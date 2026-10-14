@@ -849,6 +849,38 @@ hands it to `CraftingPanelController` as a Callable, and the panel receives it a
 fall back to `HudWorkVocab.build_queue_subject(job, x, y, "")`. Any non-build source (take, site, other
 pool) keeps today's wording, being the more urgent fact.
 
+## A WHOLE KIT IS ONE BENCH ORDER (issue #780)
+
+`.claude/rules/core_sim/crafting.md` → kit orders is the sim half. The panel's half is three surfaces
+over four wire terms — `kit_needs[]` and `materials_free[]` on the cohort, `bench.kit_orders[]` and
+`orders[].kit_order` on the bench — and three verbs relayed like every bench verb (panel signal →
+`CraftingPanelController` → `HudLayer` → `Main.format_bench_enqueue_kit` / `_remove_kit` / `_raise_kit`).
+
+- **A KITS group leads the ledger, above Gear**, one row per `kit_needs` entry in config order, folded by
+  the same head builder. The row reads the kit's items and job noun (`Spears · Sled — hunters`), what is
+  equipped (`min over items of min(have × workers_per_unit, people)`, shown `e of P` with an `equipped`
+  chip, or a `None equipped` / `Not used` pill), one kit's rebuild cost at each item's `suggested`
+  recipe (with `each` under it) and one reason under Make: danger for the first item with an unqueued
+  gap, dim when every gap is queued, faint — and the row's information dimmed, never its Make — when the
+  kit is covered or nobody is on its job.
+- **Make opens a PICKER under the row**: `Make <Kit> for how many <noun>?` with a `− N +` stepper
+  defaulting to the kit's own head count. Per item it states EQUIPPED, QUEUED, MAKE and RECIPE.
+  `gap = max(0, ceil(N / workers_per_unit) − have)`, `MAKE = gap − min(gap, queued)`. The RECIPE cell
+  lists only recipes whose `craftOffers` entry is `queueable` — a radio per recipe with its cost, the
+  bare cost for a sole one, the item's own refusal in its severity tint (and MAKE 0) when none can be
+  queued. **The footer's shortage is exact arithmetic over published terms**, the estimate precedent:
+  passes = `ceil(MAKE / output_per_pass)` and `need[m] = Σ passes × amount` against `materials_free`,
+  one decimal. `Start` sends ONE command carrying the counts the table showed, so what the player ordered
+  is what he saw; it is dead at a MAKE total of zero. The picker's state (`_kit_picker`, `_kit_people`,
+  `_kit_recipes`) is VIEW state, checked against every payload like `_picker_row`.
+- **The queue draws a kit order as ONE box**, where its first part sits: a status word (WORKING when a
+  part is the worked order and not blocked, WAITING when every part is blocked, else QUEUED), `Kit · N
+  noun`, a progress bar and `made of total` (`done + Σ made` over `done + Σ count`), the parts summed
+  on a sub-line while folded, and the WHOLE kit's ↑ (absent at index 0) and ✕. Unfolded, each part has
+  a `− made/count +` addressing it by its own order index, and no ↑ or ✕. The worked part is in the box
+  as well as in the well.
+- **The well's title appends `· for <Kit>`** when the worked order belongs to a kit order.
+
 ## Key scripts
 
 | Script | Purpose |

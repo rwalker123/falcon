@@ -48,6 +48,15 @@ signal bench_priority_requested(payload: Dictionary)
 signal bench_auto_requested(payload: Dictionary)
 ## Pass over the waiting auto order's item - `bench_auto_skip <faction> <band>`. Payload: { faction, band_id }.
 signal bench_auto_skip_requested(payload: Dictionary)
+## Order a whole kit as ONE bench order (#780) - `bench_enqueue_kit <faction> <band> kit <id> people <n>
+## recipe <id> count <n> ...`. Payload: { faction, band_id, kit_id, people, parts: [{recipe_id, count}] }.
+signal bench_enqueue_kit_requested(payload: Dictionary)
+## Take a whole kit order off the bench - `bench_remove_kit <faction> <band> kit_order <id>`. Payload:
+## { faction, band_id, kit_order }. Items already made stay in the store.
+signal bench_remove_kit_requested(payload: Dictionary)
+## Move a whole kit order up past the unit ahead of it - `bench_raise_kit <faction> <band> kit_order <id>`.
+## Payload: { faction, band_id, kit_order }.
+signal bench_raise_kit_requested(payload: Dictionary)
 
 # --- Collaborators handed in by HudLayer (the SAME instances it holds) ---
 var _band_labor: HudBandLaborState = null
@@ -205,6 +214,9 @@ func _ensure_panel() -> void:
 	_panel.bench_priority_requested.connect(_on_bench_priority_requested)
 	_panel.bench_auto_requested.connect(_on_bench_auto_requested)
 	_panel.bench_auto_skip_requested.connect(_on_bench_auto_skip_requested)
+	_panel.kit_enqueue_requested.connect(_on_kit_enqueue_requested)
+	_panel.kit_remove_requested.connect(_on_kit_remove_requested)
+	_panel.kit_raise_requested.connect(_on_kit_raise_requested)
 
 func _on_band_selected(entity: int) -> void:
 	_open_entity = entity
@@ -310,6 +322,48 @@ func _on_bench_auto_skip_requested() -> void:
 	bench_auto_skip_requested.emit({
 		"faction": int(band.get("faction", HudConst.PLAYER_FACTION_ID)),
 		"band_id": int(band.get("band_id", HudConst.NO_BAND_ID)),
+	})
+
+## **A KIT ORDER NAMES THE KIT, THE HEAD COUNT IT WAS SIZED FOR AND EVERY PART'S RECIPE AND COUNT** - the
+## counts the picker showed, so the player orders what he saw. Nothing goes out for no kit, no people or
+## no part, and a part below one is not a part.
+func _on_kit_enqueue_requested(kit_id: String, people: int, parts: Array) -> void:
+	var band := _open_band()
+	if band.is_empty() or kit_id == "" or people < 1 or parts.is_empty():
+		return
+	var kept: Array = []
+	for part_variant in parts:
+		if part_variant is Dictionary and String((part_variant as Dictionary).get("recipe_id", "")) != "" \
+				and int((part_variant as Dictionary).get("count", 0)) >= 1:
+			kept.append(part_variant)
+	if kept.is_empty():
+		return
+	bench_enqueue_kit_requested.emit({
+		"faction": int(band.get("faction", HudConst.PLAYER_FACTION_ID)),
+		"band_id": int(band.get("band_id", HudConst.NO_BAND_ID)),
+		"kit_id": kit_id,
+		"people": people,
+		"parts": kept,
+	})
+
+func _on_kit_remove_requested(kit_order: int) -> void:
+	var band := _open_band()
+	if band.is_empty() or kit_order < 1:
+		return
+	bench_remove_kit_requested.emit({
+		"faction": int(band.get("faction", HudConst.PLAYER_FACTION_ID)),
+		"band_id": int(band.get("band_id", HudConst.NO_BAND_ID)),
+		"kit_order": kit_order,
+	})
+
+func _on_kit_raise_requested(kit_order: int) -> void:
+	var band := _open_band()
+	if band.is_empty() or kit_order < 1:
+		return
+	bench_raise_kit_requested.emit({
+		"faction": int(band.get("faction", HudConst.PLAYER_FACTION_ID)),
+		"band_id": int(band.get("band_id", HudConst.NO_BAND_ID)),
+		"kit_order": kit_order,
 	})
 
 # ---- lookups ----------------------------------------------------------------

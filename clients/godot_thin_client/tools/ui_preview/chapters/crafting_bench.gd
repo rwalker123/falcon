@@ -17,7 +17,7 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 264
+const EXPECTED_CHECKPOINTS := 325
 
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 
@@ -762,6 +762,7 @@ func _crafting_states() -> void:
 	await _material_shortage_state()
 	await _worked_forecast_state()
 	await _auto_craft_states()
+	await _kit_order_states()
 
 	# Hand everything back: the panel closed, the roster restored to the reference band.
 	h._hud.close_crafting_panel()
@@ -3975,3 +3976,493 @@ func _shrug_with_a_link_state() -> void:
 	await h._save("crafting_panel_shrug_recipes")
 	h._hud.close_crafting_panel()
 	await h._settle()
+
+# ---- A WHOLE KIT AS ONE BENCH ORDER (issue #780) -------------------------------------------------
+# `.claude/rules/client/crafting-panel.md` -> "A WHOLE KIT IS ONE BENCH ORDER". Five frames: the ledger
+# with its KITS group, the picker with a shortage, the same picker after the sled's recipe is switched
+# (no shortage), a queue with a COLLAPSED kit box and then an UNFOLDED one, and the well titled
+# `· for Stalking kit`. Every expected string below is spelled out, never composed through the
+# vocabulary under test, and every control is pressed through real pointer input.
+
+const KIT_STALKING := "big_game"
+const KIT_HARVESTING := "gathering"
+const KIT_WARRIOR := "warrior"
+const KIT_WAYFINDING := "wayfinding"
+const KIT_RANGING := "ranging"
+const KIT_HUNTERS := 6
+const KIT_HARVESTERS := 5
+const KIT_WARRIORS := 4
+const KIT_SCOUTS := 2
+const KIT_SPEARS_HAVE := 4
+const KIT_SLED_HAVE := 1
+const KIT_SLED_QUEUED := 1
+const KIT_BASKETS_HAVE := 4
+const KIT_BASKETS_QUEUED := 1
+const KIT_CLUBS_HAVE := 5
+const SLED_HIDE_RECIPE := "sled"
+const SLED_FRAMED_RECIPE := "sled_framed"
+const SLED_HIDE_LABEL := "Hide"
+const SLED_FRAMED_LABEL := "Framed"
+## The kit order on the queue frames: an earlier part already finished and made one item; the spears
+## part has made one of two and the sled part none of four.
+const KIT_ORDER_ID := 1
+const KIT_ORDER_DONE := 1
+const KIT_ORDER_SPEARS_COUNT := 2
+const KIT_ORDER_SPEARS_MADE := 1
+const KIT_ORDER_SLED_COUNT := 4
+const KIT_ORDER_SLED_REASON := "Short 3.0 hide"
+## The part indices on the first queue frame (the basket is the worked order, index 0).
+const KIT_PART_SPEARS_INDEX := 1
+const KIT_PART_SLED_INDEX := 2
+const KIT_PLAIN_TAIL_INDEX := 3
+
+func _kit_order_states() -> void:
+	# The kit frames need a SECOND sled recipe (the picker's whole point), which the shared recipe book
+	# does not carry, so the catalogue is pushed here and handed back at the end.
+	h._hud.update_crafting_catalogues(_materials(), _characteristic_bands(), _kit_recipe_book(),
+		_craft_knowledge())
+	var band := _kit_band()
+	var faction := HudConst.PLAYER_FACTION_ID
+	var band_id := int(band.get("band_id", HudConst.NO_BAND_ID))
+	h._hud.update_band_alerts([band])
+	h._hud.open_crafting_panel(band)
+	await h._settle()
+	var panel: CraftingPanel = h._hud.crafting_panel().panel()
+	if panel == null:
+		h._assert_hud("crafting/kits — the kit band's panel opens", false)
+		return
+
+	# --- (1) THE LEDGER'S KITS GROUP
+	_assert_the_kits_group_reads(panel)
+	await h._save("crafting_kits_ledger")
+
+	# --- (2) THE PICKER, with the hide sled short of hide
+	await _press_control(_by_meta(panel, HudCraftingVocab.KIT_MAKE_BUTTON_META, KIT_STALKING) as Control)
+	_assert_the_picker_states_a_shortage(panel)
+	await h._save("crafting_kit_picker_short")
+
+	# --- (3) …and the same picker after switching the sled to the framed recipe
+	await _press_control(_radio_for(panel, SLED_FRAMED_RECIPE))
+	_assert_the_picker_clears_when_the_recipe_changes(panel)
+	await h._save("crafting_kit_picker_switched")
+
+	# Start sends ONE command carrying every part, then closes the picker.
+	var lines := await _kit_lines_from(
+		_by_meta(panel, HudCraftingVocab.KIT_PICKER_START_META, KIT_STALKING) as Control)
+	h._assert_hud("crafting/kits — Start sends ONE kit order carrying both parts (%s)" % [lines],
+		lines == ["bench_enqueue_kit %d %d kit big_game people 6 recipe spears_flint count 2 recipe sled_framed count 4"
+			% [faction, band_id]])
+	h._assert_hud("crafting/kits — …and closes the picker",
+		_by_meta(panel, HudCraftingVocab.KIT_PICKER_META, KIT_STALKING) == null)
+
+	# The head count's own stepper: one hunter fewer asks for one spear and three sleds, and on the
+	# default (hide) sled that is a smaller but still real shortage.
+	await _press_control(_by_meta(panel, HudCraftingVocab.KIT_MAKE_BUTTON_META, KIT_STALKING) as Control)
+	await _press_control(_by_meta(panel, HudCraftingVocab.KIT_PICKER_MINUS_META, KIT_STALKING) as Control)
+	h._assert_hud("crafting/kits — the stepper's face reads 5 (%s)"
+			% [_face_people(panel)], _face_people(panel) == "5")
+	h._assert_hud("crafting/kits — at 5 hunters it asks for 1 spear and 3 sleds, short 4.2 hide (%s/%s, %s)"
+			% [_text_of(_by_meta(panel, HudCraftingVocab.KIT_PICKER_MAKE_META, "spears")),
+				_text_of(_by_meta(panel, HudCraftingVocab.KIT_PICKER_MAKE_META, "sled")),
+				_text_of(_by_meta(panel, HudCraftingVocab.KIT_PICKER_MESSAGE_META, KIT_STALKING))],
+		_text_of(_by_meta(panel, HudCraftingVocab.KIT_PICKER_MAKE_META, "spears")) == "1"
+			and _text_of(_by_meta(panel, HudCraftingVocab.KIT_PICKER_MAKE_META, "sled")) == "3"
+			and _text_of(_by_meta(panel, HudCraftingVocab.KIT_PICKER_MESSAGE_META, KIT_STALKING))
+				== "Short 4.2 hide for all 4")
+
+	# Nothing to make, then nobody to equip — the two zero readings, each with Start dead.
+	await _press_control(_by_meta(panel, HudCraftingVocab.KIT_MAKE_BUTTON_META, KIT_WARRIOR) as Control)
+	h._assert_hud("crafting/kits — opening another kit's picker closes the first",
+		_by_meta(panel, HudCraftingVocab.KIT_PICKER_META, KIT_STALKING) == null
+			and _by_meta(panel, HudCraftingVocab.KIT_PICKER_META, KIT_WARRIOR) != null)
+	h._assert_hud("crafting/kits — a kit every warrior already has says so, Start dead (%s)"
+			% [_text_of(_by_meta(panel, HudCraftingVocab.KIT_PICKER_MESSAGE_META, KIT_WARRIOR))],
+		_text_of(_by_meta(panel, HudCraftingVocab.KIT_PICKER_MESSAGE_META, KIT_WARRIOR))
+				== "All 4 warriors already have this kit, or it is queued."
+			and (_by_meta(panel, HudCraftingVocab.KIT_PICKER_START_META, KIT_WARRIOR) as Button).disabled)
+	h._assert_hud("crafting/kits — …and the open kit's Make reads Close",
+		(_by_meta(panel, HudCraftingVocab.KIT_MAKE_BUTTON_META, KIT_WARRIOR) as Button).text == "Close")
+	await _press_control(_by_meta(panel, HudCraftingVocab.KIT_MAKE_BUTTON_META, KIT_RANGING) as Control)
+	h._assert_hud("crafting/kits — a kit with nobody on its job asks how many to equip, Start dead (%s)"
+			% [_text_of(_by_meta(panel, HudCraftingVocab.KIT_PICKER_MESSAGE_META, KIT_RANGING))],
+		_text_of(_by_meta(panel, HudCraftingVocab.KIT_PICKER_MESSAGE_META, KIT_RANGING))
+				== "Choose how many rangers to equip."
+			and (_by_meta(panel, HudCraftingVocab.KIT_PICKER_START_META, KIT_RANGING) as Button).disabled)
+	await _press_control(_by_meta(panel, HudCraftingVocab.KIT_PICKER_CANCEL_META, KIT_RANGING) as Control)
+	h._assert_hud("crafting/kits — Cancel closes it",
+		_by_meta(panel, HudCraftingVocab.KIT_PICKER_META, KIT_RANGING) == null)
+
+	# --- (4) THE QUEUE: a kit order is ONE box
+	band = _kit_queue_band(false)
+	h._hud.update_band_alerts([band])
+	h._hud.open_crafting_panel(band)
+	await h._settle()
+	panel = h._hud.crafting_panel().panel()
+	_assert_the_kit_box_is_collapsed(panel)
+	await h._save("crafting_kit_order_collapsed")
+
+	lines = await _kit_lines_from(_by_meta(panel, HudCraftingVocab.KIT_ORDER_RAISE_META, KIT_ORDER_ID) as Control)
+	h._assert_hud("crafting/kits — the box's ↑ raises the WHOLE kit (%s)" % [lines],
+		lines == ["bench_raise_kit %d %d kit_order %d" % [faction, band_id, KIT_ORDER_ID]])
+
+	await _press_control(_by_meta(panel, HudCraftingVocab.KIT_ORDER_FOLD_META, KIT_ORDER_ID) as Control)
+	_assert_the_kit_box_is_unfolded(panel)
+	await h._save("crafting_kit_order_unfolded")
+
+	lines = await _kit_lines_from(_queue_control(panel, HudCraftingVocab.ORDER_INCREMENT_META,
+		KIT_PART_SLED_INDEX))
+	h._assert_hud("crafting/kits — a part's + addresses the PART by its own order index (%s)" % [lines],
+		lines == ["bench_order_count %d %d order %d count %d" % [faction, band_id, KIT_PART_SLED_INDEX,
+			KIT_ORDER_SLED_COUNT + 1]])
+	lines = await _kit_lines_from(_by_meta(panel, HudCraftingVocab.KIT_ORDER_REMOVE_META, KIT_ORDER_ID) as Control)
+	h._assert_hud("crafting/kits — the box's ✕ takes the WHOLE kit off (%s)" % [lines],
+		lines == ["bench_remove_kit %d %d kit_order %d" % [faction, band_id, KIT_ORDER_ID]])
+
+	# --- (5) THE WELL, when the worked order is a part of the kit order
+	band = _kit_queue_band(true)
+	h._hud.update_band_alerts([band])
+	h._hud.open_crafting_panel(band)
+	await h._settle()
+	panel = h._hud.crafting_panel().panel()
+	_assert_the_well_names_its_kit(panel)
+	await h._save("crafting_bench_for_kit")
+
+	# Hand everything back: the recipe book, the panel and the reference band.
+	h._hud.update_crafting_catalogues(_materials(), _characteristic_bands(), _recipes(), _craft_knowledge())
+	h._hud.close_crafting_panel()
+	await h._settle()
+
+func _assert_the_kits_group_reads(panel: CraftingPanel) -> void:
+	var kits_head := _group_head(panel, "Kits")
+	var gear_head := _group_head(panel, HEAD_KIT)
+	h._assert_hud("crafting/kits — the ledger carries a KITS head above GEAR",
+		kits_head != null and gear_head != null
+			and kits_head.get_global_rect().position.y < gear_head.get_global_rect().position.y)
+	var ids: Array = []
+	_collect_meta_values(panel, HudCraftingVocab.KIT_ROW_META, ids)
+	h._assert_hud("crafting/kits — one row per kit, in config order (%s)" % [ids],
+		ids == [KIT_STALKING, KIT_HARVESTING, KIT_WARRIOR, KIT_WAYFINDING, KIT_RANGING])
+
+	# Stalking: spears 4 of 6 and a sled 1 of 6 -> the kit is equipped for 1, and spears are the gap
+	# nobody has queued.
+	h._assert_hud("crafting/kits — Stalking's role line names its items and its job noun",
+		_has_text(panel, "Spears · Sled — hunters"))
+	h._assert_hud("crafting/kits — …it is equipped for 1 of 6 (%s)" % [_owned_of(panel, KIT_STALKING)],
+		_owned_of(panel, KIT_STALKING) == "1 of 6 equipped")
+	h._assert_hud("crafting/kits — …one kit costs each item's suggested recipe, summed (%s)"
+			% [_cost_of(panel, KIT_STALKING)],
+		_cost_of(panel, KIT_STALKING) == "1 stone · 2 wood · 3 fibre · 6 hide each")
+	var stalking_why := _by_meta(panel, HudCraftingVocab.KIT_REASON_META, KIT_STALKING) as Label
+	h._assert_hud("crafting/kits — …and its reason is the danger line for the first unqueued gap (%s)"
+			% [_text_of(stalking_why)],
+		_text_of(stalking_why) == "2 hunters without spears"
+			and stalking_why.get_theme_color("font_color") == HudStyle.DANGER)
+	# Harvesting: every gap is queued -> a dim line.
+	var harvesting_why := _by_meta(panel, HudCraftingVocab.KIT_REASON_META, KIT_HARVESTING) as Label
+	h._assert_hud("crafting/kits — a gap that is all queued reads dim, not danger (%s)"
+			% [_text_of(harvesting_why)],
+		_text_of(harvesting_why) == "Queued — 1 baskets"
+			and harvesting_why.get_theme_color("font_color") == HudStyle.INK_DIM)
+	# Warrior: everyone has a club -> faint, and the whole row dimmed — except its button.
+	var warrior_why := _by_meta(panel, HudCraftingVocab.KIT_REASON_META, KIT_WARRIOR) as Label
+	h._assert_hud("crafting/kits — a covered kit reads faint (%s)" % [_text_of(warrior_why)],
+		_text_of(warrior_why) == "All 4 warriors equipped"
+			and warrior_why.get_theme_color("font_color") == HudStyle.INK_FAINT)
+	h._assert_hud("crafting/kits — …and its row is dimmed while its Make is NOT, beside a lit row (%s / %s / %s)"
+			% [_effective_alpha(_label_with_text(panel, "Warrior kit")),
+				_effective_alpha(_by_meta(panel, HudCraftingVocab.KIT_MAKE_BUTTON_META, KIT_WARRIOR)),
+				_effective_alpha(_label_with_text(panel, "Stalking kit"))],
+		_effective_alpha(_label_with_text(panel, "Warrior kit")) < 1.0
+			and is_equal_approx(_effective_alpha(
+				_by_meta(panel, HudCraftingVocab.KIT_MAKE_BUTTON_META, KIT_WARRIOR)), 1.0)
+			and is_equal_approx(_effective_alpha(_label_with_text(panel, "Stalking kit")), 1.0))
+	# Wayfinding: nobody has the gear -> the pill.
+	h._assert_hud("crafting/kits — an unequipped kit wears the None-equipped pill, with its gap line (%s)"
+			% [_owned_of(panel, KIT_WAYFINDING)],
+		_owned_of(panel, KIT_WAYFINDING) == "None equipped"
+			and _text_of(_by_meta(panel, HudCraftingVocab.KIT_REASON_META, KIT_WAYFINDING))
+				== "2 scouts without wayfinding gear")
+	# Ranging: nobody on the job -> Not used, and a faint No-<noun>-yet.
+	h._assert_hud("crafting/kits — a kit nobody's job uses reads Not used / No rangers yet (%s / %s)"
+			% [_owned_of(panel, KIT_RANGING), _text_of(_by_meta(panel, HudCraftingVocab.KIT_REASON_META, KIT_RANGING))],
+		_owned_of(panel, KIT_RANGING) == "Not used"
+			and _text_of(_by_meta(panel, HudCraftingVocab.KIT_REASON_META, KIT_RANGING)) == "No rangers yet")
+
+func _assert_the_picker_states_a_shortage(panel: CraftingPanel) -> void:
+	var picker := _by_meta(panel, HudCraftingVocab.KIT_PICKER_META, KIT_STALKING)
+	h._assert_hud("crafting/kits — Make opens the picker under the Stalking row", picker != null)
+	h._assert_hud("crafting/kits — the heading asks how many hunters (%s)" % [_has_text(picker, "Make Stalking kit for how many hunters?")],
+		_has_text(picker, "Make Stalking kit for how many hunters?"))
+	h._assert_hud("crafting/kits — …the stepper defaults to the people on the kit's job, with its hint",
+		_face_people(panel) == "6"
+			and _text_of(_by_meta(panel, HudCraftingVocab.KIT_PICKER_HINT_META, KIT_STALKING)) == "6 on the hunt")
+	h._assert_hud("crafting/kits — EQUIPPED / QUEUED / MAKE per item: spears 4 of 6, —, 2; sled 1 of 6, 1, 4",
+		_text_of(_by_meta(panel, HudCraftingVocab.KIT_PICKER_EQUIPPED_META, "spears")) == "4 of 6"
+			and _text_of(_by_meta(panel, HudCraftingVocab.KIT_PICKER_QUEUED_META, "spears")) == "—"
+			and _text_of(_by_meta(panel, HudCraftingVocab.KIT_PICKER_MAKE_META, "spears")) == "2"
+			and _text_of(_by_meta(panel, HudCraftingVocab.KIT_PICKER_EQUIPPED_META, "sled")) == "1 of 6"
+			and _text_of(_by_meta(panel, HudCraftingVocab.KIT_PICKER_QUEUED_META, "sled")) == "1"
+			and _text_of(_by_meta(panel, HudCraftingVocab.KIT_PICKER_MAKE_META, "sled")) == "4")
+	var recipes: Array = []
+	_collect_meta_values(picker, HudCraftingVocab.KIT_PICKER_RADIO_META, recipes)
+	h._assert_hud("crafting/kits — a radio per queueable recipe, each item's suggested one lit (%s)" % [recipes],
+		recipes == [SPEARS_BONE_RECIPE, SPEARS_FLINT_RECIPE, SLED_HIDE_RECIPE, SLED_FRAMED_RECIPE]
+			and (_radio_for(panel, SPEARS_FLINT_RECIPE)).button_pressed
+			and not (_radio_for(panel, SPEARS_BONE_RECIPE)).button_pressed
+			and (_radio_for(panel, SLED_HIDE_RECIPE)).button_pressed)
+	var message := _by_meta(panel, HudCraftingVocab.KIT_PICKER_MESSAGE_META, KIT_STALKING) as Label
+	h._assert_hud("crafting/kits — the footer says what the picked recipes cannot cover (%s)" % [_text_of(message)],
+		_text_of(message) == "Short 10.2 hide for all 6"
+			and message.get_theme_color("font_color") == HudStyle.DANGER)
+	h._assert_hud("crafting/kits — …and Start is live",
+		not (_by_meta(panel, HudCraftingVocab.KIT_PICKER_START_META, KIT_STALKING) as Button).disabled)
+
+func _assert_the_picker_clears_when_the_recipe_changes(panel: CraftingPanel) -> void:
+	var message := _by_meta(panel, HudCraftingVocab.KIT_PICKER_MESSAGE_META, KIT_STALKING) as Label
+	h._assert_hud("crafting/kits — the framed sled is the lit radio now, the hide sled is not",
+		(_radio_for(panel, SLED_FRAMED_RECIPE)).button_pressed
+			and not (_radio_for(panel, SLED_HIDE_RECIPE)).button_pressed)
+	h._assert_hud("crafting/kits — the shortage is gone and the footer says what Start queues (%s)"
+			% [_text_of(message)],
+		_text_of(message) == "Queues 6 items as one kit order"
+			and message.get_theme_color("font_color") == HudStyle.INK_DIM)
+
+func _assert_the_kit_box_is_collapsed(panel: CraftingPanel) -> void:
+	var box := _by_meta(panel, HudCraftingVocab.KIT_ORDER_BOX_META, KIT_ORDER_ID)
+	h._assert_hud("crafting/kits — the kit order is ONE box", box != null)
+	var boxes: Array = []
+	_collect_meta_values(panel, HudCraftingVocab.KIT_ORDER_BOX_META, boxes)
+	h._assert_hud("crafting/kits — …and exactly one (%s)" % [boxes], boxes.size() == 1)
+	h._assert_hud("crafting/kits — its title and its progress (%s / %s)"
+			% [_text_of(_by_meta(panel, HudCraftingVocab.KIT_ORDER_TITLE_META, KIT_ORDER_ID)),
+				_text_of(_by_meta(panel, HudCraftingVocab.KIT_ORDER_PROGRESS_META, KIT_ORDER_ID))],
+		_text_of(_by_meta(panel, HudCraftingVocab.KIT_ORDER_TITLE_META, KIT_ORDER_ID)) == "Stalking kit · 6 hunters"
+			and _text_of(_by_meta(panel, HudCraftingVocab.KIT_ORDER_PROGRESS_META, KIT_ORDER_ID)) == "2 of 7 made")
+	h._assert_hud("crafting/kits — collapsed, it sums its parts on a sub-line (%s)"
+			% [_text_of(_by_meta(panel, HudCraftingVocab.KIT_ORDER_SUMMARY_META, KIT_ORDER_ID))],
+		_text_of(_by_meta(panel, HudCraftingVocab.KIT_ORDER_SUMMARY_META, KIT_ORDER_ID)) == "Spears 1/2 · Sled 0/4")
+	h._assert_hud("crafting/kits — …and shows no part rows",
+		_by_meta(panel, HudCraftingVocab.KIT_ORDER_PART_META, null) == null)
+	h._assert_hud("crafting/kits — QUEUED, since the worked order is the basket and not every part waits (%s)"
+			% [_text_of(_by_meta(panel, HudCraftingVocab.KIT_ORDER_STATUS_META, KIT_ORDER_ID))],
+		_text_of(_by_meta(panel, HudCraftingVocab.KIT_ORDER_STATUS_META, KIT_ORDER_ID)) == "QUEUED")
+	h._assert_hud("crafting/kits — the box carries the whole kit's ↑ and ✕ with the tooltip that says what stays",
+		_by_meta(panel, HudCraftingVocab.KIT_ORDER_RAISE_META, KIT_ORDER_ID) != null
+			and (_by_meta(panel, HudCraftingVocab.KIT_ORDER_REMOVE_META, KIT_ORDER_ID) as Button).tooltip_text
+				== "Take the whole kit off the bench — items already made stay in the store")
+	h._assert_hud("crafting/kits — the plain order behind the box keeps its own ✕",
+		_queue_control(panel, HudCraftingVocab.ORDER_REMOVE_META, KIT_PLAIN_TAIL_INDEX) != null)
+
+func _assert_the_kit_box_is_unfolded(panel: CraftingPanel) -> void:
+	var parts: Array = []
+	_collect_meta_values(panel, HudCraftingVocab.KIT_ORDER_PART_META, parts)
+	h._assert_hud("crafting/kits — unfolded, a row per part at its own order index (%s)" % [parts],
+		parts == [KIT_PART_SPEARS_INDEX, KIT_PART_SLED_INDEX])
+	h._assert_hud("crafting/kits — …and the sub-line is gone",
+		_by_meta(panel, HudCraftingVocab.KIT_ORDER_SUMMARY_META, KIT_ORDER_ID) == null)
+	h._assert_hud("crafting/kits — each part has its own − made/count +",
+		_queue_control(panel, HudCraftingVocab.ORDER_INCREMENT_META, KIT_PART_SPEARS_INDEX) != null
+			and _queue_control(panel, HudCraftingVocab.ORDER_DECREMENT_META, KIT_PART_SLED_INDEX) != null)
+	h._assert_hud("crafting/kits — …and NO ↑ or ✕ of its own: the kit moves and goes as one",
+		_queue_control(panel, HudCraftingVocab.ORDER_RAISE_META, KIT_PART_SPEARS_INDEX) == null
+			and _queue_control(panel, HudCraftingVocab.ORDER_REMOVE_META, KIT_PART_SPEARS_INDEX) == null
+			and _queue_control(panel, HudCraftingVocab.ORDER_RAISE_META, KIT_PART_SLED_INDEX) == null
+			and _queue_control(panel, HudCraftingVocab.ORDER_REMOVE_META, KIT_PART_SLED_INDEX) == null)
+	h._assert_hud("crafting/kits — a part the bench is skipping reads WAITING with the sim's reason (%s / %s)"
+			% [_text_of(_by_meta(panel, HudCraftingVocab.KIT_ORDER_PART_STATUS_META, KIT_PART_SLED_INDEX)),
+				_text_of(_by_meta(panel, HudCraftingVocab.ORDER_REASON_META, KIT_PART_SLED_INDEX))],
+		_text_of(_by_meta(panel, HudCraftingVocab.KIT_ORDER_PART_STATUS_META, KIT_PART_SLED_INDEX)) == "WAITING"
+			and _text_of(_by_meta(panel, HudCraftingVocab.ORDER_REASON_META, KIT_PART_SLED_INDEX))
+				== KIT_ORDER_SLED_REASON
+			and _text_of(_by_meta(panel, HudCraftingVocab.KIT_ORDER_PART_STATUS_META, KIT_PART_SPEARS_INDEX)) == "QUEUED")
+
+func _assert_the_well_names_its_kit(panel: CraftingPanel) -> void:
+	var suffix := _by_meta(panel, HudCraftingVocab.BENCH_FOR_KIT_META, null) as Label
+	h._assert_hud("crafting/kits — the well's title appends the kit it works for (%s)" % [_text_of(suffix)],
+		suffix != null and suffix.text == " · for Stalking kit")
+	h._assert_hud("crafting/kits — …the box is WORKING, and its ↑ is gone at the head of the queue (%s)"
+			% [_text_of(_by_meta(panel, HudCraftingVocab.KIT_ORDER_STATUS_META, KIT_ORDER_ID))],
+		_text_of(_by_meta(panel, HudCraftingVocab.KIT_ORDER_STATUS_META, KIT_ORDER_ID)) == "WORKING"
+			and _by_meta(panel, HudCraftingVocab.KIT_ORDER_RAISE_META, KIT_ORDER_ID) == null)
+
+# ---- fixtures ----------------------------------------------------------------------------------
+
+## The shared recipe book plus the framed sled, so a kit item can offer two recipes.
+func _kit_recipe_book() -> Array:
+	var book := _recipes()
+	book.append(_kit_recipe(SLED_FRAMED_RECIPE, "Sled", "tanning",
+		[["hide", 3.0, ""], ["wood", 2.0, ""], ["fibre", 2.0, ""]], "sled", SLED_FRAMED_LABEL))
+	return book
+
+## The reference band with the whole-kit wire on it: `kit_needs` (the efficiency-applied per-pass inputs,
+## which are NOT the recipe book's own numbers) and `materials_free` — what the queue's claims leave.
+func _kit_band() -> Dictionary:
+	var band := _crafting_band()
+	var offers: Array = []
+	for offer in band["craft_offers"]:
+		if String((offer as Dictionary).get("recipe_id", "")) != SLED_HIDE_RECIPE:
+			offers.append(offer)
+	offers.append(_offer(SLED_HIDE_RECIPE, "Sled", HudCraftingVocab.GROUP_KIT, "sled", true,
+		"Mammoth hide → excellent", HudCraftingVocab.SEVERITY_NEUTRAL, [], false,
+		{"recipe_label": SLED_HIDE_LABEL}))
+	offers.append(_offer(SLED_FRAMED_RECIPE, "Sled", HudCraftingVocab.GROUP_KIT, "sled", true,
+		"Framed → good", HudCraftingVocab.SEVERITY_NEUTRAL, [], false,
+		{"recipe_label": SLED_FRAMED_LABEL, "suggested": false}))
+	band["craft_offers"] = offers
+	band["kit_needs"] = _kit_needs()
+	band["materials_free"] = [
+		{"material_id": "fibre", "amount": 20.8}, {"material_id": "hide", "amount": 13.8},
+		{"material_id": "bone", "amount": 3.1}, {"material_id": "wood", "amount": 14.0},
+		{"material_id": "stone", "amount": 6.0}]
+	return band
+
+func _kit_needs() -> Array:
+	return [
+		_need(KIT_STALKING, "Stalking kit", ["hunt"], KIT_HUNTERS, [
+			_need_item("spears", 1, KIT_SPEARS_HAVE, 0, [
+				_need_recipe(SPEARS_BONE_RECIPE, 1.0, [["bone", 1.0], ["fibre", 2.0], ["hide", 1.0]]),
+				_need_recipe(SPEARS_FLINT_RECIPE, 1.0, [["stone", 1.0], ["wood", 2.0], ["fibre", 1.0]])]),
+			_need_item("sled", 1, KIT_SLED_HAVE, KIT_SLED_QUEUED, [
+				_need_recipe(SLED_HIDE_RECIPE, 1.0, [["hide", 6.0], ["fibre", 2.0]]),
+				_need_recipe(SLED_FRAMED_RECIPE, 1.0, [["hide", 3.0], ["wood", 2.0], ["fibre", 2.0]])])]),
+		_need(KIT_HARVESTING, "Harvesting kit", ["forage"], KIT_HARVESTERS, [
+			_need_item("baskets", 1, KIT_BASKETS_HAVE, KIT_BASKETS_QUEUED, [
+				_need_recipe(BASKETS_REED_RECIPE, 1.0, [["fibre", 5.0], ["hide", 1.0]]),
+				_need_recipe(BASKETS_WITHY_RECIPE, 1.0, [["wood", 3.0], ["fibre", 2.0]])])]),
+		_need(KIT_WARRIOR, "Warrior kit", ["warrior"], KIT_WARRIORS, [
+			_need_item("clubs", 1, KIT_CLUBS_HAVE, 0, [
+				_need_recipe("clubs", 1.0, [["bone", 2.0], ["hide", 1.0]])])]),
+		_need(KIT_WAYFINDING, "Wayfinding kit", ["scout"], KIT_SCOUTS, [
+			_need_item("wayfinding", 1, 0, 0, [
+				_need_recipe("wayfinding", 1.0, [["bone", 1.0], ["hide", 1.0], ["fibre", 1.0]])])]),
+		_need(KIT_RANGING, "Ranging kit", ["expedition"], 0, [
+			_need_item("spears", 1, KIT_SPEARS_HAVE, 0, [
+				_need_recipe(SPEARS_FLINT_RECIPE, 1.0, [["stone", 1.0], ["wood", 2.0], ["fibre", 1.0]])]),
+			_need_item("baskets", 1, KIT_BASKETS_HAVE, KIT_BASKETS_QUEUED, [
+				_need_recipe(BASKETS_REED_RECIPE, 1.0, [["fibre", 5.0], ["hide", 1.0]])])]),
+	]
+
+func _need(kit_id: String, display_name: String, jobs: Array, people: int, items: Array) -> Dictionary:
+	return {"kit_id": kit_id, "display_name": display_name, "jobs": jobs, "people": people, "items": items}
+
+func _need_item(item_id: String, workers_per_unit: int, have: int, queued: int, recipes: Array) -> Dictionary:
+	return {"item_id": item_id, "workers_per_unit": workers_per_unit, "have": have, "queued": queued,
+		"recipes": recipes}
+
+func _need_recipe(recipe_id: String, output_per_pass: float, inputs: Array) -> Dictionary:
+	var rows: Array = []
+	for input in inputs:
+		rows.append({"material_id": String(input[0]), "amount": float(input[1])})
+	return {"recipe_id": recipe_id, "output_per_pass": output_per_pass, "inputs": rows}
+
+## A kit part: an ordinary order tagged with the kit order it belongs to.
+func _kit_part(recipe_id: String, count: int, made: int, progress: float, drawn: bool,
+		blocked_reason: String = "") -> Dictionary:
+	var part := _order(recipe_id, count, made, progress, drawn, blocked_reason,
+		HudCraftingVocab.SEVERITY_DANGER if blocked_reason != "" else "")
+	part["kit_order"] = KIT_ORDER_ID
+	return part
+
+## The queue frames' band. Not worked on the kit (`worked_on_kit` false): the basket is the head and the
+## kit's two parts sit behind it with a plain order after them. Worked on the kit: the spears part is the
+## head, so it is the order the well describes.
+func _kit_queue_band(worked_on_kit: bool) -> Dictionary:
+	var band := _kit_band()
+	var bench: Dictionary = _bench()
+	var basket := _order(BASKETS_REED_RECIPE, BENCH_ORDER_COUNT, BENCH_ORDER_MADE, BENCH_PROGRESS, true)
+	var plain_tail := _order("traps", 1, 0, 0.0, false)
+	if worked_on_kit:
+		bench["recipe_id"] = SPEARS_FLINT_RECIPE
+		bench["display_name"] = "Spears (Flint)"
+		bench["teaches"] = ""
+		bench["orders"] = [
+			_kit_part(SPEARS_FLINT_RECIPE, KIT_ORDER_SPEARS_COUNT, KIT_ORDER_SPEARS_MADE, BENCH_PROGRESS, true),
+			_kit_part(SLED_FRAMED_RECIPE, KIT_ORDER_SLED_COUNT, 0, 0.0, false),
+			basket]
+	else:
+		bench["orders"] = [
+			basket,
+			_kit_part(SPEARS_FLINT_RECIPE, KIT_ORDER_SPEARS_COUNT, KIT_ORDER_SPEARS_MADE, 0.0, false),
+			_kit_part(SLED_FRAMED_RECIPE, KIT_ORDER_SLED_COUNT, 0, 0.0, false, KIT_ORDER_SLED_REASON),
+			plain_tail]
+	bench["kit_orders"] = [{"id": KIT_ORDER_ID, "kit_id": KIT_STALKING, "people": KIT_HUNTERS,
+		"done": KIT_ORDER_DONE}]
+	band["bench"] = bench
+	return band
+
+# ---- finders -----------------------------------------------------------------------------------
+
+## The first node carrying `meta` — valued `value` when one is given (compared as text, so an int meta and
+## its text face both match), any value when `null`.
+func _by_meta(node: Node, meta: String, value: Variant) -> Node:
+	if node == null:
+		return null
+	if node.has_meta(meta) and (value == null or str(node.get_meta(meta)) == str(value)):
+		return node
+	for child in node.get_children():
+		var found := _by_meta(child, meta, value)
+		if found != null:
+			return found
+	return null
+
+## Every value `meta` is carried with under `node`, in tree order.
+func _collect_meta_values(node: Node, meta: String, into: Array) -> void:
+	if node.has_meta(meta):
+		into.append(node.get_meta(meta))
+	for child in node.get_children():
+		_collect_meta_values(child, meta, into)
+
+## The head count the open picker's stepper face carries on its meta, `""` when no picker is open.
+func _face_people(panel: Node) -> String:
+	var face := _by_meta(panel, HudCraftingVocab.KIT_PICKER_FACE_META, null)
+	return "" if face == null else str(face.get_meta(HudCraftingVocab.KIT_PICKER_FACE_META))
+
+## A Label's (or Button's) text, `""` for a missing node.
+func _text_of(node: Node) -> String:
+	if node is Label:
+		return (node as Label).text
+	if node is Button:
+		return (node as Button).text
+	return ""
+
+func _has_text(node: Node, text: String) -> bool:
+	return node != null and _label_texts(node).has(text)
+
+## The kit row's owned cell, read as the player reads it: the labels joined by a space.
+func _owned_of(panel: Node, kit_id: String) -> String:
+	var cell := _by_meta(panel, HudCraftingVocab.KIT_OWNED_META, kit_id)
+	return "" if cell == null else " ".join(_label_texts(cell))
+
+## The kit row's cost cell: the clauses run together, then the `each` line.
+func _cost_of(panel: Node, kit_id: String) -> String:
+	var cell := _by_meta(panel, HudCraftingVocab.KIT_COST_META, kit_id)
+	if cell == null:
+		return ""
+	var texts := _label_texts(cell)
+	var each: String = texts.pop_back()
+	return "".join(texts) + " " + each
+
+func _radio_for(panel: Node, recipe_id: String) -> CheckBox:
+	return _by_meta(panel, HudCraftingVocab.KIT_PICKER_RADIO_META, recipe_id) as CheckBox
+
+## Press `control` and answer the command LINES the kit and bench verbs would send, off the real relay.
+func _kit_lines_from(control: Control) -> Array:
+	var lines: Array = []
+	var on_enqueue := func(p: Dictionary) -> void:
+		lines.append(String(MAIN_SCRIPT.format_bench_enqueue_kit(p).get("line", "")))
+	var on_remove := func(p: Dictionary) -> void:
+		lines.append(String(MAIN_SCRIPT.format_bench_remove_kit(p).get("line", "")))
+	var on_raise := func(p: Dictionary) -> void:
+		lines.append(String(MAIN_SCRIPT.format_bench_raise_kit(p).get("line", "")))
+	var on_count := func(p: Dictionary) -> void:
+		lines.append(String(MAIN_SCRIPT.format_bench_order_count(p).get("line", "")))
+	h._hud.bench_enqueue_kit_requested.connect(on_enqueue)
+	h._hud.bench_remove_kit_requested.connect(on_remove)
+	h._hud.bench_raise_kit_requested.connect(on_raise)
+	h._hud.bench_order_count_requested.connect(on_count)
+	await _press_control(control)
+	h._hud.bench_enqueue_kit_requested.disconnect(on_enqueue)
+	h._hud.bench_remove_kit_requested.disconnect(on_remove)
+	h._hud.bench_raise_kit_requested.disconnect(on_raise)
+	h._hud.bench_order_count_requested.disconnect(on_count)
+	return lines

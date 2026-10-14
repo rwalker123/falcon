@@ -199,6 +199,16 @@ signal bench_auto_requested(payload: Dictionary)
 ## Emitted when the Skip link under a waiting auto order is pressed. Payload keys: { faction, band_id }.
 ## Main formats `bench_auto_skip <faction> <band>`. RELAYED from `CraftingPanelController`.
 signal bench_auto_skip_requested(payload: Dictionary)
+## Emitted when a kit picker's Start is pressed (#780). Payload keys: { faction, band_id, kit_id, people,
+## parts: [{recipe_id, count}] }. Main formats `bench_enqueue_kit <faction> <band> kit <id> people <n>
+## recipe <id> count <n> ...`. RELAYED from `CraftingPanelController`.
+signal bench_enqueue_kit_requested(payload: Dictionary)
+## Emitted when a kit order's box ✕ is pressed. Payload keys: { faction, band_id, kit_order }. Main formats
+## `bench_remove_kit <faction> <band> kit_order <id>`. RELAYED from `CraftingPanelController`.
+signal bench_remove_kit_requested(payload: Dictionary)
+## Emitted when a kit order's box ↑ is pressed. Payload keys: { faction, band_id, kit_order }. Main formats
+## `bench_raise_kit <faction> <band> kit_order <id>`. RELAYED from `CraftingPanelController`.
+signal bench_raise_kit_requested(payload: Dictionary)
 ## Emitted on EVERY stepper press on the OPENING LOADOUT picker (issue #629) — the card holds no
 ## draft and defers no order. Payload keys:
 ## { faction, band_id, kits: [{id, count}], materials: [{id, units}], revert_kits, revert_materials }.
@@ -843,6 +853,12 @@ func _ready() -> void:
         func(payload: Dictionary) -> void: bench_auto_requested.emit(payload))
     _crafting.bench_auto_skip_requested.connect(
         func(payload: Dictionary) -> void: bench_auto_skip_requested.emit(payload))
+    _crafting.bench_enqueue_kit_requested.connect(
+        func(payload: Dictionary) -> void: bench_enqueue_kit_requested.emit(payload))
+    _crafting.bench_remove_kit_requested.connect(
+        func(payload: Dictionary) -> void: bench_remove_kit_requested.emit(payload))
+    _crafting.bench_raise_kit_requested.connect(
+        func(payload: Dictionary) -> void: bench_raise_kit_requested.emit(payload))
     _bandpanel.crafting_requested.connect(
         func(band: Dictionary) -> void: _crafting.toggle_for(band))
     # The knowledge screen, on the same room and the same launch idiom. It takes `_topbar` as well,
