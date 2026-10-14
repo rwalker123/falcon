@@ -12522,6 +12522,26 @@ func _need_workforce_states() -> void:
 		not plain.has(HudWorkVocab.WORKFORCE_KEY_OUT_HUNTING))
 	_assert_band_panel("workforce bar — …and the header does not say out hunting",
 		not _has_label_containing(_panel, "out hunting"))
+	_assert_idle_attention_nets_the_muster()
+
+## **THE TURN ORB'S IDLE ROW NETS OUT THE IDLE HANDS THE MUSTER TAKES**, matching the Workforce head.
+## A pair: the same wire `idle_workers` raises the row when nothing is mustered and raises none when
+## the muster takes every one of them.
+func _assert_idle_attention_nets_the_muster() -> void:
+	var lending := _need_workforce_fixture(true)
+	lending["idle_workers"] = NEED_IDLE_MUSTERED
+	var plain := _need_workforce_fixture(false)
+	plain["idle_workers"] = NEED_IDLE_MUSTERED
+	var idle_rows := func(band: Dictionary) -> Array:
+		return _hud._attention.build_band_attention([band], []).filter(func(a):
+			return String(a.get("kind", "")) == HudAttentionVocab.ATTENTION_KIND_IDLE_WORKERS)
+	var lent_rows: Array = idle_rows.call(lending)
+	var plain_rows: Array = idle_rows.call(plain)
+	_assert_band_panel("turn orb — idle hands the muster takes raise no idle-workers row (got %d)"
+		% lent_rows.size(), lent_rows.is_empty())
+	_assert_band_panel("turn orb — …the same idle count with nothing mustered does (got %s)"
+		% str(plain_rows), plain_rows.size() == 1
+		and String(plain_rows[0].get("label", "")) == "%d idle workers" % NEED_IDLE_MUSTERED)
 
 ## An extraction crew on the need band: three cutters on a wood working, one of them lent.
 const NEED_EXTRACT_TILE := Vector2i(68, 22)

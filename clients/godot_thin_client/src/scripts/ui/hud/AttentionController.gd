@@ -314,7 +314,10 @@ func build_band_attention(player_bands: Array, player_expeditions: Array) -> Arr
             })
         # Producer 3 — idle labor: working-age workers unassigned (amber/warn). Supersedes
         # the old activity==idle alert (a worker count is more actionable than a state flag).
-        var idle_workers := int(entry.get("idle_workers", 0))
+        # Hands the next hunting-by-need muster takes are going out hunting, not idle: the band
+        # panel's Workforce head counts them as "out hunting", so the orb nets them out too.
+        var idle_workers := maxi(int(entry.get("idle_workers", 0))
+            - int(_band_labor.hunt_muster_out(entry)["idle"]), 0)
         if idle_workers > 0:
             attention.append({
                 "kind": HudAttentionVocab.ATTENTION_KIND_IDLE_WORKERS,
