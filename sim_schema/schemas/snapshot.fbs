@@ -2533,6 +2533,17 @@ table SedentarizationState {
   beliefPoints:float = 0;
 }
 
+// One faction's mobility score (#800) - the roaming counterpart of `SedentarizationState`. `score`
+// is the EMA-smoothed 0-100 readout; `skillsPoints` / `distancePoints` are the two inputs' raw
+// points this turn (100 x weight x norm), BEFORE the EMA that smooths `score`. Viewer-scoped like
+// `sedentarization`: a viewer sees its own people's row only. No stage and no thresholds.
+table MobilityState {
+  faction:uint;
+  score:float = 0;
+  skillsPoints:float = 0;
+  distancePoints:float = 0;
+}
+
 // ONE COMPOSITION ENTRY'S MATERIAL RATES (the selective gather) - FlatBuffers has no
 // vector-of-vectors, so `ForagePatchState.compositionMaterialPerBiomass` is a vector of these
 // one-field tables. `rows` is EMPTY for a plant that pays no material: "no row", never a zero-valued
@@ -5889,6 +5900,10 @@ table SubsistenceSection {
   // `defaultHuntKitId` stands behind a herd's own `defaultKitId`. Never empty: it always names a
   // real roster entry.
   defaultExtractKitId:string;
+  // --- THE MOBILITY SCORE, per faction (appended last, #800) ------------------------------------
+  // The roaming counterpart of `sedentarization`: viewer-scoped, whole-vector on both snapshot and
+  // delta (absent on a delta = unchanged). See `MobilityState`.
+  mobility:[MobilityState];
 }
 
 // ONE discovery the VIEWER'S people is learning BY CONTACT this turn — the knowledge rider on a

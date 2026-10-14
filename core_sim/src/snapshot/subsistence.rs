@@ -339,6 +339,26 @@ pub(crate) fn snapshot_sedentarization(
         .collect()
 }
 
+/// **The viewer's own mobility score, and nobody else's** - `snapshot_sedentarization`'s rule: a bare
+/// number with nothing on the map to look at, so it has no visible tier (`factions.md` -> "Which
+/// frame sections are viewer-scoped").
+pub(crate) fn snapshot_mobility(
+    score: &crate::mobility::MobilityScore,
+    viewer: FactionId,
+) -> Vec<SchemaMobilityState> {
+    score
+        .iter_sorted()
+        .into_iter()
+        .filter(|(faction, _)| *faction == viewer)
+        .map(|(faction, entry)| SchemaMobilityState {
+            faction: faction.0,
+            score: entry.score,
+            skills_points: entry.skills_points,
+            distance_points: entry.distance_points,
+        })
+        .collect()
+}
+
 /// **How many points each source's regrowth curve is SAMPLED at** — readings of a continuum, **not**
 /// a set of states, and a **display-resolution choice rather than a model fact**. The growth curve is
 /// continuous; this is how finely the client is handed it.

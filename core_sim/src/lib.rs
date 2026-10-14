@@ -71,6 +71,8 @@ mod map_preset;
 mod mapgen;
 mod materials_config;
 pub mod metrics;
+mod mobility;
+mod mobility_config;
 pub mod network;
 mod orders;
 pub mod personalities;
@@ -367,6 +369,10 @@ pub use materials_config::{
     CharacteristicBand, HandWorking, MaterialDef, MaterialPayoff, MaterialYieldDef,
     MaterialYieldError, MaterialsConfig, MaterialsConfigError, MaterialsConfigHandle,
     MaterialsConfigMetadata, BUILTIN_MATERIALS_CONFIG,
+};
+pub use mobility::{mobility_tick, HerdFollowSteps, MobilityEntry, MobilityScore};
+pub use mobility_config::{
+    load_mobility_config_from_env, MobilityConfig, MobilityConfigHandle, MobilityConfigMetadata,
 };
 pub use recipes_config::{
     load_recipes_config_from_env, CraftingTuning, RecipeDef, RecipeGrade, RecipeInput,
@@ -736,6 +742,8 @@ pub fn build_headless_app() -> App {
         sedentarization_config::load_sedentarization_config_from_env();
     let sedentarization_handle =
         sedentarization_config::SedentarizationConfigHandle::new(sedentarization_config);
+    let (mobility_config, mobility_metadata) = mobility_config::load_mobility_config_from_env();
+    let mobility_handle = mobility_config::MobilityConfigHandle::new(mobility_config);
     let (settlement_stage_config, settlement_stage_metadata) =
         settlement_stage_config::load_settlement_stage_config_from_env();
     let settlement_stage_handle =
@@ -909,6 +917,10 @@ pub fn build_headless_app() -> App {
         .insert_resource(sedentarization_handle)
         .insert_resource(sedentarization_metadata)
         .insert_resource(sedentarization::SedentarizationScore::default())
+        .insert_resource(mobility_handle)
+        .insert_resource(mobility_metadata)
+        .insert_resource(mobility::MobilityScore::default())
+        .insert_resource(mobility::HerdFollowSteps::default())
         .insert_resource(beat_config_handle)
         .insert_resource(beat_config_metadata)
         .insert_resource(beat_catalog_handle)
@@ -1341,6 +1353,10 @@ pub fn build_headless_app() -> App {
                     // this turn is skipped.
                     systems::advance_culture_splits,
                     sedentarization::sedentarization_tick,
+                    // The roaming counterpart: after `advance_band_movement` (in this chain, so
+                    // the order is declared), which records the turn's steps beside a migrating
+                    // herd and which this drains.
+                    mobility::mobility_tick,
                 )
                     .chain(),
                 // Pure telemetry: reads `TradeTelemetry`, which two systems write (the cross-people

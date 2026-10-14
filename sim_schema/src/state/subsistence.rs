@@ -145,6 +145,19 @@ pub struct SedentarizationState {
     pub belief_points: f32,
 }
 
+/// One faction's mobility score (#800) — the roaming counterpart of [`SedentarizationState`].
+/// `skills_points` / `distance_points` are the two inputs' raw points this turn (`100 × weight ×
+/// norm`), before the EMA that smooths `score`. No stage: mobility has no prompt thresholds.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct MobilityState {
+    pub faction: u32,
+    pub score: f32,
+    #[serde(default)]
+    pub skills_points: f32,
+    #[serde(default)]
+    pub distance_points: f32,
+}
+
 /// A fully-fed pen — the neutral value of [`HerdTelemetryState::pen_fed_fraction`], so an un-penned
 /// (or older-snapshot) herd never reads as starving.
 fn pen_fully_fed() -> f32 {

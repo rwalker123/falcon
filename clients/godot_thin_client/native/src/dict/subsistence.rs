@@ -75,6 +75,24 @@ pub(crate) fn sedentarization_to_array(
     array
 }
 
+/// The mobility score (#800), the roaming counterpart of `sedentarization`: one dictionary per
+/// faction (the viewer's own row only). `skills_points` / `distance_points` are the two inputs' raw
+/// points this turn, before the EMA that smooths `score`.
+pub(crate) fn mobility_to_array(
+    states: Vector<'_, ForwardsUOffset<fb::MobilityState<'_>>>,
+) -> VarArray {
+    let mut array = VarArray::new();
+    for state in states {
+        let mut dict = VarDictionary::new();
+        let _ = dict.insert("faction", state.faction() as i64);
+        let _ = dict.insert("score", state.score());
+        let _ = dict.insert("skills_points", state.skillsPoints());
+        let _ = dict.insert("distance_points", state.distancePoints());
+        array.push(&dict.to_variant());
+    }
+    array
+}
+
 pub(crate) fn herds_to_array(
     herds: Vector<'_, ForwardsUOffset<fb::HerdTelemetryState<'_>>>,
 ) -> VarArray {

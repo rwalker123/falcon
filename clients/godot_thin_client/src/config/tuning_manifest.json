@@ -383,6 +383,54 @@
           "hint": "Extra lethality for a detached party. Never applied to a resident band."
         }
       ]
+    },
+    {
+      "kind": "mobility",
+      "label": "Mobility",
+      "env_var": "MOBILITY_CONFIG_PATH",
+      "params": [
+        {
+          "pointer": "/smoothing",
+          "label": "Score memory",
+          "type": "float",
+          "min": 0,
+          "max": 0.99,
+          "step": 0.01,
+          "default": 0.95,
+          "hint": "How much of last turn's mobility score is kept each turn. High: the score remembers the long walking legs through the loiters between them. Low: it tracks this turn's walking."
+        },
+        {
+          "pointer": "/weights/skills",
+          "label": "Skills weight",
+          "type": "float",
+          "min": 0,
+          "max": 1,
+          "step": 0.05,
+          "default": 0.5,
+          "hint": "How much of the score is what the people have learned: herd lore, travois and drives. Keep it and the distance weight summing to 1 so the score stays on a 0-100 scale."
+        },
+        {
+          "pointer": "/weights/distance",
+          "label": "Distance weight",
+          "type": "float",
+          "min": 0,
+          "max": 1,
+          "step": 0.05,
+          "default": 0.5,
+          "hint": "How much of the score is the ground bands walked this turn beside a migrating herd. A people that stops roaming stops earning it."
+        },
+        {
+          "pointer": "/references/hexes_per_turn",
+          "label": "Full-pace walk",
+          "type": "float",
+          "min": 0.5,
+          "max": 6,
+          "step": 0.5,
+          "default": 1.0,
+          "unit": "hexes",
+          "hint": "Hexes a band must step in one turn, following a migrating herd, to earn the full distance points. Matches a band's walking speed, so walking every turn saturates it."
+        }
+      ]
     }
   ]
 }

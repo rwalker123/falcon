@@ -66,6 +66,7 @@ pub struct SnapshotContext<'w> {
     pub victory: Res<'w, VictoryState>,
     pub faction_inventory: Res<'w, FactionInventory>,
     pub sedentarization: Res<'w, SedentarizationScore>,
+    pub mobility: Res<'w, crate::mobility::MobilityScore>,
     pub discovered_sites: Res<'w, DiscoveredSites>,
     pub sites_config: Res<'w, SitesConfigHandle>,
     pub food_sites: Res<'w, FoodSiteRegistry>,
@@ -354,6 +355,8 @@ pub(crate) struct SeatPublishState {
     /// The two deposit branches' rung catalog — the same kind of per-world constant, on the same
     /// seam.
     deposit_rungs: Whole<Vec<DepositRungState>>,
+    /// The mobility score, per faction (#800) - `sedentarization`'s roaming counterpart.
+    mobility: Whole<Vec<SchemaMobilityState>>,
     history: VecDeque<StoredSnapshot>,
 }
 
@@ -761,6 +764,7 @@ struct SubsistenceParts {
     craft_knowledge: Option<Vec<CraftKnowledgeState>>,
     route_rungs: Option<Vec<RouteRungState>>,
     deposit_rungs: Option<Vec<DepositRungState>>,
+    mobility: Option<Vec<SchemaMobilityState>>,
 }
 
 /// Fauna and flora: the herd roster, the forage patches, and the food-module map.
@@ -784,6 +788,7 @@ fn diff_subsistence(
     craft_knowledge: &mut Whole<Vec<CraftKnowledgeState>>,
     route_rungs: &mut Whole<Vec<RouteRungState>>,
     deposit_rungs: &mut Whole<Vec<DepositRungState>>,
+    mobility: &mut Whole<Vec<SchemaMobilityState>>,
     snapshot: &WorldSnapshot,
     write: Baseline,
 ) -> SubsistenceParts {
@@ -834,6 +839,7 @@ fn diff_subsistence(
         craft_knowledge: diff_whole(craft_knowledge, &snapshot.craft_knowledge, write),
         route_rungs: diff_whole(route_rungs, &snapshot.route_rungs, write),
         deposit_rungs: diff_whole(deposit_rungs, &snapshot.deposit_rungs, write),
+        mobility: diff_whole(mobility, &snapshot.mobility, write),
     }
 }
 
@@ -977,6 +983,7 @@ impl SeatPublishState {
             craft_knowledge: Whole::default(),
             route_rungs: Whole::default(),
             deposit_rungs: Whole::default(),
+            mobility: Whole::default(),
             default_hunt_kit_id: Whole::default(),
             default_forage_kit_id: Whole::default(),
             default_scout_kit_id: Whole::default(),
@@ -1135,6 +1142,7 @@ impl SeatPublishState {
             craft_knowledge,
             route_rungs,
             deposit_rungs,
+            mobility,
             default_hunt_kit_id,
             default_forage_kit_id,
             default_scout_kit_id,
@@ -1269,6 +1277,7 @@ impl SeatPublishState {
                         craft_knowledge,
                         route_rungs,
                         deposit_rungs,
+                        mobility,
                         captured,
                         write,
                     )
@@ -1364,6 +1373,7 @@ impl SeatPublishState {
             craft_knowledge: subsistence_parts.craft_knowledge,
             route_rungs: subsistence_parts.route_rungs,
             deposit_rungs: subsistence_parts.deposit_rungs,
+            mobility: subsistence_parts.mobility,
             default_hunt_kit_id: subsistence_parts.default_hunt_kit_id,
             default_forage_kit_id: subsistence_parts.default_forage_kit_id,
             default_scout_kit_id: subsistence_parts.default_scout_kit_id,
@@ -1598,6 +1608,7 @@ impl SeatPublishState {
         self.route_rungs.reset(entry.snapshot.route_rungs.clone());
         self.deposit_rungs
             .reset(entry.snapshot.deposit_rungs.clone());
+        self.mobility.reset(entry.snapshot.mobility.clone());
         self.default_hunt_kit_id
             .reset(entry.snapshot.default_hunt_kit_id.clone());
         self.default_forage_kit_id
@@ -1772,6 +1783,7 @@ impl SeatPublishState {
             craft_knowledge: None,
             route_rungs: None,
             deposit_rungs: None,
+            mobility: None,
             default_hunt_kit_id: None,
             default_forage_kit_id: None,
             default_scout_kit_id: None,
@@ -1921,6 +1933,7 @@ impl SeatPublishState {
             craft_knowledge: None,
             route_rungs: None,
             deposit_rungs: None,
+            mobility: None,
             default_hunt_kit_id: None,
             default_forage_kit_id: None,
             default_scout_kit_id: None,
@@ -2054,6 +2067,7 @@ impl SeatPublishState {
             craft_knowledge: None,
             route_rungs: None,
             deposit_rungs: None,
+            mobility: None,
             default_hunt_kit_id: None,
             default_forage_kit_id: None,
             default_scout_kit_id: None,
@@ -2628,6 +2642,7 @@ pub fn capture_snapshot(
         victory,
         faction_inventory,
         sedentarization,
+        mobility,
         discovered_sites,
         sites_config,
         food_sites,
@@ -3871,6 +3886,7 @@ pub fn capture_snapshot(
         // **THE TWO DEPOSIT BRANCHES' RUNG CATALOG** — what a wood or a rock body may become, on the
         // same per-world seam as the route catalog above, so it likewise diffs out after the first frame.
         let deposit_rung_state = snapshot_deposit_rungs(&ladder_config);
+        let mobility_state = snapshot_mobility(&mobility, viewer);
         let command_events_state = command_events_to_state(&command_events, viewer);
         // The Telling's client-facing fork tier + stance readout (BTree-backed, so already ordered).
         let pending_forks_state = snapshot_pending_forks(&beat_ledger, viewer);
@@ -4012,6 +4028,7 @@ pub fn capture_snapshot(
             ladder_areas: ladder_areas_state.clone(),
             route_rungs: route_rung_state.clone(),
             deposit_rungs: deposit_rung_state.clone(),
+            mobility: mobility_state.clone(),
             command_events: command_events_state.clone(),
             command_events_retention_turns: command_events.retention_turns() as u32,
             lineage_constants: lineage_constants_state,

@@ -3353,6 +3353,26 @@
       "tool_item_id": "materials[2].tool_item_id"
     }
   ],
+  "mobility": [
+    {
+      "distance_points": 40.369999,
+      "faction": 185,
+      "score": 79.75,
+      "skills_points": 74.389999
+    },
+    {
+      "distance_points": 49.099998,
+      "faction": 114,
+      "score": 79.389999,
+      "skills_points": 44.060001
+    },
+    {
+      "distance_points": 3.69,
+      "faction": 79,
+      "score": 89.910004,
+      "skills_points": 77.739998
+    }
+  ],
   "opening_loadout": {
     "craftable_recipe_ids": [
       "opening_loadout.craftable_recipe_ids[0]",

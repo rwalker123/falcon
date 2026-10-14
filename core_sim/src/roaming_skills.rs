@@ -35,6 +35,13 @@ pub const DRIVES: &str = "drives";
 /// Every roaming skill — what `LadderConfig::validate` requires a price for.
 pub const ROAMING_SKILLS: [&str; 3] = [HERD_LORE, TRAVOIS, DRIVES];
 
+/// The three discovery ids in [`ROAMING_SKILLS`] order - what the mobility score reads progress off.
+pub const ROAMING_SKILL_DISCOVERY_IDS: [u32; 3] = [
+    HERD_LORE_DISCOVERY_ID,
+    TRAVOIS_DISCOVERY_ID,
+    DRIVES_DISCOVERY_ID,
+];
+
 /// Discovery-ledger ids. 2011 is retired, 2018 is storage; these continue the sequence.
 pub const HERD_LORE_DISCOVERY_ID: u32 = 2019;
 pub const TRAVOIS_DISCOVERY_ID: u32 = 2020;
@@ -48,11 +55,19 @@ const PRACTICE_PER_HEX: f32 = 1.0;
 /// in. Credited once per source per turn, like every ladder lesson, never scaled by the crew.
 const PRACTICE_PER_DRIVE_TURN: f32 = 1.0;
 
+/// **Whether a band's step beside this herd is a step beside a MIGRATION** - the herd is on a
+/// `Migrate` leg. One predicate for the two things that count such a step: herd-lore practice
+/// ([`herd_lore_practice`]) and the mobility score's distance input
+/// ([`crate::mobility::HerdFollowSteps`]). A herd that loiters counts for neither.
+pub fn walks_beside_a_migration(herd: &Herd) -> bool {
+    matches!(herd.roam, RoamState::Migrate)
+}
+
 /// The practice a band's walk beside a herd is worth: `learn_rate` per hex stepped, and only when
 /// the herd is on a `Migrate` leg — a herd that loiters teaches the band nothing about where it
 /// goes next.
 pub fn herd_lore_practice(hexes_stepped: u32, herd: &Herd, knowledge: &LadderKnowledge) -> f32 {
-    if hexes_stepped == 0 || !matches!(herd.roam, RoamState::Migrate) {
+    if hexes_stepped == 0 || !walks_beside_a_migration(herd) {
         return 0.0;
     }
     knowledge.learn_rate * PRACTICE_PER_HEX * hexes_stepped as f32

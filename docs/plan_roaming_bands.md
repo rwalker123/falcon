@@ -204,10 +204,17 @@ observing band's sight and contact is found inside the sight sweep (`.claude/rul
 so a band that walks long migrations meets more peoples, holds more ties, and culture spreads over
 ties (`docs/plan_contact_and_logistics.md` §Settled by #530). Moving well is how a nomadic people wins.
 
+**The formula (#800).** `raw = 100 x (weights.skills x skills_norm + weights.distance x
+distance_norm)`, then an EMA (`smoothing`, as the Sedentarization Score smooths). *Skills* is the mean
+progress of herd lore, travois and drives on the ledger. *Distance* is a **rate**: the hexes a
+resident band stepped this turn beside a herd on a `Migrate` leg, over `references.hexes_per_turn`,
+population-weighted across the faction's bands. All four numbers are Workbench levers
+(`mobility_config.json`; the `mobility` kind), settled by playtest.
+
 ## Open items
 
-- **The score's formula** — the weights of skills against distance travelled, and the victory
-  threshold. Opening values are Workbench levers, settled by playtest.
+- **The victory threshold** — Cultural Diffusion (#234) is the score's consumer. Opening values are
+  Workbench levers, settled by playtest.
 
 ## Slices
 

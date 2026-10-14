@@ -117,6 +117,7 @@ impl WorldSnapshot {
             route_rungs,
             deposits,
             deposit_rungs,
+            mobility,
             moisture_raster,
             elevation_overlay,
             climate_bands,
@@ -262,6 +263,7 @@ impl WorldSnapshot {
         replace_if_some(&mut self.route_rungs, route_rungs);
         replace_if_some(&mut self.deposits, deposits);
         replace_if_some(&mut self.deposit_rungs, deposit_rungs);
+        replace_if_some(&mut self.mobility, mobility);
         replace_if_some(&mut self.moisture_raster, moisture_raster);
         replace_if_some(&mut self.elevation_overlay, elevation_overlay);
         replace_if_some(&mut self.climate_bands, climate_bands);
@@ -581,6 +583,7 @@ mod tests {
         delta.route_rungs = Some(Vec::new());
         delta.deposits = Some(Vec::new());
         delta.deposit_rungs = Some(Vec::new());
+        delta.mobility = Some(Vec::new());
         delta.moisture_raster = Some(Default::default());
         delta.lineage_constants = Some(Default::default());
         delta.elevation_overlay = Some(Default::default());

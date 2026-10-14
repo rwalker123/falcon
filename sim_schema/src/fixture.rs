@@ -874,6 +874,9 @@ fn seed_snapshot() -> WorldSnapshot {
     // once per world, beside the route catalog above and seeded for the same reason.
     s.deposit_rungs = rows();
 
+    // **THE MOBILITY SCORE** — seeded so the round trip proves the table both ways.
+    s.mobility = rows();
+
     // --- connections -----------------------------------------------------
     // The contact primitive's own section (arc #527). Seeded for the reason every repeated
     // field here is: an empty vector is a field the decode guard cannot exercise.

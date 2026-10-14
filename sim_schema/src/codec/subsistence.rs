@@ -7,8 +7,8 @@ use crate::state::subsistence::{
     BuildLegState, CharacteristicBandState, CraftKnowledgeState, DepositRungState, DepositState,
     FloraShareInfo, FoodModuleState, ForagePatchState, HerdTelemetryState,
     IntensificationKnowledgeState, KitOptionState, LadderKnowledgeProgress, LadderKnowledgeState,
-    MaterialDefState, MaterialPayoff, RecipeDefState, RecipeInputState, RecipeOutputState,
-    RouteRungState, SedentarizationState, SpeciesMaterialRates,
+    MaterialDefState, MaterialPayoff, MobilityState, RecipeDefState, RecipeInputState,
+    RecipeOutputState, RouteRungState, SedentarizationState, SpeciesMaterialRates,
 };
 use crate::world::{WorldDelta, WorldSnapshot};
 use flatbuffers::{ForwardsUOffset, WIPOffset};
@@ -80,6 +80,7 @@ pub(crate) fn serialize_subsistence_section<'a>(
     let route_rungs = create_route_rungs(builder, &snapshot.route_rungs);
     let deposit_rungs = create_deposit_rungs(builder, &snapshot.deposit_rungs);
     let deposits = create_deposits(builder, &snapshot.deposits);
+    let mobility = create_mobility(builder, &snapshot.mobility);
     fb::SubsistenceSection::create(
         builder,
         &fb::SubsistenceSectionArgs {
@@ -107,6 +108,7 @@ pub(crate) fn serialize_subsistence_section<'a>(
             deposits: Some(deposits),
             depositRungs: Some(deposit_rungs),
             ladderAreas: Some(ladder_areas),
+            mobility: Some(mobility),
         },
     )
 }
@@ -203,6 +205,10 @@ pub(crate) fn serialize_subsistence_section_delta<'a>(
         .deposits
         .as_ref()
         .map(|entries| create_deposits(builder, entries));
+    let mobility = delta
+        .mobility
+        .as_ref()
+        .map(|entries| create_mobility(builder, entries));
     fb::SubsistenceSection::create(
         builder,
         &fb::SubsistenceSectionArgs {
@@ -228,6 +234,7 @@ pub(crate) fn serialize_subsistence_section_delta<'a>(
             deposits,
             depositRungs: deposit_rungs,
             ladderAreas: ladder_areas,
+            mobility,
         },
     )
 }
@@ -458,6 +465,27 @@ fn create_sedentarization<'a>(
         );
         entries.push(entry);
     }
+    builder.create_vector(&entries)
+}
+
+fn create_mobility<'a>(
+    builder: &mut FbBuilder<'a>,
+    states: &[MobilityState],
+) -> WIPOffset<flatbuffers::Vector<'a, ForwardsUOffset<fb::MobilityState<'a>>>> {
+    let entries: Vec<_> = states
+        .iter()
+        .map(|state| {
+            fb::MobilityState::create(
+                builder,
+                &fb::MobilityStateArgs {
+                    faction: state.faction,
+                    score: state.score,
+                    skillsPoints: state.skills_points,
+                    distancePoints: state.distance_points,
+                },
+            )
+        })
+        .collect();
     builder.create_vector(&entries)
 }
 
@@ -1371,6 +1399,7 @@ pub(crate) fn decode_subsistence_section(
     snapshot.route_rungs = map_rows(section.routeRungs(), decode_route_rung);
     snapshot.deposits = map_rows(section.deposits(), decode_deposit);
     snapshot.deposit_rungs = map_rows(section.depositRungs(), decode_deposit_rung);
+    snapshot.mobility = map_rows(section.mobility(), decode_mobility);
 }
 
 pub(crate) fn decode_subsistence_section_delta(
@@ -1406,6 +1435,7 @@ pub(crate) fn decode_subsistence_section_delta(
     delta.route_rungs = map_rows_if_present(section.routeRungs(), decode_route_rung);
     delta.deposits = map_rows_if_present(section.deposits(), decode_deposit);
     delta.deposit_rungs = map_rows_if_present(section.depositRungs(), decode_deposit_rung);
+    delta.mobility = map_rows_if_present(section.mobility(), decode_mobility);
 }
 
 fn decode_material(state: fb::MaterialDefState<'_>) -> MaterialDefState {
@@ -1479,6 +1509,15 @@ fn decode_kit(state: fb::KitOption<'_>) -> KitOptionState {
         build_work_branch: text(state.buildWorkBranch()),
         build_work_rung: text(state.buildWorkRung()),
         expedition_sight_range: state.expeditionSightRange(),
+    }
+}
+
+fn decode_mobility(state: fb::MobilityState<'_>) -> MobilityState {
+    MobilityState {
+        faction: state.faction(),
+        score: state.score(),
+        skills_points: state.skillsPoints(),
+        distance_points: state.distancePoints(),
     }
 }
 
