@@ -895,6 +895,9 @@ fn a_herd_beyond_work_range_is_not_hunted_and_posts_no_party() {
         ..Stock::ROOMY
     };
     let (mut app, band) = world(far);
+    // The band walks off the camp its donors stand in, so the gear it can equip a crew with must be
+    // in hand: a mammoth crew is only sent when it can be armed.
+    arm_the_band(&mut app, band, ENOUGH_UNITS);
     let width = app.world.resource::<TileRegistry>().width;
     let wrap = app
         .world
@@ -1682,13 +1685,19 @@ fn when_the_hunts_kit_is_short_the_donor_holding_it_lends_first() {
     arm_the_band(&mut app, band, SHORT_STALKING_UNITS);
     plan_a_crew_past_the_idle(&mut app, band);
     let wire = published(&app);
+    // The kit is short by the crew less the one free set, and the stalking row holds `STALKING_HANDS`
+    // of it: it lends all of them ahead of the bare idle hands, which fill the rest of the crew.
     assert_eq!(
         wire.row(NORMAL_DONOR_HERD).lent_to_hunt,
-        HANDS_FROM_ROWS,
+        STALKING_HANDS,
         "the stalking row lends first, though it is the higher Priority"
     );
     assert_eq!(wire.row(LOW_DONOR_HERD).lent_to_hunt, 0);
-    assert_eq!(wire.idle_mustered, wire.idle_workers);
+    assert_eq!(
+        wire.idle_mustered,
+        wire.idle_workers - (STALKING_HANDS - HANDS_FROM_ROWS),
+        "the idle hands give way to the kit-carrying donor"
+    );
 }
 
 /// The control: with the kit not short, the order is Priority alone.
@@ -1769,18 +1778,26 @@ fn a_hunt_crews_missing_kit_is_suggested_though_the_standing_rows_are_kitted() {
     arm_the_band(&mut app, band, STALKING_HANDS);
     set_meat(&mut app, band, LEAN_LARDER);
     turn(&mut app);
-    let crew = row(&app, band, NEED_HERD).muster_crew;
+    let sent = row(&app, band, NEED_HERD).muster_crew;
+    let wanted = row(&app, band, NEED_HERD).planned_crew;
 
-    assert!(
-        crew > published(&app).idle_workers,
-        "liveness: the donors lend, so their kit moves to the crew"
+    assert_eq!(
+        published(&app).row(NORMAL_DONOR_HERD).lent_to_hunt,
+        STALKING_HANDS,
+        "liveness: the stalking donor lends, so its kit moves to the crew"
     );
+    assert_eq!(
+        sent, STALKING_HANDS,
+        "the crew sent is the hands the band can equip"
+    );
+    assert!(wanted > sent, "liveness: the hunt wants a bigger crew");
 
+    // The suggestions equip toward the crew the hunt WANTS.
     let spears = suggested(&app, "spears").expect("the crew's spears are suggested");
     assert!(spears > 0);
     assert!(
-        spears + STALKING_HANDS <= crew,
-        "{spears} suggested over the {STALKING_HANDS} held cannot exceed the {crew} mustered: the stalking donor's own kit is not counted twice"
+        spears + STALKING_HANDS <= wanted,
+        "{spears} suggested over the {STALKING_HANDS} held cannot exceed the {wanted} wanted: the stalking donor's own kit is not counted twice"
     );
     // The control: the same band with the crew's gear in hand suggests nothing.
     let (mut armed, band_a) = world_hunting(CREW_NEEDS_THE_DONORS, RABBITS);
@@ -2093,6 +2110,29 @@ fn auto_craft_queues_the_kit_a_hunt_crew_is_short_of() {
 // THE KIT IS FLAGGED AHEAD OF THE HUNT: A WAITING ROW'S PLANNED CREW
 // ---------------------------------------------------------------------------------------------
 
+/// The band holds no stalking kit and neither donor row uses one, so the only crew that could claim
+/// spears is the need row's: nothing standing is short, and nothing can be sent.
+fn hold_no_spears_and_stalk_nowhere(app: &mut App, band: Entity) {
+    arm_the_band(app, band, 0);
+    gather_with_the_normal_donor(app, band);
+}
+
+/// Put the `Normal` donor row on the gathering kit, as [`arm_the_band`] does the `Low` one.
+fn gather_with_the_normal_donor(app: &mut App, band: Entity) {
+    let gathering = app
+        .world
+        .resource::<core_sim::EquipmentConfigHandle>()
+        .get()
+        .kit(GATHERING_KIT)
+        .expect("the gathering kit is shipped");
+    let normal = index_of(app, band, NORMAL_DONOR_HERD);
+    app.world
+        .get_mut::<LaborAllocation>(band)
+        .expect("the band keeps its allocation")
+        .assignments[normal]
+        .kit = Some(gathering);
+}
+
 /// ⛔ **A WAITING NEED ROW'S CREW IS EQUIPPED AHEAD OF THE HUNT.** With meat in the larder the row
 /// waits (`muster_crew` 0) but the labor pass still prices the crew it would send (`planned_crew`),
 /// and the craft suggestions - and auto-craft, which reads the same list - flag the kit that crew
@@ -2101,7 +2141,7 @@ fn auto_craft_queues_the_kit_a_hunt_crew_is_short_of() {
 #[test]
 fn a_waiting_rows_planned_crew_is_equipped_ahead_of_the_hunt() {
     let (mut app, band) = world_hunting(CREW_NEEDS_THE_DONORS, RABBITS);
-    arm_the_band(&mut app, band, STALKING_HANDS);
+    hold_no_spears_and_stalk_nowhere(&mut app, band);
     set_meat(&mut app, band, COMFORTABLE_LARDER);
     turn(&mut app);
     set_meat(&mut app, band, COMFORTABLE_LARDER);
@@ -2123,7 +2163,7 @@ fn a_waiting_rows_planned_crew_is_equipped_ahead_of_the_hunt() {
 
     // The control: the same band with no planned crew adds nothing.
     let (mut none, band_n) = world_hunting(CREW_NEEDS_THE_DONORS, RABBITS);
-    arm_the_band(&mut none, band_n, STALKING_HANDS);
+    hold_no_spears_and_stalk_nowhere(&mut none, band_n);
     set_meat(&mut none, band_n, COMFORTABLE_LARDER);
     turn(&mut none);
     let need_n = index_of(&none, band_n, NEED_HERD);
@@ -2495,4 +2535,154 @@ fn a_crew_going_out_publishes_the_shortage_on_the_rows_and_a_waiting_row_does_no
         !some_row_is_short_of_spears(&standing),
         "a waiting row keeps the standing reading, where the rows are armed: {standing:?}"
     );
+}
+
+// ---------------------------------------------------------------------------------------------
+// THE CREW IS CAPPED AT THE HANDS THE BAND CAN FULLY EQUIP
+// ---------------------------------------------------------------------------------------------
+
+/// Idle hands in the equipment-cap worlds: few, so a crew sized to the meal would reach past them
+/// into the donor rows and the crafting bench.
+const CAP_WORLD_IDLE_HANDS: u32 = 2;
+/// Hands the crafting bench holds in the equipment-cap worlds.
+const CAP_WORLD_BENCH_HANDS: u32 = 3;
+/// Free sets of the stalking kit (spear + sled) in the short-kit world.
+const FREE_STALKING_SETS: u32 = 3;
+/// A camp whose hands are the idle few, both donor rows and the bench.
+const CAP_WORLD: Stock = Stock {
+    working: CAP_WORLD_IDLE_HANDS + LOW_DONOR_HANDS + NORMAL_DONOR_HANDS + CAP_WORLD_BENCH_HANDS,
+    ..Stock::ROOMY
+};
+
+/// A lean band with a bench of `CAP_WORLD_BENCH_HANDS`, `units` sets of the stalking kit and no donor
+/// row holding any of it, after one turn.
+fn capped_world(units: u32) -> (App, Entity) {
+    let (mut app, band) = world_hunting(CAP_WORLD, RABBITS);
+    arm_the_band(&mut app, band, units);
+    gather_with_the_normal_donor(&mut app, band);
+    app.world.entity_mut(band).insert(core_sim::BandBench {
+        orders: vec![core_sim::BenchOrder::new(BENCH_RECIPE, UNFINISHED_ORDER)],
+        workers: CAP_WORLD_BENCH_HANDS,
+        ..Default::default()
+    });
+    set_meat(&mut app, band, LEAN_LARDER);
+    turn(&mut app);
+    (app, band)
+}
+
+/// ⛔ **THE CREW IS CAPPED AT THE HANDS THE BAND CAN FULLY EQUIP, AND THE BENCH LENDS NOTHING.** A
+/// crew sized to the meal regardless of the kit took the idle hands, the donor rows and the crafting
+/// bench, most of them bare - and a bench with no crafters never made the spears. The band here holds
+/// three sets and no donor row holds any: the crew is three, every one of them equipped, the bench
+/// is untouched. The paired control holds the kit for everyone and sends the whole meal crew.
+#[test]
+fn a_band_short_of_the_kit_sends_only_the_hands_it_can_equip_and_leaves_the_bench_alone() {
+    let (short, band) = capped_world(FREE_STALKING_SETS);
+    let need = row(&short, band, NEED_HERD);
+
+    assert!(
+        need.planned_crew > FREE_STALKING_SETS,
+        "liveness: the meal calls for a bigger crew than the kit arms, got {}",
+        need.planned_crew
+    );
+    assert_eq!(
+        need.muster_crew, FREE_STALKING_SETS,
+        "the crew is the hands the band can equip"
+    );
+    assert_eq!(
+        published(&short).row(NEED_HERD).muster_crew,
+        FREE_STALKING_SETS,
+        "and the wire publishes the capped crew"
+    );
+    assert_eq!(
+        published_bench_lent(&short),
+        0,
+        "the bench keeps its crafters, so the spears get made"
+    );
+
+    let toe = published_kit_toe(&short);
+    let stalking: Vec<_> = toe
+        .iter()
+        .filter(|(herd, item, _, _)| herd == NEED_HERD && (item == "spears" || item == "sled"))
+        .collect();
+    assert!(
+        !stalking.is_empty() && stalking.iter().all(|(_, _, required, _)| *required > 0.0),
+        "liveness: the crew's kit claim is published on the need row, got {toe:?}"
+    );
+    assert!(
+        stalking
+            .iter()
+            .all(|(_, _, required, filled)| (filled - required).abs() < 1e-3),
+        "every hunter on the need row is equipped, got {stalking:?}"
+    );
+
+    // The control: the same band holding the kit for everyone sends the whole meal crew.
+    let (armed, band_a) = capped_world(ENOUGH_UNITS);
+    let need_a = row(&armed, band_a, NEED_HERD);
+    assert_eq!(
+        need_a.planned_crew, need.planned_crew,
+        "the crew the hunt wants does not depend on the kit"
+    );
+    assert_eq!(
+        need_a.muster_crew, need_a.planned_crew,
+        "with the kit in hand the whole meal crew goes"
+    );
+    assert!(need_a.muster_crew > FREE_STALKING_SETS);
+}
+
+/// ⛔ **A BAND WITH NO KIT SENDS NOBODY, BUT THE CRAFT SUGGESTIONS STILL ASK FOR IT.** The crew is
+/// capped at zero, so nothing goes out and the row waits for ever ([`NO_HUNT_NEEDED`]); the planned
+/// crew is the uncapped wanted crew, so the spear suggestion for the crew the hunt wants is on the
+/// panel - and auto-craft queues it.
+#[test]
+fn a_band_with_no_kit_sends_nobody_and_still_asks_for_spears() {
+    let (mut app, band) = capped_world(0);
+    let need = row(&app, band, NEED_HERD);
+
+    assert_eq!(
+        need.muster_crew, 0,
+        "nothing can be equipped, so nobody goes"
+    );
+    assert!(
+        need.planned_crew > 0,
+        "the planned crew is the uncapped wanted crew"
+    );
+    let wire = published(&app);
+    assert_eq!(wire.row(NEED_HERD).muster_crew, 0);
+    assert_eq!(wire.row(NEED_HERD).turns_to_kill, 0);
+    assert_eq!(wire.row(NEED_HERD).turns_until_hunt, NO_HUNT_NEEDED);
+    assert_eq!(wire.idle_mustered, 0, "no idle hand is mustered either");
+    assert_eq!(published_bench_lent(&app), 0);
+    assert!(
+        suggested(&app, "spears").is_some_and(|count| count > 0),
+        "the craft suggestions still ask for the spears the wanted crew needs"
+    );
+
+    auto_bench_with_materials(&mut app, band);
+    let queued = queued_recipes(&app, band);
+    assert!(
+        queued.iter().any(|recipe| is_stalking_gear(recipe)),
+        "auto-craft queues the stalking gear, got {queued:?}"
+    );
+}
+
+/// ⛔ **THE DONOR HOLDING THE KIT LENDS BEFORE THE IDLE HANDS WHEN THE KIT IS SHORT.** No free set,
+/// idle hands to spare, and a local hunt row of four holding the four sets: the crew is the four the
+/// band can equip, all four from the donor row and none from idle.
+#[test]
+fn a_short_kit_is_lent_by_its_donor_before_any_idle_hand_goes() {
+    let (mut app, band) = world_hunting(CREW_NEEDS_THE_DONORS, RABBITS);
+    arm_the_band(&mut app, band, STALKING_HANDS);
+    set_meat(&mut app, band, LEAN_LARDER);
+    turn(&mut app);
+    let wire = published(&app);
+
+    assert!(
+        wire.idle_workers >= STALKING_HANDS,
+        "liveness: idle hands could have made the crew"
+    );
+    assert_eq!(wire.row(NEED_HERD).muster_crew, STALKING_HANDS);
+    assert_eq!(wire.row(NORMAL_DONOR_HERD).lent_to_hunt, STALKING_HANDS);
+    assert_eq!(wire.row(LOW_DONOR_HERD).lent_to_hunt, 0);
+    assert_eq!(wire.idle_mustered, 0, "no bare idle hand goes");
 }

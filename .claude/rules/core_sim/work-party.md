@@ -762,6 +762,12 @@ range): a waiting row has `muster_crew == 0` and a planned crew, and the craft s
 crew ahead of the hunt (`crafting.md` -> "Craft suggestions"). Also outside the `PartialEq`, and on the
 save.
 
+**`planned_crew` is the crew the hunt WANTS** (`NeedAssessment::wanted_crew`): the meal-sized crew
+before the equipment cap, so a band short of spears (or holding none) sends the few it can equip, or
+nobody, while the craft suggestions still ask for the spears the wanted crew needs. `muster_crew` is
+the capped crew that goes out; the wire's `musterCrew`, `turnsToKill` and `turnsUntilHunt` are read
+off the same capped assessment the turn makes.
+
 **The decision, at the foot of the band's labor pass for next turn** (`assess_need`):
 
 | step | rule |
@@ -769,6 +775,7 @@ save.
 | herd gone, or beyond `band_work_range` of the band | `muster_crew = 0` — **only a camp kill is mustered**; a one-turn crew cannot run a caravan, so a need row never posts a party and a band still catching up hunts nothing |
 | crew | **sized to the meal** (below): the smallest row of `hunt_crew_take_curve(..)` landing the animals the meal calls for, never above `hunt_useful_crew`, priced with `max_workers` = the musterable pool (idle + every donor row's hands) |
 | no crew | `0` |
+| equipment cap | the crew is capped at **the hands the band can fully equip with the need row's take kit** (`MusterPricing::equippable_crew`): per item of the kit, the units no row claims (`unclaimed_units x workers_per_unit`, floored) plus the hands the lendable donor rows' settled units would arm (each row capped at the hands it has present), and the least over the kit's items; a kit that names no item never caps (`NO_KIT_CAP`). `crew = min(meal-sized, cap)`; a cap of `0` sends nobody (`muster_crew` 0, `turnsToKill` 0, `turnsUntilHunt` `NO_HUNT_NEEDED`, even mid-hunt) |
 | a hunt in progress | the crew was out this turn, the herd has `wounds.pending() > 0` and **no kill landed** → send, whatever the larder says |
 | otherwise | send iff `runway <= turns_to_kill + follow.need_margin_turns` (default **1**); `turns_to_kill` is the first non-zero slot of `fauna::project_arrivals_hunt` at that crew (`fauna::hunt_crew_turns_to_kill`), `runway` is the **need clock's** (`snapshot::kill_turns_of_food`, below) and the `NOT_FOOD_LIMITED_TURNS` sentinel never triggers |
 
@@ -867,6 +874,18 @@ numbers; kits come through the ordinary claims at the need row's own Priority. A
   posts past), never by "a party exists yet", so a brand-new far row can't lend. Order is `Low` →
   `Normal` → `High`, the later row first within a tier. Role rows and road keepers never lend. It
   may come up short. The turn and the capture pass the same predicate to `muster_donors`.
+- **Idle hands give way to the kit when it is short.** With the take kit short
+  (`MusterKit::shortfall > 0`) `muster_donors` takes idle hands only for `crew - shortfall` first,
+  then the kit-carrying donors up to the shortfall, then the rest of the idle hands, then the ordinary
+  donor order - so a bare idle hand never takes the place of a hand carrying a spear. With no
+  shortfall the order is idle, then Priority alone. `MusterPlan::from_idle` is the total idle taken.
+  Because the crew is capped at what the band can equip, the shortfall is the free kit's gap to the
+  capped crew, and the crafting bench is reached only by a crew the kit fully arms - a band short of
+  spears no longer strips its bench of the crafters who would make them. Pinned by
+  `hunt_by_need::{a_band_short_of_the_kit_sends_only_the_hands_it_can_equip_and_leaves_the_bench_alone,
+  a_band_with_no_kit_sends_nobody_and_still_asks_for_spears,
+  a_short_kit_is_lent_by_its_donor_before_any_idle_hand_goes}` and
+  `components::tests::a_short_kit_holds_the_idle_back_until_the_donors_holding_it_have_lent`.
 - **The crafting bench lends like a row.** It is not a `LaborTarget`, so `muster_donors` takes it as
   a `MusterBench { priority: BandBench::priority, hands: BandBench::workers }` beside the allocation
   (`MusterBench::of`; `None` for a bench nobody is at). It joins the donor order as one candidate

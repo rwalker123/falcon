@@ -10808,7 +10808,9 @@ pub fn advance_labor_allocation(
                         } else {
                             NO_CREW_ON_THIS_ACTIVITY
                         },
-                        assessment.crew,
+                        // The craft suggestions equip toward the crew the hunt WANTS, not the
+                        // capped one that can go out, so a band short of spears still asks for them.
+                        assessment.wanted_crew,
                     )
                 })
                 .collect();

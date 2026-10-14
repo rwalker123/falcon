@@ -1376,7 +1376,9 @@ those zeros as the zeros they are.
 - **A need row's crew is a second, hunt-turn pass.** A hunting-by-need row stands at zero hands, so
   the standing lines never see the kit its crew would claim. For a band whose need row has a **planned crew**
   (`LaborAssignment::planned_crew > 0`: the meal-sized crew the labor pass priced at its foot,
-  **whether the row is sending or still waiting**, so the kit is flagged ahead of the hunt and the
+  **whether the row is sending or still waiting, and before the equipment cap**
+  (`NeedAssessment::wanted_crew`) - a band short of spears still asks for the spears the wanted crew
+  needs, however few hands it can equip and send - so the kit is flagged ahead of the hunt and the
   band can make it in time), the allocation is cloned, that crew is mustered through `LaborAllocation::muster_donors` (kit-carrying donors bring
   their kit - `work-party.md` -> "Hunting by need"), every row's claim and the item budget are struck
   again, and the take rows' lines are built a second time

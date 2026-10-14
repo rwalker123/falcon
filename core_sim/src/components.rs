@@ -3338,12 +3338,12 @@ enum MusterDonor {
 }
 
 /// **HOW SHORT THE HUNT'S TAKE KIT IS, AND WHO IS HOLDING IT** — what [`LaborAllocation::muster_donors`]
-/// reads to put kit-carrying donors first. Struck by `hunt_by_need::muster_kit` from the band's
+/// reads to put kit-carrying donors ahead of the bare idle hands. Struck by `hunt_by_need::muster_kit` from the band's
 /// own item budget (`BandItemBudget`, the claims the turn settles on), never from a parallel count.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct MusterKit {
     /// Hands of the crew the band cannot arm from units no row is claiming — `0` when the kit is
-    /// not short, and then the donor order is Priority alone.
+    /// not short, and then the muster is idle hands, then Priority alone.
     pub shortfall: u32,
     /// Per assignment index: the hands on that row holding a unit of a **short** item of the hunt
     /// kit (the row carries the item and was settled units of it). Lending these frees their kit for
@@ -6560,12 +6560,14 @@ impl LaborAllocation {
     /// road keepers are never donors. It takes up to `crew` and may come up short
     /// ([`MusterPlan::total`] is what it got).
     ///
-    /// **When the hunt's take kit is short** (`kit.shortfall > 0`), donors that are holding it come
-    /// first — lowest Priority first among them, the later row first on a tie — and give up hands
-    /// only as far as the shortfall in kitted hands, because a lent hand's unit goes to the crew
-    /// instead of leaving its own row bare to be stripped by the budget. Then the rest, in the
-    /// ordinary order. With the kit not short the order is Priority alone. The bench carries no hunt
-    /// kit, so it only ever joins the ordinary pass.
+    /// **When the hunt's take kit is short** (`kit.shortfall > 0`), idle hands fill only
+    /// `crew - shortfall` of the crew first; then donors that are holding the kit — lowest Priority
+    /// first among them, the later row first on a tie — give up hands only as far as the shortfall
+    /// in kitted hands, because a lent hand's unit goes to the crew instead of leaving its own row
+    /// bare to be stripped by the budget; then the rest of the idle hands; then everyone else, in the
+    /// ordinary order. With the kit not short the order is idle, then Priority alone. The bench
+    /// carries no hunt kit, so it only ever joins the ordinary pass. `MusterPlan::from_idle` is the
+    /// total idle taken across both idle steps.
     ///
     /// **A donor row's source must be within the band's work range**, decided by geometry through
     /// `is_local` (see [`crate::hunt_by_need::source_is_local`]) rather than by whether a party has
@@ -6580,8 +6582,10 @@ impl LaborAllocation {
         bench: Option<MusterBench>,
         kit: &MusterKit,
     ) -> MusterPlan {
-        let from_idle = idle.min(crew);
-        let mut wanted = crew - from_idle;
+        // With the kit short, idle hands fill only what the kit-carrying donors will not: a bare
+        // idle hand ahead of a kitted donor sends the crew out unarmed.
+        let idle_first = idle.min(crew.saturating_sub(kit.shortfall));
+        let mut wanted = crew - idle_first;
         let order = self.donor_order(need_idx, is_local, bench);
         let mut taken: BTreeMap<MusterDonor, u32> = BTreeMap::new();
         fn give(
@@ -6613,6 +6617,10 @@ impl LaborAllocation {
             owed -= hands.min(wanted);
             give(&mut taken, donor, hands, &mut wanted);
         }
+        // Then the rest of the idle hands, before any donor gives up an ordinary hand.
+        let idle_after = (idle - idle_first).min(wanted);
+        wanted -= idle_after;
+        let from_idle = idle_first + idle_after;
         // Then everyone, in the ordinary order, from what each still holds.
         for &donor in &order {
             if wanted == 0 {
@@ -6650,6 +6658,23 @@ impl LaborAllocation {
             .into_iter()
             .map(|donor| self.donor_hands(donor, bench))
             .sum::<u32>()
+    }
+
+    /// **The rows [`Self::muster_donors`] could lend from** for need row `need_idx` - the donor
+    /// order's rows (not the need row, not a need row, no party, local, hands present), without the
+    /// bench, which carries no hunt kit.
+    pub(crate) fn lendable_donor_rows(
+        &self,
+        need_idx: usize,
+        is_local: &dyn Fn(&LaborTarget) -> bool,
+    ) -> Vec<usize> {
+        self.donor_order(need_idx, is_local, None)
+            .into_iter()
+            .filter_map(|donor| match donor {
+                MusterDonor::Row(idx) => Some(idx),
+                MusterDonor::Bench => None,
+            })
+            .collect()
     }
 
     /// The hands donor `donor` holds that it could lend.
@@ -10455,6 +10480,45 @@ mod tests {
         // The kit not short: Priority alone, the Low row first.
         let plan = board.muster_donors(0, 0, 5, &|_| true, None, &MusterKit::default());
         assert_eq!((plan.lent_by(1), plan.lent_by(2)), (3, 2));
+    }
+
+    /// ⛔ **A SHORT KIT CAPS THE IDLE HANDS TAKEN AHEAD OF THE DONORS HOLDING IT.** Idle hands are
+    /// bare, so they fill only `crew - shortfall` of the crew first; the kit-carrying donors lend up
+    /// to the shortfall; the rest of the idle hands come next, before any ordinary donor; and
+    /// `from_idle` is the total idle taken across both steps.
+    #[test]
+    fn a_short_kit_holds_the_idle_back_until_the_donors_holding_it_have_lent() {
+        let board = muster_board(vec![
+            muster_row(muster_hunt("low", false), 3, SourcePriority::Low),
+            muster_row(muster_hunt("kitted", false), 4, SourcePriority::Normal),
+        ]);
+        let short = MusterKit {
+            shortfall: 3,
+            carried: vec![0, 0, 4],
+        };
+        // Plenty of idle: it takes only the crew less the shortfall, then the kitted row lends the
+        // shortfall; nothing is left for the Low row.
+        let plan = board.muster_donors(10, 0, 5, &|_| true, None, &short);
+        assert_eq!(plan.from_idle, 2, "idle takes the crew less the shortfall");
+        assert_eq!(plan.lent_by(2), 3, "the kitted row lends the shortfall");
+        assert_eq!(plan.lent_by(1), 0);
+        assert_eq!(plan.total(), 5);
+
+        // A shortfall past what the kitted row holds: it lends all four, then the remaining idle
+        // hands fill the rest before the Low row is asked.
+        let wide = MusterKit {
+            shortfall: 6,
+            carried: vec![0, 0, 4],
+        };
+        let plan = board.muster_donors(10, 0, 7, &|_| true, None, &wide);
+        assert_eq!(plan.lent_by(2), 4);
+        assert_eq!(plan.from_idle, 3, "1 ahead of the kitted row, 2 after it");
+        assert_eq!(plan.lent_by(1), 0, "idle comes before the ordinary donors");
+        assert_eq!(plan.total(), 7);
+
+        // The kit not short: idle first, the whole crew.
+        let plan = board.muster_donors(10, 0, 5, &|_| true, None, &MusterKit::default());
+        assert_eq!((plan.from_idle, plan.from_rows.len()), (5, 0));
     }
 
     /// ⛔ **ONLY SOURCE ROWS WITH NO PARTY AND NO FLAG ARE DONORS** — role rows, other need rows, a
