@@ -45,7 +45,7 @@ use core_sim::{
 };
 use core_sim::{
     build_headless_app, clear_config_overrides, denial_forecast, expedition_returned_event,
-    fold_party_into_band, granted_ai_faction_count, install_config_override, party_owes_a_report,
+    fold_party_into_band, granted_archetype_counts, install_config_override, party_owes_a_report,
     publish_baseline_snapshot, recapture_snapshot_in_place, run_turn, scalar_from_f32,
     split_band_from_parent, AgentAssignment, BandId, BandIdAllocator, BandName, CommandEventEntry,
     CommandEventKind, CommandEventLog, CounterIntelBudgets, CrisisArchetypeCatalog,
@@ -62,7 +62,7 @@ use core_sim::{
     SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle, SnapshotOverlaysConfigMetadata,
     StartLocation, StartProfileLookup, StartProfilesHandle, StartingUnit, SubmitError,
     SubmitOutcome, Tile, TileRegistry, TownCenter, TurnPipelineConfig, TurnPipelineConfigHandle,
-    TurnPipelineConfigMetadata, TurnQueue, WorldEpoch, FODDER, FOOD,
+    TurnPipelineConfigMetadata, TurnQueue, WorldEpoch, FODDER, FOOD, POST_RECALLED,
 };
 use core_sim::{
     ConnectionId, ConnectionIdAllocator, SeatRegistry, SeatTurnGate, SeatTurnLimits, TurnWait,
@@ -553,16 +553,17 @@ fn main() {
                 // seeded against the CONFIG FILE's grid, so without this a shrink could register
                 // more factions than the new map seats — and a grow would silently drop the rivals
                 // this world was actually playing with back to the file's default.
-                let carried_ai_factions =
-                    app.world.resource::<FactionRegistry>().ai_faction_count();
+                let carried_archetype_counts = current_config
+                    .start_archetype_assignment
+                    .counts(current_config.start_profile_overrides.archetypes.len());
                 let reset_land_fraction = core_sim::faction_start_land_fraction(
                     &app.world.resource::<core_sim::MapPresetsHandle>().get(),
                     &new_config.map_preset_id,
                 );
-                let granted_ai_factions = granted_ai_faction_count(
-                    carried_ai_factions,
+                let granted_archetype_counts = granted_archetype_counts(
+                    &carried_archetype_counts,
+                    &new_config.start_profile_overrides.archetypes,
                     new_config.grid_size,
-                    new_config.faction_start_min_separation,
                     reset_land_fraction,
                 );
 
@@ -574,7 +575,7 @@ fn main() {
                     &watch_paths,
                     &snapshot_flat_server,
                     &mut world_epoch,
-                    move |new_app| seed_faction_roster(new_app, granted_ai_factions),
+                    move |new_app| seed_faction_roster(new_app, &granted_archetype_counts),
                 );
                 world_active = true;
                 // A new world: nothing before this point is reachable.
@@ -595,7 +596,7 @@ fn main() {
                 height,
                 seed,
                 profile_id,
-                ai_faction_count,
+                archetype_counts,
             } => {
                 handle_new_game(
                     &mut app,
@@ -607,7 +608,7 @@ fn main() {
                     height,
                     seed,
                     profile_id,
-                    ai_faction_count,
+                    archetype_counts,
                     &snapshot_flat_server,
                 );
                 retain_claimed_seats(&app, &mut seats);
@@ -1452,6 +1453,17 @@ enum Command {
         /// See [`Command::SendDenialRaid::kit_id`].
         kit_id: Option<String>,
     },
+    /// **The stationed party** (`docs/plan_contact_and_logistics.md` "Settled by #774") — part of a
+    /// band posted at another band it holds a live tie with. Gated on the connection, and on the
+    /// host's Open Borders only when the host is another people's.
+    StationExpedition {
+        faction: FactionId,
+        band_id: Option<u64>,
+        party_workers: u32,
+        host_band_id: u64,
+        /// See [`Command::SendDenialRaid::kit_id`].
+        kit_id: Option<String>,
+    },
     FoundSettlement {
         faction: FactionId,
         target_x: u32,
@@ -1667,9 +1679,10 @@ enum Command {
         height: u32,
         seed: u64,
         profile_id: String,
-        /// **How many AI factions the player picked, not counting their own.** `None` means
-        /// *"nobody picked"* — the unattended roster, which is not the same as `Some(0)`.
-        ai_faction_count: Option<u32>,
+        /// **How many peoples of each archetype the player picked, not counting their own.** An
+        /// archetype left out means *"nobody picked"* - its unattended count, which is not the same
+        /// as an explicit 0.
+        archetype_counts: Vec<sim_runtime::ArchetypeCount>,
     },
     /// **One band's outfitting loadout** — the one source of a faction's gear and material. Field
     /// 69. See `handle_set_starting_loadout`; it fails **closed and whole**.
@@ -2171,15 +2184,31 @@ fn answer_query(
         // the question — see `faction_start_land_fraction`, where that limitation is recorded.
         let presets = world.resource::<core_sim::MapPresetsHandle>().get();
         let config = world.resource::<SimulationConfig>();
-        let capacity = core_sim::faction_start_capacity(
+        // **The profile asked about**: the one the ask names, else the ACTIVE one - the screen asks
+        // about the profile it is about to start, which is not necessarily the one the idle server
+        // booted on.
+        let profiles = world.resource::<StartProfilesHandle>().get();
+        let overrides = profiles
+            .get(&ask.profile_id)
+            .map(|profile| profile.overrides())
+            .unwrap_or(&config.start_profile_overrides);
+        let capacities = core_sim::archetype_capacities(
+            &overrides.archetypes,
             UVec2::new(ask.width, ask.height),
-            config.faction_start_min_separation,
             core_sim::faction_start_land_fraction(&presets, &config.map_preset_id),
-            config.default_ai_faction_count,
         );
         return QueryReply::FactionCapacity(FactionCapacityReply {
-            default_ai_faction_count: capacity.default_ai_factions,
-            max_ai_faction_count: capacity.max_ai_factions,
+            archetypes: overrides
+                .archetypes
+                .iter()
+                .zip(capacities)
+                .map(|(archetype, capacity)| sim_runtime::ArchetypeCapacity {
+                    id: archetype.id.clone(),
+                    display_label: archetype.display_label.clone(),
+                    site_count: capacity.site_count,
+                    default_count: capacity.default_count,
+                })
+                .collect(),
         });
     }
     if !world_active {
@@ -2634,23 +2663,37 @@ fn rebuild_world_from_config(
     new_app
 }
 
-/// **What an AI-faction count on the wire resolves to before the grid clamps it.**
+/// **What the archetype counts on the wire resolve to before the grid clamps them**, in catalog
+/// order.
 ///
-/// `None` is *not* `Some(0)`: absent means **nobody picked** — a direct scene launch, a CLI
-/// `new_game`, a test — and 0 means a player who chose to play alone. The two arrive on the same
-/// wire field precisely so a client can leave the choice to the sim, and collapsing them here would
-/// make the unattended roster unreachable from every caller that does.
+/// An archetype that is not listed is *not* listed-as-0: absent means **nobody picked** - a direct
+/// scene launch, a CLI `new_game`, a test - and an explicit 0 means a player who chose none of
+/// them. Collapsing the two would make the unattended roster unreachable from every caller that
+/// leaves the choice to the sim.
 ///
-/// ⛔ **An absent pick resolves to [`core_sim::unattended_ai_faction_count`], NOT to the count the
-/// New Game screen pre-selects.** The screen's number is derived from the map and can be several
-/// rivals; this path is what a `cargo run` server and a scripted launch get, and it stays at zero
-/// rivals until something drives them. `simulation_config.json`'s `default_ai_faction_count` pins it
-/// when a headless run wants otherwise.
+/// ⛔ **An unlisted archetype resolves to its UNATTENDED count
+/// ([`core_sim::unattended_archetype_counts`]), NOT to the count the New Game screen pre-selects.**
+/// The screen's number is derived from the map; this path is what a `cargo run` server and a
+/// scripted launch get, and it stays at the archetype's own `default_count` pin, else none.
 ///
-/// `config` is the config the NEW world will run on — `load_simulation_config_for_new_world`'s, not
-/// the outgoing world's — because the pin is a tuning value and tuning is re-read at world start.
-fn requested_ai_faction_count(picked: Option<u32>, config: &SimulationConfig) -> u32 {
-    picked.unwrap_or_else(|| core_sim::unattended_ai_faction_count(config.default_ai_faction_count))
+/// `Err(id)` names an id the profile does not carry (or one listed twice): the command is rejected
+/// rather than guessed at.
+fn requested_archetype_counts(
+    picked: &[sim_runtime::ArchetypeCount],
+    archetypes: &[core_sim::StartArchetype],
+) -> Result<Vec<u32>, String> {
+    let mut counts = core_sim::unattended_archetype_counts(archetypes);
+    let mut seen = vec![false; archetypes.len()];
+    for entry in picked {
+        let Some(index) = archetypes.iter().position(|a| a.id == entry.id) else {
+            return Err(entry.id.clone());
+        };
+        if std::mem::replace(&mut seen[index], true) {
+            return Err(entry.id.clone());
+        }
+        counts[index] = entry.count;
+    }
+    Ok(counts)
 }
 
 /// Generate a world on demand from the `new_game` wire command (the server boots idle). Validates
@@ -2667,7 +2710,7 @@ fn handle_new_game(
     height: u32,
     seed: u64,
     profile_id: String,
-    ai_faction_count: Option<u32>,
+    archetype_counts: Vec<sim_runtime::ArchetypeCount>,
     snapshot_server_flat: &Arc<SnapshotServer>,
 ) {
     if width == 0 || height == 0 {
@@ -2727,11 +2770,23 @@ fn handle_new_game(
         &app.world.resource::<core_sim::MapPresetsHandle>().get(),
         &new_config.map_preset_id,
     );
-    let requested_ai_factions = requested_ai_faction_count(ai_faction_count, &new_config);
-    let granted_ai_factions = granted_ai_faction_count(
-        requested_ai_factions,
+    let archetypes = &profile.overrides().archetypes;
+    let requested_counts = match requested_archetype_counts(&archetype_counts, archetypes) {
+        Ok(counts) => counts,
+        Err(archetype) => {
+            warn!(
+                target: "shadow_scale::server",
+                profile = %profile.id,
+                %archetype,
+                "new_game.rejected=unknown_archetype"
+            );
+            return;
+        }
+    };
+    let granted_counts = granted_archetype_counts(
+        &requested_counts,
+        archetypes,
         new_config.grid_size,
-        new_config.faction_start_min_separation,
         new_game_land_fraction,
     );
 
@@ -2742,8 +2797,8 @@ fn handle_new_game(
         height,
         seed,
         profile = %profile.id,
-        requested_ai_factions,
-        granted_ai_factions,
+        requested = ?requested_counts,
+        granted = ?granted_counts,
         "new_game.begin"
     );
 
@@ -2760,7 +2815,7 @@ fn handle_new_game(
             // **The roster is seeded here, not by the profile**: `build_headless_app` seeded it from
             // the config file's own count and grid, and this world is neither. See
             // `seed_faction_roster` for the five resources that ride on it.
-            seed_faction_roster(new_app, granted_ai_factions);
+            seed_faction_roster(new_app, &granted_counts);
         },
     );
     *world_active = true;
@@ -3117,7 +3172,8 @@ fn apply_start_profile(app: &mut bevy::prelude::App, profile: &StartProfile) {
     }
 }
 
-/// **Seat one human and `ai_faction_count` rivals in a world about to be generated**, and re-seed
+/// **Seat one human and `archetype_counts` rivals (per archetype, catalog order) in a world about to
+/// be generated**, and re-seed
 /// everything the boot path derives from that roster.
 ///
 /// Called inside `rebuild_world_from_config`'s `configure` hook, i.e. after the replacement app is
@@ -3126,8 +3182,8 @@ fn apply_start_profile(app: &mut bevy::prelude::App, profile: &StartProfile) {
 /// the count the player picked reached `SimulationConfig` and nothing that resolves a turn ever
 /// heard about it.
 ///
-/// The count is expected to be **already clamped** by
-/// [`core_sim::granted_ai_faction_count`] — the clamp is the caller's, because only the caller knows
+/// The counts are expected to be **already clamped** by
+/// [`core_sim::granted_archetype_counts`] — the clamp is the caller's, because only the caller knows
 /// which grid the world is being built on.
 ///
 /// ⛔ **EVERY resource `build_headless_app` seeds from the roster is re-seeded here.** The list is
@@ -3141,8 +3197,14 @@ fn apply_start_profile(app: &mut bevy::prelude::App, profile: &StartProfile) {
 /// `Startup` system that seeds from whatever registry it finds, and the caller runs Startup after
 /// this — so re-seeding it here would be a second, earlier copy of a job the schedule already does
 /// against the same roster.
-fn seed_faction_roster(app: &mut bevy::prelude::App, ai_faction_count: u32) {
-    let registry = FactionRegistry::with_ai_factions(ai_faction_count);
+fn seed_faction_roster(app: &mut bevy::prelude::App, archetype_counts: &[u32]) {
+    // Who is which archetype: transient and config-side, read by worldgen in the Startup the caller
+    // runs next (see `StartArchetypeAssignment`).
+    app.world
+        .resource_mut::<SimulationConfig>()
+        .start_archetype_assignment =
+        core_sim::StartArchetypeAssignment::from_counts(archetype_counts);
+    let registry = FactionRegistry::with_ai_factions(archetype_counts.iter().sum());
     let factions = registry.factions().to_vec();
     app.world.insert_resource(registry);
     app.world.insert_resource(TurnQueue::new(factions.clone()));
@@ -5445,11 +5507,12 @@ fn handle_assign_labor(
     } else {
         String::new()
     };
-    push_command_event(
+    push_band_event(
         app,
         tick,
         event_kind,
         faction,
+        band.id,
         format!("{} {} x{}{}", band.label, kind_label, applied, clamp_note),
         Some(format!(
             "status=applied role={} workers={} assigned_total={} available={}",
@@ -5513,16 +5576,14 @@ fn handle_move_band(
     }
 
     let tick = app.world.resource::<SimulationTick>().0;
-    push_command_event(
+    push_band_event(
         app,
         tick,
         CommandEventKind::CancelOrder,
         faction,
+        band.id,
         format!("{} moving -> ({}, {})", band.label, target_x, target_y),
-        Some(format!(
-            "status=queued action=move_band band={}",
-            band.label
-        )),
+        Some("status=queued action=move_band".to_string()),
     );
 }
 
@@ -5734,17 +5795,20 @@ fn handle_send_expedition(
                 // A scout carries no shipment — the cargo store is the trade verb's.
                 cargo: LocalStore::new(),
                 defection_pull: Scalar::zero(),
+                station_reports: Vec::new(),
+                aim: None,
             },
             BandTravel::to(target),
         ))
         .id();
 
     let tick = app.world.resource::<SimulationTick>().0;
-    push_command_event(
+    push_band_event(
         app,
         tick,
         CommandEventKind::ExpeditionSent,
         faction,
+        band.id,
         format!("{} expedition -> ({}, {})", band.label, target_x, target_y),
         Some(format!(
             "status=applied workers={} provisions_drawn={} distance={} expedition={}",
@@ -6254,6 +6318,8 @@ fn launch_party_from_band(
                 kit,
                 cargo: orders.cargo,
                 defection_pull: Scalar::zero(),
+                station_reports: Vec::new(),
+                aim: None,
             },
             BandTravel::to(orders.target),
         ))
@@ -6396,6 +6462,7 @@ fn handle_send_denial_raid(
     };
 
     let band_label = outfit.band.label.clone();
+    let band_durable_id = outfit.band.id;
     // Read off the outfit BEFORE it is moved into the launch, for the same reason `band_label` is.
     let target_species = outfit.herd_species.clone();
     let mission = ExpeditionMission::Deny {
@@ -6419,11 +6486,12 @@ fn handle_send_denial_raid(
     };
 
     let tick = app.world.resource::<SimulationTick>().0;
-    push_command_event(
+    push_band_event(
         app,
         tick,
         CommandEventKind::ExpeditionSent,
         faction,
+        band_durable_id,
         format!(
             "{} denial raid -> {}{}",
             band_label, target_display, verdict
@@ -6434,6 +6502,254 @@ fn handle_send_denial_raid(
             fauna_id,
             expedition_entity.to_bits(),
             verdict_detail
+        )),
+    );
+}
+
+/// **The kit a provisioned or posted party is sent out with**, resolved against the `expedition`
+/// job before anything is drawn — the rule the trade shipment and the stationed party share. Absent
+/// names the job's default; an unknown id, or one whose `jobs` does not list `expedition`, is a
+/// command failure (answered `None`) with the reason in the feed.
+fn resolve_expedition_job_kit(
+    app: &mut bevy::prelude::App,
+    faction: FactionId,
+    verb: &str,
+    kit_id: Option<&str>,
+) -> Option<KitChoice> {
+    let equipment_cfg = app.world.resource::<EquipmentConfigHandle>().get();
+    let absent = equipment_cfg.default_kit(KitJob::Expedition);
+    match equipment_cfg.resolve_kit_or(kit_id, KitJob::Expedition, absent) {
+        Ok(kit) => Some(kit),
+        Err(reason) => {
+            emit_command_failure(
+                app,
+                CommandEventKind::ExpeditionSent,
+                faction,
+                format!("{verb}: {reason}."),
+            );
+            None
+        }
+    }
+}
+
+/// **Everything a stationed party's launch needs resolved before a single worker is drawn** — the
+/// host it is posted at, where it stands and how far away that is.
+struct ResolvedPost {
+    host_band: BandId,
+    host_name: String,
+    /// **Where the party sets out toward** — what the sender knows of the host's whereabouts
+    /// (`ConnectionLedger::launch_aim`), not necessarily where the host is now.
+    aim: UVec2,
+    distance: u32,
+}
+
+/// Resolve and validate a stationed party's host. **Fails closed on every axis, before anything is
+/// drawn**: a host that is not a resident band, the home band itself, a host that is not standing
+/// anywhere, no live tie from the home band to the host (a parked edge refuses exactly as a missing
+/// one does), and — for a host of ANOTHER people only — that people's borders being closed. A host of
+/// the sender's own people never asks Open Borders; the one comparison lives in
+/// [`FactionBorderPolicies::admits_posting`].
+fn resolve_post(
+    app: &mut bevy::prelude::App,
+    faction: FactionId,
+    home_entity: Entity,
+    host_band_id: u64,
+) -> Option<ResolvedPost> {
+    const VERB: &str = "station_expedition";
+    let wanted = BandId(host_band_id);
+    let Some(&home_band) = app.world.get::<BandId>(home_entity) else {
+        emit_command_failure(
+            app,
+            CommandEventKind::ExpeditionSent,
+            faction,
+            format!("{VERB}: the sending band has no id to post from."),
+        );
+        return None;
+    };
+    if wanted == home_band {
+        emit_command_failure(
+            app,
+            CommandEventKind::ExpeditionSent,
+            faction,
+            format!("{VERB}: a band cannot station a party at itself."),
+        );
+        return None;
+    }
+    let host = {
+        let mut query = app
+            .world
+            .query_filtered::<(&BandId, &PopulationCohort, Option<&BandName>), With<ResidentBand>>(
+            );
+        query
+            .iter(&app.world)
+            .find(|(id, _, _)| **id == wanted)
+            .map(|(id, cohort, name)| {
+                (
+                    *id,
+                    cohort.current_tile,
+                    cohort.faction,
+                    name.map(|name| name.0.clone()).unwrap_or_default(),
+                )
+            })
+    };
+    let Some((host_band, host_tile, host_faction, host_name)) = host else {
+        emit_command_failure(
+            app,
+            CommandEventKind::ExpeditionSent,
+            faction,
+            format!("{VERB}: band {host_band_id} is not a band to station a party at."),
+        );
+        return None;
+    };
+    let Some(host_pos) = app.world.get::<Tile>(host_tile).map(|t| t.position) else {
+        emit_command_failure(
+            app,
+            CommandEventKind::ExpeditionSent,
+            faction,
+            format!("{VERB}: band {host_band_id} is not standing anywhere."),
+        );
+        return None;
+    };
+    let tie = app
+        .world
+        .resource::<core_sim::connections::ConnectionLedger>()
+        .get(&core_sim::connections::ConnectionKey::new(
+            home_band, host_band,
+        ))
+        .map(|connection| connection.strength)
+        .unwrap_or(core_sim::connections::NO_TIE);
+    if tie <= core_sim::connections::NO_TIE {
+        emit_command_failure(
+            app,
+            CommandEventKind::ExpeditionSent,
+            faction,
+            format!(
+                "{VERB}: no dealings with band {host_band_id} — meet them before you station a \
+                 party with them."
+            ),
+        );
+        return None;
+    }
+    let admitted = app
+        .world
+        .resource::<FactionBorderPolicies>()
+        .admits_posting(host_faction, faction);
+    if !admitted {
+        emit_command_failure(
+            app,
+            CommandEventKind::ExpeditionSent,
+            faction,
+            format!("{VERB}: band {host_band_id}'s people have closed their borders."),
+        );
+        return None;
+    }
+    let aim = app
+        .world
+        .resource::<core_sim::connections::ConnectionLedger>()
+        .launch_aim(
+            app.world.resource::<core_sim::VisibilityLedger>(),
+            faction,
+            home_band,
+            host_band,
+            host_faction,
+            host_pos,
+        );
+    let home_pos = app
+        .world
+        .get::<PopulationCohort>(home_entity)
+        .and_then(|cohort| app.world.get::<Tile>(cohort.current_tile))
+        .map(|tile| tile.position);
+    let distance = {
+        let grid_width = app.world.resource::<TileRegistry>().width;
+        let wrap_horizontal = app
+            .world
+            .resource::<SimulationConfig>()
+            .map_topology
+            .wrap_horizontal;
+        home_pos
+            .map(|from| hex_distance_wrapped(from, aim, grid_width, wrap_horizontal))
+            .unwrap_or(0)
+    };
+    Some(ResolvedPost {
+        host_band,
+        host_name,
+        aim,
+        distance,
+    })
+}
+
+/// Outfit and launch a **stationed party**: draw `party_workers` off the resolved home band and send
+/// them to stay with a band the home band holds a live tie with. Text form: `station_expedition
+/// <faction> <band> <party_workers> <host_band_id> [kit <id>]`.
+///
+/// **No provisions are drawn and no cargo is loaded.** The party carries no larder: from launch to
+/// fold-back its rations are part of the home band's ordinary consumption
+/// (`simulate_population`), so a refused launch has nothing to unwind and an accepted one debits
+/// the band's workers and kit only. Every gate runs before that draw.
+fn handle_station_expedition(
+    app: &mut bevy::prelude::App,
+    faction: FactionId,
+    band_id: Option<u64>,
+    party_workers: u32,
+    host_band_id: u64,
+    kit_id: Option<String>,
+) {
+    const VERB: &str = "station_expedition";
+    let Some(kit) = resolve_expedition_job_kit(app, faction, VERB, kit_id.as_deref()) else {
+        return;
+    };
+    let Some(outfit) = outfit_detached_party(app, faction, band_id, party_workers, VERB) else {
+        return;
+    };
+    let Some(post) = resolve_post(app, faction, outfit.band.entity, host_band_id) else {
+        return;
+    };
+
+    let band_label = outfit.band.label.clone();
+    let home_band = outfit.band.id;
+    let mission = ExpeditionMission::Station {
+        host_band: post.host_band,
+        host_name: post.host_name,
+    };
+    let host_label = mission.host_display();
+    let Some(expedition_entity) = launch_party_from_band(
+        app,
+        outfit,
+        party_workers,
+        mission,
+        LaunchOrders {
+            phase: ExpeditionPhase::Outbound,
+            target: post.aim,
+            provisions: FoodMix::default(),
+            cargo: LocalStore::new(),
+        },
+        kit,
+    ) else {
+        emit_command_failure(
+            app,
+            CommandEventKind::ExpeditionSent,
+            faction,
+            format!("{VERB}: {band_label} has no population to outfit from."),
+        );
+        return;
+    };
+    if let Some(mut expedition) = app.world.get_mut::<Expedition>(expedition_entity) {
+        expedition.aim = Some(post.aim);
+    }
+    let tick = app.world.resource::<SimulationTick>().0;
+    push_band_event(
+        app,
+        tick,
+        CommandEventKind::ExpeditionSent,
+        faction,
+        home_band,
+        format!("{band_label} party -> stationed with {host_label}"),
+        Some(format!(
+            "status=applied mission=station workers={} host={} distance={} expedition={}",
+            party_workers,
+            host_band_id,
+            post.distance,
+            expedition_entity.to_bits()
         )),
     );
 }
@@ -6450,7 +6766,9 @@ struct ResolvedShipment {
     /// the destination for a client that may have no row for a foreign band.
     destination_faction: FactionId,
     destination_name: String,
-    destination_pos: UVec2,
+    /// **Where the party sets out toward** — what the sender knows of the destination's whereabouts
+    /// (`ConnectionLedger::launch_aim`), not necessarily where it is now.
+    aim: UVec2,
     /// The FOOD the shipment will carry, summed over the order's food lines.
     food: Scalar,
     /// The FODDER the shipment will carry, summed over the order's hay lines. **A third account,
@@ -6554,6 +6872,18 @@ fn resolve_shipment(
         );
         return None;
     }
+
+    let aim = app
+        .world
+        .resource::<core_sim::connections::ConnectionLedger>()
+        .launch_aim(
+            app.world.resource::<core_sim::VisibilityLedger>(),
+            faction,
+            home_band,
+            destination_band,
+            destination_faction,
+            destination_pos,
+        );
 
     // --- the cargo lines, summed per key ------------------------------------------------------
     if cargo.is_empty() {
@@ -6734,7 +7064,7 @@ fn resolve_shipment(
         // load-bearing: a foreign band's name has to come from the sim, the client having no roster
         // to resolve one from.
         destination_name: String::new(),
-        destination_pos,
+        aim,
         food,
         fodder,
         materials,
@@ -6770,21 +7100,8 @@ fn handle_send_trade_expedition(
     // contact, by gathering and by hunting — which is exactly what [`KitJob::Expedition`] covers.
     // (It read the **hunt** job until the ranging kit existed, which armed the roadside kill and
     // left the party unable to gather at all.)
-    let kit = {
-        let equipment_cfg = app.world.resource::<EquipmentConfigHandle>().get();
-        let absent = equipment_cfg.default_kit(KitJob::Expedition);
-        match equipment_cfg.resolve_kit_or(kit_id.as_deref(), KitJob::Expedition, absent) {
-            Ok(kit) => kit,
-            Err(reason) => {
-                emit_command_failure(
-                    app,
-                    CommandEventKind::ExpeditionSent,
-                    faction,
-                    format!("{VERB}: {reason}."),
-                );
-                return;
-            }
-        }
+    let Some(kit) = resolve_expedition_job_kit(app, faction, VERB, kit_id.as_deref()) else {
+        return;
     };
     // The resident-band gate, the party bound and the cohort template — the same seam both raiding
     // verbs outfit through, so this verb could not acquire its own copy of them.
@@ -6816,9 +7133,7 @@ fn handle_send_trade_expedition(
             .map_topology
             .wrap_horizontal;
         band_pos
-            .map(|from| {
-                hex_distance_wrapped(from, shipment.destination_pos, grid_width, wrap_horizontal)
-            })
+            .map(|from| hex_distance_wrapped(from, shipment.aim, grid_width, wrap_horizontal))
             .unwrap_or(0)
     };
     let cfg = app.world.resource::<ExpeditionConfigHandle>().get();
@@ -6873,6 +7188,7 @@ fn handle_send_trade_expedition(
     };
     let provisions_total = provisions.total();
     let band_label = outfit.band.label.clone();
+    let band_durable_id = outfit.band.id;
     let mission = ExpeditionMission::Trade {
         destination_band: shipment.destination_band,
         destination_faction: shipment.destination_faction,
@@ -6905,7 +7221,7 @@ fn handle_send_trade_expedition(
             // A shipment reuses the scout's `Outbound`; there is no trade phase, because the party
             // does exactly two things and both already have one.
             phase: ExpeditionPhase::Outbound,
-            target: shipment.destination_pos,
+            target: shipment.aim,
             provisions,
             cargo: shipment_store,
         },
@@ -6919,6 +7235,9 @@ fn handle_send_trade_expedition(
         );
         return;
     };
+    if let Some(mut expedition) = app.world.get_mut::<Expedition>(expedition_entity) {
+        expedition.aim = Some(shipment.aim);
+    }
 
     // **The sending half of the transfer terms, on the `TransferLink::Route` arm — and SPLIT BY
     // CAUSE.** Two different things left this band's store with the party:
@@ -6979,11 +7298,12 @@ fn handle_send_trade_expedition(
     }
     manifest.extend(carried_materials);
     let tick = app.world.resource::<SimulationTick>().0;
-    push_command_event(
+    push_band_event(
         app,
         tick,
         CommandEventKind::ExpeditionSent,
         faction,
+        band_durable_id,
         format!(
             "{band_label} shipment -> {destination_label} ({})",
             manifest.join(", ")
@@ -7060,11 +7380,12 @@ fn handle_recall_expedition(
     }
     let tick = app.world.resource::<SimulationTick>().0;
     if let Some(at) = cancel_party_standing_in_camp(app, entity) {
-        push_command_event(
+        push_band_event(
             app,
             tick,
             CommandEventKind::ExpeditionRecalled,
             faction,
+            app.world.get::<BandId>(entity).copied(),
             format!("{} cancelled — the party never left camp", label),
             Some(format!("status=cancelled expedition={}", entity.to_bits())),
         );
@@ -7076,13 +7397,25 @@ fn handle_recall_expedition(
         app.world.despawn(entity);
         return;
     }
-    push_command_event(
+    // **A stationed party's recall names its host and says why**, in the register the turn's own
+    // post-ending lines use (`reason=` then `host=`), so a client swaps its band label in by one token.
+    let post_detail = app
+        .world
+        .get::<Expedition>(entity)
+        .and_then(|expedition| expedition.mission.host_band())
+        .map(|host| format!(" reason={POST_RECALLED} host={}", host.0))
+        .unwrap_or_default();
+    push_band_event(
         app,
         tick,
         CommandEventKind::ExpeditionRecalled,
         faction,
+        app.world.get::<BandId>(entity).copied(),
         format!("{} recalled — returning home", label),
-        Some(format!("status=returning expedition={}", entity.to_bits())),
+        Some(format!(
+            "status=returning{post_detail} expedition={}",
+            entity.to_bits()
+        )),
     );
 }
 
@@ -7155,11 +7488,12 @@ fn handle_split_band(
         split.share,
         split.provisions.to_f32()
     );
-    push_command_event(
+    push_band_event(
         app,
         tick,
         CommandEventKind::BandFounded,
         faction,
+        band.id,
         format!(
             "{} split off a new band of {} workers at ({}, {})",
             label, split.workers, split.at.x, split.at.y
@@ -7507,11 +7841,7 @@ fn handle_cancel_order(
     }
 
     let tick = app.world.resource::<SimulationTick>().0;
-    let detail = format!(
-        "status=cancelled scope={} band={}",
-        scope.as_str(),
-        band.label
-    );
+    let detail = format!("status=cancelled scope={}", scope.as_str());
     info!(
         target: "shadow_scale::command",
         command = "cancel_order",
@@ -7520,11 +7850,12 @@ fn handle_cancel_order(
         scope = %scope.as_str(),
         "command.cancel_order.applied"
     );
-    push_command_event(
+    push_band_event(
         app,
         tick,
         CommandEventKind::CancelOrder,
         faction,
+        band.id,
         cancel_scope_applied_message(scope, &band.label),
         Some(detail),
     );
@@ -8690,11 +9021,12 @@ fn handle_bench_enqueue(
     } else {
         String::new()
     };
-    push_command_event(
+    push_band_event(
         app,
         tick,
         event_kind,
         faction,
+        band.id,
         format!(
             "{} queued {display_name} x{count}, crew {applied}{clamp_note}",
             band.label
@@ -8870,7 +9202,15 @@ fn handle_bench_queue_edit(
                 core_sim::auto_craft::auto_craft_fill(&mut app.world, band.entity);
             }
             let tick = app.world.resource::<SimulationTick>().0;
-            push_command_event(app, tick, event_kind, faction, sentence, Some(detail));
+            push_band_event(
+                app,
+                tick,
+                event_kind,
+                faction,
+                band.id,
+                sentence,
+                Some(detail),
+            );
         }
         Err(error) => emit_command_failure(
             app,
@@ -8951,11 +9291,12 @@ fn handle_bench_priority(
         SourcePriority::Normal => format!("{}: the bench takes its turn like the rest", band.label),
         SourcePriority::Low => format!("{}: the bench is the first thing given up", band.label),
     };
-    push_command_event(
+    push_band_event(
         app,
         tick,
         event_kind,
         faction,
+        band.id,
         sentence,
         Some(format!(
             "status=applied action=bench_priority level={} band={band_id}",
@@ -8987,11 +9328,12 @@ fn handle_bench_auto(
     core_sim::auto_craft::set_auto_craft(&mut app.world, band.entity, enabled);
     let tick = app.world.resource::<SimulationTick>().0;
     let state = if enabled { "on" } else { "off" };
-    push_command_event(
+    push_band_event(
         app,
         tick,
         event_kind,
         faction,
+        band.id,
         format!("{}: bench auto-craft {state}", band.label),
         Some(format!(
             "status=applied action=bench_auto enabled={enabled} band={band_id}"
@@ -9014,11 +9356,12 @@ fn handle_bench_auto_skip(app: &mut bevy::prelude::App, faction: FactionId, band
     match core_sim::auto_craft::auto_craft_skip(&mut app.world, band.entity) {
         Ok(item) => {
             let tick = app.world.resource::<SimulationTick>().0;
-            push_command_event(
+            push_band_event(
                 app,
                 tick,
                 event_kind,
                 faction,
+                band.id,
                 format!("{} skipped {item} on the bench", band.label),
                 Some(format!(
                     "status=applied action={verb} item={item} band={band_id}"
@@ -9081,11 +9424,12 @@ fn handle_bench_crew(
     } else {
         String::new()
     };
-    push_command_event(
+    push_band_event(
         app,
         tick,
         event_kind,
         faction,
+        band.id,
         format!("{} bench crew x{applied}{clamp_note}", band.label),
         Some(format!(
             "status=applied action=bench_crew recipe={recipe_id} workers={applied} \
@@ -10800,6 +11144,19 @@ fn command_from_payload(
             cargo,
             kit_id,
         }),
+        ProtoCommandPayload::StationExpedition {
+            faction_id,
+            band_id,
+            party_workers,
+            host_band_id,
+            kit_id,
+        } => Some(Command::StationExpedition {
+            faction: FactionId(faction_id),
+            band_id,
+            party_workers,
+            host_band_id,
+            kit_id,
+        }),
         ProtoCommandPayload::FoundSettlement {
             faction_id,
             target_x,
@@ -11171,14 +11528,14 @@ fn command_from_payload(
             height,
             seed,
             profile_id,
-            ai_faction_count,
+            archetype_counts,
         } => Some(Command::NewGame {
             preset_id,
             width,
             height,
             seed,
             profile_id,
-            ai_faction_count,
+            archetype_counts,
         }),
         // The one payload that carries a way BACK. `reply` is this connection's writer channel, so
         // the answer reaches the client that asked even if it is computed several commands later.
@@ -11337,9 +11694,60 @@ fn resolve_starting_unit_entity(
     Some(entity)
 }
 
+/// **A band a command resolved to**, with the one spelling of it every event line uses.
+///
+/// ⛔ `label` is `Band {id}` ([`core_sim::band_label`]) and NEVER the unit's kind. The kind
+/// (`BandScout`, ...) names what sort of unit a band was founded as, so every band of a people shares
+/// it: two bands' craft lines both read "BandScout queued Baskets…". An event names a band the way
+/// every other event does - by the durable [`BandId`] - and carries the id as a `band=` detail token
+/// ([`push_band_event`]), which is what the client joins on to put the band's real name in the line.
 struct SelectedBand {
     entity: Entity,
+    /// The durable id; `None` only for a hand-built fixture band that never minted one.
+    id: Option<BandId>,
     label: String,
+}
+
+/// The [`SelectedBand`] for `entity`.
+fn selected_band(app: &bevy::prelude::App, entity: Entity) -> SelectedBand {
+    SelectedBand {
+        entity,
+        id: app.world.get::<BandId>(entity).copied(),
+        label: starting_unit_label(app, entity),
+    }
+}
+
+/// **Push an event that is about ONE band**, so the line names it the way every other event does:
+/// the entry carries the durable [`BandId`] ([`CommandEventEntry::with_band`]) and its detail a
+/// `band=<id>` token - appended here unless the writer already stated one - which is what the client
+/// re-labels the row by (`event-feed.md` -> "The `band=` token is what makes a loss line clickable").
+/// A band with no durable id (a fixture) publishes its line unchanged and renders linkless.
+fn push_band_event(
+    app: &mut bevy::prelude::App,
+    tick: u64,
+    kind: CommandEventKind,
+    faction: FactionId,
+    band: Option<BandId>,
+    label: String,
+    detail: Option<String>,
+) {
+    let detail = match (band, detail) {
+        (Some(id), Some(detail)) if !has_band_token(&detail) => {
+            Some(format!("{detail} band={}", id.0))
+        }
+        (Some(id), None) => Some(format!("band={}", id.0)),
+        (_, detail) => detail,
+    };
+    let mut entry = CommandEventEntry::new(tick, kind, faction, label, detail);
+    if let Some(id) = band {
+        entry = entry.with_band(id);
+    }
+    push_command_entry(app, entry);
+}
+
+/// Whether a detail already carries a whole `band=` token.
+fn has_band_token(detail: &str) -> bool {
+    detail.split(' ').any(|token| token.starts_with("band="))
 }
 
 fn select_starting_band(
@@ -11351,24 +11759,20 @@ fn select_starting_band(
 ) -> Option<SelectedBand> {
     if let Some(bits) = band_id {
         let entity = resolve_starting_unit_entity(app, faction, bits, command_label, event_kind)?;
-        return Some(SelectedBand {
-            entity,
-            label: starting_unit_label(app, entity),
-        });
+        return Some(selected_band(app, entity));
     }
 
     // Default-band picker: only ever auto-grab a real band (`With<ResidentBand>`) so a band-less
     // command never silently commandeers a detached expedition (which keeps `StartingUnit`).
     let mut query = app
         .world
-        .query_filtered::<(Entity, &PopulationCohort, &StartingUnit), With<ResidentBand>>();
-    for (entity, cohort, unit) in query.iter(&app.world) {
-        if cohort.faction == faction {
-            return Some(SelectedBand {
-                entity,
-                label: unit.kind.clone(),
-            });
-        }
+        .query_filtered::<(Entity, &PopulationCohort), (With<StartingUnit>, With<ResidentBand>)>();
+    let picked = query
+        .iter(&app.world)
+        .find(|(_, cohort)| cohort.faction == faction)
+        .map(|(entity, _)| entity);
+    if let Some(entity) = picked {
+        return Some(selected_band(app, entity));
     }
 
     warn!(
@@ -11395,13 +11799,14 @@ fn select_founder_band(
     let mut query = app
         .world
         .query_filtered::<(Entity, &PopulationCohort, &StartingUnit), With<ResidentBand>>();
-    for (entity, cohort, unit) in query.iter(&app.world) {
-        if cohort.faction == faction && unit.kind.eq_ignore_ascii_case("founders") {
-            return Some(SelectedBand {
-                entity,
-                label: unit.kind.clone(),
-            });
-        }
+    let picked = query
+        .iter(&app.world)
+        .find(|(_, cohort, unit)| {
+            cohort.faction == faction && unit.kind.eq_ignore_ascii_case("founders")
+        })
+        .map(|(entity, _, _)| entity);
+    if let Some(entity) = picked {
+        return Some(selected_band(app, entity));
     }
 
     emit_command_failure(
@@ -11413,7 +11818,13 @@ fn select_founder_band(
     None
 }
 
+/// **How an event line names a band** - `Band {id}` off its durable [`BandId`], never the unit's
+/// kind (see [`SelectedBand`]). Only a band that never minted an id (a hand-built fixture) falls
+/// back to the kind, there being no honest id to state.
 fn starting_unit_label(app: &bevy::prelude::App, entity: Entity) -> String {
+    if let Some(id) = app.world.get::<BandId>(entity).copied() {
+        return core_sim::band_label(id);
+    }
     app.world
         .get::<StartingUnit>(entity)
         .map(|unit| unit.kind.clone())
@@ -11826,6 +12237,7 @@ fn commanding_faction(command: &Command) -> Option<(FactionId, &'static str)> {
         Command::SplitBand { faction, .. } => Some((*faction, "split_band")),
         Command::SendDenialRaid { faction, .. } => Some((*faction, "send_denial_raid")),
         Command::SendTradeExpedition { faction, .. } => Some((*faction, "send_trade_expedition")),
+        Command::StationExpedition { faction, .. } => Some((*faction, "station_expedition")),
         Command::FoundSettlement { faction, .. } => Some((*faction, "found_settlement")),
         Command::Tame { faction, .. } => Some((*faction, "tame")),
         Command::AnswerFork { faction, .. } => Some((*faction, "answer_fork")),
@@ -12195,6 +12607,15 @@ fn apply_command(app: &mut bevy::prelude::App, command: Command) {
                 cargo,
                 kit_id,
             );
+        }
+        Command::StationExpedition {
+            faction,
+            band_id,
+            party_workers,
+            host_band_id,
+            kit_id,
+        } => {
+            handle_station_expedition(app, faction, band_id, party_workers, host_band_id, kit_id);
         }
         Command::FoundSettlement {
             faction,
@@ -13192,6 +13613,7 @@ mod tests {
                     morale: core_sim::scalar_one(),
                     last_food_consumption: 0.0,
                     last_food_need: 0.0,
+                    fed_party_workers: Default::default(),
                     last_food_spoiled: 0.0,
                     last_turn_food_transfers: Default::default(),
                     last_turn_fodder_transfers: Default::default(),
@@ -13324,7 +13746,7 @@ mod tests {
             16,
             7,
             "late_forager_tribe".to_string(),
-            None,
+            Vec::new(),
             flat,
         );
         assert!(*world_active, "the fixture world must build");
@@ -13590,7 +14012,7 @@ mod tests {
             WORLD_GRID.y,
             WORLD_SEED,
             "late_forager_tribe".to_string(),
-            None,
+            Vec::new(),
             &flat,
         );
         assert!(world_active, "the fixture world must build");
@@ -13880,7 +14302,7 @@ mod tests {
             NEXT_GRID.y,
             NEXT_SEED,
             "no_such_profile".to_string(),
-            None,
+            Vec::new(),
             &flat,
         );
         let kept = command_log
@@ -13899,7 +14321,7 @@ mod tests {
             NEXT_GRID.y,
             NEXT_SEED,
             "late_forager_tribe".to_string(),
-            None,
+            Vec::new(),
             &flat,
         );
         let log = command_log.expect("a new game leaves a log in place");
@@ -14209,7 +14631,7 @@ mod tests {
             32,
             7,
             "no_such_profile".to_string(),
-            None,
+            Vec::new(),
             &flat,
         );
         assert!(!world_active, "an unknown profile must not build a world");
@@ -14233,7 +14655,7 @@ mod tests {
             32,
             7,
             "late_forager_tribe".to_string(),
-            None,
+            Vec::new(),
             &flat,
         );
         assert!(!world_active, "zero width must be rejected");
@@ -14254,7 +14676,7 @@ mod tests {
             32,
             7,
             "late_forager_tribe".to_string(),
-            None,
+            Vec::new(),
             &flat,
         );
         assert!(world_active, "a valid new_game activates the world");
@@ -14293,7 +14715,7 @@ mod tests {
             32,
             7,
             "late_forager_tribe".to_string(),
-            None,
+            Vec::new(),
             &flat,
         );
         assert_eq!(world_epoch, 2, "the next world build increments the epoch");
@@ -14316,13 +14738,40 @@ mod tests {
     /// different rejection (`new_game.rejected=unknown_profile`), and the fixture has to be able to
     /// tell that apart from a roster that came out wrong.
     fn profiles_named(id: &str) -> StartProfilesHandle {
-        let json = format!(
-            "{{\"profiles\": [{{\"id\": \"{id}\", \
-             \"opening_loadout\": {{\"pickable_materials\": [\"bone\"]}}}}]}}"
-        );
+        let archetype = |archetype_id: &str, separation: u32| {
+            serde_json::json!({
+                "id": archetype_id,
+                "display_label": archetype_id,
+                "min_separation": separation,
+                "opening_loadout": {"pickable_materials": ["bone"]},
+            })
+        };
+        let json = serde_json::json!({"profiles": [{
+            "id": id,
+            "archetypes": [
+                archetype(FIXTURE_MAJOR, FIXTURE_MAJOR_SEPARATION),
+                archetype(FIXTURE_MINOR, FIXTURE_MINOR_SEPARATION),
+            ],
+        }]})
+        .to_string();
         StartProfilesHandle::new(std::sync::Arc::new(
             core_sim::StartProfiles::from_json_str(&json).expect("the fixture profiles parse"),
         ))
+    }
+
+    /// The fixture profile's two archetypes and the separations they are placed at - the shipped
+    /// profile's shape, restated so the clamp tests read against numbers they control.
+    const FIXTURE_MAJOR: &str = "major";
+    const FIXTURE_MINOR: &str = "minor";
+    const FIXTURE_MAJOR_SEPARATION: u32 = 20;
+    const FIXTURE_MINOR_SEPARATION: u32 = 8;
+
+    /// `count` peoples of the fixture's major archetype, as a `new_game` would carry them.
+    fn majors(count: u32) -> Vec<sim_runtime::ArchetypeCount> {
+        vec![sim_runtime::ArchetypeCount {
+            id: FIXTURE_MAJOR.to_string(),
+            count,
+        }]
     }
 
     /// The land share this app's capacity answers are discounted by — its own preset's, exactly as
@@ -14339,8 +14788,8 @@ mod tests {
     /// ⛔ **`new_game` SEEDS THE ROSTER THE PLAYER PICKED**, not the boot config's.
     ///
     /// `rebuild_world_from_config` builds the replacement app first — `build_headless_app` seeds
-    /// `FactionRegistry` and `TurnQueue` from `simulation_config.json`'s own
-    /// `default_ai_faction_count`, against that file's grid — and configures it second. Without
+    /// `FactionRegistry` and `TurnQueue` from the start profiles' own unattended archetype counts,
+    /// against the config file's grid — and configures it second. Without
     /// `seed_faction_roster`, a picked count reached `SimulationConfig` and nothing that resolves a
     /// turn ever heard about it.
     #[test]
@@ -14368,7 +14817,7 @@ mod tests {
             32,
             7,
             "two_sided".to_string(),
-            Some(1),
+            majors(1),
             &flat,
         );
 
@@ -14451,7 +14900,7 @@ mod tests {
             32,
             7,
             "alone".to_string(),
-            Some(0),
+            majors(0),
             &flat,
         );
 
@@ -14480,13 +14929,9 @@ mod tests {
         app.world
             .insert_resource(CommandSenderResource(unbounded::<CommandDelivery>().0));
         app.world.insert_resource(profiles_named("crowded"));
-        let separation = app
-            .world
-            .resource::<SimulationConfig>()
-            .faction_start_min_separation;
         let land = capacity_land_fraction(&app);
         let grid = UVec2::new(60, 40);
-        let ceiling = core_sim::max_faction_starts(grid, separation, land) - 1;
+        let ceiling = core_sim::max_faction_starts(grid, FIXTURE_MAJOR_SEPARATION, land) - 1;
         assert!(
             (1..9).contains(&ceiling),
             "fixture: the grid must seat SOME rivals but fewer than the count asked for, or the \
@@ -14506,7 +14951,7 @@ mod tests {
             grid.y,
             7,
             "crowded".to_string(),
-            Some(9),
+            majors(9),
             &flat,
         );
 
@@ -14528,68 +14973,148 @@ mod tests {
         );
     }
 
-    /// **An absent count is the UNATTENDED roster, and it is not `Some(0)`.** The wire
+    /// **An unlisted archetype is the UNATTENDED count, and it is not an explicit 0.** The wire
     /// distinguishes them, and only this says the server honours the distinction.
     ///
-    /// ⛔ Absent resolves to **no rivals**, not to the map-scaled count the New Game screen
-    /// pre-selects. A scripted launch and a `cargo run` server are not a player looking at a
-    /// screen, and there is still no AI to drive a rival — sabotaged by routing this through
-    /// `faction_start_capacity`, which the first case catches.
-    ///
-    /// Asserted on the resolution rule rather than through `handle_new_game`, because the count a
-    /// rebuild defaults to comes from the config FILE (`load_simulation_config_for_new_world` re-reads
-    /// it, carrying only fog and the binds), and steering a file would mean a process-global env var
-    /// a parallel test would race on.
+    /// ⛔ Unlisted resolves to the archetype's own pin, else **none**, not to the map-scaled count
+    /// the New Game screen pre-selects. A scripted launch and a `cargo run` server are not a player
+    /// looking at a screen - sabotaged by routing this through `archetype_capacities`, which the
+    /// first case catches.
     #[test]
-    fn an_absent_rival_count_resolves_to_the_unattended_roster() {
-        let app = build_test_app();
-        let mut config = app.world.resource::<SimulationConfig>().clone();
+    fn an_unlisted_archetype_resolves_to_the_unattended_count() {
+        let profiles = profiles_named("unattended");
+        let profile = profiles.get().get("unattended").cloned().expect("fixture");
+        let mut archetypes = profile.overrides().archetypes.clone();
+        let count = |id: &str, n: u32| sim_runtime::ArchetypeCount {
+            id: id.to_string(),
+            count: n,
+        };
         assert_eq!(
-            config.default_ai_faction_count, None,
-            "fixture: the shipped config derives rather than pinning"
-        );
-        assert_eq!(
-            requested_ai_faction_count(None, &config),
-            0,
+            requested_archetype_counts(&[], &archetypes),
+            Ok(vec![0, 0]),
             "nobody picked, and nothing pins it: the world that has always shipped"
         );
         assert_eq!(
-            requested_ai_faction_count(Some(2), &config),
-            2,
-            "a pick is honoured"
+            requested_archetype_counts(&[count(FIXTURE_MAJOR, 2)], &archetypes),
+            Ok(vec![2, 0]),
+            "a pick is honoured, and the archetype left out stays unattended"
         );
-
-        config.default_ai_faction_count = Some(3);
+        archetypes[1].default_count = Some(3);
         assert_eq!(
-            requested_ai_faction_count(None, &config),
-            3,
-            "absent takes the config pin when there is one"
-        );
-        assert_eq!(
-            requested_ai_faction_count(Some(0), &config),
-            0,
-            "and an explicit 0 is a player who chose to play alone, not an absent field"
+            requested_archetype_counts(&[], &archetypes),
+            Ok(vec![0, 3]),
+            "an unlisted archetype takes its own pin"
         );
         assert_eq!(
-            requested_ai_faction_count(Some(1), &config),
-            1,
-            "a pick overrides the pin"
+            requested_archetype_counts(&[count(FIXTURE_MINOR, 0)], &archetypes),
+            Ok(vec![0, 0]),
+            "and an explicit 0 is a player who chose none, not an absent entry"
+        );
+        assert_eq!(
+            requested_archetype_counts(&[count("ghost", 1)], &archetypes),
+            Err("ghost".to_string()),
+            "an id the profile does not carry is refused, not guessed at"
+        );
+        assert_eq!(
+            requested_archetype_counts(
+                &[count(FIXTURE_MAJOR, 1), count(FIXTURE_MAJOR, 2)],
+                &archetypes
+            ),
+            Err(FIXTURE_MAJOR.to_string()),
+            "and so is an archetype listed twice"
         );
     }
 
-    /// **The New Game screen's two numbers come from the sim, and are answerable with no world.**
+    /// **A `new_game` naming an archetype the profile does not carry builds NO world.**
+    #[test]
+    fn new_game_with_an_unknown_archetype_is_rejected() {
+        let mut app = build_test_app();
+        app.world
+            .insert_resource(CommandSenderResource(unbounded::<CommandDelivery>().0));
+        app.world.insert_resource(profiles_named("strict"));
+        let flat = loopback_snapshot_server();
+        let mut world_active = false;
+        let mut world_epoch: u32 = 0;
+        handle_new_game(
+            &mut app,
+            &mut world_active,
+            &mut world_epoch,
+            &mut None,
+            "earthlike".to_string(),
+            48,
+            32,
+            7,
+            "strict".to_string(),
+            vec![sim_runtime::ArchetypeCount {
+                id: "ghost".to_string(),
+                count: 1,
+            }],
+            &flat,
+        );
+        assert!(!world_active, "an unknown archetype id rejects the command");
+    }
+
+    /// **Majors and minors both seat, in catalog order**: the roster is the human, then the major
+    /// rivals, then the minors, and the assignment says so.
+    #[test]
+    fn new_game_seats_majors_then_minors_in_catalog_order() {
+        let mut app = build_test_app();
+        app.world
+            .insert_resource(CommandSenderResource(unbounded::<CommandDelivery>().0));
+        app.world.insert_resource(profiles_named("mixed"));
+        let flat = loopback_snapshot_server();
+        let mut world_active = false;
+        let mut world_epoch: u32 = 0;
+        handle_new_game(
+            &mut app,
+            &mut world_active,
+            &mut world_epoch,
+            &mut None,
+            "earthlike".to_string(),
+            80,
+            52,
+            7,
+            "mixed".to_string(),
+            vec![
+                sim_runtime::ArchetypeCount {
+                    id: FIXTURE_MAJOR.to_string(),
+                    count: 1,
+                },
+                sim_runtime::ArchetypeCount {
+                    id: FIXTURE_MINOR.to_string(),
+                    count: 2,
+                },
+            ],
+            &flat,
+        );
+        assert!(world_active, "the world is built");
+        assert_eq!(
+            app.world.resource::<FactionRegistry>().factions().len(),
+            4,
+            "human + 1 major + 2 minors"
+        );
+        let assignment = app
+            .world
+            .resource::<SimulationConfig>()
+            .start_archetype_assignment
+            .clone();
+        let archetypes: Vec<usize> = (0..4)
+            .map(|id| assignment.archetype_index(FactionId(id)))
+            .collect();
+        assert_eq!(archetypes, vec![0, 0, 1, 1]);
+    }
+
+    /// **The New Game screen's per-archetype rows come from the sim, and are answerable with no
+    /// world.**
     ///
     /// Asked before `world_active` for the reason the slot list is: a player configures a game
-    /// before there is one. It answers about the grid IN THE ASK, not the one the server holds —
+    /// before there is one. It answers about the grid IN THE ASK, not the one the server holds -
     /// sabotaged by answering from `SimulationConfig::grid_size`, which the differing sizes below
-    /// would catch.
+    /// would catch - and about the profile the ask names.
     #[test]
     fn the_faction_capacity_query_is_answered_idle_for_the_asked_grid() {
         let mut app = build_test_app();
-        let separation = app
-            .world
-            .resource::<SimulationConfig>()
-            .faction_start_min_separation;
+        app.world.insert_resource(profiles_named("asked"));
         let land = capacity_land_fraction(&app);
 
         let roomy = UVec2::new(80, 52);
@@ -14600,51 +15125,63 @@ mod tests {
             "fixture: the asked grid must differ from the server's, or the ask is unread"
         );
 
-        let answer = answer_query(
-            false,
-            &mut app.world,
-            &QueryPayload::FactionCapacity(sim_runtime::FactionCapacityQuery {
-                width: roomy.x,
-                height: roomy.y,
-            }),
-        );
-        let QueryReply::FactionCapacity(roomy_reply) = answer else {
-            panic!("the capacity query is answered even with no world: {answer:?}");
+        let ask = |app: &mut bevy::prelude::App, grid: UVec2, profile: &str| {
+            let answer = answer_query(
+                false,
+                &mut app.world,
+                &QueryPayload::FactionCapacity(sim_runtime::FactionCapacityQuery {
+                    width: grid.x,
+                    height: grid.y,
+                    profile_id: profile.to_string(),
+                }),
+            );
+            let QueryReply::FactionCapacity(reply) = answer else {
+                panic!("the capacity query is answered even with no world: {answer:?}");
+            };
+            reply
         };
+
+        let roomy_reply = ask(&mut app, roomy, "asked");
         assert_eq!(
-            roomy_reply.max_ai_faction_count,
-            core_sim::max_faction_starts(roomy, separation, land) - 1,
-            "the ceiling is the sim's own rule, not a second copy of it"
+            roomy_reply
+                .archetypes
+                .iter()
+                .map(|row| row.id.as_str())
+                .collect::<Vec<_>>(),
+            vec![FIXTURE_MAJOR, FIXTURE_MINOR],
+            "one row per archetype of the ASKED profile, in catalog order"
+        );
+        assert_eq!(
+            roomy_reply.archetypes[0].site_count,
+            core_sim::max_faction_starts(roomy, FIXTURE_MAJOR_SEPARATION, land),
+            "the site count is the sim's own rule, not a second copy of it"
+        );
+        assert_eq!(
+            roomy_reply.archetypes[1].site_count,
+            core_sim::max_faction_starts(roomy, FIXTURE_MINOR_SEPARATION, land)
         );
         assert!(
-            roomy_reply.default_ai_faction_count > 0,
+            roomy_reply.archetypes[0].default_count > 0,
             "and with nothing pinned the screen pre-selects a world with neighbours, unlike the \
              unattended roster the same server would boot with"
         );
 
-        let answer = answer_query(
-            false,
-            &mut app.world,
-            &QueryPayload::FactionCapacity(sim_runtime::FactionCapacityQuery {
-                width: cramped.x,
-                height: cramped.y,
-            }),
-        );
-        let QueryReply::FactionCapacity(cramped_reply) = answer else {
-            panic!("the capacity query is answered even with no world: {answer:?}");
-        };
+        let cramped_reply = ask(&mut app, cramped, "asked");
         assert_eq!(
-            cramped_reply.max_ai_faction_count, 0,
+            cramped_reply.archetypes[0].site_count, 1,
             "a grid that seats one start offers no rivals at all"
         );
+        assert_eq!(cramped_reply.archetypes[0].default_count, 0);
         assert!(
-            cramped_reply.max_ai_faction_count < roomy_reply.max_ai_faction_count,
+            cramped_reply.archetypes[0].site_count < roomy_reply.archetypes[0].site_count,
             "and the answer follows the grid in the ask"
         );
-        assert!(
-            cramped_reply.default_ai_faction_count <= cramped_reply.max_ai_faction_count,
-            "the offered default is always grantable"
-        );
+
+        // An empty or unknown profile id reads as the ACTIVE profile, which is the shipped one.
+        let shipped = ask(&mut app, roomy, "");
+        let unknown = ask(&mut app, roomy, "no_such_profile");
+        assert_eq!(shipped, unknown);
+        assert_eq!(shipped.archetypes[0].id, "major");
     }
 
     /// **What the band has DECLARED on its single worked source** — what the four build verbs
@@ -16739,6 +17276,8 @@ mod tests {
                 kit: core_sim::EquipmentConfig::builtin().default_kit(KitJob::Hunt),
                 cargo: LocalStore::new(),
                 defection_pull: Scalar::zero(),
+                station_reports: Vec::new(),
+                aim: None,
             },
         ));
 
@@ -21688,6 +22227,73 @@ mod tests {
         })
     }
 
+    /// ⛔ **A CRAFT LINE NAMES THE BAND BY ITS DURABLE ID, NEVER BY THE UNIT'S KIND.** The label used to
+    /// be the `StartingUnit` kind, which every band of a people shares, so two bands' queue lines both
+    /// read "BandScout queued Baskets…". Every craft writer now names `Band {id}` and carries the id
+    /// as a `band=` token (and on the entry), which is what the client re-labels the row by. Asserted
+    /// on three writers - the queue, a queue edit and the crew - against the kind the band is.
+    #[test]
+    fn a_craft_line_names_the_band_by_its_durable_id_and_not_its_unit_kind() {
+        let mut app = build_test_app();
+        app.update();
+        let faction = FactionId(0);
+        let band = first_resident_band(&mut app);
+        let id = *app
+            .world
+            .get::<BandId>(band)
+            .expect("a campaign band carries a durable id");
+        let kind = app
+            .world
+            .get::<StartingUnit>(band)
+            .expect("a campaign band carries its unit")
+            .kind
+            .clone();
+
+        handle_bench_enqueue(
+            &mut app,
+            faction,
+            Some(id.0),
+            BENCH_IDLE_RECIPE,
+            BENCH_TEST_ORDER,
+            BENCH_IDLE_CREW,
+        );
+        handle_bench_queue_edit(&mut app, faction, Some(id.0), HEAD, BenchQueueEdit::Remove);
+        handle_bench_crew(&mut app, faction, Some(id.0), BENCH_IDLE_CREW);
+
+        let lines: Vec<(String, Option<String>, u64)> = app
+            .world
+            .resource::<CommandEventLog>()
+            .iter()
+            .filter(|entry| matches!(entry.kind, CommandEventKind::Craft))
+            .map(|entry| (entry.label.clone(), entry.detail.clone(), entry.band))
+            .collect();
+        assert!(
+            lines.len() >= 3,
+            "liveness: the queue, the edit and the crew each wrote a line: {lines:?}"
+        );
+        for (label, detail, entry_band) in &lines {
+            assert!(
+                label.contains(&core_sim::band_label(id)),
+                "the line names the band as `Band {{id}}`: {label}"
+            );
+            assert!(
+                !label.contains(&kind),
+                "...and never by the unit kind ({kind}): {label}"
+            );
+            let detail = detail.as_deref().unwrap_or_default();
+            assert!(
+                detail
+                    .split(' ')
+                    .any(|token| token == format!("band={}", id.0)),
+                "the detail carries the durable id as a `band=` token: {detail}"
+            );
+            assert_eq!(
+                *entry_band, id.0,
+                "the entry itself names the band: {label}"
+            );
+        }
+    }
+
     /// **Naming no crew recruits nobody; naming one is obeyed to the head.**
     ///
     /// A pairing, because every other bench fixture passes an explicit crew — which is the one call
@@ -23161,6 +23767,422 @@ mod tests {
         assert_eq!(
             parties, 1,
             "a shipment addressed to another party must be refused, not launched"
+        );
+    }
+
+    // ------------------------------------------------------------------------------------------
+    // The stationed party (issue #774) — the launch gates and the recall verb. What the party DOES
+    // once out is `core_sim/tests/station_expedition.rs`.
+    // ------------------------------------------------------------------------------------------
+
+    /// Everything a refused launch must leave alone: the band's whole cohort (brackets, larder,
+    /// hay, batches) and its gear ledger, as the `Debug` text of both.
+    fn band_fingerprint(app: &bevy::prelude::App, band: Entity) -> String {
+        format!(
+            "{:?}|{:?}",
+            app.world
+                .get::<PopulationCohort>(band)
+                .expect("the band exists"),
+            app.world.get::<BandEquipment>(band)
+        )
+    }
+
+    fn parties_out(app: &mut bevy::prelude::App) -> usize {
+        let mut query = app.world.query_filtered::<Entity, With<Expedition>>();
+        query.iter(&app.world).count()
+    }
+
+    fn feed_lines(app: &bevy::prelude::App) -> usize {
+        app.world.resource::<CommandEventLog>().iter().count()
+    }
+
+    /// **One refused order leaves the band exactly as it stood** — nothing drawn, nothing
+    /// launched, and a line on the feed saying so.
+    fn assert_station_refused(
+        app: &mut bevy::prelude::App,
+        faction: FactionId,
+        sender: Entity,
+        host_band_id: u64,
+        workers: u32,
+        why: &str,
+    ) {
+        let sender_id = app.world.get::<core_sim::BandId>(sender).expect("an id").0;
+        let before = band_fingerprint(app, sender);
+        let lines_before = feed_lines(app);
+        handle_station_expedition(app, faction, Some(sender_id), workers, host_band_id, None);
+        assert_eq!(parties_out(app), 0, "refused ({why}): no party leaves");
+        assert_eq!(
+            band_fingerprint(app, sender),
+            before,
+            "refused ({why}): the band is exactly as it stood"
+        );
+        assert!(
+            feed_lines(app) > lines_before,
+            "refused ({why}): the refusal is on the feed"
+        );
+    }
+
+    fn make_host_another_people(app: &mut bevy::prelude::App, host: core_sim::BandId) -> FactionId {
+        const OTHER_PEOPLE: FactionId = FactionId(1);
+        let entity = {
+            let mut query = app.world.query::<(Entity, &core_sim::BandId)>();
+            query
+                .iter(&app.world)
+                .find(|(_, id)| **id == host)
+                .map(|(entity, _)| entity)
+                .expect("the host exists")
+        };
+        app.world
+            .get_mut::<PopulationCohort>(entity)
+            .expect("the host cohort")
+            .faction = OTHER_PEOPLE;
+        OTHER_PEOPLE
+    }
+
+    /// **A launch posts the party, draws no provisions and loads no cargo.** The band loses its
+    /// workers and its larder is untouched to the micro-unit — the party's rations are the band's
+    /// ordinary meal from here on.
+    #[test]
+    fn a_station_order_posts_a_party_and_draws_no_provisions() {
+        let mut app = build_world_app();
+        let (sender, host, faction) = two_bands_that_know_each_other(&mut app);
+        let sender_id = app.world.get::<core_sim::BandId>(sender).expect("an id").0;
+        let food_before = app
+            .world
+            .get::<PopulationCohort>(sender)
+            .expect("band")
+            .stores
+            .get(FOOD);
+        let working_before = app
+            .world
+            .get::<PopulationCohort>(sender)
+            .expect("band")
+            .working;
+
+        handle_station_expedition(
+            &mut app,
+            faction,
+            Some(sender_id),
+            TRADE_PARTY,
+            host.0,
+            None,
+        );
+
+        let party = launched_party(&mut app).expect("a live tie lets the party leave");
+        let expedition = app.world.get::<Expedition>(party).expect("the party");
+        assert_eq!(expedition.mission.host_band(), Some(host));
+        assert_eq!(expedition.phase, ExpeditionPhase::Outbound);
+        assert_eq!(
+            expedition.cargo.get(FOOD),
+            Scalar::from_i64(0),
+            "it carries no cargo"
+        );
+        let cohort = app.world.get::<PopulationCohort>(sender).expect("band");
+        assert_eq!(
+            cohort.stores.get(FOOD),
+            food_before,
+            "no provisions were drawn: the home band feeds the party"
+        );
+        assert_eq!(
+            app.world
+                .get::<PopulationCohort>(party)
+                .expect("party")
+                .stores
+                .get(FOOD),
+            Scalar::from_i64(0),
+            "and the party's own pack is empty"
+        );
+        assert_eq!(
+            cohort.working,
+            working_before - Scalar::from_u32(TRADE_PARTY),
+            "the band lost exactly the party's workers (liveness: a party really left)"
+        );
+        assert!(
+            last_expedition_detail(&app).contains("mission=station"),
+            "{}",
+            last_expedition_detail(&app)
+        );
+    }
+
+    /// **Every gate refuses before anything is drawn.** No edge, a parked edge, closed borders
+    /// (another people's host), the band itself as host, a host that is not a resident band, and an
+    /// oversized party — each leaves the band exactly as it stood.
+    #[test]
+    fn every_station_refusal_leaves_the_band_as_it_stood() {
+        // No edge at all.
+        let mut app = build_world_app();
+        let (sender, host, faction) = two_bands_that_know_each_other(&mut app);
+        app.world
+            .insert_resource(core_sim::connections::ConnectionLedger::default());
+        assert_station_refused(&mut app, faction, sender, host.0, TRADE_PARTY, "no edge");
+
+        // A parked edge: a tie formed and then bled to nothing.
+        let mut app = build_world_app();
+        let (sender, host, faction) = two_bands_that_know_each_other(&mut app);
+        {
+            let sender_id = *app.world.get::<core_sim::BandId>(sender).expect("an id");
+            let cfg = app
+                .world
+                .resource::<core_sim::ConnectionsConfigHandle>()
+                .get();
+            let mut ledger = core_sim::connections::ConnectionLedger::default();
+            let key = core_sim::connections::ConnectionKey::new(sender_id, host);
+            ledger.record_contact(
+                key,
+                &core_sim::Sighting::new(UVec2::new(0, 0), 0, ""),
+                0,
+                &cfg,
+            );
+            for turn in 1..=(1.0 / cfg.strength.decay_per_turn).ceil() as u64 + 1 {
+                ledger.decay_all(turn, &cfg);
+            }
+            assert_eq!(
+                ledger.get(&key).map(|c| c.strength),
+                Some(core_sim::connections::NO_TIE),
+                "the fixture really parks the edge"
+            );
+            app.world.insert_resource(ledger);
+        }
+        assert_station_refused(
+            &mut app,
+            faction,
+            sender,
+            host.0,
+            TRADE_PARTY,
+            "parked edge",
+        );
+
+        // Another people's host with its borders closed.
+        let mut app = build_world_app();
+        let (sender, host, faction) = two_bands_that_know_each_other(&mut app);
+        let other = make_host_another_people(&mut app, host);
+        app.world
+            .resource_mut::<FactionBorderPolicies>()
+            .set_open(other, false);
+        assert_station_refused(
+            &mut app,
+            faction,
+            sender,
+            host.0,
+            TRADE_PARTY,
+            "closed borders",
+        );
+
+        // The band itself.
+        let mut app = build_world_app();
+        let (sender, _, faction) = two_bands_that_know_each_other(&mut app);
+        let sender_id = app.world.get::<core_sim::BandId>(sender).expect("an id").0;
+        assert_station_refused(
+            &mut app,
+            faction,
+            sender,
+            sender_id,
+            TRADE_PARTY,
+            "host is home",
+        );
+
+        // A host that is not a resident band: a stranger's id, and a detached party's own id.
+        let mut app = build_world_app();
+        let (sender, host, faction) = two_bands_that_know_each_other(&mut app);
+        let stranger = app.world.resource_mut::<BandIdAllocator>().allocate().0;
+        assert_station_refused(
+            &mut app,
+            faction,
+            sender,
+            stranger,
+            TRADE_PARTY,
+            "no such band",
+        );
+        let sender_id = app.world.get::<core_sim::BandId>(sender).expect("an id").0;
+        handle_station_expedition(
+            &mut app,
+            faction,
+            Some(sender_id),
+            TRADE_PARTY,
+            host.0,
+            None,
+        );
+        let party = launched_party(&mut app).expect("a first party leaves");
+        let party_id = app.world.get::<core_sim::BandId>(party).expect("an id").0;
+        let before = band_fingerprint(&app, sender);
+        handle_station_expedition(
+            &mut app,
+            faction,
+            Some(sender_id),
+            TRADE_PARTY,
+            party_id,
+            None,
+        );
+        assert_eq!(parties_out(&mut app), 1, "a detached party is no host");
+        assert_eq!(band_fingerprint(&app, sender), before);
+
+        // Oversized: past the workers the band can field.
+        let mut app = build_world_app();
+        let (sender, host, faction) = two_bands_that_know_each_other(&mut app);
+        assert_station_refused(
+            &mut app,
+            faction,
+            sender,
+            host.0,
+            TRADE_FIXTURE_WORKERS as u32 + 5,
+            "oversized party",
+        );
+    }
+
+    /// **The borders gate is asked of ANOTHER people's host only** — paired with the refusal above:
+    /// the same closed-borders world launches for a host of the sender's own people, and for another
+    /// people's host that keeps its borders open.
+    #[test]
+    fn a_station_order_asks_open_borders_of_another_peoples_host_only() {
+        // Own people: the sender's borders closed, the host the sender's own.
+        let mut app = build_world_app();
+        let (sender, host, faction) = two_bands_that_know_each_other(&mut app);
+        let sender_id = app.world.get::<core_sim::BandId>(sender).expect("an id").0;
+        app.world
+            .resource_mut::<FactionBorderPolicies>()
+            .set_open(faction, false);
+        handle_station_expedition(
+            &mut app,
+            faction,
+            Some(sender_id),
+            TRADE_PARTY,
+            host.0,
+            None,
+        );
+        assert_eq!(parties_out(&mut app), 1, "a people's own band never asks");
+
+        // Another people, borders open.
+        let mut app = build_world_app();
+        let (sender, host, faction) = two_bands_that_know_each_other(&mut app);
+        let sender_id = app.world.get::<core_sim::BandId>(sender).expect("an id").0;
+        make_host_another_people(&mut app, host);
+        handle_station_expedition(
+            &mut app,
+            faction,
+            Some(sender_id),
+            TRADE_PARTY,
+            host.0,
+            None,
+        );
+        assert_eq!(
+            parties_out(&mut app),
+            1,
+            "another people's open borders welcome the party"
+        );
+    }
+
+    /// **Recall works on a station party.** In the field it turns the party for home and says why on
+    /// the feed (`reason=recalled host=<id>`); standing in camp with nothing in transit it is
+    /// cancelled on the spot; standing in camp with news still in transit it must walk the
+    /// `Returning` path, because only that arm lands the reports.
+    #[test]
+    fn a_stationed_party_can_be_recalled_in_the_field_in_camp_and_with_news_in_transit() {
+        let tick_event = |app: &bevy::prelude::App| -> Option<String> {
+            app.world
+                .resource::<CommandEventLog>()
+                .iter()
+                .filter(|entry| entry.kind == CommandEventKind::ExpeditionRecalled)
+                .filter_map(|entry| entry.detail.clone())
+                .last()
+        };
+
+        // In the field.
+        let mut app = build_world_app();
+        app.world
+            .insert_resource(CommandSenderResource(unbounded::<CommandDelivery>().0));
+        let (sender, host, faction) = two_bands_that_know_each_other(&mut app);
+        let sender_id = app.world.get::<core_sim::BandId>(sender).expect("an id").0;
+        handle_station_expedition(
+            &mut app,
+            faction,
+            Some(sender_id),
+            TRADE_PARTY,
+            host.0,
+            None,
+        );
+        let party = launched_party(&mut app).expect("the party left");
+        let party_id = app.world.get::<core_sim::BandId>(party).expect("id").0;
+        let out_there = {
+            let camp = app
+                .world
+                .get::<PopulationCohort>(party)
+                .expect("p")
+                .current_tile;
+            let camp = app.world.get::<Tile>(camp).expect("tile").position;
+            let registry = app.world.resource::<TileRegistry>();
+            registry
+                .index(camp.x + 5, camp.y)
+                .expect("a tile five columns over")
+        };
+        app.world
+            .get_mut::<PopulationCohort>(party)
+            .expect("p")
+            .current_tile = out_there;
+        handle_recall_expedition(&mut app, faction, party_id);
+        assert_eq!(
+            app.world.get::<Expedition>(party).expect("still out").phase,
+            ExpeditionPhase::Returning
+        );
+        let detail = tick_event(&app).expect("the recall is on the feed");
+        assert!(
+            detail.contains("reason=recalled") && detail.contains(&format!("host={}", host.0)),
+            "{detail}"
+        );
+
+        // In camp, nothing in transit: cancelled at once.
+        let mut app = build_world_app();
+        app.world
+            .insert_resource(CommandSenderResource(unbounded::<CommandDelivery>().0));
+        let (sender, host, faction) = two_bands_that_know_each_other(&mut app);
+        let sender_id = app.world.get::<core_sim::BandId>(sender).expect("an id").0;
+        handle_station_expedition(
+            &mut app,
+            faction,
+            Some(sender_id),
+            TRADE_PARTY,
+            host.0,
+            None,
+        );
+        let party = launched_party(&mut app).expect("the party left");
+        let party_id = app.world.get::<core_sim::BandId>(party).expect("id").0;
+        handle_recall_expedition(&mut app, faction, party_id);
+        assert!(
+            !app.world.entities().contains(party),
+            "a party that has not left camp is cancelled, not sent on a round trip"
+        );
+
+        // In camp, news in transit: the Returning arm must land it.
+        let mut app = build_world_app();
+        app.world
+            .insert_resource(CommandSenderResource(unbounded::<CommandDelivery>().0));
+        let (sender, host, faction) = two_bands_that_know_each_other(&mut app);
+        let sender_id = app.world.get::<core_sim::BandId>(sender).expect("an id").0;
+        handle_station_expedition(
+            &mut app,
+            faction,
+            Some(sender_id),
+            TRADE_PARTY,
+            host.0,
+            None,
+        );
+        let party = launched_party(&mut app).expect("the party left");
+        let party_id = app.world.get::<core_sim::BandId>(party).expect("id").0;
+        app.world
+            .get_mut::<Expedition>(party)
+            .expect("p")
+            .station_reports
+            .push(core_sim::StationReport {
+                land_turn: u64::MAX,
+                tiles: Vec::new(),
+                sightings: Default::default(),
+            });
+        handle_recall_expedition(&mut app, faction, party_id);
+        assert_eq!(
+            app.world
+                .get::<Expedition>(party)
+                .expect("the party is NOT cancelled while it carries news")
+                .phase,
+            ExpeditionPhase::Returning
         );
     }
 
@@ -26476,6 +27498,7 @@ mod tests {
             QueryPayload::FactionCapacity(sim_runtime::commands::FactionCapacityQuery {
                 width: QUERY_GATE_GRID.x,
                 height: QUERY_GATE_GRID.y,
+                profile_id: String::new(),
             }),
         ] {
             for asker in [UNSEATED_CLIENT, HOME_CLIENT, ConnectionId::INTERNAL] {

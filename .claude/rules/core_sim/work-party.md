@@ -205,6 +205,10 @@ feeding needs no mechanism of its own. The whole take walks home, and a party ca
 separately from its band: if the larder runs dry, the band starves by the ordinary demographic rules,
 and its party with it.
 
+A **stationed party** (`expeditions.md` → "A stationed party") is the same rule for a detached party:
+it carries no larder, and its workers are charged to the home band's meal from launch until fold-back;
+if the larder cannot cover them the band bears the shortfall and the post stands.
+
 > #### RETIRED: an eat-first rule
 >
 > The first caravan had the party eat its upkeep out of its own take before anything was loaded,
@@ -533,8 +537,9 @@ them; they rejoin only as they arrive) and `work_party::tests::a_deep_cut_turns_
 > `shed_unopened_party`: the party takes this turn's step (what lands now lands) and nothing walks
 > home. Pinned by `work_party_caravan::a_far_row_the_shed_trims_sheds_once_and_nobody_walks_home`.
 
-**The hands are away until they arrive.** `LaborAllocation::walking_home` sums the walks' workers;
-`BandWorkforce::walking_home` nets it out of `idle`, `assignable` and `benchable`, and
+**The hands are away until they arrive.** `LaborAllocation::walking_home` sums the **plain** walks'
+workers (a walk that [rejoins its row](#a-re-entered-rows-walkers-rejoin-it-and-are-counted-once) is
+inside that row's `workers` already); `BandWorkforce::walking_home` nets it out of `idle`, `assignable` and `benchable`, and
 `LaborAllocation::normalize` counts it beside the bench in the total it drives down (nothing in the
 shed can shed a walker, so a pool below them strips every row and stops). It rides `SimState` with
 the allocation (save v18) and sits outside the allocation's intent `PartialEq`, as a row's party
@@ -550,7 +555,9 @@ Every path that ends a posting routes through the one step:
   posts a party, so neither reaches the per-posting settlement; the foot of the pass sweeps every row
   still carrying a party that posted nothing this turn, stands it down, and clears `party` — **before**
   the `lapsed` removal, which would otherwise drop the row with its caravan on the road. A re-entered
-  row is plainly local afterwards and publishes no party field.
+  row is plainly local afterwards and publishes no party field. **Its walkers stay on the row**: the
+  sweep marks every walk `rejoins_row` (below); a row the same pass lapses (`herd_gone`) flips them to
+  plain walks as it goes.
 - **Unassign** — `set_assignment` at zero stands the party down in the command (above); the row
   survives as a holding if it holds anything, with no party. A row the shed trims to zero walks
   home whatever its shed left.
@@ -567,11 +574,11 @@ band's fields (`PopulationCohortState`, appended) count every walk:
 
 | field | what it is |
 |---|---|
-| `homewardWorkers` | hands walking home — not idle, on no row; `idleWorkers` already excludes them |
+| `homewardWorkers` | **plain** walkers only — hands walking home, not idle, on no row; `idleWorkers` already excludes them. Hands walking back to a surviving row are in that row's `workers` and are not counted here |
 | `homewardFood` | the food they carry, gross of the walk's rot (a deposit's material is not counted) |
 | `homewardFoodSpoils` | of `homewardFood`, what rots before it lands (`HomewardWalk::food_that_rots`) |
 | `homewardNextLoadIn` | turns until the soonest homeward load lands; `0` = none — the row's `nextLoadHomeIn`, carried past the row's end |
-| `homewardAllHomeIn` | turns until the last homeward hand is back; `0` = nobody walking home |
+| `homewardAllHomeIn` | turns until the last plain walker is back; `0` = nobody walking home |
 
 A row still on the board (`LaborAssignment`, appended) carries the walks whose `target` is its own
 source, by `LaborTarget::same_source` — the identity a row keeps across a floor or crew edit — so a
@@ -579,12 +586,16 @@ cut or unassigned far row can say *"3 walking home"* under itself:
 
 | field | what it is |
 |---|---|
-| `homewardWorkers` | hands from this row walking home |
+| `homewardWorkers` | **plain** walkers from this row — hands that LEFT the row (a cut, an unassign) walking home |
 | `homewardAllHomeIn` | turns until the last of those hands is back; `0` = none |
 | `homewardFood` | the food they carry, gross of the walk's rot |
+| `rejoiningWorkers` | hands of this row walking back to it — already inside `workers`, not at the source until they land |
+| `rejoiningAllHomeIn` | turns until the last of those hands is back; `0` = none |
+| `rejoiningFood` | the food they carry, gross of the walk's rot (a deposit's material is not counted) |
 
 **Both readings are one summation** (`work_party::HomewardTotals::of`, the row's through
-`HomewardTotals::for_source`), so they cannot disagree. A walk whose row is gone (abandoned, lapsed,
+`HomewardTotals::for_source`; the rejoining fields through `HomewardTotals::rejoining_for_source`), so
+they cannot disagree. A walk whose row is gone (abandoned, lapsed,
 cancelled) matches no row and appears on the band only, so the rows' `homewardWorkers` sum to at most
 the band's. Pinned off the encoded row by
 `work_party_caravan::{a_far_row_unassigned_to_zero_publishes_the_hands_walking_home_from_it,
@@ -611,6 +622,66 @@ an_abandoned_rows_walkers_appear_on_the_band_only}`.
 Pinned by `work_party_caravan::a_cancelled_far_hunt_walks_every_pack_home_and_rots_it_by_its_walk`,
 `::a_herd_back_inside_the_apron_walks_its_caravan_home_once` and
 `::a_vanished_herd_walks_its_caravan_home_as_the_row_lapses`, each on the route arm.
+
+## A re-entered row's walkers REJOIN it, and are counted ONCE
+
+A herd that drifts back inside `band_work_range` sends the party home (above), and the row survives as
+a local row at the crew the player set. Its walkers are **that crew's hands on the road**, not a
+second set of hands, so they are counted on the row and nowhere else:
+
+- **`HomewardWalk::rejoins_row`** is set on every walk the unposted sweep makes for a row that
+  survives the pass (`stand_down_party(.., WALKS_BACK_TO_ITS_ROW)`). Every other stand-down
+  (`bring_the_dropped_party_home`, a row held at zero, a row lapsing under its party) walks **plain**
+  (`WALKS_PLAIN`).
+- **Counting.** `LaborAllocation::walking_home` — and so `BandWorkforce::idle / assignable /
+  benchable` and `normalize`'s total — counts **plain walks only**; `assigned_total` counts the row's
+  `workers`, rejoining hands included. A band of eleven holding rows of four and four with three
+  hands on the road home reads idle **3**, not 0: forage 4 + hunt 4 are committed and nothing is
+  counted twice.
+- **Hands present** (`LaborAllocation::hands_present_on` / `hands_present`) = the row's `workers`
+  less its rejoining walkers (`rejoining_to`, matched by `LaborTarget::same_source`). A local row with
+  three of four away takes with one. The crew a row's **take, keeping, kit claims, lessons and
+  caravan posting** are priced on is the hands present; `assignment.workers` still answers "is this
+  row held". The readers of it:
+  - `systems::labor::advance_labor_allocation` — the row walk's `present_hands` (the party's crew,
+    the take crew, the lesson test, the caravan forecasts' keeping hands);
+  - `SiteCrews::of`, `site_keeping_claims` and the keeping asks — a site's keeping is paid by the
+    hands there;
+  - `take_claims::row_claims` (and so `LaborAllocation::item_budget`, the capture's kit lines and the
+    craft suggestions' `take_row_gear`), `LaborAllocation::workers_on_job`;
+  - `extraction::deposit_crew_needed` — the useful-cutters count;
+  - the need-row muster — `MusterKit`, `muster_donors`, `musterable_pool`, `donor_order` and
+    `MusterPricing::other_rows_at` lend only hands that are present.
+- **Landing.** A rejoining walk lands exactly as a plain one does (the route arm, the transit rot by
+  its walk) and changes no head count: the hand is on the row already and is present from then on.
+- **The row goes far again while hands are still walking back.** The party posts with the hands
+  present or arriving as its crew. A rejoining hand that lands on a turn the row posts a party joins
+  it as a `Walker` heading back out empty with the whole walk ahead (`turns_out == walk_turns`, the
+  state a porter is in the moment its pack lands): it is in the party's `workers` and not among
+  `hunters_present` until its walk ends (`post_a_party`'s `returning`).
+- **Every exit routes through ONE helper**, `LaborAllocation::settle_rejoining(ExcessRejoining)`,
+  which restores the invariant *a source's rejoining hands never exceed its row's `workers`* (a source
+  with no row holds none), settling the excess the most `turns_left` first:
+  - `WalkHomePlain` — an unassign, a cut below the rejoining count (`set_assignment` cuts the present
+    hands first, then flips the excess), `abandon` / a zero-crew drop (`drop_source_row`),
+    `cancel_order` (`clear`, `clear_kinds`), a lapse (the removal at the foot of the labor pass) and
+    the sweep's own zero-crew rows: the excess hands become ordinary walkers going home, counted in
+    `walking_home` and landing into idle (`HomewardWalk::split_off` divides a group's cargo with its
+    hands);
+  - `Discard` — the starvation shed (`normalize`) trims a row's `workers` present-first and then
+    rejoining, discarding the excess without walking home, as every hand the shed removes leaves.
+- **Which turn's take is priced on the present hands.** The sweep runs at the foot of the pass, so the
+  turn the herd comes back in is still priced as a local row at the full crew (as it always was); the
+  next pass is the first at which the row's hands present are fewer than its crew.
+
+Pinned off the encoded frame by `work_party_caravan::{a_herd_back_inside_the_apron_does_not_count_its_walkers_twice,
+a_rejoining_rows_hands_are_counted_once_every_turn_until_they_land,
+a_re_entered_rows_take_is_priced_on_the_hands_present,
+a_cut_below_the_rejoining_count_flips_the_excess_to_plain_walkers,
+an_unassign_flips_every_rejoining_walk_to_plain, a_lapse_flips_every_rejoining_walk_to_plain,
+the_shed_discards_the_rejoining_walkers_it_trims,
+a_rejoining_hand_landing_on_a_re_posted_party_walks_back_out_the_whole_walk}`. `SAVE_FORMAT_VERSION`
+37 (the flag rides `LaborAllocation::homeward`).
 
 ## `BandReach` no longer asks about distance
 

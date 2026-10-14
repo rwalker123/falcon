@@ -227,7 +227,9 @@ retired (human food is not animal feed; see `band-readouts.md`). The other is `f
 this turn in the larder or in a caravan pack on the walk home, the "Spoiled" food-ledger row. Beside
 it, the band's stood-down-party walk home (#706): `homeward_workers` / `homeward_next_load_in` /
 `homeward_all_home_in` (`uint`, `as i64`) and `homeward_food` / `homeward_food_spoils` (`float`,
-`f64`), all 0 while nobody walks home. Each work row carries `spoiled_rate_home` and
+`f64`), all 0 while nobody walks home. Each work row also carries `rejoining_workers` /
+`rejoining_all_home_in` (`as i64`) and `rejoining_food` (`f64`): its own hands walking back to it,
+already inside the row's `workers`. Each work row carries `spoiled_rate_home` and
 `transit_keeps_turns` (`float`) beside `net_rate_home`, which is NET of that rot; the
 `WorkPartyForecastReply` decode (`bridge/query.rs`) carries the same pair beside `rate_home`. Each
 row also carries `fodder_rate_home` (`float`) and `materials_rate_home` (`material_yield`'s

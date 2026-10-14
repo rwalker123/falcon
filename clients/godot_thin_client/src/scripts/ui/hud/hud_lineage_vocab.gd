@@ -38,14 +38,16 @@ const VALUE_FORMAT := "%d / %d"
 const MEMBER_VALUE_FORMAT := "%d families · %d"
 const PEOPLE_VALUE_FORMAT := "+%d families"
 const FADING_SUFFIX := " · fading"
-const CONTACT_NOTE := "Contact with other factions raises the limit."
+const CONTACT_NOTE := "Contact with unrelated peoples raises the limit."
 
 # ---- the bullet under the row ---------------------------------------------------------------------
 ## The amber bullet's lead mark — the work board's `◆`, so a warning reads the same on every tab.
 const BULLET_MARK := "◆"
-const BULLET_OVER_LIMIT := "Over the limit. Find another faction to grow again."
-const BULLET_KIN := "Too closely related. Meet another faction to grow."
-const BULLET_ROOM_FORMAT := "Room for %d more. Meet another faction to grow."
+## UNRELATED, not "another faction": a people that broke off from yours carries copies of your
+## lines, and a shared line counts once, so meeting it raises nothing (#690).
+const BULLET_OVER_LIMIT := "Over the limit. Meet an unrelated people to grow again."
+const BULLET_KIN := "Too closely related. Meet an unrelated people to grow."
+const BULLET_ROOM_FORMAT := "Room for %d more. Meet an unrelated people to grow."
 ## The line under the faction row when bands have lost touch with the main group (one / several).
 const BULLET_OUT_ONE_FORMAT := "%s is out of touch. Bring it back to share the limit."
 const BULLET_OUT_MANY_FORMAT := "%d bands are out of touch. Bring them back to share the limit."

@@ -1489,3 +1489,13 @@ upper-right, the dashed ring round the herd and its orange arrow drawn with noth
 The claims are `MapView.unit_follows_herd` true for the first band and false for the second, the
 followed set equal to exactly the one herd, and — on the same snapshot with the flag off — an empty set
 and no badge, the pair without which "the badge draws" passes on a renderer that draws it for everyone.
+
+## `map_remembered_bands` (map_preview) and `remembered_band_hover` (ui_preview, station chapter)
+
+`map_preview._remembered_band_states` — turn 40; one live band (own tile), three ghosts whose news is
+0 / 15 / 30 turns old at tie strengths 0.0 / 0.5 / 1.0 (strength runs opposite to freshness on purpose),
+a subject that is live (no ghost), an older sighting of the 15-turn subject (no ghost there), a host the
+viewer has a `stationed` party with (no ghost) and one a party is only `outbound` to (ghost stays).
+Asserts the mean |dL| against the tie-less frame grades by age (fresh > middle > oldest > 0), the
+suppression pair, the latest-sighting / `news_age` resolution, the tile-info rows and the hover sentence.
+`ui_preview/chapters/station.gd` renders the HUD tooltip for the same shape (`remembered_band_hover.png`).

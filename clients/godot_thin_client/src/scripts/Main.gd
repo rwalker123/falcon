@@ -116,20 +116,20 @@ const DEV_DEFAULT_NEW_GAME := {
     # The seed is TEXT the whole way to the socket — see `new_game_line`.
     "seed": "0",
     "profile_id": "late_forager_tribe",
-    # No rival count: a direct `Main.tscn` launch never saw the New Game screen, so it has no pick to
-    # forward and the argument is omitted. **The server resolves an absent field to its UNATTENDED
-    # roster — no rivals** (`worldgen::unattended_ai_faction_count`), unless `simulation_config.json`
-    # pins `default_ai_faction_count`. That is still a different REQUEST from an explicit 0, which
-    # names the count whatever the config says; it simply lands on the same world by default.
-    "ai_faction_count": FactionCapacity.NO_COUNT,
+    # No counts: a direct `Main.tscn` launch never saw the New Game screen, so it has no picks to
+    # forward and no `<id>=<count>` token is appended. **The server resolves an omitted archetype to
+    # its UNATTENDED count** — the archetype's own `default_count` pin in `start_profiles.json`, else
+    # 0. That is still a different REQUEST from an explicit `count: 0`, which names the count whatever
+    # the profile pins.
+    "archetype_counts": [],
 }
-## How the boot line reports the rival count it asked for. The absent-field case keeps a phrase of
-## its own because it is a distinct REQUEST from asking for none — it names no count, and the server
-## answers it with its unattended roster (no rivals, unless its config pins some).
-const RIVALS_MESSAGE_DEFAULT := "no count sent (the server's unattended roster)"
-const RIVALS_MESSAGE_NONE := "no rivals"
-const RIVALS_MESSAGE_ONE := "1 rival"
-const RIVALS_MESSAGE_FORMAT := "%d rivals"
+## How the boot line reports the counts it asked for. The no-counts case keeps a phrase of its own
+## because it is a distinct REQUEST from asking for none — it names no count, and the server answers it
+## with its unattended roster.
+const PEOPLES_MESSAGE_DEFAULT := "no counts sent (the server's unattended roster)"
+const PEOPLES_MESSAGE_NONE := "no other peoples"
+## One `<id>=<count>` token of the `new_game` line, and the joiner of the boot line's summary.
+const ARCHETYPE_TOKEN_FORMAT := "%s=%d"
 
 const STREAM_HOST = "127.0.0.1"
 const STREAM_PORT = 41002
@@ -397,6 +397,8 @@ func _ready() -> void:
             hud.connect("send_denial_raid_requested", Callable(self, "_on_hud_send_denial_raid"))
         if hud.has_signal("send_trade_expedition_requested") and not hud.is_connected("send_trade_expedition_requested", Callable(self, "_on_hud_send_trade_expedition")):
             hud.connect("send_trade_expedition_requested", Callable(self, "_on_hud_send_trade_expedition"))
+        if hud.has_signal("station_expedition_requested") and not hud.is_connected("station_expedition_requested", Callable(self, "_on_hud_station_expedition")):
+            hud.connect("station_expedition_requested", Callable(self, "_on_hud_station_expedition"))
         if hud.has_signal("recall_expedition_requested") and not hud.is_connected("recall_expedition_requested", Callable(self, "_on_hud_recall_expedition")):
             hud.connect("recall_expedition_requested", Callable(self, "_on_hud_recall_expedition"))
         if hud.has_signal("split_band_requested") and not hud.is_connected("split_band_requested", Callable(self, "_on_hud_split_band")):
@@ -677,18 +679,16 @@ func _build_world_request() -> void:
     else:
         seed_text = MenuShell.seed_digits(seed_text)
     var profile := String(params.get("profile_id", DEV_DEFAULT_NEW_GAME["profile_id"]))
-    # **HOW MANY RIVAL PEOPLES, OR NO ANSWER AT ALL.** The count is the command's one OPTIONAL
-    # argument, and omitting it is not the same request as sending 0: absent names no count and the
-    # server answers it with its UNATTENDED roster — no rivals, unless `simulation_config.json` pins
-    # `default_ai_faction_count` — while 0 is a player who chose to be alone whatever that config
-    # says. So a `FactionCapacity.NO_COUNT` (the New Game screen never got a ceiling to offer a
-    # choice from, or the scene was launched directly) appends nothing rather than guessing.
-    var rivals := int(params.get("ai_faction_count", FactionCapacity.NO_COUNT))
-    if rivals < 0:
-        rivals = FactionCapacity.NO_COUNT
+    # **HOW MANY PEOPLES OF EACH ARCHETYPE, OR NO ANSWER AT ALL.** The counts are the command's OPTIONAL
+    # tail, one `<id>=<count>` token per archetype, and omitting one is not the same request as sending
+    # 0: an absent id names no count and the server answers it with that archetype's UNATTENDED count,
+    # while 0 is a player who chose none whatever the profile pins. So an empty list (the New Game
+    # screen never got an answer to offer a choice from, or the scene was launched directly) appends
+    # nothing rather than guessing.
+    var counts := _sanitized_archetype_counts(params.get("archetype_counts", []))
     _new_game_command = {
-        "line": new_game_line(preset, width, height, seed_text, profile, rivals),
-        "message": "New game: %s (%dx%d) seed %s, %s." % [preset, width, height, seed_text, _rivals_message(rivals)],
+        "line": new_game_line(preset, width, height, seed_text, profile, counts),
+        "message": "New game: %s (%dx%d) seed %s, %s." % [preset, width, height, seed_text, _peoples_message(counts)],
     }
     # The POST-fallback, post-clamp values, so a re-armed launch asks for exactly the world this run
     # got — including when the fallback is what supplied them.
@@ -699,33 +699,55 @@ func _build_world_request() -> void:
             "height": height,
             "seed": seed_text,
             "profile_id": profile,
-            "ai_faction_count": rivals,
+            "archetype_counts": counts,
         })
 
 ## **THE `new_game` LINE, INCLUDING WHETHER IT CARRIES A COUNT AT ALL.** Static and pure, so the one
 ## rule that decides between "2 rivals" and "none" is reachable from a harness without standing a
-## whole client up — `menu_preview` asserts the count the screen SHOWS is the count this appends, and
-## that the seed reaches this line digit for digit.
+## whole client up — `menu_preview` asserts the counts the screen SHOWS are the counts this appends,
+## per archetype, and that the seed reaches this line digit for digit.
 ##
 ## **`seed_text` IS THE SEED'S DIGITS, substituted with `%s`.** The command is text and the server
 ## parses it as a u64, so there is no number to round-trip through: a `%d` over a GDScript `int`
 ## would cap the top half of the u64 range at 9223372036854775807 and ask for a different world than
 ## the one named. Callers hand digits a `MenuShell.seed_error` accepts.
 static func new_game_line(preset: String, width: int, height: int, seed_text: String,
-        profile: String, rivals: int) -> String:
-    var rivals_suffix := "" if rivals == FactionCapacity.NO_COUNT else " %d" % rivals
-    return "new_game %s %d %d %s %s%s" % [preset, width, height, seed_text, profile, rivals_suffix]
+        profile: String, archetype_counts: Array) -> String:
+    var line := "new_game %s %d %d %s %s" % [preset, width, height, seed_text, profile]
+    for entry in _sanitized_archetype_counts(archetype_counts):
+        line += " " + ARCHETYPE_TOKEN_FORMAT % [String(entry["id"]), int(entry["count"])]
+    return line
 
-## The boot line's words for a rival count — the four cases the count actually has, since "1 rivals"
-## and "0 rivals" both misreport what was asked for.
-func _rivals_message(count: int) -> String:
-    if count == FactionCapacity.NO_COUNT:
-        return RIVALS_MESSAGE_DEFAULT
-    if count == 0:
-        return RIVALS_MESSAGE_NONE
-    if count == 1:
-        return RIVALS_MESSAGE_ONE
-    return RIVALS_MESSAGE_FORMAT % count
+## **THE ENTRIES THAT CAN BECOME A TOKEN.** The line is whitespace-split and each token is split on `=`,
+## so an id that is empty or holds either would corrupt its neighbours; a negative count is
+## `FactionCapacity.NO_COUNT`, "not offered a choice", which is the absence of a token. Both are
+## dropped rather than sent. Order is kept — the server hands roster ids out in catalog order.
+static func _sanitized_archetype_counts(raw) -> Array:
+    var out: Array = []
+    if not (raw is Array):
+        return out
+    for entry in (raw as Array):
+        if not (entry is Dictionary):
+            continue
+        var id := String((entry as Dictionary).get("id", ""))
+        var count := int((entry as Dictionary).get("count", FactionCapacity.NO_COUNT))
+        if id.is_empty() or id.contains("=") or id.contains(" ") or count < 0:
+            continue
+        out.append({"id": id, "count": count})
+    return out
+
+## The boot line's words for the counts it sent — "none" and "nothing named" are different requests.
+func _peoples_message(counts: Array) -> String:
+    if counts.is_empty():
+        return PEOPLES_MESSAGE_DEFAULT
+    var parts: PackedStringArray = []
+    var total := 0
+    for entry in counts:
+        parts.append(ARCHETYPE_TOKEN_FORMAT % [String(entry["id"]), int(entry["count"])])
+        total += int(entry["count"])
+    if total == 0:
+        return PEOPLES_MESSAGE_NONE
+    return ", ".join(parts)
 
 ## Send the pending world request. A `new_game` goes through the SAME transport MapPanel uses for
 ## map_size (inspector.send_runtime_command → command socket); a `load_game` goes through the save
@@ -930,6 +952,8 @@ func _apply_snapshot(snapshot: Dictionary) -> void:
     # is not expected to skip; the wins are the quiet sections — `intensification_knowledge`,
     # `discovered_sites`, `faction_inventory`, `food_modules`, `sedentarization`.
     _hud_invoke("update_overlay", [snapshot.get("turn", 0), metrics])
+    if map_view != null and map_view.has_method("set_current_turn"):
+        map_view.set_current_turn(int(snapshot.get("turn", 0)))
     if snapshot.has("server_build"):
         _hud_invoke("update_build_info", [String(snapshot["server_build"])])
     if snapshot.has("sedentarization") and SnapshotSections.changed(snapshot, "sedentarization"):
@@ -1007,6 +1031,9 @@ func _apply_snapshot(snapshot: Dictionary) -> void:
     # whole section: absence means unchanged, so a quiet turn leaves the ties standing.
     if snapshot.has("connections") and SnapshotSections.changed(snapshot, "connections"):
         _hud_invoke("update_connections", [snapshot["connections"]])
+        # …and the map, which draws a ghost marker for every tied band it cannot currently see.
+        if map_view != null and map_view.has_method("set_connections"):
+            map_view.set_connections(snapshot["connections"])
     if snapshot.has("kits") and SnapshotSections.changed(snapshot, "kits"):
         # The KIT ROSTER + the FIVE job defaults, forwarded as ONE call: the compose sheets' pickers
         # need the list and the "what does the verb take when I name none" answer together, and a
@@ -1557,6 +1584,28 @@ static func format_send_denial_raid(payload: Dictionary) -> Dictionary:
         # The receipt states the whole order, because the whole order is two things: a herd and a
         # party. There is no third clause to quote and none to omit.
         "message": "Send denial raid (%d) against %s." % [party_workers, fauna_label],
+    }
+
+## `station_expedition <faction_id> <band_id> <party_workers> <host_band_id>` (issue #774).
+##
+## A stationed party posts some of a band's people at a band it holds a LIVE tie with. The grammar
+## has an optional `kit <id>` tail, which this client never sends: the server defaults the kit, so
+## there is nothing for the player to choose. Its own builder because its own command (the
+## `format_send_trade_expedition` precedent) — it names a HOST band and nothing else.
+static func format_station_expedition(payload: Dictionary) -> Dictionary:
+    var band_id := int(payload.get("band_id", HudConst.NO_BAND_ID))
+    var host_band_id := int(payload.get("host_band_id", HudConst.NO_BAND_ID))
+    var party_workers := int(payload.get("party_workers", 0))
+    if band_id == HudConst.NO_BAND_ID or host_band_id == HudConst.NO_BAND_ID or party_workers <= 0:
+        return {}
+    var faction := int(payload.get("faction", HudConst.PLAYER_FACTION_ID))
+    var host_label := String(payload.get("host_label", "")).strip_edges()
+    var message := "Station %d people with a tied band." % party_workers
+    if host_label != "":
+        message = "Station %d people with %s." % [party_workers, host_label]
+    return {
+        "line": "station_expedition %d %d %d %d" % [faction, band_id, party_workers, host_band_id],
+        "message": message,
     }
 
 ## `send_trade_expedition <faction_id> <band_id> <party_workers> <destination_band_id>`
@@ -2374,6 +2423,11 @@ func _on_hud_send_denial_raid(payload: Dictionary) -> void:
 ## — the manifest tail no other party verb has; see `format_send_trade_expedition`.
 func _on_hud_send_trade_expedition(payload: Dictionary) -> void:
     _send_formatted_command(format_send_trade_expedition(payload))
+
+## The player posted people at a tied band (issue #774). Its own handler because its own command —
+## see `format_station_expedition`.
+func _on_hud_station_expedition(payload: Dictionary) -> void:
+    _send_formatted_command(format_station_expedition(payload))
 
 ## Extend a built pen by one fenced ring (Grazing 2d-γ). The server works the ring off over ~25
 ## turns (rejecting at max radius / unowned / Herding-unknown with a feed message).

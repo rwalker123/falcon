@@ -1,7 +1,7 @@
 //! **`sim_ai bench`** — the harness (`docs/plan_ai_driver.md` §8.1 → Bench, §8.3).
 //!
-//! For each seed: write a scratch config from the shipped one with `map_seed` and
-//! `default_ai_faction_count` pinned and the port block moved to a free private base; start the
+//! For each seed: write a scratch config from the shipped one with `map_seed` pinned and the port
+//! block moved to a free private base; start the
 //! built `server` on it; ask it (`FactionCapacity`) whether the world seats the rivals requested;
 //! build the world with `new_game` from an unseated connection; spawn one `sim_ai` per requested
 //! seat with `--turns` and `--log-dir`; wait for them all; kill the server. Then read every seat's
@@ -41,7 +41,7 @@ use std::str::FromStr;
 use std::time::{Duration, Instant};
 
 use clap::Parser;
-use sim_runtime::commands::{FactionCapacityQuery, QueryPayload};
+use sim_runtime::commands::{ArchetypeCount, FactionCapacityQuery, QueryPayload};
 use sim_runtime::{CommandPayload, QueryReply};
 use tracing::info;
 
@@ -126,6 +126,9 @@ impl fmt::Display for MapSize {
 
 pub const MAP_PRESET: &str = "earthlike";
 pub const START_PROFILE: &str = "late_forager_tribe";
+/// **The start archetype a bench's rivals are** - the profile's first, the same kind of people as
+/// the human seat (`start_profiles.json` `archetypes[0].id`).
+pub const RIVAL_ARCHETYPE: &str = "major";
 /// The seat the bench holds while the rivals claim theirs (`HudConst.PLAYER_FACTION_ID`).
 const HUMAN_SEAT: u32 = 0;
 /// **The seeds a bench plays when `--seeds` is not given.** Eight Standard `earthlike` starts
@@ -143,10 +146,7 @@ pub const DEFAULT_TURNS: u64 = 60;
 
 /// The config keys the bench rewrites.
 const KEY_MAP_SEED: &str = "map_seed";
-const KEY_AI_FACTION_COUNT: &str = "default_ai_faction_count";
 /// The keys the bench reads back to hold the world to the shipped one (tests only).
-#[cfg(test)]
-const KEY_START_SEPARATION: &str = "faction_start_min_separation";
 #[cfg(test)]
 const KEY_MAP_PRESET: &str = "map_preset_id";
 #[cfg(test)]
@@ -588,7 +588,7 @@ fn run_seed(
     let saves = seed_dir.join(SAVES_DIR);
     fs::create_dir_all(&saves).map_err(|source| io_at(&saves, source))?;
     let rivals = u32::try_from(args.seats.len()).expect("a handful of seats");
-    let config_path = write_config(base_config, seed, rivals, seed_dir)?;
+    let config_path = write_config(base_config, seed, seed_dir)?;
     let ports_path = seed_dir.join(PORTS_FILE);
     let server_log = seed_dir.join(SERVER_LOG_FILE);
 
@@ -627,12 +627,23 @@ fn run_seed(
         let (width, height) = args.map_size.dimensions();
         let capacity = builder
             .ask(
-                QueryPayload::FactionCapacity(FactionCapacityQuery { width, height }),
+                QueryPayload::FactionCapacity(FactionCapacityQuery {
+                    width,
+                    height,
+                    profile_id: START_PROFILE.to_owned(),
+                }),
                 CAPACITY_QUERY_TIMEOUT,
             )
             .map_err(|err| world_build(err.to_string()))?;
+        // The rivals are the profile's RIVAL archetype; its ceiling is the first archetype's
+        // (`site_count - 1`: nothing has been placed ahead of it but the human seat - the
+        // `ArchetypeCapacity` contract in `command.proto`).
         let max_rivals = match capacity {
-            QueryReply::FactionCapacity(reply) => reply.max_ai_faction_count,
+            QueryReply::FactionCapacity(reply) => reply
+                .archetypes
+                .iter()
+                .find(|row| row.id == RIVAL_ARCHETYPE)
+                .map_or(0, |row| row.site_count.saturating_sub(1)),
             other => {
                 return Err(world_build(format!(
                     "the capacity question was answered with {other:?}"
@@ -656,7 +667,10 @@ fn run_seed(
                 height,
                 seed,
                 profile_id: START_PROFILE.to_owned(),
-                ai_faction_count: Some(rivals),
+                archetype_counts: vec![ArchetypeCount {
+                    id: RIVAL_ARCHETYPE.to_owned(),
+                    count: rivals,
+                }],
             })
             .and_then(|()| builder.sync(WORLD_BUILD_TIMEOUT))
             .map_err(|err| world_build(err.to_string()))?;
@@ -709,17 +723,16 @@ fn run_seed(
     Ok(())
 }
 
-/// The shipped config with the seed and the rival count pinned and the port block moved to a
-/// free base. Nothing else moves: the separation is the shipped one, so the world is the menu's.
+/// The shipped config with the seed pinned and the port block moved to a free base. Nothing else
+/// moves: the start separations live in the start profile, so the world is the menu's. The rival
+/// count rides the `new_game` command, not this file.
 fn write_config(
     base: &serde_json::Value,
     seed: u64,
-    rivals: u32,
     seed_dir: &Path,
 ) -> Result<PathBuf, BenchError> {
     let mut json = base.clone();
     json[KEY_MAP_SEED] = serde_json::Value::from(seed);
-    json[KEY_AI_FACTION_COUNT] = serde_json::Value::from(u64::from(rivals));
     let port_base = free_port_base()?;
     for (key, offset) in [
         (KEY_PORT_BASE_BIND, 0),
@@ -980,14 +993,26 @@ mod tests {
         let base: serde_json::Value = serde_json::from_str(SHIPPED_CONFIG).expect("JSON");
         let dir = std::env::temp_dir().join(format!("sim_ai_bench_config_{}", std::process::id()));
         fs::create_dir_all(&dir).unwrap();
-        let path = write_config(&base, 11, 2, &dir).expect("writes");
+        let path = write_config(&base, 11, &dir).expect("writes");
         let json: serde_json::Value =
             serde_json::from_str(&fs::read_to_string(path).unwrap()).unwrap();
         assert_eq!(json[KEY_MAP_SEED], 11);
-        assert_eq!(json[KEY_AI_FACTION_COUNT], 2);
         assert_eq!(
-            json[KEY_START_SEPARATION], base[KEY_START_SEPARATION],
-            "the separation is the shipped one, not a bench fixture's"
+            json,
+            {
+                let mut expected = base.clone();
+                for key in [
+                    KEY_MAP_SEED,
+                    KEY_PORT_BASE_BIND,
+                    KEY_COMMAND_BIND,
+                    KEY_SNAPSHOT_FLAT_BIND,
+                    KEY_LOG_BIND,
+                ] {
+                    expected[key] = json[key].clone();
+                }
+                expected
+            },
+            "nothing but the seed and the port block moves: the world is the shipped one"
         );
         assert_eq!(json[KEY_MAP_PRESET], MAP_PRESET);
         assert_eq!(json[KEY_START_PROFILE], START_PROFILE);

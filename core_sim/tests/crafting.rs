@@ -91,6 +91,7 @@ fn cohort(working: f32, stores: LocalStore) -> PopulationCohort {
         morale: scalar_one(),
         last_food_consumption: 0.0,
         last_food_need: 0.0,
+        fed_party_workers: Default::default(),
         last_food_spoiled: 0.0,
         last_turn_food_transfers: Default::default(),
         last_turn_fodder_transfers: Default::default(),
@@ -752,7 +753,8 @@ const FIXTURE_EQUIPMENT: &str = r#"{
   "default_kits": { "hunt": "big_game", "forage": "none", "scout": "none", "warrior": "none", "agriculture": "none", "husbandry": "none", "builders": "none", "roadwork": "none", "expedition": "none", "extract": "none", "quarrywork": "none" },
   "quarry_default_kit_margin": 0.25,
   "start_stock_fraction": 1.5,
-  "life_readout": { "warn_fraction": 0.34, "danger_fraction": 0.10 }
+  "life_readout": { "warn_fraction": 0.34, "danger_fraction": 0.10 },
+            "wear_forecast": { "window_turns": 10 }
 }"#;
 
 /// **A PASS THAT MAKES THREE MAKES THREE.** `RecipeOutput::amount` used to be read by nothing on

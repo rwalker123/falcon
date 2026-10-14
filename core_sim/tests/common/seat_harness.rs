@@ -36,6 +36,8 @@ pub const START_PROFILE: &str = "late_forager_tribe";
 pub const MAP_SEED: u64 = 11;
 /// One rival, so there is a seat for the AI to fill.
 pub const ONE_RIVAL: u32 = 1;
+/// The start archetype the test's rival is (`start_profiles.json` `archetypes[0].id`).
+pub const RIVAL_ARCHETYPE: &str = "major";
 /// The shipped separation seats one faction on a map this small; shrunk so a rival is seated.
 pub const TEST_START_SEPARATION: u32 = 6;
 pub const RIVAL_SEAT: u32 = 1;
@@ -98,6 +100,7 @@ pub fn start_server(case: &str, port_base: u16, record_dir: Option<&Path>) -> Se
     let saves = scratch.dir.join("saves");
     fs::create_dir_all(&saves).expect("scratch save directory");
     let config_path = write_test_config(&scratch.dir, port_base);
+    let profiles_path = write_test_start_profiles(&scratch.dir);
     let ports_path = scratch.dir.join("ports.json");
     let log_path = scratch.dir.join("server.log");
 
@@ -108,6 +111,7 @@ pub fn start_server(case: &str, port_base: u16, record_dir: Option<&Path>) -> Se
         .current_dir(&scratch.dir)
         .env("SIM_SAVE_DIR", &saves)
         .env("SIM_CONFIG_PATH", &config_path)
+        .env("START_PROFILES_PATH", &profiles_path)
         .env("SIM_PORTS_FILE", &ports_path)
         .env("RUST_LOG", SERVER_LOG_FILTER)
         .env_remove("SIM_PORT_BASE")
@@ -130,8 +134,7 @@ pub fn start_server(case: &str, port_base: u16, record_dir: Option<&Path>) -> Se
     }
 }
 
-/// The shipped config, its port block moved, its separation shrunk, its seed and rival count
-/// pinned.
+/// The shipped config, its port block moved and its seed pinned.
 fn write_test_config(dir: &Path, port_base: u16) -> PathBuf {
     let shipped = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/data/simulation_config.json");
     let raw = fs::read_to_string(&shipped).expect("the shipped simulation config reads");
@@ -146,16 +149,35 @@ fn write_test_config(dir: &Path, port_base: u16) -> PathBuf {
     ] {
         json[key] = serde_json::Value::String(addr.to_string());
     }
-    json["faction_start_min_separation"] =
-        serde_json::Value::from(u64::from(TEST_START_SEPARATION));
     json["map_seed"] = serde_json::Value::from(MAP_SEED);
-    json["default_ai_faction_count"] = serde_json::Value::from(u64::from(ONE_RIVAL));
     let path = dir.join("simulation_config.json");
     fs::write(
         &path,
         serde_json::to_string_pretty(&json).expect("serialises"),
     )
     .expect("writes");
+    path
+}
+
+/// The shipped start profiles with every archetype's separation shrunk to
+/// [`TEST_START_SEPARATION`] - the separation lives in the profile now, not in
+/// `simulation_config.json`.
+fn write_test_start_profiles(dir: &Path) -> PathBuf {
+    let shipped = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/data/start_profiles.json");
+    let raw = fs::read_to_string(&shipped).expect("the shipped start profiles read");
+    let mut json: serde_json::Value =
+        serde_json::from_str(&raw).expect("the shipped start profiles are JSON");
+    for profile in json["profiles"].as_array_mut().expect("profiles") {
+        for archetype in profile["archetypes"].as_array_mut().expect("archetypes") {
+            archetype["min_separation"] = serde_json::Value::from(u64::from(TEST_START_SEPARATION));
+        }
+    }
+    let path = dir.join("start_profiles.json");
+    fs::write(
+        &path,
+        serde_json::to_string_pretty(&json).expect("the patched profiles serialise"),
+    )
+    .expect("the patched profiles write");
     path
 }
 
@@ -204,7 +226,10 @@ pub fn new_game() -> CommandPayload {
         height: MAP_HEIGHT,
         seed: MAP_SEED,
         profile_id: START_PROFILE.to_string(),
-        ai_faction_count: Some(ONE_RIVAL),
+        archetype_counts: vec![sim_runtime::ArchetypeCount {
+            id: RIVAL_ARCHETYPE.to_string(),
+            count: ONE_RIVAL,
+        }],
     }
 }
 

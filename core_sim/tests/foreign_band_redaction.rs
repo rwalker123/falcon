@@ -39,6 +39,9 @@ struct PublishedRow {
     name: String,
     position: (u32, u32),
     size: u32,
+    /// The marker the client draws, as `(id, label, icon)`. Published on a redacted row because it
+    /// is a pure function of `size`.
+    stage: (String, String, String),
     // …and everything below this line is what a foreign band must NOT say.
     morale: i64,
     turns_of_food: f32,
@@ -77,6 +80,7 @@ impl PublishedRow {
                 name: self.name.clone(),
                 position: self.position,
                 size: self.size,
+                stage: self.stage.clone(),
                 ..PublishedRow::default()
             }
     }
@@ -106,6 +110,16 @@ fn published_rows(app: &App) -> Vec<PublishedRow> {
             name: row.name().unwrap_or_default().to_string(),
             position: (row.currentX(), row.currentY()),
             size: row.size(),
+            stage: row
+                .settlementStage()
+                .map(|stage| {
+                    (
+                        stage.id().unwrap_or_default().to_string(),
+                        stage.label().unwrap_or_default().to_string(),
+                        stage.icon().unwrap_or_default().to_string(),
+                    )
+                })
+                .unwrap_or_default(),
             morale: row.morale(),
             turns_of_food: row.turnsOfFood(),
             age_turns: row.ageTurns(),
@@ -326,5 +340,54 @@ fn fog_off_reveals_where_a_foreign_band_is_and_still_says_nothing_about_it() {
     assert!(
         row.is_fully_redacted(),
         "fog decides what you can SEE, never what you are entitled to KNOW: {row:?}"
+    );
+}
+
+/// A band size that clears the shipped second stage's `min_size` (50 in `settlement_stage_config`),
+/// so the stage under test is a non-default one rather than the always-matching opening stage.
+const CAMP_SIZED_BAND: u32 = 60;
+
+/// ⛔ **A foreign band's marker is drawn from the stage, so the redacted row must carry it — and it
+/// must be the stage the owner's own row publishes for the same band.**
+///
+/// Left at default the client draws a gray box. Compared across two captures of ONE world (the
+/// viewer swapped), on the encoded envelope.
+#[test]
+fn a_foreign_band_publishes_the_same_settlement_stage_its_owner_does() {
+    let (mut app, _, rival_band) = a_rival_in_plain_sight();
+    let (_, rival_entity) = opening_band(&mut app, RIVAL);
+    // `simulate_population` re-derives `size` from the brackets each turn, so the brackets are what
+    // has to be set.
+    let mut cohort = app
+        .world
+        .get_mut::<PopulationCohort>(rival_entity)
+        .expect("the rival band exists");
+    cohort.children = core_sim::Scalar::from_u32(0);
+    cohort.elders = core_sim::Scalar::from_u32(0);
+    cohort.working = core_sim::Scalar::from_u32(CAMP_SIZED_BAND);
+    cohort.size = CAMP_SIZED_BAND;
+    run_turn(&mut app);
+
+    let as_seen_by_stranger = row_for(&app, rival_band).expect("the rival is in view");
+    app.world.insert_resource(core_sim::ViewerFaction(RIVAL));
+    run_turn(&mut app);
+    let as_seen_by_owner = row_for(&app, rival_band).expect("the rival's own band is published");
+
+    assert!(
+        !as_seen_by_stranger.stage.0.is_empty() && !as_seen_by_stranger.stage.2.is_empty(),
+        "liveness: the redacted row carries a stage id and icon: {as_seen_by_stranger:?}"
+    );
+    assert_eq!(
+        as_seen_by_stranger.stage.0, "camp",
+        "a camp-sized band resolves the non-default stage: {as_seen_by_stranger:?}"
+    );
+    assert_eq!(
+        as_seen_by_stranger.stage, as_seen_by_owner.stage,
+        "observer and owner agree on the stage (sizes {} vs {})",
+        as_seen_by_stranger.size, as_seen_by_owner.size
+    );
+    assert!(
+        as_seen_by_owner.size >= CAMP_SIZED_BAND / 2,
+        "the band is still camp-sized: {as_seen_by_owner:?}"
     );
 }

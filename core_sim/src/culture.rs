@@ -788,10 +788,23 @@ impl CultureManager {
     /// Seeding neutral would make every new band maximally diverged from its own home and trip a
     /// schism for existing. If the parent region is missing the seed falls back to neutral.
     pub fn attach_band(&mut self, band: BandId, parent_region: CultureLayerId) -> CultureLayerId {
+        self.attach_band_with_lean(band, parent_region, None)
+    }
+
+    /// [`attach_band`](Self::attach_band) for a **starting** band that carries its people's
+    /// [`StartingCultureLean`]: the lean is added to the seeded character offset on the band's
+    /// culture MODIFIER (clamped to the trait range), never to the baseline - the baseline relaxes
+    /// back to the parent province, so only the modifier makes the lean persist.
+    pub fn attach_band_with_lean(
+        &mut self,
+        band: BandId,
+        parent_region: CultureLayerId,
+        lean: Option<&StartingCultureLean>,
+    ) -> CultureLayerId {
         let seed = self
             .regional_layer_by_id(parent_region)
             .map(|parent| *parent.traits.values());
-        self.insert_band_layer(band, parent_region, seed)
+        self.insert_band_layer(band, parent_region, seed, lean)
     }
 
     /// [`attach_band`](Self::attach_band) for a band that **came from somewhere** — the half a band
@@ -821,7 +834,7 @@ impl CultureManager {
             .band_layer_by_owner(CultureOwner::from_band(source))
             .map(|layer| *layer.traits.values())
         {
-            Some(seed) => self.insert_band_layer(band, parent_region, Some(seed)),
+            Some(seed) => self.insert_band_layer(band, parent_region, Some(seed), None),
             None => self.attach_band(band, parent_region),
         }
     }
@@ -834,6 +847,7 @@ impl CultureManager {
         band: BandId,
         parent_region: CultureLayerId,
         seed: Option<[Scalar; CULTURE_TRAIT_AXES]>,
+        lean: Option<&StartingCultureLean>,
     ) -> CultureLayerId {
         let owner = CultureOwner::from_band(band);
         if let Some(layer) = self.bands.get(&owner.0) {
@@ -850,6 +864,12 @@ impl CultureManager {
         };
         *layer.traits.modifier_mut() =
             seeded_modifiers_for_band(band, self.settings.band_character_amplitude);
+        if let Some(lean) = lean {
+            let span = scalar_from_f32(CULTURE_TRAIT_SPAN);
+            for (slot, offset) in layer.traits.modifier_mut().iter_mut().zip(lean.0) {
+                *slot = (*slot + offset).clamp(-span, span);
+            }
+        }
         self.bands.insert(owner.0, layer);
         id
     }
@@ -1488,6 +1508,16 @@ impl Default for CultureManager {
     }
 }
 
+/// **The cultural lean a STARTING band is born with** - its people's drawn personality
+/// (`personalities.json`), as a per-axis offset.
+///
+/// Worldgen inserts it on every starting band; [`reconcile_band_culture_layers`] consumes it when
+/// it creates the band's layer (`attach_band_with_lean` adds it to the culture modifier) and
+/// REMOVES it, so it is applied exactly once. A band split off another never carries one: fission
+/// inherits from its source band as it always has.
+#[derive(Component, Debug, Clone, Copy, PartialEq)]
+pub struct StartingCultureLean(pub [Scalar; CULTURE_TRAIT_AXES]);
+
 /// Spreads consecutive band ids apart before they are folded into a wave — the single-id twin of
 /// the tile seed's `x * 31 + y * 17`.
 const BAND_SEED_STRIDE: u64 = 31;
@@ -1555,13 +1585,22 @@ pub fn culture_region_at(province_map: Option<&ProvinceMap>, position: UVec2) ->
 /// province a band is reconciled against is the one it *starts* the turn on. Worldgen-spawned bands
 /// therefore get their layers on the first `Update`, before the turn's snapshot is captured.
 pub fn reconcile_band_culture_layers(
+    mut commands: Commands,
     mut manager: ResMut<CultureManager>,
     province_map: Option<Res<ProvinceMap>>,
-    bands: Query<(&BandId, &PopulationCohort), With<ResidentBand>>,
+    bands: Query<
+        (
+            Entity,
+            &BandId,
+            &PopulationCohort,
+            Option<&StartingCultureLean>,
+        ),
+        With<ResidentBand>,
+    >,
     tiles: Query<&Tile>,
 ) {
     let mut live: Vec<u64> = Vec::with_capacity(bands.iter().len());
-    for (band, cohort) in bands.iter() {
+    for (entity, band, cohort, lean) in bands.iter() {
         // Liveness is decided by the query alone, ahead of the tile resolve: a band left out of
         // `live` is read by the stale sweep below as a dead band and has its layer detached, and
         // re-attachment reseeds traits from the province rather than restoring the drift, timers
@@ -1581,7 +1620,10 @@ pub fn reconcile_band_culture_layers(
             .map(|layer| layer.parent);
         match current_parent {
             None => {
-                manager.attach_band(*band, parent);
+                manager.attach_band_with_lean(*band, parent, lean);
+                if lean.is_some() {
+                    commands.entity(entity).remove::<StartingCultureLean>();
+                }
             }
             Some(existing) if existing != Some(parent) => {
                 manager.set_band_parent(*band, parent);

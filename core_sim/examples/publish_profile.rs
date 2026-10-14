@@ -60,8 +60,9 @@ const MAP_SEED_KEY: &str = "map_seed";
 /// The config key holding the map dimensions, overridden by the scaling sweep.
 const GRID_SIZE_KEY: &str = "grid_size";
 
-/// The config key pinning how many rivals a new world takes, overridden by the seat sweep.
-const AI_FACTION_COUNT_KEY: &str = "default_ai_faction_count";
+/// The env var naming the start profiles file, which the seat sweep points at a copy whose first
+/// archetype pins the rival count (`default_count`).
+const START_PROFILES_ENV: &str = "START_PROFILES_PATH";
 
 /// The seat counts row 5 sweeps. **1 is the shipped single-player game** and the arm every other
 /// row in this file measures; 4 is a full local table.
@@ -101,7 +102,7 @@ const SWEEP_GRIDS: [(u32, u32); 3] = [(40, 26), (80, 52), (160, 104)];
 const NANOS_PER_SECOND: f64 = 1_000_000_000.0;
 
 fn main() {
-    let pinned = write_pinned_config(None, None);
+    let pinned = write_pinned_config(None);
     std::env::set_var("SIM_CONFIG_PATH", &pinned);
 
     println!("\nmap_seed={PINNED_MAP_SEED:#x}  warmups={WARMUP_TURNS}  frames={MEASURED_FRAMES}");
@@ -265,7 +266,7 @@ fn build_breakdown_row() {
     let mut apps: Vec<_> = SWEEP_GRIDS
         .iter()
         .map(|grid| {
-            std::env::set_var("SIM_CONFIG_PATH", write_pinned_config(Some(*grid), None));
+            std::env::set_var("SIM_CONFIG_PATH", write_pinned_config(Some(*grid)));
             let mut app = build_headless_app();
             app.world.resource_mut::<SnapshotHistory>().shutdown();
             for _ in 0..WARMUP_TURNS {
@@ -358,9 +359,10 @@ fn build_breakdown_row() {
 /// machine drift by more than the effect. Idle, so the publisher's own per-seat work (diff, encode,
 /// socket) is deliberately not in it — that lands on the publisher thread, and row 1 prices it.
 fn seat_row() {
+    std::env::set_var("SIM_CONFIG_PATH", write_pinned_config(None));
     std::env::set_var(
-        "SIM_CONFIG_PATH",
-        write_pinned_config(None, Some(SEAT_SWEEP_AI_FACTIONS)),
+        START_PROFILES_ENV,
+        write_pinned_start_profiles(SEAT_SWEEP_AI_FACTIONS),
     );
     let mut apps: Vec<_> = SWEEP_SEATS
         .iter()
@@ -468,7 +470,7 @@ impl Denominators {
 /// **before** the warm-ups (that is what makes it the idle row), and with no publisher there is no
 /// published snapshot to count.
 fn denominators_of(grid: (u32, u32)) -> Denominators {
-    std::env::set_var("SIM_CONFIG_PATH", write_pinned_config(Some(grid), None));
+    std::env::set_var("SIM_CONFIG_PATH", write_pinned_config(Some(grid)));
     let mut app = build_headless_app();
     for _ in 0..WARMUP_TURNS {
         run_turn(&mut app);
@@ -563,7 +565,7 @@ fn changed_sections_of(delta: &WorldDelta) -> [(&'static str, bool); 39] {
 
 /// Copy the **current** shipped `simulation_config.json` with the seed pinned, and return its path.
 /// `grid` overrides the map dimensions (row 4's sweep); `None` keeps the shipped size.
-fn write_pinned_config(grid: Option<(u32, u32)>, ai_factions: Option<u64>) -> PathBuf {
+fn write_pinned_config(grid: Option<(u32, u32)>) -> PathBuf {
     let shipped = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("src")
         .join("data")
@@ -573,21 +575,43 @@ fn write_pinned_config(grid: Option<(u32, u32)>, ai_factions: Option<u64>) -> Pa
     let mut config: serde_json::Value =
         serde_json::from_str(&text).expect("shipped simulation_config.json should parse");
     config[MAP_SEED_KEY] = serde_json::json!(PINNED_MAP_SEED);
-    let mut suffix = match grid {
+    let suffix = match grid {
         Some((width, height)) => {
             config[GRID_SIZE_KEY] = serde_json::json!({ "x": width, "y": height });
             format!("_{width}x{height}")
         }
         None => String::new(),
     };
-    if let Some(ai_factions) = ai_factions {
-        config[AI_FACTION_COUNT_KEY] = serde_json::json!(ai_factions);
-        suffix.push_str(&format!("_ai{ai_factions}"));
-    }
 
     // One file per grid, so a run's three worlds cannot race each other's config on disk.
     let out = std::env::temp_dir().join(format!("publish_profile_simulation_config{suffix}.json"));
     std::fs::write(&out, serde_json::to_string_pretty(&config).unwrap())
+        .unwrap_or_else(|err| panic!("writing {}: {err}", out.display()));
+    out
+}
+
+/// Copy the shipped `start_profiles.json` with its first archetype's `default_count` pinned to
+/// `ai_factions` rivals, and return its path. The rival count is the start profile's now - the
+/// archetype's pin is what an unattended boot (this example's) takes.
+fn write_pinned_start_profiles(ai_factions: u64) -> PathBuf {
+    let shipped = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("src")
+        .join("data")
+        .join("start_profiles.json");
+    let text = std::fs::read_to_string(&shipped)
+        .unwrap_or_else(|err| panic!("reading {}: {err}", shipped.display()));
+    let mut profiles: serde_json::Value =
+        serde_json::from_str(&text).expect("shipped start_profiles.json should parse");
+    for profile in profiles["profiles"]
+        .as_array_mut()
+        .expect("profiles is an array")
+    {
+        profile["archetypes"][0]["default_count"] = serde_json::json!(ai_factions);
+    }
+    let out = std::env::temp_dir().join(format!(
+        "publish_profile_start_profiles_ai{ai_factions}.json"
+    ));
+    std::fs::write(&out, serde_json::to_string_pretty(&profiles).unwrap())
         .unwrap_or_else(|err| panic!("writing {}: {err}", out.display()));
     out
 }

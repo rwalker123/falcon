@@ -67,6 +67,7 @@ fn cohort(tile: Entity, working: f32, stores: LocalStore, faction: FactionId) ->
         morale: scalar_one(),
         last_food_consumption: 0.0,
         last_food_need: 0.0,
+        fed_party_workers: Default::default(),
         last_food_spoiled: 0.0,
         last_turn_food_transfers: Default::default(),
         last_turn_fodder_transfers: Default::default(),
@@ -684,6 +685,7 @@ fn a_spawned_band_owns_exactly_its_default_outfit() {
         .resource::<core_sim::ActiveStartProfile>()
         .profile()
         .overrides()
+        .archetypes[0]
         .opening_loadout
         .material_defaults
         .clone();
@@ -747,8 +749,7 @@ fn every_material_a_rung_eats_is_produced_or_pickable_at_the_start() {
     let pickable: Vec<String> = core_sim::StartProfiles::builtin()
         .iter()
         .flat_map(|profile| {
-            profile
-                .overrides()
+            profile.overrides().archetypes[0]
                 .opening_loadout
                 .pickable_materials
                 .clone()

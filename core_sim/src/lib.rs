@@ -73,6 +73,7 @@ mod materials_config;
 pub mod metrics;
 pub mod network;
 mod orders;
+pub mod personalities;
 pub mod port_alloc;
 mod power;
 mod provinces;
@@ -150,10 +151,10 @@ pub use components::{
     KnowledgeFragment, LaborAllocation, LaborAssignment, LaborTarget, LocalStore, MaterialBatch,
     MaterialDraw, MoraleCause, MusterKit, MusterPlan, PoolToeLine, PopulationCohort, PowerNode,
     QueuedBuildToe, ResidentBand, Settlement, ShedCrew, ShedFacts, ShedStep, ShedSubject,
-    SourcePriority, SourceShedFacts, SourceYield, StartingUnit, TakeSelection, Tile, TownCenter,
-    TransferCause, TransferCounterparty, TransferCrossing, TransferDirection, TransferLedger,
-    TransferLink, YieldRange, DEFAULT_ESCAPEMENT_FLOOR, FODDER, FOOD, HEAD_ORDER, MIN_ORDER_COUNT,
-    NO_IMPROVEMENT_UNDERWAY, STRIP_IT_BARE,
+    SourcePriority, SourceShedFacts, SourceYield, StartingUnit, StationReport, TakeSelection, Tile,
+    TownCenter, TransferCause, TransferCounterparty, TransferCrossing, TransferDirection,
+    TransferLedger, TransferLink, YieldRange, DEFAULT_ESCAPEMENT_FLOOR, FODDER, FOOD, HEAD_ORDER,
+    MIN_ORDER_COUNT, NO_IMPROVEMENT_UNDERWAY, STRIP_IT_BARE,
 };
 pub use config_fingerprint::{
     current_config_fingerprint, drift_between, ConfigDigest, ConfigFingerprint,
@@ -194,8 +195,8 @@ pub use culture::{
     reconcile_culture_layers, seeded_modifiers_for_band, ContactPull, ContactTie,
     CultureEffectsCache, CultureLayer, CultureLayerId, CultureLayerScope, CultureManager,
     CultureOwner, CultureSchismEvent, CultureSplitQueue, CultureTensionEvent, CultureTensionKind,
-    CultureTensionRecord, CultureTraitAxis, CultureTraitVector, CULTURE_TRAIT_AXES,
-    CULTURE_TRAIT_SPAN, FALLBACK_CULTURE_REGION_ID,
+    CultureTensionRecord, CultureTraitAxis, CultureTraitVector, StartingCultureLean,
+    CULTURE_TRAIT_AXES, CULTURE_TRAIT_SPAN, FALLBACK_CULTURE_REGION_ID,
 };
 pub use culture_corruption_config::{
     CorruptionSeverityConfig, CultureCorruptionConfig, CultureCorruptionConfigHandle,
@@ -249,12 +250,12 @@ pub use fauna::{
     regrowth_delta_at, repopulate_fauna, resolve_hunt_engagement, resolve_hunt_fight,
     retreat_band_edge, retreat_mean, retreat_seed, spawn_initial_herds, species_requires_denial,
     stamp_migratory_game_trails, stay_fraction, sustainable_yield, unqueue_build_and_cancel_ring,
-    would_be_herders_needed, AnimalTake, CrewKeeping, EcologyPhase, EngagementQuantum,
-    EngagementStop, FightCasualties, Herd, HerdDensityMap, HerdRegistry, HerdTelemetry,
-    HerdTelemetryEntry, HuntCrew, HuntCrewCurveInputs, HuntCrewTake, HuntDraw, HuntEngagement,
-    HuntFight, HuntProjection, HuntTakeBound, HuntingParty, OutcomeKills, PartyResolution,
-    PreyDatum, ProjectedHuntTurn, ProjectionStart, QuarryFight, RetreatOutcome, RoamState,
-    SourceYieldForecast, TakeRange, TakeReading, FODDERING_DISCOVERY_ID, FULLY_HERDED,
+    would_be_herders_needed, AnimalTake, Contact, CrewContact, CrewKeeping, EcologyPhase,
+    EngagementQuantum, EngagementStop, FightCasualties, Herd, HerdDensityMap, HerdRegistry,
+    HerdTelemetry, HerdTelemetryEntry, HuntCrew, HuntCrewCurveInputs, HuntCrewTake, HuntDraw,
+    HuntEngagement, HuntFight, HuntProjection, HuntTakeBound, HuntingParty, OutcomeKills,
+    PartyResolution, PreyDatum, ProjectedHuntTurn, ProjectionStart, QuarryFight, RetreatOutcome,
+    RoamState, SourceYieldForecast, TakeRange, TakeReading, FODDERING_DISCOVERY_ID, FULLY_HERDED,
     HERDING_DISCOVERY_ID, MSY_BIOMASS_FRACTION, NO_DEATHS_TO_REPORT, NO_HANDS,
     NO_STANDING_COMMITMENT, NO_USEFUL_CREW, ONE_KEEPER_LOAD, PENNING_DISCOVERY_ID,
 };
@@ -315,6 +316,10 @@ pub use lineage::{
     breeding_ceiling, effective_breeding_ceiling, shared_breeding_ceiling, tie_joined_groups,
     BreedingMember, BreedingPeople, BreedingReading, FoundingLines, FreeBreedingPeoples, LineId,
     TieJoinedGroup, MIN_BAND_LINES, NO_INBREEDING_CEILING,
+};
+pub use personalities::{
+    load_personalities_from_env, PersonalitiesError, Personality, PersonalityCatalog,
+    PersonalityCatalogHandle, PersonalityCatalogMetadata, BUILTIN_PERSONALITIES, PERSONALITY_SALT,
 };
 // The drainage-network measurement instrument (consumed by the `#[ignore]`d census test).
 pub use extraction::{
@@ -410,6 +415,7 @@ pub use start_profile::{
     StartProfileOverrides, StartProfiles, StartProfilesHandle, StartProfilesMetadata,
     StartingUnitSpec,
 };
+pub use start_profile::{StartArchetype, StartArchetypeAssignment};
 pub use starting_loadout::{
     allocation_load, apply_starting_loadout, fit_to_carry, order_load, split_default_outfit,
     FittedLoadout, KitAllocation, LoadoutRejection, LoadoutSupply, LoadoutWindow,
@@ -484,26 +490,28 @@ pub use systems::{
     advance_band_independence, advance_band_movement, advance_crafting, advance_culture_splits,
     advance_expeditions, advance_labor_allocation, advance_party_defection,
     advance_population_migration, advance_predator_raids, advance_tick,
-    announce_bench_material_short, bench_material_rate, bench_tiers, bill_and_stock_roads,
-    bring_the_dropped_party_home, deliver_bench_output, denial_forecast, expedition_returned_event,
-    fold_party_into_band, follow_hunted_herds, grow_faction_roster, hunt_per_worker_provisions,
-    hunt_report_event, hunt_take, output_multiplier, party_owes_a_report, prospective_keep_hands,
-    publish_turn_transfers, settle_bands_roadwork, settle_scarce_tools, simulate_population,
-    simulate_power, source_has_a_meter_at_risk, split_band_from_parent, split_refusals, BenchTiers,
-    DenialForecast, DenialOutcome, HeartLedger, HeartReading, HuntOutcome, PartyGear,
+    announce_bench_material_short, band_label, bench_material_rate, bench_tiers,
+    bill_and_stock_roads, break_off_breeding_excess, bring_the_dropped_party_home,
+    deliver_bench_output, denial_forecast, expedition_returned_event, fold_party_into_band,
+    follow_hunted_herds, grow_faction_roster, hunt_per_worker_provisions, hunt_report_event,
+    hunt_take, output_multiplier, party_owes_a_report, prospective_keep_hands,
+    publish_turn_transfers, settle_bands_roadwork, settle_scarce_tools, shed_breeding_excess,
+    simulate_population, simulate_power, source_has_a_meter_at_risk, split_band_from_parent,
+    split_band_from_parent_with, split_refusals, BenchTiers, BreakOffAsk, BreedingBreakOffs,
+    DenialForecast, DenialOutcome, HeartLedger, HeartReading, HuntOutcome, LineDivision, PartyGear,
     PartySightings, PoolToolPlan, PowerSimParams, RaidRoll, SplitBand, SplitRefusal, SplitRefusals,
-    ToolClaimStage, TradeDiffusionEvent,
+    ToolClaimStage, TradeDiffusionEvent, POST_RECALLED,
 };
 pub use systems::{
     apply_biome_palette_clamp, apply_tag_budget_solver, bias_food_sites_toward_fresh_water,
     reconcile_coastal_shelf, reconcile_food_modules,
 };
-/// **The map's say in how many peoples it seats** — the ceiling, the offered default, and the clamp
-/// every path that takes an AI count runs through. Exported because the boot path, the `new_game`
-/// handler and the capacity query all ask the same function.
+/// **The map's say in how many peoples it seats** — the per-archetype ceiling, the offered default,
+/// and the clamp every path that takes archetype counts runs through. Exported because the boot
+/// path, the `new_game` handler and the capacity query all ask the same functions.
 pub use systems::{
-    faction_start_capacity, faction_start_land_fraction, granted_ai_faction_count,
-    max_faction_starts, unattended_ai_faction_count, FactionStartCapacity,
+    archetype_capacities, archetype_ceiling, faction_start_land_fraction, granted_archetype_counts,
+    max_faction_starts, unattended_archetype_counts, ArchetypeCapacity,
 };
 pub use telling::{
     load_beat_catalog_from_env, load_beat_config_from_env, telling_tick, BeatCatalog,
@@ -593,20 +601,22 @@ pub fn build_headless_app() -> App {
     let active_profile_resource = ActiveStartProfile::new(active_profile.clone());
     let profile_lookup = StartProfileLookup::new(active_profile.id.clone());
 
-    // **Who plays this world is a COUNT OF RIVALS, not a profile declaration**: one human — the
-    // player — plus however many AI factions were asked for. A world built here was asked by
-    // nobody: it is the UNATTENDED roster, so an absent `default_ai_faction_count` means no rivals
-    // rather than the map-scaled count a New Game screen is offered (`unattended_ai_faction_count`
-    // vs `faction_start_capacity`). A `new_game` re-seeds this from the count the player picked.
-    // The count is clamped to what the grid can seat before the registry is built, so no path can
+    // **Who plays this world is a COUNT OF RIVALS PER ARCHETYPE, not a profile declaration**: one
+    // human — the player — plus however many AI factions of each start archetype were asked for. A
+    // world built here was asked by nobody: it is the UNATTENDED roster, so an archetype with no
+    // `default_count` pin means no rivals rather than the map-scaled count a New Game screen is
+    // offered (`unattended_archetype_counts` vs `archetype_capacities`). A `new_game` re-seeds this
+    // from the counts the player picked. The counts are clamped to what the grid can seat before the registry is built, so no path can
     // register a faction worldgen has nowhere to put; the turn queue then awaits exactly the roster
     // the registry was seeded with.
-    let faction_registry = orders::FactionRegistry::with_ai_factions(granted_ai_faction_count(
-        unattended_ai_faction_count(config.default_ai_faction_count),
+    let archetype_counts = granted_archetype_counts(
+        &unattended_archetype_counts(&config.start_profile_overrides.archetypes),
+        &config.start_profile_overrides.archetypes,
         config.grid_size,
-        config.faction_start_min_separation,
         faction_start_land_fraction(&map_presets, &config.map_preset_id),
-    ));
+    );
+    config.start_archetype_assignment = StartArchetypeAssignment::from_counts(&archetype_counts);
+    let faction_registry = orders::FactionRegistry::with_ai_factions(archetype_counts.iter().sum());
     let turn_queue = orders::TurnQueue::new(faction_registry.factions().to_vec());
     // Depth is decided in ONE place — `snapshot::PUBLICATION_RING_DEPTH`, which
     // `capture_snapshot` no longer has to re-assert every turn.
@@ -669,6 +679,10 @@ pub fn build_headless_app() -> App {
     let (faction_names_catalog, faction_names_metadata) =
         faction_names::load_faction_names_from_env();
     let faction_names_handle = faction_names::FactionNameCatalogHandle::new(faction_names_catalog);
+    // The lean a starting faction is born with. Content on the same boot seam as the name pools.
+    let (personalities_catalog, personalities_metadata) =
+        personalities::load_personalities_from_env();
+    let personalities_handle = personalities::PersonalityCatalogHandle::new(personalities_catalog);
     // **The materials table loads FIRST of the three**, because both food webs' yield edges are
     // reconciled against it: a species (plant or animal) naming a material that does not exist, or
     // stating a reading on an axis that material does not declare, is a boot panic rather than a
@@ -847,6 +861,8 @@ pub fn build_headless_app() -> App {
         .insert_resource(band_names_metadata)
         .insert_resource(faction_names_handle)
         .insert_resource(faction_names_metadata)
+        .insert_resource(personalities_handle)
+        .insert_resource(personalities_metadata)
         // Empty until worldgen mints it from the roster and the final map seed (Startup).
         .insert_resource(faction_names::FactionNames::default())
         .insert_resource(sim_state::Replaying::default())
@@ -922,6 +938,7 @@ pub fn build_headless_app() -> App {
         .insert_resource(visibility::VisibilitySweepTracker::default())
         .insert_resource(connections::ConnectionLedger::default())
         .insert_resource(systems::HeartLedger::default())
+        .insert_resource(systems::BreedingBreakOffs::default())
         .insert_resource(culture::CultureSplitQueue::default())
         .insert_resource(lineage::FreeBreedingPeoples::default())
         // **The roads and this turn's traffic** (`docs/plan_standing_upkeep.md` §4.13). The registry
@@ -1042,6 +1059,14 @@ pub fn build_headless_app() -> App {
         .add_systems(
             Update,
             systems::deliver_bench_output.before(TurnStage::Influence),
+        )
+        // **Each ledger opens this turn's wear slot** - the window the "coming up" craft suggestions
+        // read their rate off (#778). After the delivery only because both write `BandEquipment`.
+        .add_systems(
+            Update,
+            systems::open_wear_slots
+                .after(systems::deliver_bench_output)
+                .before(TurnStage::Influence),
         )
         .add_systems(
             Update,
@@ -1296,6 +1321,11 @@ pub fn build_headless_app() -> App {
                     // morale/discontent are current and productivity has already been applied at each
                     // yield site; it then relocates discontented people (population conserved).
                     systems::advance_population_migration,
+                    // A breeding population above its ceiling sheds the excess (#690): after
+                    // migration, which overwrites each band's `last_emigrated` / `last_immigrated`,
+                    // and before independence, which judges the roster the break-off may grow.
+                    systems::shed_breeding_excess,
+                    systems::break_off_breeding_excess,
                     // A detached party defects whole (`docs/plan_band_fission.md` §Defection): it
                     // reads its home band's morale, which demographics made current, and the
                     // sightings `advance_expeditions` recorded this turn; it runs after the trickle
@@ -1313,10 +1343,17 @@ pub fn build_headless_app() -> App {
                     sedentarization::sedentarization_tick,
                 )
                     .chain(),
-                // Pure telemetry: reads `TradeTelemetry`, which only `advance_population_migration`
-                // writes (the cross-people knowledge credit). Ordered after that writer and nothing
-                // else, so it stays free of the labor run the migration follows.
-                systems::publish_trade_telemetry.after(systems::advance_population_migration),
+                // Pure telemetry: reads `TradeTelemetry`, which two systems write (the cross-people
+                // knowledge credit): `advance_population_migration` and `shed_breeding_excess`
+                // (through `MigrationKnowledgeSinks`). Ordered after both and nothing else, so it
+                // stays free of the labor run the migration follows. The one other edge is
+                // `break_off_breeding_excess`, an EXCLUSIVE system (it spawns a band) and so in
+                // conflict with every system; the telemetry reads nothing it writes, so it simply
+                // takes its place after it.
+                systems::publish_trade_telemetry
+                    .after(systems::advance_population_migration)
+                    .after(systems::shed_breeding_excess)
+                    .after(systems::break_off_breeding_excess),
                 // **RETIRED: `settle_route_keeping`, the third keeping pool as a SYSTEM OF ITS
                 // OWN.** It ran `.after(advance_labor_allocation)` because the `roadwork` head count
                 // it divides has to be the one the shedding order left — and that put the payment a

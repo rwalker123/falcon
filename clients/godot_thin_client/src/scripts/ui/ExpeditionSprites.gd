@@ -3,7 +3,7 @@ class_name ExpeditionSprites
 
 ## Bundled PNG art for EXPEDITION MAP MARKERS — the sprite half of the mission glyphs a detached
 ## party's marker wears on the map (`MapView.EXPEDITION_GLYPH` ⚑ for a scouting party,
-## `EXPEDITION_DENY_GLYPH` 💀, `EXPEDITION_TRADE_GLYPH` 📦), drawn by
+## `EXPEDITION_DENY_GLYPH` 💀, `EXPEDITION_TRADE_GLYPH` 📦, `EXPEDITION_STATION_GLYPH` ⚓), drawn by
 ## `BandMarkerRenderer._draw_expedition_body` centred in the marker's dark disc and faction ring.
 ##
 ## **THE MAP-MARKER HOUSE STYLE, NOT `hud/`'s.** These draw over the MAP, at marker size, over whatever
@@ -23,6 +23,7 @@ const SPRITE_PATHS := {
 	HudExpeditionVocab.EXPEDITION_MISSION_SCOUT: SPRITE_DIR + "scout.png",
 	HudExpeditionVocab.EXPEDITION_MISSION_DENY: SPRITE_DIR + "deny.png",
 	HudExpeditionVocab.EXPEDITION_MISSION_TRADE: SPRITE_DIR + "trade.png",
+	HudExpeditionVocab.EXPEDITION_MISSION_STATION: SPRITE_DIR + "station.png",
 }
 
 ## Bundled sprite for a party's mission, or `null` when the mission has none (an unknown
@@ -30,7 +31,7 @@ const SPRITE_PATHS := {
 ## has with its emoji.
 ##
 ## Takes `IconSprites.texture_for`'s DEFAULT `warn: true`: this family's coverage is complete for what
-## it declares — all three keys above have a committed, imported PNG behind them — so a failed load is
+## it declares — all four keys above have a committed, imported PNG behind them — so a failed load is
 ## a DEFECT and must surface.
 static func for_mission(mission: String) -> Texture2D:
 	if mission == "" or not SPRITE_PATHS.has(mission):

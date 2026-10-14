@@ -491,6 +491,16 @@ pub struct LaborAssignmentState {
     /// Appended last.
     #[serde(default)]
     pub need_runway: f32,
+    /// **Hands of this row walking back to it** - already inside `workers`, not at the source until
+    /// they land (the row's take is priced on `workers - rejoining_workers`). Appended last.
+    #[serde(default)]
+    pub rejoining_workers: u32,
+    /// Turns until the last of those hands is back; `0` = none. Appended last.
+    #[serde(default)]
+    pub rejoining_all_home_in: u32,
+    /// The food they carry, gross of the walk's rot. Appended last.
+    #[serde(default)]
+    pub rejoining_food: f32,
 }
 
 /// **ONE LINE OF ONE TAKE ROW'S TABLE OF EQUIPMENT** — a row of [`LaborAssignmentState::kit_toe`].
@@ -1813,6 +1823,10 @@ pub struct PopulationCohortState {
     /// `keeping.classes` order. Appended last.
     #[serde(default)]
     pub hunt_meals: Vec<KeepingMealState>,
+    /// **The messenger reach**, in tiles (`ExpeditionConfig::effective_comm_range`) — a stationed
+    /// party's report lands the turn it leaves inside it. Global config echoed per cohort. Appended last.
+    #[serde(default)]
+    pub comm_range_tiles: u32,
 }
 
 /// **ONE KEEPING CLASS'S HUNTING MEAL** — a row of [`PopulationCohortState::hunt_meals`]: the food
@@ -2226,6 +2240,13 @@ pub struct CraftSuggestionState {
     /// empty when covered or when no recipe makes the item.
     #[serde(default)]
     pub shortfalls: Vec<MaterialShortfallState>,
+    /// **The share of [`Self::count`] that is a forecast** (#778): units that will wear out before
+    /// the bench could replace them. `count - upcoming_count` is what is short today.
+    pub upcoming_count: u32,
+    /// Turns until the unit in hand wears out at the recent wear rate; `0` with no forecast.
+    pub expires_in_turns: f32,
+    /// The bench's lead time for one more unit, in whole turns (`>= 1`); `0` with no forecast.
+    pub lead_turns: u32,
 }
 
 /// **One consumer going without a suggested item** — a row of [`CraftSuggestionState::sources`].

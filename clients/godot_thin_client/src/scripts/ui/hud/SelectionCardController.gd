@@ -476,10 +476,11 @@ func _band_row_activity(unit: Dictionary, is_player: bool) -> String:
 ## **A DETACHED PARTY TAKES NO STAGE ART AT ALL.** The map deliberately refuses a party a settlement
 ## glyph (`_draw_band_token` returns early on `is_expedition` for its hollow flag disc), because a
 ## party is not a settlement and must not read as one; the row obeys the same rule and takes the
-## mission mark from `_band_row_glyph` instead.
+## mission mark instead: `hud/<mission>.png` here, `_band_row_glyph` only as its fallback.
 func _band_row_sprite(unit: Dictionary) -> Texture2D:
 	if bool(unit.get("is_expedition", false)):
-		return null
+		return HudSprites.for_mark(HudFormat.expedition_mission_mark(
+			String(unit.get("expedition_mission", ""))))
 	return StageSprites.for_stage(String(unit.get("settlement_stage_id", "")).strip_edges())
 
 ## A band row's leading GLYPH — the server's `settlement_stage_icon` (`⛺ 🛖 🏘️`), or a PARTY's

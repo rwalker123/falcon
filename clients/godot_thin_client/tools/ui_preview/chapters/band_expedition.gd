@@ -1075,7 +1075,7 @@ func _heart_band_fixture(cut_off: bool, bond: float, ago: int, grievance: float)
 	var band := BandFx.band_fixture()
 	band["cut_off"] = cut_off
 	band["heart_bond"] = bond
-	band["heart_last_contact_turn"] = h._hud._band_labor.current_turn() - ago
+	band["heart_last_contact_turn"] = HudConnectionsVocab.resolved_turn(h._hud._band_labor.current_turn()) - ago
 	band["grievance"] = grievance
 	band["independence_grievance_threshold"] = HEART_GRIEVANCE_THRESHOLD
 	return band

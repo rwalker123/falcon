@@ -4,8 +4,8 @@ use super::*;
 
 use crate::belief::BeliefRegistry;
 use crate::belief_config::{BeliefConfig, BeliefConfigHandle};
-use crate::components::BandWorkforce;
-use crate::work_party::WorkParty;
+use crate::components::{BandWorkforce, ExcessRejoining};
+use crate::work_party::{WorkParty, WALKS_BACK_TO_ITS_ROW, WALKS_PLAIN};
 
 /// **"Is this crew actually working the source?"** — THE eligibility term that replaced the
 /// `EcologyPhase::Thriving` gate on both webs (`docs/plan_harvest_floor.md` §3.2), asked of the
@@ -2233,7 +2233,8 @@ impl SiteCrews {
         for allocation in allocations {
             for row in &allocation.assignments {
                 if let Some(source) = BuildSource::of(&row.target) {
-                    *crews.entry(source).or_insert(NO_CREW_ON_THIS_ACTIVITY) += row.workers;
+                    *crews.entry(source).or_insert(NO_CREW_ON_THIS_ACTIVITY) +=
+                        allocation.hands_present_on(row);
                 }
             }
         }
@@ -2303,7 +2304,8 @@ fn site_keeping_claims(
 ) -> Vec<KeepingClaim> {
     let mut claims: Vec<KeepingClaim> = Vec::new();
     for (index, assignment) in allocation.assignments.iter().enumerate() {
-        let crew = assignment.workers;
+        // The keeping is paid by the hands PRESENT at the site, not those still walking back.
+        let crew = allocation.hands_present_on(assignment);
         if crew == NO_CREW_ON_THIS_ACTIVITY {
             continue;
         }
@@ -2437,7 +2439,9 @@ fn site_keeping_asks(
             let crew = allocation
                 .assignments
                 .get(claim.index)
-                .map_or(NO_CREW_ON_THIS_ACTIVITY, |row| row.workers);
+                .map_or(NO_CREW_ON_THIS_ACTIVITY, |row| {
+                    allocation.hands_present_on(row)
+                });
             let rate = fully_equipped_keeper_rate(
                 equipment,
                 band_kit,
@@ -4327,6 +4331,7 @@ fn post_a_party(
     source_pos: UVec2,
     band_pos: UVec2,
     workers: u32,
+    returning: u32,
     geometry: (u32, u32, bool),
     labor: &crate::labor_config::LaborConfig,
     supply: &crate::supply_network_config::SupplyNetworkConfig,
@@ -4364,10 +4369,23 @@ fn post_a_party(
     if shed {
         let _gone_with_the_shed = party.cut_crew(workers, target);
     }
+    // HANDS THAT REJOINED THIS TURN ARRIVE AT THE SOURCE BY WALKING. A rejoining walk landed at the
+    // top of the pass, but the row has posted a party (it went far again), so its hand is home, not
+    // at the herd: it joins the party as a porter heading back out empty with the whole walk ahead
+    // (the state a porter is in the moment its pack lands), is counted in the party's crew
+    // (`workers`) but not among the hunters present, and takes no step this turn, as the porter
+    // that landed this turn does not.
+    for _ in 0..returning {
+        party.on_the_road.push(crate::work_party::Walker {
+            walk_turns: party.walk_turns,
+            turns_out: party.walk_turns,
+            ..Default::default()
+        });
+    }
     let working_crew = if shed && open.present > NO_CREW_ON_THIS_ACTIVITY {
         party.hunters_present()
     } else {
-        open.present
+        open.present.saturating_sub(returning)
     };
     Some(PartyPosting {
         working_crew,
@@ -4388,7 +4406,7 @@ pub fn bring_the_dropped_party_home(world: &mut World, band: Entity, row: &Labor
         return;
     };
     if let Some(mut allocation) = world.get_mut::<LaborAllocation>(band) {
-        stand_down_party(&mut allocation, party, &row.target);
+        stand_down_party(&mut allocation, party, &row.target, WALKS_PLAIN);
     }
 }
 
@@ -4402,12 +4420,22 @@ pub fn bring_the_dropped_party_home(world: &mut World, band: Entity, row: &Labor
 /// finishes its walk, the hands at the source carry the load over the whole walk, and the cargo
 /// rots by its walk when it lands — the same rule a live pack lands by. One step is what keeps any
 /// of those paths from settling a party differently.
+///
+/// ⛔ **`rejoins_row` says whether the row SURVIVES the stand-down.** A row that does (its source
+/// drifted back inside the apron, so it is plainly local now) keeps the crew the player set, and the
+/// walkers are some of those hands on the road — [`crate::work_party::HomewardWalk::rejoins_row`], counted once, on
+/// the row. Every other exit ends the row (or its hands) and walks plain.
 pub(crate) fn stand_down_party(
     allocation: &mut LaborAllocation,
     party: WorkParty,
     target: &LaborTarget,
+    rejoins_row: bool,
 ) {
-    allocation.homeward.extend(party.walk_home(target));
+    let mut walks = party.walk_home(target);
+    for walk in &mut walks {
+        walk.rejoins_row = rejoins_row;
+    }
+    allocation.homeward.extend(walks);
 }
 
 /// **[`stand_down_party`] for a party the labor pass ends BEFORE its turn opened** — a row the shed
@@ -4427,7 +4455,9 @@ fn stand_down_unopened_party(
 ) -> f32 {
     let open = party.open_turn();
     let spoiled = bring_the_party_home(stores, allocation, &open.packs, home, keeping);
-    stand_down_party(allocation, party, target);
+    // The row is still there (or lapses further down this pass, and `settle_rejoining` flips these
+    // to plain walks when it goes), so its hands walk back to it.
+    stand_down_party(allocation, party, target, WALKS_BACK_TO_ITS_ROW);
     spoiled
 }
 
@@ -5577,10 +5607,18 @@ pub fn advance_labor_allocation(
         // A group stood down later in this pass is pushed after this step and so takes its first
         // step next turn — nothing a posting ends with arrives the turn it ends.
         let homeward = std::mem::take(&mut allocation.homeward);
+        // The hands of rejoining walks that land this turn, by the row they rejoin. A hand lands
+        // exactly as a plain one does (cargo, rot) and changes no head count: it is on its row
+        // already, and is *present* from now on. If the row posts a party this turn the hand joins
+        // it as a walker heading back out ([`post_a_party`]).
+        let mut rejoined: Vec<(LaborTarget, u32)> = Vec::new();
         for mut walk in homeward {
             if !walk.step() {
                 allocation.homeward.push(walk);
                 continue;
+            }
+            if walk.rejoins_row {
+                rejoined.push((walk.target.clone(), walk.workers));
             }
             let spoiled = bring_the_party_home(
                 &mut cohort.stores,
@@ -5716,6 +5754,7 @@ pub fn advance_labor_allocation(
         // the shed's `continue`s and rewritten below from the plan this turn actually settled, so a
         // band that loses its last worker stops publishing a TOE for sites it no longer holds.
         allocation.last_pool_toe.clear();
+        allocation.last_pool_toe_head = None;
         // **AND THE QUEUED BUILDS' TOOLS**, on the same rule.
         allocation.last_queued_build_toe.clear();
         // **AND THE SITE CREWS' KEEPING ISSUES**, on the same rule: the take crews' item budget is
@@ -5883,6 +5922,13 @@ pub fn advance_labor_allocation(
         // second derivation there would be free to disagree with the tools these hands actually
         // worked with.
         allocation.last_pool_toe = pool_tools.toe_lines();
+        // **STAMPED WITH THE ENTRY THE BUILDERS' CLAIM WAS STRUCK FOR**, so the capture can withhold
+        // the builders' lines once that entry is no longer the queue head.
+        allocation.last_pool_toe_head = pile_source
+            .as_ref()
+            .filter(|_| builders > NO_CREW_ON_THIS_ACTIVITY)
+            .and(head_entry.as_ref())
+            .map(|entry| (entry.source.clone(), entry.declared));
         allocation.last_keeping_issued = pool_tools.keeping_issued(&site_asks, &allocation);
         // ## ⛔ THE ROADS THIS BAND KEEPS, PAID HERE — AFTER THE SHED AND BEFORE THE QUOTE
         //
@@ -6167,6 +6213,17 @@ pub fn advance_labor_allocation(
         // `assignments` immutably — the same shape `lapsed` and `repaired_takes` take.
         let mut postings: BTreeMap<usize, PartyPosting> = BTreeMap::new();
         for (idx, assignment) in allocation.assignments.iter().enumerate() {
+            // ⛔ **THE HANDS PRESENT AT THIS ROW'S SOURCE** — its crew less the hands still walking
+            // back to it ([`LaborAllocation::hands_present`]). Everything the row prices (the party's
+            // crew, the take, the keeping, the kit claim, the lesson) reads this, never the crew the
+            // player set; `assignment.workers` still answers *"is this row held"*.
+            let present_hands = allocation.hands_present(idx);
+            // The rejoining hands that landed this turn on this row, who walk out to a party it posts.
+            let rejoined_here: u32 = rejoined
+                .iter()
+                .filter(|(target, _)| target.same_source(&assignment.target))
+                .map(|(_, hands)| hands)
+                .sum();
             // ⛔ **WHAT THIS ROW ACTUALLY STAFFS AT THE SOURCE.** A row whose source is past the
             // band's own hands posts a **work party** rather than lapsing
             // (`docs/plan_civilization_steps.md` §One work party). Its hunters walk packs home one
@@ -6184,7 +6241,8 @@ pub fn advance_labor_allocation(
                         &assignment.target,
                         source,
                         band_pos,
-                        assignment.workers,
+                        present_hands,
+                        rejoined_here,
                         (grid_width, grid_height, wrap_horizontal),
                         &labor,
                         &supply_cfg,
@@ -6194,7 +6252,7 @@ pub fn advance_labor_allocation(
                 });
             let workers = posting
                 .as_ref()
-                .map_or(assignment.workers, |posting| posting.working_crew);
+                .map_or(present_hands, |posting| posting.working_crew);
             if let Some(posting) = posting {
                 postings.insert(idx, posting);
             }
@@ -6436,7 +6494,7 @@ pub fn advance_labor_allocation(
                 crate::work_party::CaravanPricing::resolve(
                     &equipment_cfg,
                     &crew_kit,
-                    take_hands_after_keeping(assignment.workers, row_claims.keep_hands[idx]),
+                    take_hands_after_keeping(present_hands, row_claims.keep_hands[idx]),
                     row_claims.claims[idx],
                     assignment.priority,
                     &band_kit,
@@ -7121,7 +7179,7 @@ pub fn advance_labor_allocation(
                             ),
                             &equipment_cfg,
                             &band_kit,
-                            assignment.workers,
+                            present_hands,
                         );
                         posting.forecast = Some(crate::work_party::forecast_forage_caravan(
                             &posting.party,
@@ -8215,7 +8273,7 @@ pub fn advance_labor_allocation(
                                 ),
                                 &equipment_cfg,
                                 &band_kit,
-                                assignment.workers,
+                                present_hands,
                             );
                             posting.forecast = Some(crate::work_party::forecast_hunt_caravan(
                                 &posting.party,
@@ -9151,7 +9209,7 @@ pub fn advance_labor_allocation(
                             ),
                             &equipment_cfg,
                             &band_kit,
-                            assignment.workers,
+                            present_hands,
                         );
                         posting.forecast = Some(crate::work_party::forecast_hunt_caravan(
                             &posting.party,
@@ -9813,7 +9871,7 @@ pub fn advance_labor_allocation(
                                 ground,
                                 &extraction_cfg,
                                 &ladder,
-                                assignment.workers,
+                                present_hands,
                             ),
                             realized_horizon,
                         ));
@@ -10430,7 +10488,7 @@ pub fn advance_labor_allocation(
             // the road with the workers.
             if row_lapsed {
                 let target = allocation.assignments[idx].target.clone();
-                stand_down_party(&mut allocation, posting.party, &target);
+                stand_down_party(&mut allocation, posting.party, &target, WALKS_PLAIN);
                 continue;
             }
             // ⛔ **THE ROW'S FORWARD PROJECTIONS ARE WHAT ARRIVES HOME, NOT WHAT IS TAKEN.**
@@ -10461,7 +10519,7 @@ pub fn advance_labor_allocation(
             // walks home. The row itself survives as a holding.
             if allocation.assignments[idx].workers == NO_CREW_ON_THIS_ACTIVITY {
                 let target = allocation.assignments[idx].target.clone();
-                stand_down_party(&mut allocation, posting.party, &target);
+                stand_down_party(&mut allocation, posting.party, &target, WALKS_PLAIN);
                 allocation.assignments[idx].party = None;
                 continue;
             }
@@ -10499,6 +10557,9 @@ pub fn advance_labor_allocation(
             );
             cohort.last_food_spoiled += spoiled;
         }
+        // A row held at zero hands (or crew-short after the shed) cannot have its walkers rejoin
+        // it: whatever the row does not hold hands for walks home as an ordinary walker.
+        allocation.settle_rejoining(ExcessRejoining::WalkHomePlain);
         // **THE REPAIRED TAKE SELECTIONS, written back** — before the `lapsed` removal shuffles the
         // indices they were collected against.
         for (idx, repaired) in repaired_takes {
@@ -10547,6 +10608,9 @@ pub fn advance_labor_allocation(
             allocation.assignments.remove(idx);
             yields.remove(idx);
         }
+        // A lapsed row ends: the hands still walking back to it walk home plain, as a lapse always
+        // did (`LaborAllocation::settle_rejoining`).
+        allocation.settle_rejoining(ExcessRejoining::WalkHomePlain);
         allocation.last_yields = yields;
         // ## ⛔ HUNTING BY NEED — THE DECISION FOR NEXT TURN
         //
@@ -12610,6 +12674,88 @@ pub struct MigrationKnowledgeSinks<'w> {
     pub trade_events: EventWriter<'w, TradeDiffusionEvent>,
 }
 
+/// One cross-people move's knowledge credit: `(from people, to people, fragment)`.
+pub(crate) type KnowledgeCredit = (FactionId, FactionId, ContractKnowledgeFragment);
+
+/// **Knowledge travels with people, in proportion** — the one statement of the cross-people
+/// knowledge credit, shared by the unhappy trickle ([`advance_population_migration`]) and the
+/// breeding shed (`systems::breeding_shed`): a person crossing into another people is the same act
+/// whatever sent them. The source band's knowledge is scaled by `migration_fragment_scaling`, then
+/// by `share` — the fraction of the band that left (its pre-move total) — so a brain drain is
+/// proportional, never all-or-nothing. Each surviving fragment is queued for the destination band's
+/// merge (`knowledge_in`) and for the destination people's credit (`credits`).
+pub(crate) fn carry_knowledge_across(
+    source: &PopulationCohort,
+    share: Scalar,
+    fragment_scaling: Scalar,
+    (from, to): (FactionId, FactionId),
+    dest_entity: Entity,
+    knowledge_in: &mut HashMap<Entity, Vec<ContractKnowledgeFragment>>,
+    credits: &mut Vec<KnowledgeCredit>,
+) {
+    let scaled = scale_migration_fragments(
+        &fragments_to_contract(&source.knowledge),
+        fragment_scaling.raw(),
+    );
+    for mut fragment in scaled {
+        fragment.progress = (Scalar::from_raw(fragment.progress) * share).raw();
+        if fragment.progress <= 0 {
+            continue;
+        }
+        knowledge_in
+            .entry(dest_entity)
+            .or_default()
+            .push(fragment.clone());
+        credits.push((from, to, fragment));
+    }
+}
+
+/// **The destination peoples' discovery credit, telemetry and diffusion events** for the credits
+/// [`carry_knowledge_across`] queued, in the order they were queued. The "via migration" rows the
+/// knowledge panel publishes come from here.
+pub(crate) fn credit_migrated_knowledge(
+    credits: &[KnowledgeCredit],
+    tick: u64,
+    sinks: &mut MigrationKnowledgeSinks,
+) {
+    for (from, to, fragment) in credits {
+        let delta = Scalar::from_raw(fragment.progress);
+        sinks
+            .discovery
+            .add_progress(*to, fragment.discovery_id, delta);
+        sinks.telemetry.tech_diffusion_applied =
+            sinks.telemetry.tech_diffusion_applied.saturating_add(1);
+        sinks.telemetry.migration_transfers = sinks.telemetry.migration_transfers.saturating_add(1);
+        sinks.telemetry.push_record(TradeDiffusionRecord {
+            tick,
+            from: *from,
+            to: *to,
+            discovery_id: fragment.discovery_id,
+            delta,
+            via_migration: true,
+            herd_density: 0.0,
+        });
+        sinks.trade_events.send(TradeDiffusionEvent {
+            tick,
+            from: *from,
+            to: *to,
+            discovery_id: fragment.discovery_id,
+            delta,
+            via_migration: true,
+        });
+    }
+}
+
+/// Merge the fragments a destination band received into its own knowledge.
+pub(crate) fn merge_migrated_knowledge(
+    cohort: &mut PopulationCohort,
+    payload: &[ContractKnowledgeFragment],
+) {
+    let mut knowledge = fragments_to_contract(&cohort.knowledge);
+    merge_fragment_payload(&mut knowledge, payload, Scalar::one().raw());
+    cohort.knowledge = fragments_from_contract(&knowledge);
+}
+
 /// **Everything that belongs to a band and must go with it when it changes people** — the state a
 /// remnant flip (`advance_population_migration`) and a break-away (`advance_band_independence`)
 /// re-point at the band's new people, bundled so each system stays inside Bevy's argument budget.
@@ -12799,6 +12945,79 @@ pub(crate) fn follow_the_band_to_its_new_people(
     }
 }
 
+/// One end of a would-be move: the band's people, its durable id (a band with none can be neither
+/// tie-checked nor named) and the tile its people walk from — its home.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct WalkEnd {
+    pub faction: FactionId,
+    pub band_id: Option<BandId>,
+    pub pos: UVec2,
+}
+
+/// Whose band a destination is, to the people leaving for it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DestinationKind {
+    OwnPeople,
+    OtherPeople,
+}
+
+/// **The destination predicate, minus morale** — the one test of whether `dest` is somewhere
+/// `src`'s people may go, shared by the unhappy trickle ([`advance_population_migration`]) and the
+/// breeding shed (`systems::breeding_shed`), so "where people can move to" has one statement.
+///
+/// - **Reach**: `dest` is within [`crate::supply::WalkReach`] of `src` — hex steps less whatever a
+///   road shortens.
+/// - **Own people**: nothing more.
+/// - **Another people**: *perception* — a live band-to-band tie (`ConnectionLedger::tie_is_live`),
+///   so both bands need a durable id — and *consent* — the receiving people's borders are open.
+pub(crate) fn walkable_destination(
+    walk: &crate::supply::WalkReach,
+    roads: &crate::routes::RoadRegistry,
+    connections: &ConnectionLedger,
+    borders: &FactionBorderPolicies,
+    src: WalkEnd,
+    dest: WalkEnd,
+) -> Option<DestinationKind> {
+    if !walk.within(roads, src.pos, dest.pos) {
+        return None;
+    }
+    if dest.faction == src.faction {
+        return Some(DestinationKind::OwnPeople);
+    }
+    let (src_id, dest_id) = (src.band_id?, dest.band_id?);
+    (connections.tie_is_live(src_id, dest_id) && borders.is_open(dest.faction))
+        .then_some(DestinationKind::OtherPeople)
+}
+
+/// **How a number of leavers divides across a band's brackets** — `requested` split ∝
+/// `bracket_size × weight` (working `1.0`, children and elders `dependent_weight`), so the headline
+/// head-count stays exact while working-age dominates the composition. Returns `(total leaving,
+/// working, children, elders)`. The total is clamped to the weighted denominator so no bracket can
+/// be over-drafted (`move_x ≤ w_x ≤ bracket_x`), which keeps population conserved; that is a no-op
+/// under shipped tuning and a safety net for a very low `dependent_weight` on a dependent-heavy
+/// band. Shared by the unhappy trickle and the breeding shed.
+pub(crate) fn weighted_leavers(
+    cohort: &PopulationCohort,
+    requested: Scalar,
+    dependent_weight: Scalar,
+) -> (Scalar, Scalar, Scalar, Scalar) {
+    let w_working = cohort.working;
+    let w_children = cohort.children * dependent_weight;
+    let w_elders = cohort.elders * dependent_weight;
+    let denom = w_working + w_children + w_elders;
+    let total_leaving = requested.min(denom);
+    if denom > scalar_zero() {
+        (
+            total_leaving,
+            total_leaving * w_working / denom,
+            total_leaving * w_children / denom,
+            total_leaving * w_elders / denom,
+        )
+    } else {
+        (total_leaving, scalar_zero(), scalar_zero(), scalar_zero())
+    }
+}
+
 /// **Who may a band's leavers join** — the three facts the destination search reads beyond the
 /// bands themselves, bundled so the system stays well inside Bevy's argument budget.
 #[derive(bevy::ecs::system::SystemParam)]
@@ -12911,25 +13130,10 @@ pub fn advance_population_migration(
         .iter()
         .map(|(entity, cohort, band_id)| {
             let move_fraction = migration_move_fraction(cohort.morale, mig_cfg);
-            // Weighted bracket masses; the total is apportioned in proportion to these.
-            let w_working = cohort.working;
-            let w_children = cohort.children * dependent_weight;
-            let w_elders = cohort.elders * dependent_weight;
-            let denom = w_working + w_children + w_elders;
-            // Clamp the headline leaving amount to the weighted denominator so no bracket can be
-            // over-drafted (`move_x ≤ w_x ≤ bracket_x`), preserving population conservation.
-            // A no-op under shipped tuning (`total × max_rate ≤ denom` always), but a safety net for
-            // extreme-but-valid config (e.g. a very low `dependent_weight` on a dependent-heavy band).
-            let total_leaving = (cohort.total() * move_fraction).min(denom);
-            let (move_working, move_children, move_elders) = if denom > scalar_zero() {
-                (
-                    total_leaving * w_working / denom,
-                    total_leaving * w_children / denom,
-                    total_leaving * w_elders / denom,
-                )
-            } else {
-                (scalar_zero(), scalar_zero(), scalar_zero())
-            };
+            // The total leaving is `total × move_fraction`, apportioned across brackets by the
+            // shared weighting ([`weighted_leavers`]).
+            let (total_leaving, move_working, move_children, move_elders) =
+                weighted_leavers(cohort, cohort.total() * move_fraction, dependent_weight);
             Band {
                 entity,
                 band_id: band_id.copied(),
@@ -12973,23 +13177,27 @@ pub fn advance_population_migration(
             if dest.morale < attractive_morale || dest.morale <= bands[i].morale + min_gap {
                 continue;
             }
-            if !walk.within(&followers.roads, src_pos, dest_pos) {
+            let Some(kind) = walkable_destination(
+                &walk,
+                &followers.roads,
+                &gates.connections,
+                &gates.borders,
+                WalkEnd {
+                    faction: bands[i].faction,
+                    band_id: bands[i].band_id,
+                    pos: src_pos,
+                },
+                WalkEnd {
+                    faction: dest.faction,
+                    band_id: dest.band_id,
+                    pos: dest_pos,
+                },
+            ) else {
                 continue;
-            }
-            let best = if dest.faction == bands[i].faction {
-                &mut best_own
-            } else {
-                // Perception: a live tie between THESE two bands; consent: the receiving people's
-                // borders are open. A band with no durable id can be neither tie-checked nor named.
-                let (Some(src_id), Some(dest_id)) = (bands[i].band_id, dest.band_id) else {
-                    continue;
-                };
-                if !gates.connections.tie_is_live(src_id, dest_id)
-                    || !gates.borders.is_open(dest.faction)
-                {
-                    continue;
-                }
-                &mut best_foreign
+            };
+            let best = match kind {
+                DestinationKind::OwnPeople => &mut best_own,
+                DestinationKind::OtherPeople => &mut best_foreign,
             };
             if best.is_none_or(|(_, m)| dest.morale > m) {
                 *best = Some((j, dest.morale));
@@ -13038,58 +13246,23 @@ pub fn advance_population_migration(
         }
         *dst_tally.immigrated_foreign.entry(from_people).or_default() += moved_head;
         tallies.entry(src_entity).or_default().joined_people = Some(to_people);
-        // **Knowledge travels with people, in proportion.** The source band's knowledge is scaled
-        // by `migration_fragment_scaling`, then by the share of the band that left — so a brain
-        // drain is proportional, never all-or-nothing.
         let Ok((_, source_cohort, _)) = cohorts.get(src_entity) else {
             continue;
         };
-        let share = (mw + mc + me) / bands[i].total;
-        let scaled = scale_migration_fragments(
-            &fragments_to_contract(&source_cohort.knowledge),
-            sim_config.migration_fragment_scaling.raw(),
+        carry_knowledge_across(
+            source_cohort,
+            (mw + mc + me) / bands[i].total,
+            sim_config.migration_fragment_scaling,
+            (from_people, to_people),
+            dest_entity,
+            &mut knowledge_in,
+            &mut credits,
         );
-        for mut fragment in scaled {
-            fragment.progress = (Scalar::from_raw(fragment.progress) * share).raw();
-            if fragment.progress <= 0 {
-                continue;
-            }
-            knowledge_in
-                .entry(dest_entity)
-                .or_default()
-                .push(fragment.clone());
-            credits.push((from_people, to_people, fragment));
-        }
     }
 
     // The destination peoples' discovery credit, telemetry and diffusion events — in the order the
     // sources were walked, which is the entity-sorted snapshot order.
-    for (from, to, fragment) in &credits {
-        let delta = Scalar::from_raw(fragment.progress);
-        sinks
-            .discovery
-            .add_progress(*to, fragment.discovery_id, delta);
-        sinks.telemetry.tech_diffusion_applied =
-            sinks.telemetry.tech_diffusion_applied.saturating_add(1);
-        sinks.telemetry.migration_transfers = sinks.telemetry.migration_transfers.saturating_add(1);
-        sinks.telemetry.push_record(TradeDiffusionRecord {
-            tick: tick.0,
-            from: *from,
-            to: *to,
-            discovery_id: fragment.discovery_id,
-            delta,
-            via_migration: true,
-            herd_density: 0.0,
-        });
-        sinks.trade_events.send(TradeDiffusionEvent {
-            tick: tick.0,
-            from: *from,
-            to: *to,
-            discovery_id: fragment.discovery_id,
-            delta,
-            via_migration: true,
-        });
-    }
+    credit_migrated_knowledge(&credits, tick.0, &mut sinks);
 
     // Apply relocation + refresh the derived per-turn emigrant/immigrant readouts + accrue/decay
     // the grievance accumulator. Base accrual is `grievance_gain × discontent_fraction` (the 0.6
@@ -13125,9 +13298,7 @@ pub fn advance_population_migration(
             cohort.sync_size();
         }
         if let Some(payload) = knowledge_in.get(&entity) {
-            let mut knowledge = fragments_to_contract(&cohort.knowledge);
-            merge_fragment_payload(&mut knowledge, payload, Scalar::one().raw());
-            cohort.knowledge = fragments_from_contract(&knowledge);
+            merge_migrated_knowledge(&mut cohort, payload);
         }
         // **A band too small to staff itself does not linger as a husk.** Only a cross-people move
         // can trigger this, and it reads the source's POST-move brackets: the remnant goes over to
@@ -14462,6 +14633,7 @@ mod labor_yield_tests {
                     morale: scalar_one(),
                     last_food_consumption: 0.0,
                     last_food_need: 0.0,
+                    fed_party_workers: Default::default(),
                     last_food_spoiled: 0.0,
                     last_turn_food_transfers: Default::default(),
                     last_turn_fodder_transfers: Default::default(),

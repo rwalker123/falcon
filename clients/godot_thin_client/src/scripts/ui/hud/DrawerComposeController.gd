@@ -1403,13 +1403,26 @@ func _take_notes(take: Dictionary) -> Array[String]:
 
 ## **WHY A SHEET'S CREW `+` IS GREYED AT ITS CAP** — the cap gate's own sentence. Where the SOURCE
 ## binds (`cap < pool`) that is the cap note the sheet already prints under the stepper; where the
-## band's hands bind it is the labor note when the cap produced one (it names the useful count), else
+## band's hands bind it is the labor note when the cap produced one (it names the band's limit), else
 ## the plain no-free-hands reason. One rule for every compose sheet, so the hunt, forage and deposit
-## `+` cannot explain the same ceiling three ways.
-func _crew_cap_reason(cap_note: String, cap: int, pool: int) -> String:
+## `+` cannot explain the same ceiling three ways. The `+` is only greyed at the cap, so the labor
+## sentence on its hover is never shown below it.
+func _crew_cap_reason(cap_note: String, cap: int, pool: int, labor_note: String = "") -> String:
     if cap_note != "":
         return cap_note
+    if labor_note != "":
+        return labor_note
     return HudWorkVocab.STEPPER_NO_IDLE_REASON if cap >= pool else ""
+
+## **THE NOTE A SHEET PRINTS UNDER ITS STEPPER.** The cap dict's `note` (the SOURCE binds: max N useful)
+## always; its `labor_note` (the band's HANDS bind) only once the composed crew IS at that cap — below
+## it the `+` still works and there is nothing for the sentence to explain.
+func _cap_mount_note(capped: Dictionary, count: int) -> String:
+    var note := String(capped["note"])
+    if note != "":
+        return note
+    var labor_note := String(capped.get("labor_note", ""))
+    return labor_note if labor_note != "" and count >= int(capped["cap"]) else ""
 
 ## **THE CAP OFF A CREW CURVE** — `min(pool, useful)`, with `_forecast_worker_cap`'s two notes. While the
 ## curve is in flight (`NO_CREW_ANSWER`) only the pool caps the stepper.
@@ -1417,8 +1430,8 @@ func _curve_worker_cap(useful: int, assignable: int) -> Dictionary:
     if useful == SourceForecast.NO_CREW_ANSWER or useful >= assignable:
         var labor_note := ""
         if useful != SourceForecast.NO_CREW_ANSWER and useful > assignable:
-            labor_note = SourceForecast.LABOR_BOUND_NOTE_FORMAT % [assignable, useful]
-        return {"cap": assignable, "note": labor_note}
+            labor_note = SourceForecast.LABOR_BOUND_NOTE_FORMAT % assignable
+        return {"cap": assignable, "note": "", "labor_note": labor_note}
     var noun := SourceForecast.MAX_USEFUL_NOUN_ONE if useful == 1 else SourceForecast.MAX_USEFUL_NOUN_MANY
     return {"cap": useful, "note": SourceForecast.MAX_USEFUL_NOTE_FORMAT % [useful, noun]}
 
@@ -1970,8 +1983,8 @@ func _useful_worker_cap(useful: int, assignable: int,
         # (useful == assignable) and no-forecast (UNBOUNDED) stay noteless.
         var labor_note := ""
         if useful != SourceForecast.MAX_USEFUL_UNBOUNDED and useful > assignable:
-            labor_note = SourceForecast.LABOR_BOUND_NOTE_FORMAT % [assignable, useful]
-        return {"cap": assignable, "note": labor_note}
+            labor_note = SourceForecast.LABOR_BOUND_NOTE_FORMAT % assignable
+        return {"cap": assignable, "note": "", "labor_note": labor_note}
     var noun := SourceForecast.MAX_USEFUL_NOUN_ONE if useful == 1 else SourceForecast.MAX_USEFUL_NOUN_MANY
     # **THE WEAPONS ARE THE BINDING TERM — say so instead of blaming the herd.** Every conjunct earns
     # its place, and dropping any one of them prints a false sentence:
@@ -3247,12 +3260,13 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
             func(count: int) -> void:
                 _compose.set_hunt_count(clampi(count, 0, cap))
                 _build_herd_assign_controls(_live_herd(herd_id, herd), target),
-            "", _crew_cap_reason(String(capped["note"]), cap, assignable))
+            "", _crew_cap_reason(String(capped["note"]), cap, assignable,
+                String(capped.get("labor_note", ""))))
         # **THE CREW SPLIT, UNDER THE STEPPER** — the hunt curve row's `keep_hands` at the stepper's crew.
         hunt_split = _mount_crew_split(target, _compose.hunt_count(), _curve_row_keep_hands(
             crew_take_view, SourceForecast.hunt_crew_take_row(crew_take, _compose.hunt_count())),
             SourceForecast.LABOR_KIND_HUNT)
-        cap_note = String(capped["note"])
+        cap_note = _cap_mount_note(capped, _compose.hunt_count())
         if cap_note != "":
             target.add_child(HudWidgets.alloc_hint_label(cap_note))
     # **NO STALE ANSWER STANDS ON THIS PATH EITHER** — `_crew_take_view` reads `view_exact`, and the
@@ -4126,14 +4140,15 @@ func _build_forage_assign_controls(tile_info: Dictionary, target: VBoxContainer)
         func(count: int) -> void:
             _compose.set_forage_count(clampi(count, 0, cap))
             _build_forage_assign_controls(_live_tile_info(subject_key, tile_info), target),
-        "", _crew_cap_reason(String(capped["note"]), cap, crew_pool))
+        "", _crew_cap_reason(String(capped["note"]), cap, crew_pool,
+            String(capped.get("labor_note", ""))))
     # **THE CREW SPLIT, UNDER THE STEPPER** — one mark per harvester, the tending share off the crew
     # curve row's `keep_hands` at the stepper's crew. While the curve is in flight there is no figure,
     # so there are no marks; an unkept patch owes no tending and carries none either.
     var sheet_keep := _forage_sheet_keep_hands(kept, _compose.forage_count())
     var split_sentence := _mount_crew_split(target, _compose.forage_count(), sheet_keep,
         SourceForecast.LABOR_KIND_FORAGE)
-    var cap_note := String(capped["note"])
+    var cap_note := _cap_mount_note(capped, _compose.forage_count())
     if cap_note != "":
         target.add_child(HudWidgets.alloc_hint_label(cap_note))
     # **THE KIT ROW, directly under the crew stepper and above the readout** — the forage web's half of

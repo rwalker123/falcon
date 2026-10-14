@@ -637,9 +637,10 @@ fn food_terms_over(
     is_expedition: bool,
     counts: &dyn Fn(&str) -> bool,
 ) -> BandFoodTerms {
+    // **The forward need counts the party the band feeds**, the same mouths its meal does.
     let demand = food_demand(
         cohort.children,
-        cohort.working,
+        cohort.working + cohort.fed_party_workers,
         cohort.elders,
         &demographics.consumption,
     );
@@ -898,6 +899,9 @@ pub(crate) struct ExpeditionLevers<'a> {
     /// [`crate::carry::move_ferry_reach_tiles`] — how far a band moves and keeps everything,
     /// echoed per-cohort on the same idiom as the floors above.
     pub(crate) move_ferry_reach_tiles: u32,
+    /// [`crate::expedition_config::ExpeditionConfig::effective_comm_range`] — the messenger reach a
+    /// stationed party's report lands instantly inside, echoed per-cohort on the same idiom.
+    pub(crate) comm_range_tiles: u32,
 }
 
 /// **The TOE levers a cohort's kit readout is resolved against** — the config, plus the *equipped*
@@ -1248,6 +1252,23 @@ pub(crate) fn builtin_hunt_crew_levers() -> &'static HuntCrewLevers<'static> {
     })
 }
 
+/// The settlement stage a band of `size` people resolves to, as the view the client draws its
+/// marker from. ONE resolution shared by the owner's row and the redacted foreign row, so the two
+/// can never disagree about what stage a band is.
+fn settlement_stage_view(
+    size: u32,
+    config: &crate::settlement_stage_config::SettlementStageConfig,
+) -> SettlementStageViewState {
+    let inputs = crate::settlement_stage_config::SettlementStageInputs { size };
+    crate::settlement_stage_config::resolve_settlement_stage(&inputs, &config.stages)
+        .map(|stage| SettlementStageViewState {
+            id: stage.id.clone(),
+            label: stage.label.clone(),
+            icon: stage.icon.clone(),
+        })
+        .unwrap_or_default()
+}
+
 /// ⛔ **A FOREIGN BAND'S ROW, REDACTED TO WHAT AN OBSERVER CAN ACTUALLY SEE.**
 ///
 /// Standing on a ridge watching a stranger's camp tells you **where they are, roughly how many
@@ -1259,7 +1280,7 @@ pub(crate) fn builtin_hunt_crew_levers() -> &'static HuntCrewLevers<'static> {
 ///
 /// # The allow-list is the WHOLE construction, not a set of deletions
 ///
-/// Six fields are named and **everything else comes from `Default`**. That is the load-bearing
+/// Seven fields are named and **everything else comes from `Default`**. That is the load-bearing
 /// choice: a field appended to `PopulationCohortState` later is redacted *by construction* rather
 /// than by whoever added it remembering to come here. A redaction written as "build the full row,
 /// then blank the sensitive parts" fails open on exactly the field nobody thought about, which is
@@ -1272,6 +1293,7 @@ pub(crate) fn builtin_hunt_crew_levers() -> &'static HuntCrewLevers<'static> {
 /// | `faction` | whose people they are — the thing you learn *first* by looking at them |
 /// | `name` | who they say they are |
 /// | `current_x` / `current_y` | where they are standing, which is the only reason this row exists at all |
+/// | `settlement_stage` | the marker the client draws. ⛔ **Safe ONLY because the stage is a pure function of `size`** (`SettlementStageInputs` carries nothing else), and `size` is already published in the row above, so it discloses nothing new. It is resolved from `cohort.size` through the same helper the owner's row uses, never copied from a full row. **If the stage ever gains a criterion beyond size (improvements, …) it MUST leave this allow-list** |
 /// | `size` | a camp's rough scale is legible from outside, and the client sizes its marker with it. Taken from `cohort.size`, which is exactly the `size` the owner's own row publishes (`whole_age_brackets` sums its triple back to it), so an observer and the owner never disagree about how many people are there |
 ///
 /// **The published triple is left at zero, and that is not a broken invariant.** `population_state`
@@ -1285,6 +1307,7 @@ pub(crate) fn redacted_population_state(
     band_name: Option<&BandName>,
     cohort: &PopulationCohort,
     current_position: Option<UVec2>,
+    settlement_stage_config: &crate::settlement_stage_config::SettlementStageConfig,
 ) -> PopulationCohortState {
     PopulationCohortState {
         entity: entity.to_bits(),
@@ -1294,6 +1317,8 @@ pub(crate) fn redacted_population_state(
         current_x: current_position.map(|p| p.x).unwrap_or(0),
         current_y: current_position.map(|p| p.y).unwrap_or(0),
         size: cohort.size,
+        // Allow-listed ONLY while the stage is a pure function of `size` (see the table above).
+        settlement_stage: settlement_stage_view(cohort.size, settlement_stage_config),
         ..PopulationCohortState::default()
     }
 }
@@ -1723,7 +1748,15 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
     let idle_workers = workforce.idle();
     // **The band's runway, resolved ONCE** — the published `turnsOfFood` and the figure a need row's
     // `turnsUntilHunt` counts down from.
-    let turns_of_food = band_turns_of_food(cohort, allocation, demographics, expedition.is_some());
+    // **A party its home band feeds has no larder to run out of** — its rations are part of that
+    // band's meal (`ExpeditionMission::fed_by_home_band`), so its pack reading empty is not a
+    // famine. It reports the not-food-limited sentinel; the home band's own runway (and the post
+    // ending when the band is short) is where that hunger shows.
+    let turns_of_food = if expedition.is_some_and(|exp| exp.mission.fed_by_home_band()) {
+        NOT_FOOD_LIMITED_TURNS
+    } else {
+        band_turns_of_food(cohort, allocation, demographics, expedition.is_some())
+    };
     // **THE MUSTER THE NEXT TURN WILL APPLY**, from the one function the labor pass applies
     // (`LaborAllocation::muster_donors`), so a donor row's `lentToHunt` and the band's
     // `idleMustered` are what the turn takes. A band has at most one need row.
@@ -1847,6 +1880,15 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
                     row.homeward_workers = walking_home.workers;
                     row.homeward_all_home_in = walking_home.all_home_in;
                     row.homeward_food = walking_home.food;
+                    // **THIS ROW'S HANDS WALKING BACK TO IT** — already in `workers`, so they are in
+                    // none of the band's homeward figures; the row's own fields state them.
+                    let rejoining = crate::work_party::HomewardTotals::rejoining_for_source(
+                        &a.homeward,
+                        &assignment.target,
+                    );
+                    row.rejoining_workers = rejoining.workers;
+                    row.rejoining_all_home_in = rejoining.all_home_in;
+                    row.rejoining_food = rejoining.food;
                     // **HUNTING BY NEED (#798)** — a need row publishes the crew it sends, the wait
                     // before one goes and the animal's progress; a donor row what it lends. Every
                     // other row keeps the zeros.
@@ -2051,18 +2093,7 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
     };
     // Resolve the band's settlement stage from the data-driven config (interim input: head-count).
     // Empty config would yield None; fall back to the empty view so the field is always present.
-    let settlement_stage_inputs =
-        crate::settlement_stage_config::SettlementStageInputs { size: cohort.size };
-    let settlement_stage = crate::settlement_stage_config::resolve_settlement_stage(
-        &settlement_stage_inputs,
-        &settlement_stage_config.stages,
-    )
-    .map(|stage| SettlementStageViewState {
-        id: stage.id.clone(),
-        label: stage.label.clone(),
-        icon: stage.icon.clone(),
-    })
-    .unwrap_or_default();
+    let settlement_stage = settlement_stage_view(cohort.size, settlement_stage_config);
     // **THIS PARTY'S PACK** = `party_workers × the per-worker carry of the pack its MISSION fills`
     // (`0` for a scout and for a normal band). The party's worker count is its working-age head-count.
     //
@@ -2083,8 +2114,9 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         Some(ExpeditionMission::Trade { .. }) => {
             crate::carry::carry_capacity(working_age, expedition_levers.carry).to_f32()
         }
-        // A scout hauls nothing it was sent for, and a resident band is not a party.
-        Some(ExpeditionMission::Scout) | None => 0.0,
+        // A scout hauls nothing it was sent for, a stationed party carries no pack at all (its home
+        // band feeds it), and a resident band is not a party.
+        Some(ExpeditionMission::Scout | ExpeditionMission::Station { .. }) | None => 0.0,
     };
     // **The shipment a trade party is carrying** — read off `Expedition::cargo`, which is a store of
     // its own and deliberately *not* the party's pack (`cohort.stores`, published as `stores` and
@@ -2103,16 +2135,18 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         expedition_cargo_fodder,
         expedition_cargo_materials,
     ) = match expedition {
-        Some(exp) if exp.mission.destination_band().is_some() => (
+        Some(exp) if exp.mission.bound_for_band().is_some() => (
+            // **A shipment's destination or a post's host** — the one band this party is bound for,
+            // whichever verb sent it (`expeditionMission` says which).
             exp.mission
-                .destination_band()
+                .bound_for_band()
                 .map(|band| band.0)
                 .unwrap_or_default(),
             // **The raw name, not the display fallback.** `destination_display` prints the band's
             // id when there is no name, which is right for the sim's own feed prose and wrong for a
             // wire field: the client already has a label for a band, and an id-shaped string would
             // fight it. Empty means "no name" — see `ExpeditionMission::Trade::destination_name`.
-            exp.mission.destination_name().to_string(),
+            exp.mission.bound_for_name().to_string(),
             exp.cargo.get(FOOD).to_f32(),
             // **The hay account, published apart from the food one** — two keys on the shipment's
             // store that never convert, and a client that summed them would be reinventing the
@@ -2173,9 +2207,15 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
                     take_rows,
                     hunt_turn_lines.as_deref(),
                     bench,
-                    craft_inputs.recipes,
-                    craft_inputs.equipment,
+                    crate::craft_suggestions::SuggestionConfigs {
+                        recipes: craft_inputs.recipes,
+                        equipment: craft_inputs.equipment,
+                    },
                     &kit,
+                    Some(crate::craft_suggestions::ForecastInputs {
+                        offers: &craft_offers,
+                        materials: craft_inputs.materials,
+                    }),
                 ),
             );
             // **What the whole count needs that the stock cannot cover**, off the same forecast the
@@ -2501,8 +2541,7 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         pool_toe: allocation
             .map(|alloc| {
                 alloc
-                    .last_pool_toe
-                    .iter()
+                    .published_pool_toe()
                     .map(|line| sim_schema::state::PoolToeLineState {
                         pool: line.pool.as_str().to_string(),
                         item_id: line.item.clone(),
@@ -2624,6 +2663,7 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
             .unwrap_or(crate::work_party::NO_LOAD_ON_THE_ROAD),
         homeward_all_home_in: homeward_totals.all_home_in,
         move_ferry_reach_tiles: expedition_levers.move_ferry_reach_tiles,
+        comm_range_tiles: expedition_levers.comm_range_tiles,
         // **The long-move forecast is the shed the move would run**, from the same function — no
         // client mirror. A detached party keeps its own rules, so it forecasts nothing.
         long_move_leaves_food: long_move.food.to_f32(),
@@ -3116,6 +3156,7 @@ mod tests {
             move_ferry_reach_tiles: crate::carry::move_ferry_reach_tiles(
                 &crate::supply_network_config::SupplyNetworkConfig::builtin(),
             ),
+            comm_range_tiles: cfg.effective_comm_range(),
         }
     }
 
@@ -3134,6 +3175,7 @@ mod tests {
             morale: scalar_one(),
             last_food_consumption: 0.0,
             last_food_need: 0.0,
+            fed_party_workers: Default::default(),
             last_food_spoiled: 0.0,
             last_turn_food_transfers: Default::default(),
             last_turn_fodder_transfers: Default::default(),
@@ -3311,6 +3353,8 @@ mod tests {
                 .default_kit(crate::equipment_config::KitJob::Hunt),
             cargo: LocalStore::new(),
             defection_pull: Scalar::zero(),
+            station_reports: Vec::new(),
+            aim: None,
         };
         let runway = captured_runway(&cohort, None, Some(&expedition));
         let historical = TEST_LARDER / demand_of(&cohort);

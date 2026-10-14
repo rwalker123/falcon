@@ -29,9 +29,10 @@ Design stance (agreed):
  (named contributors)    (0..1 scalar)   (fraction +        (productivity · migration
   terrain, climate,                       grievance state)    · [future] revolution)
   settling, unrest,
-  [future: food,
-  education, tech,
-  government, …])
+  culture,
+  [future: education,
+  tech, government,
+  …])
 ```
 
 ### Layer 1 — Factors (inputs → morale)
@@ -40,8 +41,13 @@ Morale trends toward an equilibrium set by the **sum of named contributions**. E
 rewritten.
 - **Phase 1 (active):** the existing real inputs — `settling` (+ base growth), `terrain`
   habitability, `climate` (temperature vs the tolerance band), `unrest` (crisis + culture).
-- **Reserved slots (unimplemented):** `nutrition`/food, `education`, `technology`, `government`,
-  `crowding`, `culture`, `leadership`.
+- **Phase 2 (active):** `culture` — near (+) / far (−) from the band's ancestors (#699;
+  `wellbeing_config.json` → `culture`).
+- **Reserved slots (unimplemented):** `education`, `technology`, `government`, `crowding`,
+  `leadership`.
+- **Not a factor: nutrition / food.** Starvation stays out of morale by design — hunger reaches the
+  player through the days-of-food path, and population loss to starvation is a demographic
+  outcome, not a wellbeing one.
 - **Free win:** this contributor list *is* the per-band **morale breakdown** — the UI can itemize
   "why morale is moving" directly from it (the transparency we'd otherwise bolt on separately).
 
@@ -86,7 +92,8 @@ Each keys off the discontent state independently; adding one doesn't touch the o
 - Extension points present and **empty**: extra factors, extra productivity modifiers, revolution.
 
 **Phase 2+ (deferred, no rewrite required).**
-- Additional morale factors: nutrition, education, technology, government type, culture.
+- Additional morale factors: education, technology, government type (#223). Culture shipped in
+  #699; nutrition is not a factor (Layer 1).
 - Additional productivity modifiers (education/tech/government).
 - **Revolution** consequence off the `grievance` accumulator.
 - Richer emigrant destinations (settlements, cross-faction), and reach tied to concrete movement

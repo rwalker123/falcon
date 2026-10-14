@@ -31,7 +31,7 @@ pub const COMMAND_VERBS: &[CommandVerbHelp] = &[
         verb: "new_game",
         aliases: &[],
         summary: "Generate a world on demand (the server boots idle). seed 0 randomizes.",
-        usage: "new_game <preset_id> <width> <height> <seed> <profile_id> [ai_factions]",
+        usage: "new_game <preset_id> <width> <height> <seed> <profile_id> [<archetype_id>=<count> ...]",
     },
     CommandVerbHelp {
         verb: "order",
@@ -340,6 +340,14 @@ pub const COMMAND_VERBS: &[CommandVerbHelp] = &[
                 [kit <id>]",
     },
     CommandVerbHelp {
+        verb: "station_expedition",
+        aliases: &[],
+        summary: "Post part of a band at another band it holds a live tie with — the party follows \
+                  the host, keeps the tie alive and sends news home a runner's walk behind. The home \
+                  band feeds it; a host of another people needs that people's Open Borders.",
+        usage: "station_expedition <faction_id> <band_id> <party_workers> <host_band_id> [kit <id>]",
+    },
+    CommandVerbHelp {
         verb: "export_map",
         aliases: &["export"],
         summary: "Write the current world map (terrain + seed) to a JSON file for inspection and tests.",
@@ -366,8 +374,8 @@ pub const COMMAND_VERBS: &[CommandVerbHelp] = &[
 ];
 
 use crate::{
-    CancelScope, CommandPayload, ConfigOverrideKind, OrdersDirective, ReloadConfigKind,
-    SecurityPolicyKind,
+    ArchetypeCount, CancelScope, CommandPayload, ConfigOverrideKind, OrdersDirective,
+    ReloadConfigKind, SecurityPolicyKind,
 };
 
 #[derive(Debug, Error)]
@@ -462,22 +470,28 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
             let profile_id = parts
                 .next()
                 .ok_or(CommandParseError::MissingArgument("profile_id"))?;
-            // **The rival count is the one OPTIONAL argument**, and omitting it is not the same as
-            // typing 0: absent leaves the server on its unattended roster — no rivals unless
-            // `default_ai_faction_count` pins some — while `0` is an explicit "I play alone".
-            // Optional so every existing script and replay line keeps parsing and keeps meaning
-            // what it meant.
-            let ai_faction_count = match parts.next() {
-                Some(token) => Some(parse_u32(token, "new_game ai_factions")?),
-                None => None,
-            };
+            // **The archetype counts are the OPTIONAL tail**, one `<archetype_id>=<count>` token per
+            // archetype the caller picked. An archetype left off is not the same as `=0`: absent
+            // leaves the server on that archetype's unattended count - its `default_count` pin,
+            // else none - while `=0` is an explicit "none of these".
+            let mut archetype_counts = Vec::new();
+            for token in parts.by_ref() {
+                let (id, count) = token
+                    .split_once('=')
+                    .filter(|(id, _)| !id.is_empty())
+                    .ok_or_else(|| CommandParseError::UnexpectedArgument(token.to_string()))?;
+                archetype_counts.push(ArchetypeCount {
+                    id: id.to_string(),
+                    count: parse_u32(count, "new_game archetype count")?,
+                });
+            }
             Ok(CommandPayload::NewGame {
                 preset_id: preset_id.to_string(),
                 width: parse_u32(width_str, "new_game width")?,
                 height: parse_u32(height_str, "new_game height")?,
                 seed: parse_u64(seed_str, "new_game seed")?,
                 profile_id: profile_id.to_string(),
-                ai_faction_count,
+                archetype_counts,
             })
         }
         "order" => {
@@ -1864,6 +1878,45 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
                 kit_id,
             })
         }
+        // **A stationed party's grammar is four positional tokens and an optional named `kit <id>`**,
+        // closed to everything else on `send_denial_raid`'s rule: there is no cargo and no floor, so
+        // any other trailing token is a misunderstanding of the verb and is refused.
+        "station_expedition" => {
+            let faction_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("faction_id"))?;
+            let band_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("band_id"))?;
+            let workers_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("party_workers"))?;
+            let host_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("host_band_id"))?;
+            let mut kit_id: Option<String> = None;
+            while let Some(token) = parts.next() {
+                match token.to_ascii_lowercase().as_str() {
+                    "kit" => {
+                        let id = parts.next().ok_or(CommandParseError::MissingArgument(
+                            "station_expedition kit id",
+                        ))?;
+                        if kit_id.is_some() {
+                            return Err(CommandParseError::UnexpectedArgument(token.to_string()));
+                        }
+                        kit_id = Some(id.to_string());
+                    }
+                    _ => return Err(CommandParseError::UnexpectedArgument(token.to_string())),
+                }
+            }
+            Ok(CommandPayload::StationExpedition {
+                faction_id: parse_u32(faction_str, "station_expedition faction")?,
+                band_id: Some(parse_u64(band_str, "station_expedition band_id")?),
+                party_workers: parse_u32(workers_str, "station_expedition party_workers")?,
+                host_band_id: parse_u64(host_str, "station_expedition host_band_id")?,
+                kit_id,
+            })
+        }
         "resync" => Ok(CommandPayload::Resync),
         "export" | "export_map" => {
             // Remaining tokens (if any) form the destination path; join so
@@ -2587,7 +2640,7 @@ mod tests {
                 height: 52,
                 seed: 0,
                 profile_id: "late_forager_tribe".to_string(),
-                ai_faction_count: None,
+                archetype_counts: Vec::new(),
             }
         );
         // A non-zero seed is preserved verbatim (u64 range).
@@ -2599,37 +2652,56 @@ mod tests {
                 height: 52,
                 seed: 119304647,
                 profile_id: "late_forager_tribe".to_string(),
-                ai_faction_count: None,
+                archetype_counts: Vec::new(),
             }
         );
-        // **The rival count is the one optional argument, and absent is NOT zero.** An explicit 0
-        // says "I play alone"; leaving it off says "use the config default", and the two must not
-        // collapse into one payload.
+        // **The archetype counts are the optional tail, and an archetype left off is NOT zero.** An
+        // explicit `=0` says "none of these"; leaving it off says "use the unattended count", and
+        // the two must not collapse into one payload.
+        let counts = |entries: &[(&str, u32)]| -> Vec<ArchetypeCount> {
+            entries
+                .iter()
+                .map(|(id, count)| ArchetypeCount {
+                    id: (*id).to_string(),
+                    count: *count,
+                })
+                .collect()
+        };
         assert_eq!(
-            parse_command_line("new_game earthlike 80 52 0 late_forager_tribe 2").unwrap(),
+            parse_command_line("new_game earthlike 80 52 0 late_forager_tribe major=2 minor=3")
+                .unwrap(),
             CommandPayload::NewGame {
                 preset_id: "earthlike".to_string(),
                 width: 80,
                 height: 52,
                 seed: 0,
                 profile_id: "late_forager_tribe".to_string(),
-                ai_faction_count: Some(2),
+                archetype_counts: counts(&[("major", 2), ("minor", 3)]),
             }
         );
         assert_eq!(
-            parse_command_line("new_game earthlike 80 52 0 late_forager_tribe 0").unwrap(),
+            parse_command_line("new_game earthlike 80 52 0 late_forager_tribe major=0").unwrap(),
             CommandPayload::NewGame {
                 preset_id: "earthlike".to_string(),
                 width: 80,
                 height: 52,
                 seed: 0,
                 profile_id: "late_forager_tribe".to_string(),
-                ai_faction_count: Some(0),
+                archetype_counts: counts(&[("major", 0)]),
             }
         );
         assert!(matches!(
-            parse_command_line("new_game earthlike 80 52 0 late_forager_tribe many"),
+            parse_command_line("new_game earthlike 80 52 0 late_forager_tribe major=many"),
             Err(CommandParseError::InvalidInteger { .. })
+        ));
+        // The retired bare positional count, and a token with no id, are refused rather than guessed.
+        assert!(matches!(
+            parse_command_line("new_game earthlike 80 52 0 late_forager_tribe 2"),
+            Err(CommandParseError::UnexpectedArgument(_))
+        ));
+        assert!(matches!(
+            parse_command_line("new_game earthlike 80 52 0 late_forager_tribe =2"),
+            Err(CommandParseError::UnexpectedArgument(_))
         ));
         // Every other positional argument is required.
         assert!(matches!(
@@ -3784,6 +3856,30 @@ mod tests {
             parse_command_line("work_priority 1 7 4 9 wood extra low"),
             Err(CommandParseError::UnexpectedToken(_))
         ));
+    }
+
+    #[test]
+    fn parse_station_expedition_reads_four_tokens_and_an_optional_kit() {
+        assert_eq!(
+            parse_command_line("station_expedition 0 7 4 12").unwrap(),
+            CommandPayload::StationExpedition {
+                faction_id: 0,
+                band_id: Some(7),
+                party_workers: 4,
+                host_band_id: 12,
+                kit_id: None,
+            }
+        );
+        let CommandPayload::StationExpedition { kit_id, .. } =
+            parse_command_line("station_expedition 0 7 4 12 kit none").unwrap()
+        else {
+            panic!("a station order parses to a station payload");
+        };
+        assert_eq!(kit_id.as_deref(), Some("none"));
+        assert!(parse_command_line("station_expedition 0 7 4").is_err());
+        assert!(parse_command_line("station_expedition 0 7 4 12 food 3").is_err());
+        assert!(parse_command_line("station_expedition 0 7 4 12 kit a kit b").is_err());
+        assert!(parse_command_line("station_expedition 0 7 4 12 kit").is_err());
     }
 
     /// **`bench_auto` takes a band and `on|off`; `bench_auto_skip` takes a band alone.**

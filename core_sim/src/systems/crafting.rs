@@ -735,6 +735,19 @@ pub fn deliver_bench_output(mut bands: Query<(&mut BandBench, &mut BandEquipment
     }
 }
 
+/// **OPEN EVERY LEDGER'S WEAR SLOT FOR THE TURN** (#778) - the rolling window the "coming up" craft
+/// suggestions average their wear rate over. Scheduled beside [`deliver_bench_output`], before the
+/// first stage, so every wear charge of the turn lands in this turn's slot.
+pub fn open_wear_slots(
+    mut ledgers: Query<&mut BandEquipment>,
+    equipment: Res<crate::equipment_config::EquipmentConfigHandle>,
+) {
+    let window_turns = equipment.get().wear_forecast.window_turns;
+    for mut ledger in ledgers.iter_mut() {
+        ledger.open_wear_slot(window_turns);
+    }
+}
+
 /// **NOBODY AT THE BENCH** — the crew below which it may not draw. Named rather than a bare `0`
 /// because the test is *"is anyone working this job"* and not a comparison with a magnitude.
 const AN_IDLE_BENCH: u32 = 0;

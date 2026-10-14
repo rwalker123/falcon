@@ -50,6 +50,14 @@ A **resident** band (`ResidentBand` — an expedition is detached and deliberate
 
 - **`bands` is a separate map from `locals`**, which is what makes it impossible for a band layer to be returned by the tile lookups or walked as a tile.
 - **`attach_band` seeds from the parent province's *current* values**, not neutral: a band born into a long-diverged province starts assimilated rather than schisming for existing.
+- **A STARTING band also carries its people's personality lean — `attach_band_with_lean`.** Worldgen
+  draws one personality per faction in the roster (`personalities.json`, `factions.md` →
+  "Personalities") and inserts a transient `StartingCultureLean` on each of that faction's starting
+  bands. `reconcile_band_culture_layers` hands it to `attach_band_with_lean` on the band's first layer
+  and removes the component: the lean is **added to the band's culture MODIFIER** (on top of
+  `seeded_modifiers_for_band`, clamped to `±CULTURE_TRAIT_SPAN`), never to the baseline — the
+  baseline relaxes back to the parent province every turn, so only the modifier makes the lean last.
+  `attach_band_from_source` is untouched: a band that came from somewhere inherits, it draws nothing.
 - **A band that CAME from somewhere is seeded from where it came from — `attach_band_from_source`.**
   A colony founded by an expedition is attached at founding time
   (`systems::split_band_from_parent`) from its **home band**'s current values, parented on the

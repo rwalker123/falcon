@@ -642,6 +642,7 @@ impl WorkParty {
                     cargo: self.load_cargo,
                     classes: self.load_classes,
                     goods: self.load_goods,
+                    rejoins_row: WALKS_PLAIN,
                 });
             }
         }
@@ -721,7 +722,36 @@ impl HomewardTotals {
     /// **The one summation behind both readings of the wire** — the band's whole set
     /// (`PopulationCohortState.homeward*`) and one row's share ([`Self::for_source`],
     /// `LaborAssignment.homeward*`) — so the two cannot disagree.
+    ///
+    /// ⛔ **PLAIN WALKS ONLY.** A walk that [rejoins its row](HomewardWalk::rejoins_row) is
+    /// "not idle, on no row" of neither reading: its hands are on the row already. They are the
+    /// row's own `rejoining*` fields ([`Self::rejoining_for_source`]).
     pub fn of<'a>(walks: impl IntoIterator<Item = &'a HomewardWalk>) -> Self {
+        Self::sum(walks.into_iter().filter(|walk| !walk.rejoins_row))
+    }
+
+    /// **One row's share** — the plain walks whose source is `target`, by
+    /// [`crate::components::LaborTarget::same_source`], the identity a row keeps across a floor or
+    /// crew edit. A walk whose row is gone matches no row and is counted only in the band's total.
+    pub fn for_source(walks: &[HomewardWalk], target: &crate::components::LaborTarget) -> Self {
+        Self::of(walks.iter().filter(|walk| walk.target.same_source(target)))
+    }
+
+    /// **The hands walking BACK to this row** — the walks from `target` that
+    /// [rejoin it](HomewardWalk::rejoins_row): already inside the row's `workers`, away from the
+    /// source until they land.
+    pub fn rejoining_for_source(
+        walks: &[HomewardWalk],
+        target: &crate::components::LaborTarget,
+    ) -> Self {
+        Self::sum(
+            walks
+                .iter()
+                .filter(|walk| walk.rejoins_row && walk.target.same_source(target)),
+        )
+    }
+
+    fn sum<'a>(walks: impl IntoIterator<Item = &'a HomewardWalk>) -> Self {
         walks.into_iter().fold(
             Self {
                 workers: NOBODY_ON_THE_ROAD,
@@ -739,13 +769,6 @@ impl HomewardTotals {
                 totals
             },
         )
-    }
-
-    /// **One row's share** — the walks whose source is `target`, by
-    /// [`crate::components::LaborTarget::same_source`], the identity a row keeps across a floor or
-    /// crew edit. A walk whose row is gone matches no row and is counted only in the band's total.
-    pub fn for_source(walks: &[HomewardWalk], target: &crate::components::LaborTarget) -> Self {
-        Self::of(walks.iter().filter(|walk| walk.target.same_source(target)))
     }
 }
 
@@ -771,7 +794,19 @@ pub struct HomewardWalk {
     pub classes: CargoClasses,
     /// **Its fodder and materials** (#706) — landed with it, never rotted.
     pub goods: CarriedGoods,
+    /// ⛔ **THE WALK'S HANDS ARE STILL ON THEIR ROW** — set when the row survives the stand-down
+    /// (the source drifted back inside the apron, so the row is local now): the hands are counted
+    /// ONCE, in the row's `workers`, are not at the source until they land, and rejoin the row when
+    /// they do. `false` is the plain walk — hands off any row, counted by
+    /// `LaborAllocation::walking_home` and landing into the band's idle pool.
+    pub rejoins_row: bool,
 }
+
+/// A walk whose hands are on no row — the default every stand-down starts with.
+pub const WALKS_PLAIN: bool = false;
+
+/// A walk whose hands stay on the row that sent them ([`HomewardWalk::rejoins_row`]).
+pub const WALKS_BACK_TO_ITS_ROW: bool = true;
 
 impl HomewardWalk {
     /// **Hands walking home with nothing** over `turns_left` turns.
@@ -788,6 +823,7 @@ impl HomewardWalk {
             cargo: NOTHING_CARRIED,
             classes: CargoClasses::new(),
             goods: CarriedGoods::default(),
+            rejoins_row: WALKS_PLAIN,
         }
     }
 
@@ -812,6 +848,7 @@ impl HomewardWalk {
             cargo: walker.cargo,
             classes: walker.classes,
             goods: walker.goods,
+            rejoins_row: WALKS_PLAIN,
         }
     }
 
@@ -856,6 +893,38 @@ impl HomewardWalk {
             .filter(|(class, _)| rots(class))
             .map(|(_, amount)| amount)
             .sum()
+    }
+
+    /// **Split `hands` of this group off into a walk of their own**, carrying their share of the
+    /// cargo — the cut that flips only part of a group (a row cut below its rejoining hands).
+    /// The remainder stays in `self`. `hands` is clamped to the group.
+    pub fn split_off(&mut self, hands: u32) -> HomewardWalk {
+        let hands = hands.min(self.workers);
+        let share = if self.workers > NOBODY_ON_THE_ROAD {
+            hands as f32 / self.workers as f32
+        } else {
+            NOTHING_CARRIED
+        };
+        let cargo = self.cargo * share;
+        self.cargo -= cargo;
+        let classes = scaled_classes(&self.classes, share);
+        for (class, amount) in &classes {
+            if let Some(held) = self.classes.get_mut(class) {
+                *held = (*held - amount).max(NOTHING_CARRIED);
+            }
+        }
+        let goods = self.goods.take_share(share);
+        self.workers -= hands;
+        HomewardWalk {
+            target: self.target.clone(),
+            workers: hands,
+            turns_left: self.turns_left,
+            walk_turns: self.walk_turns,
+            cargo,
+            classes,
+            goods,
+            rejoins_row: self.rejoins_row,
+        }
     }
 
     /// The pack it lands as — its cargo and classes, carried over its walk.

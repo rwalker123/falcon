@@ -452,6 +452,8 @@ pub fn row_claims(
 ) -> RowClaims {
     let mut rows = RowClaims::default();
     for assignment in &allocation.assignments {
+        // The kit claim is struck on the hands PRESENT at the source: the row's crew less its
+        // rejoining walkers (`LaborAllocation::hands_present_on`).
         let split = if assignment.target.is_standing_pool() {
             CrewClaim::default()
         } else {
@@ -461,7 +463,7 @@ pub fn row_claims(
                 declared_on(allocation, &assignment.target),
                 &assignment.target,
                 &assignment.kit_choice(sources.equipment),
-                assignment.workers,
+                allocation.hands_present_on(assignment),
             )
         };
         rows.claims.push(split.claim);

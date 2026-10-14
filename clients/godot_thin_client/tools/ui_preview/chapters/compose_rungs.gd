@@ -565,10 +565,64 @@ func run(harness) -> void:
 	_assert_the_hint_states_each_kits_own_items()
 	_assert_the_appended_axes_read_the_band()
 	_assert_a_pen_prices_on_the_hunters_carry()
+	_assert_a_partly_armed_crew_prices_a_weighted_stay()
 
 	await _kit_offer_states()
 	await _herd_default_kit_states()
 	await _kit_swap_turn_estimate_states()
+
+## ⛔ **THE RETREAT'S COVERAGE WEIGHTING, DRIVEN THROUGH THE REAL SEAM.** `band_panel_preview` calls
+## `KitRoster.party_stay_fraction` with numbers, which cannot see a feed break — and this seam has died
+## silently before (labor-ui.md → "THE REPRICING NEEDS A LIVENESS GUARD"). So this goes through
+## `DrawerComposeController._hunt_priced_herd` at the offer roster: a quiet kit (`dispersion 0`) on a
+## quarry that retreats, a band holding FEWER of its units than the composed crew, against the fully
+## armed twin and the bare reading. Asserted by RATIO against those two readings, never as a magnitude:
+## `(short − bare) × crew == (full − bare) × armed`.
+func _assert_a_partly_armed_crew_prices_a_weighted_stay() -> void:
+	h._hud.update_kit_roster(_offer_roster(), BandFx.KIT_DEFAULT_HUNT, BandFx.KIT_DEFAULT_FORAGE,
+		BandFx.KIT_DEFAULT_SCOUT, BandFx.KIT_DEFAULT_WARRIOR, BandFx.KIT_DEFAULT_EXPEDITION)
+	var warren := _offer_quarry("game_rabbit_weighted_stay", "Rabbit Warren", "small",
+		OFFER_RABBIT_BODY_MASS, OFFER_RABBIT_DEFENSE, SourceForecast.HUSBANDRY_CEILING_PEN)
+	warren[SourceForecast.FORECAST_STAY_FRACTION_KEY] = WEIGHTED_STAY_WIRE
+	var kit_before: String = h._hud._compose.hunt_kit_id()
+	var count_before: int = h._hud._compose.hunt_count()
+	h._hud._compose.set_hunt_count(WEIGHTED_STAY_CREW)
+	h._hud._compose.set_hunt_kit_id(KIT_ID_TRAPPING)
+	var short_stay := _weighted_stay_reading(warren, WEIGHTED_STAY_ARMED)
+	var full_stay := _weighted_stay_reading(warren, WEIGHTED_STAY_CREW)
+	h._hud._compose.set_hunt_kit_id(KitRoster.NO_KIT_ID)
+	var bare_stay := _weighted_stay_reading(warren, 0)
+	h._hud._compose.set_hunt_kit_id(kit_before)
+	h._hud._compose.set_hunt_count(count_before)
+	h._assert_hud("precondition: the band is SHORT of the kit (%d of %d) and the quiet kit reads above the bare hand (%s over %s)"
+			% [WEIGHTED_STAY_ARMED, WEIGHTED_STAY_CREW, str(full_stay), str(bare_stay)],
+		WEIGHTED_STAY_ARMED < WEIGHTED_STAY_CREW and full_stay > bare_stay
+			and is_equal_approx(bare_stay, WEIGHTED_STAY_WIRE))
+	h._assert_hud("a short-handed crew's stay is the share-weighted mean of the armed and bare readings (%s)"
+			% str(short_stay),
+		short_stay > bare_stay and short_stay < full_stay
+			and is_equal_approx((short_stay - bare_stay) * float(WEIGHTED_STAY_CREW),
+				(full_stay - bare_stay) * float(WEIGHTED_STAY_ARMED)))
+
+## The stay the sheet's own producer quotes for the composed hunt, with the band holding `armed` units.
+func _weighted_stay_reading(quarry: Dictionary, armed: int) -> float:
+	var band := BandFx.with_equipped_kit(BandFx.hunt_preview_local_band())
+	band[KitRoster.BAND_KIT_TIERS_KEY] = [{
+		KitRoster.BAND_KIT_TIERS_ID_KEY: KIT_ID_TRAPPING,
+		KitRoster.KIT_ATTACK_KEY: BandFx.KIT_ATTACK_EQUIPPED,
+		KitRoster.KIT_HUNT_CARRY_KEY: BandFx.KIT_HUNT_CARRY_EQUIPPED,
+		KitRoster.KIT_HUNT_CARRY_BARE_KEY: BandFx.KIT_HUNT_CARRY_BARE,
+		KitRoster.KIT_HUNT_SATURATING_CREW_KEY: armed,
+		KitRoster.KIT_FORAGE_CARRY_KEY: BandFx.KIT_FORAGE_CARRY_BARE,
+	}]
+	var priced: Dictionary = h._hud._drawercompose._hunt_priced_herd(quarry, band)
+	return float(priced.get(SourceForecast.FORECAST_STAY_FRACTION_KEY, -1.0))
+
+## The quarry's wire stay (a warren keeps one animal in four), and the crew / armed counts of the
+## driven case: three hunters holding one trap.
+const WEIGHTED_STAY_WIRE := 0.25
+const WEIGHTED_STAY_CREW := 3
+const WEIGHTED_STAY_ARMED := 1
 
 ## ⛔ **THE KIT LINE IS A SHORTFALL WARNING, AND SAYS NOTHING WHEN NOBODY IS SHORT.**
 ##

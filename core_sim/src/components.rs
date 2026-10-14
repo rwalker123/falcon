@@ -1582,6 +1582,13 @@ pub struct PopulationCohort {
     /// hand-to-mouth hits every turn even when its income covers its need on average. Set each turn
     /// by `simulate_population`; `0.0` before a band's first turn. On the wire as `foodNeed`.
     pub last_food_need: f32,
+    /// **Working-age people this band is feeding out in the field** — the stationed parties it sent
+    /// out ([`ExpeditionMission::fed_by_home_band`]), as `simulate_population` counted them into this
+    /// turn's meal. Their rations are inside [`Self::last_food_need`]; this is what the FORWARD
+    /// readings (the runway, the hunting need clock) add to the band's own brackets so they count the
+    /// same mouths the meal does. Rewritten every turn (zero when none); one turn stale across a
+    /// launch or a fold-back, for the reason `last_food_need` is.
+    pub fed_party_workers: Scalar,
     /// **The food that ROTTED this turn** (#706) — the larder rot `systems::rot_band_larders` struck
     /// right after the meal (which also resets it each turn), plus the transit rot of any caravan
     /// pack that landed home after a walk longer than its class keeps (`systems::labor`). One term,
@@ -2206,6 +2213,26 @@ pub enum ExpeditionMission {
         /// scheme to fill it is a separate piece of design, not a field default.
         destination_name: String,
     },
+    /// **Post part of a band at another band it holds a live tie with** — a stationed party
+    /// (`docs/plan_contact_and_logistics.md` "Settled by #774", `.claude/rules/core_sim/expeditions.md`
+    /// → "A stationed party").
+    ///
+    /// The party walks to the host, **stays and follows it** ([`ExpeditionPhase::Stationed`]), keeps
+    /// the home band's tie toward the host alive for as long as it stays, and sends what it sees home
+    /// as reports that land a runner's walk behind ([`Expedition::station_reports`]). It carries no
+    /// larder: the home band's ordinary consumption feeds it.
+    ///
+    /// Like [`Self::Trade`], **it names its host by [`BandId`]** and follows that id (fission keeps the
+    /// id with one half), and **the only faction comparison on its path** is
+    /// [`crate::resources::FactionBorderPolicies::admits_posting`].
+    Station {
+        /// The host band's durable id — the key, never rendered.
+        host_band: BandId,
+        /// The host's display name, resolved ONCE at launch off its [`BandName`] (empty when the band
+        /// carries none). Carried for [`ExpeditionMission::Trade::destination_name`]'s reason: the
+        /// party outlives the host's presence in the viewer's world.
+        host_name: String,
+    },
 }
 
 /// **The orders a party works a herd under** — [`ExpeditionMission::Deny`]'s, resolved once so the
@@ -2227,6 +2254,7 @@ impl ExpeditionMission {
             ExpeditionMission::Scout => "scout",
             ExpeditionMission::Deny { .. } => "deny",
             ExpeditionMission::Trade { .. } => "trade",
+            ExpeditionMission::Station { .. } => "station",
         }
     }
 
@@ -2237,6 +2265,7 @@ impl ExpeditionMission {
             ExpeditionMission::Scout => "scouting",
             ExpeditionMission::Deny { .. } => "raiding",
             ExpeditionMission::Trade { .. } => "trading",
+            ExpeditionMission::Station { .. } => "stationed",
         }
     }
 
@@ -2262,6 +2291,10 @@ impl ExpeditionMission {
                 destination_band: BandId(destination_band),
                 destination_faction: FactionId(destination_faction),
                 destination_name: destination_name.to_string(),
+            },
+            "station" => ExpeditionMission::Station {
+                host_band: BandId(destination_band),
+                host_name: destination_name.to_string(),
             },
             _ => ExpeditionMission::Scout,
         }
@@ -2313,6 +2346,50 @@ impl ExpeditionMission {
         }
     }
 
+    /// **The band a stationed party is posted at**, for the one mission that names one — `None`
+    /// for every other verb. Deliberately NOT folded into [`Self::destination_band`]: that one is a
+    /// shipment's, and the trade arm's guards and its consignee read it.
+    pub fn host_band(&self) -> Option<BandId> {
+        match self {
+            ExpeditionMission::Station { host_band, .. } => Some(*host_band),
+            _ => None,
+        }
+    }
+
+    /// **The band this party is bound for, whichever verb sent it** — a shipment's destination or a
+    /// post's host. What the wire's `expeditionDestinationBand` publishes.
+    pub fn bound_for_band(&self) -> Option<BandId> {
+        self.destination_band().or_else(|| self.host_band())
+    }
+
+    /// The display name of [`Self::bound_for_band`] as it is PUBLISHED: the destination's name for a
+    /// shipment, the host's for a post, `""` for everything else (and for a band with no name — the
+    /// same *"empty is no name"* contract as [`Self::destination_name`]).
+    pub fn bound_for_name(&self) -> &str {
+        match self {
+            ExpeditionMission::Station { host_name, .. } => host_name,
+            _ => self.destination_name(),
+        }
+    }
+
+    /// The host's name for the sim's OWN feed prose: the name when there is one, `band <id>`
+    /// otherwise. Empty for every other mission. Never published — see [`Self::destination_display`].
+    pub fn host_display(&self) -> String {
+        match self {
+            ExpeditionMission::Station {
+                host_band,
+                host_name,
+            } => {
+                if host_name.is_empty() {
+                    format!("band {}", host_band.0)
+                } else {
+                    host_name.clone()
+                }
+            }
+            _ => String::new(),
+        }
+    }
+
     /// **The string the SIM'S OWN EVENT FEED prints for a shipment's destination** — the name when
     /// there is one, the band's id as a last resort, exactly as [`Self::target_display`] falls back
     /// for a quarry. Empty for every non-`Trade` mission.
@@ -2344,7 +2421,9 @@ impl ExpeditionMission {
     pub fn target_herd(&self) -> &str {
         match self {
             ExpeditionMission::Deny { fauna_id, .. } => fauna_id,
-            ExpeditionMission::Scout | ExpeditionMission::Trade { .. } => "",
+            ExpeditionMission::Scout
+            | ExpeditionMission::Trade { .. }
+            | ExpeditionMission::Station { .. } => "",
         }
     }
 
@@ -2358,7 +2437,9 @@ impl ExpeditionMission {
     pub fn target_species(&self) -> &str {
         match self {
             ExpeditionMission::Deny { target_species, .. } => target_species,
-            ExpeditionMission::Scout | ExpeditionMission::Trade { .. } => "",
+            ExpeditionMission::Scout
+            | ExpeditionMission::Trade { .. }
+            | ExpeditionMission::Station { .. } => "",
         }
     }
 
@@ -2396,8 +2477,17 @@ impl ExpeditionMission {
                 floor: STRIP_IT_BARE,
                 stop: crate::fauna::EngagementStop::Never,
             }),
-            ExpeditionMission::Scout | ExpeditionMission::Trade { .. } => None,
+            ExpeditionMission::Scout
+            | ExpeditionMission::Trade { .. }
+            | ExpeditionMission::Station { .. } => None,
         }
+    }
+
+    /// **Does the home band feed this party out of its own larder?** A stationed party carries no
+    /// larder of its own — its rations are part of the home band's ordinary consumption from launch
+    /// until fold-back (`.claude/rules/core_sim/work-party.md` → "The home band feeds its party").
+    pub fn fed_by_home_band(&self) -> bool {
+        matches!(self, ExpeditionMission::Station { .. })
     }
 }
 
@@ -2411,6 +2501,12 @@ pub enum ExpeditionPhase {
     AwaitingOrders,
     Returning,
     Hunting,
+    /// **A stationed party standing at its host** ([`ExpeditionMission::Station`]) — it stays, follows
+    /// the host's live tile every turn. It credits the home band's tie
+    /// only through the reports it sends home: the tie rises when a `StationReport` lands, never
+    /// while the party merely stands there (`.claude/rules/core_sim/connections.md`, "There is no
+    /// live credit"). Genuinely new state: no other phase both stays and moves.
+    Stationed,
 }
 
 impl ExpeditionPhase {
@@ -2421,6 +2517,7 @@ impl ExpeditionPhase {
             ExpeditionPhase::AwaitingOrders => "awaiting",
             ExpeditionPhase::Returning => "returning",
             ExpeditionPhase::Hunting => "hunting",
+            ExpeditionPhase::Stationed => "stationed",
         }
     }
 
@@ -2430,9 +2527,28 @@ impl ExpeditionPhase {
             "awaiting" => ExpeditionPhase::AwaitingOrders,
             "returning" => ExpeditionPhase::Returning,
             "hunting" => ExpeditionPhase::Hunting,
+            "stationed" => ExpeditionPhase::Stationed,
             _ => ExpeditionPhase::Outbound,
         }
     }
+}
+
+/// **One report a stationed party has sent home and not yet landed** — everything its observe pass
+/// found on one turn, bundled and carried by a runner who is walking it home
+/// (`.claude/rules/core_sim/connections.md` → "A stationed party's reports").
+///
+/// The tiles and sightings carry their OBSERVED turn (a [`Sighting`](crate::connections::Sighting) stamps it), so landing the report
+/// late never rewrites when something was seen: the home ledger's clock 1 reads the observation turn
+/// and clocks 2 and 3 read the turn the report landed.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StationReport {
+    /// The first turn this report lands on: dispatch turn + the runner's walk (`0` inside the
+    /// effective comm range, where it lands the turn it leaves).
+    pub land_turn: u64,
+    /// The tiles the party's sight found, landed as `Discovered` — never `Active`.
+    pub tiles: Vec<UVec2>,
+    /// The peoples it found, subject band → where and when it saw them.
+    pub sightings: std::collections::BTreeMap<BandId, crate::connections::Sighting>,
 }
 
 /// Marks a detached traveling party (a scout, a denial raid or a shipment). Reuses `PopulationCohort` +
@@ -2529,6 +2645,19 @@ pub struct Expedition {
     /// is accrued across turns: a rollback that zeroed it would silently delay a defection the
     /// discarded future had already made inevitable.
     pub defection_pull: Scalar,
+    /// **A stationed party's reports in transit** ([`ExpeditionMission::Station`] only; empty for every
+    /// other verb). Dispatched one per turn the party has anything to report, each with the turn it
+    /// lands; landed in `advance_expeditions` the turn it falls due, and every one still in transit
+    /// lands when the party folds back — it carries its own news home. Rides the checkpoint whole
+    /// with the rest of the `Expedition`.
+    pub station_reports: Vec<StationReport>,
+    /// **The tile a Station / Trade party is walking toward** — what its people KNOW about where the
+    /// target band is, not where it is (`.claude/rules/core_sim/connections.md`). Set at launch to
+    /// the target's live tile when the sender knows it (own people, or visible) and otherwise to the
+    /// connection edge's `last_seen_position`; refreshed each `Outbound` turn only when the target is
+    /// the sender's own people or the party sees it. `None` for every other verb. Rides the
+    /// checkpoint with the rest of the `Expedition`.
+    pub aim: Option<UVec2>,
 }
 
 /// Permanent settlement seeded by a founding action.
@@ -4000,6 +4129,17 @@ pub struct BandEquipment {
     /// An item with no entry has retired none. **Not gameplay**: nothing in the sim branches on it,
     /// and it must not become a repair discount or a durability bonus — it is the readout's memory.
     retired: std::collections::BTreeMap<String, std::collections::BTreeMap<String, u32>>,
+    /// **THE CONDITION EACH ITEM WAS CHARGED, PER TURN, over the last `wear_forecast.window_turns`
+    /// turns** (#778) - the rate behind the "coming up" craft suggestions. One slot per turn, oldest
+    /// first; [`Self::wear_item`] writes the condition it charged into the newest slot, and
+    /// [`Self::open_wear_slot`] (the per-turn system) opens the next and drops the slots beyond the
+    /// window.
+    ///
+    /// **Recorded at the one seam every wear charge passes through**, so it is exactly what the
+    /// ledger was charged and cannot drift from it. **Not gameplay**: only the suggestion forecast
+    /// reads it, through [`Self::wear_rate`]. It rides `BandRecord::equipment` with the rest of the
+    /// ledger; a splinter's ledger is built empty and so measures its own.
+    wear_window: std::collections::VecDeque<std::collections::BTreeMap<String, f32>>,
 }
 
 /// **Which units a removal takes first** — the two answers to two different questions:
@@ -4496,12 +4636,39 @@ impl BandEquipment {
         if charged <= 0.0 {
             return self;
         }
-        let Some(index) = self.serving_index(item, def) else {
+        let Some(consumed) = self.consume_condition(def, item, charged) else {
             return self;
         };
-        let Some(batches) = self.batches.get_mut(item) else {
-            return self;
-        };
+        // **The readout's memory, written on the one seam that destroys a unit.** See the field's
+        // docs: an emptied batch is removed, so without this the panel could not say *"worn out"*.
+        if consumed.retired > 0 {
+            *self
+                .retired
+                .entry(item.to_string())
+                .or_default()
+                .entry(consumed.tier)
+                .or_default() += consumed.retired;
+        }
+        self.record_wear(item, charged);
+        self
+    }
+
+    /// **CHARGE `charged` CONDITION TO THE BATCH IN HAND** - the consumption step `wear_item` and
+    /// the wear forecast share ([`Self::charge_condition`]). Wear past the tier's durability
+    /// consumes the unit in hand and carries the remainder onto the next one; a batch that runs out
+    /// of units is dropped and the charge stops there rather than spilling onto stock that never
+    /// went out. `None` when the band has no batch in condition to charge.
+    ///
+    /// **Touches neither the readout's `retired` memory nor the wear window** - those are
+    /// `wear_item`'s, so the forecast can run this on a clone without recording anything.
+    fn consume_condition(
+        &mut self,
+        def: &crate::equipment_config::ItemDefinition,
+        item: &str,
+        charged: f32,
+    ) -> Option<ConsumedCondition> {
+        let index = self.serving_index(item, def)?;
+        let batches = self.batches.get_mut(item)?;
         let batch = &mut batches[index];
         let durability = def.tier_or_default(&batch.tier).starting_durability;
         batch.wear += charged;
@@ -4511,27 +4678,73 @@ impl BandEquipment {
             batch.wear -= durability;
             retired += 1;
         }
-        // **The tier is read off the batch being spent**, before it can be dropped — this seam knows
+        // **The tier is read off the batch being spent**, before it can be dropped - this seam knows
         // which tier it is destroying, so the readout never has to guess one later.
         let tier = batch.tier.clone();
-        let emptied = batch.count == 0;
-        if emptied {
+        if batch.count == 0 {
             batches.remove(index);
             if batches.is_empty() {
                 self.batches.remove(item);
             }
         }
-        // **The readout's memory, written on the one seam that destroys a unit.** See the field's
-        // docs: an emptied batch is removed, so without this the panel could not say *"worn out"*.
-        if retired > 0 {
-            *self
-                .retired
-                .entry(item.to_string())
-                .or_default()
-                .entry(tier)
-                .or_default() += retired;
+        Some(ConsumedCondition { retired, tier })
+    }
+
+    /// **CHARGE `item` a raw amount of CONDITION through the ledger's own consumption step** - the
+    /// forecast's spend ([`crate::craft_suggestions`]), run on a clone. Records nothing: no
+    /// `retired` memory, no wear window.
+    pub(crate) fn charge_condition(
+        &mut self,
+        config: &crate::equipment_config::EquipmentConfig,
+        item: &str,
+        charged: f32,
+    ) {
+        let Some(def) = config.item(item) else {
+            return;
+        };
+        if charged.is_finite() && charged > 0.0 {
+            self.consume_condition(def, item, charged);
         }
-        self
+    }
+
+    /// Add `charged` condition to `item` in the newest wear slot, opening one when the window is
+    /// empty (a ledger no turn system has touched yet).
+    fn record_wear(&mut self, item: &str, charged: f32) {
+        if self.wear_window.is_empty() {
+            self.wear_window.push_back(Default::default());
+        }
+        if let Some(slot) = self.wear_window.back_mut() {
+            *slot.entry(item.to_string()).or_default() += charged;
+        }
+    }
+
+    /// **OPEN THE NEXT TURN'S WEAR SLOT** and drop the oldest beyond `window_turns` - the per-turn
+    /// system's one call. Every band calls it once a turn, so the slot count is the turns recorded.
+    pub fn open_wear_slot(&mut self, window_turns: u32) {
+        self.wear_window.push_back(Default::default());
+        while self.wear_window.len() > window_turns as usize {
+            self.wear_window.pop_front();
+        }
+    }
+
+    /// **THE CONDITION `item` LOSES PER TURN**, averaged over the turns the window has recorded
+    /// (never more than `window_turns`). `0` for an item never charged in the window - and for a
+    /// ledger with no slot at all, which forecasts nothing.
+    pub fn wear_rate(&self, item: &str) -> f32 {
+        if self.wear_window.is_empty() {
+            return 0.0;
+        }
+        let charged: f32 = self
+            .wear_window
+            .iter()
+            .filter_map(|slot| slot.get(item))
+            .sum();
+        charged / self.wear_window.len() as f32
+    }
+
+    /// How many turns the wear window has recorded (never more than `window_turns`).
+    pub fn wear_turns_recorded(&self) -> usize {
+        self.wear_window.len()
     }
 
     /// **Whole units of `item` this band has worn out**, ever, across every tier. `0` for an item it
@@ -4588,6 +4801,13 @@ impl BandEquipment {
         }
         self
     }
+}
+
+/// What [`BandEquipment::consume_condition`] spent: the units it retired and the tier of the batch
+/// it charged.
+struct ConsumedCondition {
+    retired: u32,
+    tier: String,
 }
 
 /// **What a spawn stocks of each start-kit item: one.** One unit is one item's
@@ -5075,6 +5295,18 @@ impl BandWorkforce {
     }
 }
 
+/// **WHAT BECOMES OF A ROW'S REJOINING WALKS THE ROW NO LONGER HOLDS HANDS FOR**
+/// ([`LaborAllocation::settle_rejoining`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExcessRejoining {
+    /// The row ended or was cut by the player or the turn: the excess hands become ordinary
+    /// walkers going home, counted in [`LaborAllocation::walking_home`] and landing into idle.
+    WalkHomePlain,
+    /// The starvation shed trimmed the row: the excess hands are people the band no longer has,
+    /// so they leave **without walking home**, as every other hand the shed removes does.
+    Discard,
+}
+
 /// A band's partition of its working-age pool across labor demands. Replaces the retired
 /// single-task model (`HarvestAssignment`/`ScoutAssignment`/`FaunaPursuit`): a band now draws from
 /// many sources at once, with the invariant `Σ assignments.workers ≤ available_workers(working)`.
@@ -5309,6 +5541,17 @@ pub struct LaborAllocation {
     /// must stop republishing last turn's tools. **Excluded from equality** below, like the rest of
     /// the per-turn telemetry.
     pub last_pool_toe: Vec<PoolToeLine>,
+    /// **THE QUEUE ENTRY THE BUILDERS' [`Self::last_pool_toe`] LINES WERE STRUCK FOR** — the head
+    /// `(source, declared job)` the turn's `BuildersAsk` was built from, `None` when no ask was made
+    /// (no builders, or a head the ground refused).
+    ///
+    /// ⛔ **THE BUILDERS' LINES NAME THE QUEUE HEAD OR NOTHING.** A completed head retires in the
+    /// same pass that struck the claim on it, so the frame after a completion carries lines for a job
+    /// that is no longer at the head (and a `build_order` / `unqueue` between turns does the same by
+    /// hand). [`Self::published_pool_toe`] withholds the builders' lines unless this stamp is the
+    /// live head, so a reader sees a blank for that one frame rather than the previous job's tools.
+    /// Cleared with [`Self::last_pool_toe`] and rewritten beside it; **excluded from equality**.
+    pub last_pool_toe_head: Option<(BuildSource, BuildJob)>,
     /// **THE TOOLS EACH QUEUED BUILD BEHIND THE HEAD WILL NEED OF THE BUILDERS' HANDS**, one line per
     /// `(queue position, item)` for every entry after the head (the head's own claim is the builders'
     /// [`Self::last_pool_toe`] line). Each is the same requirement the head's claim computes — the
@@ -5761,6 +6004,22 @@ pub struct BuildQueueEntry {
 }
 
 impl LaborAllocation {
+    /// **THE POOL TABLES OF EQUIPMENT AS THE WIRE STATES THEM** — [`Self::last_pool_toe`] with the
+    /// builders' lines dropped unless they were struck for the live queue head
+    /// ([`Self::last_pool_toe_head`]). The live head is read at call time, after every command, so a
+    /// reorder or an unqueue since the turn withholds them the same as a completion does.
+    pub fn published_pool_toe(&self) -> impl Iterator<Item = &PoolToeLine> + '_ {
+        let builders_current = match (&self.last_pool_toe_head, self.build_queue.first()) {
+            (Some((source, declared)), Some(head)) => {
+                *source == head.source && *declared == head.declared
+            }
+            _ => false,
+        };
+        self.last_pool_toe.iter().filter(move |line| {
+            line.pool != crate::equipment_config::KitJob::Builders || builders_current
+        })
+    }
+
     /// ⛔ **THE ONE WAY A CROSSING IS BOOKED** — the ledger arm (for `FOOD` / `FODDER`) and the
     /// crossings row, in one call, so the cause detail and the four arms it refines cannot disagree.
     ///
@@ -5867,8 +6126,87 @@ impl LaborAllocation {
 
     /// **Hands still walking home from a stood-down party** ([`Self::homeward`]) — away from the
     /// band until their walk ends.
+    ///
+    /// ⛔ **PLAIN WALKS ONLY.** A walk that [rejoins its row](crate::work_party::HomewardWalk::rejoins_row)
+    /// is inside that row's `workers` already ([`Self::assigned_total`] counts it), so counting it
+    /// here as well would take its hands off the band's pool twice.
     pub fn walking_home(&self) -> u32 {
-        self.homeward.iter().map(|walk| walk.workers).sum()
+        self.homeward
+            .iter()
+            .filter(|walk| !walk.rejoins_row)
+            .map(|walk| walk.workers)
+            .sum()
+    }
+
+    /// **The hands of `target`'s row that are walking back to it** ([`Self::homeward`] walks that
+    /// rejoin their row, matched by [`LaborTarget::same_source`]) — in the row's `workers`, and not
+    /// at the source until they land.
+    pub fn rejoining_to(&self, target: &LaborTarget) -> u32 {
+        self.homeward
+            .iter()
+            .filter(|walk| walk.rejoins_row && walk.target.same_source(target))
+            .map(|walk| walk.workers)
+            .sum()
+    }
+
+    /// ⛔ **A ROW'S HANDS PRESENT AT ITS SOURCE** — its crew less the hands still walking back to it
+    /// ([`Self::rejoining_to`]). This is the crew its take, keeping, kit claims and lessons are
+    /// priced on; `LaborAssignment::workers` stays the crew the player set.
+    pub fn hands_present_on(&self, row: &LaborAssignment) -> u32 {
+        row.workers.saturating_sub(self.rejoining_to(&row.target))
+    }
+
+    /// [`Self::hands_present_on`] for the row at `idx`.
+    pub fn hands_present(&self, idx: usize) -> u32 {
+        self.hands_present_on(&self.assignments[idx])
+    }
+
+    /// ⛔ **THE ONE HELPER EVERY ROW-ENDING OR ROW-CUTTING PATH ROUTES THROUGH** — an unassign, a
+    /// cut, an `abandon`, a zero-crew drop, `cancel_order`, a lapse, the starvation shed. It
+    /// restores the invariant that makes a rejoining walk safe to count only on its row:
+    /// **a source's rejoining hands never exceed its row's `workers`** (a source with no row holds
+    /// none). Where one does, the excess is settled by `excess` — the most `turns_left` first, the
+    /// order the walks would have landed last — so no exit can strand a rejoining walk on a row
+    /// that is gone or too small, where it would be counted nowhere.
+    pub fn settle_rejoining(&mut self, excess: ExcessRejoining) {
+        let mut sources: Vec<LaborTarget> = Vec::new();
+        for walk in self.homeward.iter().filter(|walk| walk.rejoins_row) {
+            if !sources.iter().any(|seen| seen.same_source(&walk.target)) {
+                sources.push(walk.target.clone());
+            }
+        }
+        for source in sources {
+            let held = self
+                .assignments
+                .iter()
+                .find(|row| row.target.same_source(&source))
+                .map_or(NO_CREW_ON_THIS_ACTIVITY, |row| row.workers);
+            loop {
+                let rejoining = self.rejoining_to(&source);
+                if rejoining <= held {
+                    break;
+                }
+                let over = rejoining - held;
+                let Some(at) = self
+                    .homeward
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, walk)| walk.rejoins_row && walk.target.same_source(&source))
+                    .max_by_key(|(_, walk)| walk.turns_left)
+                    .map(|(at, _)| at)
+                else {
+                    break;
+                };
+                let mut cut = self.homeward[at].split_off(over);
+                if self.homeward[at].workers == NO_CREW_ON_THIS_ACTIVITY {
+                    self.homeward.remove(at);
+                }
+                if excess == ExcessRejoining::WalkHomePlain {
+                    cut.rejoins_row = crate::work_party::WALKS_PLAIN;
+                    self.homeward.push(cut);
+                }
+            }
+        }
     }
 
     /// Total workers staffed on the given source (matched by [`LaborTarget::same_source`], so a
@@ -5920,7 +6258,7 @@ impl LaborAllocation {
         self.assignments
             .iter()
             .filter(|assignment| assignment.target.kit_job() == job)
-            .map(|assignment| assignment.workers)
+            .map(|assignment| self.hands_present_on(assignment))
             .sum()
     }
 
@@ -6207,10 +6545,7 @@ impl LaborAllocation {
             if owed == 0 || wanted == 0 {
                 break;
             }
-            let hands = self.assignments[idx]
-                .workers
-                .min(kit.carried_by(idx))
-                .min(owed);
+            let hands = self.hands_present(idx).min(kit.carried_by(idx)).min(owed);
             owed -= hands.min(wanted);
             give(&mut taken, idx, hands, &mut wanted);
         }
@@ -6219,7 +6554,7 @@ impl LaborAllocation {
             if wanted == 0 {
                 break;
             }
-            let held = self.assignments[idx].workers - taken.get(&idx).copied().unwrap_or(0);
+            let held = self.hands_present(idx) - taken.get(&idx).copied().unwrap_or(0);
             give(&mut taken, idx, held, &mut wanted);
         }
         // Reported in the ordinary donor order, so the plan reads the same however it was reached.
@@ -6244,7 +6579,7 @@ impl LaborAllocation {
         idle + self
             .donor_order(need_idx, is_local)
             .into_iter()
-            .map(|idx| self.assignments[idx].workers)
+            .map(|idx| self.hands_present(idx))
             .sum::<u32>()
     }
 
@@ -6261,7 +6596,7 @@ impl LaborAllocation {
                     && !row.is_need_row()
                     && row.party.is_none()
                     && is_local(&row.target)
-                    && row.workers > 0
+                    && self.hands_present_on(row) > 0
             })
             .map(|(idx, _)| idx)
             .collect();
@@ -6372,12 +6707,20 @@ impl LaborAllocation {
         // through [`crate::work_party::WorkParty::walk_home`], onto [`Self::homeward`] in this
         // command. `walking_home` then covers them at once, so `idle` / `assignable` never offer a
         // hand that is still days from home to another row. A raise cuts nothing.
+        //
+        // ⛔ **THE ROW'S REJOINING WALKERS ARE ITS HANDS TOO, AND THE CUT TAKES THE PRESENT ONES
+        // FIRST.** A party's crew is the row's hands *present* (the rejoining walkers are still on
+        // the road home), so a cut to `applied` leaves the party `applied` less the rejoining hands
+        // the row still holds. Only a cut below that count touches a rejoining walk, and
+        // [`Self::settle_rejoining`] below flips the excess to plain walkers.
+        let rejoining_kept = self.rejoining_to(&target).min(applied);
         let standing_party = standing_party.and_then(|mut party| {
             if applied == 0 {
                 self.homeward.extend(party.walk_home(&target));
                 None
             } else {
-                self.homeward.extend(party.cut_crew(applied, &target));
+                self.homeward
+                    .extend(party.cut_crew(applied - rejoining_kept, &target));
                 Some(party)
             }
         });
@@ -6408,6 +6751,7 @@ impl LaborAllocation {
             });
             self.last_yields.push(SourceYield::ZERO);
         }
+        self.settle_rejoining(ExcessRejoining::WalkHomePlain);
         applied
     }
 
@@ -6442,6 +6786,7 @@ impl LaborAllocation {
         // A row going away cannot change a road's keeper, so road entries stand here and are judged
         // by the turn's own prune — [`road_holding_unchanged`].
         let _ = self.prune_build_queue(&road_holding_unchanged);
+        self.settle_rejoining(ExcessRejoining::WalkHomePlain);
         Some(row)
     }
 
@@ -6791,6 +7136,9 @@ impl LaborAllocation {
                         self.last_yields.remove(index);
                         facts.forget_row(index);
                     }
+                    // ⛔ Present hands go first, then rejoining walkers (the most `turns_left`
+                    // first); a shed walker is discarded, as every hand the shed removes is.
+                    self.settle_rejoining(ExcessRejoining::Discard);
                     (ShedSubject::Row(target), remaining)
                 }
                 // ⛔ **NEVER `remove_order`** — that forfeits the drawn pile. The queue, every
@@ -7196,6 +7544,7 @@ impl LaborAllocation {
         self.assignments.clear();
         self.last_yields.clear();
         self.build_queue.clear();
+        self.settle_rejoining(ExcessRejoining::WalkHomePlain);
     }
 
     /// Drop every assignment `keep` rejects, retaining the rest — the scoped counterpart of
@@ -7237,6 +7586,7 @@ impl LaborAllocation {
         // ground it no longer holds. Road entries stand here for the reason
         // [`road_holding_unchanged`] gives: clearing a row is not losing a keeper.
         let _ = self.prune_build_queue(&road_holding_unchanged);
+        self.settle_rejoining(ExcessRejoining::WalkHomePlain);
         freed
     }
 }

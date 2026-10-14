@@ -466,6 +466,9 @@ fn create_populations<'a>(
                                 turnsToKill: assignment.turns_to_kill,
                                 killProgress: assignment.kill_progress,
                                 needRunway: assignment.need_runway,
+                                rejoiningWorkers: assignment.rejoining_workers,
+                                rejoiningAllHomeIn: assignment.rejoining_all_home_in,
+                                rejoiningFood: assignment.rejoining_food,
                             },
                         )
                     })
@@ -1216,6 +1219,7 @@ fn create_populations<'a>(
                     cultureBreakAwayRisk: cohort.culture_break_away_risk,
                     idleMustered: cohort.idle_mustered,
                     huntMeals: Some(hunt_meals),
+                    commRangeTiles: cohort.comm_range_tiles,
                 },
             )
         })
@@ -1299,6 +1303,9 @@ fn create_craft_suggestions<'a>(
                     workPerTurn: suggestion.work_per_turn,
                     sources: Some(sources),
                     shortfalls: Some(shortfalls),
+                    upcomingCount: suggestion.upcoming_count,
+                    expiresInTurns: suggestion.expires_in_turns,
+                    leadTurns: suggestion.lead_turns,
                 },
             )
         })
@@ -1487,6 +1494,9 @@ fn decode_labor_assignment(
         turns_to_kill: assignment.turnsToKill(),
         kill_progress: assignment.killProgress(),
         need_runway: assignment.needRunway(),
+        rejoining_workers: assignment.rejoiningWorkers(),
+        rejoining_all_home_in: assignment.rejoiningAllHomeIn(),
+        rejoining_food: assignment.rejoiningFood(),
     })
 }
 
@@ -1865,6 +1875,9 @@ fn decode_population(
                     queue_position: source.queuePosition(),
                 }),
                 shortfalls: decode_shortfalls(suggestion.shortfalls()),
+                upcoming_count: suggestion.upcomingCount(),
+                expires_in_turns: suggestion.expiresInTurns(),
+                lead_turns: suggestion.leadTurns(),
             }
         }),
         fertility_ceiling: cohort.fertilityCeiling(),
@@ -1905,6 +1918,7 @@ fn decode_population(
             keeping: text(meal.keeping()),
             food: meal.food(),
         }),
+        comm_range_tiles: cohort.commRangeTiles(),
     })
 }
 

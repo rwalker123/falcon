@@ -273,6 +273,7 @@ fn spawn_hunters(app: &mut App, pos: UVec2, fauna_id: &str, floor: f32) -> bevy:
                 morale: scalar_one(),
                 last_food_consumption: 0.0,
                 last_food_need: 0.0,
+                fed_party_workers: Default::default(),
                 last_food_spoiled: 0.0,
                 last_turn_food_transfers: Default::default(),
                 last_turn_fodder_transfers: Default::default(),
@@ -362,7 +363,7 @@ fn party_at(combat: &CombatConfig) -> HuntingParty {
         base.best_equipped_hunter(),
         combat.tuning(),
         combat.hunt_injury_damage_per_animal,
-        base.dispersion,
+        base.crews[0].dispersion,
     )
 }
 
@@ -516,8 +517,9 @@ fn the_takes_retreat_is_scaled_by_the_rung_and_never_switched_off() {
     };
 
     // The second implementation: `1 − clamp(wariness × rung scalar × dispersion, 0, 1)`.
-    let expected_share =
-        |rung_scalar: f32| 1.0 - (wild_wariness * rung_scalar * party.dispersion).clamp(0.0, 1.0);
+    let expected_share = |rung_scalar: f32| {
+        1.0 - (wild_wariness * rung_scalar * party.crews[0].dispersion).clamp(0.0, 1.0)
+    };
     /// The wild rung's own scalar — the identity, because a wild animal is exactly as wary as the
     /// roster says it is.
     const WILD: f32 = 1.0;
@@ -533,7 +535,7 @@ fn the_takes_retreat_is_scaled_by_the_rung_and_never_switched_off() {
             (measured - expected).abs() <= RETREAT_EPSILON,
             "the {name} rung must keep {expected} of what it engages (wariness {wild_wariness} × \
              {scalar} × dispersion {}): the take kept {measured}",
-            party.dispersion
+            party.crews[0].dispersion
         );
     }
 

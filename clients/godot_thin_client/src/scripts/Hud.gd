@@ -45,6 +45,11 @@ signal send_denial_raid_requested(payload: Dictionary)
 ## `destination_label` is what the command-feed note reads, the `fauna_id` / `fauna_label` rule.
 ## Main formats the `send_trade_expedition …` command.
 signal send_trade_expedition_requested(payload: Dictionary)
+## STATIONED PARTY (issue #774) — people posted at a band this one holds a live tie with. Payload keys:
+## { faction, band_id, party_workers, host_band_id, host_label }. Its own signal for the
+## `send_trade_expedition_requested` reason: the grammar names a host band, not a herd or a tile.
+## Main formats the `station_expedition …` command.
+signal station_expedition_requested(payload: Dictionary)
 ## Emitted when the player recalls the selected in-flight expedition (folds it home). Payload
 ## keys: { faction, expedition }. Main formats the `recall_expedition …` command.
 signal recall_expedition_requested(payload: Dictionary)
@@ -785,6 +790,8 @@ func _ready() -> void:
         func(payload: Dictionary) -> void: send_denial_raid_requested.emit(payload))
     _bandpanel.send_trade_expedition_requested.connect(
         func(payload: Dictionary) -> void: send_trade_expedition_requested.emit(payload))
+    _bandpanel.station_expedition_requested.connect(
+        func(payload: Dictionary) -> void: station_expedition_requested.emit(payload))
     _bandpanel.recall_expedition_requested.connect(
         func(payload: Dictionary) -> void: recall_expedition_requested.emit(payload))
     _bandpanel.split_band_requested.connect(
@@ -2907,6 +2914,13 @@ func show_tooltip(info: Dictionary) -> void:
     # Remembered (Discovered) tiles: flag that contents are stale/incomplete.
     if String(info.get("visibility_state", "")) == "discovered":
         lines.append("(last seen — incomplete)")
+
+    # Remembered bands last seen here (map ghost markers): name + when, in the Peoples tab's words.
+    var remembered_variant: Variant = info.get("remembered_bands", [])
+    if remembered_variant is Array:
+        for tie_variant in remembered_variant:
+            if tie_variant is Dictionary:
+                lines.append(ConnectionsRoster.remembered_hover_line(tie_variant, _band_labor))
 
     # Food
     var food := String(info.get("food_module_label", ""))

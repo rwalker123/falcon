@@ -85,11 +85,15 @@ const MUST_BE_ORDERED: [(&str, &str); 3] = [
 /// `Startup` is deliberately out of scope, both here and for the ambiguity gate: it is `.chain()`-ed
 /// wholesale, which is why `spawn_initial_world`, `reconcile_food_modules` and
 /// `place_wondrous_sites` take `Commands` without appearing below.
-const COMMANDS_SYSTEMS: [&str; 4] = [
+const COMMANDS_SYSTEMS: [&str; 5] = [
     "advance_band_movement",
     "advance_expeditions",
     "advance_party_defection",
     "follow_hunted_herds",
+    // Removes the transient `StartingCultureLean` from a starting band once it has built that
+    // band's culture layer. Reviewed: the component is read and removed only here, so no other
+    // system's ordering depends on the deferred removal.
+    "reconcile_band_culture_layers",
 ];
 
 /// Reachability over the schedule's dependency graph, flattened the way bevy flattens it.

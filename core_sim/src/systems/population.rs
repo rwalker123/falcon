@@ -13,6 +13,12 @@ struct DemographicState {
     working: Scalar,
     elders: Scalar,
     food_store: Scalar,
+    /// **Working-age people this band is feeding who are not in its brackets** — the stationed
+    /// parties it sent out (`ExpeditionMission::Station`). They eat at the working-age ration out of
+    /// this band's larder as part of its ordinary meal, so they join the meal's demand and nothing
+    /// else: they bear no children, age no further and die of nothing here. Zero for a band with
+    /// no such party.
+    party_working: Scalar,
 }
 
 /// One turn's food demand for the given age brackets: per-capita draw × weighted mouths
@@ -333,7 +339,7 @@ fn meal_and_births(
 ) -> MealAndBirths {
     let demand = food_demand(
         state.children,
-        state.working,
+        state.working + state.party_working,
         state.elders,
         &demo.consumption,
     );
@@ -462,6 +468,7 @@ fn advance_demographics(
         working: working0,
         elders: elders0,
         food_store: _,
+        party_working: _,
     } = state;
 
     // 1. Food consumption from the band's own larder (dependents eat less than a worker).
@@ -573,6 +580,7 @@ fn advance_demographics(
             working,
             elders,
             food_store: remaining_food,
+            party_working: state.party_working,
         },
         fertility: factors,
         // Reported **pre-clamp**: the population cap is an aggregate safety net that never fires
@@ -717,7 +725,7 @@ pub fn migration_move_fraction(
 /// token, and the client substitutes what IT calls that band over this rendering; that join is what
 /// keeps a row's name current, and it needs a spelling it can find. A label baked from the name
 /// would freeze the name the band had when the event fired.
-pub(crate) fn band_label(band: BandId) -> String {
+pub fn band_label(band: BandId) -> String {
     format!("Band {}", band.0)
 }
 
@@ -1091,6 +1099,7 @@ fn resolve_breeding_ceilings(
     contact_stamp: Option<u64>,
     demo: &DemographicsConfig,
     free: &mut crate::lineage::FreeBreedingPeoples,
+    party_working: &BTreeMap<Entity, Scalar>,
 ) -> BreedingCeilings {
     use crate::lineage::{BreedingMember, BreedingPeople, LineId};
 
@@ -1140,6 +1149,7 @@ fn resolve_breeding_ceilings(
                 working: cohort.working,
                 elders: cohort.elders,
                 food_store: cohort.stores.get(FOOD),
+                party_working: party_working.get(entity).copied().unwrap_or_default(),
             };
             tally.would_be_births +=
                 meal_and_births(&state, band_food_flow(*labor), demo).would_be_births;
@@ -1322,7 +1332,9 @@ fn publish_breeding_readings(cohorts: &mut DemographicBands, breeding: &Breeding
                 member.people = whole_people.get(member_entity).copied().unwrap_or(0);
             }
         }
+        let faction = cohort.faction;
         cohort.last_breeding = crate::lineage::BreedingReading {
+            faction: Some(faction),
             headcount: headcounts.get(group).copied().unwrap_or_default().to_u32(),
             ceiling: ceiling
                 .people
@@ -1479,6 +1491,21 @@ struct CultureReading {
     relay_hops: u8,
 }
 
+/// **The working-age people each band is feeding out in the field, by home band** — every party
+/// whose mission the home band feeds ([`ExpeditionMission::fed_by_home_band`]), from launch until it
+/// folds back. A band with no such party has no entry.
+fn stationed_party_workers(
+    parties: &Query<(&PopulationCohort, &Expedition), Without<ResidentBand>>,
+) -> BTreeMap<Entity, Scalar> {
+    let mut fed: BTreeMap<Entity, Scalar> = BTreeMap::new();
+    for (cohort, expedition) in parties.iter() {
+        if expedition.mission.fed_by_home_band() {
+            *fed.entry(expedition.home_band).or_default() += cohort.working;
+        }
+    }
+    fed
+}
+
 #[allow(clippy::too_many_arguments)] // Bevy system parameters require explicit resource access
 pub fn simulate_population(
     config: Res<SimulationConfig>,
@@ -1503,7 +1530,11 @@ pub fn simulate_population(
     // **Near / far from the ancestors** — the culture term reads the same road-aware walk test
     // migration does (`supply::WalkReach`).
     walk_inputs: WalkReachInputs,
+    // **The parties each band feeds** — a stationed party carries no larder, so its rations are
+    // charged to its home band's meal (`DemographicState::party_working`).
+    parties: Query<(&PopulationCohort, &Expedition), Without<ResidentBand>>,
 ) {
+    let party_working = stationed_party_workers(&parties);
     let population_cfg = pipeline_config.config().population();
     let belief_cfg = belief_config.get();
     let demo = demographics.get();
@@ -1517,6 +1548,7 @@ pub fn simulate_population(
         contact_stamp,
         &demo,
         &mut free_breeding,
+        &party_working,
     );
     let wellbeing = wellbeing_config.get();
     let max_cap_scalar = scalar_from_u32(config.population_cap);
@@ -1602,6 +1634,7 @@ pub fn simulate_population(
                 working: cohort.working,
                 elders: cohort.elders,
                 food_store: food_before,
+                party_working: party_working.get(&entity).copied().unwrap_or_default(),
             },
             band_food_flow(labor),
             temperature,
@@ -1635,6 +1668,7 @@ pub fn simulate_population(
         // every turn its take lands after the meal: `need − eaten` is published as the band's
         // shortfall, and the runway counts down need, never eaten.
         cohort.last_food_need = outcome.need.to_f32();
+        cohort.fed_party_workers = party_working.get(&entity).copied().unwrap_or_default();
         cohort.sync_size();
 
         // **The cemetery** (`docs/plan_civilization_steps.md` §"The first pulls are not
@@ -1801,6 +1835,7 @@ mod demographics_tests {
             working: scalar_from_f32(working),
             elders: scalar_from_f32(elders),
             food_store: scalar_from_f32(food),
+            party_working: scalar_zero(),
         }
     }
 
@@ -2819,6 +2854,7 @@ mod breeding_ceiling_tests {
             working: people(20.0),
             elders: people(5.0),
             food_store: people(1_000.0),
+            party_working: scalar_zero(),
         };
         let run = |ceiling: Scalar| {
             advance_demographics(
@@ -2901,6 +2937,7 @@ mod food_flow_tests {
             last_roadwork_supplied: 0.0,
             last_keeping_issued: Default::default(),
             last_pool_toe: Vec::new(),
+            last_pool_toe_head: None,
             last_queued_build_toe: Vec::new(),
             last_pool_crew: Vec::new(),
             last_fodder_need: 0.0,
@@ -2956,6 +2993,7 @@ mod food_flow_tests {
             last_roadwork_supplied: 0.0,
             last_keeping_issued: Default::default(),
             last_pool_toe: Vec::new(),
+            last_pool_toe_head: None,
             last_queued_build_toe: Vec::new(),
             last_pool_crew: Vec::new(),
             last_fodder_need: 0.0,
@@ -3327,6 +3365,7 @@ mod wellbeing_tests {
             morale: m,
             last_food_consumption: 0.0,
             last_food_need: 0.0,
+            fed_party_workers: Default::default(),
             last_food_spoiled: 0.0,
             last_turn_food_transfers: Default::default(),
             last_turn_fodder_transfers: Default::default(),

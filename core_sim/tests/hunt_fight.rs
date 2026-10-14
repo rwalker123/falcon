@@ -92,7 +92,7 @@ fn party_at(attack: f32) -> HuntingParty {
         },
         base.tuning,
         base.crews[0].injury_damage_per_animal,
-        base.dispersion,
+        base.crews[0].dispersion,
     )
 }
 
@@ -982,7 +982,11 @@ fn the_passive_device_beats_spears_on_every_small_game_row_and_takes_no_large_ga
             wounds: DamageLedger::default(),
         };
         let reached = animals_engaged(HUNTERS as f32, def.engage_rate);
-        let stayed = party.stayers(reached, def.combat.wariness, HuntDraw::EXPECTED);
+        let stayed = party.stayers(
+            core_sim::Contact::unclamped(reached),
+            def.combat.wariness,
+            HuntDraw::EXPECTED,
+        );
         resolve_hunt_fight(
             stayed,
             f32::from(HUNTERS as u16),

@@ -26,7 +26,9 @@ use crate::{
         BandBench, BandEquipment, BenchOrder, Expedition, LaborAllocation, PopulationCohort,
         HEAD_ORDER, MIN_ORDER_COUNT,
     },
-    craft_suggestions::{band_suggestions, take_row_gear, CraftSuggestion},
+    craft_suggestions::{
+        band_suggestions, take_row_gear, CraftSuggestion, ForecastInputs, SuggestionConfigs,
+    },
     equipment_config::{EquipmentConfig, EquipmentConfigHandle},
     intensification::LadderConfigHandle,
     materials_config::{MaterialsConfig, MaterialsConfigHandle},
@@ -159,16 +161,6 @@ fn band_suggestions_and_offers(
     // **The hunt-turn pass**, so a kit a going-out hunt crew is short of is in the list auto-craft
     // works down exactly as it is in the panel's (`snapshot::population::hunt_turn_lines`).
     let hunt_turn = hunt_turn_pass(world, cohort, allocation, bench, &wear, configs);
-    let suggestions = band_suggestions(
-        allocation,
-        take_rows,
-        hunt_turn.as_deref(),
-        Some(bench),
-        &configs.recipes,
-        &configs.equipment,
-        &wear,
-    );
-
     let ladder = world.get_resource::<LadderConfigHandle>()?.get();
     let labor = world.get_resource::<crate::LaborConfigHandle>()?.get();
     let expedition = world.get_resource::<crate::ExpeditionConfigHandle>()?.get();
@@ -197,6 +189,22 @@ fn band_suggestions_and_offers(
         },
     };
     let offers = band_craft_state(&cohort.stores, Some(bench), &wear, &inputs).craft_offers;
+    // The offers come first: the wear forecast reads the recipe each item's row marks `suggested`.
+    let suggestions = band_suggestions(
+        allocation,
+        take_rows,
+        hunt_turn.as_deref(),
+        Some(bench),
+        SuggestionConfigs {
+            recipes: &configs.recipes,
+            equipment: &configs.equipment,
+        },
+        &wear,
+        Some(ForecastInputs {
+            offers: &offers,
+            materials: &configs.materials,
+        }),
+    );
     Some((suggestions, offers))
 }
 

@@ -14044,6 +14044,33 @@ func _assert_kit_reprices_the_source() -> void:
 			% str(trapped[KitRoster.SOURCE_STAY_FRACTION]),
 		is_equal_approx(float(trapped[KitRoster.SOURCE_STAY_FRACTION]),
 			KitRoster.STAY_FRACTION_NONE_BREAKS_OFF))
+	# **A PARTLY-ARMED CREW RETREATS PER CREW** (`fauna::HuntingParty::stay_fraction`): 2 hunters, 1 trap
+	# (`dispersion 0`) = half the party at the trap's stay (1.0) and half bare at the species' own (STAY),
+	# i.e. their share-weighted mean — NOT the trap's stay for both.
+	var half_share := KitRoster.armed_share_of(2, 1, true)
+	var half_trapped := KitRoster.repriced_source(src, "", PUBLISHED_CARRY, PUBLISHED_CARRY, 0.0,
+		KitRoster.COVERAGE_UNSTATED, KitRoster.COVERAGE_UNSTATED, 0, half_share)
+	var half_expected := 0.5 * KitRoster.STAY_FRACTION_NONE_BREAKS_OFF + 0.5 * STAY
+	_assert_band_panel("a half-armed trapping crew quotes the share-weighted stay (%s, expected %s)"
+			% [str(half_trapped[KitRoster.SOURCE_STAY_FRACTION]), str(half_expected)],
+		is_equal_approx(half_share, 0.5)
+			and is_equal_approx(float(half_trapped[KitRoster.SOURCE_STAY_FRACTION]), half_expected)
+			and float(half_trapped[KitRoster.SOURCE_STAY_FRACTION])
+				< float(trapped[KitRoster.SOURCE_STAY_FRACTION]))
+	# …the control: a FULLY armed crew (or a roster stating no saturating term) is the single-kit stay,
+	# unchanged; and a crew with no armed hand is the species' own.
+	var full_trapped := KitRoster.repriced_source(src, "", PUBLISHED_CARRY, PUBLISHED_CARRY, 0.0,
+		KitRoster.COVERAGE_UNSTATED, KitRoster.COVERAGE_UNSTATED, 0,
+		KitRoster.armed_share_of(2, 2, true))
+	var unstated := KitRoster.armed_share_of(2, 0, false)
+	var none_armed := KitRoster.repriced_source(src, "", PUBLISHED_CARRY, PUBLISHED_CARRY, 0.0,
+		KitRoster.COVERAGE_UNSTATED, KitRoster.COVERAGE_UNSTATED, 0,
+		KitRoster.armed_share_of(2, 0, true))
+	_assert_band_panel("a fully armed crew keeps the single-kit stay, an unstated one is fully armed, a bare one reads the species' own",
+		is_equal_approx(float(full_trapped[KitRoster.SOURCE_STAY_FRACTION]),
+			float(trapped[KitRoster.SOURCE_STAY_FRACTION]))
+			and is_equal_approx(unstated, KitRoster.ARMED_SHARE_ALL)
+			and is_equal_approx(float(none_armed[KitRoster.SOURCE_STAY_FRACTION]), STAY))
 	# The claim that motivated the whole substitution: same carry, same reach, different take.
 	_assert_band_panel("…so two kits with the SAME carry still quote different takes",
 		not is_equal_approx(float(trapped[KitRoster.SOURCE_STAY_FRACTION]),
@@ -26052,6 +26079,50 @@ func _row_homeward_band_fixture() -> Dictionary:
 	band["size"] = int(band["size"]) + ROW_HOMEWARD_NEAR_WORKERS
 	return band
 
+## **A ROW'S OWN HANDS WALKING BACK TO IT** (`rejoining_*`) — the far hunt's source drifted back inside
+## work range, so its party's walkers stay on the row and rejoin it on landing. The row's `workers`
+## already holds them: Hunt keeps its crew, the band's `homeward_*` is empty, and those hands are
+## neither idle nor a "Walking home" segment. The band reads the idle hands it really has.
+const ROW_REJOINING_WORKERS := PARTY_PELT_WORKERS
+const ROW_REJOINING_FOOD := HOMEWARD_FOOD
+const ROW_REJOINING_ALL_HOME_IN := 1
+
+func _row_rejoining_band_fixture() -> Dictionary:
+	var band := _work_party_spoil_band_fixture()
+	for key in [HudWorkVocab.HOMEWARD_WORKERS_KEY, HudWorkVocab.HOMEWARD_FOOD_KEY,
+			HudWorkVocab.HOMEWARD_FOOD_SPOILS_KEY, HudWorkVocab.HOMEWARD_NEXT_LOAD_IN_KEY,
+			HudWorkVocab.HOMEWARD_ALL_HOME_IN_KEY]:
+		band.erase(key)
+	for row_variant in band["labor_assignments"]:
+		var row: Dictionary = row_variant
+		if String(row.get("fauna_id", "")) == PARTY_FAR_HERD_ID:
+			row[HudWorkVocab.REJOINING_WORKERS_KEY] = ROW_REJOINING_WORKERS
+			row[HudWorkVocab.REJOINING_ALL_HOME_IN_KEY] = ROW_REJOINING_ALL_HOME_IN
+			row[HudWorkVocab.REJOINING_FOOD_KEY] = ROW_REJOINING_FOOD
+	return band
+
+## `band_panel_work_row_rejoining`: the hunt row's walking-back line, and the band's idle count.
+func _render_work_row_rejoining_state() -> void:
+	_set_world_herds(_herd_fixtures())
+	_push_bands([_row_rejoining_band_fixture()])
+	await _pin_canvas(Vector2i(ULTRAWIDE_WIDTH, DOCKROW_CANVAS.y))
+	_panel.set_dock(SIDE_BOTTOM)
+	_panel.set_active_tab(&"work")
+	await _settle()
+	await _save("band_panel_work_row_rejoining")
+	_assert_zones_within_bounds()
+	_assert_zone_content_fits()
+	var want := HudWorkVocab.ROW_REJOINING_LINE_FORMAT % [ROW_REJOINING_WORKERS,
+		HudWorkVocab.HOMEWARD_FOOD_CLAUSE_FORMAT % SourceForecast.format_magnitude(
+			ROW_REJOINING_FOOD), HudWorkVocab.ROW_REJOINING_HERE_NEXT_TURN]
+	var lines := _work_party_lines(_work_row_for_herd(PARTY_FAR_HERD_ID))
+	_assert_band_panel("band_panel_work_row_rejoining: the hunt row says its hands are walking back - want [%s], got %s"
+			% [want, str(lines)], lines.has(want))
+	var band: Dictionary = _hud._band_labor._panel_band
+	_assert_band_panel("...and those hands are in the row, so the band's idle is the %d it really has (got %d)"
+			% [ROW_REJOINING_WORKERS, _hud._band_labor.effective_idle(band)],
+		_hud._band_labor.effective_idle(band) == ROW_REJOINING_WORKERS)
+
 ## `band_panel_work_row_homeward`: each row's walker line, in the quiet ink, under the right row.
 func _render_work_row_homeward_state() -> void:
 	_set_world_herds(_herd_fixtures() + [{"id": PARTY_PELT_HERD_ID, "species": "Grey Wolf",
@@ -26171,6 +26242,7 @@ func _render_work_party_spoil_states() -> void:
 	# Each ROW's own walkers (the per-row `homeward_*` keys) — before the hand-back, so no later
 	# frame moves.
 	await _render_work_row_homeward_state()
+	await _render_work_row_rejoining_state()
 
 	# Hand the world and the reference band back.
 	_set_forage_patches([])

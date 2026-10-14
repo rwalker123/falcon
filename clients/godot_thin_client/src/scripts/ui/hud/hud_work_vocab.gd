@@ -562,8 +562,8 @@ static func homeward_lines(band: Dictionary) -> Array[String]:
 
 ## ` with 2.40 food`, or `""` when the walkers carry none — the ONE food clause both homeward
 ## sentences (the band's and a row's) are spelled with, read off whichever dict carries the keys.
-static func _homeward_food_clause(walk: Dictionary) -> String:
-    var food := float(walk.get(HOMEWARD_FOOD_KEY, 0.0))
+static func _homeward_food_clause(walk: Dictionary, food_key: String = HOMEWARD_FOOD_KEY) -> String:
+    var food := float(walk.get(food_key, 0.0))
     return HOMEWARD_FOOD_CLAUSE_FORMAT % SourceForecast.format_magnitude(food) \
         if SourceForecast.has_component(food) else ""
 
@@ -578,7 +578,21 @@ static func _homeward_food_clause(walk: Dictionary) -> String:
 ## `homeward_food_spoils` / `homeward_next_load_in` are band-only: the row's line is one line, and the
 ## band's zone carries the rot and the first-load lines.
 const ROW_HOMEWARD_KEYS: Array[String] = [
-    HOMEWARD_WORKERS_KEY, HOMEWARD_ALL_HOME_IN_KEY, HOMEWARD_FOOD_KEY]
+    HOMEWARD_WORKERS_KEY, HOMEWARD_ALL_HOME_IN_KEY, HOMEWARD_FOOD_KEY,
+    REJOINING_WORKERS_KEY, REJOINING_ALL_HOME_IN_KEY, REJOINING_FOOD_KEY]
+
+## **HANDS WALKING BACK TO THEIR OWN ROW** — a far row whose source drifted inside work range keeps its
+## crew; the party's walkers rejoin it on landing. They are COUNTED ONCE, in the row's `workers` (so the
+## WORKFORCE bar's segment already holds them, they are not idle and not in the band's `homeward_*`),
+## and per-row only: the band has no total of them. `0` = none walking back.
+const REJOINING_WORKERS_KEY := "rejoining_workers"
+const REJOINING_ALL_HOME_IN_KEY := "rejoining_all_home_in"
+const REJOINING_FOOD_KEY := "rejoining_food"
+## `3 walking back with 2.40 food — here in 2 turns`; the food clause only when they carry any. Args:
+## `[workers, (food clause), here phrase]`.
+const ROW_REJOINING_LINE_FORMAT := "%d walking back%s — here %s"
+const ROW_REJOINING_HERE_NEXT_TURN := "in 1 turn"
+const ROW_REJOINING_HERE_IN_FORMAT := "in %d turns"
 ## `3 walking home with 2.40 food — free next turn`; the food clause only when they carry any. It says
 ## *free* where the band's line says *all home*, because the row's question is when these hands can be
 ## put back to work. Args: `[workers, (food clause), free phrase]`.
@@ -601,6 +615,22 @@ static func row_homeward_line(row: Dictionary) -> String:
     var free := ROW_HOMEWARD_FREE_IN_FORMAT % all_home \
         if all_home > WORK_ROW_PARTY_TURNS_SINGULAR else ROW_HOMEWARD_FREE_NEXT_TURN
     return ROW_HOMEWARD_LINE_FORMAT % [workers, _homeward_food_clause(row), free]
+
+## Hands of this row walking back to it, `0` while none are.
+static func row_rejoining_workers(row: Dictionary) -> int:
+    return int(row.get(REJOINING_WORKERS_KEY, 0))
+
+## The row's one rejoining line, or `""` while nobody is walking back to it. Beside
+## `row_homeward_line` (plain walkers, leaving every row); a 0 arrival beside walkers reads 1 turn.
+static func row_rejoining_line(row: Dictionary) -> String:
+    var workers := row_rejoining_workers(row)
+    if workers <= 0:
+        return ""
+    var all_home := int(row.get(REJOINING_ALL_HOME_IN_KEY, 0))
+    var here := ROW_REJOINING_HERE_IN_FORMAT % all_home \
+        if all_home > WORK_ROW_PARTY_TURNS_SINGULAR else ROW_REJOINING_HERE_NEXT_TURN
+    return ROW_REJOINING_LINE_FORMAT % [
+        workers, _homeward_food_clause(row, REJOINING_FOOD_KEY), here]
 
 ## What of the homeward load rots before it lands, or `""` when nobody is walking home or none of it
 ## rots.

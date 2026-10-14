@@ -432,6 +432,47 @@ the player only steps in to override.
   Switching Auto off leaves the queue as it is and forgets every skip.
 - A suggestion for a craft the band has not learned is passed over, since the queue would refuse it.
 
+### Coming up — the kit that wears out before a new one could be made (#778)
+
+The list above is what the band is short of **today**. Below it, the same list names what will run
+out **before the bench could replace it**, so the player crafts ahead of the step-down rather than
+after it.
+
+- **The rate is the wear the band was actually charged.** Every wear charge in the game passes
+  through one seam (`BandEquipment::wear_item`), so the band records the condition each item lost
+  there, per turn, over the last `wear_forecast.window_turns` turns (`equipment.json`, **10**). The
+  rate is that sum divided by the turns recorded (never more than the window). A band with no turn
+  recorded forecasts nothing.
+  - *Why a trailing window, when food is projected forward:* food has a herd model to run forward;
+    wear has no model except the ~25 charge sites themselves, and a hunt's strikes come out of the
+    combat roll and land in lumps every few turns. Recording the shipped charge is exact, cannot drift
+    from it, and averages the lumps honestly. It lags a change of staffing by a few turns, which is
+    the price.
+- **The horizon is the bench's lead time, so a slow craft is warned earlier.** Per item, with the
+  recipe the ledger marks `suggested` for it: the turns the bench needs to finish the work already
+  queued ahead, plus one unit of this item, at the bench's current crew — each queued order at its
+  own recipe's rate, an order the bench cannot advance adding nothing. **An unstaffed bench is quoted
+  at one crafter**, not at never. Rounded up, at least one turn. An item no recipe makes, or whose
+  recipe one crafter cannot advance, has no forecast.
+- **What runs out is struck by the ledger's own rule.** The rate × the lead time is charged against a
+  copy of the band's ledger through the same consumption step `wear_item` uses (most-worn batch
+  first, a unit retired at its tier's durability), so the forecast spends units in exactly the order
+  the turn will.
+- **It counts only what someone is using.** The need for an item is the sum of what its consumers
+  require (the same lines the list above reads — the larger of the standing and hunt-turn passes).
+  Units coming up = `max(0, need − live after) − max(0, need − live now)`: a spare unit nobody holds
+  absorbs a loss before anything is suggested, and a unit already short today is not counted twice.
+  Bench tools are not consumers on those lines, so they are not forecast.
+- **One suggestion per item.** An item short today and wearing out too is one entry whose count is
+  both, netted once against the queue; it ranks where today's shortage puts it. An item that is only
+  coming up ranks **below every shortage**, soonest-to-run-out first, ties by item id.
+- **Auto-craft reads the same list**, so it reaches a coming-up item only when nothing above it is
+  usable — the player's "if there is nothing more urgent to make".
+- **A detached party forecasts nothing**, as it suggests nothing. A band split off by fission starts
+  with an empty window and measures its own.
+- **Not forecast here:** a site's next rung needing a tool the band lacks, and a pool growing past its
+  stock. Both turn on choices the player has not made yet.
+
 ### Readout rules
 
 - **The ledger carries no condition column.** Its four columns are **Item · Owned · Rebuild costs ·

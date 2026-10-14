@@ -8,6 +8,7 @@ paths:
   - "core_sim/src/systems/expeditions.rs"
   - "core_sim/src/components.rs"
   - "core_sim/tests/connections.rs"
+  - "core_sim/tests/station_expedition.rs"
   - "core_sim/src/knowledge_contact.rs"
   - "core_sim/src/knowledge_contact_config.rs"
   - "core_sim/src/data/knowledge_contact_config.json"
@@ -194,6 +195,49 @@ captured on the march, not at the flush, so a report says what the party saw.
 
 The buffer rides the existing checkpoint path unchanged — `capture_sim_state` clones the whole
 `Expedition` into `ExpeditionRecord` and restore clones it back.
+
+## A stationed party's reports
+
+Design of record: `docs/plan_contact_and_logistics.md` -> "Settled by #774";
+`expeditions.md` -> "A stationed party" has the party's side.
+
+**A post raises its tie only through landed reports, one contact per landed report.** A stationed
+party's observe-pass output is bundled once a turn into a `StationReport` that lands after the
+runner's walk (`station_report_delay`). A landed report enters `ContactsThisTurn::record` with its
+**observed** turn, exactly as a returning scout's does, so `record_contact` adds `gain_per_contact`,
+stamps `last_contact_turn` with the landed turn, and moves clock 1 (`last_seen_turn`) to the observed
+turn: `last_seen_turn` trails `last_contact_turn` by the walk (zero inside the effective comm range).
+Reports in transit are `Expedition` state and ride the checkpoint with it.
+
+**There is no live credit, and that is the point.** Strength is how well the people know the host,
+and freshness is clock 1 (`last_seen_turn`). A credit with no news home would make the strength
+current while the remembered position is a walk old: the tie read 100% the moment a post arrived
+although nothing had been learned (Ray's playtest: 25% after the scout, 100% on arrival). So the
+ledger has no presence-credit seam, and `ContactsThisTurn` carries sightings only.
+
+What follows from it, all intended:
+
+- A post far beyond comm range: the tie keeps decaying on the ordinary clock from arrival until the
+  first runner's report lands, then rises by `gain_per_contact` per landed report (one a turn) to
+  `FULL_TIE` and holds there while a report lands each turn.
+- Inside comm range a report lands the turn it leaves, so the tie rises from the first turn the
+  party has news.
+- A tie that decayed to `NO_TIE` is parked, never deleted, and a landing report still raises it;
+  nothing in the post's phases or gates reads the tie's strength after launch, so a parked tie ends
+  no post.
+- A posted edge is reaped on the ordinary third clock (`forget_turns` from the last landed report)
+  and only if reports stop landing for that long.
+
+## A traveling party aims at what its people know
+
+The keystone applied to a walk. A stationed party and a shipment (`expeditions.md`) never home on a
+band's live tile for free: `Expedition::aim` is the tile the party is walking toward, set at launch
+by `ConnectionLedger::launch_aim` (the target's live tile when the sender's people know it — the
+target is the sender's own people, or its tile is `Active` on the sender's map — otherwise this
+ledger's `last_seen_position` for the `home -> target` edge) and refreshed each `Outbound` turn only
+when the target is the sender's own people or the party itself sees it that turn. Where the target
+cannot be seen, the party walks to the remembered tile and, finding nothing there, turns home. A
+`Stationed` party is standing with its host, which is presence, so it follows the host's live tile.
 
 ## The three clocks
 

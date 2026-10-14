@@ -728,6 +728,7 @@ fn the_opening_loadout_reaches_the_client() {
             .resource::<core_sim::ActiveStartProfile>()
             .profile()
             .overrides()
+            .archetypes[0]
             .opening_loadout
             .pickable_materials,
         "the pick list is published in the order the profile declares it"
@@ -764,6 +765,7 @@ fn the_opening_loadout_reaches_the_client() {
         .resource::<core_sim::ActiveStartProfile>()
         .profile()
         .overrides()
+        .archetypes[0]
         .opening_loadout
         .kit_defaults
         .iter()
@@ -841,6 +843,7 @@ fn a_band_is_created_already_holding_its_default_outfit() {
             .resource::<core_sim::ActiveStartProfile>()
             .profile()
             .overrides()
+            .archetypes[0]
             .opening_loadout;
         (
             loadout.kit_defaults.clone(),

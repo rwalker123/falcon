@@ -61,8 +61,13 @@ four rows cover both size units and all three time buckets plus the absolute-dat
 expressed as OFFSETS from now (a fixed stamp would drift into another bucket as the branch aged) and
 only the date row carries a fixed stamp, since that branch has no bucket to drift out of.
 
-**…AND THE NEW GAME PANE'S RIVAL COUNT, over the same fake transport.** `_run_new_game_states`
-injects a real `FactionCapacity` seam on the same sender and walks the row's states:
+**…AND THE NEW GAME PANE'S PEOPLES COUNTS, over the same fake transport.** `_run_new_game_states`
+injects a real `FactionCapacity` seam on the same sender and walks the rows' states. **The fixtures are
+the reply's shape** — `GRID_TINY` / `GRID_STANDARD` / `GRID_HUGE` / `GRID_ALONE`, each a list of
+`[id, display_label, site_count, default_count]` for the shipped `major` ("Rivals") and `minor` ("Minor
+peoples") archetypes, turned into the bridge's `archetypes: [...]` by `_archetype_rows`. The ceilings are
+NOT in them: they are the contract formula's, so the assertions state them (a comment table at the top
+of the fixtures block does the arithmetic). The UI under test names neither id:
 `menu_new_game_rivals_pending` (the ask in flight), `menu_new_game_rivals` (answered, opened on the
 server's default), `menu_new_game_rivals_picked` (the player drags the slider), and the states no
 healthy stack reaches — `menu_new_game_rivals_alone`, a grid with no room for a second people, and
@@ -104,14 +109,20 @@ by restoring the defect: freeing the children on every emit fails four legs, nam
 38px → 16px while the ask was in flight.
 
 **`_assert_the_shown_count_is_the_count_sent` has no frame and is the most load-bearing of them.**
-An absent `ai_faction_count` now means the server's unattended roster — zero rivals — so a break
-between the number the row displays and the number that reaches the socket hands the player an empty
+An omitted archetype id now means that archetype's unattended count — usually zero — so a break
+between the numbers the rows display and the numbers that reach the socket hands the player an empty
 world while every frame looks correct. It stages the state a screen nobody has touched is in (the
-pick and its flag, reset explicitly, because a pick is deliberately kept across pane changes and
-would otherwise be inherited from the frames above), then walks both ends of the chain: the shell's
-`new_game_requested` payload, and `Main.new_game_line` — `static` for exactly this, so the rule that
-decides between a trailing count and none is callable without standing a client up. Sabotage-verified
-by making the shell send only an explicit pick: it fails naming `showed 2 … carried -1`.
+picks and counts, reset explicitly, because a pick is deliberately kept across pane changes and
+would otherwise be inherited from the frames above), then asserts PER ARCHETYPE both ends of the chain:
+the shell's `new_game_requested` payload (an Array of `{id, count}`), and `Main.new_game_line` — `static`
+for exactly this — which must read `... major=4 minor=2` on the Standard grid, keep an explicit
+`major=0` as a token, and carry nothing for `[]`.
+
+**`_assert_a_later_row_follows_an_earlier_one` is the contract's other half** (`menu_new_game_archetypes_reclamped`):
+the minor row is dragged to its ceiling behind four majors (10 − 1 − 4 = 5), the major row is raised to 6,
+and the minor slider's bound, value and the SENT count must all fall to 10 − 1 − 6 = 3 — on the same slider
+node, since a rebuild under a dragging player would drop the drag. It leaves the screen on another map size
+so the next state's click is a real re-ask that re-seeds the rows.
 
 **`_run_seed_states` is the seed's own block, and it asserts the COMPOSED COMMAND LINE rather than any
 internal** — the thing that was wrong was what reached the socket. It stages a reachable server first,
@@ -132,11 +143,12 @@ of them naming the truncation `618699468282` verbatim.
 
 Five more assertions ride with the state frames, and every one covers something the PNG cannot show: opening the pane
 must put an ask in flight, a size click must put a fresh one in flight, **no slider may be offered
-without a ceiling to offer it against** (a 0..0 range would look like a deliberate layout),
+before an answer names the rows** (and a row the grid cannot seat anyone for must be a DISABLED
+slider, never a live one over a 0..0 range),
 `Begin the trail` must be on screen and LIVE in every failure but the unreachable one — where it must
 be on screen and LOCKED, since a vanished action is a layout the player cannot ask about — and the
-count that would go on the wire must match the state: the pick when there is one, an explicit `0` on a
-0 ceiling, and `FactionCapacity.NO_COUNT` after a failure, which omits the argument entirely.
+counts that would go on the wire must match the state, per archetype: the picks when there are any, an
+explicit `0` per row on a 0 ceiling, and `[]` after a failure, which appends no token at all.
 `_assert_capacity_ids_are_disjoint_from_the_save_seam` is the id half, and it checks the CONSEQUENCE
 rather than the mechanism: a capacity answer must finish nothing on the save seam. It cannot stage
 the case the tie-break count exists for — two seams built inside the same microsecond — because the

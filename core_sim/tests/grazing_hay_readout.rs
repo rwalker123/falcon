@@ -217,6 +217,7 @@ fn spawn_band(app: &mut App, tile: UVec2, assignments: Vec<LaborAssignment>) -> 
                 morale: scalar_one(),
                 last_food_consumption: 0.0,
                 last_food_need: 0.0,
+                fed_party_workers: Default::default(),
                 last_food_spoiled: 0.0,
                 last_turn_food_transfers: Default::default(),
                 last_turn_fodder_transfers: Default::default(),

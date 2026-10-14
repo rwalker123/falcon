@@ -263,6 +263,8 @@ static func build_branch_noun(branch: String) -> String:
 ## SPECIES decides what a noisy approach costs (`equipment.md`). Neutral at `1.0`; a trap ships `0`.
 const KIT_DISPERSION_KEY := "dispersion"
 const DISPERSION_NEUTRAL := 1.0
+## The whole party holds the kit — the default share, which reproduces the single-kit retreat.
+const ARMED_SHARE_ALL := 1.0
 
 ## **THE SIZE WINDOW A WEAPON'S `attack` IS BOUNDED TO** (`equipment.md` — "An effect can be bounded
 ## by the quarry's BODY MASS"). A snare holds a hare and not a deer, and above its ceiling the item
@@ -776,7 +778,8 @@ const STAY_FRACTION_NONE_BREAKS_OFF := SourceForecast.STAY_FRACTION_NONE_BREAKS_
 ## `yield-forecast.md`'s "THE BOUNDARY" requires; nothing here re-derives a take.
 static func repriced_source(src: Dictionary, prefix: String, carry: float, reference: float,
 		dispersion: float, equipped: float = COVERAGE_UNSTATED,
-		bare: float = COVERAGE_UNSTATED, saturating: int = 0) -> Dictionary:
+		bare: float = COVERAGE_UNSTATED, saturating: int = 0,
+		armed_share: float = ARMED_SHARE_ALL) -> Dictionary:
 	var out := src.duplicate()
 	# **THE COVERAGE TERMS TRAVEL WITH THE SOURCE, because a CREW-DEPENDENT rate cannot answer a
 	# question about the crew.** `carry` above is `carry_per_worker(w)`, so scaling by it prices the
@@ -810,8 +813,35 @@ static func repriced_source(src: Dictionary, prefix: String, carry: float, refer
 	var stay_key := prefix + SOURCE_STAY_FRACTION
 	if out.has(stay_key):
 		var stay := clampf(float(out[stay_key]), 0.0, 1.0)
-		out[stay_key] = clampf(1.0 - (1.0 - stay) * maxf(dispersion, 0.0), 0.0, 1.0)
+		out[stay_key] = party_stay_fraction(stay, dispersion, armed_share)
 	return out
+
+## **THE PARTY'S STAY FRACTION — THE SHARE-WEIGHTED MEAN OF ITS CREWS' OWN**, the sim's rule
+## (`fauna::HuntingParty::stay_fraction`): each crew's animals break off at its OWN kit's dispersion, so
+##
+##     stay = armed_share × stay_at(kit dispersion) + (1 − armed_share) × stay_at(bare dispersion)
+##     stay_at(d) = clamp(1 − (1 − wire stay) × d, 0, 1)
+##
+## `armed_share` is `min(w, saturating crew) / w`; the bare crew's dispersion is the neutral `1.0` (a
+## kit holding nothing live declares no dispersion — `EquipmentStat::neutral`). One kit-level stay for
+## the whole party over-quoted a quiet kit (a trap) beside a bare hand that frightens its own share.
+## `ARMED_SHARE_ALL` (the default) reproduces the single-kit substitution exactly.
+static func party_stay_fraction(wire_stay: float, dispersion: float, armed_share: float) -> float:
+	var share := clampf(armed_share, 0.0, 1.0)
+	var armed := _stay_at(wire_stay, dispersion)
+	if share >= ARMED_SHARE_ALL:
+		return armed
+	return share * armed + (1.0 - share) * _stay_at(wire_stay, DISPERSION_NEUTRAL)
+
+static func _stay_at(wire_stay: float, dispersion: float) -> float:
+	return clampf(1.0 - (1.0 - wire_stay) * maxf(dispersion, 0.0), 0.0, 1.0)
+
+## The share of a crew holding the kit: `min(w, saturating) / w`; an uncomposed crew, or a roster that
+## states no saturating term for the job, is fully armed (absent means fully covered).
+static func armed_share_of(crew: int, saturating: int, stated: bool) -> float:
+	if crew <= 0 or not stated:
+		return ARMED_SHARE_ALL
+	return float(mini(crew, maxi(saturating, 0))) / float(crew)
 
 ## **THE CARRY AXIS THIS JOB IS COLLECTED ON** (`JOB_CARRY_AXES`). `""` for a job with no carry axis
 ## at all, which `priced_source` reads as "nothing to price against".
@@ -882,11 +912,13 @@ static func priced_source(src: Dictionary, prefix: String, kits: Array, job: Str
 	var tiers := effective_tiers(kits, kit, band)
 	var equipped := float(tiers.get(carry_key, 0.0))
 	var bare := float(tiers.get(String(JOB_CARRY_BARE_AXES.get(job, "")), equipped))
-	var saturating := int(tiers.get(String(JOB_SATURATING_CREW_AXES.get(job, "")), 0))
+	var saturating_key := String(JOB_SATURATING_CREW_AXES.get(job, ""))
+	var saturating := int(tiers.get(saturating_key, 0))
 	return repriced_source(src, prefix, carry_per_worker(crew, equipped, bare, saturating),
 		equipped_tier(kits, carry_key),
 		float(kit.get(KIT_DISPERSION_KEY, DISPERSION_NEUTRAL)),
-		equipped, bare, saturating)
+		equipped, bare, saturating,
+		armed_share_of(crew, saturating, bool(tiers.get("stated", false))))
 
 ## **WHAT ONE WORKER OF A CREW OF `w` CARRIES ON AVERAGE**, which is the number a per-worker rate may
 ## be scaled by and the tier is not.
