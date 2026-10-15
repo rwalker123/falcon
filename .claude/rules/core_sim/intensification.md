@@ -95,8 +95,8 @@ cannot be scale-sensitive, and gear cost was size-blind because every build tota
     **the upkeep reads neither.** Better tools make a build arrive sooner; they do not make an
     unkept one forget more slowly, because what it forgets is what its keepers did not supply.
 - **On the wire the meter is still a `0..1` fraction.** `intensification::build_fraction` divides at
-  **capture**, against the source's *own stamped* cost, so `cultivationProgress` / `fieldProgress` /
-  `corralProgress` / `domestication` and `isCultivated` / `isField` / `corralled` are unchanged in
+  **capture**, against the source's *own stamped* cost, so `rungQuotes[plant:tended].progress` / `rungQuotes[plant:field].progress` /
+  `rungQuotes[animal:pen].progress` / `domestication` and `rungQuotes[plant:tended].reached` / `rungQuotes[plant:field].reached` / `corralled` are unchanged in
   type, meaning and range and every shipped readout keeps working. See "The build on the wire".
 
 **The ladder is DATA over a bounded set of coded primitives.** A rung is a [`RungDef`] record, the ladder
@@ -950,7 +950,7 @@ first *rate*** (`docs/plan_standing_upkeep.md`).
   site's crew** — a real cost the player must see before committing — it is simply not netted off
   the build; see "A price without the rate that eats it is not a quote".
 - **ALL FOUR MANAGED RUNGS DECLARE ONE.** `upkeep_demand` is an honest `0` on the two `wild` rungs
-  rather than a sentinel — `corralYield`'s rule.
+  rather than a sentinel — `rungQuotes[animal:pen].foodYield`'s rule.
 - **THE DECAY IS PROPORTIONAL, continuously** (§2.4). Meet the demand and the net is zero and the
   improvement holds; fall short and the meter loses `shortfall_fraction × the rung's own rate`, past
   the upkeep's own `grace_turns`. Half the hands a meter needs means it slides at half rate — not at
@@ -1269,7 +1269,7 @@ holds no hoes publishes `hoes required 1.8 filled 0`; the paid control reads fil
 > another. Pinned on the encoded frame for both viewers by
 > `frame_is_viewer_scoped::a_site_kept_by_two_peoples_publishes_each_viewer_only_its_own_keeping_tools`.
 
-- **`upkeepDemand` follows `corralYield`'s rule: always meaningful, never a sentinel.** A rung with no
+- **`upkeepDemand` follows `rungQuotes[animal:pen].foodYield`'s rule: always meaningful, never a sentinel.** A rung with no
   upkeep publishes an honest `0`.
 - **IT ANSWERS FOR THE RUNG THE SOURCE IS ON, WHICH IS WHY A QUOTE CANNOT READ IT** — see "A price
   without the rate that eats it is not a quote" below, the pair that closes that gap.
@@ -1362,8 +1362,8 @@ already read `self.build.as_ref()` and every other reader was already borrowing.
 - ⛔ **AND THE `⌃` TRACK NEEDS A PER-RUNG QUOTE, WHICH THE STAMP CANNOT GIVE IT.** The track's third
   aside prices the rung it is **offering** — *"then 1.00 work · 0.05 hurdles a turn to hold"* — so it
   reads the material twin of the existing `*UpkeepDemand` pre-commit pair:
-  `cultivationUpkeepMaterialDemand` / `fieldUpkeepMaterialDemand` on the patch row,
-  `tameUpkeepMaterialDemand` / `corralUpkeepMaterialDemand` on the herd row.
+  `rungQuotes[plant:tended].upkeepMaterialDemand` / `rungQuotes[plant:field].upkeepMaterialDemand` on the patch row,
+  `rungQuotes[animal:pastoral].upkeepMaterialDemand` / `rungQuotes[animal:pen].upkeepMaterialDemand` on the herd row.
   **It is the rung's own rate at the source's own scale, resolved LIVE — never the stamp.** The two
   answer different questions and *disagree* on a source mid-climb, exactly as the work pair does: one
   says what you were **billed**, the other what this **rung** costs. **Without it the material half of
@@ -1661,7 +1661,7 @@ shipped.
 - **It bites where `base` is non-zero AND the price is per-source** — `plant:field` (base = the
   tended rung's width, width = this patch's quoted Sow price) and `animal:pen` (base = this herd's
   taming price). A branch's **first** investment rung has `base == 0`, where `fl(0 + w) − 0` is `w`
-  exactly, so `cultivationProgress` and `domestication` were never affected.
+  exactly, so `rungQuotes[plant:tended].progress` and `domestication` were never affected.
 - **The animal twin is LATENT, not live.** Every `taming_cost_multiplier` in the shipped roster
   (`1.0`, `1.25`, `2.0`, `5.0`) makes `50 × m` exactly representable, so no pen has ever mis-read —
   but the dial is validated only as *positive and finite*, and 29% of the values in the roster's own
@@ -1742,7 +1742,7 @@ Field at 40% is a whole Tended patch plus 40% of the Field's own extra.
   read the at-risk meter's *stamped* cost so a rotting source would not slide down the `Priority`
   order as it started needing hands; that hazard is accepted, because a rotted source really is worth
   less and there is no stamped cost left to prefer.
-- **The wire is unchanged in shape.** `cultivationProgress` / `fieldProgress` and the `*WorkDone`
+- **The wire is unchanged in shape.** `rungQuotes[plant:tended].progress` / `rungQuotes[plant:field].progress` and the `*WorkDone`
   pair are the position clamped into each rung's own span (`forage::patch_rung_work_done`) over that
   rung's live cost. **`patch_rung_work_done` is a READOUT** — nothing in the sim branches on it.
 
@@ -1776,8 +1776,8 @@ Field at 40% is a whole Tended patch plus 40% of the Field's own extra.
 - **`upkeepDemand` on the wire is the BILL** (`patch_keeping_basis`), so the published trio satisfies
   `demand − supplied == shortfall`. The *live* cost of holding a rung a player is composing against
   is the `<rung>UpkeepDemand` quote pair, which is what that pair is for.
-  > **THE QUOTE RESOLVES THROUGH THE SAME TILE THE BILL DOES.** `cultivationUpkeepDemand` /
-  > `fieldUpkeepDemand` were the bare ladder rates, identical on every patch in the game, back when
+  > **THE QUOTE RESOLVES THROUGH THE SAME TILE THE BILL DOES.** `rungQuotes[plant:tended].upkeepDemand` /
+  > `rungQuotes[plant:field].upkeepDemand` were the bare ladder rates, identical on every patch in the game, back when
   > the plant rungs were `flat`. Scaled, that pair and `patch_upkeep_demand` become **two producers
   > of one verdict** — the compose sheet quoting `4.0` for a Field its crew will be billed `4.31`
   > — so both quotes take the patch's own tile capacity. Pinned by
@@ -1858,7 +1858,7 @@ and is `""` when nothing is queued; this says where the source *is*, and every s
 bottom rung is `plant:wild` / `animal:wild`, never `""`).
 
 - **It exists so a consumer stops needing each web's private booleans.** "Has this been improved, and
-  what is above it" reads `isCultivated` + `isField` on a patch and `domestication`-over-a-threshold
+  what is above it" reads `rungQuotes[plant:tended].reached` + `rungQuotes[plant:field].reached` on a patch and `domestication`-over-a-threshold
   + `corralled` on a herd, so every consumer hand-writes one reader per web and a third source type
   costs a third. One branch-qualified token is the same read on both, and on the branch that does not
   exist yet.
@@ -1866,7 +1866,7 @@ bottom rung is `plant:wild` / `animal:wild`, never `""`).
   `fauna::herd_rung_key`, the single home of each web's *"sown → field, cultivated → tended, else
   wild"* test, struck at capture off the source's own meters. It cannot disagree with the rung the
   sim stands the source on, because it is not a second reading of it.
-- **The fog rule is the client's**, as it already is for `isCultivated` / `isField`: this token
+- **The fog rule is the client's**, as it already is for `rungQuotes[plant:tended].reached` / `rungQuotes[plant:field].reached`: this token
   carries the same ladder position those bools do, so whatever redacts them on a merely-remembered
   hex redacts this with them.
 
@@ -2104,8 +2104,8 @@ tools follow from the rung in flight.
 
 **The meter stores absolute work units; the wire keeps publishing a `0..1` fraction, and the sim
 divides at capture** (`docs/plan_unit_costed_work.md` §8 — the client does zero arithmetic, the
-sim-answers discipline). `ForagePatchState.cultivationProgress` / `fieldProgress`,
-`HerdTelemetryState.corralProgress` / `domestication` and the `isCultivated` / `isField` /
+sim-answers discipline). `rungQuotes[plant:tended].progress` / `rungQuotes[plant:field].progress`,
+`rungQuotes[animal:pen].progress` / `domestication` and the `rungQuotes[plant:tended].reached` / `rungQuotes[plant:field].reached` /
 `corralled` bools are **unchanged in type, meaning and range**, so every shipped readout keeps
 working untouched. `intensification::build_fraction` is the one divisor, and it divides by the
 source's **own stamped** cost so a finished rung reads exactly `1.0` beside a predicate that already
@@ -2114,7 +2114,7 @@ says so.
 **THE FRACTION AND THE WORK PAIR MUST BE CAPTURED FROM THE SAME FRAME.** A build meter accrues in
 `advance_labor_allocation`, at **Population**, so anything the capture reads out of a display cache
 written *earlier in the turn* is a turn behind the `*WorkDone` beside it. On the animal web that
-cache is `HerdTelemetry` (Logistics), and `domestication` / `corralled` / `corralProgress` were taken
+cache is `HerdTelemetry` (Logistics), and `domestication` / `corralled` / `rungQuotes[animal:pen].progress` were taken
 from it: a finished Tame shipped as *"50 / 50 work (99%)"* — the same meter stated twice, from two
 turns, in one sentence. All three now read the live `Herd`; `husbandry.md` → "A herd row is assembled
 from TWO frames" owns the provenance table. The plant web never had the defect — `ForagePatch` is
@@ -2127,13 +2127,13 @@ Appended (append-only) on both tables:
 
 | Field | Answers |
 |---|---|
-| `cultivationWorkDone` / `cultivationWorkCost`, `fieldWorkDone` / `fieldWorkCost` | the plant meters in **work units**, and what each job costs |
-| `tameWorkDone` / `tameWorkCost`, `corralWorkDone` / `corralWorkCost` | the animal pair, the Tame carrying the species' own cost multiplier |
+| `rungQuotes[plant:tended].workDone` / `rungQuotes[plant:tended].workCost`, `rungQuotes[plant:field].workDone` / `rungQuotes[plant:field].workCost` | the plant meters in **work units**, and what each job costs |
+| `rungQuotes[animal:pastoral].workDone` / `rungQuotes[animal:pastoral].workCost`, `rungQuotes[animal:pen].workDone` / `rungQuotes[animal:pen].workCost` | the animal pair, the Tame carrying the species' own cost multiplier |
 | `buildTurnsRemaining` | how many more turns at the band's own builders pool — **chained** behind everything above this entry in that band's queue — and, with nothing queued here, the same question asked at the **back of the line** for the rung it would climb next. Five states: a count, `-2` the meter holds, `-3` the meter rots, `-4` the queue is blocked here, `-1` no answer |
 | `buildQueuePosition` | this source's 0-based place in the winning band's build queue, `-1` when no band has queued it. Rides the **same winner** as the two fields above — they are read as one set |
 | `buildWorkFromGear` | what that crew's **tools** took off the job, in work units — the `t` above |
 | `buildWorkPerWorkerTurn` | what **one** worker banks per turn on this source at the food peak, before the floor multiplier and before gear — `intensification::build_work_per_worker_turn`, today `PER_WORKER_OUTPUT` |
-| `cultivationUpkeepDemand` / `fieldUpkeepDemand`, `tameUpkeepDemand` / `corralUpkeepDemand` | what **that rung** costs to hold, per turn — the **rate** half of the same quote the `*WorkCost` beside it gives the **pile** half of |
+| `rungQuotes[plant:tended].upkeepDemand` / `rungQuotes[plant:field].upkeepDemand`, `rungQuotes[animal:pastoral].upkeepDemand` / `rungQuotes[animal:pen].upkeepDemand` | what **that rung** costs to hold, per turn — the **rate** half of the same quote the `*WorkCost` beside it gives the **pile** half of |
 
 - **`workCost` is the LADDER's price, not the source's stamped one.** It is resolved at capture off
   the rung (and, for a Tame, the species) and published **whether or not a build is in flight** — the
@@ -2167,8 +2167,8 @@ Appended (append-only) on both tables:
 >
 > **The animal web hid it**, and that is the tell rather than an exemption: `herd_keeping_rung`
 > answers for any **owned** herd, so a part-tamed herd's demand was published and its quote was right.
-> A **wild** herd — the one a Tame is composed against — had the same hole. `tameUpkeepDemand` /
-> `corralUpkeepDemand` carry the herd's own **keeper load**, ownership-independent, for
+> A **wild** herd — the one a Tame is composed against — had the same hole. `rungQuotes[animal:pastoral].upkeepDemand` /
+> `rungQuotes[animal:pen].upkeepDemand` carry the herd's own **keeper load**, ownership-independent, for
 > `herdersNeededIfManaged`'s reason: a quote has to exist before the herd is anyone's.
 >
 > **`buildTurnsRemaining` WAS wrong, and §4.6a is what fixed it.** The projection netted the quoted
@@ -2229,7 +2229,7 @@ Appended (append-only) on both tables:
   > **The compose sheet is BY DEFINITION looking at a source nobody has started**, so a sentinel there
   > withheld the one readout that makes this arc legible — *turns are an output; add hands and watch
   > them fall* — at the exact moment the player is deciding. That is the same defect
-  > `HerdTelemetryState.corralYield` already states on the animal web (`husbandry.md`: *"a
+  > `rungQuotes[animal:pen].foodYield` already states on the animal web (`husbandry.md`: *"a
   > **projection** for an unpenned herd, the **live** payoff for a penned one… always meaningful,
   > never `0`-because-unpenned"*), and it takes the same remedy. The client still cannot compute it — it
   > holds neither the crew's output, nor the floor multiplier, nor the kit's coverage-weighted
@@ -2268,7 +2268,7 @@ Appended (append-only) on both tables:
   records' `order` **in both directions**, so a `above` that answered `None` for everything — which
   would silently turn every projection back into "no estimate" — cannot pass.
 - **A PROJECTION MUST NEVER QUOTE A RUNG THE COMMAND WOULD REFUSE.** Turns for a Sow on ground
-  `validate_sow` rejects is the `sowSiteRefusal` failure mode in a new costume, so the quote carries
+  `validate_sow` rejects is the `rungQuotes[plant:field].siteRefusal` failure mode in a new costume, so the quote carries
   the gates the verb would be judged by: the rung's `unlock_knowledge`, its `site_requirement` (through
   the same `rung_site_refusal` closure the running `Sow` is gated by), the tile's basket through
   `resolve_committed_species`, the species' `ceiling_required`, and **ownership** — which the live
@@ -2295,7 +2295,7 @@ Appended (append-only) on both tables:
 - **`workCost` and the turns must name ONE rung**, because they are read as a pair (*"50 work, ≈25
   turns"*). Both rungs' costs ship per source, so the client picks: the verb on
   `LaborAssignment.improvement`, or — when that is empty — the rung above the one the source's own
-  published state says it stands on (`isCultivated`/`isField`, `domestication`/`corralled`). That is
+  published state says it stands on (`rungQuotes[plant:tended].reached`/`rungQuotes[plant:field].reached`, `domestication`/`corralled`). That is
   the same rung the projection resolved, derived from the same wire fields.
 - **The projection reads the work already BANKED on that rung**, not a fresh `0`. On an unstarted
   source the two coincide; on one whose build the player abandoned, quoting the whole job again would
@@ -2535,6 +2535,50 @@ road's `frictionMultiplier` / `holdsLinkToTiles` / `grantsSight`; a deposit's `y
 `recoveryFraction` / `regrowthMultiplier` / `minDepositCapacity`) at the wire's neutral value
 elsewhere. Field-by-field contracts are `routes.md` -> "The rung CATALOG" and `extraction.md` -> "The
 rung catalog". `BuildQueueEntryState.road` is gone: a per-tile entry names its `branch`.
+
+## Rung quotes on the patch and herd rows - `rungQuotes`
+
+`ForagePatchState` and `HerdTelemetryState` carry **one `RungQuoteState` per rung of the source's
+branch above the root** (`rungQuotes`, appended last) and **no field named after a step**. The
+per-step families (`cultivation*`, `tended*`, `field*`, `sow*`, `tame*`, `corral*`, `pastoral*`,
+`isCultivated` / `isField` / `corralled`, `domestication`) are deleted, so a fourth plant or animal
+rung is a JSON edit that appears on the wire with no schema or code change.
+`core_sim/tests/rung_quotes_generic.rs` proves it on a test-only `plant:farm` (traits `managed` +
+`sown`, built to from a Field) and `animal:ranch` (traits `domesticated` + `enclosed`).
+
+**Producers iterate the ladder.** `snapshot::subsistence::patch_rung_quotes` / `herd_rung_quotes`
+walk `ladder.rungs_of(branch_of_kind(..))` past the root and price each rung by its own record and
+its **traits** (`PlantPayoff::of_rung`, `HerdPayoff::of`) - nothing names a rung. Every figure comes
+from the seam the sim pays or gates with: `forage::plant_rung_cost` (a `replaced_share` rung is
+priced per patch), `patch_rung_work_done` / `Herd::rung_work_done`, `rung_payoff` /
+`rung_fodder_payoff`, the forecast's `managed_yield` / `pastoral_yield` for the animal blocks, and
+the capture's per-`(tile, rung)` `RungSiteRequirement::refusal` sweep (`rung_site_refusals`, built
+over every plant rung that declares a `site_requirement`).
+
+| Retired field | Now (`RungQuoteState` of the rung, keyed `branch:id`) |
+|---|---|
+| `isCultivated` / `isField` / `corralled` | `reached` - the source stands at or above the rung |
+| `cultivationProgress` / `fieldProgress` / `domestication` / `corralProgress` | `progress` - the raw meter, `workDone / workCost`, `1.0` once reached |
+| `cultivationWorkDone` / `fieldWorkDone` / `tameWorkDone` / `corralWorkDone` | `workDone` |
+| `cultivationWorkCost` / `fieldWorkCost` / `tameWorkCost` / `corralWorkCost` | `workCost` - the ladder's price on THIS source |
+| `cultivationUpkeepDemand` / `fieldUpkeepDemand` / `tameUpkeepDemand` / `corralUpkeepDemand` | `upkeepDemand` - at the source's own tender- or keeper-load |
+| `*UpkeepMaterialDemand` (plant and animal) | `upkeepMaterialDemand` |
+| `corralBuildMaterialCost` (and the head-of-queue `buildMaterialCost` generalised) | `buildMaterialCost` - the rung's whole pile |
+| `tendedYield` / `fieldYield` / `corralYield` / `pastoralYield` | `foodYield` |
+| `tendedFodder` / `fieldFodder` | `fodder` (`0` on an animal) |
+| `corralMaterial` / `pastoralMaterial` | `materialPayoff` (empty on a patch row) |
+| `sowSiteRefusal` | `siteRefusal` - `""` when the ground takes the rung |
+
+**Kept, because they describe a behaviour and not a step** (the `enclosed` trait's state and the
+keeping machinery, which a rung of any name can switch on): `penFedFraction`, `penPastureFraction`,
+`penFodderShortfall`, `penRadius`, `penFootprintTiles`, `penExtendProgress` / `penExtendCost`,
+`fodderDraw`, `herdersNeeded` / `herdersNeededIfManaged` / `herdedFraction`, `standingOutput*` /
+`outputRecommit*`, `husbandryCeiling`, `currentRung`, `buildDestinationRung`, `buildLegs`, `upkeep*`
+(the stamped bill) and `meterRotPerTurn`.
+
+**`FloraShareInfo` is NOT migrated**: its per-plant `cultivate*` / `sow*` payoff quotes are still
+per-step fields, so a fourth plant step is quoted per rung on the patch row but not per species in
+the crop picker.
 
 ## Knowledge no rung teaches — `standalone_knowledges`
 

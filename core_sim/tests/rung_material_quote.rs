@@ -197,7 +197,10 @@ fn a_pastoral_herd_is_quoted_the_pen_rungs_material_though_its_own_bill_names_no
     resolve_and_publish(&mut app);
 
     let quoted = published_herd_field(&app, BIG_HERD, |row| {
-        payoffs(row.corralUpkeepMaterialDemand())
+        payoffs(
+            sim_schema::wire_rung_quote(row.rungQuotes(), "animal:pen")
+                .and_then(|quote| quote.upkeepMaterialDemand()),
+        )
     });
     let hurdles = amount_of(&quoted, PEN_MATERIAL).unwrap_or_else(|| {
         panic!(
@@ -221,7 +224,10 @@ fn a_pastoral_herd_is_quoted_the_pen_rungs_material_though_its_own_bill_names_no
 
     // …and the rung below it quotes nothing, so the pair is not one number echoed twice.
     let tame_quote = published_herd_field(&app, BIG_HERD, |row| {
-        payoffs(row.tameUpkeepMaterialDemand())
+        payoffs(
+            sim_schema::wire_rung_quote(row.rungQuotes(), "animal:pastoral")
+                .and_then(|quote| quote.upkeepMaterialDemand()),
+        )
     });
     assert!(
         tame_quote.is_empty(),
@@ -245,12 +251,22 @@ fn the_material_quote_scales_with_the_herd_exactly_as_the_work_quote_does() {
 
     let material = |id: &str| {
         amount_of(
-            &published_herd_field(&app, id, |row| payoffs(row.corralUpkeepMaterialDemand())),
+            &published_herd_field(&app, id, |row| {
+                payoffs(
+                    sim_schema::wire_rung_quote(row.rungQuotes(), "animal:pen")
+                        .and_then(|quote| quote.upkeepMaterialDemand()),
+                )
+            }),
             PEN_MATERIAL,
         )
         .expect("both fixture herds are quoted the Pen rung's material")
     };
-    let work = |id: &str| published_herd_field(&app, id, |row| row.corralUpkeepDemand());
+    let work = |id: &str| {
+        published_herd_field(&app, id, |row| {
+            sim_schema::wire_rung_quote(row.rungQuotes(), "animal:pen")
+                .map_or(0.0, |quote| quote.upkeepDemand())
+        })
+    };
 
     let herds = BIG_BIOMASS / SMALL_BIOMASS;
     assert!(
@@ -306,15 +322,28 @@ fn the_plant_rungs_quote_no_material_and_publish_no_row_for_it() {
     // **LIVENESS**: the WORK quote beside it is a real number on this same row, so *"empty"* below
     // is a statement about the material term and not about a row nobody filled in.
     assert!(
-        row.cultivationUpkeepDemand() > 0.0 && row.fieldUpkeepDemand() > 0.0,
+        sim_schema::wire_rung_quote(row.rungQuotes(), "plant:tended")
+            .map_or(0.0, |quote| quote.upkeepDemand())
+            > 0.0
+            && sim_schema::wire_rung_quote(row.rungQuotes(), "plant:field")
+                .map_or(0.0, |quote| quote.upkeepDemand())
+                > 0.0,
         "fixture: the patch's work quotes must be live, or the emptiness below proves nothing"
     );
     assert!(
-        payoffs(row.cultivationUpkeepMaterialDemand()).is_empty(),
+        payoffs(
+            sim_schema::wire_rung_quote(row.rungQuotes(), "plant:tended")
+                .and_then(|quote| quote.upkeepMaterialDemand())
+        )
+        .is_empty(),
         "no plant rung declares a material, so the quote is EMPTY — never a row of zero"
     );
     assert!(
-        payoffs(row.fieldUpkeepMaterialDemand()).is_empty(),
+        payoffs(
+            sim_schema::wire_rung_quote(row.rungQuotes(), "plant:field")
+                .and_then(|quote| quote.upkeepMaterialDemand())
+        )
+        .is_empty(),
         "…and the same on the Field rung"
     );
 }
@@ -333,7 +362,12 @@ fn a_wild_herd_is_quoted_the_pen_rungs_material_too() {
     resolve_and_publish(&mut app);
 
     let wild = published_wild_herd_id(&app);
-    let quoted = published_herd_field(&app, &wild, |row| payoffs(row.corralUpkeepMaterialDemand()));
+    let quoted = published_herd_field(&app, &wild, |row| {
+        payoffs(
+            sim_schema::wire_rung_quote(row.rungQuotes(), "animal:pen")
+                .and_then(|quote| quote.upkeepMaterialDemand()),
+        )
+    });
     assert!(
         amount_of(&quoted, PEN_MATERIAL).is_some_and(|amount| amount > 0.0),
         "a quote has to exist before the herd is anyone's: {quoted:?}"
@@ -341,7 +375,12 @@ fn a_wild_herd_is_quoted_the_pen_rungs_material_too() {
     // **LIVENESS**: the work quote beside it is live on the same row, so the material one is not
     // reading a row the capture never filled in.
     assert!(
-        published_herd_field(&app, &wild, |row| row.corralUpkeepDemand()) > 0.0,
+        published_herd_field(&app, &wild, |row| sim_schema::wire_rung_quote(
+            row.rungQuotes(),
+            "animal:pen"
+        )
+        .map_or(0.0, |quote| quote.upkeepDemand()))
+            > 0.0,
         "fixture: the wild herd's own work quote must be live too"
     );
 }
@@ -367,7 +406,13 @@ fn published_wild_herd_id(app: &App) -> String {
         .and_then(|section| section.herds())
         .expect("the subsistence section carries the herd list")
         .iter()
-        .find(|herd| herd.domestication() <= 0.0 && !herd.corralled())
+        .find(|herd| {
+            sim_schema::wire_rung_quote(herd.rungQuotes(), "animal:pastoral")
+                .map_or(0.0, |quote| quote.progress())
+                <= 0.0
+                && !sim_schema::wire_rung_quote(herd.rungQuotes(), "animal:pen")
+                    .is_some_and(|quote| quote.reached())
+        })
         .map(|herd| herd.id().unwrap_or_default().to_string())
         .expect("the harness map seeds wild herds the viewer can see")
 }
@@ -591,7 +636,10 @@ fn a_corralled_herd_is_quoted_the_rings_pile_though_its_build_cost_is_empty() {
     resolve_and_publish(&mut app);
 
     let quoted = published_herd_field(&app, CORRALLED_HERD, |row| {
-        payoffs(row.corralBuildMaterialCost())
+        payoffs(
+            sim_schema::wire_rung_quote(row.rungQuotes(), "animal:pen")
+                .and_then(|quote| quote.buildMaterialCost()),
+        )
     });
     let hurdles = amount_of(&quoted, PEN_MATERIAL).unwrap_or_else(|| {
         panic!(
@@ -619,7 +667,12 @@ fn a_corralled_herd_is_quoted_the_rings_pile_though_its_build_cost_is_empty() {
     // **LIVENESS**: the WORK half of the same card is a real number on the same row, so the
     // emptiness above is a statement about that field and not about a row the capture never filled.
     assert!(
-        published_herd_field(&app, CORRALLED_HERD, |row| row.corralWorkCost()) > 0.0,
+        published_herd_field(&app, CORRALLED_HERD, |row| sim_schema::wire_rung_quote(
+            row.rungQuotes(),
+            "animal:pen"
+        )
+        .map_or(0.0, |quote| quote.workCost()))
+            > 0.0,
         "fixture: the ring's work price must be live, or neither claim above is about anything"
     );
 }
@@ -646,7 +699,10 @@ fn the_published_pile_is_what_a_completed_ring_actually_eats() {
 
     let quoted = amount_of(
         &published_herd_field(&app, CORRALLED_HERD, |row| {
-            payoffs(row.corralBuildMaterialCost())
+            payoffs(
+                sim_schema::wire_rung_quote(row.rungQuotes(), "animal:pen")
+                    .and_then(|quote| quote.buildMaterialCost()),
+            )
         }),
         PEN_MATERIAL,
     )
@@ -694,7 +750,12 @@ fn a_pastoral_herds_ring_quote_and_build_cost_are_the_same_pile() {
     seat_pastoral_herds(&mut app, tile);
     resolve_and_publish(&mut app);
 
-    let ring = published_herd_field(&app, BIG_HERD, |row| payoffs(row.corralBuildMaterialCost()));
+    let ring = published_herd_field(&app, BIG_HERD, |row| {
+        payoffs(
+            sim_schema::wire_rung_quote(row.rungQuotes(), "animal:pen")
+                .and_then(|quote| quote.buildMaterialCost()),
+        )
+    });
     let climb = published_herd_field(&app, BIG_HERD, |row| payoffs(row.buildMaterialCost()));
     assert_eq!(
         ring, climb,

@@ -18469,7 +18469,8 @@ mod tests {
                     "every food-bearing tile carries a patch, so the wire must describe this one",
                 );
             assert_eq!(
-                patch.sow_site_refusal, expected_wire,
+                patch.quote("plant:field").site_refusal,
+                expected_wire,
                 "the wire's verdict at {coord:?}"
             );
 
@@ -18537,10 +18538,13 @@ mod tests {
         // BOTH plant meters ship, independently — the two-meter split the client needs. **Each is
         // still a 0..1 FRACTION**, divided at capture against that patch's own job, even though the
         // meter behind it now stores absolute work units.
-        assert!((patch.cultivation_progress - 1.0).abs() < 1e-6);
-        assert!(patch.is_cultivated);
-        assert!((patch.field_progress - HALF_SOWN).abs() < 1e-6);
-        assert!(!patch.is_field, "a half-sown field is not a Field");
+        assert!((patch.quote("plant:tended").progress - 1.0).abs() < 1e-6);
+        assert!(patch.quote("plant:tended").reached);
+        assert!((patch.quote("plant:field").progress - HALF_SOWN).abs() < 1e-6);
+        assert!(
+            !patch.quote("plant:field").reached,
+            "a half-sown field is not a Field"
+        );
 
         // **And the WORK pair beside it** — the absolute meter and the job's live price, which is
         // what lets the UI say "18 of 50 work" and quote a rung before the player commits. The cost
@@ -18549,13 +18553,16 @@ mod tests {
             .rung(shipped::plant_tended())
             .build_cost(core_sim::RUNG_COST_UNSCALED)
             .expect("the tended rung builds");
-        assert!((patch.cultivation_work_cost - cultivate_cost).abs() < 1e-6);
+        assert!((patch.quote("plant:tended").work_cost - cultivate_cost).abs() < 1e-6);
         assert!(
-            (patch.field_work_done - patch.field_work_cost * HALF_SOWN).abs() < 1e-3,
+            (patch.quote("plant:field").work_done
+                - patch.quote("plant:field").work_cost * HALF_SOWN)
+                .abs()
+                < 1e-3,
             "the Field's work-done readout is the position clamped into the Field's own span"
         );
         assert!(
-            patch.field_work_cost > 0.0,
+            patch.quote("plant:field").work_cost > 0.0,
             "a rung nobody has started still quotes its price"
         );
         assert_eq!(
@@ -18568,7 +18575,7 @@ mod tests {
         // (`docs/plan_standing_upkeep.md` §2). The `sow_build_fraction` this block used to compose a
         // "preparing" row from is retired with the dip: a crew building takes nothing, so there is
         // no factor left to publish and the client reads the zero from the model.
-        assert!(patch.tended_yield > 0.0);
+        assert!(patch.quote("plant:tended").food_yield > 0.0);
         let sustain_ceiling =
             (patch.biomass - core_sim::MSY_BIOMASS_FRACTION * patch.carrying_capacity).max(0.0)
                 * patch.provisions_per_biomass;
@@ -18650,10 +18657,10 @@ mod tests {
         // (`docs/plan_harvest_floor.md` §1). The payoff comparison that still means something is
         // rate-against-rate, below.
         assert!(
-            patch.field_yield > patch.tended_yield,
+            patch.quote("plant:field").food_yield > patch.quote("plant:tended").food_yield,
             "the Field out-yields the patch it replaces — that IS the reason to sow: {} vs {}",
-            patch.field_yield,
-            patch.tended_yield
+            patch.quote("plant:field").food_yield,
+            patch.quote("plant:tended").food_yield
         );
     }
 

@@ -596,10 +596,10 @@ fn the_published_terms_reproduce_the_published_build_turns_at_the_committed_crew
 
         // The build actually ran, so neither side is quoting an untouched job.
         assert!(
-            herd.tame_work_done > 0.0,
+            herd.quote("animal:pastoral").work_done > 0.0,
             "fixture: the Tame must have accrued, or the equality is about two whole jobs \
              (work_done {})",
-            herd.tame_work_done
+            herd.quote("animal:pastoral").work_done
         );
         // The gear term is live, so the `min` under test is exercised at all.
         assert!(
@@ -635,15 +635,16 @@ fn the_published_terms_reproduce_the_published_build_turns_at_the_committed_crew
         // inverted. The ordering below is what replaced it, and it is the same shape the plant web's
         // `an_unstarted_patch_publishes_the_quoted_rungs_upkeep_where_the_billed_one_is_zero` pins.
         assert!(
-            herd.tame_upkeep_demand > 0.0,
+            herd.quote("animal:pastoral").upkeep_demand > 0.0,
             "fixture: the pastoral rung must cost something to hold, or the ordering is vacuous"
         );
         assert!(
-            herd.upkeep_demand > 0.0 && herd.upkeep_demand <= herd.tame_upkeep_demand,
+            herd.upkeep_demand > 0.0
+                && herd.upkeep_demand <= herd.quote("animal:pastoral").upkeep_demand,
             "a herd raising the pastoral rung is billed a SHARE of what that rung is quoted at — \
              billed {} against a quote of {}",
             herd.upkeep_demand,
-            herd.tame_upkeep_demand
+            herd.quote("animal:pastoral").upkeep_demand
         );
         // **AND NEITHER OF THEM IS WHAT THE FORM NETS.** The rot is its own published number and,
         // on the animal web, an honest `0`: no animal rung declares a `meter_decay`, so nothing
@@ -656,8 +657,8 @@ fn the_published_terms_reproduce_the_published_build_turns_at_the_committed_crew
 
         // (2) **THE TURN COUNT** — the whole form against the sim's own answer.
         let quoted = client_turns_estimate(
-            herd.tame_work_cost,
-            herd.tame_work_done,
+            herd.quote("animal:pastoral").work_cost,
+            herd.quote("animal:pastoral").work_done,
             build_work_per_worker,
             saturating_crew,
             herd.build_work_per_worker_turn,
@@ -678,11 +679,14 @@ fn the_published_terms_reproduce_the_published_build_turns_at_the_committed_crew
             herd.build_turns_remaining
         );
         assert_eq!(
-            quoted, published,
+            quoted,
+            published,
             "the client's closed form must reproduce the sim's own answer at the committed crew: \
              cost {} done {} gear/worker {build_work_per_worker} crew {saturating_crew} \
              per-worker-turn {} builders {THE_BUILD_CREW}",
-            herd.tame_work_cost, herd.tame_work_done, herd.build_work_per_worker_turn,
+            herd.quote("animal:pastoral").work_cost,
+            herd.quote("animal:pastoral").work_done,
+            herd.build_work_per_worker_turn,
         );
     }
 
@@ -893,39 +897,48 @@ fn a_herds_published_build_meters_agree_with_their_work_pairs_on_the_turn_they_c
             .expect("the watched herd is on the wire");
 
         assert_eq!(
-            herd.domestication,
-            build_fraction(herd.tame_work_done, herd.tame_work_cost),
+            herd.quote("animal:pastoral").progress,
+            build_fraction(
+                herd.quote("animal:pastoral").work_done,
+                herd.quote("animal:pastoral").work_cost
+            ),
             "turn {turn}: the published `domestication` must be the published work pair's own \
              fraction — {} / {}",
-            herd.tame_work_done,
-            herd.tame_work_cost
+            herd.quote("animal:pastoral").work_done,
+            herd.quote("animal:pastoral").work_cost
         );
         assert_eq!(
-            herd.corral_progress,
-            build_fraction(herd.corral_work_done, herd.corral_work_cost),
+            herd.quote("animal:pen").progress,
+            build_fraction(
+                herd.quote("animal:pen").work_done,
+                herd.quote("animal:pen").work_cost
+            ),
             "turn {turn}: the published `corralProgress` must be the published work pair's own \
              fraction — {} / {}",
-            herd.corral_work_done,
-            herd.corral_work_cost
+            herd.quote("animal:pen").work_done,
+            herd.quote("animal:pen").work_cost
         );
 
-        if herd.domestication > 0.0 && herd.domestication < 1.0 {
+        if herd.quote("animal:pastoral").progress > 0.0
+            && herd.quote("animal:pastoral").progress < 1.0
+        {
             saw_partial_tame = true;
         }
-        if herd.corral_progress > 0.0 && herd.corral_progress < 1.0 {
+        if herd.quote("animal:pen").progress > 0.0 && herd.quote("animal:pen").progress < 1.0 {
             saw_partial_pen = true;
         }
 
         if tamed_on.is_none() {
-            if herd.tame_work_done >= herd.tame_work_cost {
+            if herd.quote("animal:pastoral").work_done >= herd.quote("animal:pastoral").work_cost {
                 tamed_on = Some(turn);
                 assert_eq!(
-                    herd.domestication, 1.0,
+                    herd.quote("animal:pastoral").progress,
+                    1.0,
                     "turn {turn}: the Tame's meter reached its cost, so the row must read a \
                      finished build in the same frame, not last turn's 99%"
                 );
                 assert!(
-                    !herd.corralled,
+                    !herd.quote("animal:pen").reached,
                     "turn {turn}: a tamed herd is not yet penned"
                 );
                 set_improvement(&mut app, keepers, shipped::corral());
@@ -933,24 +946,26 @@ fn a_herds_published_build_meters_agree_with_their_work_pairs_on_the_turn_they_c
             continue;
         }
 
-        if herd.corral_work_done >= herd.corral_work_cost {
+        if herd.quote("animal:pen").work_done >= herd.quote("animal:pen").work_cost {
             penned_on = Some(turn);
             assert_eq!(
-                herd.corral_progress, 1.0,
+                herd.quote("animal:pen").progress,
+                1.0,
                 "turn {turn}: the pen's meter reached its cost, so the row must read a finished \
                  build in the same frame"
             );
             assert!(
-                herd.corralled,
+                herd.quote("animal:pen").reached,
                 "turn {turn}: `corralled` must flip the instant the pen's meter fills — it is the \
                  same fact the meter is stating"
             );
             break;
         }
         assert!(
-            !herd.corralled,
+            !herd.quote("animal:pen").reached,
             "turn {turn}: `corralled` must not lead its own meter ({} / {})",
-            herd.corral_work_done, herd.corral_work_cost
+            herd.quote("animal:pen").work_done,
+            herd.quote("animal:pen").work_cost
         );
     }
 
@@ -1211,18 +1226,18 @@ fn the_wire_publishes_the_whole_job_and_a_geared_pool_that_finishes_it_sooner() 
              the claim are vacuous"
         );
         assert!(
-            herd.tame_work_cost > gear,
+            herd.quote("animal:pastoral").work_cost > gear,
             "the published job must be the rung's whole price, not a bar the pool's kit shrank: {} \
              against a kit delivering {gear} a turn",
-            herd.tame_work_cost
+            herd.quote("animal:pastoral").work_cost
         );
 
         // **AND THE GEAR STILL DOES SOMETHING** — the same pool carrying nothing takes strictly
         // longer over the identical job. Struck through the client's own form, so the pair is
         // asserted on the expression the compose sheet evaluates.
         let geared_turns = client_turns_estimate(
-            herd.tame_work_cost,
-            herd.tame_work_done,
+            herd.quote("animal:pastoral").work_cost,
+            herd.quote("animal:pastoral").work_done,
             tiers.build_work_per_worker,
             tiers.build_work_saturating_crew,
             herd.build_work_per_worker_turn,
@@ -1231,8 +1246,8 @@ fn the_wire_publishes_the_whole_job_and_a_geared_pool_that_finishes_it_sooner() 
         )
         .expect("a staffed crew has an estimate");
         let bare_turns = client_turns_estimate(
-            herd.tame_work_cost,
-            herd.tame_work_done,
+            herd.quote("animal:pastoral").work_cost,
+            herd.quote("animal:pastoral").work_done,
             NO_GEAR_PER_WORKER,
             tiers.build_work_saturating_crew,
             herd.build_work_per_worker_turn,
@@ -1244,8 +1259,8 @@ fn the_wire_publishes_the_whole_job_and_a_geared_pool_that_finishes_it_sooner() 
             geared_turns < bare_turns,
             "the equipped pool must finish the same job sooner: {geared_turns} against \
              {bare_turns} — improvement {improvement:?}, cost {} done {}",
-            herd.tame_work_cost,
-            herd.tame_work_done
+            herd.quote("animal:pastoral").work_cost,
+            herd.quote("animal:pastoral").work_done
         );
 
         // And the client's transcribed form must reproduce the sim's own answer, or the compose
@@ -1526,8 +1541,8 @@ fn the_client_form_reproduces_the_sim_with_a_live_rot_past_the_grace() {
     );
 
     let quoted = client_turns_estimate(
-        row.cultivation_work_cost,
-        row.cultivation_work_done,
+        row.quote("plant:tended").work_cost,
+        row.quote("plant:tended").work_done,
         tiers.build_work_per_worker,
         tiers.build_work_saturating_crew,
         row.build_work_per_worker_turn,
@@ -1539,8 +1554,8 @@ fn the_client_form_reproduces_the_sim_with_a_live_rot_past_the_grace() {
         u32::try_from(row.build_turns_remaining).ok(),
         "the client's closed form must net the published rot and land on the sim's own answer: \
          cost {} done {} gear {gear} per-worker-turn {} builders {BUILDERS} rot {}",
-        row.cultivation_work_cost,
-        row.cultivation_work_done,
+        row.quote("plant:tended").work_cost,
+        row.quote("plant:tended").work_done,
         row.build_work_per_worker_turn,
         row.meter_rot_per_turn,
     );
@@ -1549,8 +1564,8 @@ fn the_client_form_reproduces_the_sim_with_a_live_rot_past_the_grace() {
     // else, which is what makes the assertion above a guard rather than a coincidence.
     assert_ne!(
         client_turns_estimate(
-            row.cultivation_work_cost,
-            row.cultivation_work_done,
+            row.quote("plant:tended").work_cost,
+            row.quote("plant:tended").work_done,
             tiers.build_work_per_worker,
             tiers.build_work_saturating_crew,
             row.build_work_per_worker_turn,

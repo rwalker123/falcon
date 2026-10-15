@@ -1088,15 +1088,16 @@ fn the_published_field_yield_never_inherits_the_tended_rungs_basket() {
     let as_field = row(&mut app, coord);
 
     assert!(
-        as_field.field_yield > 0.0,
+        as_field.quote("plant:field").food_yield > 0.0,
         "the fixture must quote a real Field"
     );
     assert!(
-        (tended.field_yield - as_field.field_yield).abs() <= EPSILON * as_field.field_yield,
+        (tended.quote("plant:field").food_yield - as_field.quote("plant:field").food_yield).abs()
+            <= EPSILON * as_field.quote("plant:field").food_yield,
         "fieldYield on a tended patch must be what the Field it would become actually pays: \
          {} vs {}",
-        tended.field_yield,
-        as_field.field_yield
+        tended.quote("plant:field").food_yield,
+        as_field.quote("plant:field").food_yield
     );
 
     // …and it IS the crop picker's own Sow payoff for that crop on this tile — quote and payout are
@@ -1108,9 +1109,9 @@ fn the_published_field_yield_never_inherits_the_tended_rungs_basket() {
         .expect("the committed crop is on its own patch's basket")
         .sow_payoff;
     assert!(
-        (tended.field_yield - picker).abs() <= EPSILON * picker.max(1.0),
+        (tended.quote("plant:field").food_yield - picker).abs() <= EPSILON * picker.max(1.0),
         "the published fieldYield on a tended patch must BE the picker's sowPayoff: {} vs {picker}",
-        tended.field_yield
+        tended.quote("plant:field").food_yield
     );
 
     // And the converse, so the two rungs cannot collapse onto one number from the other side: the
@@ -1124,15 +1125,16 @@ fn the_published_field_yield_never_inherits_the_tended_rungs_basket() {
         .expect("the committed crop is on its own patch's basket")
         .cultivate_payoff;
     assert!(
-        (tended.tended_yield - cultivate).abs() <= EPSILON * cultivate.max(1.0),
+        (tended.quote("plant:tended").food_yield - cultivate).abs() <= EPSILON * cultivate.max(1.0),
         "tendedYield must BE the picker's cultivatePayoff: {} vs {cultivate}",
-        tended.tended_yield
+        tended.quote("plant:tended").food_yield
     );
     assert!(
-        (tended.tended_yield - tended.field_yield).abs() > EPSILON,
+        (tended.quote("plant:tended").food_yield - tended.quote("plant:field").food_yield).abs()
+            > EPSILON,
         "the two rungs must not share a number: tended {} vs field {}",
-        tended.tended_yield,
-        tended.field_yield
+        tended.quote("plant:tended").food_yield,
+        tended.quote("plant:field").food_yield
     );
 }
 

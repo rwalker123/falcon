@@ -1050,7 +1050,7 @@ impl ForagePatch {
 /// named function rather than a closure at four call sites so *"only the Field is priced per patch"*
 /// is stated once — the exact shape `Herd::standing_at` uses for `taming_cost_multiplier` on
 /// `animal:pastoral`.
-fn plant_rung_cost(rung: &RungDef, field_cost_multiplier: f32) -> Option<f32> {
+pub(crate) fn plant_rung_cost(rung: &RungDef, field_cost_multiplier: f32) -> Option<f32> {
     rung.build_cost(match rung.cost_scale {
         CostScale::ReplacedShare => field_cost_multiplier,
         _ => RUNG_COST_UNSCALED,
@@ -4061,7 +4061,7 @@ pub(crate) fn tended_provisions(
 
 /// **THE take a rung-2 quote is priced on** — the Sustain (MSY) skim on the *tended* curve, clamped
 /// to the standing crop. Stated once because rung 2 pays **three** accounts off one take
-/// ([`tended_provisions`], [`tended_fodder`], and the material rows [`rung_material_payoff`]
+/// ([`tended_provisions`], the fodder row `rung_fodder_payoff` quotes, and the material rows [`rung_material_payoff`]
 /// prices), and a second copy of this expression is exactly how the food quote and the trade quote
 /// would start describing different harvests — the `patch_ecology` lesson, applied to the take
 /// instead of the curve.
@@ -4085,31 +4085,6 @@ fn rung_msy_take(patch: &ForagePatch, forage: &ForageLaborConfig, rung: PlantPay
     let capacity = patch.carrying_capacity * rebase;
     let biomass = patch.biomass * rebase;
     sustainable_yield(biomass, capacity, &rung_ecology(rung, forage)).clamp(0.0, biomass)
-}
-
-/// **What a patch would pay in FODDER as a TENDED patch** — the rung-2 quote twin of
-/// [`tended_provisions`], routing the yield vector's fodder component instead of its provisions
-/// one. The hay counterpart, one rung down, of what [`rung_fodder_payoff`] answers at `PlantField`
-/// (the retired `field_fodder`), and the number the crop picker's Cultivate rung needs: before
-/// this, the picker had only `sowFodderPayoff` and therefore quoted a *sown Field's* hay on the
-/// Cultivate row.
-///
-/// **Priced on [`rung_msy_take`], the same take the food quote uses**, and converted through the
-/// same [`rung_rate`] seam at `PlantTended` — so the three accounts of one rung-2 harvest are one
-/// harvest, split three ways, and cannot disagree about its size. `0` for a crop whose vector pays no
-/// fodder, with no `role` branch.
-pub(crate) fn tended_fodder(
-    patch: &ForagePatch,
-    tile_composition: &[FloraShare],
-    forage: &ForageLaborConfig,
-    flora: &FloraConfig,
-    output_multiplier: f32,
-) -> f32 {
-    forage_provisions(
-        rung_msy_take(patch, forage, PlantPayoff::Tended),
-        rung_fodder_per_biomass(patch, tile_composition, flora, forage, PlantPayoff::Tended),
-        output_multiplier,
-    )
 }
 
 /// **WHAT A RUNG BUYS THE LAND — production, never draw.**

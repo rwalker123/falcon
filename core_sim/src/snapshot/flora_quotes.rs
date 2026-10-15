@@ -421,7 +421,7 @@ fn derive_tile_quotes(
                 // staple (no fodder in its vector) or a plant that cannot Sow here.
                 sow_fodder_payoff: fodder_payoff(sown_rung),
                 // **The same account one rung down** (#419) — what a completed TENDED PATCH of
-                // this plant would pay, through `tended_fodder`. The Cultivate row of the picker had
+                // this plant would pay, through `rung_fodder_payoff` at the tended rung. The Cultivate row of the picker had
                 // only the Field figure above and quoted that, which is a managed rate standing in
                 // for an MSY skim on a rung the player commits 25 turns to.
                 //

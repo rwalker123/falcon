@@ -2461,13 +2461,13 @@ mod tests {
         assert_eq!((patches[1].x, patches[1].y), (0, 1));
 
         let w = &patches[0];
-        assert!(!w.is_cultivated);
-        assert_eq!(w.cultivation_progress, 0.0);
+        assert!(!w.quote("plant:tended").reached);
+        assert_eq!(w.quote("plant:tended").progress, 0.0);
         assert_eq!(w.owner, None);
 
         let t = &patches[1];
-        assert!(t.is_cultivated);
-        assert!((t.cultivation_progress - 1.0).abs() < 1e-6);
+        assert!(t.quote("plant:tended").reached);
+        assert!((t.quote("plant:tended").progress - 1.0).abs() < 1e-6);
         assert_eq!(t.owner, Some(3));
     }
 
@@ -2765,9 +2765,15 @@ mod tests {
             &all_seeing_ledger(64),
         );
         let pen = states.iter().find(|h| h.id == "herd_pen").unwrap();
-        assert!(pen.corralled, "a penned herd reports corralled");
+        assert!(
+            pen.quote("animal:pen").reached,
+            "a penned herd reports corralled"
+        );
         let wild = states.iter().find(|h| h.id == "herd_wild").unwrap();
-        assert!(!wild.corralled, "a mobile herd reports not corralled");
+        assert!(
+            !wild.quote("animal:pen").reached,
+            "a mobile herd reports not corralled"
+        );
     }
 
     /// **THE ANIMAL TWIN of `snapshot_forage_patches_publish_the_rung_each_patch_stands_on`** — all
@@ -3548,7 +3554,7 @@ mod tests {
         let pen = states.iter().find(|h| h.id == "herd_pen").unwrap();
         assert!((pen.pen_fed_fraction - HALF_FED).abs() < 1e-6);
         assert!(
-            pen.corral_yield > 0.0,
+            pen.quote("animal:pen").food_yield > 0.0,
             "the pen's gross managed yield rides alongside its fed fraction"
         );
 

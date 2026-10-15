@@ -133,7 +133,7 @@ the odd web out.
   `0xF10A_5EED_C011_0010`, committed to `wild_emmer`): wild **0.703** → tended **1.328** → Field
   **6.240** before, and **0.703 → 1.328 → 6.241** after. A re-expression, not a rebalance.
 - **A per-rung QUOTE re-bases the land onto the rung it is asked about** (`rung_msy_take`), because
-  `fieldYield` is published for every patch including a tended one. It is a *ratio*, so a patch
+  `rungQuotes[plant:field].foodYield` is published for every patch including a tended one. It is a *ratio*, so a patch
   already standing on that rung re-bases by exactly `1.0` — which is what keeps the live reading and
   the quote one number. `composition_for_rung`'s rule, applied to the land instead of the basket.
 - **A Field now needs HANDS.** It holds far more standing crop, so one gatherer brings home a
@@ -679,7 +679,7 @@ the exact twin, one `ladder_position` beside a stamped `standing`; the checkpoin
 sim. `plant:wild` now carries a `site_requirement` of its own (`requires_gathering_site: true`),
 enforced in `validate_labor_policy`'s `Forage` arm through `server::plant_rung_site_refusal` — the one
 seam `validate_cultivate`, `validate_sow`, the labor arm's `Sow` placement gate and the wire's
-`sowSiteRefusal` all resolve, so no two of them can disagree about which ground may be worked.
+`rungQuotes[plant:field].siteRefusal` all resolve, so no two of them can disagree about which ground may be worked.
 
 **Why it is not "the tile has a `FoodModuleTag`".** `classify_food_module` tags essentially every land
 biome and `spawn_initial_forage` seeds a patch on every tagged tile with capacity, so a module test
@@ -873,9 +873,9 @@ herd has one appetite).
   only by `set_ladder_position`, so a restored pair is the pair that was captured.
 - **On the wire (slice 6a — append-only, slots 36–44):** `ForagePatchState` carries
   `fieldProgress:float` + `isField:bool` (the rung-3 meter and the completed rung — read the *bool*,
-  never infer a rung from the float) beside the already-shipped `cultivationProgress`/`isCultivated`,
+  never infer a rung from the float) beside the already-shipped `rungQuotes[plant:tended].progress`/`rungQuotes[plant:tended].reached`,
   so the client has **both** plant meters for the §4.1 two-meter split; `fieldYield:float` (Sow's
-  payoff, the twin of `tendedYield`; no field carries Sow's **dip**, which went with the dip itself —
+  payoff, the twin of `rungQuotes[plant:tended].foodYield`; no field carries Sow's **dip**, which went with the dip itself —
   a building crew takes nothing, so there is no factor left to publish — and two rungs still keep two
   numbers, so a retune of one cannot move the other); and **`sowSiteRefusal:string`** — `""` when the ground takes seed, else
   **`"not_gathering_site"`** / `"too_dry"` / `"too_poor"` / `"too_poor_and_too_dry"`
@@ -960,9 +960,9 @@ multiplier  = clamp(share_load, field_share_cost_floor, field_share_cost_ceiling
 - **Every surface that states what a Sow will cost resolves through one seam**,
   `forage::patch_field_cost_multiplier` — the arm that charges it, `patch_build_legs`' work figures and
   their chained dates, the pre-commit `projected_build_quote` the `⌃` mark and the compose sheet read,
-  and the published `fieldWorkCost`, which already carried the price and now carries the scaled one.
+  and the published `rungQuotes[plant:field].workCost`, which already carried the price and now carries the scaled one.
   That seam answers the patch's **own** price list whenever the position stands above the Field rung's
-  base, quoted or not, so the published cost and the published `fieldWorkDone` can never divide by two
+  base, quoted or not, so the published cost and the published `rungQuotes[plant:field].workDone` can never divide by two
   different denominators.
 - **The crop picker prices every crop, through the same expression** (`FloraShareInfo::sow_work_cost`,
   `sowWorkCost` on the wire, `sow_work_cost` in the client dict). A patch prices exactly *one* crop, so
@@ -971,7 +971,7 @@ multiplier  = clamp(share_load, field_share_cost_floor, field_share_cost_ceiling
   **that** crop, through `field_cost_multiplier_at_share` — priced by the ladder's own `build_cost`;
   `patch_field_cost_multiplier` spends the same private `field_cost_multiplier_for_crop`, so it is one
   expression and not two. The figure published for the crop a patch is committed to is therefore
-  that patch's `fieldWorkCost`, on the encoded envelope, at declaration and with the leg stamped alike
+  that patch's `rungQuotes[plant:field].workCost`, on the encoded envelope, at declaration and with the leg stamped alike
   (`sow_share_cost::the_per_crop_sow_price_is_the_price_this_patch_is_charged`).
 - **A crop that cannot climb to a Field here publishes NO figure** (`species_climbs` at
   the field rung) — `0`, which a client renders as no row. A measured price is never `0`: the

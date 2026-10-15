@@ -1123,8 +1123,8 @@ rides, and its ecology half (biomass, phase, standing crop) is world-visible lik
 describes. What is *not* a fact about the tile is the improvement standing on it. **Two different
 rules divide that row, and conflating them is what produced both of its leaks.**
 
-**① The improvement follows the ground.** `owner`, `isCultivated` / `cultivationProgress`, `isField`
-/ `fieldProgress` and everything derived from the patch's rung are a fact about a *people*, and
+**① The improvement follows the ground.** `owner`, `rungQuotes[plant:tended].reached` / `rungQuotes[plant:tended].progress`, `rungQuotes[plant:field].reached`
+/ `rungQuotes[plant:field].progress` and everything derived from the patch's rung are a fact about a *people*, and
 before the sweep every client got them for every patch on the map — a live readout of exactly which
 ground a rival was farming. They are legible where the viewer's own hand built them, and where a
 rival's are on ground the viewer has **explored** — `is_discovered`, not `is_visible`, on
@@ -1150,7 +1150,7 @@ model.
 >
 > It shipped as a **deny-list of five names** — the two flags, the two meters and `owner` — and the
 > row beside those five confirmed exactly what they denied. `carryingCapacity` is the tile's `K`
-> **times the Field rung's interpolated capacity gain**, `tendedYield` / `fieldYield` are
+> **times the Field rung's interpolated capacity gain**, `rungQuotes[plant:tended].foodYield` / `rungQuotes[plant:field].foodYield` are
 > `rung_payoff` read off the patch's rung, `provisionsPerBiomass` is the *committed* conversion, and
 > `composition` / `committedSpecies` are the weeded basket. **So `carryingCapacity != tileCapacity`
 > was an exact test for "this rival tile carries a standing improvement", published on the row that

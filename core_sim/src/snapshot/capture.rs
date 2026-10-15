@@ -2774,10 +2774,17 @@ pub fn capture_snapshot(
     // tile it is looking at, and a patch is on every food-bearing tile there is (see
     // core_sim/CLAUDE.md → the Field).
     let patches_scope = crate::turn_profile::scope("snapshot.build.patches");
-    let field_rung = ladder_config.sown_patch_rung();
+    // **Every plant rung that gates on the ground** - the ones whose `site_requirement` can refuse a
+    // tile. Found by asking the ladder, never by naming a rung, so a fourth step with a requirement
+    // of its own is refused on the wire the moment it is configured.
+    let site_gated_rungs: Vec<&crate::intensification::RungDef> = ladder_config
+        .rungs_of(ladder_config.branch_of_kind(crate::intensification::SourceKind::Patch))
+        .into_iter()
+        .filter(|rung| rung.site_requirement.is_some())
+        .collect();
     let grid = config.grid_size;
     let wrap_horizontal = config.map_topology.wrap_horizontal;
-    let mut sow_site_refusals: HashMap<UVec2, SiteRefusal> = HashMap::new();
+    let mut rung_site_refusals: HashMap<(UVec2, RungId), SiteRefusal> = HashMap::new();
     // **The size of the land under each patch** — the tile's own forage `K`, through the one
     // `forage::tile_forage_capacity` seam. Every plant upkeep figure the patch row publishes is
     // quoted per **tender-load** of it (`forage::patch_tender_loads`), the plant twin of a herd's
@@ -2799,17 +2806,19 @@ pub fn capture_snapshot(
         let fresh_water = tile_is_fresh_watered(tile, grid.x, grid.y, wrap_horizontal, |coord| {
             tile_tags.get(coord)
         });
-        if let Some(refusal) = rung_site_refusal(
-            field_rung,
-            tile,
-            &labor_config.forage,
-            food_sites.is_site(tile.position),
-            fresh_water,
-            // **A plant rung asks nothing of a deposit**, so the term cannot refuse it: every rung
-            // off the two deposit branches leaves `min_deposit_capacity` at this neutral.
-            crate::intensification::NO_DEPOSIT_FLOOR,
-        ) {
-            sow_site_refusals.insert(tile.position, refusal);
+        for rung in &site_gated_rungs {
+            if let Some(refusal) = rung_site_refusal(
+                rung,
+                tile,
+                &labor_config.forage,
+                food_sites.is_site(tile.position),
+                fresh_water,
+                // **A plant rung asks nothing of a deposit**, so the term cannot refuse it: every
+                // rung off the two deposit branches leaves `min_deposit_capacity` at this neutral.
+                crate::intensification::NO_DEPOSIT_FLOOR,
+            ) {
+                rung_site_refusals.insert((tile.position, rung.rung_id()), refusal);
+            }
         }
         flora_sweep.quotes(tile);
     }
@@ -3879,7 +3888,7 @@ pub fn capture_snapshot(
             &flora_config,
             &ladder_config,
             &seasonal_weights,
-            &sow_site_refusals,
+            &rung_site_refusals,
             &tile_capacities,
             &flora_quotes,
             &build_kit_ids,

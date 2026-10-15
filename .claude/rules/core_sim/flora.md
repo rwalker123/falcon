@@ -390,7 +390,7 @@ Sow.
   `composition_for_rung` itself is unchanged, because a per-rung *quote* wants exactly the rung it
   asked about. **The bug this shape exists to prevent, caught in
   the #433 slice itself:** `patch_species_quality` (since deleted — see above) keyed off the patch's own meter, so
-  `snapshot_forage_patches` — which publishes `fieldYield` for *every* patch, tended ones included —
+  `snapshot_forage_patches` — which publishes `rungQuotes[plant:field].foodYield` for *every* patch, tended ones included —
   quoted a Sow on a tended patch against the **weeded** basket *with rung 2's conversion gain in it*,
   overstating by 10.2% on the reference tile and by the full gain (2×) wherever weeding saturates.
   `field_fodder` / `managed_per_worker_*` carried the same latent defect with no reachable trigger. Pinned on the **shipped snapshot** by
@@ -404,7 +404,7 @@ Sow.
   can grey out what is *impossible* without holding a roster) and **`cultivateYieldRatio`/
   `sowYieldRatio`** — what committing *this tile* to *this plant* pays **against just gathering it
   wild**, per rung — **plus `cultivatePayoff`/`sowPayoff`, the provisions/turn each rung would pay
-  committed to *that* plant** (slots 18/20), in `tendedYield`/`fieldYield`'s units so the client can
+  committed to *that* plant** (slots 18/20), in `rungQuotes[plant:tended].foodYield`/`rungQuotes[plant:field].foodYield`'s units so the client can
   substitute one for the other. The ratio **is those payoffs divided** (`forage::commit_yield_ratio`
   takes the two numbers, it does not re-derive them), and each payoff comes from `forage::rung_payoff`
   — the *same* Sustain-MSY expressions the sim quotes and pays with, `rung_payoff` asked about the

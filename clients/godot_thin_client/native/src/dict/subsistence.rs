@@ -139,7 +139,6 @@ pub(crate) fn herds_to_array(
         if let Some(husbandry_ceiling) = herd.husbandryCeiling() {
             let _ = dict.insert("husbandry_ceiling", husbandry_ceiling);
         }
-        let _ = dict.insert("domestication", herd.domestication());
         // **THE PER-BIOMASS YIELD VECTOR** — what ONE UNIT of this herd's biomass is worth, in each
         // account (`docs/plan_harvest_floor.md` §5). It replaces the retired `huntPolicyCeilings`
         // rows, because four rows cannot answer a **continuous** floor. With `biomass` (B),
@@ -186,20 +185,6 @@ pub(crate) fn herds_to_array(
             "per_worker_material",
             &material_payoffs_to_array(herd.perWorkerMaterial()),
         );
-        // THE TWO INVESTMENT RUNGS' MATERIAL PAYOFFS (arc #527) — the twins of `corral_yield` /
-        // `pastoral_yield`, and the replacement for the retired `corral_trade`/`pastoral_trade`.
-        // Without them an INEDIBLE quarry's Tame and Corral rungs quote nothing at all: a wolf's food
-        // payoff on both is honestly `0`, so the "→ then +Y" face had no number. Priced on the same
-        // MSY biomass their food siblings are. EMPTY = "no row" (including a rung this herd never
-        // offers), never "zero".
-        let _ = dict.insert(
-            "corral_material",
-            &material_payoffs_to_array(herd.corralMaterial()),
-        );
-        let _ = dict.insert(
-            "pastoral_material",
-            &material_payoffs_to_array(herd.pastoralMaterial()),
-        );
 
         // **WHAT ONE HUNTER MOVES, IN BIOMASS** — the crew term the panel's two worker targets
         // divide by (`clear it now` = room / this, `hold it after` = the regrowth at the floor /
@@ -222,25 +207,6 @@ pub(crate) fn herds_to_array(
             "regrowth_samples",
             &regrowth_samples_packed(herd.regrowthSamples()),
         );
-        let _ = dict.insert("corralled", herd.corralled());
-        // Pen-construction meter 0..1 accrued while a keeper band works this herd under the Corral
-        // policy — the animal twin of `ForagePatchState.cultivationProgress`. Read by Hud's herd
-        // drawer for the "Corral: Building N%" row.
-        let _ = dict.insert("corral_progress", herd.corralProgress());
-        // **THE ANIMAL BUILDS, PRICED IN WORK** (docs/plan_unit_costed_work.md §8). An improvement
-        // costs a fixed number of WORK UNITS and a crew produces work units per turn, so TURNS ARE
-        // THE OUTPUT — which is a statement the two `0..1` meters above structurally cannot make.
-        // `*_work_done / *_work_cost` IS `domestication` / `corral_progress`; the absolutes are what
-        // let a readout say "18 of 50 work", and nothing here may re-derive one pair from the other.
-        //
-        // **THE COST IS PUBLISHED WHETHER OR NOT A BUILD IS IN FLIGHT** — it is the resolved price
-        // of that job on THIS herd (the tame pair carrying the species' own cost multiplier, the pen
-        // pair not: a fence is a fence), which is what lets the compose sheet quote the job BEFORE
-        // the player commits.
-        let _ = dict.insert("tame_work_done", herd.tameWorkDone());
-        let _ = dict.insert("tame_work_cost", herd.tameWorkCost());
-        let _ = dict.insert("corral_work_done", herd.corralWorkDone());
-        let _ = dict.insert("corral_work_cost", herd.corralWorkCost());
         // HOW MANY MORE TURNS the running build needs, at the crew, floor and kit that worked this
         // herd. **`-1` IS "NO ESTIMATE" AND MUST RENDER AS NOTHING AT ALL** — a stalled build has no
         // finite answer, and a `0` in its place is a promise. The client CANNOT compute it (it holds
@@ -418,18 +384,6 @@ pub(crate) fn herds_to_array(
         let _ = dict.insert("per_worker_yield", herd.perWorkerYield());
         // **RETIRED with the trade-goods yield axis** (arc #527), and off the wire. What a source
         // pays beyond food is MATERIALS, which ride the cohort's `material_batches`.
-        // `corral_yield` is the Corral rung's PAYOFF — what the herd pays once penned; its
-        // during-building dip is `corral_build_fraction` on the CREW, so together they drive the
-        // pre-commit "+X → +Y while building → +Z" deal on %HerdAssignControls.
-        // **On an ALREADY-PENNED herd this same field is the pen's live managed production** — a
-        // corralled herd is never drawn down, so its ceiling is this number at EVERY floor and the
-        // escapement composition above does not apply to it (sim `SourceYieldForecast::managed`).
-        // `corral_yield` STANDS ALONE: there is no food-unit running cost to subtract from it. A pen is
-        // fed by its fenced footprint's grass and by hay (both FODDER), never from the FOOD larder, so
-        // the pre-commit Corral row quotes the payoff with nothing beside it.
-        let _ = dict.insert("corral_yield", herd.corralYield());
-        // **RETIRED with the trade-goods yield axis** (arc #527), and off the wire. What a source
-        // pays beyond food is MATERIALS, which ride the cohort's `material_batches`.
         // The pen as a managed POPULATION (docs/plan_corral_managed_population.md). `pen_upkeep` — the
         // pen's food-unit feed demand — IS RETIRED (off the wire): human food is
         // not animal feed. What remains is the outcome of the pen's FODDER budget:
@@ -568,12 +522,6 @@ pub(crate) fn herds_to_array(
             i64::from(herd.herdersNeededIfManaged()),
         );
         let _ = dict.insert("herded_fraction", herd.herdedFraction());
-        // The Tame rung's PAYOFF — the pastoral twin of `corral_yield`: food/turn a Sustain hunt pays
-        // ONCE this herd is tamed (the pastoral MSY). While Tame's DURING-BUILDING dip rides the
-        // `hunt_policy_ceilings` list, this is the "then +Y" the client shows so Tame reads as
-        // `→ +pastoral_yield` (like Cultivate/Sow/Corral) instead of quoting only the dip. Sustain <
-        // Tame < Corral. Appended-field audit: this is the newest slot on HerdTelemetryState.
-        let _ = dict.insert("pastoral_yield", herd.pastoralYield());
         // **RETIRED with the trade-goods yield axis** (arc #527), and off the wire. What a source
         // pays beyond food is MATERIALS, which ride the cohort's `material_batches`.
         // THE BUILD DIPS ARE RETIRED (docs/plan_standing_upkeep.md section 2.2). A crew's turn is
@@ -608,64 +556,6 @@ pub(crate) fn herds_to_array(
         let _ = dict.insert(
             "upkeep_next_worker_turn",
             i64::from(herd.upkeepNextWorkerTurn()),
-        );
-        // **THE STANDING PRICE, PER RUNG** — what holding THAT rung will cost per turn once it stands,
-        // published unconditionally exactly as the `*_work_cost` beside it is. `upkeep_demand` above
-        // answers *"what is this herd billed right now"*, which is `0` on a herd with nothing started,
-        // so it can price no rung the player is about to commit to. These are the ladder's own rates,
-        // picked with the same key table the cost is, so price, meter and rate always name one rung.
-        // Both carry this herd's own keeper load (`scaled_by: source_load`) and are
-        // ownership-independent: a quote exists before the herd is anyone's.
-        //
-        // **A PRICE, NOT A THRESHOLD** (`docs/plan_standing_upkeep.md` §2.4). The compose sheet's
-        // closed form subtracted this while the build crew supplied the rate below the meter's cost;
-        // the band's keeping pool owes it at every fullness now, so the form nets `meter_rot_per_turn`
-        // and this rides the offered face as the second half of the deal.
-        let _ = dict.insert("tame_upkeep_demand", herd.tameUpkeepDemand());
-        let _ = dict.insert("corral_upkeep_demand", herd.corralUpkeepDemand());
-        // **THE MATERIAL TWIN OF THAT PAIR** — what holding THAT rung costs in goods per turn, read
-        // beside the work quote above by the same rung-picking rule, and quoted with it in the `⌃`
-        // track's hold aside: *"then 1.00 work + 0.05 hurdles a turn to hold"*.
-        //
-        // ⛔ **THE RUNG'S RATE, NOT THE STAMPED BILL** — `upkeep_material_demand` above says what
-        // this herd was BILLED this turn, resolved through the rung it stands on; these say what a
-        // rung it may not be on yet would COST. On a herd mid-climb the two DISAGREE and that is
-        // correct — the work pair has exactly that relationship. Do not reconcile them.
-        //
-        // **EMPTY MEANS THE RUNG EATS NO MATERIAL**, never zero of something, so a consumer renders
-        // NO material clause rather than `0 hurdles`. On the shipped ladder `tame_upkeep_material_
-        // demand` is ALWAYS empty (`animal:pastoral` names none) and `corral_upkeep_material_demand`
-        // names `hurdles` — a pastoral herd is the only source a track offers the Pen rung from, so
-        // that one row is where the whole field earns its keep. Carries this herd's keeper load, the
-        // same `scaled_by` the bill reads; the client does NO arithmetic on it.
-        let _ = dict.insert(
-            "tame_upkeep_material_demand",
-            &material_payoffs_to_array(herd.tameUpkeepMaterialDemand()),
-        );
-        let _ = dict.insert(
-            "corral_upkeep_material_demand",
-            &material_payoffs_to_array(herd.corralUpkeepMaterialDemand()),
-        );
-        // **THE PILE `animal:pen` ITSELF SWALLOWS TO RAISE** — the material twin of `corral_work_cost`
-        // above, UNSCALED, resolved live off the ladder and published at every position exactly as that
-        // work figure is.
-        //
-        // ⛔ **IT IS NOT `build_material_cost`, AND COLLAPSING THE TWO WOULD RE-OPEN THE GAP IT CLOSES.**
-        // That field prices the rung DIRECTLY ABOVE where the source stands; `animal:pen` is the top of
-        // the animal branch, so on a CORRALLED herd — the only source a ring is ever offered from — it is
-        // empty, correctly and on purpose. This field is the pen's OWN pile, so it is the one a ring can
-        // be quoted from. On a PASTORAL herd the two agree by construction (same rung, two selectors),
-        // and it is the DISAGREEMENT on a penned herd that the ring price card needs.
-        //
-        // It exists for word-for-word the reason `corral_upkeep_material_demand` above does: the rung
-        // the player is deciding on is not the rung the stamped/above-selected field answers for.
-        // Read it beside `current_rung`, exactly as the work half is: on a pastoral herd it prices the
-        // CLIMB to the pen, on a penned herd it prices ANOTHER RING — the same rung, again. The three
-        // standing `MaterialPayoff` rules hold: NEVER SUMMED, EMPTY MEANS "no row" and never zero, and
-        // the key is always present.
-        let _ = dict.insert(
-            "corral_build_material_cost",
-            &material_payoffs_to_array(herd.corralBuildMaterialCost()),
         );
         // **WHAT THE AT-RISK METER IS LOSING PER TURN** — the term the build's closed form actually
         // nets (`net = crew work − rot`), per SOURCE rather than per rung. Always meaningful, never a
@@ -740,6 +630,47 @@ pub(crate) fn herds_to_array(
             "upkeep_toe",
             &crate::dict::population::kit_toe_to_array(herd.upkeepToe()),
         );
+        // **EVERY RUNG'S QUOTE** (`HerdTelemetryState.rungQuotes`) - one dictionary per rung of the
+        // animal branch above the root, keyed by `rung_key`; replaces the per-step fields.
+        let _ = dict.insert("rung_quotes", &rung_quotes_to_array(herd.rungQuotes()));
+        array.push(&dict.to_variant());
+    }
+    array
+}
+
+/// **A SOURCE'S RUNG QUOTES** (`rungQuotes` on a patch or herd row) as an array of dictionaries, one
+/// per rung above the branch's root, in climb order. `rung_key` joins to the ladder catalog's
+/// `rung_key`; every other key is the quote's own field, snake-cased.
+pub(crate) fn rung_quotes_to_array(
+    quotes: Option<Vector<'_, ForwardsUOffset<fb::RungQuoteState<'_>>>>,
+) -> VarArray {
+    let mut array = VarArray::new();
+    let Some(quotes) = quotes else {
+        return array;
+    };
+    for quote in quotes {
+        let mut dict = VarDictionary::new();
+        let _ = dict.insert("rung_key", quote.rungKey().unwrap_or_default());
+        let _ = dict.insert("reached", quote.reached());
+        let _ = dict.insert("progress", f64::from(quote.progress()));
+        let _ = dict.insert("work_done", f64::from(quote.workDone()));
+        let _ = dict.insert("work_cost", f64::from(quote.workCost()));
+        let _ = dict.insert(
+            "build_material_cost",
+            &material_payoffs_to_array(quote.buildMaterialCost()),
+        );
+        let _ = dict.insert("upkeep_demand", f64::from(quote.upkeepDemand()));
+        let _ = dict.insert(
+            "upkeep_material_demand",
+            &material_payoffs_to_array(quote.upkeepMaterialDemand()),
+        );
+        let _ = dict.insert("food_yield", f64::from(quote.foodYield()));
+        let _ = dict.insert("fodder", f64::from(quote.fodder()));
+        let _ = dict.insert(
+            "material_payoff",
+            &material_payoffs_to_array(quote.materialPayoff()),
+        );
+        let _ = dict.insert("site_refusal", quote.siteRefusal().unwrap_or_default());
         array.push(&dict.to_variant());
     }
     array
@@ -898,8 +829,6 @@ pub(crate) fn forage_patches_to_array(
         let mut dict = VarDictionary::new();
         let _ = dict.insert("x", patch.x() as i64);
         let _ = dict.insert("y", patch.y() as i64);
-        let _ = dict.insert("cultivation_progress", patch.cultivationProgress());
-        let _ = dict.insert("is_cultivated", patch.isCultivated());
         let _ = dict.insert("has_owner", patch.hasOwner());
         let _ = dict.insert("owner", patch.owner() as i64);
         let _ = dict.insert("biomass", patch.biomass());
@@ -937,47 +866,6 @@ pub(crate) fn forage_patches_to_array(
         // the patch's CURRENT biomass, at output_multiplier 1.0). MapView cross-refs these onto
         // `tile_info` (as `patch_*`) so %ForageAssignControls can forecast + cap the stepper.
         let _ = dict.insert("per_worker_yield", patch.perWorkerYield());
-        // The Cultivate INVESTMENT rung (forage-only): `ceiling_cultivate` is the food/turn the patch
-        // pays WHILE it is being prepared (the deliberate dip), `tended_yield` what it pays once
-        // cultivated. MapView cross-refs both onto `tile_info` (as `patch_*`) for the pre-commit
-        // "Preparing: +X → then +Y" forecast on %ForageAssignControls.
-        let _ = dict.insert("tended_yield", patch.tendedYield());
-        // The Sow INVESTMENT rung + the FIELD — plant RUNG 3, the twin of the herd's Corral block
-        // (docs/plan_intensification_ladder.md §2). The plant branch carries TWO build meters on ONE
-        // source and both ship: `cultivation_progress`/`is_cultivated` (rung 2, above) and these.
-        //
-        // ⛔ **RETIRED CLAIM — *"they are independent: `Sow` needs no prior patch, so a Field may
-        // stand on ground that was never tended"*.** That was the two-independent-meters model. A
-        // patch keeps ONE ladder position now and the Field rung's range begins where the tended
-        // rung's ends, so a `sow` ordered on wild ground lays the tended leg first and a standing
-        // Field publishes `is_cultivated` true beside a FULL `cultivation_progress`, however it was
-        // reached. The pairs are two windows onto one position, not two facts.
-        //
-        // Read `is_field` (the BOOL) for the completed rung; never infer a rung from the float —
-        // and never read a float BELOW 1.0 as *the rung slipped*, because each meter is published as
-        // a publication of the standing verdict (`intensification::rung_work_done`) and a held rung
-        // reads exactly full. MapView cross-refs all five onto `tile_info` (as `patch_*`) exactly as
-        // the Cultivate pair above.
-        let _ = dict.insert("field_progress", patch.fieldProgress());
-        let _ = dict.insert("is_field", patch.isField());
-        // Sow's "preparing X → then Y" pre-commit pair, mirroring `ceiling_cultivate`/`tended_yield`.
-        // `ceiling_sow` is the dip WHILE the ground is being sown (honestly ~0 on bare ground — there
-        // is no standing crop to take a fraction of, so a bare-ground sow is pure investment);
-        // `field_yield` is what the Field pays once sown (2× `tended_yield` on the shipped dials).
-        let _ = dict.insert("field_yield", patch.fieldYield());
-        // **THE PLANT BUILDS, PRICED IN WORK** (docs/plan_unit_costed_work.md §8) — the twin of the
-        // herd block above, and the same contract: `*_work_done / *_work_cost` IS the `*_progress`
-        // fraction beside it, the cost is the resolved price of that job on THIS patch and is
-        // published whether or not a build runs, and `build_turns_remaining` of `-1` means NO
-        // ESTIMATE rather than zero (with `-2` / `-3` the two never-finishing answers, `-4` a blocked
-        // queue and `-5` an entry no estimate pass has reached). TWO pairs for two rungs, the `cultivate_build_fraction` /
-        // `sow_build_fraction` rule: independently tunable jobs must not share a number. ONE
-        // turns/gear pair for both, because at most one improvement is ever in flight on one source.
-        // MapView cross-refs all six onto `tile_info` (as `patch_*`), like the rest of the payload.
-        let _ = dict.insert("cultivation_work_done", patch.cultivationWorkDone());
-        let _ = dict.insert("cultivation_work_cost", patch.cultivationWorkCost());
-        let _ = dict.insert("field_work_done", patch.fieldWorkDone());
-        let _ = dict.insert("field_work_cost", patch.fieldWorkCost());
         // The plant twin of the herd row's — `-1` no estimate, `-2` the meter holds, `-3` it rots,
         // `-4` the queue is blocked on it, `-5` it is queued and the sim has not looked yet. See the
         // herd row for why each of the five has to be read as itself on the other side.
@@ -1060,15 +948,6 @@ pub(crate) fn forage_patches_to_array(
         // `tillage` kit's row, and a row whose `build_work_branch` disagrees with the entry in front
         // of the player is the ungeared case rather than a missing term.
         let _ = dict.insert("build_work_per_worker_turn", patch.buildWorkPerWorkerTurn());
-        // WHY this ground will not take seed — "" when it will. "too_poor" / "too_dry" /
-        // "too_poor_and_too_dry", resolved server-side through the SAME `RungSiteRequirement::refusal`
-        // seam the `sow` command gates on. Shipped as an ANSWER rather than a bool because only ~1% of
-        // tiles are sowable (46 of 4160 on the standard map): the client has neither the per-biome
-        // capacity table nor the hydrology, so it CANNOT re-derive this. Same free-form-string
-        // convention as `species` / `husbandry_ceiling`; absent ⇒ treated as sowable by the client.
-        if let Some(sow_site_refusal) = patch.sowSiteRefusal() {
-            let _ = dict.insert("sow_site_refusal", sow_site_refusal);
-        }
         // WHAT GROWS HERE (flora roster F1) — the named plants this tile's forage capacity is made
         // of, as normalized shares that sum to 1. Derived from the BIOME, not from patch state, so
         // every tile of a biome reads the same list. Already sorted (share DESC, then species key
@@ -1319,11 +1198,6 @@ pub(crate) fn forage_patches_to_array(
             "regrowth_samples",
             &regrowth_samples_packed(patch.regrowthSamples()),
         );
-        // The two investment rungs' FODDER payoff twins — the non-food half of
-        // `tended_yield`/`field_yield`, quoted at **its own** rung (#433), never at the rung the
-        // patch happens to stand on. (Their `*_trade` siblings went with arc #527's axis.)
-        let _ = dict.insert("tended_fodder", patch.tendedFodder());
-        let _ = dict.insert("field_fodder", patch.fieldFodder());
         // THE BUILD DIPS ARE RETIRED — the plant twins of `HerdTelemetryState`'s pair; see there
         // for why, and for what replaced them. THE STANDING UPKEEP rides here in their place.
         let _ = dict.insert("upkeep_demand", patch.upkeepDemand());
@@ -1343,30 +1217,6 @@ pub(crate) fn forage_patches_to_array(
         let _ = dict.insert(
             "upkeep_next_worker_turn",
             i64::from(patch.upkeepNextWorkerTurn()),
-        );
-        // **THE STANDING PRICE, PER RUNG** — the plant twin of the herd block's pair; see there for
-        // why `upkeep_demand` cannot price a rung nobody has started, and why this is a price rather
-        // than a threshold. Both plant rungs declare `scaled_by: source_load` and quote their rate
-        // PER TENDER-LOAD, so the sim strikes each through **this patch's own `tile_capacity`** (the
-        // same measure `patch_upkeep_demand` bills against) before it ships them. They therefore
-        // differ from patch to patch, and reading them as the ladder's bare rates would promise `4.0`
-        // for a Field about to be billed `4.31`. They scale off the TILE's `K`, never the patch's, so
-        // they carry no rung and survive fog — see `tile_capacity` above.
-        let _ = dict.insert("cultivation_upkeep_demand", patch.cultivationUpkeepDemand());
-        let _ = dict.insert("field_upkeep_demand", patch.fieldUpkeepDemand());
-        // **THE MATERIAL TWIN OF THAT PAIR** — the plant side of the herd block's quote; see there
-        // for why this is the RUNG'S RATE rather than the stamped bill, and why the two are meant to
-        // disagree on a source mid-climb. Both are EMPTY on the shipped ladder (neither plant rung
-        // names a material) and the seam exists because the route branch's stone lands in it next —
-        // so a consumer must render no material clause at all rather than a `0`. Struck through this
-        // patch's own tender-load, exactly as the work quote above is.
-        let _ = dict.insert(
-            "cultivation_upkeep_material_demand",
-            &material_payoffs_to_array(patch.cultivationUpkeepMaterialDemand()),
-        );
-        let _ = dict.insert(
-            "field_upkeep_material_demand",
-            &material_payoffs_to_array(patch.fieldUpkeepMaterialDemand()),
         );
         // **WHAT THE AT-RISK METER IS LOSING PER TURN** — the plant twin, and the one web where it is
         // routinely non-zero: a plant rung's penalty for an unpaid keeping IS a meter bleed. Per
@@ -1393,6 +1243,9 @@ pub(crate) fn forage_patches_to_array(
             "upkeep_toe",
             &crate::dict::population::kit_toe_to_array(patch.upkeepToe()),
         );
+        // **EVERY RUNG'S QUOTE** (`ForagePatchState.rungQuotes`) - one dictionary per rung of the
+        // plant branch above the root, keyed by `rung_key`; replaces the per-step fields.
+        let _ = dict.insert("rung_quotes", &rung_quotes_to_array(patch.rungQuotes()));
         // THE BUILD CREWS ARE RETIRED with `crew_needed` (docs/plan_standing_upkeep.md section
         // 2.2). They floored the compose sheet's worker cap because that cap was inverted out of the
         // TAKE and a building crew was paid a dipped take, so a 25-turn improvement asked for FEWER

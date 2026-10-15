@@ -139,6 +139,18 @@ const DELTA_PAYLOAD_NAME: &str = "delta";
 
 pub(crate) type FbBuilder<'a> = FlatBufferBuilder<'a, DefaultAllocator>;
 
+/// **ONE RUNG'S QUOTE OFF A SOURCE'S WIRE ROW**, by its `branch:id` key - what a reader of a patch or
+/// herd table asks of `rungQuotes()` instead of a field named after a step. `None` where the source
+/// says nothing about that rung.
+pub fn wire_rung_quote<'a>(
+    quotes: Option<flatbuffers::Vector<'a, flatbuffers::ForwardsUOffset<fb::RungQuoteState<'a>>>>,
+    rung_key: &str,
+) -> Option<fb::RungQuoteState<'a>> {
+    quotes?
+        .iter()
+        .find(|quote| quote.rungKey() == Some(rung_key))
+}
+
 pub fn encode_snapshot_flatbuffer(snapshot: &WorldSnapshot) -> Vec<u8> {
     let mut builder = FlatBufferBuilder::new();
     let offset = build_snapshot_flatbuffer(&mut builder, snapshot);

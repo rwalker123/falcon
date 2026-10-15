@@ -244,7 +244,7 @@ fn a_herd_penned_this_turn_publishes_no_heading() {
 
     let penned = published_row(&mut app, &id);
     assert!(
-        penned.corralled,
+        penned.quote("animal:pen").reached,
         "the pen must reach the wire in the same frame the heading is judged in"
     );
     assert_eq!(

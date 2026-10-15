@@ -1770,10 +1770,10 @@ impl Food {
                         continue;
                     };
                     let bill = if queued_here(ROLE_FORAGE, Some(tile), None) {
-                        if patch.is_cultivated {
-                            patch.field_upkeep_demand
+                        if patch.quote(crate::rungs::PLANT_TENDED).reached {
+                            patch.quote(crate::rungs::PLANT_FIELD).upkeep_demand
                         } else {
-                            patch.cultivation_upkeep_demand
+                            patch.quote(crate::rungs::PLANT_TENDED).upkeep_demand
                         }
                     } else {
                         patch.upkeep_demand
@@ -1791,10 +1791,11 @@ impl Food {
                         continue;
                     };
                     let bill = if queued_here(ROLE_HUNT, None, Some(&herd.id)) {
-                        if herd.domestication >= KNOWLEDGE_COMPLETE {
-                            herd.corral_upkeep_demand
+                        if herd.quote(crate::rungs::ANIMAL_PASTORAL).progress >= KNOWLEDGE_COMPLETE
+                        {
+                            herd.quote(crate::rungs::ANIMAL_PEN).upkeep_demand
                         } else {
-                            herd.tame_upkeep_demand
+                            herd.quote(crate::rungs::ANIMAL_PASTORAL).upkeep_demand
                         }
                     } else {
                         herd.upkeep_demand
@@ -1893,12 +1894,15 @@ impl Food {
             if queued {
                 continue;
             }
-            let climb = if !patch.is_cultivated {
+            let climb = if !patch.quote(crate::rungs::PLANT_TENDED).reached {
                 cultivation.then_some(Climb::Tended)
             } else if goals.ground_rung == GroundRung::Field
-                && !patch.is_field
+                && !patch.quote(crate::rungs::PLANT_FIELD).reached
                 && seed_selection
-                && patch.sow_site_refusal.is_empty()
+                && patch
+                    .quote(crate::rungs::PLANT_FIELD)
+                    .site_refusal
+                    .is_empty()
             {
                 Some(Climb::Field)
             } else {
@@ -1916,10 +1920,15 @@ impl Food {
             let gained = payoff - today;
             let (work_left, verb) = match climb {
                 Climb::Tended => (
-                    patch.cultivation_work_cost - patch.cultivation_work_done,
+                    patch.quote(crate::rungs::PLANT_TENDED).work_cost
+                        - patch.quote(crate::rungs::PLANT_TENDED).work_done,
                     VERB_CULTIVATE,
                 ),
-                Climb::Field => (patch.field_work_cost - patch.field_work_done, VERB_SOW),
+                Climb::Field => (
+                    patch.quote(crate::rungs::PLANT_FIELD).work_cost
+                        - patch.quote(crate::rungs::PLANT_FIELD).work_done,
+                    VERB_SOW,
+                ),
             };
             let per_builder = patch.build_work_per_worker_turn;
             if gained <= 0.0 || work_left <= 0.0 || per_builder <= 0.0 {
@@ -1930,8 +1939,8 @@ impl Food {
             // what the band already owes at its builds' finished bills, must fit in the hands it
             // is not otherwise using — its free hands plus the ones already keeping.
             let finished_bill = match climb {
-                Climb::Tended => patch.cultivation_upkeep_demand,
-                Climb::Field => patch.field_upkeep_demand,
+                Climb::Tended => patch.quote(crate::rungs::PLANT_TENDED).upkeep_demand,
+                Climb::Field => patch.quote(crate::rungs::PLANT_FIELD).upkeep_demand,
             };
             let finished_hands = (finished_bill - patch.upkeep_demand).max(0.0) / per_builder;
             if keeping.owed + finished_hands > free.hands as f32 + keeping.keeping_now {
@@ -2497,7 +2506,8 @@ impl Food {
                     // permanent), so there is no rebuild term — what an unkept herd loses is the
                     // flock the row culls, priced at the row's own take. A tamed herd's bill is a
                     // standing one.
-                    let complete = herd.domestication >= KNOWLEDGE_COMPLETE;
+                    let complete =
+                        herd.quote(crate::rungs::ANIMAL_PASTORAL).progress >= KNOWLEDGE_COMPLETE;
                     any_complete |= complete;
                     if row.workers > 0 {
                         premium_total += Self::row_rate(memory, band, row) * row.workers as f32;
@@ -2506,14 +2516,21 @@ impl Food {
                     continue;
                 }
             };
-            let (rung_yield, work_done) = if patch.is_field {
-                (patch.field_yield, patch.field_work_done)
+            let (rung_yield, work_done) = if patch.quote(crate::rungs::PLANT_FIELD).reached {
+                (
+                    patch.quote(crate::rungs::PLANT_FIELD).food_yield,
+                    patch.quote(crate::rungs::PLANT_FIELD).work_done,
+                )
             } else {
-                (patch.tended_yield, patch.cultivation_work_done)
+                (
+                    patch.quote(crate::rungs::PLANT_TENDED).food_yield,
+                    patch.quote(crate::rungs::PLANT_TENDED).work_done,
+                )
             };
             // The rung's premium over the wild take the hands left harvesting make on the patch
             // — earned only once the rung is complete, and by nobody if nobody forages it.
-            let complete = patch.is_cultivated || patch.is_field;
+            let complete = patch.quote(crate::rungs::PLANT_TENDED).reached
+                || patch.quote(crate::rungs::PLANT_FIELD).reached;
             any_complete |= complete;
             let rate = patch_per_worker_yield(memory, band, patch);
             // **The row's own crew goes on harvesting** — the hands the hold adds keep the patch,
@@ -3344,7 +3361,7 @@ mod tests {
                 .iter_mut()
                 .find(|herd| herd.id == HERD_ID)
                 .expect("the fixture herd");
-            herd.domestication = 1.0;
+            herd.quote_mut(crate::rungs::ANIMAL_PASTORAL).progress = 1.0;
             herd.upkeep_demand = 4.0;
             herd.upkeep_supplied = 2.0;
             herd.upkeep_shortfall = 2.0;
@@ -3393,10 +3410,10 @@ mod tests {
                 for patch in &mut view.snapshot.forage_patches {
                     if Tile::new(patch.x, patch.y) == RICH_PATCH {
                         patch.owner = Some(FACTION);
-                        patch.is_cultivated = true;
-                        patch.tended_yield = 40.0;
-                        patch.cultivation_work_cost = 50.0;
-                        patch.cultivation_work_done = 50.0;
+                        patch.quote_mut(crate::rungs::PLANT_TENDED).reached = true;
+                        patch.quote_mut(crate::rungs::PLANT_TENDED).food_yield = 40.0;
+                        patch.quote_mut(crate::rungs::PLANT_TENDED).work_cost = 50.0;
+                        patch.quote_mut(crate::rungs::PLANT_TENDED).work_done = 50.0;
                         patch.build_work_per_worker_turn = 1.0;
                         patch.upkeep_demand = 1.92;
                         patch.upkeep_shortfall = shortfall;
@@ -3472,20 +3489,20 @@ mod tests {
                 let tile = Tile::new(patch.x, patch.y);
                 if tile == RICH_PATCH || tile == NEAR_PATCH {
                     patch.owner = Some(FACTION);
-                    patch.is_cultivated = true;
-                    patch.cultivation_work_cost = 50.0;
-                    patch.cultivation_work_done = 50.0;
+                    patch.quote_mut(crate::rungs::PLANT_TENDED).reached = true;
+                    patch.quote_mut(crate::rungs::PLANT_TENDED).work_cost = 50.0;
+                    patch.quote_mut(crate::rungs::PLANT_TENDED).work_done = 50.0;
                     patch.build_work_per_worker_turn = 1.0;
                 }
                 if tile == RICH_PATCH {
-                    patch.tended_yield = 40.0;
+                    patch.quote_mut(crate::rungs::PLANT_TENDED).food_yield = 40.0;
                     patch.upkeep_demand = 1.92;
                     patch.upkeep_shortfall = 0.0;
                     patch.upkeep_workers_needed = 2;
                     patch.upkeep_hands = 2.0;
                 }
                 if tile == NEAR_PATCH {
-                    patch.tended_yield = 20.0;
+                    patch.quote_mut(crate::rungs::PLANT_TENDED).food_yield = 20.0;
                     patch.upkeep_demand = 0.96;
                     patch.upkeep_shortfall = 0.96;
                     patch.upkeep_workers_needed = 1;
@@ -3968,8 +3985,8 @@ mod tests {
                         sow_payoff: 80.0,
                         ..Default::default()
                     }]);
-                    patch.cultivation_work_cost = 50.0;
-                    patch.field_work_cost = 75.0;
+                    patch.quote_mut(crate::rungs::PLANT_TENDED).work_cost = 50.0;
+                    patch.quote_mut(crate::rungs::PLANT_FIELD).work_cost = 75.0;
                     patch.build_work_per_worker_turn = 1.0;
                 }
             }
@@ -4032,7 +4049,7 @@ mod tests {
             let mut view = a_parked_band();
             for patch in &mut view.snapshot.forage_patches {
                 if Tile::new(patch.x, patch.y) == RICH_PATCH {
-                    patch.cultivation_upkeep_demand = bill;
+                    patch.quote_mut(crate::rungs::PLANT_TENDED).upkeep_demand = bill;
                 }
             }
             food().upgrade_the_ground(
@@ -5841,10 +5858,10 @@ mod tests {
                 for patch in &mut view.snapshot.forage_patches {
                     if Tile::new(patch.x, patch.y) == RICH_PATCH {
                         patch.owner = Some(FACTION);
-                        patch.is_cultivated = true;
-                        patch.tended_yield = 40.0;
-                        patch.cultivation_work_cost = 50.0;
-                        patch.cultivation_work_done = 50.0;
+                        patch.quote_mut(crate::rungs::PLANT_TENDED).reached = true;
+                        patch.quote_mut(crate::rungs::PLANT_TENDED).food_yield = 40.0;
+                        patch.quote_mut(crate::rungs::PLANT_TENDED).work_cost = 50.0;
+                        patch.quote_mut(crate::rungs::PLANT_TENDED).work_done = 50.0;
                         patch.build_work_per_worker_turn = 1.0;
                         patch.upkeep_demand = 1.92;
                         patch.upkeep_shortfall = 1.92;
@@ -6073,8 +6090,8 @@ mod tests {
                         sow_payoff: 80.0,
                         ..Default::default()
                     }]);
-                    patch.cultivation_work_cost = 50.0;
-                    patch.field_work_cost = 75.0;
+                    patch.quote_mut(crate::rungs::PLANT_TENDED).work_cost = 50.0;
+                    patch.quote_mut(crate::rungs::PLANT_FIELD).work_cost = 75.0;
                     patch.build_work_per_worker_turn = 1.0;
                 }
             }
@@ -6189,7 +6206,7 @@ mod tests {
         let mut view = a_working_band(STOCK);
         for patch in &mut view.snapshot.forage_patches {
             if Tile::new(patch.x, patch.y) == RICH_PATCH {
-                patch.is_cultivated = true;
+                patch.quote_mut(crate::rungs::PLANT_TENDED).reached = true;
             }
         }
         let field = plan_toward(1.0, GroundRung::Field);
@@ -6242,7 +6259,7 @@ mod tests {
         // Ground that will not take seed.
         for patch in &mut view.snapshot.forage_patches {
             if Tile::new(patch.x, patch.y) == RICH_PATCH {
-                patch.sow_site_refusal = "too_dry".to_owned();
+                patch.quote_mut(crate::rungs::PLANT_FIELD).site_refusal = "too_dry".to_owned();
             }
         }
         assert!(food()

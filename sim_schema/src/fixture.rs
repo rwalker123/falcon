@@ -61,7 +61,7 @@ use crate::state::population::*;
 use crate::state::subsistence::{
     CharacteristicBandState, CraftKnowledgeState, FloraShareInfo, LadderKnowledgeProgress,
     LadderKnowledgeState, LadderRungState, MaterialDefState, RecipeDefState, RecipeInputState,
-    RecipeOutputState, SpeciesMaterialRates,
+    RecipeOutputState, RungQuoteState, SpeciesMaterialRates,
 };
 use crate::world::WorldSnapshot;
 use std::error::Error;
@@ -173,6 +173,19 @@ pub fn saturated_snapshot() -> Result<WorldSnapshot, Box<dyn Error>> {
 
 fn rows<T: Default + Clone>() -> Vec<T> {
     vec![T::default(); ROWS]
+}
+
+/// **A source's rung quotes, every nested repeated field seeded** - the three material vectors on each
+/// row need elements of their own for the decode guard to exercise the inner level.
+fn rung_quotes() -> Vec<RungQuoteState> {
+    (0..ROWS)
+        .map(|_| RungQuoteState {
+            build_material_cost: rows(),
+            upkeep_material_demand: rows(),
+            material_payoff: rows(),
+            ..Default::default()
+        })
+        .collect()
 }
 
 fn rows_of<T: Clone>(blank: T) -> Vec<T> {
@@ -692,9 +705,6 @@ fn seed_snapshot() -> WorldSnapshot {
         // the same reason the curve above is.
         herd.material_per_biomass = rows();
         herd.per_worker_material = rows();
-        // …and the two investment rungs' material payoffs.
-        herd.corral_material = rows();
-        herd.pastoral_material = rows();
         // …and the MATERIAL half of the ladder's price: the pile the next rung eats, the rate this
         // one costs to hold, and what the store paid toward it.
         herd.build_material_cost = rows();
@@ -709,18 +719,13 @@ fn seed_snapshot() -> WorldSnapshot {
                 ..Default::default()
             })
             .collect();
-        // …and the per-rung PRE-COMMIT quote pair, which is a different question from the stamped
-        // bill above and therefore a different pair of nested repeated fields.
-        herd.tame_upkeep_material_demand = rows();
-        herd.corral_upkeep_material_demand = rows();
-        // …and the ring's own pile, which is the BUILD twin of that pair: `build_material_cost`
-        // above prices the rung *above* a source, and a ring is only ever offered on a herd already
-        // at the top of its branch.
-        herd.corral_build_material_cost = rows();
         // The animal twin of `ForagePatchState.build_legs` — one leg on this web today, and seeded
         // for the same reason: a repeated field the fixture leaves empty is a field the decode guard
         // cannot exercise.
         herd.build_legs = rows();
+        // **EVERY RUNG'S QUOTE** - a repeated field of rows that each carry three more repeated
+        // fields, so both levels are seeded or the decode guard never reaches the inner ones.
+        herd.rung_quotes = rung_quotes();
     }
     s.food_modules = rows();
     // **The kit roster**, and each entry's `jobs` / `item_ids` — repeated fields inside a repeated
@@ -812,9 +817,6 @@ fn seed_snapshot() -> WorldSnapshot {
                 ..Default::default()
             })
             .collect();
-        // …and the per-rung PRE-COMMIT quote pair — see the herd twin.
-        patch.cultivation_upkeep_material_demand = rows();
-        patch.field_upkeep_material_demand = rows();
         // The TILE's per-rung vector (#426) — the plant twin of `hunt_policy_ceilings` above, and
         // seeded for the same reason: a repeated field the fixture leaves empty is a field the decode
         // guard cannot exercise, which is how four appended fields reached the client as zeros.
@@ -823,6 +825,8 @@ fn seed_snapshot() -> WorldSnapshot {
         // curve above is. A `sow` on untended ground is a two-leg climb, which is what the fixture
         // stands for here.
         patch.build_legs = rows();
+        // …and every rung's quote - see the herd twin.
+        patch.rung_quotes = rung_quotes();
     }
     // **THE LADDER'S KNOWLEDGE ROSTER** (what there is to learn) and the per-faction PROGRESS list
     // beside it. Both are seeded with real ids rather than defaulted rows, because the roster's

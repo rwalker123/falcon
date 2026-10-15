@@ -2547,6 +2547,52 @@ table SpeciesMaterialRates {
   rows:[MaterialPayoff];
 }
 
+// --- ONE RUNG'S QUOTE ON ONE SOURCE (appended to ForagePatchState and HerdTelemetryState) ---------
+// A source row says what EACH RUNG of its branch would cost and pay, as ONE row per rung of the
+// source's branch above the root, in climb order - never as a field named after a step. A rung is
+// identified by `rungKey` (the "branch:id" key that joins to `SubsistenceSection.ladderRungs`, which
+// carries the rung's verb, traits and display names), so a fourth plant or animal step is a JSON edit
+// that appears here with no schema change. The server produces the rows by iterating the branch's
+// rungs and reads each rung's TRAITS to price it; nothing names a rung.
+//
+// Every number is the LADDER's quote at capture, published whether or not a build is in flight: the
+// compose sheet prices a rung BEFORE the player commits to it. They are quotes for the rung, not the
+// stamped bill - `upkeepDemand` on the parent table is what the source is billed right now.
+table RungQuoteState {
+  // The rung's "branch:id" key (RungId::wire_key).
+  rungKey:string;
+  // Whether this source stands AT OR ABOVE the rung: the retired isCultivated / isField / corralled
+  // flags, for any rung. Read the bool, never infer a rung from `progress`.
+  reached:bool = false;
+  // The rung's own build meter, 0..1 (`workDone / workCost`): the retired cultivationProgress /
+  // fieldProgress / domestication / corralProgress. 1.0 once `reached`.
+  progress:float = 0;
+  // The rung's meter in work units, and what the rung costs ON THIS SOURCE (a Sow priced by how
+  // much of the tile the crop must replace, a Tame by the species' own multiplier). Published
+  // whether or not a build is in flight.
+  workDone:float = 0;
+  workCost:float = 0;
+  // The materials the rung's build pile eats, at full coverage. EMPTY = it eats none.
+  buildMaterialCost:[MaterialPayoff];
+  // What holding this rung would cost per turn, in work, at THIS source's own measure (its tile's
+  // tender-loads, its herd's keeper-load). `0` only where the rung declares no upkeep. And the
+  // materials it eats to hold, EMPTY when none.
+  upkeepDemand:float = 0;
+  upkeepMaterialDemand:[MaterialPayoff];
+  // What the source would pay per turn once at this rung: food, fodder (hay) and the materials of its
+  // yield vector. The retired tendedYield / fieldYield / corralYield / pastoralYield,
+  // tendedFodder / fieldFodder, and corralMaterial / pastoralMaterial. `fodder` is 0 on an animal
+  // (none pays it); `materialPayoff` is EMPTY on a patch row (a plant's materials are priced per
+  // species in FloraShareInfo).
+  foodYield:float = 0;
+  fodder:float = 0;
+  materialPayoff:[MaterialPayoff];
+  // WHY this ground will not take the rung - "" when it will and on a rung with no site requirement
+  // (the retired sowSiteRefusal; "too_poor" | "too_dry" | "too_poor_and_too_dry" for the shipped
+  // field rung). A free-form key, so a new refusal needs no schema change.
+  siteRefusal:string;
+}
+
 // One depletable forage patch's cultivation + ecology state for the client tile card
 // (Intensification Phase 1a). Keyed by tile `(x,y)`. `cultivationProgress` is the 0..1 taming meter;
 // `isCultivated` = a completed tended patch (progress >= 1.0). `owner`/`hasOwner` carry the tending
@@ -2557,8 +2603,6 @@ table SpeciesMaterialRates {
 table ForagePatchState {
   x:uint;
   y:uint;
-  cultivationProgress:float = 0;
-  isCultivated:bool = false;
   hasOwner:bool = false;
   owner:uint = 0;
   biomass:float = 0;
@@ -2589,38 +2633,6 @@ table ForagePatchState {
   // `perWorkerYield` is the FOOD per-worker term. It folds in this tile's seasonal weight (as
   // `forage_take` does); it can be 0 in a dead season — do not divide by it.
   perWorkerYield:float = 0;
-  // --- The Cultivate investment rung --- `tendedYield` = food/turn the patch will pay ONCE
-  // cultivated (maintenance labor: one worker suffices). Cultivate is FORAGE-ONLY (the herd twin is
-  // Corral).
-  tendedYield:float = 0;
-  // --- The Sow investment rung + the Field (appended, slice 5/6a) --- plant RUNG 3, the twin of the
-  // herd's Corral block. `fieldProgress` is the per-patch `plant:field` build meter 0..1 (the mirror
-  // of `HerdTelemetryState.corralProgress`); `isField` is the completed rung — read the BOOL, never
-  // infer a rung from the float. Note the plant branch now has TWO build meters on one source, and
-  // both ship: `cultivationProgress`/`isCultivated` (rung 2, already shipped above) and these. They
-  // are independent — `Sow` needs no prior patch, so a Field may stand on ground that was never
-  // tended.
-  fieldProgress:float = 0;
-  isField:bool = false;
-  // `fieldYield` = food/turn the patch will pay ONCE sown (maintenance labor: one worker suffices),
-  // the Field's rate on its current standing crop — 2× `tendedYield` on the shipped dials. Together
-  // with `tendedYield` it is the two investment rungs' payoff pair: the rungs' baskets and conversion
-  // gains differ, so one number cannot answer both.
-  fieldYield:float = 0;
-  // **WHY this ground will not take seed** — "" when it will (and on a rung with no site requirement).
-  // Otherwise the verdict of the `plant:field` rung's `site_requirement`, as a stable key:
-  //   "too_poor"             — the ground is watered, but too thin to take a crop without fertilizing
-  //   "too_dry"              — the ground is rich, but too dry to farm without irrigation
-  //   "too_poor_and_too_dry" — both
-  // Free-form string (the `species`/`sizeClass`/`husbandryCeiling` convention), so a future refusal
-  // needs no schema change.
-  //
-  // SHIPPED AS AN ANSWER, not a bool, because only ~1% of tiles are sowable (46 of 4160 on the
-  // standard map) — so "why can't I sow here?" is the question players will actually ask, and the
-  // client CANNOT re-derive it: it has neither the per-biome capacity table nor the hydrology. The
-  // server resolves it through the SAME seam (`RungSiteRequirement::refusal`) that the `sow` command
-  // and the labor arm gate on, so the wire, the rejection and the sim cannot disagree.
-  sowSiteRefusal:string;
   // --- WHAT GROWS HERE (appended, flora roster F1) ---
   // The named plants this tile's forage capacity is MADE OF, as normalized shares
   // (docs/plan_flora_roster.md §2, "naming decomposes, it does not add"). `species` is the stable
@@ -2663,14 +2675,6 @@ table ForagePatchState {
   // (`isCultivated`/`isField`). See docs/plan_flora_roster.md §4.3.
   committedSpecies:string;
   committedDisplayName:string;
-  // The FODDER halves of the two investment rungs' PAYOFFS — the twins of `tendedYield` /
-  // `fieldYield`. A tended patch is drawn down, so its fodder rides the take; a Field is a managed
-  // rate. One field per rung for `tendedYield`/`fieldYield`'s own reason: the rungs differ in basket,
-  // conversion gain AND the shape of the harvest, so one number cannot answer both. THIS IS THE
-  // **TILE's** VECTOR, NOT A PLANT'S — `FloraShareInfo`'s `cultivate*`/`sow*` payoffs answer "what
-  // would THIS PLANT pay if I committed to it", a different question.
-  tendedFodder:float = 0;
-  fieldFodder:float = 0;
   // --- THE NEGLECT GRACE (appended) --------------------------------------------------------------
   // How many more turns nobody may work this patch before its improvement starts reverting. The sim
   // now forgives a rung's `grace_turns` of consecutive neglect before the feral bleed begins, so a
@@ -2824,25 +2828,6 @@ table ForagePatchState {
   // EMPTY MEANS "NO ROW", NEVER "ZERO" - most baskets grow nothing anyone builds with.
   materialPerBiomass:[MaterialPayoff];
   perWorkerMaterial:[MaterialPayoff];
-  // --- THE BUILD, PRICED IN WORK (appended, docs/plan_unit_costed_work.md section 8) -------------
-  // An improvement costs a fixed amount of WORK now, not a fixed number of turns: a crew produces
-  // work units per turn (head count x floor discipline x kit) and TURNS ARE THE OUTPUT. The three
-  // fields below are what makes that visible; the `*Progress` fractions above are unchanged in type,
-  // meaning and range, and are exactly `workDone / workCost`.
-  //
-  //   workDone  = the source's own meter, in work units.
-  //   workCost  = what that job costs ON THIS SOURCE, resolved off the ladder (and, for a Tame, the
-  //               species' own cost multiplier) AT CAPTURE. It is published WHETHER OR NOT a build
-  //               is in flight, which is the point: the compose sheet quotes the price BEFORE the
-  //               player commits. It is NOT the source's stamped cost, which is 0 on an unstarted
-  //               source.
-  //
-  // Two rungs keep two pairs, the `cultivateBuildFraction`/`sowBuildFraction` rule: independently
-  // tunable jobs must not share a number.
-  cultivationWorkDone:float = 0;
-  cultivationWorkCost:float = 0;
-  fieldWorkDone:float = 0;
-  fieldWorkCost:float = 0;
   // HOW MANY MORE TURNS a build on this patch needs, at the crew, floor and kit that worked it this
   // turn — and A PROJECTION WHEN NOTHING IS BEING BUILT, which is by definition the state a compose
   // sheet is looking at. With an improvement in flight it counts down the running meter; with none
@@ -3001,45 +2986,6 @@ table ForagePatchState {
   upkeepSupplied:float = 0;
   upkeepShortfall:float = 0;
   upkeepWorkersNeeded:uint = 0;
-  // WHAT EACH RUNG COSTS TO HOLD, PER TURN (appended, docs/plan_standing_upkeep.md section 2) - the
-  // RATE half of the same quote `cultivationWorkCost`/`fieldWorkCost` give the PILE half of, and read
-  // beside them by the SAME rung-picking rule (the assignment's `improvement`, or the next rung up
-  // when that is empty).
-  //
-  // WHY IT IS NOT `upkeepDemand` ABOVE. That field answers "what is this patch BILLED right now", and
-  // it resolves through the AT-RISK rung - the newest meter carrying progress. A wild patch has
-  // progress on neither meter, so it publishes an honest `0` - and a compose sheet quoting a
-  // Cultivate off it subtracts nothing, promises `workCost / crew` turns, and the player commits to a
-  // build that never moves because the crew is under the rate. The price and the outcome were
-  // computed against different rungs.
-  //
-  // THE RATE IS OWED WHILE BUILDING TOO - BUT IT IS NOT A TAX ON THE BUILD, and the closed form does
-  // NOT net it (docs/plan_standing_upkeep.md section 4.6a). The band's keeping pool owes the rate for
-  // every meter carrying work, at any fullness, and a build crew supplies nothing toward it: the pace
-  // is `work_cost / crew` again. What the closed form nets is `meterRotPerTurn` - what the ground is
-  // losing under the builders - and `buildTurnsRemaining`'s `-2` (the crew banks exactly what the
-  // meter bleeds) / `-3` (it banks less) are struck from that term.
-  //
-  // So what this pair is FOR is the standing bill: what holding the rung will cost the keeping pool
-  // once the build lands, which is a cost the player has to be able to see before committing.
-  //
-  // ALWAYS MEANINGFUL, NEVER A SENTINEL (the corralYield rule): it is the LADDER's rate for that rung,
-  // resolved at capture whether or not a build is in flight, exactly as the `*WorkCost` beside it is.
-  // On a patch mid-build it equals `upkeepDemand`; on an unstarted one it is the number that field
-  // cannot yet give. `0` only where the rung declares no upkeep.
-  //
-  // BOTH SCALE WITH THE SIZE OF THE LAND, and they scale with the SAME measure the bill does.
-  // Both plant rungs declare `scaled_by: source_load` and quote their rate PER TENDER-LOAD - the
-  // tile's own forage capacity over `forage.cultivation.capacity_per_tender` (the plant twin of a
-  // herd's keeper-load). So these are `rate x this patch's tile's loads`, not the ladder's bare 2
-  // and 4: a Field on rich delta ground quotes ~4.31 and is billed ~4.31, and a thin steppe patch
-  // quotes less than either. Quoting the bare rate here would show one price and charge another,
-  // which is two producers of one verdict.
-  //
-  // The client still does NO arithmetic of its own on these - they are struck at capture off the
-  // same patch's tile as `upkeepDemand`.
-  cultivationUpkeepDemand:float = 0;
-  fieldUpkeepDemand:float = 0;
   // WHAT THIS PATCH'S AT-RISK METER WILL LOSE ON THE NEXT DECAY PASS, in WORK UNITS (appended,
   // docs/plan_standing_upkeep.md section 4.6a) - the rung's own `meter_decay.per_turn` scaled by how
   // short the keeping fell. `0` for as long as the rung's grace still forgives the shortfall.
@@ -3360,37 +3306,6 @@ table ForagePatchState {
   buildMaterialCost:[MaterialPayoff];
   upkeepMaterialDemand:[MaterialPayoff];
   upkeepMaterialSupplied:[MaterialPayoff];
-  // --- THE PRE-COMMIT MATERIAL QUOTE, PER RUNG (appended) ---------------------------------------
-  // WHAT EACH RUNG WOULD COST TO HOLD IN GOODS, PER TURN - the material twin of the
-  // `cultivationUpkeepDemand` / `fieldUpkeepDemand` pair above, and read beside them by the SAME
-  // rung-picking rule. This is what the up-track's third aside quotes: "then 1.00 work + 0.05
-  // hurdles a turn to hold".
-  //
-  // *** IT IS THE RUNG'S RATE, NOT THE STAMPED BILL, and the two are DIFFERENT QUESTIONS. ***
-  // `upkeepMaterialDemand` above answers "what was this source BILLED this turn" - it resolves
-  // through the rung the source stands on, and it is the STAMPED figure the keeping was judged
-  // against. These answer "what would THIS rung cost to hold", for a rung the source may not be on
-  // yet, which is the only question a player deciding whether to commit can act on. On a source
-  // mid-climb the two DISAGREE, and that is correct: one says what you were billed, the other what
-  // this rung costs. The work pair above has exactly that relationship and says so.
-  //
-  // Which is also why these are resolved LIVE at capture rather than read off the stamp. The stamp
-  // exists to stop an interpolated demand moving across the Population->Logistics carry; a
-  // pre-commit quote is carried nowhere, so it has nothing to be protected from - and reading the
-  // stamp would publish an empty list for every rung the source is not already standing on, which
-  // is every rung a track ever offers.
-  //
-  // ALWAYS MEANINGFUL, NEVER A SENTINEL (the `*UpkeepDemand` rule): the LADDER's rate for that rung,
-  // published whether or not a build is in flight. EMPTY MEANS THE RUNG EATS NO MATERIAL, never
-  // "zero of something" - which is BOTH plant rungs on the shipped ladder, so both of these are
-  // empty today and the seam exists because the route branch's stone is what lands in it next.
-  //
-  // SCALED BY THE SAME MEASURE THE BILL IS - the rung reads ONE `scaled_by` for both currencies, so
-  // these are `rate x this patch's tile's tender-loads`, exactly as the work pair is. Quoting the
-  // bare ladder rate would show one price and charge another. The client does NO arithmetic on
-  // them.
-  cultivationUpkeepMaterialDemand:[MaterialPayoff];
-  fieldUpkeepMaterialDemand:[MaterialPayoff];
   // --- WHAT THIS SITE'S OWN CREW SPENT KEEPING IT (appended last, docs/plan_site_crews.md) -----
   // A SITE'S CREW KEEPS IT FIRST AND COLLECTS WITH WHAT IS LEFT (section 2.1). `upkeepSupplied`
   // above is what those keeping hands delivered; these two say how many hands that took and whether
@@ -3430,6 +3345,9 @@ table ForagePatchState {
   // `filled < required`, and `upkeepToolsShort` is exactly "some line is short". Item ids only - the
   // client resolves each to its roster display name. Absent = the site's keeping claimed no tool.
   upkeepToe:[KitToeLine];
+  // --- EVERY RUNG'S QUOTE ON THIS SOURCE (appended last; replaces the per-step fields) ----------
+  // One row per rung of this source's branch above the root - see RungQuoteState.
+  rungQuotes:[RungQuoteState];
 }
 
 // ONE LEG OF A QUEUE ENTRY'S CLIMB (appended) - a rung the entry has still to raise, and what it
@@ -3776,14 +3694,6 @@ table HerdTelemetryState {
   sizeClass:string;
   huntable:bool = false;
   ecologyPhase:string;
-  domestication:float = 0;
-  // Intensification Rung 1c corral state: true iff the herd is penned (`corralled_at.is_some()`),
-  // so the client can show a corral (place-bound) indicator distinct from a mobile domesticated
-  // herd. Appended (append-only schema discipline).
-  corralled:bool = false;
-  // Pen-construction progress 0..1 (1.0 = penned) accrued while a keeper band works this herd under
-  // the Corral policy — the animal twin of `ForagePatchState.cultivationProgress`. Appended.
-  corralProgress:float = 0;
   // --- Pre-commit yield forecast (appended, append-only schema discipline) ---
   // The herd-side twin of `ForagePatchState`'s forecast block — food/turn at this herd's CURRENT
   // biomass, for a live "Expected yield" readout + worker-stepper cap while the player composes a
@@ -3792,10 +3702,6 @@ table HerdTelemetryState {
   // per-biomass yield vector below; `hunt_take` and the forecast share the conversion helpers, so
   // forecast == actual (see core_sim/CLAUDE.md). This scalar is the per-worker FOOD rate.
   perWorkerYield:float = 0;
-  // --- The Corral investment rung --- the herd twin of `ForagePatchState`'s Cultivate block.
-  // `corralYield` = food/turn the herd will pay ONCE penned (maintenance labor: one keeper
-  // suffices). Corral is ANIMAL-ONLY (the patch twin is Cultivate).
-  corralYield:float = 0;
   // --- The pen as a managed POPULATION --- a corralled herd is a population in its own right: it
   // EATS every turn, and underfeeding shrinks it (docs/plan_corral_managed_population.md). HUMAN
   // FOOD IS NOT ANIMAL FEED — a pen eats the grass its fenced footprint grows and the hay its keeper
@@ -3871,13 +3777,6 @@ table HerdTelemetryState {
   // 1.0 = fully staffed (also the value for a herd that needs nobody); < 1 = under-herded, so
   // `domestication` bleeds proportionally and the herd risks reclassifying as wild. Render a warning.
   herdedFraction:float = 1;
-  // --- The Tame rung's payoff (appended last) --- the pastoral twin of `corralYield`: food/turn a
-  // Sustain hunt pays ONCE this herd is tamed (the pastoral MSY at the herd's CURRENT biomass). While
-  // `ceilingTame` in `huntPolicyCeilings` is Tame's DURING-BUILDING dip, this is what the herd pays
-  // after taming completes — so the client can render Tame as "→ +Y" (like Cultivate/Sow/Corral)
-  // instead of quoting only the dip. 0 on a herd that never offers Tame (already penned, or a species
-  // whose husbandry ceiling is "wild"). Matched to `corralYield`: Sustain < Tame < Corral.
-  pastoralYield:float = 0;
   // The hay this pen drew from its keeper band's FODDER store last turn (Flora Roster F3, §5.2), in
   // fodder units. With `penPastureFraction` it is the WHOLE feed split — "Fed by pasture NN% · hay
   // X.X", both sources in fodder against one fodder demand — and whatever the two leave uncovered is
@@ -4147,40 +4046,6 @@ table HerdTelemetryState {
   // published 0 would read as a herd that pays badly rather than one that pays in meat alone.
   materialPerBiomass:[MaterialPayoff];
   perWorkerMaterial:[MaterialPayoff];
-  // --- WHAT THE TWO INVESTMENT RUNGS WOULD PAY, PER MATERIAL (appended last, arc #527) ---
-  // The material twins of corralYield/pastoralYield, and the replacement for the retired
-  // corralTrade/pastoralTrade. Without them an INEDIBLE quarry's Tame and Corral rungs quote nothing
-  // at all: a wolf's corralYield and pastoralYield are honestly 0, so the compose sheet's
-  // "-> then +Y" had no number on either rung.
-  //
-  // Priced on the SAME pen/pastoral MSY biomass their food siblings are
-  // (SourceYieldForecast::managedYieldBiomass / pastoralYieldBiomass, resolved once in
-  // hunt_forecast), so a rung's two readouts cannot describe different harvests.
-  //
-  // corralMaterial is GROSS like corralYield - the pen's feed is FODDER, never a PROVISIONS debit, and
-  // never touches it. EMPTY on a herd that never offers the rung, and EMPTY means "no row".
-  corralMaterial:[MaterialPayoff];
-  pastoralMaterial:[MaterialPayoff];
-  // --- THE BUILD, PRICED IN WORK (appended, docs/plan_unit_costed_work.md section 8) -------------
-  // An improvement costs a fixed amount of WORK now, not a fixed number of turns: a crew produces
-  // work units per turn (head count x floor discipline x kit) and TURNS ARE THE OUTPUT. The three
-  // fields below are what makes that visible; the `*Progress` fractions above are unchanged in type,
-  // meaning and range, and are exactly `workDone / workCost`.
-  //
-  //   workDone  = the source's own meter, in work units.
-  //   workCost  = what that job costs ON THIS SOURCE, resolved off the ladder (and, for a Tame, the
-  //               species' own cost multiplier) AT CAPTURE. It is published WHETHER OR NOT a build
-  //               is in flight, which is the point: the compose sheet quotes the price BEFORE the
-  //               player commits. It is NOT the source's stamped cost, which is 0 on an unstarted
-  //               source.
-  //
-  // The tame pair carries the SPECIES' OWN cost (a Steppe Runner is five times the work of a
-  // rabbit); the pen pair does not, because penning is a flat job for every species — a fence is a
-  // fence. `domestication` and `corralProgress` above are their fractions.
-  tameWorkDone:float = 0;
-  tameWorkCost:float = 0;
-  corralWorkDone:float = 0;
-  corralWorkCost:float = 0;
   // HOW MANY MORE TURNS a build on this herd needs (Tame or Corral), at the crew, floor and kit
   // that worked it this turn — and A PROJECTION WHEN NOTHING IS BEING BUILT, so the compose sheet
   // can quote the job before the player commits. Read it beside the `*WorkCost` for the
@@ -4321,39 +4186,6 @@ table HerdTelemetryState {
   upkeepSupplied:float = 0;
   upkeepShortfall:float = 0;
   upkeepWorkersNeeded:uint = 0;
-  // WHAT EACH RUNG COSTS TO HOLD, PER TURN (appended, docs/plan_standing_upkeep.md section 2) - the
-  // RATE half of the same quote `tameWorkCost`/`corralWorkCost` give the PILE half of, and read
-  // beside them by the SAME rung-picking rule (the assignment's `improvement`, or the next rung up
-  // when that is empty).
-  //
-  // WHY IT IS NOT `upkeepDemand` ABOVE. That field answers "what is this herd BILLED right now", and
-  // it resolves through the KEEPING rung - the one this herd stands on or is raising. A herd nobody
-  // has started taming is standing on no managed rung at all, so it publishes an honest `0` - and a
-  // compose sheet quoting the Tame off it subtracts nothing, promises `workCost / crew` turns, and
-  // the player commits to a build that never moves because the crew is under the rate. The price and
-  // the outcome were computed against different rungs.
-  //
-  // THE RATE IS OWED WHILE BUILDING TOO - BUT IT IS NOT A TAX ON THE BUILD, and the closed form does
-  // NOT net it (docs/plan_standing_upkeep.md section 4.6a). The band's keeping pool owes the rate for
-  // every meter carrying work, at any fullness, and a build crew supplies nothing toward it: the pace
-  // is `work_cost / crew` again. What the closed form nets is `meterRotPerTurn` - what the ground is
-  // losing under the builders - and `buildTurnsRemaining`'s `-2` (the crew banks exactly what the
-  // meter bleeds) / `-3` (it banks less) are struck from that term.
-  //
-  // So what this pair is FOR is the standing bill: what holding the rung will cost the keeping pool
-  // once the build lands, which is a cost the player has to be able to see before committing.
-  //
-  // ALWAYS MEANINGFUL, NEVER A SENTINEL (the corralYield rule): it is the LADDER's rate for that rung,
-  // resolved at capture whether or not a build is in flight, exactly as the `*WorkCost` beside it is.
-  // On a herd mid-build it equals `upkeepDemand`; on an unstarted one it is the number that field
-  // cannot yet give. `0` only where the rung declares no upkeep.
-  //
-  // BOTH CARRY THIS HERD'S OWN KEEPER LOAD, because both animal rungs quote `work_per_turn` per
-  // keeper-load (`scaled_by: source_load`) - so the rate says "a shepherd minds 300 sheep and a
-  // cowherd 80 cattle" rather than naming a head count. The load is OWNERSHIP-INDEPENDENT, like
-  // herdersNeededIfManaged: a quote must exist before the herd is anyone's.
-  tameUpkeepDemand:float = 0;
-  corralUpkeepDemand:float = 0;
   // WHAT THIS HERD'S AT-RISK METER WILL LOSE ON THE NEXT DECAY PASS, in WORK UNITS (appended,
   // docs/plan_standing_upkeep.md section 4.6a) - the plant twin's field, on the same rule, so a
   // client's build estimate is one expression across both webs.
@@ -4497,84 +4329,6 @@ table HerdTelemetryState {
   buildMaterialCost:[MaterialPayoff];
   upkeepMaterialDemand:[MaterialPayoff];
   upkeepMaterialSupplied:[MaterialPayoff];
-  // --- THE PRE-COMMIT MATERIAL QUOTE, PER RUNG (appended) ---------------------------------------
-  // WHAT EACH RUNG WOULD COST TO HOLD IN GOODS, PER TURN - the material twin of the
-  // `tameUpkeepDemand` / `corralUpkeepDemand` pair above, and read beside them by the SAME
-  // rung-picking rule. This is what the up-track's third aside quotes: "then 1.00 work + 0.05
-  // hurdles a turn to hold".
-  //
-  // *** IT IS THE RUNG'S RATE, NOT THE STAMPED BILL, and the two are DIFFERENT QUESTIONS. ***
-  // `upkeepMaterialDemand` above answers "what was this source BILLED this turn" - it resolves
-  // through the rung the source stands on, and it is the STAMPED figure the keeping was judged
-  // against. These answer "what would THIS rung cost to hold", for a rung the source may not be on
-  // yet, which is the only question a player deciding whether to commit can act on. On a source
-  // mid-climb the two DISAGREE, and that is correct: one says what you were billed, the other what
-  // this rung costs. The work pair above has exactly that relationship and says so.
-  //
-  // Which is also why these are resolved LIVE at capture rather than read off the stamp. The stamp
-  // exists to stop an interpolated demand moving across the Population->Logistics carry; a
-  // pre-commit quote is carried nowhere, so it has nothing to be protected from - and reading the
-  // stamp would publish an empty list for every rung the source is not already standing on, which
-  // is every rung a track ever offers.
-  //
-  // ALWAYS MEANINGFUL, NEVER A SENTINEL (the `*UpkeepDemand` rule): the LADDER's rate for that rung,
-  // published whether or not a build is in flight. EMPTY MEANS THE RUNG EATS NO MATERIAL, never
-  // "zero of something" - so on the shipped ladder `tameUpkeepMaterialDemand` is ALWAYS empty
-  // (`animal:pastoral` names none) and `corralUpkeepMaterialDemand` names `hurdles`. THAT PAIR IS
-  // THE WHOLE POINT OF THE FIELD: a pastoral herd is the only source a track ever offers the Pen
-  // rung from, its CURRENT rung declares no material, and the stamped `upkeepMaterialDemand` above
-  // is therefore empty on exactly the row where the player needs the number. Without this the
-  // material half of the up-track's aside is unreachable in play.
-  //
-  // SCALED BY THE SAME MEASURE THE BILL IS - the rung reads ONE `scaled_by` for both currencies, so
-  // these are `rate x this patch's herd's keeper-loads`, exactly as the work pair is. Quoting the
-  // bare ladder rate would show one price and charge another. The client does NO arithmetic on
-  // them.
-  tameUpkeepMaterialDemand:[MaterialPayoff];
-  corralUpkeepMaterialDemand:[MaterialPayoff];
-  // --- THE PRE-COMMIT MATERIAL QUOTE FOR A **RING** (appended last, append-only wire) ------------
-  // Conceptually this belongs with `corralUpkeepMaterialDemand` above; it sits at the end of the
-  // table because field slots are positional and this wire is append-only. Read it there.
-  //
-  // THE WHOLE PILE THE `animal:pen` RUNG SWALLOWS TO RAISE, at full coverage, UNSCALED - the
-  // material twin of `corralWorkCost` beside it, resolved LIVE off the LADDER at capture and
-  // published WHETHER OR NOT A BUILD IS IN FLIGHT, because the card quotes a price before the
-  // player commits. That is the rule `corralWorkCost` and `buildMaterialCost` both already state.
-  //
-  // *** IT EXISTS FOR WORD-FOR-WORD THE REASON `corralUpkeepMaterialDemand` DOES. *** That field
-  // exists because a PASTORAL herd is the only source the `⌃` track ever offers the Pen rung from,
-  // its CURRENT rung declares no material, and the stamped `upkeepMaterialDemand` is therefore
-  // empty on exactly the row the player is deciding on. THIS field exists because a CORRALLED herd
-  // is the only source a RING is ever offered from, `animal:pen` is the top of its branch so the
-  // rung above it is NONE, and `buildMaterialCost` is therefore empty on exactly the row the player
-  // is deciding on. A ring is not free: the labor arm prices a ring's width at the pen rung's own
-  // unscaled build cost and draws that rung's pile in proportion to the work banked, so a whole
-  // ring swallows this whole list.
-  //
-  // UNSCALED IS NOT AN OVERSIGHT, IT IS WHAT A RING COSTS. Penning takes no per-species multiplier
-  // (`corralWorkCost`'s own comment: a fence is a fence, whatever it holds) and the ring's width is
-  // priced at that same unscaled cost, so a scaled quote here would show one price and charge
-  // another.
-  //
-  // IT READS TWO WAYS, BY THE RUNG THE HERD STANDS ON, and that is `corralWorkCost`'s existing
-  // behaviour rather than a new ambiguity. On a PASTORAL herd it prices the CLIMB to the Pen rung;
-  // on a CORRALLED herd it prices ANOTHER RING - the same rung, again. The client disambiguates
-  // with `currentRung`, exactly as it already does for the work half.
-  //
-  // ON A PASTORAL HERD IT AGREES WITH `buildMaterialCost` ABOVE, BY CONSTRUCTION: the two are the
-  // same pile of the same rung reached through two selectors, not a second reading of the ladder.
-  // That agreement is not a redundancy to collapse - it holds on that one rung only, and it is the
-  // DISAGREEMENT on a corralled herd (empty there, the pen's pile here) that the ring card needs.
-  //
-  // *** THERE IS DELIBERATELY NO `tameBuildMaterialCost`. *** The tame rung has no repeatable
-  // increment - nothing rings a Tame - so nothing would read one, and `buildMaterialCost` already
-  // publishes the tame pile on the only row that can climb to it (a WILD herd). The asymmetry
-  // against the `tameUpkeepMaterialDemand`/`corralUpkeepMaterialDemand` pair is exactly that: that
-  // pair prices two rungs a source can STAND ON, this prices the one job a source can REPEAT.
-  //
-  // The three standing MaterialPayoff rules hold unchanged - NEVER SUMMED, EMPTY MEANS "no row" and
-  // never zero, and the key is always present.
-  corralBuildMaterialCost:[MaterialPayoff];
 
   // --- WHAT THIS HERD IS COMMITTED TO PRODUCING (appended last, append-only wire) ---------------
   // `standingOutputFraction` = HOW MUCH OF ITSELF THIS HERD GIVES AS STANDING OUTPUT - milk, eggs
@@ -4675,6 +4429,9 @@ table HerdTelemetryState {
   // "no ground to show" - and always -1 for a non-migratory herd or a single-anchor route.
   nextGroundX:int = -1;
   nextGroundY:int = -1;
+  // --- EVERY RUNG'S QUOTE ON THIS SOURCE (appended last; replaces the per-step fields) ----------
+  // One row per rung of this source's branch above the root - see RungQuoteState.
+  rungQuotes:[RungQuoteState];
 }
 
 table CommandEventState {

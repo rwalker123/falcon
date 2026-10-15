@@ -189,30 +189,12 @@ pub struct HerdTelemetryState {
     pub huntable: bool,
     #[serde(default)]
     pub ecology_phase: String,
-    #[serde(default)]
-    pub domestication: f32,
-    /// Intensification Rung 1c corral state: `true` iff the herd is penned (`corralled_at.is_some()`).
-    #[serde(default)]
-    pub corralled: bool,
-    /// Pen-construction progress 0..1 (`1.0` = penned) while a keeper works the herd under the
-    /// **Corral** policy. The animal twin of `ForagePatchState::cultivation_progress`.
-    #[serde(default)]
-    pub corral_progress: f32,
     /// Pre-commit yield forecast at the herd's current biomass (food/turn, `output_multiplier =
     /// 1`). The per-worker **rate**; the escapement ceiling that clamps it is composed at the
     /// crew's floor from [`Self::provisions_per_biomass`] and [`Self::carrying_capacity`], the
     /// per-policy ceiling rows having retired with the four harvest stances.
     #[serde(default)]
     pub per_worker_yield: f32,
-    // **RETIRED: `per_worker_trade`** (arc #527), and off the wire. A band preview that needs a *crew* number on an inedible species reads
-    // [`Self::per_worker_biomass`], which is positive there and always was.
-    /// Food/turn the herd will pay **once penned** (the corral's managed harvest at its current
-    /// biomass). A crew building the pen takes **nothing** while it works
-    /// (`docs/plan_standing_upkeep.md` §2.2), so this alone lets the client show "preparing → then
-    /// Y" pre-commit. **Gross and net both**: a pen's feed is grass and hay, so nothing is
-    /// subtracted from this in food.
-    #[serde(default)]
-    pub corral_yield: f32,
     // **RETIRED: `corral_trade`** (arc #527), and off the wire.
     // **RETIRED: `pen_upkeep`** — `pen.upkeep_per_biomass × biomass`, the FOOD a pen drew from its
     // keeper's larder, quoted for every herd so a pre-commit `Corral` row could subtract the running
@@ -258,7 +240,7 @@ pub struct HerdTelemetryState {
     #[serde(default)]
     pub pen_pasture_fraction: f32,
     /// **The in-flight `ExtendPen` ring's build meter, in WORK UNITS** — the same unit-costed meter
-    /// [`Self::tame_work_done`] / [`Self::corral_work_done`] carry, **not** a `0..1` fraction. It
+    /// `Self::tame_work_done` / `Self::corral_work_done` carry, **not** a `0..1` fraction. It
     /// completes at [`Self::pen_extend_cost`] (→ `pen_radius` grows by one and both reset to `0.0`),
     /// so a "Fencing N%" badge is `pen_extend_progress / pen_extend_cost` with the zero denominator
     /// guarded. `0.0` when the pen is not extending. Appended (append-only).
@@ -307,15 +289,6 @@ pub struct HerdTelemetryState {
     /// (append-only).
     #[serde(default = "fully_herded")]
     pub herded_fraction: f32,
-    /// **The Tame rung's payoff** — food/turn a Sustain hunt pays once this herd is tamed (the
-    /// pastoral MSY at the herd's current biomass), the pastoral twin of [`Self::corral_yield`].
-    /// Its during-building dip is gone — a crew taming spends its turn on the meter and takes
-    /// nothing (the retired `tame_build_fraction`) — and this is what the herd pays *after* taming,
-    /// so the client renders Tame as `→ +Y` (like Cultivate/Sow/Corral) instead of only the dip.
-    /// `0` on a herd that never offers Tame (already penned, or a `wild`-ceiling species). Appended
-    /// last (append-only).
-    #[serde(default)]
-    pub pastoral_yield: f32,
     // **RETIRED: `pastoral_trade`** (arc #527), and off the wire.
     /// The hay this pen drew from its keeper band's FODDER store last turn (Flora Roster F3), in
     /// fodder units. `0` for an unpenned herd, a keeper that has not learned Foddering, or a pen its
@@ -564,45 +537,6 @@ pub struct HerdTelemetryState {
     /// [`Self::material_per_biomass`]. Appended (append-only).
     #[serde(default)]
     pub per_worker_material: Vec<MaterialPayoff>,
-    /// **What the Corral rung would pay, per material** (arc #527) — the material twin of
-    /// [`Self::corral_yield`] and the replacement for the retired `corral_trade`. Without it an
-    /// **inedible** quarry's Corral rung quotes nothing at all: a wolf's `corral_yield` is honestly
-    /// `0`, so the compose sheet's *"→ then +Y"* had no number.
-    ///
-    /// Priced on the **same** pen MSY biomass its food sibling is, so a rung's two readouts cannot
-    /// describe different harvests. **Gross** like `corral_yield` — the pen's feed is a provisions
-    /// debit and never touches it. **Empty is "no row"**, including on a herd that never offers the
-    /// rung. Appended (append-only).
-    #[serde(default)]
-    pub corral_material: Vec<MaterialPayoff>,
-    /// The **Tame** rung's twin of [`Self::corral_material`], priced on the pastoral MSY biomass
-    /// [`Self::pastoral_yield`] reads its provisions from. Appended (append-only).
-    #[serde(default)]
-    pub pastoral_material: Vec<MaterialPayoff>,
-    /// **The build, PRICED IN WORK** (`docs/plan_unit_costed_work.md` §8). An improvement costs a
-    /// fixed amount of work now, not a fixed number of turns: a crew produces work units per turn
-    /// (head count × floor discipline × kit) and **turns are the output**.
-    ///
-    /// `work_done` is the source's own meter, in work units. `work_cost` is what that job costs **on
-    /// this source**, resolved off the ladder at capture and published **whether or not a build is in
-    /// flight** — that is the point, since the compose sheet must quote the price *before* the player
-    /// commits. The `*_progress` fraction beside it is exactly `work_done / work_cost`. Appended
-    /// (append-only).
-    ///
-    /// The tame pair carries the **species' own** cost multiplier (a Steppe Runner is five times the
-    /// work of a rabbit); the pen pair does not, because penning is a flat job for every species — a
-    /// fence is a fence.
-    #[serde(default)]
-    pub tame_work_done: f32,
-    /// See [`Self::tame_work_done`].
-    #[serde(default)]
-    pub tame_work_cost: f32,
-    /// The rung-3 twin of [`Self::tame_work_done`].
-    #[serde(default)]
-    pub corral_work_done: f32,
-    /// See [`Self::corral_work_done`].
-    #[serde(default)]
-    pub corral_work_cost: f32,
     /// **How many more turns a build on this source needs**, at the crew, floor and kit that worked
     /// it this turn — and a **PROJECTION when nothing is being built**, which is by definition the
     /// state a compose sheet is looking at. With an improvement in flight it counts down the running
@@ -718,30 +652,6 @@ pub struct HerdTelemetryState {
     /// Appended (append-only).
     #[serde(default)]
     pub build_work_per_worker_turn: f32,
-    /// **WHAT EACH RUNG COSTS TO HOLD, PER TURN**, in work units — the **rate** half of the same
-    /// quote [`Self::tame_work_cost`] / [`Self::corral_work_cost`] give the **pile** half of, and
-    /// read beside them by the same rung-picking rule (the assignment's `improvement`, or the next
-    /// rung up when that is empty).
-    ///
-    /// **It is not [`Self::upkeep_demand`], and the difference is the whole point.** That field
-    /// answers *"what is this herd billed right now"* and resolves through the **keeping** rung — the
-    /// one the herd stands on or is raising. A herd nobody has started taming stands on no managed
-    /// rung, so it publishes an honest `0`, and a compose sheet quoting the Tame off it subtracts
-    /// nothing and promises `work_cost / crew` turns for a build that will never move. This one
-    /// answers *"what would the rung being quoted cost to hold"*, resolved at capture off the
-    /// **ladder** whether or not a build is in flight — exactly the rule the `*_work_cost` beside it
-    /// follows. On a herd mid-build the two agree; on an unstarted one they differ, and that
-    /// difference was the trap.
-    ///
-    /// **Both carry this herd's own keeper load**, because both animal rungs quote their rate per
-    /// keeper-load (`scaled_by: source_load`) — and the load is **ownership-independent**, like
-    /// [`Self::herders_needed_if_managed`]: a quote has to exist before the herd is anyone's.
-    /// Appended (append-only).
-    #[serde(default)]
-    pub tame_upkeep_demand: f32,
-    /// The rung-3 twin of [`Self::tame_upkeep_demand`].
-    #[serde(default)]
-    pub corral_upkeep_demand: f32,
     /// **What this herd's at-risk meter will lose on the next decay pass**, in work units — the
     /// plant twin's field on the same rule, so a client's build estimate is one expression across
     /// both webs (`docs/plan_standing_upkeep.md` §4.6a).
@@ -840,7 +750,7 @@ pub struct HerdTelemetryState {
     /// every other build on this row already does.
     ///
     /// **It is the herd's STAMPED cost, not a live quote** — the one way it differs from
-    /// [`Self::tame_work_cost`] / [`Self::corral_work_cost`], which resolve at capture so a compose
+    /// `Self::tame_work_cost` / `Self::corral_work_cost`, which resolve at capture so a compose
     /// sheet can price a build before the player commits. `Herd::accrue_pen_extension` stamps it on
     /// the first worked turn, so it reads `0.0` both with no ring in flight and on the turn a ring is
     /// begun. Read the pair together: `0.0 / 0.0` is *"no ring"*, never *"0%"*.
@@ -883,7 +793,7 @@ pub struct HerdTelemetryState {
     ///
     /// Struck at capture by `core_sim`'s `fauna::herd_rung_key` — the single home of the *"penned →
     /// pen, tamed → pastoral, else wild"* test this row otherwise makes a client re-derive from
-    /// [`Self::domestication`] against a threshold plus [`Self::corralled`]. **Never empty**; an
+    /// `Self::domestication` against a threshold plus `Self::corralled`. **Never empty**; an
     /// untouched herd reads `animal:wild`. Appended (append-only).
     #[serde(default)]
     pub current_rung: String,
@@ -913,41 +823,6 @@ pub struct HerdTelemetryState {
     /// the amounts are never summed — a full store must not paper over missing hands.
     #[serde(default)]
     pub upkeep_material_supplied: Vec<MaterialPayoff>,
-    /// **WHAT EACH ANIMAL RUNG WOULD COST TO HOLD IN GOODS, PER TURN** — the material twin of the
-    /// [`Self::tame_upkeep_demand`] / [`Self::corral_upkeep_demand`] pair, on the plant twin's own
-    /// rules: the rung's **rate** rather than the stamped bill, resolved **live** at capture, and
-    /// scaled by this herd's own keeper-load.
-    ///
-    /// ⛔ **THIS PAIR IS WHY THE FIELD EXISTS.** `tame_upkeep_material_demand` is always empty
-    /// (`animal:pastoral` names no material) and `corral_upkeep_material_demand` names `hurdles` —
-    /// and a **pastoral** herd is the only source a `⌃` track ever offers the Pen rung from. Its
-    /// *current* rung declares nothing, so the stamped [`Self::upkeep_material_demand`] is empty on
-    /// exactly the row where the player needs the number. Without this the material half of that
-    /// aside is unreachable in play.
-    #[serde(default)]
-    pub tame_upkeep_material_demand: Vec<MaterialPayoff>,
-    /// The rung-3 twin of [`Self::tame_upkeep_material_demand`], and the one that carries `hurdles`.
-    #[serde(default)]
-    pub corral_upkeep_material_demand: Vec<MaterialPayoff>,
-    /// **THE WHOLE PILE A PEN RING SWALLOWS TO RAISE** — the material twin of
-    /// [`Self::corral_work_cost`], resolved live off the **ladder** at capture and published
-    /// whether or not a build is in flight, because the ring card quotes a price before the player
-    /// commits.
-    ///
-    /// ⛔ **IT EXISTS FOR WORD-FOR-WORD THE REASON [`Self::corral_upkeep_material_demand`] DOES.**
-    /// That field exists because a *pastoral* herd is the only source the `⌃` track ever offers the
-    /// Pen rung from, and its own rung declares no material. This one exists because a *corralled*
-    /// herd is the only source a **ring** is ever offered from, `animal:pen` is the top of its
-    /// branch, and [`Self::build_material_cost`] — which publishes the rung *above* — is therefore
-    /// empty on exactly the row the player is deciding on.
-    ///
-    /// **UNSCALED**, because the labor arm prices a ring's width at the pen rung's own unscaled
-    /// build cost: penning takes no per-species multiplier, and a scaled quote would show one price
-    /// and charge another. On a **pastoral** herd this equals [`Self::build_material_cost`] by
-    /// construction — the same rung's pile reached through two selectors, never a second reading of
-    /// the ladder.
-    #[serde(default)]
-    pub corral_build_material_cost: Vec<MaterialPayoff>,
     /// **The crew hands spent keeping this source this turn** (`docs/plan_site_crews.md` §2.1) —
     /// fractional, summed across every band whose crew keeps it. The row's `keeps N of M` reads it;
     /// `0` on a source that owes nothing or that nobody works.
@@ -978,6 +853,12 @@ pub struct HerdTelemetryState {
     /// See [`Self::next_ground_x`].
     #[serde(default = "no_next_ground")]
     pub next_ground_y: i32,
+    /// **Every rung of this source's branch above the root, quoted** - one [`RungQuoteState`] per
+    /// rung in climb order. Replaces the per-step fields (`cultivation*`, `tended*`, `field*`,
+    /// `sow*`, `tame*`, `corral*`, `pastoral*`, `domestication`): a rung is a row keyed by its
+    /// `rung_key`, never a field, so a new step is a config edit. Appended last.
+    #[serde(default)]
+    pub rung_quotes: Vec<RungQuoteState>,
 }
 
 /// The `-1` "no ground to show" sentinel of the next-seasonal-ground pair — the same convention
@@ -1001,11 +882,7 @@ impl Default for HerdTelemetryState {
             size_class: String::new(),
             huntable: false,
             ecology_phase: String::new(),
-            domestication: 0.0,
-            corralled: false,
-            corral_progress: 0.0,
             per_worker_yield: 0.0,
-            corral_yield: 0.0,
             pen_fed_fraction: pen_fully_fed(),
             carrying_capacity: 0.0,
             graze_range_radius: 0,
@@ -1018,7 +895,6 @@ impl Default for HerdTelemetryState {
             food_per_animal: 0.0,
             herders_needed: 0,
             herded_fraction: fully_herded(),
-            pastoral_yield: 0.0,
             fodder_draw: 0.0,
             pen_fodder_shortfall: 0.0,
             attack: 0.0,
@@ -1056,16 +932,10 @@ impl Default for HerdTelemetryState {
             // No material — the ordinary case, and an EMPTY list rather than a row of zeros.
             material_per_biomass: Vec::new(),
             per_worker_material: Vec::new(),
-            tame_work_done: 0.0,
-            tame_work_cost: 0.0,
-            corral_work_done: 0.0,
-            corral_work_cost: 0.0,
             build_turns_remaining: no_build_turns_estimate(),
             build_work_from_gear: 0.0,
             build_work_per_worker_turn: 0.0,
             // A herd nothing has described quotes no rung, so neither rate is owed yet.
-            tame_upkeep_demand: 0.0,
-            corral_upkeep_demand: 0.0,
             meter_rot_per_turn: 0.0,
             build_queue_position: crate::NOT_IN_ANY_BUILD_QUEUE,
             build_blocked_reason: String::new(),
@@ -1088,9 +958,6 @@ impl Default for HerdTelemetryState {
             build_material_cost: Vec::new(),
             upkeep_material_demand: Vec::new(),
             upkeep_material_supplied: Vec::new(),
-            tame_upkeep_material_demand: Vec::new(),
-            corral_upkeep_material_demand: Vec::new(),
-            corral_build_material_cost: Vec::new(),
             upkeep_hands: NO_UPKEEP_HANDS,
             upkeep_tools_short: false,
             predator_eaten_by: String::new(),
@@ -1098,8 +965,7 @@ impl Default for HerdTelemetryState {
             next_ground_x: no_next_ground(),
             next_ground_y: no_next_ground(),
             predator_eaten: 0.0,
-            corral_material: Vec::new(),
-            pastoral_material: Vec::new(),
+            rung_quotes: Vec::new(),
         }
     }
 }
@@ -1124,10 +990,6 @@ pub struct SpeciesMaterialRates {
 pub struct ForagePatchState {
     pub x: u32,
     pub y: u32,
-    #[serde(default)]
-    pub cultivation_progress: f32,
-    #[serde(default)]
-    pub is_cultivated: bool,
     #[serde(default)]
     pub owner: Option<u32>,
     #[serde(default)]
@@ -1164,31 +1026,6 @@ pub struct ForagePatchState {
     /// whether a patch was DESCRIBED is the row's presence, not this number's size.
     #[serde(default)]
     pub per_worker_yield: f32,
-    /// Food/turn the patch will pay **once cultivated** (the tended harvest on its current standing
-    /// crop). A crew cultivating takes nothing while it works, so this alone is the client's
-    /// "preparing → then Y".
-    #[serde(default)]
-    pub tended_yield: f32,
-    /// The per-patch **`plant:field` build meter**, `0..1` — the plant rung-3 twin of a herd's
-    /// `corral_progress`. Independent of `cultivation_progress`: `Sow` needs no prior patch, so a
-    /// Field may stand on ground that was never tended, and the client shows **two** meters.
-    #[serde(default)]
-    pub field_progress: f32,
-    /// The completed rung 3 — a sown **Field**. Read this rather than inferring a rung from
-    /// `field_progress`.
-    #[serde(default)]
-    pub is_field: bool,
-    /// Food/turn the patch will pay **once sown** (the Field harvest on its current standing crop —
-    /// 2× `tended_yield` on the shipped dials) — Sow's half of the same "preparing → then Y" pair.
-    #[serde(default)]
-    pub field_yield: f32,
-    /// **Why this ground will not take seed** (`SiteRefusal::as_str`: `"too_poor"` / `"too_dry"` /
-    /// `"too_poor_and_too_dry"`), or **`""`** when it will. Resolved through the same
-    /// `RungSiteRequirement::refusal` seam the `sow` command and the labor arm gate on, so the wire
-    /// cannot disagree with the gate. Shipped as an *answer* because the client can re-derive
-    /// nothing: it holds neither the per-biome capacity table nor the hydrology.
-    #[serde(default)]
-    pub sow_site_refusal: String,
     /// **What is actually growing here** — the named plants *this patch's* biomass is made of, as
     /// normalized shares (`docs/plan_flora_roster.md` §2: naming decomposes, it does not add).
     ///
@@ -1275,16 +1112,6 @@ pub struct ForagePatchState {
     /// species key. Appended (append-only).
     #[serde(default)]
     pub committed_display_name: String,
-    // **RETIRED: `tended_trade`** (arc #527), and off the wire.
-    /// Fodder/turn a **completed tended patch** would pay. `0` unless its basket holds a fodder crop.
-    #[serde(default)]
-    pub tended_fodder: f32,
-    // **RETIRED: `field_trade`** (arc #527), and off the wire.
-    // A cash Field's whole product is **material batches**, which this table cannot quote as a
-    // per-turn number — see `MaterialBatchState`, which is what the band actually holds.
-    /// Fodder/turn a **completed Field** would pay — the whole yield of a `hay_grass` Field.
-    #[serde(default)]
-    pub field_fodder: f32,
     // **RETIRED: `cultivate_build_fraction` / `sow_build_fraction`** — the plant twins of the animal
     // pair; see [`HerdTelemetryState`] for why the dip dissolved into the work budget. Neither is on
     // the wire.
@@ -1411,28 +1238,6 @@ pub struct ForagePatchState {
     /// honestly **empty in a dead season**. Appended (append-only).
     #[serde(default)]
     pub per_worker_material: Vec<MaterialPayoff>,
-    /// **The build, PRICED IN WORK** (`docs/plan_unit_costed_work.md` §8). An improvement costs a
-    /// fixed amount of work now, not a fixed number of turns: a crew produces work units per turn
-    /// (head count × floor discipline × kit) and **turns are the output**.
-    ///
-    /// `work_done` is the source's own meter, in work units. `work_cost` is what that job costs **on
-    /// this source**, resolved off the ladder at capture and published **whether or not a build is in
-    /// flight** — that is the point, since the compose sheet must quote the price *before* the player
-    /// commits. The `*_progress` fraction beside it is exactly `work_done / work_cost`. Appended
-    /// (append-only).
-    #[serde(default)]
-    pub cultivation_work_done: f32,
-    /// See [`Self::cultivation_work_done`].
-    #[serde(default)]
-    pub cultivation_work_cost: f32,
-    /// The rung-3 twin of [`Self::cultivation_work_done`]. Two rungs keep two pairs, the
-    /// `cultivate_build_fraction` / `sow_build_fraction` rule: independently tunable jobs must not
-    /// share a number.
-    #[serde(default)]
-    pub field_work_done: f32,
-    /// See [`Self::field_work_done`].
-    #[serde(default)]
-    pub field_work_cost: f32,
     /// **How many more turns a build on this source needs**, at the crew, floor and kit that worked
     /// it this turn — and a **PROJECTION when nothing is being built**, which is by definition the
     /// state a compose sheet is looking at. With an improvement in flight it counts down the running
@@ -1548,30 +1353,6 @@ pub struct ForagePatchState {
     /// Appended (append-only).
     #[serde(default)]
     pub build_work_per_worker_turn: f32,
-    /// **WHAT EACH RUNG COSTS TO HOLD, PER TURN**, in work units — the **rate** half of the same
-    /// quote [`Self::cultivation_work_cost`] / [`Self::field_work_cost`] give the **pile** half of,
-    /// and read beside them by the same rung-picking rule (the assignment's `improvement`, or the
-    /// next rung up when that is empty).
-    ///
-    /// **It is not [`Self::upkeep_demand`], and the difference is the whole point.** That field
-    /// answers *"what is this patch billed right now"* and resolves through the **at-risk** rung —
-    /// the newest meter carrying progress. A wild patch has progress on neither, so it publishes an
-    /// honest `0`, and a compose sheet quoting a Cultivate off it subtracts nothing and promises
-    /// `work_cost / crew` turns for a build that will never move. This one answers *"what would the
-    /// rung being quoted cost to hold"*, resolved at capture off the **ladder** whether or not a
-    /// build is in flight — exactly the rule the `*_work_cost` beside it follows. On a patch
-    /// mid-build the two agree; on an unstarted one they differ, and that difference was the trap.
-    ///
-    /// **Both scale with the size of the land, through the same measure the bill uses.** Both plant
-    /// rungs declare `scaled_by: source_load` and quote their rate **per tender-load** — the tile's
-    /// own forage capacity over `forage.cultivation.capacity_per_tender` — so these are struck at
-    /// capture off *this patch's* tile, exactly as [`Self::upkeep_demand`] is, and not off the
-    /// ladder's bare rate. Appended (append-only).
-    #[serde(default)]
-    pub cultivation_upkeep_demand: f32,
-    /// The rung-3 twin of [`Self::cultivation_upkeep_demand`].
-    #[serde(default)]
-    pub field_upkeep_demand: f32,
     /// **What this patch's at-risk meter will lose on the next decay pass**, in work units — the
     /// rung's own `meter_decay.per_turn` scaled by how short the keeping fell
     /// (`docs/plan_standing_upkeep.md` §4.6a). `0.0` for as long as the rung's grace still forgives
@@ -1691,7 +1472,7 @@ pub struct ForagePatchState {
     /// empty when nothing is queued; this one says **where the source is**, which every source has.
     ///
     /// It ships so a consumer can answer *"has this been improved, and what is above it"* without
-    /// knowing either web's private booleans ([`Self::is_cultivated`] + [`Self::is_field`] here, a
+    /// knowing either web's private booleans (`Self::is_cultivated` + `Self::is_field` here, a
     /// float and a flag on the herd row), and so a third branch costs it nothing. Struck at capture
     /// by `core_sim`'s `forage::patch_rung_key`, the single home of the *"sown → field, cultivated →
     /// tended, else wild"* test, so it cannot disagree with the rung the sim resolves.
@@ -1727,29 +1508,6 @@ pub struct ForagePatchState {
     /// the amounts are never summed — a full store must not paper over missing hands.
     #[serde(default)]
     pub upkeep_material_supplied: Vec<MaterialPayoff>,
-    /// **WHAT EACH PLANT RUNG WOULD COST TO HOLD IN GOODS, PER TURN** — the material twin of the
-    /// [`Self::cultivation_upkeep_demand`] / [`Self::field_upkeep_demand`] pair, read beside them by
-    /// the same rung-picking rule and quoted for the same reason: the `⌃` track's third aside prices
-    /// the rung it is **offering**, before the player commits.
-    ///
-    /// ⛔ **IT IS THE RUNG'S RATE, NOT THE STAMPED BILL.** [`Self::upkeep_material_demand`] answers
-    /// *"what was this source billed this turn"* through the rung it stands **on**; this answers
-    /// *"what would this rung cost to hold"* for a rung it may not have reached. On a source
-    /// mid-climb the two **disagree**, and that is correct — the work pair has exactly that
-    /// relationship.
-    ///
-    /// **Resolved LIVE at capture** rather than off the stamp: the stamp exists to stop an
-    /// interpolated demand moving across the Population→Logistics carry, and a pre-commit quote is
-    /// carried nowhere. Reading the stamp would publish an empty list for every rung the source is
-    /// not already on — which is every rung a track ever offers.
-    ///
-    /// **Scaled by the same tender-load measure the bill is**, since the rung reads one `scaled_by`
-    /// for both currencies. **Empty is "no row", never zero** — which is both plant rungs today.
-    #[serde(default)]
-    pub cultivation_upkeep_material_demand: Vec<MaterialPayoff>,
-    /// The rung-3 twin of [`Self::cultivation_upkeep_material_demand`].
-    #[serde(default)]
-    pub field_upkeep_material_demand: Vec<MaterialPayoff>,
     /// **The crew hands spent keeping this source this turn** (`docs/plan_site_crews.md` §2.1) —
     /// fractional, summed across every band whose crew keeps it. The row's `keeps N of M` reads it;
     /// `0` on a source that owes nothing or that nobody works.
@@ -1759,6 +1517,12 @@ pub struct ForagePatchState {
     /// (`docs/plan_site_crews.md` §2.3) — its crew kept with more of its own hands. The row's `ⓘ`.
     #[serde(default)]
     pub upkeep_tools_short: bool,
+    /// **Every rung of this source's branch above the root, quoted** - one [`RungQuoteState`] per
+    /// rung in climb order. Replaces the per-step fields (`cultivation*`, `tended*`, `field*`,
+    /// `sow*`, `tame*`, `corral*`, `pastoral*`, `domestication`): a rung is a row keyed by its
+    /// `rung_key`, never a field, so a new step is a config edit. Appended last.
+    #[serde(default)]
+    pub rung_quotes: Vec<RungQuoteState>,
 }
 
 /// **"This working does not run out"** — the wire value of [`DepositState::turns_remaining`] on a
@@ -2125,6 +1889,112 @@ pub struct MaterialPayoff {
     pub amount: f32,
 }
 
+/// **ONE RUNG'S QUOTE ON ONE SOURCE** - what the rung `rung_key` would cost and pay for the patch or
+/// herd that carries it, whether or not a build is in flight (`snapshot.fbs` -> `RungQuoteState`).
+/// A source row carries one per rung of its branch above the root, so a step is a row and never a
+/// field.
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+pub struct RungQuoteState {
+    /// The rung's `branch:id` wire key - the join to `LadderRungState::rung_key`.
+    pub rung_key: String,
+    /// Whether the source stands at or above this rung.
+    pub reached: bool,
+    /// The rung's own build meter, `0..=1` (`work_done / work_cost`); `1.0` once `reached`.
+    pub progress: f32,
+    /// The meter in work units.
+    pub work_done: f32,
+    /// What the rung costs ON THIS SOURCE, in work units.
+    pub work_cost: f32,
+    /// The materials the rung's build pile eats at full coverage; empty = none.
+    pub build_material_cost: Vec<MaterialPayoff>,
+    /// What holding the rung costs per turn, in work, at this source's own measure.
+    pub upkeep_demand: f32,
+    /// The materials holding the rung eats per turn; empty = none.
+    pub upkeep_material_demand: Vec<MaterialPayoff>,
+    /// Food per turn the source pays once at this rung.
+    pub food_yield: f32,
+    /// Fodder per turn the source pays once at this rung (`0` on an animal).
+    pub fodder: f32,
+    /// The materials of the source's yield vector once at this rung (empty on a patch row).
+    pub material_payoff: Vec<MaterialPayoff>,
+    /// Why this ground will not take the rung; `""` when it will.
+    pub site_refusal: String,
+}
+
+/// **THE QUOTE OF A RUNG A SOURCE SAYS NOTHING ABOUT** - every number zero, nothing reached. What
+/// [`RungQuoteState::of`] answers for a root rung or a key off the branch, so a reader asking *"how
+/// much work does this rung cost?"* gets a number and never has to branch on a missing row.
+pub static NO_RUNG_QUOTE: RungQuoteState = RungQuoteState {
+    rung_key: String::new(),
+    reached: false,
+    progress: 0.0,
+    work_done: 0.0,
+    work_cost: 0.0,
+    build_material_cost: Vec::new(),
+    upkeep_demand: 0.0,
+    upkeep_material_demand: Vec::new(),
+    food_yield: 0.0,
+    fodder: 0.0,
+    material_payoff: Vec::new(),
+    site_refusal: String::new(),
+};
+
+impl RungQuoteState {
+    /// **The quote for `rung_key` (`branch:id`) among a source's quotes**, or `None` when the source
+    /// has nothing to say about that rung (it is the branch's root, or off the branch).
+    pub fn find<'a>(quotes: &'a [RungQuoteState], rung_key: &str) -> Option<&'a RungQuoteState> {
+        quotes.iter().find(|quote| quote.rung_key == rung_key)
+    }
+
+    /// [`Self::find`], answering [`NO_RUNG_QUOTE`] for a rung the source says nothing about.
+    pub fn of<'a>(quotes: &'a [RungQuoteState], rung_key: &str) -> &'a RungQuoteState {
+        Self::find(quotes, rung_key).unwrap_or(&NO_RUNG_QUOTE)
+    }
+
+    /// **The quote for `rung_key`, inserting a blank one if the source has none** - how a fixture
+    /// states one rung's numbers without rebuilding the whole vector.
+    pub fn entry<'a>(
+        quotes: &'a mut Vec<RungQuoteState>,
+        rung_key: &str,
+    ) -> &'a mut RungQuoteState {
+        let at = quotes
+            .iter()
+            .position(|quote| quote.rung_key == rung_key)
+            .unwrap_or_else(|| {
+                quotes.push(RungQuoteState {
+                    rung_key: rung_key.to_string(),
+                    ..RungQuoteState::default()
+                });
+                quotes.len() - 1
+            });
+        &mut quotes[at]
+    }
+}
+
+impl ForagePatchState {
+    /// This patch's quote for `rung_key` ([`RungQuoteState::of`]).
+    pub fn quote(&self, rung_key: &str) -> &RungQuoteState {
+        RungQuoteState::of(&self.rung_quotes, rung_key)
+    }
+
+    /// A mutable quote for `rung_key`, inserted blank if absent ([`RungQuoteState::entry`]).
+    pub fn quote_mut(&mut self, rung_key: &str) -> &mut RungQuoteState {
+        RungQuoteState::entry(&mut self.rung_quotes, rung_key)
+    }
+}
+
+impl HerdTelemetryState {
+    /// This herd's quote for `rung_key` ([`RungQuoteState::of`]).
+    pub fn quote(&self, rung_key: &str) -> &RungQuoteState {
+        RungQuoteState::of(&self.rung_quotes, rung_key)
+    }
+
+    /// A mutable quote for `rung_key`, inserted blank if absent ([`RungQuoteState::entry`]).
+    pub fn quote_mut(&mut self, rung_key: &str) -> &mut RungQuoteState {
+        RungQuoteState::entry(&mut self.rung_quotes, rung_key)
+    }
+}
+
 /// One named plant's share of a tile's forage capacity — see [`ForagePatchState::composition`].
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct FloraShareInfo {
@@ -2178,7 +2048,7 @@ pub struct FloraShareInfo {
     pub sow_yield_ratio: f32,
     /// **Provisions/turn this tile would pay once the tended rung is complete and committed to this
     /// plant** — the same units and output-multiplier convention as
-    /// [`ForagePatchState::tended_yield`], so the client can substitute one for the other with no
+    /// `ForagePatchState::tended_yield`, so the client can substitute one for the other with no
     /// arithmetic of its own.
     ///
     /// **Per species, because the shipped per-patch quotes are species-blind**: they read whatever
@@ -2193,7 +2063,7 @@ pub struct FloraShareInfo {
     #[serde(default)]
     pub cultivate_payoff: f32,
     /// The Field-rung twin of [`Self::cultivate_payoff`] — the counterpart of
-    /// [`ForagePatchState::field_yield`]. Appended (append-only).
+    /// `ForagePatchState::field_yield`. Appended (append-only).
     #[serde(default)]
     pub sow_payoff: f32,
     /// Fodder/turn a sown Field of this plant would harvest into the band's FODDER store on this tile
@@ -2250,7 +2120,7 @@ pub struct FloraShareInfo {
     pub cultivate_material_payoff: Vec<MaterialPayoff>,
     /// **What a Sow committing this tile to THIS plant would cost, in work units**
     /// (`docs/plan_standing_upkeep.md` §4.15) — the rung's declared `work_cost` times the multiplier
-    /// this crop's own share earns, in the same units as [`ForagePatchState::field_work_cost`].
+    /// this crop's own share earns, in the same units as `ForagePatchState::field_work_cost`.
     ///
     /// **The cost half of the crop decision.** `plant:field` is priced by how much of the tile the
     /// chosen crop still has to replace, and a patch prices exactly one crop — its commitment, or the
@@ -2265,7 +2135,7 @@ pub struct FloraShareInfo {
     ///
     /// Produced by `forage::crop_field_cost_multiplier`, the same expression the patch's own price
     /// goes through, so the figure quoted for the committed crop **is**
-    /// [`ForagePatchState::field_work_cost`]. Appended (append-only).
+    /// `ForagePatchState::field_work_cost`. Appended (append-only).
     #[serde(default)]
     pub sow_work_cost: f32,
 }

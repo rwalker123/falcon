@@ -133,7 +133,10 @@ impl ScoreRow {
             .collect();
         let patches_improved = own_patches
             .iter()
-            .filter(|patch| patch.is_cultivated || patch.is_field)
+            .filter(|patch| {
+                patch.quote(crate::rungs::PLANT_TENDED).reached
+                    || patch.quote(crate::rungs::PLANT_FIELD).reached
+            })
             .count();
 
         let intensification_knowledge = snapshot
@@ -197,7 +200,11 @@ impl ScoreRow {
             patches_owned: own_patches.len(),
             patches_improved,
             herd_biomass_in_view: snapshot.herds.iter().map(|herd| herd.biomass).sum(),
-            herds_corralled: snapshot.herds.iter().filter(|herd| herd.corralled).count(),
+            herds_corralled: snapshot
+                .herds
+                .iter()
+                .filter(|herd| herd.quote(crate::rungs::ANIMAL_PEN).reached)
+                .count(),
             intensification_knowledge,
             craft_knowledge,
             deaths_by_cause,
@@ -260,10 +267,16 @@ mod tests {
             patch.owner = Some(other_faction);
         }
         snapshot.forage_patches[0].owner = Some(faction);
-        snapshot.forage_patches[0].is_cultivated = false;
-        snapshot.forage_patches[0].is_field = false;
+        snapshot.forage_patches[0]
+            .quote_mut(crate::rungs::PLANT_TENDED)
+            .reached = false;
+        snapshot.forage_patches[0]
+            .quote_mut(crate::rungs::PLANT_FIELD)
+            .reached = false;
         snapshot.forage_patches[1].owner = Some(faction);
-        snapshot.forage_patches[1].is_cultivated = true;
+        snapshot.forage_patches[1]
+            .quote_mut(crate::rungs::PLANT_TENDED)
+            .reached = true;
         let died = |tick: u64, faction: u32, cause: &str, count: u32| CommandEventState {
             tick,
             kind: DIED_EVENT_KIND.to_owned(),
@@ -354,7 +367,11 @@ mod tests {
         );
         assert_eq!(
             row.herds_corralled,
-            snapshot.herds.iter().filter(|herd| herd.corralled).count()
+            snapshot
+                .herds
+                .iter()
+                .filter(|herd| herd.quote(crate::rungs::ANIMAL_PEN).reached)
+                .count()
         );
         assert_eq!(
             row.intensification_knowledge.len(),

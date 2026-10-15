@@ -21,7 +21,7 @@ animals in §4.11). `domestication_progress` / `domestication_cost` and `corral_
 `corral_cost` — **four fields, two unconnected meters** — are gone. Prose below that names them is
 describing the retired shape; the seam it points at is `Herd::rung_work_done`, the position read into
 a rung's own span **through the herd's standing**, which is what the wire's `domestication` and
-`corralProgress` meters are still published from (**the raw meter fraction** — `partial_credit`
+`rungQuotes[animal:pen].progress` meters are still published from (**the raw meter fraction** — `partial_credit`
 governs what a half-built pen is *worth*, never what its progress bar reads).
 
 **A rung the standing HOLDS reads FULL, and on `animal:pen` that is load-bearing rather than
@@ -176,7 +176,7 @@ domestication *reduce* capacity). **Playtest dials.**
 > here.** It generalised the pen's harvest rule to a floor the stance names (`Surplus 0.30·K`,
 > `Deplete 0.15·K`, `Eradicate 0`), so every rung on both webs is now the shape this callout already
 > described. What the arc **did** change is which comparisons are meaningful: a stance ceiling is a
-> stock and a rung payoff (`pastoralYield`, `corralYield`) is a long-run rate, so the two cannot be
+> stock and a rung payoff (`rungQuotes[animal:pastoral].foodYield`, `rungQuotes[animal:pen].foodYield`) is a long-run rate, so the two cannot be
 > ordered against each other at a single turn — the ladder lives on the payoff axis, and the 600-turn
 > average is where it is measured (`the_husbandry_ladder_is_a_per_species_growth_rate_ladder`, and the
 > plan's own `stance_probe` property tests).
@@ -663,8 +663,8 @@ is here.
   `pen_extending` gate instead. Deciding both questions there is what made widening a pen materially
   free while raising one cost six panels.
 - **AND THE WIRE STATES THAT PILE ON THE ONE ROW A RING IS OFFERED FROM** —
-  `HerdTelemetryState.corralBuildMaterialCost`, the material twin of `corralWorkCost` and the build
-  twin of `corralUpkeepMaterialDemand`. It exists because `buildMaterialCost` beside it prices the
+  `rungQuotes[animal:pen].buildMaterialCost`, the material twin of `rungQuotes[animal:pen].workCost` and the build
+  twin of `rungQuotes[animal:pen].upkeepMaterialDemand`. It exists because `buildMaterialCost` beside it prices the
   rung **directly above** where a herd stands, and a ring is only ever offered on a herd already
   standing on `animal:pen` — the **top of its branch**, where that field is deliberately empty
   (*"the honest reading rather than a repeat of the pen's own"*). So a ring price card could state
@@ -678,7 +678,7 @@ is here.
   pins the published pile against what a **completed ring actually takes off the band's shelf**.
   ⛔ **THERE IS NO `tameBuildMaterialCost`**: the tame rung has no repeatable increment, and
   `buildMaterialCost` already carries the tame pile on the only row that can climb to it — a wild
-  herd. The asymmetry against the `tameUpkeepMaterialDemand`/`corralUpkeepMaterialDemand` pair is
+  herd. The asymmetry against the `rungQuotes[animal:pastoral].upkeepMaterialDemand`/`rungQuotes[animal:pen].upkeepMaterialDemand` pair is
   that that pair prices two rungs a source can **stand on**, where this prices the one job a source
   can **repeat**.
 - **THE SHORTFALL SHEDS ANIMALS, and no new penalty was added.** `uncontained_overage` reads
@@ -1591,8 +1591,8 @@ units**, complete at its stored `corral_cost`; the pen under construction), `cor
 > badge is their quotient with the zero denominator guarded — `0 / 0` is *"no ring"*, not *"0%"*.
 > The one field on its own is an unscaled work count that a percentage readout renders as nonsense
 > (a 69-unit ring read as *"Fencing 6900%"*), which is what a schema comment still describing a
-> normalized fraction cost. It is the same meter/pile pair `tameWorkDone`/`tameWorkCost` and
-> `corralWorkDone`/`corralWorkCost` already publish, with one difference: those costs are **resolved
+> normalized fraction cost. It is the same meter/pile pair `rungQuotes[animal:pastoral].workDone`/`rungQuotes[animal:pastoral].workCost` and
+> `rungQuotes[animal:pen].workDone`/`rungQuotes[animal:pen].workCost` already publish, with one difference: those costs are **resolved
 > at capture** so a compose sheet can price an uncommitted build, while this one is the herd's
 > **stamped** cost. Guarded by
 > `build_queue::a_ring_publishes_the_cost_its_progress_completes_at`, which asserts on the encoded
@@ -1747,14 +1747,14 @@ units**, complete at its stored `corral_cost`; the pen under construction), `cor
   `WorldSnapshot` and `WorldDelta` (`snapshot.fbs`, `sim_schema`, `snapshot.rs`
   `herd_snapshot_entries`): `HerdTelemetryState.corralled:bool` (= `Herd::is_corralled()`) and
   **`corralProgress:float`** (0..1, the pen-building meter — the animal twin of
-  `ForagePatchState.cultivationProgress`), plus **`penFedFraction:float`** — per-herd, for the herd
+  `rungQuotes[plant:tended].progress`), plus **`penFedFraction:float`** — per-herd, for the herd
   drawer and the starving warning.
   - **`penUpkeep` is RETIRED** (off the wire). It was the **food** this pen demanded, or
     would demand once built, at the herd's current biomass (`pen.upkeep_per_biomass × biomass`) — a
     projection for an unpenned herd, the live demand for a penned one, computed on the same biomass
-    basis as `corralYield` so the two were a matched pair the client **subtracted** on the pre-commit
+    basis as `rungQuotes[animal:pen].foodYield` so the two were a matched pair the client **subtracted** on the pre-commit
     `Corral` row. **A pen has no food-unit running cost now**, so there is nothing to subtract and
-    `corralYield` is the whole answer. `corralYield` keeps the always-meaningful discipline
+    `rungQuotes[animal:pen].foodYield` is the whole answer. `rungQuotes[animal:pen].foodYield` keeps the always-meaningful discipline
     `penUpkeep` used to state: at or below `K/2` the projected yield is honestly `0` (escapement — the
     pen pays nothing until the herd rebuilds), never `0`-because-unpenned.
     > **`buildTurnsRemaining` is the same rule applied to TIME.** It publishes the turns a running
@@ -1785,7 +1785,7 @@ units**, complete at its stored `corral_cost`; the pen under construction), `cor
       that row. Both die with the larder feed. `fodderDraw` itself survives, in its own grass units,
       which is where it always belonged.
 
-  Plus the forecast pair `huntPolicyCeilings`' **corral** row / `corralYield` (see
+  Plus the forecast pair `huntPolicyCeilings`' **corral** row / `rungQuotes[animal:pen].foodYield` (see
   "Pre-commit Yield Forecast"). See "Intensification display snapshot" under Cultivation for the
   plant-side + faction-knowledge fields.
 - **Follow-up (final Phase-1 slice):** the **client _rendering_ for both ladders** — cultivation +
@@ -1825,7 +1825,7 @@ left on the entry, and why:
 | `x` / `y` | entry | **kept as a pair with the fog gate**, which decided this row's visibility against `entry.position` — publishing a different tile beside it would describe a herd whose presence was judged somewhere else. They cannot differ in any case: the only Population-stage writer of `current_pos` is `Herd::corral_at`, and the tile it is handed is `herd.position()`, the hex the herd already stands on |
 | everything else | **live `Herd`** | see below |
 
-- **The build meters** — `domestication`, `corralled`, `corralProgress` — through
+- **The build meters** — `domestication`, `corralled`, `rungQuotes[animal:pen].progress` — through
   `intensification::build_fraction`, because the build engine accrues in `advance_labor_allocation`
   at Population.
 - **`biomass`**, because `advance_husbandry`'s shed/starve shrink and the Population hunt take both
@@ -1848,8 +1848,8 @@ left on the entry, and why:
   pen had just ended and the map drew a migration arrow on an animal that cannot move. (`routeLength`
   is live for uniformity only; a herd's route is built at spawn and never rewritten.)
 
-**The lag became a contradiction when the work pair joined it in the same sentence.** `tameWorkDone`
-/ `tameWorkCost` are live, so a completed Tame published as *"Domesticating 50 / 50 work (99%)"* —
+**The lag became a contradiction when the work pair joined it in the same sentence.** `rungQuotes[animal:pastoral].workDone`
+/ `rungQuotes[animal:pastoral].workCost` are live, so a completed Tame published as *"Domesticating 50 / 50 work (99%)"* —
 one row, one meter, two frames — and read Domesticated the turn after, with nothing in the sim having
 reverted.
 

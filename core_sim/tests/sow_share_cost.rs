@@ -317,7 +317,8 @@ fn published_patches(app: &App) -> Vec<PublishedPatch> {
         .iter()
         .map(|row| PublishedPatch {
             tile: UVec2::new(row.x(), row.y()),
-            field_work_cost: row.fieldWorkCost(),
+            field_work_cost: sim_schema::wire_rung_quote(row.rungQuotes(), "plant:field")
+                .map_or(0.0, |quote| quote.workCost()),
             committed_species: row.committedSpecies().unwrap_or_default().to_string(),
             crops: row
                 .composition()

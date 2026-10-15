@@ -72,13 +72,38 @@ fn fingerprint(row: &fb::ForagePatchState<'_>) -> PatchFingerprint {
     vec![
         ("hasOwner", format!("{}", row.hasOwner())),
         ("owner", format!("{}", row.owner())),
-        ("isCultivated", format!("{}", row.isCultivated())),
+        (
+            "isCultivated",
+            format!(
+                "{}",
+                sim_schema::wire_rung_quote(row.rungQuotes(), "plant:tended")
+                    .is_some_and(|quote| quote.reached())
+            ),
+        ),
         (
             "cultivationProgress",
-            format!("{}", row.cultivationProgress()),
+            format!(
+                "{}",
+                sim_schema::wire_rung_quote(row.rungQuotes(), "plant:tended")
+                    .map_or(0.0, |quote| quote.progress())
+            ),
         ),
-        ("isField", format!("{}", row.isField())),
-        ("fieldProgress", format!("{}", row.fieldProgress())),
+        (
+            "isField",
+            format!(
+                "{}",
+                sim_schema::wire_rung_quote(row.rungQuotes(), "plant:field")
+                    .is_some_and(|quote| quote.reached())
+            ),
+        ),
+        (
+            "fieldProgress",
+            format!(
+                "{}",
+                sim_schema::wire_rung_quote(row.rungQuotes(), "plant:field")
+                    .map_or(0.0, |quote| quote.progress())
+            ),
+        ),
         ("carryingCapacity", format!("{}", row.carryingCapacity())),
         ("tileCapacity", format!("{}", row.tileCapacity())),
         ("biomass", format!("{}", row.biomass())),
@@ -89,10 +114,38 @@ fn fingerprint(row: &fb::ForagePatchState<'_>) -> PatchFingerprint {
         ),
         ("fodderPerBiomass", format!("{}", row.fodderPerBiomass())),
         ("perWorkerYield", format!("{}", row.perWorkerYield())),
-        ("tendedYield", format!("{}", row.tendedYield())),
-        ("fieldYield", format!("{}", row.fieldYield())),
-        ("tendedFodder", format!("{}", row.tendedFodder())),
-        ("fieldFodder", format!("{}", row.fieldFodder())),
+        (
+            "tendedYield",
+            format!(
+                "{}",
+                sim_schema::wire_rung_quote(row.rungQuotes(), "plant:tended")
+                    .map_or(0.0, |quote| quote.foodYield())
+            ),
+        ),
+        (
+            "fieldYield",
+            format!(
+                "{}",
+                sim_schema::wire_rung_quote(row.rungQuotes(), "plant:field")
+                    .map_or(0.0, |quote| quote.foodYield())
+            ),
+        ),
+        (
+            "tendedFodder",
+            format!(
+                "{}",
+                sim_schema::wire_rung_quote(row.rungQuotes(), "plant:tended")
+                    .map_or(0.0, |quote| quote.fodder())
+            ),
+        ),
+        (
+            "fieldFodder",
+            format!(
+                "{}",
+                sim_schema::wire_rung_quote(row.rungQuotes(), "plant:field")
+                    .map_or(0.0, |quote| quote.fodder())
+            ),
+        ),
         (
             "committedSpecies",
             row.committedSpecies().unwrap_or("").to_string(),
@@ -104,14 +157,36 @@ fn fingerprint(row: &fb::ForagePatchState<'_>) -> PatchFingerprint {
         ("currentRung", row.currentRung().unwrap_or("").to_string()),
         (
             "cultivationWorkDone",
-            format!("{}", row.cultivationWorkDone()),
+            format!(
+                "{}",
+                sim_schema::wire_rung_quote(row.rungQuotes(), "plant:tended")
+                    .map_or(0.0, |quote| quote.workDone())
+            ),
         ),
-        ("fieldWorkDone", format!("{}", row.fieldWorkDone())),
+        (
+            "fieldWorkDone",
+            format!(
+                "{}",
+                sim_schema::wire_rung_quote(row.rungQuotes(), "plant:field")
+                    .map_or(0.0, |quote| quote.workDone())
+            ),
+        ),
         (
             "cultivationWorkCost",
-            format!("{}", row.cultivationWorkCost()),
+            format!(
+                "{}",
+                sim_schema::wire_rung_quote(row.rungQuotes(), "plant:tended")
+                    .map_or(0.0, |quote| quote.workCost())
+            ),
         ),
-        ("fieldWorkCost", format!("{}", row.fieldWorkCost())),
+        (
+            "fieldWorkCost",
+            format!(
+                "{}",
+                sim_schema::wire_rung_quote(row.rungQuotes(), "plant:field")
+                    .map_or(0.0, |quote| quote.workCost())
+            ),
+        ),
         ("upkeepDemand", format!("{}", row.upkeepDemand())),
         (
             "upkeepWorkersNeeded",

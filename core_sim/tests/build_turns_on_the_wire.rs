@@ -1031,8 +1031,12 @@ fn the_published_rot_is_exactly_what_the_next_decay_pass_bleeds() {
 
     // **`source` is a PARAMETER, not a capture** — the rescue arm below opens a second world, and a
     // closure holding the first world's tile would read a patch that is not in it.
-    let work_done =
-        |app: &App, source| published_patch_field(app, source, |p| p.cultivationWorkDone());
+    let work_done = |app: &App, source| {
+        published_patch_field(app, source, |p| {
+            sim_schema::wire_rung_quote(p.rungQuotes(), "plant:tended")
+                .map_or(0.0, |quote| quote.workDone())
+        })
+    };
     let rot_now = |app: &App, source| published_patch_field(app, source, |p| p.meterRotPerTurn());
 
     // --- (1) THE BOUNDARY, and (2) the steady state, on one walk. ---------------------------------
@@ -1172,7 +1176,10 @@ fn an_unstarted_patch_publishes_the_quoted_rungs_upkeep_where_the_billed_one_is_
     recapture_snapshot_in_place(&mut app.world);
 
     let billed = published_patch_field(&app, source, |patch| patch.upkeepDemand());
-    let quoted = published_patch_field(&app, source, |patch| patch.cultivationUpkeepDemand());
+    let quoted = published_patch_field(&app, source, |patch| {
+        sim_schema::wire_rung_quote(patch.rungQuotes(), "plant:tended")
+            .map_or(0.0, |quote| quote.upkeepDemand())
+    });
     assert_eq!(
         billed,
         core_sim::NO_UPKEEP_DEMAND,
@@ -1188,7 +1195,10 @@ fn an_unstarted_patch_publishes_the_quoted_rungs_upkeep_where_the_billed_one_is_
     // pool's bill, not a tax on the build, and on ground nobody has started there is nothing banked
     // and therefore nothing to rot. The quote used to read `-3` here — *"the meter never reaches its
     // cost"* — about a build that finishes perfectly well.
-    let cost = published_patch_field(&app, source, |patch| patch.cultivationWorkCost());
+    let cost = published_patch_field(&app, source, |patch| {
+        sim_schema::wire_rung_quote(patch.rungQuotes(), "plant:tended")
+            .map_or(0.0, |quote| quote.workCost())
+    });
     // **PLUS WHAT THE POOL'S TOOLS DELIVER, IN THE DIVISOR** (`docs/plan_standing_upkeep.md` §4.8).
     // The builders row names no kit, so the pool derives one per queue entry and the roster answers
     // `tillage` for a patch — the hoes are the plant web's build tool. Read off the band's own kit
@@ -1224,7 +1234,10 @@ fn an_unstarted_patch_publishes_the_quoted_rungs_upkeep_where_the_billed_one_is_
     core_sim::run_turn(&mut app);
     recapture_snapshot_in_place(&mut app.world);
     let billed = published_patch_field(&app, source, |patch| patch.upkeepDemand());
-    let quoted = published_patch_field(&app, source, |patch| patch.cultivationUpkeepDemand());
+    let quoted = published_patch_field(&app, source, |patch| {
+        sim_schema::wire_rung_quote(patch.rungQuotes(), "plant:tended")
+            .map_or(0.0, |quote| quote.upkeepDemand())
+    });
     assert!(
         quoted > 0.0,
         "fixture: the tended rung costs something to hold, or the comparison is vacuous"
@@ -1335,7 +1348,11 @@ fn a_wild_patch_publishes_the_ground_twice() {
     let carrying = published_patch_field(&app, source, |patch| patch.carryingCapacity());
 
     assert!(
-        !published_patch_field(&app, source, |patch| patch.isField()),
+        !published_patch_field(&app, source, |patch| sim_schema::wire_rung_quote(
+            patch.rungQuotes(),
+            "plant:field"
+        )
+        .is_some_and(|quote| quote.reached())),
         "fixture: this arm is about ground nobody has built on"
     );
     assert!(
@@ -1401,7 +1418,10 @@ fn the_quoted_price_is_the_price_the_patch_will_be_billed() {
     core_sim::run_turn(&mut app);
     recapture_snapshot_in_place(&mut app.world);
 
-    let quoted = published_patch_field(&app, source, |patch| patch.cultivationUpkeepDemand());
+    let quoted = published_patch_field(&app, source, |patch| {
+        sim_schema::wire_rung_quote(patch.rungQuotes(), "plant:tended")
+            .map_or(0.0, |quote| quote.upkeepDemand())
+    });
     let billed = published_patch_field(&app, source, |patch| patch.upkeepDemand());
     assert!(
         billed > core_sim::NO_UPKEEP_DEMAND,
@@ -1483,7 +1503,10 @@ fn a_blocked_head_publishes_no_supply_against_the_zero_demand_it_publishes() {
         (
             published_patch_field(&app, source, |patch| patch.upkeepSupplied()),
             published_patch_field(&app, source, |patch| patch.upkeepDemand()),
-            published_patch_field(&app, source, |patch| patch.cultivationWorkDone()),
+            published_patch_field(&app, source, |patch| {
+                sim_schema::wire_rung_quote(patch.rungQuotes(), "plant:tended")
+                    .map_or(0.0, |quote| quote.workDone())
+            }),
             published_patch_field(&app, source, |patch| {
                 patch.buildBlockedReason().unwrap_or_default().to_string()
             }),
