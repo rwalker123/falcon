@@ -253,7 +253,8 @@ An AI people answers every pending item by command on its turn, exactly as a hum
   `ai_treaty_goodwill` (opening value **0.2**, the friendly line).
 
 **The AI answers and does not initiate in this issue.** It sends no gifts, offers or proposals of its
-own; goodwill toward a human player rises through the human's dealings.
+own; goodwill toward a human player rises through the human's dealings. The initiating half is
+**#829** (arc #666).
 
 ## 5. Config — `src/data/diplomacy_config.json`
 
