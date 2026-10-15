@@ -681,6 +681,20 @@ static func branch_name(branches: Array, branch: String) -> String:
 				return label
 	return _sentence_case(branch.replace(RUNG_ID_WORD_JOINER, " ").strip_edges())
 
+## What a tile row with no improvement stands on: the branch's ROOT rung (lowest `order` among the
+## catalog rows of that branch), named as the catalog names it. `TILE_BRANCH_UNKNOWN_RUNG` where the
+## catalog carries no rung of the branch at all -- never a word from another branch's vocabulary.
+const TILE_BRANCH_UNKNOWN_RUNG := "—"
+
+static func branch_root_name(catalog: Array, branch: String) -> String:
+	var root: Dictionary = {}
+	for row in catalog:
+		if not (row is Dictionary) or String((row as Dictionary).get("branch", "")) != branch:
+			continue
+		if root.is_empty() or catalog_order(row as Dictionary) < catalog_order(root):
+			root = row
+	return catalog_name(root) if not root.is_empty() else TILE_BRANCH_UNKNOWN_RUNG
+
 ## One rung's player-facing name off the catalog by its `rung_key`, the humanised key where it has none.
 static func rung_name_in(catalog: Array, rung_key: String) -> String:
 	var row := _row_of_rung_key(catalog, rung_key)

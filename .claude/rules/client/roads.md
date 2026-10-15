@@ -1753,8 +1753,9 @@ A `kind == "tile"` labor row (`HudConst.LABOR_KIND_TILE`, `branch` naming its la
 reaches the Workforce bar's Groundwork slice. The Work tab draws it as a read-only row in the
 GROUNDWORK section (`BandPanelController._tile_source_models` / `_build_tile_row`): the branch's name
 from `ladder_branches`, the rung it stands on from `ladder_rungs` x `tile_improvements`
-(`HudRouteVocab.branch_name` / `rung_name_in`, humanised where the catalog has no word, `Wild` where no
-improvement row exists yet), its crew count, its keeping mark off the row's `upkeep_*` keys and a far
+(`HudRouteVocab.branch_name` / `rung_name_in`, humanised where the catalog has no word; with no
+improvement row yet, the branch's root rung via `branch_root_name`, or `—` for a branch the catalog
+lacks — never `Wild`, which is plant vocabulary), its crew count, its keeping mark off the row's `upkeep_*` keys and a far
 posting's party block. No stepper and no inspector: assigning a tile crew has no UI until the first tile
 branch ships. A tile build is `build <verb> <faction> <x> <y>` (no band token; only road verbs name a
 band). `band_panel_work_tile_crews` is the frame, over a fixture `orchard` / `grafted` catalog and a

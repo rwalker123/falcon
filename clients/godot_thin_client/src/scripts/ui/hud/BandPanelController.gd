@@ -2910,7 +2910,7 @@ func _tile_source_models(band: Dictionary) -> Array:
                 HudRouteVocab.branch_name(branches, branch),
                 _roadwork_roster_locator(distance, camp, Vector2i(x, y))],
             "rung_name": HudRouteVocab.rung_name_in(catalog, rung_key) \
-                if rung_key != "" else HudWorkVocab.SITE_CREW_RUNG_WILD,
+                if rung_key != "" else HudRouteVocab.branch_root_name(catalog, branch),
         })
     models.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
         if int(a["distance"]) != int(b["distance"]):

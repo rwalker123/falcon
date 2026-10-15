@@ -25562,12 +25562,14 @@ const TILE_FX_RUNG_LABEL := "Grafted"
 const TILE_FX_UNKNOWN_BRANCH := "salt_pan"
 const TILE_FX_UNKNOWN_NAME := "Salt pan"
 const TILE_FX_WORKERS := 2
+const TILE_FX_ROOT_LABEL := "Bare ground"
+const TILE_FX_BARE_WORKERS := 3
 const TILE_FX_UNKNOWN_WORKERS := 1
 
 func _tile_crew_catalog() -> Array:
 	return [
-		{"rung_key": "orchard:planted", "branch": TILE_FX_BRANCH, "order": 0, "verb": "",
-			"label": "Planted", "source_kind": "tile"},
+		{"rung_key": "orchard:bare", "branch": TILE_FX_BRANCH, "order": 0, "verb": "",
+			"label": TILE_FX_ROOT_LABEL, "source_kind": "tile"},
 		{"rung_key": TILE_FX_RUNG, "branch": TILE_FX_BRANCH, "order": 1, "verb": "graft",
 			"label": TILE_FX_RUNG_LABEL, "source_kind": "tile"},
 	]
@@ -25612,6 +25614,9 @@ func _render_tile_crew_state() -> void:
 	rows.append({"kind": HudConst.LABOR_KIND_TILE, "workers": TILE_FX_WORKERS,
 		"target_x": ROSTER_NEAR_TILE.x, "target_y": ROSTER_NEAR_TILE.y, "fauna_id": "",
 		"branch": TILE_FX_BRANCH})
+	rows.append({"kind": HudConst.LABOR_KIND_TILE, "workers": TILE_FX_BARE_WORKERS,
+		"target_x": ROSTER_MID_TILE.x, "target_y": ROSTER_MID_TILE.y, "fauna_id": "",
+		"branch": TILE_FX_BRANCH})
 	rows.append({"kind": HudConst.LABOR_KIND_TILE, "workers": TILE_FX_UNKNOWN_WORKERS,
 		"target_x": ROSTER_FAR_TILE.x, "target_y": ROSTER_FAR_TILE.y, "fauna_id": "",
 		"branch": TILE_FX_UNKNOWN_BRANCH})
@@ -25636,9 +25641,16 @@ func _render_tile_crew_state() -> void:
 	_assert_band_panel("tile crew — a branch the catalog does not carry still draws, humanised as `%s` (got %s)"
 			% [TILE_FX_UNKNOWN_NAME, str(unknown)],
 		_tile_texts_lead_with(unknown, TILE_FX_UNKNOWN_NAME))
-	_assert_band_panel("tile crew — …on the floor word where no `tile_improvements` row exists (got %s)"
+	_assert_band_panel("tile crew — …on an em dash, never `Wild`, where the catalog has no such branch (got %s)"
 			% str(unknown),
-		unknown.has(HudWorkVocab.site_crew_line(HudWorkVocab.SITE_CREW_RUNG_WILD)))
+		unknown.has(HudWorkVocab.site_crew_line(HudRouteVocab.TILE_BRANCH_UNKNOWN_RUNG))
+			and not unknown.has(HudWorkVocab.site_crew_line(HudWorkVocab.SITE_CREW_RUNG_WILD)))
+	var bare := _tile_crew_row_texts("%d,%d:%s" % [ROSTER_MID_TILE.x, ROSTER_MID_TILE.y,
+		TILE_FX_BRANCH])
+	_assert_band_panel("tile crew — an orchard crew with no improvement yet stands on the branch's ROOT rung `%s`, not `Wild` (got %s)"
+			% [TILE_FX_ROOT_LABEL, str(bare)],
+		bare.has(HudWorkVocab.site_crew_line(TILE_FX_ROOT_LABEL))
+			and not bare.has(HudWorkVocab.site_crew_line(HudWorkVocab.SITE_CREW_RUNG_WILD)))
 	_hud.update_ladder_rungs([])
 	_hud.update_ladder_branches([])
 	_hud.update_tile_improvements([])
