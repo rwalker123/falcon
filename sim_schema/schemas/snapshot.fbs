@@ -2531,6 +2531,14 @@ table SedentarizationState {
   // clamp(belief on the band's STANDING tile / references.belief, 0, 1). Pre-EMA - the score above
   // is smoothed, this is not; 0 when no band stands on belief. Appended last.
   beliefPoints:float = 0;
+  // The other four inputs' shares of this turn's raw points, same meaning as beliefPoints
+  // (100 x weight x norm, pre-EMA): domestication (herds + cultivated patches), surplus (larder),
+  // land (map-wide resource density), population. With beliefPoints they sum to the raw score the
+  // EMA smooths into `score`. Appended last.
+  domesticationPoints:float = 0;
+  surplusPoints:float = 0;
+  landPoints:float = 0;
+  populationPoints:float = 0;
 }
 
 // One faction's mobility score (#800) - the roaming counterpart of `SedentarizationState`. `score`

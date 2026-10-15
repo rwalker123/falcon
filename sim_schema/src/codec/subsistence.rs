@@ -461,6 +461,10 @@ fn create_sedentarization<'a>(
                 score: state.score,
                 stage: Some(stage),
                 beliefPoints: state.belief_points,
+                domesticationPoints: state.domestication_points,
+                surplusPoints: state.surplus_points,
+                landPoints: state.land_points,
+                populationPoints: state.population_points,
             },
         );
         entries.push(entry);
@@ -1527,6 +1531,10 @@ fn decode_sedentarization(state: fb::SedentarizationState<'_>) -> Sedentarizatio
         score: state.score(),
         stage: text(state.stage()),
         belief_points: state.beliefPoints(),
+        domestication_points: state.domesticationPoints(),
+        surplus_points: state.surplusPoints(),
+        land_points: state.landPoints(),
+        population_points: state.populationPoints(),
     }
 }
 

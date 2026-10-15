@@ -1383,6 +1383,16 @@ lowers the stage silently). The score is exported per-faction in the snapshot
 (`SedentarizationState`, mirroring `factionInventory`) and shown as a HUD meter. Tunables live
 in `data/sedentarization_config.json` (`sedentarization_config.rs`).
 
+**The score is itemized on the wire.** `sedentarization_tick` computes each input's raw points
+once (`100 x weight x norm`, pre-EMA) and builds the raw score as their sum, so the published parts
+add up to it by construction. `SedentarizationEntry` keeps all five (`domestication_points`,
+`surplus_points`, `land_points` for the resource-density term, `population_points`,
+`belief_points`) and `SedentarizationState` publishes them as `domesticationPoints`,
+`surplusPoints`, `landPoints`, `populationPoints` and `beliefPoints` (each appended last, default
+`0`). On a faction's first reading the smoothed `score` is `(1 - smoothing) x` the sum of the five.
+The entry is checkpoint state (`SimState::sedentarization`, `SAVE_FORMAT_VERSION` 43). Pinned by
+`belief_culture::the_tethers_input_points_sum_to_the_raw_score_on_the_encoded_snapshot`.
+
 > **Reframed by the Settlement & Population Economy arc** (`docs/plan_settlement_population.md`):
 > settlements are *derived* from clustered populated tiles + tended improvements (there is no
 > discrete founding), and `SedentarizationScore` becomes an emergent readout of accumulated

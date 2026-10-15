@@ -1532,6 +1532,16 @@ from the player's `sedentarization` entry, which `FactionReadouts.update_sedenta
   inserted ahead of the value (a plain `Label` renders no BBCode).
 - **Below it** the row reads `0 — stand on your dead` in `INK_DIM`. It fits the zone without an ellipsis
   and says what to do next.
+- **Both forms carry the same hover**, `FACTION_SETTLING_BELIEF_TOOLTIP` (`Points to Settling from bands
+  camped where their dead lie.`), routed through `_stat_row`'s tip argument so it is set on both Labels
+  of the row (a bare `Label.tooltip_text` is a silent no-op) and hoverable across it.
+- **The stage row's hover itemizes the five inputs** (`FACTION_SETTLING_TOOLTIP_FORMAT`, built by
+  `FactionRollup._settling_tooltip`): `Tamed herds and tended plants`, `Food to spare`, `Rich land`,
+  `Population` and `From the dead`, each `+N` from the entry's `domestication_points`, `surplus_points`,
+  `land_points`, `population_points` and `belief_points`. They are raw, pre-smoothing points on the
+  0-100 scale that sum to the raw score, not shares of the smoothed `score`; a missing key reads 0.
+  `_assert_settling_tooltips` asserts the stage tip lists every fixture value and the belief row carries
+  its tip in both forms.
 - **The row's height is reached by the band zone's scroll** on a horizontal dock.
 - **Frames:** `band_panel_faction` (the seeded `+24`, `TOPBAR_SEDENTARIZATION_BELIEF_POINTS`) and
   `band_panel_faction_settling_untied` (`_assert_faction_settling_belief`, which re-pushes the entry with

@@ -249,6 +249,14 @@ const FACTION_MOBILITY_KEY := "Mobility"
 const FACTION_MOBILITY_SCALE := 100
 const FACTION_MOBILITY_TOOLTIP_FORMAT := "Roaming skills (herd lore, travois, drives): +%d\nWalking with the herds: +%d"
 
+## The Settling stage row's hover: the five inputs to the raw settle score, each the points it gave this
+## turn (`domestication_points`, `surplus_points`, `land_points`, `population_points`, `belief_points`,
+## pre-smoothing, so the five sum to the raw score and the meter follows them). A key the entry lacks
+## reads 0.
+const FACTION_SETTLING_TOOLTIP_FORMAT := "Settling score (sedentarization)\nTamed herds and tended plants: +%d\nFood to spare: +%d\nRich land: +%d\nPopulation: +%d\nFrom the dead: +%d"
+## The `From the dead` row's hover, on both of its forms (the `+N` one and the dimmed zero one).
+const FACTION_SETTLING_BELIEF_TOOLTIP := "Points to Settling from bands camped where their dead lie."
+
 ## **OPEN BORDERS — the faction page's one control** (issue #512, `docs/plan_band_fission.md`
 ## §Defection). A faction-wide policy with no other home: whether another people's unhappy leavers,
 ## and their defecting parties, may join this people's bands. The checkbox's face is the policy's

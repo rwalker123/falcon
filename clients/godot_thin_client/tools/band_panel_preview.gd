@@ -546,6 +546,12 @@ const TOPBAR_SEDENTARIZATION_STAGE := "soft"
 ## How many of that score's points the band standing on its dead supplies (the SETTLING block's
 ## `From the dead` row). Seeded non-zero so every faction frame measures the block with the mark in.
 const TOPBAR_SEDENTARIZATION_BELIEF_POINTS := 24.0
+## The other four raw settle-score inputs, distinct and nonzero so the stage row's tooltip can be told
+## apart value by value.
+const SEDENTARIZATION_DOMESTICATION_POINTS := 11.0
+const SEDENTARIZATION_SURPLUS_POINTS := 7.0
+const SEDENTARIZATION_LAND_POINTS := 13.0
+const SEDENTARIZATION_POPULATION_POINTS := 5.0
 ## Slack allowed between a stat-row key's laid-out width and the width its own font measures for its
 ## own string (`_faction_keyless_rows`). It absorbs the sub-pixel disagreement between the container's
 ## rounded layout and the text server's float measurement, and nothing wider: a CLIPPED key comes back
@@ -1011,7 +1017,10 @@ func _ready() -> void:
 	# Seed the top bar so the HUD reflow reads against real content.
 	_hud.update_sedentarization([{"faction": 0,
 		"score": TOPBAR_SEDENTARIZATION_SCORE, "stage": TOPBAR_SEDENTARIZATION_STAGE,
-		"belief_points": TOPBAR_SEDENTARIZATION_BELIEF_POINTS}])
+		"belief_points": TOPBAR_SEDENTARIZATION_BELIEF_POINTS,
+		"domestication_points": SEDENTARIZATION_DOMESTICATION_POINTS,
+		"surplus_points": SEDENTARIZATION_SURPLUS_POINTS, "land_points": SEDENTARIZATION_LAND_POINTS,
+		"population_points": SEDENTARIZATION_POPULATION_POINTS}])
 	# The mobility row beside it (issue #800): the viewer's own row, the shape the native decoder emits.
 	_hud.update_mobility([{"faction": 0, "score": MOBILITY_SCORE,
 		"skills_points": MOBILITY_SKILLS_POINTS, "distance_points": MOBILITY_DISTANCE_POINTS}])
@@ -9899,9 +9908,13 @@ func _assert_faction_settling_belief() -> void:
 		tied.ends_with("+%d" % int(TOPBAR_SEDENTARIZATION_BELIEF_POINTS)))
 	_assert_band_panel("faction settling belief: ...behind the ancestors mark",
 		_has_label_containing(zone, BandOverlayRenderer.ANCESTORS_GLYPH))
+	_assert_settling_tooltips(zone, true)
 	_hud.update_sedentarization([{"faction": HudConst.PLAYER_FACTION_ID,
 		"score": TOPBAR_SEDENTARIZATION_SCORE, "stage": TOPBAR_SEDENTARIZATION_STAGE,
-		"belief_points": 0.0}])
+		"belief_points": 0.0,
+		"domestication_points": SEDENTARIZATION_DOMESTICATION_POINTS,
+		"surplus_points": SEDENTARIZATION_SURPLUS_POINTS, "land_points": SEDENTARIZATION_LAND_POINTS,
+		"population_points": SEDENTARIZATION_POPULATION_POINTS}])
 	_hud.update_faction_policies([_faction_policy_fixture(true)])
 	await _settle()
 	await _save("band_panel_faction_settling_untied")
@@ -9910,6 +9923,7 @@ func _assert_faction_settling_belief() -> void:
 	_assert_band_panel("faction settling belief: no band on its dead reads '%s' (got '%s')" % [
 			HudWorkVocab.FACTION_SETTLING_BELIEF_NONE, untied],
 		untied == HudWorkVocab.FACTION_SETTLING_BELIEF_NONE)
+	_assert_settling_tooltips(zone, false)
 	_assert_band_panel("faction settling belief: ...and carries no ancestors mark",
 		zone != null and not _has_label_containing(zone, BandOverlayRenderer.ANCESTORS_GLYPH))
 	# The long sentence must not widen the zone: the Settling meter beside it still renders whole.
@@ -9918,9 +9932,48 @@ func _assert_faction_settling_belief() -> void:
 	_assert_zone_content_width_fits()
 	_hud.update_sedentarization([{"faction": HudConst.PLAYER_FACTION_ID,
 		"score": TOPBAR_SEDENTARIZATION_SCORE, "stage": TOPBAR_SEDENTARIZATION_STAGE,
-		"belief_points": TOPBAR_SEDENTARIZATION_BELIEF_POINTS}])
+		"belief_points": TOPBAR_SEDENTARIZATION_BELIEF_POINTS,
+		"domestication_points": SEDENTARIZATION_DOMESTICATION_POINTS,
+		"surplus_points": SEDENTARIZATION_SURPLUS_POINTS, "land_points": SEDENTARIZATION_LAND_POINTS,
+		"population_points": SEDENTARIZATION_POPULATION_POINTS}])
 	_hud.update_faction_policies([_faction_policy_fixture(true)])
 	await _settle()
+
+## The Settling block's two tooltips. The stage row's lists every fixture input (and the `From the dead`
+## value, which is the belief fixture while a band stands on its dead and 0 when none does); the
+## `From the dead` row carries its own in both forms. Read off the row's Labels, which hold the tip.
+func _assert_settling_tooltips(zone: Node, tied: bool) -> void:
+	var belief := int(TOPBAR_SEDENTARIZATION_BELIEF_POINTS) if tied else 0
+	var expected := HudWorkVocab.FACTION_SETTLING_TOOLTIP_FORMAT % [
+		int(SEDENTARIZATION_DOMESTICATION_POINTS), int(SEDENTARIZATION_SURPLUS_POINTS),
+		int(SEDENTARIZATION_LAND_POINTS), int(SEDENTARIZATION_POPULATION_POINTS), belief]
+	var stage_tip := _faction_row_tooltip(zone, HudWorkVocab.FACTION_SETTLING_STAGE_LABELS.get(
+		TOPBAR_SEDENTARIZATION_STAGE, ""))
+	_assert_band_panel("faction settling tooltip: the stage row lists every input (got '%s')" % stage_tip.replace("\n", " | "),
+		stage_tip == expected and stage_tip.contains("Rich land: +%d" % int(SEDENTARIZATION_LAND_POINTS))
+		and stage_tip.contains("From the dead: +%d" % belief))
+	var belief_tip := _faction_row_tooltip(zone, HudWorkVocab.FACTION_SETTLING_BELIEF_KEY)
+	_assert_band_panel("faction settling tooltip: the From the dead row carries its tip (%s form)" % (
+			"+N" if tied else "zero"),
+		belief_tip == HudWorkVocab.FACTION_SETTLING_BELIEF_TOOLTIP)
+
+## The tooltip on the stat row keyed `key`: both of its Labels must carry the SAME non-empty text, so it
+## is hoverable across the row rather than on one Label.
+func _faction_row_tooltip(node: Node, key: String) -> String:
+	if node is HBoxContainer:
+		var labels: Array = []
+		for child in node.get_children():
+			if child is Label:
+				labels.append(child)
+		if labels.size() >= 2 and (labels[0] as Label).text == key:
+			var first := (labels[0] as Label).tooltip_text
+			var last := (labels[labels.size() - 1] as Label).tooltip_text
+			return first if first == last else "MISMATCH %s / %s" % [first, last]
+	for child in node.get_children():
+		var found := _faction_row_tooltip(child, key)
+		if found != "":
+			return found
+	return ""
 
 ## The player faction's `faction_policies` row, the shape the native decoder hands GDScript.
 func _faction_policy_fixture(open: bool) -> Dictionary:

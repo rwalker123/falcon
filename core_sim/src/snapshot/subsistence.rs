@@ -335,6 +335,10 @@ pub(crate) fn snapshot_sedentarization(
             score: entry.score,
             stage: entry.stage.as_str().to_string(),
             belief_points: entry.belief_points,
+            domestication_points: entry.domestication_points,
+            surplus_points: entry.surplus_points,
+            land_points: entry.land_points,
+            population_points: entry.population_points,
         })
         .collect()
 }

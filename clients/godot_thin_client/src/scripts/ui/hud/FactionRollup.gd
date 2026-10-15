@@ -805,12 +805,22 @@ static func _build_settling_block(sedentarization: Dictionary, mobility: Diction
         HudWorkVocab.FACTION_SETTLING_VALUE_FORMAT % [
             HudFormat.meter_bar(score, KNOWLEDGE_METER_CELLS),
             int(round(score)), HudWorkVocab.FACTION_SETTLING_SCALE],
-        HudStyle.INK_DIM))
+        HudStyle.INK_DIM, _settling_tooltip(sedentarization)))
     block.add_child(_build_settling_belief_row(float(sedentarization.get("belief_points", 0.0))))
     var mobility_row := _build_mobility_row(mobility)
     if mobility_row != null:
         block.add_child(mobility_row)
     return block
+
+## The stage row's hover: the five raw inputs to the settle score, rounded to integers. A missing key
+## reads 0.
+static func _settling_tooltip(sedentarization: Dictionary) -> String:
+    return HudWorkVocab.FACTION_SETTLING_TOOLTIP_FORMAT % [
+        int(round(float(sedentarization.get("domestication_points", 0.0)))),
+        int(round(float(sedentarization.get("surplus_points", 0.0)))),
+        int(round(float(sedentarization.get("land_points", 0.0)))),
+        int(round(float(sedentarization.get("population_points", 0.0)))),
+        int(round(float(sedentarization.get("belief_points", 0.0))))]
 
 ## THE MOBILITY ROW (issue #800) — the roaming counterpart to the settling meter, the SETTLING block's
 ## last row, in the stage row's own form (meter and `N/100`). Null before the snapshot has carried one
@@ -841,11 +851,12 @@ static func _build_mobility_row(mobility: Dictionary) -> HBoxContainer:
 static func _build_settling_belief_row(belief_points: float) -> HBoxContainer:
     if belief_points < HudWorkVocab.FACTION_SETTLING_BELIEF_MIN:
         var none_row := _stat_row(HudWorkVocab.FACTION_SETTLING_BELIEF_KEY,
-            HudWorkVocab.FACTION_SETTLING_BELIEF_NONE, HudStyle.INK_DIM)
+            HudWorkVocab.FACTION_SETTLING_BELIEF_NONE, HudStyle.INK_DIM,
+            HudWorkVocab.FACTION_SETTLING_BELIEF_TOOLTIP)
         return none_row
     var row := _stat_row(HudWorkVocab.FACTION_SETTLING_BELIEF_KEY,
         HudWorkVocab.FACTION_SETTLING_BELIEF_VALUE_FORMAT % int(round(belief_points)),
-        HudStyle.BELIEF)
+        HudStyle.BELIEF, HudWorkVocab.FACTION_SETTLING_BELIEF_TOOLTIP)
     var mark := Label.new()
     mark.text = BandOverlayRenderer.ANCESTORS_GLYPH
     mark.add_theme_font_size_override("font_size", STAT_ROW_FONT_SIZE)

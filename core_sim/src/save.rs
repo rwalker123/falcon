@@ -137,7 +137,8 @@ pub const SAVE_MAGIC: [u8; 8] = *b"SHDWSAV\x01";
 /// | 40 | A traveling party aims at what its people know: `Expedition` gained `aim` (the tile a Station / Trade party is walking toward, `None` for every other verb), riding `ExpeditionRecord` whole, so a version-39 blob does not decode |
 /// | 41 | `LaborAllocation` gained `last_pool_toe_head` — the queue entry the builders' `last_pool_toe` lines were struck for, which the wire compares with the live head before publishing them; it rides `BandRecord::labor` whole, so a version-40 blob does not decode |
 /// | 42 | The mobility score (#800): `SimState` gained `mobility` (`MobilityScore`, per-faction EMA score and its two raw point components), which the wire publishes as `MobilityState`; a version-41 blob has none, so it does not decode |
-pub const SAVE_FORMAT_VERSION: u32 = 42;
+/// | 43 | The sedentarization score itemized: `SedentarizationEntry` gained `domestication_points`, `surplus_points`, `land_points` and `population_points` beside `belief_points` (each input's raw pre-EMA points), which the wire publishes as `SedentarizationState.domesticationPoints` / `surplusPoints` / `landPoints` / `populationPoints`. A version-42 blob has none |
+pub const SAVE_FORMAT_VERSION: u32 = 43;
 
 /// gzip level for the payload document.
 ///

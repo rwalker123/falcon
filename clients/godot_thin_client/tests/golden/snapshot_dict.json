@@ -9204,21 +9204,33 @@
   "sedentarization": [
     {
       "belief_points": 93.480003,
+      "domestication_points": 108.779999,
       "faction": 8,
+      "land_points": 53.099998,
+      "population_points": 88.410004,
       "score": 80.769997,
-      "stage": "sedentarization[0].stage"
+      "stage": "sedentarization[0].stage",
+      "surplus_points": 16.74
     },
     {
       "belief_points": 97.150002,
+      "domestication_points": 9.99,
       "faction": 71,
+      "land_points": 95.290001,
+      "population_points": 23.690001,
       "score": 26.860001,
-      "stage": "sedentarization[1].stage"
+      "stage": "sedentarization[1].stage",
+      "surplus_points": 54.009998
     },
     {
       "belief_points": 22.790001,
+      "domestication_points": 28.280001,
       "faction": 170,
+      "land_points": 94.809998,
+      "population_points": 76.260002,
       "score": 31.299999,
-      "stage": "sedentarization[2].stage"
+      "stage": "sedentarization[2].stage",
+      "surplus_points": 17.450001
     }
   ],
   "sentiment": {

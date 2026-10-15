@@ -143,6 +143,18 @@ pub struct SedentarizationState {
     /// EMA that smooths `score`. Appended last.
     #[serde(default)]
     pub belief_points: f32,
+    /// The domestication input's raw points this turn, before the EMA. Appended last.
+    #[serde(default)]
+    pub domestication_points: f32,
+    /// The surplus (larder) input's raw points this turn, before the EMA.
+    #[serde(default)]
+    pub surplus_points: f32,
+    /// The land (resource density) input's raw points this turn, before the EMA.
+    #[serde(default)]
+    pub land_points: f32,
+    /// The population input's raw points this turn, before the EMA.
+    #[serde(default)]
+    pub population_points: f32,
 }
 
 /// One faction's mobility score (#800) — the roaming counterpart of [`SedentarizationState`].
