@@ -1171,14 +1171,24 @@ mod tests {
                 composition: vec![
                     FloraShareInfo {
                         species: "cotton".to_string(),
-                        sow_material_payoff: vec![MaterialPayoff {
-                            material_id: "fibre".to_string(),
-                            amount: SOW_FIBRE,
-                        }],
-                        cultivate_material_payoff: vec![MaterialPayoff {
-                            material_id: "fibre".to_string(),
-                            amount: CULTIVATE_FIBRE,
-                        }],
+                        rung_quotes: vec![
+                            RungShareQuoteState {
+                                rung_key: "plant:tended".to_string(),
+                                material_payoff: vec![MaterialPayoff {
+                                    material_id: "fibre".to_string(),
+                                    amount: CULTIVATE_FIBRE,
+                                }],
+                                ..RungShareQuoteState::default()
+                            },
+                            RungShareQuoteState {
+                                rung_key: "plant:field".to_string(),
+                                material_payoff: vec![MaterialPayoff {
+                                    material_id: "fibre".to_string(),
+                                    amount: SOW_FIBRE,
+                                }],
+                                ..RungShareQuoteState::default()
+                            },
+                        ],
                         ..FloraShareInfo::default()
                     },
                     // A grain Field beside it: no material at all, and it must stay that way.
@@ -1207,11 +1217,11 @@ mod tests {
             .expect("the patch's composition");
 
         let cotton = composition.get(0);
-        let sow = cotton
-            .sowMaterialPayoff()
+        let sow = codec::wire_share_rung_quote(cotton.rungQuotes(), "plant:field")
+            .and_then(|quote| quote.materialPayoff())
             .expect("the Sow quote survives the codec");
-        let cultivate = cotton
-            .cultivateMaterialPayoff()
+        let cultivate = codec::wire_share_rung_quote(cotton.rungQuotes(), "plant:tended")
+            .and_then(|quote| quote.materialPayoff())
             .expect("the Cultivate quote survives the codec");
         assert_eq!((sow.len(), cultivate.len()), (1, 1));
         assert_eq!(sow.get(0).materialId(), Some("fibre"));
@@ -1225,7 +1235,9 @@ mod tests {
 
         let grain = composition.get(1);
         assert!(
-            grain.sowMaterialPayoff().is_none_or(|rows| rows.is_empty()),
+            codec::wire_share_rung_quote(grain.rungQuotes(), "plant:field")
+                .and_then(|quote| quote.materialPayoff())
+                .is_none_or(|rows| rows.is_empty()),
             "a food crop quotes NO ROW — never a zero-valued one"
         );
     }

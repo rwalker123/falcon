@@ -1107,7 +1107,8 @@ fn the_published_field_yield_never_inherits_the_tended_rungs_basket() {
         .iter()
         .find(|share| share.species == crop)
         .expect("the committed crop is on its own patch's basket")
-        .sow_payoff;
+        .quote("plant:field")
+        .food_payoff;
     assert!(
         (tended.quote("plant:field").food_yield - picker).abs() <= EPSILON * picker.max(1.0),
         "the published fieldYield on a tended patch must BE the picker's sowPayoff: {} vs {picker}",
@@ -1123,7 +1124,8 @@ fn the_published_field_yield_never_inherits_the_tended_rungs_basket() {
         .iter()
         .find(|share| share.species == crop)
         .expect("the committed crop is on its own patch's basket")
-        .cultivate_payoff;
+        .quote("plant:tended")
+        .food_payoff;
     assert!(
         (tended.quote("plant:tended").food_yield - cultivate).abs() <= EPSILON * cultivate.max(1.0),
         "tendedYield must BE the picker's cultivatePayoff: {} vs {cultivate}",

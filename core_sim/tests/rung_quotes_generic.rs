@@ -99,8 +99,24 @@ fn spawn_world() -> App {
     app.world.insert_resource(config);
     app.world
         .insert_resource(LadderConfigHandle::new(Arc::new(ladder_with_a_farm())));
+    app.world
+        .insert_resource(core_sim::FloraConfigHandle::new(Arc::new(
+            roster_that_climbs_to_the_farm(),
+        )));
     app.update();
     app
+}
+
+/// **THE SHIPPED ROSTER WITH EVERY FIELD-CEILING CROP LIFTED TO THE FARM** - `cultivation_ceiling` is
+/// the species-side gate on a rung (an oak's mast is a wild harvest forever), and the shipped
+/// roster's stop at the Field, so a fourth step is reachable by a crop only once the roster says so.
+/// That is a JSON edit too, applied here as a text substitution on the builtin file.
+fn roster_that_climbs_to_the_farm() -> core_sim::FloraConfig {
+    let json = core_sim::BUILTIN_FLORA_CONFIG.replace(
+        "\"cultivation_ceiling\": \"plant:field\"",
+        "\"cultivation_ceiling\": \"plant:farm\"",
+    );
+    core_sim::FloraConfig::from_json_str(&json).expect("the lifted roster loads")
 }
 
 /// **A PATCH THE BAND CAN STAND ON AND CROP**: the first food site with a patch whose tile can name
@@ -108,6 +124,7 @@ fn spawn_world() -> App {
 fn cultivable_site(app: &mut App) -> UVec2 {
     let labor = app.world.resource::<core_sim::LaborConfigHandle>().get();
     let flora = app.world.resource::<core_sim::FloraConfigHandle>().get();
+    let ladder = app.world.resource::<LadderConfigHandle>().get();
     let map_seed = app.world.resource::<core_sim::SimulationConfig>().map_seed;
     let tiles: std::collections::HashMap<UVec2, Tile> = {
         let mut query = app.world.query::<&Tile>();
@@ -131,7 +148,7 @@ fn cultivable_site(app: &mut App) -> UVec2 {
                 core_sim::default_species_for_rung(
                     &composition,
                     &flora,
-                    shipped::ladder(),
+                    &ladder,
                     shipped::plant_field(),
                 )
                 .is_some()
@@ -327,6 +344,71 @@ fn a_fourth_plant_rung_is_quoted_on_the_wire_with_its_own_price() {
         farm_quote.food_yield > 0.0,
         "a sown rung pays through the Field's payoff block, resolved off its traits"
     );
+}
+
+/// **THE CROP PICKER QUOTES THE FOURTH RUNG TOO**: every plant in the patch's composition carries one
+/// `RungShareQuoteState` per rung above the root, the Farm's among them, with the Farm's own price
+/// where the plant can climb to it and the Field's payoff block (resolved off the shared traits).
+#[test]
+fn a_fourth_plant_rung_is_quoted_per_species_in_the_crop_picker() {
+    use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
+
+    let mut app = spawn_world();
+    let (_, site) = stand_on_a_field_and_queue_the_farm(&mut app);
+    app.update();
+
+    let snapshot = app
+        .world
+        .resource::<SnapshotHistory>()
+        .latest_entry()
+        .expect("a snapshot was captured")
+        .snapshot;
+    let bytes = sim_schema::encode_snapshot_flatbuffer(snapshot.as_ref());
+    let envelope = fb::root_as_envelope(bytes.as_ref()).expect("a valid envelope");
+    let patch = envelope
+        .payload_as_snapshot()
+        .expect("a snapshot")
+        .subsistence()
+        .expect("a subsistence section")
+        .foragePatches()
+        .expect("the forage patches")
+        .iter()
+        .find(|patch| patch.x() == site.x && patch.y() == site.y)
+        .expect("the patch is on the wire");
+    let composition = patch.composition().expect("the patch names its plants");
+    assert!(!composition.is_empty(), "the tile grows something");
+    for share in composition.iter() {
+        let keys: Vec<&str> = share
+            .rungQuotes()
+            .expect("every plant publishes its rung quotes")
+            .iter()
+            .map(|quote| quote.rungKey().unwrap_or_default())
+            .collect();
+        assert_eq!(
+            keys,
+            ["plant:tended", "plant:field", "plant:farm"],
+            "one quote per rung above the root, for every plant"
+        );
+        let field = sim_schema::wire_share_rung_quote(share.rungQuotes(), "plant:field")
+            .expect("the field is quoted");
+        let farm_quote = sim_schema::wire_share_rung_quote(share.rungQuotes(), "plant:farm")
+            .expect("the farm is quoted");
+        assert!(
+            farm_quote.canClimb(),
+            "a crop whose ceiling is the Farm can climb to it"
+        );
+        assert!(
+            (f64::from(farm_quote.workCost()) - FARM_WORK_COST).abs() < 1.0e-3
+                || farm_quote.workCost() > field.workCost(),
+            "the Farm quotes its own price: {}",
+            farm_quote.workCost()
+        );
+        assert_eq!(
+            farm_quote.foodPayoff(),
+            field.foodPayoff(),
+            "…and pays through the Field's block, resolved off the shared traits"
+        );
+    }
 }
 
 /// **AND IT IS BUILT TO**: the climb from the Field completes through the same machinery the shipped

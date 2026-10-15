@@ -61,7 +61,7 @@ use crate::state::population::*;
 use crate::state::subsistence::{
     CharacteristicBandState, CraftKnowledgeState, FloraShareInfo, LadderKnowledgeProgress,
     LadderKnowledgeState, LadderRungState, MaterialDefState, RecipeDefState, RecipeInputState,
-    RecipeOutputState, RungQuoteState, SpeciesMaterialRates,
+    RecipeOutputState, RungQuoteState, RungShareQuoteState, SpeciesMaterialRates,
 };
 use crate::world::WorldSnapshot;
 use std::error::Error;
@@ -776,11 +776,16 @@ fn seed_snapshot() -> WorldSnapshot {
         patch.build_destination_capacity = seeded_on(row).then(f32::default);
         let mut composition = rows::<FloraShareInfo>();
         for share in &mut composition {
-            // The crop picker's PER-MATERIAL cash quote (arc #527) — a nested repeated field, so it
-            // is seeded for the same reason `regrowth_samples` is: an empty one is a field the
-            // decode guard cannot exercise.
-            share.sow_material_payoff = rows();
-            share.cultivate_material_payoff = rows();
+            // The crop picker's PER-RUNG quotes, each carrying its own PER-MATERIAL cash quote
+            // (arc #527) - a nested repeated field inside a repeated field, seeded at both levels
+            // for the reason `regrowth_samples` is: an empty one is a field the decode guard cannot
+            // exercise.
+            share.rung_quotes = (0..ROWS)
+                .map(|_| RungShareQuoteState {
+                    material_payoff: rows(),
+                    ..Default::default()
+                })
+                .collect();
         }
         // **How much of each plant is standing** (the selective gather) — index-aligned with the
         // basket above, so it is seeded to the SAME length rather than to `ROWS`: a fixture whose

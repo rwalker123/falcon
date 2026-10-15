@@ -2576,9 +2576,22 @@ keeping machinery, which a rung of any name can switch on): `penFedFraction`, `p
 `outputRecommit*`, `husbandryCeiling`, `currentRung`, `buildDestinationRung`, `buildLegs`, `upkeep*`
 (the stamped bill) and `meterRotPerTurn`.
 
-**`FloraShareInfo` is NOT migrated**: its per-plant `cultivate*` / `sow*` payoff quotes are still
-per-step fields, so a fourth plant step is quoted per rung on the patch row but not per species in
-the crop picker.
+**`FloraShareInfo` (the crop picker) is generic the same way**: its per-plant quote is
+`FloraShareInfo.rungQuotes`, one `RungShareQuoteState` per rung of the plant branch above the root
+(`snapshot::flora_quotes` walks the ladder; every figure is the `forage::commit_*` seam for that rung,
+resolved off traits). A species' reach is still its roster `cultivation_ceiling`, so a crop climbs to a
+fourth step by that JSON edit (`rung_quotes_generic.rs` lifts the roster to `plant:farm`).
+
+| Retired `FloraShareInfo` field | Now (`RungShareQuoteState` of the rung) |
+|---|---|
+| `canCultivate` / `canSow` | `canClimb` on `plant:tended` / `plant:field` |
+| `cultivatePayoff` / `sowPayoff` | `foodPayoff` |
+| `cultivateYieldRatio` / `sowYieldRatio` | `yieldRatio` |
+| `cultivateFodderPayoff` / `sowFodderPayoff` | `fodderPayoff` |
+| `cultivateMaterialPayoff` / `sowMaterialPayoff` | `materialPayoff` |
+| `sowWorkCost` | `workCost` (now published for every rung; `0` = the plant cannot climb to it here) |
+
+`role` stays: it is a fact about the plant, not a rung.
 
 ## Knowledge no rung teaches — `standalone_knowledges`
 

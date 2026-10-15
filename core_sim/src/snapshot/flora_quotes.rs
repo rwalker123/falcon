@@ -56,7 +56,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, OnceLock};
 
 use bevy::prelude::*;
-use sim_runtime::{FloraShareInfo, MaterialPayoff, TerrainType};
+use sim_runtime::{FloraShareInfo, MaterialPayoff, RungShareQuoteState, TerrainType};
 
 use crate::components::Tile;
 use crate::flora_config::{FloraConfig, FloraShare};
@@ -66,7 +66,7 @@ use crate::forage::{
     patch_material_yields, patch_provisions_per_biomass, patch_species_rates,
     tile_flora_composition, tile_forage_capacity, wild_payoff, ForagePatch, SpeciesRate,
 };
-use crate::intensification::LadderConfig;
+use crate::intensification::{LadderConfig, RungDef};
 use crate::labor_config::{ForageLaborConfig, LaborConfig};
 use crate::materials_config::MaterialYieldDef;
 
@@ -331,140 +331,120 @@ fn derive_tile_quotes(
         FORECAST_OUTPUT_MULTIPLIER,
         ladder,
     );
-    // **The two rungs the picker quotes, named by what they ARE** - the first `managed` and the
-    // first `sown` rung of the plant ladder.
-    let managed_rung = ladder.managed_patch_rung().rung_id();
-    let sown_rung = ladder.sown_patch_rung().rung_id();
+    // **EVERY RUNG OF THE PLANT BRANCH ABOVE THE ROOT**, found by walking the ladder - the picker
+    // quotes whatever steps the config declares, so a fourth plant rung appears here with no code
+    // change. Each is priced by its own record and its traits (`PlantPayoff::of_rung` inside the
+    // `commit_*` seams), never by naming it.
+    let rungs: Vec<&RungDef> = ladder
+        .rungs_of(ladder.branch_of_kind(crate::intensification::SourceKind::Patch))
+        .into_iter()
+        .skip(BRANCH_ROOT_RUNGS)
+        .collect();
     let quotes = composition
         .iter()
         .map(|share| {
             let def = &flora.species[&share.species];
-            // **What this tile would pay per turn once committed to THIS plant**, per rung — through
-            // `forage::commit_payoff`, which builds the patch the sim would have and asks the *same*
-            // payoff functions the sim quotes and pays each rung with (`tended_provisions` /
-            // `field_provisions`). Nothing is re-derived here, which is what stops the published
-            // number and the payout from drifting.
-            let payoff = |rung| {
-                commit_payoff(
-                    tile.position,
-                    tile_capacity,
-                    &share.species,
-                    &composition,
-                    flora,
-                    forage,
-                    FORECAST_OUTPUT_MULTIPLIER,
-                    ladder,
-                    rung,
-                )
-            };
-            let cultivate = payoff(managed_rung);
-            let sow = payoff(sown_rung);
-            // The two non-food accounts, per rung, through the same rung-parameterized seams — so the
-            // Cultivate row of the crop picker states what a TENDED patch of this plant pays rather
-            // than borrowing the Field's number (issue #419). Same closure shape as `payoff` above,
-            // and for the same reason: the rung is an argument, never a hardcoded arm.
-            let fodder_payoff = |rung| {
-                commit_fodder_payoff(
-                    tile.position,
-                    tile_capacity,
-                    &share.species,
-                    &composition,
-                    flora,
-                    forage,
-                    FORECAST_OUTPUT_MULTIPLIER,
-                    ladder,
-                    rung,
-                )
-            };
-            // The MATERIAL account, same shape again — and the one that answers per material rather
-            // than with a single number, because that is what a material yield *is* (arc #527).
-            let material_payoff = |rung| {
-                commit_material_payoff(
-                    tile.position,
-                    tile_capacity,
-                    &share.species,
-                    &composition,
-                    flora,
-                    forage,
-                    FORECAST_OUTPUT_MULTIPLIER,
-                    ladder,
-                    rung,
-                )
-                .into_iter()
-                .map(|payoff| MaterialPayoff {
-                    material_id: payoff.material,
-                    amount: payoff.amount,
+            let rung_quotes = rungs
+                .iter()
+                .map(|rung_def| {
+                    let rung = rung_def.rung_id();
+                    // **What this tile would pay per turn once committed to THIS plant**, at this
+                    // rung - through `forage::commit_payoff`, which builds the patch the sim would
+                    // have and asks the *same* payoff functions the sim quotes and pays each rung
+                    // with. Nothing is re-derived here, which is what stops the published number
+                    // and the payout from drifting. The fodder and material accounts go through
+                    // their own rung-parameterised seams the same way.
+                    let food_payoff = commit_payoff(
+                        tile.position,
+                        tile_capacity,
+                        &share.species,
+                        &composition,
+                        flora,
+                        forage,
+                        FORECAST_OUTPUT_MULTIPLIER,
+                        ladder,
+                        rung,
+                    );
+                    let can_climb = flora.can_reach(&share.species, ladder, rung);
+                    // **What building the rung with THIS crop would cost**: a `replaced_share` rung
+                    // is priced by how much of the tile the chosen crop still has to replace, the
+                    // same expression the patch's own `workCost` goes through, so the figure for
+                    // the crop a patch is committed to IS that patch's quote. Every other rung is
+                    // the ladder's own price. `NO_RUNG_WORK_COST` where the plant cannot climb to
+                    // the rung on this ground.
+                    let work_cost = if can_climb {
+                        match rung_def.cost_scale {
+                            crate::intensification::CostScale::ReplacedShare => {
+                                crop_field_cost_multiplier(
+                                    &composition,
+                                    &share.species,
+                                    flora,
+                                    forage,
+                                    ladder,
+                                )
+                                .and_then(|multiplier| rung_def.build_cost(multiplier))
+                            }
+                            _ => rung_def.build_cost(crate::intensification::RUNG_COST_UNSCALED),
+                        }
+                        .unwrap_or(NO_RUNG_WORK_COST)
+                    } else {
+                        NO_RUNG_WORK_COST
+                    };
+                    RungShareQuoteState {
+                        rung_key: rung.wire_key(),
+                        // Species-global (its own `cultivation_ceiling`): it says nothing about
+                        // whether this tile is a good place for the plant - the payoff and ratio
+                        // answer that, and a legal-but-marginal crop is the loss the player is free
+                        // to choose.
+                        can_climb,
+                        food_payoff,
+                        // **Is it worth it?** - the same payoff over the same wild payoff, so the
+                        // ratio can never disagree with the numbers it relates.
+                        yield_ratio: commit_yield_ratio(food_payoff, wild),
+                        // The hay account (F3); `0` for a staple. A cash crop quotes nothing here -
+                        // its account is the material one.
+                        fodder_payoff: commit_fodder_payoff(
+                            tile.position,
+                            tile_capacity,
+                            &share.species,
+                            &composition,
+                            flora,
+                            forage,
+                            FORECAST_OUTPUT_MULTIPLIER,
+                            ladder,
+                            rung,
+                        ),
+                        // **Per material** (arc #527), the only thing that can state a cotton
+                        // Field's whole product. EMPTY is "no row", never "zero".
+                        material_payoff: commit_material_payoff(
+                            tile.position,
+                            tile_capacity,
+                            &share.species,
+                            &composition,
+                            flora,
+                            forage,
+                            FORECAST_OUTPUT_MULTIPLIER,
+                            ladder,
+                            rung,
+                        )
+                        .into_iter()
+                        .map(|payoff| MaterialPayoff {
+                            material_id: payoff.material,
+                            amount: payoff.amount,
+                        })
+                        .collect(),
+                        work_cost,
+                    }
                 })
-                .collect()
-            };
+                .collect();
             FloraShareInfo {
                 species: share.species.clone(),
                 display_name: def.display_name.clone(),
                 share: share.share,
-                // **Which rungs this plant can EVER climb** (Flora Roster S1) — its own
-                // `cultivation_ceiling`, straight off the roster, so the client's crop picker can
-                // grey out what is impossible without holding a roster of its own. Species-global:
-                // it says nothing about whether this tile is a good place for it — the payoff/ratio
-                // below answer that, and a legal-but-marginal crop is exactly the loss §4.3 leaves
-                // the player free to choose.
-                can_cultivate: flora.can_reach(&share.species, ladder, managed_rung),
-                can_sow: flora.can_reach(&share.species, ladder, sown_rung),
-                cultivate_payoff: cultivate,
-                sow_payoff: sow,
-                // **Is it worth it?** — the same payoffs over the same wild payoff, so the ratio can
-                // never disagree with the numbers it relates.
-                cultivate_yield_ratio: commit_yield_ratio(cultivate, wild),
-                sow_yield_ratio: commit_yield_ratio(sow, wild),
-                // **What a hay Field of this plant would pay into the FODDER account** (F3) —
-                // through the same `commit_fodder_payoff` seam the sim's `field_fodder` pays with,
-                // so the picker can show hay's value where `sow_yield_ratio` reads 0×. `0` for a
-                // staple (no fodder in its vector) or a plant that cannot Sow here.
-                sow_fodder_payoff: fodder_payoff(sown_rung),
-                // **The same account one rung down** (#419) — what a completed TENDED PATCH of
-                // this plant would pay, through `rung_fodder_payoff` at the tended rung. The Cultivate row of the picker had
-                // only the Field figure above and quoted that, which is a managed rate standing in
-                // for an MSY skim on a rung the player commits 25 turns to.
-                //
-                // A cash crop quotes nothing *here* — its account is the material one below.
-                cultivate_fodder_payoff: fodder_payoff(managed_rung),
-                // **What this plant is FOR** — the roster's own `role`, shipped verbatim as the
-                // display tag it is. Taken off `def` rather than re-read from the yield vector here,
-                // because a tag whose whole purpose is to be ONE definition must have exactly one
-                // place that decides it (`FloraRole`). Nothing in the sim branches on it.
+                // **What this plant is FOR** - the roster's own `role`, shipped verbatim as the
+                // display tag it is. Nothing in the sim branches on it.
                 role: def.role.as_str().to_string(),
-                // **What a cash crop would pay, PER MATERIAL** (arc #527) — the replacement for the
-                // retired `sow_trade_payoff` / `cultivate_trade_payoff`, and the only thing on this
-                // row that can state a cotton Field's whole product. Through the same
-                // `commit_material_payoff` seam the sim's `credit_material_yield` is paid off, at
-                // each rung's own harvest, so quote and payout cannot drift.
-                //
-                // **Empty is "no row", never "zero"** — a food crop yields no material, and a `0`
-                // would read as a cash crop that pays badly.
-                sow_material_payoff: material_payoff(sown_rung),
-                cultivate_material_payoff: material_payoff(managed_rung),
-                // **WHAT SOWING THIS CROP WOULD COST** (`docs/plan_standing_upkeep.md` §4.15) — the
-                // cost half of the picker's decision, and the only figure on this row that is not a
-                // payoff. A Sow is priced by how much of the tile the chosen crop still has to
-                // replace, and the patch's own `fieldWorkCost` prices exactly ONE crop (its
-                // commitment, or the rung's auto-pick), so every row of a crop list quoted that same
-                // number while the payoffs beside it moved.
-                //
-                // Through `forage::crop_field_cost_multiplier` — the same expression
-                // `patch_field_cost_multiplier` goes through — priced by the ladder's own
-                // `build_cost`, exactly as the published `fieldWorkCost` is. So the figure this row
-                // states for the crop a patch is committed to **is** that patch's `fieldWorkCost`,
-                // rather than a second derivation that happens to agree.
-                //
-                // [`NO_SOW_WORK_COST`] where the plant cannot climb to a Field on this ground.
-                sow_work_cost: crop_field_cost_multiplier(
-                    &composition,
-                    &share.species,
-                    flora,
-                    forage,
-                    ladder,
-                )
-                .and_then(|multiplier| ladder.sown_patch_rung().build_cost(multiplier))
-                .unwrap_or(NO_SOW_WORK_COST),
+                rung_quotes,
             }
         })
         .collect();
@@ -523,7 +503,11 @@ fn derive_wild_ground_quotes(
 /// call site reads as a measurement, and a measured Sow price can never be one: the multiplier is
 /// clamped at `field_share_cost_floor` precisely because laying the rows and putting the seed in
 /// costs work even on ground already wholly the crop.
-const NO_SOW_WORK_COST: f32 = 0.0;
+const NO_RUNG_WORK_COST: f32 = 0.0;
+
+/// How many leading rungs of the plant branch carry no quote: the root, which is what a patch stands
+/// on before anything is built.
+const BRANCH_ROOT_RUNGS: usize = 1;
 
 #[cfg(test)]
 mod tests {
@@ -895,8 +879,14 @@ mod tests {
             let capacity = capacity_of(tile);
             for quote in &quotes {
                 for (rung, published) in [
-                    (shipped::plant_field(), &quote.sow_material_payoff),
-                    (shipped::plant_tended(), &quote.cultivate_material_payoff),
+                    (
+                        shipped::plant_field(),
+                        &quote.quote("plant:field").material_payoff,
+                    ),
+                    (
+                        shipped::plant_tended(),
+                        &quote.quote("plant:tended").material_payoff,
+                    ),
                 ] {
                     let expected = commit_material_payoff(
                         tile.position,
@@ -926,7 +916,7 @@ mod tests {
                     }
                     saw_a_material |= !published.is_empty();
                 }
-                saw_a_bare_staple |= quote.sow_material_payoff.is_empty();
+                saw_a_bare_staple |= quote.quote("plant:field").material_payoff.is_empty();
             }
         }
         assert!(

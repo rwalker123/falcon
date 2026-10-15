@@ -151,6 +151,18 @@ pub fn wire_rung_quote<'a>(
         .find(|quote| quote.rungKey() == Some(rung_key))
 }
 
+/// **ONE PLANT'S QUOTE AT ONE RUNG OFF A `FloraShareInfo` WIRE ROW**, by the rung's `branch:id` key.
+pub fn wire_share_rung_quote<'a>(
+    quotes: Option<
+        flatbuffers::Vector<'a, flatbuffers::ForwardsUOffset<fb::RungShareQuoteState<'a>>>,
+    >,
+    rung_key: &str,
+) -> Option<fb::RungShareQuoteState<'a>> {
+    quotes?
+        .iter()
+        .find(|quote| quote.rungKey() == Some(rung_key))
+}
+
 pub fn encode_snapshot_flatbuffer(snapshot: &WorldSnapshot) -> Vec<u8> {
     let mut builder = FlatBufferBuilder::new();
     let offset = build_snapshot_flatbuffer(&mut builder, snapshot);

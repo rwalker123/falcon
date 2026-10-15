@@ -2565,7 +2565,7 @@ table RungQuoteState {
   // flags, for any rung. Read the bool, never infer a rung from `progress`.
   reached:bool = false;
   // The rung's own build meter, 0..1 (`workDone / workCost`): the retired cultivationProgress /
-  // fieldProgress / domestication / corralProgress. 1.0 once `reached`.
+  // rungQuotes[plant:field].progress / domestication / rungQuotes[animal:pen].progress. 1.0 once `reached`.
   progress:float = 0;
   // The rung's meter in work units, and what the rung costs ON THIS SOURCE (a Sow priced by how
   // much of the tile the crop must replace, a Tame by the species' own multiplier). Published
@@ -2581,7 +2581,7 @@ table RungQuoteState {
   upkeepMaterialDemand:[MaterialPayoff];
   // What the source would pay per turn once at this rung: food, fodder (hay) and the materials of its
   // yield vector. The retired tendedYield / fieldYield / corralYield / pastoralYield,
-  // tendedFodder / fieldFodder, and corralMaterial / pastoralMaterial. `fodder` is 0 on an animal
+  // rungQuotes[plant:tended].fodder / rungQuotes[plant:field].fodder, and rungQuotes[animal:pen].materialPayoff / rungQuotes[animal:pastoral].materialPayoff. `fodder` is 0 on an animal
   // (none pays it); `materialPayoff` is EMPTY on a patch row (a plant's materials are priced per
   // species in FloraShareInfo).
   foodYield:float = 0;
@@ -2594,8 +2594,8 @@ table RungQuoteState {
 }
 
 // One depletable forage patch's cultivation + ecology state for the client tile card
-// (Intensification Phase 1a). Keyed by tile `(x,y)`. `cultivationProgress` is the 0..1 taming meter;
-// `isCultivated` = a completed tended patch (progress >= 1.0). `owner`/`hasOwner` carry the tending
+// (Intensification Phase 1a). Keyed by tile `(x,y)`. `rungQuotes[plant:tended].progress` is the 0..1 taming meter;
+// `rungQuotes[plant:tended].reached` = a completed tended patch (progress >= 1.0). `owner`/`hasOwner` carry the tending
 // faction (`hasOwner = false` = a wild/untended patch, since faction 0 is a valid id).
 // `biomass`/`carryingCapacity`/`ecologyPhase` let the client optionally show patch health.
 // `carryingCapacity` is LIVE STATE THAT CARRIES THE RUNG and `tileCapacity` (appended last) is
@@ -2613,7 +2613,7 @@ table ForagePatchState {
   // one reads part-way between, continuously.
   //
   // ⛔ IT MUST BE REDACTED ON A REMEMBERED HEX, AND `tileCapacity` (appended last) IS WHAT REPLACES
-  // IT THERE. `isField` and `fieldProgress` are already redacted under fog; publishing this one
+  // IT THERE. `rungQuotes[plant:field].reached` and `rungQuotes[plant:field].progress` are already redacted under fog; publishing this one
   // unredacted hands the same ladder position back, and worse than the boolean did - being
   // interpolated, it states HOW FAR UP rather than merely whether. The pair exists precisely so the
   // client can keep stating a capacity on ground it remembers (issue #462) while giving away
@@ -2672,7 +2672,7 @@ table ForagePatchState {
   // NOTE the commitment is RECORDED before it TAKES EFFECT: a patch still being prepared names its
   // crop here while still carrying the tile's full capacity and converting at the wild basket rate —
   // both halves of the commitment (concentration and conversion) switch on when the rung completes
-  // (`isCultivated`/`isField`). See docs/plan_flora_roster.md §4.3.
+  // (`rungQuotes[plant:tended].reached`/`rungQuotes[plant:field].reached`). See docs/plan_flora_roster.md §4.3.
   committedSpecies:string;
   committedDisplayName:string;
   // --- THE NEGLECT GRACE (appended) --------------------------------------------------------------
@@ -2805,7 +2805,7 @@ table ForagePatchState {
   stressedFraction:float = 0;
   // --- WHAT A GATHER OF THIS PATCH IS MADE OF (appended last, arc #527) ---
   // The successor to the retired trade-goods rate, and the RUNG-1 half of the material
-  // story: FloraShareInfo.sowMaterialPayoff/cultivateMaterialPayoff quote rungs 3 and 2, and a WILD
+  // story: FloraShareInfo.rungQuotes[plant:field].materialPayoff/rungQuotes[plant:tended].materialPayoff quote rungs 3 and 2, and a WILD
   // gather had nothing at all - a tile whose basket is 32% cotton and 26% tobacco read
   // "0.24 FOOD, - FODDER" while the turn banked fibre and leaf.
   //
@@ -2832,10 +2832,10 @@ table ForagePatchState {
   // turn — and A PROJECTION WHEN NOTHING IS BEING BUILT, which is by definition the state a compose
   // sheet is looking at. With an improvement in flight it counts down the running meter; with none
   // it is what the NEXT rung would take the crew currently working the patch. Always meaningful,
-  // never `-1`-because-unstarted — the same always-meaningful rule `corralYield` follows on a herd.
+  // never `-1`-because-unstarted — the same always-meaningful rule `rungQuotes[animal:pen].foodYield` follows on a herd.
   //
   // READ IT BESIDE the `*WorkCost` for the assignment's own `improvement`, or for the next rung up
-  // (`isCultivated`/`isField`) when that is empty — the pair reads "50 work, ~25 turns", so they
+  // (`rungQuotes[plant:tended].reached`/`rungQuotes[plant:field].reached`) when that is empty — the pair reads "50 work, ~25 turns", so they
   // must name one rung.
   //
   // FIVE NEGATIVES, FIVE FACTS, and they must not be collapsed:
@@ -2952,7 +2952,7 @@ table ForagePatchState {
   // the ladder, beside the build's PILE. All three are published rather than two, because the sim
   // answers and the client does zero arithmetic.
   //
-  //   upkeepDemand    = THE BILL THIS PATCH'S KEEPERS WERE HANDED this turn. Follows corralYield's
+  //   upkeepDemand    = THE BILL THIS PATCH'S KEEPERS WERE HANDED this turn. Follows rungQuotes[animal:pen].foodYield's
   //                     rule: it is ALWAYS MEANINGFUL, never a sentinel - for a rung that declares
   //                     no upkeep it is honestly 0, and a source nobody has started reads 0 (see
   //                     the `<rung>UpkeepDemand` pair below for the number a PRE-COMMIT quote
@@ -2999,7 +2999,7 @@ table ForagePatchState {
   // the PREVIOUS turn's shortfall while this reads 0 - correctly, because that loss is already spent.
   // A readout wanting the turn's realised cost must read the meter, not this field.
   //
-  // ALWAYS MEANINGFUL, NEVER A SENTINEL (the corralYield rule). It is `0` when the keeping covers the
+  // ALWAYS MEANINGFUL, NEVER A SENTINEL (the rungQuotes[animal:pen].foodYield rule). It is `0` when the keeping covers the
   // demand, when the source is still inside its rung's grace, when nothing is built here, and when
   // the rung declares no `meter_decay` at all - WHICH IS BOTH ANIMAL RUNGS, whose penalty is the shed
   // rather than a meter bleed. An animal source therefore always reads `0` here and that is the
@@ -3052,7 +3052,7 @@ table ForagePatchState {
   buildQueuePosition:int = -1;
   // WHY THE QUEUE IS BLOCKED HERE (appended, docs/plan_standing_upkeep.md 4.6b) - "" whenever this
   // source is not a blocked build, else a short lowercase cause key on the free-form-string
-  // convention `ecologyPhase` / `sowSiteRefusal` already use.
+  // convention `ecologyPhase` / `rungQuotes[plant:field].siteRefusal` already use.
   //
   // READ IT BESIDE `buildTurnsRemaining`'s `-4`, never instead of it: that field says the pool is
   // stuck, this says which conjunct of the rung's own gate refused. `-4` with no reason is the state
@@ -3065,7 +3065,7 @@ table ForagePatchState {
   // how the two come to disagree.
   //
   // IT IS A CAUSE, NOT A SENTENCE - no player-facing prose crosses the wire; the client owns the
-  // wording, exactly as it does for `sowSiteRefusal`.
+  // wording, exactly as it does for `rungQuotes[plant:field].siteRefusal`.
   //
   // The keys, and the conjunct each names:
   //   knowledge      - the faction does not know the rung's `unlock_knowledge`
@@ -3248,8 +3248,8 @@ table ForagePatchState {
   // every source has, queued or not.
   //
   // WHY IT SHIPS. Answering "has this been improved, and what is above it" off the wire otherwise
-  // means knowing each food web's PRIVATE SPELLING for its own ladder: a patch says `isCultivated`
-  // plus `isField` (two bools, read in the right order), a herd says `domestication` over a
+  // means knowing each food web's PRIVATE SPELLING for its own ladder: a patch says `rungQuotes[plant:tended].reached`
+  // plus `rungQuotes[plant:field].reached` (two bools, read in the right order), a herd says `domestication` over a
   // threshold plus `corralled` (a float and a flag). So every consumer hand-writes one reader per
   // web, and a third source type - a route climbing trail -> road - would cost it a third. One
   // branch-qualified token is the same read on every web, and costs the client nothing at all for
@@ -3265,7 +3265,7 @@ table ForagePatchState {
   // would be a fourth state on a three-rung ladder and every client would have to guess which of the
   // three it meant.
   //
-  // IT ARRIVES UNREDACTED, exactly as `isCultivated`/`isField` beside it do - the fog rule on this
+  // IT ARRIVES UNREDACTED, exactly as `rungQuotes[plant:tended].reached`/`rungQuotes[plant:field].reached` beside it do - the fog rule on this
   // table is the CLIENT's (see `carryingCapacity`). This token states the same ladder position those
   // bools do, so a client that redacts them on a merely-remembered hex must redact this one with
   // them.
@@ -3423,7 +3423,7 @@ table BuildQueueEntryState {
 }
 
 // ONE MATERIAL A COMMITMENT WOULD PAY, AND HOW MUCH OF IT PER TURN (appended, arc #527) - a row of
-// FloraShareInfo.sowMaterialPayoff / cultivateMaterialPayoff.
+// FloraShareInfo.rungQuotes[plant:field].materialPayoff / rungQuotes[plant:tended].materialPayoff.
 //
 // A VECTOR RATHER THAN A SCALAR IS THE WHOLE POINT. It replaced sowTradePayoff/cultivateTradePayoff,
 // which answered "how much trade" - a number a market could total and a player could not act on.
@@ -3440,6 +3440,34 @@ table MaterialPayoff {
   amount:float;
 }
 
+// --- ONE PLANT'S QUOTE AT ONE RUNG OF THE PLANT BRANCH (FloraShareInfo.rungQuotes) ---------------
+// What committing THIS tile to THIS plant would be at the rung `rungKey`, one row per rung of the
+// plant branch above the root in climb order - never a field named after a step, so a fourth plant
+// step is a JSON edit the crop picker shows with no schema change. `rungKey` is the "branch:id" key
+// that joins to `SubsistenceSection.ladderRungs`. Every number is the sim's own seam for that rung
+// (the same payoff functions the sim pays with), asked about the rung by its traits.
+//
+// THIS IS THE **TILE'S** VECTOR FOR THE PLANT, NOT THE PATCH'S: `ForagePatchState.rungQuotes` answers
+// "what would THIS PATCH pay at each rung", this answers "what would THIS PLANT pay if I committed".
+table RungShareQuoteState {
+  rungKey:string;
+  // Whether this plant can EVER climb the rung - its own `cultivation_ceiling` straight off the
+  // roster, species-global: it says nothing about whether this tile is a good place for it.
+  canClimb:bool = false;
+  // Food/turn a completed rung of this plant pays on this tile, in `ForagePatchState.rungQuotes[].foodYield`
+  // units, and that payoff over the tile's WILD payoff (`0` = cannot climb here, `1.0` = no gain).
+  foodPayoff:float = 0;
+  yieldRatio:float = 0;
+  // The FODDER (hay) account at the rung. 0 for a staple.
+  fodderPayoff:float = 0;
+  // The MATERIAL account at the rung, one row per material. EMPTY = a food crop, never "zero".
+  materialPayoff:[MaterialPayoff];
+  // What building the rung with THIS crop costs, in work: a rung priced `replaced_share` is priced
+  // by how much of the tile the crop must replace. `0` where the plant cannot climb to it here.
+  workCost:float = 0;
+}
+
+
 // One named plant's share of a tile's forage capacity — see `ForagePatchState.composition`.
 table FloraShareInfo {
   // The stable config key (`flora_config.json` -> species), e.g. "hazel". Free-form string (the
@@ -3450,95 +3478,6 @@ table FloraShareInfo {
   displayName:string;
   // This plant's fraction of the tile's basket, 0..1. The shares on a forage-bearing tile sum to 1.
   share:float;
-  // --- CAN THIS PLANT EVER CLIMB? (appended, flora roster S1) ---
-  // The two readings of this species' `cultivation_ceiling` (flora_config.json): may a `Cultivate`
-  // commit a patch to it (rung 2), and may a `Sow` (rung 3). Shipped for the same reason
-  // `displayName` is — the client holds no roster, so it cannot tell that oak mast is a wild harvest
-  // forever.
-  //
-  // SPECIES-GLOBAL, NOT TILE-SPECIFIC: the ceiling is a property of the plant, so these read the same
-  // on every tile that hosts it and can never drift from a per-tile rule. (The other half of
-  // legality — "does it grow HERE" — is this entry EXISTING in the tile's composition at all.)
-  //
-  // THEY ANSWER "CAN THIS PLANT EVER CLIMB THIS RUNG", NOT "IS THIS A GOOD IDEA HERE". `share` above
-  // answers the latter: committing to a marginal-share plant is legal and is a real loss, and that
-  // loss is precisely the decision the rung exists to make (docs/plan_flora_roster.md §4.3). So grey
-  // out what is impossible, and leave what is merely unwise on offer.
-  canCultivate:bool = false;
-  canSow:bool = false;
-  // --- IS COMMITTING THIS TILE TO THIS PLANT WORTH IT? (appended, flora roster S1) ---
-  // What committing THIS tile to THIS plant pays, AGAINST JUST GATHERING IT WILD, at each rung:
-  //
-  //   ratio(rung) = min(1, share x concentration_gain(rung)) x species_rate / forage.provisions_per_biomass
-  //
-  // > 1.0 committing beats gathering the whole basket; < 1.0 it is a LOSS — a legal one the player
-  // stays free to choose, which is the entire decision the rung exists to make. Never clamped, never
-  // hidden, and a sub-1 crop is never refused (docs/plan_flora_roster.md §4.3).
-  //
-  // A RATIO AGAINST THE WILD BASKET, NOT AN ABSOLUTE YIELD. It folds in BOTH inputs — the plant's
-  // share of this tile and the plant's own conversion rate — which is why it is shipped instead of
-  // the raw per-biomass rate: the rate alone is half the answer, and deriving the rest client-side
-  // would put the §4.3 formula somewhere it can drift from the sim's. Computed through the same
-  // concentration seam the sim's own committed-patch payoff uses, so the quote and the payout cannot
-  // disagree.
-  //
-  // TWO FIELDS PER QUANTITY because the two rungs differ in BOTH their concentration gain and their
-  // legality, so a single number would be ambiguous about which rung it answers. 0 means "CANNOT
-  // CLIMB THIS RUNG" (mirroring canCultivate/canSow).
-  //
-  // NOTE THE RATIO IS THE PAYOFF PAIR BELOW, DIVIDED — `cultivateYieldRatio == cultivatePayoff / the
-  // tile's wild payoff` — so the two can never disagree. In particular the Cultivate ratio carries
-  // `cultivation.tended_regrowth_gain`, because a tended patch rides a faster curve and THAT IS THE
-  // RUNG'S PAYOFF: rungs 1-2 pay MSY (r x K / 4), where r does not cancel between wild and tended.
-  // An earlier version divided concentration x rate instead — a capacity basis where r DOES cancel —
-  // and shipped every Cultivate ratio at exactly half its true value.
-  cultivateYieldRatio:float = 0;
-  sowYieldRatio:float = 0;
-  // --- WHAT IT WOULD ACTUALLY PAY (appended, flora roster S1) ---
-  // Provisions/turn this tile would pay once the rung is COMPLETE and committed to THIS plant — in
-  // the same units and at the same output-multiplier convention as `ForagePatchState.tendedYield` /
-  // `fieldYield`, so the client can substitute one for the other with no arithmetic of its own.
-  //
-  // WHY PER SPECIES: the shipped per-patch quotes are species-BLIND — they read whatever the patch is
-  // already committed to (usually nothing), so a player comparing crops in the compose sheet is shown
-  // the same number for every option and the "Preparing: ... -> then +X" line does not move when they
-  // change their pick. These do move.
-  //
-  // Produced by the same payoff functions the sim quotes and pays each rung with (tended_provisions /
-  // field_provisions), against the patch the sim would have: this tile's own capacity concentrated by
-  // the rung, at the standing crop THAT RUNG SETTLES AT (the MSY operating point for the drawn-down
-  // rungs, full capacity for a Field, which is never drawn down). It is therefore "what this ground
-  // pays once the crop is established", not a snapshot of one transient turn — which is the right
-  // question for a 25-turn investment, and for a rung already built it is the same number
-  // tendedYield/fieldYield read. 0 where the plant cannot climb the rung.
-  cultivatePayoff:float = 0;
-  sowPayoff:float = 0;
-  // --- WHAT A HAY FIELD WOULD PAY (appended, flora roster F3) ---
-  // Fodder/turn a sown Field of THIS plant would harvest into the band's FODDER store on this tile,
-  // in the same convention as `sowPayoff` but routed to the FODDER account. A fodder crop's payoff is
-  // NOT in provisions, so `sowYieldRatio`/`sowPayoff` read `0` for it (worthless as food) — this is
-  // the number that lets the picker show hay's real value instead of a bare 0x. `0` for a staple (its
-  // yield vector pays no fodder) or a plant that cannot climb to the Field rung here. Produced by the
-  // same `field_fodder` payoff function the sim pays with, so the quote and the payout cannot drift.
-  sowFodderPayoff:float = 0;
-  // --- WHAT A TENDED PATCH WOULD PAY IN THE TWO NON-FOOD ACCOUNTS (appended, issue #419) ---
-  // The rung-2 twins of `sowFodderPayoff`/`sowTradePayoff`: fodder and trade goods per turn a
-  // completed TENDED PATCH of this plant would pay on this tile. `0` where the plant's vector pays
-  // that account nothing, or where it cannot climb to the tended rung here.
-  //
-  // TWO FIELDS PER ACCOUNT PER RUNG, for exactly the reason `cultivatePayoff`/`sowPayoff` are two
-  // fields: the rungs differ in their basket, their conversion gain AND the SHAPE of their harvest
-  // (rung 2 is a drawn-down MSY skim, rung 3 a managed rate on the standing crop), so one number
-  // cannot answer both. Shipping only the Sow half is what made the Cultivate row of the crop picker
-  // quote a sown Field's trade — `10.2 trade` for cotton, on a rung that pays a fraction of it.
-  //
-  // Produced by the same `tended_fodder`/`tended_trade_goods` quote functions the sim's own rung-2
-  // payout rides (`tended_take_fodder`/`tended_take_trade_goods`, which coincide with these under
-  // `Sustain`), off the ONE `tended_msy_take` — so all three accounts of a rung-2 harvest describe the
-  // same harvest. Quoted POLICY-BLIND with no `market.trade_goods_multiplier`: the markup is a
-  // `Deplete`-policy concept applied at the credit site, and a crop row states what the CROP pays on
-  // this ground. The same rule `sowTradePayoff` states one rung up.
-  cultivateFodderPayoff:float = 0;
   // --- WHAT THIS PLANT IS FOR (appended, tile-card crop roles) ---
   // The species' own `role` (flora_config.json -> species): "staple" | "fodder" | "cash". A DISPLAY
   // TAG — nothing in the sim branches on it, and nothing on a client may either. The yield vector is
@@ -3551,46 +3490,12 @@ table FloraShareInfo {
   // SHIPPED RATHER THAN DERIVED FROM THE PAYOFFS ABOVE, which cannot answer it: those are rung-2 and
   // rung-3 numbers, so they fold in the weeding and conversion gains rather than stating the plant's
   // own vector, and they are ALL ZERO for a species that cannot climb on this ground
-  // (`canCultivate`/`canSow` false) — exactly the wild-ceiling case where the role is still a true
+  // (`rungQuotes[plant:tended].canClimb`/`rungQuotes[plant:field].canClimb` false) — exactly the wild-ceiling case where the role is still a true
   // and useful fact.
   role:string;
-  // --- WHAT A CASH CROP WOULD PAY, PER MATERIAL (appended last, arc #527) ---
-  // The replacement for the retired sowTradePayoff / cultivateTradePayoff, one entry per material
-  // this plant would yield per turn at that rung on this tile. See MaterialPayoff above for why it
-  // is a vector.
-  //
-  // EMPTY MEANS "NO ROW", NEVER "ZERO". A food crop yields no material and must render nothing at
-  // all here - not a `0`, which would read as a cash crop that pays badly. Empty is also what a
-  // plant that cannot climb the rung on this ground reports, the same convention
-  // cultivatePayoff/sowPayoff's `0` follows.
-  //
-  // Produced by the same forage::commit_material_payoff seam at each rung's own harvest
-  // (field_harvest_production at rung 3, tended_msy_take at rung 2) that credit_material_yield is
-  // paid off, so the quote and the payout cannot drift - pinned by
-  // flora_f4_cash::the_picker_material_quote_is_the_material_the_sim_credits.
-  //
-  // TWO FIELDS, ONE PER RUNG, for exactly the reason cultivatePayoff/sowPayoff are two: the rungs
-  // differ in basket, conversion gain AND the shape of the harvest, so one number cannot answer both.
-  sowMaterialPayoff:[MaterialPayoff];
-  cultivateMaterialPayoff:[MaterialPayoff];
-  // --- WHAT SOWING THIS CROP WOULD COST (appended last, docs/plan_standing_upkeep.md 4.15) ---
-  // Work units a `Sow` committing this tile to THIS plant would be charged: the `plant:field` rung's
-  // declared work_cost times the multiplier this crop's own share of the tile earns. Same units as
-  // ForagePatchState.fieldWorkCost.
-  //
-  // THE COST HALF OF THE CROP DECISION. A Sow is priced by how much of the tile the chosen crop still
-  // has to replace, and a patch prices exactly ONE crop - its commitment, or the rung's auto-pick - so
-  // every row of a crop picker quoted the same work figure while only the payoffs moved. This one
-  // moves with the crop, which is what lets work be weighed against payoff before committing.
-  //
-  // `0` MEANS NO FIGURE - the plant cannot climb to a Field on this ground - and must render as NO
-  // ROW, never as a free Sow. A real price is never 0: the multiplier is clamped at
-  // field_share_cost_floor because ground already wholly the crop still has its rows laid and its
-  // seed put in.
-  //
-  // Produced by forage::crop_field_cost_multiplier, the SAME expression the patch's own price goes
-  // through, so the figure quoted for the crop a patch is committed to IS that patch's fieldWorkCost.
-  sowWorkCost:float = 0;
+  // --- THIS PLANT'S QUOTE AT EVERY RUNG (appended last; replaces the per-step fields) ----------
+  // One row per rung of the plant branch above the root - see RungShareQuoteState.
+  rungQuotes:[RungShareQuoteState];
 }
 
 // ONE LADDER KNOWLEDGE THE CONFIG DECLARES — the ROSTER half, once per world, faction-independent.
@@ -3740,7 +3645,7 @@ table HerdTelemetryState {
   // the client renders "fed by pasture NN% · larder N/turn". 0.0 if unpenned.
   penPastureFraction:float = 0;
   // `penExtendProgress` = the in-flight ExtendPen ring's build meter, **in WORK UNITS** — the same
-  // unit-costed meter every other build on this table carries (`tameWorkDone`/`corralWorkDone`), NOT a
+  // unit-costed meter every other build on this table carries (`rungQuotes[animal:pastoral].workDone`/`rungQuotes[animal:pen].workDone`), NOT a
   // 0..1 fraction. It completes at `penExtendCost` below (→ `penRadius` grows by one and both reset to
   // 0), so a client wanting a "Fencing N%" badge DIVIDES: `penExtendProgress / penExtendCost`, guarding
   // the 0 denominator. 0 when the pen is not extending — and also on the turn a ring is begun but not
@@ -4146,7 +4051,7 @@ table HerdTelemetryState {
   // the ladder, beside the build's PILE. All three are published rather than two, because the sim
   // answers and the client does zero arithmetic.
   //
-  //   upkeepDemand    = THE BILL THIS HERD'S KEEPERS WERE HANDED this turn. Follows corralYield's
+  //   upkeepDemand    = THE BILL THIS HERD'S KEEPERS WERE HANDED this turn. Follows rungQuotes[animal:pen].foodYield's
   //                     rule: it is ALWAYS MEANINGFUL, never a sentinel - for a rung that declares
   //                     no upkeep it is honestly 0, and a herd nobody has started taming reads 0
   //                     (see the `<rung>UpkeepDemand` pair below for the number a PRE-COMMIT quote
@@ -4243,11 +4148,11 @@ table HerdTelemetryState {
 
   // WHAT THE IN-FLIGHT FENCE RING COSTS (appended last, append-only wire) - the DENOMINATOR of
   // `penExtendProgress` above, in the SAME work units, so the pen ring publishes the pile/meter pair
-  // every other build on this table already does (`tameWorkDone`/`tameWorkCost`,
-  // `corralWorkDone`/`corralWorkCost`). Without it the progress meter is an unscaled work count and a
+  // every other build on this table already does (`rungQuotes[animal:pastoral].workDone`/`rungQuotes[animal:pastoral].workCost`,
+  // `rungQuotes[animal:pen].workDone`/`rungQuotes[animal:pen].workCost`). Without it the progress meter is an unscaled work count and a
   // client rendering it as a percentage quotes nonsense.
   //
-  // IT IS THE HERD'S STAMPED COST, NOT A LIVE QUOTE - unlike `tameWorkCost`/`corralWorkCost`, which
+  // IT IS THE HERD'S STAMPED COST, NOT A LIVE QUOTE - unlike `rungQuotes[animal:pastoral].workCost`/`rungQuotes[animal:pen].workCost`, which
   // are resolved at capture so a compose sheet can price a build BEFORE the player commits. The ring
   // is stamped by the accrual seam on the first worked turn, so this reads 0 both when no ring is in
   // flight and on the turn one is begun but not yet worked. Read the pair together: `0 / 0` is "no
@@ -6097,7 +6002,7 @@ table RouteState {
   // fully-worn trail a dirt road on the turn its first traffic banked. This string is the bool.
   rung:string;
   // The meter on the rung this road is actually raising, 0..1 - the route twin of
-  // `cultivationProgress` / `corralProgress`, off the same intensification::rung_work_done /
+  // `rungQuotes[plant:tended].progress` / `rungQuotes[animal:pen].progress`, off the same intensification::rung_work_done /
   // build_fraction seam both food webs publish theirs from.
   //
   // *** NEVER DERIVED BY SUBTRACTION. *** `fl(base + width) - base` is not `width` when that

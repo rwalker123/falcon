@@ -292,7 +292,10 @@ fn sowable_species_by_tile(app: &App) -> std::collections::HashMap<(u32, u32), S
             .composition()
             .into_iter()
             .flatten()
-            .find(|entry| entry.canSow())
+            .find(|entry| {
+                sim_schema::wire_share_rung_quote(entry.rungQuotes(), "plant:field")
+                    .is_some_and(|quote| quote.canClimb())
+            })
             .and_then(|entry| entry.species())
         {
             out.insert((row.x(), row.y()), species.to_string());

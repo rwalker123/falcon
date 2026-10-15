@@ -8,7 +8,8 @@ use crate::state::subsistence::{
     FoodModuleState, ForagePatchState, HerdTelemetryState, IntensificationKnowledgeState,
     KitOptionState, LadderBranchState, LadderKnowledgeProgress, LadderKnowledgeState,
     LadderRungState, MaterialDefState, MaterialPayoff, RecipeDefState, RecipeInputState,
-    RecipeOutputState, RungQuoteState, SedentarizationState, SpeciesMaterialRates,
+    RecipeOutputState, RungQuoteState, RungShareQuoteState, SedentarizationState,
+    SpeciesMaterialRates,
 };
 use crate::world::{WorldDelta, WorldSnapshot};
 use flatbuffers::{ForwardsUOffset, WIPOffset};
@@ -620,7 +621,7 @@ fn create_herds<'a>(
                 buildWorkPerWorkerTurn: herd.build_work_per_worker_turn,
                 // **The standing upkeep** — appended last (append-only wire,
                 // docs/plan_standing_upkeep.md §2). All three terms ship, so the client subtracts
-                // nothing; `upkeepDemand` follows `corralYield`'s always-meaningful rule.
+                // nothing; `upkeepDemand` follows `rungQuotes[animal:pen].foodYield`'s always-meaningful rule.
                 upkeepDemand: herd.upkeep_demand,
                 upkeepSupplied: herd.upkeep_supplied,
                 upkeepShortfall: herd.upkeep_shortfall,
@@ -814,7 +815,7 @@ fn create_forage_patches<'a>(
                 buildWorkPerWorkerTurn: patch.build_work_per_worker_turn,
                 // **The standing upkeep** — appended last (append-only wire,
                 // docs/plan_standing_upkeep.md §2). All three terms ship, so the client subtracts
-                // nothing; `upkeepDemand` follows `corralYield`'s always-meaningful rule.
+                // nothing; `upkeepDemand` follows `rungQuotes[animal:pen].foodYield`'s always-meaningful rule.
                 upkeepDemand: patch.upkeep_demand,
                 upkeepSupplied: patch.upkeep_supplied,
                 upkeepShortfall: patch.upkeep_shortfall,
@@ -866,6 +867,47 @@ fn create_forage_patches<'a>(
 
 /// The per-tile flora composition (`ForagePatchState.composition`). Emitted in the order the sim
 /// hands it over — already deterministic (share DESC, then species key ASC).
+/// **A PLANT'S QUOTE AT EVERY RUNG**, children built before the row opens.
+fn create_rung_share_quotes<'a>(
+    builder: &mut FbBuilder<'a>,
+    quotes: &[RungShareQuoteState],
+) -> WIPOffset<flatbuffers::Vector<'a, ForwardsUOffset<fb::RungShareQuoteState<'a>>>> {
+    let mut entries = Vec::with_capacity(quotes.len());
+    for quote in quotes {
+        let rung_key = builder.create_string(quote.rung_key.as_str());
+        let material_payoff = create_material_payoffs(builder, &quote.material_payoff);
+        let entry = fb::RungShareQuoteState::create(
+            builder,
+            &fb::RungShareQuoteStateArgs {
+                rungKey: Some(rung_key),
+                canClimb: quote.can_climb,
+                foodPayoff: quote.food_payoff,
+                yieldRatio: quote.yield_ratio,
+                fodderPayoff: quote.fodder_payoff,
+                materialPayoff: Some(material_payoff),
+                workCost: quote.work_cost,
+            },
+        );
+        entries.push(entry);
+    }
+    builder.create_vector(&entries)
+}
+
+/// The decode twin of [`create_rung_share_quotes`].
+fn decode_rung_share_quotes(
+    quotes: Option<flatbuffers::Vector<'_, ForwardsUOffset<fb::RungShareQuoteState<'_>>>>,
+) -> Vec<RungShareQuoteState> {
+    map_rows(quotes, |quote| RungShareQuoteState {
+        rung_key: text(quote.rungKey()),
+        can_climb: quote.canClimb(),
+        food_payoff: quote.foodPayoff(),
+        yield_ratio: quote.yieldRatio(),
+        fodder_payoff: quote.fodderPayoff(),
+        material_payoff: decode_material_payoffs(quote.materialPayoff()),
+        work_cost: quote.workCost(),
+    })
+}
+
 fn create_flora_shares<'a>(
     builder: &mut FbBuilder<'a>,
     shares: &[FloraShareInfo],
@@ -877,41 +919,17 @@ fn create_flora_shares<'a>(
         let role = builder.create_string(share.role.as_str());
         // **Built before the parent table opens**, the ordinary FlatBuffers rule: a nested vector
         // cannot be written while `FloraShareInfo` is under construction.
-        let sow_materials = create_material_payoffs(builder, &share.sow_material_payoff);
-        let cultivate_materials =
-            create_material_payoffs(builder, &share.cultivate_material_payoff);
+        let rung_quotes = create_rung_share_quotes(builder, &share.rung_quotes);
         let entry = fb::FloraShareInfo::create(
             builder,
             &fb::FloraShareInfoArgs {
                 species: Some(species),
                 displayName: Some(display_name),
                 share: share.share,
-                // Which rungs this plant can climb — appended last (append-only wire).
-                canCultivate: share.can_cultivate,
-                canSow: share.can_sow,
-                // Is committing this tile to this plant worth it — appended last (append-only wire).
-                cultivateYieldRatio: share.cultivate_yield_ratio,
-                sowYieldRatio: share.sow_yield_ratio,
-                // What it would actually pay — appended last (append-only wire).
-                cultivatePayoff: share.cultivate_payoff,
-                sowPayoff: share.sow_payoff,
-                // The fodder a hay Field would pay — appended last (append-only wire, F3).
-                sowFodderPayoff: share.sow_fodder_payoff,
-                // The same two accounts at the TENDED rung — appended last (append-only wire, #419).
-                cultivateFodderPayoff: share.cultivate_fodder_payoff,
                 // What the plant is FOR — a display tag off the roster, appended last (append-only
                 // wire). `""` is "unstated", never "staple".
                 role: Some(role),
-                // **What a cash crop would pay, per material** — appended last (append-only wire,
-                // arc #527), replacing the retired `sowTradePayoff`/`cultivateTradePayoff`. An EMPTY
-                // vector is "no row", never "zero": a food crop yields no material and must render
-                // nothing at all.
-                sowMaterialPayoff: Some(sow_materials),
-                cultivateMaterialPayoff: Some(cultivate_materials),
-                // **What sowing THIS crop would cost in work** — appended last (append-only wire,
-                // §4.15). `0` is "no figure" (the plant cannot climb to a Field here), never a free
-                // Sow.
-                sowWorkCost: share.sow_work_cost,
+                rungQuotes: Some(rung_quotes),
             },
         );
         entries.push(entry);
@@ -1636,18 +1654,8 @@ fn decode_flora_shares(
         species: text(share.species()),
         display_name: text(share.displayName()),
         share: share.share(),
-        can_cultivate: share.canCultivate(),
-        can_sow: share.canSow(),
-        cultivate_yield_ratio: share.cultivateYieldRatio(),
-        sow_yield_ratio: share.sowYieldRatio(),
-        cultivate_payoff: share.cultivatePayoff(),
-        sow_payoff: share.sowPayoff(),
-        sow_fodder_payoff: share.sowFodderPayoff(),
-        cultivate_fodder_payoff: share.cultivateFodderPayoff(),
         role: text(share.role()),
-        sow_material_payoff: decode_material_payoffs(share.sowMaterialPayoff()),
-        cultivate_material_payoff: decode_material_payoffs(share.cultivateMaterialPayoff()),
-        sow_work_cost: share.sowWorkCost(),
+        rung_quotes: decode_rung_share_quotes(share.rungQuotes()),
     })
 }
 

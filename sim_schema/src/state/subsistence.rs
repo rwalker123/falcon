@@ -240,7 +240,7 @@ pub struct HerdTelemetryState {
     #[serde(default)]
     pub pen_pasture_fraction: f32,
     /// **The in-flight `ExtendPen` ring's build meter, in WORK UNITS** — the same unit-costed meter
-    /// `Self::tame_work_done` / `Self::corral_work_done` carry, **not** a `0..1` fraction. It
+    /// `Self::rungQuotes[animal:pastoral].workDone` / `Self::rungQuotes[animal:pen].workDone` carry, **not** a `0..1` fraction. It
     /// completes at [`Self::pen_extend_cost`] (→ `pen_radius` grows by one and both reset to `0.0`),
     /// so a "Fencing N%" badge is `pen_extend_progress / pen_extend_cost` with the zero denominator
     /// guarded. `0.0` when the pen is not extending. Appended (append-only).
@@ -363,7 +363,7 @@ pub struct HerdTelemetryState {
     // **RETIRED: `maintain`** — a per-source boolean toggle. *"Stop maintaining this"* is
     // `maintain <faction> hunt <herd> 0`: a flag beside a crew count would be a second way to say
     // what the number already says, and the two could disagree.
-    /// **What holding this herd's rung DEMANDS this turn**, in work units. Follows `corral_yield`'s
+    /// **What holding this herd's rung DEMANDS this turn**, in work units. Follows `rungQuotes[animal:pen].foodYield`'s
     /// rule — **always meaningful, never a sentinel**: a rung that declares no upkeep reads an honest
     /// `0`, which is every shipped rung today.
     #[serde(default)]
@@ -542,10 +542,10 @@ pub struct HerdTelemetryState {
     /// state a compose sheet is looking at. With an improvement in flight it counts down the running
     /// meter; with none it is what the rung this source would climb **next** would take the crew
     /// currently working it, from the work already banked on that rung. Always meaningful, never
-    /// `-1`-because-unstarted — the same always-meaningful rule `corral_yield` follows.
+    /// `-1`-because-unstarted — the same always-meaningful rule `rungQuotes[animal:pen].foodYield` follows.
     ///
     /// **Which `*_work_cost` it belongs beside** is the assignment's own `improvement`, and the
-    /// **next rung up** when that is empty (`is_cultivated` / `is_field`, `domestication` /
+    /// **next rung up** when that is empty (`rungQuotes[plant:tended].reached` / `rungQuotes[plant:field].reached`, `domestication` /
     /// `corralled`): the pair is read as *"50 work, ≈13 turns"*, so they must name one rung.
     ///
     /// **IT IS A CHAINED DATE** (`docs/plan_standing_upkeep.md` §4.6b). The band's whole `builders`
@@ -750,7 +750,7 @@ pub struct HerdTelemetryState {
     /// every other build on this row already does.
     ///
     /// **It is the herd's STAMPED cost, not a live quote** — the one way it differs from
-    /// `Self::tame_work_cost` / `Self::corral_work_cost`, which resolve at capture so a compose
+    /// `Self::rungQuotes[animal:pastoral].workCost` / `Self::rungQuotes[animal:pen].workCost`, which resolve at capture so a compose
     /// sheet can price a build before the player commits. `Herd::accrue_pen_extension` stamps it on
     /// the first worked turn, so it reads `0.0` both with no ring in flight and on the turn a ring is
     /// begun. Read the pair together: `0.0 / 0.0` is *"no ring"*, never *"0%"*.
@@ -982,8 +982,8 @@ pub struct SpeciesMaterialRates {
 }
 
 /// One depletable forage patch's cultivation + ecology state for the client tile card
-/// (Intensification Phase 1a). Keyed by tile `(x, y)`. `cultivation_progress` is the 0..1 taming
-/// meter; `is_cultivated` = a completed tended patch. `owner` is the tending faction (`None` = a
+/// (Intensification Phase 1a). Keyed by tile `(x, y)`. `rungQuotes[plant:tended].progress` is the 0..1 taming
+/// meter; `rungQuotes[plant:tended].reached` = a completed tended patch. `owner` is the tending faction (`None` = a
 /// wild/untended patch). `biomass`/`carrying_capacity`/`ecology_phase` let the client show patch
 /// health. Mirrors `HerdTelemetryState`'s display-telemetry role for the plant side.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
@@ -1002,7 +1002,7 @@ pub struct ForagePatchState {
     ///
     /// # ⛔ REDACT IT UNDER FOG — [`Self::tile_capacity`] is what replaces it there
     ///
-    /// `is_field` and `field_progress` are already withheld on a remembered hex; publishing this one
+    /// `rungQuotes[plant:field].reached` and `rungQuotes[plant:field].progress` are already withheld on a remembered hex; publishing this one
     /// unredacted hands back the same ladder position, and in a finer grain than the boolean did —
     /// being interpolated it states *how far up*, not merely *whether*. Render this where the tile is
     /// **visible** and [`Self::tile_capacity`] where it is merely **discovered**.
@@ -1243,10 +1243,10 @@ pub struct ForagePatchState {
     /// state a compose sheet is looking at. With an improvement in flight it counts down the running
     /// meter; with none it is what the rung this source would climb **next** would take the crew
     /// currently working it, from the work already banked on that rung. Always meaningful, never
-    /// `-1`-because-unstarted — the same always-meaningful rule `corral_yield` follows.
+    /// `-1`-because-unstarted — the same always-meaningful rule `rungQuotes[animal:pen].foodYield` follows.
     ///
     /// **Which `*_work_cost` it belongs beside** is the assignment's own `improvement`, and the
-    /// **next rung up** when that is empty (`is_cultivated` / `is_field`, `domestication` /
+    /// **next rung up** when that is empty (`rungQuotes[plant:tended].reached` / `rungQuotes[plant:field].reached`, `domestication` /
     /// `corralled`): the pair is read as *"50 work, ≈13 turns"*, so they must name one rung.
     ///
     /// **IT IS A CHAINED DATE** (`docs/plan_standing_upkeep.md` §4.6b). The band's whole `builders`
@@ -1472,7 +1472,7 @@ pub struct ForagePatchState {
     /// empty when nothing is queued; this one says **where the source is**, which every source has.
     ///
     /// It ships so a consumer can answer *"has this been improved, and what is above it"* without
-    /// knowing either web's private booleans (`Self::is_cultivated` + `Self::is_field` here, a
+    /// knowing either web's private booleans (`Self::rungQuotes[plant:tended].reached` + `Self::rungQuotes[plant:field].reached` here, a
     /// float and a flag on the herd row), and so a third branch costs it nothing. Struck at capture
     /// by `core_sim`'s `forage::patch_rung_key`, the single home of the *"sown → field, cultivated →
     /// tended, else wild"* test, so it cannot disagree with the rung the sim resolves.
@@ -1869,7 +1869,7 @@ fn not_in_any_build_queue() -> i32 {
 }
 
 /// **One material a commitment would pay, and how much of it per turn** — a row of
-/// [`FloraShareInfo::sow_material_payoff`] / [`FloraShareInfo::cultivate_material_payoff`].
+/// [`FloraShareInfo::rungQuotes[plant:field].materialPayoff`] / [`FloraShareInfo::rungQuotes[plant:tended].materialPayoff`].
 ///
 /// **A vector of these rather than one scalar is the whole point.** It replaced
 /// `sow_trade_payoff` / `cultivate_trade_payoff` (arc #527), which answered *"how much trade"* — a
@@ -2004,85 +2004,6 @@ pub struct FloraShareInfo {
     pub display_name: String,
     /// This plant's fraction of the tile's basket, `0..1`.
     pub share: f32,
-    /// **May a `Cultivate` commit a patch to this plant** (rung 2) — the species' own
-    /// `cultivation_ceiling.allows_cultivate()`. Shipped for the reason [`Self::display_name`] is:
-    /// the client holds no roster, so it cannot tell that oak mast is a wild harvest forever.
-    ///
-    /// **Species-global, not tile-specific** — the ceiling is a property of the plant, so it reads
-    /// the same on every tile hosting it and cannot drift from a per-tile rule. The *other* half of
-    /// legality ("does it grow here") is this entry existing in the tile's composition at all.
-    ///
-    /// It answers *"can this plant ever climb this rung"*, **not** *"is this a good idea here"* —
-    /// [`Self::share`] answers that. Committing to a marginal-share plant is legal and is a real
-    /// loss, and that loss is the decision the rung exists to make
-    /// (`docs/plan_flora_roster.md` §4.3). Appended (append-only).
-    #[serde(default)]
-    pub can_cultivate: bool,
-    /// **May a `Sow` commit a patch to this plant** (rung 3) — `cultivation_ceiling.allows_sow()`.
-    /// The rung-3 twin of [`Self::can_cultivate`], same reading, same caveats. Appended
-    /// (append-only).
-    #[serde(default)]
-    pub can_sow: bool,
-    /// **What committing this tile to this plant pays, against just gathering it wild, at the tended
-    /// rung** — the tended payoff over the wild payoff, where tending **weeds** the basket (the
-    /// favored share rises to `min(1, share × tended_weeding_gain)`, taken from the least abundant
-    /// of the members standing in the worked ground first) and converts the favored term at
-    /// `tended_conversion_gain`
-    /// (`docs/plan_flora_roster.md` §4.3).
-    ///
-    /// `> 1.0` committing beats gathering the whole basket; `< 1.0` it is a **loss the player stays
-    /// free to choose**, which is the decision the rung exists to make — never clamped, never hidden.
-    /// A *ratio against the wild basket*, not an absolute yield: it folds in both the plant's share
-    /// of this tile and the plant's own conversion rate, which is why it is shipped instead of the
-    /// raw rate (half the answer, and the rest of the formula would drift client-side).
-    ///
-    /// `0` means **cannot climb this rung**, mirroring [`Self::can_cultivate`] — distinct from a real
-    /// ratio of `0`, which cannot occur. Appended (append-only).
-    #[serde(default)]
-    pub cultivate_yield_ratio: f32,
-    /// The Field-rung twin of [`Self::cultivate_yield_ratio`] — same reading, on a basket forced to
-    /// **100% the sown crop** and on `allows_sow`. Its own field because the two rungs differ in
-    /// *both* reweight and legality, so one number would be ambiguous about which rung it answers.
-    /// Appended (append-only).
-    #[serde(default)]
-    pub sow_yield_ratio: f32,
-    /// **Provisions/turn this tile would pay once the tended rung is complete and committed to this
-    /// plant** — the same units and output-multiplier convention as
-    /// `ForagePatchState::tended_yield`, so the client can substitute one for the other with no
-    /// arithmetic of its own.
-    ///
-    /// **Per species, because the shipped per-patch quotes are species-blind**: they read whatever
-    /// the patch is already committed to (usually nothing), so a player comparing crops sees one
-    /// number for every option. Produced by the same payoff function the sim pays the rung with,
-    /// against the patch the sim would have — this tile's own `K` concentrated by the rung, at the
-    /// standing crop that rung settles at — so it answers *"what does this ground pay once the crop
-    /// is established"* rather than pricing a 25-turn investment off one transient turn. `0` where
-    /// the plant cannot climb the rung.
-    /// [`Self::cultivate_yield_ratio`] is exactly this over the tile's wild payoff. Appended
-    /// (append-only).
-    #[serde(default)]
-    pub cultivate_payoff: f32,
-    /// The Field-rung twin of [`Self::cultivate_payoff`] — the counterpart of
-    /// `ForagePatchState::field_yield`. Appended (append-only).
-    #[serde(default)]
-    pub sow_payoff: f32,
-    /// Fodder/turn a sown Field of this plant would harvest into the band's FODDER store on this tile
-    /// (Flora Roster F3). A fodder crop's payoff is in this account, not provisions, so the picker can
-    /// show hay's value instead of the bare `0×` its `sow_yield_ratio` reads. `0` for a staple or a
-    /// plant that cannot climb to the Field rung here. Appended (append-only).
-    #[serde(default)]
-    pub sow_fodder_payoff: f32,
-    // **RETIRED: `sow_trade_payoff`** (arc #527), and off the wire. **The gap it leaves is real:** the crop picker's cash-crop row was the one surface
-    // that told a player what sowing cotton is *for*, and a material yield cannot be quoted as one
-    // per-turn number. Replacing it is client-side work with a per-material shape.
-    /// The **tended-rung** twin of [`Self::sow_fodder_payoff`] — fodder/turn a completed tended patch
-    /// of this plant would pay here (issue #419). Its own field for the reason
-    /// [`Self::cultivate_payoff`] is: rung 2 is a drawn-down MSY skim and rung 3 a managed rate, so one
-    /// number cannot answer both rungs, and quoting the Sow figure on the Cultivate row overstated it.
-    /// `0` where the vector pays no fodder or the plant cannot climb to the tended rung here. Appended
-    /// (append-only).
-    #[serde(default)]
-    pub cultivate_fodder_payoff: f32,
     // **RETIRED: `cultivate_trade_payoff`** (arc #527), and off the wire — see `sow_trade_payoff`
     // above for the gap.
     /// **What this plant is for** — the species' own `role` (`flora_config.json` → `species`):
@@ -2100,44 +2021,73 @@ pub struct FloraShareInfo {
     /// true. Appended (append-only).
     #[serde(default)]
     pub role: String,
-    /// **What a sown Field of this plant would pay, per material** (arc #527) — the replacement for
-    /// the retired `sow_trade_payoff`, and the number the crop picker's cash-crop row states.
-    ///
-    /// **Empty means "no row", never "zero".** A food crop yields no material and must render
-    /// nothing here — a `0` would read as a cash crop that pays badly. Empty is also what a plant
-    /// that cannot climb the rung on this ground reports, the convention
-    /// [`Self::sow_payoff`]'s `0` follows.
-    ///
-    /// Produced by `forage::commit_material_payoff` off the same per-rung harvest
-    /// `credit_material_yield` is paid on, so the quote and the payout cannot drift. Appended
-    /// (append-only).
+    /// **This plant's quote at every rung of the plant branch above the root** - one
+    /// [`RungShareQuoteState`] per rung in climb order, replacing the per-step `cultivate*` /
+    /// `sow*` fields. Appended last.
     #[serde(default)]
-    pub sow_material_payoff: Vec<MaterialPayoff>,
-    /// The **tended-rung** twin of [`Self::sow_material_payoff`] — its own field for the reason
-    /// [`Self::cultivate_payoff`] is: rung 2 is a drawn-down MSY skim and rung 3 a managed rate on
-    /// the standing crop, so one number cannot answer both rungs. Appended (append-only).
-    #[serde(default)]
-    pub cultivate_material_payoff: Vec<MaterialPayoff>,
-    /// **What a Sow committing this tile to THIS plant would cost, in work units**
-    /// (`docs/plan_standing_upkeep.md` §4.15) — the rung's declared `work_cost` times the multiplier
-    /// this crop's own share earns, in the same units as `ForagePatchState::field_work_cost`.
-    ///
-    /// **The cost half of the crop decision.** `plant:field` is priced by how much of the tile the
-    /// chosen crop still has to replace, and a patch prices exactly one crop — its commitment, or the
-    /// rung's auto-pick — so every row of a crop picker quoted the *same* work figure and only the
-    /// payoffs moved. This one moves with the crop, so work and payoff can be weighed against each
-    /// other before anything is committed.
-    ///
-    /// `0` means **no figure** — the plant cannot climb to a Field on this ground — and must render
-    /// as *no row*, never as a free Sow. A real price is never `0`: the multiplier is clamped at
-    /// `field_share_cost_floor` precisely because ground already wholly the crop still has its rows
-    /// laid and its seed put in.
-    ///
-    /// Produced by `forage::crop_field_cost_multiplier`, the same expression the patch's own price
-    /// goes through, so the figure quoted for the committed crop **is**
-    /// `ForagePatchState::field_work_cost`. Appended (append-only).
-    #[serde(default)]
-    pub sow_work_cost: f32,
+    pub rung_quotes: Vec<RungShareQuoteState>,
+}
+
+/// **ONE PLANT'S QUOTE AT ONE RUNG** (`snapshot.fbs` -> `RungShareQuoteState`): what committing the
+/// tile to this plant would be at the rung `rung_key`.
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+pub struct RungShareQuoteState {
+    /// The rung's `branch:id` wire key.
+    pub rung_key: String,
+    /// Whether the plant can ever climb the rung (its `cultivation_ceiling`).
+    pub can_climb: bool,
+    /// Food per turn a completed rung of this plant pays on this tile.
+    pub food_payoff: f32,
+    /// That payoff over the tile's wild payoff; `0` = cannot climb here.
+    pub yield_ratio: f32,
+    /// The fodder account at the rung.
+    pub fodder_payoff: f32,
+    /// The material account at the rung; empty for a food crop.
+    pub material_payoff: Vec<MaterialPayoff>,
+    /// What building the rung with this crop costs; `0` where the plant cannot climb to it here.
+    pub work_cost: f32,
+}
+
+/// **THE QUOTE OF A RUNG A PLANT SAYS NOTHING ABOUT** - every number zero, nothing climbable. What
+/// [`FloraShareInfo::quote`] answers for the root or a key off the branch.
+pub static NO_RUNG_SHARE_QUOTE: RungShareQuoteState = RungShareQuoteState {
+    rung_key: String::new(),
+    can_climb: false,
+    food_payoff: 0.0,
+    yield_ratio: 0.0,
+    fodder_payoff: 0.0,
+    material_payoff: Vec::new(),
+    work_cost: 0.0,
+};
+
+impl FloraShareInfo {
+    /// This plant's quote for `rung_key`, or `None` for the root or a key off the branch.
+    pub fn rung_quote(&self, rung_key: &str) -> Option<&RungShareQuoteState> {
+        self.rung_quotes
+            .iter()
+            .find(|quote| quote.rung_key == rung_key)
+    }
+
+    /// [`Self::rung_quote`], answering [`NO_RUNG_SHARE_QUOTE`] where the plant has nothing to say.
+    pub fn quote(&self, rung_key: &str) -> &RungShareQuoteState {
+        self.rung_quote(rung_key).unwrap_or(&NO_RUNG_SHARE_QUOTE)
+    }
+
+    /// A mutable quote for `rung_key`, inserted blank if absent - how a fixture states one rung.
+    pub fn quote_mut(&mut self, rung_key: &str) -> &mut RungShareQuoteState {
+        let at = self
+            .rung_quotes
+            .iter()
+            .position(|quote| quote.rung_key == rung_key)
+            .unwrap_or_else(|| {
+                self.rung_quotes.push(RungShareQuoteState {
+                    rung_key: rung_key.to_string(),
+                    ..RungShareQuoteState::default()
+                });
+                self.rung_quotes.len() - 1
+            });
+        &mut self.rung_quotes[at]
+    }
 }
 
 /// **ONE LADDER KNOWLEDGE THE CONFIG DECLARES** — the *roster* half, once per world and deliberately

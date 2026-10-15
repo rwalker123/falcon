@@ -328,8 +328,16 @@ fn published_patches(app: &App) -> Vec<PublishedPatch> {
                         .map(|entry| PublishedCrop {
                             species: entry.species().unwrap_or_default().to_string(),
                             share: entry.share(),
-                            can_sow: entry.canSow(),
-                            sow_work_cost: entry.sowWorkCost(),
+                            can_sow: sim_schema::wire_share_rung_quote(
+                                entry.rungQuotes(),
+                                "plant:field",
+                            )
+                            .is_some_and(|quote| quote.canClimb()),
+                            sow_work_cost: sim_schema::wire_share_rung_quote(
+                                entry.rungQuotes(),
+                                "plant:field",
+                            )
+                            .map_or(0.0, |quote| quote.workCost()),
                         })
                         .collect()
                 })

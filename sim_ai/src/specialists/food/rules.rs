@@ -1707,19 +1707,19 @@ impl Food {
 
     /// The plant a climb commits `patch` to: what it is already committed to, else the largest
     /// share that may climb the rung — and what that plant pays once the rung is complete
-    /// (`FloraShareInfo::cultivate_payoff` / `sow_payoff`). The land reading (`ground.rs`)
+    /// (`FloraShareInfo::quote(..).food_payoff`). The land reading (`ground.rs`)
     /// quotes a patch's farmed rungs through this same selection.
     pub(crate) fn climb_payoff(
         patch: &ForagePatchState,
         climb: Climb,
     ) -> Option<(&FloraShareInfo, f32)> {
         let legal = |plant: &FloraShareInfo| match climb {
-            Climb::Tended => plant.can_cultivate,
-            Climb::Field => plant.can_sow,
+            Climb::Tended => plant.quote(crate::rungs::PLANT_TENDED).can_climb,
+            Climb::Field => plant.quote(crate::rungs::PLANT_FIELD).can_climb,
         };
         let payoff = |plant: &FloraShareInfo| match climb {
-            Climb::Tended => plant.cultivate_payoff,
-            Climb::Field => plant.sow_payoff,
+            Climb::Tended => plant.quote(crate::rungs::PLANT_TENDED).food_payoff,
+            Climb::Field => plant.quote(crate::rungs::PLANT_FIELD).food_payoff,
         };
         let committed = patch
             .composition
@@ -3979,10 +3979,20 @@ mod tests {
                     patch.composition = Arc::from(vec![FloraShareInfo {
                         species: "hazel".to_owned(),
                         share: 1.0,
-                        can_cultivate: true,
-                        can_sow: true,
-                        cultivate_payoff: 40.0,
-                        sow_payoff: 80.0,
+                        rung_quotes: vec![
+                            sim_runtime::RungShareQuoteState {
+                                rung_key: crate::rungs::PLANT_TENDED.to_owned(),
+                                can_climb: true,
+                                food_payoff: 40.0,
+                                ..Default::default()
+                            },
+                            sim_runtime::RungShareQuoteState {
+                                rung_key: crate::rungs::PLANT_FIELD.to_owned(),
+                                can_climb: true,
+                                food_payoff: 80.0,
+                                ..Default::default()
+                            },
+                        ],
                         ..Default::default()
                     }]);
                     patch.quote_mut(crate::rungs::PLANT_TENDED).work_cost = 50.0;
@@ -6084,10 +6094,20 @@ mod tests {
                     patch.composition = Arc::from(vec![FloraShareInfo {
                         species: "hazel".to_owned(),
                         share: 1.0,
-                        can_cultivate: true,
-                        can_sow: true,
-                        cultivate_payoff: 40.0,
-                        sow_payoff: 80.0,
+                        rung_quotes: vec![
+                            sim_runtime::RungShareQuoteState {
+                                rung_key: crate::rungs::PLANT_TENDED.to_owned(),
+                                can_climb: true,
+                                food_payoff: 40.0,
+                                ..Default::default()
+                            },
+                            sim_runtime::RungShareQuoteState {
+                                rung_key: crate::rungs::PLANT_FIELD.to_owned(),
+                                can_climb: true,
+                                food_payoff: 80.0,
+                                ..Default::default()
+                            },
+                        ],
                         ..Default::default()
                     }]);
                     patch.quote_mut(crate::rungs::PLANT_TENDED).work_cost = 50.0;

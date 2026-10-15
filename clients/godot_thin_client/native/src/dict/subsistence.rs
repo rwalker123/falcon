@@ -5,12 +5,6 @@ use flatbuffers::{ForwardsUOffset, Vector};
 use godot::prelude::*;
 use shadow_scale_flatbuffers::shadow_scale::sim as fb;
 
-/// **The wire's "this crop cannot be sown here"** for `FloraShareInfo.sowWorkCost` — a Sow price is
-/// never legitimately `0` (the sim's multiplier is floored, because laying the rows and putting the
-/// seed in costs work on any ground), so the schema default reads as *no figure* and the key is
-/// simply not inserted.
-const NO_SOW_WORK_COST: f32 = 0.0;
-
 /// The `regrowthSamples` vector both source tables publish, as the packed float array GDScript
 /// interpolates over. **An ABSENT vector stays EMPTY** rather than becoming a run of zeros:
 /// "published no curve" and "does not grow" are different claims, and only the first may leave the
@@ -638,6 +632,32 @@ pub(crate) fn herds_to_array(
     array
 }
 
+/// **A PLANT'S QUOTES AT EVERY RUNG** (`FloraShareInfo.rungQuotes`) as an array of dictionaries, one per
+/// rung above the plant branch's root, in climb order.
+pub(crate) fn rung_share_quotes_to_array(
+    quotes: Option<Vector<'_, ForwardsUOffset<fb::RungShareQuoteState<'_>>>>,
+) -> VarArray {
+    let mut array = VarArray::new();
+    let Some(quotes) = quotes else {
+        return array;
+    };
+    for quote in quotes {
+        let mut dict = VarDictionary::new();
+        let _ = dict.insert("rung_key", quote.rungKey().unwrap_or_default());
+        let _ = dict.insert("can_climb", quote.canClimb());
+        let _ = dict.insert("food_payoff", f64::from(quote.foodPayoff()));
+        let _ = dict.insert("yield_ratio", f64::from(quote.yieldRatio()));
+        let _ = dict.insert("fodder_payoff", f64::from(quote.fodderPayoff()));
+        let _ = dict.insert(
+            "material_payoff",
+            &material_payoffs_to_array(quote.materialPayoff()),
+        );
+        let _ = dict.insert("work_cost", f64::from(quote.workCost()));
+        array.push(&dict.to_variant());
+    }
+    array
+}
+
 /// **A SOURCE'S RUNG QUOTES** (`rungQuotes` on a patch or herd row) as an array of dictionaries, one
 /// per rung above the branch's root, in climb order. `rung_key` joins to the ladder catalog's
 /// `rung_key`; every other key is the quote's own field, snake-cased.
@@ -1027,39 +1047,6 @@ pub(crate) fn forage_patches_to_array(
                     let _ = share_dict.insert("display_name", display_name);
                 }
                 let _ = share_dict.insert("share", share.share());
-                // CAN THIS PLANT EVER CLIMB THIS RUNG (flora roster S1) — species-GLOBAL legality,
-                // not "is this a good idea here". An oak's mast is a wild harvest forever, so it is
-                // shown in the crop picker and greyed; `share` is what says whether a LEGAL crop is
-                // a wise one, and a marginal share must never disable anything.
-                let _ = share_dict.insert("can_cultivate", share.canCultivate());
-                let _ = share_dict.insert("can_sow", share.canSow());
-                // WHAT COMMITTING PAYS — this rung's yield RELATIVE to gathering the plant wild.
-                // Already folds in the tile's share AND the species' conversion rate, computed
-                // sim-side through the same seams the real payout uses, so the client only ever
-                // FORMATS it: >1 committing beats gathering, <1 it is a loss, and 0 is the
-                // "cannot climb this rung" sentinel (a real ratio is never 0), never a number to
-                // print. The raw per-species rate is deliberately NOT published — it is meaningless
-                // alone and would put the payoff formula in two places.
-                let _ = share_dict.insert("cultivate_yield_ratio", share.cultivateYieldRatio());
-                let _ = share_dict.insert("sow_yield_ratio", share.sowYieldRatio());
-                // WHAT THIS RUNG PAYS ONCE COMPLETE, committed to THIS species — same units and
-                // output-multiplier convention as the forecast `payoff` the compose sheet already
-                // renders, so the client SUBSTITUTES it into the "→ then" term rather than computing
-                // anything. 0 on a rung the species cannot climb. (The ratio above is exactly this
-                // divided by the wild rate; both come from the sim so the two can never disagree.)
-                let _ = share_dict.insert("cultivate_payoff", share.cultivatePayoff());
-                let _ = share_dict.insert("sow_payoff", share.sowPayoff());
-                // The FODDER twin of `sow_payoff` (Flora roster F3): provisions-equivalent hay a Sown
-                // Field of THIS species would pay per turn, routed to the fodder account. >0 marks a
-                // fodder crop (e.g. hay_grass), whose provisions payoff/ratio read 0 — worthless as
-                // food but valuable as feed. The crop picker shows this hay value in place of the 0×
-                // provisions ratio so a fodder crop does not read as a loss. 0 for a normal crop.
-                let _ = share_dict.insert("sow_fodder_payoff", share.sowFodderPayoff());
-                // The same account AT THE TENDED RUNG (#419). The two `sow_*` payoffs above are
-                // Field figures, so a Cultivate row that read them quoted rung 3's managed rate for a
-                // rung that pays an MSY skim off a merely-weeded basket. Which one a row states is the
-                // POLICY's question, so both ride the entry and the picker picks by rung.
-                let _ = share_dict.insert("cultivate_fodder_payoff", share.cultivateFodderPayoff());
                 // WHAT THIS PLANT IS FOR — "staple" | "fodder" | "cash", the species' own display
                 // tag. The tile card leads each basket row with one icon per role, so a player sees
                 // at a glance how much of a stand is food, feed or cash.
@@ -1075,51 +1062,16 @@ pub(crate) fn forage_patches_to_array(
                 if let Some(role) = share.role() {
                     let _ = share_dict.insert("role", role);
                 }
-                // WHAT A CASH CROP PAYS, PER MATERIAL (arc #527) — the replacement for the retired
-                // `sow_trade_payoff`/`cultivate_trade_payoff`, which answered "how much trade": a
-                // number a market could total and a player could not act on. Each key holds an
-                // ARRAY of `{ material_id, amount }` dicts — one row per material this plant would
-                // yield per turn at that rung on this tile.
-                //
-                // **AN EMPTY ARRAY IS "NO ROW", NEVER "ZERO".** A food crop yields no material and
-                // must render nothing at all; a `0` would read as a cash crop that pays badly. The
-                // key is always inserted (empty array included) so a reader can tell "this server
-                // sent no quote" from "this plant pays no material" — the opposite convention to
-                // `role` above, and deliberately so, because here the empty case is a real answer
-                // rather than an unstated one.
-                //
-                // **DO NOT SUM THEM INTO ONE materials/turn FIGURE.** That is the retired trade axis
-                // under a new name, and it collapses the distinction the materials model exists to
-                // keep. `material_id` resolves for display against the material catalogue the
-                // snapshot already ships.
+                // **THIS PLANT'S QUOTE AT EVERY RUNG** (`FloraShareInfo.rungQuotes`) - one dictionary
+                // per rung of the plant branch above the root, in climb order, replacing the per-step
+                // `can_*` / `cultivate_*` / `sow_*` keys. `rung_key` joins to the ladder catalog.
+                // `material_payoff` is an array of `{ material_id, amount }` and an EMPTY one is "no
+                // row", never "zero"; `work_cost` `0` is "no figure" (the plant cannot climb to the
+                // rung here), never a free build.
                 let _ = share_dict.insert(
-                    "sow_material_payoff",
-                    &material_payoffs_to_array(share.sowMaterialPayoff()),
+                    "rung_quotes",
+                    &rung_share_quotes_to_array(share.rungQuotes()),
                 );
-                let _ = share_dict.insert(
-                    "cultivate_material_payoff",
-                    &material_payoffs_to_array(share.cultivateMaterialPayoff()),
-                );
-                // WHAT SOWING THIS CROP WOULD COST, in work units (§4.15) — the COST half of the
-                // crop decision, and the only figure on this entry that is not a payoff. A Sow is
-                // priced by how much of the tile the chosen crop still has to replace, and the
-                // patch's own `field_work_cost` prices exactly ONE crop (its commitment, or the
-                // rung's auto-pick) — so a crop picker showed the same work figure against every
-                // row while the payoffs beside them moved. This one moves with the crop.
-                //
-                // Same units as the patch's `field_work_cost`, and for the crop the patch is
-                // ACTUALLY committed to it is the identical number: both come out of one sim-side
-                // expression. Compare them, never re-derive one from the other.
-                //
-                // **ABSENT MEANS NO FIGURE, NEVER A FREE SOW** — the key is only inserted when the
-                // plant can climb to a Field on this ground, the `role` convention rather than the
-                // `sow_material_payoff` one, because a `0` work cost is not a readable answer: a
-                // real price is floored at `field_share_cost_floor` since laying the rows and
-                // putting the seed in costs work even on ground already wholly the crop. Render no
-                // row where the key is missing.
-                if share.sowWorkCost() > NO_SOW_WORK_COST {
-                    let _ = share_dict.insert("sow_work_cost", share.sowWorkCost());
-                }
                 shares.push(&share_dict.to_variant());
             }
             let _ = dict.insert("composition", &shares);
