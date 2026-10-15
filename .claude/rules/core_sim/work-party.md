@@ -25,6 +25,11 @@ caravan's state and per-turn rule, the walk, the forecast, the pricing) plus the
 in `forecast_query.rs`. **A deposit (wood, stone) posts a party by exactly the rule a patch does** —
 see "The deposit web: the cargo is the material".
 
+**A tile improvement's crew (`LaborTarget::Tile`, `intensification.md` -> "The tile kind") is the
+fourth row kind and posts a party by the same rule**: `party_source_position` names its tile, a far
+crew is a party, and the party carries no cargo (the row takes nothing; it only keeps). Nothing forks
+for it.
+
 ## Config files
 
 | File | Purpose |

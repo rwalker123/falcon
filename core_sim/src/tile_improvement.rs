@@ -2,68 +2,65 @@
 //! (`docs/plan_intensification_ladder.md`, `.claude/rules/core_sim/intensification.md` -> "The tile
 //! kind").
 //!
-//! A `tile` branch is the road's shape for a thing that is not a road: a **standing** on the ladder,
-//! a **keeper**, an **upkeep** bill, a **neglect** clock and a **grace** - and no crew row, no
-//! stock, no traffic. It is a source kind the code owns (each kind is a source with its own state,
-//! registry and turn arm) and a branch is a JSON edit, so the code never names a tile branch: no
-//! tile branch ships, and one added to `intensification_ladder.json` works with no code change
-//! (`core_sim/tests/tile_improvement.rs` proves it on a test-only ladder).
+//! A `tile` branch is the working's shape for a thing that yields nothing: a **standing** on the
+//! ladder, a **bill**, a **neglect** clock and a **grace**, kept by a **crew row** a band assigns to
+//! it ([`crate::components::LaborTarget::Tile`]) exactly as a deposit's crew is. It is a source kind
+//! the code owns (each kind is a source with its own state, registry and turn arm) and a branch is a
+//! JSON edit, so the code never names a tile branch: no tile branch ships, and one added to
+//! `intensification_ladder.json` works with no code change (`core_sim/tests/tile_improvement.rs`
+//! proves it on a test-only ladder).
 //!
-//! # Not the road, and not merged with it
+//! # Not a road, and not merged with one
 //!
-//! [`crate::routes::RoadRegistry`] is keyed by tile alone because a tile carries one road and its
-//! position is wore in by traffic. This registry is keyed `(tile, branch)` because one tile can carry
-//! an improvement of several branches, and its position is raised **only** by a band's builders. The
-//! two share the keeping *machinery* (the `Roadwork` pool pays both; the ladder's neglect and decay
-//! seams read both) and nothing else.
+//! [`crate::routes::RoadRegistry`] is keyed by tile alone, worn in by traffic and kept by the band
+//! that typed `grade`. This registry is keyed `(tile, branch)` and raised only by a band's builders;
+//! it shares the keeping *machinery* with every other site and nothing else.
 //!
-//! # The keeper is a REACH, not a command
+//! # The crew is the keeper
 //!
-//! A road's keeper is the band that typed `grade`. A tile improvement's keeper is **whichever band of
-//! the improvement's people stands within `supply_network_config.reach_tiles` of it** - the nearest,
-//! ties to the lowest band id - recomputed every turn by [`assign_tile_keepers`]. The band the
-//! `build` command names is the *builder* only; keeping thereafter follows the people, so a camp that
-//! moves on stops keeping what it left, and the improvement decays after its rung's grace unless
-//! another band comes within reach.
+//! There is no keeper rule and no keeper field. A band **assigns a crew to the improvement** with
+//! `assign_labor <faction> <band> tile <branch> <x> <y> <workers>`; the first crew places it at the
+//! branch's floor. That crew keeps it **first** - `keep_hands = min(crew, bill / keep_rate)`, through
+//! the same site-keeping claims a working's crew makes - and the rung's keeping tools follow from the
+//! rung it stands on. Nobody assigned means unkept: the bill goes unpaid and the improvement decays
+//! after its rung's grace. **Distance is nothing special**: a crew past `band_work_range` is a work
+//! party exactly as a far working's is, and travels, and is priced, by that path.
 //!
-//! # What the keeping draws on
+//! # What surplus hands do
 //!
-//! The band's `Roadwork` pool - the one band-level keeping pool, which already pays for tiles with no
-//! labor row. A kept tile improvement's claim sits beside the roads' in the pool's split
-//! (`systems::labor::route_keeping_claims`). **Materials are refused on a tile rung** (the ladder's
-//! `validate`): the pool settles work, and a stone-eating tile rung would be a bill nothing pays.
+//! Nothing - the same rule a working's crew follows when its stock gives it nothing more to take. The
+//! hands beyond the bill have no yield to collect, and a build is raised by the band's `builders`
+//! pool (as it is on a working), so the row is a keeping row and the builders are the building ones.
+//!
+//! # Materials
+//!
+//! Refused on a tile rung by `LadderConfig::validate`: the keeping settles work, and a stone-eating
+//! tile rung would be a bill nothing pays.
 
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-use crate::components::{BandId, PopulationCohort, ResidentBand, Tile};
-use crate::grid_utils::hex_distance_wrapped;
+use crate::components::{BandId, LaborAllocation, LaborTarget, PopulationCohort};
 use crate::intensification::{
     interpolate, rung_span, upkeep_shortfall, BranchId, BuildGate, BuildTurns, LadderConfig,
     LadderConfigHandle, RungDef, RungId, RungStanding, SourceKind, NEGLECT_NONE, NO_UPKEEP_DECAY,
-    NO_UPKEEP_DEMAND, RUNG_COST_UNSCALED, RUNG_UNSTARTED,
+    NO_UPKEEP_DEMAND, PER_WORKER_OUTPUT, RUNG_COST_UNSCALED, RUNG_UNSTARTED,
 };
 use crate::orders::FactionId;
-use crate::resources::{CommandEventLog, SimulationConfig, SimulationTick, TileRegistry};
-use crate::supply_network_config::SupplyNetworkConfigHandle;
+use crate::resources::{CommandEventLog, SimulationTick};
 
 /// **ONE SITE, ONE LOAD** - the keeper-loads a tile improvement's `scaled_by: source_load` upkeep is
 /// multiplied by. A tile improvement has no stock, head count or crop to scale a bill by, so its
 /// bill is the rung's `work_per_turn` as written.
 pub const TILE_KEEPING_LOAD: f32 = 1.0;
 
+/// **NO HANDS KEPT THE SITE THIS TURN** - the neutral of [`TileImprovement::upkeep_hands`].
+pub const NO_HANDS_ON_THE_IMPROVEMENT: f32 = 0.0;
+
 /// Slack on the keeping comparison, so an improvement funded to the last representable fraction of
 /// its bill is not judged short by a rounding - [`crate::routes`]' reason, restated for this kind.
 const KEEPING_EPSILON: f32 = 1.0e-4;
-
-/// **THE BAND WHOSE JOB THIS IMPROVEMENT IS, THIS TURN** - the nearest of the improvement's people
-/// within reach. Recomputed every turn, never commanded.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub struct TileKeeper {
-    pub faction: FactionId,
-    pub band: BandId,
-}
 
 /// **THE KEY OF ONE IMPROVEMENT** - the tile and the branch, `(y, x, branch)` so iteration is
 /// row-major like every other tile sweep, with the branch's string order breaking the tie.
@@ -94,19 +91,21 @@ pub fn tile_rung_span(rung: RungId, ladder: &LadderConfig) -> (f32, f32) {
 pub struct TileImprovement {
     pub tile: UVec2,
     pub branch: BranchId,
-    /// **The people whose improvement this is** - set when it is placed, and the only faction whose
-    /// bands may raise or keep it.
+    /// **The people whose improvement this is** - set when the first crew places it, and the only
+    /// faction whose bands may crew, raise or keep it.
     pub faction: FactionId,
     position: f32,
     standing: RungStanding,
-    /// This turn's keeper, `None` when no band of the people stands within reach.
-    pub keeper: Option<TileKeeper>,
-    /// **This turn's keeping bill, as stamped before the pool paid it** - `None` where nobody has
-    /// billed it yet. The road's `upkeep_demanded` exactly: every reader of the keeping takes the
+    /// **This turn's keeping bill, as stamped before the crews paid it** - `None` where nobody has
+    /// billed it yet. The working's `upkeep_demanded` exactly: every reader of the keeping takes the
     /// stamp, so `demand - supplied == shortfall` holds verbatim on the wire.
     pub upkeep_demanded: Option<f32>,
-    /// What the keeper's pool paid toward the bill this turn.
+    /// What the crews paid toward the bill this turn.
     pub upkeep_supplied: f32,
+    /// **How many of the crews' hands the keeping took this turn** - a working's `upkeep_hands`.
+    pub upkeep_hands: f32,
+    /// **The keeping tools this turn's crews claimed**, one line per `(faction, item)`.
+    pub upkeep_toe: Vec<crate::components::KeepingToolLine>,
     /// Consecutive turns the bill went short, against the at-risk rung's grace.
     pub neglect_turns: u16,
     /// The highest rung ever held, so an *achieved* loss is told once ([`crate::intensification::raise_peak`]).
@@ -137,9 +136,10 @@ impl TileImprovement {
             faction,
             position: RUNG_UNSTARTED,
             standing: tile_standing_at(ladder, branch, RUNG_UNSTARTED),
-            keeper: None,
             upkeep_demanded: None,
             upkeep_supplied: NO_UPKEEP_DEMAND,
+            upkeep_hands: NO_HANDS_ON_THE_IMPROVEMENT,
+            upkeep_toe: Vec::new(),
             neglect_turns: NEGLECT_NONE,
             peak_rung: None,
             build_blocked_reason: BuildGate::Open,
@@ -179,7 +179,7 @@ impl TileImprovement {
     }
 
     /// **THE BILL THIS IMPROVEMENT OWES AT ITS STANDING**, interpolated across the rung it is
-    /// climbing - the road's `road_upkeep_demand` with the tile's constant load.
+    /// climbing - the working's `deposit_upkeep_demand` with the tile's constant load.
     pub fn upkeep_demand(&self, ladder: &LadderConfig) -> f32 {
         interpolate(&self.standing, |rung| {
             ladder.rung(rung.id).upkeep_demand(TILE_KEEPING_LOAD)
@@ -209,9 +209,19 @@ impl TileImprovement {
         }
     }
 
+    /// **Whole hands the stamped bill calls for** at the bare rate - the working's
+    /// `deposit_upkeep_workers_needed`, published as `upkeepWorkersNeeded`.
+    pub fn upkeep_workers_needed(&self, ladder: &LadderConfig) -> u32 {
+        let demand = self.keeping_basis(ladder);
+        if demand <= NO_UPKEEP_DEMAND {
+            return crate::intensification::NO_CREW_ON_THIS_ACTIVITY;
+        }
+        (demand / PER_WORKER_OUTPUT).ceil() as u32
+    }
+
     /// **WHAT THE MISSED KEEPING COSTS THE METER THIS TURN** - the at-risk rung's rot at the stamped
-    /// shortfall, which the build quote subtracts from the crew's output ([`crate::routes::road_meter_rot`]'s
-    /// twin). Zero for a rung that declares no upkeep.
+    /// shortfall, which the build quote subtracts from the crew's output. Zero for a rung that
+    /// declares no upkeep.
     pub fn meter_rot(&self, ladder: &LadderConfig) -> f32 {
         let rung = ladder.rung(self.at_risk_rung());
         if rung.upkeep.is_none() {
@@ -229,7 +239,7 @@ impl TileImprovement {
         )
     }
 
-    /// **The rung whose bill is at risk** - the one being raised once work is banked on it, else the
+    /// **The rung whose bill is at risk**, the one being raised once work is banked on it, else the
     /// one held ([`crate::routes::road_at_risk_rung`]).
     pub fn at_risk_rung(&self) -> RungId {
         self.standing
@@ -262,7 +272,7 @@ impl TileImprovementRegistry {
     }
 
     /// **The improvement of `branch` on `tile`, placing one at the branch's floor where there was
-    /// none** - what the first `build` verb of a tile branch does.
+    /// none** - what the first crew assigned to it does.
     pub fn place(
         &mut self,
         tile: UVec2,
@@ -283,13 +293,6 @@ impl TileImprovementRegistry {
         self.improvements.values_mut()
     }
 
-    /// **The improvements a band keeps this turn**, in registry order.
-    pub fn kept_by(&self, band: BandId) -> impl Iterator<Item = &TileImprovement> {
-        self.improvements
-            .values()
-            .filter(move |improvement| improvement.keeper.is_some_and(|keeper| keeper.band == band))
-    }
-
     pub fn len(&self) -> usize {
         self.improvements.len()
     }
@@ -299,93 +302,25 @@ impl TileImprovementRegistry {
     }
 }
 
-/// **THE KEEPER RULE**, pure: of the candidate bands, the nearest to `site` within `reach` hex steps;
-/// a tie goes to the lowest band id; none within reach is `None`.
+/// **THE DECAY, THIS TURN'S BILL AND THE ONE-TURN CYCLE** - [`crate::extraction::advance_deposits`]'
+/// shape for the tile kind, in `TurnStage::Logistics` ahead of the next labour pass.
 ///
-/// Candidates are `(band, position)` pairs of the improvement's own people, so the caller has already
-/// filtered the faction. Distance is the hex metric every other reach in the sim is measured in.
-pub fn nearest_band_in_reach(
-    site: UVec2,
-    candidates: &[(BandId, UVec2)],
-    reach: u32,
-    width: u32,
-    wrap: bool,
-) -> Option<BandId> {
-    candidates
-        .iter()
-        .map(|(band, position)| (hex_distance_wrapped(*position, site, width, wrap), *band))
-        .filter(|(distance, _)| *distance <= reach)
-        .min()
-        .map(|(_, band)| band)
-}
-
-/// **THE KEEPER RULE, EVERY TURN** - and the turn's bill, struck in the same breath so the keeper and
-/// the bill describe one moment.
-///
-/// Runs in the Population stage ahead of the labour pass (which pays the bill from the keeper's
-/// `Roadwork` pool), after the movement chain so the reach is measured on the positions the turn's
-/// movement left. The bill is stamped on **every** improvement, keeper or not: an unstamped
-/// improvement reads as met, so a pass that billed only the kept ones would let an unkept one hold
-/// for ever - the same trap [`crate::systems::bill_and_stock_roads`] documents for roads.
-pub fn assign_tile_keepers(
-    mut registry: ResMut<TileImprovementRegistry>,
-    supply: Res<SupplyNetworkConfigHandle>,
-    ladder: Res<LadderConfigHandle>,
-    sim_config: Res<SimulationConfig>,
-    tile_registry: Res<TileRegistry>,
-    tiles: Query<&Tile>,
-    bands: Query<(&PopulationCohort, &BandId), With<ResidentBand>>,
-) {
-    if registry.is_empty() {
-        return;
-    }
-    let reach = supply.get().reach_tiles;
-    let ladder = ladder.get();
-    let width = tile_registry.width;
-    let wrap = sim_config.map_topology.wrap_horizontal;
-    let placed: Vec<(FactionId, BandId, UVec2)> = bands
-        .iter()
-        .filter_map(|(cohort, band)| {
-            tiles
-                .get(cohort.current_tile)
-                .ok()
-                .map(|tile| (cohort.faction, *band, tile.position))
-        })
-        .collect();
-    for improvement in registry.iter_mut() {
-        let candidates: Vec<(BandId, UVec2)> = placed
-            .iter()
-            .filter(|(faction, _, _)| *faction == improvement.faction)
-            .map(|(_, band, position)| (*band, *position))
-            .collect();
-        improvement.keeper =
-            nearest_band_in_reach(improvement.tile, &candidates, reach, width, wrap).map(|band| {
-                TileKeeper {
-                    faction: improvement.faction,
-                    band,
-                }
-            });
-        if improvement.upkeep_demanded.is_none() {
-            improvement.upkeep_demanded = Some(improvement.upkeep_demand(&ladder));
-        }
-    }
-}
-
-/// **THE DECAY AND THE ONE-TURN CYCLE** - [`crate::routes::advance_roads`]' phases 1-3 for the tile
-/// kind, in `TurnStage::Logistics` ahead of the next turn's bill.
-///
-/// 1. **How short**, off the stamped basis through the ladder's own seam, and the neglect counter
-///    that trips on it. An improvement nobody billed reads fully supplied and is forgiven.
+/// 1. **How short**, off the stamped basis, and the neglect counter that trips on it. An improvement
+///    nobody billed reads fully supplied and is forgiven.
 /// 2. **The bleed**, at the at-risk rung's own rate, past that rung's own grace
-///    ([`RungDef::upkeep_decay`] owns the `>`), told to the keeper's people as the two edges
-///    [`crate::intensification::rung_decay_edges`] names.
-/// 3. **The bill, this turn's payment and the build scratch cleared** on the one-turn cycle.
+///    ([`RungDef::upkeep_decay`] owns the `>`), told to the people whose crews work it as the two
+///    edges [`crate::intensification::rung_decay_edges`] names.
+/// 3. **The payment, the hands, the tools and the build scratch cleared**, and **the next bill
+///    stamped at the position the bleed left** - the labour pass then pays that stamp.
 ///
 /// A rung that declares no upkeep owes nothing and cannot be short, so it never decays - the
-/// ladder's own rule, not this kind's.
+/// ladder's own rule, not this kind's. **An improvement nobody crews is billed all the same**: the
+/// stamp is what makes an unkept one decay.
+#[allow(clippy::too_many_arguments)] // a Bevy system: one parameter per resource it reads or writes
 pub fn advance_tile_improvements(
     mut registry: ResMut<TileImprovementRegistry>,
     ladder: Res<LadderConfigHandle>,
+    bands: Query<(&BandId, &PopulationCohort, &LaborAllocation)>,
     mut event_log: Option<ResMut<CommandEventLog>>,
     tick: Option<Res<SimulationTick>>,
 ) {
@@ -411,8 +346,6 @@ pub fn advance_tile_improvements(
             .upkeep_decay(shortfall_fraction, improvement.neglect_turns);
         if decay > NO_UPKEEP_DECAY {
             let was = improvement.position();
-            let faction = improvement.faction;
-            let band = improvement.keeper.map(|keeper| keeper.band);
             improvement.set_position(was - decay, &ladder);
             let mut edges = crate::intensification::rung_decay_edges(
                 &ladder,
@@ -427,87 +360,70 @@ pub fn advance_tile_improvements(
                 &mut improvement.peak_rung,
             );
             if let (false, Some(log)) = (edges.is_empty(), event_log.as_deref_mut()) {
-                crate::intensification::announce_rung_decay(
-                    log,
-                    tick.as_deref().map_or(0, |tick| tick.0),
-                    faction,
-                    band,
-                    &ladder,
-                    improvement.tile,
-                    improvement.position(),
-                    &edges,
-                );
+                // The people told are every faction with a crew row on the site; each hears it with
+                // the band whose crew there is largest - a working's rule.
+                let candidates: Vec<_> = bands
+                    .iter()
+                    .filter_map(|(band, cohort, allocation)| {
+                        let crew: u32 = allocation
+                            .assignments
+                            .iter()
+                            .filter(|row| {
+                                matches!(
+                                    &row.target,
+                                    LaborTarget::Tile { tile, branch }
+                                        if *tile == improvement.tile && *branch == improvement.branch
+                                )
+                            })
+                            .map(|row| row.workers)
+                            .sum();
+                        (crew > 0 || row_exists(allocation, improvement))
+                            .then_some((cohort.faction, *band, crew))
+                    })
+                    .collect();
+                let mut factions: Vec<FactionId> =
+                    candidates.iter().map(|(faction, _, _)| *faction).collect();
+                factions.sort_unstable();
+                factions.dedup();
+                for faction in factions {
+                    crate::intensification::announce_rung_decay(
+                        log,
+                        tick.as_deref().map_or(0, |tick| tick.0),
+                        faction,
+                        crate::intensification::site_band_for(&candidates, faction),
+                        &ladder,
+                        improvement.tile,
+                        improvement.position(),
+                        &edges,
+                    );
+                }
             }
         }
-        improvement.upkeep_demanded = None;
         improvement.upkeep_supplied = NO_UPKEEP_DEMAND;
+        improvement.upkeep_hands = NO_HANDS_ON_THE_IMPROVEMENT;
+        improvement.upkeep_toe.clear();
         improvement.build_blocked_reason = BuildGate::Open;
         improvement.build_turns_remaining = None;
         improvement.build_queue_position = sim_schema::NOT_IN_ANY_BUILD_QUEUE;
         improvement.build_destination = None;
         improvement.build_legs.clear();
+        // The next bill, struck at the position the bleed left.
+        improvement.upkeep_demanded = Some(improvement.upkeep_demand(&ladder));
     }
+}
+
+/// Does this band hold a row (staffed or held at zero) on the improvement?
+fn row_exists(allocation: &LaborAllocation, improvement: &TileImprovement) -> bool {
+    allocation.assignments.iter().any(|row| {
+        matches!(
+            &row.target,
+            LaborTarget::Tile { tile, branch }
+                if *tile == improvement.tile && *branch == improvement.branch
+        )
+    })
 }
 
 /// Is `branch` a per-tile branch of this ladder?
 pub fn is_tile_branch(ladder: &LadderConfig, branch: BranchId) -> bool {
     ladder.source_kind(branch) == Some(SourceKind::Tile)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    const WIDTH: u32 = 32;
-    const NO_WRAP: bool = false;
-    const REACH: u32 = 3;
-
-    fn at(band: u64, x: u32, y: u32) -> (BandId, UVec2) {
-        (BandId(band), UVec2::new(x, y))
-    }
-
-    #[test]
-    fn the_nearest_band_in_reach_keeps_it() {
-        let site = UVec2::new(10, 10);
-        let candidates = [at(1, 12, 10), at(2, 11, 10)];
-        assert_eq!(
-            nearest_band_in_reach(site, &candidates, REACH, WIDTH, NO_WRAP),
-            Some(BandId(2))
-        );
-    }
-
-    #[test]
-    fn a_tie_goes_to_the_lowest_band_id() {
-        let site = UVec2::new(10, 10);
-        let candidates = [at(9, 12, 10), at(4, 8, 10)];
-        assert_eq!(
-            nearest_band_in_reach(site, &candidates, REACH, WIDTH, NO_WRAP),
-            Some(BandId(4)),
-            "both stand two steps away; the lower id keeps it"
-        );
-    }
-
-    #[test]
-    fn nobody_in_reach_means_no_keeper() {
-        let site = UVec2::new(10, 10);
-        let candidates = [at(1, 20, 10)];
-        assert_eq!(
-            nearest_band_in_reach(site, &candidates, REACH, WIDTH, NO_WRAP),
-            None
-        );
-        assert_eq!(
-            nearest_band_in_reach(site, &[], REACH, WIDTH, NO_WRAP),
-            None
-        );
-    }
-
-    #[test]
-    fn a_band_exactly_at_reach_still_keeps_it() {
-        let site = UVec2::new(10, 10);
-        let candidates = [at(1, 13, 10)];
-        assert_eq!(
-            nearest_band_in_reach(site, &candidates, REACH, WIDTH, NO_WRAP),
-            Some(BandId(1))
-        );
-    }
 }

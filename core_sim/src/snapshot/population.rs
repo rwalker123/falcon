@@ -214,6 +214,13 @@ pub(crate) fn labor_assignment_to_state(
             // `DepositState::rung_floor_fraction` rides the working's row beside it.
             state.floor = *floor;
         }
+        // **A TILE IMPROVEMENT'S CREW ROW** - the tile and the branch are the key that joins it to
+        // its `TileImprovementState`. No floor, species or material: it takes nothing.
+        LaborTarget::Tile { tile, branch } => {
+            state.target_x = tile.x;
+            state.target_y = tile.y;
+            state.branch = branch.as_str().to_string();
+        }
         // The seven band-wide roles carry no source and no floor: their whole content is the head
         // count already on the row.
         LaborTarget::Scout

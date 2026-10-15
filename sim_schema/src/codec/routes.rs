@@ -1,5 +1,6 @@
 //! Route-section FlatBuffers serialization — the roads in the ground, one row per tile.
 
+use crate::codec::subsistence::{create_upkeep_toe, decode_upkeep_toe};
 use crate::codec::{map_rows, map_rows_if_present, text, FbBuilder};
 use crate::state::routes::{RouteState, TileImprovementState};
 use crate::state::subsistence::BuildLegState;
@@ -77,6 +78,7 @@ fn create_tile_improvements<'a>(
                 .collect();
             let build_legs = builder.create_vector(&leg_offsets);
             let build_blocked_reason = builder.create_string(&improvement.build_blocked_reason);
+            let upkeep_toe = create_upkeep_toe(builder, &improvement.upkeep_toe);
             fb::TileImprovementState::create(
                 builder,
                 &fb::TileImprovementStateArgs {
@@ -94,8 +96,11 @@ fn create_tile_improvements<'a>(
                     neglectTurns: improvement.neglect_turns,
                     hasNeglectGrace: improvement.has_neglect_grace,
                     neglectGraceRemaining: improvement.neglect_grace_remaining,
-                    hasKeeper: improvement.has_keeper,
-                    keeperBandId: improvement.keeper_band_id,
+                    upkeepWorkersNeeded: improvement.upkeep_workers_needed,
+                    upkeepHands: improvement.upkeep_hands,
+                    upkeepToolsShort: improvement.upkeep_tools_short,
+                    upkeepToe: upkeep_toe,
+                    isQueued: improvement.is_queued,
                 },
             )
         })
@@ -184,8 +189,11 @@ fn decode_tile_improvement(improvement: fb::TileImprovementState<'_>) -> TileImp
         neglect_turns: improvement.neglectTurns(),
         has_neglect_grace: improvement.hasNeglectGrace(),
         neglect_grace_remaining: improvement.neglectGraceRemaining(),
-        has_keeper: improvement.hasKeeper(),
-        keeper_band_id: improvement.keeperBandId(),
+        upkeep_workers_needed: improvement.upkeepWorkersNeeded(),
+        upkeep_hands: improvement.upkeepHands(),
+        upkeep_tools_short: improvement.upkeepToolsShort(),
+        upkeep_toe: decode_upkeep_toe(improvement.upkeepToe()),
+        is_queued: improvement.isQueued(),
     }
 }
 

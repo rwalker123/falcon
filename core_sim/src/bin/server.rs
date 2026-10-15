@@ -1309,8 +1309,17 @@ impl BuildSourceRef {
     /// both-shapes message only because the tile pair is tested first and requires both halves —
     /// the text grammar cannot produce one at all.
     fn target(&self, ladder: &LadderConfig) -> Option<LaborTarget> {
-        if self.is_road(ladder) || self.is_tile_improvement(ladder) {
+        if self.is_road(ladder) {
             return None;
+        }
+        if self.is_tile_improvement(ladder) {
+            return match (self.target_x, self.target_y, self.branch.as_deref()) {
+                (Some(x), Some(y), Some(branch)) => Some(LaborTarget::Tile {
+                    tile: UVec2::new(x, y),
+                    branch: BranchId::new(branch),
+                }),
+                _ => None,
+            };
         }
         match (self.target_x, self.target_y, self.herd_id.as_ref()) {
             (Some(x), Some(y), _) => Some(match &self.material {
@@ -1333,15 +1342,6 @@ impl BuildSourceRef {
     /// **The build-queue key this names** — a road's own [`BuildSource::Road`], else the queue key
     /// of the labor row it names ([`BuildSource::of`]).
     fn build_source(&self, ladder: &LadderConfig) -> Option<BuildSource> {
-        if self.is_tile_improvement(ladder) {
-            return match (self.target_x, self.target_y, self.branch.as_deref()) {
-                (Some(x), Some(y), Some(branch)) => Some(BuildSource::Tile {
-                    tile: UVec2::new(x, y),
-                    branch: BranchId::new(branch),
-                }),
-                _ => None,
-            };
-        }
         match (self.is_road(ladder), self.target_x, self.target_y) {
             (true, Some(x), Some(y)) => Some(BuildSource::Road(UVec2::new(x, y))),
             (true, _, _) => None,
@@ -4069,8 +4069,10 @@ fn seed_source_yield(
                 ..core_sim::SourceYield::ZERO
             }
         }
-        // A band-wide role produces no per-source yield, so there is no row to seed.
-        LaborTarget::Scout
+        // A band-wide role produces no per-source yield, so there is no row to seed - and neither
+        // does a tile improvement's crew, which keeps a standing and takes nothing.
+        LaborTarget::Tile { .. }
+        | LaborTarget::Scout
         | LaborTarget::Warrior
         | LaborTarget::Roadwork
         | LaborTarget::Builders => return,
@@ -4302,6 +4304,9 @@ fn validate_labor_policy(
             }
             Ok(())
         }
+        // **A tile improvement's crew has no stance to validate** - no floor, species or herd. What
+        // `assign_labor` checks for it (a tile-kind branch, not another people's) is its own arm.
+        LaborTarget::Tile { .. } => Ok(()),
         LaborTarget::Scout
         | LaborTarget::Warrior
         | LaborTarget::Roadwork
@@ -4363,6 +4368,12 @@ fn validate_improvement(
                 return wrong_kind("a deposit");
             }
             validate_deposit_verb(app, faction, *tile, material, improvement)
+        }
+        LaborTarget::Tile { tile, branch } => {
+            if verb_kind != Some(SourceKind::Tile) {
+                return wrong_kind("a tile improvement");
+            }
+            validate_tile_verb(app, faction, *tile, *branch, rung)
         }
         LaborTarget::Scout
         | LaborTarget::Warrior
@@ -5199,6 +5210,38 @@ fn handle_assign_labor(
                 return;
             }
         },
+        // **A TILE IMPROVEMENT'S CREW** - the deposit row's twin for a source that yields nothing.
+        // It names a TILE AND A BRANCH (one tile can carry improvements of several tile branches);
+        // the branch rides the `species` token, as a deposit's material does. The crew keeps the
+        // improvement first, and distance is nothing special: a far crew is a work party.
+        "tile" => match (target_x, target_y, species.as_deref().map(str::trim)) {
+            (Some(x), Some(y), Some(branch)) if !branch.is_empty() => {
+                let ladder = app.world.resource::<LadderConfigHandle>().get();
+                let branch = BranchId::new(branch);
+                if !core_sim::is_tile_branch(&ladder, branch) {
+                    emit_command_failure(
+                        app,
+                        CommandEventKind::CancelOrder,
+                        faction,
+                        format!("'{branch}' is not a tile improvement branch this ladder knows."),
+                    );
+                    return;
+                }
+                LaborTarget::Tile {
+                    tile: UVec2::new(x, y),
+                    branch,
+                }
+            }
+            _ => {
+                emit_command_failure(
+                    app,
+                    CommandEventKind::CancelOrder,
+                    faction,
+                    "assign_labor tile requires <branch> <x> <y>.".to_string(),
+                );
+                return;
+            }
+        },
         other => {
             emit_command_failure(
                 app,
@@ -5223,6 +5266,8 @@ fn handle_assign_labor(
         // generic one, as the warriors do.
         LaborTarget::Builders => CommandEventKind::CancelOrder,
         LaborTarget::Extract { .. } => CommandEventKind::Extraction,
+        // A tile improvement has no web's channel; it reports on the generic one, as the pools do.
+        LaborTarget::Tile { .. } => CommandEventKind::CancelOrder,
     };
 
     // Stance validation. Unassigning (`workers == 0`) is always allowed — a player must be able to
@@ -5297,11 +5342,17 @@ fn handle_assign_labor(
     // *"what does this command STORE"*, not *"which kit is the absent one"*: that helper returns a
     // resolved `KitChoice` for the raid path too.
     let unstaffing = workers == 0 && !target.is_need_row();
-    let staffing_a_standing_pool = matches!(target, LaborTarget::Builders | LaborTarget::Roadwork);
+    let staffing_a_standing_pool = matches!(
+        target,
+        LaborTarget::Builders | LaborTarget::Roadwork | LaborTarget::Tile { .. }
+    );
     if staffing_a_standing_pool && kit_id.is_some() {
         let refusal = match target {
             LaborTarget::Builders => {
                 "a pool names no kit — the builders' tools follow from the rung they are raising"
+            }
+            LaborTarget::Tile { .. } => {
+                "a tile crew names no kit — its keeping tools follow from the rung the improvement stands on"
             }
             _ => "a pool names no kit — the road keepers' tools follow from the rung each road stands on",
         }
@@ -5352,8 +5403,42 @@ fn handle_assign_labor(
             .world
             .resource::<core_sim::extraction::DepositRegistry>();
         let ladder = app.world.resource::<LadderConfigHandle>().get();
-        core_sim::source_has_a_meter_at_risk(&target, forage_registry, herds, deposits, &ladder)
+        let tile_improvements = app.world.resource::<core_sim::TileImprovementRegistry>();
+        core_sim::source_has_a_meter_at_risk(
+            &target,
+            forage_registry,
+            herds,
+            deposits,
+            tile_improvements,
+            &ladder,
+        )
     };
+
+    // **THE FIRST CREW PLACES THE IMPROVEMENT** at its branch's floor, so the row, the wire and a
+    // `build` all see ground something stands on. Another people's improvement is refused.
+    if let (true, LaborTarget::Tile { tile, branch }) = (workers > 0, &target) {
+        let ladder = app.world.resource::<LadderConfigHandle>().get();
+        let theirs = app
+            .world
+            .resource::<core_sim::TileImprovementRegistry>()
+            .get(*tile, *branch)
+            .is_some_and(|improvement| improvement.faction != faction);
+        if theirs {
+            emit_command_failure(
+                app,
+                event_kind,
+                faction,
+                format!(
+                    "The improvement at ({}, {}) belongs to another people.",
+                    tile.x, tile.y
+                ),
+            );
+            return;
+        }
+        app.world
+            .resource_mut::<core_sim::TileImprovementRegistry>()
+            .place(*tile, *branch, faction, &ladder);
+    }
 
     let kind_label = target.kind();
     let (applied, assigned_total, dropped_row) = {
@@ -8110,126 +8195,29 @@ fn handle_road_verb(
     );
 }
 
-/// **A `build` LINE FOR A TILE-KIND VERB** - place or raise the improvement of the verb's branch on a
-/// tile, built by the band the line names.
+/// **MAY THIS RUNG BE RAISED ON THIS TILE?** - the tile kind's arm of [`validate_improvement`].
 ///
-/// `build <verb> <faction> <band> <x> <y>`: the band named is the **builder** - its `builders` pool
-/// raises the improvement, and its queue holds the entry. **Keeping is not decided here**: whichever
-/// band of the faction stands within `reach_tiles` of the tile keeps it, every turn
-/// ([`core_sim::assign_tile_keepers`]). So the command refuses nothing for distance - a builder may
-/// raise a tile it will walk away from, and the improvement will decay after its grace unless
-/// someone comes within reach.
-///
-/// The improvement is **placed at the branch's floor in the same breath as it is declared** (the
-/// first verb of the branch on a tile), so a queue entry never names ground nothing stands on.
-fn handle_tile_verb(
-    app: &mut bevy::prelude::App,
+/// Three terms, asked in order: the knowledge the rung gates on; that the improvement is not another
+/// people's; and that the rung is the next one up - the improvement stands on the rung beneath, or
+/// (where nothing stands yet) the verb's rung is the branch's first built one, so the crew's first
+/// build places it from the floor. The queue entry itself needs a crew on the tile
+/// ([`queue_build_on_working_bands`]), exactly as a deposit's does.
+fn validate_tile_verb(
+    app: &bevy::prelude::App,
     faction: FactionId,
-    band_id: u64,
     tile: UVec2,
-    destination: RungId,
-) {
-    let ladder = app.world.resource::<LadderConfigHandle>().get();
-    let rung = ladder.rung(destination);
-    let verb = rung.verb.clone().unwrap_or_default();
-    let channel = rung
-        .feed_channel_kind()
-        .expect("validate requires a feed channel on every built rung");
-    let branch = destination.branch;
-    if let Err(reason) = tile_verb_refusal(app, faction, band_id, tile, destination) {
-        warn!(
-            target: "shadow_scale::command",
-            command = %verb,
-            faction = %faction.0,
-            band_id,
-            x = tile.x,
-            y = tile.y,
-            reason = %reason,
-            "command.tile.rejected"
-        );
-        emit_command_failure(app, channel, faction, reason);
-        return;
-    }
-    let band = BandId(band_id);
-    let Some((entity, _)) = band_entity_and_tile(app, faction, band) else {
-        emit_command_failure(
-            app,
-            channel,
-            faction,
-            format!("Band {band_id} is not standing anywhere the simulation can see."),
-        );
-        return;
-    };
-    {
-        let mut improvements = app
-            .world
-            .resource_mut::<core_sim::TileImprovementRegistry>();
-        improvements.place(tile, branch, faction, &ladder);
-    }
-    {
-        let mut allocation = band_allocation_mut(app, entity);
-        allocation.enqueue_build(
-            BuildSource::Tile { tile, branch },
-            BuildJob::Climb(destination),
-        );
-    }
-    let tick = app.world.resource::<SimulationTick>().0;
-    info!(
-        target: "shadow_scale::command",
-        command = %verb,
-        faction = %faction.0,
-        band_id,
-        x = tile.x,
-        y = tile.y,
-        "command.tile.declared"
-    );
-    push_command_event(
-        app,
-        tick,
-        channel,
-        faction,
-        format!(
-            "Band {band_id} takes on the {} at ({}, {}) - {verb}",
-            rung.label.to_lowercase(),
-            tile.x,
-            tile.y
-        ),
-        Some(format!(
-            "status=declared action={verb} x={} y={} band={band_id}",
-            tile.x, tile.y
-        )),
-    );
-}
-
-/// **Every refusal a tile-kind verb can produce, in the order they are asked.**
-fn tile_verb_refusal(
-    app: &mut bevy::prelude::App,
-    faction: FactionId,
-    band_id: u64,
-    tile: UVec2,
-    destination: RungId,
+    branch: BranchId,
+    rung: &core_sim::RungDef,
 ) -> Result<(), String> {
-    let band = BandId(band_id);
-    let holds_band = {
-        let mut query = app.world.query::<(&PopulationCohort, &BandId)>();
-        query
-            .iter(&app.world)
-            .any(|(cohort, id)| *id == band && cohort.faction == faction)
-    };
-    if !holds_band {
-        return Err(format!(
-            "Band {band_id} is not one of your people, so it cannot build there."
-        ));
-    }
     let ladder = app.world.resource::<LadderConfigHandle>().get();
-    if let Some(refusal) = knowledge_refusal(app, faction, &ladder, ladder.rung(destination)) {
+    if let Some(refusal) = knowledge_refusal(app, faction, &ladder, rung) {
         return Err(refusal);
     }
-    let branch = destination.branch;
+    let destination = rung.rung_id();
     let required = ladder
         .below_id(destination)
         .expect("a rung a verb raises stands on the rung beneath it");
-    let label = ladder.rung(destination).label.to_lowercase();
+    let label = rung.label.to_lowercase();
     let improvements = app.world.resource::<core_sim::TileImprovementRegistry>();
     match improvements.get(tile, branch) {
         Some(improvement) if improvement.faction != faction => Err(format!(
@@ -8249,8 +8237,6 @@ fn tile_verb_refusal(
             ))
         }
         Some(_) => Ok(()),
-        // Nothing stands there yet: the verb places the improvement, which is only legal when it
-        // starts from the branch's floor.
         None if ladder.root_of(branch).map(core_sim::RungDef::rung_id) == Some(required) => Ok(()),
         None => Err(format!(
             "Nothing stands at ({}, {}) yet - raise the {} first.",
@@ -8620,7 +8606,7 @@ fn handle_build_rung(app: &mut bevy::prelude::App, faction: FactionId, request: 
         .target_x
         .zip(request.target_y)
         .map(|(x, y)| UVec2::new(x, y));
-    if request.band_id.is_some() && !matches!(kind, Some(SourceKind::Road | SourceKind::Tile)) {
+    if request.band_id.is_some() && kind != Some(SourceKind::Road) {
         reject_build(
             app,
             faction,
@@ -8711,24 +8697,22 @@ fn handle_build_rung(app: &mut bevy::prelude::App, faction: FactionId, request: 
             handle_road_verb(app, faction, band_id, tile, improvement);
             return;
         }
-        Some(SourceKind::Tile) => {
-            let (Some(band_id), Some(tile)) = (request.band_id, tile) else {
+        Some(SourceKind::Tile) => match tile {
+            Some(tile) => LaborTarget::Tile {
+                tile,
+                branch: rung.branch,
+            },
+            None => {
                 reject_build(
                     app,
                     faction,
                     channel,
                     &verb,
-                    format!(
-                        "'{verb}' names the band that will build it, because a tile improvement \
-                         has no work row to read a builder off: \
-                         `build {verb} <faction> <band> <x> <y>`."
-                    ),
+                    format!("'{verb}' names a tile: `build {verb} <faction> <x> <y>`."),
                 );
                 return;
-            };
-            handle_tile_verb(app, faction, band_id, tile, rung.rung_id());
-            return;
-        }
+            }
+        },
         None => {
             reject_build(
                 app,
@@ -9904,15 +9888,31 @@ fn handle_abandon(app: &mut bevy::prelude::App, faction: FactionId, source: Buil
         handle_abandon_working(app, faction, UVec2::new(x, y), material);
         return;
     }
-    if source.is_tile_improvement(&ladder) {
-        emit_command_failure(
+    if let (true, Some(target)) = (source.is_tile_improvement(&ladder), source.target(&ladder)) {
+        let bands = bands_working_source(app, faction, &target);
+        if bands.is_empty() {
+            emit_command_failure(
+                app,
+                CommandEventKind::CancelOrder,
+                faction,
+                format!("No band of yours holds {label}, so there is nothing to put down."),
+            );
+            return;
+        }
+        for band in &bands {
+            core_sim::drop_holding_and_cancel_ring(&mut app.world, *band, &target);
+        }
+        let tick = app.world.resource::<SimulationTick>().0;
+        push_command_event(
             app,
+            tick,
             CommandEventKind::CancelOrder,
             faction,
-            format!(
-                "Nobody holds {label} by command: whoever stands near it keeps it. \
-                 Withdraw a queued build with `unqueue`."
-            ),
+            format!("Put down {label} - unkept, it goes back to the wild after its grace"),
+            Some(format!(
+                "status=applied action=abandon source={label} bands={} roads=0",
+                bands.len()
+            )),
         );
         return;
     }
@@ -15469,6 +15469,112 @@ mod tests {
             NO_CREW_ON_THIS_ACTIVITY,
             "and ground that holds none of it takes no row at all — absence is the answer, not a \
              zero-capacity working"
+        );
+    }
+
+    /// **THE ORCHARD OVERLAY** - the test-only tile branch merged onto the builtin ladder, the
+    /// fixture `core_sim/tests/tile_improvement.rs` drives, so the command path is proved on a branch
+    /// the server has never heard of.
+    fn ladder_with_the_orchard() -> LadderConfig {
+        let mut ladder: serde_json::Value =
+            serde_json::from_str(core_sim::BUILTIN_INTENSIFICATION_LADDER)
+                .expect("the builtin ladder parses as json");
+        let overlay: serde_json::Value = serde_json::from_str(include_str!(
+            "../../tests/fixtures/orchard_tile_branch.json"
+        ))
+        .expect("the fixture parses as json");
+        for (id, branch) in overlay["branches"].as_object().expect("branches") {
+            ladder["branches"][id] = branch.clone();
+        }
+        ladder["rungs"]
+            .as_array_mut()
+            .expect("rungs is an array")
+            .extend(overlay["rungs"].as_array().expect("overlay rungs").clone());
+        LadderConfig::from_json_str(&ladder.to_string()).expect("the overlay loads")
+    }
+
+    /// **A TILE IMPROVEMENT IS CREWED AND BUILT LIKE A DEPOSIT** - `assign_labor ... tile <branch>
+    /// <x> <y> <workers>` puts a crew on it (placing it), a `kit` token on that row is refused, and
+    /// `build <verb> <faction> <x> <y>` (no band) climbs it only once a crew is on it.
+    #[test]
+    fn assign_labor_tile_crews_an_improvement_and_a_build_needs_that_crew() {
+        const CREW: u32 = 2;
+        let mut app = build_test_app();
+        app.world
+            .insert_resource(LadderConfigHandle::new(Arc::new(ladder_with_the_orchard())));
+        app.update();
+        let faction = FactionId(0);
+        let band = starting_band_id(&mut app, faction);
+        let (_, tile) =
+            band_entity_and_tile(&mut app, faction, BandId(band)).expect("the band stands");
+        let orchard = core_sim::BranchId::new("orchard");
+        let crew_on = |app: &mut bevy::prelude::App| -> u32 {
+            app.world
+                .query::<&LaborAllocation>()
+                .iter(&app.world)
+                .flat_map(|allocation| allocation.assignments.iter())
+                .filter(
+                    |row| matches!(&row.target, LaborTarget::Tile { tile: at, .. } if *at == tile),
+                )
+                .map(|row| row.workers)
+                .sum()
+        };
+        let queued = |app: &mut bevy::prelude::App| -> usize {
+            app.world
+                .query::<&LaborAllocation>()
+                .iter(&app.world)
+                .map(|allocation| allocation.build_queue.len())
+                .sum()
+        };
+        let assign = |app: &mut bevy::prelude::App, workers: u32, kit: Option<String>| {
+            handle_assign_labor(
+                app,
+                faction,
+                Some(band),
+                "tile".to_string(),
+                workers,
+                Some(tile.x),
+                Some(tile.y),
+                None,
+                Some("orchard".to_string()),
+                None,
+                kit,
+                Vec::new(),
+                false,
+            );
+        };
+        let graft = || BuildRungRequest {
+            verb: "graft".to_string(),
+            target_x: Some(tile.x),
+            target_y: Some(tile.y),
+            ..BuildRungRequest::default()
+        };
+
+        handle_build_rung(&mut app, faction, graft());
+        assert_eq!(
+            queued(&mut app),
+            0,
+            "no crew works the tile, so nothing is queued"
+        );
+
+        assign(&mut app, CREW, Some("none".to_string()));
+        assert_eq!(crew_on(&mut app), 0, "a tile crew names no kit");
+
+        assign(&mut app, CREW, None);
+        assert_eq!(crew_on(&mut app), CREW, "the crew is on the improvement");
+        assert!(
+            app.world
+                .resource::<core_sim::TileImprovementRegistry>()
+                .get(tile, orchard)
+                .is_some(),
+            "the first crew places it"
+        );
+
+        handle_build_rung(&mut app, faction, graft());
+        assert_eq!(
+            queued(&mut app),
+            1,
+            "with a crew on it the climb is declared"
         );
     }
 

@@ -27,7 +27,7 @@ const NO_DESTINATION: &str = "";
 /// # EVERY NUMBER COMES OFF THE STAMPED BILL
 ///
 /// `demand - supplied == shortfall` must hold verbatim on the wire, so all three resolve through
-/// [`crate::tile_improvement::TileImprovement::keeping_basis`], the stamp `assign_tile_keepers`
+/// [`crate::tile_improvement::TileImprovement::keeping_basis`], the stamp `advance_tile_improvements`
 /// struck and the labour pass paid against this turn.
 pub(crate) fn tile_improvement_states(
     registry: &crate::tile_improvement::TileImprovementRegistry,
@@ -93,10 +93,17 @@ pub(crate) fn tile_improvement_states(
                 neglect_turns: u32::from(improvement.neglect_turns),
                 has_neglect_grace: grace.is_some(),
                 neglect_grace_remaining: grace.unwrap_or(NO_NEGLECT_REMAINING),
-                has_keeper: improvement.keeper.is_some(),
-                keeper_band_id: improvement
-                    .keeper
-                    .map_or(NO_KEEPER_BAND, |keeper| keeper.band.0),
+                upkeep_workers_needed: improvement.upkeep_workers_needed(ladder),
+                upkeep_hands: improvement.upkeep_hands,
+                upkeep_tools_short: crate::snapshot::subsistence::viewer_keeping_tools_short(
+                    &improvement.upkeep_toe,
+                    viewer,
+                ),
+                upkeep_toe: crate::snapshot::subsistence::upkeep_toe_lines(
+                    &improvement.upkeep_toe,
+                    viewer,
+                ),
+                is_queued: queued,
             }
         })
         .collect()

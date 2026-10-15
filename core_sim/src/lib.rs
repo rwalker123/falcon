@@ -433,9 +433,9 @@ pub use supply_network_config::{
     SupplyNetworkConfigMetadata,
 };
 pub use tile_improvement::{
-    advance_tile_improvements, assign_tile_keepers, is_tile_branch, nearest_band_in_reach,
-    tile_rung_cost, tile_rung_span, tile_standing_at, TileImprovement, TileImprovementKey,
-    TileImprovementRegistry, TileKeeper, TILE_KEEPING_LOAD,
+    advance_tile_improvements, is_tile_branch, tile_rung_cost, tile_rung_span, tile_standing_at,
+    TileImprovement, TileImprovementKey, TileImprovementRegistry, NO_HANDS_ON_THE_IMPROVEMENT,
+    TILE_KEEPING_LOAD,
 };
 pub use turn_pipeline_config::{
     load_turn_pipeline_config_from_env, PopulationPhaseConfig, PowerPhaseConfig,
@@ -1261,9 +1261,9 @@ pub fn build_headless_app() -> App {
                 extraction::advance_deposits
                     .after(systems::simulate_materials)
                     .after(routes::advance_roads),
-                // **THE TILE IMPROVEMENTS' DECAY AND THE ONE-TURN CYCLE** - the tile kind's twin of
-                // `advance_roads`. It announces a slip or a loss on the feed the passes above write,
-                // so it takes its place after the last of them.
+                // **THE TILE IMPROVEMENTS' DECAY, THIS TURN'S BILL AND THE ONE-TURN CYCLE** - the
+                // tile kind's twin of `advance_deposits`. It announces a slip or a loss on the feed
+                // the passes above write, so it takes its place after the last of them.
                 tile_improvement::advance_tile_improvements.after(extraction::advance_deposits),
             )
                 .in_set(TurnStage::Logistics)
@@ -1432,13 +1432,6 @@ pub fn build_headless_app() -> App {
                 //  - `.before(advance_labor_allocation)` — the ordering this system exists for.
                 systems::bill_and_stock_roads
                     .after(systems::advance_expeditions)
-                    .before(systems::advance_labor_allocation),
-                // **THE TILE IMPROVEMENTS' KEEPER AND THEIR BILL** - who stands within reach of each
-                // this turn, and what it owes, struck on the positions the movement chain left and
-                // before the labour pass pays it out of the keeper's `Roadwork` pool.
-                tile_improvement::assign_tile_keepers
-                    .after(systems::advance_expeditions)
-                    .after(systems::bill_and_stock_roads)
                     .before(systems::advance_labor_allocation),
             )
                 .in_set(TurnStage::Population)

@@ -246,8 +246,8 @@ pub const COMMAND_VERBS: &[CommandVerbHelp] = &[
     CommandVerbHelp {
         verb: "assign_labor",
         aliases: &[],
-        summary: "Set the worker count for one labor target on a band (0 unassigns; clamps to idle). A worked source's crew (forage/hunt/extract) KEEPS ITS SITE FIRST and collects with what is left: a tended patch, Field, tamed herd, pen or raised working owes work every turn, the crew pays it before it takes, and a crew short of it keeps what it can and collects nothing. A site with 0 crew is not kept at all. 'roadwork' is the one keeping POOL: it keeps every road the band keeps, measured against their SUM, and short of the sum the split follows the band's upkeep_mode; zero stops keeping roads. 'builders' is the other band-wide pool: its whole output goes on the head of the band's build queue, so zero stops building altogether. A `kit` token may sit anywhere after the role, and it is REFUSED on 'builders' and 'roadwork' — a pool is HOW MANY hands, never what they carry: what a build and a site are worked with follows from the rung they stand on. The worked sources (forage/hunt/extract) and the two standing roles (scout/warrior) do take one, and an absent token means the job's default. The retired 'agriculture', 'husbandry' and 'quarrywork' pools are refused.",
-        usage: "assign_labor <faction_id> <band> forage <x> <y> [floor] [species] [take:<a>,<b>] <workers> [kit <id>] | hunt <herd_id> [floor] <workers> [kit <id>] | extract <x> <y> <material> [floor] <workers> [kit <id>] | scout <workers> | warrior <workers> | roadwork <workers> | builders <workers>",
+        summary: "Set the worker count for one labor target on a band (0 unassigns; clamps to idle). A worked source's crew (forage/hunt/extract/tile) KEEPS ITS SITE FIRST and collects with what is left: a tended patch, Field, tamed herd, pen or raised working owes work every turn, the crew pays it before it takes, and a crew short of it keeps what it can and collects nothing. A site with 0 crew is not kept at all. 'roadwork' is the one keeping POOL: it keeps every road the band keeps, measured against their SUM, and short of the sum the split follows the band's upkeep_mode; zero stops keeping roads. 'builders' is the other band-wide pool: its whole output goes on the head of the band's build queue, so zero stops building altogether. A `kit` token may sit anywhere after the role, and it is REFUSED on 'builders', 'roadwork' and 'tile' — a pool (or a tile improvement's crew) is HOW MANY hands, never what they carry: what a build and a site are worked with follows from the rung they stand on. The worked sources (forage/hunt/extract) and the two standing roles (scout/warrior) do take one, and an absent token means the job's default. The retired 'agriculture', 'husbandry' and 'quarrywork' pools are refused.",
+        usage: "assign_labor <faction_id> <band> forage <x> <y> [floor] [species] [take:<a>,<b>] <workers> [kit <id>] | hunt <herd_id> [floor] <workers> [kit <id>] | extract <x> <y> <material> [floor] <workers> [kit <id>] | tile <branch> <x> <y> <workers> | scout <workers> | warrior <workers> | roadwork <workers> | builders <workers>",
     },
     CommandVerbHelp {
         verb: "move_band",
@@ -1436,6 +1436,36 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
                         None,
                         floor_tok,
                         Some(material.to_string()),
+                    )
+                }
+                // **A TILE IMPROVEMENT'S CREW** - `tile <branch> <x> <y> <workers>`: the deposit row's
+                // twin for a source that yields nothing. It names a tile AND a branch, because one
+                // tile can carry improvements of several tile branches; the branch rides the
+                // `species` slot as a deposit's material does, for the same reason (one free-form
+                // string, one field). It takes no floor: there is no stock to leave anything of.
+                "tile" => {
+                    let branch = parts
+                        .next()
+                        .ok_or(CommandParseError::MissingArgument("branch"))?;
+                    let x = parts
+                        .next()
+                        .ok_or(CommandParseError::MissingArgument("target_x"))?;
+                    let y = parts
+                        .next()
+                        .ok_or(CommandParseError::MissingArgument("target_y"))?;
+                    let workers_tok = parts
+                        .next()
+                        .ok_or(CommandParseError::MissingArgument("workers"))?;
+                    if let Some(extra) = parts.next() {
+                        return Err(CommandParseError::UnexpectedToken(extra.to_string()));
+                    }
+                    (
+                        parse_u32(workers_tok, "assign_labor workers")?,
+                        Some(parse_u32(x, "assign_labor target_x")?),
+                        Some(parse_u32(y, "assign_labor target_y")?),
+                        None,
+                        None,
+                        Some(branch.to_ascii_lowercase()),
                     )
                 }
                 // **A role passes TWO gates: this grammar and the sim's own `handle_assign_labor`.**
@@ -2973,6 +3003,38 @@ mod tests {
                 move_with_herd: false,
             },
             "a non-numeric optional token is the SPECIES"
+        );
+    }
+
+    /// **A TILE IMPROVEMENT'S CREW NAMES ITS BRANCH, THEN ITS TILE** - `tile <branch> <x> <y>
+    /// <workers>`, the branch riding the `species` slot as a deposit's material does, with no floor.
+    #[test]
+    fn assign_labor_tile_carries_the_branch_in_the_species_slot() {
+        assert_eq!(
+            parse_command_line("assign_labor 0 904 tile Orchard 3 4 6").unwrap(),
+            CommandPayload::AssignLabor {
+                faction_id: 0,
+                band_id: Some(904),
+                role: "tile".to_string(),
+                workers: 6,
+                target_x: Some(3),
+                target_y: Some(4),
+                fauna_id: None,
+                policy: None,
+                species: Some("orchard".to_string()),
+                floor: None,
+                kit_id: None,
+                take_species: Vec::new(),
+                move_with_herd: false,
+            },
+        );
+        assert!(
+            parse_command_line("assign_labor 0 904 tile orchard 3 4").is_err(),
+            "the head count is not optional"
+        );
+        assert!(
+            parse_command_line("assign_labor 0 904 tile orchard 3 4 6 7").is_err(),
+            "a tile row has no floor to name"
         );
     }
 

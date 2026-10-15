@@ -2963,6 +2963,21 @@ pub enum LaborTarget {
         /// simply has no effect, so it is accepted uniformly and applied conditionally.
         floor: f32,
     },
+    /// **KEEP AN IMPROVEMENT ON A TILE-KIND BRANCH** - the tile kind's crew row
+    /// (`core_sim/src/tile_improvement.rs`), modelled on [`Self::Extract`] and **paying nothing**:
+    /// a tile improvement has no yield, so the crew's whole job is to keep the site.
+    ///
+    /// **The crew is the keeper.** The hands on this row keep the improvement first
+    /// (`keep_hands = min(crew, bill / keep_rate)`, the same site-keeping claims a working's crew
+    /// makes), through the keeping tools the improvement's rung derives. Hands beyond the bill do no
+    /// work: a build is raised by the band's `builders` pool, exactly as it is on a working, and a
+    /// take has nothing to take. **A far crew is a work party, as a far working's is** - the row
+    /// posts one past `band_work_range` like every other source row.
+    ///
+    /// Stored as `(tile, branch)`, the registry's own key: one tile can carry an improvement of
+    /// several tile branches, and working one is not working another. It names no floor - there is
+    /// no stock to leave standing.
+    Tile { tile: UVec2, branch: BranchId },
 }
 
 /// The stable role key a **Forage** row publishes, and the one a plant-web build queue entry names
@@ -2981,6 +2996,10 @@ pub const ROADWORK_ROLE_KEY: &str = "roadwork";
 /// the same reason there is one row kind: what a crew is doing is *taking a material out of the
 /// ground*, and which of the two skills that is, is the deposit's.
 pub const EXTRACT_ROLE_KEY: &str = "extract";
+/// The **Tile** twin of [`EXTRACT_ROLE_KEY`] - the crew row on a tile-kind improvement, and the row a
+/// tile build-queue entry names its source with. One key for every tile-kind branch, for the reason
+/// there is one row kind: which branch it is, is the improvement's.
+pub const TILE_ROLE_KEY: &str = "tile";
 
 impl LaborTarget {
     /// The stable role key (also the snapshot `kind` string and the `activity` summary).
@@ -2993,6 +3012,7 @@ impl LaborTarget {
             LaborTarget::Roadwork => ROADWORK_ROLE_KEY,
             LaborTarget::Builders => "builders",
             LaborTarget::Extract { .. } => EXTRACT_ROLE_KEY,
+            LaborTarget::Tile { .. } => TILE_ROLE_KEY,
         }
     }
 
@@ -3019,6 +3039,11 @@ impl LaborTarget {
             // *do* ship (`earthmoving`, `stone_dressing`) declare `build_work`, which lands on the
             // builders' pool that RAISES a working rather than on the crew that takes from it.
             LaborTarget::Extract { .. } => crate::equipment_config::KitJob::Extraction,
+            // **A tile crew takes nothing, so it has no take kit to choose**: its keeping tools
+            // follow from the improvement's rung (`EquipmentConfig::pool_toe`), exactly as a
+            // pool's do, and the command refuses a `kit` token on the row. `roadwork` is the job
+            // whose default kit is the empty `none`, which is what a row that carries nothing wants.
+            LaborTarget::Tile { .. } => crate::equipment_config::KitJob::Roadwork,
         }
     }
 
@@ -3049,6 +3074,17 @@ impl LaborTarget {
                     tile: b,
                     material: right,
                     ..
+                },
+            ) => a == b && left == right,
+            // **Keyed by tile AND branch**, the registry's own key.
+            (
+                LaborTarget::Tile {
+                    tile: a,
+                    branch: left,
+                },
+                LaborTarget::Tile {
+                    tile: b,
+                    branch: right,
                 },
             ) => a == b && left == right,
             _ => false,
@@ -3087,7 +3123,9 @@ impl LaborTarget {
             // *stop cutting here*, never *this band has nothing here*, and the row has to survive it
             // or the working loses its place in the build queue — and a row held at zero is a site
             // with no crew, so nothing keeps it.
-            | LaborTarget::Extract { .. } => true,
+            | LaborTarget::Extract { .. }
+            // **A tile improvement is ground the band holds**, a working's reading exactly.
+            | LaborTarget::Tile { .. } => true,
             LaborTarget::Scout
             | LaborTarget::Warrior
             | LaborTarget::Roadwork
@@ -3113,6 +3151,7 @@ impl LaborTarget {
             LaborTarget::Forage { .. }
             | LaborTarget::Hunt { .. }
             | LaborTarget::Extract { .. }
+            | LaborTarget::Tile { .. }
             | LaborTarget::Scout
             | LaborTarget::Warrior => false,
         }
@@ -5903,11 +5942,9 @@ pub enum BuildSource {
     /// deposits, and a `fell` queued on the timber is not a `quarry` queued on the rock beneath it.
     Deposit { tile: UVec2, material: String },
     /// **AN IMPROVEMENT ON ONE TILE OF A TILE-KIND BRANCH** - `(tile, branch)`, the key of
-    /// [`crate::tile_improvement::TileImprovementRegistry`]. Like a road it is backed by **no labor
-    /// row**: the named band builds it from its `builders` pool and the improvement's keeper is
-    /// whichever band of its people stands within reach, so there is no per-band holding to prune
-    /// by - the `build` command places the improvement in the same breath as it declares, and
-    /// nothing removes one, so the entry's membership is permanent until it completes.
+    /// [`crate::tile_improvement::TileImprovementRegistry`]. **Backed by a labor row**, a working's
+    /// reading ([`LaborTarget::Tile`]): the band's `builders` pool raises it and the crew on the row
+    /// keeps it, so the entry is pruned exactly as a deposit's is - no row, no holding.
     Tile { tile: UVec2, branch: BranchId },
 }
 
@@ -5935,6 +5972,10 @@ impl BuildSource {
                 tile: *tile,
                 material: material.clone(),
             }),
+            LaborTarget::Tile { tile, branch } => Some(BuildSource::Tile {
+                tile: *tile,
+                branch: *branch,
+            }),
             LaborTarget::Scout
             | LaborTarget::Warrior
             | LaborTarget::Roadwork
@@ -5956,9 +5997,9 @@ impl BuildSource {
             // **The take row's own key**, unlike a road's: a working has a row, so a client joins
             // its queued `fell` or `quarry` to the crew that is actually standing on it.
             BuildSource::Deposit { .. } => EXTRACT_ROLE_KEY,
-            // **The keeping role, like a road's**: a tile improvement has no take row either, and
-            // the pool that keeps it is the same band-wide one.
-            BuildSource::Tile { .. } => ROADWORK_ROLE_KEY,
+            // **The crew row's own key**, a working's reading: a tile improvement has a row, so a
+            // client joins its queued build to the crew that is standing on it.
+            BuildSource::Tile { .. } => TILE_ROLE_KEY,
         }
     }
 
@@ -5975,6 +6016,13 @@ impl BuildSource {
                     ..
                 },
             ) => tile == other && material == worked,
+            (
+                BuildSource::Tile { tile, branch },
+                LaborTarget::Tile {
+                    tile: other,
+                    branch: worked,
+                },
+            ) => tile == other && branch == worked,
             // **A road names no row.** `LaborTarget::Roadwork` is band-wide and covers every road
             // the band keeps, so it names no one of them — the same answer `Agriculture` gives a
             // patch.
@@ -7130,14 +7178,14 @@ impl LaborAllocation {
             // is `docs/plan_extraction.md` §6's one deliberate departure from the route branch: a
             // road is free to leave and so belongs to no camp, but *a quarry you walk away from is a
             // quarry you lost*, and that is what puts a working on the move-or-stay decision.
-            BuildSource::Patch(_) | BuildSource::Herd(_) | BuildSource::Deposit { .. } => self
+            // **A tile improvement is held by its crew's row**, a working's reading.
+            BuildSource::Patch(_)
+            | BuildSource::Herd(_)
+            | BuildSource::Deposit { .. }
+            | BuildSource::Tile { .. } => self
                 .assignments
                 .iter()
                 .any(|assignment| source.names(&assignment.target)),
-            // **A TILE IMPROVEMENT IS HELD BY NOBODY'S ROW AND NOBODY'S KEEPER** - the `build`
-            // command places it and declares in one act, and the registry never removes one, so the
-            // entry stands until it completes.
-            BuildSource::Tile { .. } => true,
         }
     }
 

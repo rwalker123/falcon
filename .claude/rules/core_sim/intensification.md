@@ -2459,9 +2459,9 @@ an unknown or non-per-tile branch is refused by name rather than read as the til
 
 ## The tile kind — an improvement on ONE TILE of a branch the config declares
 
-`SourceKind::Tile` is the road's shape for a thing that is not a road: a **standing** on the ladder, a
-**keeper**, a **standing bill**, a **neglect clock** and a **grace** - and no crew row, no stock and
-no traffic. **No tile branch ships.** A tile branch is a JSON edit, and the engine never names one:
+`SourceKind::Tile` is a source that **yields nothing**: a **standing** on the ladder, a **standing
+bill**, a **neglect clock** and a **grace**, kept by a **crew row** exactly as a deposit's working is.
+**No tile branch ships.** A tile branch is a JSON edit, and the engine never names one:
 `core_sim/tests/tile_improvement.rs` proves it on a test-only two-rung branch (`orchard`, overlay
 `core_sim/tests/fixtures/orchard_tile_branch.json`) merged onto the builtin ladder. Engine:
 `core_sim/src/tile_improvement.rs`.
@@ -2469,36 +2469,58 @@ no traffic. **No tile branch ships.** A tile branch is a JSON edit, and the engi
 **The registry is its own, keyed `(tile, branch)`.** `TileImprovementRegistry` is modelled on
 `RoadRegistry` and deliberately **not merged with it**: a road is one per tile and its position is
 worn in by traffic; an improvement is one per `(tile, branch)` and its position is raised **only** by a
-band's builders. They share the keeping *machinery* and nothing else. It rides `SimState`
-(`tile_improvements`, classified in `sim_state_coverage`); the save version is unchanged.
+band's builders. It rides `SimState` (`tile_improvements`, classified in `sim_state_coverage`); the
+save version is unchanged.
 
-**Building**: `build <verb> <faction> <band> <x> <y>` with a tile-kind verb. The band named is the
-**builder**: its `builders` pool raises the improvement and its queue holds the entry
-(`BuildSource::Tile { tile, branch }`, `BuildJob::Climb(rung)`). The first verb of a branch on a tile
-**places** the improvement at the branch's root in the same breath as it declares (a verb whose rung
-is not directly above the root refuses until the rung beneath is held). The pool's arm is the road
-arm's shape without the remoteness quote and without a material pile.
+**The crew is the keeper - there is no reach rule and no pool.** A band assigns hands to the
+improvement with `assign_labor <faction> <band> tile <branch> <x> <y> <workers>`
+(`LaborTarget::Tile { tile, branch }`, role key `tile`; the branch rides the command's `species` slot
+as a deposit's material does). The first crew **places** it at the branch's root. The row is the
+Extract arm's twin in `advance_labor_allocation`: the crew **keeps the improvement first** -
+`keep_hands = min(crew, bill / keep_rate)` through the same `site_keeping_claims` / `SiteCrews`
+machinery a working's crew uses - and the keeping tools follow from the rung it stands on
+(`EquipmentConfig::pool_toe(branch, rung)`). A `kit` token on a tile row is refused, as on a pool: the
+row says how many hands. `tile_keeping_claims`, `assign_tile_keepers` and the Roadwork-pool merge are
+gone; roads keep their pool unchanged.
 
-**Keeping is a REACH, not a command.** `assign_tile_keepers` (Population, ahead of the labour pass)
-gives each improvement to **the nearest band of its people within `supply_network_config.reach_tiles`**,
-ties to the lowest `BandId`, and none in reach means **no keeper**. The bill is stamped on every
-improvement keeper or not, so an unkept one cannot read as met. The keeper's `Roadwork` pool pays it
-(`route_keeping_claims`' sibling `tile_keeping_claims`, merged by `pool_keeping_claims`): the pool is
-the band-level keeping pool for tiles with no labor row. A band that moves on stops keeping what it
-left; the improvement then **decays after its at-risk rung's grace** (`advance_tile_improvements`,
-the road decay's phases 1-3), announced on the rung's feed channel.
+**Surplus hands do nothing.** A tile has no take, so hands beyond the bill have nothing to collect -
+the deposit arm's rule when its stock offers nothing more. **A build is not the site crew's work on
+any kind**: the band's `builders` pool raises the improvement (inside the tile arm, with
+`tile_head_gate`, `head_build_legs`, a `BuildQuote` and `charge_build_wear`), exactly as it does a
+working.
+
+**Distance is nothing special.** A crew past `band_work_range` is a work party by the path every
+source row takes (`party_source_position` names the tile; the party carries no cargo). Nothing here
+forks it.
+
+**Building**: `build <verb> <faction> <x> <y>` with a tile-kind verb - no band token, the deposit
+grammar. It resolves to `LaborTarget::Tile`, gates on the knowledge and on the rung beneath being held
+(or the root where nothing stands), and then declares on every band of the faction that crews the
+tile (`queue_build_on_working_bands`): **a queue entry requires a row**, so "No band of yours works
+(x, y). Assign a crew first" is the refusal with no crew. The queue verbs (`unqueue`, `build_order`,
+the priorities) address it as `<branch> <x> <y>` / `branch=<id>`; `abandon` on a tile branch drops the
+crews' rows and their entries and leaves the meter to decay.
+
+**Unkept means decay.** Nobody crewing it means the bill goes unpaid and the improvement **decays after
+its at-risk rung's grace** (`advance_tile_improvements`, the working's phases 1-3, announced on the
+rung's feed channel). The bill is re-stamped at the end of that system for every improvement, crewed or
+not, so an unkept one cannot read as met. A row at zero hands survives as the band's holding while the
+improvement is above its root (`source_has_a_meter_at_risk`); at the root with no queue entry it
+lapses. The record persists at the root after a full decay; nothing prunes it.
 
 **Refusals that are the point.** `LadderConfig::validate` refuses a material on a tile rung (build
-pile or standing rate): the pool settles work, and a stone-eating tile rung would be a demand nothing
-pays. `abandon` on a tile branch is refused with a pointer to `unqueue` - nobody holds an improvement
-by command. The improvement record persists at the root rung after a full decay; nothing prunes it.
+pile or standing rate): the keeping settles work, and a stone-eating tile rung would be a demand
+nothing pays.
 
-**On the wire** (`RouteSection.tileImprovements`, `TileImprovementState`): the road row's shape -
-current rung, stamped bill (`upkeepDemand - upkeepSupplied == upkeepShortfall`), neglect and grace,
-`hasKeeper` / `keeperBandId` - plus the builder's scratch (`buildDestinationRung`, `buildLegs`,
-`buildTurnsRemaining`, `buildBlockedReason`), which publishes only where one of the **viewer's own
-bands** has the improvement queued. Fog-gated on `Discovered`, the road's rule. The rungs above the
-one a row holds are priced by `ladderRungs` filtered to the branch.
+**On the wire**: `RouteSection.tileImprovements` (`TileImprovementState`) - current rung, stamped bill
+(`upkeepDemand - upkeepSupplied == upkeepShortfall`), neglect and grace, the working's keeping block
+(`upkeepWorkersNeeded`, `upkeepHands`, `upkeepToolsShort`, `upkeepToe`, viewer-only tool lines) and
+`isQueued`, plus the builder's scratch (`buildDestinationRung`, `buildLegs`, `buildTurnsRemaining`,
+`buildBlockedReason`), which publishes only where one of the **viewer's own bands** has the
+improvement queued. Fog-gated on `Discovered`, the road's rule. **Who keeps it is the crews:** the
+band's `LaborAssignment` row for it has `kind = "tile"`, `targetX` / `targetY` and the new `branch`
+(the join key to the improvement row), and carries `partyWorkers` and the rest of the party block like
+any far row. The rungs above the one a row holds are priced by `ladderRungs` filtered to the branch.
 
 ## The ladder catalog on the wire — `ladderRungs` / `ladderBranches`
 

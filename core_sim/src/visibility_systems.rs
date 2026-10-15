@@ -494,7 +494,9 @@ pub fn calculate_visibility(
                         // **A deposit crew stands on the deposit**, exactly as the foragers stand
                         // on their patch — the working is a fixed spot on the map and the hands are
                         // at it, so it sees fog on the same terms.
-                        LaborTarget::Extract { tile, .. } => Some(*tile),
+                        LaborTarget::Extract { tile, .. } | LaborTarget::Tile { tile, .. } => {
+                            Some(*tile)
+                        }
                         LaborTarget::Scout
                         | LaborTarget::Warrior
                         // **A band-wide role stands on no tile of its own**: the road keepers hold

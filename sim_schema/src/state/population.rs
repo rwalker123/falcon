@@ -501,6 +501,10 @@ pub struct LaborAssignmentState {
     /// The food they carry, gross of the walk's rot. Appended last.
     #[serde(default)]
     pub rejoining_food: f32,
+    /// The tile-kind branch id on a `tile` row, `""` on every other (`snapshot.fbs`'s
+    /// `LaborAssignment.branch`).
+    #[serde(default)]
+    pub branch: String,
 }
 
 /// **ONE LINE OF ONE TAKE ROW'S TABLE OF EQUIPMENT** — a row of [`LaborAssignmentState::kit_toe`].

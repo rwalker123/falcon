@@ -15,7 +15,7 @@ use flatbuffers::{ForwardsUOffset, WIPOffset};
 
 /// **A SITE'S KEEPING-TOOL LINES** — absent rather than empty where the keeping claimed no tool,
 /// the `kitToe` convention.
-fn create_upkeep_toe<'a>(
+pub(crate) fn create_upkeep_toe<'a>(
     builder: &mut FbBuilder<'a>,
     lines: &[crate::state::population::KitToeLineState],
 ) -> Option<WIPOffset<flatbuffers::Vector<'a, ForwardsUOffset<fb::KitToeLine<'a>>>>> {
@@ -40,7 +40,7 @@ fn create_upkeep_toe<'a>(
 }
 
 /// The decode twin of [`create_upkeep_toe`].
-fn decode_upkeep_toe(
+pub(crate) fn decode_upkeep_toe(
     lines: Option<flatbuffers::Vector<'_, ForwardsUOffset<fb::KitToeLine<'_>>>>,
 ) -> Vec<crate::state::population::KitToeLineState> {
     map_rows(lines, |line| crate::state::population::KitToeLineState {

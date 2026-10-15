@@ -894,6 +894,7 @@ fn seed_snapshot() -> WorldSnapshot {
     // A tile improvement's own `build_legs` is a nested repeated field, so it is seeded too.
     s.tile_improvements = rows_of(crate::state::routes::TileImprovementState {
         build_legs: vec![crate::state::subsistence::BuildLegState::default()],
+        upkeep_toe: vec![crate::state::population::KitToeLineState::default()],
         ..Default::default()
     });
 

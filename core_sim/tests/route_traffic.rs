@@ -235,7 +235,6 @@ const NO_BAND_WIDE_TOOL_PLAN: Option<&core_sim::PoolToolPlan> = None;
 
 fn pay_road_keepers(
     mut registry: ResMut<RoadRegistry>,
-    mut tile_improvements: ResMut<core_sim::TileImprovementRegistry>,
     ladder: Res<LadderConfigHandle>,
     equipment: Res<EquipmentConfigHandle>,
     tile_registry: Res<TileRegistry>,
@@ -256,7 +255,6 @@ fn pay_road_keepers(
     for (cohort, mut allocation, mut band_equipment, band) in bands.iter_mut() {
         settle_bands_roadwork(
             &mut registry,
-            &mut tile_improvements,
             cohort,
             &mut allocation,
             band_equipment.as_deref_mut(),

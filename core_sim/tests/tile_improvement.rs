@@ -2,10 +2,11 @@
 //! overlay in `tests/fixtures/orchard_tile_branch.json` (a root rung and one built rung, `graft`,
 //! on a branch the code has never heard of) onto the builtin ladder and drives the real turn.
 //!
-//! What it proves is the keeper rule and the whole life of an improvement: a band builds rung 2 with
-//! its `builders` pool, **keeps it while it stands within reach** from the `Roadwork` pool, and the
-//! improvement **decays after its grace once the band leaves** - and that all of it reaches the wire
-//! through the same accessor chain a client uses. Nothing in `core_sim/src` names the branch.
+//! What it proves is the crew-keeper rule and the whole life of an improvement: a band's `tile`
+//! crew **keeps the improvement first** while its `builders` pool raises rung 2, the improvement
+//! **decays after its grace once nobody crews it**, a crew past `band_work_range` **goes as a work
+//! party** exactly as a far deposit's does, and all of it reaches the wire through the same
+//! accessor chain a client uses. Nothing in `core_sim/src` names the branch.
 
 use std::sync::Arc;
 
@@ -28,10 +29,13 @@ const BRANCH: &str = "orchard";
 const ROOT_RUNG: &str = "bare_ground";
 const BUILT_RUNG: &str = "grafted";
 
-/// Hands the fixture band puts on a pool. The built rung costs 20 work and the keeping bill is 1
-/// work a turn against one work per bare worker, so these are comfortably enough for both.
+/// Hands the fixture band puts on the builders and on the improvement's crew. The built rung costs 20
+/// work and the keeping bill is 1 work a turn against one work per bare worker, so these are
+/// comfortably enough for both.
 const BUILDERS: u32 = 5;
-const KEEPERS: u32 = 1;
+const CREW: u32 = 2;
+/// Every hand the fixture band assigns - the `available` figure `set_assignment` clamps against.
+const ALL_HANDS: u32 = BUILDERS + CREW;
 
 /// The turn budget for any one phase of a scenario - far above what the fixture needs, so a
 /// failure is a wrong answer and not a short loop.
@@ -43,16 +47,16 @@ struct PublishedImprovement {
     branch: String,
     current_rung: String,
     destination: String,
-    has_keeper: bool,
-    keeper_band_id: u64,
+    is_queued: bool,
+    upkeep_workers_needed: u32,
     demand: f32,
     supplied: f32,
     shortfall: f32,
 }
 
-/// How far from the camp the band is moved to leave the improvement behind: past
-/// `supply_network_config.reach_tiles` by a wide margin.
-const FAR_AWAY_TILES: u32 = 12;
+/// How far from the band an improvement is put to make its crew a work party: past
+/// `labor_config.band_work_range` (2) by a wide margin, and still on the map.
+const FAR_AWAY_TILES: u32 = 6;
 
 /// **THE OVERLAY MERGED ONTO THE BUILTIN LADDER** - the branch descriptors and the rung records the
 /// fixture adds, appended exactly as a designer would edit the JSON.
@@ -121,16 +125,25 @@ fn first_band(app: &mut App) -> (Entity, FactionId, BandId, UVec2) {
     (entity, faction, band, position)
 }
 
-/// Place an orchard at the band's own tile and stand the band's builders on it: `BUILDERS` builders
-/// with the climb to `grafted` queued. The keeping is staffed separately ([`staff_the_keeping`]),
-/// because the shedding order spares a `Roadwork` hand above the bill and an unbuilt rung owes none.
+/// The improvement's crew row on `tile`.
+fn tile_row(tile: UVec2) -> LaborTarget {
+    LaborTarget::Tile {
+        tile,
+        branch: branch(),
+    }
+}
+
+/// Place an orchard at `tile`, stand the band's builders on the queue head and put a crew of `CREW`
+/// on the improvement: `BUILDERS` builders with the climb to `grafted` queued, and the `tile` row
+/// that keeps the improvement first.
 fn begin_building(app: &mut App, band: Entity, faction: FactionId, tile: UVec2) {
     let ladder = app.world.resource::<LadderConfigHandle>().get();
     app.world
         .resource_mut::<TileImprovementRegistry>()
         .place(tile, branch(), faction, &ladder);
     let mut allocation = LaborAllocation::default();
-    allocation.set_assignment(LaborTarget::Builders, BUILDERS, BUILDERS, None);
+    allocation.set_assignment(LaborTarget::Builders, BUILDERS, ALL_HANDS, None);
+    allocation.set_assignment(tile_row(tile), CREW, ALL_HANDS, None);
     allocation.enqueue_build(
         BuildSource::Tile {
             tile,
@@ -141,12 +154,13 @@ fn begin_building(app: &mut App, band: Entity, faction: FactionId, tile: UVec2) 
     app.world.entity_mut(band).insert(allocation);
 }
 
-/// Put `KEEPERS` hands on the band's `Roadwork` pool - the pool that keeps a tile improvement.
-fn staff_the_keeping(app: &mut App, band: Entity) {
+/// Set the improvement's crew to `hands` (`0` holds the row unstaffed: the holding survives, the
+/// keeping stops).
+fn set_crew(app: &mut App, band: Entity, tile: UVec2, hands: u32) {
     app.world
         .get_mut::<LaborAllocation>(band)
         .expect("the band has an allocation")
-        .set_assignment(LaborTarget::Roadwork, KEEPERS, BUILDERS + KEEPERS, None);
+        .set_assignment(tile_row(tile), hands, ALL_HANDS, None);
 }
 
 fn held_rung(app: &App, tile: UVec2) -> RungId {
@@ -168,28 +182,13 @@ fn run_until(app: &mut App, what: &str, done: impl Fn(&App) -> bool) -> usize {
     panic!("{what} did not happen within {TURN_BUDGET} turns");
 }
 
-/// Move the band's camp to a tile `FAR_AWAY_TILES` east of where it stood.
-fn walk_away(app: &mut App, band: Entity, from: UVec2) {
-    let width = app.world.resource::<TileRegistry>().width;
-    let away = UVec2::new((from.x + FAR_AWAY_TILES) % width, from.y);
-    let entity = app
-        .world
-        .resource::<TileRegistry>()
-        .index(away.x, away.y)
-        .expect("the destination is on the map");
-    app.world
-        .get_mut::<PopulationCohort>(band)
-        .expect("the band has a cohort")
-        .current_tile = entity;
-}
-
-/// **THE HAPPY PATH, END TO END**: rung 2 is built by the named band's builders, the entry leaves
-/// the queue, and while the band stands within reach the improvement is KEPT - a keeper is named,
-/// the bill is paid in full, and the neglect clock never starts.
+/// **THE HAPPY PATH, END TO END**: rung 2 is built by the band's builders while its crew keeps the
+/// improvement, the entry leaves the queue, and while the crew stays on it the improvement is KEPT -
+/// the bill is paid in full by the crew's hands and the neglect clock never starts.
 #[test]
-fn a_band_builds_rung_two_and_keeps_it_while_it_stands_within_reach() {
+fn a_crew_builds_rung_two_and_keeps_it_while_it_works_it() {
     let mut app = spawn_world();
-    let (band, faction, band_id, tile) = first_band(&mut app);
+    let (band, faction, _, tile) = first_band(&mut app);
     begin_building(&mut app, band, faction, tile);
 
     run_until(&mut app, "the climb to the grafted rung", |app| {
@@ -205,7 +204,6 @@ fn a_band_builds_rung_two_and_keeps_it_while_it_stands_within_reach() {
     );
 
     // Long enough to outlast the rung's grace several times over: a kept improvement holds.
-    staff_the_keeping(&mut app, band);
     for _ in 0..8 {
         app.update();
     }
@@ -216,19 +214,26 @@ fn a_band_builds_rung_two_and_keeps_it_while_it_stands_within_reach() {
         rung(BUILT_RUNG),
         "a kept rung holds"
     );
-    assert_eq!(
-        improvement.keeper.map(|keeper| keeper.band),
-        Some(band_id),
-        "the band standing on it keeps it"
-    );
     assert_eq!(improvement.neglect_turns, 0, "its bill is met every turn");
+    assert!(
+        improvement.upkeep_hands > 0.0,
+        "the crew's hands are what paid it: {}",
+        improvement.upkeep_hands
+    );
+    assert!(
+        (improvement.upkeep_supplied - improvement.upkeep_demanded.unwrap_or_default()).abs()
+            < 1.0e-4,
+        "the crew supplied the whole bill: {} of {:?}",
+        improvement.upkeep_supplied,
+        improvement.upkeep_demanded
+    );
 }
 
-/// **THE LEAVING HALF**: with the keeper out of reach the improvement has no keeper, its bill goes
-/// unpaid, and it **decays after its grace** back to the branch's floor - while a control run, with
-/// the band staying put, holds the rung over the same turns.
+/// **THE UNSTAFFING HALF**: with the crew taken off, the improvement has nobody keeping it, its bill
+/// goes unpaid, and it **decays after its grace** back to the branch's floor - the row surviving as
+/// the band's holding meanwhile.
 #[test]
-fn an_improvement_with_no_band_in_reach_decays_after_its_grace() {
+fn an_unstaffed_improvement_decays_after_its_grace() {
     let mut app = spawn_world();
     let (band, faction, _, tile) = first_band(&mut app);
     begin_building(&mut app, band, faction, tile);
@@ -244,8 +249,7 @@ fn an_improvement_with_no_band_in_reach_decays_after_its_grace() {
         .expect("the built rung declares a bill")
         .grace_turns;
 
-    staff_the_keeping(&mut app, band);
-    walk_away(&mut app, band, tile);
+    set_crew(&mut app, band, tile, 0);
 
     // Inside the grace nothing is lost: the bill is short, the clock is running, the rung stands.
     for _ in 0..grace {
@@ -257,9 +261,9 @@ fn an_improvement_with_no_band_in_reach_decays_after_its_grace() {
             .resource::<TileImprovementRegistry>()
             .get(tile, branch())
             .expect("it is still there");
-        assert!(
-            improvement.keeper.is_none(),
-            "nobody of its people stands within reach any more"
+        assert_eq!(
+            improvement.upkeep_hands, 0.0,
+            "nobody is keeping it any more"
         );
         assert_eq!(
             improvement.held_rung(),
@@ -271,6 +275,15 @@ fn an_improvement_with_no_band_in_reach_decays_after_its_grace() {
             "the neglect clock is running"
         );
     }
+    assert!(
+        app.world
+            .get::<LaborAllocation>(band)
+            .expect("the band has an allocation")
+            .assignments
+            .iter()
+            .any(|row| row.target.same_source(&tile_row(tile))),
+        "the unstaffed row survives as the band's holding while the improvement stands"
+    );
 
     // Past the grace it bleeds, and the rung is lost.
     run_until(&mut app, "the decay back to the floor", |app| {
@@ -278,14 +291,76 @@ fn an_improvement_with_no_band_in_reach_decays_after_its_grace() {
     });
 }
 
-/// **THE WIRE**: a kept improvement on explored ground is published with its rung, its keeper and
-/// its stamped bill, and the builder's scratch rides only while the viewer's own band has it queued.
+/// **DISTANCE IS NOTHING SPECIAL**: an improvement beyond `band_work_range` is worked by a work
+/// party exactly as a far deposit is - the row keeps its crew, a party is posted at the improvement's
+/// tile, and the wire's `partyWorkers` says so.
 #[test]
-fn a_kept_improvement_reaches_the_wire_with_its_keeper_and_its_bill() {
+fn a_far_crew_goes_as_a_work_party() {
     use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
 
     let mut app = spawn_world();
-    let (band, faction, band_id, tile) = first_band(&mut app);
+    let (band, faction, _, home) = first_band(&mut app);
+    let width = app.world.resource::<TileRegistry>().width;
+    let far = UVec2::new((home.x + FAR_AWAY_TILES) % width, home.y);
+    let ladder = app.world.resource::<LadderConfigHandle>().get();
+    app.world
+        .resource_mut::<TileImprovementRegistry>()
+        .place(far, branch(), faction, &ladder);
+    let mut allocation = LaborAllocation::default();
+    allocation.set_assignment(tile_row(far), CREW, ALL_HANDS, None);
+    app.world.entity_mut(band).insert(allocation);
+
+    for _ in 0..3 {
+        app.update();
+    }
+    let allocation = app
+        .world
+        .get::<LaborAllocation>(band)
+        .expect("the band has an allocation");
+    let row = allocation
+        .assignments
+        .iter()
+        .find(|row| row.target.same_source(&tile_row(far)))
+        .expect("a far row is not given up on");
+    let party = row.party.as_ref().expect("a far crew is a work party");
+    assert_eq!(party.position, far, "the party stands at the improvement");
+    assert!(party.workers > 0, "the party holds the crew's hands");
+
+    let snapshot = app
+        .world
+        .resource::<SnapshotHistory>()
+        .latest_entry()
+        .expect("a snapshot was captured")
+        .snapshot;
+    let bytes = sim_schema::encode_snapshot_flatbuffer(snapshot.as_ref());
+    let envelope = fb::root_as_envelope(bytes.as_ref()).expect("a valid envelope");
+    let wire_row = envelope
+        .payload_as_snapshot()
+        .expect("a snapshot")
+        .population()
+        .and_then(|section| section.populations())
+        .expect("the population section carries the cohort list")
+        .iter()
+        .flat_map(|cohort| cohort.laborAssignments().into_iter().flatten())
+        .find(|assignment| assignment.kind().unwrap_or_default() == "tile")
+        .expect("the crew's row is on the wire");
+    assert_eq!(wire_row.branch().unwrap_or_default(), BRANCH);
+    assert_eq!((wire_row.targetX(), wire_row.targetY()), (far.x, far.y));
+    assert!(
+        wire_row.partyWorkers() > 0,
+        "the wire says the crew is a party"
+    );
+}
+
+/// **THE WIRE**: an improvement on explored ground is published with its rung, its stamped bill and
+/// the keeping block a deposit publishes; the builder's scratch rides only while the viewer's own
+/// band has it queued, and the crew's row names its branch.
+#[test]
+fn a_kept_improvement_reaches_the_wire_with_its_crew_and_its_bill() {
+    use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
+
+    let mut app = spawn_world();
+    let (band, faction, _, tile) = first_band(&mut app);
     begin_building(&mut app, band, faction, tile);
 
     // One turn in, the climb is queued and being worked: the builder's scratch is published.
@@ -311,8 +386,8 @@ fn a_kept_improvement_reaches_the_wire_with_its_keeper_and_its_bill() {
                 branch: row.branch().unwrap_or_default().to_string(),
                 current_rung: row.currentRung().unwrap_or_default().to_string(),
                 destination: row.buildDestinationRung().unwrap_or_default().to_string(),
-                has_keeper: row.hasKeeper(),
-                keeper_band_id: row.keeperBandId(),
+                is_queued: row.isQueued(),
+                upkeep_workers_needed: row.upkeepWorkersNeeded(),
                 demand: row.upkeepDemand(),
                 supplied: row.upkeepSupplied(),
                 shortfall: row.upkeepShortfall(),
@@ -323,8 +398,7 @@ fn a_kept_improvement_reaches_the_wire_with_its_keeper_and_its_bill() {
     assert_eq!(rows.len(), 1, "one improvement is on the map: {rows:?}");
     let row = rows[0].clone();
     assert_eq!(row.branch, BRANCH);
-    assert!(row.has_keeper, "the band standing on it keeps it");
-    assert_eq!(row.keeper_band_id, band_id.0);
+    assert!(row.is_queued, "the viewer's own band has a build queued");
     assert_eq!(
         row.destination,
         rung(BUILT_RUNG).wire_key(),
@@ -334,14 +408,14 @@ fn a_kept_improvement_reaches_the_wire_with_its_keeper_and_its_bill() {
     run_until(&mut app, "the climb to the grafted rung", |app| {
         held_rung(app, tile) == rung(BUILT_RUNG)
     });
-    staff_the_keeping(&mut app, band);
     app.update();
     app.update();
     let rows = published(&app);
     let PublishedImprovement {
         current_rung,
         destination,
-        has_keeper,
+        is_queued,
+        upkeep_workers_needed,
         demand,
         supplied,
         shortfall,
@@ -349,13 +423,40 @@ fn a_kept_improvement_reaches_the_wire_with_its_keeper_and_its_bill() {
     } = rows[0].clone();
     assert_eq!(current_rung, rung(BUILT_RUNG).wire_key());
     assert!(destination.is_empty(), "nothing is queued any more");
-    assert!(has_keeper);
+    assert!(!is_queued);
     assert!(demand > 0.0, "a built rung owes a bill: {demand}");
+    assert!(
+        upkeep_workers_needed > 0,
+        "the bill calls for whole hands: {upkeep_workers_needed}"
+    );
     assert!(
         (demand - supplied - shortfall).abs() < 1.0e-4,
         "demand - supplied == shortfall verbatim: {demand} {supplied} {shortfall}"
     );
-    assert!(shortfall.abs() < 1.0e-4, "the keepers cover the bill");
+    assert!(shortfall.abs() < 1.0e-4, "the crew covers the bill");
+
+    // The crew's own row names the tile and the branch, so a client can join it to the row above.
+    let snapshot = app
+        .world
+        .resource::<SnapshotHistory>()
+        .latest_entry()
+        .expect("a snapshot was captured")
+        .snapshot;
+    let bytes = sim_schema::encode_snapshot_flatbuffer(snapshot.as_ref());
+    let envelope = fb::root_as_envelope(bytes.as_ref()).expect("a valid envelope");
+    let crew_row = envelope
+        .payload_as_snapshot()
+        .expect("a snapshot")
+        .population()
+        .and_then(|section| section.populations())
+        .expect("the population section carries the cohort list")
+        .iter()
+        .flat_map(|cohort| cohort.laborAssignments().into_iter().flatten())
+        .find(|assignment| assignment.kind().unwrap_or_default() == "tile")
+        .expect("the crew's row is on the wire");
+    assert_eq!(crew_row.branch().unwrap_or_default(), BRANCH);
+    assert_eq!((crew_row.targetX(), crew_row.targetY()), (tile.x, tile.y));
+    assert_eq!(crew_row.workers(), CREW);
 }
 
 /// **FOG**: an improvement on ground the viewer has never explored is not published.

@@ -1613,8 +1613,18 @@ pub(crate) fn tile_improvements_to_array(
             "neglect_grace_remaining",
             row.neglectGraceRemaining() as i64,
         );
-        let _ = dict.insert("has_keeper", row.hasKeeper());
-        let _ = dict.insert("keeper_band_id", row.keeperBandId() as i64);
+        // WHO KEEPS IT IS THE CREWS ON IT: the keeping block is the working's, verbatim.
+        let _ = dict.insert(
+            "upkeep_workers_needed",
+            i64::from(row.upkeepWorkersNeeded()),
+        );
+        let _ = dict.insert("upkeep_hands", f64::from(row.upkeepHands()));
+        let _ = dict.insert("upkeep_tools_short", row.upkeepToolsShort());
+        let _ = dict.insert(
+            "upkeep_toe",
+            &crate::dict::population::kit_toe_to_array(row.upkeepToe()),
+        );
+        let _ = dict.insert("is_queued", row.isQueued());
         array.push(&dict.to_variant());
     }
     array

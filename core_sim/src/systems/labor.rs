@@ -207,6 +207,7 @@ pub fn source_has_a_meter_at_risk(
     forage_registry: &ForageRegistry,
     herds: &HerdRegistry,
     deposits: &crate::extraction::DepositRegistry,
+    tile_improvements: &crate::tile_improvement::TileImprovementRegistry,
     ladder: &LadderConfig,
 ) -> bool {
     match target {
@@ -230,6 +231,15 @@ pub fn source_has_a_meter_at_risk(
             deposits.source(*tile, material).is_some_and(|source| {
                 source.ladder_position() > crate::intensification::RUNG_UNSTARTED
             })
+        }
+        // **A tile improvement raised above its floor is a HOLDING**, a working's reading exactly:
+        // un-staffing it is *stop keeping it*, never *this band has nothing here*.
+        LaborTarget::Tile { tile, branch } => {
+            tile_improvements
+                .get(*tile, *branch)
+                .is_some_and(|improvement| {
+                    improvement.position() > crate::intensification::RUNG_UNSTARTED
+                })
         }
         LaborTarget::Scout
         | LaborTarget::Warrior
@@ -2361,6 +2371,7 @@ fn site_keeping_claims(
     herds: &HerdRegistry,
     fauna: &FaunaConfig,
     deposits: &crate::extraction::DepositRegistry,
+    tile_improvements: &crate::tile_improvement::TileImprovementRegistry,
     tile_registry: &TileRegistry,
     tiles: &Query<&Tile>,
     extraction: &crate::extraction_config::ExtractionConfig,
@@ -2425,6 +2436,20 @@ fn site_keeping_claims(
                         // been raised: the position **is** the accumulator, as on a road.
                         working.ladder_position(),
                         format!("{:010}:{:010}:{material}", tile.y, tile.x),
+                    )
+                })
+            }
+            // **A tile improvement claims from the rung it STANDS on**, a working's reading: the
+            // stamped bill, and the position as the accumulator ("most invested" is how far up it
+            // has been raised).
+            LaborTarget::Tile { tile, branch } => {
+                tile_improvements.get(*tile, *branch).map(|improvement| {
+                    (
+                        *branch,
+                        improvement.held_rung(),
+                        improvement.keeping_basis(ladder),
+                        improvement.position(),
+                        format!("{:010}:{:010}:{branch}", tile.y, tile.x),
                     )
                 })
             }
@@ -3038,6 +3063,7 @@ fn resolve_shed_facts(
     forage_registry: &ForageRegistry,
     herds: &HerdRegistry,
     deposits: &crate::extraction::DepositRegistry,
+    tile_improvements: &crate::tile_improvement::TileImprovementRegistry,
     // **THE GROUND'S OWN RENEWAL RATE FOR ONE WORKING**, resolved by the caller through
     // [`crate::extraction::tile_deposit_regrowth`]: the tile query and the deposits config are the
     // caller's to hand. It is what decides whether an `extract`
@@ -3137,6 +3163,16 @@ fn resolve_shed_facts(
                         keeping_need,
                     })
             }
+            // **A tile improvement teaches nothing and is improved once anybody paid to raise it** -
+            // the working's reading, without the lesson.
+            LaborTarget::Tile { tile, branch } => tile_improvements.get(*tile, *branch).map_or(
+                SourceShedFacts::default(),
+                |improvement| SourceShedFacts {
+                    accruing_knowledge: false,
+                    improved: improvement.position() > RUNG_UNSTARTED,
+                    keeping_need,
+                },
+            ),
             // A band-wide role stands on no ground, so it carries neither a lesson nor a meter. No
             // step of the order asks these of a role row; the entry exists to hold the alignment.
             LaborTarget::Scout
@@ -3230,72 +3266,6 @@ fn route_keeping_claims(
     }
     sort_keeping_claims(&mut claims);
     (kept, claims)
-}
-
-/// **WHAT THE TILE IMPROVEMENTS THIS BAND KEEPS CLAIM FROM ITS `Roadwork` POOL** - the tile kind's
-/// claims, beside [`route_keeping_claims`]' for the roads.
-///
-/// The catchment is the keeper the registry holds this turn ([`crate::tile_improvement::assign_tile_keepers`]):
-/// the nearest band of the improvement's people within reach. `first_index` is where the returned
-/// claims' `index` starts, so a caller that appends them to the roads' list indexes one combined
-/// site list - roads first, then these - without a second numbering scheme.
-///
-/// **No tool is bound to a tile rung unless the equipment config binds one**: the claim carries its
-/// branch and the rung it holds, and the roster derives a tile branch's keeping tools from those
-/// exactly as it does a road's, so a branch with none bound is kept bare-handed.
-fn tile_keeping_claims(
-    improvements: &crate::tile_improvement::TileImprovementRegistry,
-    band: Option<BandId>,
-    first_index: usize,
-    ladder: &LadderConfig,
-) -> (Vec<(UVec2, BranchId)>, Vec<KeepingClaim>) {
-    let Some(band) = band else {
-        return (Vec::new(), Vec::new());
-    };
-    let mut kept: Vec<(UVec2, BranchId)> = Vec::new();
-    let mut claims: Vec<KeepingClaim> = Vec::new();
-    for improvement in improvements.kept_by(band) {
-        claims.push(KeepingClaim {
-            index: first_index + kept.len(),
-            branch: improvement.branch,
-            // A tile improvement has no row to carry a rank, so its keeping bids at the default
-            // tier - the road's rule.
-            priority: SourcePriority::default(),
-            rung: Some(improvement.held_rung()),
-            demand: improvement.keeping_basis(ladder),
-            invested: improvement.position(),
-            tiebreak: format!(
-                "{:010}:{:010}:{}",
-                improvement.tile.y,
-                improvement.tile.x,
-                improvement.branch.as_str()
-            ),
-        });
-        kept.push((improvement.tile, improvement.branch));
-    }
-    (kept, claims)
-}
-
-/// **EVERYTHING THE `Roadwork` POOL KEEPS FOR THIS BAND, ONE LIST** - the roads it is the keeper of
-/// and the tile improvements it is nearest to, as one claim list in one funding order.
-///
-/// `(road tiles, tile improvements, claims)`: a claim's `index` below `roads.len()` names a road,
-/// at or above it the improvement at `index - roads.len()`. Sorted most-invested first across both,
-/// because the pool funds in slice order and the order is the caller's.
-fn pool_keeping_claims(
-    roads: &crate::routes::RoadRegistry,
-    improvements: &crate::tile_improvement::TileImprovementRegistry,
-    band: Option<BandId>,
-    tile_registry: &TileRegistry,
-    tiles: &Query<&Tile>,
-    ladder: &LadderConfig,
-) -> (Vec<UVec2>, Vec<(UVec2, BranchId)>, Vec<KeepingClaim>) {
-    let (road_tiles, mut claims) = route_keeping_claims(roads, band, tile_registry, tiles, ladder);
-    let (tile_sites, tile_claims) =
-        tile_keeping_claims(improvements, band, road_tiles.len(), ladder);
-    claims.extend(tile_claims);
-    sort_keeping_claims(&mut claims);
-    (road_tiles, tile_sites, claims)
 }
 
 /// **THE ROADS' BILL, AND THE STONE THAT PAYS IT** — struck **before** the builders run, and that
@@ -3518,7 +3488,6 @@ pub fn bill_and_stock_roads(
 #[allow(clippy::too_many_arguments)] // The per-band slice of what was a Bevy system's parameter list
 pub fn settle_bands_roadwork(
     registry: &mut crate::routes::RoadRegistry,
-    tile_improvements: &mut crate::tile_improvement::TileImprovementRegistry,
     cohort: &PopulationCohort,
     allocation: &mut LaborAllocation,
     mut band_equipment: Option<&mut BandEquipment>,
@@ -3536,14 +3505,7 @@ pub fn settle_bands_roadwork(
     // republishing a bill it no longer owes.
     allocation.last_roadwork_demand = NO_ROADWORK_LEDGER;
     allocation.last_roadwork_supplied = NO_ROADWORK_LEDGER;
-    let (kept, kept_tiles, claims) = pool_keeping_claims(
-        registry,
-        tile_improvements,
-        Some(band),
-        tile_registry,
-        tiles,
-        ladder,
-    );
+    let (kept, claims) = route_keeping_claims(registry, Some(band), tile_registry, tiles, ladder);
     // **(c) THE DEMAND IS SUMMED BEFORE THE HEAD-COUNT GATE.** A band with nobody on the role
     // owes exactly this much and this is the field that says so — the hay need's own rule.
     allocation.last_roadwork_demand = claims.iter().map(|claim| claim.demand).sum();
@@ -3586,20 +3548,8 @@ pub fn settle_bands_roadwork(
     allocation.record_pool_crew(rates.crew(crate::equipment_config::KitJob::Roadwork));
     for (claim, payment) in claims.iter().zip(rates.payments) {
         let supplied = payment.supplied();
-        // A claim below `kept.len()` is a road, at or above it a tile improvement - the one
-        // combined numbering [`pool_keeping_claims`] hands out.
-        match kept.get(claim.index) {
-            Some(tile) => {
-                if let Some(road) = registry.road_mut(*tile) {
-                    road.upkeep_supplied += supplied;
-                }
-            }
-            None => {
-                let (tile, branch) = kept_tiles[claim.index - kept.len()];
-                if let Some(improvement) = tile_improvements.get_mut(tile, branch) {
-                    improvement.upkeep_supplied += supplied;
-                }
-            }
+        if let Some(road) = registry.road_mut(kept[claim.index]) {
+            road.upkeep_supplied += supplied;
         }
         // **(c) this band's own contribution**, accumulated across the roads it keeps.
         allocation.last_roadwork_supplied += supplied;
@@ -4018,7 +3968,9 @@ pub(crate) fn party_source_position(
     registry: &HerdRegistry,
 ) -> Option<UVec2> {
     match target {
-        LaborTarget::Forage { tile, .. } | LaborTarget::Extract { tile, .. } => Some(*tile),
+        LaborTarget::Forage { tile, .. }
+        | LaborTarget::Extract { tile, .. }
+        | LaborTarget::Tile { tile, .. } => Some(*tile),
         LaborTarget::Hunt { fauna_id, .. } => registry.find(fauna_id).map(|herd| herd.position()),
         _ => None,
     }
@@ -5749,14 +5701,8 @@ pub fn advance_labor_allocation(
         // and *"what each road is owed"* cannot come from two readings of the same ground. This
         // reading is the **pre-shed** one the shedding order is entitled to; the payment below strikes
         // its own against what survived.
-        let (_, _, road_claims) = pool_keeping_claims(
-            &roads,
-            &tile_improvements,
-            band_id,
-            &tile_registry,
-            &tiles,
-            &ladder,
-        );
+        let (_, road_claims) =
+            route_keeping_claims(&roads, band_id, &tile_registry, &tiles, &ladder);
         // **And what each of its SITES costs its own crew to keep**, on the same rule: the
         // **pre-shed** reading the shedding order is entitled to, with the keeping below striking
         // its own against what survived.
@@ -5769,6 +5715,7 @@ pub fn advance_labor_allocation(
             &registry,
             &fauna,
             &deposits,
+            &tile_improvements,
             &tile_registry,
             &tiles,
             &extraction_cfg,
@@ -5795,6 +5742,7 @@ pub fn advance_labor_allocation(
             &forage_registry,
             &registry,
             &deposits,
+            &tile_improvements,
             &deposit_renewal_of,
             &fauna,
             &ladder,
@@ -6079,6 +6027,7 @@ pub fn advance_labor_allocation(
             &registry,
             &fauna,
             &deposits,
+            &tile_improvements,
             &tile_registry,
             &tiles,
             &extraction_cfg,
@@ -6090,14 +6039,8 @@ pub fn advance_labor_allocation(
         // order; this one funds what survived. They are the same numbers today — a road claim is a
         // property of the ROADS, not of the allocation — and keeping them separate is what stops a
         // later change to one silently retuning the other.
-        let (_, _, road_claims_funded) = pool_keeping_claims(
-            &roads,
-            &tile_improvements,
-            band_id,
-            &tile_registry,
-            &tiles,
-            &ladder,
-        );
+        let (_, road_claims_funded) =
+            route_keeping_claims(&roads, band_id, &tile_registry, &tiles, &ladder);
         // ## ⛔ THE BAND'S TOOLS, PLANNED AND SETTLED ONCE FOR EVERY CLAIM ON THEM
         //
         // `docs/plan_site_crews.md` §2.3 and `docs/plan_pool_toe.md` §2.3. Every site crew plans its
@@ -6161,7 +6104,6 @@ pub fn advance_labor_allocation(
         if let Some(band_id) = band_id {
             settle_bands_roadwork(
                 &mut roads,
-                &mut tile_improvements,
                 &cohort,
                 &mut allocation,
                 band_equipment.as_deref_mut(),
@@ -6775,6 +6717,7 @@ pub fn advance_labor_allocation(
                             &forage_registry,
                             &registry,
                             &deposits,
+                            &tile_improvements,
                             &ladder,
                         )
                     {
@@ -7885,6 +7828,7 @@ pub fn advance_labor_allocation(
                             &forage_registry,
                             &registry,
                             &deposits,
+                            &tile_improvements,
                             &ladder,
                         )
                     {
@@ -9531,6 +9475,7 @@ pub fn advance_labor_allocation(
                             &forage_registry,
                             &registry,
                             &deposits,
+                            &tile_improvements,
                             &ladder,
                         )
                     {
@@ -10046,6 +9991,165 @@ pub fn advance_labor_allocation(
                         &mut discovery,
                     );
                 }
+                LaborTarget::Tile { tile, branch } => {
+                    // ## A TILE IMPROVEMENT'S CREW - A WORKING'S CREW THAT TAKES NOTHING
+                    //
+                    // **The Extract arm's shape, minus the take.** A far crew is a work party and
+                    // `workers` above is the working crew (`0` while the party walks out) - the same
+                    // posting every source row takes, so distance is nothing special here. The crew
+                    // keeps the improvement FIRST (`keeping`, struck by the same site-keeping claims a
+                    // working's is); **hands beyond the bill do nothing**, because there is no yield
+                    // to collect - the working's rule when its stock offers nothing more - and the
+                    // build is raised by the band's `builders` pool, as it is on a working.
+                    //
+                    // **A HOLDING ROW LASTS EXACTLY AS LONG AS THERE IS SOMETHING TO HOLD.**
+                    if !row_is_held
+                        && queued.is_none()
+                        && !source_has_a_meter_at_risk(
+                            &assignment.target,
+                            &forage_registry,
+                            &registry,
+                            &deposits,
+                            &tile_improvements,
+                            &ladder,
+                        )
+                    {
+                        lapsed.push(idx);
+                        continue;
+                    }
+                    // **The improvement is placed LAZILY, by the first crew** - the `assign_labor`
+                    // command places it too; this covers a hand-built fixture. It is the placing
+                    // faction's: another people's crew banks, keeps and builds nothing here.
+                    tile_improvements.place(*tile, *branch, faction, &ladder);
+                    if tile_improvements
+                        .get(*tile, *branch)
+                        .is_none_or(|improvement| improvement.faction != faction)
+                    {
+                        continue;
+                    }
+                    let tile_source = BuildSource::Tile {
+                        tile: *tile,
+                        branch: *branch,
+                    };
+                    let keep_hands = {
+                        let improvement = tile_improvements
+                            .get_mut(*tile, *branch)
+                            .expect("the improvement was just placed");
+                        improvement.upkeep_supplied += keeping.kept;
+                        improvement.upkeep_hands += keeping.keep_hands;
+                        if keeping.keep_hands > fauna::NO_HANDS {
+                            crate::components::merge_keeping_tool_lines(
+                                &mut improvement.upkeep_toe,
+                                faction,
+                                &keeping.tool_lines,
+                            );
+                        }
+                        keeping.keep_hands
+                    };
+                    charge_keeping_wear(
+                        band_equipment.as_deref_mut(),
+                        &equipment_cfg,
+                        keeping.wear_kit.as_ref(),
+                        keeping.armed_kept,
+                    );
+                    if let Some(destination) = declared
+                        .filter(|rung| ladder.source_kind(rung.branch) == Some(SourceKind::Tile))
+                    {
+                        let rung = ladder.rung(destination);
+                        let verb = rung.verb_id();
+                        let gate = tile_head_gate(
+                            &tile_improvements,
+                            *tile,
+                            *branch,
+                            destination,
+                            faction,
+                            &discovery,
+                            knowledge_threshold,
+                            &ladder,
+                        );
+                        let (standing, banked_position, meter_rot) = {
+                            let improvement = tile_improvements
+                                .get(*tile, *branch)
+                                .expect("the improvement was just placed");
+                            (
+                                improvement.standing(),
+                                improvement.position(),
+                                improvement.meter_rot(&ladder),
+                            )
+                        };
+                        let in_flight = standing
+                            .raising
+                            .filter(|next| ladder.at_or_above(destination, *next))
+                            .unwrap_or(destination);
+                        let entry_gear = builders_gear.for_source(&tile_source, Some(in_flight));
+                        let accrual = rung.build_accrual(
+                            verb,
+                            gate.holds(),
+                            build_workers,
+                            entry_gear.work_per_worker,
+                        ) * entry_material_coverage;
+                        let legs = head_build_legs(
+                            &tile_source,
+                            destination,
+                            &forage_registry,
+                            &registry,
+                            &roads,
+                            &tile_improvements,
+                            &deposits,
+                            &ladder,
+                        );
+                        let (base, width) =
+                            crate::tile_improvement::tile_rung_span(destination, &ladder);
+                        // **EVERY QUEUED IMPROVEMENT RECORDS A QUOTE, HEAD OR NOT** - the invariant the
+                        // road and working arms state at length: a staffed head with no quote is
+                        // minted `Blocked` with no cause, and `carried` hands that answer to every
+                        // entry behind it.
+                        build_quotes.push((
+                            tile_source.clone(),
+                            BuildQuote {
+                                cost: width,
+                                banked: (banked_position - base).clamp(NOTHING_DEMANDED, width),
+                                balance: rung.build_balance(
+                                    verb,
+                                    gate.holds(),
+                                    builders,
+                                    entry_gear.work_per_worker,
+                                    meter_rot,
+                                    entry_material_coverage,
+                                ),
+                                gate,
+                                legs: legs
+                                    .iter()
+                                    .map(|(rung, owed, _)| crate::intensification::BuildLeg {
+                                        rung: *rung,
+                                        work_remaining: *owed,
+                                    })
+                                    .collect(),
+                                material_coverage: entry_material_coverage,
+                            },
+                        ));
+                        if accrual > crate::intensification::NO_BUILD_PROGRESS {
+                            if let Some(improvement) = tile_improvements.get_mut(*tile, *branch) {
+                                // **Capped at the DESTINATION's top**, so a `build` does not run on
+                                // into a rung nobody ordered.
+                                let position = (improvement.position() + accrual).min(base + width);
+                                improvement.set_position(position, &ladder);
+                            }
+                            charge_build_wear(
+                                band_equipment.as_deref_mut(),
+                                &equipment_cfg,
+                                &entry_gear.wear_kit,
+                                accrual,
+                            );
+                        }
+                    }
+                    // **The row's published need is the keeping's** - the whole of what hands here
+                    // can usefully do - so the stepper stops at the bill.
+                    if let Some(improvement) = tile_improvements.get(*tile, *branch) {
+                        yields[idx].workers_needed = improvement.upkeep_workers_needed(&ladder);
+                    }
+                    let _ = keep_hands;
+                }
                 LaborTarget::Scout => {
                     // Scouts act as forward observers in `calculate_visibility`: staffed scouts
                     // post vantage points out from the band (`labor.scout.vantage_distance(scouts)`)
@@ -10374,122 +10478,6 @@ pub fn advance_labor_allocation(
                 road.position() - before,
             );
             if ladder.at_or_above(road.held_rung(), destination) {
-                completed.push((entry.source.clone(), entry.declared));
-            }
-        }
-        // ## THE TILE IMPROVEMENT AT THE HEAD OF THE QUEUE - RAISED BY THE BAND'S BUILDERS
-        //
-        // **The road arm's shape for the tile kind, smaller.** A tile improvement has no labor row
-        // either, so the head is read directly here, after the assignment loop, where the road's is.
-        // What it drops is everything a road's price carries that a tile's does not: there is no
-        // remoteness quote (the rung's cost is the ladder's own, unscaled) and no material pile
-        // (the ladder's `validate` refuses a material on a tile rung), so the store never scales
-        // the work and the gate is the improvement's presence, its people and the knowledge.
-        //
-        // **Every tile entry records a `BuildQuote`, head or not** - the invariant the road arm
-        // states at length: a staffed head with no quote is minted `Blocked` with no cause and
-        // `carried` hands that answer to every entry behind it.
-        for entry in &build_queue {
-            let (BuildSource::Tile { tile, branch }, BuildJob::Climb(destination)) =
-                (&entry.source, entry.declared)
-            else {
-                continue;
-            };
-            let verb = ladder.rung(destination).verb_id();
-            let gate = tile_head_gate(
-                &tile_improvements,
-                *tile,
-                *branch,
-                destination,
-                faction,
-                &discovery,
-                knowledge_threshold,
-                &ladder,
-            );
-            let is_head = allocation.build_queue_position(&entry.source) == Some(BUILD_QUEUE_HEAD);
-            // **The rung actually being climbed**, not where the entry is going: an improvement
-            // that has decayed below the rung beneath the destination is doing the lower rung's
-            // work this turn, and wears that rung's tool.
-            let in_flight = tile_improvements
-                .get(*tile, *branch)
-                .map(|improvement| improvement.held_rung())
-                .and_then(|held| ladder.above_id(held))
-                .filter(|next| ladder.at_or_above(destination, *next))
-                .unwrap_or(destination);
-            let gear = builders_gear.for_source(&entry.source, Some(in_flight));
-            let entry_material_coverage = if is_head {
-                build_coverage
-            } else {
-                FULLY_SERVED
-            };
-            let at_full_coverage =
-                crate::intensification::pool_work_supply(builders, gear.work_per_worker);
-            let legs = head_build_legs(
-                &entry.source,
-                destination,
-                &forage_registry,
-                &registry,
-                &roads,
-                &tile_improvements,
-                &deposits,
-                &ladder,
-            );
-            let Some(improvement) = tile_improvements.get(*tile, *branch) else {
-                continue;
-            };
-            let (base, width) = crate::tile_improvement::tile_rung_span(destination, &ladder);
-            let banked = (improvement.position() - base).clamp(NOTHING_DEMANDED, width);
-            let meter_rot = improvement.meter_rot(&ladder);
-            let quote = BuildQuote {
-                cost: width,
-                banked,
-                balance: ladder.rung(destination).build_balance(
-                    verb,
-                    gate.holds(),
-                    builders,
-                    gear.work_per_worker,
-                    meter_rot,
-                    entry_material_coverage,
-                ),
-                gate,
-                legs: legs
-                    .iter()
-                    .map(|(rung, owed, _)| crate::intensification::BuildLeg {
-                        rung: *rung,
-                        work_remaining: *owed,
-                    })
-                    .collect(),
-                material_coverage: entry_material_coverage,
-            };
-            // The cause comes off the quote, never off the gate directly, and only the head carries
-            // one - the road arm's rule.
-            if let Some(improvement) = tile_improvements.get_mut(*tile, *branch) {
-                improvement.build_blocked_reason = if is_head {
-                    quote.blocking_gate()
-                } else {
-                    BuildGate::Open
-                };
-            }
-            build_quotes.push((entry.source.clone(), quote));
-            if !is_head || !gate.holds() || builders == NO_CREW_ON_THIS_ACTIVITY {
-                continue;
-            }
-            let accrual = at_full_coverage * build_coverage;
-            let Some(improvement) = tile_improvements.get_mut(*tile, *branch) else {
-                continue;
-            };
-            // **Capped at the DESTINATION's top**, so a `build` does not run on into a rung nobody
-            // ordered.
-            let before = improvement.position();
-            improvement.set_position((before + accrual).min(base + width), &ladder);
-            // The gear is charged for the progress the meter took, never for the work offered.
-            charge_build_wear(
-                band_equipment.as_deref_mut(),
-                &equipment_cfg,
-                &gear.wear_kit,
-                improvement.position() - before,
-            );
-            if ladder.at_or_above(improvement.held_rung(), destination) {
                 completed.push((entry.source.clone(), entry.declared));
             }
         }
@@ -11685,6 +11673,7 @@ fn publish_entry(
         BuildSource::Tile { tile, branch } => {
             if let Some(improvement) = tile_improvements.get_mut(*tile, *branch) {
                 improvement.build_turns_remaining = answer.turns;
+                improvement.build_blocked_reason = answer.reason;
                 improvement.build_queue_position = answer.position;
                 improvement.build_destination = answer.destination;
                 improvement.build_legs = answer.legs.clone();
@@ -11927,6 +11916,11 @@ fn announce_shed_crew(
             CommandEventKind::Extraction,
             format!("the {material} crew at ({}, {})", tile.x, tile.y),
             format!("kind=extract material={material} x={} y={}", tile.x, tile.y),
+        ),
+        LaborTarget::Tile { tile, branch } => (
+            CommandEventKind::Road,
+            format!("the {branch} crew at ({}, {})", tile.x, tile.y),
+            format!("kind=tile branch={branch} x={} y={}", tile.x, tile.y),
         ),
         LaborTarget::Scout => (
             CommandEventKind::Scout,

@@ -2329,6 +2329,12 @@ table LaborAssignment {
   rejoiningAllHomeIn:uint = 0;
   // The food they carry, gross of the walk's rot (a deposit's material is not counted).
   rejoiningFood:float = 0;
+  // --- A TILE IMPROVEMENT'S CREW ROW (appended last) ---------------------------------------------
+  // The tile-kind branch id on a `tile` row ("tile" is its `kind`), the half of the row's key that
+  // `targetX` / `targetY` cannot say: one tile can carry an improvement of several tile branches,
+  // so (targetX, targetY, branch) is what joins this row to its `TileImprovementState`. "" on every
+  // other row. A tile row has no floor, species or material; its crew is the improvement's keeper.
+  branch:string;
 }
 
 // One commodity entry in a band's local goods store (fixed-point quantity, `Scalar::SCALE` = 1.0).
@@ -6533,10 +6539,20 @@ table TileImprovementState {
   neglectTurns:uint = 0;
   hasNeglectGrace:bool = false;
   neglectGraceRemaining:uint = 0;
-  // THE BAND THAT KEEPS IT THIS TURN - the nearest band of its people within reach. `false` when
-  // nobody stands near it, which is the state that decays it. `0` is a real band id.
-  hasKeeper:bool = false;
-  keeperBandId:ulong = 0;
+  // WHO KEEPS IT IS THE CREWS ON IT, not a band: every band's `tile` labor row on this
+  // (tile, branch) is a keeper, and nobody assigned means unkept - the state that decays it. The
+  // keeping fields are the working's (`DepositState`), verbatim.
+  //
+  // Whole hands the stamped bill calls for at the bare rate.
+  upkeepWorkersNeeded:uint = 0;
+  // How many of the crews' hands the keeping took this turn (fractional).
+  upkeepHands:float = 0;
+  // Whether the viewer's keeping crew's tool claim was filled less than in full.
+  upkeepToolsShort:bool = false;
+  // The viewer's keeping tools, one line per item the crews claimed.
+  upkeepToe:[KitToeLine];
+  // Whether one of the viewer's own bands has a build queued on this improvement.
+  isQueued:bool = false;
 }
 
 table RouteSection {

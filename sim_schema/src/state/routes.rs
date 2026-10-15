@@ -174,9 +174,16 @@ pub struct TileImprovementState {
     pub neglect_turns: u32,
     pub has_neglect_grace: bool,
     pub neglect_grace_remaining: u32,
-    /// Whether any band of the improvement's people stands within reach of it this turn.
-    pub has_keeper: bool,
-    pub keeper_band_id: u64,
+    /// Whole hands the stamped bill calls for at the bare rate.
+    pub upkeep_workers_needed: u32,
+    /// How many of the crews' hands the keeping took this turn.
+    pub upkeep_hands: f32,
+    /// Whether the viewer's keeping crew's tool claim was filled less than in full.
+    pub upkeep_tools_short: bool,
+    /// The viewer's keeping tools, one line per item the crews claimed.
+    pub upkeep_toe: Vec<crate::state::population::KitToeLineState>,
+    /// Whether one of the viewer's own bands has a build queued on this improvement.
+    pub is_queued: bool,
 }
 
 impl Default for TileImprovementState {
@@ -196,8 +203,11 @@ impl Default for TileImprovementState {
             neglect_turns: 0,
             has_neglect_grace: false,
             neglect_grace_remaining: 0,
-            has_keeper: false,
-            keeper_band_id: 0,
+            upkeep_workers_needed: 0,
+            upkeep_hands: 0.0,
+            upkeep_tools_short: false,
+            upkeep_toe: Vec::new(),
+            is_queued: false,
         }
     }
 }

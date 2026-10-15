@@ -312,6 +312,7 @@ fn create_populations<'a>(
                         };
                         // The deposit this crew is on — `None` on every row that is not
                         // `extract`, the `fauna_id` convention: an absent string is "no selection".
+                        let branch = builder.create_string(&assignment.branch);
                         let material = if assignment.material.is_empty() {
                             None
                         } else {
@@ -469,6 +470,7 @@ fn create_populations<'a>(
                                 rejoiningWorkers: assignment.rejoining_workers,
                                 rejoiningAllHomeIn: assignment.rejoining_all_home_in,
                                 rejoiningFood: assignment.rejoining_food,
+                                branch: Some(branch),
                             },
                         )
                     })
@@ -1505,6 +1507,7 @@ fn decode_labor_assignment(
         rejoining_workers: assignment.rejoiningWorkers(),
         rejoining_all_home_in: assignment.rejoiningAllHomeIn(),
         rejoining_food: assignment.rejoiningFood(),
+        branch: text(assignment.branch()),
     })
 }
 

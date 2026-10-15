@@ -973,6 +973,8 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
             // `""` on every row that is not `extract`, which is every other row kind: nothing else
             // names a material. Always inserted so the entry shape is stable.
             let _ = entry.insert("material", assignment.material().unwrap_or_default());
+            // A tile improvement's crew row: the tile-kind branch id (`""` on every other row).
+            let _ = entry.insert("branch", assignment.branch().unwrap_or_default());
             // **WHICH PLANTS THIS FORAGE CREW CARRIES HOME** (the selective gather) — the species
             // keys the crew is gathering, or an EMPTY array for *"take the whole basket"*, which is
             // the default and byte-identical to every assignment sent before this field existed.
