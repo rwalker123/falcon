@@ -155,8 +155,8 @@ and a fast wild breeder out-yielded the prime domesticates at every rung, becaus
 `r`. The gain for the herd's **current rung** is `fauna::herd_density_gain` (corralled → `pen_density`,
 tamed → `pastoral_density`, wild → `1.0`; mirrors `herd_ecology`'s dispatch, resolved live by display
 name via `FaunaConfig::pen_density_for` / `pastoral_density_for`), applied at the **one K seam**
-`ecological_carrying_capacity` — it multiplies the final range/footprint-derived `K` (`Some(flow /
-fodder × gain)`), so it is recomputed fresh each turn (idempotent, never a compounding read). Roster:
+`ecological_carrying_capacity` — it multiplies each wander point's feed `K` (`flow /
+fodder × gain`, before the mean over the points — see `graze.md` → "Phase 2b-ii"), so it is recomputed fresh each turn (idempotent, never a compounding read). Roster:
 crag_goat/aurochs **2.0 / 5.0**, boar **1.5 / 4.0**, rabbit/fowl **1.1 / 1.5**,
 steppe_runner/marsh_grazer **1.5 / 1.0** (pastoral only, so `pen_density` is inert), deer/mammoth omit
 both (wild ceiling → always `×1.0`). Validated finite & `>= 1.0` (a gain below 1 would make

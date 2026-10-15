@@ -220,10 +220,11 @@ its **own** rate. Gated by a convergence test (§2.2), because a coupled consume
 oscillates or crashes if built carelessly.
 
 - **`K` is range-derived, recomputed in `advance_herds`.** After a mobile (non-corralled) herd roams,
-  `ecological_carrying_capacity` sets `herd.carrying_capacity =
-  Σ_range graze_sustainable_flow(G_tile) / fodder_per_biomass` over `hex_range_tiles(current_pos,
-  graze_range_radius)` — the **same** tiles `advance_herd_grazing` eats, at their **current** (drawn-
-  down) biomass. So overgrazing a range lowers its flow → lowers `K` → shrinks the herd (the emergent
+  `ecological_carrying_capacity` sets `herd.carrying_capacity` to the **mean, over the herd's wander
+  points, of** `Σ_range graze_sustainable_flow(G_tile) / fodder_per_biomass` over
+  `hex_range_tiles(point, graze_range_radius)`, at the tiles' **current** (drawn-down) biomass.
+  `advance_herd_grazing` still eats only the footprint at `current_pos`; only `K` is averaged. So
+  overgrazing a range lowers its flow → lowers `K` → shrinks the herd (the emergent
   overgrazing spiral); a range held at/above its MSY point yields full flow → `K` at max. This is the
   **one** write; `herd_capacity(herd, fauna)` still reads the cached field, so **every downstream
   consumer is unchanged** (no `&GrazeRegistry` threaded through the ~15 capacity call sites). Since
@@ -231,6 +232,25 @@ oscillates or crashes if built carelessly.
   (`hex_range_tiles(corralled_at, pen_radius)`), via the same `ecological_carrying_capacity` seam (a
   wholly-barren footprint keeps the frozen `K` and must live entirely on hay). A non-grazing herd
   (`fodder ≤ 0`) or an absent graze layer keeps the constant `K`.
+  > **⛔ `K` IS A FACT ABOUT THE LAND A HERD RANGES OVER, NOT THE HEX IT STANDS ON THIS TURN.**
+  > Anchoring `K` at `current_pos` made a wild boar's "max herd" swing 172 → 118 → 172 every couple of
+  > turns as it stepped between a good patch and a poor one — the herd was not eating its land down,
+  > it simply was not there long enough. `herd_wander_points` names the points the mean is taken over,
+  > and each point's `K` keeps everything the seam always did (the feed sum, `fodder_delivery_rate`,
+  > the density gain, and `min(feed, space)` with that point's own clipped tile count):
+  >
+  > | herd | points |
+  > |---|---|
+  > | wild graze-wander / migratory | every anchor of `Herd::route` (cluster waypoints, or loiter anchors), each at the roam radius |
+  > | fenced (`corralled_at`, or `arrived_at` the pen rung) | its one pen anchor (`corralled_at`, else `current_pos`) at `pen_radius` — the mean over one point is that point, so extending the fence still raises `K` |
+  > | tamed but unfenced (pastoral, `drift_to_owner`, `owner.is_some()`) | `current_pos` alone: it is held near its owner's camp, so its route anchors are stale wild anchors |
+  > | empty route | `current_pos` |
+  >
+  > The mean keeps the overgrazing feedback (it reads today's drawn-down graze at every anchor) while a
+  > single step no longer moves the number. It is a pure function of today's land — no stored state, no
+  > save change. A carnivore's feed is still the prey disk around its live position; only its **space**
+  > term is averaged per point.
+  >
   > **⛔ THE SEAM IS NOW PARAMETERISED BY A STANDING, so a build can QUOTE the `K` it is heading for.**
   > `ecological_carrying_capacity(..., at: CapacityStanding)` answers at the standing it is handed:
   > `live` for the one write in `advance_herds`, `arrived_at(destination)` for the figure published as

@@ -2894,12 +2894,13 @@ pub fn advance_herds(
         ) {
             log.herd_passed(step.from, step.to, &ladder);
         }
-        // **K is ecological — for a MOBILE herd its roam range, for a PENNED herd its fenced footprint**
-        // (Grazing 2b-ii + 2d §2.1). Recomputed each turn (penned herds are no longer frozen) from the
-        // graze the footprint yields, so nothing downstream changes: `herd_capacity` still reads this
-        // cached field. Computed AFTER movement (K reflects where the herd now stands / its fence) and
-        // BEFORE `regrow_biomass` (the herd grows toward this K), over the SAME tiles
-        // `advance_herd_grazing` then eats.
+        // **K is ecological — the MEAN over the land the herd ranges over** (Grazing 2b-ii + 2d §2.1):
+        // for a wild herd the footprints at its route anchors, for a PENNED herd its one fenced
+        // footprint ([`herd_wander_points`]). Recomputed each turn (penned herds are no longer frozen)
+        // from today's graze, so nothing downstream changes: `herd_capacity` still reads this cached
+        // field. Computed AFTER movement and BEFORE `regrow_biomass` (the herd grows toward this K).
+        // It is a fact about the land, not about the hex the herd stands on this turn, so a step does
+        // not move it; `advance_herd_grazing` still eats only the footprint at `current_pos`.
         //
         // **A penned herd on a WHOLLY-BARREN footprint keeps its frozen K and lives entirely on hay** —
         // §2.3's "today's behaviour, preserved as the worst case". `ecological_carrying_capacity`
@@ -2999,6 +3000,29 @@ fn herd_footprint_at(herd: &Herd, def: Option<&SpeciesDef>, penned: bool) -> (UV
         (true, pen) => (pen.unwrap_or(herd.current_pos), herd.pen_radius),
         (false, _) => (herd.current_pos, herd.graze_range_radius(def)),
     }
+}
+
+/// **THE POINTS A HERD'S `K` IS AVERAGED OVER** — each an `(anchor, radius)` footprint for
+/// `hex_range_tiles`. `K` is a fact about the land a herd ranges over, not the hex it stands on this
+/// turn, so [`ecological_carrying_capacity`] takes the **mean** of the per-point `K`s:
+///
+/// - a **fenced** herd (`penned`) → its one pen footprint ([`herd_footprint_at`]); the mean over one
+///   point is that point, so extending the fence still raises `K` through the radius;
+/// - a **tamed but unfenced** (pastoral) herd → `current_pos` alone. It is held near its owner's
+///   camp, so its route anchors are stale wild anchors that say nothing about where it ranges;
+/// - a **wild** herd with a route → every anchor of [`Herd::route`] (the game cluster's waypoints, or
+///   a migration's loiter anchors), each at the roam radius;
+/// - a herd with an **empty route** → `current_pos`.
+fn herd_wander_points(herd: &Herd, def: Option<&SpeciesDef>, penned: bool) -> Vec<(UVec2, u32)> {
+    if penned {
+        return vec![herd_footprint_at(herd, def, true)];
+    }
+    let radius = herd.graze_range_radius(def);
+    let held_near_its_owner = herd.owner.is_some();
+    if held_near_its_owner || herd.route.is_empty() {
+        return vec![(herd.current_pos, radius)];
+    }
+    herd.route.iter().map(|anchor| (*anchor, radius)).collect()
 }
 
 /// **HOW MUCH BIOMASS PHYSICALLY FITS ON A FOOTPRINT**, and [`NO_SPACE_CAP_AT_ALL`] when the dial is
@@ -3154,14 +3178,19 @@ fn predator_target(species: &SpeciesDef, prey: &[PreyDatum]) -> usize {
 }
 
 /// **The ecological carrying capacity** (Grazing Phase 2b-ii, `docs/plan_grazing_2b.md` §2/§3): the
-/// number of animals the sustainable graze flow on a herd's range can feed. Sum the graze flow
-/// ([`graze_sustainable_flow`], at each tile's **current — drawn-down —** biomass) over the herd's
-/// range tiles ([`hex_range_tiles`], the SAME tiles [`advance_herd_grazing`] eats), then denominate
-/// into animals by the herd's per-species `fodder_per_biomass`:
+/// number of animals the sustainable graze flow on the land a herd ranges over can feed. For each of
+/// the herd's wander points ([`herd_wander_points`]) sum the graze flow ([`graze_sustainable_flow`],
+/// at each tile's **current — drawn-down —** biomass) over the footprint's tiles
+/// ([`hex_range_tiles`]), denominate into animals by the herd's per-species `fodder_per_biomass`,
+/// and take the **mean** over the points:
 ///
 /// ```text
-/// K = Σ_range graze_sustainable_flow(G_tile, G_cap_tile, graze.ecology) / fodder_per_biomass
+/// K = mean_points( Σ_footprint graze_sustainable_flow(G_tile, G_cap_tile, graze.ecology) / fodder_per_biomass )
 /// ```
+///
+/// `K` is a fact about the land the herd ranges over, not the hex it stands on this turn, so one step
+/// between a rich patch and a poor one does not move it. [`advance_herd_grazing`] still eats only the
+/// footprint at `current_pos`; only `K` is averaged.
 ///
 /// Reading the graze's **current** biomass is the whole feedback loop (§2.1): a range grazed below its
 /// MSY point yields less flow, so `K` falls and the herd shrinks (the emergent overgrazing spiral); a
@@ -3189,56 +3218,69 @@ fn ecological_carrying_capacity(
     wrap: bool,
     at: CapacityStanding,
 ) -> Option<f32> {
-    // **THE SPACE HALF, AND IT APPLIES TO EVERY DIET AND EVERY RUNG** — how much biomass this herd's
-    // physical footprint holds ([`herd_space_capacity`]). Feed is soft and fodder may offset it;
-    // space is hard and nothing offsets it, so the two are `min`'d rather than blended. Resolved off
-    // the same `herd_footprint_at` the graze sum below walks, before the carnivore branch returns, so
-    // a wolf's ground is measured by the same expression a cow's is.
-    let (anchor, radius) = herd_footprint_at(herd, def, at.penned);
-    let range = hex_range_tiles(anchor, radius, width, height, wrap);
-    let space = herd_space_capacity(range.len(), herd.body_mass, fauna);
+    // **K IS THE MEAN OVER THE HERD'S WANDER POINTS** ([`herd_wander_points`]): the `K` a footprint
+    // anchored at each point would give, from today's (drawn-down) graze and the roam or pen radius,
+    // averaged. One step between a rich patch and a poor one therefore does not move the number.
+    // Everything below is applied PER POINT before the mean — the feed sum, the fodder inflow, the
+    // density gain and the `min` against that point's own space.
+    let points = herd_wander_points(herd, def, at.penned);
     // **Diet branches the ONE K seam** (Predators Phase 1a). A carnivore's food layer is *other herds*
     // (the prey index), not the per-tile `GrazeRegistry` — so it ignores graze / `fodder_per_biomass`
-    // / `fodder_delivery_rate` entirely and sums prey flow in its sensing disk. Only the *layer* and
-    // the *denominator* differ; both branches share `prey_/graze_sustainable_flow`'s logistic shape.
-    if def.map(|d| d.diet) == Some(Diet::Carnivore) {
-        return carnivore_carrying_capacity(herd, def.unwrap(), prey, fauna, width, wrap)
-            .map(|feed| feed.min(space));
-    }
-    if herd.fodder_per_biomass <= 0.0 || graze.is_empty() {
+    // / `fodder_delivery_rate` entirely and its feed is the prey disk around its live position; only
+    // the space half is per point, so a wolf's ground is measured by the same expression a cow's is.
+    let carnivore_feed = if def.map(|d| d.diet) == Some(Diet::Carnivore) {
+        Some(carnivore_carrying_capacity(
+            herd,
+            def.unwrap(),
+            prey,
+            fauna,
+            width,
+            wrap,
+        )?)
+    } else {
+        None
+    };
+    if carnivore_feed.is_none() && (herd.fodder_per_biomass <= 0.0 || graze.is_empty()) {
         return None;
     }
-    let mut flow = 0.0;
-    for tile in range {
-        if let Some(patch) = graze.patch(tile) {
-            flow += graze_sustainable_flow(
-                patch.biomass,
-                patch.carrying_capacity,
-                &fauna.graze.ecology,
-            );
+    let density_gain = herd_density_gain(&at.standing, herd, fauna);
+    let mut total = 0.0;
+    for (anchor, radius) in &points {
+        let range = hex_range_tiles(*anchor, *radius, width, height, wrap);
+        // **THE SPACE HALF, AND IT APPLIES TO EVERY DIET AND EVERY RUNG** — how much biomass this
+        // point's physical footprint holds ([`herd_space_capacity`]). Feed is soft and fodder may
+        // offset it; space is hard and nothing offsets it, so the two are `min`'d rather than blended.
+        let space = herd_space_capacity(range.len(), herd.body_mass, fauna);
+        if let Some(feed) = carnivore_feed {
+            total += feed.min(space);
+            continue;
         }
+        let mut flow = 0.0;
+        for tile in range {
+            if let Some(patch) = graze.patch(tile) {
+                flow += graze_sustainable_flow(
+                    patch.biomass,
+                    patch.carrying_capacity,
+                    &fauna.graze.ecology,
+                );
+            }
+        }
+        // **The fodder-flow term** (Flora Roster F3, §5.3): delivered hay enters `K` at exactly the
+        // point graze does, because hay *is* feed. `fodder_delivery_rate` is the SUSTAINED inflow of
+        // the keeper band's hay Fields (written by `advance_labor_allocation`), NOT the store's stock
+        // — reading a built-up buffer would spike K and oscillate the coupled loop. It is `0.0`
+        // unless the keeper knows Foddering AND the herd is penned, so a wild/unfoddered herd's `K` is
+        // footprint-only. Added once per point: the mean of a constant is itself, so it enters `K`
+        // exactly as it did over a single footprint, and a barren footprint (`flow = 0`) is carried
+        // entirely by delivered hay.
+        flow += herd.fodder_delivery_rate.max(0.0);
+        // **The per-species husbandry DENSITY gain** (the density ladder): domestication makes the
+        // land hold *more* animals per unit of feed, so it scales the feed side ONLY, above the
+        // `min` — it does not enlarge the ground. A wild herd's `×1.0` leaves this untouched;
+        // recomputed fresh each turn from `flow`, so it never compounds.
+        total += (flow / herd.fodder_per_biomass * density_gain).min(space);
     }
-    // **The fodder-flow term** (Flora Roster F3, §5.3): delivered hay enters `K` at exactly the point
-    // graze does, because hay *is* feed. `fodder_delivery_rate` is the SUSTAINED inflow of the keeper
-    // band's hay Fields (written by `advance_labor_allocation`), NOT the store's stock — reading a
-    // built-up buffer would spike K and oscillate the coupled loop, while the flow is what the farming
-    // sustainably delivers, so it settles. It is `0.0` unless the keeper knows Foddering AND the herd
-    // is penned (the labor arm gates and stamps it), so a wild/unfoddered herd's `K` is byte-identical
-    // to its footprint-only self. Added to the graze flow BEFORE the density gain and the
-    // fodder-per-biomass division, so `K_pen = (footprint_flow + fodder_flow) / fodder_per_biomass`,
-    // which relaxes "a dead tile cannot hold a pen" into an honest feedlot: a barren footprint
-    // (`flow = 0`) carried entirely by delivered hay.
-    flow += herd.fodder_delivery_rate.max(0.0);
-    // **The per-species husbandry DENSITY gain** (the density ladder): domestication makes the land
-    // hold *more* animals, non-linearly by species — a corralled goat's fenced pasture supports
-    // `pen_density ×` the animals a wild goat's would. Orthogonal to the r-gains `herd_ecology` folds
-    // in (which scale the *rate*, not the *ceiling*). Applied to the FINAL range-derived K, so a wild
-    // herd's `×1.0` leaves this byte-identical; recomputed fresh each turn from `flow`, so it is
-    // idempotent (never a compounding read of the already-scaled field).
-    // **`min(feed_K, space_K)`** — and the density gain is applied to the feed side ONLY, above the
-    // `min`, because domestication makes the land hold more animals *per unit of feed* and does not
-    // enlarge the ground.
-    Some((flow / herd.fodder_per_biomass * herd_density_gain(&at.standing, herd, fauna)).min(space))
+    Some(total / points.len() as f32)
 }
 
 /// **THE RUNG A CAPACITY READING IS STRUCK AT** — the two things [`ecological_carrying_capacity`]
@@ -14854,5 +14896,207 @@ mod tests {
         let mean = expected_stayers(&outcomes);
         let closed = expected_stayers_of(&party, reach, reach);
         assert!((mean - closed).abs() < 1e-3, "{mean} vs {closed}");
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // K IS THE MEAN OVER THE HERD'S WANDER POINTS (`herd_wander_points`)
+    // ---------------------------------------------------------------------------------------------
+
+    const K_WIDTH: u32 = 80;
+    const K_HEIGHT: u32 = 52;
+    const K_RICH_ANCHOR: UVec2 = UVec2::new(10, 10);
+    const K_POOR_ANCHOR: UVec2 = UVec2::new(40, 10);
+    /// A fully grown patch on the rich ground, and a thin one on the poor ground. Both stay below the
+    /// MSY point's flat top only when drawn down, so the two anchors genuinely differ.
+    const K_RICH_CAP: f32 = 240.0;
+    const K_POOR_CAP: f32 = 60.0;
+    const K_FODDER: f32 = 0.05;
+
+    /// A graze-wander herd on a map whose two anchors stand on rich and poor ground, with the space
+    /// budget off so `K` is the feed term alone.
+    fn k_fixture() -> (Herd, FaunaConfig, GrazeRegistry) {
+        let mut fauna = (*FaunaConfig::builtin()).clone();
+        fauna.husbandry.hex_space_budget = None;
+        let mut herd = herd_of_size(SizeClass::Big, 100.0, 1000.0, K_FODDER);
+        herd.current_pos = K_RICH_ANCHOR;
+        herd.route = vec![K_RICH_ANCHOR, K_POOR_ANCHOR];
+        let mut graze = GrazeRegistry::default();
+        for (anchor, cap) in [(K_RICH_ANCHOR, K_RICH_CAP), (K_POOR_ANCHOR, K_POOR_CAP)] {
+            for tile in hex_range_tiles(anchor, 3, K_WIDTH, K_HEIGHT, false) {
+                graze.patches.insert(tile, GrazePatch::new(tile, cap));
+            }
+        }
+        (herd, fauna, graze)
+    }
+
+    fn live_k(herd: &Herd, fauna: &FaunaConfig, graze: &GrazeRegistry) -> f32 {
+        ecological_carrying_capacity(
+            herd,
+            None,
+            graze,
+            &[],
+            fauna,
+            K_WIDTH,
+            K_HEIGHT,
+            false,
+            CapacityStanding::live(herd),
+        )
+        .expect("a grazing herd on a graze layer has a K")
+    }
+
+    /// **K is the mean of the per-anchor Ks, and one step between anchors does not move it.** The
+    /// single-anchor Ks are read off the same seam (a one-anchor route), so the claim is the mean and
+    /// not a re-derivation of the flow; the precondition is that the two anchors really differ.
+    #[test]
+    fn a_wandering_herds_k_is_the_mean_over_its_anchors_and_a_step_does_not_move_it() {
+        let (mut herd, fauna, graze) = k_fixture();
+        let single = |anchor: UVec2| {
+            let mut one = herd.clone();
+            one.route = vec![anchor];
+            live_k(&one, &fauna, &graze)
+        };
+        let rich = single(K_RICH_ANCHOR);
+        let poor = single(K_POOR_ANCHOR);
+        assert!(
+            rich > poor * 2.0,
+            "the precondition: rich {rich} vs poor {poor}"
+        );
+        let mean = (rich + poor) / 2.0;
+        let at_rich = live_k(&herd, &fauna, &graze);
+        assert!(
+            (at_rich - mean).abs() < 1e-3,
+            "K {at_rich} is the mean {mean}"
+        );
+        herd.current_pos = K_POOR_ANCHOR;
+        let at_poor = live_k(&herd, &fauna, &graze);
+        assert!(
+            (at_poor - at_rich).abs() < 1e-6,
+            "moving between anchors leaves K alone: {at_rich} vs {at_poor}"
+        );
+    }
+
+    /// **A herd with no route reads its own tile**, the mean over one point.
+    #[test]
+    fn a_herd_with_no_route_reads_its_current_tile() {
+        let (mut herd, fauna, graze) = k_fixture();
+        herd.route.clear();
+        herd.current_pos = K_POOR_ANCHOR;
+        let poor = live_k(&herd, &fauna, &graze);
+        herd.current_pos = K_RICH_ANCHOR;
+        assert!(live_k(&herd, &fauna, &graze) > poor * 2.0);
+    }
+
+    /// **A pen is its one footprint, and a longer fence raises K** — the mean over one point is that
+    /// point, so the radius is what grows it. The expected value is the flow summed by hand over the
+    /// fenced disk.
+    #[test]
+    fn a_pens_k_is_its_one_footprint_and_extending_the_fence_raises_it() {
+        let (mut herd, fauna, graze) = k_fixture();
+        herd.corralled_at = Some(K_RICH_ANCHOR);
+        herd.current_pos = K_RICH_ANCHOR;
+        let gain = herd_density_gain(&herd.standing(), &herd, &fauna);
+        let by_hand = |radius: u32| -> f32 {
+            let flow: f32 = hex_range_tiles(K_RICH_ANCHOR, radius, K_WIDTH, K_HEIGHT, false)
+                .into_iter()
+                .filter_map(|tile| graze.patch(tile))
+                .map(|patch| {
+                    graze_sustainable_flow(
+                        patch.biomass,
+                        patch.carrying_capacity,
+                        &fauna.graze.ecology,
+                    )
+                })
+                .sum();
+            flow / K_FODDER * gain
+        };
+        herd.pen_radius = 0;
+        let single = live_k(&herd, &fauna, &graze);
+        assert!(
+            (single - by_hand(0)).abs() < 1e-3,
+            "{single} vs {}",
+            by_hand(0)
+        );
+        herd.pen_radius = 1;
+        let extended = live_k(&herd, &fauna, &graze);
+        assert!((extended - by_hand(1)).abs() < 1e-3);
+        assert!(
+            extended > single,
+            "a longer fence holds more: {extended} vs {single}"
+        );
+    }
+
+    /// **The tamed-but-unfenced herd reads `current_pos` alone** (its route anchors are stale wild
+    /// anchors) — the `held_near_its_owner` arm of `herd_wander_points`.
+    #[test]
+    fn a_pastoral_herd_is_read_at_its_own_tile_not_its_stale_route() {
+        let (mut herd, fauna, graze) = k_fixture();
+        herd.owner = Some(FactionId(0));
+        herd.current_pos = K_POOR_ANCHOR;
+        let held_poor = live_k(&herd, &fauna, &graze);
+        herd.current_pos = K_RICH_ANCHOR;
+        let held_rich = live_k(&herd, &fauna, &graze);
+        assert!(held_rich > held_poor * 2.0, "{held_rich} vs {held_poor}");
+    }
+
+    /// **The destination quote is the same seam at the arrival standing**: a penned herd's quote at
+    /// the pen rung equals the live K, and a roaming herd's quote at a rung is the mean over its
+    /// anchors, not a reading at wherever it stands.
+    #[test]
+    fn the_destination_quote_agrees_with_the_live_k_at_the_same_standing() {
+        let (mut herd, fauna, graze) = k_fixture();
+        herd.corralled_at = Some(K_RICH_ANCHOR);
+        herd.pen_radius = 1;
+        herd.build_destination = Some(RungKey::AnimalPen);
+        let at = CapacityStanding::arrived_at(RungKey::AnimalPen, &herd);
+        let quote =
+            herd_destination_capacity(&herd, None, &graze, &[], &fauna, K_WIDTH, K_HEIGHT, false)
+                .expect("a build is queued");
+        let live_at_that_standing = ecological_carrying_capacity(
+            &herd,
+            None,
+            &graze,
+            &[],
+            &fauna,
+            K_WIDTH,
+            K_HEIGHT,
+            false,
+            at,
+        )
+        .unwrap();
+        assert!((quote - live_at_that_standing).abs() < 1e-6);
+
+        // A roaming herd quoted toward the pen rung is fenced where it stands: one point.
+        let (mut roaming, _, _) = k_fixture();
+        roaming.build_destination = Some(RungKey::AnimalPen);
+        roaming.pen_radius = 1;
+        roaming.current_pos = K_POOR_ANCHOR;
+        let quote = herd_destination_capacity(
+            &roaming,
+            None,
+            &graze,
+            &[],
+            &fauna,
+            K_WIDTH,
+            K_HEIGHT,
+            false,
+        )
+        .unwrap();
+        roaming.corralled_at = Some(K_POOR_ANCHOR);
+        let penned_there = ecological_carrying_capacity(
+            &roaming,
+            None,
+            &graze,
+            &[],
+            &fauna,
+            K_WIDTH,
+            K_HEIGHT,
+            false,
+            CapacityStanding::arrived_at(RungKey::AnimalPen, &roaming),
+        )
+        .unwrap();
+        assert!(
+            (quote - penned_there).abs() < 1e-6,
+            "{quote} vs {penned_there}"
+        );
     }
 }
