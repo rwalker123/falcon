@@ -355,6 +355,7 @@ fn spawn_scout_party(
                 cargo: LocalStore::new(),
                 defection_pull: core_sim::Scalar::zero(),
                 station_reports: Vec::new(),
+                goodwill_news: Default::default(),
                 aim: None,
             },
         ))

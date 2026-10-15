@@ -178,6 +178,7 @@ fn launch_station(app: &mut App, home: Entity, host: BandId, host_pos: UVec2) ->
                 cargo: LocalStore::new(),
                 defection_pull: Scalar::zero(),
                 station_reports: Vec::new(),
+                goodwill_news: Default::default(),
                 aim: Some(host_pos),
             },
             BandTravel::to(host_pos),
@@ -783,6 +784,7 @@ fn the_fold_back_lands_the_reports_still_in_transit() {
             land_turn,
             tiles: vec![unseen_tile],
             sightings,
+            goodwill: Default::default(),
         });
     }
     feed(&mut rig.app, home);

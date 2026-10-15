@@ -625,12 +625,27 @@ pub fn answer_dealing(
     );
     let mut return_store = LocalStore::new();
     let delivered: Vec<String>;
+    // **The two worths, judged against what each side held BEFORE the transfer** — the cargo against
+    // the receiving band's larder and stores, the return against the sender's home band's
+    // (`goodwill::cargo_worth`).
+    let carry = world
+        .resource::<crate::expedition_config::ExpeditionConfigHandle>()
+        .get()
+        .carry
+        .clone();
+    let home_held = world
+        .get::<Expedition>(party)
+        .and_then(|expedition| world.get::<PopulationCohort>(expedition.home_band))
+        .map(|home| home.stores.clone())
+        .unwrap_or_default();
+    let cargo_worth;
     {
         let mut query = world.query::<(&mut PopulationCohort, Option<&mut LaborAllocation>)>();
         let (mut host, mut allocation) = query
             .get_mut(world, receiver)
             .expect("the receiving band was resolved above");
         delivered = manifest(&cargo);
+        cargo_worth = crate::goodwill::cargo_worth(&cargo, &host.stores, &carry);
         crate::systems::land_cargo_at_band(
             &mut cargo,
             &mut host,
@@ -681,6 +696,42 @@ pub fn answer_dealing(
         host.sync_size();
     }
     let paid = manifest(&return_store);
+    // **Goodwill, judged by the receiver of each leg**: a gift (a return of nothing) raises the
+    // receiver's opinion of the giver; a settled exchange raises each side's opinion of the other by
+    // the worth of what it received. Refusal, expiry and a failed exchange credit nothing.
+    let return_worth = crate::goodwill::cargo_worth(&return_store, &home_held, &carry);
+    let per_load = world
+        .get_resource::<crate::diplomacy_config::DiplomacyConfigHandle>()
+        .map(|handle| handle.get().goodwill.per_load)
+        .unwrap_or_else(|| {
+            crate::diplomacy_config::DiplomacyConfig::builtin()
+                .goodwill
+                .per_load
+        });
+    if let Some(mut goodwill) = world.get_resource_mut::<crate::goodwill::Goodwill>() {
+        use crate::goodwill::GoodwillSource;
+        if paid.is_empty() {
+            goodwill.credit(
+                ends.receiver_faction,
+                ends.sender_faction,
+                GoodwillSource::Gift,
+                per_load * cargo_worth,
+            );
+        } else {
+            goodwill.credit(
+                ends.receiver_faction,
+                ends.sender_faction,
+                GoodwillSource::Exchange,
+                per_load * cargo_worth,
+            );
+            goodwill.credit(
+                ends.sender_faction,
+                ends.receiver_faction,
+                GoodwillSource::Exchange,
+                per_load * return_worth,
+            );
+        }
+    }
     {
         let mut expedition = world
             .get_mut::<Expedition>(party)

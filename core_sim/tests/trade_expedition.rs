@@ -241,6 +241,7 @@ fn launch_shipment(
                 cargo,
                 defection_pull: core_sim::Scalar::zero(),
                 station_reports: Vec::new(),
+                goodwill_news: Default::default(),
                 aim: Some(destination_pos),
             },
             BandTravel::to(destination_pos),

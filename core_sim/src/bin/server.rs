@@ -5807,6 +5807,7 @@ fn handle_send_expedition(
                 cargo: LocalStore::new(),
                 defection_pull: Scalar::zero(),
                 station_reports: Vec::new(),
+                goodwill_news: Default::default(),
                 aim: None,
             },
             BandTravel::to(target),
@@ -6326,6 +6327,7 @@ fn launch_party_from_band(
                 cargo: orders.cargo,
                 defection_pull: Scalar::zero(),
                 station_reports: Vec::new(),
+                goodwill_news: Default::default(),
                 aim: None,
             },
             BandTravel::to(orders.target),
@@ -17389,6 +17391,7 @@ mod tests {
                 cargo: LocalStore::new(),
                 defection_pull: Scalar::zero(),
                 station_reports: Vec::new(),
+                goodwill_news: Default::default(),
                 aim: None,
             },
         ));
@@ -24368,6 +24371,7 @@ mod tests {
                 land_turn: u64::MAX,
                 tiles: Vec::new(),
                 sightings: Default::default(),
+                goodwill: Default::default(),
             });
         handle_recall_expedition(&mut app, faction, party_id);
         assert_eq!(

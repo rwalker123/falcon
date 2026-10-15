@@ -21,13 +21,14 @@ use sim_runtime::{
     ElevationOverlayState, FactionInventoryEntryState as SchemaFactionInventoryEntryState,
     FactionInventoryState as SchemaFactionInventoryState, FactionNameState, FactionPolicyState,
     FloatRasterState, FloraShareInfo, FoodModuleState, ForagePatchState, ForkChoiceState,
-    GenerationState, GlossEntryState, GreatDiscoveryDefinitionState, GreatDiscoveryProgressState,
-    GreatDiscoveryState, GreatDiscoveryTelemetryState, HerdTelemetryState,
-    InfluentialIndividualState, IntensificationKnowledgeState, KitOptionState,
-    KnowledgeLedgerEntryState, KnowledgeMetricsState, KnowledgeTimelineEventState,
-    LaborAssignmentState, LadderKnowledgeProgress, LadderKnowledgeState, LineageConstantsState,
-    MaterialDefState, MountainKind, OpeningKitDefaultState, OpeningLoadoutState,
-    OpeningMaterialDefaultState, PendingForkState, PendingForksState, PopulationCohortState,
+    GenerationState, GlossEntryState, GoodwillCutsState, GoodwillState,
+    GreatDiscoveryDefinitionState, GreatDiscoveryProgressState, GreatDiscoveryState,
+    GreatDiscoveryTelemetryState, HerdTelemetryState, InfluentialIndividualState,
+    IntensificationKnowledgeState, KitOptionState, KnowledgeLedgerEntryState,
+    KnowledgeMetricsState, KnowledgeTimelineEventState, LaborAssignmentState,
+    LadderKnowledgeProgress, LadderKnowledgeState, LineageConstantsState, MaterialDefState,
+    MountainKind, OpeningKitDefaultState, OpeningLoadoutState, OpeningMaterialDefaultState,
+    PendingForkState, PendingForksState, PopulationCohortState,
     PopulationDemographicsState as SchemaPopulationDemographicsState, PowerIncidentSeverity,
     PowerIncidentState, PowerNodeState, PowerTelemetryState, RecipeDefState, RouteRungState,
     RouteState, ScalarRasterState, SedentarizationState as SchemaSedentarizationState,
@@ -117,6 +118,7 @@ mod dealings;
 mod deposits;
 mod economy;
 mod flora_quotes;
+mod goodwill;
 mod governance;
 mod knowledge;
 mod map;
@@ -1168,6 +1170,8 @@ mod tests {
             connections: Vec::new(),
             routes: Vec::new(),
             dealings: Vec::new(),
+            goodwill: Vec::new(),
+            goodwill_cuts: Default::default(),
             deposits: Vec::new(),
             demographics: Vec::new(),
             forage_patches: Vec::new(),
@@ -1254,6 +1258,8 @@ mod tests {
             connections: Vec::new(),
             routes: Vec::new(),
             dealings: Vec::new(),
+            goodwill: Vec::new(),
+            goodwill_cuts: Default::default(),
             deposits: Vec::new(),
             demographics: Vec::new(),
             forage_patches: Vec::new(),
@@ -1335,6 +1341,8 @@ mod tests {
             connections: Vec::new(),
             routes: Vec::new(),
             dealings: Vec::new(),
+            goodwill: Vec::new(),
+            goodwill_cuts: Default::default(),
             deposits: Vec::new(),
             demographics: Vec::new(),
             forage_patches: Vec::new(),

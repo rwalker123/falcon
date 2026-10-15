@@ -42,7 +42,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 /// Mutated across turns, and a later turn reads it. A checkpoint that omits any of these produces
 /// a world that diverges from the one it claims to restore.
-const SIM_STATE_RESOURCES: [&str; 51] = [
+const SIM_STATE_RESOURCES: [&str; 53] = [
     "ActiveCrisisLedger",
     // Belief on every place. Only ever grows and outlives the bands whose dead put it there, so
     // nothing rebuilds it — the roads' reason exactly.
@@ -78,6 +78,10 @@ const SIM_STATE_RESOURCES: [&str; 51] = [
     // have already left the sender, so a restore that dropped the book would strand a party in a
     // camp with nobody waiting on it.
     "PendingDealings",
+    // What each people thinks of each other, as its reasons, and what it is known to think of you
+    // — credits accumulate over turns and nothing rebuilds them.
+    "Goodwill",
+    "KnownGoodwill",
     // Minted once by worldgen and carried: the save wins over a later pool edit.
     "FactionNames",
     // **The roster.** A world static while it was built once per world; a cut-off group of bands

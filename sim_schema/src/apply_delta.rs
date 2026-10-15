@@ -144,6 +144,8 @@ impl WorldSnapshot {
             routes,
             contact_lessons,
             dealings,
+            goodwill,
+            goodwill_cuts,
         } = delta;
 
         // --- header, and the one scalar carried on every frame -----------------------------------
@@ -284,6 +286,8 @@ impl WorldSnapshot {
         replace_if_some(&mut self.routes, routes);
         replace_if_some(&mut self.contact_lessons, contact_lessons);
         replace_if_some(&mut self.dealings, dealings);
+        replace_if_some(&mut self.goodwill, goodwill);
+        replace_if_some(&mut self.goodwill_cuts, goodwill_cuts);
 
         // --- the flattened `Option<Option<_>>` ---------------------------------------------------
         // The producer cannot say "cleared" (`capture.rs` flattens the whole-diff of an `Option`),
@@ -602,6 +606,8 @@ mod tests {
         delta.routes = Some(Vec::new());
         delta.contact_lessons = Some(Vec::new());
         delta.dealings = Some(Vec::new());
+        delta.goodwill = Some(Vec::new());
+        delta.goodwill_cuts = Some(Default::default());
 
         let mut applied = world.clone();
         applied.apply_delta(&delta).expect("applies");

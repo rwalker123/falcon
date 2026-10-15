@@ -3480,6 +3480,7 @@ mod tests {
             cargo: LocalStore::new(),
             defection_pull: Scalar::zero(),
             station_reports: Vec::new(),
+            goodwill_news: Default::default(),
             aim: None,
         };
         let runway = captured_runway(&cohort, None, Some(&expedition));

@@ -894,6 +894,11 @@ fn seed_snapshot() -> WorldSnapshot {
     // inside repeated fields, so both levels need elements or the decode guard never reaches the
     // inner ones.
     s.dealings = rows();
+
+    // --- goodwill --------------------------------------------------------
+    // What other peoples are known to think of the viewer's; the cuts are a single table, saturated
+    // with the rest.
+    s.goodwill = rows();
     for dealing in &mut s.dealings {
         for goods in [&mut dealing.goods_sent, &mut dealing.goods_asked] {
             goods.materials = ["hide", "fibre"]

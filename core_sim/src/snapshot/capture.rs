@@ -64,6 +64,11 @@ pub struct SnapshotContext<'w> {
     /// The pending dealings — published filtered to the viewer's people (addressed to them or sent
     /// by them). `Option` for the reason the policies above are.
     pub pending_dealings: Option<Res<'w, crate::dealings::PendingDealings>>,
+    /// What other peoples are known to think of each viewer — published as the viewer's own rows.
+    pub known_goodwill: Option<Res<'w, crate::goodwill::KnownGoodwill>>,
+    /// The diplomacy levers — the word cuts the goodwill rows are drawn with. `Option` on the same
+    /// rule: a hand-rolled world reads the builtin.
+    pub diplomacy_config: Option<Res<'w, crate::diplomacy_config::DiplomacyConfigHandle>>,
     /// Every faction's name — published world-visible. `Option` for the reason the two above are.
     pub faction_names: Option<Res<'w, crate::faction_names::FactionNames>>,
     pub victory: Res<'w, VictoryState>,
@@ -291,6 +296,8 @@ pub(crate) struct SeatPublishState {
     contact_lessons: Whole<Vec<ContactLessonState>>,
     routes: Whole<Vec<RouteState>>,
     dealings: Whole<Vec<DealingState>>,
+    goodwill: Whole<Vec<GoodwillState>>,
+    goodwill_cuts: Whole<GoodwillCutsState>,
     demographics: Whole<Vec<SchemaPopulationDemographicsState>>,
     forage_patches: Whole<Vec<ForagePatchState>>,
     /// The live workings, diffed as a whole vector exactly like [`Self::forage_patches`].
@@ -662,6 +669,8 @@ struct CampaignParts {
     contact_lessons: Option<Vec<ContactLessonState>>,
     routes: Option<Vec<RouteState>>,
     dealings: Option<Vec<DealingState>>,
+    goodwill: Option<Vec<GoodwillState>>,
+    goodwill_cuts: Option<GoodwillCutsState>,
     demographics: Option<Vec<SchemaPopulationDemographicsState>>,
     intensification_knowledge: Option<Vec<IntensificationKnowledgeState>>,
     ladder_knowledge: Option<Vec<LadderKnowledgeState>>,
@@ -688,6 +697,8 @@ struct CampaignBaselines<'a> {
     contact_lessons: &'a mut Whole<Vec<ContactLessonState>>,
     routes: &'a mut Whole<Vec<RouteState>>,
     dealings: &'a mut Whole<Vec<DealingState>>,
+    goodwill: &'a mut Whole<Vec<GoodwillState>>,
+    goodwill_cuts: &'a mut Whole<GoodwillCutsState>,
     demographics: &'a mut Whole<Vec<SchemaPopulationDemographicsState>>,
     intensification_knowledge: &'a mut Whole<Vec<IntensificationKnowledgeState>>,
     ladder_knowledge: &'a mut Whole<Vec<LadderKnowledgeState>>,
@@ -733,6 +744,8 @@ fn diff_campaign(
         contact_lessons: diff_whole(baseline.contact_lessons, &snapshot.contact_lessons, write),
         routes: diff_whole(baseline.routes, &snapshot.routes, write),
         dealings: diff_whole(baseline.dealings, &snapshot.dealings, write),
+        goodwill: diff_whole(baseline.goodwill, &snapshot.goodwill, write),
+        goodwill_cuts: diff_whole(baseline.goodwill_cuts, &snapshot.goodwill_cuts, write),
         demographics: diff_whole(baseline.demographics, &snapshot.demographics, write),
         intensification_knowledge: diff_whole(
             baseline.intensification_knowledge,
@@ -959,6 +972,8 @@ impl SeatPublishState {
             contact_lessons: Whole::default(),
             routes: Whole::default(),
             dealings: Whole::default(),
+            goodwill: Whole::default(),
+            goodwill_cuts: Whole::default(),
             demographics: Whole::default(),
             forage_patches: Whole::default(),
             deposits: Whole::default(),
@@ -1128,6 +1143,8 @@ impl SeatPublishState {
             contact_lessons,
             routes,
             dealings,
+            goodwill,
+            goodwill_cuts,
             demographics,
             intensification_knowledge,
             ladder_knowledge,
@@ -1249,6 +1266,8 @@ impl SeatPublishState {
                             contact_lessons,
                             routes,
                             dealings,
+                            goodwill,
+                            goodwill_cuts,
                             demographics,
                             intensification_knowledge,
                             ladder_knowledge,
@@ -1359,6 +1378,8 @@ impl SeatPublishState {
             contact_lessons: campaign_parts.contact_lessons,
             routes: campaign_parts.routes,
             dealings: campaign_parts.dealings,
+            goodwill: campaign_parts.goodwill,
+            goodwill_cuts: campaign_parts.goodwill_cuts,
             demographics: campaign_parts.demographics,
             intensification_knowledge: campaign_parts.intensification_knowledge,
             ladder_knowledge: campaign_parts.ladder_knowledge,
@@ -1564,6 +1585,9 @@ impl SeatPublishState {
             .reset(entry.snapshot.contact_lessons.clone());
         self.routes.reset(entry.snapshot.routes.clone());
         self.dealings.reset(entry.snapshot.dealings.clone());
+        self.goodwill.reset(entry.snapshot.goodwill.clone());
+        self.goodwill_cuts
+            .reset(entry.snapshot.goodwill_cuts.clone());
         self.demographics.reset(entry.snapshot.demographics.clone());
         self.forage_patches
             .reset(entry.snapshot.forage_patches.clone());
@@ -1798,6 +1822,8 @@ impl SeatPublishState {
             contact_lessons: None,
             routes: None,
             dealings: None,
+            goodwill: None,
+            goodwill_cuts: None,
             demographics: None,
             forage_patches: None,
             deposits: None,
@@ -1948,6 +1974,8 @@ impl SeatPublishState {
             contact_lessons: None,
             routes: None,
             dealings: None,
+            goodwill: None,
+            goodwill_cuts: None,
             demographics: None,
             forage_patches: None,
             deposits: None,
@@ -2082,6 +2110,8 @@ impl SeatPublishState {
             contact_lessons: None,
             routes: None,
             dealings: None,
+            goodwill: None,
+            goodwill_cuts: None,
             demographics: None,
             forage_patches: None,
             deposits: None,
@@ -2640,6 +2670,8 @@ pub fn capture_snapshot(
         starting_loadout,
         border_policies,
         pending_dealings,
+        known_goodwill,
+        diplomacy_config,
         faction_names,
         victory,
         faction_inventory,
@@ -3844,6 +3876,18 @@ pub fn capture_snapshot(
                 )
             })
             .unwrap_or_default();
+        // **WHAT OTHER PEOPLES ARE KNOWN TO THINK OF THE VIEWER'S** — the viewer's own rows of the
+        // carried-news ledger, never the live opinion (`docs/plan_early_diplomacy.md` §2).
+        let goodwill_states = known_goodwill
+            .as_deref()
+            .map(|known| crate::snapshot::goodwill::goodwill_states(known, viewer))
+            .unwrap_or_default();
+        let goodwill_cuts_state = crate::snapshot::goodwill::goodwill_cuts(
+            &diplomacy_config
+                .as_deref()
+                .map(|handle| handle.get())
+                .unwrap_or_else(crate::diplomacy_config::DiplomacyConfig::builtin),
+        );
         // **THE DEPOSITS THE VIEWER HAS EXPLORED** — the road list's `Discovered` gate, because a
         // quarry does not wander off either, over the deposit-bearing ground sweep 1 picked out. See
         // `snapshot::deposits::deposit_states`: a row is about the LAND, so it stands whether or not
@@ -4038,6 +4082,8 @@ pub fn capture_snapshot(
             contact_lessons: contact_lessons_state,
             routes: route_states.clone(),
             dealings: dealing_states,
+            goodwill: goodwill_states,
+            goodwill_cuts: goodwill_cuts_state,
             demographics: demographics_state.clone(),
             forage_patches: forage_patches_state.clone(),
             deposits: deposit_states.clone(),

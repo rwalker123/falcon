@@ -7,14 +7,20 @@ paths:
   - "core_sim/tests/dealings.rs"
   - "sim_schema/src/state/dealings.rs"
   - "sim_schema/src/codec/dealings.rs"
+  - "core_sim/src/goodwill.rs"
+  - "core_sim/src/snapshot/goodwill.rs"
+  - "core_sim/tests/goodwill.rs"
+  - "sim_schema/src/state/goodwill.rs"
+  - "sim_schema/src/codec/goodwill.rs"
 ---
 
-# Early diplomacy — offers, and the pending dealing
+# Early diplomacy — offers, the pending dealing, and goodwill
 
 Design of record: `docs/plan_early_diplomacy.md` (issue #233, arc #231). This file is the as-built
 engineering rationale for **slice 1a, offers** (§1 of the plan): the config, the pending item, the
-standing answer, the answer verb and the wire. Goodwill, treaties, the envoy, road rights and the AI
-are later slices; their levers are loaded and validated here and read there.
+standing answer, the answer verb and the wire; and **slice 1b, goodwill** (§2): the opinion ledger,
+its sources, its fade, and how it is known. Treaties, the envoy, road rights and the AI are later
+slices; their levers are loaded and validated here and read there.
 
 ## Config files
 
@@ -34,9 +40,11 @@ are later slices; their levers are loaded and validated here and read there.
 Loader `diplomacy_config.rs` on the shared boot seam (`config-loading.md`), env override
 `DIPLOMACY_CONFIG_PATH`, no hot-reload kind. **Every key is required and every table is closed**
 (`deny_unknown_fields`; only the root accepts a `_comment`), so a missing or misspelled lever is a boot
-panic rather than a number nobody chose. Only `offer_wait_turns` has a reader in this slice; the
-rest are loaded so a bad file stops the boot the day it is edited, not the day a later slice first
-reads it. All opening values are playtest dials.
+panic rather than a number nobody chose. Readers: `offer_wait_turns` (offers) and, for goodwill,
+`fade_per_turn`, `per_load`, `per_person_stationed`, `wary_below` and `friendly_above`; the rest
+(`per_link`, `per_term`, `broken_treaty`, the roads and AI blocks) are loaded so a bad file stops the
+boot the day it is edited, not the day a later slice first reads it. All opening values are playtest
+dials.
 
 ## The pending item: `PendingDealings`
 
@@ -167,6 +175,73 @@ A row (`DealingState`): `id`, `kind`, `senderFaction`, `senderBand`, `receiverFa
 own standing answer is `FactionPolicyState.acceptOwnGifts` (appended; default on) beside
 `openBorders`. `TransferCrossingState.cause` gains `9` and `10`.
 
+## Goodwill — one opinion per ordered pair, kept as its reasons
+
+`goodwill.rs`. `Goodwill` (`SimState`) is `BTreeMap<(holder, about), GoodwillEntry>`; the entry is
+**one `f32` per source kind** — `gifts`, `exchanges`, `stationed`, `link`, `treaty`, `breach` — and the
+opinion is their sum (`GoodwillEntry::total`), never stored. `link`, `treaty` and `breach` have no
+writer yet and stay in the shape. The components are the readout's "reasons"; proportional fade
+(`x -= x × fade_per_turn` on each) treats them identically, so the sum fades exactly as one number.
+
+- **`Goodwill::credit(holder, about, source, amount)` is the one seam.** It ignores a self-pair
+  (an opinion of your own people is meaningless — never stored, never credited, so no call site
+  checks) and a non-finite or zero amount. When a credit would carry the total past `[-1, +1]` it is
+  **scaled down so the total lands exactly on the bound**; existing components are never rescaled.
+- **Order in a turn.** `fade_goodwill` runs in `TurnStage::Influence`, the first stage; the stationed
+  credit runs in `Population`; stage sets are chained, so the fade precedes every credit the turn's
+  systems make. A steady source `s` settles at `s / fade_per_turn` (a post of ten: `0.01 / 0.02 =
+  0.5`). `credit_stationed_goodwill` sits in the Population chain between `advance_dealings` and
+  `bill_and_stock_roads` — it reads each party's phase (settled by `advance_expeditions`) and
+  `PopulationCohort`, which the rest of the chain writes, so both edges are declared. Entries that
+  fade to exactly nothing are dropped.
+
+### Worth — the receiver's judgement, never a price table
+
+`goodwill::worth`: `Σ over goods ( load_g × amount_g / (amount_g + held_g) )`, `held_g` the
+**receiving band's holding of that good immediately before the transfer**, in the same unit. Food,
+fodder and each material id are separate goods (a material's quality batches sum by amount within
+that material only); `load_g` is the load of the gift's whole amount of that good in `carry.rs`'s one
+currency (`CarryLoad` of one unit × the amount), so the fraction is what the receiver's holding
+discounts. A good they have none of counts at its full load; one they hold ten times over counts for about
+a tenth. An empty gift is worth `0`. The number becomes goodwill and nothing else — no exchange is
+accepted or refused on it, and it is never published as a price.
+
+### The sources (this slice)
+
+| Source | Credited by | Pair | Size |
+|---|---|---|---|
+| a gift lands (an accepted dealing with an empty return) | `answer_dealing` | receiver → giver | `per_load × worth(cargo)` into `gifts` |
+| an exchange settles (an accepted dealing with a return) | `answer_dealing` | receiver → sender, and sender → receiver | `per_load × worth(cargo)` and `per_load × worth(return, held = the sender's HOME band's holding)`, into `exchanges`; both at acceptance |
+| a stationed party | `credit_stationed_goodwill` | host people → sender people | `per_person_stationed × party workers`, each turn it is `Stationed` at a foreign host, into `stationed` |
+
+A refusal, a lapse and a failed exchange credit nothing. A gift's pair only ever crosses peoples: a
+same-people dealing (the standing answer off) credits a self-pair, which the seam drops.
+
+### Who knows it — news is carried
+
+A people knows its own opinion live (`Goodwill`). What another people thinks of it is
+`KnownGoodwill` (`SimState`): `(viewer, other)` → the other people's components as last reported and
+the turn they were observed. **It moves only when a party carrying the news lands it**:
+
+- `Expedition::goodwill_news` (`other faction → GoodwillNews { components, turn }`, rides the
+  checkpoint with the party) is written by `advance_expeditions`' observe pass **at each sighting of a
+  foreign band** — the value at that sighting turn, so a scout and a trade party at its destination
+  both record it. A stationed party's per-turn bundle takes the map into its `StationReport::goodwill`.
+- It lands where the party's other news lands: a scout or trade party at its **comm flush** (near
+  home), a stationed party when its **report lands**. Never earlier — the turn a gift is credited the
+  giver's `KnownGoodwill` has not moved.
+- `KnownGoodwill::record` keeps the newer `turn` and **never moves backwards** (a report no newer than
+  the held one is ignored), and ignores a self-pair — `connections.md`'s clock-1 rule applied to an
+  opinion.
+
+### The wire
+
+`GoodwillSection` appended last on both envelopes (`goodwill` rows diffed whole, `cuts` diffed
+whole), **viewer-scoped**: the viewer's own `KnownGoodwill` rows. A row (`GoodwillState`):
+`otherFaction`, the six components, `total` (their sum), `reportedTurn`. `GoodwillCutsState`
+(`waryBelow`, `friendlyAbove`) rides the section once, off `diplomacy_config.json`, so the client
+never restates the word cuts. A delta's absent `cuts` table means unchanged.
+
 ## Tests
 
 | Test | Claim |
@@ -179,6 +254,8 @@ own standing answer is `FactionPolicyState.acceptOwnGifts` (appended; default on
 | `::an_answer_that_cannot_be_honoured_is_refused_and_nothing_moves`, `::a_return_over_the_partys_carry_is_refused` | every fail-closed check, with the bands, party and book unchanged |
 | `::only_the_receiving_people_may_answer`, `::a_dealing_whose_party_has_gone_is_withdrawn` | who may answer, and a vanished party |
 | `::a_pending_dealing_round_trips_a_checkpoint` | the book, the counter and the terms ride `SimState` |
+| `tests/goodwill.rs` | a gift credits receiver → giver only; an exchange credits both by what each received; refusal and lapse credit nothing; no self-pair entry; a post of ten follows `0.5 × (1 − 0.98^n)` turn by turn and settles near `0.5`; news reaches `KnownGoodwill` only with the returning party, stamped with the sighting turn; the frame carries the viewer's own rows and the cuts; checkpoint round trip |
+| `goodwill.rs` unit tests | worth (none held = full load, 10× held ≈ 1/11, per-good, empty = 0), clamp lands on the bound without rescaling components, fade is proportional on every component, a stale or equal report never overwrites a fresher one |
 | `tests/sim_state_coverage.rs` | `PendingDealings` is classified `SIM_STATE`; the config handle and metadata are `CONFIG` |
 
 ## See also

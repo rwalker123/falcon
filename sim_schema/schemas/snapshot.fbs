@@ -6689,6 +6689,35 @@ table DealingsSection {
   dealings:[DealingState];
 }
 
+// --- Goodwill (docs/plan_early_diplomacy.md §2, issue #233) --------------------------------------
+// WHAT ANOTHER PEOPLE THINKS OF THE VIEWER'S, AS LAST REPORTED - one row per other people the viewer
+// has news of. NEVER LIVE: the opinion is carried home by a party and lands with its other news, and
+// `reportedTurn` is the turn it was observed. The opinion is its REASONS (one component per source
+// kind); `total` is their sum, clamped to -1..+1.
+table GoodwillState {
+  otherFaction:uint;
+  gifts:float;
+  exchanges:float;
+  stationed:float;
+  link:float;
+  treaty:float;
+  breach:float;
+  total:float;
+  reportedTurn:ulong;
+}
+
+// THE WORD CUTS - published once so the client never restates them: below `waryBelow` reads wary,
+// above `friendlyAbove` reads friendly, between is neutral (diplomacy_config.json).
+table GoodwillCutsState {
+  waryBelow:float;
+  friendlyAbove:float;
+}
+
+table GoodwillSection {
+  goodwill:[GoodwillState];
+  cuts:GoodwillCutsState;
+}
+
 // ONE GOOD THAT CROSSED A BAND'S STORE, BY CAUSE - a row of `PopulationCohortState.transferCrossings`.
 // Appended last (append-only discipline).
 table TransferCrossingState {
@@ -6857,6 +6886,9 @@ table WorldSnapshot {
   // Pending dealings, appended after routes: viewer-scoped (addressed to the viewer's people, or sent
   // by them).
   dealings:DealingsSection;
+  // Goodwill, appended after dealings: viewer-scoped (what other peoples are known to think of the
+  // viewer's people).
+  goodwill:GoodwillSection;
 }
 
 table WorldDelta {
@@ -6878,6 +6910,8 @@ table WorldDelta {
   routes:RouteSection;
   // Mirrors `WorldSnapshot.dealings`; the whole list is re-sent when any row moves.
   dealings:DealingsSection;
+  // Mirrors `WorldSnapshot.goodwill`; the rows and the cuts are each re-sent whole when they move.
+  goodwill:GoodwillSection;
 }
 
 union SnapshotPayload {

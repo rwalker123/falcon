@@ -364,6 +364,8 @@ pub mod knowledge {
                 connections: Vec::new(),
                 routes: Vec::new(),
                 dealings: Vec::new(),
+                goodwill: Vec::new(),
+                goodwill_cuts: Default::default(),
                 contact_lessons: Vec::new(),
                 deposits: Vec::new(),
                 pending_forks: Vec::new(),

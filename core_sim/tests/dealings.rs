@@ -234,6 +234,7 @@ fn launch(scene: &mut Scene, terms: ShipmentTerms, cargo: LocalStore) -> Entity 
                 cargo,
                 defection_pull: core_sim::Scalar::zero(),
                 station_reports: Vec::new(),
+                goodwill_news: Default::default(),
                 aim: Some(destination_pos),
             },
             BandTravel::to(destination_pos),

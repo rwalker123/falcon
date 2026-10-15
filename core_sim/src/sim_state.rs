@@ -215,6 +215,13 @@ pub struct SimState {
     /// book would strand a party in a camp with nobody waiting on it, and one that dropped the
     /// counter would re-issue an id a client still holds. Restored whole.
     pub pending_dealings: crate::dealings::PendingDealings,
+    /// **What each people thinks of each other, as its reasons** (`crate::goodwill`). State: credits
+    /// accumulate over turns and nothing rebuilds them.
+    pub goodwill: crate::goodwill::Goodwill,
+    /// **What other peoples are known to think of each viewer**, and the turn it was reported.
+    /// State for the same reason, and because the report clock must not move backwards across a
+    /// restore.
+    pub known_goodwill: crate::goodwill::KnownGoodwill,
     /// Every faction's name. **The save wins**: minted once by worldgen, then carried, so a pool
     /// edit never renames a saved world's factions.
     pub faction_names: crate::faction_names::FactionNames,
@@ -457,6 +464,14 @@ pub fn capture_sim_state(world: &World) -> SimState {
             .get_resource::<crate::dealings::PendingDealings>()
             .cloned()
             .unwrap_or_default(),
+        goodwill: world
+            .get_resource::<crate::goodwill::Goodwill>()
+            .cloned()
+            .unwrap_or_default(),
+        known_goodwill: world
+            .get_resource::<crate::goodwill::KnownGoodwill>()
+            .cloned()
+            .unwrap_or_default(),
         faction_names: world
             .get_resource::<crate::faction_names::FactionNames>()
             .cloned()
@@ -670,6 +685,8 @@ pub fn restore_sim_state(world: &mut World, state: &SimState) {
     world.insert_resource(state.security_policies.clone());
     world.insert_resource(state.border_policies.clone());
     world.insert_resource(state.pending_dealings.clone());
+    world.insert_resource(state.goodwill.clone());
+    world.insert_resource(state.known_goodwill.clone());
     world.insert_resource(state.faction_names.clone());
     world.insert_resource(state.factions.clone());
     world.insert_resource(state.hearts.clone());

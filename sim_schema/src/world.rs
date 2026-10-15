@@ -17,6 +17,7 @@ use crate::state::culture::{
 };
 use crate::state::dealings::DealingState;
 use crate::state::economy::FactionInventoryState;
+use crate::state::goodwill::{GoodwillCutsState, GoodwillState};
 use crate::state::governance::{
     CorruptionLedger, CrisisOverlayState, CrisisTelemetryState, PowerNodeState, PowerTelemetryState,
 };
@@ -319,6 +320,14 @@ pub struct WorldSnapshot {
     /// Another pair's dealings are theirs to know. Rides `DealingsSection`.
     #[serde(default)]
     pub dealings: Vec<DealingState>,
+    /// **What other peoples are known to think of the viewer's**, as last reported
+    /// (`docs/plan_early_diplomacy.md` §2). Ordered by the other people's id. Rides
+    /// `GoodwillSection`.
+    #[serde(default)]
+    pub goodwill: Vec<GoodwillState>,
+    /// The word cuts the client draws `goodwill` with — published, never restated client-side.
+    #[serde(default)]
+    pub goodwill_cuts: GoodwillCutsState,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -488,6 +497,12 @@ pub struct WorldDelta {
     /// `None` = unchanged this frame, on `connections`' own rules.
     #[serde(default)]
     pub dealings: Option<Vec<DealingState>>,
+    /// `None` = unchanged this frame, on `connections`' own rules.
+    #[serde(default)]
+    pub goodwill: Option<Vec<GoodwillState>>,
+    /// `None` = unchanged this frame.
+    #[serde(default)]
+    pub goodwill_cuts: Option<GoodwillCutsState>,
 }
 
 pub fn hash_snapshot(snapshot: &WorldSnapshot) -> u64 {

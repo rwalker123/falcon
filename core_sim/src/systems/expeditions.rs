@@ -186,6 +186,12 @@ pub struct ExpeditionConfigs<'w> {
 pub struct ExpeditionDealings<'w> {
     pub pending: Option<ResMut<'w, crate::dealings::PendingDealings>>,
     pub config: Option<Res<'w, crate::diplomacy_config::DiplomacyConfigHandle>>,
+    /// **What peoples think of each other** — read when a party sights a foreign band, so the
+    /// opinion it will carry home is the one standing at that sighting.
+    pub goodwill: Option<Res<'w, crate::goodwill::Goodwill>>,
+    /// **Where a party's carried news lands** — alongside its other news (the comm flush, a landed
+    /// station report).
+    pub known_goodwill: Option<ResMut<'w, crate::goodwill::KnownGoodwill>>,
 }
 
 impl ExpeditionDealings<'_> {
@@ -1227,6 +1233,25 @@ pub fn advance_expeditions(
                         sees_target = true;
                     }
                     if Some(*subject) != home_band_id {
+                        // **What that people thinks of ours, at this sighting** — carried home
+                        // with the rest of the party's news.
+                        if let (Some(goodwill), Some(&(subject_entity, _))) = (
+                            configs.dealings.goodwill.as_deref(),
+                            resident_positions.get(subject),
+                        ) {
+                            if let Ok((_, subject_cohort, ..)) = bands.get(subject_entity) {
+                                let other = subject_cohort.faction;
+                                if other != faction {
+                                    expedition.goodwill_news.insert(
+                                        other,
+                                        crate::goodwill::GoodwillNews {
+                                            components: goodwill.get(other, faction),
+                                            turn: current_turn,
+                                        },
+                                    );
+                                }
+                            }
+                        }
                         let name = resident_names.get(subject).cloned().unwrap_or_default();
                         expedition
                             .pending_contacts
@@ -1294,6 +1319,7 @@ pub fn advance_expeditions(
                             land_turn: current_turn + delay,
                             tiles: std::mem::take(&mut expedition.pending_reveal),
                             sightings: std::mem::take(&mut expedition.pending_contacts),
+                            goodwill: std::mem::take(&mut expedition.goodwill_news),
                         };
                         expedition.station_reports.push(report);
                     }
@@ -1321,6 +1347,11 @@ pub fn advance_expeditions(
                     for (subject, sighting) in report.sightings {
                         contacts.record(observer, subject, sighting);
                     }
+                    if let Some(known) = configs.dealings.known_goodwill.as_deref_mut() {
+                        for (other, news) in report.goodwill {
+                            known.record(faction, other, news);
+                        }
+                    }
                 }
             }
         } else if near_home {
@@ -1337,6 +1368,13 @@ pub fn advance_expeditions(
             if let Some(observer) = home_band_id {
                 for (subject, sighting) in reports {
                     contacts.record(observer, subject, sighting);
+                }
+                // The opinions it carried home land with the sightings, to the people that sent it.
+                let news = std::mem::take(&mut expedition.goodwill_news);
+                if let Some(known) = configs.dealings.known_goodwill.as_deref_mut() {
+                    for (other, news) in news {
+                        known.record(faction, other, news);
+                    }
                 }
             }
         }

@@ -2603,7 +2603,7 @@ impl ExpeditionPhase {
 /// The tiles and sightings carry their OBSERVED turn (a [`Sighting`](crate::connections::Sighting) stamps it), so landing the report
 /// late never rewrites when something was seen: the home ledger's clock 1 reads the observation turn
 /// and clocks 2 and 3 read the turn the report landed.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct StationReport {
     /// The first turn this report lands on: dispatch turn + the runner's walk (`0` inside the
     /// effective comm range, where it lands the turn it leaves).
@@ -2612,6 +2612,10 @@ pub struct StationReport {
     pub tiles: Vec<UVec2>,
     /// The peoples it found, subject band → where and when it saw them.
     pub sightings: std::collections::BTreeMap<BandId, crate::connections::Sighting>,
+    /// **What the peoples it stood among thought of its people when it saw them** — the news a
+    /// stationed party carries beside its sightings (`crate::goodwill::KnownGoodwill`), landing where
+    /// the sightings land.
+    pub goodwill: std::collections::BTreeMap<FactionId, crate::goodwill::GoodwillNews>,
 }
 
 /// Marks a detached traveling party (a scout, a denial raid or a shipment). Reuses `PopulationCohort` +
@@ -2714,6 +2718,13 @@ pub struct Expedition {
     /// lands when the party folds back — it carries its own news home. Rides the checkpoint whole
     /// with the rest of the `Expedition`.
     pub station_reports: Vec<StationReport>,
+    /// **What other peoples think of this party's people, as this party last saw it** — one entry
+    /// per people it has been in contact with, valued at the turn it was in contact
+    /// (`docs/plan_early_diplomacy.md` §2, "Who knows it"). **News is carried**: it lands in
+    /// [`crate::goodwill::KnownGoodwill`] exactly where the party's other news lands — a scout or
+    /// trade party at its comm flush, a stationed party when its [`StationReport`] lands — and never
+    /// before. Rides the checkpoint with the rest of the `Expedition`.
+    pub goodwill_news: std::collections::BTreeMap<FactionId, crate::goodwill::GoodwillNews>,
     /// **The tile a Station / Trade party is walking toward** — what its people KNOW about where the
     /// target band is, not where it is (`.claude/rules/core_sim/connections.md`). Set at launch to
     /// the target's live tile when the sender knows it (own people, or visible) and otherwise to the

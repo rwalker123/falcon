@@ -54,6 +54,7 @@ mod food;
 mod forage;
 pub mod forecast_query;
 mod generations;
+pub mod goodwill;
 mod graze;
 mod great_discovery;
 pub mod grid_utils;
@@ -306,6 +307,10 @@ pub use forage::{
     SEED_SELECTION_DISCOVERY_ID, WHOLE_BASKET,
 };
 pub use generations::{GenerationBias, GenerationId, GenerationProfile, GenerationRegistry};
+pub use goodwill::{
+    cargo_worth, good_worth, worth, GoodAmount, Goodwill, GoodwillEntry, GoodwillNews,
+    GoodwillSource, KnownGoodwill, KnownGoodwillEntry,
+};
 pub use graze::{advance_graze_regrowth, spawn_initial_graze, GrazePatch, GrazeRegistry};
 pub use great_discovery::{
     ConstellationRequirement, GreatDiscoveryCandidateEvent, GreatDiscoveryDefinition,
@@ -904,6 +909,8 @@ pub fn build_headless_app() -> App {
         .insert_resource(diplomacy_handle)
         .insert_resource(diplomacy_metadata)
         .insert_resource(dealings::PendingDealings::default())
+        .insert_resource(goodwill::Goodwill::default())
+        .insert_resource(goodwill::KnownGoodwill::default())
         .insert_resource(belief_handle)
         .insert_resource(belief_metadata)
         .insert_resource(materials_handle)
@@ -1403,6 +1410,14 @@ pub fn build_headless_app() -> App {
                 //  - `.after(advance_expeditions)` — it slots into the chain immediately before
                 //    labor, so the bill is struck on the positions this turn's movement left.
                 //  - `.before(advance_labor_allocation)` — the ordering this system exists for.
+                // **A stationed party's standing in a foreign host's camp raises the host people's
+                // opinion of its own.** It reads every party's phase (settled by
+                // `advance_expeditions`) and `PopulationCohort`, which the rest of the chain
+                // writes, so both edges are declared: after the dealings pass that follows the
+                // expeditions, before the labour pass that opens the rest of the chain.
+                goodwill::credit_stationed_goodwill
+                    .after(dealings::advance_dealings)
+                    .before(systems::bill_and_stock_roads),
                 systems::bill_and_stock_roads
                     .after(systems::advance_expeditions)
                     .before(systems::advance_labor_allocation),
@@ -1457,6 +1472,10 @@ pub fn build_headless_app() -> App {
             crisis::advance_crisis_system.in_set(TurnStage::Crisis),
         )
         .add_systems(Update, telling::telling_tick.in_set(TurnStage::Telling))
+        // Opinions fade once a turn, in the FIRST stage, so the fade precedes every credit the turn's
+        // systems make (stage sets are chained: Influence < ... < Population). It writes only
+        // `Goodwill`, which nothing else in Influence touches, so it declares no further edge.
+        .add_systems(Update, goodwill::fade_goodwill.in_set(TurnStage::Influence))
         .add_systems(
             Update,
             // Both write `CorruptionLedgers`; nothing to overlap.

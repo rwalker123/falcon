@@ -41,6 +41,7 @@ mod connections;
 mod culture;
 mod dealings;
 mod economy;
+mod goodwill;
 mod governance;
 mod knowledge;
 mod map;
@@ -68,6 +69,10 @@ use crate::codec::dealings::{
 use crate::codec::economy::{
     decode_economy_section, decode_economy_section_delta, serialize_economy_section,
     serialize_economy_section_delta,
+};
+use crate::codec::goodwill::{
+    decode_goodwill_section, decode_goodwill_section_delta, serialize_goodwill_section,
+    serialize_goodwill_section_delta,
 };
 use crate::codec::governance::{
     decode_governance_section, decode_governance_section_delta, serialize_governance_section,
@@ -133,6 +138,11 @@ pub enum DecodeError {
 }
 
 /// A decoded frame of either kind, as the `Envelope`'s `SnapshotPayload` union names it.
+///
+/// Both variants are whole sections' worth of rows and grow with every appended section; the
+/// difference between them is the delta's `Option` wrappers, a few bytes per section. Boxing one
+/// would churn every consumer for a transient decode result, so the lint is allowed here.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone)]
 pub enum FramePayload {
     Snapshot(WorldSnapshot),
@@ -252,6 +262,10 @@ fn decode_snapshot_table(table: fb::WorldSnapshot<'_>) -> Result<WorldSnapshot, 
         required(table.dealings(), "DealingsSection")?,
         &mut snapshot,
     );
+    decode_goodwill_section(
+        required(table.goodwill(), "GoodwillSection")?,
+        &mut snapshot,
+    );
     witness_snapshot_is_fully_decoded(&snapshot);
     Ok(snapshot)
 }
@@ -289,6 +303,7 @@ fn decode_delta_table(table: fb::WorldDelta<'_>) -> Result<WorldDelta, DecodeErr
     );
     decode_route_section_delta(required(table.routes(), "RouteSection")?, &mut delta);
     decode_dealings_section_delta(required(table.dealings(), "DealingsSection")?, &mut delta);
+    decode_goodwill_section_delta(required(table.goodwill(), "GoodwillSection")?, &mut delta);
     witness_delta_is_fully_decoded(&delta);
     Ok(delta)
 }
@@ -403,6 +418,9 @@ fn witness_snapshot_is_fully_decoded(snapshot: &WorldSnapshot) {
         routes: _,
         // `decode_dealings_section`
         dealings: _,
+        // `decode_goodwill_section`
+        goodwill: _,
+        goodwill_cuts: _,
     } = snapshot;
 }
 
@@ -504,6 +522,9 @@ fn witness_delta_is_fully_decoded(delta: &WorldDelta) {
         routes: _,
         // `decode_dealings_section_delta`
         dealings: _,
+        // `decode_goodwill_section_delta`
+        goodwill: _,
+        goodwill_cuts: _,
     } = delta;
 }
 
@@ -568,6 +589,7 @@ fn build_snapshot_flatbuffer<'a>(
     let connections = serialize_connection_section(builder, snapshot);
     let routes = serialize_route_section(builder, snapshot);
     let dealings = serialize_dealings_section(builder, snapshot);
+    let goodwill = serialize_goodwill_section(builder, snapshot);
 
     let snapshot_table = fb::WorldSnapshot::create(
         builder,
@@ -586,6 +608,7 @@ fn build_snapshot_flatbuffer<'a>(
             connections: Some(connections),
             routes: Some(routes),
             dealings: Some(dealings),
+            goodwill: Some(goodwill),
         },
     );
 
@@ -646,6 +669,7 @@ fn build_delta_flatbuffer<'a>(
     let connections = serialize_connection_section_delta(builder, delta);
     let routes = serialize_route_section_delta(builder, delta);
     let dealings = serialize_dealings_section_delta(builder, delta);
+    let goodwill = serialize_goodwill_section_delta(builder, delta);
 
     let delta_table = fb::WorldDelta::create(
         builder,
@@ -664,6 +688,7 @@ fn build_delta_flatbuffer<'a>(
             connections: Some(connections),
             routes: Some(routes),
             dealings: Some(dealings),
+            goodwill: Some(goodwill),
         },
     );
 
@@ -1170,6 +1195,8 @@ mod round_trip_tests {
             connections: Some(world.connections.clone()),
             routes: Some(world.routes.clone()),
             dealings: Some(world.dealings.clone()),
+            goodwill: Some(world.goodwill.clone()),
+            goodwill_cuts: Some(world.goodwill_cuts.clone()),
             contact_lessons: Some(world.contact_lessons.clone()),
         }
     }
@@ -1236,6 +1263,8 @@ mod round_trip_tests {
             connections: Some(Vec::new()),
             routes: Some(Vec::new()),
             dealings: Some(Vec::new()),
+            goodwill: Some(Vec::new()),
+            goodwill_cuts: Some(Default::default()),
             contact_lessons: Some(Vec::new()),
             ..Default::default()
         }
