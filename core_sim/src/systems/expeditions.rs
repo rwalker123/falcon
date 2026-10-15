@@ -567,7 +567,7 @@ fn settle_treaty_bundles(
             crate::dealings::ExchangeOutcome::ReceiverShort,
             arrival.entity.to_bits(),
         );
-        pour(&mut covered, &mut expedition.exchange_return);
+        pour(&mut covered, &mut expedition.unpaid_return);
         return true;
     }
     let home_held = bands
@@ -580,7 +580,7 @@ fn settle_treaty_bundles(
         faction: arrival.faction,
     };
     let Ok((_, mut host, _, _, allocation, _, _)) = bands.get_mut(arrival.host_entity) else {
-        pour(&mut covered, &mut expedition.exchange_return);
+        pour(&mut covered, &mut expedition.unpaid_return);
         return true;
     };
     let settled = crate::dealings::settle_exchange(
@@ -1167,10 +1167,12 @@ pub fn advance_party_defection(
         let head_count = available_workers(party_cohort.working);
         // **A party that goes over takes its gear with it** — it lands in the band it joins.
         let mut exchange = std::mem::take(&mut expedition.exchange_return);
+        let mut unpaid = std::mem::take(&mut expedition.unpaid_return);
         let fold = fold_party_into_band(
             &mut party_cohort,
             &mut expedition.cargo,
             &mut exchange,
+            &mut unpaid,
             &mut destination,
             PartyGear {
                 party: party_gear.as_deref_mut(),
@@ -2635,10 +2637,12 @@ pub fn advance_expeditions(
                         // goods, and they settle into the band that sent them.
                         // **And the kit it carried goes back on the band's shelf**, worn as it is.
                         let mut exchange = std::mem::take(&mut expedition.exchange_return);
+                        let mut unpaid = std::mem::take(&mut expedition.unpaid_return);
                         let fold = fold_party_into_band(
                             &mut cohort,
                             &mut expedition.cargo,
                             &mut exchange,
+                            &mut unpaid,
                             &mut home,
                             PartyGear {
                                 party: party_equipment.as_deref_mut(),
@@ -3116,6 +3120,7 @@ pub fn fold_party_into_band(
     party: &mut PopulationCohort,
     cargo: &mut crate::LocalStore,
     exchange: &mut crate::LocalStore,
+    unpaid: &mut crate::LocalStore,
     home: &mut PopulationCohort,
     gear: PartyGear<'_>,
 ) -> FoldBack {
@@ -3146,11 +3151,23 @@ pub fn fold_party_into_band(
     if exchange_fodder > scalar_zero() {
         home.stores.add(FODDER, exchange_fodder);
     }
-    let materials =
-        materials_carried(&party.stores) + materials_carried(cargo) + materials_carried(exchange);
+    // **Covered goods the receiver could not pay for** never changed hands: they are an undelivered
+    // shipment, reported apart so the ledger books them `ShipmentReturned`.
+    let unpaid_mix = unpaid.take_food_mix(unpaid.get(FOOD));
+    home.stores.add_food_mix(&unpaid_mix);
+    let unpaid_food = unpaid_mix.total();
+    let unpaid_fodder = unpaid.take(FODDER, unpaid.get(FODDER));
+    if unpaid_fodder > scalar_zero() {
+        home.stores.add(FODDER, unpaid_fodder);
+    }
+    let materials = materials_carried(&party.stores)
+        + materials_carried(cargo)
+        + materials_carried(exchange)
+        + materials_carried(unpaid);
     let pack_materials = party.stores.drain_materials_into(&mut home.stores);
     let cargo_materials = cargo.drain_materials_into(&mut home.stores);
     let exchange_materials = exchange.drain_materials_into(&mut home.stores);
+    let unpaid_materials = unpaid.drain_materials_into(&mut home.stores);
     home.sync_size();
     FoldBack {
         pack_food: leftover,
@@ -3158,10 +3175,13 @@ pub fn fold_party_into_band(
         cargo_fodder: undelivered_fodder,
         exchange_food,
         exchange_fodder,
+        unpaid_food,
+        unpaid_fodder,
         materials,
         pack_materials,
         cargo_materials,
         exchange_materials,
+        unpaid_materials,
     }
 }
 
@@ -3217,6 +3237,10 @@ pub struct FoldBack {
     /// [`TransferCause::ExchangeIn`] whatever the shipment's own terms were.
     pub exchange_food: Scalar,
     pub exchange_fodder: Scalar,
+    /// **Covered goods the receiver could not pay for, coming home** — booked
+    /// [`TransferCause::ShipmentReturned`], the cause an undelivered shipment uses.
+    pub unpaid_food: Scalar,
+    pub unpaid_fodder: Scalar,
     pub materials: f32,
     /// **The pack's material batches**, at the reading each carried — a raid's hides.
     pub pack_materials: Vec<(String, crate::components::MaterialDraw)>,
@@ -3224,6 +3248,8 @@ pub struct FoldBack {
     pub cargo_materials: Vec<(String, crate::components::MaterialDraw)>,
     /// **The agreed-trade return's material batches**, at the reading each carried.
     pub exchange_materials: Vec<(String, crate::components::MaterialDraw)>,
+    /// **The unpaid covered goods' material batches**, at the reading each carried.
+    pub unpaid_materials: Vec<(String, crate::components::MaterialDraw)>,
 }
 
 impl FoldBack {
@@ -3302,6 +3328,26 @@ impl FoldBack {
             consignee,
             party,
         );
+        // Goods the receiver never paid for are an undelivered shipment coming home.
+        for (commodity, amount) in [(FOOD, self.unpaid_food), (FODDER, self.unpaid_fodder)] {
+            allocation.book_crossing(
+                TransferCrossing::goods(
+                    commodity,
+                    TransferDirection::In,
+                    TransferCause::ShipmentReturned,
+                    amount.to_f32(),
+                )
+                .with_counterparty(consignee)
+                .with_party(party),
+            );
+        }
+        allocation.book_material_draws(
+            &self.unpaid_materials,
+            TransferDirection::In,
+            TransferCause::ShipmentReturned,
+            consignee,
+            party,
+        );
     }
 }
 
@@ -3318,8 +3364,14 @@ impl FoldBack {
         origin: Option<TransferCounterparty>,
     ) {
         for (commodity, amount) in [
-            (FOOD, self.pack_food + self.cargo_food + self.exchange_food),
-            (FODDER, self.cargo_fodder + self.exchange_fodder),
+            (
+                FOOD,
+                self.pack_food + self.cargo_food + self.exchange_food + self.unpaid_food,
+            ),
+            (
+                FODDER,
+                self.cargo_fodder + self.exchange_fodder + self.unpaid_fodder,
+            ),
         ] {
             allocation.book_crossing(
                 TransferCrossing::goods(
@@ -3336,6 +3388,7 @@ impl FoldBack {
             &self.pack_materials,
             &self.cargo_materials,
             &self.exchange_materials,
+            &self.unpaid_materials,
         ] {
             allocation.book_material_draws(
                 draws,

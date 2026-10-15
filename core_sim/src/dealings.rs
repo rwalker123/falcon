@@ -2385,6 +2385,21 @@ fn answer_treaty(
                     "{VERB}: a counter that asks for no term is not a treaty; refuse instead."
                 ));
             }
+            // **A counter is a new proposal and travels like one.** A dealing an envoy brought home
+            // (no envoy standing with the other party any more) may be accepted or refused where it
+            // is, but a further counter needs a standing link between the two bands, and then goes
+            // along the road.
+            let carrier = if proposal.carrier == TreatyCarrier::Envoy && party.is_none() {
+                if !bands_have_standing_link(world, ends.sender_band, ends.receiver_band) {
+                    return Err(format!(
+                        "{VERB}: no standing link to band {} carries a counter — accept or refuse                          this proposal, or send an envoy with the new terms (send_envoy).",
+                        ends.sender_band.0
+                    ));
+                }
+                TreatyCarrier::Road
+            } else {
+                proposal.carrier
+            };
             world.resource_mut::<PendingDealings>().remove(id);
             push_treaty_resolution_events(
                 &mut world.resource_mut::<CommandEventLog>(),
@@ -2413,10 +2428,7 @@ fn answer_treaty(
                 goods_sent: LocalStore::new(),
                 goods_asked: LocalStore::new(),
                 agreement: None,
-                treaty: Some(TreatyProposal {
-                    terms,
-                    carrier: proposal.carrier,
-                }),
+                treaty: Some(TreatyProposal { terms, carrier }),
                 posted_turn: tick,
                 expires_turn: tick + u64::from(wait),
             };

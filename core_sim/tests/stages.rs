@@ -404,6 +404,7 @@ fn launch_agreed(scene: &mut Scene, agreement: &Agreement, dealing: DealingId) -
                 station_reports: Vec::new(),
                 goodwill_news: Default::default(),
                 exchange_return: Default::default(),
+                unpaid_return: Default::default(),
                 scout_pack: Default::default(),
                 aim: Some(destination_pos),
             },
@@ -1118,6 +1119,7 @@ fn launch_scout(scene: &mut Scene, order: StrangersOrder, pack: f32) -> Entity {
                 station_reports: Vec::new(),
                 goodwill_news: Default::default(),
                 exchange_return: Default::default(),
+                unpaid_return: Default::default(),
                 scout_pack: ScoutPack {
                     order,
                     ..Default::default()

@@ -438,11 +438,14 @@ what the answer wrote on the party for the fold-back to read (`dealings::report_
 [road_rights] [open_borders] [bundle give … ask …]…`, `AnswerDealingCommand.counter_terms`, proto
 **7**; `counter give … ask …` stays the stage-4 trade counter). A counter carries the receiver's
 **full** terms and posts a new `TreatyProposal` the other way (a counter naming no term is refused —
-refuse instead). **A counter inherits its carrier**: a road-carried one is answered under the
-stage-4 link rule; an envoy-carried one rides home with the envoy and is posted into the book at the
-fold-back, addressed to the envoy's own people, and **answering it needs no road** (the envoy that
-carried it has already come home; each further counter on it is posted at once, and costs the
-haggler a turn).
+refuse instead). **A counter is a new proposal and travels like one.** A road-carried one is
+answered under the stage-4 link rule and its counter goes back along the road. A counter made to an
+envoy standing in the camp rides home with that envoy and is posted into the book at the fold-back,
+addressed to the envoy's own people. That dealing may be **accepted or refused** at home with nothing
+carrying the answer (its effect is immediate in the sim, like every treaty acceptance), but **a
+further `counter` on it is refused** unless a standing link joins the two bands at that moment — it
+then posts along the road (`carrier = road`); otherwise the failure reason tells the player to send
+an envoy (`send_envoy` with the new terms). The refusal leaves the dealing pending and untouched.
 
 ### Ending: `end_treaty`, and the breach
 
@@ -488,8 +491,9 @@ receiver and must not take the payment with it (the fold-back books it `Exchange
 follows the shipment's own terms** — a gift to another people, or an offer, becomes a pending dealing
 carrying only the remainder; nothing left means nothing pending and the party turns home. **If the
 receiver cannot pay the return, the covered part fails as stage 4 does** (`receiver_short`): nothing
-lands, no goodwill moves, and the covered goods walk home on `exchange_return` (booked `ExchangeIn`
-there — a label the rare case shares with a payment). A same-people shipment never reads treaties.
+lands, no goodwill moves, and the covered goods walk home on `Expedition::unpaid_return` — they
+never changed hands, so the fold-back books them `ShipmentReturned` (the cause an undelivered shipment
+uses), where a paid bundle's payment is `ExchangeIn`. A same-people shipment never reads treaties.
 
 ### Treaty goodwill
 

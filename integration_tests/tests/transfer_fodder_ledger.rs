@@ -318,6 +318,7 @@ fn spawn_hay_shipment(
                 station_reports: Vec::new(),
                 goodwill_news: Default::default(),
                 exchange_return: Default::default(),
+                unpaid_return: Default::default(),
                 scout_pack: Default::default(),
                 aim: None,
             },

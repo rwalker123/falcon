@@ -896,6 +896,7 @@ fn launch_envoy(scene: &mut Scene, terms: TreatyTerms) -> Entity {
                 station_reports: Vec::new(),
                 goodwill_news: Default::default(),
                 exchange_return: Default::default(),
+                unpaid_return: Default::default(),
                 scout_pack: Default::default(),
                 aim: Some(destination_pos),
             },
@@ -1139,6 +1140,7 @@ fn launch_shipment(scene: &mut Scene, food: f32, terms: ShipmentTerms) -> Entity
                 station_reports: Vec::new(),
                 goodwill_news: Default::default(),
                 exchange_return: Default::default(),
+                unpaid_return: Default::default(),
                 scout_pack: Default::default(),
                 aim: Some(destination_pos),
             },
@@ -1304,7 +1306,7 @@ fn a_receiver_short_of_the_bundles_return_fails_the_covered_part_with_no_goodwil
     );
     let expedition = scene.app.world.get::<Expedition>(party).expect("the party");
     assert!(
-        (expedition.exchange_return.get(FOOD).to_f32() - 8.0).abs() < EPSILON,
+        (expedition.unpaid_return.get(FOOD).to_f32() - 8.0).abs() < EPSILON,
         "the covered goods walk home"
     );
     for (holder, about) in [
@@ -1343,6 +1345,166 @@ fn a_same_people_shipment_never_reads_treaties() {
         assert_eq!(exchange_events(&scene.app, faction, "failed"), 0);
     }
     assert!(scene.app.world.resource::<PendingDealings>().is_empty());
+}
+
+/// The counter an envoy carried home, posted to the proposer: runs the envoy flow to the fold-back
+/// and returns the proposer-side dealing. No turn runs after it, so a road laid next is still kept.
+fn counter_brought_home(scene: &mut Scene) -> core_sim::Dealing {
+    let envoy = launch_envoy(
+        scene,
+        TreatyTerms {
+            road_rights: true,
+            open_borders: true,
+            ..Default::default()
+        },
+    );
+    assert!(run_until(&mut scene.app, |app| {
+        !app.world.resource::<PendingDealings>().is_empty()
+    }));
+    let dealing = only_dealing(&scene.app);
+    answer(
+        scene,
+        dealing.id,
+        DealingAnswer::CounterTerms {
+            terms: request(false, true),
+        },
+    )
+    .expect("counters");
+    assert!(run_until(&mut scene.app, |app| app
+        .world
+        .get_entity(envoy)
+        .is_none()));
+    only_dealing(&scene.app)
+}
+
+/// **A further counter on a dealing an envoy brought home does not travel for free**: with no standing
+/// link it is refused, the dealing stays answerable, and the reason points at `send_envoy`.
+#[test]
+fn a_further_counter_at_home_is_refused_without_a_standing_link() {
+    let mut scene = scene(LINK_SPAN);
+    let counter = counter_brought_home(&mut scene);
+    assert!(!linked(&mut scene), "precondition: no road joins the bands");
+    let refused = answer_dealing(
+        &mut scene.app.world,
+        SENDER_PEOPLE,
+        counter.id,
+        &DealingAnswer::CounterTerms {
+            terms: request(true, false),
+        },
+    )
+    .expect_err("nothing carries the counter");
+    assert!(refused.contains("send_envoy"), "{refused}");
+    assert_eq!(
+        only_dealing(&scene.app).id,
+        counter.id,
+        "the dealing is still pending, untouched"
+    );
+    // Accept (or refuse) at home still works with nothing carrying it.
+    answer_dealing(
+        &mut scene.app.world,
+        SENDER_PEOPLE,
+        counter.id,
+        &DealingAnswer::Accept {
+            returned: Vec::new(),
+        },
+    )
+    .expect("accept at home needs no carrier");
+    assert!(treaties(&scene.app).open_borders(SENDER_PEOPLE, RECEIVER_PEOPLE));
+}
+
+/// **With a standing link the counter goes along the road**, as any road-carried proposal does.
+#[test]
+fn a_further_counter_at_home_goes_along_a_standing_link() {
+    let mut scene = scene(LINK_SPAN);
+    let counter = counter_brought_home(&mut scene);
+    lay_road_between(&mut scene);
+    assert!(linked(&mut scene));
+    answer_dealing(
+        &mut scene.app.world,
+        SENDER_PEOPLE,
+        counter.id,
+        &DealingAnswer::CounterTerms {
+            terms: request(true, false),
+        },
+    )
+    .expect("a road joins the bands");
+    let posted = only_dealing(&scene.app);
+    assert_ne!(posted.id, counter.id);
+    assert_eq!(
+        (posted.sender_faction, posted.receiver_faction),
+        (SENDER_PEOPLE, RECEIVER_PEOPLE)
+    );
+    assert_eq!(
+        posted.treaty.as_ref().map(|proposal| proposal.carrier),
+        Some(TreatyCarrier::Road)
+    );
+}
+
+/// **The cause on the fold-back crossing**: a paid bundle's payment comes home `ExchangeIn`; covered
+/// goods the receiver could not pay for never changed hands and come home `ShipmentReturned`.
+#[test]
+fn a_bundles_payment_comes_home_as_exchange_in_and_unpaid_goods_as_shipment_returned() {
+    use core_sim::TransferCause;
+    // Paid.
+    let mut paid = scene(LINK_SPAN);
+    standing_bundle(&mut paid);
+    let party = launch_shipment(&mut paid, 8.0, ShipmentTerms::Offer);
+    let mut exchange_in_hide = 0.0;
+    let mut returned_food = 0.0;
+    for _ in 0..TURN_BUDGET {
+        if paid.app.world.get_entity(party).is_none() {
+            break;
+        }
+        run_turn(&mut paid.app);
+        exchange_in_hide += booked(&paid.app, paid.sender, "hide", TransferCause::ExchangeIn);
+        returned_food += booked(
+            &paid.app,
+            paid.sender,
+            FOOD,
+            TransferCause::ShipmentReturned,
+        );
+    }
+    assert!(
+        (exchange_in_hide - 2.0).abs() < EPSILON,
+        "{exchange_in_hide}"
+    );
+    assert!(returned_food.abs() < EPSILON, "nothing was unpaid");
+
+    // Unpaid.
+    let mut short = scene(LINK_SPAN);
+    standing_bundle(&mut short);
+    short
+        .app
+        .world
+        .get_mut::<PopulationCohort>(short.receiver)
+        .expect("receiver")
+        .stores
+        .take_material_batches("hide", scalar_from_f32(RECEIVER_HIDE));
+    let party = launch_shipment(&mut short, 8.0, ShipmentTerms::Offer);
+    let mut returned_food = 0.0;
+    let mut exchange_in_food = 0.0;
+    for _ in 0..TURN_BUDGET {
+        if short.app.world.get_entity(party).is_none() {
+            break;
+        }
+        run_turn(&mut short.app);
+        returned_food += booked(
+            &short.app,
+            short.sender,
+            FOOD,
+            TransferCause::ShipmentReturned,
+        );
+        exchange_in_food += booked(&short.app, short.sender, FOOD, TransferCause::ExchangeIn);
+    }
+    assert!(
+        short.app.world.get_entity(party).is_none(),
+        "the party came home"
+    );
+    assert!(
+        returned_food >= 8.0 - EPSILON,
+        "the unpaid covered food came home as ShipmentReturned: {returned_food}"
+    );
+    assert!(exchange_in_food.abs() < EPSILON, "{exchange_in_food}");
 }
 
 // =============================================================================================

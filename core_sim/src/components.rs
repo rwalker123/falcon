@@ -2768,6 +2768,10 @@ pub struct Expedition {
     /// band: an accepted offer for the remainder must not land the bundle's return with it. Booked
     /// `ExchangeIn` on the fold-back ([`TransferCause::ExchangeIn`]); checkpointed with the party.
     pub exchange_return: crate::LocalStore,
+    /// **Goods a bundle covered that the receiver could not pay for** — they never changed hands, so
+    /// they walk home as an undelivered shipment ([`TransferCause::ShipmentReturned`]), not as an
+    /// exchange. Kept apart from [`Self::exchange_return`] for the ledger's cause.
+    pub unpaid_return: crate::LocalStore,
     /// **The tile a Station / Trade party is walking toward** — what its people KNOW about where the
     /// target band is, not where it is (`.claude/rules/core_sim/connections.md`). Set at launch to
     /// the target's live tile when the sender knows it (own people, or visible) and otherwise to the

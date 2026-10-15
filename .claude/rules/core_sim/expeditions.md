@@ -1241,10 +1241,11 @@ fold-back reads `outcome` and tells its people (`dealings::report_envoy_home`). 
 reads `mission=envoy`.
 
 **`Expedition::exchange_return`** is the store of goods the party walks home **whatever becomes of its
-cargo's dealing** — the payment an agreed-trade bundle made on arrival, and a covered part the
-receiver could not pay for. `fold_party_into_band` takes it beside `cargo` and returns it on the
-`FoldBack` (`exchange_food`, `exchange_fodder`, `exchange_materials`); `book_home` books it
-`ExchangeIn` against the consignee and `book_defected` folds it into the defection's books. Every
+cargo's dealing** — the payment an agreed-trade bundle made on arrival. A covered part the receiver
+could not pay for rides apart on `Expedition::unpaid_return` and is booked `ShipmentReturned`, not
+`ExchangeIn`. `fold_party_into_band` takes both beside `cargo` and returns them on the
+`FoldBack` (`exchange_*`, `unpaid_*`); `book_home` books the first
+`ExchangeIn` and the second `ShipmentReturned` against the consignee and `book_defected` folds it into the defection's books. Every
 fold-back site passes it (`Returning`, a cancel in camp, a defection), and the checkpoint carries it
 with the party.
 

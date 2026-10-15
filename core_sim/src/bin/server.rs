@@ -5937,6 +5937,7 @@ fn handle_send_scout(
                 station_reports: Vec::new(),
                 goodwill_news: Default::default(),
                 exchange_return: Default::default(),
+                unpaid_return: Default::default(),
                 scout_pack: core_sim::ScoutPack {
                     order: match strangers {
                         sim_runtime::StrangersKind::Keep => core_sim::StrangersOrder::Keep,
@@ -6466,6 +6467,7 @@ fn launch_party_from_band(
                 station_reports: Vec::new(),
                 goodwill_news: Default::default(),
                 exchange_return: Default::default(),
+                unpaid_return: Default::default(),
                 scout_pack: Default::default(),
                 aim: None,
             },
@@ -7580,6 +7582,7 @@ fn cancel_party_standing_in_camp(
     // immediately after, so the live component is never read again.
     let mut cargo = expedition.cargo.clone();
     let mut exchange = expedition.exchange_return.clone();
+    let mut unpaid = expedition.unpaid_return.clone();
     // The party's kit goes back on the band's shelf with it, worn as it is — read off a clone, since
     // the caller despawns the party immediately after.
     let mut party_gear = app.world.get::<BandEquipment>(entity).cloned();
@@ -7592,6 +7595,7 @@ fn cancel_party_standing_in_camp(
             &mut party,
             &mut cargo,
             &mut exchange,
+            &mut unpaid,
             &mut home,
             core_sim::PartyGear {
                 party: party_gear.as_mut(),
@@ -17869,6 +17873,7 @@ mod tests {
                 station_reports: Vec::new(),
                 goodwill_news: Default::default(),
                 exchange_return: Default::default(),
+                unpaid_return: Default::default(),
                 scout_pack: Default::default(),
                 aim: None,
             },
