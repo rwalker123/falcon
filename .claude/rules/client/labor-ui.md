@@ -8332,11 +8332,16 @@ catalog label, then its `label_fallback`.
 payoffs), `RUNG_LESSONS`, `rung_branch_for_kind`, `rung_at_or_above`, `RungGates.RUNG_KNOWLEDGE_TRACKS`
 and `CROP_LEGALITY_FLAGS`, and `KitRoster.QUARRY_CORRALLED_KEY`.
 
-**Two gates are approximated, because they are not on the wire.** The sim's per-rung
-`requires_held_rung_below`, `ceiling_required`, `places_source` and `requires_crop` are not on
-`LadderRungState`. The client reads *the rung below must be held* off the herd's web
-(`RungGates.source_gates`'s `rung_below_gates`), and husbandry admission by treating the species'
-`husbandry_ceiling` as a rung id and comparing its catalog `order` with each quote's.
+**The catalog's five gate bools replace the guesses.** Every `ladder_rungs` entry carries
+`requires_held_rung_below`, `requires_crop`, `requires_work_room`, `requires_ownership` and
+`places_source` (always present). `RungGates.source_gates` adds the rung-below gate wherever the
+rung's own `requires_held_rung_below` is set, on ANY branch; `RungLadder.crop_choices` offers a crop
+step only for a `requires_crop` rung and prices it per crop where the rung `places_source`; the Band
+panel's crop step takes its Grow/Tend title from `places_source`. `RungQuotes.requires_held_below` /
+`requires_crop` / `places_source` read them off the stamped quote. No trait or rung key stands in for
+them. Husbandry admission still compares catalog `order`: the species' `husbandry_ceiling` IS a rung
+id, so a rung is admitted when its order is at or below the ceiling rung's. `requires_work_room` and
+`requires_ownership` are on the quote and read by nothing yet.
 
 **The remembered-hex fog redacts `patch_rung_quotes` whole** (`MapView.FOW_DISCOVERED_HIDDEN_KEYS`);
 `patch_current_rung` is kept, so a remembered hex still names what it stood on.

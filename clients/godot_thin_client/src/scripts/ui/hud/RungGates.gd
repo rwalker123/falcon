@@ -27,10 +27,9 @@ extends RefCounted
 ##
 ## Each rung can carry three gates, appended in this order:
 ##   1. **THE CRAFT** -- the rung's `unlock_knowledge`, at the `KNOWLEDGE_COMPLETE` bar.
-##   2. **THE RUNG BENEATH** -- on a HERD, the rung below must be reached first (a wild herd cannot be
-##      penned). A PLANT may skip a rung (seed travels, so `Sow` needs no prior patch), so it carries
-##      no such gate. *The sim's `requires_held_rung_below` is not on the wire, so the web it applies
-##      to is read off the source kind; a wire flag would replace this.*
+##   2. **THE RUNG BENEATH** -- only where the rung's own `requires_held_rung_below` is set (a wild herd
+##      cannot be penned). A rung without it may skip the one below (seed travels, so `Sow` needs no
+##      prior patch). The flag is the catalog's, for ANY branch; no web is assumed.
 ##   3. **THE GROUND** -- the quote's own `site_refusal`, the sim's verdict on this ground (the only
 ##      gate that the player answers by MOVING rather than by working).
 ##
@@ -43,8 +42,7 @@ extends RefCounted
 ## `GATE_REASON_KNOWLEDGE_FALLBACK_FORMAT` off its `unlock_knowledge` id.
 ##
 ## `prefix` spells the source's keys: the `patch_` tile cross-ref and a bare wire row both work.
-static func source_gates(src: Dictionary, prefix: String, knowledge: Dictionary,
-        rung_below_gates: bool = false) -> Dictionary:
+static func source_gates(src: Dictionary, prefix: String, knowledge: Dictionary) -> Dictionary:
     # The FOOD-PEAK glyph leads every knowledge remedy: practice scales with the floor
     # (`intensification::learn_multiplier` = floor / the food peak), so the peak is the reference the
     # remedy's "the more you leave standing" is measured against.
@@ -67,7 +65,7 @@ static func source_gates(src: Dictionary, prefix: String, knowledge: Dictionary,
                     reasons.append(HudFloraVocab.GATE_REASON_KNOWLEDGE_FALLBACK_FORMAT % [
                         unlock.replace("_", " ").capitalize(),
                         HudFormat.progress_percent(learned), sustain_icon])
-        var below := _required_rung_quote(src, prefix, quote) if rung_below_gates else {}
+        var below := _required_rung_quote(src, prefix, quote) if RungQuotes.requires_held_below(quote) else {}
         if not below.is_empty() and not bool(below.get(RungQuotes.KEY_REACHED, false)):
             var percent := HudFormat.progress_percent(float(below.get(RungQuotes.KEY_PROGRESS, 0.0)))
             var below_glyph := FoodIcons.for_policy(RungQuotes.verb_of(below))
@@ -108,7 +106,7 @@ static func forage_gates(tile_info: Dictionary, knowledge: Dictionary) -> Dictio
 
 ## The animal web's gates for a bare-keyed herd row.
 static func hunt_gates(herd: Dictionary, knowledge: Dictionary) -> Dictionary:
-    return source_gates(herd, HudComposeVocab.BARE_FORECAST_PREFIX, knowledge, true)
+    return source_gates(herd, HudComposeVocab.BARE_FORECAST_PREFIX, knowledge)
 
 ## **THE ROUTE ARM — may this ROAD be raised to each rung above the one it stands on, and if not,
 ## why not?** (arc #532 slice 13). Keyed **RUNG KEY → `Array[Dictionary]` of refusals**, empty for a
@@ -490,7 +488,7 @@ static func _next_rung(kind: String, source: Dictionary, prefix: String, improve
     var current := improvement.strip_edges().to_lower()
     if kind != SourceForecast.LABOR_KIND_FORAGE and kind != SourceForecast.LABOR_KIND_HUNT:
         return {}
-    var gates := source_gates(source, prefix, knowledge, kind == SourceForecast.LABOR_KIND_HUNT)
+    var gates := source_gates(source, prefix, knowledge)
     # HIGHEST RUNG FIRST, among those the source admits. A plant's admission is "at least one crop in
     # the basket can climb this rung" (species-global legality, never "is it wise here"); a herd's is
     # its husbandry ceiling.

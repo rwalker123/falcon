@@ -2438,6 +2438,11 @@ pub(crate) fn snapshot_ladder_rungs(ladder: &LadderConfig) -> Vec<LadderRungStat
                     // **Why a rung is refused, and not merely that it is** - the rung's own floor,
                     // struck against the capacity a working already publishes. A rung with no
                     // `site_requirement` reads [`NO_DEPOSIT_FLOOR`].
+                    requires_held_rung_below: rung.requires_held_rung_below,
+                    requires_crop: rung.requires_crop,
+                    requires_work_room: rung.requires_work_room,
+                    requires_ownership: rung.requires_ownership,
+                    places_source: rung.places_source,
                     min_deposit_capacity: rung
                         .site_requirement
                         .as_ref()

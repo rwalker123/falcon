@@ -10,7 +10,7 @@ class_name RungQuotes
 ## against `ladder_rungs`**, done once where a snapshot arrives (`enrich_sources`), which stamps each
 ## quote with the rung's `verb`, `order`, `branch`, `traits`, `unlock_knowledge` and `label`. Every
 ## reader below then asks by VERB (the unit a command and a control already speak) or by TRAIT (what a
-## rung IS: `enclosed` is a pen, `sown` a field), so a fourth step added to the config appears with no
+## rung IS: `enclosed` is a pen; the gate bools say the rest), so a fourth step added to the config appears with no
 ## GDScript edit.
 ##
 ## ⛔ **A QUOTE THAT THE CATALOG DOES NOT CARRY IS KEPT, NOT DROPPED**: it has no verb and no order, so
@@ -49,7 +49,11 @@ const KEY_FODDER_PAYOFF := "fodder_payoff"
 
 ## The rung traits a reader asks by. Spelled once; the config owns what carries them.
 const TRAIT_ENCLOSED := "enclosed"
-const TRAIT_SOWN := "sown"
+## The catalog's own gate bools on a rung (always present on the wire): the rung below must be HELD
+## (not merely reached by web), the step commits a CROP, and the step PLACES a source.
+const KEY_REQUIRES_HELD_BELOW := "requires_held_rung_below"
+const KEY_REQUIRES_CROP := "requires_crop"
+const KEY_PLACES_SOURCE := "places_source"
 const TRAIT_MANAGED := "managed"
 const TRAIT_DOMESTICATED := "domesticated"
 
@@ -100,10 +104,25 @@ static func _enrich_list(quotes_variant: Variant, by_key: Dictionary) -> void:
 		quote[KEY_UNLOCK] = String(rung.get(KEY_UNLOCK, ""))
 		quote[KEY_REQUIRES_RUNG] = String(rung.get(KEY_REQUIRES_RUNG, ""))
 		quote[KEY_EARNS] = String(rung.get(KEY_EARNS, ""))
+		quote[KEY_REQUIRES_HELD_BELOW] = bool(rung.get(KEY_REQUIRES_HELD_BELOW, false))
+		quote[KEY_REQUIRES_CROP] = bool(rung.get(KEY_REQUIRES_CROP, false))
+		quote[KEY_PLACES_SOURCE] = bool(rung.get(KEY_PLACES_SOURCE, false))
 		quote[KEY_LABEL] = String(rung.get(KEY_LABEL, ""))
 		quote[KEY_LABEL_FALLBACK] = String(rung.get(KEY_LABEL_FALLBACK, ""))
 
 # ---- READERS ---------------------------------------------------------------------------------------
+
+## Does this rung want the rung below it HELD first? The catalog's `requires_held_rung_below`.
+static func requires_held_below(quote: Dictionary) -> bool:
+	return bool(quote.get(KEY_REQUIRES_HELD_BELOW, false))
+
+## Does climbing to this rung commit a crop? The catalog's `requires_crop`.
+static func requires_crop(quote: Dictionary) -> bool:
+	return bool(quote.get(KEY_REQUIRES_CROP, false))
+
+## Does climbing to this rung place a source (a sown field)? The catalog's `places_source`.
+static func places_source(quote: Dictionary) -> bool:
+	return bool(quote.get(KEY_PLACES_SOURCE, false))
 
 ## The source's quotes in climb order. `prefix` spells the key, so a `patch_`-prefixed `tile_info`
 ## cross-ref and a bare wire row read alike.

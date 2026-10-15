@@ -1142,6 +1142,11 @@ fn create_ladder_rungs<'a>(
                 recoveryFraction: state.recovery_fraction,
                 regrowthMultiplier: state.regrowth_multiplier,
                 minDepositCapacity: state.min_deposit_capacity,
+                requiresHeldRungBelow: state.requires_held_rung_below,
+                requiresCrop: state.requires_crop,
+                requiresWorkRoom: state.requires_work_room,
+                requiresOwnership: state.requires_ownership,
+                placesSource: state.places_source,
             },
         ));
     }
@@ -1723,6 +1728,11 @@ fn decode_ladder_rung(state: fb::LadderRungState<'_>) -> LadderRungState {
         recovery_fraction: state.recoveryFraction(),
         regrowth_multiplier: state.regrowthMultiplier(),
         min_deposit_capacity: state.minDepositCapacity(),
+        requires_held_rung_below: state.requiresHeldRungBelow(),
+        requires_crop: state.requiresCrop(),
+        requires_work_room: state.requiresWorkRoom(),
+        requires_ownership: state.requiresOwnership(),
+        places_source: state.placesSource(),
     }
 }
 

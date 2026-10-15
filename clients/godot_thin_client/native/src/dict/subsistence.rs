@@ -1362,6 +1362,12 @@ pub(crate) fn ladder_rungs_to_array(
         let _ = dict.insert("recovery_fraction", f64::from(rung.recoveryFraction()));
         let _ = dict.insert("regrowth_multiplier", f64::from(rung.regrowthMultiplier()));
         let _ = dict.insert("min_deposit_capacity", f64::from(rung.minDepositCapacity()));
+        // The rung's gate properties, straight from the ladder config.
+        let _ = dict.insert("requires_held_rung_below", rung.requiresHeldRungBelow());
+        let _ = dict.insert("requires_crop", rung.requiresCrop());
+        let _ = dict.insert("requires_work_room", rung.requiresWorkRoom());
+        let _ = dict.insert("requires_ownership", rung.requiresOwnership());
+        let _ = dict.insert("places_source", rung.placesSource());
         array.push(&dict.to_variant());
     }
     array

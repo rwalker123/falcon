@@ -5765,8 +5765,7 @@ func _open_crop_step(band: Dictionary, model: Dictionary, source: Dictionary, ru
         # source's position, the faction's knowledge and whatever entry is queued all move per
         # snapshot, and a step left up across one of those would offer a rung already climbed.
         func() -> void: _open_rung_track(band, model, anchor),
-        RungQuotes.has_trait(RungQuotes.quote_of_verb(source, HudComposeVocab.BARE_FORECAST_PREFIX, rung),
-            RungQuotes.TRAIT_SOWN)))
+        RungQuotes.places_source(RungQuotes.quote_of_verb(source, HudComposeVocab.BARE_FORECAST_PREFIX, rung))))
     track.popup(_rung_track_anchor_rect(anchor))
 
 ## **THE RING'S PRICE CARD, OPENED FROM THE STANDING-RUNG MARK** (`docs/plan_standing_upkeep.md` §4.9

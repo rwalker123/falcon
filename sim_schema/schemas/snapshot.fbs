@@ -5293,6 +5293,20 @@ table LadderRungState {
   // `site_requirement.min_deposit_capacity`; 0 where it asks nothing of the ground. Published so a
   // client can say WHY a rung is refused.
   minDepositCapacity:float = 0;
+  // --- THE RUNG'S GATE PROPERTIES (appended last), straight from the ladder config -----------------
+  // What a source must satisfy for this rung to be built on it, so a client reads the gate off the
+  // catalog instead of guessing it from the rung's id or position.
+  //   requiresHeldRungBelow = the rung directly beneath must already be HELD (a pen needs the herd
+  //                           tamed first); false = the rung may be started from any standing.
+  //   requiresCrop          = a plant rung needs a crop committed to the patch.
+  //   requiresWorkRoom      = the stock must leave room to be worked (the escapement floor).
+  //   requiresOwnership     = the source must be this people's (or unowned).
+  //   placesSource          = the rung PLACES a source on bare ground rather than upgrading one.
+  requiresHeldRungBelow:bool = false;
+  requiresCrop:bool = false;
+  requiresWorkRoom:bool = false;
+  requiresOwnership:bool = false;
+  placesSource:bool = false;
 }
 
 // ONE BRANCH OF THE LADDER, AS THE CONFIG DECLARES IT - once per world, beside `LadderRungState`.

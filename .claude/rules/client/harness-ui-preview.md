@@ -3841,8 +3841,8 @@ Appended LAST in `CHAPTERS`, so no existing frame moves; it hands the reference 
 ## `chapters/fourth_rung.gd` -- a step the shipped ladder lacks (issue #175)
 
 Appended LAST in `CHAPTERS`, so no earlier frame moves. Four frames (`fourth_rung_farm_offered`,
-`fourth_rung_farm_part_built`, `fourth_rung_farm_locked`, `fourth_rung_ranch_offered`) and ten claims
-(`EXPECTED_CHECKPOINTS` 14, RE-MEASURED by a run). It pushes `RungFx.ladder_rungs(true)`, the
+`fourth_rung_farm_part_built`, `fourth_rung_farm_locked`, `fourth_rung_ranch_offered`) and twelve claims
+(`EXPECTED_CHECKPOINTS` 16, RE-MEASURED by a run). It pushes `RungFx.ladder_rungs(true)`, the
 fixture catalog with `plant:farm` (verb `farm`, above the Field) and `animal:ranch` (verb `ranch`,
 above the Pen), then stands a Field and a Pen beneath them. Nothing in `src/` names either step, so
 every claim is evidence the generic `rung_quotes` path works: the `farm` control is OFFERED beside a
@@ -3851,6 +3851,11 @@ part-built Farm draws its own tile-card row while an unstarted one draws none, a
 knowledge unlearned no live control is offered (the sheet's teaching line names the catalog's
 `unlock_knowledge`). The `ranch` control is offered over a penned herd, which is `enclosed` by the
 catalog's trait.
+
+The fixture catalog states the five gate bools per rung from `intensification_ladder.json`, and gives
+`farm` and `ranch` `requires_held_rung_below`. A patch holding only Tended is asserted NOT offered
+Farm, and `RungGates.source_gates` is asserted to carry a gate for it. The unknown verbs wear
+`FoodIcons.GENERIC_POLICY` (a plain mark) rather than no glyph.
 
 The fixtures author the extra steps through `RungFx`'s `extra_step` keys (`farm_*` on a patch,
 `ranch_*` on a herd, `can_farm` on a composition entry). The chapter hands the shipped catalog back.

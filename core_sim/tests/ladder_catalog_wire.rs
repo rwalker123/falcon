@@ -128,6 +128,51 @@ fn a_rung_carries_only_the_payoff_block_its_kind_declares() {
     );
 }
 
+/// **A RUNG'S GATE PROPERTIES RIDE THE CATALOG AS THE CONFIG DECLARES THEM**, so a client reads
+/// `requiresHeldRungBelow` / `requiresCrop` / `requiresWorkRoom` / `requiresOwnership` /
+/// `placesSource` off the row instead of guessing them from an id. Every row matches its record, and
+/// each flag is set on at least one shipped rung and clear on at least one other - a catalog that
+/// published a constant would pass either half alone.
+#[test]
+fn a_rung_publishes_its_gate_properties_as_configured() {
+    let app = a_world_with_a_catalog();
+    let ladder = app.world.resource::<LadderConfigHandle>().get();
+    let bytes = encoded(&app);
+    let envelope = fb::root_as_envelope(bytes.as_ref()).expect("a valid envelope");
+    let rows = envelope
+        .payload_as_snapshot()
+        .expect("a snapshot")
+        .subsistence()
+        .and_then(|section| section.ladderRungs())
+        .expect("the rung catalog is published");
+    // [set somewhere, clear somewhere] per flag, in the order the flags are asserted below.
+    let mut seen = [[false; 2]; 5];
+    for row in rows.iter() {
+        let rung = ladder
+            .rungs
+            .iter()
+            .find(|rung| Some(rung.wire_key().as_str()) == row.rungKey())
+            .expect("every published row names a config rung");
+        let published = [
+            (row.requiresHeldRungBelow(), rung.requires_held_rung_below),
+            (row.requiresCrop(), rung.requires_crop),
+            (row.requiresWorkRoom(), rung.requires_work_room),
+            (row.requiresOwnership(), rung.requires_ownership),
+            (row.placesSource(), rung.places_source),
+        ];
+        for (flag, (wire, configured)) in published.into_iter().enumerate() {
+            assert_eq!(wire, configured, "{} flag {flag}", rung.wire_key());
+            seen[flag][usize::from(!configured)] = true;
+        }
+    }
+    for (flag, both) in seen.iter().enumerate() {
+        assert!(
+            both[0] && both[1],
+            "flag {flag} must be set on one shipped rung and clear on another"
+        );
+    }
+}
+
 /// **THE BRANCHES ARE PUBLISHED IN THE CATALOG'S OWN ORDER** with their area, kind and heading.
 #[test]
 fn the_branches_are_published_beside_the_rungs() {

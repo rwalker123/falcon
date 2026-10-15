@@ -1304,7 +1304,10 @@ static func crop_choices(source: Dictionary, prefix: String,
         return rows
     # A `sown` rung plants a crop and is PRICED per crop; any other plant rung weeds toward a plant
     # already standing and carries no per-crop work figure.
-    var sown := RungQuotes.has_trait(rung_quote, RungQuotes.TRAIT_SOWN)
+    # A rung that commits no crop has nothing to choose between.
+    if not RungQuotes.requires_crop(rung_quote):
+        return rows
+    var sown := RungQuotes.places_source(rung_quote)
     for entry in SourceForecast.flora_basket_entries(
             source.get(prefix + CROP_COMPOSITION_KEY, [])):
         var entry_quote := RungQuotes.entry_quote(entry, improvement)
@@ -1560,8 +1563,7 @@ static func _rung_name(improvement: String, source: Dictionary = {}, prefix: Str
 ## mark, the map badge and the compose sheet cannot disagree about what is climbable.
 static func _gates(kind: String, source: Dictionary, prefix: String,
         knowledge: Dictionary) -> Dictionary:
-    return RungGates.source_gates(source, prefix, knowledge,
-        kind == SourceForecast.LABOR_KIND_HUNT)
+    return RungGates.source_gates(source, prefix, knowledge)
 
 ## **EVERY REASON THIS RUNG IS REFUSED — `[]` when it is not.** Two kinds, and the ORDER is the point:
 ## an OUTRIGHT bar comes first, because *no aurochs will ever be penned* supersedes *your people know

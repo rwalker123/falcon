@@ -14,7 +14,7 @@ extends RefCounted
 ## step by the catalog's own label.
 
 ## The checkpoints this chapter owes the walk -- assertions made plus frames saved, as a FLOOR.
-const EXPECTED_CHECKPOINTS := 14
+const EXPECTED_CHECKPOINTS := 16
 
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 const ForageFx := preload("res://tools/ui_preview/fixtures_forage.gd")
@@ -118,6 +118,25 @@ func _farm_states() -> void:
 			!= HudWidgets.IMPROVEMENT_STATE_OFFERED)
 	h._hud._drawercompose.close_compose_sheet()
 	_knowledge(KNOWN, KNOWN)
+
+	# The catalog's `requires_held_rung_below` on Farm: a patch holding only Tended is not offered it,
+	# and the gate names the rung it waits on (the Field), whatever branch the step is on.
+	var tended_only := _field_tile(0.0)
+	tended_only["patch_is_field"] = false
+	tended_only["patch_field_progress"] = 0.0
+	RungFx.stamp_patch(tended_only, HudComposeVocab.FORAGE_FORECAST_PREFIX)
+	h._hud._compose.reset_forage_source()
+	h._show_tile(tended_only)
+	h._compose_forage(tended_only)
+	await h._settle()
+	h._assert_hud("a patch holding only Tended is NOT offered Farm",
+		ForageFx.improvement_state(h._hud._drawercompose._compose_sheet, FARM_VERB)
+			!= HudWidgets.IMPROVEMENT_STATE_OFFERED)
+	var gates := RungGates.source_gates(tended_only, HudComposeVocab.FORAGE_FORECAST_PREFIX,
+		{"cultivation": KNOWN, "seed_selection": KNOWN, KNOWLEDGE_AGRONOMY: KNOWN})
+	h._assert_hud("…and the step's own gate says the rung below is not held (%s)" % str(gates),
+		gates.has(FARM_VERB))
+	h._hud._drawercompose.close_compose_sheet()
 
 func _ranch_states() -> void:
 	_knowledge(KNOWN, KNOWN)

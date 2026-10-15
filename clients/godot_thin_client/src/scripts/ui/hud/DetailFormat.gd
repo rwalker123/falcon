@@ -1608,7 +1608,7 @@ static func rung_built_label(improvement: String, src: Dictionary = {},
     return "%s %s" % [GENERIC_RUNG_GLYPH, rung_badge_word(improvement, src, prefix)]
 
 ## The mark a rung with no hand-written badge wears.
-const GENERIC_RUNG_GLYPH := "▪"
+const GENERIC_RUNG_GLYPH := FoodIcons.GENERIC_POLICY
 
 ## **THE FACE OF THE RUNG A SOURCE STANDS ON — `▦ Field 100%`, `🐄 Corralled 100%`, and the hazard
 ## states with them** (`docs/plan_standing_upkeep.md` §4.9 item 12c). `""` on a source standing on its

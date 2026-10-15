@@ -97,6 +97,8 @@ static func for_floor_zone(zone: String) -> String:
 ## the turn orb's `starving_pen` attention row (an unfed pen is a corral problem, so it wears the
 ## corral glyph). The picker/map look policies up by their snapshot string; the orb has no policy in
 ## hand, so it needs the constant.
+## The mark a policy or rung verb with no entry in `POLICY_ICONS` wears.
+const GENERIC_POLICY := "▪"
 const POLICY_CORRAL := "corral"
 # The four INVESTMENT rungs, one per rung-transition of the two ladders
 # (docs/plan_intensification_ladder.md §2a):
@@ -136,7 +138,11 @@ const POLICY_ICONS := {
 
 ## Icon for an improvement verb ("" for an unknown/absent one, so callers render bare text).
 static func for_policy(policy: String) -> String:
-	return String(POLICY_ICONS.get(policy.strip_edges().to_lower(), ""))
+	var key := policy.strip_edges().to_lower()
+	if key == "":
+		return ""
+	# A verb the table does not know (a step the config added) wears the generic mark rather than none.
+	return String(POLICY_ICONS.get(key, GENERIC_POLICY))
 
 # ---- WHAT A WORKING TAKES OUT OF THE GROUND — the MATERIAL marks --------------------------------
 # The map's THIRD secondary-marker family (issue #650). A working that is BEING CUT wears a marker on

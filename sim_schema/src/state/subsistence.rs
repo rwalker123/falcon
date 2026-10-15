@@ -2236,6 +2236,16 @@ pub struct LadderRungState {
     /// Deposit site rule: the capacity the ground must hold for the rung to be placed there.
     #[serde(default)]
     pub min_deposit_capacity: f32,
+    /// The rung directly beneath must already be held (`requires_held_rung_below`).
+    pub requires_held_rung_below: bool,
+    /// A plant rung needs a crop committed to the patch (`requires_crop`).
+    pub requires_crop: bool,
+    /// The stock must leave room to be worked (`requires_work_room`).
+    pub requires_work_room: bool,
+    /// The source must be this people's or unowned (`requires_ownership`).
+    pub requires_ownership: bool,
+    /// The rung places a source on bare ground rather than upgrading one (`places_source`).
+    pub places_source: bool,
 }
 
 /// The wire's own default for [`LadderRungState::friction_multiplier`]: no help.
@@ -2281,6 +2291,11 @@ impl Default for LadderRungState {
             recovery_fraction: 0.0,
             regrowth_multiplier: DEPOSIT_RUNG_REGROWTH_UNCHANGED,
             min_deposit_capacity: 0.0,
+            requires_held_rung_below: false,
+            requires_crop: false,
+            requires_work_room: false,
+            requires_ownership: false,
+            places_source: false,
         }
     }
 }

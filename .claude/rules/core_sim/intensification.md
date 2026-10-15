@@ -2529,7 +2529,9 @@ config's order and climbing within it; `ladderBranches` is each branch's `area`,
 heading. Both are derived from `intensification_ladder.json` and nothing else, per-world constants
 diffed whole like `kits`. A row carries identity (`rungKey`, `branch`, `order`, `displayName`,
 `label`, `labelFallback`), the verb, the `sourceKind`, the `traits`, the knowledge gate and remedy,
-the chain (`requiresRung`), the unscaled price (`workCost`, `upkeepWorkPerTurn`, the flat build pile
+the chain (`requiresRung`), the rung's gate properties straight from its record
+(`requiresHeldRungBelow`, `requiresCrop`, `requiresWorkRoom`, `requiresOwnership`, `placesSource`;
+native keys the snake_case twins), the unscaled price (`workCost`, `upkeepWorkPerTurn`, the flat build pile
 and its material), the sim's bare work rate, and the payoff blocks for the kinds that have one (a
 road's `frictionMultiplier` / `holdsLinkToTiles` / `grantsSight`; a deposit's `yieldPerWorkerTurn` /
 `recoveryFraction` / `regrowthMultiplier` / `minDepositCapacity`) at the wire's neutral value

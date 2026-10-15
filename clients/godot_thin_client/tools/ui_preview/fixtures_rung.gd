@@ -48,28 +48,35 @@ static func ladder_rungs(with_extra_steps: bool = false) -> Array:
 	var rows: Array = [
 		_rung(KEY_WILD_PLANT, "plant", 1, "", [], "", "cultivation", "", "Wild ground", "patch"),
 		_rung(KEY_TENDED, "plant", 2, "cultivate", ["managed"], "cultivation", "seed_selection",
-			KEY_WILD_PLANT, "Tended patch", "patch"),
+			KEY_WILD_PLANT, "Tended patch", "patch", ["requires_work_room", "requires_crop", "requires_ownership"]),
 		_rung(KEY_FIELD, "plant", 3, "sow", ["managed", "sown"], "seed_selection", "",
-			KEY_TENDED, "Field", "patch"),
+			KEY_TENDED, "Field", "patch", ["requires_crop", "requires_ownership", "places_source"]),
 		_rung(KEY_WILD_ANIMAL, "animal", 1, "", [], "", "herding", "", "Wild herd", "herd"),
 		_rung(KEY_PASTORAL, "animal", 2, "tame", ["managed", "domesticated"], "herding", "penning",
-			KEY_WILD_ANIMAL, "Tamed herd", "herd"),
+			KEY_WILD_ANIMAL, "Tamed herd", "herd", ["requires_work_room", "requires_ownership"]),
 		_rung(KEY_PEN, "animal", 3, "corral", ["managed", "domesticated", "enclosed"], "penning",
-			"foddering", KEY_PASTORAL, "Pen", "herd"),
+			"foddering", KEY_PASTORAL, "Pen", "herd", ["requires_held_rung_below", "requires_ownership"]),
 	]
 	if with_extra_steps:
 		rows.append(_rung(KEY_FARM, "plant", 4, "farm", ["managed", "sown"], "agronomy", "",
-			KEY_FIELD, "Farm", "patch"))
+			KEY_FIELD, "Farm", "patch", ["requires_held_rung_below", "requires_crop", "requires_ownership", "places_source"]))
 		rows.append(_rung(KEY_RANCH, "animal", 4, "ranch", ["managed", "domesticated", "enclosed"],
-			"ranching", "", KEY_PEN, "Ranch", "herd"))
+			"ranching", "", KEY_PEN, "Ranch", "herd", ["requires_held_rung_below", "requires_ownership"]))
 	return rows
 
 static func _rung(key: String, branch: String, order: int, verb: String, traits: Array,
-		unlock: String, earns: String, requires: String, label: String, source_kind: String) -> Dictionary:
-	return {"rung_key": key, "branch": branch, "order": order, "verb": verb, "traits": traits,
+		unlock: String, earns: String, requires: String, label: String, source_kind: String,
+		gates: Array = []) -> Dictionary:
+	var flags := {}
+	for flag in ["requires_held_rung_below", "requires_crop", "requires_work_room",
+			"requires_ownership", "places_source"]:
+		flags[flag] = gates.has(flag)
+	var row := {"rung_key": key, "branch": branch, "order": order, "verb": verb, "traits": traits,
 		"unlock_knowledge": unlock, "earns_knowledge": earns, "requires_rung": requires,
 		"label": label, "label_fallback": label.to_lower(), "display_name": label,
 		"source_kind": source_kind}
+	row.merge(flags)
+	return row
 
 # ---- the standing rung ----------------------------------------------------------------------------
 
