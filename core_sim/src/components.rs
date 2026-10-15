@@ -2152,13 +2152,23 @@ pub struct BandName(pub String);
 /// Which of the two a shipment is does not depend on this enum alone: [`Self::Gift`] to another
 /// people is pending too, and the standing answer is what [`crate::dealings::standing_answer_covers`]
 /// reads.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub enum ShipmentTerms {
     /// Asks nothing back. The default — the shipment verb's behaviour before offers existed.
     #[default]
     Gift,
     /// Always pending: the receiver names the return, or refuses.
     Offer,
+    /// **Both legs were agreed before the party left** (stage 4, `docs/plan_early_diplomacy.md` §1):
+    /// the cargo is the sender's agreed give and `agreed_return` is what the receiver pays. It is
+    /// never pending — the exchange settles the turn the party arrives
+    /// (`systems::expeditions`' `Arrived` arm), or fails there if the receiver no longer holds the
+    /// return. Set at launch, by an accepted proposal or counter.
+    Agreed {
+        agreed_return: crate::dealings::GoodsLines,
+        /// The proposal or counter this trade came from — the id its settlement's feed lines name.
+        dealing: crate::dealings::DealingId,
+    },
     /// **The receiver accepted, and what the party carries now is the receiver's return.** Set by
     /// the answer, never at launch. It exists so the fold-back books the cargo as the exchange's
     /// return ([`TransferCause::ExchangeIn`]) rather than as a shipment that never arrived
@@ -2357,9 +2367,9 @@ impl ExpeditionMission {
 
     /// **What a shipment is on offer as**, for the one mission that carries goods to another band
     /// — `None` for every other verb.
-    pub fn shipment_terms(&self) -> Option<ShipmentTerms> {
+    pub fn shipment_terms(&self) -> Option<&ShipmentTerms> {
         match self {
-            ExpeditionMission::Trade { terms, .. } => Some(*terms),
+            ExpeditionMission::Trade { terms, .. } => Some(terms),
             _ => None,
         }
     }
@@ -2732,6 +2742,113 @@ pub struct Expedition {
     /// the sender's own people or the party sees it. `None` for every other verb. Rides the
     /// checkpoint with the rest of the `Expedition`.
     pub aim: Option<UVec2>,
+    /// **A scout's pack and what it is to do with it** — stage 1 of early diplomacy
+    /// (`docs/plan_early_diplomacy.md` §1). Inert (the default) for every party that carries no
+    /// pack order. Rides the checkpoint with the rest of the `Expedition`.
+    pub scout_pack: ScoutPack,
+}
+
+/// **The standing order a scouting party holds for the first stranger it sights** — `keep` (the
+/// default) leaves its pack alone; `give` and `offer` hand the pack to that stranger.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum StrangersOrder {
+    /// Carry the pack, hand it to nobody. The default.
+    #[default]
+    Keep,
+    /// Hand the pack over as a gift: the receiver may accept it as it stands.
+    Give,
+    /// Hand the pack over as an offer: the receiver names a return from its own holdings, or refuses.
+    Offer,
+}
+
+impl StrangersOrder {
+    /// The wire / command word.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            StrangersOrder::Keep => "keep",
+            StrangersOrder::Give => "give",
+            StrangersOrder::Offer => "offer",
+        }
+    }
+
+    /// The order a command word names (`keep`, `give`, `offer`).
+    pub fn parse(word: &str) -> Option<Self> {
+        [
+            StrangersOrder::Keep,
+            StrangersOrder::Give,
+            StrangersOrder::Offer,
+        ]
+        .into_iter()
+        .find(|order| order.as_str() == word)
+    }
+}
+
+/// **A scouting party's pack order and the state of its one handover.** The pack itself is
+/// [`Expedition::cargo`]; this is the order, the stranger it picked and the way back to the scouting
+/// the party interrupted.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct ScoutPack {
+    /// What to do with the pack when a stranger turns up.
+    pub order: StrangersOrder,
+    /// **The stranger the party has turned toward** — set when the first one is sighted while the
+    /// order is live, cleared when the handover posts, or when the stranger is lost before arrival
+    /// (the order is then NOT spent).
+    pub target: Option<BandId>,
+    /// **The scouting destination the party was walking to when it turned** (or the tile it stood on
+    /// while waiting), recorded so it can resume. Consumed by the `Outbound` arm.
+    pub resume: Option<UVec2>,
+    /// **The one handover has been made.** Set when the pending dealing posts; the order is spent
+    /// whether the receiver accepts, refuses or lets it lapse.
+    pub spent: bool,
+    /// **The receiving band of the handover**, with its people — the counterparty a return that
+    /// comes home books against.
+    pub handover: Option<TransferCounterparty>,
+    /// **The cargo aboard now is the receiver's return**, so the fold-back books it
+    /// [`TransferCause::ExchangeIn`] rather than [`TransferCause::ShipmentReturned`].
+    pub returned: bool,
+}
+
+impl ScoutPack {
+    /// **Is the order live** — a handover is wanted, has not been made, and has not yet picked a
+    /// stranger.
+    pub fn is_seeking(&self) -> bool {
+        self.order != StrangersOrder::Keep && !self.spent && self.target.is_none()
+    }
+}
+
+impl Expedition {
+    /// **The cause the cargo books under when it comes home** — a return the receiver paid
+    /// ([`TransferCause::ExchangeIn`]) or goods that never landed
+    /// ([`TransferCause::ShipmentReturned`]). The one place the two are told apart for a party of
+    /// any mission, so the fold-back's two sites cannot disagree.
+    pub fn returning_cargo_cause(&self) -> TransferCause {
+        if self.scout_pack.returned {
+            TransferCause::ExchangeIn
+        } else {
+            self.mission.returning_cargo_cause()
+        }
+    }
+
+    /// **Who the cargo coming home is booked against** — the receiver that paid a scout's return,
+    /// else the shipment's consignee.
+    pub fn cargo_counterparty(&self) -> Option<TransferCounterparty> {
+        if self.scout_pack.returned {
+            self.scout_pack.handover
+        } else {
+            self.mission.consignee()
+        }
+    }
+
+    /// **Where a party goes when its pending dealing is over** (accepted, refused or lapsed): a
+    /// shipment turns for home; a scout picks its scouting back up — `Outbound`, with the resume
+    /// tile still recorded for the `Outbound` arm to walk to.
+    pub fn after_dealing(&mut self) {
+        self.phase = if matches!(self.mission, ExpeditionMission::Scout) {
+            ExpeditionPhase::Outbound
+        } else {
+            ExpeditionPhase::Returning
+        };
+    }
 }
 
 /// Permanent settlement seeded by a founding action.

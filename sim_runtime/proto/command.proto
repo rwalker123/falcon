@@ -94,14 +94,44 @@ enum DealingAnswerKind {
   DEALING_ANSWER_KIND_UNSPECIFIED = 0;
   DEALING_ANSWER_KIND_ACCEPT = 1;
   DEALING_ANSWER_KIND_REFUSE = 2;
+  // COUNTER (a proposal or a counter only): answer with different legs, stated from the ORIGINAL
+  // SENDER's point of view - `give` is what it would send, `ask` what it gets back - so accept always
+  // means the same thing. Closes the dealing and posts a new one the other way.
+  DEALING_ANSWER_KIND_COUNTER = 3;
 }
 
 message AnswerDealingCommand {
   uint32 faction = 1;
   uint64 dealing_id = 2;
   DealingAnswerKind answer = 3;
-  // The goods the receiver pays back; meaningful on ACCEPT only.
+  // The goods the receiver pays back; meaningful on ACCEPT of an OFFER only (a proposal's terms are
+  // already written).
   repeated TradeCargoItem returned = 4;
+  // The counter's legs, from the original sender's point of view; meaningful on COUNTER only.
+  repeated TradeCargoItem give = 5;
+  repeated TradeCargoItem ask = 6;
+}
+
+// STAGE 4 (docs/plan_early_diplomacy.md section 1): haggle over a STANDING LINK - a kept road on every
+// tile between two bands. Names both legs before any party walks: `give` is what this band sends,
+// `ask` what it wants back. Posts a pending `proposal` addressed to the destination's people the turn
+// it is made. Fails closed (no standing link, no live tie, goods not held, give over the party's
+// carry) and draws nothing.
+message ProposeTradeCommand {
+  uint32 faction_id = 1;
+  optional uint64 band_id = 2;
+  uint32 party_workers = 3;
+  uint64 destination_band_id = 4;
+  repeated TradeCargoItem give = 5;
+  repeated TradeCargoItem ask = 6;
+}
+
+// What a scouting party does with its pack when it sights a stranger.
+enum StrangersOrderKind {
+  STRANGERS_ORDER_KIND_UNSPECIFIED = 0;
+  STRANGERS_ORDER_KIND_KEEP = 1;
+  STRANGERS_ORDER_KIND_GIVE = 2;
+  STRANGERS_ORDER_KIND_OFFER = 3;
 }
 
 message AdjustCounterIntelBudgetCommand {
@@ -475,6 +505,14 @@ message SendExpeditionCommand {
   // the stands it gathers from and the game it meets. An unknown id, or one whose `jobs` does not
   // include `expedition`, is a command failure with a reason. Appended (append-only).
   optional string kit_id = 6;
+  // THE SCOUT'S PACK (docs/plan_early_diplomacy.md section 1, stage 1): goods the party carries, the
+  // same manifest a shipment takes, bounded by the party's carry and drawn from the band at launch.
+  // Appended (append-only).
+  repeated TradeCargoItem pack = 7;
+  // THE STANDING ORDER FOR STRANGERS: GIVE hands the pack to the first stranger (a band of another
+  // people the party sights and its home band holds no live tie with) as a gift, OFFER as an offer the
+  // receiver answers by naming a return. KEEP (the default; also UNSPECIFIED) carries it home.
+  StrangersOrderKind strangers = 8;
 }
 
 // Order an in-flight expedition home (phase -> Returning; folds back on arrival).
@@ -1776,5 +1814,7 @@ message CommandEnvelope {
     // (append-only; never renumber).
     SetAcceptOwnGiftsCommand set_accept_own_gifts = 85;
     AnswerDealingCommand answer_dealing = 86;
+    // 86 is held by `answer_dealing`, so the stage-4 proposal takes 87 (append-only; never renumber).
+    ProposeTradeCommand propose_trade = 87;
   }
 }

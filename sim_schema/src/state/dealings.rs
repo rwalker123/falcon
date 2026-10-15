@@ -24,7 +24,7 @@ pub struct DealingGoodsState {
 pub struct DealingState {
     /// Monotonic, never reused; the key `answer_dealing` addresses it by.
     pub id: u64,
-    /// `"offer"` today. Later kinds are new tokens.
+    /// `"offer"`, `"proposal"` or `"counter"`.
     pub kind: String,
     pub sender_faction: u32,
     /// The band that sent it (the party's home band) — a durable id a client swaps its own label in
@@ -40,4 +40,10 @@ pub struct DealingState {
     /// How many resolves it stays open for, counting the next one: `1` = answer this turn or
     /// silence refuses it.
     pub turns_left: u32,
+    /// **Stage 4 (`proposal` / `counter`):** the band whose party will walk — the original proposer,
+    /// whichever end is speaking. `0` on an offer. `goods_sent` is then what it SENDS and
+    /// `goods_asked` what it asks BACK, from the shipper's point of view, as unrated lines.
+    pub shipper_band: u64,
+    /// How many workers the shipper's party carries. `0` on an offer.
+    pub party_workers: u32,
 }

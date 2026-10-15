@@ -68,13 +68,22 @@ pub enum CommandPayload {
         accept: bool,
     },
     /// **Answer a pending dealing** — accept (paying `returned` from the receiving band, empty
-    /// allowed) or refuse. Only the receiving people may answer. Proto field 86.
+    /// allowed), refuse, or counter. Only the receiving people may answer. Proto field 86.
     AnswerDealing {
         faction: u32,
         dealing_id: u64,
-        accept: bool,
-        /// The goods the receiver pays back; meaningful on an accept only.
-        returned: Vec<TradeCargoItem>,
+        reply: DealingReply,
+    },
+    /// **Propose a trade over a standing link** (`docs/plan_early_diplomacy.md` §1, stage 4): name
+    /// what this band sends and what it asks back, before any party walks. Proto field 87.
+    ProposeTrade {
+        faction_id: u32,
+        band_id: Option<u64>,
+        party_workers: u32,
+        /// The destination's `BandId` — a durable id, never an entity.
+        destination_band_id: u64,
+        give: Vec<TradeCargoItem>,
+        ask: Vec<TradeCargoItem>,
     },
     AdjustCounterIntelBudget {
         faction: u32,
@@ -546,6 +555,11 @@ pub enum CommandPayload {
         /// an unknown id, or one whose `jobs` does not include `expedition`, fails the command with
         /// a reason. Same rule as [`Self::SendDenialRaid::kit_id`].
         kit_id: Option<String>,
+        /// **The scout's pack** (`docs/plan_early_diplomacy.md` §1, stage 1): goods drawn from the
+        /// band at launch, bounded by the party's carry. Empty carries nothing.
+        pack: Vec<TradeCargoItem>,
+        /// What the party does with the pack when it sights a stranger. `Keep` is the default.
+        strangers: StrangersKind,
     },
     RecallExpedition {
         faction_id: u32,
@@ -1279,6 +1293,55 @@ pub mod query_error {
     pub const NOT_YOUR_SEAT: &str = "not_your_seat";
 }
 
+/// **How a receiver answers a pending dealing** (`answer_dealing`): accept, refuse, or counter.
+#[derive(Debug, Clone, PartialEq)]
+pub enum DealingReply {
+    /// Take the cargo and pay `returned` back from the receiving band (empty allowed). On a proposal
+    /// or a counter the terms are already written and `returned` must be empty.
+    Accept {
+        returned: Vec<TradeCargoItem>,
+    },
+    Refuse,
+    /// Answer a proposal or a counter with different legs, stated from the ORIGINAL SENDER's point of
+    /// view: `give` is what it would send, `ask` what it gets back.
+    Counter {
+        give: Vec<TradeCargoItem>,
+        ask: Vec<TradeCargoItem>,
+    },
+}
+
+/// **What a scouting party does with its pack when it sights a stranger** (`send_expedition`'s
+/// `strangers`). `Keep` — the default — carries it home.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum StrangersKind {
+    #[default]
+    Keep,
+    Give,
+    Offer,
+}
+
+fn cargo_to_proto(items: &[TradeCargoItem]) -> Vec<pb::TradeCargoItem> {
+    items
+        .iter()
+        .map(|item| pb::TradeCargoItem {
+            id: item.id.clone(),
+            is_material: item.is_material,
+            amount: item.amount,
+        })
+        .collect()
+}
+
+fn cargo_from_proto(items: Vec<pb::TradeCargoItem>) -> Vec<TradeCargoItem> {
+    items
+        .into_iter()
+        .map(|item| TradeCargoItem {
+            id: item.id,
+            is_material: item.is_material,
+            amount: item.amount,
+        })
+        .collect()
+}
+
 /// **The FOOD commodity key a shipment's food line names** — the same string `core_sim`'s
 /// `components::FOOD` is, restated here because `sim_runtime` deliberately does not depend on the
 /// sim.
@@ -1782,24 +1845,51 @@ impl CommandEnvelope {
             CommandPayload::AnswerDealing {
                 faction,
                 dealing_id,
-                accept,
-                returned,
-            } => pb::command_envelope::Command::AnswerDealing(pb::AnswerDealingCommand {
-                faction: *faction,
-                dealing_id: *dealing_id,
-                answer: if *accept {
-                    pb::DealingAnswerKind::Accept
-                } else {
-                    pb::DealingAnswerKind::Refuse
-                } as i32,
-                returned: returned
-                    .iter()
-                    .map(|item| pb::TradeCargoItem {
-                        id: item.id.clone(),
-                        is_material: item.is_material,
-                        amount: item.amount,
-                    })
-                    .collect(),
+                reply,
+            } => {
+                let (answer, returned, give, ask) = match reply {
+                    DealingReply::Accept { returned } => (
+                        pb::DealingAnswerKind::Accept,
+                        cargo_to_proto(returned),
+                        Vec::new(),
+                        Vec::new(),
+                    ),
+                    DealingReply::Refuse => (
+                        pb::DealingAnswerKind::Refuse,
+                        Vec::new(),
+                        Vec::new(),
+                        Vec::new(),
+                    ),
+                    DealingReply::Counter { give, ask } => (
+                        pb::DealingAnswerKind::Counter,
+                        Vec::new(),
+                        cargo_to_proto(give),
+                        cargo_to_proto(ask),
+                    ),
+                };
+                pb::command_envelope::Command::AnswerDealing(pb::AnswerDealingCommand {
+                    faction: *faction,
+                    dealing_id: *dealing_id,
+                    answer: answer as i32,
+                    returned,
+                    give,
+                    ask,
+                })
+            }
+            CommandPayload::ProposeTrade {
+                faction_id,
+                band_id,
+                party_workers,
+                destination_band_id,
+                give,
+                ask,
+            } => pb::command_envelope::Command::ProposeTrade(pb::ProposeTradeCommand {
+                faction_id: *faction_id,
+                band_id: *band_id,
+                party_workers: *party_workers,
+                destination_band_id: *destination_band_id,
+                give: cargo_to_proto(give),
+                ask: cargo_to_proto(ask),
             }),
             CommandPayload::AdjustCounterIntelBudget {
                 faction,
@@ -2240,6 +2330,8 @@ impl CommandEnvelope {
                 target_x,
                 target_y,
                 kit_id,
+                pack,
+                strangers,
             } => pb::command_envelope::Command::SendExpedition(pb::SendExpeditionCommand {
                 faction_id: *faction_id,
                 band_id: *band_id,
@@ -2247,6 +2339,12 @@ impl CommandEnvelope {
                 target_x: *target_x,
                 target_y: *target_y,
                 kit_id: kit_id.clone(),
+                pack: cargo_to_proto(pack),
+                strangers: match strangers {
+                    StrangersKind::Keep => pb::StrangersOrderKind::Keep,
+                    StrangersKind::Give => pb::StrangersOrderKind::Give,
+                    StrangersKind::Offer => pb::StrangersOrderKind::Offer,
+                } as i32,
             }),
             CommandPayload::RecallExpedition {
                 faction_id,
@@ -2570,9 +2668,15 @@ impl CommandEnvelope {
                 }
             }
             pb::command_envelope::Command::AnswerDealing(cmd) => {
-                let accept = match pb::DealingAnswerKind::try_from(cmd.answer) {
-                    Ok(pb::DealingAnswerKind::Accept) => true,
-                    Ok(pb::DealingAnswerKind::Refuse) => false,
+                let reply = match pb::DealingAnswerKind::try_from(cmd.answer) {
+                    Ok(pb::DealingAnswerKind::Accept) => DealingReply::Accept {
+                        returned: cargo_from_proto(cmd.returned),
+                    },
+                    Ok(pb::DealingAnswerKind::Refuse) => DealingReply::Refuse,
+                    Ok(pb::DealingAnswerKind::Counter) => DealingReply::Counter {
+                        give: cargo_from_proto(cmd.give),
+                        ask: cargo_from_proto(cmd.ask),
+                    },
                     _ => {
                         return Err(CommandDecodeError::InvalidEnum {
                             field: "AnswerDealingCommand.answer",
@@ -2583,18 +2687,17 @@ impl CommandEnvelope {
                 CommandPayload::AnswerDealing {
                     faction: cmd.faction,
                     dealing_id: cmd.dealing_id,
-                    accept,
-                    returned: cmd
-                        .returned
-                        .into_iter()
-                        .map(|item| TradeCargoItem {
-                            id: item.id,
-                            is_material: item.is_material,
-                            amount: item.amount,
-                        })
-                        .collect(),
+                    reply,
                 }
             }
+            pb::command_envelope::Command::ProposeTrade(cmd) => CommandPayload::ProposeTrade {
+                faction_id: cmd.faction_id,
+                band_id: cmd.band_id,
+                party_workers: cmd.party_workers,
+                destination_band_id: cmd.destination_band_id,
+                give: cargo_from_proto(cmd.give),
+                ask: cargo_from_proto(cmd.ask),
+            },
             pb::command_envelope::Command::AdjustCounterIntelBudget(cmd) => {
                 CommandPayload::AdjustCounterIntelBudget {
                     faction: cmd.faction,
@@ -2895,6 +2998,13 @@ impl CommandEnvelope {
                 target_x: cmd.target_x,
                 target_y: cmd.target_y,
                 kit_id: cmd.kit_id,
+                pack: cargo_from_proto(cmd.pack),
+                // Unspecified (the field absent on the wire) reads as the default, keep.
+                strangers: match pb::StrangersOrderKind::try_from(cmd.strangers) {
+                    Ok(pb::StrangersOrderKind::Give) => StrangersKind::Give,
+                    Ok(pb::StrangersOrderKind::Offer) => StrangersKind::Offer,
+                    _ => StrangersKind::Keep,
+                },
             },
             pb::command_envelope::Command::RecallExpedition(cmd) => {
                 CommandPayload::RecallExpedition {
@@ -3975,18 +4085,60 @@ mod tests {
             CommandPayload::AnswerDealing {
                 faction: 1,
                 dealing_id: 9,
-                accept: true,
-                returned: vec![TradeCargoItem {
-                    id: "hide".to_string(),
-                    is_material: true,
-                    amount: 1.5,
-                }],
+                reply: DealingReply::Accept {
+                    returned: vec![TradeCargoItem {
+                        id: "hide".to_string(),
+                        is_material: true,
+                        amount: 1.5,
+                    }],
+                },
             },
             CommandPayload::AnswerDealing {
                 faction: 1,
                 dealing_id: 9,
-                accept: false,
-                returned: Vec::new(),
+                reply: DealingReply::Refuse,
+            },
+            CommandPayload::AnswerDealing {
+                faction: 1,
+                dealing_id: 9,
+                reply: DealingReply::Counter {
+                    give: vec![TradeCargoItem {
+                        id: FOOD_CARGO_KEY.to_string(),
+                        is_material: false,
+                        amount: 3.0,
+                    }],
+                    ask: vec![TradeCargoItem {
+                        id: "hide".to_string(),
+                        is_material: true,
+                        amount: 2.0,
+                    }],
+                },
+            },
+            CommandPayload::ProposeTrade {
+                faction_id: 0,
+                band_id: Some(7),
+                party_workers: 3,
+                destination_band_id: 12,
+                give: vec![TradeCargoItem {
+                    id: FOOD_CARGO_KEY.to_string(),
+                    is_material: false,
+                    amount: 4.0,
+                }],
+                ask: Vec::new(),
+            },
+            CommandPayload::SendExpedition {
+                faction_id: 0,
+                band_id: Some(7),
+                party_workers: 2,
+                target_x: 5,
+                target_y: 6,
+                kit_id: None,
+                pack: vec![TradeCargoItem {
+                    id: FOOD_CARGO_KEY.to_string(),
+                    is_material: false,
+                    amount: 2.0,
+                }],
+                strangers: StrangersKind::Offer,
             },
         ] {
             let envelope = CommandEnvelope {

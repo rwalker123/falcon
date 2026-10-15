@@ -6669,7 +6669,9 @@ table DealingGoodsState {
 table DealingState {
   // Monotonic, never reused; the key `answer_dealing` addresses it by.
   id:ulong;
-  // "offer" today (a trade party standing in the receiver's camp). Later kinds are new tokens.
+  // "offer" (a trade party or a scout standing in the receiver's camp), "proposal" (stage 4: both legs
+  // named over a standing link, no party walking yet) or "counter" (a proposal answered with
+  // different legs, going the other way).
   kind:string;
   senderFaction:uint;
   // The band that sent it (the party's home band). A durable bandId - a client swaps in its own label.
@@ -6683,6 +6685,15 @@ table DealingState {
   // How many resolves it stays open for, counting the next one: 1 = answer this turn or silence
   // refuses it. Never 0 on a published row.
   turnsLeft:uint;
+  // STAGE 4 (kinds "proposal" and "counter"): the band whose party will walk - the ORIGINAL proposer,
+  // whichever end of the haggle is speaking. 0 on an offer. goodsSent is then what that band SENDS
+  // and goodsAsked what it asks BACK, always from the shipper's point of view (so "accept" means the
+  // same thing on a proposal and on every counter after it). The lines carry NO ratings: nothing has
+  // been drawn yet, so a material row is `{materialId, amount}` with empty readings.
+  shipperBand:ulong;
+  // How many workers the shipper's party carries (fixed by the proposal; a counter inherits it). 0 on
+  // an offer.
+  partyWorkers:uint;
 }
 
 table DealingsSection {

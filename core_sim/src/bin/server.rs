@@ -38,9 +38,9 @@ use core_sim::{
     CreaturesConfigHandle, Expedition, ExpeditionConfigHandle, ExpeditionMission, ExpeditionPhase,
     ExtractionConfigHandle, FloraConfigHandle, FoodMix, FoodModuleTag, ForkAnswerError,
     HuntingParty, KitChoice, KitJob, LaborAllocation, LaborTarget, LadderConfigHandle, LocalStore,
-    MaterialDraw, MaterialsConfigHandle, RecipesConfigHandle, ResidentBand, RungKey, SiteRefusal,
-    SourcePriority, SpeciesRefusal, StartProfile, StartProfileOverrides, TakeSelection,
-    TransferCause, TransferCrossing, TransferDirection, UpkeepFundMode, WellbeingConfigHandle,
+    MaterialDraw, RecipesConfigHandle, ResidentBand, RungKey, SiteRefusal, SourcePriority,
+    SpeciesRefusal, StartProfile, StartProfileOverrides, TakeSelection, TransferCause,
+    TransferCrossing, TransferDirection, UpkeepFundMode, WellbeingConfigHandle,
     DEFAULT_ESCAPEMENT_FLOOR, MIN_ORDER_COUNT, NO_FORAGE_SEASON,
 };
 use core_sim::{
@@ -1417,6 +1417,10 @@ enum Command {
         /// `None` for the **expedition** job's default. Rejected with a reason if unknown or
         /// wrong-job, exactly as the raiding verbs' is.
         kit_id: Option<String>,
+        /// The scout's pack (stage 1 of early diplomacy), drawn from the band at launch.
+        pack: Vec<TradeCargoItem>,
+        /// What the party does with the pack when it sights a stranger.
+        strangers: sim_runtime::StrangersKind,
     },
     RecallExpedition {
         faction: FactionId,
@@ -1465,8 +1469,17 @@ enum Command {
     AnswerDealing {
         faction: FactionId,
         dealing_id: u64,
-        accept: bool,
-        returned: Vec<TradeCargoItem>,
+        reply: sim_runtime::DealingReply,
+    },
+    /// **Propose a trade over a standing link** (`docs/plan_early_diplomacy.md` §1, stage 4): name
+    /// both legs before any party walks. Posts a pending proposal to the destination's people.
+    ProposeTrade {
+        faction: FactionId,
+        band_id: Option<u64>,
+        party_workers: u32,
+        destination_band_id: u64,
+        give: Vec<TradeCargoItem>,
+        ask: Vec<TradeCargoItem>,
     },
     /// **The stationed party** (`docs/plan_contact_and_logistics.md` "Settled by #774") — part of a
     /// band posted at another band it holds a live tie with. Gated on the connection, and on the
@@ -5584,6 +5597,12 @@ fn handle_move_band(
     if let Some(mut expedition) = app.world.get_mut::<Expedition>(band.entity) {
         expedition.phase = ExpeditionPhase::Outbound;
         expedition.announced = false;
+        // **The player's order wins over a scout's chase of a stranger**: the chosen stranger and the
+        // way back to the scouting are forgotten (the pack order stays live, unspent, and may pick
+        // another stranger on the new walk).
+        expedition.scout_pack.target = None;
+        expedition.scout_pack.resume = None;
+        expedition.aim = None;
     }
 
     let tick = app.world.resource::<SimulationTick>().0;
@@ -5607,7 +5626,7 @@ fn handle_move_band(
 /// is provisioned, drains that larder every turn, and replaces it on the march by gathering off a
 /// stand in reach and — only if that was not enough — taking the game it meets
 /// (`systems::expeditions::advance_expeditions`). Both halves resolve through this one kit.
-#[allow(clippy::too_many_arguments)] // every launch order the verb accepts is a parameter
+#[cfg(test)]
 fn handle_send_expedition(
     app: &mut bevy::prelude::App,
     faction: FactionId,
@@ -5616,6 +5635,37 @@ fn handle_send_expedition(
     target_x: u32,
     target_y: u32,
     kit_id: Option<String>,
+) {
+    handle_send_scout(
+        app,
+        faction,
+        band_id,
+        party_workers,
+        target_x,
+        target_y,
+        kit_id,
+        Vec::new(),
+        sim_runtime::StrangersKind::Keep,
+    );
+}
+
+/// **A scout with a pack** (`docs/plan_early_diplomacy.md` §1, stage 1): `handle_send_expedition`
+/// plus the pack the party carries and the standing order for strangers. The pack is the shipment's
+/// own manifest, fails closed on the shipment's own gates (held, over the party's carry) before
+/// anything is drawn, and is drawn **before** the walking larder so it is exact while the larder
+/// stays "partial is fine". A `give` / `offer` order with no pack has nothing to hand over and is
+/// refused.
+#[allow(clippy::too_many_arguments)] // every launch order the verb accepts is a parameter
+fn handle_send_scout(
+    app: &mut bevy::prelude::App,
+    faction: FactionId,
+    band_id: Option<u64>,
+    party_workers: u32,
+    target_x: u32,
+    target_y: u32,
+    kit_id: Option<String>,
+    pack: Vec<TradeCargoItem>,
+    strangers: sim_runtime::StrangersKind,
 ) {
     // **The kit fails closed, and is resolved before anything is drawn** — the rule every other
     // launch verb follows, so a party is never half-outfitted off a refused order.
@@ -5713,6 +5763,43 @@ fn handle_send_expedition(
         return;
     }
 
+    // **The pack fails closed, before anything is drawn.**
+    let pack_goods = match core_sim::GoodsLines::resolve(&app.world, &pack, "send_expedition") {
+        Ok(goods) => goods,
+        Err(reason) => {
+            emit_command_failure(app, CommandEventKind::ExpeditionSent, faction, reason);
+            return;
+        }
+    };
+    if strangers != sim_runtime::StrangersKind::Keep && pack_goods.is_empty() {
+        emit_command_failure(
+            app,
+            CommandEventKind::ExpeditionSent,
+            faction,
+            "send_expedition: a strangers order needs a pack to hand over.",
+        );
+        return;
+    }
+    if !pack_goods.is_empty() {
+        if let Err(reason) = core_sim::check_cargo(
+            &app.world,
+            faction,
+            band.entity,
+            party_workers,
+            &pack_goods,
+            "send_expedition",
+        ) {
+            emit_command_failure(app, CommandEventKind::ExpeditionSent, faction, reason);
+            return;
+        }
+    }
+    // The pack leaves the band's store first, so it is exact (the shipment's own draw); the
+    // walking larder below takes what is left, partial being fine.
+    let (pack_store, pack_materials) = match app.world.get_mut::<PopulationCohort>(band.entity) {
+        Some(mut band_cohort) => draw_goods(&mut band_cohort, &pack_goods),
+        None => return,
+    };
+
     // Draw provisions (partial OK — non-fatal in v1) and remove the party from the band's pool.
     let requested = scalar_from_f32(
         party_workers as f32 * distance as f32 * cfg.provision_draw_per_worker_per_tile,
@@ -5762,6 +5849,15 @@ fn handle_send_expedition(
             )
             .with_party(Some(expedition_band_id)),
         );
+        // The pack is a shipment leaving with the party, with no destination known yet: the same
+        // `ShipmentOut` cause, naming nobody.
+        book_shipment_out(
+            &mut allocation,
+            &pack_store,
+            &pack_materials,
+            None,
+            Some(expedition_band_id),
+        );
     }
     // **...but it INHERITS the home band's name, and must not mint one.** A party is those same
     // people walking somewhere, not a new band: minting here would consume a name slot the faction
@@ -5803,11 +5899,19 @@ fn handle_send_expedition(
                 // **The kit the player named, else the EXPEDITION job's default** — resolved above,
                 // before anything was drawn off the band, and carried for the party's whole life.
                 kit: kit.clone(),
-                // A scout carries no shipment — the cargo store is the trade verb's.
-                cargo: LocalStore::new(),
+                // The scout's PACK, when it was sent with one — otherwise empty.
+                cargo: pack_store,
                 defection_pull: Scalar::zero(),
                 station_reports: Vec::new(),
                 goodwill_news: Default::default(),
+                scout_pack: core_sim::ScoutPack {
+                    order: match strangers {
+                        sim_runtime::StrangersKind::Keep => core_sim::StrangersOrder::Keep,
+                        sim_runtime::StrangersKind::Give => core_sim::StrangersOrder::Give,
+                        sim_runtime::StrangersKind::Offer => core_sim::StrangersOrder::Offer,
+                    },
+                    ..Default::default()
+                },
                 aim: None,
             },
             BandTravel::to(target),
@@ -6328,6 +6432,7 @@ fn launch_party_from_band(
                 defection_pull: Scalar::zero(),
                 station_reports: Vec::new(),
                 goodwill_news: Default::default(),
+                scout_pack: Default::default(),
                 aim: None,
             },
             BandTravel::to(orders.target),
@@ -6784,15 +6889,17 @@ struct ResolvedShipment {
     /// **Where the party sets out toward** — what the sender knows of the destination's whereabouts
     /// (`ConnectionLedger::launch_aim`), not necessarily where it is now.
     aim: UVec2,
-    /// The FOOD the shipment will carry, summed over the order's food lines.
-    food: Scalar,
-    /// The FODDER the shipment will carry, summed over the order's hay lines. **A third account,
-    /// never a share of [`Self::food`]** — the two keys sit on the same band store and never
-    /// convert, so a herd can no more eat its keepers' bread here than anywhere else.
-    fodder: Scalar,
-    /// One `(material id, amount)` per material the order names, summed over its lines and in the
+    /// **What the shipment will carry** — food, hay (a second account, never a share of the food:
+    /// the two keys sit on the same band store and never convert) and one total per material, in the
     /// order the player named them.
-    materials: Vec<(String, Scalar)>,
+    goods: core_sim::GoodsLines,
+}
+
+/// Where a shipment's cargo comes from: the player's lines (resolved here), or lines already
+/// resolved (an agreed trade's give).
+enum ShipmentCargo<'a> {
+    Items(&'a [TradeCargoItem]),
+    Lines(&'a core_sim::GoodsLines),
 }
 
 // **A shipment is priced by the ONE carry system** (`core_sim::carry`): its cap is
@@ -6812,260 +6919,62 @@ fn resolve_shipment(
     home_entity: Entity,
     party_workers: u32,
     destination_band_id: u64,
-    cargo: &[TradeCargoItem],
+    cargo: ShipmentCargo<'_>,
 ) -> Option<ResolvedShipment> {
     const VERB: &str = "send_trade_expedition";
-    // --- the destination is a real, resident band -------------------------------------------
-    let wanted = BandId(destination_band_id);
-    // The entity is deliberately not carried out of here: nothing downstream needs it. It *was*,
-    // to resolve a display name off `StartingUnit` — see `ResolvedShipment::destination_name` for
-    // why that is gone.
-    let destination = {
-        let mut query = app
-            .world
-            .query_filtered::<(&BandId, &PopulationCohort), With<ResidentBand>>();
-        query
-            .iter(&app.world)
-            .find(|(id, _)| **id == wanted)
-            .map(|(id, cohort)| (*id, cohort.current_tile, cohort.faction))
-    };
-    let Some((destination_band, destination_tile, destination_faction)) = destination else {
-        emit_command_failure(
-            app,
-            CommandEventKind::ExpeditionSent,
-            faction,
-            format!("{VERB}: band {destination_band_id} is not a band to deliver to."),
-        );
-        return None;
-    };
-    let Some(destination_pos) = app.world.get::<Tile>(destination_tile).map(|t| t.position) else {
-        emit_command_failure(
-            app,
-            CommandEventKind::ExpeditionSent,
-            faction,
-            format!("{VERB}: band {destination_band_id} is not standing anywhere."),
-        );
-        return None;
-    };
-
-    // --- the tie is the gate, and FACTION IS NEVER ASKED --------------------------------------
-    // *"At zero, nothing flows"* (`docs/plan_contact_and_logistics.md` §Q6): a shipment needs a live
-    // connection from the sending band to the destination, and a **parked** tie — an edge at zero,
-    // meaning *"we know such a people exist and have no current dealings"* — refuses exactly as a
-    // missing one does.
-    //
-    // **There is deliberately no same-faction branch here or anywhere downstream.** Faction is a
-    // property of the endpoint (`.claude/rules/core_sim/connections.md`), so a destination in
-    // another faction works by construction rather than by a clause someone has to remember to add.
-    let Some(&home_band) = app.world.get::<BandId>(home_entity) else {
-        emit_command_failure(
-            app,
-            CommandEventKind::ExpeditionSent,
-            faction,
-            format!("{VERB}: the sending band has no id to trade under."),
-        );
-        return None;
-    };
-    let tie = app
-        .world
-        .resource::<core_sim::connections::ConnectionLedger>()
-        .get(&core_sim::connections::ConnectionKey::new(
-            home_band,
-            destination_band,
-        ))
-        .map(|connection| connection.strength)
-        .unwrap_or(core_sim::connections::NO_TIE);
-    if tie <= core_sim::connections::NO_TIE {
-        emit_command_failure(
-            app,
-            CommandEventKind::ExpeditionSent,
-            faction,
-            format!(
-                "{VERB}: no dealings with band {destination_band_id} — meet them before you ship \
-                 to them."
-            ),
-        );
-        return None;
-    }
-
-    let aim = app
-        .world
-        .resource::<core_sim::connections::ConnectionLedger>()
-        .launch_aim(
-            app.world.resource::<core_sim::VisibilityLedger>(),
-            faction,
-            home_band,
-            destination_band,
-            destination_faction,
-            destination_pos,
-        );
-
-    // --- the cargo lines, summed per key ------------------------------------------------------
-    if cargo.is_empty() {
-        emit_command_failure(
-            app,
-            CommandEventKind::ExpeditionSent,
-            faction,
-            format!("{VERB}: a shipment with nothing in it is not a shipment."),
-        );
-        return None;
-    }
-    let materials_cfg = app.world.resource::<MaterialsConfigHandle>().get();
-    let mut food = Scalar::from_i64(0);
-    // Its own accumulator, never a share of the one above: the two commodity keys are two accounts.
-    let mut fodder = Scalar::from_i64(0);
-    // A `Vec` rather than a map: the order the player named the lines in is the order they are drawn
-    // and published in, and two lines naming one material sum rather than the second winning.
-    let mut materials: Vec<(String, Scalar)> = Vec::new();
-    for item in cargo {
-        if !item.amount.is_finite() || item.amount <= 0.0 {
-            emit_command_failure(
-                app,
-                CommandEventKind::ExpeditionSent,
-                faction,
-                format!(
-                    "{VERB}: '{}' must be a positive amount; got {}.",
-                    item.id, item.amount
-                ),
-            );
+    // The destination is a real resident band and the home band holds a live tie to it — the tie
+    // is the gate and FACTION IS NEVER ASKED (`core_sim::check_destination`).
+    let gate = match core_sim::check_destination(
+        &mut app.world,
+        faction,
+        home_entity,
+        destination_band_id,
+        VERB,
+    ) {
+        Ok(gate) => gate,
+        Err(reason) => {
+            emit_command_failure(app, CommandEventKind::ExpeditionSent, faction, reason);
             return None;
         }
-        let amount = scalar_from_f32(item.amount);
-        if item.is_material {
-            if materials_cfg.material(&item.id).is_none() {
+    };
+    // --- the cargo lines, summed per key --------------------------------------------------
+    let goods = match cargo {
+        ShipmentCargo::Items(items) => {
+            if items.is_empty() {
                 emit_command_failure(
                     app,
                     CommandEventKind::ExpeditionSent,
                     faction,
-                    format!("{VERB}: unknown material '{}'.", item.id),
+                    format!("{VERB}: a shipment with nothing in it is not a shipment."),
                 );
                 return None;
             }
-            match materials.iter_mut().find(|(id, _)| id == &item.id) {
-                Some((_, held)) => *held += amount,
-                None => materials.push((item.id.clone(), amount)),
-            }
-        } else {
-            // **The commodity key is checked, not assumed.** `sim_runtime::FOOD_CARGO_KEY` and
-            // `FODDER_CARGO_KEY` are restatements of this crate's `FOOD` and `FODDER`, and this
-            // match is what makes the duplication safe on BOTH keys: a drift refuses the shipment
-            // rather than loading the wrong good.
-            //
-            // **The two accounts sum apart.** Bread and hay never convert, so a manifest naming
-            // both leaves with both, and no line can move a unit from one to the other.
-            match item.id.as_str() {
-                FOOD => food += amount,
-                FODDER => fodder += amount,
-                _ => {
-                    emit_command_failure(
-                        app,
-                        CommandEventKind::ExpeditionSent,
-                        faction,
-                        format!("{VERB}: unknown commodity '{}'.", item.id),
-                    );
+            match core_sim::GoodsLines::resolve(&app.world, items, VERB) {
+                Ok(goods) => goods,
+                Err(reason) => {
+                    emit_command_failure(app, CommandEventKind::ExpeditionSent, faction, reason);
                     return None;
                 }
             }
         }
-    }
-
-    // --- it fits in the packs of the people being sent ----------------------------------------
-    let cfg = app.world.resource::<ExpeditionConfigHandle>().get();
-    // **The pack as the sending people carry it** (#799): travois lifts the cap the launch enforces
-    // and the `carryPerWorker` echo the picker multiplies by, from one config.
-    let pack = cfg
-        .carry
-        .for_faction(core_sim::roaming_skills::world_faction_knows(
-            &app.world,
-            faction,
-            core_sim::roaming_skills::TRAVOIS_DISCOVERY_ID,
-        ));
-    let cap = core_sim::carry_capacity(party_workers, &pack).to_f32();
-    let mass = core_sim::CarryLoad {
-        food,
-        fodder,
-        items: 0,
-        materials: materials
-            .iter()
-            .fold(Scalar::zero(), |total, (_, amount)| total + *amount),
-    }
-    .load(&pack)
-    .to_f32();
-    if mass > cap {
-        emit_command_failure(
-            app,
-            CommandEventKind::ExpeditionSent,
-            faction,
-            format!(
-                "{VERB}: {party_workers} workers can carry {cap:.2}; this shipment weighs \
-                 {mass:.2}."
-            ),
-        );
-        return None;
-    }
-
-    // --- and the band actually holds it -------------------------------------------------------
-    let Some(store) = app
-        .world
-        .get::<PopulationCohort>(home_entity)
-        .map(|cohort| cohort.stores.clone())
-    else {
-        emit_command_failure(
-            app,
-            CommandEventKind::ExpeditionSent,
-            faction,
-            format!("{VERB}: the sending band has no store to load from."),
-        );
-        return None;
+        ShipmentCargo::Lines(lines) => lines.clone(),
     };
-    if store.get(FOOD) < food {
-        emit_command_failure(
-            app,
-            CommandEventKind::ExpeditionSent,
-            faction,
-            format!(
-                "{VERB}: the band holds {:.2} {FOOD}, not {:.2}.",
-                store.get(FOOD).to_f32(),
-                food.to_f32()
-            ),
-        );
+    // --- it fits in the packs of the people being sent, and the band actually holds it ------
+    if let Err(reason) = core_sim::check_cargo(
+        &app.world,
+        faction,
+        home_entity,
+        party_workers,
+        &goods,
+        VERB,
+    ) {
+        emit_command_failure(app, CommandEventKind::ExpeditionSent, faction, reason);
         return None;
-    }
-    // The hay account answers for itself: a band with a full larder and an empty hayloft can no more
-    // ship a bale than one with neither.
-    if store.get(FODDER) < fodder {
-        emit_command_failure(
-            app,
-            CommandEventKind::ExpeditionSent,
-            faction,
-            format!(
-                "{VERB}: the band holds {:.2} {FODDER}, not {:.2}.",
-                store.get(FODDER).to_f32(),
-                fodder.to_f32()
-            ),
-        );
-        return None;
-    }
-    for (material, amount) in &materials {
-        let held = store.material_total(material);
-        if held < *amount {
-            emit_command_failure(
-                app,
-                CommandEventKind::ExpeditionSent,
-                faction,
-                format!(
-                    "{VERB}: the band holds {:.2} {material}, not {:.2}.",
-                    held.to_f32(),
-                    amount.to_f32()
-                ),
-            );
-            return None;
-        }
     }
 
     Some(ResolvedShipment {
-        destination_band,
-        destination_faction,
+        destination_band: gate.destination_band,
+        destination_faction: gate.destination_faction,
         // **EMPTY, because bands have no names in this game.** This briefly resolved through
         // `starting_unit_label`, which answers `StartingUnit.kind` — the unit *archetype*
         // (`"BandForager"`), the same string for every seeded band — so an in-flight party's row
@@ -7079,11 +6988,78 @@ fn resolve_shipment(
         // load-bearing: a foreign band's name has to come from the sim, the client having no roster
         // to resolve one from.
         destination_name: String::new(),
-        aim,
-        food,
-        fodder,
-        materials,
+        aim: gate.aim,
+        goods,
     })
+}
+
+/// **Draw a shipment's goods out of a band's store** — the cargo leaves in the band's own proportions
+/// (#706), hay from the same store into its own account, and every material **peeled batch by batch,
+/// splitting only the last**: a split preserves the batch's rating and its readings, so two ratings
+/// of one material leave as two batches and arrive as two batches. Returns the loaded store and the
+/// batches drawn (for the `ShipmentOut` rows).
+fn draw_goods(
+    band: &mut PopulationCohort,
+    goods: &core_sim::GoodsLines,
+) -> (LocalStore, Vec<(String, MaterialDraw)>) {
+    let mut loaded = LocalStore::new();
+    let food = band.stores.take_food_mix(goods.food);
+    loaded.add_food_mix(&food);
+    // **Hay is drawn from the SAME store and kept in a DIFFERENT account** — `FODDER` is an
+    // ordinary second key on the band's `LocalStore`, so the draw is the food draw verbatim, and
+    // the two never meet in the party's cargo either.
+    let fodder = band.stores.take(FODDER, goods.fodder);
+    if fodder > Scalar::from_i64(0) {
+        loaded.add(FODDER, fodder);
+    }
+    let mut drawn = Vec::new();
+    for (material, amount) in &goods.materials {
+        for draw in band.stores.take_material_batches(material, *amount) {
+            loaded.deposit_material(
+                material,
+                draw.band.clone(),
+                draw.amount,
+                &draw.characteristics,
+            );
+            drawn.push((material.clone(), draw));
+        }
+    }
+    (loaded, drawn)
+}
+
+/// **The sending half of a shipment's transfer terms**, on the `TransferLink::Route` arm and under
+/// [`TransferCause::ShipmentOut`]: the cargo's food, hay and every material batch, naming the
+/// destination when it is known. Booked after the launch so every row names the party that carries
+/// it.
+fn book_shipment_out(
+    allocation: &mut LaborAllocation,
+    loaded: &LocalStore,
+    loaded_materials: &[(String, MaterialDraw)],
+    destination: Option<core_sim::TransferCounterparty>,
+    party_band: Option<BandId>,
+) {
+    for (commodity, amount) in [
+        (FOOD, loaded.get(FOOD).to_f32()),
+        (FODDER, loaded.get(FODDER).to_f32()),
+    ] {
+        allocation.book_crossing(
+            TransferCrossing::goods(
+                commodity,
+                TransferDirection::Out,
+                TransferCause::ShipmentOut,
+                amount,
+            )
+            .with_counterparty(destination)
+            .with_party(party_band),
+        );
+    }
+    allocation.book_material_draws(
+        loaded_materials,
+        TransferDirection::Out,
+        TransferCause::ShipmentOut,
+        destination,
+        party_band,
+    );
 }
 
 /// Outfit and launch a **trade expedition**: draw `party_workers` off the resolved home band, load
@@ -7109,6 +7085,36 @@ fn handle_send_trade_expedition(
     kit_id: Option<String>,
     offer: bool,
 ) {
+    launch_trade_party(
+        app,
+        faction,
+        band_id,
+        party_workers,
+        destination_band_id,
+        ShipmentCargo::Items(&cargo),
+        kit_id,
+        if offer {
+            core_sim::ShipmentTerms::Offer
+        } else {
+            core_sim::ShipmentTerms::Gift
+        },
+    );
+}
+
+/// **Launch a trade party** — the body of `send_trade_expedition`, and the launch an accepted
+/// proposal or counter makes with `ShipmentTerms::Agreed`. Answers whether the party set out; every
+/// refusal has already been published as a command failure with its reason.
+#[allow(clippy::too_many_arguments)] // every launch order the verb accepts is a parameter
+fn launch_trade_party(
+    app: &mut bevy::prelude::App,
+    faction: FactionId,
+    band_id: Option<u64>,
+    party_workers: u32,
+    destination_band_id: u64,
+    cargo: ShipmentCargo<'_>,
+    kit_id: Option<String>,
+    terms: core_sim::ShipmentTerms,
+) -> bool {
     const VERB: &str = "send_trade_expedition";
     // **The kit fails closed**, resolved before anything is drawn — the rule both raiding verbs
     // follow. A trade party is quoted at the **expedition** job for the reason a scout is: it is
@@ -7117,12 +7123,12 @@ fn handle_send_trade_expedition(
     // (It read the **hunt** job until the ranging kit existed, which armed the roadside kill and
     // left the party unable to gather at all.)
     let Some(kit) = resolve_expedition_job_kit(app, faction, VERB, kit_id.as_deref()) else {
-        return;
+        return false;
     };
     // The resident-band gate, the party bound and the cohort template — the same seam both raiding
     // verbs outfit through, so this verb could not acquire its own copy of them.
     let Some(outfit) = outfit_detached_party(app, faction, band_id, party_workers, VERB) else {
-        return;
+        return false;
     };
     let Some(shipment) = resolve_shipment(
         app,
@@ -7130,9 +7136,9 @@ fn handle_send_trade_expedition(
         outfit.band.entity,
         party_workers,
         destination_band_id,
-        &cargo,
+        cargo,
     ) else {
-        return;
+        return false;
     };
 
     // --- everything above refused without drawing; from here the band is debited ---------------
@@ -7159,8 +7165,7 @@ fn handle_send_trade_expedition(
         party_workers as f32 * distance as f32 * cfg.provision_draw_per_worker_per_tile,
     );
     // Every material batch the cargo took, at its own rating — the shipment's `ShipmentOut` rows.
-    let mut loaded_materials: Vec<(String, MaterialDraw)> = Vec::new();
-    let (provisions, shipment_store) = {
+    let (provisions, shipment_store, loaded_materials) = {
         let Some(mut band_cohort) = app.world.get_mut::<PopulationCohort>(outfit.band.entity)
         else {
             emit_command_failure(
@@ -7172,35 +7177,12 @@ fn handle_send_trade_expedition(
                     outfit.band.label
                 ),
             );
-            return;
+            return false;
         };
-        let mut loaded = LocalStore::new();
-        // The cargo leaves in the band's own proportions (#706).
-        let food = band_cohort.stores.take_food_mix(shipment.food);
-        loaded.add_food_mix(&food);
-        // **Hay is drawn from the SAME store and kept in a DIFFERENT account** — `FODDER` is an
-        // ordinary second key on the band's `LocalStore`, so the draw is the food draw verbatim, and
-        // the two never meet in the party's cargo either.
-        let fodder = band_cohort.stores.take(FODDER, shipment.fodder);
-        if fodder > Scalar::from_i64(0) {
-            loaded.add(FODDER, fodder);
-        }
-        // **Peeled batch by batch, splitting only the last** — a split preserves the batch's rating
-        // and its readings, because an amount is a quantity of one identical material. Two ratings
-        // of one material therefore leave as two batches and arrive as two batches.
-        for (material, amount) in &shipment.materials {
-            for draw in band_cohort.stores.take_material_batches(material, *amount) {
-                loaded.deposit_material(
-                    material,
-                    draw.band.clone(),
-                    draw.amount,
-                    &draw.characteristics,
-                );
-                loaded_materials.push((material.clone(), draw));
-            }
-        }
+        // The cargo leaves in the band's own proportions (#706), then the walking larder.
+        let (loaded, loaded_materials) = draw_goods(&mut band_cohort, &shipment.goods);
         let provisions = band_cohort.stores.take_food_mix(requested_provisions);
-        (provisions, loaded)
+        (provisions, loaded, loaded_materials)
     };
     let provisions_total = provisions.total();
     let band_label = outfit.band.label.clone();
@@ -7211,11 +7193,7 @@ fn handle_send_trade_expedition(
         destination_name: shipment.destination_name,
         // What the cargo is on offer as. A gift lands on arrival when the receiver's standing
         // answer covers it; an offer always waits for the receiving people to answer.
-        terms: if offer {
-            core_sim::ShipmentTerms::Offer
-        } else {
-            core_sim::ShipmentTerms::Gift
-        },
+        terms,
     };
     // Read BEFORE the mission moves into the launch: the counterparty every cargo row names, from
     // the one place an undelivered homecoming will read it too.
@@ -7227,8 +7205,11 @@ fn handle_send_trade_expedition(
     let destination_label = mission.destination_display();
     let carried_food = shipment_store.get(FOOD).to_f32();
     let carried_fodder = shipment_store.get(FODDER).to_f32();
+    // The cargo moves into the launch below; the booking after it reads this copy.
+    let shipment_store_booked = shipment_store.clone();
     let home_entity = outfit.band.entity;
     let carried_materials: Vec<String> = shipment
+        .goods
         .materials
         .iter()
         .map(|(material, amount)| format!("{:.2} {material}", amount.to_f32()))
@@ -7256,7 +7237,7 @@ fn handle_send_trade_expedition(
             faction,
             format!("{VERB}: {band_label} has no population to outfit from."),
         );
-        return;
+        return false;
     };
     if let Some(mut expedition) = app.world.get_mut::<Expedition>(expedition_entity) {
         expedition.aim = Some(shipment.aim);
@@ -7280,22 +7261,10 @@ fn handle_send_trade_expedition(
     // Booked after the launch so every row names the party that carries it.
     let party_band = app.world.get::<BandId>(expedition_entity).copied();
     if let Some(mut allocation) = app.world.get_mut::<LaborAllocation>(home_entity) {
-        for (commodity, amount) in [(FOOD, carried_food), (FODDER, carried_fodder)] {
-            allocation.book_crossing(
-                TransferCrossing::goods(
-                    commodity,
-                    TransferDirection::Out,
-                    TransferCause::ShipmentOut,
-                    amount,
-                )
-                .with_counterparty(destination)
-                .with_party(party_band),
-            );
-        }
-        allocation.book_material_draws(
+        book_shipment_out(
+            &mut allocation,
+            &shipment_store_booked,
             &loaded_materials,
-            TransferDirection::Out,
-            TransferCause::ShipmentOut,
             destination,
             party_band,
         );
@@ -7339,6 +7308,7 @@ fn handle_send_trade_expedition(
             expedition_entity.to_bits()
         )),
     );
+    true
 }
 
 /// The collapse verdict's turn window as prose — *"4 turns"* when the distribution is degenerate,
@@ -7591,8 +7561,8 @@ fn cancel_party_standing_in_camp(
         fold.book_home(
             &mut allocation,
             party_band,
-            expedition.mission.consignee(),
-            expedition.mission.returning_cargo_cause(),
+            expedition.cargo_counterparty(),
+            expedition.returning_cargo_cause(),
         );
     }
     Some(CancelledInCamp {
@@ -11120,6 +11090,8 @@ fn command_from_payload(
             target_x,
             target_y,
             kit_id,
+            pack,
+            strangers,
         } => Some(Command::SendExpedition {
             faction: FactionId(faction_id),
             band_id,
@@ -11127,6 +11099,8 @@ fn command_from_payload(
             target_x,
             target_y,
             kit_id,
+            pack,
+            strangers,
         }),
         ProtoCommandPayload::RecallExpedition {
             faction_id,
@@ -11183,13 +11157,26 @@ fn command_from_payload(
         ProtoCommandPayload::AnswerDealing {
             faction,
             dealing_id,
-            accept,
-            returned,
+            reply,
         } => Some(Command::AnswerDealing {
             faction: FactionId(faction),
             dealing_id,
-            accept,
-            returned,
+            reply,
+        }),
+        ProtoCommandPayload::ProposeTrade {
+            faction_id,
+            band_id,
+            party_workers,
+            destination_band_id,
+            give,
+            ask,
+        } => Some(Command::ProposeTrade {
+            faction: FactionId(faction_id),
+            band_id,
+            party_workers,
+            destination_band_id,
+            give,
+            ask,
         }),
         ProtoCommandPayload::StationExpedition {
             faction_id,
@@ -12279,6 +12266,7 @@ fn commanding_faction(command: &Command) -> Option<(FactionId, &'static str)> {
         Command::SetOpenBorders { faction, .. } => Some((*faction, "set_open_borders")),
         Command::SetAcceptOwnGifts { faction, .. } => Some((*faction, "set_accept_own_gifts")),
         Command::AnswerDealing { faction, .. } => Some((*faction, "answer_dealing")),
+        Command::ProposeTrade { faction, .. } => Some((*faction, "propose_trade")),
         Command::SpawnCrisis { faction, .. } => Some((*faction, "spawn_crisis")),
         Command::AssignLabor { faction, .. } => Some((*faction, "assign_labor")),
         Command::MoveBand { faction, .. } => Some((*faction, "move_band")),
@@ -12607,8 +12595,10 @@ fn apply_command(app: &mut bevy::prelude::App, command: Command) {
             target_x,
             target_y,
             kit_id,
+            pack,
+            strangers,
         } => {
-            handle_send_expedition(
+            handle_send_scout(
                 app,
                 faction,
                 band_id,
@@ -12616,6 +12606,8 @@ fn apply_command(app: &mut bevy::prelude::App, command: Command) {
                 target_x,
                 target_y,
                 kit_id,
+                pack,
+                strangers,
             );
         }
         Command::RecallExpedition {
@@ -12666,10 +12658,27 @@ fn apply_command(app: &mut bevy::prelude::App, command: Command) {
         Command::AnswerDealing {
             faction,
             dealing_id,
-            accept,
-            returned,
+            reply,
         } => {
-            handle_answer_dealing(app, faction, dealing_id, accept, returned);
+            handle_answer(app, faction, dealing_id, reply);
+        }
+        Command::ProposeTrade {
+            faction,
+            band_id,
+            party_workers,
+            destination_band_id,
+            give,
+            ask,
+        } => {
+            handle_propose_trade(
+                app,
+                faction,
+                band_id,
+                party_workers,
+                destination_band_id,
+                give,
+                ask,
+            );
         }
         Command::StationExpedition {
             faction,
@@ -13115,11 +13124,9 @@ fn handle_set_accept_own_gifts(app: &mut bevy::prelude::App, faction: FactionId,
     );
 }
 
-/// **Answer a pending dealing** — `answer_dealing <faction> <id> accept [goods…] | refuse`. The
-/// seat gate and membership have run; [`core_sim::answer_dealing`] checks that the dealing is
-/// addressed to `faction`'s people and, for an accept, every fact the return depends on **before
-/// anything moves**. A refused answer is a command failure with the reason and leaves both bands
-/// and the party as they stood.
+/// **Answer a pending dealing with a plain accept or refuse** — the offer's two answers, for callers
+/// that have no counter to make. The dispatcher goes through [`handle_answer`].
+#[cfg(test)]
 fn handle_answer_dealing(
     app: &mut bevy::prelude::App,
     faction: FactionId,
@@ -13127,10 +13134,42 @@ fn handle_answer_dealing(
     accept: bool,
     returned: Vec<TradeCargoItem>,
 ) {
-    let answer = if accept {
-        core_sim::DealingAnswer::Accept { returned }
-    } else {
-        core_sim::DealingAnswer::Refuse
+    handle_answer(
+        app,
+        faction,
+        dealing_id,
+        if accept {
+            sim_runtime::DealingReply::Accept { returned }
+        } else {
+            sim_runtime::DealingReply::Refuse
+        },
+    );
+}
+
+/// **Answer a pending dealing** — `answer_dealing <faction> <id> accept [goods…] | refuse |
+/// counter give […] ask […]`. The seat gate and membership have run; [`core_sim::answer_dealing`]
+/// checks that the dealing is addressed to `faction`'s people and, for an accept, every fact the
+/// answer depends on **before anything moves**. A refused answer is a command failure with the
+/// reason and leaves both bands, the party and the book as they stood.
+///
+/// **An accepted proposal or counter launches the shipper's party in this same resolution.** The
+/// library answers with the [`core_sim::Agreement`] (the launch lives in this binary) and the party
+/// sets out with the agreed give as its cargo and `ShipmentTerms::Agreed` carrying the agreed
+/// return. If the launch cannot happen after all, both peoples are told and nothing moved.
+fn handle_answer(
+    app: &mut bevy::prelude::App,
+    faction: FactionId,
+    dealing_id: u64,
+    reply: sim_runtime::DealingReply,
+) {
+    let answer = match reply {
+        sim_runtime::DealingReply::Accept { returned } => {
+            core_sim::DealingAnswer::Accept { returned }
+        }
+        sim_runtime::DealingReply::Refuse => core_sim::DealingAnswer::Refuse,
+        sim_runtime::DealingReply::Counter { give, ask } => {
+            core_sim::DealingAnswer::Counter { give, ask }
+        }
     };
     match core_sim::answer_dealing(
         &mut app.world,
@@ -13138,12 +13177,123 @@ fn handle_answer_dealing(
         core_sim::DealingId(dealing_id),
         &answer,
     ) {
-        Ok(report) => info!(
+        Ok(report) => {
+            info!(
+                target: "shadow_scale::server",
+                %faction,
+                dealing = report.id.0,
+                accepted = report.accepted,
+                countered = report.counter.is_some(),
+                "dealing.answered"
+            );
+            if let Some(reason) = report.failed {
+                emit_command_failure(
+                    app,
+                    CommandEventKind::Dealing,
+                    faction,
+                    format!("answer_dealing: the sender could not go ahead: {reason}."),
+                );
+            }
+            if let Some(agreement) = report.launch {
+                launch_agreed_party(app, report.id, report.kind, agreement);
+            }
+        }
+        Err(reason) => {
+            emit_command_failure(app, CommandEventKind::Dealing, faction, reason);
+        }
+    }
+}
+
+/// **Send the shipper's party out on agreed terms.** The agreed give is the cargo and the agreed
+/// ask rides the mission, so the exchange settles at once when the party arrives. A launch that
+/// cannot happen (the shipper's gates were checked a moment ago by the answer, so this is a kit
+/// refusal or a vanished band) fails the dealing with a reason, told to both peoples; nothing was
+/// drawn.
+fn launch_agreed_party(
+    app: &mut bevy::prelude::App,
+    dealing: core_sim::DealingId,
+    kind: core_sim::DealingKind,
+    agreement: core_sim::Agreement,
+) {
+    let launched = launch_trade_party(
+        app,
+        agreement.shipper_faction,
+        Some(agreement.shipper_band.0),
+        agreement.party_workers,
+        agreement.consignee_band.0,
+        ShipmentCargo::Lines(&agreement.give),
+        None,
+        core_sim::ShipmentTerms::Agreed {
+            agreed_return: agreement.ask.clone(),
+            dealing,
+        },
+    );
+    if !launched {
+        let tick = app.world.resource::<SimulationTick>().0;
+        core_sim::dealings::push_resolution_events(
+            &mut app.world.resource_mut::<CommandEventLog>(),
+            tick,
+            dealing,
+            kind,
+            &core_sim::dealings::DealingEnds {
+                sender_faction: agreement.shipper_faction,
+                sender_band: agreement.shipper_band,
+                receiver_faction: agreement.consignee_faction,
+                receiver_band: agreement.consignee_band,
+            },
+            &core_sim::dealings::Resolution::LaunchFailed(
+                "the party could not set out".to_string(),
+            ),
+        );
+    }
+}
+
+/// **Propose a trade over a standing link** — `propose_trade <faction> <band> <party_workers>
+/// <destination_band> give […] ask […]` (`docs/plan_early_diplomacy.md` §1, stage 4). The seat gate
+/// and membership have run; [`core_sim::propose_trade`] fails closed with a reason before it records
+/// anything (no standing link, no live tie, goods not held, give over the party's carry) and draws
+/// nothing.
+fn handle_propose_trade(
+    app: &mut bevy::prelude::App,
+    faction: FactionId,
+    band_id: Option<u64>,
+    party_workers: u32,
+    destination_band_id: u64,
+    give: Vec<TradeCargoItem>,
+    ask: Vec<TradeCargoItem>,
+) {
+    let Some(band) = select_starting_band(
+        app,
+        faction,
+        band_id,
+        "propose_trade",
+        CommandEventKind::Dealing,
+    ) else {
+        return;
+    };
+    let Some(&home_band) = app.world.get::<BandId>(band.entity) else {
+        emit_command_failure(
+            app,
+            CommandEventKind::Dealing,
+            faction,
+            "propose_trade: the band has no id to trade under.",
+        );
+        return;
+    };
+    match core_sim::propose_trade(
+        &mut app.world,
+        faction,
+        home_band,
+        party_workers,
+        BandId(destination_band_id),
+        &give,
+        &ask,
+    ) {
+        Ok(id) => info!(
             target: "shadow_scale::server",
             %faction,
-            dealing = report.id.0,
-            accepted = report.accepted,
-            "dealing.answered"
+            dealing = id.0,
+            "dealing.proposed"
         ),
         Err(reason) => {
             emit_command_failure(app, CommandEventKind::Dealing, faction, reason);
@@ -17392,6 +17542,7 @@ mod tests {
                 defection_pull: Scalar::zero(),
                 station_reports: Vec::new(),
                 goodwill_news: Default::default(),
+                scout_pack: Default::default(),
                 aim: None,
             },
         ));
@@ -23100,7 +23251,7 @@ mod tests {
                     .expect("the party")
                     .mission
                     .shipment_terms(),
-                Some(expected)
+                Some(&expected)
             );
         }
     }
@@ -23135,6 +23286,365 @@ mod tests {
             .map(|entry| entry.label.clone())
             .collect();
         assert_eq!(failures.len(), 1, "one failure line: {failures:?}");
+    }
+
+    // ------------------------------------------------------------------------------------------
+    // Stage 4 — haggling over a kept road — and stage 1 — a scout's pack
+    // (docs/plan_early_diplomacy.md §1)
+    // ------------------------------------------------------------------------------------------
+
+    /// Hay and food a proposal asks for in return: a different number from the give, so an assertion
+    /// that read the wrong leg could not pass by coincidence.
+    const HAGGLE_ASK_FOOD: f32 = 3.0;
+
+    /// **Lay a kept dirt road under the two co-located bands' shared tile** — the whole path between
+    /// them, which is that one tile. Nobody owes it a bill before a turn judges it, so it stands.
+    fn lay_the_road_under(app: &mut bevy::prelude::App, band: Entity) {
+        let tile = {
+            let cohort = app.world.get::<PopulationCohort>(band).expect("the band");
+            app.world
+                .get::<Tile>(cohort.current_tile)
+                .expect("a tile")
+                .position
+        };
+        let ladder = core_sim::LadderConfig::builtin();
+        let (base, width) = core_sim::road_rung_span(
+            core_sim::RungKey::RouteDirtRoad,
+            &ladder,
+            core_sim::NEAR_ENOUGH_TO_KEEP,
+        );
+        app.world
+            .resource_mut::<core_sim::RoadRegistry>()
+            .road_or_trail(tile, &ladder)
+            .set_position(base + width, &ladder);
+    }
+
+    fn dealing_failures(app: &bevy::prelude::App) -> Vec<String> {
+        app.world
+            .resource::<CommandEventLog>()
+            .iter()
+            .filter(|entry| matches!(entry.kind, CommandEventKind::Dealing))
+            .map(|entry| entry.label.clone())
+            .collect()
+    }
+
+    /// **An accepted proposal launches the sender's party in the same resolution**: the agreed give
+    /// is the party's cargo, drawn from the larder; the mission is bound for the consignee with the
+    /// agreed return on its terms; and the proposal is gone from the book.
+    #[test]
+    fn an_accepted_proposal_launches_the_senders_party_with_the_agreed_terms() {
+        let mut app = build_world_app();
+        let (sender, destination, faction) = two_bands_that_know_each_other(&mut app);
+        let sender_id = app.world.get::<core_sim::BandId>(sender).expect("an id").0;
+        lay_the_road_under(&mut app, sender);
+        let before = band_food(&app, sender);
+
+        handle_propose_trade(
+            &mut app,
+            faction,
+            Some(sender_id),
+            TRADE_PARTY,
+            destination.0,
+            food_cargo(TRADE_CARGO_FOOD),
+            food_cargo(HAGGLE_ASK_FOOD),
+        );
+        let id = {
+            let book = app.world.resource::<core_sim::PendingDealings>();
+            assert_eq!(
+                book.len(),
+                1,
+                "one proposal is pending: {:?}",
+                dealing_failures(&app)
+            );
+            book.iter().next().expect("a proposal").id
+        };
+        assert!(
+            launched_party(&mut app).is_none(),
+            "no party walks on a proposal"
+        );
+        assert!(
+            (band_food(&app, sender) - before).abs() < TRADE_EPSILON,
+            "a proposal draws nothing"
+        );
+
+        handle_answer(
+            &mut app,
+            faction,
+            id.0,
+            sim_runtime::DealingReply::Accept {
+                returned: Vec::new(),
+            },
+        );
+        let party = launched_party(&mut app).expect("the accepted proposal sent the party");
+        let expedition = app.world.get::<Expedition>(party).expect("the party");
+        match &expedition.mission {
+            ExpeditionMission::Trade {
+                destination_band,
+                terms:
+                    core_sim::ShipmentTerms::Agreed {
+                        agreed_return,
+                        dealing,
+                    },
+                ..
+            } => {
+                assert_eq!(*destination_band, destination);
+                assert_eq!(*dealing, id);
+                assert!((agreed_return.food.to_f32() - HAGGLE_ASK_FOOD).abs() < TRADE_EPSILON);
+            }
+            other => panic!("an agreed trade, got {other:?}"),
+        }
+        assert!(
+            (expedition.cargo.get(FOOD).to_f32() - TRADE_CARGO_FOOD).abs() < TRADE_EPSILON,
+            "the agreed give is the cargo"
+        );
+        assert!(
+            app.world.resource::<core_sim::PendingDealings>().is_empty(),
+            "the proposal is resolved"
+        );
+        assert!(
+            band_food(&app, sender) < before - TRADE_CARGO_FOOD + TRADE_EPSILON,
+            "the larder paid the cargo (and the walk)"
+        );
+    }
+
+    /// **A counter accepted by the sender launches on the counter's terms**, the party size the
+    /// proposal fixed.
+    #[test]
+    fn a_countered_proposal_launches_on_the_counters_terms() {
+        let mut app = build_world_app();
+        let (sender, destination, faction) = two_bands_that_know_each_other(&mut app);
+        let sender_id = app.world.get::<core_sim::BandId>(sender).expect("an id").0;
+        lay_the_road_under(&mut app, sender);
+
+        handle_propose_trade(
+            &mut app,
+            faction,
+            Some(sender_id),
+            TRADE_PARTY,
+            destination.0,
+            food_cargo(TRADE_CARGO_FOOD),
+            Vec::new(),
+        );
+        let first = app
+            .world
+            .resource::<core_sim::PendingDealings>()
+            .iter()
+            .next()
+            .expect("a proposal")
+            .id;
+        // The receiving band (same people in this fixture) counters: less cargo, a food return.
+        handle_answer(
+            &mut app,
+            faction,
+            first.0,
+            sim_runtime::DealingReply::Counter {
+                give: food_cargo(TRADE_CARGO_FOOD / 2.0),
+                ask: food_cargo(HAGGLE_ASK_FOOD),
+            },
+        );
+        let counter = {
+            let book = app.world.resource::<core_sim::PendingDealings>();
+            assert_eq!(book.len(), 1, "the original closed and a counter went back");
+            let dealing = book.iter().next().expect("a counter");
+            assert_eq!(dealing.kind, core_sim::DealingKind::Counter);
+            dealing.id
+        };
+        handle_answer(
+            &mut app,
+            faction,
+            counter.0,
+            sim_runtime::DealingReply::Accept {
+                returned: Vec::new(),
+            },
+        );
+        let party = launched_party(&mut app).expect("the accepted counter sent the party");
+        let expedition = app.world.get::<Expedition>(party).expect("the party");
+        assert!(
+            (expedition.cargo.get(FOOD).to_f32() - TRADE_CARGO_FOOD / 2.0).abs() < TRADE_EPSILON,
+            "the counter's give is the cargo"
+        );
+        assert_eq!(
+            app.world
+                .get::<PopulationCohort>(party)
+                .map(|party| core_sim::available_workers(party.working)),
+            Some(TRADE_PARTY),
+            "the proposal's party size carried over"
+        );
+    }
+
+    /// **A sender that can no longer honour its leg fails the dealing with a reason, and nothing
+    /// moves**: the receiver accepts, the sender's larder has been spent since, no party is sent and
+    /// both peoples are told.
+    #[test]
+    fn a_proposal_the_sender_cannot_honour_any_more_fails_without_moving_anything() {
+        let mut app = build_world_app();
+        let (sender, destination, faction) = two_bands_that_know_each_other(&mut app);
+        let sender_id = app.world.get::<core_sim::BandId>(sender).expect("an id").0;
+        lay_the_road_under(&mut app, sender);
+        handle_propose_trade(
+            &mut app,
+            faction,
+            Some(sender_id),
+            TRADE_PARTY,
+            destination.0,
+            food_cargo(TRADE_CARGO_FOOD),
+            Vec::new(),
+        );
+        let id = app
+            .world
+            .resource::<core_sim::PendingDealings>()
+            .iter()
+            .next()
+            .expect("a proposal")
+            .id;
+        // The sender spends its larder.
+        app.world
+            .get_mut::<PopulationCohort>(sender)
+            .expect("the sender")
+            .stores
+            .reset_food("dry", scalar_from_f32(0.0));
+
+        // The consignee accepts; the sender's leg is what is missing, so the dealing FAILS (it is
+        // closed, with a reason) and nothing set out.
+        handle_answer(
+            &mut app,
+            faction,
+            id.0,
+            sim_runtime::DealingReply::Accept {
+                returned: Vec::new(),
+            },
+        );
+        assert!(launched_party(&mut app).is_none(), "nothing set out");
+        assert!(
+            app.world.resource::<core_sim::PendingDealings>().is_empty(),
+            "a dealing the sender cannot honour is closed, not left hanging"
+        );
+        let labels = dealing_failures(&app);
+        assert!(
+            labels.iter().any(|label| label.contains("provisions")),
+            "the failure names what is missing: {labels:?}"
+        );
+        assert!(
+            labels
+                .iter()
+                .any(|label| label.contains("could not go ahead")),
+            "both peoples are told it failed: {labels:?}"
+        );
+    }
+
+    /// **A proposal with no standing link is a command failure that records nothing.**
+    #[test]
+    fn a_proposal_with_no_standing_link_is_a_command_failure() {
+        let mut app = build_world_app();
+        let (sender, destination, faction) = two_bands_that_know_each_other(&mut app);
+        let sender_id = app.world.get::<core_sim::BandId>(sender).expect("an id").0;
+        handle_propose_trade(
+            &mut app,
+            faction,
+            Some(sender_id),
+            TRADE_PARTY,
+            destination.0,
+            food_cargo(TRADE_CARGO_FOOD),
+            Vec::new(),
+        );
+        assert!(app.world.resource::<core_sim::PendingDealings>().is_empty());
+        let failures: Vec<String> = app
+            .world
+            .resource::<CommandEventLog>()
+            .iter()
+            .filter(|entry| matches!(entry.kind, CommandEventKind::Dealing))
+            .filter_map(|entry| entry.detail.clone())
+            .collect();
+        assert_eq!(failures.len(), 1, "{failures:?}");
+        assert!(failures[0].contains("standing link"), "{}", failures[0]);
+    }
+
+    /// **A scout's pack is drawn at launch, rides as the party's cargo, and carries its order.**
+    #[test]
+    fn a_scouts_pack_is_drawn_at_launch_and_carries_its_strangers_order() {
+        let mut app = build_world_app();
+        let (sender, _destination, faction) = two_bands_that_know_each_other(&mut app);
+        let sender_id = app.world.get::<core_sim::BandId>(sender).expect("an id").0;
+        let home = {
+            let cohort = app.world.get::<PopulationCohort>(sender).expect("the band");
+            app.world
+                .get::<Tile>(cohort.current_tile)
+                .expect("a tile")
+                .position
+        };
+        let before = band_food(&app, sender);
+        handle_send_scout(
+            &mut app,
+            faction,
+            Some(sender_id),
+            TRADE_PARTY,
+            home.x + 3,
+            home.y,
+            None,
+            food_cargo(TRADE_CARGO_FOOD),
+            sim_runtime::StrangersKind::Offer,
+        );
+        let party = launched_party(&mut app).expect("the scout left");
+        let expedition = app.world.get::<Expedition>(party).expect("the party");
+        assert!(matches!(expedition.mission, ExpeditionMission::Scout));
+        assert_eq!(expedition.scout_pack.order, core_sim::StrangersOrder::Offer);
+        assert!(!expedition.scout_pack.spent);
+        assert!(
+            (expedition.cargo.get(FOOD).to_f32() - TRADE_CARGO_FOOD).abs() < TRADE_EPSILON,
+            "the pack is the party's cargo, apart from its larder"
+        );
+        assert!(band_food(&app, sender) <= before - TRADE_CARGO_FOOD + TRADE_EPSILON);
+    }
+
+    /// **A scout's pack fails closed on the shipment's own gates, before anything is drawn**: over
+    /// the party's carry, not held, and an order with nothing to hand over.
+    #[test]
+    fn a_scouts_pack_fails_closed_before_anything_is_drawn() {
+        let mut app = build_world_app();
+        let (sender, _destination, faction) = two_bands_that_know_each_other(&mut app);
+        let sender_id = app.world.get::<core_sim::BandId>(sender).expect("an id").0;
+        let home = {
+            let cohort = app.world.get::<PopulationCohort>(sender).expect("the band");
+            app.world
+                .get::<Tile>(cohort.current_tile)
+                .expect("a tile")
+                .position
+        };
+        let before = band_food(&app, sender);
+        for (pack, strangers, why) in [
+            (
+                food_cargo(OVER_CAP_FOOD),
+                sim_runtime::StrangersKind::Give,
+                "over the pack",
+            ),
+            (
+                food_cargo(TRADE_FIXTURE_LARDER * 2.0),
+                sim_runtime::StrangersKind::Give,
+                "not held",
+            ),
+            (
+                Vec::new(),
+                sim_runtime::StrangersKind::Give,
+                "no pack to hand over",
+            ),
+        ] {
+            handle_send_scout(
+                &mut app,
+                faction,
+                Some(sender_id),
+                TRADE_PARTY,
+                home.x + 3,
+                home.y,
+                None,
+                pack,
+                strangers,
+            );
+            assert!(launched_party(&mut app).is_none(), "refused: {why}");
+            assert!(
+                (band_food(&app, sender) - before).abs() < TRADE_EPSILON,
+                "a refused scout drew nothing: {why}"
+            );
+        }
     }
 
     /// **The debit is exactly the manifest plus the walk's larder.** The sending band loses what it

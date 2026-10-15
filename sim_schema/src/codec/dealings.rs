@@ -78,6 +78,8 @@ fn create_dealings<'a>(
                     goodsSent: Some(goods_sent),
                     goodsAsked: Some(goods_asked),
                     turnsLeft: dealing.turns_left,
+                    shipperBand: dealing.shipper_band,
+                    partyWorkers: dealing.party_workers,
                 },
             )
         })
@@ -161,5 +163,7 @@ fn decode_dealing(dealing: fb::DealingState<'_>) -> DealingState {
         goods_sent: decode_goods(dealing.goodsSent()),
         goods_asked: decode_goods(dealing.goodsAsked()),
         turns_left: dealing.turnsLeft(),
+        shipper_band: dealing.shipperBand(),
+        party_workers: dealing.partyWorkers(),
     }
 }

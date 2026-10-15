@@ -438,6 +438,16 @@ tense — and it is what makes the top rungs a **capability** rather than a disc
 `Road::standing` is. A supply pass that resolved it would take a `LadderConfigHandle` to re-derive a
 number the road already knows, and every harness that stands the pooling up would have to hand it one.
 
+### A standing link is the SAME tile set, asked a different question
+
+`routes::standing_link(roads, a, b, width, height, wrap, floor)` is true when every tile of the
+`trace_path` between two camps carries a road that is `keeping_is_met` and held at `floor` or above
+(`diplomacy_config.json` → `offers.standing_link_min_rung`, opening `route:dirt_road`). It reads
+exactly the tiles `path_reach_tiles` reads, through the same trace and the same keeping filter, so
+the reach a road buys and the standing link it makes can never be two runs of ground; where
+`path_reach_tiles` takes the weakest tile's *reach*, this asks the weakest tile's *rung*. Early
+diplomacy reads it for stage-4 haggling and for the link's goodwill (`diplomacy.md`).
+
 ## The one-turn lag is the ledger's, and it is accepted for the ledger's reason
 
 `balance_supply_networks` runs in `TurnStage::Logistics` and **`routes::advance_roads` runs after it**

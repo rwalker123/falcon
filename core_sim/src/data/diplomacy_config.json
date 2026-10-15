@@ -1,7 +1,8 @@
 {
-  "_comment": "EARLY DIPLOMACY (docs/plan_early_diplomacy.md §5; core_sim/src/diplomacy_config.rs). Every value is an opening guess, tuned from play. Only offers.offer_wait_turns is read by the offer slice; the goodwill, roads and ai blocks are loaded and validated now and read by the slices that follow. offer_wait_turns: turns a pending dealing waits for the receiving people's answer before silence refuses it. goodwill.*: fade_per_turn is the proportional fade toward zero; per_load, per_person_stationed, per_link and per_term are the credits (a gift or exchange, a stationed person, a standing link, a treaty term in force); broken_treaty is the drop a breach costs; wary_below / friendly_above are the word cuts on the -1..+1 scale. roads.foreign_road_share: a foreigner's share of a built road's payoff. ai.ai_treaty_goodwill: the goodwill an AI needs to accept a treaty.",
+  "_comment": "EARLY DIPLOMACY (docs/plan_early_diplomacy.md §5; core_sim/src/diplomacy_config.rs). Every value is an opening guess, tuned from play. offers.offer_wait_turns and offers.standing_link_min_rung are read by the offer and stage slices; the goodwill, roads and ai blocks are read as the slices that use them land. offer_wait_turns: turns a pending dealing waits for the receiving people's answer before silence refuses it. standing_link_min_rung: the lowest built road rung (a route-ladder wire key) every tile between two camps must carry, with its keeping met, for the link to stand. goodwill.*: fade_per_turn is the proportional fade toward zero; per_load, per_person_stationed, per_link and per_term are the credits (a gift or exchange, a stationed person, a standing link, a treaty term in force); broken_treaty is the drop a breach costs; wary_below / friendly_above are the word cuts on the -1..+1 scale. roads.foreign_road_share: a foreigner's share of a built road's payoff. ai.ai_treaty_goodwill: the goodwill an AI needs to accept a treaty.",
   "offers": {
-    "offer_wait_turns": 1
+    "offer_wait_turns": 1,
+    "standing_link_min_rung": "route:dirt_road"
   },
   "goodwill": {
     "fade_per_turn": 0.02,

@@ -153,12 +153,12 @@ pub use components::{
     FinishedBatch, FoodBatch, FoodMix, Improvement, KeepingIssue, KeepingToolLine,
     KnowledgeFragment, LaborAllocation, LaborAssignment, LaborTarget, LocalStore, MaterialBatch,
     MaterialDraw, MoraleCause, MusterBench, MusterKit, MusterPlan, PoolToeLine, PopulationCohort,
-    PowerNode, QueuedBuildToe, ResidentBand, Settlement, ShedCrew, ShedFacts, ShedStep,
+    PowerNode, QueuedBuildToe, ResidentBand, ScoutPack, Settlement, ShedCrew, ShedFacts, ShedStep,
     ShedSubject, ShipmentTerms, SourcePriority, SourceShedFacts, SourceYield, StartingUnit,
-    StationReport, TakeSelection, Tile, TownCenter, TransferCause, TransferCounterparty,
-    TransferCrossing, TransferDirection, TransferLedger, TransferLink, YieldRange,
-    DEFAULT_ESCAPEMENT_FLOOR, FODDER, FOOD, HEAD_ORDER, MIN_ORDER_COUNT, NO_IMPROVEMENT_UNDERWAY,
-    STRIP_IT_BARE,
+    StationReport, StrangersOrder, TakeSelection, Tile, TownCenter, TransferCause,
+    TransferCounterparty, TransferCrossing, TransferDirection, TransferLedger, TransferLink,
+    YieldRange, DEFAULT_ESCAPEMENT_FLOOR, FODDER, FOOD, HEAD_ORDER, MIN_ORDER_COUNT,
+    NO_IMPROVEMENT_UNDERWAY, STRIP_IT_BARE,
 };
 pub use config_fingerprint::{
     current_config_fingerprint, drift_between, ConfigDigest, ConfigFingerprint,
@@ -207,8 +207,9 @@ pub use culture_corruption_config::{
     CultureSeverityConfig, CultureTensionTuning, BUILTIN_CULTURE_CORRUPTION_CONFIG,
 };
 pub use dealings::{
-    advance_dealings, answer_dealing, standing_answer_covers, AnswerReport, Dealing, DealingAnswer,
-    DealingId, DealingKind, PendingDealings,
+    advance_dealings, answer_dealing, bands_have_standing_link, check_cargo, check_destination,
+    propose_trade, standing_answer_covers, Agreement, AnswerReport, Dealing, DealingAnswer,
+    DealingId, DealingKind, GoodsLines, PendingDealings, ShipmentGate,
 };
 pub use demographics_config::{
     load_demographics_config_from_env, DemographicsConfig, DemographicsConfigHandle,
@@ -395,10 +396,10 @@ pub use routes::{
     path_lesson_rung, path_reach_tiles, remoteness_multiplier, road_at_risk_rung,
     road_build_fraction, road_keeping_basis, road_keeping_range, road_measure,
     road_neglect_grace_remaining, road_rung_span, road_upkeep_demand, road_upkeep_measure,
-    road_upkeep_workers_needed, route_rungs_in_climb_order, rung_grants_sight, trace_path,
-    traffic_ceiling, Road, RoadKeeper, RoadRegistry, RouteJourney, RouteTrafficLog, TrafficSource,
-    FIRST_BUILT_RUNG, FREE_FLOOR_TOP_RUNG, METER_FULL, NEAR_ENOUGH_TO_KEEP, NO_HERD_HAS_CROSSED,
-    NO_REACH_HELD_OPEN, PAVING_DISCOVERY_ID, ROADBUILDING_DISCOVERY_ID,
+    road_upkeep_workers_needed, route_rungs_in_climb_order, rung_grants_sight, standing_link,
+    trace_path, traffic_ceiling, Road, RoadKeeper, RoadRegistry, RouteJourney, RouteTrafficLog,
+    TrafficSource, FIRST_BUILT_RUNG, FREE_FLOOR_TOP_RUNG, METER_FULL, NEAR_ENOUGH_TO_KEEP,
+    NO_HERD_HAS_CROSSED, NO_REACH_HELD_OPEN, PAVING_DISCOVERY_ID, ROADBUILDING_DISCOVERY_ID,
 };
 pub use sedentarization::{
     sedentarization_tick, SedentarizationEntry, SedentarizationScore, SedentarizationStage,
@@ -1463,6 +1464,11 @@ pub fn build_headless_app() -> App {
                 // site sweep touches nothing the rider reads. See
                 // `knowledge_contact::learn_over_connections`.
                 knowledge_contact::learn_over_connections.after(sites::discover_sites),
+                // **A standing link raises each people's opinion of the other, and word of it
+                // travels along the road** — read at this stage because the roads' keeping has been
+                // judged by now (the moment `light_kept_routes` reads it). It takes
+                // `PopulationCohort` shared, which `discover_sites` writes, so that edge is stated.
+                goodwill::credit_link_goodwill.after(sites::discover_sites),
             )
                 .in_set(TurnStage::Visibility)
                 .run_if(capability_enabled(CapabilityFlags::ALWAYS_ON)),

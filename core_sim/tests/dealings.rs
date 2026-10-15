@@ -235,6 +235,7 @@ fn launch(scene: &mut Scene, terms: ShipmentTerms, cargo: LocalStore) -> Entity 
                 defection_pull: core_sim::Scalar::zero(),
                 station_reports: Vec::new(),
                 goodwill_news: Default::default(),
+                scout_pack: Default::default(),
                 aim: Some(destination_pos),
             },
             BandTravel::to(destination_pos),
@@ -1100,7 +1101,7 @@ fn a_pending_dealing_round_trips_a_checkpoint() {
     assert!(restored[0].cargo.get(FOOD).to_f32() > CARGO_FOOD - EPSILON);
     assert_eq!(
         restored[0].mission.shipment_terms(),
-        Some(ShipmentTerms::Offer),
+        Some(&ShipmentTerms::Offer),
         "the terms ride the mission"
     );
 
@@ -1126,6 +1127,7 @@ fn a_pending_dealing_round_trips_a_checkpoint() {
             party: None,
             goods_sent: LocalStore::new(),
             goods_asked: LocalStore::new(),
+            agreement: None,
             posted_turn: 0,
             expires_turn: 1,
         });

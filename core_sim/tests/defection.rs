@@ -478,6 +478,7 @@ fn spawn_party(app: &mut App, home: Entity, at: Entity) -> (Entity, BandId) {
                 defection_pull: Scalar::zero(),
                 station_reports: Vec::new(),
                 goodwill_news: Default::default(),
+                scout_pack: Default::default(),
                 aim: None,
             },
         ))

@@ -201,6 +201,7 @@ fn launch(scene: &mut Scene, terms: ShipmentTerms, cargo: LocalStore) -> Entity 
                 defection_pull: core_sim::Scalar::zero(),
                 station_reports: Vec::new(),
                 goodwill_news: Default::default(),
+                scout_pack: Default::default(),
                 aim: Some(destination_pos),
             },
             BandTravel::to(destination_pos),
@@ -433,6 +434,7 @@ fn a_stationed_post_settles_at_its_equilibrium() {
                 defection_pull: core_sim::Scalar::zero(),
                 station_reports: Vec::new(),
                 goodwill_news: Default::default(),
+                scout_pack: Default::default(),
                 aim: Some(host_pos),
             },
         ))

@@ -724,6 +724,42 @@ pub fn path_reach_tiles<'a>(
     reach.unwrap_or(NO_REACH_HELD_OPEN)
 }
 
+/// ⛔ **A STANDING LINK — A BUILT, KEPT ROAD RUNNING THE WHOLE WAY BETWEEN TWO CAMPS.** The one
+/// predicate behind early diplomacy's stage 4 and its link goodwill (`docs/plan_early_diplomacy.md`
+/// §1/§2): true when **every** tile of the path between `a` and `b` carries a road that is
+/// [`Road::keeping_is_met`] **and** held at `floor` or above.
+///
+/// **It reads exactly the tile set [`path_reach_tiles`] reads** — the same [`trace_path`] over the
+/// same registry, the same keeping filter — so "the road holds the link open" and "the road makes
+/// this a standing link" can never be two different runs of ground. Where `path_reach_tiles` takes
+/// the weakest tile's reach, this asks the weakest tile's rung: a single bare, unkept or sub-floor
+/// tile breaks the link, which is the shipped asymmetry again (the whole run holds or it does not).
+///
+/// No faction branch: whose road it is does not matter, only that it is built and kept. The two
+/// endpoint tiles are tested first (they are the cheapest tiles to fail on and every path contains
+/// both), so a pair of camps with no road at either end traces nothing.
+pub fn standing_link(
+    roads: &RoadRegistry,
+    a: UVec2,
+    b: UVec2,
+    width: u32,
+    height: u32,
+    wrap: bool,
+    floor: RungKey,
+) -> bool {
+    let tile_stands = |tile: UVec2| {
+        roads
+            .road(tile)
+            .is_some_and(|road| road.keeping_is_met() && road.held_rung().is_at_or_above(floor))
+    };
+    if !tile_stands(a) || !tile_stands(b) {
+        return false;
+    }
+    trace_path(a, b, width, height, wrap, roads)
+        .iter()
+        .all(|tile| tile_stands(*tile))
+}
+
 /// **A TILE THAT HOLDS NO LINK OPEN** — what bare ground and a path are both worth to
 /// [`path_reach_tiles`], and the value an empty path answers.
 pub const NO_REACH_HELD_OPEN: u32 = 0;

@@ -5,7 +5,7 @@
 //! panic. Env override `DIPLOMACY_CONFIG_PATH`. No hot reload.
 //!
 //! **Every §5 key is loaded and validated now**, though the offer slice reads only
-//! `offers.offer_wait_turns`: the goodwill, roads and ai blocks belong to the slices that follow,
+//! the two `offers.*` keys: the goodwill, roads and ai blocks belong to the slices that follow,
 //! and a file that is wrong should stop the boot on the day it is edited rather than the day a
 //! later slice first reads it. Every key is required — a missing one is a parse failure, never a
 //! number nobody chose — and every table is closed (`deny_unknown_fields`); only the root accepts a
@@ -18,6 +18,7 @@ use std::{
 };
 
 use crate::config_load::{load_config_from_env, ConfigLoadError};
+use crate::{intensification::RungKey, routes::FIRST_BUILT_RUNG};
 use bevy::prelude::Resource;
 use serde::Deserialize;
 use thiserror::Error;
@@ -49,6 +50,18 @@ pub struct DiplomacyConfig {
 pub struct OffersConfig {
     /// Turns a pending dealing waits for an answer before silence refuses it.
     pub offer_wait_turns: u32,
+    /// The lowest built road rung (a route-ladder wire key such as `route:dirt_road`) every tile
+    /// between two camps must carry, keeping met, for the link between them to stand
+    /// ([`crate::routes::standing_link`]). Validated to name a rung at or above the first built one.
+    pub standing_link_min_rung: String,
+}
+
+impl OffersConfig {
+    /// The rung `standing_link_min_rung` names. Validation guarantees it resolves.
+    pub fn standing_link_floor(&self) -> RungKey {
+        RungKey::from_wire_key(&self.standing_link_min_rung)
+            .expect("validated: standing_link_min_rung names a route rung")
+    }
 }
 
 /// What one people thinks of another (read by the goodwill slice).
@@ -117,6 +130,19 @@ impl DiplomacyConfig {
                 field: "offers.offer_wait_turns".to_string(),
                 reason: format!("must be at least {MIN_OFFER_WAIT_TURNS}"),
             });
+        }
+        match RungKey::from_wire_key(&self.offers.standing_link_min_rung) {
+            Some(rung) if rung.is_at_or_above(FIRST_BUILT_RUNG) => {}
+            _ => {
+                return Err(DiplomacyConfigError::Invalid {
+                    field: "offers.standing_link_min_rung".to_string(),
+                    reason: format!(
+                        "must name a built route rung (a wire key at or above {}; was {:?})",
+                        FIRST_BUILT_RUNG.wire_key(),
+                        self.offers.standing_link_min_rung
+                    ),
+                });
+            }
         }
         let goodwill = &self.goodwill;
         for (field, value) in [
@@ -271,6 +297,7 @@ mod tests {
     fn the_builtin_parses_with_the_spec_opening_values() {
         let config = DiplomacyConfig::builtin();
         assert_eq!(config.offers.offer_wait_turns, 1);
+        assert_eq!(config.offers.standing_link_floor(), FIRST_BUILT_RUNG);
         assert_eq!(config.goodwill.fade_per_turn, 0.02);
         assert_eq!(config.goodwill.broken_treaty, 0.5);
         assert_eq!(config.goodwill.wary_below, -0.2);
@@ -294,6 +321,19 @@ mod tests {
             v["offers"]["offer_wait_turn"] = serde_json::json!(2);
         })
         .is_err());
+    }
+
+    #[test]
+    fn the_standing_link_floor_must_name_a_built_route_rung() {
+        for bad in ["route:trail", "plant:tended", "route:nonsense", ""] {
+            let err = with(|v| v["offers"]["standing_link_min_rung"] = serde_json::json!(bad))
+                .expect_err("a floor that is no built route rung must not load");
+            assert!(err.contains("offers.standing_link_min_rung"), "{err}");
+        }
+        let paved =
+            with(|v| v["offers"]["standing_link_min_rung"] = serde_json::json!("route:paved_road"))
+                .expect("a higher built rung is a legal floor");
+        assert_eq!(paved.offers.standing_link_floor(), RungKey::RoutePavedRoad);
     }
 
     #[test]

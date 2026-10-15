@@ -1,5 +1,5 @@
 use super::*;
-use crate::components::{BandName, RaidOrders, StationReport};
+use crate::components::{BandName, RaidOrders, ShipmentTerms, StationReport};
 use crate::connections::Sighting;
 use crate::fauna::AnimalTake;
 
@@ -188,7 +188,10 @@ pub struct ExpeditionDealings<'w> {
     pub config: Option<Res<'w, crate::diplomacy_config::DiplomacyConfigHandle>>,
     /// **What peoples think of each other** — read when a party sights a foreign band, so the
     /// opinion it will carry home is the one standing at that sighting.
-    pub goodwill: Option<Res<'w, crate::goodwill::Goodwill>>,
+    pub goodwill: Option<ResMut<'w, crate::goodwill::Goodwill>>,
+    /// **Who a party's home band already holds a tie with** — a *stranger* is a band of another
+    /// people the home band holds no live tie with (stage 1 of early diplomacy).
+    pub connections: Option<Res<'w, crate::connections::ConnectionLedger>>,
     /// **Where a party's carried news lands** — alongside its other news (the comm flush, a landed
     /// station report).
     pub known_goodwill: Option<ResMut<'w, crate::goodwill::KnownGoodwill>>,
@@ -206,6 +209,253 @@ impl ExpeditionDealings<'_> {
             }
         }
     }
+}
+
+impl ExpeditionDealings<'_> {
+    /// `goodwill.per_load` — the installed config's, else the builtin's.
+    pub fn per_load(&self) -> f32 {
+        match self.config.as_deref() {
+            Some(handle) => handle.get().goodwill.per_load,
+            None => {
+                crate::diplomacy_config::DiplomacyConfig::builtin()
+                    .goodwill
+                    .per_load
+            }
+        }
+    }
+}
+
+/// **Is `subject` a stranger this scout should hand its pack to?** (`docs/plan_early_diplomacy.md`
+/// §1, stage 1.) The party is a scout still holding a live pack order with a pack aboard and no
+/// stranger chosen yet, and the subject is a band of another people that the scout's home band
+/// holds no live tie with. A world with no connection ledger, or a party with no home band id,
+/// cannot tell a stranger from an acquaintance and so finds none.
+fn is_a_stranger(
+    expedition: &Expedition,
+    mission: &ExpeditionMission,
+    home_band: Option<BandId>,
+    subject: BandId,
+    own_faction: FactionId,
+    subject_faction: Option<FactionId>,
+    connections: Option<&crate::connections::ConnectionLedger>,
+) -> bool {
+    matches!(mission, ExpeditionMission::Scout)
+        && matches!(
+            expedition.phase,
+            ExpeditionPhase::Outbound | ExpeditionPhase::AwaitingOrders
+        )
+        && expedition.scout_pack.is_seeking()
+        && !crate::dealings::manifest(&expedition.cargo).is_empty()
+        && subject_faction.is_some_and(|other| other != own_faction)
+        && home_band
+            .zip(connections)
+            .is_some_and(|(home, ledger)| !ledger.tie_is_live(home, subject))
+}
+
+/// **The stranger is lost, or there is nobody to hand the pack to**: the order is NOT spent, the
+/// party forgets the chase and goes back to the scouting it recorded (or stands where it is, when it
+/// recorded none).
+fn drop_the_stranger(
+    expedition: &mut Expedition,
+    exp_pos: UVec2,
+    commands: &mut Commands,
+    entity: Entity,
+) {
+    expedition.scout_pack.target = None;
+    expedition.aim = None;
+    match expedition
+        .scout_pack
+        .resume
+        .take()
+        .filter(|resume| *resume != exp_pos)
+    {
+        Some(resume) => {
+            expedition.phase = ExpeditionPhase::Outbound;
+            commands.entity(entity).insert(BandTravel::to(resume));
+        }
+        None => {
+            expedition.phase = ExpeditionPhase::AwaitingOrders;
+            commands.entity(entity).remove::<BandTravel>();
+        }
+    }
+}
+
+/// What [`post_scout_handover`] needs to name the two ends.
+struct ScoutHandover {
+    entity: Entity,
+    faction: FactionId,
+    sender_band: BandId,
+    party: BandId,
+    receiver: FactionId,
+    receiver_band: BandId,
+    current_turn: u64,
+}
+
+/// **A scout that reached its stranger posts its pack as a pending offer** and waits in the camp
+/// (`AwaitingOrders`, the wait a shipment's offer already uses) for the stranger's people to answer
+/// or for silence to refuse. The order is spent here, whatever the answer: **one pack, one
+/// handover.** The pack itself stays on the party; the dealing is its manifest.
+fn post_scout_handover(
+    expedition: &mut Expedition,
+    dealings: &mut ExpeditionDealings,
+    event_log: &mut CommandEventLog,
+    handover: ScoutHandover,
+) {
+    let wait = dealings.offer_wait_turns();
+    let manifest = crate::dealings::manifest(&expedition.cargo);
+    let dealing = dealings
+        .pending
+        .as_deref_mut()
+        .expect("a handover is only posted when the book is present")
+        .post(crate::dealings::Dealing {
+            // Assigned by the book.
+            id: crate::dealings::DealingId::default(),
+            kind: crate::dealings::DealingKind::Offer,
+            sender_faction: handover.faction,
+            sender_band: handover.sender_band,
+            receiver_faction: handover.receiver,
+            receiver_band: handover.receiver_band,
+            party: Some(handover.party),
+            goods_sent: expedition.cargo.clone(),
+            goods_asked: crate::LocalStore::new(),
+            agreement: None,
+            posted_turn: handover.current_turn,
+            expires_turn: handover.current_turn + u64::from(wait),
+        });
+    expedition.phase = ExpeditionPhase::AwaitingOrders;
+    expedition.aim = None;
+    expedition.scout_pack.target = None;
+    expedition.scout_pack.spent = true;
+    crate::dealings::push_posted_events(
+        event_log,
+        handover.current_turn,
+        dealing,
+        &crate::dealings::DealingEnds {
+            sender_faction: handover.faction,
+            sender_band: handover.sender_band,
+            receiver_faction: handover.receiver,
+            receiver_band: handover.receiver_band,
+        },
+        &manifest,
+        handover.entity.to_bits(),
+    );
+}
+
+/// What [`settle_agreed_trade`] needs of the arrival.
+struct AgreedArrival<'a> {
+    entity: Entity,
+    host_entity: Entity,
+    destination: BandId,
+    faction: FactionId,
+    receiver: FactionId,
+    home_band_id: Option<BandId>,
+    party_band: Option<BandId>,
+    agreed_return: crate::dealings::GoodsLines,
+    dealing: crate::dealings::DealingId,
+    carry: &'a crate::carry::CarryConfig,
+    current_turn: u64,
+}
+
+/// **An agreed trade arrives and settles at once**, because the return was agreed before the party
+/// left (`docs/plan_early_diplomacy.md` §1, stage 4). The cargo lands in the receiving band, the
+/// agreed return is drawn out of it into the party's cargo and booked `ExchangeOut`, each side's
+/// opinion of the other rises by the worth of what it received, and the party turns for home with
+/// the payment (`ExchangeIn` on the fold-back).
+///
+/// **If the receiver no longer holds the return, the exchange fails**: nothing lands, nothing is
+/// drawn, no goodwill moves, and the party walks home with its cargo. Told to both peoples.
+fn settle_agreed_trade(
+    expedition: &mut Expedition,
+    bands: &mut Query<ExpeditionHomeBands, Without<Expedition>>,
+    dealings: &mut ExpeditionDealings,
+    event_log: &mut CommandEventLog,
+    arrival: AgreedArrival<'_>,
+) {
+    let Some(sender_band) = arrival.home_band_id else {
+        // A party with no home band id cannot be settled against anyone: it goes home as it came.
+        expedition.phase = ExpeditionPhase::Returning;
+        return;
+    };
+    let ends = crate::dealings::DealingEnds {
+        sender_faction: arrival.faction,
+        sender_band,
+        receiver_faction: arrival.receiver,
+        receiver_band: arrival.destination,
+    };
+    let receiver_holds_it = bands
+        .get(arrival.host_entity)
+        .ok()
+        .is_some_and(|(_, host, ..)| {
+            arrival
+                .agreed_return
+                .held_in(&host.stores, "settle_exchange")
+                .is_ok()
+        });
+    if !receiver_holds_it {
+        crate::dealings::push_exchange_events(
+            event_log,
+            arrival.current_turn,
+            arrival.dealing,
+            &ends,
+            crate::dealings::ExchangeOutcome::ReceiverShort,
+            arrival.entity.to_bits(),
+        );
+        expedition.phase = ExpeditionPhase::Returning;
+        return;
+    }
+    // The return's worth is judged against what the SENDER's home band held before the exchange.
+    let home_held = bands
+        .get(expedition.home_band)
+        .ok()
+        .map(|(_, home, ..)| home.stores.clone())
+        .unwrap_or_default();
+    let sender = TransferCounterparty {
+        band: sender_band,
+        faction: arrival.faction,
+    };
+    let Ok((_, mut host, _, _, allocation, _, _)) = bands.get_mut(arrival.host_entity) else {
+        expedition.phase = ExpeditionPhase::Returning;
+        return;
+    };
+    let settled = crate::dealings::settle_exchange(
+        &mut host,
+        allocation.map(|allocation| allocation.into_inner()),
+        &mut expedition.cargo,
+        &arrival.agreed_return,
+        sender,
+        arrival.party_band,
+        arrival.carry,
+    );
+    let return_worth =
+        crate::goodwill::cargo_worth(&settled.return_store, &home_held, arrival.carry);
+    let per_load = dealings.per_load();
+    if let Some(goodwill) = dealings.goodwill.as_deref_mut() {
+        crate::dealings::credit_settlement_goodwill(
+            goodwill,
+            per_load,
+            arrival.receiver,
+            arrival.faction,
+            settled.paid.is_empty(),
+            settled.cargo_worth,
+            return_worth,
+        );
+    }
+    crate::dealings::push_exchange_events(
+        event_log,
+        arrival.current_turn,
+        arrival.dealing,
+        &ends,
+        crate::dealings::ExchangeOutcome::Settled {
+            delivered: &settled.delivered,
+            paid: &settled.paid,
+        },
+        arrival.entity.to_bits(),
+    );
+    expedition.cargo = settled.return_store;
+    if let ExpeditionMission::Trade { terms, .. } = &mut expedition.mission {
+        *terms = ShipmentTerms::Returned;
+    }
+    expedition.phase = ExpeditionPhase::Returning;
 }
 
 /// The configs and logs [`advance_band_movement`] reads, bundled (the [`ExpeditionConfigs`] idiom).
@@ -1197,7 +1447,10 @@ pub fn advance_expeditions(
         let mut newly_seen: u32 = 0;
         // **Did the party itself see its target band this turn?** Read off the observe pass below,
         // before the station bundle drains `pending_contacts`.
-        let target_band = mission.host_band().or_else(|| mission.destination_band());
+        let target_band = mission
+            .host_band()
+            .or_else(|| mission.destination_band())
+            .or(expedition.scout_pack.target);
         let mut sees_target = false;
         for pos in crate::visibility_systems::visible_tiles_in_range(
             exp_pos,
@@ -1233,6 +1486,32 @@ pub fn advance_expeditions(
                         sees_target = true;
                     }
                     if Some(*subject) != home_band_id {
+                        // **A scout holding a pack order turns toward the first STRANGER it sights**
+                        // (`docs/plan_early_diplomacy.md` §1, stage 1): a band of another people its
+                        // home band holds no live tie with. The party records the scouting it was
+                        // doing so it can resume, and aims at where the stranger stands.
+                        if is_a_stranger(
+                            &expedition,
+                            &mission,
+                            home_band_id,
+                            *subject,
+                            faction,
+                            resident_positions
+                                .get(subject)
+                                .and_then(|(subject_entity, _)| {
+                                    bands
+                                        .get(*subject_entity)
+                                        .ok()
+                                        .map(|(_, subject_cohort, ..)| subject_cohort.faction)
+                                }),
+                            configs.dealings.connections.as_deref(),
+                        ) {
+                            expedition.scout_pack.target = Some(*subject);
+                            expedition.scout_pack.resume =
+                                Some(travel.map(|travel| travel.target).unwrap_or(exp_pos));
+                            expedition.aim = Some(pos);
+                            sees_target = true;
+                        }
                         // **What that people thinks of ours, at this sighting** — carried home
                         // with the rest of the party's news.
                         if let (Some(goodwill), Some(&(subject_entity, _))) = (
@@ -1673,6 +1952,85 @@ pub fn advance_expeditions(
 
         // ---- Phase machine ----
         match expedition.phase {
+            // **A scout carrying a pack walks its chosen stranger down and hands the pack over**
+            // (stage 1). It takes the shipment's arrival rule through the same helper: the aim
+            // follows the stranger only while the party sees it, arrival is comm-range proximity
+            // with the stranger in sight, and a stranger lost before arrival leaves the order
+            // unspent and the scouting resumed.
+            ExpeditionPhase::Outbound | ExpeditionPhase::AwaitingOrders
+                if expedition.scout_pack.target.is_some()
+                    && matches!(mission, ExpeditionMission::Scout) =>
+            {
+                let stranger = expedition
+                    .scout_pack
+                    .target
+                    .expect("this arm is gated on a chosen stranger");
+                let step = resident_positions
+                    .get(&stranger)
+                    .map(|&(host_entity, host_pos)| {
+                        (
+                            host_entity,
+                            steer_toward_target(
+                                &mut expedition.aim,
+                                exp_pos,
+                                host_pos,
+                                false,
+                                sees_target,
+                                comm_range,
+                                grid_width,
+                                wrap_horizontal,
+                            ),
+                        )
+                    });
+                match step {
+                    Some((_, TargetStep::Walk(aim))) => {
+                        expedition.phase = ExpeditionPhase::Outbound;
+                        commands.entity(entity).insert(BandTravel::to(aim));
+                    }
+                    Some((host_entity, TargetStep::Arrived)) => {
+                        let receiver_faction = bands
+                            .get(host_entity)
+                            .ok()
+                            .map(|(_, host, ..)| host.faction);
+                        let posted = match (
+                            home_band_id,
+                            party_band,
+                            receiver_faction,
+                            configs.dealings.pending.is_some(),
+                        ) {
+                            (Some(sender_band), Some(party), Some(receiver), true) => {
+                                post_scout_handover(
+                                    &mut expedition,
+                                    &mut configs.dealings,
+                                    &mut event_log,
+                                    ScoutHandover {
+                                        entity,
+                                        faction,
+                                        sender_band,
+                                        party,
+                                        receiver,
+                                        receiver_band: stranger,
+                                        current_turn,
+                                    },
+                                );
+                                true
+                            }
+                            _ => false,
+                        };
+                        if posted {
+                            commands.entity(entity).remove::<BandTravel>();
+                        } else {
+                            // Nobody to hand it to (no book, or the stranger cannot be resolved):
+                            // the order is not spent; the scout goes back to its scouting.
+                            drop_the_stranger(&mut expedition, exp_pos, &mut commands, entity);
+                        }
+                    }
+                    // Out of sight before arrival, or gone: the order is NOT spent.
+                    Some((_, TargetStep::NotFound)) | None => {
+                        drop_the_stranger(&mut expedition, exp_pos, &mut commands, entity);
+                    }
+                }
+            }
             ExpeditionPhase::Outbound if mission.destination_band().is_some() => {
                 // **A shipment walks its destination down and hands the cargo over.** It reuses the
                 // scout's `Outbound` and the shared `Returning`; there is deliberately no trade
@@ -1741,15 +2099,27 @@ pub fn advance_expeditions(
                                 .map(|(_, host, ..)| host.faction);
                             // A dealing needs both ends' durable ids; a hand-rolled world without
                             // the resource, or a party with no id, keeps the direct hand-over.
+                            // **An agreed trade settles by its own terms**, never through the
+                            // standing answer and never as a pending item: both legs were named
+                            // before the party left.
+                            let agreed = match mission.shipment_terms() {
+                                Some(ShipmentTerms::Agreed {
+                                    agreed_return,
+                                    dealing,
+                                }) => Some((agreed_return.clone(), *dealing)),
+                                _ => None,
+                            };
+                            let default_terms = ShipmentTerms::default();
                             let post_as = match (
+                                agreed.is_none(),
                                 home_band_id,
                                 party_band,
                                 receiver_faction,
                                 configs.dealings.pending.is_some(),
                             ) {
-                                (Some(sender_band), Some(party), Some(receiver), true)
+                                (true, Some(sender_band), Some(party), Some(receiver), true)
                                     if !crate::dealings::standing_answer_covers(
-                                        mission.shipment_terms().unwrap_or_default(),
+                                        mission.shipment_terms().unwrap_or(&default_terms),
                                         faction,
                                         receiver,
                                         configs.borders.as_deref(),
@@ -1759,7 +2129,29 @@ pub fn advance_expeditions(
                                 }
                                 _ => None,
                             };
-                            if let Some((sender_band, party, receiver)) = post_as {
+                            if let (Some((agreed_return, dealing)), Some(receiver)) =
+                                (agreed, receiver_faction)
+                            {
+                                settle_agreed_trade(
+                                    &mut expedition,
+                                    &mut bands,
+                                    &mut configs.dealings,
+                                    &mut event_log,
+                                    AgreedArrival {
+                                        entity,
+                                        host_entity,
+                                        destination,
+                                        faction,
+                                        receiver,
+                                        home_band_id,
+                                        party_band,
+                                        agreed_return,
+                                        dealing,
+                                        carry: &cfg.carry,
+                                        current_turn,
+                                    },
+                                );
+                            } else if let Some((sender_band, party, receiver)) = post_as {
                                 let wait = configs.dealings.offer_wait_turns();
                                 let manifest = crate::dealings::manifest(&expedition.cargo);
                                 let dealing = configs
@@ -1778,6 +2170,7 @@ pub fn advance_expeditions(
                                         party: Some(party),
                                         goods_sent: expedition.cargo.clone(),
                                         goods_asked: crate::LocalStore::new(),
+                                        agreement: None,
                                         posted_turn: current_turn,
                                         expires_turn: current_turn + u64::from(wait),
                                     });
@@ -1926,7 +2319,18 @@ pub fn advance_expeditions(
             ExpeditionPhase::Outbound => {
                 // Scout arrived when `advance_band_movement` (earlier this turn) removed the travel
                 // order → awaiting orders (the decision point) + a one-shot feed line.
-                if travel.is_none() {
+                //
+                // **A scout whose handover is over picks its scouting back up**: the destination
+                // it was walking to when it turned (or the tile it stood on) is still recorded,
+                // and it walks there before it stops.
+                let resume = if travel.is_none() {
+                    expedition.scout_pack.resume.take()
+                } else {
+                    None
+                };
+                if let Some(resume) = resume.filter(|resume| *resume != exp_pos) {
+                    commands.entity(entity).insert(BandTravel::to(resume));
+                } else if travel.is_none() {
                     expedition.phase = ExpeditionPhase::AwaitingOrders;
                     if !expedition.announced {
                         event_log.push(CommandEventEntry::new(
@@ -1992,8 +2396,8 @@ pub fn advance_expeditions(
                             fold.book_home(
                                 &mut allocation,
                                 party_band,
-                                expedition.mission.consignee(),
-                                expedition.mission.returning_cargo_cause(),
+                                expedition.cargo_counterparty(),
+                                expedition.returning_cargo_cause(),
                             );
                         }
                     }

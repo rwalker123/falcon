@@ -266,6 +266,7 @@ fn spawn_scout_party(
                 defection_pull: core_sim::Scalar::zero(),
                 station_reports: Vec::new(),
                 goodwill_news: Default::default(),
+                scout_pack: Default::default(),
                 aim: None,
             },
         ))

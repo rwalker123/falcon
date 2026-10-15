@@ -542,6 +542,7 @@ fn an_expedition_reports_a_people_only_when_it_comes_within_comm_range() {
                     defection_pull: core_sim::Scalar::zero(),
                     station_reports: Vec::new(),
                     goodwill_news: Default::default(),
+                    scout_pack: Default::default(),
                     aim: None,
                 },
             ))
@@ -712,6 +713,7 @@ fn an_older_report_refreshes_the_tie_without_rewriting_where_they_were() {
                 defection_pull: core_sim::Scalar::zero(),
                 station_reports: Vec::new(),
                 goodwill_news: Default::default(),
+                scout_pack: Default::default(),
                 aim: None,
             },
         ));
@@ -822,6 +824,7 @@ fn the_remembered_name_survives_a_checkpoint_round_trip() {
                 defection_pull: core_sim::Scalar::zero(),
                 station_reports: Vec::new(),
                 goodwill_news: Default::default(),
+                scout_pack: Default::default(),
                 aim: None,
             },
         ));

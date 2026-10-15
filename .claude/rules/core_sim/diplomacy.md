@@ -10,6 +10,7 @@ paths:
   - "core_sim/src/goodwill.rs"
   - "core_sim/src/snapshot/goodwill.rs"
   - "core_sim/tests/goodwill.rs"
+  - "core_sim/tests/stages.rs"
   - "sim_schema/src/state/goodwill.rs"
   - "sim_schema/src/codec/goodwill.rs"
 ---
@@ -19,14 +20,17 @@ paths:
 Design of record: `docs/plan_early_diplomacy.md` (issue #233, arc #231). This file is the as-built
 engineering rationale for **slice 1a, offers** (§1 of the plan): the config, the pending item, the
 standing answer, the answer verb and the wire; and **slice 1b, goodwill** (§2): the opinion ledger,
-its sources, its fade, and how it is known. Treaties, the envoy, road rights and the AI are later
-slices; their levers are loaded and validated here and read there.
+its sources, its fade, and how it is known; and **slice 1c, the exchange stages** (§1 and the `link`
+source of §2): haggling over a standing link (stage 4), a scout's pack (stage 1), and what a standing
+link is worth. Treaties, the envoy, road rights and the AI are later slices; their levers are loaded
+and validated here and read there.
 
 ## Config files
 
 | File | Key | Opening | Meaning |
 |---|---|---|---|
 | `src/data/diplomacy_config.json` | `offers.offer_wait_turns` | **1** | turns a pending dealing waits for an answer before silence refuses it; validated `>= 1` (an offer that expired the turn it was posted would be refused unseen) |
+| | `offers.standing_link_min_rung` | **`route:dirt_road`** | the lowest built road rung, as a route-ladder wire key, that every tile between two camps must carry (keeping met) for a standing link to stand; validated to name a rung at or above the first built one, so a trail, a plant rung or a typo is a boot panic |
 | | `goodwill.fade_per_turn` | **0.02** | proportional fade toward zero; a fraction in `0..=1` |
 | | `goodwill.per_load` | **0.02** | goodwill per unit of worth; finite, `>= 0` |
 | | `goodwill.per_person_stationed` | **0.001** | per stationed person per turn; finite, `>= 0` |
@@ -40,11 +44,11 @@ slices; their levers are loaded and validated here and read there.
 Loader `diplomacy_config.rs` on the shared boot seam (`config-loading.md`), env override
 `DIPLOMACY_CONFIG_PATH`, no hot-reload kind. **Every key is required and every table is closed**
 (`deny_unknown_fields`; only the root accepts a `_comment`), so a missing or misspelled lever is a boot
-panic rather than a number nobody chose. Readers: `offer_wait_turns` (offers) and, for goodwill,
-`fade_per_turn`, `per_load`, `per_person_stationed`, `wary_below` and `friendly_above`; the rest
-(`per_link`, `per_term`, `broken_treaty`, the roads and AI blocks) are loaded so a bad file stops the
-boot the day it is edited, not the day a later slice first reads it. All opening values are playtest
-dials.
+panic rather than a number nobody chose. Readers: `offer_wait_turns` (offers), `standing_link_min_rung`
+(the standing link) and, for goodwill, `fade_per_turn`, `per_load`, `per_person_stationed`,
+`per_link`, `wary_below` and `friendly_above`; the rest (`per_term`, `broken_treaty`, the roads and AI
+blocks) are loaded so a bad file stops the boot the day it is edited, not the day a later slice
+first reads it. All opening values are playtest dials.
 
 ## The pending item: `PendingDealings`
 
@@ -55,15 +59,17 @@ that dropped the book would strand a party in a camp with nobody waiting on it; 
 counter would re-issue an id a client still holds. Ids start at `1`, so `0` on the wire means "no
 dealing", and a removed id is never handed out again.
 
-A `Dealing` is: `id`, `kind`, sender faction and band, receiver faction and band, `party`
-(`Option<BandId>`), `goods_sent`, `goods_asked`, `posted_turn`, `expires_turn`
+A `Dealing` is: `id`, `kind`, sender faction and band (who posted it), receiver faction and band (who
+must answer), `party` (`Option<BandId>`, an offer's), `goods_sent`, `goods_asked`, `agreement`
+(`Option<Agreement>`, a proposal's or counter's legs), `posted_turn`, `expires_turn`
 (`posted_turn + offer_wait_turns`). Goods are `LocalStore`s — the shipment's own cargo
 representation (food by keeping class, hay, material batches with their readings) — so a list is
 never a summed value.
 
-- **`DealingKind` is a fieldless enum** (`Offer` today). The carrier-specific data (the waiting party)
-  is a field on the record, so a later `Proposal`, `Counter` or `TreatyProposal` adds a variant and
-  leaves the record's shape alone. The wire carries the kind as a token (`"offer"`).
+- **`DealingKind` is a fieldless enum** (`Offer`, `Proposal`, `Counter`). The carrier-specific data
+  is a field on the record — the waiting party on an offer, the named legs (`Dealing::agreement`) on
+  a proposal or counter — so a later `TreatyProposal` adds a variant and leaves the record's shape
+  alone. The wire carries the kind as a token (`"offer"`, `"proposal"`, `"counter"`).
 - **The goods stay on the party.** `goods_sent` is a manifest; the physical cargo is still
   `Expedition::cargo`, so a recall, a lost destination or a refusal needs no goods-moving code: the
   party turns `Returning` and the existing fold-back carries the cargo home as `ShipmentReturned`.
@@ -114,9 +120,9 @@ arrival and by an accepted offer so the two cannot book a delivery differently.
 
 `answer_dealing <faction> <id> accept [food <a>] [fodder <a>] [material <id> <a>]… | refuse`
 (proto **86**, `AnswerDealingCommand`; the return list is `TradeCargoItem`s, the shipment's own cargo
-words). Seat-gated and membership-checked like every faction-bearing order. **`counter` is the next
-slice: the text grammar refuses it** with `CommandParseError::UnsupportedAnswer` and a reason, rather
-than reading it as an accept or dropping it. The resolution is the library function
+words). Seat-gated and membership-checked like every faction-bearing order. `counter give […] ask […]`
+answers a proposal or a counter ("The exchange stages" below); an offer cannot be countered, and any
+other word is `CommandParseError::UnsupportedAnswer` rather than an accept. The resolution is the library function
 `dealings::answer_dealing(world, faction, id, &answer)`, which the server handler wraps (a refusal is
 a `CommandEventKind::Dealing` failure line) and the tests call directly.
 
@@ -146,8 +152,123 @@ fold-back books the cargo at home through `FoldBack::book_home`.
 `ExchangeOut` is the receiver paying the return; `ExchangeIn` is that return landing in the party's
 home band. Without them an accepted offer's return would come home as `ShipmentReturned`, which says
 "a shipment never arrived" — and the receiver's payment would have no cause at all. The fold-back
-picks the cause with `ExpeditionMission::returning_cargo_cause()` (`Returned` → `ExchangeIn`, else
-`ShipmentReturned`), passed to `FoldBack::book_home` by both of its call sites.
+picks the cause with `Expedition::returning_cargo_cause()` (a trade party's `Returned` terms, or a scout
+whose handover was accepted, → `ExchangeIn`; else `ShipmentReturned`) and the counterparty with
+`Expedition::cargo_counterparty()`, passed to `FoldBack::book_home` by both of its call sites.
+
+## The exchange stages (slice 1c)
+
+### The standing link — ONE predicate
+
+`routes::standing_link(roads, a, b, width, height, wrap, floor)`: true when **every tile of the path**
+between two camps carries a road that is `Road::keeping_is_met` **and** held at `floor` or above
+(`offers.standing_link_min_rung`, opening `route:dirt_road`). It reads **exactly the tile set
+`path_reach_tiles` reads** — the same `trace_path` over the same registry, the same keeping filter — so
+"the road holds the link open" and "the road makes this a standing link" can never be two runs of
+ground. A tile with no road, an unkept road or a road below the floor breaks it; **there is no faction
+branch** (whose road it is does not matter). The two endpoint tiles are tested first, so a pair of camps
+with no road at either end traces nothing. `dealings::bands_have_standing_link(world, a, b)` is the
+world-reading wrapper the command path uses.
+
+⛔ **A built road must be KEPT.** The labour pass stamps every built road's bill each turn and an unkept
+road's shortfall reads as unmet, so a road nobody pays holds no link once one real turn has judged it
+(`stages.rs::an_unkept_road_holds_no_link_once_a_turn_has_judged_it`). A road with no stamped bill
+reads as met (the shipped rule), which is why a fixture that never runs a turn can lay a bare road.
+
+### Stage 4: `propose_trade`, and the counter
+
+`propose_trade <faction> <band> <party_workers> <dest_band> give […] ask […]` (proto **87**,
+`ProposeTradeCommand`; the lists are `TradeCargoItem`s). `dealings::propose_trade` records a
+`DealingKind::Proposal` **the turn it is made**, addressed to the destination's people, and fails
+closed before recording anything: the band is the proposer's resident band with the workers; the
+destination passes `check_destination` (the shipment launch's own tie gate — a live tie, faction
+never asked); a **standing link** holds; the sender holds the give and it fits the party's pack
+(`check_cargo`, the trade verb's own carry computation); the proposal names something. **Nothing is
+drawn.** The legs are `GoodsLines` (`food`, `fodder`, one total per material) — unrated, because no
+batch exists to rate yet — held in `Dealing::agreement` beside the shipper and consignee.
+
+- **`Agreement` is stated from the SHIPPER's point of view**: `give` is what the shipper sends, `ask`
+  what it gets back, whoever is speaking, so *accept* means the same on a proposal and on every counter
+  after it. `Dealing::sender`/`receiver` are the poster and the addressee; `shipper`/`consignee` never
+  swap.
+- **`answer_dealing … counter give […] ask […]`** closes the original (`status=countered`, told to
+  both) and posts a `Counter` addressed back, party size carried over. There is no cap on counters:
+  each costs the haggler a turn. A counter must fit the shipper's pack and the answering side must hold
+  its own leg.
+- **Every answer on a proposal or counter requires the standing link to still hold.** If the road has
+  gone the dealing is withdrawn (`status=withdrawn reason=link_broken`, told to both) and the answer
+  fails.
+- **Accept** takes no return list (the terms are written; counter to change them). It checks the
+  answering side's own leg now — a consignee holds the ask, a shipper can launch — and returns the
+  `Agreement` in `AnswerReport::launch`. **The launch is the server's** (it lives in `bin/server.rs`):
+  `launch_agreed_party` sends the shipper's party through the trade launch with the give as cargo and
+  `ShipmentTerms::Agreed { agreed_return, dealing }`. When the consignee accepts and the *shipper*
+  can no longer honour its leg, the dealing **fails** with a reason (`status=failed`, told to both,
+  nothing moves); when the shipper is the answerer the answer fails closed and the dealing stays.
+- **A proposal is open for the window it was made in and `offer_wait_turns` more** (`expires_turn =
+  tick + wait`); silence refuses it. There is no party to withdraw it, only the road.
+
+### An agreed trade settles on arrival
+
+`systems::expeditions::settle_agreed_trade`, from the `Arrived` arm (an `Agreed` shipment never goes
+through the standing answer and is never pending): if the receiver still holds the agreed return,
+`dealings::settle_exchange` — **the one exchange routine an accepted offer also uses** — lands the cargo
+(`ShipmentIn`), draws the return out of the receiver (`ExchangeOut`), and the party turns `Returning`
+with the return (`ExchangeIn` on the fold-back); each side's goodwill rises by the worth of what it
+received, at settlement. **If the receiver no longer holds the return the exchange fails**: nothing
+lands, nothing is drawn, **no goodwill moves**, and the party walks home with its cargo
+(`ShipmentReturned`), `status=failed reason=receiver_short`, told to both. A failed launch (accept,
+then the party cannot set out) is likewise a failure with no goodwill.
+
+### Stage 1: a scout's pack
+
+`send_expedition … [kit <id>] [strangers give|offer|keep] [pack [food <a>] [fodder <a>] [material <id>
+<a>]…]` (proto fields 7 `pack` and 8 `strangers` on `SendExpeditionCommand`). The pack is the
+shipment's own manifest: it fails closed on the shipment's gates (`check_cargo`: held, within the
+party's carry) **before anything is drawn**, and is drawn before the walking larder so it is exact
+(`draw_goods`, shared with the trade launch). A `give`/`offer` order with no pack is refused. The
+pack rides `Expedition::cargo`; the order and the handover's state ride `Expedition::scout_pack`
+(`ScoutPack`: `order`, `target`, `resume`, `spent`, `handover`, `returned`), checkpointed with the
+party.
+
+- **A stranger** is a resident band of another people the party sights (in `advance_expeditions`'s
+  observe pass) whose tie to the party's home band is not live (`ConnectionLedger::tie_is_live`).
+  The first one sighted while the order is live and the pack aboard becomes the target; the party
+  records the scouting destination it was walking to (`resume`; the tile it stood on if it was
+  waiting) and aims at the stranger's live tile through `steer_toward_target`, the shipment's own
+  arrival rule.
+- **Arrival posts a pending `Offer`** and the party waits in `AwaitingOrders`, the wait a shipment's
+  offer already uses. `give` and `offer` post the same record — the receiver names the return in both
+  (an empty one is a gift) — and **the order is spent when the dealing posts**, whatever the answer:
+  one pack, one handover.
+- **After the dealing ends** (accepted, refused or lapsed) `Expedition::after_dealing` puts a scout
+  back to `Outbound`; the `Outbound` arm walks to `resume` before it will stop. An accepted return rides
+  home in the cargo and books `ExchangeIn` against the receiving band
+  (`Expedition::returning_cargo_cause` / `cargo_counterparty`, the one place a trade party and a scout
+  are told apart at the fold-back).
+- **A stranger lost before arrival** (out of sight when the party stands on its aim, or gone) leaves
+  the order **unspent**; the scout resumes. A `move_band` on the scout clears the chase so the
+  player's order wins, and the pack order stays live.
+
+### Link goodwill and news
+
+`goodwill::credit_link_goodwill` (`TurnStage::Visibility`, `.after(sites::discover_sites)`): for every
+pair of **peoples** with any band pair joined by a standing link, `per_link` into `link`, each people
+→ the other, **once per people pair per turn** however many band pairs the road joins — goodwill is
+a people-level opinion and a steady source is meant to settle at `s / fade_per_turn`, so crediting per
+band pair would let a people multiply a road's worth by founding bands along it. The same pass
+refreshes `KnownGoodwill` both ways with the value standing now, stamped with this turn: word travels
+along a kept road, so no party carries it. It runs in Visibility because the roads' keeping is judged
+by then (`light_kept_routes` reads it at the same moment). It filters to bands standing on a
+qualifying road first, so a world with no roads walks no pair.
+
+## The wire, slice 1c
+
+`DealingState` gains `shipperBand` and `partyWorkers` (appended): `0` on an offer; on a proposal or a
+counter `shipperBand` names the band whose party walks and `goodsSent`/`goodsAsked` are the give and
+the ask as `DealingGoodsState` with **unrated** material rows (`materialId` and `amount`, no readings).
+Feed lines carry `kind=proposal|counter`; statuses add `countered`, `failed` and, for an agreed
+trade's arrival, `settled` (`kind=exchange`).
 
 ## The feed
 
@@ -179,8 +300,8 @@ own standing answer is `FactionPolicyState.acceptOwnGifts` (appended; default on
 
 `goodwill.rs`. `Goodwill` (`SimState`) is `BTreeMap<(holder, about), GoodwillEntry>`; the entry is
 **one `f32` per source kind** — `gifts`, `exchanges`, `stationed`, `link`, `treaty`, `breach` — and the
-opinion is their sum (`GoodwillEntry::total`), never stored. `link`, `treaty` and `breach` have no
-writer yet and stay in the shape. The components are the readout's "reasons"; proportional fade
+opinion is their sum (`GoodwillEntry::total`), never stored. `treaty` and `breach` have no
+writer yet and stay in the shape (`link` is written by `credit_link_goodwill`). The components are the readout's "reasons"; proportional fade
 (`x -= x × fade_per_turn` on each) treats them identically, so the sum fades exactly as one number.
 
 - **`Goodwill::credit(holder, about, source, amount)` is the one seam.** It ignores a self-pair
@@ -206,13 +327,15 @@ discounts. A good they have none of counts at its full load; one they hold ten t
 a tenth. An empty gift is worth `0`. The number becomes goodwill and nothing else — no exchange is
 accepted or refused on it, and it is never published as a price.
 
-### The sources (this slice)
+### The sources
 
 | Source | Credited by | Pair | Size |
 |---|---|---|---|
 | a gift lands (an accepted dealing with an empty return) | `answer_dealing` | receiver → giver | `per_load × worth(cargo)` into `gifts` |
 | an exchange settles (an accepted dealing with a return) | `answer_dealing` | receiver → sender, and sender → receiver | `per_load × worth(cargo)` and `per_load × worth(return, held = the sender's HOME band's holding)`, into `exchanges`; both at acceptance |
 | a stationed party | `credit_stationed_goodwill` | host people → sender people | `per_person_stationed × party workers`, each turn it is `Stationed` at a foreign host, into `stationed` |
+| a standing link | `credit_link_goodwill` | each people → the other, **once per people pair per turn** | `per_link`, into `link` ("The exchange stages" below) |
+| an agreed trade settles on arrival | `advance_expeditions` (`settle_agreed_trade`) | receiver → sender, and sender → receiver | as an accepted offer's exchange, at settlement |
 
 A refusal, a lapse and a failed exchange credit nothing. A gift's pair only ever crosses peoples: a
 same-people dealing (the standing answer off) credits a self-pair, which the seam drops.
@@ -256,6 +379,10 @@ never restates the word cuts. A delta's absent `cuts` table means unchanged.
 | `::a_pending_dealing_round_trips_a_checkpoint` | the book, the counter and the terms ride `SimState` |
 | `tests/goodwill.rs` | a gift credits receiver → giver only; an exchange credits both by what each received; refusal and lapse credit nothing; no self-pair entry; a post of ten follows `0.5 × (1 − 0.98^n)` turn by turn and settles near `0.5`; news reaches `KnownGoodwill` only with the returning party, stamped with the sighting turn; the frame carries the viewer's own rows and the cuts; checkpoint round trip |
 | `goodwill.rs` unit tests | worth (none held = full load, 10× held ≈ 1/11, per-good, empty = 0), clamp lands on the bound without rescaling components, fade is proportional on every component, a stale or equal report never overwrites a fresher one |
+| `tests/stages.rs` (stage 4) | a proposal over a kept road is posted at once, draws nothing, and is on the encoded frame of both peoples with the shipper named and unrated lines; no link (or a bare tile, an unpaid bill, a trail) refuses it and records nothing; a counter closes the original and goes back, accept means the last terms and the party size carries; an agreed party settles on arrival, goods both ways and goodwill both ways, the return home as `ExchangeIn`; a receiver short of the return fails the exchange with no goodwill and the cargo comes home; a link broken before the answer withdraws the dealing with `reason=link_broken`; the answer's own refusals leave the book as it stood; silence expires a proposal; the checkpoint round trip |
+| `tests/stages.rs` (stage 1) | a `give` scout turns toward the first stranger and posts a pending offer, spent; an accepted gift credits receiver → giver and the scout resumes its recorded destination; an `offer` scout comes home with the named return as `ExchangeIn`; a refusal and a lapse bring the pack home; a band the home band holds a tie with is no stranger; `keep` never hands over; a lost stranger leaves the order unspent |
+| `tests/stages.rs` (link goodwill) | one credit per people pair per turn however many band pairs, `KnownGoodwill` refreshed both ways with no party; no road, no credit; an unkept road holds no link |
+| `bin/server.rs` `tests::{an_accepted_proposal…, a_countered_proposal…, a_proposal_the_sender_cannot_honour…, a_proposal_with_no_standing_link…, a_scouts_pack…}` | the launch half: an accepted proposal sends the party with the give as cargo and `Agreed` terms; a counter launches on its terms; a sender that cannot honour its leg fails the dealing; the pack is drawn at launch and fails closed |
 | `tests/sim_state_coverage.rs` | `PendingDealings` is classified `SIM_STATE`; the config handle and metadata are `CONFIG` |
 
 ## See also

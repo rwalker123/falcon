@@ -15,7 +15,7 @@
 //! viewer and the turn it was observed. Parties carry the news
 //! ([`crate::components::Expedition::goodwill_news`]) and land it where their other news lands.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -24,9 +24,12 @@ use crate::{
     carry::{CarryConfig, CarryLoad},
     components::{
         available_workers, BandId, Expedition, ExpeditionPhase, PopulationCohort, ResidentBand,
+        Tile,
     },
     diplomacy_config::DiplomacyConfigHandle,
     orders::FactionId,
+    resources::{SimulationConfig, SimulationTick, TileRegistry},
+    routes::RoadRegistry,
     scalar::Scalar,
     LocalStore, FODDER, FOOD,
 };
@@ -45,7 +48,7 @@ pub enum GoodwillSource {
     Exchange,
     /// A party stationed in the holder's band.
     Stationed,
-    /// A standing link (a later slice writes it).
+    /// A standing link between the two peoples ([`credit_link_goodwill`]).
     Link,
     /// A treaty term in force (a later slice writes it).
     Treaty,
@@ -330,6 +333,99 @@ pub fn credit_stationed_goodwill(
             party.faction,
             GoodwillSource::Stationed,
             per_person * available_workers(party.working) as f32,
+        );
+    }
+}
+
+/// **A standing link raises each people's opinion of the other**, once per turn per pair of
+/// peoples: `per_link` into `link`, both ways, whenever any band of one people and any band of the
+/// other are joined by a standing link ([`crate::routes::standing_link`]).
+///
+/// **ONCE PER PEOPLE PAIR PER TURN, however many band pairs the road joins.** Goodwill is a
+/// people-level opinion (`docs/plan_early_diplomacy.md` §2), and a steady source is meant to settle
+/// at `s / fade_per_turn`; crediting per band pair would let a people multiply a road's worth by
+/// founding bands along it. Traffic over the link counts through its exchanges, not here.
+///
+/// The same pass **refreshes what each people knows of the other's opinion**
+/// ([`KnownGoodwill`], both ways) with the value standing right now: word travels along a kept
+/// road, so no party has to carry it. It runs in `TurnStage::Visibility`, where the roads' keeping
+/// has been judged for the turn (`Road::keeping_is_met` reads the bill the labour pass stamped —
+/// the same moment `light_kept_routes` reads it at), after the fade (`Influence`) and after the
+/// turn's other credits.
+#[allow(clippy::too_many_arguments)] // the geometry, the roads, the config and the two ledgers
+pub fn credit_link_goodwill(
+    tick: Res<SimulationTick>,
+    config: Res<DiplomacyConfigHandle>,
+    roads: Res<RoadRegistry>,
+    tile_registry: Res<TileRegistry>,
+    sim_config: Res<SimulationConfig>,
+    tiles: Query<&Tile>,
+    bands: Query<(&BandId, &PopulationCohort), With<ResidentBand>>,
+    mut goodwill: ResMut<Goodwill>,
+    mut known: ResMut<KnownGoodwill>,
+) {
+    let config = config.get();
+    let floor = config.offers.standing_link_floor();
+    // Only a band standing on a qualifying road can end a standing link, so filter to those first:
+    // a world with no roads walks no pair at all.
+    let mut on_a_road: Vec<(BandId, FactionId, UVec2)> = bands
+        .iter()
+        .filter_map(|(id, cohort)| {
+            let position = tiles.get(cohort.current_tile).ok()?.position;
+            roads
+                .road(position)
+                .is_some_and(|road| road.keeping_is_met() && road.held_rung().is_at_or_above(floor))
+                .then_some((*id, cohort.faction, position))
+        })
+        .collect();
+    if on_a_road.len() < 2 {
+        return;
+    }
+    on_a_road.sort_by_key(|(id, _, _)| *id);
+    let mut linked: BTreeSet<(FactionId, FactionId)> = BTreeSet::new();
+    for (i, (_, a_faction, a_pos)) in on_a_road.iter().enumerate() {
+        for (_, b_faction, b_pos) in &on_a_road[i + 1..] {
+            if a_faction == b_faction {
+                continue;
+            }
+            let pair = (*a_faction.min(b_faction), *a_faction.max(b_faction));
+            if linked.contains(&pair) {
+                continue;
+            }
+            if crate::routes::standing_link(
+                &roads,
+                *a_pos,
+                *b_pos,
+                tile_registry.width,
+                tile_registry.height,
+                sim_config.map_topology.wrap_horizontal,
+                floor,
+            ) {
+                linked.insert(pair);
+            }
+        }
+    }
+    let per_link = config.goodwill.per_link;
+    let now = tick.0;
+    for (a, b) in linked {
+        goodwill.credit(a, b, GoodwillSource::Link, per_link);
+        goodwill.credit(b, a, GoodwillSource::Link, per_link);
+        // What `b` thinks of `a` is what `a` knows of `b`, and the other way round.
+        known.record(
+            a,
+            b,
+            GoodwillNews {
+                components: goodwill.get(b, a),
+                turn: now,
+            },
+        );
+        known.record(
+            b,
+            a,
+            GoodwillNews {
+                components: goodwill.get(a, b),
+                turn: now,
+            },
         );
     }
 }
