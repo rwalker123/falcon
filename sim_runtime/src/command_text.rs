@@ -198,8 +198,8 @@ pub const COMMAND_VERBS: &[CommandVerbHelp] = &[
     CommandVerbHelp {
         verb: "bench_enqueue_kit",
         aliases: &[],
-        summary: "ORDER A WHOLE KIT: queue every part of one `equipment.json` kit as ONE grouped order at the back of a band's bench queue. Each 'recipe <id> count <n>' pair is one part - exactly the recipe and count the Make picker showed - and the parts stay together on the queue. 'people' is how many people the order was sized for. Refused WHOLE (nothing is queued) when the kit is unknown or 'none', a recipe is unknown or unlearned (as 'bench_enqueue' refuses it), a recipe makes an item the kit does not use, a count is below 1, or no part is named. The crew is left exactly as it is.",
-        usage: "bench_enqueue_kit <faction_id> <band_id> kit <kit_id> people <n> recipe <recipe_id> count <n> [recipe <recipe_id> count <n> ...]",
+        summary: "ORDER A WHOLE KIT: build 'kits' kits of one `equipment.json` kit as ONE grouped order at the back of a band's bench queue. One kit is one unit of each item the kit uses, so every item is queued 'kits' times; the order is a count you choose and is never netted against who already has a kit. Name one 'recipe <id>' per item of the kit; the parts stay together on the queue. Refused WHOLE (nothing is queued) when the kit is unknown or 'none', kits is below 1, a recipe is unknown or unlearned (as 'bench_enqueue' refuses it), a recipe makes an item the kit does not use, two recipes make the same item, or an item of the kit has no recipe. The crew is left exactly as it is.",
+        usage: "bench_enqueue_kit <faction_id> <band_id> kit <kit_id> kits <n> recipe <recipe_id> [recipe <recipe_id> ...]",
     },
     CommandVerbHelp {
         verb: "bench_remove_kit",
@@ -1199,44 +1199,32 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
             let mut tail: Vec<&str> = parts.collect();
             let kit_id = take_named_token(&mut tail, "kit", "bench_enqueue_kit kit id")?
                 .ok_or(CommandParseError::MissingArgument("kit"))?;
-            let people = take_named_token(&mut tail, "people", "bench_enqueue_kit people")?
-                .ok_or(CommandParseError::MissingArgument("people"))?;
-            // **Every `recipe <id> count <n>` pair is one part**, in the order given: the named
-            // tokens repeat, so they are taken pairwise rather than by `take_named_token`'s
+            let kits = take_named_token(&mut tail, "kits", "bench_enqueue_kit kits")?
+                .ok_or(CommandParseError::MissingArgument("kits"))?;
+            // **Every `recipe <id>` pair names one item's recipe**, in the order given: the named
+            // token repeats, so the pairs are taken one by one rather than by `take_named_token`'s
             // first-match.
-            let mut kit_parts: Vec<crate::BenchKitPart> = Vec::new();
+            let mut recipes: Vec<String> = Vec::new();
             while let Some(token) = tail.first() {
                 if !token.eq_ignore_ascii_case("recipe") {
                     return Err(CommandParseError::UnexpectedToken(token.to_string()));
                 }
                 let recipe_id = tail
-                    .get(KIT_PART_RECIPE_VALUE)
+                    .get(KIT_RECIPE_VALUE)
                     .ok_or(CommandParseError::MissingArgument("recipe"))?
                     .to_string();
-                let count_key = tail
-                    .get(KIT_PART_COUNT_KEY)
-                    .ok_or(CommandParseError::MissingArgument("count"))?;
-                if !count_key.eq_ignore_ascii_case("count") {
-                    return Err(CommandParseError::UnexpectedToken(count_key.to_string()));
-                }
-                let count = tail
-                    .get(KIT_PART_COUNT_VALUE)
-                    .ok_or(CommandParseError::MissingArgument("count"))?;
-                kit_parts.push(crate::BenchKitPart {
-                    recipe_id,
-                    count: parse_u32(count, "bench_enqueue_kit count")?,
-                });
-                tail.drain(..KIT_PART_TOKENS);
+                recipes.push(recipe_id);
+                tail.drain(..KIT_RECIPE_TOKENS);
             }
-            if kit_parts.is_empty() {
+            if recipes.is_empty() {
                 return Err(CommandParseError::MissingArgument("recipe"));
             }
             Ok(CommandPayload::BenchEnqueueKit {
                 faction_id: parse_u32(faction_str, "bench_enqueue_kit faction")?,
                 band_id: parse_u64(band_str, "bench_enqueue_kit band_id")?,
                 kit_id,
-                people: parse_u32(&people, "bench_enqueue_kit people")?,
-                parts: kit_parts,
+                kits: parse_u32(&kits, "bench_enqueue_kit kits")?,
+                recipes,
             })
         }
         verb @ ("bench_remove_kit" | "bench_raise_kit") => {
@@ -2075,12 +2063,10 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
 ///
 /// Removes the pair from `tokens` and answers the value; `None` when the name is absent. A name with
 /// nothing after it is a missing argument, not a value to shrug at.
-/// **A `bench_enqueue_kit` part is `recipe <id> count <n>`** — four tokens; these are the offsets of
-/// the recipe id, the `count` keyword and the count within one part.
-const KIT_PART_RECIPE_VALUE: usize = 1;
-const KIT_PART_COUNT_KEY: usize = 2;
-const KIT_PART_COUNT_VALUE: usize = 3;
-const KIT_PART_TOKENS: usize = 4;
+/// **A `bench_enqueue_kit` recipe is `recipe <id>`** — two tokens; this is the offset of the id
+/// within the pair and the pair's width.
+const KIT_RECIPE_VALUE: usize = 1;
+const KIT_RECIPE_TOKENS: usize = 2;
 
 fn take_named_token(
     tokens: &mut Vec<&str>,
@@ -4116,22 +4102,13 @@ mod tests {
                 },
             ),
             (
-                "bench_enqueue_kit 1 7 kit stalking people 6 recipe spears count 2 recipe sled count 1",
+                "bench_enqueue_kit 1 7 kit stalking kits 3 recipe spears recipe sled",
                 CommandPayload::BenchEnqueueKit {
                     faction_id: 1,
                     band_id: 7,
                     kit_id: "stalking".to_string(),
-                    people: 6,
-                    parts: vec![
-                        crate::BenchKitPart {
-                            recipe_id: "spears".to_string(),
-                            count: 2,
-                        },
-                        crate::BenchKitPart {
-                            recipe_id: "sled".to_string(),
-                            count: 1,
-                        },
-                    ],
+                    kits: 3,
+                    recipes: vec!["spears".to_string(), "sled".to_string()],
                 },
             ),
             (

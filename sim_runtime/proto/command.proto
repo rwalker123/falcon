@@ -862,22 +862,18 @@ message BenchRaiseOrderCommand {
   uint32 order = 3;
 }
 
-// ORDER A WHOLE KIT (issue #780): queue every part of one kit as ONE grouped order. `parts` carries
-// the recipe and count the player's picker showed for each item - the sim re-derives nothing, so the
-// player gets what they saw. Refused whole when the kit is unknown or `none`, a recipe is refused
-// exactly as `bench_enqueue` would refuse it, a recipe's output item is not one the kit uses, a count
-// is below 1, or `parts` is empty. The crew is untouched.
+// ORDER A WHOLE KIT (issue #780): `kits` kits, queued as ONE grouped order. One kit is one unit of each
+// item the kit uses, so the sim queues `kits` of every item; the order is never sized by, or netted
+// against, who already has a kit. `recipe_ids` names one recipe per item of the kit. Refused whole
+// when the kit is unknown or `none`, `kits` is below 1, a recipe is refused exactly as
+// `bench_enqueue` would refuse it, a recipe's output item is not one the kit uses, two recipes make
+// the same item, or an item of the kit has no recipe. The crew is untouched.
 message BenchEnqueueKitCommand {
   uint32 faction_id = 1;
   uint64 band_id = 2;
   string kit_id = 3;
-  uint32 people = 4;   // how many people the order was sized for (shown on the grouped box)
-  repeated BenchKitPart parts = 5;
-}
-
-message BenchKitPart {
-  string recipe_id = 1;
-  uint32 count = 2;    // items to make, >= 1
+  uint32 kits = 4;                 // how many kits to build, >= 1
+  repeated string recipe_ids = 5;  // one recipe per item of the kit
 }
 
 // TAKE A WHOLE KIT ORDER OFF THE QUEUE: every part leaves; drawn piles are lost exactly as a single

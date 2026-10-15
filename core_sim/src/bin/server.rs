@@ -1652,8 +1652,8 @@ enum Command {
         faction: FactionId,
         band_id: Option<u64>,
         kit_id: String,
-        people: u32,
-        parts: Vec<sim_runtime::BenchKitPart>,
+        kits: u32,
+        recipes: Vec<String>,
     },
     /// Remove or raise a whole kit order. See `handle_bench_kit_edit`.
     BenchKitEdit {
@@ -9160,21 +9160,25 @@ impl BenchKitEdit {
     }
 }
 
-/// **Order a whole kit** — `bench_enqueue_kit <faction> <band> kit <id> people <n> recipe <id>
-/// count <n> [...]` (issue #780, `.claude/rules/core_sim/crafting.md` → "Kit orders").
+/// **Order a whole kit** — `bench_enqueue_kit <faction> <band> kit <id> kits <n> recipe <id> [...]`
+/// (issue #780, `.claude/rules/core_sim/crafting.md` → "Kit orders").
+///
+/// **`kits` is a count of kits the player chose, and the sim never nets it down.** One kit is one
+/// unit of each item the kit `uses`, so each part's count is `kits`; who already holds a kit, or
+/// lacks one, is information the ledger shows and plays no part in what is queued.
 ///
 /// **Fails closed and whole**: the kit must exist and carry something (the shipped `none` carries
-/// nothing and is not orderable), every recipe passes [`bench_recipe_refusal`] exactly as
-/// `bench_enqueue` would, every recipe's output item must be one the kit `uses`, and every count
-/// must be at least [`MIN_ORDER_COUNT`]. **The command carries the counts** — the player orders what
-/// the picker showed, so the sim re-derives nothing. The crew is untouched.
+/// nothing and is not orderable), `kits` must be at least [`MIN_ORDER_COUNT`], every recipe passes
+/// [`bench_recipe_refusal`] exactly as `bench_enqueue` would, every recipe's output item must be
+/// one the kit `uses`, no two recipes may make the same item, and every item of the kit must have a
+/// recipe. The crew is untouched.
 fn handle_bench_enqueue_kit(
     app: &mut bevy::prelude::App,
     faction: FactionId,
     band_id: Option<u64>,
     kit_id: &str,
-    people: u32,
-    parts: &[sim_runtime::BenchKitPart],
+    kits: u32,
+    recipe_ids: &[String],
 ) {
     const VERB: &str = "bench_enqueue_kit";
     let event_kind = CommandEventKind::Craft;
@@ -9192,40 +9196,32 @@ fn handle_bench_enqueue_kit(
         );
         return;
     };
-    if parts.is_empty() {
+    if kits < MIN_ORDER_COUNT {
         emit_command_failure(
             app,
             event_kind,
             faction,
-            format!("{VERB}: a kit order needs at least one recipe."),
+            format!(
+                "{VERB}: an order of the {} needs at least {MIN_ORDER_COUNT} kit.",
+                kit.display_name
+            ),
         );
         return;
     }
-    let mut row_keys: Vec<Option<String>> = Vec::with_capacity(parts.len());
-    for part in parts {
-        let Some(display_name) = bench_recipe_refusal(app, faction, &part.recipe_id, VERB) else {
+    let mut row_keys: Vec<Option<String>> = Vec::with_capacity(recipe_ids.len());
+    let mut items_covered: Vec<String> = Vec::with_capacity(recipe_ids.len());
+    for recipe_id in recipe_ids {
+        let Some(display_name) = bench_recipe_refusal(app, faction, recipe_id, VERB) else {
             return;
         };
-        if part.count < MIN_ORDER_COUNT {
-            emit_command_failure(
-                app,
-                event_kind,
-                faction,
-                format!(
-                    "{VERB}: an order of {display_name} needs a count of at least \
-                     {MIN_ORDER_COUNT}."
-                ),
-            );
-            return;
-        }
         let recipes = app.world.resource::<RecipesConfigHandle>().get();
         let recipe = recipes
-            .recipe(&part.recipe_id)
+            .recipe(recipe_id)
             .expect("bench_recipe_refusal found the recipe");
-        let output_in_kit = recipe
+        let output = recipe
             .output_equipment_id()
-            .is_some_and(|item| kit.uses.iter().any(|used| used == item));
-        if !output_in_kit {
+            .filter(|item| kit.uses.iter().any(|used| used == item));
+        let Some(item) = output else {
             emit_command_failure(
                 app,
                 event_kind,
@@ -9236,29 +9232,54 @@ fn handle_bench_enqueue_kit(
                 ),
             );
             return;
+        };
+        if items_covered.iter().any(|covered| covered == item) {
+            emit_command_failure(
+                app,
+                event_kind,
+                faction,
+                format!("{VERB}: two recipes make the same item ({display_name})."),
+            );
+            return;
         }
+        items_covered.push(item.to_string());
         row_keys.push(recipe.row_key().map(str::to_string));
+    }
+    if let Some(missing) = kit
+        .uses
+        .iter()
+        .find(|used| !items_covered.iter().any(|covered| covered == *used))
+    {
+        emit_command_failure(
+            app,
+            event_kind,
+            faction,
+            format!(
+                "{VERB}: the {} needs a recipe for its {missing}.",
+                kit.display_name
+            ),
+        );
+        return;
     }
     let Some(band) = select_starting_band(app, faction, band_id, VERB, event_kind) else {
         return;
     };
-    let queue: Vec<(String, u32)> = parts
+    let queue: Vec<(String, u32)> = recipe_ids
         .iter()
-        .map(|part| (part.recipe_id.clone(), part.count))
+        .map(|recipe_id| (recipe_id.clone(), kits))
         .collect();
     let id = {
         let mut bench = band_bench_mut(app, band.entity);
         let id = bench
-            .enqueue_kit(kit_id, people, queue)
-            .expect("every part was checked to carry a count of at least one");
-        for (part, row) in parts.iter().zip(&row_keys) {
+            .enqueue_kit(kit_id, kits, queue)
+            .expect("the kit count was checked to be at least one");
+        for (recipe_id, row) in recipe_ids.iter().zip(&row_keys) {
             if let Some(row) = row.as_deref() {
-                bench.record_started(row, &part.recipe_id);
+                bench.record_started(row, recipe_id);
             }
         }
         id
     };
-    let items: u32 = parts.iter().map(|part| part.count).sum();
     let tick = app.world.resource::<SimulationTick>().0;
     push_band_event(
         app,
@@ -9267,13 +9288,12 @@ fn handle_bench_enqueue_kit(
         faction,
         band.id,
         format!(
-            "{} queued the {} for {people}: {items} item(s) as one order",
+            "{} queued {kits} {} as one order",
             band.label, kit.display_name
         ),
         Some(format!(
-            "status=applied action={VERB} kit={kit_id} kit_order={id} people={people} \
-             parts={} items={items}",
-            parts.len()
+            "status=applied action={VERB} kit={kit_id} kit_order={id} kits={kits} parts={}",
+            recipe_ids.len()
         )),
     );
 }
@@ -11682,14 +11702,14 @@ fn command_from_payload(
             faction_id,
             band_id,
             kit_id,
-            people,
-            parts,
+            kits,
+            recipes,
         } => Some(Command::BenchEnqueueKit {
             faction: FactionId(faction_id),
             band_id: Some(band_id),
             kit_id,
-            people,
-            parts,
+            kits,
+            recipes,
         }),
         ProtoCommandPayload::BenchRemoveKit {
             faction_id,
@@ -13070,10 +13090,10 @@ fn apply_command(app: &mut bevy::prelude::App, command: Command) {
             faction,
             band_id,
             kit_id,
-            people,
-            parts,
+            kits,
+            recipes,
         } => {
-            handle_bench_enqueue_kit(app, faction, band_id, &kit_id, people, &parts);
+            handle_bench_enqueue_kit(app, faction, band_id, &kit_id, kits, &recipes);
         }
         Command::BenchKitEdit {
             faction,
@@ -22924,46 +22944,50 @@ mod tests {
         );
     }
 
-    fn kit_part(recipe: &str, count: u32) -> sim_runtime::BenchKitPart {
-        sim_runtime::BenchKitPart {
-            recipe_id: recipe.to_string(),
-            count,
-        }
+    fn ids(list: &[&str]) -> Vec<String> {
+        list.iter().map(|id| id.to_string()).collect()
     }
 
-    /// **A WHOLE-KIT ORDER QUEUES AS ONE GROUP, AND REFUSES WHOLE** (#780). Every part lands
-    /// contiguously under one kit-order id with the picker's own counts; each part records which
-    /// recipe the band chose for its item. A part making nothing the kit uses, a zero count, the empty
-    /// kit and an unknown kit each queue NOTHING — paired with the accepted order so a handler that
-    /// refuses everything passes neither half.
+    /// **A WHOLE-KIT ORDER QUEUES `kits` OF EVERY ITEM AS ONE GROUP, AND REFUSES WHOLE** (#780). The
+    /// sim computes each part's count (one unit per kit per item), never nets it against who holds a
+    /// kit, and records each part's recipe choice. A recipe making nothing the kit uses, two recipes
+    /// for one item, an item with no recipe, a zero count, the empty kit and an unknown kit each
+    /// queue NOTHING - paired with the accepted order so a handler that refuses everything passes
+    /// neither half.
     #[test]
-    fn a_kit_order_queues_every_part_as_one_group_and_refuses_whole() {
+    fn a_kit_order_queues_every_item_as_one_group_and_refuses_whole() {
         const STALKING: &str = "big_game";
         const NOT_THE_KITS_ITEM: &str = "baskets";
+        const KITS: u32 = 3;
         let mut app = build_test_app();
         app.update();
         let faction = FactionId(0);
         let band = first_resident_band(&mut app);
 
-        for (kit, parts, needle) in [
+        for (kit, kits, recipes, needle) in [
             (
                 STALKING,
-                vec![
-                    kit_part(BENCH_IDLE_RECIPE, 1),
-                    kit_part(NOT_THE_KITS_ITEM, 1),
-                ],
+                KITS,
+                ids(&[BENCH_IDLE_RECIPE, NOT_THE_KITS_ITEM]),
                 "makes nothing the",
             ),
-            (STALKING, vec![kit_part(BENCH_IDLE_RECIPE, 0)], "at least"),
-            ("none", vec![kit_part(BENCH_IDLE_RECIPE, 1)], "not a kit"),
             (
-                "no_such_kit",
-                vec![kit_part(BENCH_IDLE_RECIPE, 1)],
-                "not a kit",
+                STALKING,
+                KITS,
+                ids(&[BENCH_IDLE_RECIPE, BENCH_IDLE_RECIPE]),
+                "same item",
             ),
-            (STALKING, Vec::new(), "at least one recipe"),
+            (
+                STALKING,
+                KITS,
+                ids(&[BENCH_IDLE_RECIPE]),
+                "needs a recipe for",
+            ),
+            (STALKING, 0, ids(&[BENCH_IDLE_RECIPE, "spears"]), "at least"),
+            ("none", KITS, ids(&[BENCH_IDLE_RECIPE]), "not a kit"),
+            ("no_such_kit", KITS, ids(&[BENCH_IDLE_RECIPE]), "not a kit"),
         ] {
-            handle_bench_enqueue_kit(&mut app, faction, None, kit, 6, &parts);
+            handle_bench_enqueue_kit(&mut app, faction, None, kit, kits, &recipes);
             assert!(
                 the_bench(&app, band).orders.is_empty(),
                 "a refused kit order queues nothing ({needle})"
@@ -22976,8 +23000,8 @@ mod tests {
             faction,
             None,
             STALKING,
-            6,
-            &[kit_part(BENCH_IDLE_RECIPE, 2), kit_part("spears", 3)],
+            KITS,
+            &ids(&[BENCH_IDLE_RECIPE, "spears"]),
         );
         let bench = the_bench(&app, band);
         assert_eq!(
@@ -22986,11 +23010,11 @@ mod tests {
                 .iter()
                 .map(|order| (order.recipe_id.as_str(), order.count, order.kit_order))
                 .collect::<Vec<_>>(),
-            vec![(BENCH_IDLE_RECIPE, 2, 1), ("spears", 3, 1)],
-            "both parts, with the picker's counts, under one kit order"
+            vec![(BENCH_IDLE_RECIPE, KITS, 1), ("spears", KITS, 1)],
+            "one unit per kit of every item, under one kit order"
         );
         assert_eq!(bench.kit_orders.len(), 1);
-        assert_eq!(bench.kit_orders[0].people, 6);
+        assert_eq!(bench.kit_orders[0].kits, KITS);
         assert_eq!(
             bench.last_started_for("spears"),
             Some("spears"),

@@ -1283,7 +1283,7 @@ fn create_bench_kit_orders<'a>(
                 &fb::BenchKitOrderArgs {
                     id: kit.id,
                     kitId: Some(kit_id),
-                    people: kit.people,
+                    kits: kit.kits,
                     done: kit.done,
                 },
             )
@@ -1689,7 +1689,7 @@ fn decode_bench(bench: fb::BenchState<'_>) -> Result<BenchState, DecodeError> {
         kit_orders: map_rows(bench.kitOrders(), |kit| BenchKitOrderState {
             id: kit.id(),
             kit_id: text(kit.kitId()),
-            people: kit.people(),
+            kits: kit.kits(),
             done: kit.done(),
         }),
     })

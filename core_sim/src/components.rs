@@ -4965,7 +4965,7 @@ pub const NOT_A_KIT_PART: u32 = 0;
 /// **ONE WHOLE-KIT ORDER** — what the player asked for with *Make* on a kit row: every missing item
 /// of the kit, queued together as one group (issue #780). It owns no queue state itself — the parts
 /// are ordinary [`BenchOrder`]s tagged with [`Self::id`] — it holds the facts the grouped box
-/// shows: which kit, for how many people, and how many items its finished parts made.
+/// shows: which kit, for how many kits, and how many items its finished parts made.
 ///
 /// **Persisted** with the bench (`BandRecord::bench`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -4974,8 +4974,8 @@ pub struct KitOrder {
     pub id: u32,
     /// The `equipment.json` kit id the order outfits.
     pub kit_id: String,
-    /// How many people the player sized the order for (the picker's stepper).
-    pub people: u32,
+    /// How many kits the player ordered (one unit of each item of the kit per kit).
+    pub kits: u32,
     /// Items the order's **finished** parts made. A part still on the queue reports its own
     /// [`BenchOrder::made`]; a removed part's items are not counted here.
     pub done: u32,
@@ -5252,7 +5252,7 @@ impl BandBench {
     pub fn enqueue_kit(
         &mut self,
         kit_id: &str,
-        people: u32,
+        kits: u32,
         parts: Vec<(String, u32)>,
     ) -> Result<u32, BenchQueueError> {
         let parts: Vec<(String, u32)> = parts
@@ -5272,7 +5272,7 @@ impl BandBench {
         self.kit_orders.push(KitOrder {
             id,
             kit_id: kit_id.to_string(),
-            people,
+            kits,
             done: NOTHING_MADE,
         });
         Ok(id)
@@ -10733,7 +10733,7 @@ mod tests {
     // ---------------------------------------------------------------------------------------
 
     const KIT: &str = "big_game";
-    const KIT_PEOPLE: u32 = 6;
+    const KIT_COUNT: u32 = 6;
 
     fn parts(list: &[(&str, u32)]) -> Vec<(String, u32)> {
         list.iter().map(|(id, n)| (id.to_string(), *n)).collect()
@@ -10760,7 +10760,7 @@ mod tests {
         let id = bench
             .enqueue_kit(
                 KIT,
-                KIT_PEOPLE,
+                KIT_COUNT,
                 parts(&[("spears", 2), ("skipped", 0), ("sled", 1)]),
             )
             .expect("a kit order with parts queues");
@@ -10771,22 +10771,22 @@ mod tests {
             vec![KitOrder {
                 id: 1,
                 kit_id: KIT.to_string(),
-                people: KIT_PEOPLE,
+                kits: KIT_COUNT,
                 done: 0
             }]
         );
         assert_eq!(
-            bench.enqueue_kit(KIT, KIT_PEOPLE, parts(&[("sled", 0)])),
+            bench.enqueue_kit(KIT, KIT_COUNT, parts(&[("sled", 0)])),
             Err(BenchQueueError::EmptyKitOrder),
             "nothing but zero counts is an empty order"
         );
         assert_eq!(
-            bench.enqueue_kit(KIT, KIT_PEOPLE, Vec::new()),
+            bench.enqueue_kit(KIT, KIT_COUNT, Vec::new()),
             Err(BenchQueueError::EmptyKitOrder)
         );
         assert_eq!(bench.kit_orders.len(), 1, "a refused order records nothing");
         let second = bench
-            .enqueue_kit(KIT, KIT_PEOPLE, parts(&[("sled", 1)]))
+            .enqueue_kit(KIT, KIT_COUNT, parts(&[("sled", 1)]))
             .unwrap();
         assert_eq!(second, 2, "ids are never reused");
     }
@@ -10797,7 +10797,7 @@ mod tests {
     fn raising_a_plain_order_jumps_the_whole_kit_block_and_a_part_is_refused() {
         let mut bench = BandBench::default();
         bench
-            .enqueue_kit(KIT, KIT_PEOPLE, parts(&[("spears", 2), ("sled", 1)]))
+            .enqueue_kit(KIT, KIT_COUNT, parts(&[("spears", 2), ("sled", 1)]))
             .unwrap();
         bench.enqueue("plain", 1);
         assert_eq!(queue_shape(&bench), ["spears#1", "sled#1", "plain"]);
@@ -10826,10 +10826,10 @@ mod tests {
         let mut bench = BandBench::default();
         bench.enqueue("plain", 1);
         bench
-            .enqueue_kit(KIT, KIT_PEOPLE, parts(&[("spears", 2), ("sled", 1)]))
+            .enqueue_kit(KIT, KIT_COUNT, parts(&[("spears", 2), ("sled", 1)]))
             .unwrap();
         bench
-            .enqueue_kit("trapping", KIT_PEOPLE, parts(&[("traps", 3)]))
+            .enqueue_kit("trapping", KIT_COUNT, parts(&[("traps", 3)]))
             .unwrap();
         assert_eq!(
             queue_shape(&bench),
@@ -10866,7 +10866,7 @@ mod tests {
         let mut bench = BandBench::default();
         bench.enqueue("plain", 1);
         bench
-            .enqueue_kit(KIT, KIT_PEOPLE, parts(&[("spears", 2), ("sled", 1)]))
+            .enqueue_kit(KIT, KIT_COUNT, parts(&[("spears", 2), ("sled", 1)]))
             .unwrap();
         bench.orders[1].drawn = Some(DrawnInputs {
             reading: None,
@@ -10890,7 +10890,7 @@ mod tests {
     fn done_accumulates_as_parts_finish_and_the_kit_order_drops_with_its_last_part() {
         let mut bench = BandBench::default();
         bench
-            .enqueue_kit(KIT, KIT_PEOPLE, parts(&[("spears", 2), ("sled", 1)]))
+            .enqueue_kit(KIT, KIT_COUNT, parts(&[("spears", 2), ("sled", 1)]))
             .unwrap();
         assert!(!bench.complete_item(0), "one of two spears");
         assert_eq!(
@@ -10911,7 +10911,7 @@ mod tests {
 
         // Removing the parts one by one (the well's x) drops the record with the last one.
         bench
-            .enqueue_kit(KIT, KIT_PEOPLE, parts(&[("spears", 2), ("sled", 1)]))
+            .enqueue_kit(KIT, KIT_COUNT, parts(&[("spears", 2), ("sled", 1)]))
             .unwrap();
         bench.remove_order(0).unwrap();
         assert_eq!(bench.kit_orders.len(), 1, "one part still carries the id");

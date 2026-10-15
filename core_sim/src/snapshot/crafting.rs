@@ -786,7 +786,7 @@ fn published_kit_orders(bench: &BandBench) -> Vec<BenchKitOrderState> {
         .map(|kit| BenchKitOrderState {
             id: kit.id,
             kit_id: kit.kit_id.clone(),
-            people: kit.people,
+            kits: kit.kits,
             done: kit.done,
         })
         .collect()

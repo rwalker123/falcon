@@ -1534,7 +1534,7 @@ job (`equipment.json` `kits`); the ledger's **Make** on a kit row queues every m
 
 **The grouping is queue structure, not a second queue.** A kit order is the ordinary `BenchOrder`s
 for its items, appended contiguously and each tagged `BenchOrder::kit_order` (the id; `0` =
-`NOT_A_KIT_PART`), plus one `KitOrder { id, kit_id, people, done }` on `BandBench::kit_orders`
+`NOT_A_KIT_PART`), plus one `KitOrder { id, kit_id, kits, done }` on `BandBench::kit_orders`
 (`next_kit_order` counts ids ever issued, so ids start at 1 and are never reused). Everything the bench
 already does — the worked order, per-order pile and progress, the forecast — is untouched; a part is
 worked like any order.
@@ -1562,15 +1562,20 @@ guard):
 
 | verb | does | refused when |
 |---|---|---|
-| `bench_enqueue_kit <f> <b> kit <id> people <n> recipe <id> count <n> [recipe <id> count <n> …]` | queues every part as one kit order; each part writes `last_started`, as `bench_enqueue` does; the crew is untouched | the kit is unknown or carries nothing (`none`); a recipe fails `bench_recipe_refusal` (the same predicate `bench_enqueue` uses); a recipe's output item is not one the kit `uses`; a count is below 1; no part is named. **Fails whole** — nothing queues on any failure |
+| `bench_enqueue_kit <f> <b> kit <id> kits <n> recipe <id> [recipe <id> …]` | queues `n` of every item of the kit (one recipe named per item) as one kit order; each part writes `last_started`, as `bench_enqueue` does; the crew is untouched | the kit is unknown or carries nothing (`none`); `n` is below 1; a recipe fails `bench_recipe_refusal` (the same predicate `bench_enqueue` uses); a recipe's output item is not one the kit `uses`; two recipes make the same item; an item of the kit has no recipe. **Fails whole** — nothing queues on any failure |
 | `bench_remove_kit <f> <b> kit_order <id>` | removes every part | no such kit order |
 | `bench_raise_kit <f> <b> kit_order <id>` | raises the whole block | no such kit order; already at the head |
 
-**Why the command carries counts and recipes.** The picker computes the shortage and the
-per-item count from published terms and the player confirms *that* sheet; the sim re-deriving a count
-at Start could queue something other than what the player was shown (the stock, the queue or the
-people may have moved by one frame). So the sim validates and honours the order. `bench_enqueue_kit`
-checks only what could make the order meaningless (an item the kit does not use), never *how many*.
+**The order is a COUNT OF KITS the player chooses, and nothing nets it down.** One kit is one unit of
+each item in the kit's `uses`, so each part's count is `kits` (items, as `BenchOrder::count` always
+is — a recipe that makes several per pass still counts items) and the **sim** sets it; the command
+carries `kits` and one recipe per item, never a per-part count. How many people have or lack a kit
+(`KitNeed`) is information the ledger shows beside the row and **never reduces or refuses the order**
+(Ray: *"We shouldn't prevent a kit from being built. The number should be the number of new kits to
+build, it shouldn't matter how many hunters are not kitted"*). The only refusals are the ones that
+make the order meaningless: a kit that cannot be ordered, a count below one, a recipe that cannot be
+queued or makes nothing the kit uses, an item made twice, or an item left without a recipe.
+`KitOrder::kits` is the number ordered and is what the grouped box reads.
 
 **`KitNeed` on the wire** (`PopulationCohortState.kitNeeds`, one per kit that carries something, config
 order; `craft_suggestions::band_kit_needs` + `snapshot::crafting::kit_need_states`):

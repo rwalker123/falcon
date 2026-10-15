@@ -119,7 +119,7 @@ mod tests {
                     kit_orders: vec![BenchKitOrderState {
                         id: 3,
                         kit_id: "big_game".to_string(),
-                        people: 6,
+                        kits: 6,
                         done: 2,
                     }],
                     ..Default::default()

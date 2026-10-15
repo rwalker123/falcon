@@ -4426,19 +4426,19 @@
             "done": 52,
             "id": 171,
             "kit_id": "populations[0].bench.kit_orders[0].kit_id",
-            "people": 69
+            "kits": 143
           },
           {
             "done": 113,
             "id": 102,
             "kit_id": "populations[0].bench.kit_orders[1].kit_id",
-            "people": 116
+            "kits": 46
           },
           {
             "done": 150,
             "id": 101,
             "kit_id": "populations[0].bench.kit_orders[2].kit_id",
-            "people": 3
+            "kits": 65
           }
         ],
         "lent_to_hunt": 43,
@@ -6550,19 +6550,19 @@
             "done": 65,
             "id": 94,
             "kit_id": "populations[1].bench.kit_orders[0].kit_id",
-            "people": 116
+            "kits": 78
           },
           {
             "done": 188,
             "id": 179,
             "kit_id": "populations[1].bench.kit_orders[1].kit_id",
-            "people": 5
+            "kits": 15
           },
           {
             "done": 163,
             "id": 40,
             "kit_id": "populations[1].bench.kit_orders[2].kit_id",
-            "people": 178
+            "kits": 24
           }
         ],
         "lent_to_hunt": 170,
@@ -8635,19 +8635,19 @@
             "done": 118,
             "id": 61,
             "kit_id": "populations[2].bench.kit_orders[0].kit_id",
-            "people": 43
+            "kits": 169
           },
           {
             "done": 195,
             "id": 88,
             "kit_id": "populations[2].bench.kit_orders[1].kit_id",
-            "people": 26
+            "kits": 144
           },
           {
             "done": 172,
             "id": 35,
             "kit_id": "populations[2].bench.kit_orders[2].kit_id",
-            "people": 21
+            "kits": 47
           }
         ],
         "lent_to_hunt": 137,

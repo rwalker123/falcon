@@ -1885,7 +1885,7 @@ pub struct KitNeedRecipeState {
 pub struct BenchKitOrderState {
     pub id: u32,
     pub kit_id: String,
-    pub people: u32,
+    pub kits: u32,
     /// Items its finished parts made.
     pub done: u32,
 }

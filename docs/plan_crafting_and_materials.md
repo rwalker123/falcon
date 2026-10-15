@@ -536,15 +536,16 @@ after it.
 ### Ordering a whole kit
 
 A kit is the set of items a job needs (`equipment.json` `kits`), so the ledger carries a **KITS** group
-above Gear: one row per kit, and **Make** on it opens a picker — *"Make Stalking kit for how many
-hunters?"* — with a stepper defaulting to the people on the kit's jobs. Per item the picker shows what
-is equipped (*e of N*), what is already queued, what **Make** would add (`gap − min(gap, queued)`, where
-`gap = max(0, ceil(N / workers_per_unit) − have)`), and a recipe radio with the cost beside each. Its
-footer says either *"Short 13.2 hide · 2.0 wood for all 4"* (the picked recipes' total inputs exceed
-the band's free materials) or *"Queues 4 items as one kit order"*. **Start** sends one command carrying
-the recipes and counts the picker showed, and the queue shows the result as one grouped box (status,
-kit and people, progress, a collapsed per-item line that unfolds into part rows with their own
-steppers; the group has one raise and one remove).
+above Gear: one row per kit, and **Make** on it opens a picker for **how many kits to build**. One kit
+is one unit of each item the kit uses; the number is the player's, and it is **never netted against
+who already has a kit and never refused** — *"We shouldn't prevent a kit from being built. The number
+should be the number of new kits to build, it shouldn't matter how many hunters are not kitted."* The
+ledger row still shows who is equipped and who is without as information. The picker offers a recipe
+per item with its cost, and says whether the recipes' total inputs exceed the band's free materials.
+**Start** sends one command — the kit, the count and one recipe per item — and the sim queues that
+many of every item. The queue shows the result as one grouped box (status, kit and count, progress, a
+collapsed per-item line that unfolds into part rows with their own steppers; the group has one raise
+and one remove).
 
 - A kit order is a set of ordinary orders kept **contiguous**; raising or removing the group acts on
   every part, and an item already made stays in the store.

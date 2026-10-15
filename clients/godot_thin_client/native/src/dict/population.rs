@@ -1612,7 +1612,7 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
         i64::from(cohort.bench().map_or(0, |b| b.lentToHunt())),
     );
     // **THE LIVE WHOLE-KIT ORDERS** (#780), oldest first: `id` (what `bench_remove_kit` /
-    // `bench_raise_kit` address), `kit_id`, `people` (what the order was sized for) and `done` (items
+    // `bench_raise_kit` address), `kit_id`, `kits` (how many kits were ordered) and `done` (items
     // its FINISHED parts made; a part still queued reports its own `made`). Always inserted (empty
     // when none) so the entry shape is stable.
     let mut kit_orders = VarArray::new();
@@ -1621,7 +1621,7 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
             let mut row = VarDictionary::new();
             let _ = row.insert("id", i64::from(kit.id()));
             let _ = row.insert("kit_id", kit.kitId().unwrap_or(""));
-            let _ = row.insert("people", i64::from(kit.people()));
+            let _ = row.insert("kits", i64::from(kit.kits()));
             let _ = row.insert("done", i64::from(kit.done()));
             kit_orders.push(&row.to_variant());
         }

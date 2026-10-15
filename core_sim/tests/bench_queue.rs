@@ -977,12 +977,12 @@ fn a_skipped_orders_reason_quotes_its_forecast_not_one_pass() {
 /// The stalking kit's id in `equipment.json`.
 const STALKING_KIT: &str = "big_game";
 /// People a kit order is sized for in these fixtures.
-const KIT_PEOPLE: u32 = 6;
+const KIT_COUNT: u32 = 6;
 /// Sleds the kit order asks for.
 const KIT_SLEDS: u32 = 2;
 
 /// **A KIT ORDER REACHES THE CLIENT AS A GROUP, AND THE PICKER'S TERMS ARE ON THE SAME FRAME.**
-/// The queued parts carry their kit-order id, the live kit order is listed with its people, the
+/// The queued parts carry their kit-order id, the live kit order is listed with its kit count, the
 /// stalking kit's sled row names the units the bench already owes and one recipe entry per recipe
 /// making it (per-pass inputs, efficiency applied), and the free stock the picker compares those
 /// inputs with is the store LESS what the queue claims: 40 hide, minus two sleds' worth.
@@ -995,7 +995,7 @@ fn a_kit_order_and_the_pickers_terms_reach_the_wire() {
         bench
             .enqueue_kit(
                 STALKING_KIT,
-                KIT_PEOPLE,
+                KIT_COUNT,
                 vec![(SLED_RECIPE.to_string(), KIT_SLEDS)],
             )
             .expect("the kit order queues");
@@ -1026,7 +1026,7 @@ fn a_kit_order_and_the_pickers_terms_reach_the_wire() {
     let kit_orders = bench.kitOrders().expect("the kit orders ride the bench");
     assert_eq!(kit_orders.len(), 1);
     assert_eq!(kit_orders.get(HEAD).kitId(), Some(STALKING_KIT));
-    assert_eq!(kit_orders.get(HEAD).people(), KIT_PEOPLE);
+    assert_eq!(kit_orders.get(HEAD).kits(), KIT_COUNT);
     assert_eq!(kit_orders.get(HEAD).done(), NONE_MADE);
 
     let needs = cohort.kitNeeds().expect("the kit needs ride the row");
