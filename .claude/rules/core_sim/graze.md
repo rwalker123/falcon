@@ -243,8 +243,13 @@ oscillates or crashes if built carelessly.
   > |---|---|
   > | wild graze-wander / migratory | every anchor of `Herd::route` (cluster waypoints, or loiter anchors), each at the roam radius |
   > | fenced (`corralled_at`, or `arrived_at` the pen rung) | its one pen anchor (`corralled_at`, else `current_pos`) at `pen_radius` — the mean over one point is that point, so extending the fence still raises `K` |
-  > | tamed but unfenced (pastoral, `drift_to_owner`, `owner.is_some()`) | `current_pos` alone: it is held near its owner's camp, so its route anchors are stale wild anchors |
+  > | tamed but unfenced (pastoral rung, `drift_to_owner`) | the one camp it drifts to: the owner's nearest `ResidentBand` camp (`nearest_camp`, the hex distance the drift steers by, ties by `(y, x)`) at the roam radius; `current_pos` when the owner has no bands (where `drift_to_owner` falls back to plain roam) |
   > | empty route | `current_pos` |
+  >
+  > The camps are the `owner_camps` `advance_herds` already builds, passed into the seam. The
+  > destination quote of a herd climbing to the pastoral rung is struck over the camps of the faction
+  > building it (`herd.owner`, else the viewer, whose queue the row's builder state is), so a Tame's
+  > quote is the `K` delivered on completion. A herd on the wild rung, even one mid-Tame, reads its route.
   >
   > The mean keeps the overgrazing feedback (it reads today's drawn-down graze at every anchor) while a
   > single step no longer moves the number. It is a pure function of today's land — no stored state, no

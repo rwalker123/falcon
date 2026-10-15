@@ -3693,6 +3693,21 @@ pub fn capture_snapshot(
                 .filter(|(_, cohort, ..)| cohort.faction == viewer)
                 .filter_map(|(_, _, allocation, ..)| allocation),
         );
+        // **Every faction's camps** (the tiles its resident bands stand on) - what a pastoral herd's
+        // `K` is struck over, the same list `advance_herds` steers `drift_to_owner` by.
+        let mut owner_camps: std::collections::BTreeMap<FactionId, Vec<UVec2>> =
+            std::collections::BTreeMap::new();
+        for (entity, cohort, ..) in populations.iter() {
+            if !resident_bands.contains(entity) {
+                continue;
+            }
+            if let Some(position) = tile_positions.get(&cohort.current_tile.to_bits()) {
+                owner_camps
+                    .entry(cohort.faction)
+                    .or_default()
+                    .push(*position);
+            }
+        }
         let herd_states = herd_snapshot_entries(HerdSnapshotInputs {
             current_turn: tick.0,
             telemetry: &herds,
@@ -3711,6 +3726,7 @@ pub fn capture_snapshot(
             // **The graze layer the destination-capacity quote is struck over** — the same registry the
             // live `K` is summed from, so the two are one seam at two standings.
             graze: &graze_registry,
+            owner_camps: &owner_camps,
             visibility: &visibility_ledger,
             viewer,
             herd_lore_known: crate::intensification::knows(

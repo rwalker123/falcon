@@ -2919,6 +2919,9 @@ pub fn advance_herds(
                 height,
                 wrap,
                 CapacityStanding::live(herd),
+                herd.owner
+                    .and_then(|owner| owner_camps.get(&owner))
+                    .map_or(&[][..], Vec::as_slice),
             ),
             herd.is_corralled(),
             herd.carrying_capacity,
@@ -3008,21 +3011,47 @@ fn herd_footprint_at(herd: &Herd, def: Option<&SpeciesDef>, penned: bool) -> (UV
 ///
 /// - a **fenced** herd (`penned`) → its one pen footprint ([`herd_footprint_at`]); the mean over one
 ///   point is that point, so extending the fence still raises `K` through the radius;
-/// - a **tamed but unfenced** (pastoral) herd → `current_pos` alone. It is held near its owner's
-///   camp, so its route anchors are stale wild anchors that say nothing about where it ranges;
+/// - a **tamed but unfenced** (pastoral) herd → the **camp it drifts to**: `drift_to_owner` pulls it
+///   to its owner's nearest `ResidentBand` camp and it grazes around that camp, so its one point is
+///   [`nearest_camp`] (the same distance the drift steers by) at the roam radius. An owner with no
+///   bands is the case where `drift_to_owner` falls back to plain roam, and the point is
+///   `current_pos`;
 /// - a **wild** herd with a route → every anchor of [`Herd::route`] (the game cluster's waypoints, or
 ///   a migration's loiter anchors), each at the roam radius;
 /// - a herd with an **empty route** → `current_pos`.
-fn herd_wander_points(herd: &Herd, def: Option<&SpeciesDef>, penned: bool) -> Vec<(UVec2, u32)> {
-    if penned {
+fn herd_wander_points(
+    herd: &Herd,
+    def: Option<&SpeciesDef>,
+    at: &CapacityStanding,
+    owner_camps: &[UVec2],
+    width: u32,
+    wrap: bool,
+) -> Vec<(UVec2, u32)> {
+    if at.penned {
         return vec![herd_footprint_at(herd, def, true)];
     }
     let radius = herd.graze_range_radius(def);
-    let held_near_its_owner = herd.owner.is_some();
-    if held_near_its_owner || herd.route.is_empty() {
+    if at.pastoral {
+        let camp = nearest_camp(herd.current_pos, owner_camps, width, wrap);
+        return vec![(camp.unwrap_or(herd.current_pos), radius)];
+    }
+    if herd.route.is_empty() {
         return vec![(herd.current_pos, radius)];
     }
     herd.route.iter().map(|anchor| (*anchor, radius)).collect()
+}
+
+/// **The camp a `drift_to_owner` herd drifts to** — the nearest of its owner's camps from `from` by
+/// the hex distance the drift steers by ([`nearest_target_distance`]), ties broken by `(y, x)` so the
+/// answer never depends on the list's order. `None` when the owner has no camps.
+fn nearest_camp(from: UVec2, camps: &[UVec2], width: u32, wrap: bool) -> Option<UVec2> {
+    camps.iter().copied().min_by_key(|&camp| {
+        (
+            hex_distance_wrapped(from, camp, width, wrap),
+            camp.y,
+            camp.x,
+        )
+    })
 }
 
 /// **HOW MUCH BIOMASS PHYSICALLY FITS ON A FOOTPRINT**, and [`NO_SPACE_CAP_AT_ALL`] when the dial is
@@ -3217,13 +3246,14 @@ fn ecological_carrying_capacity(
     height: u32,
     wrap: bool,
     at: CapacityStanding,
+    owner_camps: &[UVec2],
 ) -> Option<f32> {
     // **K IS THE MEAN OVER THE HERD'S WANDER POINTS** ([`herd_wander_points`]): the `K` a footprint
     // anchored at each point would give, from today's (drawn-down) graze and the roam or pen radius,
     // averaged. One step between a rich patch and a poor one therefore does not move the number.
     // Everything below is applied PER POINT before the mean — the feed sum, the fodder inflow, the
     // density gain and the `min` against that point's own space.
-    let points = herd_wander_points(herd, def, at.penned);
+    let points = herd_wander_points(herd, def, &at, owner_camps, width, wrap);
     // **Diet branches the ONE K seam** (Predators Phase 1a). A carnivore's food layer is *other herds*
     // (the prey index), not the per-tile `GrazeRegistry` — so it ignores graze / `fodder_per_biomass`
     // / `fodder_delivery_rate` entirely and its feed is the prey disk around its live position; only
@@ -3298,6 +3328,9 @@ struct CapacityStanding {
     standing: RungStanding,
     /// Whether the reading is taken over a **fenced footprint** rather than a roam range.
     penned: bool,
+    /// Whether the herd stands on the pastoral rung unfenced — the rung whose `drift_to_owner`
+    /// movement holds it at its owner's camp, so its `K` is struck over that camp.
+    pastoral: bool,
 }
 
 impl CapacityStanding {
@@ -3307,6 +3340,7 @@ impl CapacityStanding {
         Self {
             standing: herd.standing(),
             penned: herd.corralled_at.is_some(),
+            pastoral: herd.corralled_at.is_none() && herd.is_domesticated(),
         }
     }
 
@@ -3317,6 +3351,9 @@ impl CapacityStanding {
         Self {
             standing: RungStanding::arrived_at(rung),
             penned: herd.corralled_at.is_some() || rung.is_at_or_above(RungKey::AnimalPen),
+            pastoral: herd.corralled_at.is_none()
+                && !rung.is_at_or_above(RungKey::AnimalPen)
+                && rung.is_at_or_above(RungKey::AnimalPastoral),
         }
     }
 }
@@ -3367,11 +3404,23 @@ pub fn herd_destination_capacity(
     width: u32,
     height: u32,
     wrap: bool,
+    builder_camps: &[UVec2],
 ) -> Option<f32> {
     let destination = herd.build_destination?;
     let at = CapacityStanding::arrived_at(destination, herd);
     Some(settled_capacity(
-        ecological_carrying_capacity(herd, def, graze, prey, fauna, width, height, wrap, at),
+        ecological_carrying_capacity(
+            herd,
+            def,
+            graze,
+            prey,
+            fauna,
+            width,
+            height,
+            wrap,
+            at,
+            builder_camps,
+        ),
         at.penned,
         herd.carrying_capacity,
     ))
@@ -14940,6 +14989,29 @@ mod tests {
             K_HEIGHT,
             false,
             CapacityStanding::live(herd),
+            &[],
+        )
+        .expect("a grazing herd on a graze layer has a K")
+    }
+
+    /// [`live_k`] for a herd whose owner's camps stand at `camps`.
+    fn live_k_with_camps(
+        herd: &Herd,
+        fauna: &FaunaConfig,
+        graze: &GrazeRegistry,
+        camps: &[UVec2],
+    ) -> f32 {
+        ecological_carrying_capacity(
+            herd,
+            None,
+            graze,
+            &[],
+            fauna,
+            K_WIDTH,
+            K_HEIGHT,
+            false,
+            CapacityStanding::live(herd),
+            camps,
         )
         .expect("a grazing herd on a graze layer has a K")
     }
@@ -15025,17 +15097,113 @@ mod tests {
         );
     }
 
-    /// **The tamed-but-unfenced herd reads `current_pos` alone** (its route anchors are stale wild
-    /// anchors) — the `held_near_its_owner` arm of `herd_wander_points`.
+    /// A herd tamed outright to the pastoral rung (owner set, `drift_to_owner` movement).
+    fn tame(herd: &mut Herd) {
+        herd.husbandry_ceiling = HusbandryCeiling::Pen;
+        herd.taming_cost_multiplier = 1.0;
+        assert!(herd.tame_outright(FactionId(0), &LadderConfig::builtin()));
+        assert!(herd.is_domesticated() && !herd.is_corralled());
+    }
+
+    /// **A pastoral herd's one point is the camp it drifts to**: its stale route anchors and its own
+    /// tile are both beside the point. The camp stands on the rich ground, the herd on the poor.
     #[test]
-    fn a_pastoral_herd_is_read_at_its_own_tile_not_its_stale_route() {
+    fn a_pastoral_herd_reads_k_at_its_owners_camp() {
         let (mut herd, fauna, graze) = k_fixture();
-        herd.owner = Some(FactionId(0));
+        tame(&mut herd);
         herd.current_pos = K_POOR_ANCHOR;
-        let held_poor = live_k(&herd, &fauna, &graze);
+        let at_camp = live_k_with_camps(&herd, &fauna, &graze, &[K_RICH_ANCHOR]);
+        let mut at_camp_tile = herd.clone();
+        at_camp_tile.route = vec![K_RICH_ANCHOR];
+        at_camp_tile.current_pos = K_RICH_ANCHOR;
+        let rich = live_k_with_camps(&at_camp_tile, &fauna, &graze, &[K_RICH_ANCHOR]);
+        assert!(
+            (at_camp - rich).abs() < 1e-6,
+            "K is the camp's footprint: {at_camp} vs {rich}"
+        );
+        let on_its_own_tile = live_k(&herd, &fauna, &graze);
+        assert!(
+            at_camp > on_its_own_tile * 2.0,
+            "not the herd's own (poor) tile: {at_camp} vs {on_its_own_tile}"
+        );
+        let route_mean = {
+            let mut wild = herd.clone();
+            wild.owner = None;
+            wild.ladder_position = 0.0;
+            live_k(&wild, &fauna, &graze)
+        };
+        assert!(
+            (at_camp - route_mean).abs() > 1.0,
+            "not the mean over the stale route: {at_camp} vs {route_mean}"
+        );
+        // The nearest camp wins, whatever order the list is in.
+        let both = live_k_with_camps(&herd, &fauna, &graze, &[K_RICH_ANCHOR, K_POOR_ANCHOR]);
+        let swapped = live_k_with_camps(&herd, &fauna, &graze, &[K_POOR_ANCHOR, K_RICH_ANCHOR]);
+        assert!((both - swapped).abs() < 1e-6);
+        assert!(
+            (both - on_its_own_tile).abs() < 1e-6,
+            "the poor camp is nearest"
+        );
+    }
+
+    /// **An owner with no bands is the plain-roam fallback: the point is `current_pos`.**
+    #[test]
+    fn a_pastoral_herd_whose_owner_has_no_camps_reads_its_own_tile() {
+        let (mut herd, fauna, graze) = k_fixture();
+        tame(&mut herd);
+        herd.current_pos = K_POOR_ANCHOR;
+        let poor = live_k_with_camps(&herd, &fauna, &graze, &[]);
         herd.current_pos = K_RICH_ANCHOR;
-        let held_rich = live_k(&herd, &fauna, &graze);
-        assert!(held_rich > held_poor * 2.0, "{held_rich} vs {held_poor}");
+        let rich = live_k_with_camps(&herd, &fauna, &graze, &[]);
+        assert!(rich > poor * 2.0, "{rich} vs {poor}");
+    }
+
+    /// **The destination quote of a Tame is the K delivered on completion**, struck over the camp of
+    /// the faction building it - not over the route the wild herd walks today.
+    #[test]
+    fn a_tames_destination_quote_is_the_k_delivered_on_completion() {
+        let (mut herd, fauna, graze) = k_fixture();
+        herd.husbandry_ceiling = HusbandryCeiling::Pen;
+        herd.taming_cost_multiplier = 1.0;
+        herd.current_pos = K_POOR_ANCHOR;
+        herd.build_destination = Some(RungKey::AnimalPastoral);
+        let camps = [K_RICH_ANCHOR];
+        let quote = herd_destination_capacity(
+            &herd,
+            None,
+            &graze,
+            &[],
+            &fauna,
+            K_WIDTH,
+            K_HEIGHT,
+            false,
+            &camps,
+        )
+        .expect("a build is queued");
+        let over_the_route = herd_destination_capacity(
+            &herd,
+            None,
+            &graze,
+            &[],
+            &fauna,
+            K_WIDTH,
+            K_HEIGHT,
+            false,
+            &[],
+        )
+        .unwrap();
+        assert!(
+            (quote - over_the_route).abs() > 1.0,
+            "the camp, not the route/own tile, is what is quoted: {quote} vs {over_the_route}"
+        );
+        // …and the herd that lands is handed exactly that.
+        herd.build_destination = None;
+        tame(&mut herd);
+        let delivered = live_k_with_camps(&herd, &fauna, &graze, &camps);
+        assert!(
+            (quote - delivered).abs() < 1e-3,
+            "quoted {quote}, delivered {delivered}"
+        );
     }
 
     /// **The destination quote is the same seam at the arrival standing**: a penned herd's quote at
@@ -15048,9 +15216,18 @@ mod tests {
         herd.pen_radius = 1;
         herd.build_destination = Some(RungKey::AnimalPen);
         let at = CapacityStanding::arrived_at(RungKey::AnimalPen, &herd);
-        let quote =
-            herd_destination_capacity(&herd, None, &graze, &[], &fauna, K_WIDTH, K_HEIGHT, false)
-                .expect("a build is queued");
+        let quote = herd_destination_capacity(
+            &herd,
+            None,
+            &graze,
+            &[],
+            &fauna,
+            K_WIDTH,
+            K_HEIGHT,
+            false,
+            &[],
+        )
+        .expect("a build is queued");
         let live_at_that_standing = ecological_carrying_capacity(
             &herd,
             None,
@@ -15061,6 +15238,7 @@ mod tests {
             K_HEIGHT,
             false,
             at,
+            &[],
         )
         .unwrap();
         assert!((quote - live_at_that_standing).abs() < 1e-6);
@@ -15079,6 +15257,7 @@ mod tests {
             K_WIDTH,
             K_HEIGHT,
             false,
+            &[],
         )
         .unwrap();
         roaming.corralled_at = Some(K_POOR_ANCHOR);
@@ -15092,6 +15271,7 @@ mod tests {
             K_HEIGHT,
             false,
             CapacityStanding::arrived_at(RungKey::AnimalPen, &roaming),
+            &[],
         )
         .unwrap();
         assert!(

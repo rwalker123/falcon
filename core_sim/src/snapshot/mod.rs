@@ -1006,6 +1006,7 @@ mod tests {
             grid_size: UVec2::new(64, 64),
             wrap_horizontal: false,
             graze: &graze,
+            owner_camps: &std::collections::BTreeMap::new(),
             visibility,
             viewer: VIEWER,
             herd_lore_known: false,
