@@ -5238,6 +5238,7 @@
           "actual_yield_high": 93.400002,
           "actual_yield_low": 57.0,
           "arrival_schedule": {"__packed": "PackedFloat32Array", "len": 4, "items": [53.360001, 85.860001, 62.110001, 89.209999]},
+          "branch": "populations[0].labor_assignments[0].branch",
           "fauna_id": "populations[0].labor_assignments[0].fauna_id",
           "floor": 110.599998,
           "fodder_rate_home": 27.309999,
@@ -5361,6 +5362,7 @@
           "actual_yield_high": 22.120001,
           "actual_yield_low": 104.010002,
           "arrival_schedule": {"__packed": "PackedFloat32Array", "len": 4, "items": [24.74, 44.759998, 71.209999, 53.509998]},
+          "branch": "populations[0].labor_assignments[1].branch",
           "fauna_id": "populations[0].labor_assignments[1].fauna_id",
           "floor": 48.369999,
           "fodder_rate_home": 107.879997,
@@ -5484,6 +5486,7 @@
           "actual_yield_high": 56.189999,
           "actual_yield_low": 110.970001,
           "arrival_schedule": {"__packed": "PackedFloat32Array", "len": 4, "items": [57.700001, 101.660004, 22.690001, 98.309998]},
+          "branch": "populations[0].labor_assignments[2].branch",
           "fauna_id": "populations[0].labor_assignments[2].fauna_id",
           "floor": 97.739998,
           "fodder_rate_home": 71.980003,
@@ -6732,6 +6735,7 @@
           "actual_yield_high": 65.989998,
           "actual_yield_low": 32.830002,
           "arrival_schedule": {"__packed": "PackedFloat32Array", "len": 4, "items": [14.59, 109.389999, 80.620003, 100.639999]},
+          "branch": "populations[1].labor_assignments[0].branch",
           "fauna_id": "populations[1].labor_assignments[0].fauna_id",
           "floor": 71.43,
           "fodder_rate_home": 48.48,
@@ -6855,6 +6859,7 @@
           "actual_yield_high": 39.169998,
           "actual_yield_low": 88.889999,
           "arrival_schedule": {"__packed": "PackedFloat32Array", "len": 4, "items": [35.360001, 53.060001, 26.610001, 75.970001]},
+          "branch": "populations[1].labor_assignments[1].branch",
           "fauna_id": "populations[1].labor_assignments[1].fauna_id",
           "floor": 95.239998,
           "fodder_rate_home": 47.799999,
@@ -6978,6 +6983,7 @@
           "actual_yield_high": 26.1,
           "actual_yield_low": 105.809998,
           "arrival_schedule": {"__packed": "PackedFloat32Array", "len": 4, "items": [50.82, 70.839996, 97.290001, 53.330002]},
+          "branch": "populations[1].labor_assignments[2].branch",
           "fauna_id": "populations[1].labor_assignments[2].fauna_id",
           "floor": 20.67,
           "fodder_rate_home": 36.439999,
@@ -8187,6 +8193,7 @@
           "actual_yield_high": 15.21,
           "actual_yield_low": 35.209999,
           "arrival_schedule": {"__packed": "PackedFloat32Array", "len": 4, "items": [92.720001, 7.32, 83.970001, 3.97]},
+          "branch": "populations[2].labor_assignments[0].branch",
           "fauna_id": "populations[2].labor_assignments[0].fauna_id",
           "floor": 7.88,
           "fodder_rate_home": 28.66,
@@ -8310,6 +8317,7 @@
           "actual_yield_high": 107.809998,
           "actual_yield_low": 93.489998,
           "arrival_schedule": {"__packed": "PackedFloat32Array", "len": 4, "items": [9.69, 95.089996, 6.34, 86.339996]},
+          "branch": "populations[2].labor_assignments[1].branch",
           "fauna_id": "populations[2].labor_assignments[1].fauna_id",
           "floor": 26.209999,
           "fodder_rate_home": 112.059998,
@@ -8433,6 +8441,7 @@
           "actual_yield_high": 54.84,
           "actual_yield_low": 111.620003,
           "arrival_schedule": {"__packed": "PackedFloat32Array", "len": 4, "items": [85.400002, 5.4, 94.150002, 51.869999]},
+          "branch": "populations[2].labor_assignments[2].branch",
           "fauna_id": "populations[2].labor_assignments[2].fauna_id",
           "floor": 94.800003,
           "fodder_rate_home": 71.290001,
@@ -9369,16 +9378,25 @@
       ],
       "build_turns_remaining": 110,
       "current_rung": "tile_improvements[0].current_rung",
-      "has_keeper": true,
-      "has_neglect_grace": false,
-      "keeper_band_id": 164,
+      "has_neglect_grace": true,
+      "is_queued": false,
       "neglect_grace_remaining": 28,
       "neglect_turns": 69,
       "tile_x": 1,
       "tile_y": 12,
       "upkeep_demand": 29.129999,
+      "upkeep_hands": 21.309999,
       "upkeep_shortfall": 61.419998,
-      "upkeep_supplied": 30.98
+      "upkeep_supplied": 30.98,
+      "upkeep_toe": [
+        {
+          "filled": 92.059998,
+          "item_id": "tile_improvements[0].upkeep_toe[0].item_id",
+          "required": 108.529999
+        }
+      ],
+      "upkeep_tools_short": false,
+      "upkeep_workers_needed": 122
     },
     {
       "branch": "tile_improvements[1].branch",
@@ -9393,16 +9411,25 @@
       ],
       "build_turns_remaining": 29,
       "current_rung": "tile_improvements[1].current_rung",
-      "has_keeper": false,
-      "has_neglect_grace": true,
-      "keeper_band_id": 37,
+      "has_neglect_grace": false,
+      "is_queued": true,
       "neglect_grace_remaining": 199,
       "neglect_turns": 78,
       "tile_x": 184,
       "tile_y": 173,
       "upkeep_demand": 87.389999,
+      "upkeep_hands": 106.089996,
       "upkeep_shortfall": 99.129997,
-      "upkeep_supplied": 3.5
+      "upkeep_supplied": 3.5,
+      "upkeep_toe": [
+        {
+          "filled": 94.279999,
+          "item_id": "tile_improvements[1].upkeep_toe[0].item_id",
+          "required": 35.419998
+        }
+      ],
+      "upkeep_tools_short": true,
+      "upkeep_workers_needed": 197
     },
     {
       "branch": "tile_improvements[2].branch",
@@ -9417,16 +9444,25 @@
       ],
       "build_turns_remaining": 84,
       "current_rung": "tile_improvements[2].current_rung",
-      "has_keeper": false,
-      "has_neglect_grace": true,
-      "keeper_band_id": 182,
+      "has_neglect_grace": false,
+      "is_queued": true,
       "neglect_grace_remaining": 74,
       "neglect_turns": 103,
       "tile_x": 103,
       "tile_y": 114,
       "upkeep_demand": 96.349998,
+      "upkeep_hands": 3.65,
       "upkeep_shortfall": 22.08,
-      "upkeep_supplied": 97.410004
+      "upkeep_supplied": 97.410004,
+      "upkeep_toe": [
+        {
+          "filled": 107.669998,
+          "item_id": "tile_improvements[2].upkeep_toe[0].item_id",
+          "required": 91.32
+        }
+      ],
+      "upkeep_tools_short": false,
+      "upkeep_workers_needed": 16
     }
   ],
   "tiles": [

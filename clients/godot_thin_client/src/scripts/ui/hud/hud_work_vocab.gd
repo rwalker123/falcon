@@ -1355,6 +1355,12 @@ const WORK_ROW_PARTY_WALKING_OUT_ONE_FORMAT := "Walking out — reaches the %s i
 const WORK_ROW_PARTY_WALK_TARGET_HERD := "herd"
 const WORK_ROW_PARTY_WALK_TARGET_PATCH := "patch"
 const WORK_ROW_PARTY_WALK_TARGET_WORKING := "working"
+const WORK_ROW_PARTY_WALK_TARGET_TILE := "improvement"
+
+## A tile crew row's meta and crew noun (issue #175): the row carries `"x,y:branch"` so a harness finds
+## it by identity, and its crew reads as *workers* where a working's reads as *cutters*.
+const TILE_ROW_META := &"tile_crew_row"
+const TILE_CREW_NOUN := "workers"
 
 ## **WHAT ARRIVES HOME, ON A ROW WITH NO RATE SLOT** — the workings roster's hover, whose one-line
 ## value cell states the ground rather than a rate. `netRateHome` in the working's OWN material
@@ -4302,9 +4308,11 @@ const CREW_SPLIT_SENTENCE_META := &"crew_split_sentence"
 const CREW_SPLIT_VERB_HARVEST := "harvest"
 const CREW_SPLIT_VERB_HUNT := "hunt"
 const CREW_SPLIT_VERB_CUT := "cut"
+const CREW_SPLIT_VERB_TILE := "tend"
 const CREW_SPLIT_OBJECT_PATCH := "the patch"
 const CREW_SPLIT_OBJECT_HERD := "the herd"
 const CREW_SPLIT_OBJECT_WORKING := "the working"
+const CREW_SPLIT_OBJECT_TILE := "the improvement"
 const CREW_SPLIT_SOME_FORMAT := "%s%d of %d %s tending %s; %d %s free to %s."
 const CREW_SPLIT_ALL_FORMAT := "All %d are tending %s — nobody is free to %s."
 const CREW_SPLIT_ONE_FORMAT := "The one worker is tending %s — nobody is free to %s."
@@ -4327,6 +4335,9 @@ static func crew_split_words(crew: int, keep_hands: float, labor_kind: String) -
     elif labor_kind == HudConst.LABOR_KIND_EXTRACT:
         verb = CREW_SPLIT_VERB_CUT
         what = CREW_SPLIT_OBJECT_WORKING
+    elif labor_kind == HudConst.LABOR_KIND_TILE:
+        verb = CREW_SPLIT_VERB_TILE
+        what = CREW_SPLIT_OBJECT_TILE
     var keep := maxf(keep_hands, 0.0)
     var tending := clampi(roundi(keep), 1, crew)
     var free := crew - tending

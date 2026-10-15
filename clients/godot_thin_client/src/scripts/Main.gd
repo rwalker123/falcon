@@ -1085,6 +1085,9 @@ func _apply_snapshot(snapshot: Dictionary) -> void:
     # per-tile lookup for the tile card; the HUD needs it because the Work tab's GROUNDWORK section asks
     # a whole-list question — *which workings does this band hold a row on* — which no per-hex index
     # answers.
+    # …and the improvements standing on tile-kind ladder branches (issue #175), the deposits' twin.
+    if snapshot.has("tile_improvements") and SnapshotSections.changed(snapshot, "tile_improvements"):
+        _hud_invoke("update_tile_improvements", [snapshot["tile_improvements"]])
     if snapshot.has("deposits") and SnapshotSections.changed(snapshot, "deposits"):
         _hud_invoke("update_deposits", [snapshot["deposits"]])
     # The Telling (docs/plan_the_telling.md). The `has()` guard is LOAD-BEARING: a delta carries a
@@ -1788,7 +1791,7 @@ static func format_extend_pen(payload: Dictionary) -> Dictionary:
 ## **THE BUILD VERBS' COMMAND SHAPE IS READ OFF THE LADDER CATALOG** (issue #175). The verb's
 ## `ladder_rungs` row names the `source_kind` of the branch it climbs, and the kind decides the shape:
 ## `herd` names a HERD id (`build tame <f> <herd>`), `patch` names a TILE, `deposit` a tile AND a
-## MATERIAL (one hex can hold two workings), and `road` / `tile` a tile AND the BAND that will keep it
+## MATERIAL (one hex can hold two workings), and `road` a tile AND the BAND that will keep it; `tile` a bare tile (its crew is its own site crew, so no band token)
 ## (a road has no work row for its keeper to be read off, so who holds the tile is said out loud — and
 ## that token is what the sim records as the keeper). A verb the catalog does not carry — a harness
 ## that staged none, or a verb the sim has not yet published — is shaped by what the payload itself
@@ -1842,7 +1845,7 @@ static func format_improvement(payload: Dictionary, catalog: Array = []) -> Dict
     var y := int(payload.get("y", -1))
     if x < 0 or y < 0:
         return {}
-    if kind == HudRouteVocab.SOURCE_KIND_ROAD or kind == HudRouteVocab.SOURCE_KIND_TILE:
+    if kind == HudRouteVocab.SOURCE_KIND_ROAD:
         # **NO BAND, NO COMMAND.** The token is the keeper, and a road with nobody on the hook is not
         # a road the sim will accept — so an absent band is refused here rather than guessed at, the
         # way an absent herd id is one branch up.

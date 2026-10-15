@@ -1348,7 +1348,7 @@ func _build_workforce_block(band: Dictionary) -> VBoxContainer:
         match String(m.get("kind", "")):
             SourceForecast.LABOR_KIND_FORAGE: forage_workers += workers
             SourceForecast.LABOR_KIND_HUNT: hunt_workers += workers
-            HudConst.LABOR_KIND_EXTRACT: extract_workers += workers
+            HudConst.LABOR_KIND_EXTRACT, HudConst.LABOR_KIND_TILE: extract_workers += workers
     var scout_eff := _band_labor.effective_role_workers(band, HudConst.LABOR_KIND_SCOUT)
     var warrior_eff := _band_labor.effective_role_workers(band, HudConst.LABOR_KIND_WARRIOR)
     # **THE ROADWORK POOL IS A ROLE, so it is in the Roles SEGMENT though its line is on the Work
@@ -2069,6 +2069,7 @@ func _fill_work_zone_column(col: VBoxContainer, band: Dictionary) -> void:
     var idle := _band_labor.effective_idle(band)
     var models := _work_source_models(band, idle)
     var extract_models := _extract_source_models(band)
+    var tile_models := _tile_source_models(band)
     col.add_child(_build_work_head(band, models,
         _work_component_sum(models, "rate"),
         _work_component_sum(models, "fodder_rate")))
@@ -2096,7 +2097,7 @@ func _fill_work_zone_column(col: VBoxContainer, band: Dictionary) -> void:
         _work_open_key = ""
     _work_inspected = inspected
     col.add_child(_flow_work_sections(_work_section_items(band, models, extract_models, queued,
-        roster_models, roster_unseen)))
+        roster_models, roster_unseen, tile_models)))
 
 ## One placeable ITEM of the sections list: a control, the height it reserves, and whether it must
 ## stay in the same column as the item after it (a section's gap and head ride with its first row).
@@ -2114,7 +2115,7 @@ func _work_item(node: Control, keep_with_next: bool = false) -> Dictionary:
 ## and GROUNDWORK draw only where the band has a row on that web. A band working nothing also gets the
 ## board's own empty hint, after the sections.
 func _work_section_items(band: Dictionary, models: Array, extract_models: Array, queued: Array,
-        roster_models: Array, roster_unseen: bool) -> Array:
+        roster_models: Array, roster_unseen: bool, tile_models: Array = []) -> Array:
     var items: Array = []
     _attach_muster_sources(band, models, extract_models)
     var builders := int(_band_labor.effective_role_workers(
@@ -2145,13 +2146,16 @@ func _work_section_items(band: Dictionary, models: Array, extract_models: Array,
         _append_work_section(items, HudWorkVocab.WORK_SECTION_ROADWORK,
             _build_roadwork_head(roster_models.size() - roster_drawn),
             [_build_roadwork_block(band, roster_models, roster_unseen)])
-    if not extract_models.is_empty():
+    if not extract_models.is_empty() or not tile_models.is_empty():
         var nodes: Array = []
         for model in extract_models:
             nodes.append(_build_extract_row(band, model as Dictionary))
+        # Tile crews are site crews like a working's, so they ride the same section.
+        for model in tile_models:
+            nodes.append(_build_tile_row(band, model as Dictionary))
         _append_work_section(items, HudWorkVocab.WORK_SECTION_GROUNDWORK,
             _build_work_section_head(HudWorkVocab.WORK_SECTION_GROUNDWORK), nodes)
-    if models.is_empty() and extract_models.is_empty():
+    if models.is_empty() and extract_models.is_empty() and tile_models.is_empty():
         var hint := HudWidgets.alloc_hint_label(HudWorkVocab.WORK_EMPTY_HINT)
         hint.custom_minimum_size = Vector2(0.0, HudWorkVocab.WORK_ROW_HEIGHT)
         items.append(_work_item(hint))
@@ -2871,6 +2875,108 @@ func _extract_source_models(band: Dictionary) -> Array:
             band, tile.x, tile.y, String(model["material"])).get("lent_to_hunt", 0))
         models.append(model)
     return models
+
+## **THE TILE CREW ROWS THIS BAND HOLDS** (issue #175) -- one model per `tile` labor row, nearest
+## first. No tile branch ships yet, so this is empty on every shipped world; it exists so the FIRST one
+## renders with no edit here. **Everything a row says comes off the catalog**: the branch's name from
+## `ladder_branches`, the rung it stands on from `ladder_rungs`, and the standing bill and tools from the
+## `tile_improvements` row, which carries the keys a deposit's does. A branch or rung the catalog does
+## not carry reads as its humanised id, never blank.
+func _tile_source_models(band: Dictionary) -> Array:
+    var models: Array = []
+    var camp := SourceForecast.band_tile(band)
+    var branches: Array = _topbar.ladder_branches() if _topbar != null else []
+    var catalog: Array = _topbar.ladder_rungs() if _topbar != null else []
+    for assignment_variant in _band_labor.tile_assignments_of(band):
+        var assignment: Dictionary = assignment_variant
+        var x := int(assignment.get("target_x", -1))
+        var y := int(assignment.get("target_y", -1))
+        var branch := String(assignment.get("branch", ""))
+        var row := _band_labor.tile_improvement_at(x, y, branch)
+        var rung_key := String(row.get("current_rung", ""))
+        var distance := SourceForecast.hex_distance_wrapped(camp.x, camp.y, x, y,
+            _band_labor.grid_width(), _band_labor.wrap_horizontal())
+        var key := _band_labor.pending_key(HudConst.LABOR_KIND_TILE, x, y, "", branch)
+        models.append({
+            "kind": HudConst.LABOR_KIND_TILE,
+            "key": key, "x": x, "y": y, "herd_id": "", "branch": branch,
+            "tile": Vector2i(x, y),
+            "tile_row": row,
+            "assignment": assignment,
+            "distance": distance,
+            "workers": _band_labor.effective_worker_map(band).get(key, {}).get(
+                "workers", int(assignment.get("workers", 0))),
+            "name": HudWorkVocab.WORKINGS_ROSTER_NAME_FORMAT % [
+                HudRouteVocab.branch_name(branches, branch),
+                _roadwork_roster_locator(distance, camp, Vector2i(x, y))],
+            "rung_name": HudRouteVocab.rung_name_in(catalog, rung_key) \
+                if rung_key != "" else HudWorkVocab.SITE_CREW_RUNG_WILD,
+        })
+    models.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
+        if int(a["distance"]) != int(b["distance"]):
+            return int(a["distance"]) < int(b["distance"])
+        var ta: Vector2i = a["tile"]
+        var tb: Vector2i = b["tile"]
+        if ta.y != tb.y:
+            return ta.y < tb.y
+        if ta.x != tb.x:
+            return ta.x < tb.x
+        return String(a["branch"]) < String(b["branch"]))
+    return models
+
+## **ONE TILE CREW'S ROW** -- a site row's shell (`_site_row_shell`) carrying the catalog's name for the
+## branch and its rung, the keeping mark off the standing bill, the crew count and, on a far posting, the
+## party block a deposit crew draws. READ-ONLY: there is no stepper and no inspector, because assigning a
+## tile crew has no UI until the first tile branch ships.
+func _build_tile_row(band: Dictionary, model: Dictionary) -> PanelContainer:
+    var tile: Vector2i = model["tile"]
+    var branch := String(model["branch"])
+    var improvement: Dictionary = model["tile_row"]
+    var assignment: Dictionary = model["assignment"]
+    var workers := int(model.get("workers", 0))
+    var shell := _site_row_shell(HudWorkVocab.EXTRACT_ROW_HEIGHT, false, Color(0.0, 0.0, 0.0, 0.0))
+    var row: PanelContainer = shell[SITE_ROW_SHELL_ROW]
+    var col: VBoxContainer = shell[SITE_ROW_SHELL_COLUMN]
+    var line: HBoxContainer = shell[SITE_ROW_SHELL_LINE]
+    row.set_meta(HudWorkVocab.TILE_ROW_META, "%d,%d:%s" % [tile.x, tile.y, branch])
+    row.mouse_filter = Control.MOUSE_FILTER_PASS
+    # An empty icon slot keeps the name in the site rows' column (no mark exists for a branch yet).
+    line.add_child(HudWidgets.build_marker_icon(null, "", HudWorkVocab.WORK_ROW_ICON_WIDTH,
+        HudWorkVocab.WORK_ROW_FONT_SIZE))
+    var title := Label.new()
+    title.text = String(model["name"])
+    title.clip_text = true
+    title.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+    title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    title.add_theme_font_size_override("font_size", HudWorkVocab.WORK_ROW_FONT_SIZE)
+    title.add_theme_color_override("font_color", HudStyle.INK)
+    title.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    line.add_child(title)
+    var kept := float(improvement.get("upkeep_supplied", SourceForecast.NO_UPKEEP_DEMAND))
+    var demand := float(improvement.get("upkeep_demand", SourceForecast.NO_UPKEEP_DEMAND))
+    var tools_short := SourceForecast.upkeep_tools_short(improvement,
+        HudComposeVocab.BARE_FORECAST_PREFIX)
+    line.add_child(_build_site_keeping_mark(kept, demand, tools_short,
+        _site_short_tool_names(improvement) if tools_short else "",
+        HudWorkVocab.tending_of(improvement, HudComposeVocab.BARE_FORECAST_PREFIX, "")))
+    var count := Label.new()
+    count.text = str(workers)
+    count.add_theme_font_size_override("font_size", HudWorkVocab.WORK_ROW_FONT_SIZE)
+    count.add_theme_color_override("font_color", HudStyle.INK)
+    count.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    line.add_child(count)
+    col.add_child(_build_site_crew_line(HudWorkVocab.site_crew_line(String(model["rung_name"])),
+        HudWorkVocab.SITE_CREW_LINE_META, _crew_split_for_row(workers,
+            float(assignment.get(SourceForecast.ASSIGNMENT_KEEP_HANDS_KEY,
+                SourceForecast.NO_UPKEEP_DEMAND)), HudConst.LABOR_KIND_TILE)))
+    var party := SourceForecast.party_readout(assignment)
+    if SourceForecast.party_is_posted(party):
+        var lines: Array[String] = HudWorkVocab.party_block_lines(party, HudWorkVocab.TILE_CREW_NOUN,
+            HudWorkVocab.WORK_ROW_PARTY_WALK_TARGET_TILE)
+        for party_line in lines:
+            col.add_child(_build_working_yield_line(party_line, HudStyle.INK_DIM,
+                HudWorkVocab.WORK_ROW_PARTY_META))
+    return row
 
 ## **ONE WORKING'S ROW — a harvest or hunt row's shape** (the site rows' shell, `_site_row_shell`).
 ## Line one is the icon (the MATERIAL's mark), the name (`Wood · 2 tiles SE`, one ink — it names the

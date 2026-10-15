@@ -1745,3 +1745,17 @@ untestable rather than as *nothing is using it*. `RungGates.RUNG_KNOWLEDGE_TRACK
 `SourceForecast.IMPROVEMENT_RUNG_KEYS` / `RUNG_BRANCHES` and the `*_IMPROVEMENTS` lists still key the
 plant and animal rungs' bespoke wire fields (`cultivation_progress`, `corral_work_cost`, ...) and the
 compose sheet's gate reasons; they are the shipped plant / animal UI's data, not command routing.
+
+### A tile crew is a site crew like a working's (issue #175)
+
+A `kind == "tile"` labor row (`HudConst.LABOR_KIND_TILE`, `branch` naming its ladder branch) is keyed per
+`(tile, branch)` through `HudBandLaborState.pending_key` (the branch rides the `material` slot) and
+reaches the Workforce bar's Groundwork slice. The Work tab draws it as a read-only row in the
+GROUNDWORK section (`BandPanelController._tile_source_models` / `_build_tile_row`): the branch's name
+from `ladder_branches`, the rung it stands on from `ladder_rungs` x `tile_improvements`
+(`HudRouteVocab.branch_name` / `rung_name_in`, humanised where the catalog has no word, `Wild` where no
+improvement row exists yet), its crew count, its keeping mark off the row's `upkeep_*` keys and a far
+posting's party block. No stepper and no inspector: assigning a tile crew has no UI until the first tile
+branch ships. A tile build is `build <verb> <faction> <x> <y>` (no band token; only road verbs name a
+band). `band_panel_work_tile_crews` is the frame, over a fixture `orchard` / `grafted` catalog and a
+branch the catalog does not carry.

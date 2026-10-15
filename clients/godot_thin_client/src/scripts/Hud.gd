@@ -1153,6 +1153,9 @@ func update_road_network(roads_variant: Variant) -> void:
 ## `update_road_network`, and it exists for one reader: the WORKINGS ROSTER (the Work tab's GROUNDWORK
 ## rows), which names WHICH workings this band holds — each kept by its own crew. `Main` reaches this BY NAME through
 ## `_hud_invoke`, so it stays a thin `HudLayer` delegator.
+func update_tile_improvements(rows_variant: Variant) -> void:
+    _band_labor.set_tile_improvements(rows_variant)
+
 func update_deposits(deposits_variant: Variant) -> void:
     _band_labor.set_deposits(deposits_variant)
 

@@ -108,6 +108,11 @@ const LABOR_KIND_ROADWORK := "roadwork"
 # arm: like `forage` it keys per target.
 const LABOR_KIND_EXTRACT := "extract"
 
+## **A TILE IMPROVEMENT'S OWN SITE CREW** (issue #175) — a labor row on a tile-kind ladder branch, keyed
+## per `(tile, branch)`. Like `extract` it is a SOURCE kind that keeps its own crew; the row's `branch`
+## names which ladder branch, and the work board reads the branch's and rung's names off the catalog.
+const LABOR_KIND_TILE := "tile"
+
 # **THE BUILDING ROLE** (`docs/plan_standing_upkeep.md` §2.5) — the third band-level standing pool,
 # staffed by the same `assign_labor <faction> <band> builders <workers>`, and the one that replaced
 # the per-source build crew a verb used to carry.

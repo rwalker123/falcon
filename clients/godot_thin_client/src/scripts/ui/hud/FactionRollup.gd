@@ -969,7 +969,7 @@ static func _build_workforce_block(labor: HudBandLaborState) -> VBoxContainer:
             match String(model.get("kind", "")):
                 SourceForecast.LABOR_KIND_FORAGE: forage_workers += workers
                 SourceForecast.LABOR_KIND_HUNT: hunt_workers += workers
-                HudConst.LABOR_KIND_EXTRACT: extract_workers += workers
+                HudConst.LABOR_KIND_EXTRACT, HudConst.LABOR_KIND_TILE: extract_workers += workers
         extract_workers -= int((muster_out["by_kind"] as Dictionary).get(HudConst.LABOR_KIND_EXTRACT, 0))
         forage_workers -= int((muster_out["by_kind"] as Dictionary).get(SourceForecast.LABOR_KIND_FORAGE, 0))
         hunt_workers -= int((muster_out["by_kind"] as Dictionary).get(SourceForecast.LABOR_KIND_HUNT, 0))

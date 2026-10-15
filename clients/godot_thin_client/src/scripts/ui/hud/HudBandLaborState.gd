@@ -571,6 +571,41 @@ func set_deposits(deposits_variant: Variant) -> void:
 func deposits() -> Array:
 	return _deposits
 
+## **THE IMPROVEMENTS ON TILE-KIND BRANCHES**, as `RouteSection.tileImprovements` sent them (issue
+## #175), one row per `(tile, branch)`. Held whole for `_deposits`' reason; empty until a tile branch
+## ships, which every reader reads as *no tile improvement*.
+var _tile_improvements: Array = []
+
+func set_tile_improvements(rows_variant: Variant) -> void:
+	if not (rows_variant is Array):
+		return
+	_tile_improvements = rows_variant
+	changed.emit(&"tile_improvements")
+
+func tile_improvements() -> Array:
+	return _tile_improvements
+
+## The `tile_improvements` row at `(x, y)` on `branch`, `{}` where the frame carries none -- a crew on
+## ground nothing stands on yet.
+func tile_improvement_at(x: int, y: int, branch: String) -> Dictionary:
+	for row_variant in _tile_improvements:
+		if not (row_variant is Dictionary):
+			continue
+		var row: Dictionary = row_variant
+		if int(row.get("tile_x", -1)) == x and int(row.get("tile_y", -1)) == y \
+				and String(row.get("branch", "")) == branch:
+			return row
+	return {}
+
+## This band's `tile` labor rows (the wire's `kind == "tile"`), in wire order.
+func tile_assignments_of(band: Dictionary) -> Array:
+	var rows: Array = []
+	for entry in labor_assignments_of(band):
+		if entry is Dictionary \
+				and String((entry as Dictionary).get("kind", "")).to_lower() == HudConst.LABOR_KIND_TILE:
+			rows.append(entry)
+	return rows
+
 ## The `deposits` row at `(x, y)` holding `material`, `{}` where the frame carries none — the working
 ## a deposit command is ABOUT, which is what `KitRoster.default_kit_for` reads the working's own
 ## default kit off. Keyed by the pair: one hex can hold wood and stone both.
@@ -667,6 +702,10 @@ func pending_key(kind: String, x: int, y: int, herd_id: String, material: String
 			return "hunt:%s" % herd_id
 		HudConst.LABOR_KIND_EXTRACT:
 			return "extract:%d,%d:%s" % [x, y, material]
+		HudConst.LABOR_KIND_TILE:
+			# A tile improvement keys per `(tile, branch)`; the BRANCH rides the `material` slot, the
+			# one free string a per-source key has.
+			return "tile:%d,%d:%s" % [x, y, material]
 		HudConst.LABOR_KIND_ROADWORK:
 			# A road BUILD keys per tile; the band-wide roadwork ROLE falls through to the bare kind.
 			if x >= 0 and y >= 0:
@@ -1008,7 +1047,9 @@ func effective_worker_map(band: Dictionary) -> Dictionary:
 		# confirmed row here, so a Wood crew and a Stone crew on ONE tile stay two rows. Empty on
 		# every other kind, which `pending_key` ignores.
 		var key := pending_key(kind, int(a.get("target_x", -1)), int(a.get("target_y", -1)),
-			String(a.get("fauna_id", "")), String(a.get("material", "")))
+			String(a.get("fauna_id", "")),
+			String(a.get("branch", "")) if kind == HudConst.LABOR_KIND_TILE \
+				else String(a.get("material", "")))
 		merged[key] = {
 			# **ONE CREW PER ROW AGAIN** (`docs/plan_standing_upkeep.md` §2.5). A row carried a second
 			# `improvement_workers` allocation for one slice; the builders are a band-level POOL now, so

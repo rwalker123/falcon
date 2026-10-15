@@ -2553,6 +2553,7 @@ func _ready() -> void:
 	# The Work tab's sections, its site crews and its two priority marks (`docs/plan_site_crews.md`).
 	await _render_work_sections_states()
 	await _render_work_sections_all_five()
+	await _render_tile_crew_state()
 
 	await _render_work_party_states()
 
@@ -25549,6 +25550,100 @@ func _site_row_icon_x(site: Control) -> float:
 ## ⛔ **ALL FIVE SECTIONS AT ONCE** — the sections band holding roads it keeps (so ROADWORK draws, with
 ## its `Road crew` row) and workings (so GROUNDWORK draws): the one frame where every section, both pool
 ## rows and a groundwork row can be read against each other.
+## **A TILE CREW ROW RENDERS FROM THE CATALOG ALONE** (issue #175). No tile branch ships, so this stages a
+## fixture catalog -- an `orchard` branch with a `grafted` rung -- and two `tile` labor rows: one the
+## catalog knows (named `Orchard`, standing on `Grafted`) and one on a branch it has never heard of with
+## no `tile_improvements` row at all (humanised, `Wild`). Neither may blank or crash the board, and the
+## crew counts must reach the Workforce partition so a tile hand is not lost from the bar.
+const TILE_FX_BRANCH := "orchard"
+const TILE_FX_BRANCH_LABEL := "Orchard"
+const TILE_FX_RUNG := "orchard:grafted"
+const TILE_FX_RUNG_LABEL := "Grafted"
+const TILE_FX_UNKNOWN_BRANCH := "salt_pan"
+const TILE_FX_UNKNOWN_NAME := "Salt pan"
+const TILE_FX_WORKERS := 2
+const TILE_FX_UNKNOWN_WORKERS := 1
+
+func _tile_crew_catalog() -> Array:
+	return [
+		{"rung_key": "orchard:planted", "branch": TILE_FX_BRANCH, "order": 0, "verb": "",
+			"label": "Planted", "source_kind": "tile"},
+		{"rung_key": TILE_FX_RUNG, "branch": TILE_FX_BRANCH, "order": 1, "verb": "graft",
+			"label": TILE_FX_RUNG_LABEL, "source_kind": "tile"},
+	]
+
+func _tile_crew_row_texts(key: String) -> Array:
+	var row := _find_meta_control_valued(_panel, String(HudWorkVocab.TILE_ROW_META), key)
+	var texts: Array = []
+	if row == null:
+		return texts
+	var labels: Array = []
+	_collect_labels(row, labels)
+	for label in labels:
+		texts.append((label as Label).text)
+	return texts
+
+## Whether any label on the row starts with `prefix` -- the name is not the row's first label (an icon
+## slot leads it), so the claim is asked of the set.
+func _tile_texts_lead_with(texts: Array, prefix: String) -> bool:
+	for text in texts:
+		if String(text).begins_with(prefix):
+			return true
+	return false
+
+func _render_tile_crew_state() -> void:
+	_panel.set_dock(SIDE_LEFT)
+	_panel.set_active_tab(&"work")
+	_hud.update_ladder_branches([
+		{"branch": TILE_FX_BRANCH, "area": "food", "source_kind": "tile",
+			"label": TILE_FX_BRANCH_LABEL}])
+	_hud.update_ladder_rungs(_tile_crew_catalog())
+	_hud.update_tile_improvements([{
+		"tile_x": ROSTER_NEAR_TILE.x, "tile_y": ROSTER_NEAR_TILE.y, "branch": TILE_FX_BRANCH,
+		"current_rung": TILE_FX_RUNG, "upkeep_demand": 1.0, "upkeep_supplied": 1.0,
+		"upkeep_workers_needed": 1, "upkeep_hands": 1.0, "upkeep_tools_short": false,
+		"upkeep_toe": [], "is_queued": false, "build_turns_remaining": -1,
+		"build_legs": [], "build_blocked_reason": "",
+	}])
+	_set_world_herds(_herd_fixtures())
+	_set_forage_patches(_sections_patches(false))
+	var band := _sections_band_fixture()
+	var rows: Array = band["labor_assignments"]
+	rows.append({"kind": HudConst.LABOR_KIND_TILE, "workers": TILE_FX_WORKERS,
+		"target_x": ROSTER_NEAR_TILE.x, "target_y": ROSTER_NEAR_TILE.y, "fauna_id": "",
+		"branch": TILE_FX_BRANCH})
+	rows.append({"kind": HudConst.LABOR_KIND_TILE, "workers": TILE_FX_UNKNOWN_WORKERS,
+		"target_x": ROSTER_FAR_TILE.x, "target_y": ROSTER_FAR_TILE.y, "fauna_id": "",
+		"branch": TILE_FX_UNKNOWN_BRANCH})
+	_push_bands([band])
+	_hud._bandpanel.rerender()
+	await _settle()
+	await _save("band_panel_work_tile_crews")
+	_assert_zones_within_bounds()
+	_assert_zone_content_fits()
+	var known := _tile_crew_row_texts("%d,%d:%s" % [ROSTER_NEAR_TILE.x, ROSTER_NEAR_TILE.y,
+		TILE_FX_BRANCH])
+	_assert_band_panel("tile crew — a catalogued branch's row is drawn, named `%s` off the catalog (got %s)"
+			% [TILE_FX_BRANCH_LABEL, str(known)],
+		_tile_texts_lead_with(known, TILE_FX_BRANCH_LABEL))
+	_assert_band_panel("tile crew — …standing on the catalog's own word for its rung, `%s` (got %s)"
+			% [TILE_FX_RUNG_LABEL, str(known)],
+		known.has(HudWorkVocab.site_crew_line(TILE_FX_RUNG_LABEL)))
+	_assert_band_panel("tile crew — …and states its crew of %d" % TILE_FX_WORKERS,
+		known.has(str(TILE_FX_WORKERS)))
+	var unknown := _tile_crew_row_texts("%d,%d:%s" % [ROSTER_FAR_TILE.x, ROSTER_FAR_TILE.y,
+		TILE_FX_UNKNOWN_BRANCH])
+	_assert_band_panel("tile crew — a branch the catalog does not carry still draws, humanised as `%s` (got %s)"
+			% [TILE_FX_UNKNOWN_NAME, str(unknown)],
+		_tile_texts_lead_with(unknown, TILE_FX_UNKNOWN_NAME))
+	_assert_band_panel("tile crew — …on the floor word where no `tile_improvements` row exists (got %s)"
+			% str(unknown),
+		unknown.has(HudWorkVocab.site_crew_line(HudWorkVocab.SITE_CREW_RUNG_WILD)))
+	_hud.update_ladder_rungs([])
+	_hud.update_ladder_branches([])
+	_hud.update_tile_improvements([])
+	_restore_workings_roster_fixture()
+
 func _render_work_sections_all_five() -> void:
 	_panel.set_dock(SIDE_LEFT)
 	_panel.set_active_tab(&"work")

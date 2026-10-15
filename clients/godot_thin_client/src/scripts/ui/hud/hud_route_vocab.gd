@@ -660,12 +660,31 @@ const RUNG_CATALOG_LABEL := "label"
 ## The rung's catalog word, lower-cased for mid-sentence use: `label`, else `display_name`, else the
 ## humanised key.
 static func catalog_label(entry: Dictionary) -> String:
+	return catalog_name(entry).to_lower()
+
+## The same word with its case kept (`Grafted`): `label`, else `display_name`, else the humanised key.
+static func catalog_name(entry: Dictionary) -> String:
 	var label := String(entry.get(RUNG_CATALOG_LABEL, "")).strip_edges()
 	if label == "":
 		label = String(entry.get(RUNG_CATALOG_DISPLAY_NAME, "")).strip_edges()
 	if label == "":
 		label = humanize_rung_key(catalog_rung_key(entry))
-	return label.to_lower()
+	return label
+
+## One branch's player-facing name off the `ladder_branches` declarations, the humanised id where the
+## catalog carries none -- never blank, so a branch added to the config names itself with no edit.
+static func branch_name(branches: Array, branch: String) -> String:
+	for row in branches:
+		if row is Dictionary and String((row as Dictionary).get("branch", "")) == branch:
+			var label := String((row as Dictionary).get("label", "")).strip_edges()
+			if label != "":
+				return label
+	return _sentence_case(branch.replace(RUNG_ID_WORD_JOINER, " ").strip_edges())
+
+## One rung's player-facing name off the catalog by its `rung_key`, the humanised key where it has none.
+static func rung_name_in(catalog: Array, rung_key: String) -> String:
+	var row := _row_of_rung_key(catalog, rung_key)
+	return catalog_name(row) if not row.is_empty() else humanize_rung_key(rung_key)
 
 static func build_fallback_text(entry: Dictionary) -> String:
 	return BUILD_FALLBACK_FORMAT % catalog_label(entry)
