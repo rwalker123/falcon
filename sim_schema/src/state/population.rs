@@ -1827,6 +1827,10 @@ pub struct PopulationCohortState {
     /// party's report lands the turn it leaves inside it. Global config echoed per cohort. Appended last.
     #[serde(default)]
     pub comm_range_tiles: u32,
+    /// **The terms an envoy party will post on arrival** (`expeditionMission` `"envoy"`;
+    /// `docs/plan_early_diplomacy.md` §3). Empty on every other row. Appended last.
+    #[serde(default)]
+    pub envoy_terms: crate::state::treaties::TreatyTermsState,
 }
 
 /// **ONE KEEPING CLASS'S HUNTING MEAL** — a row of [`PopulationCohortState::hunt_meals`]: the food

@@ -179,6 +179,7 @@ fn launch_station(app: &mut App, home: Entity, host: BandId, host_pos: UVec2) ->
                 defection_pull: Scalar::zero(),
                 station_reports: Vec::new(),
                 goodwill_news: Default::default(),
+                exchange_return: Default::default(),
                 scout_pack: Default::default(),
                 aim: Some(host_pos),
             },

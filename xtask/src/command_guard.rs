@@ -366,6 +366,8 @@ fn band_handle(payload: &CommandPayload) -> BandHandle {
         | CommandPayload::SendTradeExpedition { band_id, .. }
         | CommandPayload::StationExpedition { band_id, .. }
         | CommandPayload::ProposeTrade { band_id, .. }
+        | CommandPayload::ProposeTreaty { band_id, .. }
+        | CommandPayload::SendEnvoy { band_id, .. }
         | CommandPayload::SplitBand { band_id, .. } => *band_id,
         // ⛔ **THE ROUTE BRANCH'S TWO TILE VERBS NAME A BAND, and no other tile verb does** (arc
         // #532). A patch's keeper is whoever is already foraging it; a road has no work row at all,

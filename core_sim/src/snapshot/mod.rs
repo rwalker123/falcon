@@ -40,6 +40,8 @@ use sim_runtime::{
     GRAZE_PHASE_STRESSED, GRAZE_PHASE_THRIVING,
 };
 
+use sim_runtime::{BorderOverrideState, StandingLinkState, TreatyState};
+
 use crate::{
     components::{
         available_workers, fragments_to_contract, BandEquipment, BandId, BandName, BandTravel,
@@ -126,6 +128,7 @@ pub(crate) mod population;
 mod publish;
 mod routes;
 mod subsistence;
+mod treaties;
 mod vision;
 
 pub use campaign::*;
@@ -1170,6 +1173,8 @@ mod tests {
             connections: Vec::new(),
             routes: Vec::new(),
             dealings: Vec::new(),
+            treaties: Vec::new(),
+            standing_links: Vec::new(),
             goodwill: Vec::new(),
             own_goodwill: Vec::new(),
             goodwill_cuts: Default::default(),
@@ -1259,6 +1264,8 @@ mod tests {
             connections: Vec::new(),
             routes: Vec::new(),
             dealings: Vec::new(),
+            treaties: Vec::new(),
+            standing_links: Vec::new(),
             goodwill: Vec::new(),
             own_goodwill: Vec::new(),
             goodwill_cuts: Default::default(),
@@ -1343,6 +1350,8 @@ mod tests {
             connections: Vec::new(),
             routes: Vec::new(),
             dealings: Vec::new(),
+            treaties: Vec::new(),
+            standing_links: Vec::new(),
             goodwill: Vec::new(),
             own_goodwill: Vec::new(),
             goodwill_cuts: Default::default(),

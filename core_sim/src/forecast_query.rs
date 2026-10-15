@@ -1426,6 +1426,7 @@ fn answer_work_party_forecast(
         &labor,
         &supply,
         world.resource::<crate::routes::RoadRegistry>(),
+        &crate::routes::road_access_in_world(world, faction, &ladder),
         crate::routes::max_route_reach_tiles(&ladder),
         geometry,
     );

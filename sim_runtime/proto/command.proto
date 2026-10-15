@@ -71,9 +71,15 @@ message UpdateCounterIntelPolicyCommand {
 // another people's leavers may join its bands. Open (the default for every faction), they may: the
 // unhappy trickle's cross-people move and a defecting party both need an open destination. Closed,
 // none of this faction's bands is ever another people's destination. A faction's own bands never ask.
+//
+// PER-PEOPLE OVERRIDE (docs/plan_early_diplomacy.md §3): with `other_faction` set the order is the
+// setting toward that ONE people - it overrides the default for them and nothing else, and an
+// open-borders treaty term still beats it. Closing to a people the sender holds an open-borders term
+// with breaks the treaty.
 message SetOpenBordersCommand {
   uint32 faction = 1;
   bool open = 2;
+  optional uint32 other_faction = 3;
 }
 
 // THE STANDING ANSWER (docs/plan_early_diplomacy.md §1) — whether a gift from a people's own people
@@ -110,6 +116,51 @@ message AnswerDealingCommand {
   // The counter's legs, from the original sender's point of view; meaningful on COUNTER only.
   repeated TradeCargoItem give = 5;
   repeated TradeCargoItem ask = 6;
+  // The counter's FULL proposed terms; meaningful on COUNTER of a TREATY PROPOSAL only (a treaty
+  // proposal carries terms, not legs, so give/ask stay empty there).
+  optional TreatyTermsMsg counter_terms = 7;
+}
+
+// ONE STANDING EXCHANGE of an agreed trade (docs/plan_early_diplomacy.md §3): a shipment carrying
+// `give` is paid `ask` on arrival, `give` stated from the shipper's point of view.
+message TreatyBundleMsg {
+  repeated TradeCargoItem give = 1;
+  repeated TradeCargoItem ask = 2;
+}
+
+// THE TERMS A TREATY HOLDS OR A PROPOSAL ASKS FOR. A treaty with no term true and no bundle is not a
+// treaty: an accepted proposal carrying nothing removes whatever stood.
+message TreatyTermsMsg {
+  bool road_rights = 1;
+  bool open_borders = 2;
+  repeated TreatyBundleMsg bundles = 3;
+}
+
+// PROPOSE A TREATY OVER A STANDING LINK (docs/plan_early_diplomacy.md §3): posts a pending
+// `treaty_proposal` addressed to the destination's people the turn it is made. Fails closed (no
+// standing link, no live tie, the destination is the sender's own people, no term asked).
+message ProposeTreatyCommand {
+  uint32 faction_id = 1;
+  optional uint64 band_id = 2;
+  uint64 destination_band_id = 3;
+  TreatyTermsMsg terms = 4;
+}
+
+// SEND AN ENVOY (docs/plan_early_diplomacy.md §3): a party with no cargo that walks to the
+// destination band and posts the same proposal on arrival. For peoples with no road between them.
+message SendEnvoyCommand {
+  uint32 faction_id = 1;
+  optional uint64 band_id = 2;
+  uint32 party_workers = 3;
+  uint64 destination_band_id = 4;
+  TreatyTermsMsg terms = 5;
+}
+
+// END A TREATY (docs/plan_early_diplomacy.md §3): removes it at once and is a BREACH - the other
+// people's goodwill toward the sender takes the `broken_treaty` drop.
+message EndTreatyCommand {
+  uint32 faction = 1;
+  uint32 other_faction = 2;
 }
 
 // STAGE 4 (docs/plan_early_diplomacy.md section 1): haggle over a STANDING LINK - a kept road on every
@@ -1816,5 +1867,9 @@ message CommandEnvelope {
     AnswerDealingCommand answer_dealing = 86;
     // 86 is held by `answer_dealing`, so the stage-4 proposal takes 87 (append-only; never renumber).
     ProposeTradeCommand propose_trade = 87;
+    // 87 is held by `propose_trade`, so the treaty verbs take 88-90 (append-only; never renumber).
+    ProposeTreatyCommand propose_treaty = 88;
+    SendEnvoyCommand send_envoy = 89;
+    EndTreatyCommand end_treaty = 90;
   }
 }

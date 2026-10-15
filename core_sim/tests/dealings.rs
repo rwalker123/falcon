@@ -235,6 +235,7 @@ fn launch(scene: &mut Scene, terms: ShipmentTerms, cargo: LocalStore) -> Entity 
                 defection_pull: core_sim::Scalar::zero(),
                 station_reports: Vec::new(),
                 goodwill_news: Default::default(),
+                exchange_return: Default::default(),
                 scout_pack: Default::default(),
                 aim: Some(destination_pos),
             },
@@ -1129,6 +1130,7 @@ fn a_pending_dealing_round_trips_a_checkpoint() {
             goods_sent: LocalStore::new(),
             goods_asked: LocalStore::new(),
             agreement: None,
+            treaty: None,
             posted_turn: 0,
             expires_turn: 1,
         });

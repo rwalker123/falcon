@@ -86,7 +86,8 @@ override, not on the hot-reload path).
 **A far HUNT is not an expedition.** A hunt that leaves the band's apron is a **work party** posted
 by the band's own labour (`work-party.md`): it follows its herd anywhere, its take flows home, and
 the band feeds it. There is no hunting mission, no hunting launch verb and no hunt-trip forecast on
-this path — `ExpeditionMission` is `Scout | Deny | Trade | Station`.
+this path — `ExpeditionMission` is `Scout | Deny | Trade | Station` (an **envoy** is a `Trade`
+whose `terms` are `ShipmentTerms::Envoy`, published as `"envoy"` — `diplomacy.md` → "Treaties").
 
 **An expedition is another `StartingUnit` band.** It reuses `PopulationCohort` + `BandTravel` /
 `advance_band_movement` + `LaborAllocation` + `StartingUnit`, tagged with the `Expedition` component
@@ -1070,7 +1071,8 @@ good.
 
 ### The wire
 
-`expeditionMission` gains `"trade"`, and `PopulationCohortState` gains four appended fields on both
+`expeditionMission` gains `"trade"` (and `"envoy"` for a cargo-less treaty party, whose errand rides
+`PopulationCohortState.envoyTerms`), and `PopulationCohortState` gains four appended fields on both
 `WorldSnapshot` and `WorldDelta` (one `PopulationSection` serves both):
 `expeditionDestinationBand` (the key every command addresses the destination by, never rendered) /
 `expeditionDestinationName` (its display twin, on exactly the `expeditionTargetHerd` /
@@ -1227,6 +1229,24 @@ seams write it: the launch draw (cargo **and** the walk's larder, for both this 
 the shipment's arrival at the destination, and every fold-back including the in-camp cancel.
 
 ---
+
+## An envoy, and what a shipment's bundles pay home (#233)
+
+**An envoy is a trade party with no cargo** (`send_envoy`, `handle_send_envoy` →
+`launch_trade_party` with `ShipmentCargo::Lines(empty)` and `ShipmentTerms::Envoy { proposed,
+outcome }`): provisioned like a scout, walking to `aim`, the same arrival rule and the same
+lost-destination guards. The `Arrived` arm posts the treaty proposal instead of a delivery
+(`dealings::post_envoy_proposal`) and the envoy waits in the camp (`AwaitingOrders`); the `Returning`
+fold-back reads `outcome` and tells its people (`dealings::report_envoy_home`). The launch's feed line
+reads `mission=envoy`.
+
+**`Expedition::exchange_return`** is the store of goods the party walks home **whatever becomes of its
+cargo's dealing** — the payment an agreed-trade bundle made on arrival, and a covered part the
+receiver could not pay for. `fold_party_into_band` takes it beside `cargo` and returns it on the
+`FoldBack` (`exchange_food`, `exchange_fodder`, `exchange_materials`); `book_home` books it
+`ExchangeIn` against the consignee and `book_defected` folds it into the defection's books. Every
+fold-back site passes it (`Returning`, a cancel in camp, a defection), and the checkpoint carries it
+with the party.
 
 ## A stationed party — contact now, news later (issue #774)
 

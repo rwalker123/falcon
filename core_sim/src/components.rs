@@ -890,6 +890,16 @@ impl LocalStore {
             .fold(scalar_zero(), |total, (_, batch)| total + batch.amount)
     }
 
+    /// Does the store hold no food, no hay and no material? (Other keys do not count: a shipment
+    /// carries only goods.)
+    pub fn is_empty_of_goods(&self) -> bool {
+        self.get(FOOD) <= scalar_zero()
+            && self.get(FODDER) <= scalar_zero()
+            && self
+                .materials()
+                .all(|(material, _)| self.material_total(material) <= scalar_zero())
+    }
+
     /// Every material the store holds, in id order.
     pub fn materials(
         &self,
@@ -2169,6 +2179,14 @@ pub enum ShipmentTerms {
         /// The proposal or counter this trade came from — the id its settlement's feed lines name.
         dealing: crate::dealings::DealingId,
     },
+    /// **An envoy's errand** (`docs/plan_early_diplomacy.md` §3): the party carries no cargo, only
+    /// the terms it will post as a treaty proposal on arrival. `outcome` is the answer, set when the
+    /// receiving people answers; the envoy's own people learn it when the party folds home and not
+    /// before.
+    Envoy {
+        proposed: crate::treaties::TreatyTerms,
+        outcome: Option<crate::treaties::EnvoyOutcome>,
+    },
     /// **The receiver accepted, and what the party carries now is the receiver's return.** Set by
     /// the answer, never at launch. It exists so the fold-back books the cargo as the exchange's
     /// return ([`TransferCause::ExchangeIn`]) rather than as a shipment that never arrived
@@ -2276,7 +2294,7 @@ pub enum ExpeditionMission {
     ///
     /// Like [`Self::Trade`], **it names its host by [`BandId`]** and follows that id (fission keeps the
     /// id with one half), and **the only faction comparison on its path** is
-    /// [`crate::resources::FactionBorderPolicies::admits_posting`].
+    /// [`crate::resources::FactionBorderPolicies::admits`].
     Station {
         /// The host band's durable id — the key, never rendered.
         host_band: BandId,
@@ -2305,6 +2323,10 @@ impl ExpeditionMission {
         match self {
             ExpeditionMission::Scout => "scout",
             ExpeditionMission::Deny { .. } => "deny",
+            ExpeditionMission::Trade {
+                terms: ShipmentTerms::Envoy { .. },
+                ..
+            } => "envoy",
             ExpeditionMission::Trade { .. } => "trade",
             ExpeditionMission::Station { .. } => "station",
         }
@@ -2316,6 +2338,10 @@ impl ExpeditionMission {
         match self {
             ExpeditionMission::Scout => "scouting",
             ExpeditionMission::Deny { .. } => "raiding",
+            ExpeditionMission::Trade {
+                terms: ShipmentTerms::Envoy { .. },
+                ..
+            } => "diplomatic",
             ExpeditionMission::Trade { .. } => "trading",
             ExpeditionMission::Station { .. } => "stationed",
         }
@@ -2735,6 +2761,13 @@ pub struct Expedition {
     /// trade party at its comm flush, a stationed party when its [`StationReport`] lands — and never
     /// before. Rides the checkpoint with the rest of the `Expedition`.
     pub goodwill_news: std::collections::BTreeMap<FactionId, crate::goodwill::GoodwillNews>,
+    /// **Goods the party walks home whatever becomes of its cargo's dealing** — the return an
+    /// agreed-trade bundle paid on arrival (`docs/plan_early_diplomacy.md` §3), and the part of a
+    /// cargo a bundle covered when the receiver could not pay it. Kept apart from
+    /// [`Self::cargo`] because the cargo is what a pending dealing's answer lands in the receiving
+    /// band: an accepted offer for the remainder must not land the bundle's return with it. Booked
+    /// `ExchangeIn` on the fold-back ([`TransferCause::ExchangeIn`]); checkpointed with the party.
+    pub exchange_return: crate::LocalStore,
     /// **The tile a Station / Trade party is walking toward** — what its people KNOW about where the
     /// target band is, not where it is (`.claude/rules/core_sim/connections.md`). Set at launch to
     /// the target's live tile when the sender knows it (own people, or visible) and otherwise to the

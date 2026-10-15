@@ -59,6 +59,9 @@ pub enum CommandPayload {
     SetOpenBorders {
         faction: u32,
         open: bool,
+        /// **With a people named, the setting is toward that one people only** — an override of the
+        /// default (`docs/plan_early_diplomacy.md` §3). `None` is the people's general setting.
+        other_faction: Option<u32>,
     },
     /// **The standing answer to a gift from one's own people**
     /// (`docs/plan_early_diplomacy.md` §1). On for every people by default; off, a gift between
@@ -84,6 +87,29 @@ pub enum CommandPayload {
         destination_band_id: u64,
         give: Vec<TradeCargoItem>,
         ask: Vec<TradeCargoItem>,
+    },
+    /// **Propose a treaty over a standing link** (`docs/plan_early_diplomacy.md` §3): road rights,
+    /// open borders and/or agreed-trade bundles, posted the turn it is made. Proto field 88.
+    ProposeTreaty {
+        faction_id: u32,
+        band_id: Option<u64>,
+        /// The destination's `BandId` — a durable id, never an entity.
+        destination_band_id: u64,
+        terms: TreatyTermsRequest,
+    },
+    /// **Send an envoy**: a party with no cargo that walks to the destination band and posts the
+    /// same proposal on arrival. Proto field 89.
+    SendEnvoy {
+        faction_id: u32,
+        band_id: Option<u64>,
+        party_workers: u32,
+        destination_band_id: u64,
+        terms: TreatyTermsRequest,
+    },
+    /// **End a treaty** — at once, and a breach. Proto field 90.
+    EndTreaty {
+        faction: u32,
+        other_faction: u32,
     },
     AdjustCounterIntelBudget {
         faction: u32,
@@ -1308,6 +1334,60 @@ pub enum DealingReply {
         give: Vec<TradeCargoItem>,
         ask: Vec<TradeCargoItem>,
     },
+    /// **Answer a treaty proposal with different terms** — the full terms asked for, replacing the
+    /// proposal's. Posts a treaty proposal back.
+    CounterTerms {
+        terms: TreatyTermsRequest,
+    },
+}
+
+/// **One standing exchange as a command names it**: a shipment carrying `give` is paid `ask`.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct BundleRequest {
+    pub give: Vec<TradeCargoItem>,
+    pub ask: Vec<TradeCargoItem>,
+}
+
+/// **The terms a treaty proposal names** (`propose_treaty`, `send_envoy`, a treaty counter): the
+/// full set asked for — a proposal replaces whatever stood.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct TreatyTermsRequest {
+    pub road_rights: bool,
+    pub open_borders: bool,
+    pub bundles: Vec<BundleRequest>,
+}
+
+fn terms_to_proto(terms: &TreatyTermsRequest) -> pb::TreatyTermsMsg {
+    pb::TreatyTermsMsg {
+        road_rights: terms.road_rights,
+        open_borders: terms.open_borders,
+        bundles: terms
+            .bundles
+            .iter()
+            .map(|bundle| pb::TreatyBundleMsg {
+                give: cargo_to_proto(&bundle.give),
+                ask: cargo_to_proto(&bundle.ask),
+            })
+            .collect(),
+    }
+}
+
+fn terms_from_proto(terms: Option<pb::TreatyTermsMsg>) -> TreatyTermsRequest {
+    let Some(terms) = terms else {
+        return TreatyTermsRequest::default();
+    };
+    TreatyTermsRequest {
+        road_rights: terms.road_rights,
+        open_borders: terms.open_borders,
+        bundles: terms
+            .bundles
+            .into_iter()
+            .map(|bundle| BundleRequest {
+                give: cargo_from_proto(bundle.give),
+                ask: cargo_from_proto(bundle.ask),
+            })
+            .collect(),
+    }
 }
 
 /// **What a scouting party does with its pack when it sights a stranger** (`send_expedition`'s
@@ -1830,12 +1910,15 @@ impl CommandEnvelope {
                     },
                 )
             }
-            CommandPayload::SetOpenBorders { faction, open } => {
-                pb::command_envelope::Command::SetOpenBorders(pb::SetOpenBordersCommand {
-                    faction: *faction,
-                    open: *open,
-                })
-            }
+            CommandPayload::SetOpenBorders {
+                faction,
+                open,
+                other_faction,
+            } => pb::command_envelope::Command::SetOpenBorders(pb::SetOpenBordersCommand {
+                faction: *faction,
+                open: *open,
+                other_faction: *other_faction,
+            }),
             CommandPayload::SetAcceptOwnGifts { faction, accept } => {
                 pb::command_envelope::Command::SetAcceptOwnGifts(pb::SetAcceptOwnGiftsCommand {
                     faction: *faction,
@@ -1847,24 +1930,34 @@ impl CommandEnvelope {
                 dealing_id,
                 reply,
             } => {
-                let (answer, returned, give, ask) = match reply {
+                let (answer, returned, give, ask, counter_terms) = match reply {
                     DealingReply::Accept { returned } => (
                         pb::DealingAnswerKind::Accept,
                         cargo_to_proto(returned),
                         Vec::new(),
                         Vec::new(),
+                        None,
                     ),
                     DealingReply::Refuse => (
                         pb::DealingAnswerKind::Refuse,
                         Vec::new(),
                         Vec::new(),
                         Vec::new(),
+                        None,
                     ),
                     DealingReply::Counter { give, ask } => (
                         pb::DealingAnswerKind::Counter,
                         Vec::new(),
                         cargo_to_proto(give),
                         cargo_to_proto(ask),
+                        None,
+                    ),
+                    DealingReply::CounterTerms { terms } => (
+                        pb::DealingAnswerKind::Counter,
+                        Vec::new(),
+                        Vec::new(),
+                        Vec::new(),
+                        Some(terms_to_proto(terms)),
                     ),
                 };
                 pb::command_envelope::Command::AnswerDealing(pb::AnswerDealingCommand {
@@ -1874,6 +1967,7 @@ impl CommandEnvelope {
                     returned,
                     give,
                     ask,
+                    counter_terms,
                 })
             }
             CommandPayload::ProposeTrade {
@@ -1890,6 +1984,37 @@ impl CommandEnvelope {
                 destination_band_id: *destination_band_id,
                 give: cargo_to_proto(give),
                 ask: cargo_to_proto(ask),
+            }),
+            CommandPayload::ProposeTreaty {
+                faction_id,
+                band_id,
+                destination_band_id,
+                terms,
+            } => pb::command_envelope::Command::ProposeTreaty(pb::ProposeTreatyCommand {
+                faction_id: *faction_id,
+                band_id: *band_id,
+                destination_band_id: *destination_band_id,
+                terms: Some(terms_to_proto(terms)),
+            }),
+            CommandPayload::SendEnvoy {
+                faction_id,
+                band_id,
+                party_workers,
+                destination_band_id,
+                terms,
+            } => pb::command_envelope::Command::SendEnvoy(pb::SendEnvoyCommand {
+                faction_id: *faction_id,
+                band_id: *band_id,
+                party_workers: *party_workers,
+                destination_band_id: *destination_band_id,
+                terms: Some(terms_to_proto(terms)),
+            }),
+            CommandPayload::EndTreaty {
+                faction,
+                other_faction,
+            } => pb::command_envelope::Command::EndTreaty(pb::EndTreatyCommand {
+                faction: *faction,
+                other_faction: *other_faction,
             }),
             CommandPayload::AdjustCounterIntelBudget {
                 faction,
@@ -2660,6 +2785,7 @@ impl CommandEnvelope {
             pb::command_envelope::Command::SetOpenBorders(cmd) => CommandPayload::SetOpenBorders {
                 faction: cmd.faction,
                 open: cmd.open,
+                other_faction: cmd.other_faction,
             },
             pb::command_envelope::Command::SetAcceptOwnGifts(cmd) => {
                 CommandPayload::SetAcceptOwnGifts {
@@ -2673,9 +2799,14 @@ impl CommandEnvelope {
                         returned: cargo_from_proto(cmd.returned),
                     },
                     Ok(pb::DealingAnswerKind::Refuse) => DealingReply::Refuse,
-                    Ok(pb::DealingAnswerKind::Counter) => DealingReply::Counter {
-                        give: cargo_from_proto(cmd.give),
-                        ask: cargo_from_proto(cmd.ask),
+                    Ok(pb::DealingAnswerKind::Counter) => match cmd.counter_terms {
+                        Some(terms) => DealingReply::CounterTerms {
+                            terms: terms_from_proto(Some(terms)),
+                        },
+                        None => DealingReply::Counter {
+                            give: cargo_from_proto(cmd.give),
+                            ask: cargo_from_proto(cmd.ask),
+                        },
                     },
                     _ => {
                         return Err(CommandDecodeError::InvalidEnum {
@@ -2697,6 +2828,23 @@ impl CommandEnvelope {
                 destination_band_id: cmd.destination_band_id,
                 give: cargo_from_proto(cmd.give),
                 ask: cargo_from_proto(cmd.ask),
+            },
+            pb::command_envelope::Command::ProposeTreaty(cmd) => CommandPayload::ProposeTreaty {
+                faction_id: cmd.faction_id,
+                band_id: cmd.band_id,
+                destination_band_id: cmd.destination_band_id,
+                terms: terms_from_proto(cmd.terms),
+            },
+            pb::command_envelope::Command::SendEnvoy(cmd) => CommandPayload::SendEnvoy {
+                faction_id: cmd.faction_id,
+                band_id: cmd.band_id,
+                party_workers: cmd.party_workers,
+                destination_band_id: cmd.destination_band_id,
+                terms: terms_from_proto(cmd.terms),
+            },
+            pb::command_envelope::Command::EndTreaty(cmd) => CommandPayload::EndTreaty {
+                faction: cmd.faction,
+                other_faction: cmd.other_faction,
             },
             pb::command_envelope::Command::AdjustCounterIntelBudget(cmd) => {
                 CommandPayload::AdjustCounterIntelBudget {
@@ -4148,6 +4296,72 @@ mod tests {
             let bytes = envelope.encode_to_vec().expect("encode");
             let decoded = CommandEnvelope::decode(&bytes).expect("decode");
             assert_eq!(decoded.payload, payload);
+        }
+    }
+
+    /// **The treaty verbs survive the envelope**: the terms (flags and bundles, each bundle's two
+    /// legs), the per-people border override, and a treaty counter's terms.
+    #[test]
+    fn the_treaty_verbs_round_trip_through_the_envelope() {
+        let terms = TreatyTermsRequest {
+            road_rights: true,
+            open_borders: false,
+            bundles: vec![BundleRequest {
+                give: vec![TradeCargoItem {
+                    id: FOOD_CARGO_KEY.to_string(),
+                    is_material: false,
+                    amount: 4.0,
+                }],
+                ask: vec![TradeCargoItem {
+                    id: "hide".to_string(),
+                    is_material: true,
+                    amount: 1.0,
+                }],
+            }],
+        };
+        for payload in [
+            CommandPayload::ProposeTreaty {
+                faction_id: 0,
+                band_id: Some(7),
+                destination_band_id: 12,
+                terms: terms.clone(),
+            },
+            CommandPayload::SendEnvoy {
+                faction_id: 0,
+                band_id: Some(7),
+                party_workers: 3,
+                destination_band_id: 12,
+                terms: terms.clone(),
+            },
+            CommandPayload::EndTreaty {
+                faction: 0,
+                other_faction: 2,
+            },
+            CommandPayload::SetOpenBorders {
+                faction: 0,
+                open: false,
+                other_faction: Some(2),
+            },
+            CommandPayload::SetOpenBorders {
+                faction: 0,
+                open: true,
+                other_faction: None,
+            },
+            CommandPayload::AnswerDealing {
+                faction: 1,
+                dealing_id: 9,
+                reply: DealingReply::CounterTerms { terms },
+            },
+        ] {
+            let envelope = CommandEnvelope {
+                payload: payload.clone(),
+                correlation_id: None,
+            };
+            let bytes = envelope.encode_to_vec().expect("encode");
+            assert_eq!(
+                CommandEnvelope::decode(&bytes).expect("decode").payload,
+                payload
+            );
         }
     }
 

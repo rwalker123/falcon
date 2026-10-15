@@ -189,6 +189,18 @@ pub struct FactionPolicyState {
     /// (`docs/plan_early_diplomacy.md` §1): on (the default), such a shipment lands on arrival;
     /// off, it waits to be answered like any other dealing.
     pub accept_own_gifts: bool,
+    /// **The viewer's overrides toward single peoples** (`set_open_borders … <other_faction>`), in
+    /// the other people's id order. An override beats the default `open_borders` for that people; an
+    /// open-borders treaty term beats the override.
+    #[serde(default)]
+    pub border_overrides: Vec<BorderOverrideState>,
+}
+
+/// One per-people Open Borders override.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct BorderOverrideState {
+    pub other_faction: u32,
+    pub open: bool,
 }
 
 /// **A faction's name** on the client stream — what its people call themselves. World-visible:

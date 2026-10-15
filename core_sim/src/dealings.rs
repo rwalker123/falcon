@@ -41,6 +41,7 @@ use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 use sim_runtime::TradeCargoItem;
 
+use crate::treaties::{EnvoyOutcome, Treaties, TreatyTerms};
 use crate::{
     carry::{carry_capacity, CarryConfig, CarryLoad},
     components::{
@@ -65,8 +66,7 @@ use crate::{
 )]
 pub struct DealingId(pub u64);
 
-/// What a dealing is. A later slice adds `TreatyProposal` here; the record around the kind does not
-/// change shape.
+/// What a dealing is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum DealingKind {
     /// A cargo waiting for the receiver's return: the party is standing in the camp.
@@ -75,6 +75,10 @@ pub enum DealingKind {
     Proposal,
     /// The answer that changes the legs: a proposal in the other direction.
     Counter,
+    /// **A treaty proposal** (`docs/plan_early_diplomacy.md` §3): the full terms asked for, carried
+    /// by a standing link or by an envoy ([`TreatyProposal`]). Accepting puts them in force for both
+    /// peoples, replacing any treaty already standing.
+    TreatyProposal,
 }
 
 impl DealingKind {
@@ -84,7 +88,13 @@ impl DealingKind {
             DealingKind::Offer => "offer",
             DealingKind::Proposal => "proposal",
             DealingKind::Counter => "counter",
+            DealingKind::TreatyProposal => "treaty_proposal",
         }
+    }
+
+    /// Is this a treaty proposal?
+    pub fn is_treaty(self) -> bool {
+        matches!(self, DealingKind::TreatyProposal)
     }
 
     /// Does this kind carry an [`Agreement`] (both legs named, no party yet)?
@@ -140,6 +150,19 @@ impl GoodsLines {
             }
         }
         Ok(goods)
+    }
+
+    /// **A store read as lines**: food, hay and one total per material id (its ratings summed, for
+    /// matching only — the store itself keeps every batch).
+    pub fn from_store(store: &LocalStore) -> Self {
+        Self {
+            food: store.get(FOOD),
+            fodder: store.get(FODDER),
+            materials: store
+                .materials()
+                .map(|(material, _)| (material.to_string(), store.material_total(material)))
+                .collect(),
+        }
     }
 
     /// No line carries anything.
@@ -233,6 +256,34 @@ pub struct Agreement {
     pub ask: GoodsLines,
 }
 
+/// **How a treaty proposal reaches the people it is addressed to.** `Road`: over a standing link,
+/// posted the turn it is made, and answerable only while the link still stands. `Envoy`: a party
+/// stands in the receiver's camp (or, on a counter the envoy carried home, nothing is needed): the
+/// proposer learns the answer when the envoy walks home.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum TreatyCarrier {
+    Road,
+    Envoy,
+}
+
+impl TreatyCarrier {
+    /// The wire's token.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            TreatyCarrier::Road => "road",
+            TreatyCarrier::Envoy => "envoy",
+        }
+    }
+}
+
+/// **A treaty proposal's payload**: the full terms asked for (a proposal replaces whatever stood —
+/// amending is proposing again) and who carries it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TreatyProposal {
+    pub terms: TreatyTerms,
+    pub carrier: TreatyCarrier,
+}
+
 /// One pending item: addressed to `receiver_faction`, expiring at `expires_turn`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Dealing {
@@ -260,6 +311,8 @@ pub struct Dealing {
     pub goods_asked: LocalStore,
     /// **The named legs**, for a proposal or a counter; `None` for an offer.
     pub agreement: Option<Agreement>,
+    /// **The terms and the carrier**, for a treaty proposal; `None` for every other kind.
+    pub treaty: Option<TreatyProposal>,
     pub posted_turn: u64,
     /// `posted_turn + offer_wait_turns`: the first resolve at which silence refuses it.
     pub expires_turn: u64,
@@ -709,6 +762,10 @@ pub enum DealingAnswer {
     Counter {
         give: Vec<TradeCargoItem>,
         ask: Vec<TradeCargoItem>,
+    },
+    /// **Answer a treaty proposal with different terms** — the full terms asked for.
+    CounterTerms {
+        terms: sim_runtime::TreatyTermsRequest,
     },
 }
 
@@ -1241,6 +1298,9 @@ pub fn answer_dealing(
     if dealing.kind.is_agreement() {
         return answer_agreement(world, dealing, answer, tick);
     }
+    if dealing.kind.is_treaty() {
+        return answer_treaty(world, dealing, answer, tick);
+    }
     let ends = DealingEnds::of(&dealing);
 
     // --- the party is still standing in the camp -------------------------------------------
@@ -1271,7 +1331,7 @@ pub fn answer_dealing(
 
     let returned = match answer {
         DealingAnswer::Accept { returned } => returned,
-        DealingAnswer::Counter { .. } => {
+        DealingAnswer::Counter { .. } | DealingAnswer::CounterTerms { .. } => {
             return Err(format!(
                 "{VERB}: only a proposal or a counter can be countered; offer {} waits on an \
                  answer of accept or refuse.",
@@ -1469,6 +1529,11 @@ fn answer_agreement(
     let answerer_is_shipper = dealing.receiver_band == agreement.shipper_band;
 
     match answer {
+        DealingAnswer::CounterTerms { .. } => Err(format!(
+            "{VERB}: {} {} is a trade; counter it with 'give … ask …'.",
+            dealing.kind.as_str(),
+            id.0
+        )),
         DealingAnswer::Refuse => {
             world.resource_mut::<PendingDealings>().remove(id);
             push_resolution_events(
@@ -1517,6 +1582,7 @@ fn answer_agreement(
                     ask,
                     ..agreement
                 }),
+                treaty: None,
                 posted_turn: tick,
                 expires_turn: tick + u64::from(offer_wait_turns(world)),
             };
@@ -1746,6 +1812,7 @@ pub fn propose_trade(
         goods_sent: LocalStore::new(),
         goods_asked: LocalStore::new(),
         agreement: Some(agreement.clone()),
+        treaty: None,
         posted_turn: tick,
         expires_turn: tick + u64::from(offer_wait_turns(world)),
     };
@@ -1795,6 +1862,48 @@ pub fn advance_dealings(
         })
         .collect();
     for (id, kind, ends, party, expired) in due {
+        // A treaty proposal: a road-carried one (or an envoy's counter) has no party and lapses at
+        // its deadline; an envoy's is an offer's shape, its party waiting in the camp.
+        if kind.is_treaty() {
+            let terms = pending
+                .get(id)
+                .and_then(|dealing| dealing.treaty.as_ref())
+                .map(|proposal| proposal.terms.clone())
+                .unwrap_or_default();
+            let (status, tell_sender) = match party {
+                None => {
+                    if !expired {
+                        continue;
+                    }
+                    (TreatyStatus::Expired, true)
+                }
+                Some(party) => {
+                    let waiting = parties.iter_mut().find(|(band, expedition)| {
+                        **band == party && expedition.phase == ExpeditionPhase::AwaitingOrders
+                    });
+                    match waiting {
+                        None => (TreatyStatus::Withdrawn, false),
+                        Some(_) if !expired => continue,
+                        Some((_, mut expedition)) => {
+                            set_envoy_outcome(&mut expedition, EnvoyOutcome::Expired);
+                            expedition.after_dealing();
+                            (TreatyStatus::Expired, false)
+                        }
+                    }
+                }
+            };
+            pending.remove(id);
+            push_treaty_resolution_events(
+                &mut event_log,
+                now,
+                id,
+                &ends,
+                status,
+                &terms,
+                tell_sender,
+            );
+            continue;
+        }
         let resolution = if kind.is_agreement() {
             // No party to wait on: silence refuses it at the deadline.
             if !expired {
@@ -1824,6 +1933,613 @@ pub fn advance_dealings(
     }
 }
 
+// ------------------------------------------------------------------------------------------------
+// Treaty proposals (`docs/plan_early_diplomacy.md` §3)
+// ------------------------------------------------------------------------------------------------
+
+const PROPOSE_TREATY_VERB: &str = "propose_treaty";
+
+/// How a treaty dealing ended, for its feed lines.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TreatyStatus {
+    /// Now in force.
+    Accepted,
+    Refused,
+    /// Silence at the deadline.
+    Expired,
+    /// The carrier is gone: the envoy left the camp, or the road no longer stands.
+    Withdrawn,
+    /// The receiver asked for different terms; a new proposal goes back.
+    Countered,
+}
+
+impl TreatyStatus {
+    fn token(self) -> &'static str {
+        match self {
+            TreatyStatus::Accepted => "accepted",
+            TreatyStatus::Refused => "refused",
+            TreatyStatus::Expired => "expired",
+            TreatyStatus::Withdrawn => "withdrawn",
+            TreatyStatus::Countered => "countered",
+        }
+    }
+}
+
+/// **The feed lines a treaty proposal being posted writes.** A road-carried one tells both peoples
+/// (word travels along a kept road); an envoy-carried one tells only the receiver, because the
+/// proposer learns when the envoy walks home.
+pub fn push_treaty_posted_events(
+    log: &mut CommandEventLog,
+    tick: u64,
+    id: DealingId,
+    ends: &DealingEnds,
+    proposal: &TreatyProposal,
+) {
+    let terms = proposal.terms.describe();
+    if proposal.carrier == TreatyCarrier::Road {
+        log.push(
+            CommandEventEntry::new(
+                tick,
+                CommandEventKind::Treaty,
+                ends.sender_faction,
+                format!(
+                    "Your treaty proposal to {} waits for an answer ({terms})",
+                    band_label(ends.receiver_band)
+                ),
+                Some(format!(
+                    "status=posted dealing={} kind={} carrier={} destination={}",
+                    id.0,
+                    DealingKind::TreatyProposal.as_str(),
+                    proposal.carrier.as_str(),
+                    ends.receiver_band.0
+                )),
+            )
+            .with_band(ends.sender_band),
+        );
+    }
+    log.push(
+        CommandEventEntry::new(
+            tick,
+            CommandEventKind::Treaty,
+            ends.receiver_faction,
+            format!(
+                "{} proposes a treaty: {terms}",
+                band_label(ends.sender_band)
+            ),
+            Some(format!(
+                "status=offered dealing={} kind={} carrier={} from={} sender={} band={}",
+                id.0,
+                DealingKind::TreatyProposal.as_str(),
+                proposal.carrier.as_str(),
+                ends.sender_faction.0,
+                ends.sender_band.0,
+                ends.receiver_band.0
+            )),
+        )
+        .with_band(ends.receiver_band),
+    );
+}
+
+/// **The feed lines a treaty dealing's end writes.** The receiver is always told at once. The
+/// sender is told at once only when `tell_sender` — a road-carried proposal; an envoy's proposer
+/// learns at the fold-back ([`report_envoy_home`]).
+pub fn push_treaty_resolution_events(
+    log: &mut CommandEventLog,
+    tick: u64,
+    id: DealingId,
+    ends: &DealingEnds,
+    status: TreatyStatus,
+    terms: &TreatyTerms,
+    tell_sender: bool,
+) {
+    let kind = DealingKind::TreatyProposal.as_str();
+    let described = terms.describe();
+    let (sender_line, receiver_line) = match status {
+        TreatyStatus::Accepted => (
+            format!(
+                "{} accepted your treaty — now in force: {described}",
+                band_label(ends.receiver_band)
+            ),
+            format!(
+                "You accepted the treaty from {} — now in force: {described}",
+                band_label(ends.sender_band)
+            ),
+        ),
+        TreatyStatus::Refused => (
+            format!("{} refused your treaty", band_label(ends.receiver_band)),
+            format!(
+                "You refused the treaty from {}",
+                band_label(ends.sender_band)
+            ),
+        ),
+        TreatyStatus::Expired => (
+            format!(
+                "{} did not answer your treaty proposal",
+                band_label(ends.receiver_band)
+            ),
+            format!(
+                "The treaty proposal from {} lapsed unanswered",
+                band_label(ends.sender_band)
+            ),
+        ),
+        TreatyStatus::Withdrawn => (
+            format!(
+                "Your treaty proposal to {} was withdrawn",
+                band_label(ends.receiver_band)
+            ),
+            format!(
+                "The treaty proposal from {} was withdrawn",
+                band_label(ends.sender_band)
+            ),
+        ),
+        TreatyStatus::Countered => (
+            format!(
+                "{} answered your treaty with different terms",
+                band_label(ends.receiver_band)
+            ),
+            format!(
+                "You countered the treaty from {}",
+                band_label(ends.sender_band)
+            ),
+        ),
+    };
+    let status = status.token();
+    if tell_sender {
+        log.push(
+            CommandEventEntry::new(
+                tick,
+                CommandEventKind::Treaty,
+                ends.sender_faction,
+                sender_line,
+                Some(format!(
+                    "status={status} dealing={} kind={kind} destination={}",
+                    id.0, ends.receiver_band.0
+                )),
+            )
+            .with_band(ends.sender_band),
+        );
+    }
+    log.push(
+        CommandEventEntry::new(
+            tick,
+            CommandEventKind::Treaty,
+            ends.receiver_faction,
+            receiver_line,
+            Some(format!(
+                "status={status} dealing={} kind={kind} from={} sender={} band={}",
+                id.0, ends.sender_faction.0, ends.sender_band.0, ends.receiver_band.0
+            )),
+        )
+        .with_band(ends.receiver_band),
+    );
+}
+
+/// Record how an envoy's errand ended on the party, for it to carry home. A party whose mission is
+/// not an envoy's is left alone.
+pub fn set_envoy_outcome(expedition: &mut Expedition, outcome: EnvoyOutcome) {
+    if let ExpeditionMission::Trade {
+        terms: crate::components::ShipmentTerms::Envoy { outcome: slot, .. },
+        ..
+    } = &mut expedition.mission
+    {
+        *slot = Some(outcome);
+    }
+}
+
+/// **The envoy is home, and its people learn the answer.** Writes the proposer's feed line and, when
+/// the receiving people countered, posts their counter-proposal into the book — carried by the
+/// envoy, so answering it needs no road. A world without the book loses the counter and still
+/// tells the proposer.
+#[allow(clippy::too_many_arguments)] // both ends, what was asked, how it ended, and the book
+pub fn report_envoy_home(
+    log: &mut CommandEventLog,
+    pending: Option<&mut PendingDealings>,
+    tick: u64,
+    wait: u32,
+    ends: &DealingEnds,
+    proposed: &TreatyTerms,
+    outcome: &EnvoyOutcome,
+) {
+    let kind = DealingKind::TreatyProposal.as_str();
+    let (status, line) = match outcome {
+        EnvoyOutcome::Accepted => (
+            "accepted",
+            format!(
+                "Your envoy returns: {} accepted your treaty ({})",
+                band_label(ends.receiver_band),
+                proposed.describe()
+            ),
+        ),
+        EnvoyOutcome::Refused => (
+            "refused",
+            format!(
+                "Your envoy returns: {} refused your treaty",
+                band_label(ends.receiver_band)
+            ),
+        ),
+        EnvoyOutcome::Expired => (
+            "expired",
+            format!(
+                "Your envoy returns: {} never answered your treaty",
+                band_label(ends.receiver_band)
+            ),
+        ),
+        EnvoyOutcome::Countered(terms) => (
+            "countered",
+            format!(
+                "Your envoy returns: {} asks for different terms ({})",
+                band_label(ends.receiver_band),
+                terms.describe()
+            ),
+        ),
+    };
+    log.push(
+        CommandEventEntry::new(
+            tick,
+            CommandEventKind::Treaty,
+            ends.sender_faction,
+            line,
+            Some(format!(
+                "status={status} kind={kind} carrier=envoy destination={} reported=envoy",
+                ends.receiver_band.0
+            )),
+        )
+        .with_band(ends.sender_band),
+    );
+    if let (EnvoyOutcome::Countered(terms), Some(pending)) = (outcome, pending) {
+        // The counter goes the other way: from the receiving band back to the one that sent the
+        // envoy, whose people answer it where they stand.
+        let counter = Dealing {
+            id: DealingId::default(),
+            kind: DealingKind::TreatyProposal,
+            sender_faction: ends.receiver_faction,
+            sender_band: ends.receiver_band,
+            receiver_faction: ends.sender_faction,
+            receiver_band: ends.sender_band,
+            party: None,
+            party_workers: 0,
+            goods_sent: LocalStore::new(),
+            goods_asked: LocalStore::new(),
+            agreement: None,
+            treaty: Some(TreatyProposal {
+                terms: terms.clone(),
+                carrier: TreatyCarrier::Envoy,
+            }),
+            posted_turn: tick,
+            expires_turn: tick + u64::from(wait),
+        };
+        let counter_ends = DealingEnds::of(&counter);
+        let proposal = counter.treaty.clone().expect("the counter carries terms");
+        let id = pending.post(counter);
+        // The counter's addressee is the envoy's own people: a normal "offered" line for them.
+        push_treaty_posted_events(log, tick, id, &counter_ends, &proposal);
+    }
+}
+
+/// **Post an envoy's proposal when it reaches the receiver's camp.** The party stands in the camp
+/// (`AwaitingOrders`, the wait an offer uses) for the answer; only the receiving people are told.
+#[allow(clippy::too_many_arguments)] // both ends, the party, the terms and the clock
+pub fn post_envoy_proposal(
+    pending: &mut PendingDealings,
+    log: &mut CommandEventLog,
+    tick: u64,
+    wait: u32,
+    ends: &DealingEnds,
+    party: BandId,
+    party_workers: u32,
+    terms: &TreatyTerms,
+) -> DealingId {
+    let proposal = TreatyProposal {
+        terms: terms.clone(),
+        carrier: TreatyCarrier::Envoy,
+    };
+    let id = pending.post(Dealing {
+        id: DealingId::default(),
+        kind: DealingKind::TreatyProposal,
+        sender_faction: ends.sender_faction,
+        sender_band: ends.sender_band,
+        receiver_faction: ends.receiver_faction,
+        receiver_band: ends.receiver_band,
+        party: Some(party),
+        party_workers,
+        goods_sent: LocalStore::new(),
+        goods_asked: LocalStore::new(),
+        agreement: None,
+        treaty: Some(proposal.clone()),
+        posted_turn: tick,
+        expires_turn: tick + u64::from(wait),
+    });
+    push_treaty_posted_events(log, tick, id, ends, &proposal);
+    id
+}
+
+/// **Answer a treaty proposal.** A road-carried one needs the standing link between the two bands
+/// to still hold (or it is withdrawn, as a stage-4 proposal is); an envoy-carried one needs its
+/// party still standing in the camp — and nothing else. Accept puts the terms in force at once for
+/// both peoples (replacing any treaty standing: an amendment, never a breach); refuse closes it;
+/// counter closes it and sends the receiver's terms back.
+fn answer_treaty(
+    world: &mut World,
+    dealing: Dealing,
+    answer: &DealingAnswer,
+    tick: u64,
+) -> Result<AnswerReport, String> {
+    let id = dealing.id;
+    let ends = DealingEnds::of(&dealing);
+    let Some(proposal) = dealing.treaty.clone() else {
+        world.resource_mut::<PendingDealings>().remove(id);
+        return Err(format!("{VERB}: dealing {} carries no terms.", id.0));
+    };
+    // The carrier still holds: a standing link (road) or the envoy standing in the camp.
+    let party = match (proposal.carrier, dealing.party) {
+        (TreatyCarrier::Road, _) => {
+            if !bands_have_standing_link(world, ends.sender_band, ends.receiver_band) {
+                world.resource_mut::<PendingDealings>().remove(id);
+                push_treaty_resolution_events(
+                    &mut world.resource_mut::<CommandEventLog>(),
+                    tick,
+                    id,
+                    &ends,
+                    TreatyStatus::Withdrawn,
+                    &proposal.terms,
+                    true,
+                );
+                return Err(format!(
+                    "{VERB}: the road between band {} and band {} no longer holds — the treaty \
+                     proposal was withdrawn.",
+                    ends.sender_band.0, ends.receiver_band.0
+                ));
+            }
+            None
+        }
+        (TreatyCarrier::Envoy, Some(party)) => {
+            let standing = party_entity(world, party).filter(|&entity| {
+                world
+                    .get::<Expedition>(entity)
+                    .is_some_and(|expedition| expedition.phase == ExpeditionPhase::AwaitingOrders)
+            });
+            let Some(entity) = standing else {
+                world.resource_mut::<PendingDealings>().remove(id);
+                push_treaty_resolution_events(
+                    &mut world.resource_mut::<CommandEventLog>(),
+                    tick,
+                    id,
+                    &ends,
+                    TreatyStatus::Withdrawn,
+                    &proposal.terms,
+                    false,
+                );
+                return Err(format!(
+                    "{VERB}: the envoy that made treaty proposal {} has gone.",
+                    id.0
+                ));
+            };
+            Some(entity)
+        }
+        // A counter an envoy carried home: nothing walks, nothing to check.
+        (TreatyCarrier::Envoy, None) => None,
+    };
+    // The envoy's proposer is told when it walks home; a road-carried or envoy-less one at once.
+    let tell_sender = party.is_none();
+    let send_home = |world: &mut World, outcome: EnvoyOutcome| {
+        if let Some(entity) = party {
+            if let Some(mut expedition) = world.get_mut::<Expedition>(entity) {
+                set_envoy_outcome(&mut expedition, outcome);
+                expedition.after_dealing();
+            }
+        }
+    };
+
+    match answer {
+        DealingAnswer::Refuse => {
+            send_home(world, EnvoyOutcome::Refused);
+            world.resource_mut::<PendingDealings>().remove(id);
+            push_treaty_resolution_events(
+                &mut world.resource_mut::<CommandEventLog>(),
+                tick,
+                id,
+                &ends,
+                TreatyStatus::Refused,
+                &proposal.terms,
+                tell_sender,
+            );
+            Ok(AnswerReport::bare(id, dealing.kind, false))
+        }
+        DealingAnswer::Accept { returned } => {
+            if !returned.is_empty() {
+                return Err(format!(
+                    "{VERB}: the terms of treaty proposal {} are already written; accept it as it \
+                     stands, or counter.",
+                    id.0
+                ));
+            }
+            if resident_band_entity(world, ends.receiver_band).is_none() {
+                return Err(format!(
+                    "{VERB}: band {} is not there to answer.",
+                    ends.receiver_band.0
+                ));
+            }
+            world.get_resource_or_insert_with(Treaties::default).set(
+                ends.sender_faction,
+                ends.receiver_faction,
+                proposal.terms.clone(),
+                tick,
+            );
+            send_home(world, EnvoyOutcome::Accepted);
+            world.resource_mut::<PendingDealings>().remove(id);
+            push_treaty_resolution_events(
+                &mut world.resource_mut::<CommandEventLog>(),
+                tick,
+                id,
+                &ends,
+                TreatyStatus::Accepted,
+                &proposal.terms,
+                tell_sender,
+            );
+            Ok(AnswerReport::bare(id, dealing.kind, true))
+        }
+        DealingAnswer::CounterTerms { terms } => {
+            let terms = TreatyTerms::resolve(world, terms, VERB)?;
+            if terms.is_empty() {
+                return Err(format!(
+                    "{VERB}: a counter that asks for no term is not a treaty; refuse instead."
+                ));
+            }
+            world.resource_mut::<PendingDealings>().remove(id);
+            push_treaty_resolution_events(
+                &mut world.resource_mut::<CommandEventLog>(),
+                tick,
+                id,
+                &ends,
+                TreatyStatus::Countered,
+                &proposal.terms,
+                tell_sender,
+            );
+            let wait = offer_wait_turns(world);
+            if party.is_some() {
+                // The counter rides home with the envoy and is posted at the fold-back.
+                send_home(world, EnvoyOutcome::Countered(terms));
+                return Ok(AnswerReport::bare(id, dealing.kind, false));
+            }
+            let counter = Dealing {
+                id: DealingId::default(),
+                kind: DealingKind::TreatyProposal,
+                sender_faction: ends.receiver_faction,
+                sender_band: ends.receiver_band,
+                receiver_faction: ends.sender_faction,
+                receiver_band: ends.sender_band,
+                party: None,
+                party_workers: 0,
+                goods_sent: LocalStore::new(),
+                goods_asked: LocalStore::new(),
+                agreement: None,
+                treaty: Some(TreatyProposal {
+                    terms,
+                    carrier: proposal.carrier,
+                }),
+                posted_turn: tick,
+                expires_turn: tick + u64::from(wait),
+            };
+            let counter_ends = DealingEnds::of(&counter);
+            let counter_proposal = counter.treaty.clone().expect("the counter carries terms");
+            let new_id = world.resource_mut::<PendingDealings>().post(counter);
+            push_treaty_posted_events(
+                &mut world.resource_mut::<CommandEventLog>(),
+                tick,
+                new_id,
+                &counter_ends,
+                &counter_proposal,
+            );
+            Ok(AnswerReport {
+                counter: Some(new_id),
+                ..AnswerReport::bare(id, dealing.kind, false)
+            })
+        }
+        DealingAnswer::Counter { .. } => Err(format!(
+            "{VERB}: treaty proposal {} names terms, not legs; counter it with the terms you \
+             would accept.",
+            id.0
+        )),
+    }
+}
+
+/// **Propose a treaty over a standing link** (`propose_treaty`). Posts a
+/// [`DealingKind::TreatyProposal`] from `home_band` to `destination`, addressed to the
+/// destination's people, **the turn it is made**. Fails closed before anything is recorded: the band
+/// is the proposer's resident band, the destination is a band it holds a live tie to (the same tie
+/// gate a shipment launch asks) and of another people, a **standing link** holds between the two,
+/// and the terms ask for something.
+pub fn propose_treaty(
+    world: &mut World,
+    faction: FactionId,
+    home_band: BandId,
+    destination: BandId,
+    terms: &sim_runtime::TreatyTermsRequest,
+) -> Result<DealingId, String> {
+    let tick = world.resource::<SimulationTick>().0;
+    let Some(home) = resident_band_entity(world, home_band) else {
+        return Err(format!(
+            "{PROPOSE_TREATY_VERB}: band {} is not a band.",
+            home_band.0
+        ));
+    };
+    match world.get::<PopulationCohort>(home) {
+        Some(cohort) if cohort.faction == faction => {}
+        _ => {
+            return Err(format!(
+                "{PROPOSE_TREATY_VERB}: band {} is not one of your people's bands.",
+                home_band.0
+            ));
+        }
+    }
+    let terms = TreatyTerms::resolve(world, terms, PROPOSE_TREATY_VERB)?;
+    check_treaty_terms_named(&terms, PROPOSE_TREATY_VERB)?;
+    let gate = check_destination(world, faction, home, destination.0, PROPOSE_TREATY_VERB)?;
+    check_not_own_people(faction, gate.destination_faction, PROPOSE_TREATY_VERB)?;
+    if !bands_have_standing_link(world, home_band, gate.destination_band) {
+        return Err(format!(
+            "{PROPOSE_TREATY_VERB}: no standing link to band {} — a kept road must run the whole \
+             way between you; send an envoy instead.",
+            destination.0
+        ));
+    }
+    let proposal = TreatyProposal {
+        terms,
+        carrier: TreatyCarrier::Road,
+    };
+    let dealing = Dealing {
+        id: DealingId::default(),
+        kind: DealingKind::TreatyProposal,
+        sender_faction: faction,
+        sender_band: home_band,
+        receiver_faction: gate.destination_faction,
+        receiver_band: gate.destination_band,
+        party: None,
+        party_workers: 0,
+        goods_sent: LocalStore::new(),
+        goods_asked: LocalStore::new(),
+        agreement: None,
+        treaty: Some(proposal.clone()),
+        posted_turn: tick,
+        expires_turn: tick + u64::from(offer_wait_turns(world)),
+    };
+    let ends = DealingEnds::of(&dealing);
+    let id = world.resource_mut::<PendingDealings>().post(dealing);
+    push_treaty_posted_events(
+        &mut world.resource_mut::<CommandEventLog>(),
+        tick,
+        id,
+        &ends,
+        &proposal,
+    );
+    Ok(id)
+}
+
+/// A treaty proposal names at least one term.
+pub fn check_treaty_terms_named(terms: &TreatyTerms, verb: &str) -> Result<(), String> {
+    if terms.is_empty() {
+        return Err(format!(
+            "{verb}: a treaty that asks for no term is not a treaty — name road_rights, \
+             open_borders or a bundle."
+        ));
+    }
+    Ok(())
+}
+
+/// A people has no treaty with itself.
+pub fn check_not_own_people(
+    faction: FactionId,
+    destination: FactionId,
+    verb: &str,
+) -> Result<(), String> {
+    if faction == destination {
+        return Err(format!(
+            "{verb}: that band is one of your own people's — a treaty is between two peoples."
+        ));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1841,6 +2557,7 @@ mod tests {
             goods_sent: LocalStore::new(),
             goods_asked: LocalStore::new(),
             agreement: None,
+            treaty: None,
             posted_turn: posted,
             expires_turn: posted + wait,
         }

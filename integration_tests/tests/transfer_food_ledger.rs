@@ -588,6 +588,7 @@ fn spawn_shipment(
                 defection_pull: core_sim::Scalar::zero(),
                 station_reports: Vec::new(),
                 goodwill_news: Default::default(),
+                exchange_return: Default::default(),
                 scout_pack: Default::default(),
                 aim: None,
             },

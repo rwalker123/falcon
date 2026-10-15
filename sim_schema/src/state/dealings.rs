@@ -24,7 +24,7 @@ pub struct DealingGoodsState {
 pub struct DealingState {
     /// Monotonic, never reused; the key `answer_dealing` addresses it by.
     pub id: u64,
-    /// `"offer"`, `"proposal"` or `"counter"`.
+    /// `"offer"`, `"proposal"`, `"counter"` or `"treaty_proposal"`.
     pub kind: String,
     pub sender_faction: u32,
     /// The band that sent it (the party's home band) — a durable id a client swaps its own label in
@@ -47,4 +47,11 @@ pub struct DealingState {
     /// How many workers the party carries: the shipper's on a proposal or counter, the waiting
     /// party's on an offer (what bounds the return it can walk home).
     pub party_workers: u32,
+    /// **A treaty proposal's terms** (kind `"treaty_proposal"`) — the full terms asked for. Empty on
+    /// every other kind.
+    #[serde(default)]
+    pub treaty: crate::state::treaties::TreatyTermsState,
+    /// **Who carries a treaty proposal**: `"road"` or `"envoy"`; empty on every other kind.
+    #[serde(default)]
+    pub carrier: String,
 }

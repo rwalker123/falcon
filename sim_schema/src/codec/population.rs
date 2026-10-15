@@ -936,6 +936,7 @@ fn create_populations<'a>(
             let breeding_members = create_breeding_members(builder, &cohort.breeding_members);
             let breeding_peoples = create_breeding_peoples(builder, &cohort.breeding_peoples);
             let hunt_meals = create_hunt_meals(builder, &cohort.hunt_meals);
+            let envoy_terms = crate::codec::treaties::create_terms(builder, &cohort.envoy_terms);
             let culture_ancestor_pull = (!cohort.culture_ancestor_pull.is_empty())
                 .then(|| builder.create_vector(&cohort.culture_ancestor_pull));
             let belief_reach_y = if cohort.belief_reach_y.is_empty() {
@@ -1222,6 +1223,7 @@ fn create_populations<'a>(
                     idleMustered: cohort.idle_mustered,
                     huntMeals: Some(hunt_meals),
                     commRangeTiles: cohort.comm_range_tiles,
+                    envoyTerms: Some(envoy_terms),
                 },
             )
         })
@@ -1922,6 +1924,7 @@ fn decode_population(
             food: meal.food(),
         }),
         comm_range_tiles: cohort.commRangeTiles(),
+        envoy_terms: crate::codec::treaties::decode_terms(cohort.envoyTerms()),
     })
 }
 

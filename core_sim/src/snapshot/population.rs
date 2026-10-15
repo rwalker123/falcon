@@ -2790,6 +2790,13 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         homeward_all_home_in: homeward_totals.all_home_in,
         move_ferry_reach_tiles: expedition_levers.move_ferry_reach_tiles,
         comm_range_tiles: expedition_levers.comm_range_tiles,
+        // The treaty terms an envoy party will post on arrival; empty on every other row.
+        envoy_terms: match expedition.and_then(|exp| exp.mission.shipment_terms()) {
+            Some(crate::components::ShipmentTerms::Envoy { proposed, .. }) => {
+                crate::snapshot::treaties::terms_state(proposed)
+            }
+            _ => Default::default(),
+        },
         // **The long-move forecast is the shed the move would run**, from the same function — no
         // client mirror. A detached party keeps its own rules, so it forecasts nothing.
         long_move_leaves_food: long_move.food.to_f32(),
@@ -3481,6 +3488,7 @@ mod tests {
             defection_pull: Scalar::zero(),
             station_reports: Vec::new(),
             goodwill_news: Default::default(),
+            exchange_return: Default::default(),
             scout_pack: Default::default(),
             aim: None,
         };

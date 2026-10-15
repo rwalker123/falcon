@@ -980,6 +980,12 @@ alternative; `core_sim::goodwill` and this specialist now call one function.
   `goods_asked`) unless `shipper_band` is its own band (a counter of its own proposal), when they read
   the other way. A leg it cannot cover from its band's holdings is refused rather than answered into a
   failure. **No AI counters or proposes yet.**
+- **A treaty proposal** (`kind == "treaty_proposal"`, the full terms asked for) is **accepted iff the
+  AI's own live goodwill toward the proposer (`snapshot.own_goodwill`, `0` where it holds none) is at
+  least `dealings.treaty_goodwill`**, else refused. The terms are not weighed — a people that likes you
+  enough takes road rights, open borders and agreed trade as written. The AI never counters a treaty,
+  proposes one, sends an envoy or ends one. Unit-tested at both sides of the threshold
+  (`a_treaty_proposal_is_accepted_at_the_goodwill_threshold_and_refused_below_it`).
 - **`reason` carries the numbers**, so `decisions.jsonl` shows what the AI judged: an offer's
   `cargo worth W to us; fairness F -> return load L of T (party cap C, runway Rt >= floor): return …`,
   a proposal's `worth received R x (1 + goodwill G) = X >= worth given V: accept`.
@@ -1208,7 +1214,7 @@ and `rover` (expand). Each key has one consumer:
 | `land.pooling_weight` | the land reading | a candidate hex within `food.split_search_tiles` of a hex already chosen has its value multiplied by `1 + this`; `≥ 0`, default `0.25` |
 | `dealings.return_fairness` | `Dealings` | the share of an offer's worth to this people named back as a return load; shipped **1.0**; finite, `>= 0` |
 | `dealings.food_runway_floor_turns` | `Dealings` | a band under this runway names no food in a return; shipped **10**; finite, `>= 0` (distinct from `food.runway_floor_turns`, the alarm) |
-| `dealings.treaty_goodwill` | the treaty answer (a later slice) | the goodwill needed toward a proposer to accept a treaty, on the `-1..=+1` scale; shipped **0.2**; defined now, read by nothing yet |
+| `dealings.treaty_goodwill` | `Dealings` (a treaty proposal) | the goodwill needed toward a proposer to accept a treaty, on the `-1..=+1` scale; shipped **0.2**; the answer is accept at or above it, refuse below |
 
 | Difficulty key | Consumer | Effect |
 |---|---|---|

@@ -106,6 +106,7 @@ mod systems;
 pub mod take_claims;
 pub mod telling;
 mod terrain;
+pub mod treaties;
 mod turn_pipeline_config;
 pub mod turn_profile;
 mod victory;
@@ -208,8 +209,9 @@ pub use culture_corruption_config::{
 };
 pub use dealings::{
     advance_dealings, answer_dealing, bands_have_standing_link, check_cargo, check_destination,
-    propose_trade, standing_answer_covers, Agreement, AnswerReport, Dealing, DealingAnswer,
-    DealingId, DealingKind, GoodsLines, PendingDealings, ShipmentGate,
+    propose_trade, propose_treaty, standing_answer_covers, Agreement, AnswerReport, Dealing,
+    DealingAnswer, DealingId, DealingKind, GoodsLines, PendingDealings, ShipmentGate,
+    TreatyCarrier, TreatyProposal,
 };
 pub use demographics_config::{
     load_demographics_config_from_env, DemographicsConfig, DemographicsConfigHandle,
@@ -339,6 +341,10 @@ pub use personalities::{
     load_personalities_from_env, PersonalitiesError, Personality, PersonalityCatalog,
     PersonalityCatalogHandle, PersonalityCatalogMetadata, BUILTIN_PERSONALITIES, PERSONALITY_SALT,
 };
+pub use treaties::{
+    credit_treaty_goodwill, dissolve_extinct_peoples, end_treaty, match_bundles, Bundle,
+    BundleMatch, EnvoyOutcome, Treaties, Treaty, TreatyTerms, NO_TREATIES,
+};
 // The drainage-network measurement instrument (consumed by the `#[ignore]`d census test).
 pub use extraction::{
     advance_deposits, deposit_at_risk_rung, deposit_keeper_loads, deposit_keeping_basis,
@@ -391,15 +397,18 @@ pub use recipes_config::{
     RecipeOutput, RecipesConfig, RecipesConfigError, RecipesConfigHandle, RecipesConfigMetadata,
     BUILTIN_RECIPES_CONFIG,
 };
+pub use routes::Walker as RoadWalker;
 pub use routes::{
-    advance_roads, credit_route_lessons, max_route_reach_tiles, path_friction_multiplier,
-    path_lesson_rung, path_reach_tiles, remoteness_multiplier, road_at_risk_rung,
-    road_build_fraction, road_keeping_basis, road_keeping_range, road_measure,
-    road_neglect_grace_remaining, road_rung_span, road_upkeep_demand, road_upkeep_measure,
-    road_upkeep_workers_needed, route_rungs_in_climb_order, rung_grants_sight, standing_link,
-    trace_path, traffic_ceiling, Road, RoadKeeper, RoadRegistry, RouteJourney, RouteTrafficLog,
-    TrafficSource, FIRST_BUILT_RUNG, FREE_FLOOR_TOP_RUNG, METER_FULL, NEAR_ENOUGH_TO_KEEP,
-    NO_HERD_HAS_CROSSED, NO_REACH_HELD_OPEN, PAVING_DISCOVERY_ID, ROADBUILDING_DISCOVERY_ID,
+    advance_roads, credit_route_lessons, foreign_roads, max_route_reach_tiles,
+    path_friction_multiplier, path_lesson_rung, path_reach_tiles, remoteness_multiplier,
+    road_access_in_world, road_at_risk_rung, road_build_fraction, road_keeping_basis,
+    road_keeping_range, road_measure, road_neglect_grace_remaining, road_reach_for, road_rung_span,
+    road_upkeep_demand, road_upkeep_measure, road_upkeep_workers_needed,
+    route_rungs_in_climb_order, rung_grants_sight, standing_link, trace_path, traffic_ceiling,
+    ForeignRoads, Road, RoadAccess, RoadKeeper, RoadRegistry, RoadRights, RouteJourney,
+    RouteTrafficLog, TrafficSource, FIRST_BUILT_RUNG, FREE_FLOOR_TOP_RUNG, METER_FULL,
+    NEAR_ENOUGH_TO_KEEP, NO_HERD_HAS_CROSSED, NO_REACH_HELD_OPEN, PAVING_DISCOVERY_ID,
+    ROADBUILDING_DISCOVERY_ID,
 };
 pub use sedentarization::{
     sedentarization_tick, SedentarizationEntry, SedentarizationScore, SedentarizationStage,
@@ -911,6 +920,7 @@ pub fn build_headless_app() -> App {
         .insert_resource(diplomacy_metadata)
         .insert_resource(dealings::PendingDealings::default())
         .insert_resource(goodwill::Goodwill::default())
+        .insert_resource(treaties::Treaties::default())
         .insert_resource(goodwill::KnownGoodwill::default())
         .insert_resource(belief_handle)
         .insert_resource(belief_metadata)
@@ -1469,6 +1479,14 @@ pub fn build_headless_app() -> App {
                 // judged by now (the moment `light_kept_routes` reads it). It takes
                 // `PopulationCohort` shared, which `discover_sites` writes, so that edge is stated.
                 goodwill::credit_link_goodwill.after(sites::discover_sites),
+                // **A treaty in force is the other half of the credit**: a people that has ended
+                // goes first (its treaties dissolve with no breach), then each surviving treaty
+                // credits both ways. Both write what `credit_link_goodwill` writes, so they are
+                // ordered behind it.
+                treaties::dissolve_extinct_peoples
+                    .after(sites::discover_sites)
+                    .before(treaties::credit_treaty_goodwill),
+                treaties::credit_treaty_goodwill.after(goodwill::credit_link_goodwill),
             )
                 .in_set(TurnStage::Visibility)
                 .run_if(capability_enabled(CapabilityFlags::ALWAYS_ON)),

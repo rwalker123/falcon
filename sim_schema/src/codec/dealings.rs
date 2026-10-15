@@ -1,5 +1,6 @@
 //! Dealings-section FlatBuffers serialization — the pending offers between peoples.
 
+use crate::codec::treaties::{create_terms, decode_terms};
 use crate::codec::{map_rows, map_rows_if_present, text, FbBuilder};
 use crate::state::dealings::{DealingGoodsState, DealingState};
 use crate::state::population::{CharacteristicReadingState, MaterialBatchState};
@@ -7,7 +8,7 @@ use crate::world::{WorldDelta, WorldSnapshot};
 use flatbuffers::WIPOffset;
 use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
 
-fn create_goods<'a>(
+pub(crate) fn create_goods<'a>(
     builder: &mut FbBuilder<'a>,
     goods: &DealingGoodsState,
 ) -> WIPOffset<fb::DealingGoodsState<'a>> {
@@ -66,6 +67,8 @@ fn create_dealings<'a>(
             let kind = builder.create_string(&dealing.kind);
             let goods_sent = create_goods(builder, &dealing.goods_sent);
             let goods_asked = create_goods(builder, &dealing.goods_asked);
+            let treaty = create_terms(builder, &dealing.treaty);
+            let carrier = builder.create_string(&dealing.carrier);
             fb::DealingState::create(
                 builder,
                 &fb::DealingStateArgs {
@@ -80,6 +83,8 @@ fn create_dealings<'a>(
                     turnsLeft: dealing.turns_left,
                     shipperBand: dealing.shipper_band,
                     partyWorkers: dealing.party_workers,
+                    treaty: Some(treaty),
+                    carrier: Some(carrier),
                 },
             )
         })
@@ -132,7 +137,7 @@ pub(crate) fn decode_dealings_section_delta(
     delta.dealings = map_rows_if_present(section.dealings(), decode_dealing);
 }
 
-fn decode_goods(goods: Option<fb::DealingGoodsState<'_>>) -> DealingGoodsState {
+pub(crate) fn decode_goods(goods: Option<fb::DealingGoodsState<'_>>) -> DealingGoodsState {
     let Some(goods) = goods else {
         return DealingGoodsState::default();
     };
@@ -165,5 +170,7 @@ fn decode_dealing(dealing: fb::DealingState<'_>) -> DealingState {
         turns_left: dealing.turnsLeft(),
         shipper_band: dealing.shipperBand(),
         party_workers: dealing.partyWorkers(),
+        treaty: decode_terms(dealing.treaty()),
+        carrier: text(dealing.carrier()),
     }
 }

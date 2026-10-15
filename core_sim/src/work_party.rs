@@ -975,7 +975,9 @@ pub fn walk_turns(walk_tiles: u32, tiles_per_turn: u32) -> u32 {
 ///
 /// The road bonus reads [`crate::supply::free_pooling_reach_tiles`] — the seam two camps pool
 /// through — less the unwidened `reach_tiles`, so what a road does for a caravan and what it does
-/// for pooling are one reading of one road.
+/// for pooling are one reading of one road. **`access` says whose feet are on it**: the band's own
+/// people read a foreign kept road at a share of its rung unless a road-rights treaty joins them
+/// ([`crate::routes::road_reach_for`]).
 #[allow(clippy::too_many_arguments)] // the geometry and the three config blocks it reads
 pub fn resolve_walk(
     band_pos: UVec2,
@@ -983,6 +985,7 @@ pub fn resolve_walk(
     labor: &LaborConfig,
     supply: &crate::supply_network_config::SupplyNetworkConfig,
     roads: &crate::routes::RoadRegistry,
+    access: &crate::routes::RoadAccess<'_>,
     widest_route_reach: u32,
     geometry: (u32, u32, bool),
 ) -> Option<(u32, u32)> {
@@ -993,6 +996,7 @@ pub fn resolve_walk(
     }
     let road_bonus = crate::supply::free_pooling_reach_tiles(
         roads,
+        access,
         band_pos,
         source_pos,
         supply.reach_tiles,
@@ -2018,7 +2022,9 @@ mod tests {
     #[test]
     fn a_road_shortens_the_walk_and_one_covering_the_run_takes_it_to_zero() {
         use crate::intensification::{LadderConfig, RungKey};
-        use crate::routes::{road_rung_span, trace_path, traffic_ceiling, RoadRegistry};
+        use crate::routes::{
+            road_rung_span, trace_path, traffic_ceiling, RoadAccess, RoadRegistry,
+        };
         let ladder = LadderConfig::builtin();
         let labor = LaborConfig::builtin();
         let supply = crate::supply_network_config::SupplyNetworkConfig::builtin();
@@ -2027,9 +2033,18 @@ mod tests {
         let geometry = (width, height, false);
         let (band, source) = (UVec2::new(5, 10), UVec2::new(13, 10));
         let walk = |roads: &RoadRegistry| {
-            resolve_walk(band, source, &labor, &supply, roads, widest, geometry)
-                .expect("an 8-hex source is past the apron")
-                .0
+            resolve_walk(
+                band,
+                source,
+                &labor,
+                &supply,
+                roads,
+                &RoadAccess::NEUTRAL,
+                widest,
+                geometry,
+            )
+            .expect("an 8-hex source is past the apron")
+            .0
         };
         let run = trace_path(band, source, width, height, false, &RoadRegistry::default());
         let paved_to = |position: f32| {
@@ -2057,6 +2072,105 @@ mod tests {
         assert_eq!(
             road, NO_WALK,
             "a road covering the run takes the walk to zero"
+        );
+    }
+
+    /// ⛔ **A FOREIGN KEPT ROAD SHORTENS A PARTY'S WALK BY ITS SHARE, AND A ROAD-RIGHTS TREATY MAKES
+    /// IT WHOLE** — read through `resolve_walk`, the real seam a work party's posting, the assign-time
+    /// seed and the compose query all walk through. A road covering the run takes the keeper's own
+    /// people's walk to zero; the same road under a foreigner's feet is worth only `max(trail,
+    /// floor(share × reach))` of the pooling reach.
+    #[test]
+    fn a_foreign_road_shortens_the_walk_by_its_share_and_road_rights_make_it_whole() {
+        use crate::intensification::{LadderConfig, RungKey};
+        use crate::orders::FactionId;
+        use crate::routes::{
+            road_rung_span, trace_path, ForeignRoads, RoadAccess, RoadKeeper, RoadRegistry, Walker,
+            NEAR_ENOUGH_TO_KEEP,
+        };
+        use crate::treaties::{Treaties, TreatyTerms};
+        const KEEPER_PEOPLE: FactionId = FactionId(0);
+        const WALKING_PEOPLE: FactionId = FactionId(1);
+        /// Half of a dirt road's reach is under the trail's, so the floor decides.
+        const HALF_SHARE: f32 = 0.5;
+        let ladder = LadderConfig::builtin();
+        let labor = LaborConfig::builtin();
+        let supply = crate::supply_network_config::SupplyNetworkConfig::builtin();
+        let widest = crate::routes::max_route_reach_tiles(&ladder);
+        let (width, height) = (40, 40);
+        let geometry = (width, height, false);
+        let (band, source) = (UVec2::new(5, 10), UVec2::new(13, 10));
+        let run = trace_path(band, source, width, height, false, &RoadRegistry::default());
+        let (base, span) = road_rung_span(
+            RungKey::RouteDirtRoad,
+            &ladder,
+            crate::routes::remoteness_multiplier(0, &ladder),
+        );
+        let mut roads = RoadRegistry::default();
+        for tile in &run {
+            let road = roads.road_or_trail(*tile, &ladder);
+            road.set_position(base + span, &ladder);
+            road.take_keeper(
+                RoadKeeper {
+                    faction: KEEPER_PEOPLE,
+                    band: crate::components::BandId(1),
+                },
+                NEAR_ENOUGH_TO_KEEP,
+                &ladder,
+            );
+        }
+        let none = Treaties::default();
+        let rule = ForeignRoads::new(HALF_SHARE, &ladder);
+        let walk = |people: FactionId, treaties: &Treaties| {
+            resolve_walk(
+                band,
+                source,
+                &labor,
+                &supply,
+                &roads,
+                &RoadAccess {
+                    walker: Walker::new(people, treaties),
+                    foreign: rule,
+                },
+                widest,
+                geometry,
+            )
+            .expect("an 8-hex source is past the apron")
+            .0
+        };
+        let bare = resolve_walk(
+            band,
+            source,
+            &labor,
+            &supply,
+            &RoadRegistry::default(),
+            &RoadAccess::NEUTRAL,
+            widest,
+            geometry,
+        )
+        .expect("past the apron")
+        .0;
+        let own = walk(KEEPER_PEOPLE, &none);
+        let foreign = walk(WALKING_PEOPLE, &none);
+        assert_eq!(own, NO_WALK, "the keeper's own road covers the run");
+        assert!(
+            foreign > own && foreign < bare,
+            "a foreigner's walk is shortened, but by less: own {own}, foreign {foreign}, bare {bare}"
+        );
+        let mut rights = Treaties::default();
+        rights.set(
+            KEEPER_PEOPLE,
+            WALKING_PEOPLE,
+            TreatyTerms {
+                road_rights: true,
+                ..Default::default()
+            },
+            1,
+        );
+        assert_eq!(
+            walk(WALKING_PEOPLE, &rights),
+            own,
+            "road rights make the road whole for the partner"
         );
     }
 

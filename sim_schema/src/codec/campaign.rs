@@ -4,11 +4,12 @@ use crate::codec::{
     changed_scalar, decode_strings, map_rows, map_rows_if_present, text, FbBuilder,
 };
 use crate::state::campaign::{
-    CampaignInventoryEntryState, CampaignLabel, CampaignProfileState, CampaignStartingUnitState,
-    CommandEventState, FactionNameState, FactionPolicyState, ForkChoiceState, GlossEntryState,
-    LineageConstantsState, OpeningLoadoutState, OpeningMaterialDefaultState, PendingForkState,
-    PendingForksState, StanceAxisState, StanceState, VictoryModeSnapshotState, VictoryResultState,
-    VictorySnapshotState, VoiceLineState, VoiceMediumState,
+    BorderOverrideState, CampaignInventoryEntryState, CampaignLabel, CampaignProfileState,
+    CampaignStartingUnitState, CommandEventState, FactionNameState, FactionPolicyState,
+    ForkChoiceState, GlossEntryState, LineageConstantsState, OpeningLoadoutState,
+    OpeningMaterialDefaultState, PendingForkState, PendingForksState, StanceAxisState, StanceState,
+    VictoryModeSnapshotState, VictoryResultState, VictorySnapshotState, VoiceLineState,
+    VoiceMediumState,
 };
 use crate::world::{WorldDelta, WorldSnapshot};
 use flatbuffers::{ForwardsUOffset, WIPOffset};
@@ -406,12 +407,27 @@ fn create_faction_policies<'a>(
     let entries: Vec<_> = states
         .iter()
         .map(|state| {
+            let overrides: Vec<_> = state
+                .border_overrides
+                .iter()
+                .map(|row| {
+                    fb::BorderOverrideState::create(
+                        builder,
+                        &fb::BorderOverrideStateArgs {
+                            otherFaction: row.other_faction,
+                            open: row.open,
+                        },
+                    )
+                })
+                .collect();
+            let border_overrides = builder.create_vector(&overrides);
             fb::FactionPolicyState::create(
                 builder,
                 &fb::FactionPolicyStateArgs {
                     faction: state.faction,
                     openBorders: state.open_borders,
                     acceptOwnGifts: state.accept_own_gifts,
+                    borderOverrides: Some(border_overrides),
                 },
             )
         })
@@ -695,6 +711,10 @@ fn decode_faction_policy(state: fb::FactionPolicyState<'_>) -> FactionPolicyStat
         faction: state.faction(),
         open_borders: state.openBorders(),
         accept_own_gifts: state.acceptOwnGifts(),
+        border_overrides: map_rows(state.borderOverrides(), |row| BorderOverrideState {
+            other_faction: row.otherFaction(),
+            open: row.open(),
+        }),
     }
 }
 

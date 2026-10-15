@@ -56,12 +56,24 @@ fn dealing_state(dealing: &Dealing, now: u64, materials: &MaterialsConfig) -> De
         turns_left: dealing.turns_left(now),
         shipper_band,
         party_workers,
+        // A treaty proposal states its full terms and who carries it; every other kind leaves both
+        // empty.
+        treaty: dealing
+            .treaty
+            .as_ref()
+            .map(|proposal| crate::snapshot::treaties::terms_state(&proposal.terms))
+            .unwrap_or_default(),
+        carrier: dealing
+            .treaty
+            .as_ref()
+            .map(|proposal| proposal.carrier.as_str().to_string())
+            .unwrap_or_default(),
     }
 }
 
 /// **A leg named as lines** — food, hay and one row per material with its total and no ratings, since
 /// nothing has been drawn to be rated yet.
-fn lines_state(lines: &GoodsLines) -> DealingGoodsState {
+pub(crate) fn lines_state(lines: &GoodsLines) -> DealingGoodsState {
     DealingGoodsState {
         food: lines.food.to_f32(),
         fodder: lines.fodder.to_f32(),

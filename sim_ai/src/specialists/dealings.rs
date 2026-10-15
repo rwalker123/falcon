@@ -15,6 +15,10 @@
 //!   is accepted when `worth_received × (1 + goodwill_toward_sender) >= worth_given`, the worth to
 //!   the AI of each leg on its own holdings; otherwise refused. No AI counters yet. A leg the AI
 //!   cannot cover from its band's holdings is refused rather than accepted into a failed answer.
+//! - **A treaty proposal** (`docs/plan_early_diplomacy.md` §3, the terms asked for) is accepted
+//!   when this people's own goodwill toward the proposer is at least `dealings.treaty_goodwill`,
+//!   refused otherwise. The terms are not weighed: a people that likes you enough takes road
+//!   rights, open borders and agreed trade as written. No AI counters, proposes or ends a treaty.
 //!
 //! **A duty, not a bid.** An answer spends no worker and claims no row, band or move, so it is a
 //! standing proposal (`Proposal::standing`): paid first, before any bid is weighed, and never
@@ -49,6 +53,7 @@ pub const ANSWER_SCORE: f32 = 1.0;
 pub const KIND_OFFER: &str = "offer";
 pub const KIND_PROPOSAL: &str = "proposal";
 pub const KIND_COUNTER: &str = "counter";
+pub const KIND_TREATY_PROPOSAL: &str = "treaty_proposal";
 
 /// One unit of food is the load currency's numéraire (`carry.rs`): every other good's weight is
 /// stated against it.
@@ -298,6 +303,7 @@ impl Dealings {
         let (reply, reason) = match dealing.kind.as_str() {
             KIND_OFFER => self.answer_offer(dealing, band, &held, &weights),
             KIND_PROPOSAL | KIND_COUNTER => self.answer_terms(view, dealing, &held, &weights),
+            KIND_TREATY_PROPOSAL => self.answer_treaty(view, dealing),
             _ => return None,
         };
         let commands = vec![CommandPayload::AnswerDealing {
@@ -357,6 +363,30 @@ impl Dealings {
             cargo_text(&returned),
         );
         (DealingReply::Accept { returned }, reason)
+    }
+
+    /// **A treaty proposal is taken when the AI's own goodwill toward the proposer reaches
+    /// `dealings.treaty_goodwill`**, and refused otherwise.
+    fn answer_treaty(&self, view: &SeatView, dealing: &DealingState) -> (DealingReply, String) {
+        let goodwill = Self::goodwill_toward(view, dealing.sender_faction);
+        let accept = goodwill >= self.levers.treaty_goodwill;
+        let reason = format!(
+            "treaty proposal {}: goodwill toward faction {} {:+.3} {} threshold {:+.3}: {}",
+            dealing.id,
+            dealing.sender_faction,
+            goodwill,
+            if accept { ">=" } else { "<" },
+            self.levers.treaty_goodwill,
+            if accept { "accept" } else { "refuse" },
+        );
+        let reply = if accept {
+            DealingReply::Accept {
+                returned: Vec::new(),
+            }
+        } else {
+            DealingReply::Refuse
+        };
+        (reply, reason)
     }
 
     fn answer_terms(
@@ -504,6 +534,7 @@ mod tests {
             turns_left: 3,
             shipper_band: 0,
             party_workers,
+            ..Default::default()
         }
     }
 
@@ -520,7 +551,57 @@ mod tests {
             turns_left: 3,
             shipper_band: SENDER_BAND,
             party_workers: 2,
+            ..Default::default()
         }
+    }
+
+    fn a_treaty_proposal(id: u64) -> DealingState {
+        DealingState {
+            id,
+            kind: KIND_TREATY_PROPOSAL.to_owned(),
+            sender_faction: SENDER,
+            sender_band: SENDER_BAND,
+            receiver_faction: FACTION,
+            receiver_band: AI_BAND,
+            turns_left: 3,
+            treaty: sim_runtime::TreatyTermsState {
+                road_rights: true,
+                ..Default::default()
+            },
+            carrier: "road".to_owned(),
+            ..Default::default()
+        }
+    }
+
+    /// A treaty proposal is accepted when the AI's goodwill toward the proposer reaches the lever
+    /// (`treaty_goodwill`, 0.2 here) and refused below it; the edge is inclusive.
+    #[test]
+    fn a_treaty_proposal_is_accepted_at_the_goodwill_threshold_and_refused_below_it() {
+        let reply_for = |goodwill: f32| {
+            let band = ai_band(40.0, 0.0, &[], 30.0);
+            let proposals = propose(&view(band, vec![a_treaty_proposal(6)], goodwill));
+            assert_eq!(proposals.len(), 1);
+            assert_eq!(proposals[0].intent, "dealings:answer:6");
+            assert!(proposals[0].standing);
+            reply_of(&proposals[0]).clone()
+        };
+        assert_eq!(
+            reply_for(0.5),
+            DealingReply::Accept {
+                returned: Vec::new()
+            }
+        );
+        assert_eq!(
+            reply_for(0.2),
+            DealingReply::Accept {
+                returned: Vec::new()
+            },
+            "the threshold itself accepts"
+        );
+        assert_eq!(reply_for(0.19), DealingReply::Refuse);
+        assert_eq!(reply_for(-0.4), DealingReply::Refuse);
+        // A people it holds no opinion of reads 0, which is under the opening threshold.
+        assert_eq!(reply_for(0.0), DealingReply::Refuse);
     }
 
     fn view(band: PopulationCohortState, dealings: Vec<DealingState>, goodwill: f32) -> SeatView {

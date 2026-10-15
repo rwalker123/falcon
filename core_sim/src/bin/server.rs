@@ -1351,6 +1351,8 @@ enum Command {
     SetOpenBorders {
         faction: FactionId,
         open: bool,
+        /// With a people named, the setting toward that one people only (an override).
+        other_faction: Option<FactionId>,
     },
     AdjustCounterIntelBudget {
         faction: FactionId,
@@ -1480,6 +1482,29 @@ enum Command {
         destination_band_id: u64,
         give: Vec<TradeCargoItem>,
         ask: Vec<TradeCargoItem>,
+    },
+    /// **Propose a treaty over a standing link** (`docs/plan_early_diplomacy.md` §3): road rights,
+    /// open borders and/or agreed-trade bundles, posted to the destination's people the turn it is
+    /// made.
+    ProposeTreaty {
+        faction: FactionId,
+        band_id: Option<u64>,
+        destination_band_id: u64,
+        terms: sim_runtime::TreatyTermsRequest,
+    },
+    /// **Send an envoy** — a party with no cargo that walks to the destination band and posts the
+    /// same proposal on arrival.
+    SendEnvoy {
+        faction: FactionId,
+        band_id: Option<u64>,
+        party_workers: u32,
+        destination_band_id: u64,
+        terms: sim_runtime::TreatyTermsRequest,
+    },
+    /// **End a treaty at once — a breach.**
+    EndTreaty {
+        faction: FactionId,
+        other_faction: FactionId,
     },
     /// **The stationed party** (`docs/plan_contact_and_logistics.md` "Settled by #774") — part of a
     /// band posted at another band it holds a live tie with. Gated on the connection, and on the
@@ -4107,6 +4132,13 @@ fn caravan_seed_party(
         &labor,
         &supply,
         app.world.resource::<core_sim::RoadRegistry>(),
+        &core_sim::routes::road_access_in_world(
+            &app.world,
+            app.world
+                .get::<core_sim::PopulationCohort>(band)
+                .map_or(FactionId(0), |cohort| cohort.faction),
+            &ladder,
+        ),
         core_sim::routes::max_route_reach_tiles(&ladder),
         geometry,
     )?;
@@ -5904,6 +5936,7 @@ fn handle_send_scout(
                 defection_pull: Scalar::zero(),
                 station_reports: Vec::new(),
                 goodwill_news: Default::default(),
+                exchange_return: Default::default(),
                 scout_pack: core_sim::ScoutPack {
                     order: match strangers {
                         sim_runtime::StrangersKind::Keep => core_sim::StrangersOrder::Keep,
@@ -6432,6 +6465,7 @@ fn launch_party_from_band(
                 defection_pull: Scalar::zero(),
                 station_reports: Vec::new(),
                 goodwill_news: Default::default(),
+                exchange_return: Default::default(),
                 scout_pack: Default::default(),
                 aim: None,
             },
@@ -6668,7 +6702,7 @@ struct ResolvedPost {
 /// anywhere, no live tie from the home band to the host (a parked edge refuses exactly as a missing
 /// one does), and — for a host of ANOTHER people only — that people's borders being closed. A host of
 /// the sender's own people never asks Open Borders; the one comparison lives in
-/// [`FactionBorderPolicies::admits_posting`].
+/// [`FactionBorderPolicies::admits`].
 fn resolve_post(
     app: &mut bevy::prelude::App,
     faction: FactionId,
@@ -6750,10 +6784,11 @@ fn resolve_post(
         );
         return None;
     }
-    let admitted = app
-        .world
-        .resource::<FactionBorderPolicies>()
-        .admits_posting(host_faction, faction);
+    let admitted = app.world.resource::<FactionBorderPolicies>().admits(
+        app.world.resource::<core_sim::Treaties>(),
+        host_faction,
+        faction,
+    );
     if !admitted {
         emit_command_failure(
             app,
@@ -7187,6 +7222,11 @@ fn launch_trade_party(
     let provisions_total = provisions.total();
     let band_label = outfit.band.label.clone();
     let band_durable_id = outfit.band.id;
+    // An envoy's launch line says what it is going to propose, not a cargo it does not carry.
+    let envoy_errand = match &terms {
+        core_sim::ShipmentTerms::Envoy { proposed, .. } => Some(proposed.describe()),
+        _ => None,
+    };
     let mission = ExpeditionMission::Trade {
         destination_band: shipment.destination_band,
         destination_faction: shipment.destination_faction,
@@ -7296,12 +7336,20 @@ fn launch_trade_party(
         CommandEventKind::ExpeditionSent,
         faction,
         band_durable_id,
-        format!(
-            "{band_label} shipment -> {destination_label} ({})",
-            manifest.join(", ")
-        ),
+        match &envoy_errand {
+            Some(errand) => format!("{band_label} envoy -> {destination_label} ({errand})"),
+            None => format!(
+                "{band_label} shipment -> {destination_label} ({})",
+                manifest.join(", ")
+            ),
+        },
         Some(format!(
-            "status=applied mission=trade workers={} destination={} distance={} expedition={}",
+            "status=applied mission={} workers={} destination={} distance={} expedition={}",
+            if envoy_errand.is_some() {
+                "envoy"
+            } else {
+                "trade"
+            },
             party_workers,
             destination_band_id,
             distance,
@@ -7531,6 +7579,7 @@ fn cancel_party_standing_in_camp(
     // exactly as a party turned home mid-flight would deliver it. The caller despawns the party
     // immediately after, so the live component is never read again.
     let mut cargo = expedition.cargo.clone();
+    let mut exchange = expedition.exchange_return.clone();
     // The party's kit goes back on the band's shelf with it, worn as it is — read off a clone, since
     // the caller despawns the party immediately after.
     let mut party_gear = app.world.get::<BandEquipment>(entity).cloned();
@@ -7542,6 +7591,7 @@ fn cancel_party_standing_in_camp(
         fold_party_into_band(
             &mut party,
             &mut cargo,
+            &mut exchange,
             &mut home,
             core_sim::PartyGear {
                 party: party_gear.as_mut(),
@@ -11001,9 +11051,45 @@ fn command_from_payload(
                 }
             }
         }
-        ProtoCommandPayload::SetOpenBorders { faction, open } => Some(Command::SetOpenBorders {
+        ProtoCommandPayload::SetOpenBorders {
+            faction,
+            open,
+            other_faction,
+        } => Some(Command::SetOpenBorders {
             faction: FactionId(faction),
             open,
+            other_faction: other_faction.map(FactionId),
+        }),
+        ProtoCommandPayload::ProposeTreaty {
+            faction_id,
+            band_id,
+            destination_band_id,
+            terms,
+        } => Some(Command::ProposeTreaty {
+            faction: FactionId(faction_id),
+            band_id,
+            destination_band_id,
+            terms,
+        }),
+        ProtoCommandPayload::SendEnvoy {
+            faction_id,
+            band_id,
+            party_workers,
+            destination_band_id,
+            terms,
+        } => Some(Command::SendEnvoy {
+            faction: FactionId(faction_id),
+            band_id,
+            party_workers,
+            destination_band_id,
+            terms,
+        }),
+        ProtoCommandPayload::EndTreaty {
+            faction,
+            other_faction,
+        } => Some(Command::EndTreaty {
+            faction: FactionId(faction),
+            other_faction: FactionId(other_faction),
         }),
         ProtoCommandPayload::AdjustCounterIntelBudget {
             faction,
@@ -12030,6 +12116,7 @@ fn command_kind_display(kind: CommandEventKind) -> &'static str {
         CommandEventKind::BandBrokeAway => "Band broke away",
         CommandEventKind::LostTouch => "Lost touch",
         CommandEventKind::Dealing => "Dealing",
+        CommandEventKind::Treaty => "Treaty",
     }
 }
 
@@ -12267,6 +12354,9 @@ fn commanding_faction(command: &Command) -> Option<(FactionId, &'static str)> {
         Command::SetAcceptOwnGifts { faction, .. } => Some((*faction, "set_accept_own_gifts")),
         Command::AnswerDealing { faction, .. } => Some((*faction, "answer_dealing")),
         Command::ProposeTrade { faction, .. } => Some((*faction, "propose_trade")),
+        Command::ProposeTreaty { faction, .. } => Some((*faction, "propose_treaty")),
+        Command::SendEnvoy { faction, .. } => Some((*faction, "send_envoy")),
+        Command::EndTreaty { faction, .. } => Some((*faction, "end_treaty")),
         Command::SpawnCrisis { faction, .. } => Some((*faction, "spawn_crisis")),
         Command::AssignLabor { faction, .. } => Some((*faction, "assign_labor")),
         Command::MoveBand { faction, .. } => Some((*faction, "move_band")),
@@ -12496,8 +12586,42 @@ fn apply_command(app: &mut bevy::prelude::App, command: Command) {
         Command::UpdateCounterIntelPolicy { faction, policy } => {
             handle_update_counter_intel_policy(app, faction, policy);
         }
-        Command::SetOpenBorders { faction, open } => {
-            handle_set_open_borders(app, faction, open);
+        Command::SetOpenBorders {
+            faction,
+            open,
+            other_faction,
+        } => {
+            handle_set_open_borders(app, faction, open, other_faction);
+        }
+        Command::ProposeTreaty {
+            faction,
+            band_id,
+            destination_band_id,
+            terms,
+        } => {
+            handle_propose_treaty(app, faction, band_id, destination_band_id, terms);
+        }
+        Command::SendEnvoy {
+            faction,
+            band_id,
+            party_workers,
+            destination_band_id,
+            terms,
+        } => {
+            handle_send_envoy(
+                app,
+                faction,
+                band_id,
+                party_workers,
+                destination_band_id,
+                terms,
+            );
+        }
+        Command::EndTreaty {
+            faction,
+            other_faction,
+        } => {
+            handle_end_treaty(app, faction, other_faction);
         }
         Command::AdjustCounterIntelBudget {
             faction,
@@ -13097,15 +13221,214 @@ fn handle_update_counter_intel_policy(
 /// already checked in `apply_command`, and the seat gate has already refused a connection that does
 /// not drive `faction`, so this only records the setting; the next turn's trickle and party
 /// defection read it.
-fn handle_set_open_borders(app: &mut bevy::prelude::App, faction: FactionId, open: bool) {
+///
+/// **With `other_faction` it is the setting toward that one people** — an override of the general
+/// setting (an open-borders treaty term still beats it). Closing to a people the sender holds an
+/// open-borders term with is a breach: the whole treaty ends at once, with the same drop in the
+/// other people's goodwill as `end_treaty`.
+fn handle_set_open_borders(
+    app: &mut bevy::prelude::App,
+    faction: FactionId,
+    open: bool,
+    other_faction: Option<FactionId>,
+) {
+    let Some(other) = other_faction else {
+        app.world
+            .resource_mut::<FactionBorderPolicies>()
+            .set_open(faction, open);
+        info!(
+            target: "shadow_scale::server",
+            %faction,
+            open,
+            "open_borders.updated"
+        );
+        return;
+    };
+    if other == faction
+        || !app
+            .world
+            .resource::<core_sim::FactionRegistry>()
+            .contains(other)
+    {
+        emit_command_failure(
+            app,
+            CommandEventKind::Treaty,
+            faction,
+            format!(
+                "set_open_borders: faction {} is not another people of this world.",
+                other.0
+            ),
+        );
+        return;
+    }
     app.world
         .resource_mut::<FactionBorderPolicies>()
-        .set_open(faction, open);
+        .set_override(faction, other, open);
+    if !open
+        && app
+            .world
+            .get_resource::<core_sim::Treaties>()
+            .is_some_and(|treaties| treaties.open_borders(faction, other))
+    {
+        break_treaty(app, faction, other, "borders_closed");
+    }
     info!(
         target: "shadow_scale::server",
         %faction,
+        other = %other,
         open,
-        "open_borders.updated"
+        "open_borders.override_updated"
+    );
+}
+
+/// **End the treaty between two peoples at once, as a breach by `breaker`**: the other people's
+/// goodwill toward the breaker takes the `broken_treaty` drop. Answers whether a treaty stood.
+fn break_treaty(
+    app: &mut bevy::prelude::App,
+    breaker: FactionId,
+    other: FactionId,
+    reason: &'static str,
+) -> bool {
+    let tick = app.world.resource::<SimulationTick>().0;
+    let broken_treaty = app
+        .world
+        .get_resource::<core_sim::DiplomacyConfigHandle>()
+        .map(|handle| handle.get().goodwill.broken_treaty)
+        .unwrap_or_else(|| core_sim::DiplomacyConfig::builtin().goodwill.broken_treaty);
+    app.world.resource_scope(
+        |world, mut treaties: bevy::prelude::Mut<core_sim::Treaties>| {
+            world.resource_scope(
+                |world, mut goodwill: bevy::prelude::Mut<core_sim::Goodwill>| {
+                    let mut log = world.resource_mut::<CommandEventLog>();
+                    core_sim::end_treaty(
+                        &mut treaties,
+                        &mut goodwill,
+                        &mut log,
+                        tick,
+                        breaker,
+                        other,
+                        broken_treaty,
+                        reason,
+                    )
+                    .is_some()
+                },
+            )
+        },
+    )
+}
+
+/// **End a treaty** — `end_treaty <faction> <other_faction>`. Removes it at once and is a breach.
+fn handle_end_treaty(app: &mut bevy::prelude::App, faction: FactionId, other: FactionId) {
+    if !break_treaty(app, faction, other, "ended") {
+        emit_command_failure(
+            app,
+            CommandEventKind::Treaty,
+            faction,
+            format!(
+                "end_treaty: your people holds no treaty with faction {}.",
+                other.0
+            ),
+        );
+    }
+}
+
+/// **Propose a treaty over a standing link** — `propose_treaty <faction> <band> <destination_band>
+/// [road_rights] [open_borders] [bundle give … ask …]…`. [`core_sim::propose_treaty`] fails closed
+/// with a reason before it records anything.
+fn handle_propose_treaty(
+    app: &mut bevy::prelude::App,
+    faction: FactionId,
+    band_id: Option<u64>,
+    destination_band_id: u64,
+    terms: sim_runtime::TreatyTermsRequest,
+) {
+    let Some(band) = select_starting_band(
+        app,
+        faction,
+        band_id,
+        "propose_treaty",
+        CommandEventKind::Treaty,
+    ) else {
+        return;
+    };
+    let Some(&home_band) = app.world.get::<BandId>(band.entity) else {
+        emit_command_failure(
+            app,
+            CommandEventKind::Treaty,
+            faction,
+            "propose_treaty: the band has no id to negotiate under.",
+        );
+        return;
+    };
+    match core_sim::propose_treaty(
+        &mut app.world,
+        faction,
+        home_band,
+        BandId(destination_band_id),
+        &terms,
+    ) {
+        Ok(id) => info!(
+            target: "shadow_scale::server",
+            %faction,
+            dealing = id.0,
+            "treaty.proposed"
+        ),
+        Err(reason) => emit_command_failure(app, CommandEventKind::Treaty, faction, reason),
+    }
+}
+
+/// **Send an envoy** — `send_envoy <faction> <band> <party_workers> <destination_band> <terms…>`.
+/// The same gates a shipment launch asks (a live tie to the destination), plus the proposal's own:
+/// another people's band, and a term asked for. The envoy carries no cargo; it provisions like a
+/// scout, walks to the destination and posts the proposal on arrival.
+fn handle_send_envoy(
+    app: &mut bevy::prelude::App,
+    faction: FactionId,
+    band_id: Option<u64>,
+    party_workers: u32,
+    destination_band_id: u64,
+    terms: sim_runtime::TreatyTermsRequest,
+) {
+    const VERB: &str = "send_envoy";
+    let Some(band) = select_starting_band(app, faction, band_id, VERB, CommandEventKind::Treaty)
+    else {
+        return;
+    };
+    let terms = match core_sim::TreatyTerms::resolve(&app.world, &terms, VERB) {
+        Ok(terms) => terms,
+        Err(reason) => {
+            emit_command_failure(app, CommandEventKind::Treaty, faction, reason);
+            return;
+        }
+    };
+    let checked = core_sim::dealings::check_treaty_terms_named(&terms, VERB).and_then(|()| {
+        core_sim::check_destination(
+            &mut app.world,
+            faction,
+            band.entity,
+            destination_band_id,
+            VERB,
+        )
+        .and_then(|gate| {
+            core_sim::dealings::check_not_own_people(faction, gate.destination_faction, VERB)
+        })
+    });
+    if let Err(reason) = checked {
+        emit_command_failure(app, CommandEventKind::Treaty, faction, reason);
+        return;
+    }
+    launch_trade_party(
+        app,
+        faction,
+        band_id,
+        party_workers,
+        destination_band_id,
+        ShipmentCargo::Lines(&core_sim::GoodsLines::default()),
+        None,
+        core_sim::ShipmentTerms::Envoy {
+            proposed: terms,
+            outcome: None,
+        },
     );
 }
 
@@ -13169,6 +13492,9 @@ fn handle_answer(
         sim_runtime::DealingReply::Refuse => core_sim::DealingAnswer::Refuse,
         sim_runtime::DealingReply::Counter { give, ask } => {
             core_sim::DealingAnswer::Counter { give, ask }
+        }
+        sim_runtime::DealingReply::CounterTerms { terms } => {
+            core_sim::DealingAnswer::CounterTerms { terms }
         }
     };
     match core_sim::answer_dealing(
@@ -17542,6 +17868,7 @@ mod tests {
                 defection_pull: Scalar::zero(),
                 station_reports: Vec::new(),
                 goodwill_news: Default::default(),
+                exchange_return: Default::default(),
                 scout_pack: Default::default(),
                 aim: None,
             },
@@ -23645,6 +23972,262 @@ mod tests {
                 "a refused scout drew nothing: {why}"
             );
         }
+    }
+
+    // ------------------------------------------------------------------------------------------
+    // Treaties (docs/plan_early_diplomacy.md §3)
+    // ------------------------------------------------------------------------------------------
+
+    /// A different people for a band to belong to, so a treaty is between two.
+    const OTHER_PEOPLE: FactionId = FactionId(9);
+
+    fn make_other_people(app: &mut bevy::prelude::App, band: core_sim::BandId, people: FactionId) {
+        let mut query = app
+            .world
+            .query::<(&core_sim::BandId, &mut PopulationCohort)>();
+        for (id, mut cohort) in query.iter_mut(&mut app.world) {
+            if *id == band {
+                cohort.faction = people;
+            }
+        }
+    }
+
+    fn road_rights_request() -> sim_runtime::TreatyTermsRequest {
+        sim_runtime::TreatyTermsRequest {
+            road_rights: true,
+            ..Default::default()
+        }
+    }
+
+    /// **`send_envoy` launches a party with no cargo whose mission carries the terms**, published as
+    /// an `envoy`; and it is refused, with nothing drawn, for your own people's band and for a
+    /// proposal that asks for nothing.
+    #[test]
+    fn an_envoy_launches_with_no_cargo_and_refuses_what_a_proposal_would() {
+        let mut app = build_world_app();
+        let (sender, destination, faction) = two_bands_that_know_each_other(&mut app);
+        let sender_id = app.world.get::<core_sim::BandId>(sender).expect("an id").0;
+        let before = band_food(&app, sender);
+
+        // The destination is the sender's own people: refused.
+        handle_send_envoy(
+            &mut app,
+            faction,
+            Some(sender_id),
+            TRADE_PARTY,
+            destination.0,
+            road_rights_request(),
+        );
+        assert!(
+            launched_party(&mut app).is_none(),
+            "a treaty needs two peoples"
+        );
+
+        make_other_people(&mut app, destination, OTHER_PEOPLE);
+        // A proposal that asks for nothing: refused.
+        handle_send_envoy(
+            &mut app,
+            faction,
+            Some(sender_id),
+            TRADE_PARTY,
+            destination.0,
+            sim_runtime::TreatyTermsRequest::default(),
+        );
+        assert!(launched_party(&mut app).is_none(), "no term, no errand");
+        assert!(
+            (band_food(&app, sender) - before).abs() < TRADE_EPSILON,
+            "a refused envoy drew nothing"
+        );
+
+        handle_send_envoy(
+            &mut app,
+            faction,
+            Some(sender_id),
+            TRADE_PARTY,
+            destination.0,
+            road_rights_request(),
+        );
+        let party = launched_party(&mut app).expect("the envoy left");
+        let expedition = app.world.get::<Expedition>(party).expect("the party");
+        assert_eq!(expedition.mission.as_str(), "envoy");
+        match &expedition.mission {
+            ExpeditionMission::Trade {
+                destination_band,
+                terms: core_sim::ShipmentTerms::Envoy { proposed, outcome },
+                ..
+            } => {
+                assert_eq!(*destination_band, destination);
+                assert!(proposed.road_rights && !proposed.open_borders);
+                assert_eq!(*outcome, None, "no answer yet");
+            }
+            other => panic!("an envoy mission expected, got {other:?}"),
+        }
+        assert!(
+            expedition.cargo.is_empty_of_goods(),
+            "an envoy carries no cargo"
+        );
+        // It walks like a scout: the walking larder is the only thing drawn.
+        assert!(band_food(&app, sender) <= before + TRADE_EPSILON);
+    }
+
+    /// **Closing the border toward a people the sender holds an open-borders term with ends the
+    /// treaty — a breach**; closing toward anyone else, or opening, does not.
+    #[test]
+    fn a_border_override_closing_to_an_open_borders_partner_breaks_the_treaty() {
+        let mut app = build_world_app();
+        let host = FactionId(0);
+        let guest = app
+            .world
+            .resource_mut::<core_sim::FactionRegistry>()
+            .add_ai_faction();
+        let bystander = app
+            .world
+            .resource_mut::<core_sim::FactionRegistry>()
+            .add_ai_faction();
+        app.world.resource_mut::<core_sim::Treaties>().set(
+            host,
+            guest,
+            core_sim::TreatyTerms {
+                open_borders: true,
+                road_rights: true,
+                ..Default::default()
+            },
+            1,
+        );
+        let broken_treaty = app
+            .world
+            .resource::<core_sim::DiplomacyConfigHandle>()
+            .get()
+            .goodwill
+            .broken_treaty;
+
+        // Opening, and closing to someone it holds no treaty with, break nothing.
+        handle_set_open_borders(&mut app, host, true, Some(guest));
+        handle_set_open_borders(&mut app, host, false, Some(bystander));
+        assert_eq!(app.world.resource::<core_sim::Treaties>().len(), 1);
+        assert_eq!(
+            app.world
+                .resource::<FactionBorderPolicies>()
+                .override_for(host, bystander),
+            Some(false)
+        );
+        // The default alone is not toward anyone: the treaty term still beats it.
+        handle_set_open_borders(&mut app, host, false, None);
+        assert_eq!(app.world.resource::<core_sim::Treaties>().len(), 1);
+        assert!(app.world.resource::<FactionBorderPolicies>().admits(
+            app.world.resource::<core_sim::Treaties>(),
+            host,
+            guest
+        ));
+
+        handle_set_open_borders(&mut app, host, false, Some(guest));
+        assert!(
+            app.world.resource::<core_sim::Treaties>().is_empty(),
+            "closing to a partner ends the whole treaty"
+        );
+        let goodwill = app.world.resource::<core_sim::Goodwill>();
+        assert!(
+            (goodwill.get(guest, host).breach + broken_treaty).abs() < f32::EPSILON,
+            "the partner's opinion of the breaker took the drop"
+        );
+        assert!(goodwill.get(host, guest).breach.abs() < f32::EPSILON);
+        assert_eq!(
+            app.world
+                .resource::<FactionBorderPolicies>()
+                .override_for(host, guest),
+            Some(false)
+        );
+    }
+
+    /// **`end_treaty` removes a treaty at once and is a breach; ending one that does not exist is a
+    /// command failure and costs nobody anything.**
+    #[test]
+    fn end_treaty_is_a_breach_and_ending_nothing_is_a_failure() {
+        let mut app = build_world_app();
+        let host = FactionId(0);
+        let guest = app
+            .world
+            .resource_mut::<core_sim::FactionRegistry>()
+            .add_ai_faction();
+        handle_end_treaty(&mut app, host, guest);
+        let failures = app
+            .world
+            .resource::<CommandEventLog>()
+            .iter()
+            .filter(|entry| matches!(entry.kind, CommandEventKind::Treaty))
+            .count();
+        assert_eq!(failures, 1, "one failure line for the missing treaty");
+        assert!(
+            app.world
+                .resource::<core_sim::Goodwill>()
+                .get(guest, host)
+                .breach
+                .abs()
+                < f32::EPSILON
+        );
+
+        app.world.resource_mut::<core_sim::Treaties>().set(
+            host,
+            guest,
+            core_sim::TreatyTerms {
+                road_rights: true,
+                ..Default::default()
+            },
+            1,
+        );
+        handle_end_treaty(&mut app, guest, host);
+        assert!(app.world.resource::<core_sim::Treaties>().is_empty());
+        let goodwill = app.world.resource::<core_sim::Goodwill>();
+        assert!(
+            goodwill.get(host, guest).breach < 0.0,
+            "the host now thinks less of the breaker"
+        );
+        assert!(goodwill.get(guest, host).breach.abs() < f32::EPSILON);
+    }
+
+    /// **`propose_treaty` over a kept road posts a treaty proposal to the destination's people.**
+    #[test]
+    fn a_treaty_proposed_over_a_kept_road_is_posted_to_the_other_people() {
+        let mut app = build_world_app();
+        let (sender, destination, faction) = two_bands_that_know_each_other(&mut app);
+        let sender_id = app.world.get::<core_sim::BandId>(sender).expect("an id").0;
+        make_other_people(&mut app, destination, OTHER_PEOPLE);
+        lay_the_road_under(&mut app, sender);
+
+        handle_propose_treaty(
+            &mut app,
+            faction,
+            Some(sender_id),
+            destination.0,
+            road_rights_request(),
+        );
+        let book = app.world.resource::<core_sim::PendingDealings>();
+        assert_eq!(book.len(), 1, "{:?}", dealing_failures(&app));
+        let dealing = book.iter().next().expect("a proposal");
+        assert_eq!(dealing.kind, core_sim::DealingKind::TreatyProposal);
+        assert_eq!(dealing.receiver_faction, OTHER_PEOPLE);
+
+        // The reply path: a treaty counter's terms reach the library answer.
+        let id = dealing.id;
+        handle_answer(
+            &mut app,
+            OTHER_PEOPLE,
+            id.0,
+            sim_runtime::DealingReply::CounterTerms {
+                terms: sim_runtime::TreatyTermsRequest {
+                    open_borders: true,
+                    ..Default::default()
+                },
+            },
+        );
+        let book = app.world.resource::<core_sim::PendingDealings>();
+        assert_eq!(book.len(), 1, "{:?}", dealing_failures(&app));
+        let counter = book.iter().next().expect("the counter");
+        assert_ne!(counter.id, id);
+        assert!(counter
+            .treaty
+            .as_ref()
+            .is_some_and(|proposal| proposal.terms.open_borders && !proposal.terms.road_rights));
     }
 
     /// **The debit is exactly the manifest plus the walk's larder.** The sending band loses what it

@@ -1571,6 +1571,10 @@ table PopulationCohortState {
   // it leaves when the party stands within this many tiles of its home band; beyond it, a runner's
   // walk behind. Global config echoed per cohort (the `moveFerryReachTiles` idiom); derived, never saved.
   commRangeTiles:uint = 0;
+  // --- ENVOY (appended last, #233) ------------------------------------------------------------
+  // The treaty terms an envoy party (`expeditionMission` "envoy") will post on arrival. Empty on
+  // every other row.
+  envoyTerms:TreatyTermsState;
 }
 
 // One keeping class's hunting meal - a row of `PopulationCohortState.huntMeals`.
@@ -6032,6 +6036,14 @@ table VoiceMediumState {
 // OWN row only (per-seat, like stanceAxes / voiceMedium). Today it holds Open Borders
 // (docs/plan_band_fission.md §Defection): whether another people's unhappy leavers, and defecting
 // parties, may join this faction's bands. Every faction starts open; `set_open_borders` flips it.
+// The viewer's own setting toward ONE other people (`set_open_borders <faction> <open|closed>
+// <other_faction>`, docs/plan_early_diplomacy.md §3): it overrides the default `openBorders` for that
+// people and nothing else. An open-borders treaty term still beats it.
+table BorderOverrideState {
+  otherFaction:uint;
+  open:bool;
+}
+
 table FactionPolicyState {
   faction:uint;
   openBorders:bool = true;
@@ -6039,6 +6051,8 @@ table FactionPolicyState {
   // on (the default), such a shipment lands on arrival; off, it waits to be answered like any other
   // dealing. `set_accept_own_gifts` flips it. Appended (append-only discipline).
   acceptOwnGifts:bool = true;
+  // The viewer's per-people overrides of `openBorders`, in the other people's id order. Appended.
+  borderOverrides:[BorderOverrideState];
 }
 
 // A faction's NAME - what its people call themselves. WORLD-VISIBLE: every faction's row rides every
@@ -6695,6 +6709,12 @@ table DealingState {
   // proposal; a counter inherits it), the waiting party's on an offer - what bounds the return it can
   // walk home (partyWorkers x carryPerWorker).
   partyWorkers:uint;
+  // TREATY PROPOSALS (docs/plan_early_diplomacy.md §3): kind "treaty_proposal" carries the FULL
+  // terms asked for (`treaty`, empty on every other kind) and who carries it (`carrier`: "road" or
+  // "envoy"; empty on every other kind). The goods lists of a bundle carry NO ratings, as a stage-4
+  // proposal's legs do. Appended.
+  treaty:TreatyTermsState;
+  carrier:string;
 }
 
 table DealingsSection {
@@ -6731,6 +6751,42 @@ table GoodwillSection {
   goodwill:[GoodwillState];
   cuts:GoodwillCutsState;
   own:[GoodwillState];
+}
+
+// --- Treaties (docs/plan_early_diplomacy.md §3, issue #233) --------------------------------------
+// ONE STANDING EXCHANGE of an agreed trade: a shipment carrying `sent` between the two peoples is
+// paid `returned` on arrival. `sent` is from the SHIPPING people's point of view. No ratings.
+table TreatyBundleState {
+  sent:DealingGoodsState;
+  returned:DealingGoodsState;
+}
+
+// THE TERMS a treaty holds or a proposal asks for: the two flags and the standing bundles.
+table TreatyTermsState {
+  roadRights:bool;
+  openBorders:bool;
+  bundles:[TreatyBundleState];
+}
+
+// ONE TREATY THE VIEWER'S PEOPLE IS PARTY TO - the other people, its three terms, and the turn it
+// took effect. A frame carries the viewer's own treaties only.
+table TreatyState {
+  otherFaction:uint;
+  terms:TreatyTermsState;
+  formedTurn:ulong;
+}
+
+// ONE STANDING LINK between a band of the viewer's people and a band of another people: a kept road
+// on every tile between them (`routes::standing_link`) - what `propose_treaty` needs.
+table StandingLinkState {
+  viewerBand:ulong;
+  otherBand:ulong;
+  otherFaction:uint;
+}
+
+table TreatySection {
+  treaties:[TreatyState];
+  standingLinks:[StandingLinkState];
 }
 
 // ONE GOOD THAT CROSSED A BAND'S STORE, BY CAUSE - a row of `PopulationCohortState.transferCrossings`.
@@ -6904,6 +6960,9 @@ table WorldSnapshot {
   // Goodwill, appended after dealings: viewer-scoped (what other peoples are known to think of the
   // viewer's people).
   goodwill:GoodwillSection;
+  // Treaties, appended after goodwill: viewer-scoped (the treaties the viewer's people is party to,
+  // and the standing links between its bands and other peoples').
+  treaties:TreatySection;
 }
 
 table WorldDelta {
@@ -6927,6 +6986,8 @@ table WorldDelta {
   dealings:DealingsSection;
   // Mirrors `WorldSnapshot.goodwill`; the rows and the cuts are each re-sent whole when they move.
   goodwill:GoodwillSection;
+  // Mirrors `WorldSnapshot.treaties`; each list is re-sent whole when it moves.
+  treaties:TreatySection;
 }
 
 union SnapshotPayload {

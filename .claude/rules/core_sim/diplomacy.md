@@ -13,6 +13,11 @@ paths:
   - "core_sim/tests/stages.rs"
   - "sim_schema/src/state/goodwill.rs"
   - "sim_schema/src/codec/goodwill.rs"
+  - "core_sim/src/treaties.rs"
+  - "core_sim/src/snapshot/treaties.rs"
+  - "core_sim/tests/treaties.rs"
+  - "sim_schema/src/state/treaties.rs"
+  - "sim_schema/src/codec/treaties.rs"
 ---
 
 # Early diplomacy — offers, the pending dealing, and goodwill
@@ -24,8 +29,9 @@ its sources, its fade, and how it is known; and **slice 1c, the exchange stages*
 source of §2): haggling over a standing link (stage 4), a scout's pack (stage 1), and what a standing
 link is worth; and **slice 1d, the AI answers** (§4): the live opinion on the viewer's own frame and
 the offer's party size, which are what a player process needs to judge a dealing — the answering
-itself is `sim_ai`'s (`.claude/rules/core_sim/ai-driver.md` → "`Dealings`"). Treaties, the envoy and
-road rights are later slices; their levers are loaded and validated here and read there.
+itself is `sim_ai`'s (`.claude/rules/core_sim/ai-driver.md` → "`Dealings`"); and **slice 2,
+treaties** (§3): road rights, open borders and agreed trade, proposed over a road or by an envoy, the
+per-people borders and the foreign-road reading ("Treaties" below).
 
 ## Config files
 
@@ -47,10 +53,9 @@ Loader `diplomacy_config.rs` on the shared boot seam (`config-loading.md`), env 
 (`deny_unknown_fields`; only the root accepts a `_comment`), so a missing or misspelled lever is a boot
 panic rather than a number nobody chose. Readers: `offer_wait_turns` (offers), `standing_link_min_rung`
 (the standing link) and, for goodwill, `fade_per_turn`, `per_load`, `per_person_stationed`,
-`per_link`, `wary_below` and `friendly_above`; the rest (`per_term`, `broken_treaty`, the roads
-block) are loaded so a bad file stops the boot the day it is edited, not the day a later slice
-first reads it. All opening values are playtest dials. **No AI lever is here**: an AI is a player
-process and cannot read sim config, so its dealing levers (`return_fairness`,
+`per_link`, `wary_below` and `friendly_above`, and — read by treaties — `per_term`, `broken_treaty`
+and `roads.foreign_road_share`. All opening values are playtest dials. **No AI lever is here**: an AI
+is a player process and cannot read sim config, so its dealing levers (`return_fairness`,
 `food_runway_floor_turns`, `treaty_goodwill`) live in `sim_ai/data/ai_profiles.json`.
 
 ## The pending item: `PendingDealings`
@@ -303,9 +308,10 @@ own standing answer is `FactionPolicyState.acceptOwnGifts` (appended; default on
 
 `goodwill.rs`. `Goodwill` (`SimState`) is `BTreeMap<(holder, about), GoodwillEntry>`; the entry is
 **one `f32` per source kind** — `gifts`, `exchanges`, `stationed`, `link`, `treaty`, `breach` — and the
-opinion is their sum (`GoodwillEntry::total`), never stored. `treaty` and `breach` have no
-writer yet and stay in the shape (`link` is written by `credit_link_goodwill`). The components are the readout's "reasons"; proportional fade
-(`x -= x × fade_per_turn` on each) treats them identically, so the sum fades exactly as one number.
+opinion is their sum (`GoodwillEntry::total`), never stored. `link` is written by
+`credit_link_goodwill`, `treaty` by `credit_treaty_goodwill` and `breach` by `end_treaty` (the
+"Treaties" section). The components are the readout's "reasons"; proportional fade (`x -= x ×
+fade_per_turn` on each) treats them identically, so the sum fades exactly as one number.
 
 - **`Goodwill::credit(holder, about, source, amount)` is the one seam.** It ignores a self-pair
   (an opinion of your own people is meaningless — never stored, never credited, so no call site
@@ -389,6 +395,122 @@ return the party can walk home (`partyWorkers × carryPerWorker`), which the ans
 size one; a proposal's and counter's `partyWorkers` is the shipper's, as before (`SAVE_FORMAT_VERSION`
 42 carries it).
 
+
+## Treaties — road rights, open borders and agreed trade (slice 2, plan §3)
+
+`treaties.rs`. A treaty is a standing promise between **two peoples**: `Treaties` (`SimState`, keyed
+by the **unordered** faction pair, low id first) holds `Treaty { road_rights, open_borders,
+agreed_trade: Vec<Bundle>, formed_turn }`. **A treaty with no term true and no bundle is not stored**
+(`Treaties::set` removes it), a people has no treaty with itself (every reader answers "no term" for a
+same-people pair, so no caller compares factions), and the readers are `road_rights(a, b)`,
+`open_borders(a, b)` and `bundles(a, b)`. A `Bundle` is two `GoodsLines` — `sent` (from the
+**shipping** people's point of view) and `returned` — unrated, as a stage-4 proposal's legs are; a
+bundle must send something (an empty `sent` would be covered by any cargo, any number of times).
+
+### Proposing: `DealingKind::TreatyProposal`, and how it travels
+
+A treaty proposal is a `Dealing` with `treaty: Some(TreatyProposal { terms, carrier })` — **the full
+terms asked for** (the wire token `"treaty_proposal"`). Accepting **replaces** whatever treaty stood:
+amending is proposing again, and dropping a term that way is **not** a breach. There are two carriers
+(`TreatyCarrier`):
+
+| | `Road` (`propose_treaty`) | `Envoy` (`send_envoy`) |
+|---|---|---|
+| posted | the turn it is made, `dealings::propose_treaty` | when the envoy reaches the receiver's camp (the `Arrived` arm of `advance_expeditions`) |
+| gates | the proposer's resident band, a live tie to the destination (`check_destination`), a **standing link** (`bands_have_standing_link`), a band of **another** people, at least one term, every bundle valid | the same gates but the link, checked at launch (`handle_send_envoy`); the destination must be another people's |
+| the receiver answers | only while the standing link still holds, else it is withdrawn (`reason=link_broken`) | while the envoy stands in the camp (`AwaitingOrders`); needs nothing else |
+| the proposer learns | **at once** | **when the envoy folds home**, as one feed line (`reported=envoy`) |
+| silence | refuses it at `expires_turn` (`offer_wait_turns`), told to both | the envoy waits `offer_wait_turns`, then walks home with `Expired` |
+
+**The receiver's acceptance is in force at once, either way.** What the envoy carries home is the
+*news*, not the effect.
+
+`send_envoy` launches a **trade party with no cargo** — the envoy is `ExpeditionMission::Trade`
+whose terms are `ShipmentTerms::Envoy { proposed, outcome }`, published as `expeditionMission`
+`"envoy"` (`ExpeditionMission::as_str`) — so it reuses every arm a shipment has: provisioned like a
+scout, walks to `Expedition::aim`, the same arrival rule, the same lost-destination guards, the same
+fold-back. `outcome: Option<EnvoyOutcome>` (`Accepted | Refused | Expired | Countered(terms)`) is
+what the answer wrote on the party for the fold-back to read (`dealings::report_envoy_home`).
+
+### The answer, and the counter
+
+`answer_dealing <f> <id> accept | refuse | counter <terms>` (a treaty counter is `counter
+[road_rights] [open_borders] [bundle give … ask …]…`, `AnswerDealingCommand.counter_terms`, proto
+**7**; `counter give … ask …` stays the stage-4 trade counter). A counter carries the receiver's
+**full** terms and posts a new `TreatyProposal` the other way (a counter naming no term is refused —
+refuse instead). **A counter inherits its carrier**: a road-carried one is answered under the
+stage-4 link rule; an envoy-carried one rides home with the envoy and is posted into the book at the
+fold-back, addressed to the envoy's own people, and **answering it needs no road** (the envoy that
+carried it has already come home; each further counter on it is posted at once, and costs the
+haggler a turn).
+
+### Ending: `end_treaty`, and the breach
+
+`end_treaty <faction> <other_faction>` removes the treaty at once and **is a breach**
+(`treaties::end_treaty`): the other people's goodwill toward the breaker takes `-goodwill.broken_treaty`
+into the `breach` component; the breaker's own opinion does not move; both are told. **Closing the
+border toward a people you hold an open-borders term with**
+(`set_open_borders … <other>`, below) is the same breach — it ends the whole treaty with the same
+drop. **A treaty dissolves silently, with no breach**, when either people stops existing
+(`dissolve_extinct_peoples`, Visibility: a people exists while it has a resident band); the survivor
+is told it lapsed.
+
+### Per-people borders: `FactionBorderPolicies::admits(treaties, host, from)`
+
+**ONE function** answers "does `host`'s people take in `from`'s?", in this order: **own people**
+(always); an **open-borders treaty term**; the host's **override** for that one people
+(`set_open_borders <faction> <open|closed> <other_faction>`); the **default** (`default_open`, the
+old `is_open`). It replaces `is_open` and `admits_posting` at **every** reader — the unhappy trickle's
+destination (`walkable_destination`, shared with the breeding shed), a defecting party
+(`advance_party_defection`), a stationed party's launch and its every-turn post check
+(`resolve_post`, `advance_expeditions`). The frame publishes the viewer's overrides beside the default
+(`FactionPolicyState.borderOverrides`).
+
+### Road rights and the reading of a foreign road
+
+Road rights change how a **foreigner's walk** reads a kept road — see `routes.md` → "A foreigner's
+walk reads a share of a built road". They are read by every walk that goes through
+`routes::path_reach_tiles` (work parties' walks, the unhappy trickle's reach, the culture term and
+belief relay, supply pooling) with the walking people's treaties. A standing link is unchanged: a
+foreign kept road is still a kept road.
+
+### Agreed trade
+
+A shipment (`send_trade_expedition`, gift or offer) between two peoples whose treaty carries bundles
+settles what the bundles cover **on arrival** (`systems::expeditions::settle_treaty_bundles`):
+`treaties::match_bundles` takes **whole bundles greedily, in bundle order**, while the cargo covers
+each one's `sent` (`kᵢ` copies of bundle `i`). The covered part settles at once through
+`dealings::settle_exchange` — the one exchange routine — as an agreed exchange: the receiver pays
+`Σ kᵢ × returnedᵢ` (booked `ExchangeOut`/`ExchangeIn`), exchange goodwill rises both ways, and a
+`kind=exchange` line is told to both. **The payment walks home on `Expedition::exchange_return`**,
+apart from `cargo`, because an accepted offer for the *remainder* lands the whole cargo in the
+receiver and must not take the payment with it (the fold-back books it `ExchangeIn`). **The remainder
+follows the shipment's own terms** — a gift to another people, or an offer, becomes a pending dealing
+carrying only the remainder; nothing left means nothing pending and the party turns home. **If the
+receiver cannot pay the return, the covered part fails as stage 4 does** (`receiver_short`): nothing
+lands, no goodwill moves, and the covered goods walk home on `exchange_return` (booked `ExchangeIn`
+there — a label the rare case shares with a payment). A same-people shipment never reads treaties.
+
+### Treaty goodwill
+
+`treaties::credit_treaty_goodwill` (`TurnStage::Visibility`, after the fade and after
+`dissolve_extinct_peoples`, behind `credit_link_goodwill`): each way, `goodwill.per_term × terms` into
+`treaty`, where terms = road rights (1) + open borders (1) + (1 if there is any bundle). It settles near
+`per_term × terms / fade_per_turn`, and refreshes `KnownGoodwill` both ways (a treaty is between two
+governments that know it).
+
+### The wire
+
+`TreatySection` is appended last on **both** envelopes, **viewer-scoped**: `treaties` — the treaties
+the viewer's people is party to (`TreatyState`: the other people, `terms` (`roadRights`, `openBorders`,
+`bundles` as two goods lists each) and `formedTurn`) — and `standingLinks` — every pair of a viewer
+band and another people's band the viewer holds a live tie with that a kept road joins end to end
+(`routes::standing_link`; `StandingLinkState { viewerBand, otherBand, otherFaction }`). `DealingState`
+gains `treaty` (the proposal's full terms; empty on other kinds) and `carrier` (`"road"` / `"envoy"`),
+`PopulationCohortState` gains `envoyTerms` (an envoy party's errand), and `FactionPolicyState` gains
+`borderOverrides`. `SAVE_FORMAT_VERSION` 42 carries `Treaties`, the overrides, `Dealing::treaty`,
+`ShipmentTerms::Envoy` and `Expedition::exchange_return`.
+
 ## Tests
 
 | Test | Claim |
@@ -409,6 +531,10 @@ size one; a proposal's and counter's `partyWorkers` is the shipper's, as before 
 | `tests/stages.rs` (stage 1) | a `give` scout turns toward the first stranger and posts a pending offer, spent; an accepted gift credits receiver → giver and the scout resumes its recorded destination; an `offer` scout comes home with the named return as `ExchangeIn`; a refusal and a lapse bring the pack home; a band the home band holds a tie with is no stranger; `keep` never hands over; a lost stranger leaves the order unspent |
 | `tests/stages.rs` (link goodwill) | one credit per people pair per turn however many band pairs, `KnownGoodwill` refreshed both ways with no party; no road, no credit; an unkept road holds no link |
 | `bin/server.rs` `tests::{an_accepted_proposal…, a_countered_proposal…, a_proposal_the_sender_cannot_honour…, a_proposal_with_no_standing_link…, a_scouts_pack…}` | the launch half: an accepted proposal sends the party with the give as cargo and `Agreed` terms; a counter launches on its terms; a sender that cannot honour its leg fails the dealing; the pack is drawn at launch and fails closed |
+| `tests/treaties.rs` | a treaty proposed over a kept road is posted at once, told to both, accepted into force for both **from that turn**, and on the **encoded** frame (the treaty, the standing link, the proposal's terms and carrier) for its two peoples and no third; a counter carries full terms back and accepting it puts those in force; an accepted proposal amends a standing treaty with no breach; the fail-closed gates (no link, no term, an empty bundle, an unknown good, your own people); a vanished road withdraws a road-carried proposal; `end_treaty` costs the breaker the **other** people's goodwill only; a people ceasing dissolves its treaties without a breach; treaty goodwill follows `s(1 - (1 - fade)^n)/fade`; an envoy posts on arrival, the receiver's acceptance is in force at once and the proposer hears only at the fold-back; an envoy's counter is posted to its people at the fold-back and answered with no road; an unanswered envoy lapses; bundles settle whole and the remainder follows the shipment's terms (and is pending), an exactly covered cargo leaves nothing pending, a receiver short of the return fails the covered part with no goodwill, a same-people shipment never reads a treaty; the viewer's border overrides and an envoy's errand are on the encoded frame; a treaty round-trips a checkpoint |
+| `routes::foreign_road_tests`, `work_party::tests::a_foreign_road_shortens_the_walk…`, `resources::border_admission_tests` | the foreign-road rule tile by tile, a path's weakest tile for its own walker, a real caller (`resolve_walk`), and `admits`'s precedence table |
+| `bin/server.rs` `tests::{an_envoy_launches…, a_border_override_closing…, end_treaty_is…, a_treaty_proposed…}` | the handlers: the envoy's launch and refusals, an override closing to a partner breaks the treaty, `end_treaty`, `propose_treaty` and a treaty counter's reply path |
+| `sim_ai` `specialists::dealings::tests::a_treaty_proposal_is_accepted…` | the AI accepts a treaty at its goodwill threshold and refuses below it |
 | `tests/sim_state_coverage.rs` | `PendingDealings` is classified `SIM_STATE`; the config handle and metadata are `CONFIG` |
 
 ## See also
