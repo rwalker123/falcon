@@ -962,8 +962,8 @@ static func detail_bbcode(lines: Array, ctx: Context = null) -> String:
                 table_open = false
             out += "\n"
             continue
-        # THE BREEDING CEILING'S LINES (issue #691): popover table rows, the amber `◆` bullet and the
-        # faint notes. They ride behind control-character sentinels (`HudLineageVocab`) because the
+        # THE BREEDING CEILING'S LINES (issue #691): popover table rows and the faint notes. They ride behind
+        # control-character sentinels (`HudLineageVocab`) because the
         # popover payload is a list of strings and a plain `Key: value` carries one ink per row.
         if HudLineageVocab.is_lineage_line(line):
             var rendered := HudLineageVocab.line_bbcode(line, table_open)

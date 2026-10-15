@@ -7929,16 +7929,14 @@ player's own RESIDENT bands (parties excluded), `HudLineageVocab.faction_groups`
   `Context.family_limit_amber`, key via the caret) while its `fertility_ceiling < 1`. Bands in the
   other groups append the page's own `_alert_clause` (`N` = bands outside the main group), which
   also turns the key amber.
-- **One line under it, by precedence:** over the limit, kin (`fertility_ceiling` 0), room for N
-  more - amber `◆` lines - then `{Band} is out of touch. Bring it back to share the limit.` / `{N}
-  bands are out of touch. Bring them back to share the limit.` (amber), then the faint stay-in-touch
-  line when the ceiling equals `lineage_free_breeding_at`.
+- **Nothing sits under the row**: the popover carries every sentence the row would repeat.
 - **Popover** (`BREAKDOWN_KIND_FAMILY_LIMIT`, `register_faction`): the main group's member rows and
   other-faction rows (names by `FactionMark.faction_name`, READY blue; ` · fading` amber), then, if
   any group is out of touch, a faint `OUT OF TOUCH` label and one row per group (its band names
-  joined `, ` against its own `population / ceiling` in amber), then the faint `CONTACT_NOTE`. Rows
-  ride behind control-character sentinels (`HudLineageVocab.ROW_MARK` / `FAINT_MARK`, bullets lead
-  with `◆ `) that `DetailFormat.detail_bbcode` renders through `HudLineageVocab.line_bbcode`.
+  joined `, ` against its own `population / ceiling` in amber), then, when the main group's ceiling
+  equals `lineage_free_breeding_at`, the faint `STAY_IN_TOUCH_FORMAT` line, then the faint
+  `CONTACT_NOTE`. Rows ride behind control-character sentinels (`HudLineageVocab.ROW_MARK` /
+  `FAINT_MARK`) that `DetailFormat.detail_bbcode` renders through `HudLineageVocab.line_bbcode`.
 - **Frames:** `family_limit_room` / `_near` / `_at` / `_lost_touch` / `_peoples` / `_lifted`.
 
 ## The split sheet's families and FAMILY LIMIT block (issue #691)

@@ -227,9 +227,6 @@ static func _family_limit_lines(bands: Array, disclosures: DisclosureController)
     lines.append("%s%s%s%s" % [HudDisclosureVocab.DETAIL_ROW_FAMILY_LIMIT,
         DetailFormat.DETAIL_KV_SEPARATOR, HudLineageVocab.row_value(groups["main"]),
         _alert_clause(out_count, HudStyle.WARN_HEX)])
-    var note := HudLineageVocab.faction_note_line(groups, band_name)
-    if note != "":
-        lines.append(note)
     return lines
 
 ## `Food: 229 · −5.86 /turn` (+ the alert clause). **NO RUNWAY.** Turns-of-food is one larder against
