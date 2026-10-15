@@ -250,6 +250,10 @@ pub struct Dealing {
     /// **The waiting party**, for an offer. `None` for a proposal and a counter, which no party
     /// carries.
     pub party: Option<BandId>,
+    /// **How many workers the waiting party has**, for an offer: what bounds the return it can walk
+    /// home (`party_workers × per-worker carry`), published so the answering people can size a
+    /// return that fits. `0` for a proposal and a counter, whose `agreement` carries its own.
+    pub party_workers: u32,
     /// What was sent (an offer): the shipment's own cargo representation, by class and by rating.
     pub goods_sent: LocalStore,
     /// What is asked or returned (an offer). Empty — the receiver names the return in its answer.
@@ -1505,6 +1509,7 @@ fn answer_agreement(
                 receiver_faction: dealing.sender_faction,
                 receiver_band: dealing.sender_band,
                 party: None,
+                party_workers: 0,
                 goods_sent: LocalStore::new(),
                 goods_asked: LocalStore::new(),
                 agreement: Some(Agreement {
@@ -1737,6 +1742,7 @@ pub fn propose_trade(
         receiver_faction: gate.destination_faction,
         receiver_band: gate.destination_band,
         party: None,
+        party_workers: 0,
         goods_sent: LocalStore::new(),
         goods_asked: LocalStore::new(),
         agreement: Some(agreement.clone()),
@@ -1831,6 +1837,7 @@ mod tests {
             receiver_faction: FactionId(1),
             receiver_band: BandId(2),
             party: Some(BandId(3)),
+            party_workers: 1,
             goods_sent: LocalStore::new(),
             goods_asked: LocalStore::new(),
             agreement: None,

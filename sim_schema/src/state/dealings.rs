@@ -44,6 +44,7 @@ pub struct DealingState {
     /// whichever end is speaking. `0` on an offer. `goods_sent` is then what it SENDS and
     /// `goods_asked` what it asks BACK, from the shipper's point of view, as unrated lines.
     pub shipper_band: u64,
-    /// How many workers the shipper's party carries. `0` on an offer.
+    /// How many workers the party carries: the shipper's on a proposal or counter, the waiting
+    /// party's on an offer (what bounds the return it can walk home).
     pub party_workers: u32,
 }

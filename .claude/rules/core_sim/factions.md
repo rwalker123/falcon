@@ -1050,7 +1050,7 @@ apply only where the row describes something that can be *seen*.
 | `victory.winner` | `snapshot/campaign.rs` | **World** — a winner is public by definition, and it names the faction that actually achieved it |
 | `factionPolicies` | `snapshot/campaign.rs` | **Viewer** — your own Open Borders row and standing answer to a gift from your own people only |
 | `dealings` | `snapshot/dealings.rs` | **Viewer** — the pending dealings addressed to the viewer's people or sent by them (`diplomacy.md`) |
-| `goodwill` | `snapshot/goodwill.rs` | **Viewer** — what other peoples are *known* to think of the viewer's (carried news, never the live opinion), plus the word cuts (`diplomacy.md`) |
+| `goodwill` | `snapshot/goodwill.rs` | **Viewer** — what other peoples are *known* to think of the viewer's (carried news, never the live opinion), plus the word cuts, plus `own`: the viewer's **own** live opinion of each other people, never another people's (`diplomacy.md`) |
 | `factionNames` | `snapshot/capture.rs` | **World** — every faction's name; a name reveals nothing the roster count does not (`band-names.md` → "Faction names") |
 
 ### ⛔ A DERIVED AGGREGATE IS FACTION-KEYED DATA, EVEN WITH NO FACTION FIELD

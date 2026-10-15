@@ -899,6 +899,7 @@ fn seed_snapshot() -> WorldSnapshot {
     // What other peoples are known to think of the viewer's; the cuts are a single table, saturated
     // with the rest.
     s.goodwill = rows();
+    s.own_goodwill = rows();
     for dealing in &mut s.dealings {
         for goods in [&mut dealing.goods_sent, &mut dealing.goods_asked] {
             goods.materials = ["hide", "fibre"]

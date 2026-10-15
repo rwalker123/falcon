@@ -223,33 +223,8 @@ impl KnownGoodwill {
 // Worth
 // ---------------------------------------------------------------------------------------------
 
-/// One good of a gift, as the receiver's judgement sees it.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct GoodAmount {
-    /// The load of the gift's whole amount of this good, in the one load currency (`carry.rs`):
-    /// what it would weigh in a pack. A good they hold none of is worth exactly this.
-    pub load: f32,
-    /// How much of it crosses.
-    pub amount: f32,
-    /// How much the receiving band already holds, in the same unit, immediately before.
-    pub held: f32,
-}
-
-/// `load × amount / (amount + held)` — a good they have none of counts at its full load, a good
-/// they already hold ten times over counts for about a tenth. Zero when nothing crosses.
-pub fn good_worth(good: GoodAmount) -> f32 {
-    let denominator = good.amount + good.held;
-    if good.amount <= 0.0 || denominator <= 0.0 {
-        return 0.0;
-    }
-    good.load * good.amount / denominator
-}
-
-/// **The worth of a gift: the sum of its goods' worth.** The receiver's judgement, never a price
-/// table — it becomes goodwill and nothing else, and no exchange is accepted or refused on it.
-pub fn worth(goods: &[GoodAmount]) -> f32 {
-    goods.iter().copied().map(good_worth).sum()
-}
+// `GoodAmount`, `good_worth` and `worth` are `sim_runtime::worth`: one formula, shared with the AI.
+pub use sim_runtime::{good_worth, worth, GoodAmount};
 
 fn unit_load(carry: &CarryConfig, food: i64, fodder: i64, materials: i64) -> f32 {
     CarryLoad {

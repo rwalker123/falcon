@@ -66,6 +66,9 @@ pub struct SnapshotContext<'w> {
     pub pending_dealings: Option<Res<'w, crate::dealings::PendingDealings>>,
     /// What other peoples are known to think of each viewer — published as the viewer's own rows.
     pub known_goodwill: Option<Res<'w, crate::goodwill::KnownGoodwill>>,
+    /// Every people's live opinion of every other — published as the viewer's OWN rows only (what
+    /// its own people think), never another people's.
+    pub goodwill: Option<Res<'w, crate::goodwill::Goodwill>>,
     /// The diplomacy levers — the word cuts the goodwill rows are drawn with. `Option` on the same
     /// rule: a hand-rolled world reads the builtin.
     pub diplomacy_config: Option<Res<'w, crate::diplomacy_config::DiplomacyConfigHandle>>,
@@ -297,6 +300,7 @@ pub(crate) struct SeatPublishState {
     routes: Whole<Vec<RouteState>>,
     dealings: Whole<Vec<DealingState>>,
     goodwill: Whole<Vec<GoodwillState>>,
+    own_goodwill: Whole<Vec<GoodwillState>>,
     goodwill_cuts: Whole<GoodwillCutsState>,
     demographics: Whole<Vec<SchemaPopulationDemographicsState>>,
     forage_patches: Whole<Vec<ForagePatchState>>,
@@ -670,6 +674,7 @@ struct CampaignParts {
     routes: Option<Vec<RouteState>>,
     dealings: Option<Vec<DealingState>>,
     goodwill: Option<Vec<GoodwillState>>,
+    own_goodwill: Option<Vec<GoodwillState>>,
     goodwill_cuts: Option<GoodwillCutsState>,
     demographics: Option<Vec<SchemaPopulationDemographicsState>>,
     intensification_knowledge: Option<Vec<IntensificationKnowledgeState>>,
@@ -698,6 +703,7 @@ struct CampaignBaselines<'a> {
     routes: &'a mut Whole<Vec<RouteState>>,
     dealings: &'a mut Whole<Vec<DealingState>>,
     goodwill: &'a mut Whole<Vec<GoodwillState>>,
+    own_goodwill: &'a mut Whole<Vec<GoodwillState>>,
     goodwill_cuts: &'a mut Whole<GoodwillCutsState>,
     demographics: &'a mut Whole<Vec<SchemaPopulationDemographicsState>>,
     intensification_knowledge: &'a mut Whole<Vec<IntensificationKnowledgeState>>,
@@ -745,6 +751,7 @@ fn diff_campaign(
         routes: diff_whole(baseline.routes, &snapshot.routes, write),
         dealings: diff_whole(baseline.dealings, &snapshot.dealings, write),
         goodwill: diff_whole(baseline.goodwill, &snapshot.goodwill, write),
+        own_goodwill: diff_whole(baseline.own_goodwill, &snapshot.own_goodwill, write),
         goodwill_cuts: diff_whole(baseline.goodwill_cuts, &snapshot.goodwill_cuts, write),
         demographics: diff_whole(baseline.demographics, &snapshot.demographics, write),
         intensification_knowledge: diff_whole(
@@ -973,6 +980,7 @@ impl SeatPublishState {
             routes: Whole::default(),
             dealings: Whole::default(),
             goodwill: Whole::default(),
+            own_goodwill: Whole::default(),
             goodwill_cuts: Whole::default(),
             demographics: Whole::default(),
             forage_patches: Whole::default(),
@@ -1144,6 +1152,7 @@ impl SeatPublishState {
             routes,
             dealings,
             goodwill,
+            own_goodwill,
             goodwill_cuts,
             demographics,
             intensification_knowledge,
@@ -1267,6 +1276,7 @@ impl SeatPublishState {
                             routes,
                             dealings,
                             goodwill,
+                            own_goodwill,
                             goodwill_cuts,
                             demographics,
                             intensification_knowledge,
@@ -1379,6 +1389,7 @@ impl SeatPublishState {
             routes: campaign_parts.routes,
             dealings: campaign_parts.dealings,
             goodwill: campaign_parts.goodwill,
+            own_goodwill: campaign_parts.own_goodwill,
             goodwill_cuts: campaign_parts.goodwill_cuts,
             demographics: campaign_parts.demographics,
             intensification_knowledge: campaign_parts.intensification_knowledge,
@@ -1586,6 +1597,7 @@ impl SeatPublishState {
         self.routes.reset(entry.snapshot.routes.clone());
         self.dealings.reset(entry.snapshot.dealings.clone());
         self.goodwill.reset(entry.snapshot.goodwill.clone());
+        self.own_goodwill.reset(entry.snapshot.own_goodwill.clone());
         self.goodwill_cuts
             .reset(entry.snapshot.goodwill_cuts.clone());
         self.demographics.reset(entry.snapshot.demographics.clone());
@@ -1823,6 +1835,7 @@ impl SeatPublishState {
             routes: None,
             dealings: None,
             goodwill: None,
+            own_goodwill: None,
             goodwill_cuts: None,
             demographics: None,
             forage_patches: None,
@@ -1975,6 +1988,7 @@ impl SeatPublishState {
             routes: None,
             dealings: None,
             goodwill: None,
+            own_goodwill: None,
             goodwill_cuts: None,
             demographics: None,
             forage_patches: None,
@@ -2111,6 +2125,7 @@ impl SeatPublishState {
             routes: None,
             dealings: None,
             goodwill: None,
+            own_goodwill: None,
             goodwill_cuts: None,
             demographics: None,
             forage_patches: None,
@@ -2671,6 +2686,7 @@ pub fn capture_snapshot(
         border_policies,
         pending_dealings,
         known_goodwill,
+        goodwill,
         diplomacy_config,
         faction_names,
         victory,
@@ -3882,6 +3898,14 @@ pub fn capture_snapshot(
             .as_deref()
             .map(|known| crate::snapshot::goodwill::goodwill_states(known, viewer))
             .unwrap_or_default();
+        // **WHAT THE VIEWER'S OWN PEOPLE THINK OF EACH OTHER** — live, because it is the viewer's own
+        // opinion: the AI weighs a proposal on it and a client shows "what we think of them".
+        let own_goodwill_states = goodwill
+            .as_deref()
+            .map(|opinions| {
+                crate::snapshot::goodwill::own_goodwill_states(opinions, viewer, tick.0)
+            })
+            .unwrap_or_default();
         let goodwill_cuts_state = crate::snapshot::goodwill::goodwill_cuts(
             &diplomacy_config
                 .as_deref()
@@ -4083,6 +4107,7 @@ pub fn capture_snapshot(
             routes: route_states.clone(),
             dealings: dealing_states,
             goodwill: goodwill_states,
+            own_goodwill: own_goodwill_states,
             goodwill_cuts: goodwill_cuts_state,
             demographics: demographics_state.clone(),
             forage_patches: forage_patches_state.clone(),

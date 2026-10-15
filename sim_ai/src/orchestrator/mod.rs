@@ -33,6 +33,9 @@ use crate::view::{SeatMemory, SeatView};
 pub const ORCHESTRATOR_ID: &str = "orchestrator";
 /// The loadout's intent kind: `orchestrator:outfit:<band>`.
 pub const INTENT_OUTFIT: &str = "outfit";
+/// The priority of a specialist the plan lists none for. A specialist with no profile weight funds
+/// nothing and so has no entry in the plan; it is weighed at face value rather than scored to zero.
+pub const UNLISTED_PRIORITY: f32 = 1.0;
 
 /// **One window's loadout, resolved**: the kit and material lines to send (coalesced, never a
 /// `none` kit, never above either budget) and, per demand **in the order given**, what each
@@ -185,8 +188,14 @@ impl Plan {
             .map_or(0.0, |budget| budget.worker_share)
     }
 
+    /// A specialist's priority, or [`UNLISTED_PRIORITY`] for one the plan lists none for: a
+    /// specialist the profile carries no weight for (`Dealings`) is weighed at face value, where a
+    /// priority of nothing would score its every proposal zero.
     pub fn priority(&self, specialist: SpecialistId) -> f32 {
-        self.priorities.get(specialist).copied().unwrap_or_default()
+        self.priorities
+            .get(specialist)
+            .copied()
+            .unwrap_or(UNLISTED_PRIORITY)
     }
 
     /// The budgets as the plan record carries them.

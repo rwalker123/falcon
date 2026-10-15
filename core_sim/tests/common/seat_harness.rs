@@ -314,16 +314,24 @@ pub fn run_utility_sim_ai(
     )
 }
 
-/// A built `sim_ai` on seat `faction` with `brain_args` for `turns` turns, waited for and asserted
-/// to exit cleanly.
-fn run_sim_ai(
+/// A built `sim_ai` that is still playing: killed on drop, its log under the server's scratch
+/// directory.
+pub struct RunningAi {
+    pub process: Process,
+    pub log_path: PathBuf,
+}
+
+/// Start a built `sim_ai` on seat `faction` with `brain_args` for `turns` turns and **return at
+/// once** — for a test that plays another seat itself while the AI plays (it must submit that
+/// seat's `ready` every turn, or the turn waits for it).
+pub fn spawn_sim_ai(
     sim_ai: &Path,
     server: &Server,
     faction: u32,
     brain_args: &[&str],
     turns: u64,
     log_dir: Option<&Path>,
-) -> AiRun {
+) -> RunningAi {
     let ai_log_path = server.scratch.dir.join(format!("sim_ai_{faction}.log"));
     let ai_log = fs::File::create(&ai_log_path).expect("sim_ai log file");
     let ai_log_err = ai_log.try_clone().expect("sim_ai log file (stderr half)");
@@ -342,9 +350,28 @@ fn run_sim_ai(
     if let Some(log_dir) = log_dir {
         command.arg("--log-dir").arg(log_dir);
     }
-    let mut ai = Process {
-        child: command.spawn().expect("the built sim_ai starts"),
-    };
+    RunningAi {
+        process: Process {
+            child: command.spawn().expect("the built sim_ai starts"),
+        },
+        log_path: ai_log_path,
+    }
+}
+
+/// A built `sim_ai` on seat `faction` with `brain_args` for `turns` turns, waited for and asserted
+/// to exit cleanly.
+fn run_sim_ai(
+    sim_ai: &Path,
+    server: &Server,
+    faction: u32,
+    brain_args: &[&str],
+    turns: u64,
+    log_dir: Option<&Path>,
+) -> AiRun {
+    let RunningAi {
+        process: mut ai,
+        log_path: ai_log_path,
+    } = spawn_sim_ai(sim_ai, server, faction, brain_args, turns, log_dir);
     let deadline = Instant::now() + AI_EXIT_TIMEOUT;
     let status = loop {
         if let Ok(Some(status)) = ai.child.try_wait() {
@@ -497,6 +524,13 @@ impl Link {
         self.fail(&format!(
             "no full frame arrived within {MAX_FRAMES_AWAITED} frames of the resync"
         ))
+    }
+
+    /// The next frame on the greeted stream, decoded — a full snapshot or a delta, whichever the
+    /// seat is sent next.
+    pub fn next_frame(&mut self) -> FramePayload {
+        let bytes = self.next_frame_bytes();
+        decode_frame_flatbuffer(&bytes).expect("a published frame decodes")
     }
 
     fn next_frame_bytes(&mut self) -> Vec<u8> {

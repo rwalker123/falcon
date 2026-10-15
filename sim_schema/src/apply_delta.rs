@@ -145,6 +145,7 @@ impl WorldSnapshot {
             contact_lessons,
             dealings,
             goodwill,
+            own_goodwill,
             goodwill_cuts,
         } = delta;
 
@@ -287,6 +288,7 @@ impl WorldSnapshot {
         replace_if_some(&mut self.contact_lessons, contact_lessons);
         replace_if_some(&mut self.dealings, dealings);
         replace_if_some(&mut self.goodwill, goodwill);
+        replace_if_some(&mut self.own_goodwill, own_goodwill);
         replace_if_some(&mut self.goodwill_cuts, goodwill_cuts);
 
         // --- the flattened `Option<Option<_>>` ---------------------------------------------------
@@ -607,6 +609,7 @@ mod tests {
         delta.contact_lessons = Some(Vec::new());
         delta.dealings = Some(Vec::new());
         delta.goodwill = Some(Vec::new());
+        delta.own_goodwill = Some(Vec::new());
         delta.goodwill_cuts = Some(Default::default());
 
         let mut applied = world.clone();

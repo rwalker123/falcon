@@ -28,7 +28,7 @@ pub const BUILTIN_DIPLOMACY_CONFIG: &str = include_str!("data/diplomacy_config.j
 /// The lowest `offers.offer_wait_turns` that means anything: an offer that expired the turn it was
 /// posted would be refused before its receiver could answer.
 const MIN_OFFER_WAIT_TURNS: u32 = 1;
-/// Goodwill runs `-1..=+1`; the word cuts and the AI's treaty line are measured on that scale.
+/// Goodwill runs `-1..=+1`; the word cuts are measured on that scale.
 const GOODWILL_FLOOR: f32 = -1.0;
 const GOODWILL_CEILING: f32 = 1.0;
 
@@ -41,7 +41,6 @@ pub struct DiplomacyConfig {
     pub offers: OffersConfig,
     pub goodwill: GoodwillConfig,
     pub roads: DiplomacyRoadsConfig,
-    pub ai: DiplomacyAiConfig,
 }
 
 /// How long a pending dealing waits.
@@ -92,14 +91,6 @@ pub struct GoodwillConfig {
 pub struct DiplomacyRoadsConfig {
     /// A foreigner's share of a built road's payoff, a fraction in `0..=1`.
     pub foreign_road_share: f32,
-}
-
-/// How an AI people answers (read by the AI slice).
-#[derive(Debug, Clone, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct DiplomacyAiConfig {
-    /// The goodwill an AI needs toward a proposer to accept a treaty, on the `-1..=+1` scale.
-    pub ai_treaty_goodwill: f32,
 }
 
 impl DiplomacyConfig {
@@ -171,7 +162,6 @@ impl DiplomacyConfig {
         for (field, value) in [
             ("goodwill.wary_below", goodwill.wary_below),
             ("goodwill.friendly_above", goodwill.friendly_above),
-            ("ai.ai_treaty_goodwill", self.ai.ai_treaty_goodwill),
         ] {
             if !value.is_finite() || !(GOODWILL_FLOOR..=GOODWILL_CEILING).contains(&value) {
                 return Err(DiplomacyConfigError::Invalid {
@@ -303,7 +293,6 @@ mod tests {
         assert_eq!(config.goodwill.wary_below, -0.2);
         assert_eq!(config.goodwill.friendly_above, 0.2);
         assert_eq!(config.roads.foreign_road_share, 0.9);
-        assert_eq!(config.ai.ai_treaty_goodwill, 0.2);
     }
 
     #[test]
@@ -364,7 +353,6 @@ mod tests {
     #[test]
     fn the_word_cuts_must_stay_on_the_goodwill_scale_and_in_order() {
         assert!(with(|v| v["goodwill"]["wary_below"] = serde_json::json!(-2.0)).is_err());
-        assert!(with(|v| v["ai"]["ai_treaty_goodwill"] = serde_json::json!(1.5)).is_err());
         assert!(with(|v| v["goodwill"]["wary_below"] = serde_json::json!(0.5)).is_err());
     }
 

@@ -19,9 +19,10 @@ use core_sim::{
     answer_dealing, build_test_app, cargo_worth, recapture_snapshot_in_place, run_turn,
     scalar_from_f32, scalar_zero, split_band_from_parent, BandId, BandTravel, DealingAnswer,
     DiplomacyConfig, Expedition, ExpeditionMission, ExpeditionPhase, FactionBorderPolicies,
-    FactionId, Goodwill, GoodwillEntry, GoodwillNews, KnownGoodwill, LaborAllocation, LocalStore,
-    PendingDealings, PopulationCohort, ResidentBand, Scalar, SettleConfig, ShipmentTerms,
-    SimulationConfig, SnapshotHistory, StartingUnit, Tile, TileRegistry, ViewerFaction,
+    FactionId, Goodwill, GoodwillEntry, GoodwillNews, GoodwillSource, KnownGoodwill,
+    LaborAllocation, LocalStore, PendingDealings, PopulationCohort, ResidentBand, Scalar,
+    SettleConfig, ShipmentTerms, SimulationConfig, SnapshotHistory, StartingUnit, Tile,
+    TileRegistry, ViewerFaction,
 };
 use sim_runtime::{TradeCargoItem, FOOD_CARGO_KEY};
 
@@ -658,6 +659,92 @@ fn the_frame_carries_the_viewers_known_goodwill_and_the_word_cuts() {
             "{other:?} is not told what the sender knows"
         );
     }
+}
+
+/// The viewer's OWN live rows, off the encoded envelope (`GoodwillSection.own`).
+fn published_own_goodwill(app: &mut App, viewer: FactionId) -> Vec<PublishedGoodwill> {
+    use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
+
+    app.world.insert_resource(ViewerFaction(viewer));
+    recapture_snapshot_in_place(&mut app.world);
+    let snapshot = app
+        .world
+        .resource::<SnapshotHistory>()
+        .latest_entry()
+        .expect("a snapshot")
+        .snapshot;
+    let bytes = sim_schema::encode_snapshot_flatbuffer(snapshot.as_ref());
+    let envelope = fb::root_as_envelope(bytes.as_ref()).expect("a valid envelope");
+    envelope
+        .payload_as_snapshot()
+        .expect("a snapshot")
+        .goodwill()
+        .expect("the goodwill section is published")
+        .own()
+        .map(|rows| {
+            rows.iter()
+                .map(|row| PublishedGoodwill {
+                    other: row.otherFaction(),
+                    gifts: row.gifts(),
+                    exchanges: row.exchanges(),
+                    total: row.total(),
+                    reported_turn: row.reportedTurn(),
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// **The frame carries the viewer's OWN live opinion of each other people, and only its own.** A
+/// people's opinion is its own to know: the AI weighs a proposal on it and a client shows "what we
+/// think of them". The rows are live (`reported_turn` is the current turn), never the carried news
+/// in `goodwill`, and another people's opinion never rides this viewer's frame.
+#[test]
+fn the_frame_carries_the_viewers_own_live_opinion_and_nobody_elses() {
+    let mut app = spawn_world();
+    {
+        let mut opinions = app.world.resource_mut::<Goodwill>();
+        opinions.credit(SENDER_PEOPLE, RECEIVER_PEOPLE, GoodwillSource::Gift, 0.3);
+        opinions.credit(
+            SENDER_PEOPLE,
+            RECEIVER_PEOPLE,
+            GoodwillSource::Exchange,
+            0.1,
+        );
+        opinions.credit(RECEIVER_PEOPLE, SENDER_PEOPLE, GoodwillSource::Gift, -0.15);
+    }
+    let tick = app.world.resource::<core_sim::SimulationTick>().0;
+
+    let own = published_own_goodwill(&mut app, SENDER_PEOPLE);
+    assert_eq!(
+        own.len(),
+        1,
+        "one row per people the viewer holds an entry about"
+    );
+    assert_eq!(
+        own[0].other, RECEIVER_PEOPLE.0,
+        "the row names who is thought about"
+    );
+    assert!((own[0].gifts - 0.3).abs() < EPSILON);
+    assert!((own[0].exchanges - 0.1).abs() < EPSILON);
+    assert!((own[0].total - 0.4).abs() < EPSILON);
+    assert_eq!(own[0].reported_turn, tick, "live, not carried news");
+
+    let theirs = published_own_goodwill(&mut app, RECEIVER_PEOPLE);
+    assert_eq!(theirs.len(), 1);
+    assert_eq!(theirs[0].other, SENDER_PEOPLE.0);
+    assert!(
+        (theirs[0].total + 0.15).abs() < EPSILON,
+        "each viewer reads its own opinion"
+    );
+
+    assert!(
+        published_own_goodwill(&mut app, THIRD_PEOPLE).is_empty(),
+        "a people holding no opinion publishes no row"
+    );
+    // The carried-news rows are a different list: nothing was reported to anyone.
+    let (known, _, _) = published_goodwill(&mut app, SENDER_PEOPLE);
+    assert!(known.is_empty(), "live opinion is not carried news");
 }
 
 // ---------------------------------------------------------------------------------------------

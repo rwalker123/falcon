@@ -412,7 +412,7 @@ pub const COMMAND_VERBS: &[CommandVerbHelp] = &[
 ];
 
 use crate::{
-    ArchetypeCount, CancelScope, CommandPayload, ConfigOverrideKind, OrdersDirective,
+    ArchetypeCount, CancelScope, CommandPayload, ConfigOverrideKind, DealingReply, OrdersDirective,
     ReloadConfigKind, SecurityPolicyKind,
 };
 
@@ -2555,7 +2555,42 @@ pub fn render_command_line(payload: &CommandPayload) -> String {
             };
             format!("{ORDERS_VERB} {faction_id} {directive}")
         }
+        CommandPayload::AnswerDealing {
+            faction,
+            dealing_id,
+            reply,
+        } => {
+            let mut line = format!("answer_dealing {faction} {dealing_id}");
+            match reply {
+                DealingReply::Accept { returned } => {
+                    line.push_str(" accept");
+                    push_goods_lines(&mut line, returned);
+                }
+                DealingReply::Refuse => line.push_str(" refuse"),
+                DealingReply::Counter { give, ask } => {
+                    line.push_str(" counter give");
+                    push_goods_lines(&mut line, give);
+                    line.push_str(" ask");
+                    push_goods_lines(&mut line, ask);
+                }
+            }
+            line
+        }
         other => format!("{other:?}"),
+    }
+}
+
+/// A cargo list in the words [`parse_command_line`] reads back: `food <a>`, `fodder <a>`,
+/// `material <id> <a>`, in the order given.
+fn push_goods_lines(line: &mut String, goods: &[crate::TradeCargoItem]) {
+    for item in goods {
+        if item.is_material {
+            line.push_str(&format!(" material {} {}", item.id, item.amount));
+        } else if item.id == crate::commands::FODDER_CARGO_KEY {
+            line.push_str(&format!(" fodder {}", item.amount));
+        } else {
+            line.push_str(&format!(" food {}", item.amount));
+        }
     }
 }
 
@@ -3797,6 +3832,70 @@ mod tests {
             parse_command_line("set_accept_own_gifts 0 on now"),
             Err(CommandParseError::UnexpectedArgument(_))
         ));
+    }
+
+    /// **A rendered answer parses back to itself** — the decision log's `commands_text` for an AI's
+    /// answer is the grammar an operator would type, goods and all.
+    #[test]
+    fn a_rendered_answer_dealing_parses_back_to_itself() {
+        use crate::commands::DealingReply;
+        let line_of = |reply| {
+            render_command_line(&CommandPayload::AnswerDealing {
+                faction: 2,
+                dealing_id: 9,
+                reply,
+            })
+        };
+        for reply in [
+            DealingReply::Accept {
+                returned: Vec::new(),
+            },
+            DealingReply::Accept {
+                returned: vec![
+                    TradeCargoItem {
+                        id: FOOD_CARGO_KEY.to_string(),
+                        is_material: false,
+                        amount: 3.06,
+                    },
+                    TradeCargoItem {
+                        id: FODDER_CARGO_KEY.to_string(),
+                        is_material: false,
+                        amount: 1.5,
+                    },
+                    TradeCargoItem {
+                        id: "bone".to_string(),
+                        is_material: true,
+                        amount: 0.25,
+                    },
+                ],
+            },
+            DealingReply::Refuse,
+            DealingReply::Counter {
+                give: vec![TradeCargoItem {
+                    id: "hide".to_string(),
+                    is_material: true,
+                    amount: 2.0,
+                }],
+                ask: Vec::new(),
+            },
+        ] {
+            let line = line_of(reply.clone());
+            assert_eq!(
+                parse_command_line(&line).expect("a rendered answer parses"),
+                CommandPayload::AnswerDealing {
+                    faction: 2,
+                    dealing_id: 9,
+                    reply
+                },
+                "{line}"
+            );
+        }
+        assert_eq!(
+            line_of(DealingReply::Accept {
+                returned: Vec::new()
+            }),
+            "answer_dealing 2 9 accept"
+        );
     }
 
     /// `answer_dealing` accepts with a return list in `send_trade_expedition`'s cargo words, refuses

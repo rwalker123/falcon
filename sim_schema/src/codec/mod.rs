@@ -420,6 +420,7 @@ fn witness_snapshot_is_fully_decoded(snapshot: &WorldSnapshot) {
         dealings: _,
         // `decode_goodwill_section`
         goodwill: _,
+        own_goodwill: _,
         goodwill_cuts: _,
     } = snapshot;
 }
@@ -524,6 +525,7 @@ fn witness_delta_is_fully_decoded(delta: &WorldDelta) {
         dealings: _,
         // `decode_goodwill_section_delta`
         goodwill: _,
+        own_goodwill: _,
         goodwill_cuts: _,
     } = delta;
 }
@@ -1196,6 +1198,7 @@ mod round_trip_tests {
             routes: Some(world.routes.clone()),
             dealings: Some(world.dealings.clone()),
             goodwill: Some(world.goodwill.clone()),
+            own_goodwill: Some(world.own_goodwill.clone()),
             goodwill_cuts: Some(world.goodwill_cuts.clone()),
             contact_lessons: Some(world.contact_lessons.clone()),
         }
@@ -1264,6 +1267,7 @@ mod round_trip_tests {
             routes: Some(Vec::new()),
             dealings: Some(Vec::new()),
             goodwill: Some(Vec::new()),
+            own_goodwill: Some(Vec::new()),
             goodwill_cuts: Some(Default::default()),
             contact_lessons: Some(Vec::new()),
             ..Default::default()

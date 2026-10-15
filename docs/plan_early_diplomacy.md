@@ -250,7 +250,11 @@ An AI people answers every pending item by command on its turn, exactly as a hum
   so its worth to the sender, as far as the AI can judge from what the sender carried, matches the
   cargo's worth to the AI.
 - **A treaty proposal** is accepted when its goodwill toward the proposer is at or above
-  `ai_treaty_goodwill` (opening value **0.2**, the friendly line).
+  `treaty_goodwill` (opening value **0.2**, the friendly line).
+
+**The AI's levers are AI tuning, so they live in `sim_ai/data/ai_profiles.json`**, per seat, on the
+other side of the socket (`factions.md` → "AI tuning is not a start-profile field") — never in the
+sim's `diplomacy_config.json`, which the AI process cannot read.
 
 **The AI answers and does not initiate in this issue.** It sends no gifts, offers or proposals of its
 own; goodwill toward a human player rises through the human's dealings. The initiating half is
@@ -269,7 +273,6 @@ own; goodwill toward a human player rises through the human's dealings. The init
 | `goodwill.broken_treaty` | **0.5** | the drop a breach costs |
 | `goodwill.wary_below` / `friendly_above` | **−0.2 / 0.2** | the word cuts |
 | `roads.foreign_road_share` | **0.9** | a foreigner's share of a built road's payoff |
-| `ai.ai_treaty_goodwill` | **0.2** | the goodwill an AI needs to accept a treaty |
 
 All opening values, to be tuned in playtest. Loader `diplomacy_config.rs` on the shared boot seam,
 env override `DIPLOMACY_CONFIG_PATH`, strict (`config-loading.md`). At the opening values a post of

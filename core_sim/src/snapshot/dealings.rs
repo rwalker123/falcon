@@ -29,6 +29,7 @@ pub(crate) fn dealing_states(
 fn dealing_state(dealing: &Dealing, now: u64, materials: &MaterialsConfig) -> DealingState {
     // An offer states its goods as the shipment's own rated store; a proposal or counter states its
     // two legs as unrated lines, from the shipper's point of view.
+    // An offer's party is the one waiting in the camp; a proposal's or counter's is the shipper's.
     let (goods_sent, goods_asked, shipper_band, party_workers) = match &dealing.agreement {
         Some(agreement) => (
             lines_state(&agreement.give),
@@ -40,7 +41,7 @@ fn dealing_state(dealing: &Dealing, now: u64, materials: &MaterialsConfig) -> De
             goods_state(&dealing.goods_sent, materials),
             goods_state(&dealing.goods_asked, materials),
             0,
-            0,
+            dealing.party_workers,
         ),
     };
     DealingState {

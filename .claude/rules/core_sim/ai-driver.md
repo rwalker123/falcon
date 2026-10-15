@@ -32,7 +32,7 @@ hold · reconnect · resync, the seated `ask`, plus the unseated world-builder c
 link-backed and unasked answerers), `view.rs` (`SeatView`,
 `SeatMemory`, `Perception`), `geometry.rs` (the odd-r hex distance, restated), `profile.rs`
 (`AiProfile`, `Difficulty`, the file), `orchestrator/` (`Plan`, `ConstantStance`), `specialists/`
-(the trait, `Food`, `Land`, `Scripted`), `arbiter.rs` (the six steps), `brain.rs` (`Brain`,
+(the trait, `Food`, `Land`, `Dealings`, `Scripted`), `arbiter.rs` (the six steps), `brain.rs` (`Brain`,
 `PassBrain`, and the `Composite` the scripted and utility brains are configurations of),
 `board.rs` (the demand board), `instruments/` (`scoreboard.rs`, `decisions.rs`,
 `observations.rs`, the `Instruments` writer trio), `bench/` (`mod.rs` the harness,
@@ -149,7 +149,7 @@ was handed, not what it did.
 |---|---|---|---|
 | `PassBrain` | — | — | emits nothing (a unit struct, not a composite) |
 | `ScriptedBrain` | none (`Plan::pass_through`) | `Scripted` | `Arbiter::PassThrough` — every proposal accepted in order, raw = final |
-| `UtilityBrain` | `ConstantStance` | `Food`, `Land` (minus `--disable`) | `Arbiter::Weighing` — the six steps |
+| `UtilityBrain` | `ConstantStance` | `Food`, `Land` (minus `--disable`), `Dealings` (always) | `Arbiter::Weighing` — the six steps |
 
 **`observe`, then `decide`.** `Brain::observe` folds the frame in ahead of the observation
 record: `memory.observe` (sightings, arrivals, what every worked row realized) and **the land
@@ -205,8 +205,9 @@ next turn — because a proposal larger than the slice is `over_budget` whatever
 `food:upgrade:2`, `food:settle:9`); the scripted fixture's is the bare `script`; a loadout's is
 `orchestrator:outfit:<band>` under the specialist name `orchestrator` (`ORCHESTRATOR_ID`), which is
 on no roster and passes no arbiter step.
-The middle token is the class the behaviour gate reads: `raid` needs `will_raid`, `trade` needs
-`will_trade`. The bench's intent histogram groups on `<specialist>:<kind>`.
+`Dealings` writes `dealings:answer:<dealing id>`. The middle token is the class the behaviour gate
+reads: `raid` needs `will_raid`, `trade` needs `will_trade` (an `answer` is gated by neither: a people
+that will not trade still answers a gift). The bench's intent histogram groups on `<specialist>:<kind>`.
 
 **The arbiter's rejection set**, fixed: `behavior_gated` (step 1), `outscored` (a second proposal
 under an intent already accepted this turn), `conflict` (a **claim** already taken this turn),
@@ -930,6 +931,66 @@ bands fed keeps them; one that lets morale collapse beside a thriving rival camp
 A detached party goes whole under the same test (`advance_party_defection`). *Better ground*
 excludes ground a visible foreign band stands on, which also keeps an AI band out of a rival's reach.
 
+### `Dealings` (`specialists/dealings.rs`)
+
+`docs/plan_early_diplomacy.md` §1, §4. **The seat answers every dealing addressed to its people, every
+turn it is still open**, with `answer_dealing` (`CommandPayload::AnswerDealing`). Silence refuses a
+dealing (`offer_wait_turns`, shipped 1), so an AI that did not answer would leave a human's party
+standing in its camp and then walking home with its cargo. It is the architecture's own answer to "a new
+decision": a specialist proposing, the arbiter disposing — not a branch in the composite. **It is always
+on** (`UtilityBrain::build` pushes it after the optional two) and is not in `DISABLEABLE_SPECIALISTS`,
+which the ratchet's *never wins* gate walks: a bench with no dealings would fail it. `PassBrain` stays
+pass and the scripted brain has no `Dealings`.
+
+**A duty, not a bid.** An answer spends no worker and claims no row, band or move, so each is a
+`standing` proposal (`Cost::default()`, the arbiter pays it first and never outscores it by a bid) with a
+fixed `ANSWER_SCORE`. The plan lists no weight for it, so `Plan::priority` answers
+`UNLISTED_PRIORITY` (1.0) for a specialist the profile funds nothing with — a priority of nothing would
+score its every proposal zero in the log. `Food` and `Land` are always listed when on the roster, so
+nothing they do moved.
+
+**What it reads, all off its own frame:** `snapshot.dealings` rows with `receiver_faction` = its people
+(the rows it sent are the other side's to answer); the receiving band's holdings (`stores[provisions]`
+over `FIXED_POINT_SCALE`, `fodder_store`, `material_batches` summed per material id) and runway
+(`turns_of_food`); the pack echoes on that band (`carry_per_worker`, `expedition_trade_fodder_carry_weight`,
+`expedition_trade_material_carry_weight`); the offer's `party_workers`; and its own live opinion of the
+sender (`snapshot.own_goodwill`, `0` where it holds none). A dealing whose receiving band is not among
+its own rows is skipped, not guessed at.
+
+**Worth is the sim's formula.** `sim_runtime::worth` — `Σ load_g × amount_g / (amount_g + held_g)` — on
+the AI's own holdings, with the load of a unit of food `1.0` (`FOOD_LOAD_WEIGHT`, the carry currency's
+numéraire) and the other two goods' from the echoes. Restating the arithmetic in `sim_ai` was the
+alternative; `core_sim::goodwill` and this specialist now call one function.
+
+- **An offer** (stage 1 or 2) is **accepted**, always, and the AI names a return: the target load is
+  `dealings.return_fairness × worth(cargo)`, the return filled from the goods its band holds the most
+  **load** of first (surplus by load, not by count, so 30 hay at half weight loses to 20 bone), each good
+  taken `min(held, load still owed ÷ weight, party carry still free ÷ weight)` and rounded **down** to a
+  hundredth (`AMOUNT_STEPS_PER_UNIT` — an `f32` that crossed the wire must not exceed what the band
+  holds once the sim reads it back as fixed-point). The sender is assumed to hold none of what it is
+  given back, so the return counts at its full load. **Food is left out while the band's runway is under
+  `dealings.food_runway_floor_turns`** (a floor: at the floor food is allowed). Nothing to name is an
+  accept with an empty return. The party's carry is `party_workers × carry_per_worker` of **its own**
+  band's echo — the sender's pack is the sender's to compute and is not on the AI's frame, so a people
+  that has learned `travois` and a people that has not differ by the multiplier, and an over-cap return
+  is a refused answer (the sim's own check stands as the authority).
+- **A proposal or a counter** (stage 4) is accepted when `worth_received × (1 + goodwill_toward_sender)
+  >= worth_given`, else refused; accept on a proposal carries no `returned` (the terms are written).
+  Legs are the shipper's point of view: the AI is the consignee (it receives `goods_sent`, gives
+  `goods_asked`) unless `shipper_band` is its own band (a counter of its own proposal), when they read
+  the other way. A leg it cannot cover from its band's holdings is refused rather than answered into a
+  failure. **No AI counters or proposes yet.**
+- **`reason` carries the numbers**, so `decisions.jsonl` shows what the AI judged: an offer's
+  `cargo worth W to us; fairness F -> return load L of T (party cap C, runway Rt >= floor): return …`,
+  a proposal's `worth received R x (1 + goodwill G) = X >= worth given V: accept`.
+
+Unit-tested beside the rule (`specialists/dealings.rs`): the return sized from the biggest holding, a
+good already held discounting the cargo's worth, surplus by load, a return spilling into the next good,
+the food floor (under, at), the carry and holdings bounds, the empty return, the fairness lever, the
+accept/refuse threshold at ±goodwill, the cannot-cover refusal, the counter's reversed legs, and that
+only dealings addressed to the people are answered. The whole path over real sockets is
+`core_sim/tests/ai_dealings_scenario.rs` ("The scenario…" below).
+
 ### The land reading (`ground.rs`)
 
 **What the discovered ground would feed, and the shape of the band that would feed on it, read
@@ -1145,6 +1206,9 @@ and `rover` (expand). Each key has one consumer:
 | `land.better_ground_gain_fraction` | `Land` | the per-worker gain, as a share of the target's rate, *better ground* must buy before it moves a band |
 | `land.stay_tolerance` | the land reading (`ground.rs`) | the band's own hex is kept as the first planned band when within this fraction of the best hex's value, and a `move_target` must beat the first planned band by more than it; `≥ 0`, default `0.1` |
 | `land.pooling_weight` | the land reading | a candidate hex within `food.split_search_tiles` of a hex already chosen has its value multiplied by `1 + this`; `≥ 0`, default `0.25` |
+| `dealings.return_fairness` | `Dealings` | the share of an offer's worth to this people named back as a return load; shipped **1.0**; finite, `>= 0` |
+| `dealings.food_runway_floor_turns` | `Dealings` | a band under this runway names no food in a return; shipped **10**; finite, `>= 0` (distinct from `food.runway_floor_turns`, the alarm) |
+| `dealings.treaty_goodwill` | the treaty answer (a later slice) | the goodwill needed toward a proposer to accept a treaty, on the `-1..=+1` scale; shipped **0.2**; defined now, read by nothing yet |
 
 | Difficulty key | Consumer | Effect |
 |---|---|---|
@@ -1201,12 +1265,13 @@ reads every death as zero. The cause vocabulary (`hunger` / `cold` / `heat` / `a
 orchestrator's (`plan_ai_driver.md` §3) and `demand` the board's.
 
 `commands_text` is the proposal's commands, one line each, in the **text-command grammar**:
-`assign_labor 1 7001 forage 3 4 5`, `move_band 1 7001 4 9`, `split_band 1 7001 4`. The printer is
+`assign_labor 1 7001 forage 3 4 5`, `move_band 1 7001 4 9`, `split_band 1 7001 4`,
+`answer_dealing 2 9 accept food 3.06`. The printer is
 `sim_runtime::render_command_line`, beside the parser — **the one renderer both sides of the wire
 share**: this log and the server's run record (`core_sim/src/record.rs`) write the same line for
 the same payload, and a unit test there parses every rendered verb back through
 `parse_command_line`. It renders the verbs a player process emits (`assign_labor`, `move_band`,
-`split_band`, `set_starting_loadout`, `order … ready`); any other verb falls back to its `Debug`
+`split_band`, `set_starting_loadout`, `answer_dealing`, `order … ready`); any other verb falls back to its `Debug`
 form, readable and deliberately unparsable. `commands` (the count) is unchanged, so slice 3's
 measures are not moved.
 
@@ -1706,6 +1771,22 @@ connection, verb, command` (no token); the seat's lines are one `split_band` and
 it exits on seeing the last, which the record still holds), a score row and a lens-less
 observation on each, one `human:split_band` decision on the first whose line is the grammar's, a
 `ready` on the three acted ticks and none on the last. About 3 s.
+
+`ai_dealings_scenario.rs` (port block 45600) is the §1 bar for slice 1d — *an AI people answers a
+gift*: the built `sim_ai` (utility, `forager`, `hard`) plays seat 1 while the test plays the human
+seat 0 on a connection of its own, readying every new tick. The human sends a scout east with a food
+pack and `strangers offer`; the scout sights the rival's camp and posts a pending offer; **the test
+answers nothing**. It asserts, all off the frames the human seat is sent, that the offer reaches the
+human's `dealings`, leaves them once answered, and that after a `recall_expedition` the return lands
+at the sender's home band as an `ExchangeIn` crossing and the human people's `own_goodwill` row for
+the rival carries exchange credit. The AI's `decisions.jsonl` is read only for the accepted
+`dealings:answer:<id>` decision, in the grammar, whose `reason` carries `cargo worth`. Two things it
+had to get right: the AI must be seated **before** the human readies (a vacant seat never holds the
+turn, so the world would otherwise resolve — and with `offer_wait_turns` at 1 the offer would lapse —
+before the process joined), and the run is counted in ticks, not frames (a turn is several frames).
+One lever is moved for the run, `dealings.food_runway_floor_turns` to `0` through `--profiles`, so
+whether the rival names food does not depend on how far its larder has fallen when the offer lands;
+the floor is pinned by the unit tests.
 
 `ai_bench.rs` runs the built bench on seed 11: all-Pass twice over `TURNS` (6), asserting every
 measure identical and every `--compare` delta zero or null; then `1=scripted 2=pass` with the

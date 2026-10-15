@@ -22,8 +22,10 @@ engineering rationale for **slice 1a, offers** (§1 of the plan): the config, th
 standing answer, the answer verb and the wire; and **slice 1b, goodwill** (§2): the opinion ledger,
 its sources, its fade, and how it is known; and **slice 1c, the exchange stages** (§1 and the `link`
 source of §2): haggling over a standing link (stage 4), a scout's pack (stage 1), and what a standing
-link is worth. Treaties, the envoy, road rights and the AI are later slices; their levers are loaded
-and validated here and read there.
+link is worth; and **slice 1d, the AI answers** (§4): the live opinion on the viewer's own frame and
+the offer's party size, which are what a player process needs to judge a dealing — the answering
+itself is `sim_ai`'s (`.claude/rules/core_sim/ai-driver.md` → "`Dealings`"). Treaties, the envoy and
+road rights are later slices; their levers are loaded and validated here and read there.
 
 ## Config files
 
@@ -39,16 +41,17 @@ and validated here and read there.
 | | `goodwill.broken_treaty` | **0.5** | the drop a breach costs; a fraction in `0..=1` |
 | | `goodwill.wary_below` / `friendly_above` | **−0.2 / 0.2** | the word cuts; each within `−1..=1`, `wary_below <= friendly_above` |
 | | `roads.foreign_road_share` | **0.9** | a foreigner's share of a built road's payoff; a fraction in `0..=1` |
-| | `ai.ai_treaty_goodwill` | **0.2** | the goodwill an AI needs to accept a treaty; within `−1..=1` |
 
 Loader `diplomacy_config.rs` on the shared boot seam (`config-loading.md`), env override
 `DIPLOMACY_CONFIG_PATH`, no hot-reload kind. **Every key is required and every table is closed**
 (`deny_unknown_fields`; only the root accepts a `_comment`), so a missing or misspelled lever is a boot
 panic rather than a number nobody chose. Readers: `offer_wait_turns` (offers), `standing_link_min_rung`
 (the standing link) and, for goodwill, `fade_per_turn`, `per_load`, `per_person_stationed`,
-`per_link`, `wary_below` and `friendly_above`; the rest (`per_term`, `broken_treaty`, the roads and AI
-blocks) are loaded so a bad file stops the boot the day it is edited, not the day a later slice
-first reads it. All opening values are playtest dials.
+`per_link`, `wary_below` and `friendly_above`; the rest (`per_term`, `broken_treaty`, the roads
+block) are loaded so a bad file stops the boot the day it is edited, not the day a later slice
+first reads it. All opening values are playtest dials. **No AI lever is here**: an AI is a player
+process and cannot read sim config, so its dealing levers (`return_fairness`,
+`food_runway_floor_turns`, `treaty_goodwill`) live in `sim_ai/data/ai_profiles.json`.
 
 ## The pending item: `PendingDealings`
 
@@ -318,14 +321,19 @@ writer yet and stay in the shape (`link` is written by `credit_link_goodwill`). 
 
 ### Worth — the receiver's judgement, never a price table
 
-`goodwill::worth`: `Σ over goods ( load_g × amount_g / (amount_g + held_g) )`, `held_g` the
+`sim_runtime::worth` (re-exported by `core_sim::goodwill`, which supplies the loads and the holdings
+and nothing else): `Σ over goods ( load_g × amount_g / (amount_g + held_g) )`, `held_g` the
 **receiving band's holding of that good immediately before the transfer**, in the same unit. Food,
 fodder and each material id are separate goods (a material's quality batches sum by amount within
 that material only); `load_g` is the load of the gift's whole amount of that good in `carry.rs`'s one
 currency (`CarryLoad` of one unit × the amount), so the fraction is what the receiver's holding
 discounts. A good they have none of counts at its full load; one they hold ten times over counts for about
 a tenth. An empty gift is worth `0`. The number becomes goodwill and nothing else — no exchange is
-accepted or refused on it, and it is never published as a price.
+accepted or refused on it, and it is never published as a price. **The formula lives in
+`sim_runtime`, the crate the sim and every player process both depend on**, so the goodwill credit and an
+AI people's judgement of an offer are one piece of arithmetic that cannot drift; the AI restates only
+the loads (the `carryFodderWeight` / `carryMaterialWeight` echoes on its own band rows) and reads the
+holdings off its own frame.
 
 ### The sources
 
@@ -365,6 +373,22 @@ whole), **viewer-scoped**: the viewer's own `KnownGoodwill` rows. A row (`Goodwi
 (`waryBelow`, `friendlyAbove`) rides the section once, off `diplomacy_config.json`, so the client
 never restates the word cuts. A delta's absent `cuts` table means unchanged.
 
+**`own` — the viewer's OWN live opinion** (`WorldSnapshot::own_goodwill`, appended last,
+`GoodwillSection.own`, diffed whole): one `GoodwillState` per other people the viewer's people holds
+an entry about (`snapshot::goodwill::own_goodwill_states`, from `Goodwill::iter()` filtered to the
+viewer as holder), `otherFaction` the people thought **about**, the six components and `total`, and
+`reportedTurn` the **current tick** — it is live, because a people's opinion is its own to know. It is
+a different list from `goodwill` above (what others are *known* to think, carried news) and never
+carries another people's opinion. Two readers: a client shows "what we think of them", and an AI
+weighs a proposal on it (`worth_received × (1 + goodwill_toward_sender)`). A pair never credited has
+no row; a reader takes that as `0`.
+
+**An offer's `partyWorkers` is published** (`Dealing::party_workers`, set where the offer is posted —
+a trade party's arrival and a scout's handover — from the party's available workers). It bounds the
+return the party can walk home (`partyWorkers × carryPerWorker`), which the answering people needs to
+size one; a proposal's and counter's `partyWorkers` is the shipper's, as before (`SAVE_FORMAT_VERSION`
+42 carries it).
+
 ## Tests
 
 | Test | Claim |
@@ -377,6 +401,8 @@ never restates the word cuts. A delta's absent `cuts` table means unchanged.
 | `::an_answer_that_cannot_be_honoured_is_refused_and_nothing_moves`, `::a_return_over_the_partys_carry_is_refused` | every fail-closed check, with the bands, party and book unchanged |
 | `::only_the_receiving_people_may_answer`, `::a_dealing_whose_party_has_gone_is_withdrawn` | who may answer, and a vanished party |
 | `::a_pending_dealing_round_trips_a_checkpoint` | the book, the counter and the terms ride `SimState` |
+| `tests/goodwill.rs::the_frame_carries_the_viewers_own_live_opinion_and_nobody_elses` | `GoodwillSection.own` on the **encoded** envelope: the viewer's rows only, components and total, `reportedTurn` the current tick, a people with no entry publishes none, and it is not the carried-news list |
+| `tests/ai_dealings_scenario.rs` | a real `server` and a real `sim_ai` over the sockets: a human-side scout posts an offer to the AI's people, the AI answers it, and the return lands at the sender's home as `ExchangeIn` with the human people's `own_goodwill` credited — all read off the encoded frames the human seat is sent |
 | `tests/goodwill.rs` | a gift credits receiver → giver only; an exchange credits both by what each received; refusal and lapse credit nothing; no self-pair entry; a post of ten follows `0.5 × (1 − 0.98^n)` turn by turn and settles near `0.5`; news reaches `KnownGoodwill` only with the returning party, stamped with the sighting turn; the frame carries the viewer's own rows and the cuts; checkpoint round trip |
 | `goodwill.rs` unit tests | worth (none held = full load, 10× held ≈ 1/11, per-good, empty = 0), clamp lands on the bound without rescaling components, fade is proportional on every component, a stale or equal report never overwrites a fresher one |
 | `tests/stages.rs` (stage 4) | a proposal over a kept road is posted at once, draws nothing, and is on the encoded frame of both peoples with the shipper named and unrated lines; no link (or a bare tile, an unpaid bill, a trail) refuses it and records nothing; a counter closes the original and goes back, accept means the last terms and the party size carries; an agreed party settles on arrival, goods both ways and goodwill both ways, the return home as `ExchangeIn`; a receiver short of the return fails the exchange with no goodwill and the cargo comes home; a link broken before the answer withdraws the dealing with `reason=link_broken`; the answer's own refusals leave the book as it stood; silence expires a proposal; the checkpoint round trip |

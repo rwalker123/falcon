@@ -44,6 +44,10 @@ const KNOWN_WEIGHTS: [&str; 3] = [
     WEIGHT_LAND_CLAIM,
     WEIGHT_CONTACT_SEEKING,
 ];
+/// The goodwill scale's bounds (`core_sim`'s `GOODWILL_FLOOR` / `GOODWILL_CEILING`, restated: this
+/// crate cannot link the sim) — what `dealings.treaty_goodwill` is measured on.
+pub const GOODWILL_MIN: f32 = -1.0;
+pub const GOODWILL_MAX: f32 = 1.0;
 /// A difficulty's `selection_top_k` at which selection is argmax.
 pub const ARGMAX_TOP_K: u32 = 1;
 /// A difficulty's `memory_horizon_turns` meaning "never decay".
@@ -167,6 +171,24 @@ pub struct LandFloors {
     pub pooling_weight: f32,
 }
 
+/// Consumed by `Dealings`: how this people answers what another people sends or proposes
+/// (`docs/plan_early_diplomacy.md` §1, §4). The judgement itself — what a gift is worth — is
+/// `sim_runtime::worth`, the sim's own formula; only the people's temperament is a lever here.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct DealingsLevers {
+    /// Consumed by `Dealings` on an **offer**: the share of the gift's worth to this people that it
+    /// names back as a return — the return's load is sized to `this × worth(cargo)`. `1.0` pays back
+    /// exactly what it judged the gift worth; below it keeps a margin, above it overpays. `>= 0`.
+    pub return_fairness: f32,
+    /// Consumed by `Dealings` on an **offer**: a band whose food runway is under this many turns
+    /// names no food in its return, whatever else it names. `>= 0`.
+    pub food_runway_floor_turns: f32,
+    /// Consumed by the treaty answer (a later slice; nothing reads it yet): the goodwill this people
+    /// needs toward a proposer to accept a treaty, on the `-1..=+1` goodwill scale.
+    pub treaty_goodwill: f32,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct AiProfile {
@@ -182,6 +204,8 @@ pub struct AiProfile {
     /// Consumed by the orchestrator: `Food`'s goals, written into every plan that funds it.
     pub goals: FoodGoalLevers,
     pub land: LandFloors,
+    /// Consumed by `Dealings`.
+    pub dealings: DealingsLevers,
 }
 
 impl AiProfile {
@@ -400,6 +424,24 @@ impl AiProfiles {
                     "profile `{id}`: food.survival_floor = {survival} is not a floor from 0 to {BEST_FLOOR}"
                 ));
             }
+            let fairness = profile.dealings.return_fairness;
+            if !fairness.is_finite() || fairness < 0.0 {
+                return invalid(format!(
+                    "profile `{id}`: dealings.return_fairness = {fairness} is not a non-negative share"
+                ));
+            }
+            let floor = profile.dealings.food_runway_floor_turns;
+            if !floor.is_finite() || floor < 0.0 {
+                return invalid(format!(
+                    "profile `{id}`: dealings.food_runway_floor_turns = {floor} is not a non-negative number of turns"
+                ));
+            }
+            let treaty = profile.dealings.treaty_goodwill;
+            if !treaty.is_finite() || !(GOODWILL_MIN..=GOODWILL_MAX).contains(&treaty) {
+                return invalid(format!(
+                    "profile `{id}`: dealings.treaty_goodwill = {treaty} is not on the goodwill scale {GOODWILL_MIN}..={GOODWILL_MAX}"
+                ));
+            }
             let net = profile.goals.net_income_per_turn;
             if !net.is_finite() || net <= 0.0 {
                 return invalid(format!(
@@ -456,6 +498,29 @@ mod tests {
         if let Err(errors) = outcome {
             panic!("ai_profiles.json does not match its schema: {errors:?}");
         }
+    }
+
+    #[test]
+    fn the_dealings_levers_are_validated() {
+        for (key, value) in [
+            ("return_fairness", -0.1),
+            ("food_runway_floor_turns", -1.0),
+            ("treaty_goodwill", 1.5),
+        ] {
+            let mut document: serde_json::Value = serde_json::from_str(BUILTIN_PROFILES).unwrap();
+            document["profiles"]["forager"]["dealings"][key] = serde_json::json!(value);
+            let err = AiProfiles::parse(&document.to_string(), "<test>").unwrap_err();
+            assert!(
+                matches!(err, ProfileError::Invalid(ref detail) if detail.contains(key)),
+                "{key}: {err}"
+            );
+        }
+        let mut document: serde_json::Value = serde_json::from_str(BUILTIN_PROFILES).unwrap();
+        document["profiles"]["forager"]["dealings"]["haggle"] = serde_json::json!(0.5);
+        assert!(matches!(
+            AiProfiles::parse(&document.to_string(), "<test>"),
+            Err(ProfileError::Parse { .. })
+        ));
     }
 
     #[test]

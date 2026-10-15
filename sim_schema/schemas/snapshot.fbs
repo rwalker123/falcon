@@ -6691,8 +6691,9 @@ table DealingState {
   // same thing on a proposal and on every counter after it). The lines carry NO ratings: nothing has
   // been drawn yet, so a material row is `{materialId, amount}` with empty readings.
   shipperBand:ulong;
-  // How many workers the shipper's party carries (fixed by the proposal; a counter inherits it). 0 on
-  // an offer.
+  // How many workers the party carries: the shipper's on a proposal or counter (fixed by the
+  // proposal; a counter inherits it), the waiting party's on an offer - what bounds the return it can
+  // walk home (partyWorkers x carryPerWorker).
   partyWorkers:uint;
 }
 
@@ -6724,9 +6725,12 @@ table GoodwillCutsState {
   friendlyAbove:float;
 }
 
+// `own` is the viewer's OWN live opinion of each other people (`otherFaction` is the one thought about,
+// `reportedTurn` is the current turn) - appended last; the carried-news rows stay in `goodwill`.
 table GoodwillSection {
   goodwill:[GoodwillState];
   cuts:GoodwillCutsState;
+  own:[GoodwillState];
 }
 
 // ONE GOOD THAT CROSSED A BAND'S STORE, BY CAUSE - a row of `PopulationCohortState.transferCrossings`.

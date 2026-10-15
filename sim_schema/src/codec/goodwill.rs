@@ -51,11 +51,13 @@ pub(crate) fn serialize_goodwill_section<'a>(
 ) -> WIPOffset<fb::GoodwillSection<'a>> {
     let goodwill = create_rows(builder, &snapshot.goodwill);
     let cuts = create_cuts(builder, &snapshot.goodwill_cuts);
+    let own = create_rows(builder, &snapshot.own_goodwill);
     fb::GoodwillSection::create(
         builder,
         &fb::GoodwillSectionArgs {
             goodwill: Some(goodwill),
             cuts: Some(cuts),
+            own: Some(own),
         },
     )
 }
@@ -73,7 +75,18 @@ pub(crate) fn serialize_goodwill_section_delta<'a>(
         .goodwill_cuts
         .as_ref()
         .map(|cuts| create_cuts(builder, cuts));
-    fb::GoodwillSection::create(builder, &fb::GoodwillSectionArgs { goodwill, cuts })
+    let own = delta
+        .own_goodwill
+        .as_ref()
+        .map(|rows| create_rows(builder, rows));
+    fb::GoodwillSection::create(
+        builder,
+        &fb::GoodwillSectionArgs {
+            goodwill,
+            cuts,
+            own,
+        },
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -86,6 +99,7 @@ pub(crate) fn decode_goodwill_section(
 ) {
     snapshot.goodwill = map_rows(section.goodwill(), decode_row);
     snapshot.goodwill_cuts = section.cuts().map(decode_cuts).unwrap_or_default();
+    snapshot.own_goodwill = map_rows(section.own(), decode_row);
 }
 
 pub(crate) fn decode_goodwill_section_delta(
@@ -94,6 +108,7 @@ pub(crate) fn decode_goodwill_section_delta(
 ) {
     delta.goodwill = map_rows_if_present(section.goodwill(), decode_row);
     delta.goodwill_cuts = section.cuts().map(decode_cuts);
+    delta.own_goodwill = map_rows_if_present(section.own(), decode_row);
 }
 
 fn decode_cuts(cuts: fb::GoodwillCutsState<'_>) -> GoodwillCutsState {

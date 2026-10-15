@@ -30,6 +30,7 @@ use crate::oracle::{CrewTakeOracle, Unasked};
 use crate::orchestrator::constant::ConstantStance;
 use crate::orchestrator::{Alarm, Orchestrator, Plan, INTENT_OUTFIT, ORCHESTRATOR_ID};
 use crate::profile::{AiProfile, AiProfiles, Difficulty, ProfileError, Tuning};
+use crate::specialists::dealings::Dealings;
 use crate::specialists::food::Food;
 use crate::specialists::land::Land;
 use crate::specialists::scripted::{ScriptError, Scripted};
@@ -505,6 +506,8 @@ impl UtilityBrain {
                 profile.weight(crate::profile::WEIGHT_LAND_CLAIM),
             )));
         }
+        // A duty, always on: the seat answers every dealing addressed to its people.
+        specialists.push(Box::new(Dealings::new(faction, profile.dealings)));
         let roster: Vec<SpecialistId> = specialists.iter().map(|s| s.id()).collect();
         let orchestrator = ConstantStance::new(
             &roster,
@@ -537,7 +540,7 @@ mod tests {
     use crate::profile::DEFAULT_DIFFICULTY;
     use crate::specialists::food::tests::{a_view, FACTION};
     use crate::specialists::scripted::{SCRIPT_INTENT, SCRIPT_SCORE};
-    use crate::specialists::SPECIALIST_SCRIPTED;
+    use crate::specialists::{SPECIALIST_DEALINGS, SPECIALIST_SCRIPTED};
     use rand::SeedableRng;
     use sim_runtime::{OrdersDirective, PopulationCohortState, WorldSnapshot};
 
@@ -615,7 +618,7 @@ mod tests {
             UtilityBrain::build(FACTION, &profiles, "forager", DEFAULT_DIFFICULTY, &[]).unwrap();
         assert_eq!(
             brain.specialist_ids(),
-            vec![SPECIALIST_FOOD, SPECIALIST_LAND]
+            vec![SPECIALIST_FOOD, SPECIALIST_LAND, SPECIALIST_DEALINGS]
         );
         let mut sink = VecSink::default();
         let commands = brain.decide(&a_view(), &mut rng(), &mut sink);
@@ -655,7 +658,11 @@ mod tests {
             &[SPECIALIST_LAND.to_owned()],
         )
         .unwrap();
-        assert_eq!(brain.specialist_ids(), vec![SPECIALIST_FOOD]);
+        assert_eq!(
+            brain.specialist_ids(),
+            vec![SPECIALIST_FOOD, SPECIALIST_DEALINGS],
+            "the dealings duty is never ablated"
+        );
         assert!(matches!(
             UtilityBrain::build(FACTION, &profiles, "rover", "hard", &["herd".to_owned()]),
             Err(BrainError::NoSuchSpecialist(_))

@@ -1125,6 +1125,7 @@ fn a_pending_dealing_round_trips_a_checkpoint() {
             receiver_faction: RECEIVER_PEOPLE,
             receiver_band: scene.receiver_id,
             party: None,
+            party_workers: 0,
             goods_sent: LocalStore::new(),
             goods_asked: LocalStore::new(),
             agreement: None,

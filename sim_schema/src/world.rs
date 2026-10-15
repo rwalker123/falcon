@@ -325,6 +325,13 @@ pub struct WorldSnapshot {
     /// `GoodwillSection`.
     #[serde(default)]
     pub goodwill: Vec<GoodwillState>,
+    /// **What the viewer's own people think of each other people right now** — the live opinion, one
+    /// row per other people the viewer holds an entry about (`other_faction` is the one thought
+    /// about). The viewer's own opinion is its own to know, so unlike `goodwill` this is never
+    /// carried news: `reported_turn` is the current turn. An AI weighs a proposal on it; a client
+    /// shows "what we think of them". Rides `GoodwillSection`.
+    #[serde(default)]
+    pub own_goodwill: Vec<GoodwillState>,
     /// The word cuts the client draws `goodwill` with — published, never restated client-side.
     #[serde(default)]
     pub goodwill_cuts: GoodwillCutsState,
@@ -500,6 +507,9 @@ pub struct WorldDelta {
     /// `None` = unchanged this frame, on `connections`' own rules.
     #[serde(default)]
     pub goodwill: Option<Vec<GoodwillState>>,
+    /// `None` = unchanged this frame, on `connections`' own rules.
+    #[serde(default)]
+    pub own_goodwill: Option<Vec<GoodwillState>>,
     /// `None` = unchanged this frame.
     #[serde(default)]
     pub goodwill_cuts: Option<GoodwillCutsState>,

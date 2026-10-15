@@ -23,6 +23,9 @@ pub use commands::{
     FODDER_CARGO_KEY, FOOD_CARGO_KEY, MAX_PROTO_FRAME,
 };
 
+pub mod worth;
+pub use worth::{good_worth, worth, GoodAmount};
+
 pub mod command_text;
 pub use command_text::{
     command_line_verb, parse_command_line, render_command_line, CommandParseError, CommandVerbHelp,
@@ -365,6 +368,7 @@ pub mod knowledge {
                 routes: Vec::new(),
                 dealings: Vec::new(),
                 goodwill: Vec::new(),
+                own_goodwill: Vec::new(),
                 goodwill_cuts: Default::default(),
                 contact_lessons: Vec::new(),
                 deposits: Vec::new(),

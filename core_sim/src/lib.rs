@@ -216,9 +216,9 @@ pub use demographics_config::{
     DemographicsConfigMetadata, KeepingClass, KeepingConfig,
 };
 pub use diplomacy_config::{
-    load_diplomacy_config_from_env, DiplomacyAiConfig, DiplomacyConfig, DiplomacyConfigError,
-    DiplomacyConfigHandle, DiplomacyConfigMetadata, DiplomacyRoadsConfig, GoodwillConfig,
-    OffersConfig, BUILTIN_DIPLOMACY_CONFIG,
+    load_diplomacy_config_from_env, DiplomacyConfig, DiplomacyConfigError, DiplomacyConfigHandle,
+    DiplomacyConfigMetadata, DiplomacyRoadsConfig, GoodwillConfig, OffersConfig,
+    BUILTIN_DIPLOMACY_CONFIG,
 };
 pub use equipment_config::{
     load_equipment_config_from_env, BandItemBudget, Crew, DefaultKitsConfig, EffectTier,
