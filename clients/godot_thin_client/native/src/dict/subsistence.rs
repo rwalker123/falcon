@@ -1496,6 +1496,130 @@ pub(crate) fn ladder_areas_to_array(areas: Vector<'_, ForwardsUOffset<&str>>) ->
     crate::dict::strings_to_variant_array(areas)
 }
 
+/// **THE LADDER'S RUNG CATALOG** (`SubsistenceSection.ladderRungs`) -- one row per rung of
+/// `intensification_ladder.json`, EVERY branch of every source kind, published once per world and
+/// carrying no faction and no tile.
+///
+/// ⛔ **ONE VECTOR, FILTERED BY `branch` / `source_kind`.** Roads, deposits, plants, animals and tile
+/// improvements all ride here; a reader that ignored `branch` would offer a coppice above a quarry.
+/// `order` is per branch, so it is only a climb order WITHIN one, and the row order is the config's.
+///
+/// ⛔ **A RUNG ADDED TO THE CONFIG IS A ROW HERE WITH NO CLIENT EDIT.** `label` / `label_fallback`
+/// are the catalog-driven spellings the vocab tables fall back to for a rung they have no prose for.
+/// The `""` fields (`verb`, `unlock_knowledge`, `requires_rung`, `earns_knowledge`,
+/// `build_material_id`) are STATES, not absences; the base figures are quoted as published with no
+/// client-side scaling, and a missing `build_work_per_worker_turn` means NO ESTIMATE.
+pub(crate) fn ladder_rungs_to_array(
+    rungs: Vector<'_, ForwardsUOffset<fb::LadderRungState<'_>>>,
+) -> VarArray {
+    let mut array = VarArray::new();
+    for rung in rungs {
+        let mut dict = VarDictionary::new();
+        // `"<branch>:<id>"` -- the join key with a source's / tile's own `rung`.
+        let _ = dict.insert("rung_key", rung.rungKey().unwrap_or_default());
+        let _ = dict.insert("branch", rung.branch().unwrap_or_default());
+        let _ = dict.insert("order", rung.order() as i64);
+        let _ = dict.insert("display_name", rung.displayName().unwrap_or_default());
+        let _ = dict.insert("label", rung.label().unwrap_or_default());
+        let _ = dict.insert("label_fallback", rung.labelFallback().unwrap_or_default());
+        let _ = dict.insert("verb", rung.verb().unwrap_or_default());
+        // "patch" | "herd" | "road" | "deposit" | "tile" -- the kind of source the branch climbs.
+        let _ = dict.insert("source_kind", rung.sourceKind().unwrap_or_default());
+        let _ = dict.insert(
+            "traits",
+            &crate::dict::strings_to_variant_array(rung.traits().unwrap_or_default()),
+        );
+        let _ = dict.insert(
+            "unlock_knowledge",
+            rung.unlockKnowledge().unwrap_or_default(),
+        );
+        let _ = dict.insert("earns_knowledge", rung.earnsKnowledge().unwrap_or_default());
+        let _ = dict.insert("requires_rung", rung.requiresRung().unwrap_or_default());
+        let _ = dict.insert("work_cost", f64::from(rung.workCost()));
+        let _ = dict.insert("upkeep_work_per_turn", f64::from(rung.upkeepWorkPerTurn()));
+        // The rung's declared pile and its noun are ONE reading: decoded together, read together.
+        let _ = dict.insert("build_material_cost", f64::from(rung.buildMaterialCost()));
+        let _ = dict.insert(
+            "build_material_id",
+            rung.buildMaterialId().unwrap_or_default(),
+        );
+        let _ = dict.insert(
+            "build_work_per_worker_turn",
+            f64::from(rung.buildWorkPerWorkerTurn()),
+        );
+        let _ = dict.insert("friction_multiplier", f64::from(rung.frictionMultiplier()));
+        let _ = dict.insert("holds_link_to_tiles", rung.holdsLinkToTiles() as i64);
+        let _ = dict.insert("grants_sight", rung.grantsSight());
+        let _ = dict.insert(
+            "yield_per_worker_turn",
+            f64::from(rung.yieldPerWorkerTurn()),
+        );
+        let _ = dict.insert("recovery_fraction", f64::from(rung.recoveryFraction()));
+        let _ = dict.insert("regrowth_multiplier", f64::from(rung.regrowthMultiplier()));
+        let _ = dict.insert("min_deposit_capacity", f64::from(rung.minDepositCapacity()));
+        array.push(&dict.to_variant());
+    }
+    array
+}
+
+/// **THE LADDER'S BRANCH DECLARATIONS** (`SubsistenceSection.ladderBranches`) -- `{branch, area,
+/// source_kind, label}` in config order. The per-branch half of the catalog above: which subject
+/// area a branch is drawn under, which kind of source it climbs, and its player-facing noun.
+pub(crate) fn ladder_branches_to_array(
+    branches: Vector<'_, ForwardsUOffset<fb::LadderBranchState<'_>>>,
+) -> VarArray {
+    let mut array = VarArray::new();
+    for branch in branches {
+        let mut dict = VarDictionary::new();
+        let _ = dict.insert("branch", branch.branch().unwrap_or_default());
+        let _ = dict.insert("area", branch.area().unwrap_or_default());
+        let _ = dict.insert("source_kind", branch.sourceKind().unwrap_or_default());
+        let _ = dict.insert("label", branch.label().unwrap_or_default());
+        array.push(&dict.to_variant());
+    }
+    array
+}
+
+/// **THE IMPROVEMENTS STANDING ON TILE-KIND BRANCHES** (`RouteSection.tileImprovements`), keyed by
+/// `(tile_x, tile_y, branch)`. The standing-bill / neglect / build-countdown block is the same
+/// reading `RouteState` and `DepositState` publish, passed through verbatim.
+pub(crate) fn tile_improvements_to_array(
+    rows: Vector<'_, ForwardsUOffset<fb::TileImprovementState<'_>>>,
+) -> VarArray {
+    let mut array = VarArray::new();
+    for row in rows {
+        let mut dict = VarDictionary::new();
+        let _ = dict.insert("tile_x", row.tileX() as i64);
+        let _ = dict.insert("tile_y", row.tileY() as i64);
+        let _ = dict.insert("branch", row.branch().unwrap_or_default());
+        let _ = dict.insert("current_rung", row.currentRung().unwrap_or_default());
+        let _ = dict.insert(
+            "build_destination_rung",
+            row.buildDestinationRung().unwrap_or_default(),
+        );
+        let _ = dict.insert("build_legs", &build_legs_to_array(row.buildLegs()));
+        // The negatives are the countdown's four states, passed through VERBATIM.
+        let _ = dict.insert("build_turns_remaining", row.buildTurnsRemaining() as i64);
+        let _ = dict.insert(
+            "build_blocked_reason",
+            row.buildBlockedReason().unwrap_or_default(),
+        );
+        let _ = dict.insert("upkeep_demand", f64::from(row.upkeepDemand()));
+        let _ = dict.insert("upkeep_supplied", f64::from(row.upkeepSupplied()));
+        let _ = dict.insert("upkeep_shortfall", f64::from(row.upkeepShortfall()));
+        let _ = dict.insert("neglect_turns", row.neglectTurns() as i64);
+        let _ = dict.insert("has_neglect_grace", row.hasNeglectGrace());
+        let _ = dict.insert(
+            "neglect_grace_remaining",
+            row.neglectGraceRemaining() as i64,
+        );
+        let _ = dict.insert("has_keeper", row.hasKeeper());
+        let _ = dict.insert("keeper_band_id", row.keeperBandId() as i64);
+        array.push(&dict.to_variant());
+    }
+    array
+}
+
 pub(crate) fn food_modules_to_array(
     modules: Vector<'_, ForwardsUOffset<fb::FoodModuleState<'_>>>,
 ) -> VarArray {

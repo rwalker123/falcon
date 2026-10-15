@@ -17815,12 +17815,12 @@ func _road_queue_row() -> Dictionary:
 		"build_turns_remaining": SourceForecast.BUILD_TURNS_NOT_YET_ESTIMATED,
 	}
 
-## …and the queue entry the sim publishes for it: `kind: "roadwork"`, `road: true`, the road's TILE.
+## …and the queue entry the sim publishes for it: `kind: "roadwork"`, `branch: "route"`, the road's TILE.
 ## `BuildSource::kind()` is the same token the band-wide roadwork ROLE uses, which is exactly why
 ## `HudBandLaborState.pending_key` gates its road arm on a real tile.
 static func _queue_road_entry(tile: Vector2i) -> Dictionary:
 	return {"kind": HudConst.LABOR_KIND_ROADWORK,
-		"target_x": tile.x, "target_y": tile.y, "fauna_id": "", "road": true}
+		"target_x": tile.x, "target_y": tile.y, "fauna_id": "", "branch": HudRouteVocab.ROAD_BRANCH}
 
 ## The band whose queue is `[Tame <herd>, grade <road>]` — Ray's own shape, with the road behind the
 ## Tame that is taking every builder.
@@ -18528,7 +18528,7 @@ func _assert_the_pick_names_the_working() -> void:
 	# ⛔ **THE MATERIAL IS `stone`, WHICH IS THE WHOLE ASSERTION.** The mark was found by the rock's own
 	# `(tile, material)` handle and the near hex's OTHER working is wood, so a declaration that lost
 	# the material — or took the row's neighbour's — reads as a different line here.
-	var wanted := "%s %d %d %d %s" % [WORKINGS_QUARRY_VERB, HudConst.PLAYER_FACTION_ID,
+	var wanted := "build %s %d %d %d %s" % [WORKINGS_QUARRY_VERB, HudConst.PLAYER_FACTION_ID,
 		ROSTER_NEAR_TILE.x, ROSTER_NEAR_TILE.y, WORKINGS_STONE]
 	print("band_panel_preview: workings ladder pick -> %s" % line)
 	_assert_band_panel("…and picking it sends `%s`, naming that row's TILE and its MATERIAL (got \"%s\")"
@@ -19052,7 +19052,7 @@ const UNOPENED_NO_TAKE := 0.0
 ## gap the quarry rung above it buys, and never a restatement of the stock.
 const UNOPENED_STONE_REACHABLE := 450.0
 
-## **THE TWO DEPOSIT BRANCHES' RUNG CATALOG** (issue #650) — `SubsistenceSection.depositRungs`, per
+## **THE TWO DEPOSIT BRANCHES' RUNG CATALOG** (issue #650) — `SubsistenceSection.ladderRungs`, per
 ## world. ⛔ **THE ROSTER READS IT FOR EVERY RUNG NAME IT PRINTS**, so a state that pushed no catalog
 ## would draw `forestry:felling` in each value cell: a raw wire key is the honest answer for a rung the
 ## catalog does not carry, and a whole roster of them is a fixture that never sent one.
@@ -19785,7 +19785,7 @@ func _assert_a_working_and_a_road_carry_their_marks() -> void:
 			"target_y": ROSTER_NEAR_TILE.y, "fauna_id": "", "material": WORKINGS_STONE,
 			"build_priority": MARKS_WORKING_BUILD_LEVEL},
 		{"kind": HudConst.LABOR_KIND_ROADWORK, "target_x": ROSTER_NEAR_TILE.x,
-			"target_y": ROSTER_NEAR_TILE.y, "fauna_id": "", "road": true,
+			"target_y": ROSTER_NEAR_TILE.y, "fauna_id": "", "branch": HudRouteVocab.ROAD_BRANCH,
 			"build_priority": MARKS_ROAD_BUILD_LEVEL},
 	]
 	_push_bands([band])

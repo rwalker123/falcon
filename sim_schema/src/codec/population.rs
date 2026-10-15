@@ -511,6 +511,12 @@ fn create_populations<'a>(
                         } else {
                             Some(builder.create_string(&entry.material))
                         };
+                        // The branch of a per-tile entry, absent off one - `material`'s reading.
+                        let branch = if entry.branch.is_empty() {
+                            None
+                        } else {
+                            Some(builder.create_string(&entry.branch))
+                        };
                         fb::BuildQueueEntryState::create(
                             builder,
                             &fb::BuildQueueEntryStateArgs {
@@ -520,7 +526,7 @@ fn create_populations<'a>(
                                 faunaId: fauna_id,
                                 buildPriority: Some(build_priority),
                                 material,
-                                road: entry.road,
+                                branch,
                             },
                         )
                     })
@@ -1786,7 +1792,7 @@ fn decode_population(
             fauna_id: text(entry.faunaId()),
             build_priority: text(entry.buildPriority()),
             material: text(entry.material()),
-            road: entry.road(),
+            branch: text(entry.branch()),
         }),
         fodder_need: cohort.fodderNeed(),
         fodder_income: cohort.fodderIncome(),

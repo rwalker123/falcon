@@ -1621,7 +1621,11 @@ fn every_build_job_and_source_kind_is_stated() {
         tile: UVec2::new(3, 3),
         material: "stone".to_string(),
     };
-    for source in [&patch, &herd, &road, &deposit] {
+    let tile_improvement = BuildSource::Tile {
+        tile: UVec2::new(4, 4),
+        branch: shipped::plant(),
+    };
+    for source in [&patch, &herd, &road, &deposit, &tile_improvement] {
         match source {
             // A patch is named by its tile; a herd by an id that outlives its position; a ROAD by
             // its tile, because a road IS a tile (`docs/plan_standing_upkeep.md` §4.13b); and a
@@ -1633,6 +1637,12 @@ fn every_build_job_and_source_kind_is_stated() {
             BuildSource::Deposit { tile, material } => {
                 assert_eq!(*tile, UVec2::new(3, 3));
                 assert_eq!(material, "stone");
+            }
+            // A tile improvement is named by its tile AND its branch - one tile can carry an
+            // improvement of several branches.
+            BuildSource::Tile { tile, branch } => {
+                assert_eq!(*tile, UVec2::new(4, 4));
+                assert_eq!(*branch, shipped::plant());
             }
         }
     }

@@ -3184,7 +3184,7 @@ func _workings_roster_max_useful(band: Dictionary, model: Dictionary) -> int:
     return HudDepositVocab.published_useful_cutters(_band_labor.extract_assignment_of(
         band, tile.x, tile.y, String(model["material"])))
 
-## **THE DEPOSIT BRANCHES' CATALOG, as ordered rows** — `SubsistenceSection.depositRungs`, per world.
+## **THE DEPOSIT BRANCHES' CATALOG, as ordered rows** — `SubsistenceSection.ladderRungs`, per world.
 ## `[]` before any snapshot has arrived, which every consumer renders as *no ladder to show* rather
 ## than as branches with nothing on them.
 func _deposit_ladder() -> Array[Dictionary]:
@@ -3866,7 +3866,7 @@ func _road_queue_models(band: Dictionary) -> Dictionary:
         if not (entry_variant is Dictionary):
             continue
         var wire: Dictionary = entry_variant
-        if not bool(wire.get("road", false)):
+        if not HudRouteVocab.queue_entry_is_road(wire):
             continue
         var x := int(wire.get("target_x", -1))
         var y := int(wire.get("target_y", -1))

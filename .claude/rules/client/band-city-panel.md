@@ -7842,7 +7842,7 @@ is gone after a re-render** — its good now nets even, the tier flipped FULL↔
 the list closes rather than re-anchoring elsewhere (`trade_tab_list_anchor_gone`).
 
 The camps list: this band first, its direct links (rung as icon + word, link distance, rung facts off
-the published `route_rungs` table), then the relay camps — `via <first hop>` on the shortest chain
+the published road slice of `ladder_rungs`), then the relay camps — `via <first hop>` on the shortest chain
 (BFS over every member's own `pooling_links`, ties on the hop's link distance then name) and the
 plain hex distance. Scoped to a good: each camp's net of it off its own pooled crossings, this band
 first, movers by `|net|`, then the even ones, and a `lost in transit — friction` row that is

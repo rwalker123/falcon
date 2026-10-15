@@ -83,6 +83,8 @@ fn spawn_world() -> App {
     // route branch existed.
     app.world.insert_resource(core_sim::RoadRegistry::default());
     app.world
+        .insert_resource(core_sim::TileImprovementRegistry::default());
+    app.world
         .insert_resource(core_sim::RouteTrafficLog::default());
     // The ladder, for the route payoff's own numbers: the widest reach any rung holds open (which
     // sizes the spatial bins) and the rate a recorded link banks. With the registry empty above, the

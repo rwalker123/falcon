@@ -1201,10 +1201,11 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
                 wire_entry.buildPriority().unwrap_or_default(),
             );
             // **THE SITE'S OWN ADDRESS HALVES** (`docs/plan_site_crews.md` §2.4) — `material` names
-            // a working (`""` for every other kind) and `road` a road build. The tile alone cannot
-            // say either: one hex can hold two workings, or a road and a patch.
+            // a working (`""` for every other kind) and `branch` the ladder branch of a road or
+            // tile build (`""` for every other kind). The tile alone cannot say either: one hex can
+            // hold two workings, or a road and a patch.
             let _ = entry.insert("material", wire_entry.material().unwrap_or_default());
-            let _ = entry.insert("road", wire_entry.road());
+            let _ = entry.insert("branch", wire_entry.branch().unwrap_or_default());
             build_queue.push(&entry.to_variant());
         }
     }

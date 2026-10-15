@@ -499,7 +499,7 @@ fn two_workings_and_a_road_on_one_tile_publish_distinguishable_entries() {
                 entry.targetX(),
                 entry.targetY(),
                 entry.material().unwrap_or_default().to_string(),
-                entry.road(),
+                entry.branch().is_some_and(|branch| !branch.is_empty()),
             )
         })
         .collect();

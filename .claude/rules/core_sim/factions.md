@@ -1045,7 +1045,7 @@ apply only where the row describes something that can be *seen*.
 | `commandEvents` | `snapshot/campaign.rs` | **Viewer** |
 | `pendingForks` / `stanceAxes` / `voiceMedium` | `snapshot/campaign.rs` | **Viewer** |
 | `openingLoadout` | `snapshot/campaign.rs` | **Viewer** — already took `viewer_faction` for its known-crafts list |
-| `tiles`, the rasters, `foodModules`, `climateBands`, the catalogues (`kits`, `materials`, `recipes`, `ladderKnowledge`, `routeRungs`, `campaignProfiles`) | various | **World** — terrain and per-world constants, carrying no faction. The client fogs the map from `visibilityRaster` |
+| `tiles`, the rasters, `foodModules`, `climateBands`, the catalogues (`kits`, `materials`, `recipes`, `ladderKnowledge`, `ladderRungs`, `ladderBranches`, `campaignProfiles`) | various | **World** — terrain and per-world constants, carrying no faction. The client fogs the map from `visibilityRaster` |
 | `victory.modes[].progress` | `snapshot/campaign.rs` | **Viewer** — progress is one people's, so the frame carries the viewer's mode rows and nobody else's (`VictoryState::modes_for`) |
 | `victory.winner` | `snapshot/campaign.rs` | **World** — a winner is public by definition, and it names the faction that actually achieved it |
 | `factionPolicies` | `snapshot/campaign.rs` | **Viewer** — your own Open Borders row only |

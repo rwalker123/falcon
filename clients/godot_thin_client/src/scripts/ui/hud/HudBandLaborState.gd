@@ -613,7 +613,7 @@ func road_queue_tiles() -> Dictionary:
 			if not (entry_variant is Dictionary):
 				continue
 			var entry: Dictionary = entry_variant
-			if not bool(entry.get("road", false)):
+			if not HudRouteVocab.queue_entry_is_road(entry):
 				continue
 			var x := int(entry.get("target_x", -1))
 			var y := int(entry.get("target_y", -1))
@@ -706,13 +706,13 @@ func build_queue_keys(band: Dictionary) -> Array:
 	return keys
 
 ## **ONE WIRE QUEUE ENTRY'S KEY**, in `pending_key`'s shape, off the entry's OWN site halves
-## (`BuildQueueEntryState.material` / `.road`, `docs/plan_site_crews.md` §2.4): a working's key names
+## (`BuildQueueEntryState.material` / `.branch`, `docs/plan_site_crews.md` §2.4): a working's key names
 ## its material and a road's is the roadwork key, because one hex can hold two workings, or a road and
 ## a patch, and the tile alone cannot say which.
 func queue_entry_key(entry: Dictionary) -> String:
 	var x := int(entry.get("target_x", -1))
 	var y := int(entry.get("target_y", -1))
-	if bool(entry.get("road", false)):
+	if HudRouteVocab.queue_entry_is_road(entry):
 		return pending_key(HudConst.LABOR_KIND_ROADWORK, x, y, "")
 	return pending_key(String(entry.get("kind", "")).strip_edges().to_lower(), x, y,
 		String(entry.get("fauna_id", "")), String(entry.get("material", "")))

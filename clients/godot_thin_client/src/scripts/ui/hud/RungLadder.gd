@@ -266,7 +266,7 @@ static func has_track(rows: Array[Dictionary]) -> bool:
 # card in the client.
 #
 # ⛔ **EVERY LABEL, PRICE, PAYOFF AND GATE COMES OFF THE CATALOG** (`HudRouteVocab.route_ladder`, the
-# wire's `routeRungs`). Nothing here reads `HudRouteVocab.RUNG_LABELS` and nothing hard-codes the
+# wire's `ladderRungs`). Nothing here reads `HudRouteVocab.RUNG_LABELS` and nothing hard-codes the
 # four shipped rungs: a rung added to `intensification_ladder.json` appears as a row with no client
 # edit at all, which is the whole reason the tile card's action opens a LADDER rather than a button
 # per verb.
@@ -1045,7 +1045,7 @@ static func build_aside(text: String, warn: bool = false) -> Label:
 ## already struck against the store, so the route caller hands the finished sentence in and the
 ## format, the ordering and the WARN ink stay here, shared, rather than being spelled a second time.
 ##
-## **THE NOUN IS NO LONGER WHAT KEEPS THEM APART — THE ARITHMETIC IS.** `RouteRungState.buildMaterialId`
+## **THE NOUN IS NO LONGER WHAT KEEPS THEM APART — THE ARITHMETIC IS.** `LadderRungState.buildMaterialId`
 ## names the road's material now, so the derived sentence *could* be composed; it would just be the
 ## wrong sum. The derived fraction is a STOCK over a PILE; a road's is the sim's own per-turn
 ## coverage, struck against every other claim on the store at the sim's priority. Pairing one with
@@ -1218,7 +1218,7 @@ static func _material_term_list(rows: Array[Dictionary]) -> Array[String]:
 ##
 ## ⛔ **EVERY BRANCH REACHES HERE WITH A NAMED GOOD, AND THE NAMELESS ARM IS GONE.** It rendered the
 ## amount alone for one slice, when the route pile was a bare float — the row read `+ 20 to raise it`
-## and *twenty of what?* is why `RouteRungState.buildMaterialId` was appended. A rung that eats
+## and *twenty of what?* is why `LadderRungState.buildMaterialId` was appended. A rung that eats
 ## nothing is now filtered out UPSTREAM (`HudRouteVocab.catalog_material_pile` answers `{}` unless
 ## both halves are there), so an id reaching this function is always a word.
 static func _material_term(material_id: String, amount: float) -> String:
@@ -1607,7 +1607,7 @@ static func _outright_bar(kind: String, source: Dictionary, prefix: String,
 # card in the client.
 #
 # ⛔ **EVERY LABEL, PRICE, PAYOFF AND GATE COMES OFF THE CATALOG** (`HudDepositVocab`'s `catalog_*`
-# readers over `SubsistenceSection.depositRungs`). Nothing here hard-codes the five shipped rungs: a
+# readers over `SubsistenceSection.ladderRungs`). Nothing here hard-codes the five shipped rungs: a
 # rung added to `intensification_ladder.json` appears as a row with no client edit at all.
 #
 # ⛔ **THREE OF THE SIX ORIGINAL STATES ARE UNREACHABLE HERE, STRUCTURALLY** — `path` and `target`

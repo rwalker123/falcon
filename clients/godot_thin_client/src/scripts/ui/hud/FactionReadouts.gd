@@ -95,6 +95,14 @@ var _route_rungs: Array = []
 ## the branch its MATERIAL belongs to, and `order` is a climb order only WITHIN one branch. A reader
 ## groups before it walks.
 var _deposit_rungs: Array = []
+## ⛔ **THE WHOLE LADDER CATALOG as the wire sent it** (`SubsistenceSection.ladderRungs`, issue #175) --
+## every rung of every branch, plant / animal / road / deposit / tile alike, each row carrying its
+## `branch` and `source_kind`. `_route_rungs` and `_deposit_rungs` above are the FILTERED VIEWS of it
+## the road and deposit surfaces already read; a branch whose kind no surface reads yet (a tile
+## branch) is retained here and drawn by nothing, which is a real answer rather than a dropped row.
+var _ladder_rungs: Array = []
+## The branch declarations beside it: `{branch, area, source_kind, label}` in config order.
+var _ladder_branches: Array = []
 ## **WHAT EACH DISCOVERY LETS THE FACTION'S HANDS DO — one sentence per ladder track, and this table
 ## OUTLIVED THE ANNOUNCEMENT IT WAS WRITTEN FOR.**
 ##
@@ -187,6 +195,9 @@ func reset_world_state() -> void:
 	# never restates it, and a ladder opened before the new world's own catalog lands would draw the
 	# previous game's rungs.
 	_deposit_rungs.clear()
+	# …and the unified catalog both of them are views of, for the same reason.
+	_ladder_rungs.clear()
+	_ladder_branches.clear()
 	update_intensification([])
 	update_discoveries([])
 	update_sedentarization([])
@@ -362,7 +373,48 @@ func knowledge_labels() -> Dictionary:
 		labels[id] = String(entry.get("display_name", ""))
 	return labels
 
-## ⛔ **INGEST THE ROUTE RUNG CATALOG** — the `route_rungs` section, retained whole.
+## The `source_kind` a ladder row carries for the road branch and for the deposit branches.
+const LADDER_SOURCE_KIND_ROAD := "road"
+const LADDER_SOURCE_KIND_DEPOSIT := "deposit"
+const LADDER_SOURCE_KIND_KEY := "source_kind"
+
+## ⛔ **INGEST THE UNIFIED LADDER CATALOG** -- the `ladder_rungs` section (issue #175), retained whole,
+## then SPLIT BY SOURCE KIND into the road and deposit views the surfaces read. Per WORLD, and a
+## non-Array leaves the last value standing, this HUD's catalogue-setter convention.
+##
+## **A ROW OF AN UNKNOWN KIND IS KEPT, NOT DROPPED**: it lands in `ladder_rungs()` and in neither
+## view, so a branch added to the config reaches the wire, the dict and this store with no client edit
+## and simply has no surface yet.
+func update_ladder_rungs(catalog_variant: Variant) -> void:
+	if not (catalog_variant is Array):
+		return
+	_ladder_rungs = catalog_variant
+	update_route_rungs(ladder_rungs_of_kind(LADDER_SOURCE_KIND_ROAD))
+	update_deposit_rungs(ladder_rungs_of_kind(LADDER_SOURCE_KIND_DEPOSIT))
+
+## The whole catalog as the wire sent it, BY REFERENCE.
+func ladder_rungs() -> Array:
+	return _ladder_rungs
+
+## The catalog rows whose branch climbs one kind of source (`"patch"` | `"herd"` | `"road"` |
+## `"deposit"` | `"tile"`), in the catalog's own order.
+func ladder_rungs_of_kind(source_kind: String) -> Array:
+	var rows: Array = []
+	for row in _ladder_rungs:
+		if row is Dictionary and String((row as Dictionary).get(LADDER_SOURCE_KIND_KEY, "")) == source_kind:
+			rows.append(row)
+	return rows
+
+## Ingest the branch declarations (`ladder_branches`), retained whole; non-Array leaves the last value.
+func update_ladder_branches(branches_variant: Variant) -> void:
+	if not (branches_variant is Array):
+		return
+	_ladder_branches = branches_variant
+
+func ladder_branches() -> Array:
+	return _ladder_branches
+
+## ⛔ **INGEST THE ROUTE RUNG CATALOG** — the road view of `ladder_rungs`, retained whole.
 ##
 ## **PER WORLD, NOT PER FACTION, and that is why it is a section of its own** — exactly
 ## `ladder_knowledge`'s shape and for its reason: it declares what the route branch HOLDS, which is

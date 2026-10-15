@@ -976,7 +976,7 @@ you seen that tile"*. It **fails closed** on an absent faction map.
 | `hasKeeper` / `keeperBandId` | **whose job this tile is.** Read the bool first — `0` is a real `BandId`. `false` across the whole free floor, which is the commonest road in the game |
 | `keeperRemoteness` | what distance did to the price, as a multiple — the only way a client can explain a bill larger than the rung says |
 | `upkeepDemand` / `upkeepSupplied` / `upkeepShortfall` / `upkeepWorkersNeeded` | the standing bill in **work**, all four off the **stamped** `road_keeping_basis` |
-| `upkeepMaterialDemand` / `upkeepMaterialSupplied` | the standing bill in **goods**, off the stamped material basis, on the same `demand − supplied == shortfall` rule. ⛔ **This is the pair that separates *short of stone* from *short of keepers*** — a surface reading only the work pair tells the player to staff `roadwork` for an empty shelf. The noun is `RouteRungState.buildMaterialId`. They do **not** add: the decay rides the worse fraction, never the sum |
+| `upkeepMaterialDemand` / `upkeepMaterialSupplied` | the standing bill in **goods**, off the stamped material basis, on the same `demand − supplied == shortfall` rule. ⛔ **This is the pair that separates *short of stone* from *short of keepers*** — a surface reading only the work pair tells the player to staff `roadwork` for an empty shelf. The noun is `LadderRungState.buildMaterialId`. They do **not** add: the decay rides the worse fraction, never the sum |
 | `hasNeglectGrace` / `neglectGraceRemaining` | the **countdown**, through `routes::road_neglect_grace_remaining` at the at-risk rung |
 | `grantsSight` | the resolved *"is this road lighting its tile"* |
 | `frictionMultiplier` / `holdsLinkToTiles` | what the rung is buying, off the tile's stamped `payoff()` — the first a MEAN along a journey, the second the journey's MINIMUM |
@@ -998,13 +998,15 @@ you seen that tile"*. It **fails closed** on an absent faction map.
 - **`grantsSight` is the resolved answer**, because a client cannot re-derive *"is the bill met"*: that
   is a comparison against the stamped basis with the sim's own `KEEPING_EPSILON`.
 
-## The rung CATALOG — `RouteRungState`, once per world and carrying no tile
+## The rung CATALOG — `LadderRungState`, once per world and carrying no tile
 
 `RouteState` answers *where does this tile stand and what is that worth*. It says nothing about the
 rungs **above** it, so no readout could state what a paved road would cost or what it would buy until
 the tile already held one — which is exactly what a ladder of rungs nobody has built yet has to say.
-`SubsistenceSection.routeRungs` is that ladder: **one row per rung of `intensification_ladder.json`'s
-route branch, in climb order**.
+`SubsistenceSection.ladderRungs` is that ladder: **one row per rung of `intensification_ladder.json`,
+grouped by branch and in climb order within it** - the route branch's rows are the ones with
+`sourceKind: "road"`. (It replaced the route-only `routeRungs` and the deposit-only `depositRungs`
+tables; `ladderBranches` beside it carries each branch's area, kind and heading.)
 
 **It rides the SECTION, beside `ladderKnowledge`, and not the tile row.** These are properties of the
 **branch**, identical for every road in the world; on `RouteState` they would repeat the same four
@@ -1021,7 +1023,7 @@ coded climb has never heard of is in the catalog, and `RungDef::wire_key` /
 
 | Field | Reading |
 |---|---|
-| `rungKey` / `order` | the record's `branch:id` and its own climb order — **the row order IS that order**, bottom rung first. `rungKey` is the same spelling `RouteState.rung` carries, so a tile joins to its row here |
+| `rungKey` / `branch` / `order` | the record's `branch:id`, the branch it sits on and its own climb order — **the row order IS that order**, bottom rung first. `rungKey` is the same spelling `RouteState.rung` carries, so a tile joins to its row here |
 | `displayName` | the id read as a player reads it, through the ladder's own `knowledge_title_from_id` — one capitalization rule for underscored ladder ids, not two |
 | `verb` | the rung's own, `""` where it declares none. **An empty verb is the free floor**: a path and a trail are formed by use, so there is no command to draw a button for |
 | `unlockKnowledge` | the gate, joining to `LadderKnowledgeState.knowledgeId` for the faction's own progress; `""` where the rung waits on nothing |
@@ -1073,12 +1075,15 @@ runs on — *paying the upkeep IS the presence*, which is why the floor lights n
 is. The per-tile field stays the **resolved** answer, because a rung that grants sight still goes
 dark while its bill is unmet.
 
-**Route branch only, deliberately.** The table is `RouteRungState` rather than a generic
-`LadderRungState` because a generic table filled for one branch is a promise the code does not keep;
-the plant and animal branches publishing the same is their own change.
+**Every branch, one table.** The road, deposit, plant and animal rungs share one row shape; the payoff
+blocks a rung does not declare read the wire's neutral value (`frictionMultiplier` 1,
+`holdsLinkToTiles` 0, `regrowthMultiplier` 1, the take fields 0), so a plant rung never claims to be a
+road that helps a haul. A row also carries the rung's `label` / `labelFallback`, its `sourceKind` and
+its `traits`.
 
-`snapshot::subsistence::snapshot_route_rungs` is the one producer, called beside
-`snapshot_ladder_knowledge` in the capture. `core_sim/tests/route_wire.rs` pins it on the **encoded
+`snapshot::subsistence::snapshot_ladder_rungs` / `snapshot_ladder_branches` are the producers, called
+beside `snapshot_ladder_knowledge` in the capture. `core_sim/tests/ladder_catalog_wire.rs` pins the
+whole table against the config; `core_sim/tests/route_wire.rs` pins the road rows on the **encoded
 envelope**: one row per rung the config declares, in the coded climb's order, every value read back
 off that rung's record — plus the shape a ladder renders differently, the floor requiring nothing and
 the free floor naming no verb, owing nothing and lighting nothing, and every gate on the branch

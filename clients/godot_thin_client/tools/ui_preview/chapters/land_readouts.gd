@@ -974,7 +974,7 @@ func _restore_band_roster(inherited: Dictionary) -> void:
 ## rather than a local literal is what makes these claims about the WIRE's number.
 ## ⛔ **AND SO IS THE MATERIAL NOUN, for the identical reason.** `route:paved_road` owes standing
 ## stone, and the `Upkeep` row has to be able to say WHICH currency is short — so the drawer resolves
-## `RouteRungState.buildMaterialId` for the rung the tile HOLDS and hands it over. Passing the
+## `LadderRungState.buildMaterialId` for the rung the tile HOLDS and hands it over. Passing the
 ## catalog's own id rather than a literal is what makes these claims about the WIRE's word.
 func _road_lines_named(road: Dictionary, keeper_label: String,
 		per_worker_turn: float = LADDER_BARE_WORK_RATE,
@@ -1415,7 +1415,7 @@ func _assert_road_rows_say_whose_job_it_is() -> void:
 				HudRouteVocab.ROAD_UPKEEP_WORKER_CLAUSE_FORMAT % [ROAD_SHORT_WORKERS_DIRT,
 					HudRouteVocab.ROAD_UPKEEP_WORKER_PLURAL]])
 	# ⛔ **AND WITH NO CATALOG ON THE WIRE THERE IS NO CLAUSE AT ALL — the containment half.** The rate
-	# is `RouteRungState.buildWorkPerWorkerTurn` now, not a constant this client spells, so a client
+	# is `LadderRungState.buildWorkPerWorkerTurn` now, not a constant this client spells, so a client
 	# that has not been sent a catalog cannot price the gap in hands. **It must not fall back**: a
 	# substituted `1.0` is the retired transcription returning through the side door, and it would go
 	# stale in silence the day the sim writes worker output as a sum of more terms. The keeper is still
@@ -1580,7 +1580,7 @@ func _with_a_road_queued(tile: Vector2i) -> Array:
 		var band: Dictionary = band_variant
 		inherited.append((band.get("build_queue", []) as Array).duplicate(true))
 		band["build_queue"] = [{"kind": HudConst.LABOR_KIND_ROADWORK,
-			"target_x": tile.x, "target_y": tile.y, "fauna_id": "", "road": true}]
+			"target_x": tile.x, "target_y": tile.y, "fauna_id": "", "branch": HudRouteVocab.ROAD_BRANCH}]
 	return inherited
 
 ## ⛔ **A BAND WITH TWO JOBS ALREADY IN FRONT OF THE PRESS** — a patch at the head and a second behind
@@ -1624,7 +1624,7 @@ func _with_a_queued_road() -> void:
 		var queue: Array = (band_variant as Dictionary).get("build_queue", []) as Array
 		queue.append({"kind": HudConst.LABOR_KIND_ROADWORK,
 			"target_x": ROAD_FIXTURE_TILE.x, "target_y": ROAD_FIXTURE_TILE.y, "fauna_id": "",
-			"road": true})
+			"branch": HudRouteVocab.ROAD_BRANCH})
 
 ## The tile every road fixture in this chapter stands on, so a queue entry naming it and the road row
 ## itself cannot drift apart.
@@ -2673,7 +2673,7 @@ const ANCESTORS_TILE_ROW_TEXT := "Ancestors: 24 dead"
 ## in TRAFFIC rather than a crew's job, which is exactly why the ladder must state no price on that
 ## row — the fixture carries it so the suppression is tested against a real number.
 ## ⛔ **THE SIM'S BARE WORKER OUTPUT, ON EVERY ROW — `intensification::PER_WORKER_OUTPUT`.** It is the
-## one field on `RouteRungState` that is not derived from the rung, and it is the same value on all
+## one field on `LadderRungState` that is not derived from the rung, and it is the same value on all
 ## four: the catalog is where a number identical for every road in the world belongs, and the client
 ## reads it off the FIRST row on that strength (`core_sim/tests/route_wire.rs` asserts the agreement).
 ##
@@ -2815,7 +2815,7 @@ const TIP_DIRT_TURNS_UNGEARED := "≈150 turns with this band's builders."
 const TIP_PAVED_TURNS_GEARED := "≈134 turns with this band's builders."
 
 ## ⛔ **THE PILE CLAUSE, WRITTEN OUT — AND IT NAMES NO GOOD, WHICH IS THE WIRE'S OWN SHAPE.**
-## `RouteRungState.buildMaterialCost` is a bare float: the branch eats exactly one material and the
+## `LadderRungState.buildMaterialCost` is a bare float: the branch eats exactly one material and the
 ## schema withholds the id deliberately, so a road says HOW MUCH and not OF WHAT. The plant and
 ## animal branches ship `MaterialPayoff` rows whose id IS the noun; spelling `stone` in this
 ## expectation would be asserting a word no wire sends.
@@ -2941,7 +2941,7 @@ const SECOND_BAND_NAME := "Brackwater"
 ## the fixture's band id and the tile's `x` are deliberately different numbers, so a builder that
 ## dropped the band would produce a line that still parses and grades the wrong hex.
 func _expected_grade_line() -> String:
-	return "%s %d %d %d %d" % [SourceForecast.IMPROVEMENT_GRADE, HudConst.PLAYER_FACTION_ID,
+	return "build %s %d %d %d %d" % [SourceForecast.IMPROVEMENT_GRADE, HudConst.PLAYER_FACTION_ID,
 		_road_keeper_band(), ROAD_TILE.x, ROAD_TILE.y]
 
 ## **AND THE LINE THE ABANDON ROW WOULD TRANSMIT — `road` then the tile, and NO BAND.** `abandon`
@@ -2960,7 +2960,7 @@ func _expected_abandon_line() -> String:
 ## is out of reach but railroad is not"*.
 
 ## **THE ROUTE BRANCH'S RUNG CATALOG, TRANSCRIBED FROM THE SHIPPED LADDER** — the shape
-## `native/src/dict/routes.rs::route_rungs_to_array` decodes off `SubsistenceSection.routeRungs`.
+## `native/src/dict/routes.rs::ladder_rungs_to_array` decodes off `SubsistenceSection.ladderRungs`.
 ##
 ## ⛔ **A TRANSCRIPTION, DELIBERATELY NOT A DERIVATION.** A fixture that recomputed the catalog would
 ## pass against a producer that had stopped producing one; what this file proves is that the CLIENT

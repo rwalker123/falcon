@@ -828,7 +828,9 @@ pub(crate) fn craft_suggestion_states(
                         }
                     };
                     match target {
-                        Some(BuildSource::Patch(tile)) | Some(BuildSource::Road(tile)) => {
+                        Some(BuildSource::Patch(tile))
+                        | Some(BuildSource::Road(tile))
+                        | Some(BuildSource::Tile { tile, .. }) => {
                             state.target_x = tile.x;
                             state.target_y = tile.y;
                         }

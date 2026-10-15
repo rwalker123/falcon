@@ -144,7 +144,7 @@ fn published_destination_rung(destination: Option<crate::intensification::RungId
 /// **The client must not re-derive these.** The rung spans are the sim's config, the source's
 /// position is the sim's state, and the dates are chained against a build queue the client cannot
 /// see — so a client reconstructing them would be a second producer of a verdict that has one.
-fn published_build_legs(
+pub(crate) fn published_build_legs(
     legs: &[crate::intensification::PublishedBuildLeg],
 ) -> Vec<sim_runtime::BuildLegState> {
     legs.iter()
@@ -191,9 +191,22 @@ pub(crate) struct QueuedBuildSources {
     /// **The workings some band has queued**, keyed `(tile, material)` because one tile can hold two
     /// and a `fell` queued on the timber is not a `quarry` queued on the rock beneath it.
     deposits: std::collections::HashSet<(UVec2, String)>,
+    /// **The tile improvements some band has queued**, keyed `(tile, branch)` - the registry's own
+    /// key, since one tile can carry an improvement of several branches.
+    tiles: std::collections::HashSet<(UVec2, crate::intensification::BranchId)>,
 }
 
 impl QueuedBuildSources {
+    /// **IS THIS TILE IMPROVEMENT IN SOME BAND'S LIVE QUEUE?** - the tile kind's twin of
+    /// [`Self::road_is_queued`], and the gate on the builder's scratch a rival may not read.
+    pub(crate) fn tile_is_queued(
+        &self,
+        tile: UVec2,
+        branch: crate::intensification::BranchId,
+    ) -> bool {
+        self.tiles.contains(&(tile, branch))
+    }
+
     /// **Is this road tile in some band's live build queue?** — the route twin of
     /// [`Self::patch_is_queued`], and the `queued_live` term of [`published_build_countdown`].
     pub(crate) fn road_is_queued(&self, tile: UVec2) -> bool {
@@ -244,6 +257,9 @@ pub(crate) fn resolve_queued_build_sources<'a>(
                 }
                 crate::components::BuildSource::Deposit { tile, material } => {
                     resolved.deposits.insert((*tile, material.clone()));
+                }
+                crate::components::BuildSource::Tile { tile, branch } => {
+                    resolved.tiles.insert((*tile, *branch));
                 }
             }
         }
@@ -2417,191 +2433,132 @@ const NO_BUILD_WORK: f32 = 0.0;
 /// `route:paved_road` sits here.
 const NO_BUILD_MATERIAL: f32 = 0.0;
 
-/// **WHAT A ROAD MAY BECOME** — the route branch's rung catalog, once per world and carrying no
-/// tile. `RouteState` publishes the rung a tile **stands on**; this publishes the whole climb, so a
-/// client can price a rung nothing has built yet.
+/// **A RUNG WITH NO ROAD PAYOFF HELPS NO HAUL** - the `friction_multiplier` a rung without a
+/// `route_payoff` publishes: the wire's neutral 1.0 (no help), so a defaulted row never claims a
+/// non-road rung makes a road cheaper.
+const NO_ROUTE_FRICTION_HELP: f32 = 1.0;
+
+/// **A RUNG WITH NO ROAD PAYOFF HOLDS NO LINK OPEN** - its `holds_link_to_tiles`.
+const NO_LINK_HELD_OPEN: u32 = 0;
+
+/// **A RUNG WITH NO EXTRACTION PAYOFF TAKES NOTHING** - the neutral `yield_per_worker_turn` and
+/// `recovery_fraction` a non-deposit rung publishes.
+const NO_EXTRACTION_TAKE: f32 = 0.0;
+
+/// **WHAT ANY SOURCE MAY BECOME** - the ladder's rung catalog, once per world and carrying no tile.
+/// The source rows publish the rung a source **stands on**; this publishes every branch's whole
+/// climb, so a client can price a rung nothing has built yet, on a ground where nothing has been.
 ///
 /// ⛔ **EVERY FIELD IS DERIVED FROM `intensification_ladder.json`, EXACTLY AS THE KNOWLEDGE ROSTER
 /// ABOVE IS.** Nothing here is separately authored and no value is restated: the cost and the bill
-/// are the rung's own `build` / `upkeep` blocks, the payoff is its `route_payoff`, and the chain is
-/// its `requires_rung`. A rung added to that config appears in the ladder with no further edit,
+/// are the rung's own `build` / `upkeep` blocks, a road's payoff is its `route_payoff`, a deposit's
+/// is its `extraction_payoff`, the site rule is its `site_requirement`, and the chain is its
+/// `requires_rung`. A rung or a whole branch added to that config appears with no further edit,
 /// which is the whole reason this rides the wire instead of a client-side table.
 ///
-/// **The two rates are the rung's own, before the tile's multipliers.** A road's real price also
-/// carries its keeper's remoteness quote and its ground's `infrastructure_cost`, and both of those
-/// are per-tile facts published on `RouteState` — a catalog row is the branch's figure, which is the
-/// only one that is the same for every road in the world.
+/// **Branches in the config's own order, rungs in climb order within each.** The payoff fields of a block
+/// the rung does not declare read the wire's neutral value, so a plant rung never claims to be a
+/// road that helps a haul.
 ///
-/// **`build_work_per_worker_turn` is the one field that is the SIM'S and not the config rung's**,
-/// and it rides here for that same reason: it is identical for every rung and for every road in the
-/// world, which is the only kind of number a ladder can quote. Every source row publishes its own
-/// copy; a road's own row does not repeat it — one constant per road on the map — so without this
-/// the client would have to hold a transcription of
-/// [`crate::intensification::PER_WORKER_OUTPUT`] and would not learn of a second term landing in it.
-pub(crate) fn snapshot_route_rungs(ladder: &LadderConfig) -> Vec<RouteRungState> {
-    crate::routes::route_rungs_in_climb_order(ladder)
+/// **The two rates are the rung's own, before the source's multipliers.** A road's real price also
+/// carries its keeper's remoteness quote and its ground's `infrastructure_cost`, a working's bill
+/// its keeper-loads - per-source facts published on those rows. A catalog row is the branch's
+/// figure, the only one that is the same for every source on it.
+///
+/// **`build_work_per_worker_turn` is the one field that is the SIM'S and not the config rung's**:
+/// identical for every rung and every source, so it rides the catalog, and a client left to
+/// transcribe [`crate::intensification::PER_WORKER_OUTPUT`] would not learn of a second term landing
+/// in it.
+pub(crate) fn snapshot_ladder_rungs(ladder: &LadderConfig) -> Vec<LadderRungState> {
+    ladder
+        .branches_in_config_order()
         .into_iter()
-        .map(|rung| {
-            // The same `expect` `routes::road_payoff_at` makes, and for the same reason: the ladder's
-            // own `validate` requires a payoff on every route rung and rejects one anywhere else, so
-            // a neutral default here would be a second, quieter answer to a config that cannot load.
-            let payoff = rung
-                .route_payoff
-                .as_ref()
-                .expect("validate requires a route_payoff on every route rung");
-            // **THE PILE AND ITS NOUN, FROM ONE LOOKUP** — so the amount and the material it is
-            // counted in can never disagree. `None` for a rung that eats nothing, which is every
-            // route rung but `route:paved_road`.
-            //
-            // ⛔ **THE FIRST ENTRY, NOT A SUM.** One material per rung is the branch's model: the
-            // wire carries a single float, so a second declared material would make the *amount*
-            // meaningless before the id had to choose between them. Summing would publish a number
-            // no id could honestly name.
-            let pile = rung.build_materials().next();
-            RouteRungState {
-                rung_key: rung.wire_key(),
-                order: rung.order,
-                // The same spelling the knowledge roster resolves its titles with — both are
-                // underscored ladder ids, and a second capitalization rule would be a second answer
-                // to one question.
-                display_name: knowledge_title_from_id(&rung.id),
-                verb: rung.verb.clone().unwrap_or_default(),
-                unlock_knowledge: rung.unlock_knowledge.clone().unwrap_or_default(),
-                requires_rung: rung.requires_rung_wire_key().unwrap_or_default(),
-                // Unscaled: the remoteness quote is the tile's, not the rung's.
-                work_cost: rung.build_cost(RUNG_COST_UNSCALED).unwrap_or(NO_BUILD_WORK),
-                upkeep_work_per_turn: rung
-                    .upkeep
-                    .as_ref()
-                    .map_or(NO_UPKEEP_DEMAND, |upkeep| upkeep.work_per_turn),
-                friction_multiplier: payoff.friction_multiplier,
-                holds_link_to_tiles: payoff.holds_link_to_tiles,
-                grants_sight: crate::routes::rung_grants_sight(rung),
-                // **The remedy a gate asks for**, and it is the rung's own `earns_knowledge` rather
-                // than anything read off the chain: the rung that TEACHES a knowledge and the rung
-                // directly beneath the one it gates are two different facts that merely coincide on
-                // the shipped four.
-                earns_knowledge: rung.earns_knowledge.clone().unwrap_or_default(),
-                // **The bare rate, read and not restated** — through the same
-                // `build_work_per_worker_turn` seam the patch and herd rows publish theirs by, at
-                // `NO_BUILD_GEAR`, because it is the *sum of terms* the model is written as and a
-                // second term added there must reach this row too.
-                //
-                // It is the same figure for every rung — the sim's one answer to *what does a
-                // worker bank in a turn* — so it rides the CATALOG and not the tile row. A road
-                // does not repeat it on its own row for that reason, and a client left to
-                // transcribe the constant instead would go stale in silence the day that sum grows.
-                build_work_per_worker_turn: build_work_per_worker_turn(NO_BUILD_GEAR),
-                // ⛔ **THE PILE, AND IT IS FLAT WHERE `work_cost` ABOVE IS NOT.** The work is quoted
-                // unscaled here because the *tile's* remoteness still has to be applied to it; the
-                // material takes no such multiplier at all, so this figure is already the whole
-                // truth for every tile on the map. A tile of road needs the same stone wherever it
-                // lies, and remoteness already taxes the getting there.
-                //
-                build_material_cost: pile.map_or(NO_BUILD_MATERIAL, |(_, amount)| amount),
-                // ⛔ **THE NOUN, BECAUSE THE AMOUNT ALONE CANNOT BE A SENTENCE.** The rung row read
-                // *"+ 20 to raise it"* without it — twenty of *what*. The client must not supply
-                // `stone` itself: which material a rung eats is a fact about the **config**, so a
-                // transcribed noun is a second authority that goes stale the day a rung is retuned,
-                // which is the mistake `build_work_per_worker_turn` above exists to have prevented.
-                build_material_id: pile.map_or_else(String::new, |(id, _)| id.to_string()),
-            }
+        .filter_map(|branch| ladder.branch_def(branch).map(|def| (branch, def)))
+        .flat_map(|(branch, def)| {
+            ladder.rungs_of(branch).into_iter().map(move |rung| {
+                // **THE PILE AND ITS NOUN, FROM ONE LOOKUP**, so the amount and the material it is
+                // counted in can never disagree. `None` for a rung that eats nothing. The first
+                // entry and not a sum: the wire carries a single float, so a second declared
+                // material would make the *amount* meaningless before the id had to choose.
+                let pile = rung.build_materials().next();
+                let route = rung.route_payoff.as_ref();
+                let extraction = rung.extraction_payoff.as_ref();
+                LadderRungState {
+                    rung_key: rung.wire_key(),
+                    // One vector carries every ladder, so each row says which it is on.
+                    branch: rung.branch.as_str().to_string(),
+                    order: rung.order,
+                    // The same spelling the knowledge roster resolves its titles with - a second
+                    // capitalization rule would be a second answer to one question.
+                    display_name: knowledge_title_from_id(&rung.id),
+                    label: rung.label.clone(),
+                    label_fallback: rung.label_fallback.clone(),
+                    verb: rung.verb.clone().unwrap_or_default(),
+                    source_kind: def.source.as_str().to_string(),
+                    traits: rung
+                        .trait_set()
+                        .members()
+                        .map(|trait_| trait_.as_str().to_string())
+                        .collect(),
+                    unlock_knowledge: rung.unlock_knowledge.clone().unwrap_or_default(),
+                    // **The remedy a gate asks for**: the rung that TEACHES a knowledge and the
+                    // rung directly beneath the one it gates are two different facts.
+                    earns_knowledge: rung.earns_knowledge.clone().unwrap_or_default(),
+                    requires_rung: rung.requires_rung_wire_key().unwrap_or_default(),
+                    // Unscaled: any per-source quote (a road's remoteness) is the source's.
+                    work_cost: rung.build_cost(RUNG_COST_UNSCALED).unwrap_or(NO_BUILD_WORK),
+                    upkeep_work_per_turn: rung
+                        .upkeep
+                        .as_ref()
+                        .map_or(NO_UPKEEP_DEMAND, |upkeep| upkeep.work_per_turn),
+                    // ⛔ **THE PILE IS FLAT WHERE `work_cost` IS NOT**, and the noun rides with it
+                    // because the amount alone cannot be a sentence - and a client must not supply
+                    // the noun, which is a fact about the config.
+                    build_material_cost: pile.map_or(NO_BUILD_MATERIAL, |(_, amount)| amount),
+                    build_material_id: pile.map_or_else(String::new, |(id, _)| id.to_string()),
+                    // **The bare rate, read and not restated** - through the same
+                    // `build_work_per_worker_turn` seam every source row publishes by.
+                    build_work_per_worker_turn: build_work_per_worker_turn(NO_BUILD_GEAR),
+                    friction_multiplier: route
+                        .map_or(NO_ROUTE_FRICTION_HELP, |payoff| payoff.friction_multiplier),
+                    holds_link_to_tiles: route
+                        .map_or(NO_LINK_HELD_OPEN, |payoff| payoff.holds_link_to_tiles),
+                    grants_sight: route.is_some() && crate::routes::rung_grants_sight(rung),
+                    yield_per_worker_turn: extraction
+                        .map_or(NO_EXTRACTION_TAKE, |payoff| payoff.yield_per_worker_turn),
+                    // ⛔ **PUBLISHED, NEVER DERIVED FROM `reachable / capacity`**, which falls as
+                    // the rock is worked on a rung whose reach never moved.
+                    recovery_fraction: extraction
+                        .map_or(NO_EXTRACTION_TAKE, |payoff| payoff.recovery_fraction),
+                    regrowth_multiplier: extraction
+                        .map_or(sim_schema::DEPOSIT_RUNG_REGROWTH_UNCHANGED, |payoff| {
+                            payoff.regrowth_multiplier
+                        }),
+                    // **Why a rung is refused, and not merely that it is** - the rung's own floor,
+                    // struck against the capacity a working already publishes. A rung with no
+                    // `site_requirement` reads [`NO_DEPOSIT_FLOOR`].
+                    min_deposit_capacity: rung
+                        .site_requirement
+                        .as_ref()
+                        .map_or(NO_DEPOSIT_FLOOR, |site| site.min_deposit_capacity),
+                }
+            })
         })
         .collect()
 }
 
-/// **WHAT A WOOD OR A ROCK BODY MAY BECOME** — the forestry and extraction branches' rung catalog,
-/// once per world and carrying no working. `DepositState` publishes the rung a working **stands
-/// on**; this publishes both climbs, so a client can price a rung nothing has opened yet — including
-/// on ground where nothing has been opened at all.
-///
-/// ⛔ **EVERY FIELD IS DERIVED FROM `intensification_ladder.json`, EXACTLY AS THE ROUTE CATALOG
-/// ABOVE IS.** Nothing here is separately authored and no value is restated: the cost and the bill
-/// are the rung's own `build` / `upkeep` blocks, the payoff is its `extraction_payoff`, the site rule
-/// is its `site_requirement`, and the chain is its `requires_rung`. A rung added to that config
-/// appears in the ladder with no further edit — which is not hypothetical on these two branches, the
-/// minerals arc's `mine` being already reserved above `extraction:quarry`.
-///
-/// **The rates are the rung's own, before the working's own multipliers.** A working's real bill
-/// also carries its keeper-loads (`DepositState::upkeep_demand` is that resolved reading) and its
-/// real take is capped by the reachable stock; a catalog row is the branch's figure, which is the
-/// only one that is the same for every wood and every seam in the world.
-///
-/// **`build_work_per_worker_turn` is the one field that is the SIM'S and not the config rung's**,
-/// and it rides here for the route catalog's reason: it is identical for every rung and every
-/// working, so a client left to transcribe [`crate::intensification::PER_WORKER_OUTPUT`] would not
-/// learn of a second term landing in it.
-pub(crate) fn snapshot_deposit_rungs(ladder: &LadderConfig) -> Vec<DepositRungState> {
-    crate::extraction::deposit_rungs_in_climb_order(ladder)
+/// **THE LADDER'S BRANCHES** - the grouping [`snapshot_ladder_rungs`] is drawn under, once per
+/// world, in the config's branch order. Derived from the config's branch descriptors alone.
+pub(crate) fn snapshot_ladder_branches(ladder: &LadderConfig) -> Vec<LadderBranchState> {
+    ladder
+        .branches_in_config_order()
         .into_iter()
-        .map(|rung| {
-            // The same `expect` `extraction::deposit_payoff` makes, and for the same reason: the
-            // ladder's own `validate` requires an `extraction_payoff` on every forestry and
-            // extraction rung and rejects one anywhere else, so a neutral default here would be a
-            // second, quieter answer to a config that cannot load.
-            let payoff = rung
-                .extraction_payoff
-                .as_ref()
-                .expect("validate requires an extraction_payoff on every deposit rung");
-            // **THE PILE AND ITS NOUN, FROM ONE LOOKUP**, so the amount and the material it is
-            // counted in can never disagree. `None` for a rung that eats nothing, which is every
-            // rung on either branch but `extraction:quarry`. The first entry and not a sum, for
-            // `snapshot_route_rungs`' reason: the wire carries a single float, so a second declared
-            // material would make the *amount* meaningless before the id had to choose between them.
-            let pile = rung.build_materials().next();
-            DepositRungState {
-                rung_key: rung.wire_key(),
-                // One vector carries both ladders, so every row says which one it is on — the field
-                // the single-branch route catalog has no need of.
-                branch: rung.branch.as_str().to_string(),
-                order: rung.order,
-                // The same spelling the knowledge roster and the route catalog resolve their titles
-                // with — all three are underscored ladder ids, and a second capitalization rule
-                // would be a second answer to one question.
-                display_name: knowledge_title_from_id(&rung.id),
-                verb: rung.verb.clone().unwrap_or_default(),
-                unlock_knowledge: rung.unlock_knowledge.clone().unwrap_or_default(),
-                requires_rung: rung.requires_rung_wire_key().unwrap_or_default(),
-                // **The remedy a gate asks for**, and it is the rung's own `earns_knowledge` rather
-                // than anything read off the chain: the rung that TEACHES a knowledge and the rung
-                // directly beneath the one it gates are two different facts that merely coincide on
-                // the shipped five.
-                earns_knowledge: rung.earns_knowledge.clone().unwrap_or_default(),
-                // Unscaled, and on these two branches that is already the whole price: the deposit
-                // ladder's own rung price is the unscaled one, so unlike a road there is no per-tile
-                // multiplier still to be applied to this figure.
-                work_cost: rung.build_cost(RUNG_COST_UNSCALED).unwrap_or(NO_BUILD_WORK),
-                upkeep_work_per_turn: rung
-                    .upkeep
-                    .as_ref()
-                    .map_or(NO_UPKEEP_DEMAND, |upkeep| upkeep.work_per_turn),
-                build_material_cost: pile.map_or(NO_BUILD_MATERIAL, |(_, amount)| amount),
-                // ⛔ **THE NOUN, BECAUSE THE AMOUNT ALONE CANNOT BE A SENTENCE** — and the client
-                // must not supply `wood` itself: which material a rung eats is a fact about the
-                // **config**, so a transcribed noun is a second authority that goes stale the day a
-                // rung is retuned.
-                build_material_id: pile.map_or_else(String::new, |(id, _)| id.to_string()),
-                // **The bare rate, read and not restated** — through the same
-                // `build_work_per_worker_turn` seam every other catalog and source row publishes
-                // theirs by, at `NO_BUILD_GEAR`, because it is the *sum of terms* the model is
-                // written as and a second term added there must reach this row too.
-                build_work_per_worker_turn: build_work_per_worker_turn(NO_BUILD_GEAR),
-                yield_per_worker_turn: payoff.yield_per_worker_turn,
-                // ⛔ **PUBLISHED, NEVER DERIVED FROM `reachable / capacity`.** `deposit_reachable`
-                // clamps to the **stock**, so that ratio stops being the rung's recovery the moment
-                // the seam is drawn down — a payoff row computing it would quote a number that falls
-                // as the rock is worked, on a rung whose reach never moved.
-                recovery_fraction: payoff.recovery_fraction,
-                regrowth_multiplier: payoff.regrowth_multiplier,
-                // **Why a rung is refused, and not merely that it is** — the rung's own floor,
-                // struck against the capacity a working already publishes. A rung with no
-                // `site_requirement` reads [`NO_DEPOSIT_FLOOR`]: it has never heard of deposits,
-                // which is not the same statement as a deposit rule of zero but is the same number.
-                min_deposit_capacity: rung
-                    .site_requirement
-                    .as_ref()
-                    .map_or(NO_DEPOSIT_FLOOR, |site| site.min_deposit_capacity),
-            }
+        .filter_map(|branch| ladder.branch_def(branch).map(|def| (branch, def)))
+        .map(|(branch, def)| LadderBranchState {
+            branch: branch.as_str().to_string(),
+            area: def.area.clone(),
+            source_kind: def.source.as_str().to_string(),
+            label: def.label.clone(),
         })
         .collect()
 }

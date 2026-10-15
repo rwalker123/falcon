@@ -32,11 +32,11 @@ use crate::state::map::{
 use crate::state::population::{
     GenerationState, PopulationCohortState, PopulationDemographicsState,
 };
-use crate::state::routes::RouteState;
+use crate::state::routes::{RouteState, TileImprovementState};
 use crate::state::subsistence::{
-    CharacteristicBandState, CraftKnowledgeState, DepositRungState, DepositState, FoodModuleState,
-    ForagePatchState, HerdTelemetryState, IntensificationKnowledgeState, KitOptionState,
-    LadderKnowledgeState, MaterialDefState, RecipeDefState, RouteRungState, SedentarizationState,
+    CharacteristicBandState, CraftKnowledgeState, DepositState, FoodModuleState, ForagePatchState,
+    HerdTelemetryState, IntensificationKnowledgeState, KitOptionState, LadderBranchState,
+    LadderKnowledgeState, LadderRungState, MaterialDefState, RecipeDefState, SedentarizationState,
 };
 use ahash::RandomState;
 use serde::{Deserialize, Serialize};
@@ -255,17 +255,16 @@ pub struct WorldSnapshot {
     /// as a whole vector each frame.
     #[serde(default)]
     pub craft_knowledge: Vec<CraftKnowledgeState>,
-    /// **The route branch's rung catalog** — every rung of `intensification_ladder.json`'s route
-    /// branch, in climb order, so a client can draw a road ladder of rungs nothing has built yet.
-    /// A per-world constant, diffed whole like [`Self::ladder_knowledge`]. See [`RouteRungState`].
+    /// **The ladder's rung catalog** - every rung of every branch of `intensification_ladder.json`,
+    /// grouped by branch and in climb order within it, so a client can draw a ladder of rungs
+    /// nothing has built yet. A per-world constant, diffed whole like [`Self::ladder_knowledge`].
+    /// See [`LadderRungState`].
     #[serde(default)]
-    pub route_rungs: Vec<RouteRungState>,
-    /// **The two deposit branches' rung catalog** — every rung of `intensification_ladder.json`'s
-    /// forestry and extraction branches, grouped by branch and in climb order within it, so a client
-    /// can draw a wood or stone ladder of rungs nothing has opened yet. A per-world constant, diffed
-    /// whole like [`Self::route_rungs`] beside it. See [`DepositRungState`].
+    pub ladder_rungs: Vec<LadderRungState>,
+    /// **The ladder's branches** - the grouping [`Self::ladder_rungs`] is drawn under, in the same
+    /// order. A per-world constant, diffed whole beside it. See [`LadderBranchState`].
     #[serde(default)]
-    pub deposit_rungs: Vec<DepositRungState>,
+    pub ladder_branches: Vec<LadderBranchState>,
     pub moisture_raster: FloatRasterState,
     pub elevation_overlay: ElevationOverlayState,
     /// Climate-band cut points (`docs/plan_climate_authority.md` §8.3), a per-map constant.
@@ -308,6 +307,11 @@ pub struct WorldSnapshot {
     /// `(y, x)`, the registry's own row-major key order.
     #[serde(default)]
     pub routes: Vec<RouteState>,
+    /// **The improvements standing on tile-kind branches the viewer can see** - one row per
+    /// `(tile, branch)`, fog-filtered to explored tiles like [`Self::routes`], ordered by the
+    /// registry's own `(y, x, branch)` key. See [`TileImprovementState`].
+    #[serde(default)]
+    pub tile_improvements: Vec<TileImprovementState>,
     /// **What the viewer's people is learning by contact this turn** — one row per discovery, the
     /// strongest source (`docs/plan_contact_and_logistics.md` §Settled by #531). Ordered by
     /// discovery id. Rides `KnowledgeSection.contactLessons`.
@@ -423,14 +427,14 @@ pub struct WorldDelta {
     /// world constant. `None` means unchanged.
     #[serde(default)]
     pub craft_knowledge: Option<Vec<CraftKnowledgeState>>,
-    /// The route branch's rung catalog; a per-world constant, so a delta re-sends it only when the
+    /// The ladder's rung catalog; a per-world constant, so a delta re-sends it only when the
     /// world is rebuilt. `None` means unchanged.
     #[serde(default)]
-    pub route_rungs: Option<Vec<RouteRungState>>,
-    /// The two deposit branches' rung catalog; a per-world constant, so a delta re-sends it only
-    /// when the world is rebuilt. `None` means unchanged.
+    pub ladder_rungs: Option<Vec<LadderRungState>>,
+    /// The ladder's branches; a per-world constant, so a delta re-sends it only when the world is
+    /// rebuilt. `None` means unchanged.
     #[serde(default)]
-    pub deposit_rungs: Option<Vec<DepositRungState>>,
+    pub ladder_branches: Option<Vec<LadderBranchState>>,
     pub moisture_raster: Option<FloatRasterState>,
     pub elevation_overlay: Option<ElevationOverlayState>,
     /// Climate-band cut points; a per-map constant, so a delta re-sends it only when the map is
@@ -476,6 +480,9 @@ pub struct WorldDelta {
     pub connections: Option<Vec<ConnectionState>>,
     /// `None` = unchanged this frame, on `connections`' own rules.
     pub routes: Option<Vec<RouteState>>,
+    /// `None` = unchanged this frame, on `connections`' own rules.
+    #[serde(default)]
+    pub tile_improvements: Option<Vec<TileImprovementState>>,
     /// `None` = unchanged this frame, on `connections`' own rules.
     #[serde(default)]
     pub contact_lessons: Option<Vec<ContactLessonState>>,

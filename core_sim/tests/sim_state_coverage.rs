@@ -42,7 +42,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 /// Mutated across turns, and a later turn reads it. A checkpoint that omits any of these produces
 /// a world that diverges from the one it claims to restore.
-const SIM_STATE_RESOURCES: [&str; 50] = [
+const SIM_STATE_RESOURCES: [&str; 51] = [
     "ActiveCrisisLedger",
     // Belief on every place. Only ever grows and outlives the bands whose dead put it there, so
     // nothing rebuilds it — the roads' reason exactly.
@@ -114,6 +114,10 @@ const SIM_STATE_RESOURCES: [&str; 50] = [
     // rebuilds one — a restore that dropped this would hand back a world whose roads had never been
     // walked, with every band's pooling silently back at the unrouted friction.
     "RoadRegistry",
+    // **The tile-kind improvements.** Like a road, an improvement is in the ground and its keeper and
+    // position are facts nothing can recompute, so a restore that dropped this would hand back a
+    // world whose improvements had never been built.
+    "TileImprovementRegistry",
     "SentimentAxisBias",
     "SimulationTick",
     // The opening outfitting window. Nothing rebuilds it: the budget is a fact about the band that

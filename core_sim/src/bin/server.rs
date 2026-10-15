@@ -1281,12 +1281,19 @@ impl BuildSourceRef {
         })
     }
 
+    /// **Does this name a tile improvement?** - the named branch is a tile-kind branch of the ladder.
+    fn is_tile_improvement(&self, ladder: &LadderConfig) -> bool {
+        self.branch.as_deref().is_some_and(|branch| {
+            ladder.source_kind(BranchId::new(branch)) == Some(SourceKind::Tile)
+        })
+    }
+
     /// **Why this source's `branch` cannot be read**, or `None` when it names a road or names none.
     /// An unknown id and a branch whose source is not per-tile are both refused by name.
     fn branch_refusal(&self, ladder: &LadderConfig) -> Option<String> {
         let branch = self.branch.as_deref()?;
         match ladder.source_kind(BranchId::new(branch)) {
-            Some(SourceKind::Road) => None,
+            Some(SourceKind::Road | SourceKind::Tile) => None,
             Some(_) => Some(format!(
                 "'{branch}' is a branch whose source is worked by a crew, not kept per tile - \
                  name it by its tile, herd or `<x> <y> <material>`."
@@ -1302,7 +1309,7 @@ impl BuildSourceRef {
     /// both-shapes message only because the tile pair is tested first and requires both halves —
     /// the text grammar cannot produce one at all.
     fn target(&self, ladder: &LadderConfig) -> Option<LaborTarget> {
-        if self.is_road(ladder) {
+        if self.is_road(ladder) || self.is_tile_improvement(ladder) {
             return None;
         }
         match (self.target_x, self.target_y, self.herd_id.as_ref()) {
@@ -1326,6 +1333,15 @@ impl BuildSourceRef {
     /// **The build-queue key this names** — a road's own [`BuildSource::Road`], else the queue key
     /// of the labor row it names ([`BuildSource::of`]).
     fn build_source(&self, ladder: &LadderConfig) -> Option<BuildSource> {
+        if self.is_tile_improvement(ladder) {
+            return match (self.target_x, self.target_y, self.branch.as_deref()) {
+                (Some(x), Some(y), Some(branch)) => Some(BuildSource::Tile {
+                    tile: UVec2::new(x, y),
+                    branch: BranchId::new(branch),
+                }),
+                _ => None,
+            };
+        }
         match (self.is_road(ladder), self.target_x, self.target_y) {
             (true, Some(x), Some(y)) => Some(BuildSource::Road(UVec2::new(x, y))),
             (true, _, _) => None,
@@ -1338,6 +1354,12 @@ impl BuildSourceRef {
         match (self.target_x, self.target_y, self.herd_id.as_ref()) {
             (Some(x), Some(y), _) if self.is_road(ladder) => {
                 format!("the road at ({x}, {y})")
+            }
+            (Some(x), Some(y), _) if self.is_tile_improvement(ladder) => {
+                format!(
+                    "the {} improvement at ({x}, {y})",
+                    self.branch.as_deref().unwrap_or_default()
+                )
             }
             (Some(x), Some(y), _) => match &self.material {
                 Some(material) => format!("the {material} at ({x}, {y})"),
@@ -1383,7 +1405,8 @@ struct BuildRungRequest {
 /// **What a queue verb says when it was handed no source** — one sentence for every verb that reads
 /// a [`BuildSourceRef`], so the grammar it names cannot drift between them.
 const SITE_SOURCE_GRAMMAR: &str = "two numbers name a tile, one token names a herd, \
-     `<x> <y> <material>` names a working and `<branch> <x> <y>` (`route <x> <y>`) names a road";
+     `<x> <y> <material>` names a working and `<branch> <x> <y>` (`route <x> <y>`) names a road \
+     or a tile improvement";
 
 #[derive(Debug, Clone)]
 enum Command {
@@ -8087,6 +8110,157 @@ fn handle_road_verb(
     );
 }
 
+/// **A `build` LINE FOR A TILE-KIND VERB** - place or raise the improvement of the verb's branch on a
+/// tile, built by the band the line names.
+///
+/// `build <verb> <faction> <band> <x> <y>`: the band named is the **builder** - its `builders` pool
+/// raises the improvement, and its queue holds the entry. **Keeping is not decided here**: whichever
+/// band of the faction stands within `reach_tiles` of the tile keeps it, every turn
+/// ([`core_sim::assign_tile_keepers`]). So the command refuses nothing for distance - a builder may
+/// raise a tile it will walk away from, and the improvement will decay after its grace unless
+/// someone comes within reach.
+///
+/// The improvement is **placed at the branch's floor in the same breath as it is declared** (the
+/// first verb of the branch on a tile), so a queue entry never names ground nothing stands on.
+fn handle_tile_verb(
+    app: &mut bevy::prelude::App,
+    faction: FactionId,
+    band_id: u64,
+    tile: UVec2,
+    destination: RungId,
+) {
+    let ladder = app.world.resource::<LadderConfigHandle>().get();
+    let rung = ladder.rung(destination);
+    let verb = rung.verb.clone().unwrap_or_default();
+    let channel = rung
+        .feed_channel_kind()
+        .expect("validate requires a feed channel on every built rung");
+    let branch = destination.branch;
+    if let Err(reason) = tile_verb_refusal(app, faction, band_id, tile, destination) {
+        warn!(
+            target: "shadow_scale::command",
+            command = %verb,
+            faction = %faction.0,
+            band_id,
+            x = tile.x,
+            y = tile.y,
+            reason = %reason,
+            "command.tile.rejected"
+        );
+        emit_command_failure(app, channel, faction, reason);
+        return;
+    }
+    let band = BandId(band_id);
+    let Some((entity, _)) = band_entity_and_tile(app, faction, band) else {
+        emit_command_failure(
+            app,
+            channel,
+            faction,
+            format!("Band {band_id} is not standing anywhere the simulation can see."),
+        );
+        return;
+    };
+    {
+        let mut improvements = app
+            .world
+            .resource_mut::<core_sim::TileImprovementRegistry>();
+        improvements.place(tile, branch, faction, &ladder);
+    }
+    {
+        let mut allocation = band_allocation_mut(app, entity);
+        allocation.enqueue_build(
+            BuildSource::Tile { tile, branch },
+            BuildJob::Climb(destination),
+        );
+    }
+    let tick = app.world.resource::<SimulationTick>().0;
+    info!(
+        target: "shadow_scale::command",
+        command = %verb,
+        faction = %faction.0,
+        band_id,
+        x = tile.x,
+        y = tile.y,
+        "command.tile.declared"
+    );
+    push_command_event(
+        app,
+        tick,
+        channel,
+        faction,
+        format!(
+            "Band {band_id} takes on the {} at ({}, {}) - {verb}",
+            rung.label.to_lowercase(),
+            tile.x,
+            tile.y
+        ),
+        Some(format!(
+            "status=declared action={verb} x={} y={} band={band_id}",
+            tile.x, tile.y
+        )),
+    );
+}
+
+/// **Every refusal a tile-kind verb can produce, in the order they are asked.**
+fn tile_verb_refusal(
+    app: &mut bevy::prelude::App,
+    faction: FactionId,
+    band_id: u64,
+    tile: UVec2,
+    destination: RungId,
+) -> Result<(), String> {
+    let band = BandId(band_id);
+    let holds_band = {
+        let mut query = app.world.query::<(&PopulationCohort, &BandId)>();
+        query
+            .iter(&app.world)
+            .any(|(cohort, id)| *id == band && cohort.faction == faction)
+    };
+    if !holds_band {
+        return Err(format!(
+            "Band {band_id} is not one of your people, so it cannot build there."
+        ));
+    }
+    let ladder = app.world.resource::<LadderConfigHandle>().get();
+    if let Some(refusal) = knowledge_refusal(app, faction, &ladder, ladder.rung(destination)) {
+        return Err(refusal);
+    }
+    let branch = destination.branch;
+    let required = ladder
+        .below_id(destination)
+        .expect("a rung a verb raises stands on the rung beneath it");
+    let label = ladder.rung(destination).label.to_lowercase();
+    let improvements = app.world.resource::<core_sim::TileImprovementRegistry>();
+    match improvements.get(tile, branch) {
+        Some(improvement) if improvement.faction != faction => Err(format!(
+            "The {} at ({}, {}) belongs to another people.",
+            ladder.rung(improvement.held_rung()).label.to_lowercase(),
+            tile.x,
+            tile.y
+        )),
+        Some(improvement) if ladder.at_or_above(improvement.held_rung(), destination) => Err(
+            format!("The {label} at ({}, {}) is already built.", tile.x, tile.y),
+        ),
+        Some(improvement) if !ladder.at_or_above(improvement.held_rung(), required) => {
+            Err(format!(
+                "It is only a {} - it must be a {} before you can raise it to a {label}.",
+                ladder.rung(improvement.held_rung()).label.to_lowercase(),
+                ladder.rung(required).label.to_lowercase(),
+            ))
+        }
+        Some(_) => Ok(()),
+        // Nothing stands there yet: the verb places the improvement, which is only legal when it
+        // starts from the branch's floor.
+        None if ladder.root_of(branch).map(core_sim::RungDef::rung_id) == Some(required) => Ok(()),
+        None => Err(format!(
+            "Nothing stands at ({}, {}) yet - raise the {} first.",
+            tile.x,
+            tile.y,
+            ladder.rung(required).label.to_lowercase()
+        )),
+    }
+}
+
 /// **Every refusal `grade` / `pave` can produce, in the order they are asked.** Split out so the
 /// command and its tests read one list — the `validate_cultivate` convention one branch over.
 fn road_verb_refusal(
@@ -8446,7 +8620,7 @@ fn handle_build_rung(app: &mut bevy::prelude::App, faction: FactionId, request: 
         .target_x
         .zip(request.target_y)
         .map(|(x, y)| UVec2::new(x, y));
-    if request.band_id.is_some() && kind != Some(SourceKind::Road) {
+    if request.band_id.is_some() && !matches!(kind, Some(SourceKind::Road | SourceKind::Tile)) {
         reject_build(
             app,
             faction,
@@ -8537,7 +8711,25 @@ fn handle_build_rung(app: &mut bevy::prelude::App, faction: FactionId, request: 
             handle_road_verb(app, faction, band_id, tile, improvement);
             return;
         }
-        Some(SourceKind::Tile) | None => {
+        Some(SourceKind::Tile) => {
+            let (Some(band_id), Some(tile)) = (request.band_id, tile) else {
+                reject_build(
+                    app,
+                    faction,
+                    channel,
+                    &verb,
+                    format!(
+                        "'{verb}' names the band that will build it, because a tile improvement \
+                         has no work row to read a builder off: \
+                         `build {verb} <faction> <band> <x> <y>`."
+                    ),
+                );
+                return;
+            };
+            handle_tile_verb(app, faction, band_id, tile, rung.rung_id());
+            return;
+        }
+        None => {
             reject_build(
                 app,
                 faction,
@@ -8564,7 +8756,9 @@ fn handle_build_rung(app: &mut bevy::prelude::App, faction: FactionId, request: 
         |source| match source {
             BuildSource::Patch(tile) => format!("({}, {})", tile.x, tile.y),
             BuildSource::Herd(id) => id,
-            BuildSource::Road(tile) | BuildSource::Deposit { tile, .. } => {
+            BuildSource::Road(tile)
+            | BuildSource::Deposit { tile, .. }
+            | BuildSource::Tile { tile, .. } => {
                 format!("({}, {})", tile.x, tile.y)
             }
         },
@@ -9710,6 +9904,18 @@ fn handle_abandon(app: &mut bevy::prelude::App, faction: FactionId, source: Buil
         handle_abandon_working(app, faction, UVec2::new(x, y), material);
         return;
     }
+    if source.is_tile_improvement(&ladder) {
+        emit_command_failure(
+            app,
+            CommandEventKind::CancelOrder,
+            faction,
+            format!(
+                "Nobody holds {label} by command: whoever stands near it keeps it. \
+                 Withdraw a queued build with `unqueue`."
+            ),
+        );
+        return;
+    }
     if source.is_road(&ladder) {
         let roads_put_down = release_roads_at(app, faction, &source);
         if roads_put_down == 0 {
@@ -10313,6 +10519,8 @@ fn build_rung_on_source(
         // the ground to override. Unreachable through this path in any case - the source comes from a
         // *labor target*, and no target names a road.
         BuildSource::Road(_) => Some(declared),
+        // A tile improvement's declaration answers for itself, the road's reason exactly.
+        BuildSource::Tile { .. } => Some(declared),
     }
 }
 

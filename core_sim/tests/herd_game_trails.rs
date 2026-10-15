@@ -78,6 +78,7 @@ fn land_world() -> World {
     world.insert_resource(HerdTelemetry::default());
     world.insert_resource(HerdDensityMap::default());
     world.insert_resource(RoadRegistry::default());
+    world.insert_resource(core_sim::TileImprovementRegistry::default());
     world.insert_resource(RouteTrafficLog::default());
 
     let mut tiles = Vec::with_capacity((WORLD_WIDTH * WORLD_HEIGHT) as usize);

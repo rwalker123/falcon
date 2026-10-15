@@ -1932,7 +1932,7 @@ func _committed_line(sheet: Node) -> String:
 
 # ---- THE RUNG CATALOG -------------------------------------------------------------------------
 #
-# Shaped exactly as `native/src/dict/deposits.rs` writes a `DepositRungState` row, at the shipped
+# Shaped exactly as `native/src/dict/deposits.rs` writes a `LadderRungState` row, at the shipped
 # `intensification_ladder.json` figures — so every name, price, payoff and gate a surface states here
 # is the one the wire carries.
 

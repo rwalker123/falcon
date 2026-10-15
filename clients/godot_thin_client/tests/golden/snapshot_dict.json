@@ -527,65 +527,6 @@
       "working": 25
     }
   ],
-  "deposit_rungs": [
-    {
-      "branch": "deposit_rungs[0].branch",
-      "build_material_cost": 53.380001,
-      "build_material_id": "deposit_rungs[0].build_material_id",
-      "build_work_per_worker_turn": 9.94,
-      "display_name": "deposit_rungs[0].display_name",
-      "earns_knowledge": "deposit_rungs[0].earns_knowledge",
-      "min_deposit_capacity": 90.110001,
-      "order": 68,
-      "recovery_fraction": 24.58,
-      "regrowth_multiplier": 25.51,
-      "requires_rung": "deposit_rungs[0].requires_rung",
-      "rung_key": "deposit_rungs[0].rung_key",
-      "unlock_knowledge": "deposit_rungs[0].unlock_knowledge",
-      "upkeep_work_per_turn": 7.32,
-      "verb": "deposit_rungs[0].verb",
-      "work_cost": 111.959999,
-      "yield_per_worker_turn": 90.739998
-    },
-    {
-      "branch": "deposit_rungs[1].branch",
-      "build_material_cost": 112.269997,
-      "build_material_id": "deposit_rungs[1].build_material_id",
-      "build_work_per_worker_turn": 63.73,
-      "display_name": "deposit_rungs[1].display_name",
-      "earns_knowledge": "deposit_rungs[1].earns_knowledge",
-      "min_deposit_capacity": 15.24,
-      "order": 107,
-      "recovery_fraction": 22.190001,
-      "regrowth_multiplier": 101.449997,
-      "requires_rung": "deposit_rungs[1].requires_rung",
-      "rung_key": "deposit_rungs[1].rung_key",
-      "unlock_knowledge": "deposit_rungs[1].unlock_knowledge",
-      "upkeep_work_per_turn": 101.18,
-      "verb": "deposit_rungs[1].verb",
-      "work_cost": 15.55,
-      "yield_per_worker_turn": 6.69
-    },
-    {
-      "branch": "deposit_rungs[2].branch",
-      "build_material_cost": 61.23,
-      "build_material_id": "deposit_rungs[2].build_material_id",
-      "build_work_per_worker_turn": 88.650002,
-      "display_name": "deposit_rungs[2].display_name",
-      "earns_knowledge": "deposit_rungs[2].earns_knowledge",
-      "min_deposit_capacity": 79.370003,
-      "order": 58,
-      "recovery_fraction": 70.279999,
-      "regrowth_multiplier": 36.709999,
-      "requires_rung": "deposit_rungs[2].requires_rung",
-      "rung_key": "deposit_rungs[2].rung_key",
-      "unlock_knowledge": "deposit_rungs[2].unlock_knowledge",
-      "upkeep_work_per_turn": 23.549999,
-      "verb": "deposit_rungs[2].verb",
-      "work_cost": 52.41,
-      "yield_per_worker_turn": 85.370003
-    }
-  ],
   "deposits": [
     {
       "actual_take": 75.360001,
@@ -3287,6 +3228,26 @@
     "lore",
     "war"
   ],
+  "ladder_branches": [
+    {
+      "area": "ladder_branches[0].area",
+      "branch": "ladder_branches[0].branch",
+      "label": "ladder_branches[0].label",
+      "source_kind": "ladder_branches[0].source_kind"
+    },
+    {
+      "area": "ladder_branches[1].area",
+      "branch": "ladder_branches[1].branch",
+      "label": "ladder_branches[1].label",
+      "source_kind": "ladder_branches[1].source_kind"
+    },
+    {
+      "area": "ladder_branches[2].area",
+      "branch": "ladder_branches[2].branch",
+      "label": "ladder_branches[2].label",
+      "source_kind": "ladder_branches[2].source_kind"
+    }
+  ],
   "ladder_knowledge": [
     {
       "area": "food",
@@ -3311,6 +3272,92 @@
       "is_step": false,
       "knowledge_id": "roadbuilding",
       "order": 65
+    }
+  ],
+  "ladder_rungs": [
+    {
+      "branch": "ladder_rungs[0].branch",
+      "build_material_cost": 13.65,
+      "build_material_id": "ladder_rungs[0].build_material_id",
+      "build_work_per_worker_turn": 16.07,
+      "display_name": "ladder_rungs[0].display_name",
+      "earns_knowledge": "ladder_rungs[0].earns_knowledge",
+      "friction_multiplier": 38.439999,
+      "grants_sight": true,
+      "holds_link_to_tiles": 145,
+      "label": "ladder_rungs[0].label",
+      "label_fallback": "ladder_rungs[0].label_fallback",
+      "min_deposit_capacity": 77.510002,
+      "order": 80,
+      "recovery_fraction": 7.27,
+      "regrowth_multiplier": 84.790001,
+      "requires_rung": "ladder_rungs[0].requires_rung",
+      "rung_key": "ladder_rungs[0].rung_key",
+      "source_kind": "ladder_rungs[0].source_kind",
+      "traits": [
+        "ladder_rungs[0].traits[0]"
+      ],
+      "unlock_knowledge": "ladder_rungs[0].unlock_knowledge",
+      "upkeep_work_per_turn": 16.049999,
+      "verb": "ladder_rungs[0].verb",
+      "work_cost": 27.16,
+      "yield_per_worker_turn": 94.309998
+    },
+    {
+      "branch": "ladder_rungs[1].branch",
+      "build_material_cost": 34.459999,
+      "build_material_id": "ladder_rungs[1].build_material_id",
+      "build_work_per_worker_turn": 0.28,
+      "display_name": "ladder_rungs[1].display_name",
+      "earns_knowledge": "ladder_rungs[1].earns_knowledge",
+      "friction_multiplier": 88.849998,
+      "grants_sight": false,
+      "holds_link_to_tiles": 90,
+      "label": "ladder_rungs[1].label",
+      "label_fallback": "ladder_rungs[1].label_fallback",
+      "min_deposit_capacity": 14.55,
+      "order": 95,
+      "recovery_fraction": 9.35,
+      "regrowth_multiplier": 68.559998,
+      "requires_rung": "ladder_rungs[1].requires_rung",
+      "rung_key": "ladder_rungs[1].rung_key",
+      "source_kind": "ladder_rungs[1].source_kind",
+      "traits": [
+        "ladder_rungs[1].traits[0]"
+      ],
+      "unlock_knowledge": "ladder_rungs[1].unlock_knowledge",
+      "upkeep_work_per_turn": 8.42,
+      "verb": "ladder_rungs[1].verb",
+      "work_cost": 19.83,
+      "yield_per_worker_turn": 3.06
+    },
+    {
+      "branch": "ladder_rungs[2].branch",
+      "build_material_cost": 10.98,
+      "build_material_id": "ladder_rungs[2].build_material_id",
+      "build_work_per_worker_turn": 100.470001,
+      "display_name": "ladder_rungs[2].display_name",
+      "earns_knowledge": "ladder_rungs[2].earns_knowledge",
+      "friction_multiplier": 46.139999,
+      "grants_sight": false,
+      "holds_link_to_tiles": 63,
+      "label": "ladder_rungs[2].label",
+      "label_fallback": "ladder_rungs[2].label_fallback",
+      "min_deposit_capacity": 91.580002,
+      "order": 134,
+      "recovery_fraction": 19.620001,
+      "regrowth_multiplier": 42.709999,
+      "requires_rung": "ladder_rungs[2].requires_rung",
+      "rung_key": "ladder_rungs[2].rung_key",
+      "source_kind": "ladder_rungs[2].source_kind",
+      "traits": [
+        "ladder_rungs[2].traits[0]"
+      ],
+      "unlock_knowledge": "ladder_rungs[2].unlock_knowledge",
+      "upkeep_work_per_turn": 45.57,
+      "verb": "ladder_rungs[2].verb",
+      "work_cost": 51.25,
+      "yield_per_worker_turn": 31.73
     }
   ],
   "lineage_free_breeding_at": 90,
@@ -4585,29 +4632,29 @@
       "breeding_population": 186,
       "build_queue": [
         {
+          "branch": "populations[0].build_queue[0].branch",
           "build_priority": "populations[0].build_queue[0].build_priority",
           "fauna_id": "populations[0].build_queue[0].fauna_id",
           "kind": "populations[0].build_queue[0].kind",
           "material": "populations[0].build_queue[0].material",
-          "road": true,
           "target_x": 128,
           "target_y": 117
         },
         {
+          "branch": "populations[0].build_queue[1].branch",
           "build_priority": "populations[0].build_queue[1].build_priority",
           "fauna_id": "populations[0].build_queue[1].fauna_id",
           "kind": "populations[0].build_queue[1].kind",
           "material": "populations[0].build_queue[1].material",
-          "road": false,
           "target_x": 145,
           "target_y": 156
         },
         {
+          "branch": "populations[0].build_queue[2].branch",
           "build_priority": "populations[0].build_queue[2].build_priority",
           "fauna_id": "populations[0].build_queue[2].fauna_id",
           "kind": "populations[0].build_queue[2].kind",
           "material": "populations[0].build_queue[2].material",
-          "road": false,
           "target_x": 114,
           "target_y": 103
         }
@@ -6079,29 +6126,29 @@
       "breeding_population": 161,
       "build_queue": [
         {
+          "branch": "populations[1].build_queue[0].branch",
           "build_priority": "populations[1].build_queue[0].build_priority",
           "fauna_id": "populations[1].build_queue[0].fauna_id",
           "kind": "populations[1].build_queue[0].kind",
           "material": "populations[1].build_queue[0].material",
-          "road": true,
           "target_x": 151,
           "target_y": 162
         },
         {
+          "branch": "populations[1].build_queue[1].branch",
           "build_priority": "populations[1].build_queue[1].build_priority",
           "fauna_id": "populations[1].build_queue[1].fauna_id",
           "kind": "populations[1].build_queue[1].kind",
           "material": "populations[1].build_queue[1].material",
-          "road": false,
           "target_x": 62,
           "target_y": 51
         },
         {
+          "branch": "populations[1].build_queue[2].branch",
           "build_priority": "populations[1].build_queue[2].build_priority",
           "fauna_id": "populations[1].build_queue[2].fauna_id",
           "kind": "populations[1].build_queue[2].kind",
           "material": "populations[1].build_queue[2].material",
-          "road": false,
           "target_x": 189,
           "target_y": 200
         }
@@ -7534,29 +7581,29 @@
       "breeding_population": 160,
       "build_queue": [
         {
+          "branch": "populations[2].build_queue[0].branch",
           "build_priority": "populations[2].build_queue[0].build_priority",
           "fauna_id": "populations[2].build_queue[0].fauna_id",
           "kind": "populations[2].build_queue[0].kind",
           "material": "populations[2].build_queue[0].material",
-          "road": true,
           "target_x": 90,
           "target_y": 79
         },
         {
+          "branch": "populations[2].build_queue[1].branch",
           "build_priority": "populations[2].build_queue[1].build_priority",
           "fauna_id": "populations[2].build_queue[1].fauna_id",
           "kind": "populations[2].build_queue[1].kind",
           "material": "populations[2].build_queue[1].material",
-          "road": false,
           "target_x": 3,
           "target_y": 14
         },
         {
+          "branch": "populations[2].build_queue[2].branch",
           "build_priority": "populations[2].build_queue[2].build_priority",
           "fauna_id": "populations[2].build_queue[2].fauna_id",
           "kind": "populations[2].build_queue[2].kind",
           "material": "populations[2].build_queue[2].material",
-          "road": false,
           "target_x": 24,
           "target_y": 13
         }
@@ -9054,59 +9101,6 @@
       "work": 8.85
     }
   ],
-  "route_rungs": [
-    {
-      "build_material_cost": 57.939999,
-      "build_material_id": "route_rungs[0].build_material_id",
-      "build_work_per_worker_turn": 53.32,
-      "display_name": "route_rungs[0].display_name",
-      "earns_knowledge": "route_rungs[0].earns_knowledge",
-      "friction_multiplier": 9.48,
-      "grants_sight": true,
-      "holds_link_to_tiles": 54,
-      "order": 107,
-      "requires_rung": "route_rungs[0].requires_rung",
-      "rung_key": "route_rungs[0].rung_key",
-      "unlock_knowledge": "route_rungs[0].unlock_knowledge",
-      "upkeep_work_per_turn": 106.610001,
-      "verb": "route_rungs[0].verb",
-      "work_cost": 11.68
-    },
-    {
-      "build_material_cost": 5.07,
-      "build_material_id": "route_rungs[1].build_material_id",
-      "build_work_per_worker_turn": 9.01,
-      "display_name": "route_rungs[1].display_name",
-      "earns_knowledge": "route_rungs[1].earns_knowledge",
-      "friction_multiplier": 107.57,
-      "grants_sight": false,
-      "holds_link_to_tiles": 5,
-      "order": 4,
-      "requires_rung": "route_rungs[1].requires_rung",
-      "rung_key": "route_rungs[1].rung_key",
-      "unlock_knowledge": "route_rungs[1].unlock_knowledge",
-      "upkeep_work_per_turn": 48.59,
-      "verb": "route_rungs[1].verb",
-      "work_cost": 67.610001
-    },
-    {
-      "build_material_cost": 72.480003,
-      "build_material_id": "route_rungs[2].build_material_id",
-      "build_work_per_worker_turn": 42.25,
-      "display_name": "route_rungs[2].display_name",
-      "earns_knowledge": "route_rungs[2].earns_knowledge",
-      "friction_multiplier": 78.870003,
-      "grants_sight": false,
-      "holds_link_to_tiles": 124,
-      "order": 41,
-      "requires_rung": "route_rungs[2].requires_rung",
-      "rung_key": "route_rungs[2].rung_key",
-      "unlock_knowledge": "route_rungs[2].unlock_knowledge",
-      "upkeep_work_per_turn": 50.23,
-      "verb": "route_rungs[2].verb",
-      "work_cost": 2.46
-    }
-  ],
   "routes": [
     {
       "build_blocked_reason": "routes[0].build_blocked_reason",
@@ -9359,6 +9353,80 @@
         }
       ],
       "faction": 32
+    }
+  ],
+  "tile_improvements": [
+    {
+      "branch": "tile_improvements[0].branch",
+      "build_blocked_reason": "tile_improvements[0].build_blocked_reason",
+      "build_destination_rung": "tile_improvements[0].build_destination_rung",
+      "build_legs": [
+        {
+          "rung": "tile_improvements[0].build_legs[0].rung",
+          "turns_remaining": 175,
+          "work_remaining": 94.919998
+        }
+      ],
+      "build_turns_remaining": 110,
+      "current_rung": "tile_improvements[0].current_rung",
+      "has_keeper": true,
+      "has_neglect_grace": false,
+      "keeper_band_id": 164,
+      "neglect_grace_remaining": 28,
+      "neglect_turns": 69,
+      "tile_x": 1,
+      "tile_y": 12,
+      "upkeep_demand": 29.129999,
+      "upkeep_shortfall": 61.419998,
+      "upkeep_supplied": 30.98
+    },
+    {
+      "branch": "tile_improvements[1].branch",
+      "build_blocked_reason": "tile_improvements[1].build_blocked_reason",
+      "build_destination_rung": "tile_improvements[1].build_destination_rung",
+      "build_legs": [
+        {
+          "rung": "tile_improvements[1].build_legs[0].rung",
+          "turns_remaining": 156,
+          "work_remaining": 89.18
+        }
+      ],
+      "build_turns_remaining": 29,
+      "current_rung": "tile_improvements[1].current_rung",
+      "has_keeper": false,
+      "has_neglect_grace": true,
+      "keeper_band_id": 37,
+      "neglect_grace_remaining": 199,
+      "neglect_turns": 78,
+      "tile_x": 184,
+      "tile_y": 173,
+      "upkeep_demand": 87.389999,
+      "upkeep_shortfall": 99.129997,
+      "upkeep_supplied": 3.5
+    },
+    {
+      "branch": "tile_improvements[2].branch",
+      "build_blocked_reason": "tile_improvements[2].build_blocked_reason",
+      "build_destination_rung": "tile_improvements[2].build_destination_rung",
+      "build_legs": [
+        {
+          "rung": "tile_improvements[2].build_legs[0].rung",
+          "turns_remaining": 21,
+          "work_remaining": 76.779999
+        }
+      ],
+      "build_turns_remaining": 84,
+      "current_rung": "tile_improvements[2].current_rung",
+      "has_keeper": false,
+      "has_neglect_grace": true,
+      "keeper_band_id": 182,
+      "neglect_grace_remaining": 74,
+      "neglect_turns": 103,
+      "tile_x": 103,
+      "tile_y": 114,
+      "upkeep_demand": 96.349998,
+      "upkeep_shortfall": 22.08,
+      "upkeep_supplied": 97.410004
     }
   ],
   "tiles": [

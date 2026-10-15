@@ -41,7 +41,7 @@ var _selection: HudSelectionState = null
 var _band_labor: HudBandLaborState = null
 ## ⛔ **THE PER-WORLD READOUTS, HELD FOR ONE FIELD: THE ROUTE RUNG CATALOG.** The road block's `Upkeep`
 ## row states a shortfall in HANDS, which needs the branch's published bare work rate — and that rate
-## rides the catalog (`RouteRungState.buildWorkPerWorkerTurn`), the wire's only home for a number that
+## rides the catalog (`LadderRungState.buildWorkPerWorkerTurn`), the wire's only home for a number that
 ## is the same for every road in the world. It is resolved HERE and handed to the composer, exactly as
 ## the keeper's name is: `HudRouteVocab` is a vocabulary leaf that holds no catalog, and joining
 ## road→catalog inside it would give it one.
@@ -477,7 +477,7 @@ func _tile_terrain_lines(tile_info: Dictionary,
     # `route:paved_road` owes stone every turn it stands, and the `Upkeep` row has to be able to say
     # WHICH currency is short — *"you cannot mend a road with no stone, so a shortfall message that
     # names the pool is wrong advice"* (`docs/plan_standing_upkeep.md` §2.7). The noun is
-    # `RouteRungState.buildMaterialId` for the rung the tile **holds**, not the one it is climbing
+    # `LadderRungState.buildMaterialId` for the rung the tile **holds**, not the one it is climbing
     # toward, so it is resolved per ROAD below off the same ladder this rate comes from — and never
     # spelled `stone` in this client, which would be a second authority for a config fact.
     var ladder: Array[Dictionary] = []
@@ -524,7 +524,7 @@ func _tile_terrain_lines(tile_info: Dictionary,
     #
     # ⛔ **THE CATALOG JOIN IS RESOLVED HERE AND HANDED OVER**, exactly as the road block's keeper
     # name, build rate and material noun are: the rung's display name, its reach and its renewal all
-    # ride `SubsistenceSection.depositRungs`, and `HudDepositVocab` stays a leaf with no catalog
+    # ride `SubsistenceSection.ladderRungs`, and `HudDepositVocab` stays a leaf with no catalog
     # dependency. `[]` before a catalog has arrived, which the composer reads as *the rung cannot be
     # named* and answers with the raw wire key rather than a blank.
     var deposit_ladder: Array[Dictionary] = []

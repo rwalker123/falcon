@@ -60,8 +60,8 @@ use crate::state::map::*;
 use crate::state::population::*;
 use crate::state::subsistence::{
     CharacteristicBandState, CraftKnowledgeState, FloraShareInfo, LadderKnowledgeProgress,
-    LadderKnowledgeState, MaterialDefState, RecipeDefState, RecipeInputState, RecipeOutputState,
-    SpeciesMaterialRates,
+    LadderKnowledgeState, LadderRungState, MaterialDefState, RecipeDefState, RecipeInputState,
+    RecipeOutputState, SpeciesMaterialRates,
 };
 use crate::world::WorldSnapshot;
 use std::error::Error;
@@ -865,14 +865,18 @@ fn seed_snapshot() -> WorldSnapshot {
             .collect();
     }
 
-    // **THE ROUTE BRANCH'S RUNG CATALOG** — what a road may become, once per world. Seeded for the
+    // **THE LADDER'S RUNG CATALOG** - what any source may become, once per world. Seeded for the
     // reason every repeated field here is: an empty vector is a field the decode guard cannot
-    // exercise, which is how an appended field reaches the client as nothing at all.
-    s.route_rungs = rows();
+    // exercise, which is how an appended field reaches the client as nothing at all. The row's own
+    // `traits` list is seeded too (one blank name, which saturation turns into its path), since a
+    // nested empty array is just as unexercised.
+    s.ladder_rungs = rows_of(LadderRungState {
+        traits: vec![String::new()],
+        ..Default::default()
+    });
 
-    // **THE TWO DEPOSIT BRANCHES' RUNG CATALOG** — what a wood or a rock body may become,
-    // once per world, beside the route catalog above and seeded for the same reason.
-    s.deposit_rungs = rows();
+    // **THE LADDER'S BRANCHES** - the grouping the catalog above is drawn under, once per world.
+    s.ladder_branches = rows();
 
     // --- connections -----------------------------------------------------
     // The contact primitive's own section (arc #527). Seeded for the reason every repeated
@@ -887,6 +891,11 @@ fn seed_snapshot() -> WorldSnapshot {
     // halves went with the path object — a road is a per-tile improvement, so the row carries its
     // own `tile_x`/`tile_y` scalars and nothing to walk.
     s.routes = rows();
+    // A tile improvement's own `build_legs` is a nested repeated field, so it is seeded too.
+    s.tile_improvements = rows_of(crate::state::routes::TileImprovementState {
+        build_legs: vec![crate::state::subsistence::BuildLegState::default()],
+        ..Default::default()
+    });
 
     // --- deposits --------------------------------------------------------
     // The live workings on deposits (arc #583), **one row per `(tile, material)`**. Seeded for

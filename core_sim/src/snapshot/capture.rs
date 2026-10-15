@@ -85,6 +85,9 @@ pub struct SnapshotContext<'w> {
     /// Every road in the world. Published filtered to the roads the viewer has explored; the
     /// checkpoint carries the ledger itself.
     pub roads: Res<'w, crate::routes::RoadRegistry>,
+    /// Every improvement on a tile-kind branch. Published filtered to the tiles the viewer has
+    /// explored; the checkpoint carries the registry itself.
+    pub tile_improvements: Res<'w, crate::tile_improvement::TileImprovementRegistry>,
     /// Every live working on a deposit. Published filtered to the workings the viewer has explored;
     /// the checkpoint carries the registry itself. **Sparse and lazy** — a working exists only from
     /// the turn a band first put a crew on it.
@@ -287,6 +290,7 @@ pub(crate) struct SeatPublishState {
     connections: Whole<Vec<ConnectionState>>,
     contact_lessons: Whole<Vec<ContactLessonState>>,
     routes: Whole<Vec<RouteState>>,
+    tile_improvements: Whole<Vec<TileImprovementState>>,
     demographics: Whole<Vec<SchemaPopulationDemographicsState>>,
     forage_patches: Whole<Vec<ForagePatchState>>,
     /// The live workings, diffed as a whole vector exactly like [`Self::forage_patches`].
@@ -350,10 +354,10 @@ pub(crate) struct SeatPublishState {
     craft_knowledge: Whole<Vec<CraftKnowledgeState>>,
     /// The route branch's rung catalog — a per-world constant, diffed out on every frame after the
     /// first exactly as the ladder's knowledge roster is.
-    route_rungs: Whole<Vec<RouteRungState>>,
+    ladder_rungs: Whole<Vec<LadderRungState>>,
     /// The two deposit branches' rung catalog — the same kind of per-world constant, on the same
     /// seam.
-    deposit_rungs: Whole<Vec<DepositRungState>>,
+    ladder_branches: Whole<Vec<LadderBranchState>>,
     history: VecDeque<StoredSnapshot>,
 }
 
@@ -657,6 +661,7 @@ struct CampaignParts {
     connections: Option<Vec<ConnectionState>>,
     contact_lessons: Option<Vec<ContactLessonState>>,
     routes: Option<Vec<RouteState>>,
+    tile_improvements: Option<Vec<TileImprovementState>>,
     demographics: Option<Vec<SchemaPopulationDemographicsState>>,
     intensification_knowledge: Option<Vec<IntensificationKnowledgeState>>,
     ladder_knowledge: Option<Vec<LadderKnowledgeState>>,
@@ -682,6 +687,7 @@ struct CampaignBaselines<'a> {
     connections: &'a mut Whole<Vec<ConnectionState>>,
     contact_lessons: &'a mut Whole<Vec<ContactLessonState>>,
     routes: &'a mut Whole<Vec<RouteState>>,
+    tile_improvements: &'a mut Whole<Vec<TileImprovementState>>,
     demographics: &'a mut Whole<Vec<SchemaPopulationDemographicsState>>,
     intensification_knowledge: &'a mut Whole<Vec<IntensificationKnowledgeState>>,
     ladder_knowledge: &'a mut Whole<Vec<LadderKnowledgeState>>,
@@ -726,6 +732,11 @@ fn diff_campaign(
         connections: diff_whole(baseline.connections, &snapshot.connections, write),
         contact_lessons: diff_whole(baseline.contact_lessons, &snapshot.contact_lessons, write),
         routes: diff_whole(baseline.routes, &snapshot.routes, write),
+        tile_improvements: diff_whole(
+            baseline.tile_improvements,
+            &snapshot.tile_improvements,
+            write,
+        ),
         demographics: diff_whole(baseline.demographics, &snapshot.demographics, write),
         intensification_knowledge: diff_whole(
             baseline.intensification_knowledge,
@@ -759,8 +770,8 @@ struct SubsistenceParts {
     characteristic_bands: Option<Vec<CharacteristicBandState>>,
     recipes: Option<Vec<RecipeDefState>>,
     craft_knowledge: Option<Vec<CraftKnowledgeState>>,
-    route_rungs: Option<Vec<RouteRungState>>,
-    deposit_rungs: Option<Vec<DepositRungState>>,
+    ladder_rungs: Option<Vec<LadderRungState>>,
+    ladder_branches: Option<Vec<LadderBranchState>>,
 }
 
 /// Fauna and flora: the herd roster, the forage patches, and the food-module map.
@@ -782,8 +793,8 @@ fn diff_subsistence(
     characteristic_bands: &mut Whole<Vec<CharacteristicBandState>>,
     recipes: &mut Whole<Vec<RecipeDefState>>,
     craft_knowledge: &mut Whole<Vec<CraftKnowledgeState>>,
-    route_rungs: &mut Whole<Vec<RouteRungState>>,
-    deposit_rungs: &mut Whole<Vec<DepositRungState>>,
+    ladder_rungs: &mut Whole<Vec<LadderRungState>>,
+    ladder_branches: &mut Whole<Vec<LadderBranchState>>,
     snapshot: &WorldSnapshot,
     write: Baseline,
 ) -> SubsistenceParts {
@@ -832,8 +843,8 @@ fn diff_subsistence(
         ),
         recipes: diff_whole(recipes, &snapshot.recipes, write),
         craft_knowledge: diff_whole(craft_knowledge, &snapshot.craft_knowledge, write),
-        route_rungs: diff_whole(route_rungs, &snapshot.route_rungs, write),
-        deposit_rungs: diff_whole(deposit_rungs, &snapshot.deposit_rungs, write),
+        ladder_rungs: diff_whole(ladder_rungs, &snapshot.ladder_rungs, write),
+        ladder_branches: diff_whole(ladder_branches, &snapshot.ladder_branches, write),
     }
 }
 
@@ -951,6 +962,7 @@ impl SeatPublishState {
             connections: Whole::default(),
             contact_lessons: Whole::default(),
             routes: Whole::default(),
+            tile_improvements: Whole::default(),
             demographics: Whole::default(),
             forage_patches: Whole::default(),
             deposits: Whole::default(),
@@ -975,8 +987,8 @@ impl SeatPublishState {
             characteristic_bands: Whole::default(),
             recipes: Whole::default(),
             craft_knowledge: Whole::default(),
-            route_rungs: Whole::default(),
-            deposit_rungs: Whole::default(),
+            ladder_rungs: Whole::default(),
+            ladder_branches: Whole::default(),
             default_hunt_kit_id: Whole::default(),
             default_forage_kit_id: Whole::default(),
             default_scout_kit_id: Whole::default(),
@@ -1119,6 +1131,7 @@ impl SeatPublishState {
             connections,
             contact_lessons,
             routes,
+            tile_improvements,
             demographics,
             intensification_knowledge,
             ladder_knowledge,
@@ -1133,8 +1146,8 @@ impl SeatPublishState {
             characteristic_bands,
             recipes,
             craft_knowledge,
-            route_rungs,
-            deposit_rungs,
+            ladder_rungs,
+            ladder_branches,
             default_hunt_kit_id,
             default_forage_kit_id,
             default_scout_kit_id,
@@ -1239,6 +1252,7 @@ impl SeatPublishState {
                             connections,
                             contact_lessons,
                             routes,
+                            tile_improvements,
                             demographics,
                             intensification_knowledge,
                             ladder_knowledge,
@@ -1267,8 +1281,8 @@ impl SeatPublishState {
                         characteristic_bands,
                         recipes,
                         craft_knowledge,
-                        route_rungs,
-                        deposit_rungs,
+                        ladder_rungs,
+                        ladder_branches,
                         captured,
                         write,
                     )
@@ -1348,6 +1362,7 @@ impl SeatPublishState {
             connections: campaign_parts.connections,
             contact_lessons: campaign_parts.contact_lessons,
             routes: campaign_parts.routes,
+            tile_improvements: campaign_parts.tile_improvements,
             demographics: campaign_parts.demographics,
             intensification_knowledge: campaign_parts.intensification_knowledge,
             ladder_knowledge: campaign_parts.ladder_knowledge,
@@ -1362,8 +1377,8 @@ impl SeatPublishState {
             characteristic_bands: subsistence_parts.characteristic_bands,
             recipes: subsistence_parts.recipes,
             craft_knowledge: subsistence_parts.craft_knowledge,
-            route_rungs: subsistence_parts.route_rungs,
-            deposit_rungs: subsistence_parts.deposit_rungs,
+            ladder_rungs: subsistence_parts.ladder_rungs,
+            ladder_branches: subsistence_parts.ladder_branches,
             default_hunt_kit_id: subsistence_parts.default_hunt_kit_id,
             default_forage_kit_id: subsistence_parts.default_forage_kit_id,
             default_scout_kit_id: subsistence_parts.default_scout_kit_id,
@@ -1552,6 +1567,8 @@ impl SeatPublishState {
         self.contact_lessons
             .reset(entry.snapshot.contact_lessons.clone());
         self.routes.reset(entry.snapshot.routes.clone());
+        self.tile_improvements
+            .reset(entry.snapshot.tile_improvements.clone());
         self.demographics.reset(entry.snapshot.demographics.clone());
         self.forage_patches
             .reset(entry.snapshot.forage_patches.clone());
@@ -1595,9 +1612,9 @@ impl SeatPublishState {
         self.recipes.reset(entry.snapshot.recipes.clone());
         self.craft_knowledge
             .reset(entry.snapshot.craft_knowledge.clone());
-        self.route_rungs.reset(entry.snapshot.route_rungs.clone());
-        self.deposit_rungs
-            .reset(entry.snapshot.deposit_rungs.clone());
+        self.ladder_rungs.reset(entry.snapshot.ladder_rungs.clone());
+        self.ladder_branches
+            .reset(entry.snapshot.ladder_branches.clone());
         self.default_hunt_kit_id
             .reset(entry.snapshot.default_hunt_kit_id.clone());
         self.default_forage_kit_id
@@ -1770,8 +1787,8 @@ impl SeatPublishState {
             characteristic_bands: None,
             recipes: None,
             craft_knowledge: None,
-            route_rungs: None,
-            deposit_rungs: None,
+            ladder_rungs: None,
+            ladder_branches: None,
             default_hunt_kit_id: None,
             default_forage_kit_id: None,
             default_scout_kit_id: None,
@@ -1785,6 +1802,7 @@ impl SeatPublishState {
             connections: None,
             contact_lessons: None,
             routes: None,
+            tile_improvements: None,
             demographics: None,
             forage_patches: None,
             deposits: None,
@@ -1919,8 +1937,8 @@ impl SeatPublishState {
             characteristic_bands: None,
             recipes: None,
             craft_knowledge: None,
-            route_rungs: None,
-            deposit_rungs: None,
+            ladder_rungs: None,
+            ladder_branches: None,
             default_hunt_kit_id: None,
             default_forage_kit_id: None,
             default_scout_kit_id: None,
@@ -1934,6 +1952,7 @@ impl SeatPublishState {
             connections: None,
             contact_lessons: None,
             routes: None,
+            tile_improvements: None,
             demographics: None,
             forage_patches: None,
             deposits: None,
@@ -2052,8 +2071,8 @@ impl SeatPublishState {
             characteristic_bands: None,
             recipes: None,
             craft_knowledge: None,
-            route_rungs: None,
-            deposit_rungs: None,
+            ladder_rungs: None,
+            ladder_branches: None,
             default_hunt_kit_id: None,
             default_forage_kit_id: None,
             default_scout_kit_id: None,
@@ -2067,6 +2086,7 @@ impl SeatPublishState {
             connections: None,
             contact_lessons: None,
             routes: None,
+            tile_improvements: None,
             demographics: None,
             forage_patches: None,
             deposits: None,
@@ -2638,6 +2658,7 @@ pub fn capture_snapshot(
         knowledge_tags,
         knowledge_contact,
         roads,
+        tile_improvements,
         deposits,
         extraction,
         tile_registry,
@@ -3815,6 +3836,17 @@ pub fn capture_snapshot(
                     .map(|(_, tile, _)| tile.terrain)
             },
         );
+        // **THE TILE IMPROVEMENTS THE VIEWER HAS EXPLORED** - the road list's gate, for the road's
+        // reason: an improvement is in the ground and does not wander off. The builder's scratch is
+        // withheld unless one of the viewer's own bands has it queued.
+        let tile_improvement_states = crate::snapshot::routes::tile_improvement_states(
+            &tile_improvements,
+            &visibility_ledger,
+            viewer,
+            config.fog_enabled,
+            &ladder_config,
+            &build_kit_ids,
+        );
         // **THE DEPOSITS THE VIEWER HAS EXPLORED** — the road list's `Discovered` gate, because a
         // quarry does not wander off either, over the deposit-bearing ground sweep 1 picked out. See
         // `snapshot::deposits::deposit_states`: a row is about the LAND, so it stands whether or not
@@ -3865,12 +3897,11 @@ pub fn capture_snapshot(
         // **THE SUBJECT AREAS' DISPLAY ORDER** — beside the roster and on the same per-world seam,
         // published rather than inferred from the rows (see `snapshot_ladder_areas`).
         let ladder_areas_state = snapshot_ladder_areas(&ladder_config);
-        // **THE ROUTE BRANCH'S RUNG CATALOG** — what a road may become, beside what there is to learn.
-        // A per-world constant like the roster above, so it diffs out after the first frame.
-        let route_rung_state = snapshot_route_rungs(&ladder_config);
-        // **THE TWO DEPOSIT BRANCHES' RUNG CATALOG** — what a wood or a rock body may become, on the
-        // same per-world seam as the route catalog above, so it likewise diffs out after the first frame.
-        let deposit_rung_state = snapshot_deposit_rungs(&ladder_config);
+        // **THE LADDER'S RUNG CATALOG AND ITS BRANCHES** - what any source may become, beside what
+        // there is to learn. Per-world constants like the roster above, so they diff out after the
+        // first frame.
+        let ladder_rung_state = snapshot_ladder_rungs(&ladder_config);
+        let ladder_branch_state = snapshot_ladder_branches(&ladder_config);
         let command_events_state = command_events_to_state(&command_events, viewer);
         // The Telling's client-facing fork tier + stance readout (BTree-backed, so already ordered).
         let pending_forks_state = snapshot_pending_forks(&beat_ledger, viewer);
@@ -4004,14 +4035,15 @@ pub fn capture_snapshot(
             connections: connections_state.clone(),
             contact_lessons: contact_lessons_state,
             routes: route_states.clone(),
+            tile_improvements: tile_improvement_states.clone(),
             demographics: demographics_state.clone(),
             forage_patches: forage_patches_state.clone(),
             deposits: deposit_states.clone(),
             intensification_knowledge: intensification_knowledge_state.clone(),
             ladder_knowledge: ladder_knowledge_state.clone(),
             ladder_areas: ladder_areas_state.clone(),
-            route_rungs: route_rung_state.clone(),
-            deposit_rungs: deposit_rung_state.clone(),
+            ladder_rungs: ladder_rung_state.clone(),
+            ladder_branches: ladder_branch_state.clone(),
             command_events: command_events_state.clone(),
             command_events_retention_turns: command_events.retention_turns() as u32,
             lineage_constants: lineage_constants_state,

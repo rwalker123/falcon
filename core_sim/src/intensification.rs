@@ -3642,6 +3642,16 @@ pub enum RungTrait {
 }
 
 impl RungTrait {
+    /// The trait's config / wire name.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            RungTrait::Managed => "managed",
+            RungTrait::Sown => "sown",
+            RungTrait::Domesticated => "domesticated",
+            RungTrait::Enclosed => "enclosed",
+        }
+    }
+
     /// Every trait, in declaration order.
     pub const ALL: [RungTrait; 4] = [
         RungTrait::Managed,
@@ -4487,6 +4497,7 @@ impl LadderConfig {
             self.validate_sequence(rung, &where_)?;
             validate_links(rung, &where_)?;
             validate_build(rung, &where_)?;
+            validate_tile_rung_is_work_only(rung, source, &where_)?;
             validate_upkeep(rung, source, &where_)?;
             self.validate_upkeep_climbs(rung, &where_)?;
             validate_partial_credit(rung, &where_)?;
@@ -5295,6 +5306,39 @@ fn validate_route_payoff(
                  would make a haul WORSE than no road, which is not a rung on this ladder"
             ),
             value: payoff.friction_multiplier.to_string(),
+        });
+    }
+    Ok(())
+}
+
+/// **A TILE RUNG IS BUILT AND KEPT WITH WORK ALONE, AND THE REFUSAL IS THE POINT.** A tile
+/// improvement's keeping is paid out of the keeper band's `Roadwork` pool, which settles work, and
+/// its build is struck against the builders' pool with no material pile (`tile_improvement`'s module
+/// note). A material on a tile rung would parse, validate, publish a demand and be paid by nobody -
+/// the *"looks live but isn't"* failure this file is written against - so it is refused until a
+/// settle pass exists to pay it, and this check is then deleted deliberately.
+fn validate_tile_rung_is_work_only(
+    rung: &RungDef,
+    source: SourceKind,
+    where_: &str,
+) -> Result<(), LadderConfigError> {
+    if source != SourceKind::Tile {
+        return Ok(());
+    }
+    let build_materials = rung.build.as_ref().map_or(0, |build| build.materials.len());
+    let upkeep_materials = rung
+        .upkeep
+        .as_ref()
+        .map_or(0, |upkeep| upkeep.materials.len());
+    if build_materials + upkeep_materials > 0 {
+        return Err(LadderConfigError::Invalid {
+            field: format!("{where_}.materials"),
+            constraint:
+                "build and keep a tile improvement with WORK alone - the tile kind settles \
+                         no material, so a pile or a rate here would publish a demand that nothing \
+                         ever pays"
+                    .to_string(),
+            value: format!("{} material(s)", build_materials + upkeep_materials),
         });
     }
     Ok(())

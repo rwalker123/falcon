@@ -1240,13 +1240,14 @@ fn resolved_build_job(
         // carrying work declares for itself and a stale entry must not override it. A road has no
         // second declaration to reconcile: `grade` / `pave` are the only things that ever raise one,
         // and the entry's own `declared` is that statement.
-        (crate::components::BuildJob::Climb(rung), crate::components::BuildSource::Road(_)) => {
-            sources
-                .ladder
-                .rung_by_id(*rung)
-                .and_then(|record| record.verb.clone())
-                .unwrap_or_default()
-        }
+        (
+            crate::components::BuildJob::Climb(rung),
+            crate::components::BuildSource::Road(_) | crate::components::BuildSource::Tile { .. },
+        ) => sources
+            .ladder
+            .rung_by_id(*rung)
+            .and_then(|record| record.verb.clone())
+            .unwrap_or_default(),
         // **A deposit answers as a road does, and for the road's exact reason.** `fell`, `coppice`
         // and `quarry` are the only things that ever raise a working, so the entry's own `declared`
         // is the whole statement — there is no second, meter-derived declaration on a deposit for a
@@ -2588,7 +2589,7 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
                 alloc
                     .build_queue
                     .iter()
-                    .map(build_queue_entry_to_state)
+                    .map(|entry| build_queue_entry_to_state(entry, hunt_crew_levers.ladder))
                     .collect()
             })
             .unwrap_or_default(),
@@ -2897,6 +2898,7 @@ fn material_payoffs(ledger: &BTreeMap<String, f32>) -> Vec<sim_runtime::Material
 /// **which site** it is — tile, herd, working material or road — in the command grammar's terms.
 fn build_queue_entry_to_state(
     entry: &crate::components::BuildQueueEntry,
+    ladder: &crate::intensification::LadderConfig,
 ) -> SchemaBuildQueueEntryState {
     let source = &entry.source;
     let mut state = SchemaBuildQueueEntryState {
@@ -2920,12 +2922,23 @@ fn build_queue_entry_to_state(
         BuildSource::Road(tile) => {
             state.target_x = tile.x;
             state.target_y = tile.y;
-            state.road = true;
+            // The road's own branch, off the ladder - a per-tile entry names its branch so a
+            // second per-tile branch has somewhere to say which it is.
+            state.branch = ladder
+                .branch_of_kind(crate::intensification::SourceKind::Road)
+                .as_str()
+                .to_string();
         }
         BuildSource::Deposit { tile, material } => {
             state.target_x = tile.x;
             state.target_y = tile.y;
             material.clone_into(&mut state.material);
+        }
+        // A tile improvement names its own branch, exactly as a road does.
+        BuildSource::Tile { tile, branch } => {
+            state.target_x = tile.x;
+            state.target_y = tile.y;
+            state.branch = branch.as_str().to_string();
         }
     }
     state
@@ -3844,8 +3857,8 @@ mod tests {
                         // A road carries no take row at all — its keeper is on the road, not on a
                         // labor target — so a fixture that queued one would be describing a band
                         // this helper cannot build.
-                        BuildSource::Road(_) => unreachable!(
-                            "a road has no labor row, so it cannot be a source in this fixture"
+                        BuildSource::Road(_) | BuildSource::Tile { .. } => unreachable!(
+                            "a road or a tile improvement has no labor row, so it cannot be a source in this fixture"
                         ),
                         BuildSource::Deposit { tile, material } => LaborTarget::Extract {
                             tile: *tile,

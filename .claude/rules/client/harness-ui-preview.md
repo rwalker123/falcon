@@ -3283,9 +3283,9 @@ that said nothing about the code under test. `BandFx.band_fixture()` is pushed t
 `ComposeState.deposit_count()` rather than assumed — a deal asserted at a count the sheet refused is
 a claim about a number nothing on screen shows.
 
-⛔ **IT PUSHES ITS OWN RUNG CATALOG, THROUGH THE REAL INGEST** (`Hud.update_deposit_rungs`). Every
+⛔ **IT PUSHES ITS OWN RUNG CATALOG, THROUGH THE REAL INGEST** (`Hud.update_deposit_rungs`, the deposit view of `update_ladder_rungs`). Every
 rung NAME, PRICE, PAYOFF and GATE on all three surfaces is read out of
-`SubsistenceSection.depositRungs`, so a chapter that staged no catalog would assert against raw wire
+`SubsistenceSection.ladderRungs`, so a chapter that staged no catalog would assert against raw wire
 keys and against a ladder with no rows on it.
 
 ⛔ **AND THE LADDER IS ASSERTED OVER ITS PRODUCER, WITH NO FRAME OF ITS OWN.** The track is opened

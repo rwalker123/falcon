@@ -8,6 +8,7 @@ use sim_runtime::{
     TerrainType,
 };
 
+use crate::ladder_ids::BranchId;
 pub use crate::ladder_ids::VerbId;
 use crate::{
     generations::GenerationId,
@@ -5901,6 +5902,13 @@ pub enum BuildSource {
     /// The material is part of the key for [`LaborTarget::Extract`]'s reason — one tile can hold two
     /// deposits, and a `fell` queued on the timber is not a `quarry` queued on the rock beneath it.
     Deposit { tile: UVec2, material: String },
+    /// **AN IMPROVEMENT ON ONE TILE OF A TILE-KIND BRANCH** - `(tile, branch)`, the key of
+    /// [`crate::tile_improvement::TileImprovementRegistry`]. Like a road it is backed by **no labor
+    /// row**: the named band builds it from its `builders` pool and the improvement's keeper is
+    /// whichever band of its people stands within reach, so there is no per-band holding to prune
+    /// by - the `build` command places the improvement in the same breath as it declares, and
+    /// nothing removes one, so the entry's membership is permanent until it completes.
+    Tile { tile: UVec2, branch: BranchId },
 }
 
 /// **THE ROAD-MEMBERSHIP ANSWER A CALLER WITH NO VIEW OF THE ROADS GIVES** — *"leave road entries
@@ -5948,6 +5956,9 @@ impl BuildSource {
             // **The take row's own key**, unlike a road's: a working has a row, so a client joins
             // its queued `fell` or `quarry` to the crew that is actually standing on it.
             BuildSource::Deposit { .. } => EXTRACT_ROLE_KEY,
+            // **The keeping role, like a road's**: a tile improvement has no take row either, and
+            // the pool that keeps it is the same band-wide one.
+            BuildSource::Tile { .. } => ROADWORK_ROLE_KEY,
         }
     }
 
@@ -7123,6 +7134,10 @@ impl LaborAllocation {
                 .assignments
                 .iter()
                 .any(|assignment| source.names(&assignment.target)),
+            // **A TILE IMPROVEMENT IS HELD BY NOBODY'S ROW AND NOBODY'S KEEPER** - the `build`
+            // command places it and declares in one act, and the registry never removes one, so the
+            // entry stands until it completes.
+            BuildSource::Tile { .. } => true,
         }
     }
 

@@ -1125,15 +1125,16 @@ index answering both rather than two that could disagree.
 
 ### The rung catalog — what a wood or a rock body MAY become, once per world
 
-`SubsistenceSection.depositRungs` is a `DepositRungState` per rung of the **forestry** and
+`SubsistenceSection.ladderRungs` carries a `LadderRungState` per rung of the **forestry** and
 **extraction** branches, grouped by branch and climbing within it, built by
-`snapshot::subsistence::snapshot_deposit_rungs` off `extraction::deposit_rungs_in_climb_order`. It is
-a per-world constant on `routeRungs`' own seam — a `Whole<…>` baseline, diffed whole like `kits`, and
+`snapshot::subsistence::snapshot_ladder_rungs` (the deposit rows are those with `sourceKind:
+"deposit"`; `extraction::deposit_rungs_in_climb_order` is the sim-side walk). It is
+a per-world constant on the ladder catalog's own seam — a `Whole<…>` baseline, diffed whole like `kits`, and
 re-sent only on a world rebuild.
 
 **`DepositState` says where a working stands; the catalog says what stands above it.** Without it no
 readout could state what a quarry costs, what it reaches, or why the ground refuses one until a
-working already sat on that rung — which is the same gap `routeRungs` was added to close for roads.
+working already sat on that rung — which is the same gap the road rows of the catalog were added to close.
 
 ⛔ **IT FOLLOWS THE ROUTE PRECEDENT AND NOT THE PLANT ONE, AND THE DIFFERENCE IS WHO OWNS THE LIST.**
 The plant and animal ladders are drawn from **hardcoded client-side rung arrays**, a second authority
@@ -1146,9 +1147,9 @@ own config comment reserves the minerals arc's `mine` above the quarry, on this 
 `wire::a_rung_added_to_the_config_is_published_with_no_code_change` appends a fourth forestry rung to
 the shipped config's JSON, swaps the `LadderConfigHandle`, and asserts the row appears.
 
-**`branch` on every row is the one field `RouteRungState` has no need of.** One vector carries both
+**`branch` on every row is what groups the one vector.** One vector carries both
 ladders because they share the payoff block, so a reader groups by it;
-`extraction::DEPOSIT_BRANCHES` fixes the order the groups come in, which a set-walk could not.
+`LadderConfig::branches_in_config_order` fixes the order the groups come in, which a set-walk could not.
 
 ⛔ **`recoveryFraction` IS PUBLISHED AND MUST NEVER BE DERIVED FROM `reachable / capacity`.**
 `deposit_reachable` clamps to the **stock**, so that ratio stops being the rung's recovery the moment

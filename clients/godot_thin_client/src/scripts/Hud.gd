@@ -1109,7 +1109,17 @@ func update_ladder_areas(areas_variant: Variant) -> void:
     _topbar.update_ladder_areas(areas_variant)
     _refresh_knowledge_readouts()
 
-## **THE ROUTE BRANCH'S RUNG CATALOG** (arc #532 slice 13) — what the road ladder HOLDS, per world.
+## **THE UNIFIED LADDER CATALOG** (issue #175) -- every branch's rungs, `Main`'s one entry point; the
+## store splits it into the road and deposit views below. A thin delegator for `update_ladder_knowledge`'s
+## reason: `Main` reaches it BY NAME through `_hud_invoke`. Pushes no re-render, for the views' reason.
+func update_ladder_rungs(catalog_variant: Variant) -> void:
+    _topbar.update_ladder_rungs(catalog_variant)
+
+## …and the branch declarations (`{branch, area, source_kind, label}`) beside it.
+func update_ladder_branches(branches_variant: Variant) -> void:
+    _topbar.update_ladder_branches(branches_variant)
+
+## **THE ROUTE BRANCH'S RUNG CATALOG** (arc #532 slice 13) -- now the road view of `update_ladder_rungs`, still callable directly by a harness — what the road ladder HOLDS, per world.
 ## A thin delegator for `update_ladder_knowledge`'s reason: `Main` reaches it BY NAME through
 ## `_hud_invoke`, whose `has_method` probe fails silently.
 ##

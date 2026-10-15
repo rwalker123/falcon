@@ -1597,9 +1597,10 @@ struct PublishedRouteRung {
     build_material_id: String,
 }
 
-/// **The `routeRungs` catalog off the encoded envelope**, through the accessor chain a client uses.
-/// It rides the subsistence section beside `ladderKnowledge` — both are declarations of what the
-/// ladder holds, carrying no faction and no tile.
+/// **The route branch's rows of the `ladderRungs` catalog off the encoded envelope**, through the
+/// accessor chain a client uses. The catalog rides the subsistence section beside
+/// `ladderKnowledge` - both are declarations of what the ladder holds, carrying no faction and no
+/// tile - and carries every branch, so the road ones are picked out by their source kind.
 fn published_route_rungs(app: &App) -> Vec<PublishedRouteRung> {
     use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
 
@@ -1610,10 +1611,11 @@ fn published_route_rungs(app: &App) -> Vec<PublishedRouteRung> {
         .payload_as_snapshot()
         .expect("the envelope carries a snapshot")
         .subsistence()
-        .and_then(|section| section.routeRungs())
-        .expect("the route rung catalog is published");
+        .and_then(|section| section.ladderRungs())
+        .expect("the ladder rung catalog is published");
     catalog
         .iter()
+        .filter(|row| matches!(row.sourceKind(), Some("road")))
         .map(|row| PublishedRouteRung {
             rung_key: row.rungKey().expect("a rung publishes its key").to_string(),
             order: row.order(),

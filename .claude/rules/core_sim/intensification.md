@@ -2457,6 +2457,63 @@ by its **branch**: `BuildSourceRef.branch` replaces the old `road` bool (proto f
 `branch` string), is resolved against the ladder (`is_road` = the branch's source kind is `road`) and
 an unknown or non-per-tile branch is refused by name rather than read as the tile's patch.
 
+## The tile kind — an improvement on ONE TILE of a branch the config declares
+
+`SourceKind::Tile` is the road's shape for a thing that is not a road: a **standing** on the ladder, a
+**keeper**, a **standing bill**, a **neglect clock** and a **grace** - and no crew row, no stock and
+no traffic. **No tile branch ships.** A tile branch is a JSON edit, and the engine never names one:
+`core_sim/tests/tile_improvement.rs` proves it on a test-only two-rung branch (`orchard`, overlay
+`core_sim/tests/fixtures/orchard_tile_branch.json`) merged onto the builtin ladder. Engine:
+`core_sim/src/tile_improvement.rs`.
+
+**The registry is its own, keyed `(tile, branch)`.** `TileImprovementRegistry` is modelled on
+`RoadRegistry` and deliberately **not merged with it**: a road is one per tile and its position is
+worn in by traffic; an improvement is one per `(tile, branch)` and its position is raised **only** by a
+band's builders. They share the keeping *machinery* and nothing else. It rides `SimState`
+(`tile_improvements`, classified in `sim_state_coverage`); the save version is unchanged.
+
+**Building**: `build <verb> <faction> <band> <x> <y>` with a tile-kind verb. The band named is the
+**builder**: its `builders` pool raises the improvement and its queue holds the entry
+(`BuildSource::Tile { tile, branch }`, `BuildJob::Climb(rung)`). The first verb of a branch on a tile
+**places** the improvement at the branch's root in the same breath as it declares (a verb whose rung
+is not directly above the root refuses until the rung beneath is held). The pool's arm is the road
+arm's shape without the remoteness quote and without a material pile.
+
+**Keeping is a REACH, not a command.** `assign_tile_keepers` (Population, ahead of the labour pass)
+gives each improvement to **the nearest band of its people within `supply_network_config.reach_tiles`**,
+ties to the lowest `BandId`, and none in reach means **no keeper**. The bill is stamped on every
+improvement keeper or not, so an unkept one cannot read as met. The keeper's `Roadwork` pool pays it
+(`route_keeping_claims`' sibling `tile_keeping_claims`, merged by `pool_keeping_claims`): the pool is
+the band-level keeping pool for tiles with no labor row. A band that moves on stops keeping what it
+left; the improvement then **decays after its at-risk rung's grace** (`advance_tile_improvements`,
+the road decay's phases 1-3), announced on the rung's feed channel.
+
+**Refusals that are the point.** `LadderConfig::validate` refuses a material on a tile rung (build
+pile or standing rate): the pool settles work, and a stone-eating tile rung would be a demand nothing
+pays. `abandon` on a tile branch is refused with a pointer to `unqueue` - nobody holds an improvement
+by command. The improvement record persists at the root rung after a full decay; nothing prunes it.
+
+**On the wire** (`RouteSection.tileImprovements`, `TileImprovementState`): the road row's shape -
+current rung, stamped bill (`upkeepDemand - upkeepSupplied == upkeepShortfall`), neglect and grace,
+`hasKeeper` / `keeperBandId` - plus the builder's scratch (`buildDestinationRung`, `buildLegs`,
+`buildTurnsRemaining`, `buildBlockedReason`), which publishes only where one of the **viewer's own
+bands** has the improvement queued. Fog-gated on `Discovered`, the road's rule. The rungs above the
+one a row holds are priced by `ladderRungs` filtered to the branch.
+
+## The ladder catalog on the wire — `ladderRungs` / `ladderBranches`
+
+`SubsistenceSection.ladderRungs` is **one row per rung of every branch**, grouped by branch in the
+config's order and climbing within it; `ladderBranches` is each branch's `area`, `sourceKind` and
+heading. Both are derived from `intensification_ladder.json` and nothing else, per-world constants
+diffed whole like `kits`. A row carries identity (`rungKey`, `branch`, `order`, `displayName`,
+`label`, `labelFallback`), the verb, the `sourceKind`, the `traits`, the knowledge gate and remedy,
+the chain (`requiresRung`), the unscaled price (`workCost`, `upkeepWorkPerTurn`, the flat build pile
+and its material), the sim's bare work rate, and the payoff blocks for the kinds that have one (a
+road's `frictionMultiplier` / `holdsLinkToTiles` / `grantsSight`; a deposit's `yieldPerWorkerTurn` /
+`recoveryFraction` / `regrowthMultiplier` / `minDepositCapacity`) at the wire's neutral value
+elsewhere. Field-by-field contracts are `routes.md` -> "The rung CATALOG" and `extraction.md` -> "The
+rung catalog". `BuildQueueEntryState.road` is gone: a per-tile entry names its `branch`.
+
 ## Knowledge no rung teaches — `standalone_knowledges`
 
 `knowledge_roster()` derives from the rungs' `earns_knowledge`, so a knowledge taught by a practice

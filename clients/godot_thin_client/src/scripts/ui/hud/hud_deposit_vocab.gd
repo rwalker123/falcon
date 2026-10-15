@@ -70,7 +70,7 @@ const RUNG_KEY_QUARRY := "extraction:quarry"
 
 # ⛔ **RETIRED — `RUNG_ORDER_FORESTRY`, `RUNG_ORDER_EXTRACTION` AND `RUNG_LABELS`** (issue #650). They
 # were the client's own reading vocabulary for branches the wire published no catalog for, and the
-# wire publishes one now: `SubsistenceSection.depositRungs`, one row per rung of BOTH branches,
+# wire publishes one now: `SubsistenceSection.ladderRungs`, one row per rung of BOTH branches,
 # carrying the climb order, the sim's own `display_name`, the price, the payoff and every gate. Every
 # surface reads it through the `catalog_*` / `ladder_*` accessors below, so **a rung added to
 # `intensification_ladder.json` appears with no client edit** — the property the route branch's own
@@ -815,7 +815,7 @@ static func build_value(deposit: Dictionary, crew: int) -> String:
 		queue_position_of(deposit))
 
 # ==================================================================================================
-#  THE RUNG CATALOG — `SubsistenceSection.depositRungs`, one row per rung of BOTH branches
+#  THE RUNG CATALOG — `SubsistenceSection.ladderRungs`, one row per rung of BOTH branches
 # ==================================================================================================
 #
 # ⛔ **EVERY LABEL, PRICE, PAYOFF AND GATE ON THIS BRANCH COMES OFF THE WIRE** (issue #650), exactly as
@@ -1484,6 +1484,10 @@ const DEPOSIT_DEAL_LABEL_FORMAT := "once %sed"
 const DEPOSIT_DEAL_LABEL_SILENT_E_FORMAT := "once %sd"
 const DEPOSIT_DEAL_LABEL_Y_FORMAT := "once %sied"
 
+## The verbs whose hand-written participle rules above are vouched for; any other falls back to
+## `once <catalog label>`.
+const DEPOSIT_DEAL_SHIPPED_VERBS := ["fell", "coppice", "quarry"]
+
 ## The two endings those rules fork on, named because each IS the rule.
 const DEPOSIT_DEAL_SILENT_E := "e"
 const DEPOSIT_DEAL_CONSONANT_Y := "y"
@@ -1499,6 +1503,10 @@ static func deal_label(entry: Dictionary) -> String:
 	var verb := catalog_verb(entry)
 	if verb == RUNG_CATALOG_NONE:
 		return ""
+	# A verb outside the shipped three reads off the catalog's own label rather than a guessed
+	# participle (issue #175).
+	if not DEPOSIT_DEAL_SHIPPED_VERBS.has(verb):
+		return HudRouteVocab.deal_fallback_text(entry)
 	if verb.ends_with(DEPOSIT_DEAL_SILENT_E):
 		return DEPOSIT_DEAL_LABEL_SILENT_E_FORMAT % verb
 	if verb.ends_with(DEPOSIT_DEAL_CONSONANT_Y):

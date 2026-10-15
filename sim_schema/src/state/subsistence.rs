@@ -2339,316 +2339,144 @@ pub struct IntensificationKnowledgeState {
     pub knowledges: Vec<LadderKnowledgeProgress>,
 }
 
-/// **ONE RUNG OF THE ROUTE BRANCH, AS THE CONFIG DECLARES IT** — the branch's *catalog*, once per
-/// world and carrying no tile.
+/// **ONE RUNG OF ANY BRANCH, AS THE CONFIG DECLARES IT** - the ladder's *catalog*, once per world and
+/// carrying no tile, no source and no faction. It replaced the route and deposit catalogs (and
+/// gave the plant and animal rungs one): a row per rung of `intensification_ladder.json`, grouped
+/// by branch and in climb order within it. Every field is derived from the config through the sim's
+/// own rung types, so a rung or a branch added there appears with no client edit and no schema edit.
 ///
-/// ⛔ **THIS IS WHAT LETS A CLIENT DRAW A ROAD LADDER OF RUNGS NOTHING HAS BUILT YET.**
-/// [`crate::state::routes::RouteState`] answers *where does this tile stand and what is that worth*;
-/// it says nothing about the rungs above it, so no readout could state what a paved road would cost
-/// or what it would buy until the tile already held one.
-///
-/// ⛔ **EVERY FIELD IS DERIVED FROM `intensification_ladder.json`; NOTHING HERE IS AUTHORED
-/// SEPARATELY** — the same discipline [`LadderKnowledgeState`] follows, and for the same reason: a
-/// rung added to that config appears in the ladder with no client edit and no schema edit. The one
-/// exception is [`Self::build_work_per_worker_turn`], which is the *sim's* rate and not the rung's.
-///
-/// **It rides the section and not the tile row.** These are properties of the *branch*, identical
-/// for every road in the world; carried on `RouteState` they would repeat the same four rows on
-/// every road tile — which is the same reason the bare work rate rides here rather than on the
-/// road.
-///
-/// **Route branch only, deliberately.** A generic `LadderRungState` filled for one branch is a
-/// promise the code does not keep; the plant and animal branches publishing the same is their own
-/// change.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
-pub struct RouteRungState {
-    /// The rung's name on the wire, `"<branch>:<id>"` (`"route:dirt_road"`) — the same spelling
-    /// `RouteState::rung` carries, so a tile's standing joins to its row here.
+/// **It rides the section and not a source row**: these are properties of the *branch*, identical
+/// for every source on it. See `snapshot.fbs`'s `LadderRungState` for each field's contract; the
+/// neutral values (`friction_multiplier` 1, `regrowth_multiplier` 1) are the wire defaults, so a
+/// defaulted row never claims a rung stops the ground growing or that a road is free.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct LadderRungState {
+    /// The rung's wire key, `"<branch>:<id>"`.
     pub rung_key: String,
-    /// The config record's own `order`: `1` at the branch's floor, climbing. **The row order is this
-    /// order** — the catalog is published bottom rung first.
+    /// The branch the rung is on; joins to [`LadderBranchState::branch`].
+    pub branch: String,
+    /// The config record's `order`: 1 at the branch's floor.
     pub order: u32,
-    /// `"Dirt Road"` — the rung id with underscores turned to spaces and each word capitalized,
-    /// resolved sim-side so no client authors a second spelling of it.
+    /// The rung id title-cased by the sim.
     pub display_name: String,
-    /// The **tile command** that raises this rung (`"grade"` / `"pave"`), `""` where the rung
-    /// declares none. An empty verb is the free floor: a path and a trail are formed by *use*, so
-    /// there is no command to name the job and no crew to staff it.
+    /// The rung's player-facing label ("Tended patch").
+    #[serde(default)]
+    pub label: String,
+    /// The article-bearing feed fallback ("a tended patch").
+    #[serde(default)]
+    pub label_fallback: String,
+    /// The build verb that raises the rung, `""` where it declares none.
     pub verb: String,
-    /// The ladder knowledge that gates this rung (`"roadbuilding"`), joining to
-    /// [`LadderKnowledgeState::knowledge_id`] for the faction's own progress; `""` where the rung
-    /// waits on nothing.
+    /// The kind of source on the rung's branch: `"patch"` | `"herd"` | `"road"` | `"deposit"` | `"tile"`.
+    #[serde(default)]
+    pub source_kind: String,
+    /// The rung's trait names, in declaration order.
+    #[serde(default)]
+    pub traits: Vec<String>,
+    /// The knowledge that gates the rung, `""` where none.
     pub unlock_knowledge: String,
-    /// The wire key of the rung **directly beneath** this one, `""` at the branch's floor — the
-    /// chain, so a client renders the climb without holding a second copy of the order.
+    /// The knowledge the rung earns by being held, `""` where none.
+    #[serde(default)]
+    pub earns_knowledge: String,
+    /// The wire key of the rung directly beneath, `""` at the floor.
     pub requires_rung: String,
-    /// What reaching this rung costs, in work units, **before** the tile's own remoteness quote
-    /// (`RouteState::keeper_remoteness` is that multiplier). `0` where the rung declares no build at
-    /// all, which on the shipped ladder is the floor and nothing else. Inside the free floor the
-    /// figure is a duration in **traffic** rather than a crew's job.
+    /// Work units to reach the rung, before per-source scaling.
     #[serde(default)]
     pub work_cost: f32,
-    /// The standing bill a road at this rung owes its keeper, in work units per turn, **before** the
-    /// tile's own load scales it (`RouteState::upkeep_demand` is the resolved reading). `0` where
-    /// the rung declares no upkeep — the free floor, which costs nothing to hold and can therefore
-    /// never be short.
+    /// Work units per turn a source at the rung owes its keeper, before per-source load.
     #[serde(default)]
     pub upkeep_work_per_turn: f32,
-    /// The fraction of the base pooling friction a haul over a tile at this rung pays; `1.0` = no
-    /// help. `RouteState::friction_multiplier` is the same figure for the rung a tile **holds**.
+    /// The declared build pile, read with [`Self::build_material_id`].
     #[serde(default)]
+    pub build_material_cost: f32,
+    /// Which material the pile is of, `""` where the rung eats nothing.
+    #[serde(default)]
+    pub build_material_id: String,
+    /// What one bare-handed worker banks per turn (the sim's rate, read never assumed).
+    #[serde(default)]
+    pub build_work_per_worker_turn: f32,
+    /// Road payoff: the fraction of base pooling friction a haul pays (1.0 = no help).
+    #[serde(default = "default_friction_multiplier")]
     pub friction_multiplier: f32,
-    /// How far a tile at this rung holds a pooling link open, in tiles. `0` = none beyond the free
-    /// reach.
+    /// Road payoff: how far a tile at the rung holds a pooling link open.
     #[serde(default)]
     pub holds_link_to_tiles: u32,
-    /// **Does a road at this rung light its own tile?** Answered from whether the rung declares an
-    /// upkeep, because *paying the bill is the presence* — which is also why the free floor lights
-    /// nothing however worn it is. A road at a rung that grants sight still goes dark while its
-    /// keeping is unmet; `RouteState::grants_sight` is that resolved per-tile answer.
+    /// Road payoff: whether a road at the rung lights its tile.
     #[serde(default)]
     pub grants_sight: bool,
-    /// **The ladder knowledge standing at this rung TEACHES** (`"roadbuilding"` on the trail), `""`
-    /// where the rung teaches nothing — the floor, and the top of the branch, which has nothing
-    /// above it to open.
-    ///
-    /// ⛔ **IT IS THE REMEDY, AND IT CANNOT BE INFERRED FROM [`Self::requires_rung`].** A gate says
-    /// *you do not know `paving` yet*; what a player does about it is stand on the rung that
-    /// **teaches** paving, which is a different fact from the rung directly beneath. The two
-    /// coincide on the shipped four rungs and the config is free to break that pairing — an
-    /// inference would then name the wrong rung in the one place it matters.
-    ///
-    /// Joins to [`LadderKnowledgeState::knowledge_id`], the same vocabulary
-    /// [`Self::unlock_knowledge`] uses.
-    #[serde(default)]
-    pub earns_knowledge: String,
-    /// **What one bare-handed worker banks in a turn** — `intensification::PER_WORKER_OUTPUT`,
-    /// unscaled: before gear and before any multiplier, in work units per worker per turn.
-    ///
-    /// **The same figure for every rung, which is why it rides the catalog.** These rows are the
-    /// branch's own numbers, identical for every road in the world; a per-tile copy on
-    /// `RouteState` would repeat one constant once per road on the map.
-    ///
-    /// ⛔ **IT IS READ, NEVER ASSUMED.** Every source row publishes its own
-    /// `build_work_per_worker_turn` because the sim writes worker output as a *sum of terms* — a
-    /// road's own row ([`crate::state::RouteState`]) does not repeat it, for the reason above, so a
-    /// client without this has to transcribe the constant and goes stale in silence the day a second
-    /// term lands. A reader that finds it missing or `0` states *no estimate* rather than
-    /// substituting a rate of its own.
-    #[serde(default)]
-    pub build_work_per_worker_turn: f32,
-    /// **WHAT REACHING THIS RUNG COSTS IN MATERIAL** — the rung's declared build pile, in units of
-    /// the material it eats. `20` on `route:paved_road`; `0` on every other rung of the branch,
-    /// which eat nothing at all.
-    ///
-    /// ⛔ **IT IS FLAT, WHERE [`Self::work_cost`] BESIDE IT IS NOT.** A tile's own remoteness
-    /// multiplies the work (`RouteState::keeper_remoteness`) and does **not** multiply this: a tile
-    /// of road needs the same twenty stone wherever it lies, and remoteness already taxes the
-    /// getting there. So this figure is the whole truth for every tile on the map, while `work_cost`
-    /// is a base the tile's own multiplier still has to be applied to — the one asymmetry between
-    /// the branch's two prices, and why this needs no per-tile twin.
-    ///
-    /// **Spent as the meter climbs, never on completion, and decay refunds nothing**
-    /// (`docs/plan_standing_upkeep.md` §2.7): a roadbed a third laid has swallowed a third of the
-    /// pile, and if it then washes out the stone is gone.
-    /// `RouteState::build_material_demand` / `build_material_supplied` are this turn's share of it.
-    ///
-    /// **Which material it is** rides beside it in [`Self::build_material_id`].
-    #[serde(default)]
-    pub build_material_cost: f32,
-    /// **WHICH MATERIAL [`Self::build_material_cost`] IS OF** — `"stone"` on `route:paved_road`, and
-    /// `""` on every rung that eats nothing. Joins to the ids a band's own stores list publishes.
-    ///
-    /// ⛔ **READ IT WITH THE AMOUNT OR NOT AT ALL**, exactly as `build_work_per_worker` /
-    /// `build_work_branch` / `build_work_rung` are one reading: an amount with no noun cannot be
-    /// rendered into a sentence and a noun with no amount says nothing. Shipped without this, the
-    /// client's rung row read *"+ 20 to raise it"* — twenty of what?
-    ///
-    /// ⛔ **AND THE CLIENT MUST NOT SUPPLY THE NOUN ITSELF.** *"The route branch eats stone"* is a
-    /// fact about the **config**, so a client holding it is a second authority that goes stale in
-    /// silence the day a rung is retuned to eat something else — the same transcription mistake
-    /// [`Self::build_work_per_worker_turn`] exists to have prevented.
-    ///
-    /// **One id rather than a `MaterialPayoff` list**, unlike the plant and animal branches' piles:
-    /// one material per rung *is* the model here, [`Self::build_material_cost`] is a single float so
-    /// a second material would make the **amount** meaningless before the name mattered, and the
-    /// flat-pile arithmetic has no defined reading for two. The pair is resolved from **one** lookup
-    /// at capture so the two cannot disagree. Appended (append-only).
-    #[serde(default)]
-    pub build_material_id: String,
-}
-
-/// **ONE RUNG OF A DEPOSIT BRANCH, AS THE CONFIG DECLARES IT** — the two branches' shared *catalog*,
-/// once per world and carrying no tile. [`RouteRungState`] above is the precedent, field for field.
-///
-/// ⛔ **THIS IS WHAT LETS A CLIENT DRAW A WOOD OR STONE LADDER OF RUNGS NOTHING HAS OPENED YET.**
-/// [`crate::state::DepositState`] answers *where does this working stand and what is it taking*; it
-/// says nothing about the rungs above it, so no readout could state what a quarry would cost or what
-/// it would reach until a working already stood on one.
-///
-/// ⛔ **EVERY FIELD IS DERIVED FROM `intensification_ladder.json`; NOTHING HERE IS AUTHORED
-/// SEPARATELY** — [`RouteRungState`]'s discipline, for its reason: a rung added to that config
-/// appears in the ladder with no client edit and no schema edit. The one exception is
-/// [`Self::build_work_per_worker_turn`], which is the *sim's* rate and not the rung's.
-///
-/// **Two branches in one vector, with [`Self::branch`] on every row** — the one field
-/// [`RouteRungState`] has no need of, because it publishes a single branch. `forestry` and
-/// `extraction` share the payoff block and differ only in which of its terms a rung raises, so one
-/// table serves both; the rows are grouped by branch and climb within it.
-///
-/// **It rides the section and not the working's row.** These are properties of the *branch*,
-/// identical for every wood and every rock body in the world.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct DepositRungState {
-    /// The rung's name on the wire, `"<branch>:<id>"` (`"forestry:coppice"`) — the same spelling
-    /// `DepositState::rung` carries, so a working's standing joins to its row here.
-    pub rung_key: String,
-    /// **Which ladder this rung is on**, `"forestry"` | `"extraction"` — the config record's own
-    /// branch, the same vocabulary `DepositState::branch` publishes. One vector carries both, so
-    /// this is what a reader groups by; without it the rows of two ladders would be one
-    /// undifferentiated climb.
-    pub branch: String,
-    /// The config record's own `order`: `1` at the branch's floor, climbing. **The row order is this
-    /// order** within a branch — bottom rung first, forestry before extraction.
-    pub order: u32,
-    /// `"Coppice"` — the rung id with underscores turned to spaces and each word capitalized,
-    /// resolved sim-side so no client authors a second spelling of it.
-    pub display_name: String,
-    /// The **tile command** that raises this rung (`"fell"` / `"coppice"` / `"quarry"`), `""` where
-    /// the rung declares none. An empty verb is a free floor: deadfall and a stone scatter are what
-    /// the ground already offers, so there is no command to name the job and no crew to staff it.
-    pub verb: String,
-    /// The ladder knowledge that gates this rung (`"conservationism"`), joining to
-    /// [`LadderKnowledgeState::knowledge_id`] for the faction's own progress; `""` where the rung
-    /// waits on nothing.
-    pub unlock_knowledge: String,
-    /// The wire key of the rung **directly beneath** this one, `""` at a branch's floor — the chain,
-    /// so a client renders the climb without holding a second copy of the order.
-    pub requires_rung: String,
-    /// **The ladder knowledge standing at this rung TEACHES** (`"woodcraft"` on deadfall), `""`
-    /// where the rung teaches nothing, which is the top of each shipped branch.
-    ///
-    /// ⛔ **IT IS THE REMEDY, AND IT CANNOT BE INFERRED FROM [`Self::requires_rung`]**, exactly as on
-    /// [`RouteRungState::earns_knowledge`]: a gate says *you do not know `quarrying` yet*, and what
-    /// a player does about it is stand on the rung that **teaches** quarrying, which is a different
-    /// fact from the rung directly beneath.
-    #[serde(default)]
-    pub earns_knowledge: String,
-    /// What reaching this rung costs, in work units. `0` where the rung declares no build at all,
-    /// which on the shipped ladder is the two free floors and nothing else — nobody builds a
-    /// deadfall and nobody builds a stone scatter.
-    #[serde(default)]
-    pub work_cost: f32,
-    /// The standing bill a working at this rung owes its keeper, in work units per turn, **before**
-    /// the working's own keeper-loads scale it (`DepositState::upkeep_demand` is the resolved
-    /// reading). `0` where the rung declares no upkeep — the free floors, which cost nothing to hold
-    /// and can therefore never be short.
-    #[serde(default)]
-    pub upkeep_work_per_turn: f32,
-    /// **What reaching this rung costs in material** — the rung's declared build pile, in units of
-    /// the material it eats: `8` wood on `extraction:quarry` (props and ramps, timbered once as the
-    /// face is opened), `0` on every other rung of either branch.
-    ///
-    /// **It is a pile and not a rate**: swallowed as the meter climbs, never on completion, and the
-    /// slide back down a ladder refunds none of it. There is deliberately no
-    /// `upkeep_material_per_turn` twin — no rung on either branch declares one and `validate`
-    /// refuses one.
-    #[serde(default)]
-    pub build_material_cost: f32,
-    /// **Which material [`Self::build_material_cost`] is of** — `"wood"` on `extraction:quarry`, and
-    /// `""` on every rung that eats nothing. Joins to the ids a band's own stores list publishes.
-    ///
-    /// ⛔ **READ IT WITH THE AMOUNT OR NOT AT ALL**, and **the client must not supply the noun
-    /// itself**: *"a quarry eats wood"* is a fact about the **config**, so a transcribed noun is a
-    /// second authority that goes stale in silence the day a rung is retuned.
-    #[serde(default)]
-    pub build_material_id: String,
-    /// **What one bare-handed worker banks in a turn** — `intensification::PER_WORKER_OUTPUT`,
-    /// unscaled: before gear and before any multiplier, in work units per worker per turn. The same
-    /// figure for every rung, which is why it rides the catalog rather than the working's row.
-    ///
-    /// ⛔ **IT IS READ, NEVER ASSUMED**, for [`RouteRungState::build_work_per_worker_turn`]'s
-    /// reason: the sim writes worker output as a *sum of terms*, so a client left to transcribe the
-    /// constant goes stale in silence the day a second term lands. A reader that finds it missing or
-    /// `0` states *no estimate* rather than substituting a rate of its own.
-    #[serde(default)]
-    pub build_work_per_worker_turn: f32,
-    /// **What one worker takes in a turn at this rung**, in the deposit's material's own units,
-    /// before the reachable stock caps it. The free floors carry a real bare-handed rate rather than
-    /// a zero — the whole material economy bootstraps through them, and a zero would be a refusal
-    /// the sim does not have. `DepositState::actual_take` is what a working's crew actually banked.
+    /// Deposit payoff: what one worker takes per turn at the rung.
     #[serde(default)]
     pub yield_per_worker_turn: f32,
-    /// **How much of the deposit this rung can ever reach**, `0..=1` — the escapement floor upside
-    /// down: `floor = (1 − recovery_fraction) × capacity`, so climbing **lowers** the floor rather
-    /// than raising a ceiling. `1.0` on every forestry rung (a wood can be cut to nothing, which is
-    /// what makes over-cutting possible); `0.15` at `extraction:gathering`, which is what makes it a
-    /// *surface* rung, and `0.85` at `extraction:quarry`.
-    ///
-    /// ⛔ **THIS IS THE FIELD THE WHOLE STONE BRANCH TURNS ON, AND IT IS PUBLISHED RATHER THAN
-    /// DERIVED FROM `DepositState::reachable` / `DepositState::capacity`.** That ratio is *not* this
-    /// fraction: `reachable` clamps to the **stock**, so the moment a seam is drawn down the ratio
-    /// stops being the rung's recovery, and a payoff row computing it would silently begin quoting a
-    /// different number — one that falls as the rock is worked, on a rung whose reach never moved.
+    /// Deposit payoff: how much of the deposit the rung can ever reach, 0..1.
     #[serde(default)]
     pub recovery_fraction: f32,
-    /// **What this rung multiplies the deposit's own `regrowth_rate` by.** `1.0` = the ground renews
-    /// as it always did, which is what every extraction rung declares; `2.0` at `forestry:coppice`,
-    /// which is conservationism expressed mechanically — not more per turn, more per turn *for
-    /// ever*.
-    ///
-    /// **No rung raises capacity and there is no field for one.** The multiplier scales the
-    /// deposit's own rate and rock's rate is `0`, so *stone's rate is zero* survives as arithmetic
-    /// rather than as a rule someone has to remember.
-    #[serde(default)]
+    /// Deposit payoff: what the rung multiplies the ground's regrowth by.
+    #[serde(default = "default_regrowth_multiplier")]
     pub regrowth_multiplier: f32,
-    /// **What the ground must hold for this rung to be placed there** — the rung's
-    /// `site_requirement.min_deposit_capacity`, struck against the tile's own capacity for the
-    /// working's material. `100` at `extraction:quarry` and `70` at `forestry:coppice`, the two placement rules the deposit branches carry, and
-    /// the whole of *"you cannot quarry just anywhere"*; `0` where the rung asks nothing of the
-    /// ground, which is every other shipped rung.
-    ///
-    /// It is published so a client can say **why** a rung is refused rather than only that it is:
-    /// `DepositState::capacity` is the other half of that sentence, and a threshold transcribed
-    /// client-side would be a second authority over a placement rule the config owns.
+    /// Deposit site rule: the capacity the ground must hold for the rung to be placed there.
     #[serde(default)]
     pub min_deposit_capacity: f32,
 }
 
-/// **"THIS RUNG LEAVES THE GROUND GROWING AS IT WAS"** — the wire default of
-/// [`DepositRungState::regrowth_multiplier`] (`snapshot.fbs` declares `regrowthMultiplier:float = 1`)
-/// and the value every **extraction** rung declares, since a finite deposit has no regrowth for a
-/// rung to raise. It is `core_sim::intensification::REGROWTH_UNCHANGED` read from the wire's side of
-/// the contract; the schema cannot depend on the sim, so the two are stated once each and the
-/// catalog's own round trip is what holds them together.
+/// The wire's own default for [`LadderRungState::friction_multiplier`]: no help.
+pub const LADDER_RUNG_FRICTION_NEUTRAL: f32 = 1.0;
+
+/// **"THIS RUNG LEAVES THE GROUND GROWING AS IT WAS"** - the wire default of
+/// [`LadderRungState::regrowth_multiplier`]. A zero there is the one value that means *this rung
+/// stops the ground growing*, a claim no shipped rung makes.
 pub const DEPOSIT_RUNG_REGROWTH_UNCHANGED: f32 = 1.0;
 
-impl Default for DepositRungState {
+fn default_friction_multiplier() -> f32 {
+    LADDER_RUNG_FRICTION_NEUTRAL
+}
+
+fn default_regrowth_multiplier() -> f32 {
+    DEPOSIT_RUNG_REGROWTH_UNCHANGED
+}
+
+impl Default for LadderRungState {
     fn default() -> Self {
         Self {
             rung_key: String::new(),
             branch: String::new(),
             order: 0,
             display_name: String::new(),
+            label: String::new(),
+            label_fallback: String::new(),
             verb: String::new(),
+            source_kind: String::new(),
+            traits: Vec::new(),
             unlock_knowledge: String::new(),
-            requires_rung: String::new(),
             earns_knowledge: String::new(),
+            requires_rung: String::new(),
             work_cost: 0.0,
             upkeep_work_per_turn: 0.0,
             build_material_cost: 0.0,
             build_material_id: String::new(),
             build_work_per_worker_turn: 0.0,
+            friction_multiplier: LADDER_RUNG_FRICTION_NEUTRAL,
+            holds_link_to_tiles: 0,
+            grants_sight: false,
             yield_per_worker_turn: 0.0,
             recovery_fraction: 0.0,
-            // **The wire's own default, not `0`** — [`DepositState`]'s `turns_remaining` rule one
-            // table over. A zero here is the one value that means *this rung stops the ground
-            // growing*, which is a claim no rung on either shipped branch makes and which a
-            // defaulted row must not make for it.
             regrowth_multiplier: DEPOSIT_RUNG_REGROWTH_UNCHANGED,
             min_deposit_capacity: 0.0,
         }
     }
+}
+
+/// **ONE BRANCH OF THE LADDER, AS THE CONFIG DECLARES IT** - once per world, beside
+/// [`LadderRungState`]: the grouping a client draws a ladder under.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct LadderBranchState {
+    /// The branch id; joins to [`LadderRungState::branch`].
+    pub branch: String,
+    /// The subject area the branch files under (`ladder_areas` vocabulary).
+    pub area: String,
+    /// The kind of source on the branch.
+    pub source_kind: String,
+    /// The branch's name in player copy.
+    pub label: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]

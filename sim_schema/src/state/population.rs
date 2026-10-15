@@ -2021,10 +2021,11 @@ pub struct BuildQueueEntryState {
     /// `<x> <y> <material>` (`docs/plan_site_crews.md` §2.4).
     #[serde(default)]
     pub material: String,
-    /// **`true` on a road's entry** — the command grammar's `road <x> <y>`, since a road's tile may
-    /// also carry a patch.
+    /// **The ladder branch of a per-tile entry** (a road's `"route"`, a tile improvement's own
+    /// branch id) - the command grammar's `branch=<id>`, since such a tile may also carry a patch.
+    /// Empty on a patch, herd or working entry.
     #[serde(default)]
-    pub road: bool,
+    pub branch: String,
 }
 
 /// **One run of a band's hunt workers holding the same gear** — a row of

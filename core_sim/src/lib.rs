@@ -104,6 +104,7 @@ mod systems;
 pub mod take_claims;
 pub mod telling;
 mod terrain;
+pub mod tile_improvement;
 mod turn_pipeline_config;
 pub mod turn_profile;
 mod victory;
@@ -430,6 +431,11 @@ pub use supply::{
 pub use supply_network_config::{
     load_supply_network_config_from_env, SupplyNetworkConfig, SupplyNetworkConfigHandle,
     SupplyNetworkConfigMetadata,
+};
+pub use tile_improvement::{
+    advance_tile_improvements, assign_tile_keepers, is_tile_branch, nearest_band_in_reach,
+    tile_rung_cost, tile_rung_span, tile_standing_at, TileImprovement, TileImprovementKey,
+    TileImprovementRegistry, TileKeeper, TILE_KEEPING_LOAD,
 };
 pub use turn_pipeline_config::{
     load_turn_pipeline_config_from_env, PopulationPhaseConfig, PowerPhaseConfig,
@@ -983,6 +989,9 @@ pub fn build_headless_app() -> App {
         // `advance_herds` (which migratory herds walked their corridor) — to `routes::advance_roads`,
         // which spends them.
         .insert_resource(routes::RoadRegistry::default())
+        // **The improvements standing on the tile-kind branches** - the road's shape for a thing that
+        // is not a road. World state, empty until a band places one.
+        .insert_resource(tile_improvement::TileImprovementRegistry::default())
         .insert_resource(routes::RouteTrafficLog::default())
         .insert_resource(connections::ContactsThisTurn::default())
         .insert_resource(visibility::ViewerFaction::default())
@@ -1252,6 +1261,10 @@ pub fn build_headless_app() -> App {
                 extraction::advance_deposits
                     .after(systems::simulate_materials)
                     .after(routes::advance_roads),
+                // **THE TILE IMPROVEMENTS' DECAY AND THE ONE-TURN CYCLE** - the tile kind's twin of
+                // `advance_roads`. It announces a slip or a loss on the feed the passes above write,
+                // so it takes its place after the last of them.
+                tile_improvement::advance_tile_improvements.after(extraction::advance_deposits),
             )
                 .in_set(TurnStage::Logistics)
                 .run_if(capability_enabled(
@@ -1419,6 +1432,13 @@ pub fn build_headless_app() -> App {
                 //  - `.before(advance_labor_allocation)` — the ordering this system exists for.
                 systems::bill_and_stock_roads
                     .after(systems::advance_expeditions)
+                    .before(systems::advance_labor_allocation),
+                // **THE TILE IMPROVEMENTS' KEEPER AND THEIR BILL** - who stands within reach of each
+                // this turn, and what it owes, struck on the positions the movement chain left and
+                // before the labour pass pays it out of the keeper's `Roadwork` pool.
+                tile_improvement::assign_tile_keepers
+                    .after(systems::advance_expeditions)
+                    .after(systems::bill_and_stock_roads)
                     .before(systems::advance_labor_allocation),
             )
                 .in_set(TurnStage::Population)

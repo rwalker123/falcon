@@ -5325,7 +5325,7 @@ static func build_work_per_worker_turn(src: Dictionary, prefix: String) -> float
 # ⛔ **RETIRED — `BARE_WORK_PER_WORKER_TURN`, THIS CLIENT'S TRANSCRIPTION OF
 # `intensification::PER_WORKER_OUTPUT`.** It existed for one slice because the route branch had no
 # published rate to divide by: every SOURCE states its own `build_work_per_worker_turn`, and a road
-# has no source row at all. **`RouteRungState.buildWorkPerWorkerTurn` carries it now**
+# has no source row at all. **`LadderRungState.buildWorkPerWorkerTurn` carries it now**
 # (`HudRouteVocab.branch_build_work_per_worker_turn`), so the rate is read like every other and the
 # constant is gone.
 #

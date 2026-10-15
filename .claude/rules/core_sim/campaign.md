@@ -1247,7 +1247,7 @@ transferSent` ledger identity.
 > no kept road, the same reading a connection's lesson takes. Every link is recorded from **both**
 > ends on `SupplyNetworkMembership` (`pooling_links_of`), so each band publishes its own direct links
 > — a chain is not a clique — as `PopulationCohortState.poolingLinks` (`{bandId, distanceTiles,
-> rungId}`, `rungId` the `RouteRungState.rungKey`, `""` for none). What a rung buys is on the rung
+> rungId}`, `rungId` the `LadderRungState.rungKey`, `""` for none). What a rung buys is on the rung
 > table and is not repeated per link.
 >
 > **`supplyNetworkSpanTiles` is the longest link in the band's component** — the same figure at every

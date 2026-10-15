@@ -28,7 +28,7 @@ here are its traps, arriving one layer out.
 | `ui/hud/BandPanelController.gd` → the `_roadwork_roster_*` family | **THE ROADWORK ROSTER** — `_roadwork_roster_models` (the `has_keeper`-before-`keeper_band_id` filter, the distance/bearing locator, the stable nearest-first sort), `_roadwork_roster_unseen` (case 2, off the cohort's published `roadwork_demand` and never a sum of the fog-filtered rows), `_build_roadwork_roster_block` / `_row` / `_abandon_button`. It emits its OWN `road_abandon_requested`, relayed by `HudLayer` onto `abandon_requested` — the same path the drawer's button takes, never a second builder. Its reserved height is resolved once in `_fill_work_zone_column` and spent in BOTH `build_queue_rows_max` and `_work_board_capacity` |
 | `ui/hud/hud_work_vocab.gd` → the `ROADWORK_ROSTER_*` family | The roster's words, metas and its `roadwork_roster_height` — the one expression the block reserves AND draws at, `pools_block_height`'s rule one block down. It lives here rather than in `HudRouteVocab` because the geometry of the Work zone belongs beside the two blocks it shares that zone with |
 | `ui/hud/SourceForecast.gd` → `compass_bearing` + `COMPASS_*` | The roster's 8-point bearing, beside `hex_distance_wrapped` and using the same private wrap-aware column delta. **Taken in DRAWN space** (`sqrt(3)` across a column, `1.5` down a row) — an angle off raw offset coordinates skews every diagonal by up to a whole sector |
-| `native/src/dict/routes.rs` | `routes_to_array` — **one dict per road TILE**, the `connections.rs` shape. The row's identity is `tile_x` / `tile_y`, which replaced the retired `RouteId`; beside them ride `has_keeper` / `keeper_band_id` (read the bool first — `0` is a real `BandId`) and `keeper_remoteness`, the multiple distance put on that road's price, and `build_turns_remaining`, the sim's chained countdown for a QUEUED road (the same five sentinels a patch publishes; `-1`, never `0`, for a rung nobody has ordered), and the **standing** `upkeep_material_demand` / `upkeep_material_supplied` pair — what HOLDING the rung swallows per turn and what the store paid of it, which is not the `build_material_*` pair beside it. There is **no path on the row** — a link knows its two endpoints, so the tiles between them are computable. **`route_rungs_to_array` is the file's second producer and answers a different question** — one row per RUNG of the branch, published once per world beside `ladderKnowledge`, carrying no faction and no tile. One field on it is not the rung's: `build_work_per_worker_turn` is the SIM's bare worker output, the same on every row, riding the catalog because the catalog is the set of numbers identical for every road in the world |
+| `native/src/dict/routes.rs` | `routes_to_array` — **one dict per road TILE**, the `connections.rs` shape. The row's identity is `tile_x` / `tile_y`, which replaced the retired `RouteId`; beside them ride `has_keeper` / `keeper_band_id` (read the bool first — `0` is a real `BandId`) and `keeper_remoteness`, the multiple distance put on that road's price, and `build_turns_remaining`, the sim's chained countdown for a QUEUED road (the same five sentinels a patch publishes; `-1`, never `0`, for a rung nobody has ordered), and the **standing** `upkeep_material_demand` / `upkeep_material_supplied` pair — what HOLDING the rung swallows per turn and what the store paid of it, which is not the `build_material_*` pair beside it. There is **no path on the row** — a link knows its two endpoints, so the tiles between them are computable. **`ladder_rungs_to_array` is the file's second producer and answers a different question** — one row per RUNG of the branch, published once per world beside `ladderKnowledge`, carrying no faction and no tile. One field on it is not the rung's: `build_work_per_worker_turn` is the SIM's bare worker output, the same on every row, riding the catalog because the catalog is the set of numbers identical for every road in the world |
 
 ## ⛔ A ROAD IS NOT AN ORDER PATH, AND THE OBVIOUS NAME WAS ALREADY TAKEN
 
@@ -806,13 +806,13 @@ each carrying its own price, its own payoff and its own gate.
 
 **A RUNG ADDED TO `intensification_ladder.json` MUST APPEAR WITH NO CLIENT CHANGE.** That is the
 requirement the whole design is arranged around, and it is what makes
-`SubsistenceSection.routeRungs` — not a client table — the authority for every label, price, payoff
+`SubsistenceSection.ladderRungs` — not a client table — the authority for every label, price, payoff
 and gate reason on the card.
 
 ### The wire catalog, and the one table it must NOT be read from
 
-`RouteRungState`, published once per snapshot beside `ladderKnowledge`: `rungKey` · `order` ·
-`displayName` · `verb` · `unlockKnowledge` · `requiresRung` · `workCost` · `upkeepWorkPerTurn` ·
+`LadderRungState`, published once per snapshot beside `ladderKnowledge` (issue #175: ONE catalog for every branch; the road view is the `source_kind: "road"` slice, which `FactionReadouts.update_ladder_rungs` splits out for `route_rungs()`; `ladderBranches` declares `{branch, area, source_kind, label}`): `rungKey` · `branch` · `order` ·
+`displayName` · `label` · `labelFallback` · `sourceKind` · `traits` · `verb` · `unlockKnowledge` · `requiresRung` · `workCost` · `upkeepWorkPerTurn` ·
 `frictionMultiplier` · `holdsLinkToTiles` · `grantsSight` · `earnsKnowledge`. Per WORLD, carrying no faction and no
 tile, so it is diffed whole like `kits` and cleared at the world boundary
 (`FactionReadouts.reset_world_state`) — a delta never restates it, so the previous game's rungs would
@@ -957,7 +957,7 @@ other build surface in the game states a turns estimate. `route_track` had carri
   carried here — *"a road has no source row, which is also why `buildTurnsRemaining` is a no-op for
   roads sim-side"* — was false in both halves.
 - ⛔ **THE BARE RATE IS READ OFF THE WIRE, AND THE CLIENT SPELLS `PER_WORKER_OUTPUT` NOWHERE.**
-  `RouteRungState.buildWorkPerWorkerTurn` carries it — the sim's own worker output, unscaled, before
+  `LadderRungState.buildWorkPerWorkerTurn` carries it — the sim's own worker output, unscaled, before
   gear and before any multiplier. `HudRouteVocab.catalog_build_work_per_worker_turn` is the reader for
   a caller holding a rung; `branch_build_work_per_worker_turn` is the reader for one holding only a
   road. See "The rate rides the catalog" below for why a branch-wide number lives on a per-rung table
@@ -1064,7 +1064,7 @@ other build surface in the game states a turns estimate. `route_track` had carri
 `route:paved_road` eats **20 stone**; every other rung of the branch eats nothing at all, and states
 no clause rather than a `0`.
 
-- **`RouteRungState.buildMaterialCost` is already the whole truth for every tile on the map**, where
+- **`LadderRungState.buildMaterialCost` is already the whole truth for every tile on the map**, where
   `workCost` one field over is a base the tile's own `keeperRemoteness` still has to be applied to.
   A tile of road needs the same twenty stone wherever it lies, and remoteness already taxes the
   getting there. ⛔⛔ **Passing it through the remoteness term `workCost` goes through over-quotes
@@ -1122,7 +1122,7 @@ no clause rather than a `0`.
 > **Measured on the four `ui_preview` states:** summing them prints ONE clause where the row must
 > carry two, and fails *"…as TWO clauses, never one summed severity the sim does not have"* by name.
 >
-> **THE NOUN IS THE SIM'S, FOR THE RUNG THE TILE HOLDS.** `RouteRungState.buildMaterialId` off the
+> **THE NOUN IS THE SIM'S, FOR THE RUNG THE TILE HOLDS.** `LadderRungState.buildMaterialId` off the
 > rung catalog, resolved at the CALL SITE (`SubjectDrawerController`) and threaded into `road_lines`
 > exactly as `per_worker_turn` and `keeper_label` are — the vocab leaf holds no catalog. ⛔ Never
 > `stone` spelled in this client: *the route branch eats stone* is a fact about
@@ -1171,7 +1171,7 @@ no clause rather than a `0`.
 >
 > **The paved row reads `+ 20 stone to raise it`** — `HudWorkVocab.RUNG_TRACK_BUILD_MATERIAL_FORMAT`
 > over `RUNG_TRACK_MATERIAL_TERM`, exactly as a pen's hurdles read. ⛔ **The noun is
-> `RouteRungState.buildMaterialId`'s and never this client's.** *The route branch eats stone* is a
+> `LadderRungState.buildMaterialId`'s and never this client's.** *The route branch eats stone* is a
 > fact about `intensification_ladder.json`; a client holding it is a second authority that goes stale
 > the day a rung is retuned, which is the transcription `buildWorkPerWorkerTurn` exists to have
 > prevented. `land_readouts` composes its expectation from the fixture's own declared pair for the
@@ -1207,7 +1207,7 @@ no clause rather than a `0`.
 
 ### The rate rides the CATALOG, and one row answers for the branch
 
-`buildWorkPerWorkerTurn` is the one field on `RouteRungState` that is **not derived from the rung** —
+`buildWorkPerWorkerTurn` is the one field on `LadderRungState` that is **not derived from the rung** —
 it is `intensification::PER_WORKER_OUTPUT`, identical on every row. It rides the catalog because the
 catalog is exactly the set of numbers that are the same for every road in the world; on `RouteState`
 it would repeat itself once per road tile on the map, which is the same argument that put `workCost`
@@ -1720,3 +1720,15 @@ and the one `builders` was missing from for a whole slice while every other gate
 - `band-city-panel.md` — the WORK zone's height and width budgets the pools row is squeezed into
 - `selection-card.md` — the land drawer these rows are appended to
 - `map-renderers.md` — `AnnotationRenderer`'s other four const families, and `_unwrapped_path_points`
+
+### Catalog-driven fallback prose, and the queue entry's `branch` (issue #175)
+
+`HudRouteVocab.rung_label` keeps the hand-written word for the shipped four rungs and humanises any
+other key (`tile:bog_drain` → `Bog drain`) rather than printing the raw wire key. `catalog_label` /
+`build_fallback_text` / `raising_fallback_text` / `deal_fallback_text` are the `Build {label}` /
+`Raising {label}` / `once {label}` forms a rung with no hand-written sentence reads through;
+`HudDepositVocab.deal_label` takes the `once {label}` form for any verb outside `fell` / `coppice` /
+`quarry`. `BuildQueueEntryState.branch` replaced the `road` bool: `HudRouteVocab.queue_entry_is_road`
+is true only for the road branch's id (`ROAD_BRANCH`), so a tile-kind entry takes the generic path and
+never reads as a road. `Main.SITE_ADDRESS_ROAD_TOKEN` is that same id, and every build is
+`build <verb> <faction> [band] <source…>`.

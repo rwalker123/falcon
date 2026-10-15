@@ -2537,7 +2537,7 @@ harness that can take it**: the track is opened from the roster ROW's declaring 
 `ui_preview`'s `workings` chapter — a frame shows one, and the branch has four.
 
 ⛔ **THE STATE PUSHES A DEPOSIT RUNG CATALOG, AND WITHOUT ONE IT IS EVIDENCE OF NOTHING.** Every
-value cell names its rung out of `SubsistenceSection.depositRungs`, so a roster with no catalog
+value cell names its rung out of `SubsistenceSection.ladderRungs`, so a roster with no catalog
 behind it draws `forestry:felling` in each one; and the row's mark is built from
 `RungLadder.has_track` over its rows, so with no catalog the mark does not draw at all and **every
 claim about it passes vacuously**. It is cleared with the deposits in

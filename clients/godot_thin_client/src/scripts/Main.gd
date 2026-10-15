@@ -989,16 +989,14 @@ func _apply_snapshot(snapshot: Dictionary) -> void:
     # whole screen whenever a rung was added.
     if snapshot.has("ladder_areas") and SnapshotSections.changed(snapshot, "ladder_areas"):
         _hud_invoke("update_ladder_areas", [snapshot["ladder_areas"]])
-    # …and the ROUTE branch's rung catalog beside it, another per-world constant. It is what lets the
-    # tile card's road action open a whole ladder rather than one button per verb, so a rung added to
+    # …and the whole LADDER CATALOG beside it (issue #175), another per-world constant: every branch's
+    # rungs, road and deposit and plant and animal and tile alike. The HUD splits it by source kind
+    # into the road ladder sheet's and the working ladder's views, so a rung or a branch added to
     # `intensification_ladder.json` reaches the player with no client edit.
-    if snapshot.has("route_rungs") and SnapshotSections.changed(snapshot, "route_rungs"):
-        _hud_invoke("update_route_rungs", [snapshot["route_rungs"]])
-    # …and the two DEPOSIT branches' catalog beside it, the third per-world ladder declaration. It is
-    # what lets a working's ladder, its tile-card payoff row and its compose sheet all name a rung,
-    # price it and state what it buys off the sim's own record rather than a client table.
-    if snapshot.has("deposit_rungs") and SnapshotSections.changed(snapshot, "deposit_rungs"):
-        _hud_invoke("update_deposit_rungs", [snapshot["deposit_rungs"]])
+    if snapshot.has("ladder_rungs") and SnapshotSections.changed(snapshot, "ladder_rungs"):
+        _hud_invoke("update_ladder_rungs", [snapshot["ladder_rungs"]])
+    if snapshot.has("ladder_branches") and SnapshotSections.changed(snapshot, "ladder_branches"):
+        _hud_invoke("update_ladder_branches", [snapshot["ladder_branches"]])
     if snapshot.has("intensification_knowledge") and SnapshotSections.changed(snapshot, "intensification_knowledge"):
         _hud_invoke("update_intensification", [snapshot["intensification_knowledge"]])
     # …and what the player's people is learning by CONTACT, read against that same progress row.
@@ -2016,7 +2014,7 @@ static func site_address(payload: Dictionary, allow_road: bool = true) -> String
 
 ## The token that leads a road build's address: the ladder's ROAD BRANCH id (`route` in
 ## `intensification_ladder.json`), which the server resolves against the loaded ladder.
-const SITE_ADDRESS_ROAD_TOKEN := "route"
+const SITE_ADDRESS_ROAD_TOKEN := HudRouteVocab.ROAD_BRANCH
 
 ## **THE SAME SITE, AS THE FEED LINE NAMES IT** — `(x, y)` for a patch, `(x, y) <material>` for a
 ## working, `the road at (x, y)` for a road, the herd id for a herd. The address above is grammar; this

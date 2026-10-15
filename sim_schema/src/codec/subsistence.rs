@@ -4,11 +4,11 @@ use crate::codec::{
     decode_scalars, decode_strings, map_rows, map_rows_if_present, text, FbBuilder,
 };
 use crate::state::subsistence::{
-    BuildLegState, CharacteristicBandState, CraftKnowledgeState, DepositRungState, DepositState,
-    FloraShareInfo, FoodModuleState, ForagePatchState, HerdTelemetryState,
-    IntensificationKnowledgeState, KitOptionState, LadderKnowledgeProgress, LadderKnowledgeState,
-    MaterialDefState, MaterialPayoff, RecipeDefState, RecipeInputState, RecipeOutputState,
-    RouteRungState, SedentarizationState, SpeciesMaterialRates,
+    BuildLegState, CharacteristicBandState, CraftKnowledgeState, DepositState, FloraShareInfo,
+    FoodModuleState, ForagePatchState, HerdTelemetryState, IntensificationKnowledgeState,
+    KitOptionState, LadderBranchState, LadderKnowledgeProgress, LadderKnowledgeState,
+    LadderRungState, MaterialDefState, MaterialPayoff, RecipeDefState, RecipeInputState,
+    RecipeOutputState, SedentarizationState, SpeciesMaterialRates,
 };
 use crate::world::{WorldDelta, WorldSnapshot};
 use flatbuffers::{ForwardsUOffset, WIPOffset};
@@ -77,8 +77,8 @@ pub(crate) fn serialize_subsistence_section<'a>(
     let characteristic_bands = create_characteristic_bands(builder, &snapshot.characteristic_bands);
     let recipes = create_recipes(builder, &snapshot.recipes);
     let craft_knowledge = create_craft_knowledge(builder, &snapshot.craft_knowledge);
-    let route_rungs = create_route_rungs(builder, &snapshot.route_rungs);
-    let deposit_rungs = create_deposit_rungs(builder, &snapshot.deposit_rungs);
+    let ladder_rungs = create_ladder_rungs(builder, &snapshot.ladder_rungs);
+    let ladder_branches = create_ladder_branches(builder, &snapshot.ladder_branches);
     let deposits = create_deposits(builder, &snapshot.deposits);
     fb::SubsistenceSection::create(
         builder,
@@ -103,9 +103,9 @@ pub(crate) fn serialize_subsistence_section<'a>(
             characteristicBands: Some(characteristic_bands),
             recipes: Some(recipes),
             craftKnowledge: Some(craft_knowledge),
-            routeRungs: Some(route_rungs),
+            ladderRungs: Some(ladder_rungs),
             deposits: Some(deposits),
-            depositRungs: Some(deposit_rungs),
+            ladderBranches: Some(ladder_branches),
             ladderAreas: Some(ladder_areas),
         },
     )
@@ -191,14 +191,14 @@ pub(crate) fn serialize_subsistence_section_delta<'a>(
         .craft_knowledge
         .as_ref()
         .map(|entries| create_craft_knowledge(builder, entries));
-    let route_rungs = delta
-        .route_rungs
+    let ladder_rungs = delta
+        .ladder_rungs
         .as_ref()
-        .map(|entries| create_route_rungs(builder, entries));
-    let deposit_rungs = delta
-        .deposit_rungs
+        .map(|entries| create_ladder_rungs(builder, entries));
+    let ladder_branches = delta
+        .ladder_branches
         .as_ref()
-        .map(|entries| create_deposit_rungs(builder, entries));
+        .map(|entries| create_ladder_branches(builder, entries));
     let deposits = delta
         .deposits
         .as_ref()
@@ -224,9 +224,9 @@ pub(crate) fn serialize_subsistence_section_delta<'a>(
             characteristicBands: characteristic_bands,
             recipes,
             craftKnowledge: craft_knowledge,
-            routeRungs: route_rungs,
+            ladderRungs: ladder_rungs,
             deposits,
-            depositRungs: deposit_rungs,
+            ladderBranches: ladder_branches,
             ladderAreas: ladder_areas,
         },
     )
@@ -1080,88 +1080,85 @@ fn create_ladder_areas<'a>(
     builder.create_vector(&entries)
 }
 
-/// **THE ROUTE BRANCH'S RUNG CATALOG** — every rung the route branch declares, in climb order and
-/// once per world. A per-world constant, written whole on a snapshot and only when it moved on a
-/// delta, exactly like the roster above.
-fn create_route_rungs<'a>(
+/// **THE LADDER'S RUNG CATALOG** - every rung of every branch, grouped by branch and in climb order
+/// within it, once per world. A per-world constant, written whole on a snapshot and only when it
+/// moved on a delta, exactly like the roster above.
+fn create_ladder_rungs<'a>(
     builder: &mut FbBuilder<'a>,
-    states: &[RouteRungState],
-) -> WIPOffset<flatbuffers::Vector<'a, ForwardsUOffset<fb::RouteRungState<'a>>>> {
+    states: &[LadderRungState],
+) -> WIPOffset<flatbuffers::Vector<'a, ForwardsUOffset<fb::LadderRungState<'a>>>> {
     let mut entries = Vec::with_capacity(states.len());
     for state in states {
         let rung_key = builder.create_string(&state.rung_key);
+        // Which ladder the row is on - the field a reader groups the one vector by.
+        let branch = builder.create_string(&state.branch);
         let display_name = builder.create_string(&state.display_name);
+        let label = builder.create_string(&state.label);
+        let label_fallback = builder.create_string(&state.label_fallback);
         let verb = builder.create_string(&state.verb);
+        let source_kind = builder.create_string(&state.source_kind);
+        let trait_offsets: Vec<_> = state
+            .traits
+            .iter()
+            .map(|name| builder.create_string(name))
+            .collect();
+        let traits = builder.create_vector(&trait_offsets);
         let unlock_knowledge = builder.create_string(&state.unlock_knowledge);
-        let requires_rung = builder.create_string(&state.requires_rung);
         let earns_knowledge = builder.create_string(&state.earns_knowledge);
-        // The noun the pile beside it is counted in — `""` for a rung that eats nothing.
+        let requires_rung = builder.create_string(&state.requires_rung);
+        // The noun the pile beside it is counted in - `""` for a rung that eats nothing.
         let build_material_id = builder.create_string(&state.build_material_id);
-        entries.push(fb::RouteRungState::create(
+        entries.push(fb::LadderRungState::create(
             builder,
-            &fb::RouteRungStateArgs {
+            &fb::LadderRungStateArgs {
                 rungKey: Some(rung_key),
+                branch: Some(branch),
                 order: state.order,
                 displayName: Some(display_name),
+                label: Some(label),
+                labelFallback: Some(label_fallback),
                 verb: Some(verb),
+                sourceKind: Some(source_kind),
+                traits: Some(traits),
                 unlockKnowledge: Some(unlock_knowledge),
+                earnsKnowledge: Some(earns_knowledge),
                 requiresRung: Some(requires_rung),
                 workCost: state.work_cost,
                 upkeepWorkPerTurn: state.upkeep_work_per_turn,
+                buildMaterialCost: state.build_material_cost,
+                buildMaterialId: Some(build_material_id),
+                buildWorkPerWorkerTurn: state.build_work_per_worker_turn,
                 frictionMultiplier: state.friction_multiplier,
                 holdsLinkToTiles: state.holds_link_to_tiles,
                 grantsSight: state.grants_sight,
-                earnsKnowledge: Some(earns_knowledge),
-                buildWorkPerWorkerTurn: state.build_work_per_worker_turn,
-                buildMaterialCost: state.build_material_cost,
-                buildMaterialId: Some(build_material_id),
+                yieldPerWorkerTurn: state.yield_per_worker_turn,
+                recoveryFraction: state.recovery_fraction,
+                regrowthMultiplier: state.regrowth_multiplier,
+                minDepositCapacity: state.min_deposit_capacity,
             },
         ));
     }
     builder.create_vector(&entries)
 }
 
-/// **THE TWO DEPOSIT BRANCHES' RUNG CATALOG** — every rung the forestry and extraction branches
-/// declare, grouped by branch and in climb order within it, once per world. A per-world constant,
-/// written whole on a snapshot and only when it moved on a delta, exactly like the route catalog
-/// above.
-fn create_deposit_rungs<'a>(
+/// **THE LADDER'S BRANCHES** - the grouping the rung catalog above is drawn under, once per world.
+fn create_ladder_branches<'a>(
     builder: &mut FbBuilder<'a>,
-    states: &[DepositRungState],
-) -> WIPOffset<flatbuffers::Vector<'a, ForwardsUOffset<fb::DepositRungState<'a>>>> {
+    states: &[LadderBranchState],
+) -> WIPOffset<flatbuffers::Vector<'a, ForwardsUOffset<fb::LadderBranchState<'a>>>> {
     let mut entries = Vec::with_capacity(states.len());
     for state in states {
-        let rung_key = builder.create_string(&state.rung_key);
-        // Which ladder the row is on — one vector carries both branches, so this is what a reader
-        // groups by.
         let branch = builder.create_string(&state.branch);
-        let display_name = builder.create_string(&state.display_name);
-        let verb = builder.create_string(&state.verb);
-        let unlock_knowledge = builder.create_string(&state.unlock_knowledge);
-        let requires_rung = builder.create_string(&state.requires_rung);
-        let earns_knowledge = builder.create_string(&state.earns_knowledge);
-        // The noun the pile beside it is counted in — `""` for a rung that eats nothing.
-        let build_material_id = builder.create_string(&state.build_material_id);
-        entries.push(fb::DepositRungState::create(
+        let area = builder.create_string(&state.area);
+        let source_kind = builder.create_string(&state.source_kind);
+        let label = builder.create_string(&state.label);
+        entries.push(fb::LadderBranchState::create(
             builder,
-            &fb::DepositRungStateArgs {
-                rungKey: Some(rung_key),
+            &fb::LadderBranchStateArgs {
                 branch: Some(branch),
-                order: state.order,
-                displayName: Some(display_name),
-                verb: Some(verb),
-                unlockKnowledge: Some(unlock_knowledge),
-                requiresRung: Some(requires_rung),
-                earnsKnowledge: Some(earns_knowledge),
-                workCost: state.work_cost,
-                upkeepWorkPerTurn: state.upkeep_work_per_turn,
-                buildMaterialCost: state.build_material_cost,
-                buildMaterialId: Some(build_material_id),
-                buildWorkPerWorkerTurn: state.build_work_per_worker_turn,
-                yieldPerWorkerTurn: state.yield_per_worker_turn,
-                recoveryFraction: state.recovery_fraction,
-                regrowthMultiplier: state.regrowth_multiplier,
-                minDepositCapacity: state.min_deposit_capacity,
+                area: Some(area),
+                sourceKind: Some(source_kind),
+                label: Some(label),
             },
         ));
     }
@@ -1311,27 +1308,13 @@ fn decode_deposit(deposit: fb::DepositState<'_>) -> DepositState {
     }
 }
 
-/// The inverse of [`create_deposit_rungs`] — the two deposit branches' rung catalog, once per
-/// world. Exhaustive for [`decode_deposit`]'s reason.
-fn decode_deposit_rung(rung: fb::DepositRungState<'_>) -> DepositRungState {
-    DepositRungState {
-        rung_key: text(rung.rungKey()),
-        branch: text(rung.branch()),
-        order: rung.order(),
-        display_name: text(rung.displayName()),
-        verb: text(rung.verb()),
-        unlock_knowledge: text(rung.unlockKnowledge()),
-        requires_rung: text(rung.requiresRung()),
-        earns_knowledge: text(rung.earnsKnowledge()),
-        work_cost: rung.workCost(),
-        upkeep_work_per_turn: rung.upkeepWorkPerTurn(),
-        build_material_cost: rung.buildMaterialCost(),
-        build_material_id: text(rung.buildMaterialId()),
-        build_work_per_worker_turn: rung.buildWorkPerWorkerTurn(),
-        yield_per_worker_turn: rung.yieldPerWorkerTurn(),
-        recovery_fraction: rung.recoveryFraction(),
-        regrowth_multiplier: rung.regrowthMultiplier(),
-        min_deposit_capacity: rung.minDepositCapacity(),
+/// The inverse of [`create_ladder_branches`] - the ladder's branches, once per world.
+fn decode_ladder_branch(branch: fb::LadderBranchState<'_>) -> LadderBranchState {
+    LadderBranchState {
+        branch: text(branch.branch()),
+        area: text(branch.area()),
+        source_kind: text(branch.sourceKind()),
+        label: text(branch.label()),
     }
 }
 
@@ -1368,9 +1351,9 @@ pub(crate) fn decode_subsistence_section(
         map_rows(section.characteristicBands(), decode_characteristic_band);
     snapshot.recipes = map_rows(section.recipes(), decode_recipe);
     snapshot.craft_knowledge = map_rows(section.craftKnowledge(), decode_craft_knowledge);
-    snapshot.route_rungs = map_rows(section.routeRungs(), decode_route_rung);
+    snapshot.ladder_rungs = map_rows(section.ladderRungs(), decode_ladder_rung);
     snapshot.deposits = map_rows(section.deposits(), decode_deposit);
-    snapshot.deposit_rungs = map_rows(section.depositRungs(), decode_deposit_rung);
+    snapshot.ladder_branches = map_rows(section.ladderBranches(), decode_ladder_branch);
 }
 
 pub(crate) fn decode_subsistence_section_delta(
@@ -1403,9 +1386,9 @@ pub(crate) fn decode_subsistence_section_delta(
         map_rows_if_present(section.characteristicBands(), decode_characteristic_band);
     delta.recipes = map_rows_if_present(section.recipes(), decode_recipe);
     delta.craft_knowledge = map_rows_if_present(section.craftKnowledge(), decode_craft_knowledge);
-    delta.route_rungs = map_rows_if_present(section.routeRungs(), decode_route_rung);
+    delta.ladder_rungs = map_rows_if_present(section.ladderRungs(), decode_ladder_rung);
     delta.deposits = map_rows_if_present(section.deposits(), decode_deposit);
-    delta.deposit_rungs = map_rows_if_present(section.depositRungs(), decode_deposit_rung);
+    delta.ladder_branches = map_rows_if_present(section.ladderBranches(), decode_ladder_branch);
 }
 
 fn decode_material(state: fb::MaterialDefState<'_>) -> MaterialDefState {
@@ -1745,23 +1728,37 @@ fn decode_ladder_knowledge(state: fb::LadderKnowledgeState<'_>) -> LadderKnowled
     }
 }
 
-fn decode_route_rung(state: fb::RouteRungState<'_>) -> RouteRungState {
-    RouteRungState {
+/// The inverse of [`create_ladder_rungs`] - the ladder's rung catalog, once per world. Exhaustive
+/// for [`decode_deposit`]'s reason: a field appended to the struct breaks this build.
+fn decode_ladder_rung(state: fb::LadderRungState<'_>) -> LadderRungState {
+    LadderRungState {
         rung_key: text(state.rungKey()),
+        branch: text(state.branch()),
         order: state.order(),
         display_name: text(state.displayName()),
+        label: text(state.label()),
+        label_fallback: text(state.labelFallback()),
         verb: text(state.verb()),
+        source_kind: text(state.sourceKind()),
+        traits: state
+            .traits()
+            .map(|names| names.iter().map(str::to_string).collect())
+            .unwrap_or_default(),
         unlock_knowledge: text(state.unlockKnowledge()),
+        earns_knowledge: text(state.earnsKnowledge()),
         requires_rung: text(state.requiresRung()),
         work_cost: state.workCost(),
         upkeep_work_per_turn: state.upkeepWorkPerTurn(),
+        build_material_cost: state.buildMaterialCost(),
+        build_material_id: text(state.buildMaterialId()),
+        build_work_per_worker_turn: state.buildWorkPerWorkerTurn(),
         friction_multiplier: state.frictionMultiplier(),
         holds_link_to_tiles: state.holdsLinkToTiles(),
         grants_sight: state.grantsSight(),
-        earns_knowledge: text(state.earnsKnowledge()),
-        build_work_per_worker_turn: state.buildWorkPerWorkerTurn(),
-        build_material_cost: state.buildMaterialCost(),
-        build_material_id: text(state.buildMaterialId()),
+        yield_per_worker_turn: state.yieldPerWorkerTurn(),
+        recovery_fraction: state.recoveryFraction(),
+        regrowth_multiplier: state.regrowthMultiplier(),
+        min_deposit_capacity: state.minDepositCapacity(),
     }
 }
 

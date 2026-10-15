@@ -1,0 +1,67 @@
+{
+  "_comment": "TEST-ONLY. An overlay merged onto the builtin ladder by core_sim/tests/tile_improvement.rs: one tile-kind branch (orchard) with a root and one built rung. No tile branch ships; this proves the tile kind is a JSON edit. Never loaded by the game.",
+  "branches": {
+    "orchard": {
+      "area": "food",
+      "source": "tile",
+      "keeping_job": "roadwork",
+      "label": "Orchards"
+    }
+  },
+  "rungs": [
+    {
+      "id": "bare_ground",
+      "branch": "orchard",
+      "order": 1,
+      "label": "Bare ground",
+      "label_fallback": "bare ground",
+      "verb": null,
+      "unlock_knowledge": null,
+      "earns_knowledge": null,
+      "requires_rung": null,
+      "ceiling_required": null,
+      "site_requirement": null,
+      "build": null,
+      "behavior": {
+        "movement": "fixed"
+      }
+    },
+    {
+      "id": "grafted",
+      "branch": "orchard",
+      "order": 2,
+      "traits": [
+        "managed"
+      ],
+      "requires_work_room": false,
+      "requires_crop": false,
+      "requires_ownership": false,
+      "label": "Grafted orchard",
+      "label_fallback": "a grafted orchard",
+      "feed_channel": "road",
+      "completed_line": null,
+      "verb": "graft",
+      "unlock_knowledge": null,
+      "earns_knowledge": null,
+      "requires_rung": "bare_ground",
+      "ceiling_required": null,
+      "site_requirement": null,
+      "build": {
+        "work_cost": 20.0
+      },
+      "upkeep": {
+        "work_per_turn": 1.0,
+        "scaled_by": "source_load",
+        "meter_decay": {
+          "per_turn": 2.0
+        },
+        "grace_turns": 3
+      },
+      "behavior": {
+        "movement": "fixed"
+      },
+      "places_source": false,
+      "cost_scale": "unscaled"
+    }
+  ]
+}

@@ -90,6 +90,7 @@ fn world_of(terrain: TerrainType) -> (World, Entity) {
     world.insert_resource(CommandEventLog::default());
     world.insert_resource(SimulationTick::default());
     world.insert_resource(core_sim::RoadRegistry::default());
+    world.insert_resource(core_sim::TileImprovementRegistry::default());
     world.insert_resource(HerdRegistry::default());
     world.insert_resource(ForageRegistry::default());
     // No gathering sites: these bands do not forage, and an empty registry is a valid map.
@@ -3799,9 +3800,10 @@ mod wire {
         min_deposit_capacity: f32,
     }
 
-    /// **The `depositRungs` catalog off the encoded envelope**, through the accessor chain a client
-    /// uses. It rides the subsistence section beside `routeRungs` — both are declarations of what a
-    /// ladder holds, carrying no faction and no tile.
+    /// **The deposit branches' rows of the `ladderRungs` catalog off the encoded envelope**,
+    /// through the accessor chain a client uses. The catalog rides the subsistence section beside
+    /// `ladderKnowledge` - both are declarations of what the ladder holds, carrying no faction and
+    /// no tile - and carries every branch, so the deposit ones are picked out by their branch.
     fn published_deposit_rungs(app: &App) -> Vec<PublishedRung> {
         use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
 
@@ -3812,10 +3814,11 @@ mod wire {
             .payload_as_snapshot()
             .expect("the envelope carries a snapshot")
             .subsistence()
-            .and_then(|section| section.depositRungs())
-            .expect("the deposit rung catalog is published");
+            .and_then(|section| section.ladderRungs())
+            .expect("the ladder rung catalog is published");
         catalog
             .iter()
+            .filter(|row| matches!(row.sourceKind(), Some("deposit")))
             .map(|row| PublishedRung {
                 rung_key: row.rungKey().expect("a rung publishes its key").to_string(),
                 branch: row.branch().expect("a rung names its branch").to_string(),

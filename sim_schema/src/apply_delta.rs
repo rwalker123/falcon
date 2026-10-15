@@ -114,9 +114,9 @@ impl WorldSnapshot {
             characteristic_bands,
             recipes,
             craft_knowledge,
-            route_rungs,
+            ladder_rungs,
             deposits,
-            deposit_rungs,
+            ladder_branches,
             moisture_raster,
             elevation_overlay,
             climate_bands,
@@ -142,6 +142,7 @@ impl WorldSnapshot {
             discovery_progress,
             connections,
             routes,
+            tile_improvements,
             contact_lessons,
         } = delta;
 
@@ -259,9 +260,9 @@ impl WorldSnapshot {
         replace_if_some(&mut self.characteristic_bands, characteristic_bands);
         replace_if_some(&mut self.recipes, recipes);
         replace_if_some(&mut self.craft_knowledge, craft_knowledge);
-        replace_if_some(&mut self.route_rungs, route_rungs);
+        replace_if_some(&mut self.ladder_rungs, ladder_rungs);
         replace_if_some(&mut self.deposits, deposits);
-        replace_if_some(&mut self.deposit_rungs, deposit_rungs);
+        replace_if_some(&mut self.ladder_branches, ladder_branches);
         replace_if_some(&mut self.moisture_raster, moisture_raster);
         replace_if_some(&mut self.elevation_overlay, elevation_overlay);
         replace_if_some(&mut self.climate_bands, climate_bands);
@@ -281,6 +282,7 @@ impl WorldSnapshot {
         replace_if_some(&mut self.culture_tensions, culture_tensions);
         replace_if_some(&mut self.connections, connections);
         replace_if_some(&mut self.routes, routes);
+        replace_if_some(&mut self.tile_improvements, tile_improvements);
         replace_if_some(&mut self.contact_lessons, contact_lessons);
 
         // --- the flattened `Option<Option<_>>` ---------------------------------------------------
@@ -578,9 +580,9 @@ mod tests {
         delta.characteristic_bands = Some(Vec::new());
         delta.recipes = Some(Vec::new());
         delta.craft_knowledge = Some(Vec::new());
-        delta.route_rungs = Some(Vec::new());
+        delta.ladder_rungs = Some(Vec::new());
         delta.deposits = Some(Vec::new());
-        delta.deposit_rungs = Some(Vec::new());
+        delta.ladder_branches = Some(Vec::new());
         delta.moisture_raster = Some(Default::default());
         delta.lineage_constants = Some(Default::default());
         delta.elevation_overlay = Some(Default::default());
@@ -598,6 +600,7 @@ mod tests {
         delta.culture_tensions = Some(Vec::new());
         delta.connections = Some(Vec::new());
         delta.routes = Some(Vec::new());
+        delta.tile_improvements = Some(Vec::new());
         delta.contact_lessons = Some(Vec::new());
 
         let mut applied = world.clone();
