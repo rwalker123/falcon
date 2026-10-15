@@ -556,7 +556,10 @@ Design: `docs/plan_crafting_and_materials.md` §7, "The queue".
 - **The crew stays with the bench.** A new order is not an order to send anyone home, and an empty
   queue leaves the crew standing at an idle bench — which is why `bench_crew` applies to an idle
   bench (it is the only way to stand those hands down). The shed thins an idle bench's crew like any
-  other.
+  other. **An idle bench publishes that crew** (`BenchState.workers` is stamped on the idle row, with
+  `blockedReason` left empty — an idle bench has no job to be blocked), so a client's
+  `working_age − rows − bench` agrees with the published `idleWorkers`; pinned on the encoded frame by
+  `server::tests::an_idle_bench_publishes_its_crew_and_the_hands_add_up`.
 - **Removing an order spends its drawn pile**, exactly as clearing the bench always did — the
   materials were cut for the thing the player stopped making, and a `LocalStore` has no
   representation for a half-worked pile (`DrawnMaterial` carries an amount, not the batch readings
