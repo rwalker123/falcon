@@ -703,23 +703,22 @@ func _emit_open_borders(open: bool) -> void:
 func _faction_discoveries() -> Array:
     return _topbar.faction_discovered_sites() if _topbar != null else []
 
-## Can the FACTION page's band-zone box hold every one of its blocks? Read off the panel's own answer
-## for THAT zone rather than off the dock edge — a short window and a collapsed-to-nothing box hit the
-## same wall as a horizontal dock, and an edge test misses both. **An unknown box answers `true`**:
-## the no-dock fallback and the frame before the first layout pass are not evidence of a small box,
-## and the drastic branch (silently dropping a block) must be positively justified.
-##
-## **IT MOVED HERE WITH THE TWO BLOCKS IT GATES.** It asked the same question of the retired KNOWLEDGE
-## zone; Settling and Discoveries came to the band zone when the Know tab was deleted, and the tier
-## came with them because the reason for it is unchanged — Discoveries is the only list on the page
-## with no ceiling of its own.
-func _faction_band_zone_is_full() -> bool:
-    if _panel == null:
-        return true
-    var box: Vector2 = _panel.zone_size(BandCityPanel.ZONE_BAND)
-    if box.y <= 0.0:
-        return true
-    return box.y >= HudWorkVocab.FACTION_BAND_FULL_MIN_HEIGHT
+## The FACTION page's band zone: every block of `FactionRollup.build_band_zone`, inside the band
+## page's own sanctioned scroll (`_build_band_zone_scroll`) so a box shorter than the content reaches
+## the rest by scrolling rather than losing it. The no-dock host gets no scroll, as on the band page.
+func _faction_band_zone_column() -> VBoxContainer:
+    var content := FactionRollup.build_band_zone(_band_labor, _disclosures, _faction_settling(),
+        _faction_mobility(), _faction_discoveries(), _faction_policy(), _emit_open_borders)
+    var scroll := _build_band_zone_scroll()
+    if scroll == null:
+        return content
+    var col := HudWidgets.make_zone_column()
+    col.add_child(scroll)
+    # A scrolled child must not claim the viewport's height as its own, or a short stack would space
+    # its blocks down the zone; the width still fills, horizontal scrolling being disabled.
+    content.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+    scroll.add_child(content)
+    return col
 
 # ---- Typed adapters over the two injected HudLayer helpers -------------------------------------
 
@@ -10760,13 +10759,9 @@ func render_faction() -> void:
     # `render_band`.
     _panel.set_zone_layout(FACTION_ZONE_LAYOUT)
     _panel.set_zones({
-        # The band zone's TIER is read off the box the panel is offering it, which the
-        # `set_zone_layout` above has just settled — a horizontal dock's ~300px cannot hold every one
-        # of its blocks at the page's row size, so DISCOVERIES yields there.
-        BandCityPanel.ZONE_BAND:
-            HudWidgets.wrap_zone(FactionRollup.build_band_zone(_band_labor, _disclosures,
-                _faction_settling(), _faction_mobility(), _faction_discoveries(), _faction_policy(),
-                _emit_open_borders, _faction_band_zone_is_full())),
+        # The band zone scrolls inside the same sanctioned host the band page uses, so a horizontal
+        # dock's ~300px box never drops a block — see `_faction_band_zone_column`.
+        BandCityPanel.ZONE_BAND: HudWidgets.wrap_zone(_faction_band_zone_column()),
         BandCityPanel.ZONE_WORK:
             HudWidgets.wrap_zone(FactionRollup.build_work_zone(_band_labor,
                 attention, _faction_open_row, _toggle_faction_row, jump_to_band_entity)),

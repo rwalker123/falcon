@@ -103,42 +103,36 @@ const KNOWLEDGE_METER_CELLS := FactionReadouts.KNOWLEDGE_METER_CELLS
 ## here on the merits rather than merely being left over. Discoveries lands beside the count it
 ## elaborates.
 ##
-## **`full` IS A HEIGHT TIER, AND DISCOVERIES IS WHAT YIELDS**, carried over from the zone they came
-## from because the measurement that justified it is unchanged: Discoveries is the only list here with
-## no ceiling of its own (Settling is one row), and it is permanent geographic knowledge rather than a
-## call to act. What survives a short box is what the player might DO something about.
+## **EVERY BLOCK ALWAYS BUILDS.** A horizontal dock's box is shorter than the full block, so the
+## controller hosts this column inside the band zone's sanctioned scroll
+## (`BandPanelController._faction_band_zone_column`) rather than dropping a block: what the box cannot
+## show is reached by scrolling.
 ##
 ## **RE-MEASURE BEFORE ADDING ANOTHER BLOCK** — `band_panel_preview`'s `_report_zone_content_extent`
-## prints this zone's extent, and it has been at the edge of the ~300px a horizontal dock offers twice.
-## The tier's threshold is `HudWorkVocab.FACTION_BAND_FULL_MIN_HEIGHT`, and it must stay above the
-## full block's measured height.
+## prints this zone's extent against its box.
 ## **IT TAKES NO `knowledge` ROW.** It was threaded in for ONE reader — the dormant `Fodder:` row's
 ## hover, which stated how far along Foddering is — and that row carries no hover now
 ## (`DetailFormat.fodder_dormant_row`), so nothing on this page reads a knowledge track.
 ##
-## **OPEN BORDERS SITS ABOVE THE `full` CUT**, so the height-capped tier keeps it: it is the one thing
-## on this page the player can DO, which is exactly what that tier exists to keep. `policy` is the
+## **OPEN BORDERS SITS ABOVE DISCOVERIES**, the one thing on this page the player can DO, so it is the
+## last to scroll out of view. `policy` is the
 ## player faction's `faction_policies` row (`FactionReadouts.faction_policy`); `on_open_borders` takes
 ## the requested state as a `bool`.
 static func build_band_zone(labor: HudBandLaborState, disclosures: DisclosureController,
         sedentarization: Dictionary, mobility: Dictionary, sites: Array, policy: Dictionary,
-        on_open_borders: Callable, full: bool) -> VBoxContainer:
+        on_open_borders: Callable) -> VBoxContainer:
     var col := HudWidgets.make_zone_column()
     var bands := labor.player_bands()
     col.add_child(_build_vitals_label(bands, disclosures))
     var people := _build_people_block(bands)
     if people != null:
         col.add_child(people)
-    # The MOBILITY row yields with DISCOVERIES in the height-capped tier: the wide dock's 358px box
-    # holds the tiered block with 24px spare and the row costs 29 (issue #800).
-    var settling := _build_settling_block(sedentarization, mobility if full else {})
+    var settling := _build_settling_block(sedentarization, mobility)
     if settling != null:
         col.add_child(settling)
     var borders := _build_open_borders_row(policy, on_open_borders)
     if borders != null:
         col.add_child(borders)
-    if not full:
-        return col
     var discoveries := _build_discoveries_block(sites)
     if discoveries != null:
         col.add_child(discoveries)
@@ -844,8 +838,6 @@ static func _build_mobility_row(mobility: Dictionary) -> HBoxContainer:
 ## below it, a dimmed `0 — stand on your dead` — a `+0` would read as a measured nothing.
 ## The mark is its own Label (a plain `Label` renders no BBCode) inserted ahead of the value.
 ##
-## The extra row's height is paid for by the zone's height TIER: `HudWorkVocab.FACTION_BAND_FULL_MIN_HEIGHT`
-## was re-measured with it in.
 static func _build_settling_belief_row(belief_points: float) -> HBoxContainer:
     if belief_points < HudWorkVocab.FACTION_SETTLING_BELIEF_MIN:
         var none_row := _stat_row(HudWorkVocab.FACTION_SETTLING_BELIEF_KEY,

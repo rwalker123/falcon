@@ -2397,13 +2397,11 @@ func _ready() -> void:
 	_assert_zone_content_fits()
 	_report_zone_content_extent("band_panel_faction_wide")
 	_assert_faction_zone_layout()
-	# **THE BAND ZONE'S HEIGHT TIER, asserted here as the NEGATIVE half of a pair.** This dock's zone
-	# is ~300px and cannot hold every block at the page's row size, so DISCOVERIES must be gone —
-	# while `band_panel_faction`'s 1057px side dock, which asserts it PRESENT, is the positive. Either
-	# claim alone is satisfied by a gate stuck in one position, and `content-fits` cannot see it in
-	# either direction: a dropped block leaves a box that fits trivially, and a clipped one still
-	# reports a rect inside its host.
-	_assert_faction_band_zone_tier()
+	# **THE BAND ZONE SCROLLS RATHER THAN DROPS.** This dock's zone is ~300px and cannot show every
+	# block at the page's row size, so DISCOVERIES and the Mobility row must still be PRESENT — inside
+	# the sanctioned band-zone scroll — which `content-fits` cannot see in either direction: a dropped
+	# block leaves a box that fits trivially.
+	_assert_faction_band_zone_scrolls()
 	await _assert_faction_shell_threshold()
 
 	# The ROUTING claims, none of which a PNG can carry — and the last of them leaves the panel back on
@@ -8249,8 +8247,7 @@ func _assert_scroll_only_where_sanctioned() -> void:
 			% [int(counts[HudWorkVocab.PARTIES_LIST_NAME]), strays.size()],
 			int(counts[HudWorkVocab.PARTIES_LIST_NAME]) == 1)
 	var band_zone: Variant = _panel._zones.get(BandCityPanel.ZONE_BAND)
-	if band_zone is Node and _panel.is_ancestor_of(band_zone as Node) \
-			and not _hud._bandpanel._panel_is_faction:
+	if band_zone is Node and _panel.is_ancestor_of(band_zone as Node):
 		_assert_band_panel("…and the band zone scrolls its block stack, so no tier can delete a block instead (%d sanctioned)"
 			% int(counts[HudWorkVocab.BAND_ZONE_SCROLL_NAME]),
 			int(counts[HudWorkVocab.BAND_ZONE_SCROLL_NAME]) == 1)
@@ -9800,22 +9797,41 @@ func _assert_faction_band_zone_blocks() -> void:
 	_assert_band_panel("faction band zone: every stat row renders its key (%d keyless)" % keyless,
 		keyless == 0)
 
-## THE BAND ZONE'S HEIGHT TIER, on the height-capped horizontal dock: DISCOVERIES is dropped and the
-## blocks that survive are still there. **The second half is what stops this passing on a zone that
-## rendered nothing at all**, which is the failure a gate is most likely to produce.
-func _assert_faction_band_zone_tier() -> void:
+## THE FACTION BAND ZONE ON THE HEIGHT-CAPPED HORIZONTAL DOCK: every block is PRESENT and sits inside
+## the sanctioned band-zone scroll, which overflows its box (so a bar shows) — nothing is dropped.
+## **The overflow claim is what stops this passing on a box tall enough to need no scroll**, where
+## presence proves nothing about reachability.
+func _assert_faction_band_zone_scrolls() -> void:
 	var zone: Node = _panel._zones.get(BandCityPanel.ZONE_BAND)
 	if zone == null:
-		_assert_band_panel("faction band tier: the zone exists in the wide shell", false)
+		_assert_band_panel("faction band zone: the zone exists in the wide shell", false)
 		return
-	_assert_band_panel("faction band tier: a ~300px box DROPS the DISCOVERIES block",
-		not _has_label_containing(zone, HudWorkVocab.FACTION_HEADER_DISCOVERIES.to_upper()))
-	_assert_band_panel("faction band tier: …and KEEPS Settling",
-		_has_label_containing(zone, HudWorkVocab.FACTION_HEADER_SETTLING.to_upper()))
-	# …and the Open Borders toggle, which sits ABOVE the tier's cut: it is the one thing on the page
-	# the player can DO, and that is what the capped tier exists to keep.
-	_assert_band_panel("faction band tier: …and KEEPS the Open Borders toggle",
+	var scroll: ScrollContainer = null
+	var found: Array[Node] = []
+	_collect_scroll_containers(zone, found)
+	for node in found:
+		if String(node.name) == HudWorkVocab.BAND_ZONE_SCROLL_NAME:
+			scroll = node as ScrollContainer
+	_assert_band_panel("faction band zone: the page's band zone sits inside the sanctioned scroll",
+		scroll != null)
+	if scroll == null:
+		return
+	_assert_band_panel("faction band zone: a ~300px box KEEPS the DISCOVERIES block, inside the scroll",
+		_has_label_containing(scroll, HudWorkVocab.FACTION_HEADER_DISCOVERIES.to_upper()))
+	_assert_band_panel("faction band zone: …and the Settling block",
+		_has_label_containing(scroll, HudWorkVocab.FACTION_HEADER_SETTLING.to_upper()))
+	var mobility := _faction_stat_value(scroll, HudWorkVocab.FACTION_MOBILITY_KEY)
+	_assert_band_panel("faction band zone: …and the Mobility row, reading %d/100 (got '%s')" % [
+			int(MOBILITY_SCORE), mobility],
+		mobility.ends_with("%d/%d" % [int(MOBILITY_SCORE), HudWorkVocab.FACTION_MOBILITY_SCALE]))
+	_assert_band_panel("faction band zone: …and the Open Borders toggle",
 		_find_meta_control(zone, FactionRollup.OPEN_BORDERS_TOGGLE_META) != null)
+	var stack: Control = scroll.get_child(0) as Control
+	var needed := stack.get_combined_minimum_size().y if stack != null else 0.0
+	print("band_panel_preview: faction band zone scroll — stack %.0fpx in a %.0fpx viewport" % [
+		needed, scroll.size.y])
+	_assert_band_panel("faction band zone: the stack overflows the box, so the scrollbar is what reaches it",
+		needed > scroll.size.y)
 
 ## THE FACTION PAGE'S OPEN BORDERS TOGGLE (issue #512). Four claims, each a thing a PNG cannot carry:
 ##   • the toggle is up and CHECKED, because the snapshot said open;
