@@ -861,24 +861,28 @@ over four wire terms — `kit_needs[]` and `materials_free[]` on the cohort, `be
   equipped (`min over items of min(have × workers_per_unit, people)`, shown `e of P` with an `equipped`
   chip, or a `None equipped` / `Not used` pill), one kit's rebuild cost at each item's `suggested`
   recipe (with `each` under it) and one reason under Make: danger for the first item with an unqueued
-  gap, dim when every gap is queued, faint — and the row's information dimmed, never its Make — when the
-  kit is covered or nobody is on its job.
-- **Make opens a PICKER under the row**: `Make <Kit> for how many <noun>?` with a `− N +` stepper
-  defaulting to the kit's own head count. Per item it states EQUIPPED, QUEUED, MAKE and RECIPE.
-  `gap = max(0, ceil(N / workers_per_unit) − have)`, `MAKE = gap − min(gap, queued)`. The RECIPE cell
-  lists only recipes whose `craftOffers` entry is `queueable` — a radio per recipe with its cost, the
-  bare cost for a sole one, the item's own refusal in its severity tint (and MAKE 0) when none can be
-  queued. **The footer's shortage is exact arithmetic over published terms**, the estimate precedent:
-  passes = `ceil(MAKE / output_per_pass)` and `need[m] = Σ passes × amount` against `materials_free`,
-  one decimal. `Start` sends ONE command carrying the counts the table showed, so what the player ordered
-  is what he saw; it is dead at a MAKE total of zero. The picker's state (`_kit_picker`, `_kit_people`,
-  `_kit_recipes`) is VIEW state, checked against every payload like `_picker_row`.
+  gap, dim when every gap is queued, faint (`All 3 hunters equipped` / `No hunters yet`) when the kit is
+  covered or nobody is on its job. **No kit row is ever dimmed** — a covered kit can still be ordered.
+- **A KIT ORDER IS A COUNT OF KITS, never netted against need.** Make opens a PICKER under the row:
+  `Make how many <Kit>s?` with a `− N +` stepper (default 1, never below 1) and the columns ITEM · OWNED ·
+  MAKE · RECIPE. OWNED is `×<units>` in dim ink, the Gear cell's own reading (the sum of the item's
+  equipment batch `count`s); MAKE is N for every item. The RECIPE cell lists only recipes whose
+  `craftOffers` entry is `queueable` — a radio per recipe with its cost, the bare cost for a sole one.
+  **The footer's shortage is exact arithmetic over published terms**, the estimate precedent: passes =
+  `ceil(N / output_per_pass)` and `need[m] = Σ passes × amount` against `materials_free`, one decimal
+  (`Short 4.2 hide for all 3`, danger), else `Queues <items × N> items as one kit order` (dim).
+  **Need never caps the order or disables Start** (Ray: *"We shouldn't prevent a kit from being built.
+  The number should be the number of new kits to build"*). The only disable is an item with no queueable
+  recipe — its offer's reason sits in the RECIPE cell in its severity tint — because the sim refuses a
+  kit missing an item's recipe. `Start` sends `bench_enqueue_kit … kit <id> kits <n> recipe <id> …`, one
+  recipe per item. The picker's state (`_kit_picker`, `_kit_count`, `_kit_recipes`) is VIEW state,
+  checked against every payload like `_picker_row`.
 - **The queue draws a kit order as ONE box**, where its first part sits: a status word (WORKING when a
-  part is the worked order and not blocked, WAITING when every part is blocked, else QUEUED), `Kit · N
-  noun`, a progress bar and `made of total` (`done + Σ made` over `done + Σ count`), the parts summed
-  on a sub-line while folded, and the WHOLE kit's ↑ (absent at index 0) and ✕. Unfolded, each part has
-  a `− made/count +` addressing it by its own order index, and no ↑ or ✕. The worked part is in the box
-  as well as in the well.
+  part is the worked order and not blocked, WAITING when every part is blocked, else QUEUED), `<Kit> ×N`
+  (`bench.kit_orders[].kits`), a progress bar and `made of total` (`done + Σ made` over `done + Σ count`),
+  the parts summed on a sub-line while folded, and the WHOLE kit's ↑ (absent at index 0) and ✕. Unfolded,
+  each part has a `− made/count +` addressing it by its own order index, and no ↑ or ✕. The worked part
+  is in the box as well as in the well.
 - **The well's title appends `· for <Kit>`** when the worked order belongs to a kit order.
 
 ## Key scripts

@@ -2328,33 +2328,28 @@ static func format_bench_auto_skip(payload: Dictionary) -> Dictionary:
         "message": "Skipping to the next suggestion.",
     }
 
-## **`bench_enqueue_kit <faction_id> <band_id> kit <kit_id> people <n> recipe <id> count <n> [recipe <id>
-## count <n> ...]`** (#780) — order a whole kit as ONE bench order. `parts` is one `{recipe_id, count}`
-## per item the picker said to make; the server refuses the whole command if any part fails, so this builds
-## no line for an unnamed kit, a head count below one, no part, or a part with no recipe or a count below one.
+## **`bench_enqueue_kit <faction_id> <band_id> kit <kit_id> kits <n> recipe <id> [recipe <id> ...]`** (#780)
+## — order a COUNT OF KITS as ONE bench order. `recipe_ids` is one recipe per kit item and the sim makes
+## every item `kits` times over, so this builds no line for an unnamed kit, a count below one, no recipe
+## or a blank one.
 static func format_bench_enqueue_kit(payload: Dictionary) -> Dictionary:
     var band_id := int(payload.get("band_id", HudConst.NO_BAND_ID))
     var kit_id := String(payload.get("kit_id", "")).strip_edges()
-    var people := int(payload.get("people", 0))
-    var parts = payload.get("parts", [])
-    if band_id == HudConst.NO_BAND_ID or kit_id == "" or people < 1 or not (parts is Array) \
-            or (parts as Array).is_empty():
+    var kits := int(payload.get("kits", 0))
+    var recipe_ids = payload.get("recipe_ids", [])
+    if band_id == HudConst.NO_BAND_ID or kit_id == "" or kits < 1 or not (recipe_ids is Array) \
+            or (recipe_ids as Array).is_empty():
         return {}
     var tail := ""
-    var items := 0
-    for part in parts:
-        if not (part is Dictionary):
+    for recipe in recipe_ids:
+        var recipe_id := String(recipe).strip_edges()
+        if recipe_id == "":
             return {}
-        var recipe_id := String(part.get("recipe_id", "")).strip_edges()
-        var count := int(part.get("count", 0))
-        if recipe_id == "" or count < 1:
-            return {}
-        tail += " recipe %s count %d" % [recipe_id, count]
-        items += count
+        tail += " recipe %s" % recipe_id
     var faction := int(payload.get("faction", HudConst.PLAYER_FACTION_ID))
     return {
-        "line": "bench_enqueue_kit %d %d kit %s people %d%s" % [faction, band_id, kit_id, people, tail],
-        "message": "Queued a whole kit — %d items as one bench order." % items,
+        "line": "bench_enqueue_kit %d %d kit %s kits %d%s" % [faction, band_id, kit_id, kits, tail],
+        "message": "Queued %d × %s as one bench order." % [kits, kit_id],
     }
 
 ## **`bench_remove_kit <faction_id> <band_id> kit_order <id>`** (#780) — take a whole kit order off the

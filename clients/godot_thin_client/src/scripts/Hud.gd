@@ -199,9 +199,8 @@ signal bench_auto_requested(payload: Dictionary)
 ## Emitted when the Skip link under a waiting auto order is pressed. Payload keys: { faction, band_id }.
 ## Main formats `bench_auto_skip <faction> <band>`. RELAYED from `CraftingPanelController`.
 signal bench_auto_skip_requested(payload: Dictionary)
-## Emitted when a kit picker's Start is pressed (#780). Payload keys: { faction, band_id, kit_id, people,
-## parts: [{recipe_id, count}] }. Main formats `bench_enqueue_kit <faction> <band> kit <id> people <n>
-## recipe <id> count <n> ...`. RELAYED from `CraftingPanelController`.
+## Emitted when a kit picker's Start is pressed (#780). Payload keys: { faction, band_id, kit_id, kits,
+## recipe_ids }. Main formats `bench_enqueue_kit <faction> <band> kit <id> kits <n> recipe <id> ...`. RELAYED from `CraftingPanelController`.
 signal bench_enqueue_kit_requested(payload: Dictionary)
 ## Emitted when a kit order's box ✕ is pressed. Payload keys: { faction, band_id, kit_order }. Main formats
 ## `bench_remove_kit <faction> <band> kit_order <id>`. RELAYED from `CraftingPanelController`.

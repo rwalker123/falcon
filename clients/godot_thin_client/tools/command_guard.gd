@@ -329,21 +329,20 @@ func _drive_bench_kit_orders() -> void:
 	if crafting == null:
 		_fail("bench kit orders: the crafting panel did not open on the fixture band")
 		return
-	crafting.kit_enqueue_requested.emit(BENCH_KIT_ID, BENCH_KIT_PEOPLE, [
-		{"recipe_id": BENCH_KIT_SPEARS_RECIPE, "count": BENCH_KIT_SPEARS_COUNT},
-		{"recipe_id": BENCH_KIT_SLED_RECIPE, "count": BENCH_KIT_SLED_COUNT}])
+	crafting.kit_enqueue_requested.emit(BENCH_KIT_ID, BENCH_KIT_COUNT,
+		[BENCH_KIT_SPEARS_RECIPE, BENCH_KIT_SLED_RECIPE])
 	crafting.kit_remove_requested.emit(BENCH_KIT_ORDER_ID)
 	crafting.kit_raise_requested.emit(BENCH_KIT_ORDER_ID)
 	await _settle()
 	_hud.close_crafting_panel()
 	var faction := HudConst.PLAYER_FACTION_ID
 	if not MAIN_SCRIPT.format_bench_enqueue_kit({"faction": faction, "band_id": BAND_ID,
-			"kit_id": BENCH_KIT_ID, "people": BENCH_KIT_PEOPLE, "parts": []}).is_empty():
-		_fail("bench_enqueue_kit: a line was built for a kit order with NO parts")
+			"kit_id": BENCH_KIT_ID, "kits": BENCH_KIT_COUNT, "recipe_ids": []}).is_empty():
+		_fail("bench_enqueue_kit: a line was built for a kit order with NO recipes")
 	if not MAIN_SCRIPT.format_bench_enqueue_kit({"faction": faction, "band_id": BAND_ID,
-			"kit_id": BENCH_KIT_ID, "people": BENCH_KIT_PEOPLE,
-			"parts": [{"recipe_id": BENCH_KIT_SPEARS_RECIPE, "count": 0}]}).is_empty():
-		_fail("bench_enqueue_kit: a line was built for a part of ZERO")
+			"kit_id": BENCH_KIT_ID, "kits": 0,
+			"recipe_ids": [BENCH_KIT_SPEARS_RECIPE]}).is_empty():
+		_fail("bench_enqueue_kit: a line was built for ZERO kits")
 	if not MAIN_SCRIPT.format_bench_remove_kit({"faction": faction, "band_id": BAND_ID,
 			"kit_order": 0}).is_empty():
 		_fail("bench_remove_kit: a line was built for kit order 0, which is no kit order")
@@ -351,13 +350,11 @@ func _drive_bench_kit_orders() -> void:
 			"kit_order": 0}).is_empty():
 		_fail("bench_raise_kit: a line was built for kit order 0, which is no kit order")
 
-## The kit the order is for, the people it was sized for, and its two parts.
+## The kit the order is for, how many kits, and the one recipe per kit item.
 const BENCH_KIT_ID := "big_game"
-const BENCH_KIT_PEOPLE := 6
+const BENCH_KIT_COUNT := 3
 const BENCH_KIT_SPEARS_RECIPE := "spears"
-const BENCH_KIT_SPEARS_COUNT := 2
 const BENCH_KIT_SLED_RECIPE := "sled"
-const BENCH_KIT_SLED_COUNT := 4
 ## The kit order the edits name — never 0, the id of "not a kit order".
 const BENCH_KIT_ORDER_ID := 1
 

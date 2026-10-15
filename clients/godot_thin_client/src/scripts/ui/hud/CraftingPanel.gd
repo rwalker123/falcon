@@ -103,10 +103,10 @@ signal bench_priority_requested(level: String)
 signal bench_auto_requested(on: bool)
 ## The Skip link under a waiting auto order was pressed - `bench_auto_skip <faction> <band>`.
 signal bench_auto_skip_requested
-## A kit picker's Start was pressed — `bench_enqueue_kit <faction> <band> kit <id> people <n> recipe <id>
-## count <n> …` (#780). `parts` is `[{recipe_id, count}]`, one per item with a MAKE above zero: the
-## order carries the counts the picker SHOWED, so the player orders what he saw.
-signal kit_enqueue_requested(kit_id: String, people: int, parts: Array)
+## A kit picker's Start was pressed — `bench_enqueue_kit <faction> <band> kit <id> kits <n> recipe <id> …`
+## (#780). A kit order is a COUNT OF KITS: `recipe_ids` is one recipe per kit item, and the sim makes every
+## item `kits` times over.
+signal kit_enqueue_requested(kit_id: String, kits: int, recipe_ids: Array)
 ## A kit order's box ✕ — `bench_remove_kit <faction> <band> kit_order <id>`.
 signal kit_remove_requested(kit_order: int)
 ## A kit order's box ↑ — `bench_raise_kit <faction> <band> kit_order <id>`.
@@ -210,7 +210,7 @@ var _priority_open: bool = false
 ## chosen per item. Exactly the standing of `_picker_row` / `_picker_choice`: it survives the
 ## per-snapshot rebuild, is checked against every payload, and closes with the card.
 var _kit_picker: String = NO_ROW
-var _kit_people: int = 0
+var _kit_count: int = HudCraftingVocab.KIT_COUNT_MIN
 var _kit_recipes: Dictionary = {}
 ## The kit orders whose box is unfolded, by kit order id. A fold is a preference of the moment, so it
 ## closes with the card like the pickers do.
@@ -2258,14 +2258,18 @@ func _kit_chosen_recipe(item_id: String, choices: Array, row: Dictionary) -> Str
 				return wanted
 	return String((choices[0] as Dictionary)["recipe_id"]) if not choices.is_empty() else ""
 
-## **THE PICKER'S WHOLE ANSWER FOR ONE KIT AT ONE HEAD COUNT** — per item what is equipped and queued,
-## the MAKE, the recipe it is made with; and for the kit the total, the parts the order would carry and
-## the materials the picked recipes' passes overdraw. Pure over the payload, so the rendered picker and
-## the Start it carries cannot disagree.
-func _kit_plan(need: Dictionary, rows: Dictionary, free: Dictionary, people: int) -> Dictionary:
+## **THE PICKER'S WHOLE ANSWER FOR ONE KIT AT ONE COUNT OF KITS** — a kit order is a COUNT OF KITS, so every
+## item is made `kits` times over and nothing about what the band already holds or has queued nets it
+## down. Per item the units the band owns (the Gear cell's own reading), the recipe it is made with, and
+## for the kit the items × kits the order queues and the materials the picked recipes' passes overdraw
+## (`passes = ceil(kits / output_per_pass)`, `need[m] = Σ passes × amount` against `materials_free`).
+## **NEED NEVER CAPS THE ORDER OR DISABLES START**: the one thing that does is an item with no queueable
+## recipe, which the sim refuses. Pure over the payload, so the rendered picker and its Start agree.
+func _kit_plan(need: Dictionary, rows: Dictionary, free: Dictionary, kits: int,
+		owned_by_item: Dictionary) -> Dictionary:
 	var items: Array = []
-	var parts: Array = []
-	var total := 0
+	var recipe_ids: Array = []
+	var startable := true
 	var needed := {}
 	var material_order: Array = []
 	for item_variant in need.get(HudCraftingVocab.KIT_NEED_ITEMS_KEY, []):
@@ -2275,43 +2279,38 @@ func _kit_plan(need: Dictionary, rows: Dictionary, free: Dictionary, people: int
 		var item_id := String(item.get(HudCraftingVocab.KIT_ITEM_ID_KEY, ""))
 		var row: Dictionary = rows.get(item_id, {})
 		var choices := _kit_item_choices(item, row)
-		var gap := _kit_item_gap(item, people)
-		var queued_shown := mini(gap, int(item.get(HudCraftingVocab.KIT_ITEM_QUEUED_KEY, 0)))
-		var wanted := gap - queued_shown
-		var make := wanted
 		var chosen := ""
 		var reason := ""
 		var severity := ""
-		if wanted > 0 and choices.is_empty():
-			# Nothing to queue: the item's own refusal says why, and it adds nothing to the order.
-			make = 0
+		if choices.is_empty():
+			startable = false
 			var offer: Dictionary = row.get("offer", {})
 			reason = String(offer.get(HudCraftingVocab.OFFER_REASON_KEY, ""))
 			severity = String(offer.get(HudCraftingVocab.OFFER_SEVERITY_KEY, ""))
-		elif wanted > 0:
+		else:
 			chosen = _kit_chosen_recipe(item_id, choices, row)
-		if make > 0:
-			total += make
-			parts.append({"recipe_id": chosen, "count": make})
+			recipe_ids.append(chosen)
 			for choice in choices:
 				if String((choice as Dictionary)["recipe_id"]) != chosen:
 					continue
 				var yielded := float((choice as Dictionary)["output_per_pass"])
 				if yielded <= 0.0:
 					yielded = HudCraftingVocab.KIT_DEFAULT_OUTPUT_PER_PASS
-				var passes := ceili(float(make) / yielded)
+				var passes := ceili(float(kits) / yielded)
 				for pair in (choice as Dictionary)["inputs"]:
 					var material := String((pair as Array)[0])
 					if not needed.has(material):
 						needed[material] = 0.0
 						material_order.append(material)
 					needed[material] = float(needed[material]) + float(passes) * float((pair as Array)[1])
+		var owned := 0
+		for batch_variant in owned_by_item.get(item_id, []):
+			if batch_variant is Dictionary:
+				owned += int((batch_variant as Dictionary).get(HudCraftingVocab.EQUIPMENT_COUNT_KEY, 0))
 		items.append({
 			"item_id": item_id,
 			"name": _suggestion_item_name(item_id, row),
-			"equipped": _kit_item_equipped(item, people),
-			"queued": queued_shown,
-			"make": make,
+			"owned": owned,
 			"choices": choices,
 			"chosen": chosen,
 			"reason": reason,
@@ -2322,7 +2321,8 @@ func _kit_plan(need: Dictionary, rows: Dictionary, free: Dictionary, people: int
 		var shortage := float(needed[material]) - float(free.get(material, 0.0))
 		if shortage > HudCraftingVocab.KIT_SHORT_EPSILON:
 			short.append([String(material), shortage])
-	return {"items": items, "parts": parts, "total": total, "short": short, "people": people}
+	return {"items": items, "recipe_ids": recipe_ids, "short": short, "kits": kits,
+		"queued_items": items.size() * kits, "startable": startable}
 
 ## Open a kit's picker (sized for the kit's own head count) or close it when it is the open one.
 func _toggle_kit_picker(kit_id: String) -> void:
@@ -2333,18 +2333,17 @@ func _toggle_kit_picker(kit_id: String) -> void:
 		_close_recipes_popup()
 		_kit_picker = kit_id
 		_kit_recipes = {}
-		_kit_people = int(_kit_need_in(_payload.get(PAYLOAD_BAND, {}), kit_id).get(
-			HudCraftingVocab.KIT_NEED_PEOPLE_KEY, 0))
+		_kit_count = HudCraftingVocab.KIT_COUNT_MIN
 	if not _payload.is_empty():
 		render(_payload)
 
 func _reset_kit_picker() -> void:
 	_kit_picker = NO_ROW
-	_kit_people = 0
+	_kit_count = HudCraftingVocab.KIT_COUNT_MIN
 	_kit_recipes = {}
 
-func _step_kit_people(delta: int) -> void:
-	_kit_people = maxi(_kit_people + delta, 0)
+func _step_kit_count(delta: int) -> void:
+	_kit_count = maxi(_kit_count + delta, HudCraftingVocab.KIT_COUNT_MIN)
 	if not _payload.is_empty():
 		render(_payload)
 
@@ -2358,11 +2357,11 @@ func _cancel_kit_picker() -> void:
 	if not _payload.is_empty():
 		render(_payload)
 
-## **START SENDS ONE ORDER FOR THE WHOLE KIT**, carrying the counts the picker showed.
-func _start_kit_order(kit_id: String, people: int, parts: Array) -> void:
+## **START SENDS ONE ORDER FOR THE WHOLE KIT**: the count of kits and one recipe per item.
+func _start_kit_order(kit_id: String, kits: int, recipe_ids: Array) -> void:
 	_reset_kit_picker()
-	if not parts.is_empty():
-		kit_enqueue_requested.emit(kit_id, people, parts)
+	if not recipe_ids.is_empty():
+		kit_enqueue_requested.emit(kit_id, kits, recipe_ids)
 	if not _payload.is_empty():
 		render(_payload)
 
@@ -2377,10 +2376,11 @@ func _add_kits_section(table: VBoxContainer, band: Dictionary, payload: Dictiona
 		return
 	var rows := _rows_by_key(band, payload)
 	var free := _materials_free_of(band)
+	var owned_by_item := _equipment_by_item(band)
 	for need in needs:
 		table.add_child(_build_kit_row(need, rows))
 		if String((need as Dictionary).get(HudCraftingVocab.KIT_NEED_KIT_ID_KEY, "")) == _kit_picker:
-			table.add_child(_build_kit_picker(need, rows, free))
+			table.add_child(_build_kit_picker(need, rows, free, owned_by_item))
 		table.add_child(_rule(HudStyle.LINE_SOFT))
 
 ## **ONE KIT, ONE ROW** — its name and the items it needs, what is equipped, one kit's rebuild cost and
@@ -2405,13 +2405,10 @@ func _build_kit_row(need: Dictionary, rows: Dictionary) -> Control:
 
 	var reason := ""
 	var reason_ink := HudStyle.INK_FAINT
-	var dimmed := false
 	if people == 0:
 		reason = HudCraftingVocab.KIT_REASON_NONE_FORMAT % noun
-		dimmed = true
 	elif equipped >= people:
 		reason = HudCraftingVocab.KIT_REASON_ALL_FORMAT % [people, noun]
-		dimmed = true
 	else:
 		var queued_parts: Array[String] = []
 		var unqueued_found := false
@@ -2501,9 +2498,6 @@ func _build_kit_row(need: Dictionary, rows: Dictionary) -> Control:
 
 	# **THE DIM FALLS ON THE ROW'S INFORMATION, NEVER ITS CONTROLS** — the shrug's own rule: a faded Make
 	# reads as a disabled one.
-	if dimmed:
-		for info_cell: Control in [item_cell, owned, cost]:
-			_dim_shrug(info_cell)
 
 	var row := _ledger_row_container()
 	row.set_meta(HudCraftingVocab.KIT_ROW_META, kit_id)
@@ -2550,14 +2544,13 @@ func _cost_flow(pairs: Array, font_size: int, wrap: bool = true) -> Container:
 		flow.add_child(clause)
 	return flow
 
-## **THE KIT PICKER**, under its row: `Make <Kit> for how many <noun>?` with a `− N +` stepper, then per
-## item what is equipped, what is already queued, what this order would MAKE and the recipe it would use.
-func _build_kit_picker(need: Dictionary, rows: Dictionary, free: Dictionary) -> Control:
+## **THE KIT PICKER**, under its row: `Make how many <Kit>s?` with a `− N +` stepper (default 1, never
+## below 1), then per item what the band owns, how many this order makes (N) and the recipe it would use.
+func _build_kit_picker(need: Dictionary, rows: Dictionary, free: Dictionary,
+		owned_by_item: Dictionary) -> Control:
 	var kit_id := String(need.get(HudCraftingVocab.KIT_NEED_KIT_ID_KEY, ""))
-	var words := _kit_job_words(need)
-	var noun := String(words[HudCraftingVocab.KIT_JOB_NOUN_KEY])
-	var people := _kit_people
-	var plan := _kit_plan(need, rows, free, people)
+	var kits := _kit_count
+	var plan := _kit_plan(need, rows, free, kits, owned_by_item)
 
 	var host := MarginContainer.new()
 	host.add_theme_constant_override("margin_bottom", HudCraftingVocab.PICKER_MARGIN_BOTTOM)
@@ -2576,41 +2569,35 @@ func _build_kit_picker(need: Dictionary, rows: Dictionary, free: Dictionary) -> 
 	column.add_theme_constant_override("separation", HudCraftingVocab.PICKER_LINE_SEPARATION)
 	box.add_child(column)
 
-	# --- the question, its stepper and the people it defaults to
+	# --- the question and its stepper
 	var head := HBoxContainer.new()
 	head.add_theme_constant_override("separation", HudCraftingVocab.COLUMN_SEPARATION)
-	head.add_child(_popup_text(HudCraftingVocab.KIT_PICKER_HEADING_FORMAT % [_kit_name(need, kit_id), noun],
+	head.add_child(_popup_text(HudCraftingVocab.KIT_PICKER_HEADING_FORMAT % _kit_name(need, kit_id),
 		HudStyle.INK, HudCraftingVocab.PICKER_HEADING_FONT_SIZE))
-	var minus := _crew_button(HudCraftingVocab.KIT_PICKER_PEOPLE_DECREMENT)
-	minus.disabled = people <= 0
+	var minus := _crew_button(HudCraftingVocab.KIT_PICKER_COUNT_DECREMENT)
+	minus.disabled = kits <= HudCraftingVocab.KIT_COUNT_MIN
 	minus.set_meta(HudCraftingVocab.KIT_PICKER_MINUS_META, kit_id)
-	minus.pressed.connect(func() -> void: _step_kit_people(-1))
+	minus.pressed.connect(func() -> void: _step_kit_count(-1))
 	head.add_child(minus)
-	var face := _popup_text(str(people), HudStyle.INK, HudCraftingVocab.CREW_COUNT_FONT_SIZE)
+	var face := _popup_text(str(kits), HudStyle.INK, HudCraftingVocab.CREW_COUNT_FONT_SIZE)
 	face.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	face.set_meta(HudCraftingVocab.KIT_PICKER_FACE_META, people)
+	face.set_meta(HudCraftingVocab.KIT_PICKER_FACE_META, kits)
 	head.add_child(face)
-	var plus := _crew_button(HudCraftingVocab.KIT_PICKER_PEOPLE_INCREMENT)
+	var plus := _crew_button(HudCraftingVocab.KIT_PICKER_COUNT_INCREMENT)
 	plus.set_meta(HudCraftingVocab.KIT_PICKER_PLUS_META, kit_id)
-	plus.pressed.connect(func() -> void: _step_kit_people(1))
+	plus.pressed.connect(func() -> void: _step_kit_count(1))
 	head.add_child(plus)
-	var hint := _popup_text(HudCraftingVocab.KIT_PICKER_HINT_FORMAT % [
-		int(need.get(HudCraftingVocab.KIT_NEED_PEOPLE_KEY, 0)), String(words[HudCraftingVocab.KIT_JOB_WHERE_KEY])],
-		HudStyle.INK_FAINT, HudCraftingVocab.KIT_PICKER_HINT_FONT_SIZE)
-	hint.set_meta(HudCraftingVocab.KIT_PICKER_HINT_META, kit_id)
-	head.add_child(hint)
 	column.add_child(head)
 
-	# --- the table: ITEM · EQUIPPED · QUEUED · MAKE · RECIPE
+	# --- the table: ITEM · OWNED · MAKE · RECIPE
 	var grid := GridContainer.new()
-	grid.columns = 5
+	grid.columns = 4
 	grid.add_theme_constant_override("h_separation", HudCraftingVocab.KIT_PICKER_GRID_H_SEPARATION)
 	grid.add_theme_constant_override("v_separation", HudCraftingVocab.KIT_PICKER_GRID_V_SEPARATION)
-	var column_heads := [HudCraftingVocab.KIT_PICKER_COLUMN_ITEM, HudCraftingVocab.KIT_PICKER_COLUMN_EQUIPPED,
-		HudCraftingVocab.KIT_PICKER_COLUMN_QUEUED, HudCraftingVocab.KIT_PICKER_COLUMN_MAKE,
-		HudCraftingVocab.KIT_PICKER_COLUMN_RECIPE]
-	var column_widths := [HudCraftingVocab.KIT_PICKER_ITEM_WIDTH, HudCraftingVocab.KIT_PICKER_EQUIPPED_WIDTH,
-		HudCraftingVocab.KIT_PICKER_QUEUED_WIDTH, HudCraftingVocab.KIT_PICKER_MAKE_WIDTH, 0.0]
+	var column_heads := [HudCraftingVocab.KIT_PICKER_COLUMN_ITEM, HudCraftingVocab.KIT_PICKER_COLUMN_OWNED,
+		HudCraftingVocab.KIT_PICKER_COLUMN_MAKE, HudCraftingVocab.KIT_PICKER_COLUMN_RECIPE]
+	var column_widths := [HudCraftingVocab.KIT_PICKER_ITEM_WIDTH, HudCraftingVocab.KIT_PICKER_OWNED_WIDTH,
+		HudCraftingVocab.KIT_PICKER_MAKE_WIDTH, 0.0]
 	for i in range(column_heads.size()):
 		var column_head := _popup_text(String(column_heads[i]).to_upper(), HudStyle.INK_FAINT,
 			HudCraftingVocab.COLUMN_HEAD_FONT_SIZE)
@@ -2619,25 +2606,14 @@ func _build_kit_picker(need: Dictionary, rows: Dictionary, free: Dictionary) -> 
 	for item_variant in plan["items"]:
 		var entry: Dictionary = item_variant
 		var item_id := String(entry["item_id"])
-		var make_count := int(entry["make"])
 		var item_label := _popup_text(String(entry["name"]), HudStyle.INK, HudCraftingVocab.KIT_PICKER_CELL_FONT_SIZE)
 		item_label.custom_minimum_size = Vector2(HudCraftingVocab.KIT_PICKER_ITEM_WIDTH, 0.0)
 		grid.add_child(item_label)
-		var equipped_count := int(entry["equipped"])
-		var equipped_label := _popup_text(HudCraftingVocab.KIT_PICKER_EQUIPPED_FORMAT % [equipped_count, people],
-			HudStyle.HEALTHY if equipped_count >= people else HudStyle.INK,
-			HudCraftingVocab.KIT_PICKER_CELL_FONT_SIZE)
-		equipped_label.set_meta(HudCraftingVocab.KIT_PICKER_EQUIPPED_META, item_id)
-		grid.add_child(equipped_label)
-		var queued_count := int(entry["queued"])
-		var queued_label := _popup_text(
-			str(queued_count) if queued_count > 0 else HudCraftingVocab.KIT_PICKER_NONE,
-			HudStyle.INK if queued_count > 0 else HudStyle.INK_FAINT, HudCraftingVocab.KIT_PICKER_CELL_FONT_SIZE)
-		queued_label.set_meta(HudCraftingVocab.KIT_PICKER_QUEUED_META, item_id)
-		grid.add_child(queued_label)
-		var make_label := _popup_text(
-			str(make_count) if make_count > 0 else HudCraftingVocab.KIT_PICKER_NONE,
-			HudStyle.INK if make_count > 0 else HudStyle.INK_FAINT, HudCraftingVocab.KIT_PICKER_CELL_FONT_SIZE)
+		var owned_label := _popup_text(HudCraftingVocab.OWNED_COUNT_FORMAT % int(entry["owned"]),
+			HudStyle.INK_DIM, HudCraftingVocab.KIT_PICKER_CELL_FONT_SIZE)
+		owned_label.set_meta(HudCraftingVocab.KIT_PICKER_OWNED_META, item_id)
+		grid.add_child(owned_label)
+		var make_label := _popup_text(str(kits), HudStyle.INK, HudCraftingVocab.KIT_PICKER_CELL_FONT_SIZE)
 		make_label.set_meta(HudCraftingVocab.KIT_PICKER_MAKE_META, item_id)
 		grid.add_child(make_label)
 		grid.add_child(_build_kit_recipe_cell(entry))
@@ -2650,23 +2626,19 @@ func _build_kit_picker(need: Dictionary, rows: Dictionary, free: Dictionary) -> 
 	var message := _popup_text("", HudStyle.INK_DIM, HudCraftingVocab.PICKER_NOTE_FONT_SIZE)
 	message.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	message.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	var total := int(plan["total"])
 	var short: Array = plan["short"]
-	if total == 0:
-		message.add_theme_color_override("font_color", HudStyle.INK_FAINT)
-		message.text = HudCraftingVocab.KIT_PICKER_CHOOSE_FORMAT % noun if people == 0 \
-			else HudCraftingVocab.KIT_PICKER_ALL_HAVE_FORMAT % [people, noun]
-	elif not short.is_empty():
+	if not short.is_empty():
 		var parts: Array[String] = []
 		for pair in short:
 			parts.append(HudCraftingVocab.KIT_PICKER_SHORT_PART_FORMAT % [
 				String.num(float((pair as Array)[1]), HudCraftingVocab.SHORTFALL_DECIMALS), String((pair as Array)[0])])
 		message.add_theme_color_override("font_color", HudStyle.DANGER)
 		message.text = HudCraftingVocab.KIT_PICKER_SHORT_FORMAT % [
-			HudCraftingVocab.KIT_PICKER_SHORT_SEPARATOR.join(parts), total]
+			HudCraftingVocab.KIT_PICKER_SHORT_SEPARATOR.join(parts), kits]
 	else:
-		message.text = (HudCraftingVocab.KIT_PICKER_QUEUES_ONE_FORMAT if total == 1
-			else HudCraftingVocab.KIT_PICKER_QUEUES_FORMAT) % total
+		var queued_items := int(plan["queued_items"])
+		message.text = (HudCraftingVocab.KIT_PICKER_QUEUES_ONE_FORMAT if queued_items == 1
+			else HudCraftingVocab.KIT_PICKER_QUEUES_FORMAT) % queued_items
 	message.set_meta(HudCraftingVocab.KIT_PICKER_MESSAGE_META, kit_id)
 	footer.add_child(message)
 	var cancel := Button.new()
@@ -2682,10 +2654,11 @@ func _build_kit_picker(need: Dictionary, rows: Dictionary, free: Dictionary) -> 
 	start.focus_mode = Control.FOCUS_NONE
 	start.add_theme_font_size_override("font_size", HudCraftingVocab.ACTION_FONT_SIZE)
 	HudStyle.apply_button(start, "primary")
-	start.disabled = total == 0
+	# The ONLY disable: an item with no queueable recipe, which the sim refuses outright. A shortage never.
+	start.disabled = not bool(plan["startable"])
 	start.set_meta(HudCraftingVocab.KIT_PICKER_START_META, kit_id)
-	var order_parts: Array = plan["parts"]
-	start.pressed.connect(func() -> void: _start_kit_order(kit_id, people, order_parts))
+	var recipe_ids: Array = plan["recipe_ids"]
+	start.pressed.connect(func() -> void: _start_kit_order(kit_id, kits, recipe_ids))
 	footer.add_child(start)
 	column.add_child(footer)
 	return host
@@ -2700,7 +2673,7 @@ func _build_kit_recipe_cell(entry: Dictionary) -> Control:
 	cell.add_theme_constant_override("h_separation", HudCraftingVocab.KIT_PICKER_RADIO_SEPARATION)
 	cell.set_meta(HudCraftingVocab.KIT_PICKER_RECIPE_CELL_META, item_id)
 	var choices: Array = entry["choices"]
-	if int(entry["make"]) == 0:
+	if choices.is_empty():
 		var reason := String(entry["reason"])
 		if reason != "":
 			var why := _popup_text(reason, HudCraftingVocab.REASON_COLORS.get(String(entry["severity"]),
@@ -2880,11 +2853,9 @@ func _build_kit_order_box(kit_order: int, orders: Array, bench: Dictionary, payl
 	fold.set_meta(HudCraftingVocab.KIT_ORDER_FOLD_META, kit_order)
 	fold.pressed.connect(func() -> void: _toggle_kit_order_fold(kit_order))
 	line.add_child(fold)
-	var noun := String(_kit_job_words(_kit_need_in(band, String(record.get(
-		HudCraftingVocab.KIT_ORDER_KIT_ID_KEY, ""))))[HudCraftingVocab.KIT_JOB_NOUN_KEY])
 	var title := Label.new()
 	title.text = HudCraftingVocab.KIT_ORDER_TITLE_FORMAT % [_kit_order_name(record, band),
-		int(record.get(HudCraftingVocab.KIT_ORDER_PEOPLE_KEY, 0)), noun]
+		int(record.get(HudCraftingVocab.KIT_ORDER_KITS_KEY, 0))]
 	title.add_theme_font_size_override("font_size", HudCraftingVocab.QUEUE_ROW_FONT_SIZE)
 	title.add_theme_color_override("font_color", HudStyle.INK)
 	title.set_meta(HudCraftingVocab.KIT_ORDER_TITLE_META, kit_order)

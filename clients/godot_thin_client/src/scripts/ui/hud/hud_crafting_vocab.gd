@@ -997,7 +997,7 @@ const BAND_MATERIALS_FREE_KEY := "materials_free"
 const BENCH_KIT_ORDERS_KEY := "kit_orders"
 const KIT_ORDER_ID_KEY := "id"
 const KIT_ORDER_KIT_ID_KEY := "kit_id"
-const KIT_ORDER_PEOPLE_KEY := "people"
+const KIT_ORDER_KITS_KEY := "kits"
 ## Items its FINISHED parts made; a part still on the queue reports its own `made`.
 const KIT_ORDER_DONE_KEY := "done"
 const ORDER_KIT_ORDER_KEY := "kit_order"
@@ -1048,32 +1048,27 @@ const KIT_REASON_ALL_FORMAT := "All %d %s equipped"
 const KIT_REASON_NONE_FORMAT := "No %s yet"
 
 # -- the picker
-const KIT_PICKER_HEADING_FORMAT := "Make %s for how many %s?"
-const KIT_PICKER_HINT_FORMAT := "%d %s"
+const KIT_PICKER_HEADING_FORMAT := "Make how many %ss?"
 const KIT_PICKER_COLUMN_ITEM := "Item"
-const KIT_PICKER_COLUMN_EQUIPPED := "Equipped"
-const KIT_PICKER_COLUMN_QUEUED := "Queued"
+const KIT_PICKER_COLUMN_OWNED := "Owned"
 const KIT_PICKER_COLUMN_MAKE := "Make"
 const KIT_PICKER_COLUMN_RECIPE := "Recipe"
-const KIT_PICKER_EQUIPPED_FORMAT := "%d of %d"
-## A zero in the QUEUED and MAKE columns.
-const KIT_PICKER_NONE := "—"
 const KIT_PICKER_RECIPE_FORMAT := "%s %s"
 const KIT_PICKER_SHORT_FORMAT := "Short %s for all %d"
 const KIT_PICKER_SHORT_PART_FORMAT := "%s %s"
 const KIT_PICKER_SHORT_SEPARATOR := " · "
 const KIT_PICKER_QUEUES_FORMAT := "Queues %d items as one kit order"
 const KIT_PICKER_QUEUES_ONE_FORMAT := "Queues %d item as one kit order"
-const KIT_PICKER_ALL_HAVE_FORMAT := "All %d %s already have this kit, or it is queued."
-const KIT_PICKER_CHOOSE_FORMAT := "Choose how many %s to equip."
 const KIT_PICKER_OPEN_LABEL := "Close"
 ## A shortage under this reads as `0.0` at the display's one decimal, so it is not drawn as one.
 const KIT_SHORT_EPSILON := 0.05
-const KIT_PICKER_PEOPLE_DECREMENT := "−"
-const KIT_PICKER_PEOPLE_INCREMENT := "+"
+const KIT_PICKER_COUNT_DECREMENT := "−"
+const KIT_PICKER_COUNT_INCREMENT := "+"
+## A kit order is for at least one kit.
+const KIT_COUNT_MIN := 1
 
 # -- the grouped queue box
-const KIT_ORDER_TITLE_FORMAT := "%s · %d %s"
+const KIT_ORDER_TITLE_FORMAT := "%s ×%d"
 const KIT_ORDER_PROGRESS_FORMAT := "%d of %d made"
 const KIT_ORDER_PART_FORMAT := "%s %d/%d"
 const KIT_ORDER_PART_SEPARATOR := " · "
@@ -1094,11 +1089,9 @@ const KIT_PICKER_META := "crafting_kit_picker"
 const KIT_PICKER_FACE_META := "crafting_kit_picker_people"
 const KIT_PICKER_MINUS_META := "crafting_kit_picker_minus"
 const KIT_PICKER_PLUS_META := "crafting_kit_picker_plus"
-const KIT_PICKER_HINT_META := "crafting_kit_picker_hint"
-## Valued the item id: the MAKE cell, the EQUIPPED cell and the QUEUED cell of one item's row.
+## Valued the item id: the MAKE cell and the OWNED cell of one item's row.
 const KIT_PICKER_MAKE_META := "crafting_kit_picker_make"
-const KIT_PICKER_EQUIPPED_META := "crafting_kit_picker_equipped"
-const KIT_PICKER_QUEUED_META := "crafting_kit_picker_queued"
+const KIT_PICKER_OWNED_META := "crafting_kit_picker_owned"
 const KIT_PICKER_RECIPE_CELL_META := "crafting_kit_picker_recipe_cell"
 ## Valued the recipe id: one radio.
 const KIT_PICKER_RADIO_META := "crafting_kit_picker_radio"
@@ -1122,12 +1115,10 @@ const BENCH_FOR_KIT_META := "crafting_bench_for_kit"
 
 # -- geometry, measured off the prototype
 const KIT_PICKER_ITEM_WIDTH := 110.0
-const KIT_PICKER_EQUIPPED_WIDTH := 84.0
-const KIT_PICKER_QUEUED_WIDTH := 64.0
+const KIT_PICKER_OWNED_WIDTH := 64.0
 const KIT_PICKER_MAKE_WIDTH := 56.0
 const KIT_PICKER_CELL_FONT_SIZE := 12
 const KIT_PICKER_COST_FONT_SIZE := 11
-const KIT_PICKER_HINT_FONT_SIZE := 11
 const KIT_PICKER_GRID_H_SEPARATION := 8
 const KIT_PICKER_GRID_V_SEPARATION := 8
 const KIT_PICKER_RADIO_SEPARATION := 12
