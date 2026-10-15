@@ -1361,7 +1361,7 @@ func draw_herd_range_highlights(radius: float, origin: Vector2) -> void:
 	var herd := _view._herd_by_id(_view.selected_herd_id)
 	if herd.is_empty():
 		return
-	if bool(herd.get("corralled", false)):
+	if RungQuotes.is_enclosed(herd):
 		return
 	var x := int(herd.get("x", -1))
 	var y := int(herd.get("y", -1))
@@ -1408,7 +1408,7 @@ func draw_pen_footprint_highlight(radius: float, origin: Vector2) -> void:
 	var herd := _view._herd_by_id(_view.selected_herd_id)
 	if herd.is_empty():
 		return
-	if not bool(herd.get("corralled", false)):
+	if not RungQuotes.is_enclosed(herd):
 		return
 	var x := int(herd.get("x", -1))
 	var y := int(herd.get("y", -1))

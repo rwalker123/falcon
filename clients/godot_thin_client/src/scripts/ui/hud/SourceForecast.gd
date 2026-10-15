@@ -126,18 +126,6 @@ const IMPROVEMENT_PAVE := "pave"
 const IMPROVEMENT_FELL := "fell"
 const IMPROVEMENT_COPPICE := "coppice"
 const IMPROVEMENT_QUARRY := "quarry"
-# The four ladders, each in RUNG ORDER (low → high). Kept apart because no two webs share a rung,
-# and read by nothing that needs "all of them".
-const FORAGE_IMPROVEMENTS := [IMPROVEMENT_CULTIVATE, IMPROVEMENT_SOW]
-const HUNT_IMPROVEMENTS := [IMPROVEMENT_TAME, IMPROVEMENT_CORRAL]
-const ROUTE_IMPROVEMENTS := [IMPROVEMENT_GRADE, IMPROVEMENT_PAVE]
-# ⛔ **THE DEPOSIT SET SPANS BOTH BRANCHES AND IS THEREFORE NOT IN RUNG ORDER** — `fell` and
-# `coppice` are forestry's rungs 2 and 3, `quarry` is extraction's rung 2, and no ordering over the
-# union means anything. Its ONE reader asks *does this verb name a material*, which is a grammar
-# question rather than a ladder walk. The verbs themselves come off the wire's rung CATALOG
-# (`HudDepositVocab.catalog_verb`); this list exists because `Main` must know the token SHAPE of a
-# line before it can build one, which no catalog field states.
-const DEPOSIT_IMPROVEMENTS := [IMPROVEMENT_FELL, IMPROVEMENT_COPPICE, IMPROVEMENT_QUARRY]
 # **THE FENCE RING'S JOB TOKEN, AND IT IS NOT A RUNG.** `snapshot::population::resolved_build_job`
 # publishes this in the `improvement` slot for a queue entry whose declared job is
 # `BuildJob::ExtendPen`: a ring widens the pen rung its herd already stands on, so there is no meter
@@ -146,8 +134,6 @@ const DEPOSIT_IMPROVEMENTS := [IMPROVEMENT_FELL, IMPROVEMENT_COPPICE, IMPROVEMEN
 # the herd's own `pen_extend_progress` / `pen_extend_cost` pair, read by `pen_extend_fraction`. This
 # token is how a reader tells a RING entry from a RUNG entry with what is already on the wire.
 const BUILD_JOB_EXTEND_PEN := "extend_pen"
-# A herd at or above this domestication progress is fully tamed (pastoral); its crew are keepers.
-const DOMESTICATION_COMPLETE := 1.0
 # WHICH KIND OF SOURCE a forecast dict describes, stated explicitly by every `forecast_inputs` caller:
 # a herd and a raw wire forage patch share the empty key prefix, so the prefix cannot answer it and a
 # shape test on a wire key would misread a source whose snapshot omitted it.
@@ -992,177 +978,6 @@ const FORECAST_STRESSED_FRACTION_KEY := "stressed_fraction"
 const ECOLOGY_PHASE_COLLAPSING := "collapsing"
 const ECOLOGY_PHASE_STRESSED := "stressed"
 const ECOLOGY_PHASE_THRIVING := "thriving"
-# **A MANAGED SOURCE HAS NO ESCAPEMENT ROOM AND IGNORES THE FLOOR ENTIRELY** (sim
-# `SourceYieldForecast::managed`): a built Pen is YOURS — you control its reproduction, so there is no
-# wild stock to stop short of and the axis honestly collapses onto the one managed production it hands
-# over. The wire still carries its raw `biomass`/`carrying_capacity`/rates (they are facts about the
-# herd), so composing an escapement ceiling on one is silently wrong; the managed production is the
-# rung's own payoff field, which for a BUILT rung is the live number the sim pays. Rung 2 (a pastoral
-# herd) is still a wild stand being drawn down, so it takes the composition like rung 1.
-#
-# > #### ⛔ THE PLANT WEB HAS NO MANAGED RUNG. A FIELD IS DRAWN DOWN LIKE ANY OTHER STAND.
-# >
-# > `SOURCE_KIND_FORAGE: "is_field"` sat in this table until `forage.rs`'s **RETIRED: the whole rung-3
-# > MANAGED HARVEST** landed — *"A Field is now foraged through the ordinary `forage_take` path exactly
-# > as a tended patch and a wild stand are — floor-live, worker-capped, drawn down"* — and the entry
-# > outliving that retirement is what made a completed cash-crop Field read `max 0 workers useful
-# > here` beneath a tile card stating two tenders. The chain: a Field took the managed branch of
-# > `forecast_inputs`, whose material ceiling comes from `FORECAST_PAYOFF_MATERIAL_KEYS`, which has no
-# > plant entry by design (a plant's materials are per PLANT), so its ceiling was structurally `[]`;
-# > `off_axis_useful_workers` then divided a `0` room by a live 1.12 tobacco/worker and answered `0`,
-# > while `hold_crew` / `reach_crew` — §7.2's rescue for exactly that shape — returned `0` because the
-# > source was "managed". Reported from play 2026-08-22.
-# >
-# > **`field_yield` is still a real quote and is still read** — it is the MSY skim on the Field rung's
-# > own curve (`forage::rung_payoff`), i.e. what the rung PAYS, which is what `FORECAST_PAYOFF_KEYS`
-# > asks it for. What it is not is a per-turn production a crew collects off a stock nobody draws down.
-const FORECAST_MANAGED_FLAG_KEYS := {
-    SOURCE_KIND_HERD: "corralled",
-}
-const FORECAST_MANAGED_IMPROVEMENTS := {
-    SOURCE_KIND_HERD: IMPROVEMENT_CORRAL,
-}
-# The PAYOFF an IMPROVEMENT buys — the food/turn the source pays once the rung is built (one worker
-# suffices). Keyed by improvement, and read ONLY as a payoff lookup: it is no longer how any surface
-# asks "is this a build?" (issue #442 — that question is now answered by the assignment's own
-# `improvement` field, or by which control the player is looking at).
-#
-# **THERE IS NO CEILING-KEY TABLE ANY MORE, on either web** (#426) and no dip ROW either (#442). The
-# during-build dip is composed — `stance ceiling × <rung>_build_fraction` — in exactly one place,
-# `improvement_forecast`, and paired with the payoff below.
-const FORECAST_PAYOFF_KEYS := {
-    "cultivate": "tended_yield",
-    "corral": "corral_yield",
-    "sow": "field_yield",
-    "tame": "pastoral_yield",
-}
-# **THE TRADE HALF OF THAT PAYOFF IS RETIRED** (`FORECAST_PAYOFF_TRADE_KEYS`, arc #527) along with
-# `tended_trade` / `field_trade` / `pastoral_trade` / `corral_trade` on the wire. A prepared source's
-# non-food product is MATERIALS, which are a VECTOR and never one per-turn number: the HERD rungs
-# state theirs through `FORECAST_PAYOFF_MATERIAL_KEYS` below, and the crop picker states the plant
-# web's per PLANT from the composition entry's own `sow_material_payoff` /
-# `cultivate_material_payoff`.
-#
-# The FODDER half survives. **PLANT RUNGS ONLY, and that asymmetry is structural rather than pending work:**
-# fodder is feed grown for penned animals, and no animal pays it (`fauna_config::YieldAccounts` fills
-# a structural zero there), so `tame` and `corral` have no twin here and never will.
-const FORECAST_PAYOFF_FODDER_KEYS := {
-    "cultivate": "tended_fodder",
-    "sow": "field_fodder",
-}
-# **AND THE MATERIAL HALF, WHICH IS A VECTOR AND THEREFORE NOT THE TRADE SCALAR RETURNING.** The two
-# HERD rungs quoted nothing at all for an inedible quarry: `corral_yield` / `pastoral_yield` are
-# provisions, a wolf's are honestly `0`, and the face read `0.00 food` or nothing. `corralMaterial` /
-# `pastoralMaterial` are what a prepared herd actually pays, one row per material, so a Tame or a
-# Corral on a wolf finally states a payoff.
-#
-# **THE PLANT WEB IS ABSENT HERE ON PURPOSE.** A patch's material payoff is per PLANT and per rung
-# (`sow_material_payoff` / `cultivate_material_payoff` on each composition entry), which the crop
-# picker states row by row; a single tile-level rung figure would sum across plants, and summing is
-# the retired axis under a new name.
-const FORECAST_PAYOFF_MATERIAL_KEYS := {
-    "corral": "corral_material",
-    "tame": "pastoral_material",
-}
-# **RETIRED — `FORECAST_FEED_KEYS`, the RUNNING COST a payoff was paid against.** It held exactly one
-# entry, `corral -> pen_upkeep`, so a pre-commit Corral row could read `+5.40/turn − 2.40/turn feed`.
-# There is no such cost: HUMAN FOOD IS NOT ANIMAL FEED. A pen eats the grass its fenced footprint
-# grows and the hay its keeper carries in — both FODDER — and a shortfall STARVES the herd
-# (`pen_fed_fraction` < 1) rather than billing the people's larder, and the wire carries no
-# `pen_upkeep`.
-#
-# So `corral_yield` STANDS ALONE, and no rung on either web quotes a food-unit running cost. The
-# rung's real standing price is in WORK, and it is already stated where every rung's is — the work
-# row's `⌃` tooltip, via `FORECAST_BUILD_UPKEEP_DEMAND_KEYS`. Do not mint a second feed term here to
-# put the subtraction back.
-# **THE DURING-BUILD DIP IS RETIRED, and so is the build's `crew_needed`**
-# (`docs/plan_standing_upkeep.md` §2.2). The wire carries no `<rung>BuildFraction` or
-# `<rung>CrewNeeded`, so nothing here composes a fraction from them.
-#
-# The dip said *"this crew is preparing ground, not gathering"*, which is a statement about a SHARED
-# crew and about nothing else. A source carries three independent allocations now — take, build,
-# maintain — so what a build costs is the hands standing on it, and the gatherers beside them carry
-# what gatherers carry. There is no factor left to multiply anything by: `preparing = 0` is read off
-# the model, not off a number.
-#
-# `crew_needed` was a staffing FLOOR under the source's published `workers_needed`, needed only
-# because that count was inverted out of a DIPPED take. With each activity stating its own crew there
-# is no blended count for a floor to raise, and `workers_needed` is answered per activity — hands to
-# meet the upkeep (`upkeep_workers_needed`), hands to haul the offer (`workers_needed`).
-# The per-source BUILD METER each improvement fills, 0..1. The one place that mapping is written down
-# (`RungGates.rung_in_progress` reads it, so the compose sheet, the work board and the map badge can
-# never quote different meters for one verb).
-const FORECAST_BUILD_METER_KEYS := {
-    IMPROVEMENT_CULTIVATE: "cultivation_progress",
-    IMPROVEMENT_SOW: "field_progress",
-    IMPROVEMENT_TAME: "domestication",
-    IMPROVEMENT_CORRAL: "corral_progress",
-}
-# **WHAT THE JOB HAS COST SO FAR AND WHAT IT COSTS IN TOTAL, in WORK UNITS**
-# (`docs/plan_unit_costed_work.md` §8). The `*_progress` meter above IS `work_done / work_cost`, so
-# these are never divided here and the fraction is never re-derived from them: one number, one
-# authority. What they add is the sentence a fraction structurally cannot make — *"18 of 50 work"* —
-# which is what makes a rung's SIZE visible now that rungs cost different amounts.
-const FORECAST_BUILD_WORK_DONE_KEYS := {
-    IMPROVEMENT_CULTIVATE: "cultivation_work_done",
-    IMPROVEMENT_SOW: "field_work_done",
-    IMPROVEMENT_TAME: "tame_work_done",
-    IMPROVEMENT_CORRAL: "corral_work_done",
-}
-# The cost half. **It is published WHETHER OR NOT A BUILD IS IN FLIGHT** — the resolved price of that
-# job on THIS source — which is what lets the compose sheet quote a rung BEFORE the player commits.
-const FORECAST_BUILD_WORK_COST_KEYS := {
-    IMPROVEMENT_CULTIVATE: "cultivation_work_cost",
-    IMPROVEMENT_SOW: "field_work_cost",
-    IMPROVEMENT_TAME: "tame_work_cost",
-    IMPROVEMENT_CORRAL: "corral_work_cost",
-}
-# **WHAT THAT RUNG COSTS TO HOLD, PER TURN — the STANDING price beside `workCost`'s one-off one**,
-# keyed by improvement exactly as the cost is and published under the same rule: unconditionally,
-# whether or not a build is in flight. It is what the offered face quotes as *and this much every
-# turn, forever* — the second half of what the player is agreeing to.
-#
-# **IT IS A PRICE AND NEVER A THRESHOLD** (`docs/plan_standing_upkeep.md` §2.4). It WAS the term the
-# build's closed form subtracted, back when the build crew supplied the rate while a meter was being
-# raised. **The keeping pool owes it at every fullness now** and a build crew's whole output is
-# progress, so a form that still netted it would quote a pace nobody pays — and a note that called it
-# a threshold would name a mechanism that no longer exists. What can still eat a build is the ROT,
-# which is `FORECAST_METER_ROT_KEY` and is a fact about the source rather than about the rung.
-#
-# **`upkeep_demand` IS STILL NOT THIS NUMBER, and since §2.8 it is one step further away.** That
-# field is the BILL THE KEEPERS WERE HANDED this turn (`forage::patch_keeping_basis`), which is what
-# makes `demand − supplied == shortfall` hold exactly — the right answer for *where is my pooled
-# shortfall landing* and the wrong one for *what would this rung cost to hold*. On the plant web it
-# is now INTERPOLATED up the branch as the one position climbs, so it is not even the rung's own
-# rate; this pair is, at every fullness and on a rung nobody has started. The rung is picked with the
-# same key table the cost is, so price, meter and rate can never name three different rungs.
-const FORECAST_BUILD_UPKEEP_DEMAND_KEYS := {
-    IMPROVEMENT_CULTIVATE: "cultivation_upkeep_demand",
-    IMPROVEMENT_SOW: "field_upkeep_demand",
-    IMPROVEMENT_TAME: "tame_upkeep_demand",
-    IMPROVEMENT_CORRAL: "corral_upkeep_demand",
-}
-# **THE MATERIAL TWIN OF THAT PAIR** — what holding THAT rung costs in goods per turn, keyed by the
-# same improvement so price, meter, work rate and goods rate can never name four different rungs.
-#
-# ⛔ **THIS IS THE RUNG'S RATE; `FORECAST_UPKEEP_MATERIAL_DEMAND_KEY` IS THE STAMPED BILL.** The
-# stamp says what the source was BILLED this turn, resolved through the rung it stands on; these say
-# what a rung it may not be on yet would COST. **On a source mid-climb the two DISAGREE, and that is
-# correct** — the work pair directly above has exactly that relationship. Do not reconcile them.
-#
-# ⛔ **EMPTY MEANS THE RUNG EATS NO MATERIAL, never zero of something** (the `MaterialPayoff`
-# contract): a reader states NO material clause rather than `0 hurdles`. On the shipped ladder both
-# plant keys and `tame_upkeep_material_demand` are always empty and only
-# `corral_upkeep_material_demand` names a good — so **a pastoral herd looking at the Pen row is the
-# only place this is ever non-empty in play**, and it is exactly the place the stamp cannot answer,
-# `animal:pastoral` declaring no material of its own. The route branch's stone is what lands in the
-# plant-shaped seam next.
-const FORECAST_BUILD_UPKEEP_MATERIAL_DEMAND_KEYS := {
-    IMPROVEMENT_CULTIVATE: "cultivation_upkeep_material_demand",
-    IMPROVEMENT_SOW: "field_upkeep_material_demand",
-    IMPROVEMENT_TAME: "tame_upkeep_material_demand",
-    IMPROVEMENT_CORRAL: "corral_upkeep_material_demand",
-}
 # **HOW MANY MORE TURNS THE BUILD NEEDS, AND WHAT THE CREW'S TOOLS TOOK OFF IT.** One of each per
 # SOURCE rather than per rung: at most one improvement is ever in flight on one source.
 #
@@ -1237,84 +1052,10 @@ const BUILD_LEG_IMPROVEMENT_KEY := "improvement"
 # (`forage::patch_build_legs` pushes a leg only where `owed > LEG_ALREADY_PAID`), which is exactly why
 # the client states the boundary rather than trusting the head of the list — see `build_leg_in_flight`.
 const BUILD_LEG_NOTHING_OWED := 0.0
-# **THE WIRE'S RUNG SPELLING, AND THE VERB THAT NAMES EACH RUNG AS A DESTINATION.** The sim spells a
-# rung `<branch>:<id>` — branch-qualified because `wild` names a rung on BOTH webs — and this client
-# spells the same thing as an improvement verb, because that is what a command carries. This is the
-# ONE place the two vocabularies meet.
-#
-# **`wild` HAS NO VERB, AND ITS ABSENCE IS THE ANSWER.** You do not build the rung every source
-# starts on, so it maps to `IMPROVEMENT_NONE` and a destination picker renders it as the floor of the
-# branch rather than as something to take the land to.
-const RUNG_KEY_WILD_PLANT := "plant:wild"
-const RUNG_KEY_TENDED := "plant:tended"
-const RUNG_KEY_FIELD := "plant:field"
-const RUNG_KEY_WILD_ANIMAL := "animal:wild"
-const RUNG_KEY_PASTORAL := "animal:pastoral"
-const RUNG_KEY_PEN := "animal:pen"
-# **THE ROUTE BRANCH'S FOUR, ALIASED OFF `HudRouteVocab` RATHER THAN RESTATED.** That leaf is the
-# road readout's vocabulary and already spells them; a second spelling here is exactly the "one fact
-# written twice" this pair of tables warns about one comment down. The direction is safe by that
-# file's own contract — it references this layer inside FUNCTIONS only, never in a `const`, so the
-# two do not form a load cycle.
-const RUNG_KEY_PATH := HudRouteVocab.RUNG_KEY_PATH
-const RUNG_KEY_TRAIL := HudRouteVocab.RUNG_KEY_TRAIL
-const RUNG_KEY_DIRT_ROAD := HudRouteVocab.RUNG_KEY_DIRT_ROAD
-const RUNG_KEY_PAVED_ROAD := HudRouteVocab.RUNG_KEY_PAVED_ROAD
-const RUNG_KEY_IMPROVEMENTS := {
-    RUNG_KEY_WILD_PLANT: IMPROVEMENT_NONE,
-    RUNG_KEY_TENDED: IMPROVEMENT_CULTIVATE,
-    RUNG_KEY_FIELD: IMPROVEMENT_SOW,
-    RUNG_KEY_WILD_ANIMAL: IMPROVEMENT_NONE,
-    RUNG_KEY_PASTORAL: IMPROVEMENT_TAME,
-    RUNG_KEY_PEN: IMPROVEMENT_CORRAL,
-    # ⛔ **THE ROUTE BRANCH'S FREE FLOOR IS TWO RUNGS DEEP, AND BOTH DECLARE NO VERB.** A path and
-    # the trail above it are both worn in by traffic alone — neither is something a band
-    # builds, so both map to `IMPROVEMENT_NONE` exactly as the two `wild` rungs do. The gap this
-    # closes is above them: `grade` and `pave` are real verbs now, where the branch declared none at
-    # all when these tables were written.
-    RUNG_KEY_PATH: IMPROVEMENT_NONE,
-    RUNG_KEY_TRAIL: IMPROVEMENT_NONE,
-    RUNG_KEY_DIRT_ROAD: IMPROVEMENT_GRADE,
-    RUNG_KEY_PAVED_ROAD: IMPROVEMENT_PAVE,
-}
-# **…AND THE INVERSE: THE RUNG EACH IMPROVEMENT VERB BUILDS.** `improvement_is_done` asks this of
-# every rung of every source the HUD draws, so it is written down rather than searched for in the
-# crossing above — a reverse scan at call time would walk six rows to answer what a `has` answers.
-#
-# ⛔ **THE PAIR IS ONE FACT WRITTEN TWICE AND MUST STAY IN STEP.** A rung added to one table and not
-# the other is either a verb naming no rung — which reads as *never built*, silently — or a rung no
-# verb can reach. The route ladder is in BOTH, which is what closed the gap `grade` / `pave` opened.
-#
-# **`IMPROVEMENT_NONE` IS ABSENT, AND THAT ABSENCE IS THE ANSWER.** The floor is not something a band
-# builds, it is where every source starts, and it is spelled differently on each branch — so *is
-# `none` done?* answers `false`, which is what every rung walk in this client already relies on.
-const IMPROVEMENT_RUNG_KEYS := {
-    IMPROVEMENT_CULTIVATE: RUNG_KEY_TENDED,
-    IMPROVEMENT_SOW: RUNG_KEY_FIELD,
-    IMPROVEMENT_TAME: RUNG_KEY_PASTORAL,
-    IMPROVEMENT_CORRAL: RUNG_KEY_PEN,
-    IMPROVEMENT_GRADE: RUNG_KEY_DIRT_ROAD,
-    IMPROVEMENT_PAVE: RUNG_KEY_PAVED_ROAD,
-}
 # **THE RUNG THE SOURCE STANDS ON**, in that same `<branch>:<id>` spelling — the ONE wire field that
 # answers *"has this rung been built"* on both webs (`forage::patch_rung_key`, and its animal twin).
 # `prefix` spells it, so a `patch_`-prefixed `tile_info` cross-ref and a bare wire row read alike.
 const FORECAST_CURRENT_RUNG_KEY := "current_rung"
-# …and the branch each web climbs, BOTTOM RUNG FIRST. It is an ORDER as well as a membership list:
-# every consumer walks it to say where a source stands and what is above it, so a branch listed out
-# of climb order would mark the wrong rung as *banked*.
-const RUNG_BRANCH_PLANT := [RUNG_KEY_WILD_PLANT, RUNG_KEY_TENDED, RUNG_KEY_FIELD]
-const RUNG_BRANCH_ANIMAL := [RUNG_KEY_WILD_ANIMAL, RUNG_KEY_PASTORAL, RUNG_KEY_PEN]
-# **THE ROUTE BRANCH IS FOUR RUNGS, NOT THREE**, because its free floor is two storeys: a path is
-# what the first traffic wears in and a trail is what more of it wears over that. Both are below
-# the first rung anybody pays for, which is what `rung_above_branch_floor` reads out of the ORDER.
-const RUNG_BRANCH_ROUTE := [RUNG_KEY_PATH, RUNG_KEY_TRAIL, RUNG_KEY_DIRT_ROAD,
-    RUNG_KEY_PAVED_ROAD]
-# …and EVERY BRANCH THIS CLIENT KNOWS, in one list. It is what makes a question about a rung KEY
-# answerable without first being told which web the source is on — the wire spells a rung
-# `<branch>:<id>`, so the branch travels inside the key. The route web was that promised third entry,
-# and it cost exactly one row here and no per-source code anywhere.
-const RUNG_BRANCHES := [RUNG_BRANCH_PLANT, RUNG_BRANCH_ANIMAL, RUNG_BRANCH_ROUTE]
 const FORECAST_BUILD_GEAR_WORK_KEY := "build_work_from_gear"
 # **WHAT IT COSTS TO HOLD THIS SOURCE AT THE RUNG IT STANDS ON**, in work units per turn — the RATE
 # half of the ladder beside the build's PILE (`docs/plan_standing_upkeep.md` §2). All four ship on
@@ -1398,12 +1139,6 @@ const FORECAST_NEGLECT_GRACE_KEY := "neglect_grace_remaining"
 # RING is priced from. Reading the above-selector as universal is what left the ring card quoting no
 # pile at all through a whole slice.
 const FORECAST_BUILD_MATERIAL_COST_KEY := "build_material_cost"
-# …and the pile `animal:pen` swallows to raise, read at THAT rung rather than at the one above the
-# source. The one field a RING can be priced from: `animal:pen` is the top of the animal branch, so
-# the key above answers `[]` on every corralled herd, which is exactly the row a ring is offered on.
-# On a PASTORAL herd the two carry the same pile by construction — same rung, two selectors — and it
-# is their DISAGREEMENT on a penned herd that earns this key its place.
-const FORECAST_CORRAL_BUILD_MATERIAL_COST_KEY := "corral_build_material_cost"
 # What holding this source's OWN current rung swallows per turn (the STAMPED bill, `upkeep_demand`'s
 # per-good twin) and what the band's store actually paid toward it. The sim publishes both terms
 # rather than their difference, for the reason the work trio does: a client renders and subtracts
@@ -1635,28 +1370,6 @@ const BUILD_NO_ESCAPEMENT_ROOM := 0.0
 ## cycle between two `class_name`d scripts fails to load the whole client.
 const BUILD_GEAR_PER_WORKER := "per_worker"
 const BUILD_GEAR_SATURATING_CREW := "saturating_crew"
-## **THE PER-WEB *ACHIEVED* BOOL OF EACH RUNG THAT HAS ONE** — `is_cultivated` / `is_field` on the
-## plant web, `corralled` on the animal one; `Tame` has never had one, its achievement being its
-## meter. **No shipped reader in this client asks them.** The table survives for the test tree
-## (`fixtures_rung.gd`, `map_preview`), which reads it to DERIVE a fixture's standing rung rather than
-## spell one by hand — one table, so a fixture's flags and its `current_rung` cannot disagree.
-##
-## ⛔ **IT IS NOT THE *IS THIS BUILT* TEST, AND MUST NOT BE READ AS ONE.** That question is
-## `improvement_is_done`, which reads the wire's `current_rung` — one field, both webs, and no
-## cross-rung table to keep in step (`RETIRED: FORECAST_RETIRED_BY_HIGHER_RUNG`, below).
-##
-## ⛔ **RETIRED CLAIM — *"a Field sown from wild ground carries `is_cultivated` false FOREVER"*.**
-## That was the two-independent-meters model, and it is why reading these bools for *built* once
-## needed a cross-rung table. There is ONE ladder position now and the Field rung's range begins where
-## the tended rung's ends, so `is_cultivated()` is `held.is_at_or_above(PlantTended)` and a Field
-## answers it TRUE however it was reached. These bools and `current_rung` are two spellings of one
-## standing rather than two facts that happen to agree — which is what makes the retired
-## `rung_needs_repair` (its epitaph is beside `improvement_progress`) unanswerable.
-const FORECAST_DONE_FLAG_KEYS := {
-    IMPROVEMENT_CULTIVATE: "is_cultivated",
-    IMPROVEMENT_SOW: "is_field",
-    IMPROVEMENT_CORRAL: "corralled",
-}
 ## **RETIRED — `FORECAST_RETIRED_BY_HIGHER_RUNG`.** It was a second table saying only that a Field is
 ## also cultivated, and it existed because *built* was asked of each web's private bools, which cannot
 ## see a rung skipped by `Sow`. `improvement_is_done` now compares the source's standing rung against
@@ -1931,7 +1644,7 @@ static func has_engagement_stage(engage_rate: float) -> bool:
 ## The wire's own flag for a herd held behind a fence. Named here, in the layer both the forecast and
 ## the kit roster read through, so `KitRoster.QUARRY_CORRALLED_KEY` can alias it exactly as
 ## `SOURCE_ENGAGE_RATE` aliases `FORECAST_ENGAGE_RATE_KEY` — one spelling of one wire key.
-const SOURCE_CORRALLED_KEY := "corralled"
+const SOURCE_CORRALLED_KEY := "enclosed"
 
 ## **IS THERE A FIGHT TO LOSE AT THIS SOURCE?** — the ONE predicate every fight-shaped surface takes:
 ## the kit picker's offer test, the priced gate behind the sheet's numbers, the sheet's own refusal
@@ -1959,7 +1672,7 @@ const SOURCE_CORRALLED_KEY := "corralled"
 ## absent — so `false` — on every plant one, which is what keeps the plant web out of the pen arm.
 static func quarry_is_fought(src: Dictionary, prefix: String) -> bool:
     return is_fought(float(src.get(prefix + FORECAST_ENGAGE_RATE_KEY, NO_ENGAGEMENT_STAGE)),
-        bool(src.get(SOURCE_CORRALLED_KEY, false)))
+        RungQuotes.is_enclosed(src, prefix))
 
 ## The same verdict for a caller holding the two terms already RESOLVED rather than a source and a
 ## prefix — a COMPOSED forecast, whose keys carry no prefix at all (`forecast_inputs` copies both terms
@@ -2462,9 +2175,9 @@ static func escapement_room_next_turn(src: Dictionary, prefix: String, floor: fl
 ## This function therefore takes NO improvement argument, and that absence is the point: it carried an
 ## unused `improvement` parameter through five call sites, which read as an invitation to honour it.
 static func source_is_managed(src: Dictionary, kind: String, prefix: String) -> bool:
-    if not FORECAST_MANAGED_FLAG_KEYS.has(kind):
-        return false
-    return bool(src.get(prefix + String(FORECAST_MANAGED_FLAG_KEYS[kind]), false))
+    # **MANAGED IS A TRAIT, NOT A RUNG KEY**: the source is managed when the rung the config marks
+    # `enclosed` is reached. Plants carry no such rung, so a Field stays a drawn-down stand.
+    return RungQuotes.is_enclosed(src, prefix)
 
 ## **THE CREW'S THROUGHPUT IN BIOMASS, READ OFF THE WIRE** — what ONE worker moves before any account
 ## conversion, on either web. Everything on the crew side of the panel divides by this: the take's
@@ -3581,27 +3294,14 @@ const TEACHING_NOTHING_UNWORKED := "Teaching nothing: nothing is being taken."
 ## The value is the lesson's own word in the sentence's lower case; the husbandry ceiling does NOT
 ## suppress it, matching the sim, where the credit is read off the rung alone — hunting a wolf that
 ## can never be tamed still teaches Herding.
-const RUNG_LESSONS := {
-    SOURCE_KIND_FORAGE: {
-        IMPROVEMENT_NONE: "cultivation",
-        IMPROVEMENT_CULTIVATE: "seed selection",
-    },
-    SOURCE_KIND_HERD: {
-        IMPROVEMENT_NONE: "herding",
-        IMPROVEMENT_TAME: "penning",
-    },
-}
-
-## The lesson this source's STANDING rung teaches, or "" when its rung declares none. The standing
-## rung is the highest one actually BUILT (highest first, for the reason the improvement control's
-## DONE branch tests that way: a Field is also cultivated, a penned herd also fully tamed).
-static func rung_lesson(kind: String, src: Dictionary, prefix: String) -> String:
-    var lessons: Dictionary = RUNG_LESSONS.get(kind, {})
-    if lessons.is_empty():
-        return ""
-    var idx := _standing_rung_index(kind, src, prefix)
-    var standing := IMPROVEMENT_NONE if idx < 0 else String(_improvement_ladder(kind)[idx])
-    return String(lessons.get(standing, ""))
+## **THE LESSON IS THE KNOWLEDGE THAT GATES THE NEXT RUNG** -- what working a source at its standing
+## rung teaches is the `unlock_knowledge` of the rung above it (a wild patch teaches `cultivation`,
+## which gates Cultivate), so it is read off the next quote rather than kept in a table beside the
+## word. Spelled in the sentence's lower case. `""` at the top of the branch, where nothing is left to
+## teach: a Field and a built Pen are managed, so the sheet states no rate there anyway.
+static func rung_lesson(_kind: String, src: Dictionary, prefix: String) -> String:
+    var knowledge_id := String(RungQuotes.next(src, prefix).get(RungQuotes.KEY_UNLOCK, ""))
+    return knowledge_id.replace("_", " ")
 
 ## **DOES THE FACTION ALREADY KNOW THE LESSON THIS SOURCE TEACHES?** — the test that stops the aside
 ## teaching a craft the player finished learning twenty turns ago (reported from play: a wild patch
@@ -3615,25 +3315,30 @@ static func rung_lesson(kind: String, src: Dictionary, prefix: String) -> String
 ## per-lesson track key here would be a second spelling of it, free to drift the first time a rung's
 ## knowledge is renamed. `knowledge` is the faction's `{track: progress}` row, threaded in — this
 ## layer holds no snapshot and must never reach for one.
-static func rung_lesson_known(kind: String, src: Dictionary, prefix: String,
+static func rung_lesson_known(_kind: String, src: Dictionary, prefix: String,
         knowledge: Dictionary) -> bool:
-    var ladder := _improvement_ladder(kind)
-    var next_idx := _standing_rung_index(kind, src, prefix) + 1
-    if next_idx >= ladder.size():
+    var next_quote := RungQuotes.next(src, prefix)
+    if next_quote.is_empty():
         return false
-    return not RungGates.knowledge_gate_unmet(String(ladder[next_idx]), knowledge)
+    return not RungGates.knowledge_gate_unmet(next_quote, knowledge)
 
 ## The index in this web's ladder of the highest rung the source has BUILT — `-1` for a source still
 ## standing on wild ground, which is `IMPROVEMENT_NONE`'s row in every rung-keyed table.
-static func _standing_rung_index(kind: String, src: Dictionary, prefix: String) -> int:
-    var ladder := _improvement_ladder(kind)
+static func _standing_rung_index(_kind: String, src: Dictionary, prefix: String) -> int:
+    var ladder := _improvement_ladder(src, prefix)
     for i in range(ladder.size() - 1, -1, -1):
         if improvement_is_done(src, prefix, String(ladder[i])):
             return i
     return -1
 
-static func _improvement_ladder(kind: String) -> Array:
-    return FORAGE_IMPROVEMENTS if kind == SOURCE_KIND_FORAGE else HUNT_IMPROVEMENTS
+## **THE VERBS THIS SOURCE CAN CLIMB, IN RUNG ORDER** -- read off the source's own `rung_quotes`
+## (stamped from the catalog), so a rung added to the config is a step here with no edit.
+static func _improvement_ladder(src: Dictionary, prefix: String) -> Array:
+    return RungQuotes.verbs(src, prefix)
+
+## The verbs a source's ladder offers, for a caller outside this layer (the compose sheet's rung walk).
+static func improvement_ladder(src: Dictionary, prefix: String) -> Array:
+    return RungQuotes.verbs(src, prefix)
 
 ## **IS THIS CREW TAKING ANYTHING?** — the client's reading of the sim's work predicate
 ## (`systems::labor::crew_is_working_the_source`, `standing_above_floor > 0`), plus the crew term the
@@ -3888,7 +3593,8 @@ static func floor_chart_model(src: Dictionary, kind: String, prefix: String, flo
         # cannot name has no word to hang a figure on. Never a zero: a real source really can hold
         # nothing.
         "destination_capacity": build_destination_capacity(src, prefix),
-        "destination_rung": DetailFormat.rung_badge_word(build_destination_rung(src, prefix)),
+        "destination_rung": DetailFormat.rung_badge_word(build_destination_rung(src, prefix),
+            src, prefix),
         "learn_multiplier": learn_multiplier(floor_value),
         "crew_to_clear": crew_to_clear(escapement_room(src, prefix, floor_value), carry, reaching,
             body_mass, engage_rate, stay, per_crew),
@@ -4064,10 +3770,9 @@ static func forecast_inputs(src: Dictionary, kind: String, prefix: String, floor
     var hold_room_biomass := NO_ROOM_IN_BIOMASS
     var next_room_biomass := NO_ROOM_IN_BIOMASS
     if source_is_managed(src, kind, prefix):
-        var rung := String(FORECAST_MANAGED_IMPROVEMENTS[kind])
-        ceiling = float(src.get(prefix + String(FORECAST_PAYOFF_KEYS[rung]), 0.0))
-        if FORECAST_PAYOFF_FODDER_KEYS.has(rung):
-            ceiling_fodder = float(src.get(prefix + String(FORECAST_PAYOFF_FODDER_KEYS[rung]), 0.0))
+        var rung := RungQuotes.enclosed_verb(src, prefix)
+        ceiling = RungQuotes.number(src, prefix, rung, RungQuotes.KEY_FOOD_YIELD)
+        ceiling_fodder = RungQuotes.number(src, prefix, rung, RungQuotes.KEY_FODDER)
         # **A RUNG-3 MANAGED SOURCE HAS NO BURST TO SPEND.** The sim never draws a Field or a built Pen
         # down, so its payoff IS its every-turn rate: now and after are the same number, and the
         # readout renders one reading rather than an arrow pointing at itself.
@@ -4076,9 +3781,8 @@ static func forecast_inputs(src: Dictionary, kind: String, prefix: String, floor
         # prepared inedible quarry is worth. A managed PATCH has no entry in the table: a plant's
         # materials are per PLANT, stated row by row on the crop picker, and a tile-level figure would
         # sum across the basket.
-        if FORECAST_PAYOFF_MATERIAL_KEYS.has(rung):
-            ceiling_material = material_payoff_rows(
-                src.get(prefix + String(FORECAST_PAYOFF_MATERIAL_KEYS[rung]), []))
+        ceiling_material = material_payoff_rows(
+            RungQuotes.array_field(src, prefix, rung, RungQuotes.KEY_MATERIAL_PAYOFF))
         hold_ceiling = ceiling
         hold_ceiling_fodder = ceiling_fodder
         # A managed source pays its production every turn, so *next turn* and *the room* are the same
@@ -4155,7 +3859,7 @@ static func forecast_inputs(src: Dictionary, kind: String, prefix: String, floor
     # kill rhythm. A crew building a pen still takes whole animals while it does so: the dip scales
     # the crew, it does not change the rhythm.
     var food_per_animal := float(src.get(prefix + FORECAST_FOOD_PER_ANIMAL_KEY, 0.0))
-    var whole_animal: bool = food_per_animal > 0.0 and not bool(src.get("corralled", false))
+    var whole_animal: bool = food_per_animal > 0.0 and not RungQuotes.is_enclosed(src, prefix)
     return {
         "per_worker": per_worker,
         "ceiling": ceiling,
@@ -4235,7 +3939,7 @@ static func forecast_inputs(src: Dictionary, kind: String, prefix: String, floor
         # `with_published_useful_crew`, whose other argument is a LABOR ROW and carries no herd fields)
         # could otherwise reach neither. Copied raw, exactly as `engage_rate` is, so the verdict stays
         # in the one function that owns it. `false` on every plant source, which never publishes it.
-        SOURCE_CORRALLED_KEY: bool(src.get(prefix + SOURCE_CORRALLED_KEY, false)),
+        SOURCE_CORRALLED_KEY: RungQuotes.is_enclosed(src, prefix),
         # **THE RETREAT — the take's OWN term, and the ONE the kit's `dispersion` reaches the sheet
         # through.** `KitRoster.repriced_source` has already folded the kit into the source's
         # `stay_fraction` (the wire's own `clamp(1 - (1 - stay) x dispersion)`), so what arrives here is
@@ -4289,7 +3993,7 @@ static func forecast_inputs(src: Dictionary, kind: String, prefix: String, floor
 ## above), so the deal a rung quotes is its payoff and nothing subtracted from it, on BOTH webs.
 static func improvement_forecast(src: Dictionary, kind: String, prefix: String, floor: float,
         improvement: String) -> Dictionary:
-    if improvement == IMPROVEMENT_NONE or not FORECAST_PAYOFF_KEYS.has(improvement):
+    if improvement == IMPROVEMENT_NONE or RungQuotes.quote_of_verb(src, prefix, improvement).is_empty():
         return {}
     var base_forecast := forecast_inputs(src, kind, prefix, floor)
     if not bool(base_forecast["known"]):
@@ -4300,22 +4004,22 @@ static func improvement_forecast(src: Dictionary, kind: String, prefix: String, 
     # to; a deal composed anyway would advertise a payoff for a rung that cannot be built here.
     if build_work_cost(src, prefix, improvement) <= BUILD_WORK_COST_NONE:
         return {}
-    var payoff := float(src.get(prefix + String(FORECAST_PAYOFF_KEYS[improvement]), 0.0))
+    var payoff := RungQuotes.number(src, prefix, improvement, RungQuotes.KEY_FOOD_YIELD)
     # The payoff's non-food component — a VECTOR like every other yield in this model. Fodder is
     # plant-only (no animal pays it — a structural zero, not a gap), so a herd rung has no twin in the
     # table, resolves to 0.0 and renders as nothing, which is the rule. (The trade twin that reached
     # all four rungs went with the trade axis, arc #527.)
-    var payoff_fodder := 0.0
-    if FORECAST_PAYOFF_FODDER_KEYS.has(improvement):
-        payoff_fodder = float(src.get(prefix + String(FORECAST_PAYOFF_FODDER_KEYS[improvement]), 0.0))
+    var payoff_fodder := RungQuotes.number(src, prefix, improvement, RungQuotes.KEY_FODDER)
     # …and the MATERIAL half of the payoff, a VECTOR. Herd rungs only (see
     # `FORECAST_PAYOFF_MATERIAL_KEYS`), so a plant rung resolves empty and its deal row is unchanged.
-    var payoff_material: Array[Dictionary] = []
-    if FORECAST_PAYOFF_MATERIAL_KEYS.has(improvement):
-        payoff_material = material_payoff_rows(
-            src.get(prefix + String(FORECAST_PAYOFF_MATERIAL_KEYS[improvement]), []))
+    var payoff_material: Array[Dictionary] = material_payoff_rows(
+        RungQuotes.array_field(src, prefix, improvement, RungQuotes.KEY_MATERIAL_PAYOFF))
     return {
         "improvement": improvement,
+        # Whether the rung raised is the config's `enclosed` one (a pen) -- the trait a note that is
+        # only true of a pen asks, instead of a verb name.
+        "enclosing": RungQuotes.has_trait(RungQuotes.quote_of_verb(src, prefix, improvement),
+            RungQuotes.TRAIT_ENCLOSED),
         "floor": clamp_floor(floor),
         # The crew's forecast — ONE, priced per account through the same `expected_yield_account` the
         # committed row will be.
@@ -4368,9 +4072,9 @@ static func improvement_forecast(src: Dictionary, kind: String, prefix: String, 
 ##
 ## `kind` is a SOURCE kind (`SOURCE_KIND_*`); a caller holding a labor kind converts through
 ## `source_kind_for_labor`.
-static func build_verb(src: Dictionary, prefix: String, kind: String,
+static func build_verb(src: Dictionary, prefix: String, _kind: String,
         declared: String = IMPROVEMENT_NONE) -> String:
-    var ladder := _improvement_ladder(kind)
+    var ladder := _improvement_ladder(src, prefix)
     var wanted := declared.strip_edges().to_lower()
     for i in range(ladder.size() - 1, -1, -1):
         var rung := String(ladder[i])
@@ -4403,8 +4107,8 @@ static func build_verb(src: Dictionary, prefix: String, kind: String,
 ## to maintaining it. Maintaining it is precisely when it is at risk, so this returns the rung.
 ##
 ## `IMPROVEMENT_NONE` where no meter carries anything: a wild source, which is billed nothing.
-static func at_risk_rung(src: Dictionary, prefix: String, kind: String) -> String:
-    var ladder := _improvement_ladder(kind)
+static func at_risk_rung(src: Dictionary, prefix: String, _kind: String) -> String:
+    var ladder := _improvement_ladder(src, prefix)
     for i in range(ladder.size() - 1, -1, -1):
         var rung := String(ladder[i])
         if improvement_progress(src, prefix, rung) > BUILD_METER_UNSTARTED:
@@ -4626,10 +4330,7 @@ static func build_is_in_flight(src: Dictionary, prefix: String, kind: String,
 ##
 ## **A VERB NAMING NO RUNG ANSWERS `false`**, `IMPROVEMENT_NONE` included: nobody builds the floor.
 static func improvement_is_done(src: Dictionary, prefix: String, improvement: String) -> bool:
-    if not IMPROVEMENT_RUNG_KEYS.has(improvement):
-        return false
-    return rung_at_or_above(String(src.get(prefix + FORECAST_CURRENT_RUNG_KEY, "")),
-        String(IMPROVEMENT_RUNG_KEYS[improvement]))
+    return RungQuotes.reached(src, prefix, improvement)
 
 ## **WHICH RUNG DOES THIS SOURCE STAND ON, AS AN IMPROVEMENT KEY** — `IMPROVEMENT_RUNG_KEYS` read
 ## backwards against the ONE wire field that states the position (`current_rung`, `<branch>:<id>`).
@@ -4649,13 +4350,7 @@ static func improvement_is_done(src: Dictionary, prefix: String, improvement: St
 ##
 ## `prefix` spells the key, so a `patch_`-prefixed `tile_info` cross-ref and a bare wire row both work.
 static func standing_improvement(src: Dictionary, prefix: String) -> String:
-    var standing := String(src.get(prefix + FORECAST_CURRENT_RUNG_KEY, ""))
-    if standing == "":
-        return IMPROVEMENT_NONE
-    for improvement in IMPROVEMENT_RUNG_KEYS:
-        if String(IMPROVEMENT_RUNG_KEYS[improvement]) == standing:
-            return String(improvement)
-    return IMPROVEMENT_NONE
+    return RungQuotes.held_verb(src, prefix)
 
 ## ⛔ **RETIRED — `rung_needs_repair`.** It asked *"has this source ACHIEVED this rung and then let it
 ## SLIP?"* — the rung's own stamped flag true beside a meter short of its cost — and it was the client
@@ -4686,28 +4381,19 @@ static func standing_improvement(src: Dictionary, prefix: String) -> String:
 ## How far along this improvement's build meter is, 0..1. Clamped, so a wire value that overshoots
 ## cannot render a >100% meter. See `FORECAST_BUILD_METER_KEYS` for which meter each verb fills.
 static func improvement_progress(src: Dictionary, prefix: String, improvement: String) -> float:
-    if not FORECAST_BUILD_METER_KEYS.has(improvement):
-        return 0.0
-    return clampf(float(src.get(
-        prefix + String(FORECAST_BUILD_METER_KEYS[improvement]), 0.0)), 0.0, 1.0)
+    return clampf(RungQuotes.number(src, prefix, improvement, RungQuotes.KEY_PROGRESS), 0.0, 1.0)
 
 ## **HOW MUCH WORK THIS IMPROVEMENT HAS ABSORBED SO FAR**, in work units — the numerator of the
 ## percentage `improvement_progress` answers, read rather than reconstructed from it.
 static func build_work_done(src: Dictionary, prefix: String, improvement: String) -> float:
-    if not FORECAST_BUILD_WORK_DONE_KEYS.has(improvement):
-        return 0.0
-    return maxf(float(src.get(
-        prefix + String(FORECAST_BUILD_WORK_DONE_KEYS[improvement]), 0.0)), 0.0)
+    return maxf(RungQuotes.number(src, prefix, improvement, RungQuotes.KEY_WORK_DONE), 0.0)
 
 ## **WHAT THIS IMPROVEMENT COSTS ON THIS SOURCE**, in work units — a Tame carrying the species' own
 ## cost multiplier, a Corral not (a fence is a fence). `BUILD_WORK_COST_NONE` where the wire prices
 ## no such job here, which every readout treats as "state the percentage alone".
 static func build_work_cost(src: Dictionary, prefix: String, improvement: String) -> float:
-    if not FORECAST_BUILD_WORK_COST_KEYS.has(improvement):
-        return BUILD_WORK_COST_NONE
-    return maxf(float(src.get(
-        prefix + String(FORECAST_BUILD_WORK_COST_KEYS[improvement]), BUILD_WORK_COST_NONE)),
-        BUILD_WORK_COST_NONE)
+    return maxf(RungQuotes.number(src, prefix, improvement, RungQuotes.KEY_WORK_COST,
+        BUILD_WORK_COST_NONE), BUILD_WORK_COST_NONE)
 
 # ---- THE IN-FLIGHT FENCE RING'S METER -----------------------------------------------------------
 # The two herd-dict keys the ring's meter lives in, BOTH IN WORK UNITS. `pen_extend_progress` is the
@@ -4796,11 +4482,8 @@ static func pen_extend_fraction(herd: Dictionary) -> float:
 ## `NO_UPKEEP_DEMAND` for a rung the wire states no rate on, which is an honest measured nothing (the
 ## `corralYield` rule): a rung that costs nothing to hold is free to keep once it is built.
 static func build_upkeep_demand(src: Dictionary, prefix: String, improvement: String) -> float:
-    if not FORECAST_BUILD_UPKEEP_DEMAND_KEYS.has(improvement):
-        return NO_UPKEEP_DEMAND
-    return maxf(float(src.get(
-        prefix + String(FORECAST_BUILD_UPKEEP_DEMAND_KEYS[improvement]), NO_UPKEEP_DEMAND)),
-        NO_UPKEEP_DEMAND)
+    return maxf(RungQuotes.number(src, prefix, improvement, RungQuotes.KEY_UPKEEP_DEMAND,
+        NO_UPKEEP_DEMAND), NO_UPKEEP_DEMAND)
 
 ## **WHAT THIS SOURCE'S AT-RISK METER IS LOSING PER TURN, IN WORK UNITS** — the one term that can stop
 ## a build finishing (`docs/plan_standing_upkeep.md` §2.4), and the term `build_turns_at` nets off the
@@ -4886,7 +4569,7 @@ static func build_blocked_reason(src: Dictionary, prefix: String) -> String:
 ## a two-leg `sow` holds the head of the queue through its Cultivate leg.
 static func build_destination_rung(src: Dictionary, prefix: String) -> String:
     var key := String(src.get(prefix + FORECAST_BUILD_DESTINATION_KEY, "")).strip_edges()
-    return String(RUNG_KEY_IMPROVEMENTS.get(key, IMPROVEMENT_NONE))
+    return RungQuotes.verb_of(RungQuotes.quote_of_rung(src, prefix, key))
 
 ## **WHAT THIS SOURCE WILL CARRY AT THAT DESTINATION** — the wire's own figure, passed through, with
 ## every "no destination" reading normalised to `NO_BUILD_DESTINATION_CAPACITY`.
@@ -4930,11 +4613,12 @@ static func build_legs(src: Dictionary, prefix: String) -> Array[Dictionary]:
             continue
         var leg: Dictionary = entry
         var key := String(leg.get(BUILD_LEG_RUNG_KEY, "")).strip_edges()
-        if not RUNG_KEY_IMPROVEMENTS.has(key):
+        var leg_quote := RungQuotes.quote_of_rung(src, prefix, key)
+        if leg_quote.is_empty():
             continue
         rows.append({
             BUILD_LEG_RUNG_KEY: key,
-            BUILD_LEG_IMPROVEMENT_KEY: String(RUNG_KEY_IMPROVEMENTS[key]),
+            BUILD_LEG_IMPROVEMENT_KEY: RungQuotes.verb_of(leg_quote),
             BUILD_LEG_WORK_KEY: maxf(float(leg.get(BUILD_LEG_WORK_KEY, 0.0)), 0.0),
             # The four negatives are the countdown's own and are passed through VERBATIM — a leg
             # cannot be dated when the entry carrying it cannot, and flattening one into another is
@@ -4966,71 +4650,6 @@ static func build_leg_in_flight(src: Dictionary, prefix: String) -> Dictionary:
         if float(leg.get(BUILD_LEG_WORK_KEY, BUILD_LEG_NOTHING_OWED)) > BUILD_LEG_NOTHING_OWED:
             return leg
     return {}
-
-## The BRANCH a source climbs, bottom rung first — `RUNG_BRANCH_PLANT` for a patch, `RUNG_BRANCH_ANIMAL`
-## for a herd. One picker, so the two webs' tracks cannot be walked in two different orders.
-static func rung_branch_for_kind(source_kind: String) -> Array:
-    return RUNG_BRANCH_ANIMAL if source_kind == SOURCE_KIND_HERD else RUNG_BRANCH_PLANT
-
-## **HAS THIS SOURCE ACTUALLY BEEN IMPROVED** — is the rung it STANDS on (the wire's `current_rung`)
-## above the BOTTOM rung of whichever branch that key belongs to? Wild land and a wild herd answer
-## `false`; every rung a band ever built answers `true`.
-##
-## **IT TAKES A KEY, NOT A SOURCE, AND THAT IS THE WHOLE POINT.** The branch travels inside the key,
-## so this is ONE read for the plant web, the animal web and the branch that does not exist yet —
-## where the alternative is every consumer hand-writing `is_cultivated`/`is_field` on one web and
-## `domestication`/`corralled` on the other, and growing a third reader the day a route ladder ships.
-##
-## ⛔ **AN UNKNOWN KEY ANSWERS `false`, DELIBERATELY** — `""` included, which is what a hand-built
-## fixture carries. A key naming a branch this client has not been taught means a STALE CLIENT, and
-## the two ways of being wrong are not symmetric: `false` shows the player nothing, which is visible
-## and safe, while `true` would call every source on that branch improved — its untouched FLOOR
-## included — which is exactly the defect this test exists to remove.
-##
-## **IT IS NOT `_standing_rung_index`, AND MUST NOT BE FOLDED INTO IT.** That one asks *how far up its
-## own web's ladder has this SOURCE come*, and needs a source to ask it of; this one asks whether a
-## RUNG KEY names anything above its branch's floor, and needs only the key. Two questions.
-## (Its own retired reasoning — *"that one reads the stamped achievement flags and carries repair
-## semantics"* — died twice over: `_standing_rung_index` reads `improvement_is_done`, i.e. the very
-## position the sim publishes, and there are no repair semantics left to carry.)
-static func rung_above_branch_floor(rung_key: String) -> bool:
-    var key := rung_key.strip_edges()
-    if key == "":
-        return false
-    for branch_variant in RUNG_BRANCHES:
-        var branch: Array = branch_variant
-        var idx := branch.find(key)
-        if idx >= 0:
-            return idx > 0
-    return false
-
-## **IS THE RUNG A SOURCE STANDS ON AT OR ABOVE THIS ONE?** — the comparison `improvement_is_done` is,
-## and the only place the branch ORDER in `RUNG_BRANCHES` is turned into a verdict. Both arguments are
-## wire rung keys; the branch travels inside each of them, so this needs no source and no web.
-##
-## **AT OR ABOVE, NOT EQUAL, because a higher rung retires the one below it.** A Field sown straight
-## from wild ground never banked a Cultivate — the sim's `Sow` needs no prior patch — and offering
-## `Cultivate this patch` on finished ground was a defect reported from play. `plant:field` is one
-## step above `plant:tended` in the branch list, which is the whole of the answer now.
-##
-## ⛔ **AN UNKNOWN OR EMPTY KEY ANSWERS `false`, ON EITHER SIDE.** `""` is what a hand-built fixture and
-## a redacted remembered hex carry, and a key naming a branch this client has not been taught means a
-## STALE CLIENT. The two ways of being wrong are not symmetric: `false` reads as *nothing has been
-## built here*, which offers the player a rung they may already hold and is visible and harmless,
-## while `true` would call every rung on that branch BUILT and quietly retire the whole climb.
-## A standing key on a DIFFERENT branch from the target is unknown in exactly this sense.
-static func rung_at_or_above(rung_key: String, target_rung_key: String) -> bool:
-    var standing := rung_key.strip_edges()
-    var target := target_rung_key.strip_edges()
-    if standing == "" or target == "":
-        return false
-    for branch_variant in RUNG_BRANCHES:
-        var branch: Array = branch_variant
-        var target_idx := branch.find(target)
-        if target_idx < 0:
-            continue
-        return branch.find(standing) >= target_idx
-    return false
 
 ## **RETIRED — `build_is_queue_head`, *is this source at the head of the queue that funds it?***
 ##
@@ -5123,6 +4742,11 @@ static func upkeep_toe(src: Dictionary, prefix: String) -> Array:
     var lines: Variant = src.get(prefix + FORECAST_UPKEEP_TOE_KEY, [])
     return lines if lines is Array else []
 
+## **IS THE SOURCE STANDING ABOVE ITS BRANCH'S ROOT** -- any quote reached. Wild land and a wild herd
+## answer `false`. Read off the source's own quotes, so it holds for any branch the config declares.
+static func source_is_improved(src: Dictionary, prefix: String) -> bool:
+    return not RungQuotes.held(src, prefix).is_empty()
+
 ## **THE PILE THE RUNG ABOVE THIS SOURCE SWALLOWS TO RAISE** — one row per good, `[]` when the wire
 ## quotes none. See `FORECAST_BUILD_MATERIAL_COST_KEY`: it prices exactly ONE rung, so a caller may
 ## only attach it to the rung directly above where the source stands.
@@ -5141,7 +4765,8 @@ static func build_material_cost(src: Dictionary, prefix: String) -> Array[Dictio
 ## closes. On a pastoral herd the two agree by construction, which is why the difference is easy to
 ## miss and easier to "simplify" away.
 static func corral_build_material_cost(src: Dictionary, prefix: String) -> Array[Dictionary]:
-    return material_payoff_rows(src.get(prefix + FORECAST_CORRAL_BUILD_MATERIAL_COST_KEY, []))
+    return material_payoff_rows(RungQuotes.array_field(src, prefix,
+        RungQuotes.enclosed_verb(src, prefix), RungQuotes.KEY_BUILD_MATERIAL))
 
 ## **WHAT HOLDING THE OFFERED RUNG WOULD COST IN GOODS, PER TURN** — the material half of
 ## `build_upkeep_demand`, read at the rung being PRICED rather than at the rung the source is billed
@@ -5156,10 +4781,8 @@ static func corral_build_material_cost(src: Dictionary, prefix: String) -> Array
 ## rather than a zero — and which is every shipped rung but `animal:pen`.
 static func build_upkeep_material_demand(src: Dictionary, prefix: String,
         improvement: String) -> Array[Dictionary]:
-    if not FORECAST_BUILD_UPKEEP_MATERIAL_DEMAND_KEYS.has(improvement):
-        return [] as Array[Dictionary]
-    return material_payoff_rows(src.get(
-        prefix + String(FORECAST_BUILD_UPKEEP_MATERIAL_DEMAND_KEYS[improvement]), []))
+    return material_payoff_rows(
+        RungQuotes.array_field(src, prefix, improvement, RungQuotes.KEY_UPKEEP_MATERIAL))
 
 ## **WHAT HOLDING THIS SOURCE'S CURRENT RUNG SWALLOWS PER TURN** — one row per good, `[]` for a rung
 ## that eats no material, which is every rung on the shipped ladder but `animal:pen`.
@@ -6356,10 +5979,15 @@ static func _joined_clause(tooltip: String, clause: String) -> String:
 ## The last clause reads the IMPROVEMENT axis (issue #442), not the stance: a crew building a pen is
 ## keeping animals whether it is holding Sustain or Deplete while it does so.
 static func is_managed_hunt_source(herd: Dictionary, improvement: String) -> bool:
-    return bool(herd.get("corralled", false)) \
-        or float(herd.get("domestication", 0.0)) >= DOMESTICATION_COMPLETE \
+    return RungQuotes.is_enclosed(herd) \
+        or _domesticated_reached(herd) \
         or int(herd.get("herders_needed", 0)) > 0 \
-        or improvement == IMPROVEMENT_CORRAL
+        or (improvement != IMPROVEMENT_NONE and improvement == RungQuotes.enclosed_verb(herd))
+
+## Has the source reached a rung the config marks `domesticated` (a fully tamed herd)?
+static func _domesticated_reached(herd: Dictionary) -> bool:
+    return bool(RungQuotes.quote_with_trait(herd, "", RungQuotes.TRAIT_DOMESTICATED).get(
+        RungQuotes.KEY_REACHED, false))
 
 ## A herd's player-facing name (species → label → id). One definition, shared by the targeting banner's
 ## forecast line and the command-feed refusal, so a herd is never called two different things.
@@ -6416,10 +6044,10 @@ static func herd_display_name(herd: Dictionary) -> String:
 ## Empty/absent/unrecognized ⇒ "pen" (the full ladder), so an un-tagged herd behaves as it did
 ## before the field existed. Read by the herd drawer + assign controls to gate husbandry affordances.
 static func husbandry_ceiling(herd_data: Dictionary) -> String:
+    # The wire's own word for the highest rung the species reaches (a rung id: `wild`, `pastoral`,
+    # `pen`, or any the config adds). Absent reads as the top of the ladder.
     var ceiling := String(herd_data.get("husbandry_ceiling", "")).strip_edges().to_lower()
-    if ceiling == HUSBANDRY_CEILING_WILD or ceiling == HUSBANDRY_CEILING_PASTORAL:
-        return ceiling
-    return HUSBANDRY_CEILING_PEN
+    return ceiling if ceiling != "" else HUSBANDRY_CEILING_PEN
 
 ## The tile's basket as display-ready rows — `{species, display_name, percent, can_cultivate, can_sow}`
 ## in WIRE ORDER (share DESC, then species key ASC; never re-sorted here), with the rounding already
@@ -6456,58 +6084,12 @@ static func flora_basket_entries(composition: Variant) -> Array[Dictionary]:
             # own fraction, and it is what `selection_rates` weights the per-species conversion rates
             # by: a rate composed off the display percent would be off by the fold on every tile.
             "share": float(entry.get("share", 0.0)),
-            "can_cultivate": bool(entry.get("can_cultivate", false)),
-            "can_sow": bool(entry.get("can_sow", false)),
-            "cultivate_yield_ratio": float(entry.get("cultivate_yield_ratio", FLORA_CROP_RATIO_NONE)),
-            "sow_yield_ratio": float(entry.get("sow_yield_ratio", FLORA_CROP_RATIO_NONE)),
-            # Carried through so the compose sheet's "→ then" term can quote the SELECTED crop's own
-            # payoff; without these the row renders a correct ratio above a forecast that ignores it.
-            "cultivate_payoff": float(entry.get("cultivate_payoff", 0.0)),
-            "sow_payoff": float(entry.get("sow_payoff", 0.0)),
-            # A sown FIELD of a fodder crop pays hay, not provisions — carried through so the picker row
-            # can show the hay value in place of the 0× provisions ratio it would otherwise read.
-            "sow_fodder_payoff": float(entry.get("sow_fodder_payoff", 0.0)),
-            # THE TENDED-RUNG TWIN of the one above (#419). The `sow_*` payoffs are FIELD figures, so a
-            # Cultivate row that read them stated rung 3's number on rung 2 — a Field's managed rate on
-            # a rung that pays an MSY skim off a merely-weeded basket. Both rungs ride the entry; the
-            # picker reads the one its policy names, exactly as it does for the ratio and the food
-            # payoff.
-            "cultivate_fodder_payoff": float(entry.get("cultivate_fodder_payoff", 0.0)),
-            # **WHAT A CASH CROP PAYS, PER MATERIAL** (arc #527) — the replacement for the retired
-            # `sow_trade_payoff` / `cultivate_trade_payoff` scalars. Each is an ARRAY of
-            # `{material_id, amount}` rows, one per material this plant would yield per turn at that
-            # rung on this tile, and it is carried through VERBATIM: the picker renders one row per
-            # entry and **must never sum them into one materials/turn figure**, which is the retired
-            # trade axis under a new name.
-            #
-            # **AN EMPTY ARRAY IS "NO ROW", NEVER "ZERO"** — the wire's own contract, and the reason the
-            # default here is `[]` rather than a sentinel. A grain Field honestly pays no material; a
-            # `0` in its place would read as a cash crop that pays badly.
-            #
-            # **THE TWO RUNGS DIFFER IN KIND, not by a scale factor.** A sown Field is 100% its crop
-            # (#433), so a grain Field quotes nothing at all; a TENDED patch is a weeded basket whose
-            # volunteers are still standing, so a tended grain honestly quotes the fibre its neighbours
-            # pay. Read each rung's own vector — one never implies the other.
-            "sow_material_payoff": material_payoff_rows(entry.get("sow_material_payoff", [])),
-            "cultivate_material_payoff":
-                material_payoff_rows(entry.get("cultivate_material_payoff", [])),
-            # **WHAT SOWING THIS CROP WOULD COST, in work units** (`docs/plan_standing_upkeep.md`
-            # §4.15) — the one figure on this entry that is not a payoff, and the COST half of the
-            # crop decision. A Sow is priced by how much of the tile the chosen crop still has to
-            # replace, so the patch's own `field_work_cost` prices exactly ONE crop (its commitment,
-            # or the rung's auto-pick) while every other row of a crop list quoted that same number.
-            #
-            # **PRESENCE IS ITS OWN KEY, and here it means *this plant cannot climb to a Field on
-            # this ground*** — the sim omits the figure rather than publishing a `0`, the multiplier
-            # being floored precisely because laying the rows and putting the seed in costs work on
-            # any ground. A missing-means-zero reading would advertise a free Sow for a job that
-            # cannot be ordered at all.
-            #
-            # ⛔ **IT IS NEITHER DERIVED FROM `share` NOR A DERIVATION OF IT.** A committed patch's
-            # published `share` is its REWEIGHTED one while this is struck on the tile's own basket,
-            # which is what the sim charges against; the two are deliberately different questions.
-            "sow_work_cost": float(entry.get("sow_work_cost", 0.0)),
-            "has_sow_work_cost": entry.has("sow_work_cost"),
+            # **EVERY RUNG'S PER-PLANT QUOTE** (`rung_quotes`, issue #175): one quote per rung above the
+            # plant root -- `can_climb`, the food / fodder / material payoffs, the yield ratio and the
+            # work cost (0 = no figure) -- carried VERBATIM and read by VERB through `RungQuotes`, so a
+            # fourth step the config adds is a quote here with no key to add. The picker never sums the
+            # material vectors (the retired trade axis under a new name).
+            "rung_quotes": entry.get(RungQuotes.QUOTES_KEY, []),
             # WHAT THIS PLANT IS FOR — the sim's own display tag ("staple"/"fodder"/"cash"), carried
             # so the tile card's basket rows can lead with a role icon. **`""` is UNSTATED and must
             # stay `""`**: defaulting a missing tag to "staple" would invent a fact, and re-deriving

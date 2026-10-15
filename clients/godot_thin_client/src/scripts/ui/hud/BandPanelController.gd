@@ -5536,12 +5536,11 @@ func _queue_crop_choices(band: Dictionary, model: Dictionary) -> Array:
     var rung := String(model.get("improvement", "")).strip_edges().to_lower()
     if rung == SourceForecast.IMPROVEMENT_NONE:
         rung = String(model.get("building_policy", ""))
-    var flag := String(RungGates.CROP_LEGALITY_FLAGS.get(rung, ""))
-    if flag == "":
-        return []
     var x := int(model.get("x", -1))
     var y := int(model.get("y", -1))
     var patch: Dictionary = _band_labor.forage_patch_lookup().get(Vector2i(x, y), {})
+    if RungQuotes.quote_of_verb(patch, "", rung).is_empty():
+        return []
     var workers := int(model.get("workers", 0))
     var entries: Array = [{
         "label": HudWorkVocab.BUILD_QUEUE_CROP_DEFAULT_LABEL,
@@ -5551,7 +5550,7 @@ func _queue_crop_choices(band: Dictionary, model: Dictionary) -> Array:
     }]
     for entry_variant in SourceForecast.flora_basket_entries(patch.get("composition", [])):
         var entry: Dictionary = entry_variant
-        if not bool(entry.get(flag, false)):
+        if not RungQuotes.entry_can_climb(entry, rung):
             continue
         var species := String(entry.get("species", ""))
         entries.append({
@@ -5727,7 +5726,7 @@ func _open_rung_track(band: Dictionary, model: Dictionary, anchor: Control) -> v
 ## nothing in it is a click that answers nothing.
 func _pick_rung(band: Dictionary, model: Dictionary, source: Dictionary, rung: String,
         anchor: Control) -> void:
-    if RungLadder.rung_commits_a_crop(rung):
+    if RungLadder.rung_commits_a_crop(String(model.get("kind", ""))):
         var crops := RungLadder.crop_choices(source, HudComposeVocab.BARE_FORECAST_PREFIX, rung)
         if not crops.is_empty():
             _open_crop_step(band, model, source, rung, crops, anchor)
@@ -5766,7 +5765,8 @@ func _open_crop_step(band: Dictionary, model: Dictionary, source: Dictionary, ru
         # source's position, the faction's knowledge and whatever entry is queued all move per
         # snapshot, and a step left up across one of those would offer a rung already climbed.
         func() -> void: _open_rung_track(band, model, anchor),
-        rung))
+        RungQuotes.has_trait(RungQuotes.quote_of_verb(source, HudComposeVocab.BARE_FORECAST_PREFIX, rung),
+            RungQuotes.TRAIT_SOWN)))
     track.popup(_rung_track_anchor_rect(anchor))
 
 ## **THE RING'S PRICE CARD, OPENED FROM THE STANDING-RUNG MARK** (`docs/plan_standing_upkeep.md` §4.9
@@ -7594,8 +7594,10 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
         var site_short := HudWorkVocab.site_keeping_is_short(keep_kept, keep_demand)
         var standing := SourceForecast.standing_improvement(rung_source,
             HudComposeVocab.BARE_FORECAST_PREFIX)
-        var rung_word := String(HudComposeVocab.IMPROVEMENT_DONE_LABELS.get(standing,
-            HudWorkVocab.SITE_CREW_RUNG_WILD))
+        var rung_word := DetailFormat.improvement_done_noun(standing, rung_source,
+            HudComposeVocab.BARE_FORECAST_PREFIX)
+        if rung_word == "":
+            rung_word = HudWorkVocab.SITE_CREW_RUNG_WILD
         var under_kept_hint := ""
         if at_risk:
             var source_kind := SourceForecast.source_kind_for_labor(kind)
@@ -7603,7 +7605,8 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
                 HudComposeVocab.BARE_FORECAST_PREFIX)
             under_kept_hint = HudWorkVocab.under_kept_tooltip(kind,
                 DetailFormat.rung_badge_word(SourceForecast.at_risk_rung(
-                    rung_source, HudComposeVocab.BARE_FORECAST_PREFIX, source_kind)),
+                    rung_source, HudComposeVocab.BARE_FORECAST_PREFIX, source_kind), rung_source,
+                    HudComposeVocab.BARE_FORECAST_PREFIX),
                 int(upkeep["grace"]) if bool(upkeep.get("at_risk", false)) else 0, material_note,
                 tools_short, tools_named)
         # **THE KEEPING SHORTFALL FLIES THE ROW'S OWN KEEPING MARK** (`_build_site_keeping_mark`), so
@@ -7706,8 +7709,8 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
             # bill both render it. The rung after the build is the DECLARED destination, `""` while no
             # build is in flight here.
             "tending": HudWorkVocab.tending_of(rung_source, HudComposeVocab.BARE_FORECAST_PREFIX,
-                String(HudComposeVocab.IMPROVEMENT_DONE_LABELS.get(destination_rung, ""))
-                    if not building.is_empty() else ""),
+                DetailFormat.improvement_done_noun(destination_rung, rung_source,
+                    HudComposeVocab.BARE_FORECAST_PREFIX) if not building.is_empty() else ""),
             "upkeep_material_terms": RungLadder.upkeep_material_terms(
                 rung_source, HudComposeVocab.BARE_FORECAST_PREFIX),
             "build_queued": queued_keys.has(String(key)),

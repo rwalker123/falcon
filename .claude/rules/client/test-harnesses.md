@@ -347,7 +347,7 @@ tended, else wild"* and its animal twin) for the whole test tree. `map_preview`,
 `input_probe.gd` shape, all-`static` and stateless.
 
 - **`patch_rung_key(tended, field)` / `herd_rung_key(domestication, corralled)`** are the primitives,
-  spelled in `SourceForecast.RUNG_KEY_*` rather than in string literals.
+  spelled in `RungFx.KEY_*` rather than in string literals.
 - **`stamp_patch(row, prefix)` / `stamp_herd(row)`** are the form to reach for, and the reason is that
   they read the row's OWN flags: a fixture cannot end up standing on a rung its `is_cultivated` /
   `corralled` pair contradicts, which a hand-typed key can and which stages a source no server can

@@ -117,7 +117,7 @@ static func seed_forage_rows(tile: Dictionary) -> Dictionary:
 	# `<rung>BuildFraction` and nothing composes one. The keys are dropped here rather than at every
 	# fixture, so a fixture that still states one is simply ignored instead of seeding a dict key no
 	# reader would ever look at.
-	for rung in SourceForecast.FORAGE_IMPROVEMENTS:
+	for rung in ["cultivate", "sow"]:
 		tile.erase("patch_ceiling_%s" % rung)
 	for policy in LEGACY_STANCE_FLOORS:
 		tile.erase("patch_ceiling_%s" % policy)

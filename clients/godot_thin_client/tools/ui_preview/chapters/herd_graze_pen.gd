@@ -98,7 +98,7 @@ func _tame_worker_cap_herd_fixture() -> Dictionary:
 ## server can produce, and the frame would be asserting against it.
 func _fully_herded_herd_fixture() -> Dictionary:
 	var fixture := HerdFx.taming_herd_fixture()
-	fixture["domestication"] = SourceForecast.DOMESTICATION_COMPLETE
+	fixture["domestication"] = RungFx.DOMESTICATION_COMPLETE
 	HerdFx.price_animal_build(fixture)
 	HerdFx.set_managed_herders(fixture, 4)
 	_set_keeper_upkeep(fixture, 4, POOL_COVERS_IT)
@@ -963,8 +963,7 @@ func run(harness) -> void:
 	# craft this herd's standing rung teaches — penning — in the same frame, live.
 	h._assert_hud("…while the aside still names the lesson being earned, so the rung is not silent",
 		Readout.teaching_line(h._hud._drawercompose._compose_sheet).contains(
-			String(SourceForecast.RUNG_LESSONS[SourceForecast.SOURCE_KIND_HERD][
-				SourceForecast.IMPROVEMENT_TAME])))
+			"penning"))
 	# …and the rung it has already climbed reads as the STATE it is, above the one it cannot start.
 	h._assert_hud("…beneath the DONE label for the rung this herd has climbed",
 		ForageFx.improvement_face(h._hud._drawercompose._compose_sheet, HudConst.LABOR_POLICY_TAME).contains(
@@ -1181,8 +1180,7 @@ func run(harness) -> void:
 	# claim: the sheet is where the lesson is being earned, the strip is where its progress is read.
 	h._assert_hud("…and the aside's teaching line is the bridge: the craft this herd's rung teaches",
 		Readout.teaching_line(h._hud._drawercompose._compose_sheet).contains(
-			String(SourceForecast.RUNG_LESSONS[SourceForecast.SOURCE_KIND_HERD][
-				SourceForecast.IMPROVEMENT_TAME])))
+			"penning"))
 
 	# State 6b-tame — the ◎ Tame affordance itself: a 6th option in the LOCAL hunt picker, beside
 	# Sustain/Surplus/Deplete/Eradicate/Corral, ENABLED (Herding is known) and selected on a

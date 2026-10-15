@@ -35,4 +35,4 @@ static func is_starving(fed: float) -> bool:
 ## For a caller holding only the herd dict (the map marker, the turn-orb producer): is this herd's
 ## pen unfed? A herd that is NOT corralled is never starving, whatever its (defaulted) fraction says.
 static func herd_is_starving(herd: Dictionary) -> bool:
-	return bool(herd.get("corralled", false)) and is_starving(fed_fraction(herd))
+	return RungQuotes.is_enclosed(herd) and is_starving(fed_fraction(herd))

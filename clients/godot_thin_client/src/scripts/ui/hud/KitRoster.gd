@@ -287,7 +287,6 @@ const MASS_BOUND_UNBOUNDED := 0.0
 const QUARRY_BODY_MASS_KEY := "body_mass"
 ## Aliased off the shared layer, not re-spelled: `SourceForecast.quarry_is_fought` reads the same wire
 ## key, and two spellings of one field is how two surfaces come to disagree about a pen.
-const QUARRY_CORRALLED_KEY := SourceForecast.SOURCE_CORRALLED_KEY
 
 ## The BAND's remaining condition per ITEM — one row per item the server's config carries, as
 ## `{item_id, remaining}` on `equipment.json`'s 0-100 scale (`0` = dry). A dry item steps its role

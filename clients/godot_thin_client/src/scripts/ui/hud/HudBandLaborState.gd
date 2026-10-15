@@ -1887,16 +1887,23 @@ func floor_for_extract(band: Dictionary, x: int, y: int, material: String) -> fl
 ## `IMPROVEMENT_NONE` when it builds nothing. Validated against the animal ladder so a mis-spelled or
 ## cross-web value reads as "building nothing" rather than driving a control the source cannot offer.
 func improvement_for_hunt(band: Dictionary, herd_id: String) -> String:
-	return _validated_improvement(hunt_assignment_of(band, herd_id), SourceForecast.HUNT_IMPROVEMENTS)
+	return _validated_improvement(hunt_assignment_of(band, herd_id), find_world_herd(herd_id))
 
 ## The plant twin: what the band's existing forage on (x,y) is building.
 func improvement_for_forage(band: Dictionary, x: int, y: int) -> String:
-	return _validated_improvement(
-		forage_assignment_of(band, x, y), SourceForecast.FORAGE_IMPROVEMENTS)
+	return _validated_improvement(forage_assignment_of(band, x, y),
+		forage_patch_lookup().get(Vector2i(x, y), {}))
 
-func _validated_improvement(assignment: Dictionary, web: Array) -> String:
+## A verb counts as a build only when the SOURCE's own ladder (its `rung_quotes`, stamped from the
+## catalog) offers it -- so a mis-spelled or cross-web value
+## reads as "building nothing", and a verb the config adds is accepted with no list to extend.
+func _validated_improvement(assignment: Dictionary, source: Dictionary) -> String:
 	var improvement := String(assignment.get("improvement", "")).strip_edges().to_lower()
-	return improvement if improvement in web else SourceForecast.IMPROVEMENT_NONE
+	# A source the snapshot does not carry (yet) has no ladder to check against, so the assignment's
+	# verb -- which the sim validated when it stored it -- stands rather than reading as "nothing".
+	if source.is_empty():
+		return improvement
+	return improvement if improvement in RungQuotes.verbs(source) else SourceForecast.IMPROVEMENT_NONE
 
 ## **RETIRED — `build_workers_for_forage` / `_hunt`, the per-source BUILD crew**
 ## (`docs/plan_standing_upkeep.md` §2.5). `LaborAssignment.improvementWorkers` is off the wire: a verb

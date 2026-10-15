@@ -145,18 +145,18 @@ func run(harness) -> void:
 	# …and the DECLARATION half, which no meter can carry: bare ground with a verb declared on it is
 	# building that verb, because a zero meter is the one state the player answers for.
 	h._assert_hud("building — a declaration answers for a meter at ZERO, and only there",
-		String(RungGates.rung_in_progress("forage", {}, "cultivate").get("policy", "")) == "cultivate"
-			and RungGates.rung_in_progress("forage", {}, RUNG_BUILDING_NOTHING).is_empty())
+		String(RungGates.rung_in_progress("forage", RungFx.stamp_patch({}), "cultivate").get("policy", "")) == "cultivate"
+			and RungGates.rung_in_progress("forage", RungFx.stamp_patch({}), RUNG_BUILDING_NOTHING).is_empty())
 	# …and a FULL meter is MAINTAINING, not building — the third state, and the edge the derivation
 	# turns on. A stale declaration on it is inert rather than re-running a finished job.
 	h._assert_hud("building — a meter at its cost is maintaining, whatever is declared on it",
-		RungGates.rung_in_progress("forage", {"cultivation_progress": 1.0}, "cultivate").is_empty())
+		RungGates.rung_in_progress("forage", RungFx.stamp_patch({"cultivation_progress": 1.0}), "cultivate").is_empty())
 	# Each verb names its OWN meter — reading the wrong one would report a confident wrong number.
 	h._assert_hud("building — Sow reads field_progress, not the cultivation meter beside it",
-		float(RungGates.rung_in_progress("forage", {"field_progress": 0.7, "cultivation_progress": 0.2},
+		float(RungGates.rung_in_progress("forage", RungFx.stamp_patch({"field_progress": 0.7, "cultivation_progress": 0.2}),
 			"sow").get("progress", -1.0)) == 0.7)
 	h._assert_hud("building — Corral reads corral_progress on a herd",
-		float(RungGates.rung_in_progress("hunt", {"corral_progress": 0.25, "domestication": 1.0},
+		float(RungGates.rung_in_progress("hunt", RungFx.stamp_herd({"corral_progress": 0.25, "domestication": 1.0}),
 			"corral").get("progress", -1.0)) == 0.25)
 	# The two answers are mutually exclusive, which is what lets one badge slot carry both states.
 	h._assert_hud("building and ready are mutually exclusive on one source",

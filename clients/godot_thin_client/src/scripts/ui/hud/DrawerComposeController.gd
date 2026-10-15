@@ -2259,8 +2259,7 @@ func _build_improvement_control(kind: String, source: Dictionary, prefix: String
     # DONE — the highest rung this source has actually built, as a state label. Highest first, for the
     # reason the work board's rung mark tests highest first: a Field is ALSO cultivated and a penned
     # herd is ALSO fully tamed, so testing the lower rung first would collapse the distinction.
-    var ladder: Array = SourceForecast.FORAGE_IMPROVEMENTS if kind == SourceForecast.LABOR_KIND_FORAGE \
-        else SourceForecast.HUNT_IMPROVEMENTS
+    var ladder: Array = SourceForecast.improvement_ladder(source, prefix)
     for i in range(ladder.size() - 1, -1, -1):
         var rung := String(ladder[i])
         if not SourceForecast.improvement_is_done(source, prefix, rung):
@@ -2337,7 +2336,8 @@ func _build_improvement_control(kind: String, source: Dictionary, prefix: String
     # the same `track < KNOWLEDGE_COMPLETE` test the gate builders make, asked structurally rather
     # than by matching the reason's words; the builders append the knowledge reason FIRST on both
     # webs, so `size() == 1` under an unmet gate is exactly "the knowledge reason, alone".
-    if reasons.size() == 1 and RungGates.knowledge_gate_unmet(rung, _player_knowledge()):
+    if reasons.size() == 1 and RungGates.knowledge_gate_unmet(
+            RungQuotes.quote_of_verb(source, prefix, rung), _player_knowledge()):
         return
     if not reasons.is_empty():
         target.add_child(HudWidgets.build_improvement_control(rung,
@@ -2505,8 +2505,7 @@ func _mount_declared_control(source: Dictionary, prefix: String, source_kind: St
 ## and it is the only rung the note's own words can be said of ("Too depleted to PEN"): a plant rung
 ## paying zero is a different sentence, and this note must not start speaking it.
 func _pen_rung_pays_nothing(deal: Dictionary, band: Dictionary) -> bool:
-    if deal.is_empty() \
-            or String(deal["improvement"]) != SourceForecast.IMPROVEMENT_CORRAL:
+    if deal.is_empty() or not bool(deal.get("enclosing", false)):
         return false
     var output := float(band.get("output_multiplier", SourceForecast.OUTPUT_FULL))
     return float(deal["payoff"]) * output < SourceForecast.FOOD_FLOW_MIN
@@ -2545,7 +2544,7 @@ func _improvement_running_tooltip(improvement: String) -> String:
 func _improvement_done_face(source: Dictionary, prefix: String, rung: String,
         band: Dictionary) -> String:
     var glyph := FoodIcons.for_policy(rung)
-    var noun := String(HudComposeVocab.IMPROVEMENT_DONE_LABELS.get(rung, rung.capitalize()))
+    var noun := DetailFormat.improvement_done_noun(rung, source, prefix)
     return HudComposeVocab.IMPROVEMENT_DONE_FORMAT % [glyph, noun]
 
 ## **THE RUNG THE READOUT'S DEAL BLOCK QUOTES** — the composed verb while a build is in flight, else
@@ -3318,7 +3317,7 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
     # helper — a sub-gate party kills nothing at any headcount and still takes casualties, which reads
     # as a bug unexplained, and it is the honesty line a `none` kit depends on.
     if SourceForecast.is_fought(engage_rate,
-            bool(herd.get(SourceForecast.SOURCE_CORRALLED_KEY, false))):
+            RungQuotes.is_enclosed(herd)):
         var quarry := _herd_label_for_id(herd_id)
         # **IT IS ASKED AT THE SELECTED KIT'S EFFECTIVE ATTACK, NOT THE BAND'S DEFAULT-KIT TIER.** The
         # picker one row up decides what these hunters carry, so a gate quoting the band's default kit
@@ -3658,16 +3657,13 @@ func _forage_floor_takes(tile_info: Dictionary, band: Dictionary) -> Dictionary:
 ## `can_sow` = "can this plant ever climb this rung"). `share` answers the other question — whether a
 ## legal crop is a WISE one here — and it must never disable anything.
 func _flora_entry_allows(entry: Dictionary, policy: String) -> bool:
-    if policy == HudConst.LABOR_POLICY_SOW:
-        return bool(entry.get("can_sow", false))
-    return bool(entry.get("can_cultivate", false))
+    return RungQuotes.entry_can_climb(entry, policy)
 
 ## What committing this entry under `policy` pays relative to gathering it wild. `FLORA_CROP_RATIO_NONE`
 ## on a rung the species cannot climb — the sentinel, never printed as a number.
 func _flora_entry_ratio(entry: Dictionary, policy: String) -> float:
-    if policy == HudConst.LABOR_POLICY_SOW:
-        return float(entry.get("sow_yield_ratio", SourceForecast.FLORA_CROP_RATIO_NONE))
-    return float(entry.get("cultivate_yield_ratio", SourceForecast.FLORA_CROP_RATIO_NONE))
+    return float(RungQuotes.entry_quote(entry, policy).get(RungQuotes.KEY_YIELD_RATIO,
+        SourceForecast.FLORA_CROP_RATIO_NONE))
 
 ## The FODDER (hay) this entry would pay per turn under `policy` — >0 marks a crop whose vector feeds
 ## animals. `FLORA_CROP_RATIO_NONE` (0) where the vector pays no fodder or the plant cannot climb this
@@ -3677,9 +3673,8 @@ func _flora_entry_ratio(entry: Dictionary, policy: String) -> float:
 ## unconditionally — a *Field* payoff — so the Cultivate row stated what a sown field would pay, on a
 ## rung that pays a drawn-down MSY skim off a merely-weeded basket. The sim ships both rungs' figures.
 func _flora_entry_fodder_payoff(entry: Dictionary, policy: String) -> float:
-    if policy == HudConst.LABOR_POLICY_SOW:
-        return float(entry.get("sow_fodder_payoff", SourceForecast.FLORA_CROP_RATIO_NONE))
-    return float(entry.get("cultivate_fodder_payoff", SourceForecast.FLORA_CROP_RATIO_NONE))
+    return float(RungQuotes.entry_quote(entry, policy).get(RungQuotes.KEY_FODDER_PAYOFF,
+        SourceForecast.FLORA_CROP_RATIO_NONE))
 
 ## **WHAT THIS CROP PAYS PER TURN, PER MATERIAL, under `policy`** (arc #527) — the replacement for the
 ## retired trade scalar, and deliberately NOT a restoration of it: `[{material_id, amount}]`, one row
@@ -3694,9 +3689,8 @@ func _flora_entry_fodder_payoff(entry: Dictionary, policy: String) -> float:
 ## **EMPTY IS "THIS PLANT PAYS NO MATERIAL", WHICH IS A REAL ANSWER** — the caller renders no clause,
 ## never a `0.00`, which would read as a cash crop that pays badly.
 func _flora_entry_material_payoff(entry: Dictionary, policy: String) -> Array:
-    if policy == HudConst.LABOR_POLICY_SOW:
-        return entry.get("sow_material_payoff", []) as Array
-    return entry.get("cultivate_material_payoff", []) as Array
+    return SourceForecast.material_payoff_rows(
+        RungQuotes.entry_quote(entry, policy).get(RungQuotes.KEY_MATERIAL_PAYOFF, []))
 
 ## The rung noun the payoff tooltips name — "a tended patch" under Cultivate, "a sown field" under Sow.
 ## These payoffs are per-rung, so a tooltip that named the wrong rung would restate the very bug the
@@ -3736,9 +3730,7 @@ func _flora_row_face(crop_name: String, percent: int, ratio: float, fodder: floa
 ## the same units and output-multiplier convention as the forecast `payoff` it replaces. 0 (never
 ## substituted) on a rung the species cannot climb.
 func _flora_entry_payoff(entry: Dictionary, policy: String) -> float:
-    if policy == HudConst.LABOR_POLICY_SOW:
-        return float(entry.get("sow_payoff", 0.0))
-    return float(entry.get("cultivate_payoff", 0.0))
+    return float(RungQuotes.entry_quote(entry, policy).get(RungQuotes.KEY_FOOD_PAYOFF, 0.0))
 
 ## The "then <X>" terms for a plant rung, with the patch's species-BLIND payoff replaced by the
 ## SELECTED crop's own. Without this the deal's payoff term quotes one number no matter which crop is
@@ -3823,7 +3815,7 @@ func _crop_payoff_terms(tile_info: Dictionary, entries: Array[Dictionary], speci
 ## nothing and accepting the default behave identically. Returns "" (send nothing, still valid) for a
 ## non-committing rung, an already-committed patch, or a basket with no legal plant.
 func _resolve_crop_selection(entries: Array[Dictionary], policy: String, committed: bool, picked: String) -> String:
-    if committed or not (policy in SourceForecast.FORAGE_IMPROVEMENTS):
+    if committed or policy == SourceForecast.IMPROVEMENT_NONE:
         return ""
     var default_species := ""
     for entry in entries:
@@ -4771,7 +4763,7 @@ func _hunt_curve_herd_terms(herd_id: String) -> String:
     var herd := _live_herd(herd_id, _band_labor.find_world_herd(herd_id))
     return ":%s:%f:%f:follow=%s" % [
         String(herd.get(SourceForecast.FORECAST_CURRENT_RUNG_KEY, "")),
-        float(herd.get("domestication", 0.0)), float(herd.get("biomass", 0.0)),
+        RungQuotes.domestication_progress(herd), float(herd.get("biomass", 0.0)),
         str(_hunt_curve_follows(herd_id))]
 
 ## **HUNTING BY NEED ASKS A DIFFERENT QUESTION** (#798): ticked on a migratory herd, the curve is priced
@@ -5128,7 +5120,7 @@ func _clear_forage_drawer() -> void:
 func build_herd_drawer_actions(herd: Dictionary) -> void:
     if _herd_assign_controls == null:
         return
-    var corralled := bool(herd.get("corralled", false))
+    var corralled := RungQuotes.is_enclosed(herd)
     var available := _herd_compose_available(herd)
     # A penned herd always offers Extend-pen, even if it is no longer huntable — so the container
     # stays visible for a pen OR a composable herd.

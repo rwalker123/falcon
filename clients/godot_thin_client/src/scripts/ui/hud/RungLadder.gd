@@ -135,13 +135,15 @@ const CROP_FACE_KEY := "face"
 ## the wire prices no Sow for is one that cannot climb to a Field on this ground — the tile-specific
 ## legality the species-global `can_sow` ceiling flag structurally cannot express — so it is the same
 ## predicate the sim's own `default_species_for_rung` filters on.
-const CROP_SOW_WORK_COST_KEY := "sow_work_cost"
-const CROP_HAS_SOW_WORK_COST_KEY := "has_sow_work_cost"
 
 ## **THE WIRE'S OWN SPELLING OF *let the sim choose*** — a real instruction rather than an absent one,
 ## which is why it is a named empty string and not a sentinel. `Main.format_assign_labor` omits the
 ## species token for it, and the sim then commits to the tile's dominant legal plant.
 const CROP_SIM_PICKS := ""
+
+## The key a track gives the branch ROOT, which has no quote of its own (a source stands on it before
+## anything is built). Nothing joins on it; it only has to be stable and not collide with a real rung.
+const ROOT_RUNG_KEY := "root"
 
 ## **THE WHOLE BRANCH, BOTTOM RUNG FIRST — one row per rung, in CLIMB order.**
 ##
@@ -159,9 +161,11 @@ const CROP_SIM_PICKS := ""
 static func track(kind: String, source: Dictionary, prefix: String, improvement: String,
         knowledge: Dictionary, band: Dictionary = {}, labels: Dictionary = {}) -> Array[Dictionary]:
     var rows: Array[Dictionary] = []
-    var source_kind := SourceForecast.source_kind_for_labor(kind)
-    var branch := SourceForecast.rung_branch_for_kind(source_kind)
-    var standing := _standing_index(branch, source, prefix)
+    # **THE BRANCH IS THE SOURCE'S OWN QUOTES** (issue #175): the root (which has no quote) and then one
+    # entry per rung above it, in climb order, so a fourth step the config adds is a row here with no edit.
+    var branch: Array = [{}]
+    branch.append_array(RungQuotes.quotes(source, prefix))
+    var standing := _standing_index(branch)
     # THE DESTINATION A QUEUED ENTRY NAMES, as an index into this branch. `-1` when nothing is queued
     # here, which is the state the picker is usually opened in — and then no rung is `path` or
     # `target`, because nothing has been chosen.
@@ -176,20 +180,22 @@ static func track(kind: String, source: Dictionary, prefix: String, improvement:
     # `SourceForecast.FORECAST_BUILD_MATERIAL_COST_KEY`). Held as an index rather than re-tested per
     # row so a track can never quote one rung's pile against another rung's name.
     var priced_index := standing + 1
-    var pile := SourceForecast.build_material_cost(source, prefix)
+    var pile: Array[Dictionary] = SourceForecast.material_payoff_rows(
+        (branch[priced_index] as Dictionary).get(RungQuotes.KEY_BUILD_MATERIAL, [])) \
+        if priced_index < branch.size() else ([] as Array[Dictionary])
     var store := _material_store(band)
     # **THE PATH IS BLOCKED FROM BELOW.** A climb lays every leg between where the source stands and
     # where it was sent, so a barred rung bars everything above it — and the honest thing to state on
     # the rung above is the refusal that actually happened, further down.
     var blocking_row := {}
     for index in range(branch.size()):
-        var rung_key := String(branch[index])
-        var verb := String(SourceForecast.RUNG_KEY_IMPROVEMENTS.get(rung_key,
-            SourceForecast.IMPROVEMENT_NONE))
+        var quote: Dictionary = branch[index]
+        var rung_key := String(quote.get(RungQuotes.KEY_RUNG, ROOT_RUNG_KEY))
+        var verb := RungQuotes.verb_of(quote)
         var row := {
             ROW_RUNG_KEY: rung_key,
             ROW_IMPROVEMENT_KEY: verb,
-            ROW_NAME_KEY: _rung_name(verb),
+            ROW_NAME_KEY: _rung_name(verb, source, prefix),
             ROW_WORK_KEY: WORK_UNKNOWN,
             ROW_TURNS_KEY: SourceForecast.BUILD_TURNS_NO_ESTIMATE,
             ROW_REASONS_KEY: [] as Array[String],
@@ -211,7 +217,8 @@ static func track(kind: String, source: Dictionary, prefix: String, improvement:
         # its own. The locked face names it (`Tended Patch first`).
         var blocked_below := ""
         if reasons.is_empty() and not blocking_row.is_empty():
-            blocked_below = DetailFormat.rung_badge_word(String(blocking_row[ROW_IMPROVEMENT_KEY]))
+            blocked_below = DetailFormat.rung_badge_word(String(blocking_row[ROW_IMPROVEMENT_KEY]),
+                source, prefix)
             reasons = [HudFloraVocab.GATE_REASON_PATH_BLOCKED_FORMAT % [
                 String(blocking_row[ROW_NAME_KEY]),
                 String((blocking_row[ROW_REASONS_KEY] as Array)[0])]]
@@ -230,7 +237,7 @@ static func track(kind: String, source: Dictionary, prefix: String, improvement:
             # The rung as the unlock sentence names it — the bare word (`Field`), not the row's glyphed
             # name, which reads `a ▦ Field` in a sentence.
             _lock_row(row, _track_lock(kind, source, prefix, verb, reasons, knowledge, labels,
-                DetailFormat.rung_badge_word(verb), blocked_below), _track_figure(row))
+                DetailFormat.rung_badge_word(verb, source, prefix), blocked_below), _track_figure(row))
             if blocking_row.is_empty():
                 blocking_row = row
         elif index == destination:
@@ -985,9 +992,9 @@ static func _track_lock(kind: String, source: Dictionary, prefix: String, verb: 
         blocker = String(HudFloraVocab.GATE_SHORT_NEVER_BY_RUNG.get(verb,
             HudFloraVocab.GATE_SHORT_NOT_FOR_THIS_ANIMAL)) if hunt \
             else HudFloraVocab.GATE_SHORT_CROP_CANNOT_CLIMB
-    elif RungGates.knowledge_gate_unmet(verb, knowledge):
-        var craft := String(labels.get(String(RungGates.RUNG_KNOWLEDGE_TRACKS.get(verb, "")), "")) \
-            .strip_edges()
+    elif RungGates.knowledge_gate_unmet(RungQuotes.quote_of_verb(source, prefix, verb), knowledge):
+        var craft := String(labels.get(String(RungQuotes.quote_of_verb(source, prefix, verb).get(
+            RungQuotes.KEY_UNLOCK, "")), "")).strip_edges()
         if craft != "":
             blocker = craft
             lines.append(HudWorkVocab.RUNG_LOCKED_LEARN_FORMAT % [craft,
@@ -1252,8 +1259,8 @@ static func _stall_fraction_word(share: float) -> String:
 ## **PLANT RUNGS ONLY, and the asymmetry is the model rather than an unfinished half.** `tame` and
 ## `corral` commit no species at all: an animal rung names the herd it is raised on and there is
 ## nothing left to choose, so making them ask would be a click that answers nothing.
-static func rung_commits_a_crop(improvement: String) -> bool:
-    return RungGates.CROP_LEGALITY_FLAGS.has(improvement)
+static func rung_commits_a_crop(labor_kind: String) -> bool:
+    return labor_kind == SourceForecast.LABOR_KIND_FORAGE
 
 ## **THE CROPS THIS RUNG MAY BE COMMITTED TO, EACH BESIDE WHAT IT PAYS — one row per legal plant,
 ## `Sim picks` LAST.**
@@ -1292,22 +1299,26 @@ static func rung_commits_a_crop(improvement: String) -> bool:
 static func crop_choices(source: Dictionary, prefix: String,
         improvement: String) -> Array[Dictionary]:
     var rows: Array[Dictionary] = []
-    var flag := String(RungGates.CROP_LEGALITY_FLAGS.get(improvement, ""))
-    if flag == "":
+    var rung_quote := RungQuotes.quote_of_verb(source, prefix, improvement)
+    if rung_quote.is_empty():
         return rows
-    var sow := improvement == SourceForecast.IMPROVEMENT_SOW
+    # A `sown` rung plants a crop and is PRICED per crop; any other plant rung weeds toward a plant
+    # already standing and carries no per-crop work figure.
+    var sown := RungQuotes.has_trait(rung_quote, RungQuotes.TRAIT_SOWN)
     for entry in SourceForecast.flora_basket_entries(
             source.get(prefix + CROP_COMPOSITION_KEY, [])):
-        if not bool(entry.get(flag, false)):
+        var entry_quote := RungQuotes.entry_quote(entry, improvement)
+        if not bool(entry_quote.get(RungQuotes.KEY_CAN_CLIMB, false)):
             continue
-        # The wire's own refusal, and only the Sow rung has a price to be refused: a Cultivate's
-        # build cost is unscaled, so no per-crop work figure exists for it and none is asked for.
-        if sow and not bool(entry.get(CROP_HAS_SOW_WORK_COST_KEY, false)):
+        # The wire's own refusal, and only a sown rung has a price to be refused: a priceless quote
+        # (`work_cost` 0) is the sim saying this plant cannot climb to the rung on this ground, so a
+        # row would offer a job that cannot be ordered -- and a `0` would read as a free build.
+        if sown and float(entry_quote.get(RungQuotes.KEY_WORK_COST, 0.0)) <= 0.0:
             continue
         rows.append({
             CROP_SPECIES_KEY: String(entry.get("species", "")),
             CROP_LABEL_KEY: _crop_label(entry),
-            CROP_FACE_KEY: _crop_face(entry, improvement),
+            CROP_FACE_KEY: _crop_face(entry, improvement, sown),
         })
     if rows.is_empty():
         return rows
@@ -1339,23 +1350,23 @@ static func _crop_label(entry: Dictionary) -> String:
 ## price is read before the payoffs it is weighed against. It renders on the Sow rung alone: a
 ## Cultivate's build cost is unscaled, so the wire prices no per-crop figure for it and a clause here
 ## would have to invent one.
-static func _crop_face(entry: Dictionary, improvement: String) -> String:
-    var sow := improvement == SourceForecast.IMPROVEMENT_SOW
+static func _crop_face(entry: Dictionary, improvement: String, sown: bool) -> String:
+    var quote := RungQuotes.entry_quote(entry, improvement)
     var face := ""
-    if sow:
-        # Quoted, never re-derived. `crop_choices` has already refused every row without the key, so
-        # this read can never fall back to a zero that would advertise a free Sow.
+    if sown:
+        # Quoted, never re-derived. `crop_choices` has already refused every row without a price, so
+        # this read can never fall back to a zero that would advertise a free build.
         face += HudFloraVocab.FLORA_CROP_WORK_CLAUSE_FORMAT % DetailFormat.format_work_units(
-            float(entry.get(CROP_SOW_WORK_COST_KEY, 0.0)))
-    # **THE FOOD CLAUSE RENDERS AT ZERO.** See `crop_choices` — a cash crop's payoff is exactly `0`,
+            float(quote.get(RungQuotes.KEY_WORK_COST, 0.0)))
+    # **THE FOOD CLAUSE RENDERS AT ZERO.** See `crop_choices` -- a cash crop's payoff is exactly `0`,
     # and the unstated zero is the whole reason this step exists.
     face += HudFloraVocab.FLORA_CROP_FOOD_CLAUSE_FORMAT % float(
-        entry.get("sow_payoff" if sow else "cultivate_payoff", 0.0))
-    var fodder := float(entry.get("sow_fodder_payoff" if sow else "cultivate_fodder_payoff", 0.0))
+        quote.get(RungQuotes.KEY_FOOD_PAYOFF, 0.0))
+    var fodder := float(quote.get(RungQuotes.KEY_FODDER_PAYOFF, 0.0))
     if SourceForecast.has_component(fodder):
         face += HudFloraVocab.FLORA_CROP_HAY_CLAUSE_FORMAT % fodder
-    for row_variant in (entry.get(
-            "sow_material_payoff" if sow else "cultivate_material_payoff", []) as Array):
+    for row_variant in SourceForecast.material_payoff_rows(
+            quote.get(RungQuotes.KEY_MATERIAL_PAYOFF, [])):
         var row: Dictionary = row_variant
         var amount := float(row.get(SourceForecast.MATERIAL_PAYOFF_AMOUNT_KEY, 0.0))
         if not SourceForecast.has_component(amount):
@@ -1373,15 +1384,13 @@ static func _crop_face(entry: Dictionary, improvement: String) -> String:
 ## **`improvement` NAMES THE RUNG BEING COMMITTED, and it picks the title.** A Cultivate weeds toward
 ## a plant already standing; only a Sow plants one. See `HudWorkVocab.RUNG_CROP_TITLE_TEND`.
 static func build_crop_step(rows: Array[Dictionary], on_pick: Callable,
-        on_back: Callable, improvement: String) -> VBoxContainer:
+        on_back: Callable, sown: bool) -> VBoxContainer:
     var column := VBoxContainer.new()
     column.set_meta(HudWorkVocab.RUNG_CROP_STEP_META, true)
     column.add_theme_constant_override("separation", HudWorkVocab.RUNG_TRACK_ROW_SEPARATION)
     column.custom_minimum_size = Vector2(HudWorkVocab.RUNG_TRACK_WIDTH, 0.0)
     var title := Label.new()
-    title.text = HudWorkVocab.RUNG_CROP_TITLE_GROW \
-        if improvement == SourceForecast.IMPROVEMENT_SOW \
-        else HudWorkVocab.RUNG_CROP_TITLE_TEND
+    title.text = HudWorkVocab.RUNG_CROP_TITLE_GROW if sown else HudWorkVocab.RUNG_CROP_TITLE_TEND
     title.add_theme_color_override("font_color", HudStyle.INK_DIM)
     title.add_theme_font_size_override("font_size", HudWorkVocab.RUNG_TRACK_TITLE_FONT_SIZE)
     column.add_child(title)
@@ -1491,22 +1500,19 @@ static func _state_color(state: String) -> Color:
 ## **`improvement_is_done` IS THE TEST, and it compares the source's STANDING rung at-or-above** — a
 ## Field sown straight from wild ground reports `is_cultivated` false forever, and its Cultivate is
 ## still bought and paid for.
-static func _standing_index(branch: Array, source: Dictionary, prefix: String) -> int:
+static func _standing_index(branch: Array) -> int:
     for index in range(branch.size() - 1, 0, -1):
-        var verb := String(SourceForecast.RUNG_KEY_IMPROVEMENTS.get(String(branch[index]),
-            SourceForecast.IMPROVEMENT_NONE))
-        if verb != SourceForecast.IMPROVEMENT_NONE \
-                and SourceForecast.improvement_is_done(source, prefix, verb):
+        if bool((branch[index] as Dictionary).get(RungQuotes.KEY_REACHED, false)):
             return index
     return 0
 
-## Which rung of this branch an improvement VERB names — `-1` for none, which is what
+## Which rung of this branch an improvement VERB names -- `-1` for none, which is what
 ## `IMPROVEMENT_NONE` answers and is why an unqueued source has no path and no target.
 static func _index_of_improvement(branch: Array, improvement: String) -> int:
     if improvement == SourceForecast.IMPROVEMENT_NONE:
         return -1
     for index in range(branch.size()):
-        if String(SourceForecast.RUNG_KEY_IMPROVEMENTS.get(String(branch[index]), "")) == improvement:
+        if RungQuotes.verb_of(branch[index] as Dictionary) == improvement:
             return index
     return -1
 
@@ -1544,20 +1550,18 @@ static func _leg_turns(legs: Dictionary, rung_key: String) -> int:
 
 ## The rung's own NAME — `DetailFormat.rung_badge_word`'s word behind the glyph the work row's rung
 ## mark already draws, so the track and the board name one rung one way.
-static func _rung_name(improvement: String) -> String:
+static func _rung_name(improvement: String, source: Dictionary = {}, prefix: String = "") -> String:
     if improvement == SourceForecast.IMPROVEMENT_NONE:
         return HudWorkVocab.RUNG_TRACK_WILD_NAME
     return HudWorkVocab.RUNG_TRACK_NAME_FORMAT % [
-        FoodIcons.for_policy(improvement), DetailFormat.rung_badge_word(improvement)]
+        FoodIcons.for_policy(improvement), DetailFormat.rung_badge_word(improvement, source, prefix)]
 
 ## The KNOWLEDGE and SOURCE gates, through `RungGates` — the ONE definition, so the track, the `⌃`
 ## mark, the map badge and the compose sheet cannot disagree about what is climbable.
 static func _gates(kind: String, source: Dictionary, prefix: String,
         knowledge: Dictionary) -> Dictionary:
-    if kind == SourceForecast.LABOR_KIND_HUNT:
-        return RungGates.hunt_gates(source, knowledge)
-    return RungGates.forage_gates_from_patch(source, knowledge) \
-        if prefix == HudComposeVocab.BARE_FORECAST_PREFIX else RungGates.forage_gates(source, knowledge)
+    return RungGates.source_gates(source, prefix, knowledge,
+        kind == SourceForecast.LABOR_KIND_HUNT)
 
 ## **EVERY REASON THIS RUNG IS REFUSED — `[]` when it is not.** Two kinds, and the ORDER is the point:
 ## an OUTRIGHT bar comes first, because *no aurochs will ever be penned* supersedes *your people know
@@ -1579,23 +1583,22 @@ static func _rung_refusals(kind: String, source: Dictionary, prefix: String, imp
 ## `GATE_REASON_CROP_CANNOT_CLIMB_FORMAT` on the plant one.
 static func _outright_bar(kind: String, source: Dictionary, prefix: String,
         improvement: String) -> String:
-    if kind == SourceForecast.LABOR_KIND_HUNT:
-        # **ONLY THE PEN RUNG HAS A CEILING TO CLEAR.** `Tame` is admitted by anything above `wild`,
-        # and a `wild`-ceiling herd's whole branch above the floor is barred — which the Corral row
-        # states, the Tame row states through the same test, and neither invents a second wording for.
-        var ceiling := SourceForecast.husbandry_ceiling(source)
-        if improvement == SourceForecast.IMPROVEMENT_CORRAL:
-            return "" if ceiling == SourceForecast.HUSBANDRY_CEILING_PEN \
-                else HudFloraVocab.GATE_REASON_SPECIES_NEVER_PENNED
-        if improvement == SourceForecast.IMPROVEMENT_TAME \
-                and ceiling == SourceForecast.HUSBANDRY_CEILING_WILD:
-            return HudFloraVocab.GATE_REASON_SPECIES_NEVER_TAMED
+    var quote := RungQuotes.quote_of_verb(source, prefix, improvement)
+    if quote.is_empty():
         return ""
-    var flag := String(RungGates.CROP_LEGALITY_FLAGS.get(improvement, ""))
-    if flag == "" or RungGates.any_crop_allows(source, prefix, flag):
+    if kind == SourceForecast.LABOR_KIND_HUNT:
+        # **A RUNG ABOVE THE SPECIES' CEILING IS BARRED OUTRIGHT**, read off the ceiling's own rung id
+        # (`RungQuotes.admits`): `wild` bars the whole branch above the floor, which the Corral row
+        # states, the Tame row states through the same test, and neither invents a second wording for.
+        if RungQuotes.admits(source, prefix, quote):
+            return ""
+        return String(HudFloraVocab.GATE_REASON_NEVER_BY_RUNG.get(improvement,
+            HudFloraVocab.GATE_REASON_SPECIES_NEVER_FALLBACK_FORMAT
+                % RungQuotes.name_of(quote).to_lower()))
+    if RungGates.any_crop_allows(source, prefix, improvement):
         return ""
     return HudFloraVocab.GATE_REASON_CROP_CANNOT_CLIMB_FORMAT \
-        % DetailFormat.rung_badge_word(improvement)
+        % DetailFormat.rung_badge_word(improvement, source, prefix)
 
 # ---- THE TWO DEPOSIT BRANCHES — a THIRD sibling of `track`, never a widening of it ----------------
 #

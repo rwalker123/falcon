@@ -1073,7 +1073,7 @@ static func _work_summary(labor: HudBandLaborState, band: Dictionary) -> String:
         if herd_id.is_empty():
             continue
         var herd := labor.find_world_herd(herd_id)
-        if not herd.is_empty() and bool(herd.get("corralled", false)):
+        if not herd.is_empty() and RungQuotes.is_enclosed(herd):
             pens += 1
     var parts: Array[String] = [HudWorkVocab.FACTION_SOURCES_ONE if sources == 1 \
         else HudWorkVocab.FACTION_SOURCES_FORMAT % sources]

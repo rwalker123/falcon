@@ -76,6 +76,10 @@ const GATE_REASON_WILD_FODDER_FORMAT := "Hay stays in the field: " + FODDERING_N
 # `Tame` VERB (glyph %s), not "Sustain-hunt this Thriving herd": since slice 3a, Sustain tames
 # nothing. That correction is the single most load-bearing copy fix in this slice — the old sentence
 # is the exact hidden rule the arc exists to kill.
+## The catalog-driven forms a rung with no hand-written sentence reads through (issue #175): the craft
+## by its knowledge id, and the rung beneath by its catalog name.
+const GATE_REASON_KNOWLEDGE_FALLBACK_FORMAT := "Your people know %s %d%% — %s keep working this source to learn it"
+const GATE_REASON_RUNG_BELOW_FALLBACK_FORMAT := "The %s is %d%% raised — %s finish it first"
 const GATE_REASON_HERD_DOMESTICATED_FORMAT := "This herd is %d%% tamed — %s Tame it to finish"
 
 # **THE TWO REFUSALS THAT NAME NO REMEDY, because there is not one** — the destination picker's, and
@@ -92,6 +96,12 @@ const GATE_REASON_SPECIES_NEVER_TAMED := "This animal will never be tamed — no
 
 const GATE_REASON_SPECIES_NEVER_PENNED := "This animal will never be penned — no craft and no work changes that."
 
+## The outright-bar sentence per shipped verb, and the catalog-driven form for any other rung (issue #175).
+const GATE_REASON_NEVER_BY_RUNG := {
+    "tame": GATE_REASON_SPECIES_NEVER_TAMED,
+    "corral": GATE_REASON_SPECIES_NEVER_PENNED,
+}
+const GATE_REASON_SPECIES_NEVER_FALLBACK_FORMAT := "This animal will never reach a %s — no craft and no work changes that."
 const GATE_REASON_CROP_CANNOT_CLIMB_FORMAT := "Nothing growing here can be taken to a %s."
 
 # …and the one a DESTINATION earns from a rung BELOW it. A climb lays every leg between where the

@@ -20,107 +20,95 @@ extends RefCounted
 ## sheet through its `_topbar`, the board through the HUD's). Reaching for it here would weld a
 ## pure layer to the top-bar controller and give the map no way in at all.
 
-## Unmet prerequisites for the FORAGE investment rungs (Cultivate = rung 2, Sow = rung 3), keyed
-## policy → Array[String] of reasons (each already carrying its own remedy). Empty when every rung is
-## available. Mirrors the sim's `assign_labor` validation.
+## **UNMET PREREQUISITES FOR EVERY RUNG A SOURCE COULD CLIMB**, keyed VERB -> `Array[String]` of
+## reasons (each already carrying its own remedy), empty when every rung is available. Mirrors the
+## sim's `assign_labor` validation, and it is ONE function for both webs (issue #175): it walks the
+## source's own `rung_quotes`, so a rung the config adds is gated here with no edit.
 ##
-## The two rungs gate on DIFFERENT things, which is the ladder made legible:
-##   • Cultivate — Cultivation knowledge, and nothing else.
-##   • Sow — Seed Selection knowledge + ground that will take seed. What it needs beyond the craft is
-##     the LAND: `patch_sow_site_refusal` is the sim's verdict on this ground, and it is the only gate
-##     reason on either web that the player answers by MOVING rather than by working.
+## Each rung can carry three gates, appended in this order:
+##   1. **THE CRAFT** -- the rung's `unlock_knowledge`, at the `KNOWLEDGE_COMPLETE` bar.
+##   2. **THE RUNG BENEATH** -- on a HERD, the rung below must be reached first (a wild herd cannot be
+##      penned). A PLANT may skip a rung (seed travels, so `Sow` needs no prior patch), so it carries
+##      no such gate. *The sim's `requires_held_rung_below` is not on the wire, so the web it applies
+##      to is read off the source kind; a wire flag would replace this.*
+##   3. **THE GROUND** -- the quote's own `site_refusal`, the sim's verdict on this ground (the only
+##      gate that the player answers by MOVING rather than by working).
 ##
-## **NO RUNG ON EITHER WEB CARRIES A HEALTH GATE** (docs/plan_harvest_floor.md §3.2). The sim replaced
-## that cliff with a build the ecology phase does not enter at all: `build_supply` is the builders'
-## own output and reads no phase and no floor, so a Stressed source builds at the same rate a Thriving
-## one does. A phase term here would refuse a command the sim accepts, which is the defect class this
-## file exists to keep out of the client.
+## **NO RUNG CARRIES A HEALTH GATE** (docs/plan_harvest_floor.md section 3.2). The sim paces a build by
+## the floor and a Stressed source builds as fast as a Thriving one, so a phase term here would refuse a
+## command the sim accepts, which is the defect class this file exists to keep out of the client.
 ##
-## **THE FLOOR IS NOT A PACE EITHER, AND ITS ONE EFFECT ON A BUILD RUNS THE OTHER WAY.** A HIGHER
-## floor empties the escapement room `max(0, B − floor·K)` sooner, and an empty room is what closes
-## the `eligible` gate on the two rungs that carry it — `plant:tended` and `animal:pastoral`. That is
-## a GATE and it lives with the gate: `SourceForecast.BUILD_WORK_PREDICATE_IMPROVEMENTS` names the two
-## rungs and `build_turns_at` is where the room is tested. `learn_multiplier` paces the KNOWLEDGE
-## accrual alone (`SourceForecast.TEACHING_RATE_FLOOR_TAIL`), which is a different meter.
+## **PROSE IS PER SHIPPED VERB AND FALLS BACK TO THE CATALOG'S WORDS**: `KNOWLEDGE_REASON_FORMATS` keeps
+## the hand-written sentences for `cultivate` / `sow` / `tame` / `corral`; any other verb reads
+## `GATE_REASON_KNOWLEDGE_FALLBACK_FORMAT` off its `unlock_knowledge` id.
 ##
-## `tile_info` is the `patch_`-PREFIXED tile cross-ref, not the bare wire patch dict —
-## `forage_gates_from_patch` below is the bare-keyed twin.
+## `prefix` spells the source's keys: the `patch_` tile cross-ref and a bare wire row both work.
+static func source_gates(src: Dictionary, prefix: String, knowledge: Dictionary,
+        rung_below_gates: bool = false) -> Dictionary:
+    # The FOOD-PEAK glyph leads every knowledge remedy: practice scales with the floor
+    # (`intensification::learn_multiplier` = floor / the food peak), so the peak is the reference the
+    # remedy's "the more you leave standing" is measured against.
+    var sustain_icon := FoodIcons.for_floor_zone(SourceForecast.FLOOR_ZONE_PEAK)
+    var gates := {}
+    var quotes := RungQuotes.quotes(src, prefix)
+    for quote in quotes:
+        var verb := RungQuotes.verb_of(quote)
+        if verb == "":
+            continue
+        var reasons: Array[String] = []
+        var unlock := String(quote.get(RungQuotes.KEY_UNLOCK, ""))
+        if unlock != "":
+            var learned := track(knowledge, unlock)
+            if learned < HudConst.KNOWLEDGE_COMPLETE:
+                var format := String(KNOWLEDGE_REASON_FORMATS.get(verb, ""))
+                if format != "":
+                    reasons.append(format % [HudFormat.progress_percent(learned), sustain_icon])
+                else:
+                    reasons.append(HudFloraVocab.GATE_REASON_KNOWLEDGE_FALLBACK_FORMAT % [
+                        unlock.replace("_", " ").capitalize(),
+                        HudFormat.progress_percent(learned), sustain_icon])
+        var below := _required_rung_quote(src, prefix, quote) if rung_below_gates else {}
+        if not below.is_empty() and not bool(below.get(RungQuotes.KEY_REACHED, false)):
+            var percent := HudFormat.progress_percent(float(below.get(RungQuotes.KEY_PROGRESS, 0.0)))
+            var below_glyph := FoodIcons.for_policy(RungQuotes.verb_of(below))
+            if RUNG_BELOW_REASON_FORMATS.has(verb):
+                reasons.append(String(RUNG_BELOW_REASON_FORMATS[verb]) % [percent, below_glyph])
+            else:
+                reasons.append(HudFloraVocab.GATE_REASON_RUNG_BELOW_FALLBACK_FORMAT % [
+                    RungQuotes.name_of(below), percent, below_glyph])
+        var refusal := String(quote.get(RungQuotes.KEY_SITE_REFUSAL, "")).strip_edges()
+        if refusal != "":
+            reasons.append(String(HudFloraVocab.SOW_REFUSAL_REASONS.get(
+                refusal, HudFloraVocab.SOW_REFUSAL_FALLBACK)))
+        if not reasons.is_empty():
+            gates[verb] = reasons
+    return gates
+
+## The hand-written knowledge-gate sentences for the shipped verbs; any other verb falls back to
+## `HudFloraVocab.GATE_REASON_KNOWLEDGE_FALLBACK_FORMAT`.
+const KNOWLEDGE_REASON_FORMATS := {
+    "cultivate": HudFloraVocab.GATE_REASON_CULTIVATION_KNOWLEDGE_FORMAT,
+    "sow": HudFloraVocab.GATE_REASON_SEED_SELECTION_KNOWLEDGE_FORMAT,
+    "tame": HudFloraVocab.GATE_REASON_HERDING_KNOWLEDGE_FORMAT,
+    "corral": HudFloraVocab.GATE_REASON_PENNING_KNOWLEDGE_FORMAT,
+}
+## …and the rung-beneath sentence for the one shipped verb that has one.
+const RUNG_BELOW_REASON_FORMATS := {
+    "corral": HudFloraVocab.GATE_REASON_HERD_DOMESTICATED_FORMAT,
+}
+
+## The quote of the rung `quote` requires held first, `{}` when it names none or names the branch root
+## (which every source stands on).
+static func _required_rung_quote(src: Dictionary, prefix: String, quote: Dictionary) -> Dictionary:
+    return RungQuotes.quote_of_rung(src, prefix, String(quote.get(RungQuotes.KEY_REQUIRES_RUNG, "")))
+
+## The plant web's gates for a `patch_`-prefixed tile cross-ref -- `source_gates` at that prefix.
 static func forage_gates(tile_info: Dictionary, knowledge: Dictionary) -> Dictionary:
-    # The FOOD-PEAK glyph leads every knowledge remedy: practice scales with the floor
-    # (`intensification::learn_multiplier` = floor / the food peak), so the peak is the reference the
-    # remedy's "the more you leave standing" is measured against.
-    var sustain_icon := FoodIcons.for_floor_zone(SourceForecast.FLOOR_ZONE_PEAK)
-    var gates := {}
-    var cultivate_reasons: Array[String] = []
-    var cultivation := track(knowledge, HudFloraVocab.KNOWLEDGE_TRACK_CULTIVATION)
-    if cultivation < HudConst.KNOWLEDGE_COMPLETE:
-        cultivate_reasons.append(HudFloraVocab.GATE_REASON_CULTIVATION_KNOWLEDGE_FORMAT % [
-            HudFormat.progress_percent(cultivation), sustain_icon])
-    if not cultivate_reasons.is_empty():
-        gates[HudConst.LABOR_POLICY_CULTIVATE] = cultivate_reasons
-    var sow_reasons: Array[String] = []
-    var seed_selection := track(knowledge, HudFloraVocab.KNOWLEDGE_TRACK_SEED_SELECTION)
-    if seed_selection < HudConst.KNOWLEDGE_COMPLETE:
-        sow_reasons.append(HudFloraVocab.GATE_REASON_SEED_SELECTION_KNOWLEDGE_FORMAT % [
-            HudFormat.progress_percent(seed_selection), sustain_icon])
-    var refusal := sow_site_refusal_reason(tile_info)
-    if refusal != "":
-        sow_reasons.append(refusal)
-    if not sow_reasons.is_empty():
-        gates[HudConst.LABOR_POLICY_SOW] = sow_reasons
-    return gates
+    return source_gates(tile_info, HudComposeVocab.FORAGE_FORECAST_PREFIX, knowledge)
 
-## WHY this ground will not take seed, in the manual's voice — "" when it will. Reads the sim's
-## `patch_sow_site_refusal` verdict; the client never re-derives it (it has neither the per-biome
-## capacity table nor the hydrology). An unknown key still refuses: the sim gates the command on the
-## same seam, so offering the button anyway would only produce a failure the player cannot read.
-static func sow_site_refusal_reason(tile_info: Dictionary) -> String:
-    var key := String(tile_info.get("patch_sow_site_refusal", "")).strip_edges()
-    if key == "":
-        return ""
-    return String(HudFloraVocab.SOW_REFUSAL_REASONS.get(key, HudFloraVocab.SOW_REFUSAL_FALLBACK))
-
-## Unmet prerequisites for the HUNT investment rungs (Tame = rung 2, Corral = rung 3), keyed policy →
-## Array[String] of reasons. The herd twin of `forage_gates`.
-##
-## The §4.3 GATE RESHUFFLE is what this function encodes: ONE knowledge per transition. **Herding
-## gates Tame** (it no longer gates Corral, and taming is no longer ungated), and the **new Penning
-## gates Corral**. Corral additionally needs THIS herd tamed — the per-source half of the split.
-##
-## Deliberately NOT gated: the source being Thriving — and nothing on the control says otherwise
-## either. The sim paces a build by the FLOOR rather than stopping it on the phase (see
-## `forage_gates` above), so the WARN "Paused … only advances while Thriving" line the running control
-## used to carry is retired with the gate it described; what the sheet states instead is the live pace
-## in the aside's teaching line.
-##
-## Known gap (pre-existing): no ownership check — the sim's tracks are per-faction, so a herd tamed by
-## ANOTHER faction reads as available here while the sim rejects the assign.
+## The animal web's gates for a bare-keyed herd row.
 static func hunt_gates(herd: Dictionary, knowledge: Dictionary) -> Dictionary:
-    # The FOOD-PEAK glyph leads every knowledge remedy: practice scales with the floor
-    # (`intensification::learn_multiplier` = floor / the food peak), so the peak is the reference the
-    # remedy's "the more you leave standing" is measured against.
-    var sustain_icon := FoodIcons.for_floor_zone(SourceForecast.FLOOR_ZONE_PEAK)
-    var gates := {}
-    var domestication := float(herd.get("domestication", 0.0))
-    var tame_reasons: Array[String] = []
-    var herding := track(knowledge, HudFloraVocab.KNOWLEDGE_TRACK_HERDING)
-    if herding < HudConst.KNOWLEDGE_COMPLETE:
-        tame_reasons.append(HudFloraVocab.GATE_REASON_HERDING_KNOWLEDGE_FORMAT % [
-            HudFormat.progress_percent(herding), sustain_icon])
-    if not tame_reasons.is_empty():
-        gates[HudConst.LABOR_POLICY_TAME] = tame_reasons
-    var corral_reasons: Array[String] = []
-    var penning := track(knowledge, HudFloraVocab.KNOWLEDGE_TRACK_PENNING)
-    if penning < HudConst.KNOWLEDGE_COMPLETE:
-        corral_reasons.append(HudFloraVocab.GATE_REASON_PENNING_KNOWLEDGE_FORMAT % [
-            HudFormat.progress_percent(penning), sustain_icon])
-    if domestication < SourceForecast.DOMESTICATION_COMPLETE:
-        corral_reasons.append(HudFloraVocab.GATE_REASON_HERD_DOMESTICATED_FORMAT % [
-            HudFormat.progress_percent(domestication), FoodIcons.for_policy(HudConst.LABOR_POLICY_TAME)])
-    if not corral_reasons.is_empty():
-        gates[SourceForecast.IMPROVEMENT_CORRAL] = corral_reasons
-    return gates
-
+    return source_gates(herd, HudComposeVocab.BARE_FORECAST_PREFIX, knowledge, true)
 
 ## **THE ROUTE ARM — may this ROAD be raised to each rung above the one it stands on, and if not,
 ## why not?** (arc #532 slice 13). Keyed **RUNG KEY → `Array[Dictionary]` of refusals**, empty for a
@@ -444,25 +432,17 @@ static func _committed_to_a_fodder_crop(committed_species: String,
     for entry in basket:
         if String(entry.get("species", "")).strip_edges() != species:
             continue
-        return float(entry.get("cultivate_fodder_payoff",
-                SourceForecast.FLORA_CROP_RATIO_NONE)) > SourceForecast.FLORA_CROP_RATIO_NONE \
-            or float(entry.get("sow_fodder_payoff",
-                SourceForecast.FLORA_CROP_RATIO_NONE)) > SourceForecast.FLORA_CROP_RATIO_NONE
+        for quote in RungQuotes.quotes(entry, ""):
+            if float(quote.get(RungQuotes.KEY_FODDER_PAYOFF,
+                    SourceForecast.FLORA_CROP_RATIO_NONE)) > SourceForecast.FLORA_CROP_RATIO_NONE:
+                return true
+        return false
     return false
 
 ## The BARE-KEYED twin of `forage_gates`, for the raw wire patch dict (`forage_patch_lookup`) rather
 ## than the `patch_`-prefixed `tile_info` cross-ref.
-##
-## **The cross-ref's prefixing is UNIFORM now** (issue #442): `patch_is_cultivated` /
-## `patch_cultivation_progress` joined their already-prefixed rung-3 twins when
-## `SourceForecast.improvement_is_done` started spelling every key as `prefix + name` and the lone
-## exception would have made it answer "not built" on a tended patch. So this adapter is a plain
-## re-spelling of the one key `forage_gates` still reads, and there is no longer a mixed convention
-## to write down.
 static func forage_gates_from_patch(patch: Dictionary, knowledge: Dictionary) -> Dictionary:
-    return forage_gates({
-        "patch_sow_site_refusal": String(patch.get("sow_site_refusal", "")),
-    }, knowledge)
+    return source_gates(patch, HudComposeVocab.BARE_FORECAST_PREFIX, knowledge)
 
 ## THE READY TEST — the next rung this source could climb RIGHT NOW, as
 ## `{policy, glyph}`, or `{}` when there is nothing to offer.
@@ -508,20 +488,23 @@ static func next_rung_offered(kind: String, source: Dictionary, improvement: Str
 static func _next_rung(kind: String, source: Dictionary, prefix: String, improvement: String,
         knowledge: Dictionary, allow_gated: bool) -> Dictionary:
     var current := improvement.strip_edges().to_lower()
-    var gates := {}
+    if kind != SourceForecast.LABOR_KIND_FORAGE and kind != SourceForecast.LABOR_KIND_HUNT:
+        return {}
+    var gates := source_gates(source, prefix, knowledge, kind == SourceForecast.LABOR_KIND_HUNT)
+    # HIGHEST RUNG FIRST, among those the source admits. A plant's admission is "at least one crop in
+    # the basket can climb this rung" (species-global legality, never "is it wise here"); a herd's is
+    # its husbandry ceiling.
     var admitted: Array[String] = []
-    if kind == SourceForecast.LABOR_KIND_FORAGE:
-        gates = forage_gates(source, knowledge) if prefix == HudComposeVocab.FORAGE_FORECAST_PREFIX \
-            else forage_gates_from_patch(source, knowledge)
-        # HIGHEST RUNG FIRST. `can_sow` / `can_cultivate` are SPECIES-GLOBAL legality ("can this plant
-        # ever climb this rung"), never "is it wise here" — a marginal share must not suppress a rung.
-        for rung in [SourceForecast.IMPROVEMENT_SOW, SourceForecast.IMPROVEMENT_CULTIVATE]:
-            if rung != current and rung_has_room(source, prefix, rung) \
-                    and any_crop_allows(source, prefix, CROP_LEGALITY_FLAGS[rung]):
-                admitted.append(rung)
-    elif kind == SourceForecast.LABOR_KIND_HUNT:
-        gates = hunt_gates(source, knowledge)
-        admitted = hunt_rungs_admitted(source, prefix, current)
+    var verbs := RungQuotes.verbs(source, prefix)
+    verbs.reverse()
+    for verb in verbs:
+        if verb == current or not rung_has_room(source, prefix, verb):
+            continue
+        if kind == SourceForecast.LABOR_KIND_FORAGE:
+            if any_crop_allows(source, prefix, verb):
+                admitted.append(verb)
+        elif RungQuotes.admits(source, prefix, RungQuotes.quote_of_verb(source, prefix, verb)):
+            admitted.append(verb)
     for rung in admitted:
         if not gates.has(rung):
             return _ready(rung)
@@ -551,12 +534,11 @@ static func _next_rung(kind: String, source: Dictionary, prefix: String, improve
 static func hunt_rungs_admitted(source: Dictionary, prefix: String,
         exclude: String = "") -> Array[String]:
     var admitted: Array[String] = []
-    var ceiling := SourceForecast.husbandry_ceiling(source)
-    for rung in [SourceForecast.IMPROVEMENT_CORRAL, SourceForecast.IMPROVEMENT_TAME]:
-        var admits := ceiling == SourceForecast.HUSBANDRY_CEILING_PEN \
-            if rung == SourceForecast.IMPROVEMENT_CORRAL \
-            else ceiling != SourceForecast.HUSBANDRY_CEILING_WILD
-        if rung != exclude and admits and rung_has_room(source, prefix, rung):
+    var verbs := RungQuotes.verbs(source, prefix)
+    verbs.reverse()
+    for rung in verbs:
+        if rung != exclude and rung_has_room(source, prefix, rung) \
+                and RungQuotes.admits(source, prefix, RungQuotes.quote_of_verb(source, prefix, rung)):
             admitted.append(rung)
     return admitted
 
@@ -588,13 +570,6 @@ static func rung_has_room(source: Dictionary, prefix: String, rung: String) -> b
 ## pair, and a faction that has not learned Penning yet will learn it while still holding this herd.
 static func hunt_rung_remains(source: Dictionary, prefix: String) -> bool:
     return not hunt_rungs_admitted(source, prefix).is_empty()
-
-## The species-GLOBAL legality flag each plant rung reads off a composition entry — the one place that
-## mapping is written down.
-const CROP_LEGALITY_FLAGS := {
-    SourceForecast.IMPROVEMENT_SOW: "can_sow",
-    SourceForecast.IMPROVEMENT_CULTIVATE: "can_cultivate",
-}
 
 ## The unmet-prerequisite reasons a gates dict holds for one rung, as a typed `Array[String]` — the
 ## shape `HudWidgets.build_improvement_control` renders beneath the box.
@@ -690,12 +665,12 @@ static func leg_in_progress(source: Dictionary, building: Dictionary) -> Diction
 ## an inadmissible rung; a track SHOWS it and says why, so both surfaces have to reach the same
 ## legality flag — and a second reading of `composition` is how the picker comes to offer a Sow the
 ## board has already called impossible.
-static func any_crop_allows(patch: Dictionary, prefix: String, flag: String) -> bool:
+static func any_crop_allows(patch: Dictionary, prefix: String, verb: String) -> bool:
     var composition: Variant = patch.get(prefix + "composition", [])
     if not (composition is Array):
         return false
     for entry_variant in composition:
-        if entry_variant is Dictionary and bool((entry_variant as Dictionary).get(flag, false)):
+        if entry_variant is Dictionary and RungQuotes.entry_can_climb(entry_variant as Dictionary, verb):
             return true
     return false
 
@@ -709,32 +684,17 @@ static func _ready(policy: String) -> Dictionary:
 ## One faction-knowledge track's 0..1 progress out of the caller's `knowledge` dict, 0.0 when absent.
 ## A missing track is "not learned", never "learned" — an absent key must gate, not open, or a
 ## snapshot that omits a track would silently unlock every rung it guards.
-## **THE KNOWLEDGE TRACK EACH RUNG GATES ON** — one knowledge per transition (`§4.3`), so this is a
-## map and not a search. It is what lets a caller tell a knowledge gate apart from a SOURCE gate
-## without reading the reason's words.
-const RUNG_KNOWLEDGE_TRACKS := {
-    SourceForecast.IMPROVEMENT_CULTIVATE: HudFloraVocab.KNOWLEDGE_TRACK_CULTIVATION,
-    SourceForecast.IMPROVEMENT_SOW: HudFloraVocab.KNOWLEDGE_TRACK_SEED_SELECTION,
-    SourceForecast.IMPROVEMENT_TAME: HudFloraVocab.KNOWLEDGE_TRACK_HERDING,
-    SourceForecast.IMPROVEMENT_CORRAL: HudFloraVocab.KNOWLEDGE_TRACK_PENNING,
-    # **THE ROUTE BRANCH'S TWO** (arc #532). They are in this table for the same reason the four above
-    # are, and for one more: `KnowledgeRoster` INVERTS it to ask "what does this knowledge unlock",
-    # which is how the knowledge screen tells a discovery nothing is using from one there is nothing
-    # to use. A route rung missing here would read as a knowledge that unlocks nothing at all.
-    SourceForecast.IMPROVEMENT_GRADE: HudFloraVocab.KNOWLEDGE_TRACK_ROADBUILDING,
-    SourceForecast.IMPROVEMENT_PAVE: HudFloraVocab.KNOWLEDGE_TRACK_PAVING,
-}
-
-## **Is this rung blocked on KNOWLEDGE specifically?** — the same `track < KNOWLEDGE_COMPLETE` test the
-## gate builders above make, asked on its own so a caller can drop the knowledge reason without
-## matching its text. The gate builders append the knowledge reason FIRST, so when this answers `true`
-## the reason to drop is `reasons[0]`.
+## **Is this rung blocked on KNOWLEDGE specifically?** -- the same `track < KNOWLEDGE_COMPLETE` test the
+## gate builder above makes, asked on its own so a caller can drop the knowledge reason without
+## matching its text. It takes the rung's QUOTE (stamped with its `unlock_knowledge` from the catalog),
+## so no client table says which knowledge gates which verb. The gate builder appends the knowledge
+## reason FIRST, so when this answers `true` the reason to drop is `reasons[0]`.
 ##
 ## Its one caller is the compose sheet, where that reason is BOTH redundant and vacuous: the aside
 ## states the same lesson live and quantified, and the remedy ("forage a wild patch to learn it") names
-## the very work the sheet is composing. Every other surface keeps it — see `labor-ui.md`.
-static func knowledge_gate_unmet(rung: String, knowledge: Dictionary) -> bool:
-    var key := String(RUNG_KNOWLEDGE_TRACKS.get(rung, ""))
+## the very work the sheet is composing. Every other surface keeps it -- see `labor-ui.md`.
+static func knowledge_gate_unmet(quote: Dictionary, knowledge: Dictionary) -> bool:
+    var key := String(quote.get(RungQuotes.KEY_UNLOCK, ""))
     return key != "" and track(knowledge, key) < HudConst.KNOWLEDGE_COMPLETE
 
 static func track(knowledge: Dictionary, key: String) -> float:

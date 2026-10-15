@@ -1488,10 +1488,10 @@ Every other chapter stayed green through all three.
 
 ## What is NOT wired, and is not an omission
 
-- **The route ladder is in `SourceForecast.RUNG_KEY_IMPROVEMENTS`, its inverse AND `RUNG_BRANCHES`.**
-  It used to be in none of them, correctly: no route rung declared a verb. `grade` and `pave` closed
-  that gap, so the branch goes into all three — the tables' own note is *both or neither*, and the
-  four rung keys are ALIASED off `HudRouteVocab` rather than spelled twice. **The free floor is two
+- **The route ladder was in `SourceForecast.RUNG_KEY_IMPROVEMENTS`, its inverse AND `RUNG_BRANCHES`
+  (all three RETIRED: the catalog carries the order and the verb).** It used to be in none of them,
+  correctly: no route rung declared a verb. The four rung keys are ALIASED off `HudRouteVocab`
+  rather than spelled twice. **The free floor is two
   rungs deep and both map to `IMPROVEMENT_NONE`**, exactly as the two `wild` rungs do: a path and
   the trail above it are worn in by traffic alone, and neither is something a band builds.
   `ReadyForImprovement` is unaffected — it reads `current_rung` off patches and herds, and no road
@@ -1742,9 +1742,9 @@ not carry is shaped by what the payload itself carries, never by a verb list. `K
 resolves a knowledge's verb (`unlock_for_track`), its source kind and a road's standing order off the
 same catalog (`MODEL_LADDER_RUNGS`), so a knowledge gating only a deposit or tile verb reads as
 untestable rather than as *nothing is using it*. `RungGates.RUNG_KNOWLEDGE_TRACKS`,
-`SourceForecast.IMPROVEMENT_RUNG_KEYS` / `RUNG_BRANCHES` and the `*_IMPROVEMENTS` lists still key the
-plant and animal rungs' bespoke wire fields (`cultivation_progress`, `corral_work_cost`, ...) and the
-compose sheet's gate reasons; they are the shipped plant / animal UI's data, not command routing.
+`SourceForecast.IMPROVEMENT_RUNG_KEYS` / `RUNG_BRANCHES` and the `*_IMPROVEMENTS` lists are RETIRED:
+a patch's and a herd's rungs are the generic `rung_quotes` (`labor-ui.md` -> "RUNG QUOTES"), so the
+plant and animal webs resolve their steps, gates and knowledge off the same catalog as the road.
 
 ### A tile crew is a site crew like a working's (issue #175)
 

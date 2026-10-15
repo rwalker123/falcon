@@ -1,0 +1,262 @@
+extends RefCounted
+class_name RungQuotes
+
+## **THE LADDER'S PER-RUNG QUOTES, READ GENERICALLY** (issue #175).
+##
+## A patch, a herd and each plant in a patch's basket publish `rung_quotes`: one quote per rung ABOVE
+## the branch's root, in climb order, each keyed by the catalog's `rung_key` and carrying that rung's
+## own numbers (`reached`, `progress`, `work_done`, `work_cost`, `food_yield`, ...). Nothing in the
+## client names a rung by a hard-coded key any more: **which rung a number belongs to is a JOIN
+## against `ladder_rungs`**, done once where a snapshot arrives (`enrich_sources`), which stamps each
+## quote with the rung's `verb`, `order`, `branch`, `traits`, `unlock_knowledge` and `label`. Every
+## reader below then asks by VERB (the unit a command and a control already speak) or by TRAIT (what a
+## rung IS: `enclosed` is a pen, `sown` a field), so a fourth step added to the config appears with no
+## GDScript edit.
+##
+## ⛔ **A QUOTE THAT THE CATALOG DOES NOT CARRY IS KEPT, NOT DROPPED**: it has no verb and no order, so
+## it sorts last and no verb-keyed reader finds it, but it is still in `quotes()` for a renderer that
+## wants every rung.
+##
+## All-`static`, stateless: the catalog arrives as an argument and nothing is held here.
+
+const QUOTES_KEY := "rung_quotes"
+const KEY_RUNG := "rung_key"
+const KEY_VERB := "verb"
+const KEY_ORDER := "order"
+const KEY_BRANCH := "branch"
+const KEY_TRAITS := "traits"
+const KEY_UNLOCK := "unlock_knowledge"
+const KEY_REQUIRES_RUNG := "requires_rung"
+const KEY_EARNS := "earns_knowledge"
+const KEY_LABEL := "label"
+const KEY_LABEL_FALLBACK := "label_fallback"
+const KEY_REACHED := "reached"
+const KEY_PROGRESS := "progress"
+const KEY_WORK_DONE := "work_done"
+const KEY_WORK_COST := "work_cost"
+const KEY_BUILD_MATERIAL := "build_material_cost"
+const KEY_UPKEEP_DEMAND := "upkeep_demand"
+const KEY_UPKEEP_MATERIAL := "upkeep_material_demand"
+const KEY_FOOD_YIELD := "food_yield"
+const KEY_FODDER := "fodder"
+const KEY_MATERIAL_PAYOFF := "material_payoff"
+const KEY_SITE_REFUSAL := "site_refusal"
+## A crop-picker quote's own keys (one per plant, per rung above the plant root).
+const KEY_CAN_CLIMB := "can_climb"
+const KEY_FOOD_PAYOFF := "food_payoff"
+const KEY_YIELD_RATIO := "yield_ratio"
+const KEY_FODDER_PAYOFF := "fodder_payoff"
+
+## The rung traits a reader asks by. Spelled once; the config owns what carries them.
+const TRAIT_ENCLOSED := "enclosed"
+const TRAIT_SOWN := "sown"
+const TRAIT_MANAGED := "managed"
+const TRAIT_DOMESTICATED := "domesticated"
+
+## The order a quote with no catalog row falls to: after every rung the catalog does place.
+const ORDER_UNPLACED := 1000000
+
+# ---- ENRICHMENT (the one join) -------------------------------------------------------------------
+
+## Stamp every quote of every source in `sources` (patches or herds) -- and each patch's composition
+## entries' quotes -- from the catalog, in place. Idempotent; a quote the catalog lacks keeps what it has.
+static func enrich_sources(sources: Variant, catalog: Array, prefix: String = "") -> void:
+	if not (sources is Array):
+		return
+	var by_key := _by_rung_key(catalog)
+	for source_variant in (sources as Array):
+		if not (source_variant is Dictionary):
+			continue
+		var source: Dictionary = source_variant
+		_enrich_list(source.get(prefix + QUOTES_KEY, []), by_key)
+		var composition: Variant = source.get(prefix + "composition", [])
+		if composition is Array:
+			for entry in (composition as Array):
+				if entry is Dictionary:
+					_enrich_list((entry as Dictionary).get(QUOTES_KEY, []), by_key)
+
+static func _by_rung_key(catalog: Array) -> Dictionary:
+	var by_key: Dictionary = {}
+	for row in catalog:
+		if row is Dictionary:
+			by_key[String((row as Dictionary).get(KEY_RUNG, ""))] = row
+	return by_key
+
+static func _enrich_list(quotes_variant: Variant, by_key: Dictionary) -> void:
+	if not (quotes_variant is Array):
+		return
+	for quote_variant in (quotes_variant as Array):
+		if not (quote_variant is Dictionary):
+			continue
+		var quote: Dictionary = quote_variant
+		var row: Variant = by_key.get(String(quote.get(KEY_RUNG, "")))
+		if not (row is Dictionary):
+			continue
+		var rung: Dictionary = row
+		quote[KEY_VERB] = String(rung.get(KEY_VERB, ""))
+		quote[KEY_ORDER] = int(rung.get(KEY_ORDER, ORDER_UNPLACED))
+		quote[KEY_BRANCH] = String(rung.get(KEY_BRANCH, ""))
+		quote[KEY_TRAITS] = rung.get(KEY_TRAITS, [])
+		quote[KEY_UNLOCK] = String(rung.get(KEY_UNLOCK, ""))
+		quote[KEY_REQUIRES_RUNG] = String(rung.get(KEY_REQUIRES_RUNG, ""))
+		quote[KEY_EARNS] = String(rung.get(KEY_EARNS, ""))
+		quote[KEY_LABEL] = String(rung.get(KEY_LABEL, ""))
+		quote[KEY_LABEL_FALLBACK] = String(rung.get(KEY_LABEL_FALLBACK, ""))
+
+# ---- READERS ---------------------------------------------------------------------------------------
+
+## The source's quotes in climb order. `prefix` spells the key, so a `patch_`-prefixed `tile_info`
+## cross-ref and a bare wire row read alike.
+static func quotes(src: Dictionary, prefix: String = "") -> Array[Dictionary]:
+	var rows: Array[Dictionary] = []
+	var raw: Variant = src.get(prefix + QUOTES_KEY, [])
+	if raw is Array:
+		for quote in (raw as Array):
+			if quote is Dictionary:
+				rows.append(quote as Dictionary)
+	rows.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
+		return order_of(a) < order_of(b))
+	return rows
+
+static func order_of(quote: Dictionary) -> int:
+	return int(quote.get(KEY_ORDER, ORDER_UNPLACED))
+
+static func verb_of(quote: Dictionary) -> String:
+	return String(quote.get(KEY_VERB, ""))
+
+## The verbs of the rungs above the root that have one, in climb order -- the ladder a source offers.
+static func verbs(src: Dictionary, prefix: String = "") -> Array[String]:
+	var out: Array[String] = []
+	for quote in quotes(src, prefix):
+		var verb := verb_of(quote)
+		if verb != "":
+			out.append(verb)
+	return out
+
+## The quote whose rung carries `verb`, `{}` when the source has none.
+static func quote_of_verb(src: Dictionary, prefix: String, verb: String) -> Dictionary:
+	if verb == "":
+		return {}
+	for quote in quotes(src, prefix):
+		if verb_of(quote) == verb:
+			return quote
+	return {}
+
+static func quote_of_rung(src: Dictionary, prefix: String, rung_key: String) -> Dictionary:
+	if rung_key == "":
+		return {}
+	for quote in quotes(src, prefix):
+		if String(quote.get(KEY_RUNG, "")) == rung_key:
+			return quote
+	return {}
+
+## One numeric field of the verb's quote, `default` where the source quotes no such rung.
+static func number(src: Dictionary, prefix: String, verb: String, field: String,
+		default: float = 0.0) -> float:
+	var quote := quote_of_verb(src, prefix, verb)
+	return float(quote.get(field, default)) if not quote.is_empty() else default
+
+static func array_field(src: Dictionary, prefix: String, verb: String, field: String) -> Array:
+	var quote := quote_of_verb(src, prefix, verb)
+	var value: Variant = quote.get(field, [])
+	return value as Array if value is Array else []
+
+## Has the source climbed to (or past) the rung `verb` raises?
+static func reached(src: Dictionary, prefix: String, verb: String) -> bool:
+	return bool(quote_of_verb(src, prefix, verb).get(KEY_REACHED, false))
+
+## The highest quote the source has reached, `{}` while it stands on the branch's root.
+static func held(src: Dictionary, prefix: String = "") -> Dictionary:
+	var best: Dictionary = {}
+	for quote in quotes(src, prefix):
+		if bool(quote.get(KEY_REACHED, false)):
+			best = quote
+	return best
+
+## The verb of the rung the source stands on, `""` on the root (or an unplaced rung).
+static func held_verb(src: Dictionary, prefix: String = "") -> String:
+	return verb_of(held(src, prefix))
+
+## The lowest-order quote not yet reached -- the next step -- `{}` at the top of the branch.
+static func next(src: Dictionary, prefix: String = "") -> Dictionary:
+	for quote in quotes(src, prefix):
+		if not bool(quote.get(KEY_REACHED, false)):
+			return quote
+	return {}
+
+static func has_trait(quote: Dictionary, trait_name: String) -> bool:
+	var traits: Variant = quote.get(KEY_TRAITS, [])
+	return traits is Array and (traits as Array).has(trait_name)
+
+## The quote whose rung carries `trait`, `{}` when the branch has none.
+static func quote_with_trait(src: Dictionary, prefix: String, trait_name: String) -> Dictionary:
+	for quote in quotes(src, prefix):
+		if has_trait(quote, trait_name):
+			return quote
+	return {}
+
+## **IS THE SOURCE ENCLOSED** -- the rung carrying the `enclosed` trait is reached. That is what
+## "penned" means, asked of the config's own word for a rung rather than of one rung's key.
+static func is_enclosed(src: Dictionary, prefix: String = "") -> bool:
+	return bool(quote_with_trait(src, prefix, TRAIT_ENCLOSED).get(KEY_REACHED, false))
+
+## The verb of the enclosed rung, `""` where the branch has none.
+static func enclosed_verb(src: Dictionary, prefix: String = "") -> String:
+	return verb_of(quote_with_trait(src, prefix, TRAIT_ENCLOSED))
+
+## **DOES THE SOURCE'S HUSBANDRY CEILING ADMIT THIS RUNG?** The ceiling is the id of the highest rung
+## the species can reach (`"wild"` = the root, `"pastoral"`, `"pen"`, or any rung the config adds), so
+## a quote is admitted when its order does not pass the ceiling rung's. A source with no ceiling (every
+## plant, and a herd row that states none) admits everything; a ceiling that names the branch root --
+## or any rung the catalog does not carry -- admits nothing, the rung being withheld OUTRIGHT rather than
+## gated because no amount of work will ever raise it.
+static func admits(src: Dictionary, prefix: String, quote: Dictionary) -> bool:
+	if quote.is_empty():
+		return false
+	var ceiling := String(src.get(prefix + "husbandry_ceiling", "")).strip_edges().to_lower()
+	if ceiling == "":
+		return true
+	var ceiling_quote := quote_of_rung(src, prefix, String(quote.get(KEY_BRANCH, "")) + ":" + ceiling)
+	if ceiling_quote.is_empty():
+		return false
+	return order_of(quote) <= order_of(ceiling_quote)
+
+## `"<branch>:"` of the source's ladder (read off its first quote), `""` when it quotes no rung -- the
+## prefix a rung id is joined to for a lookup by `<branch>:<id>`.
+static func branch_prefix(src: Dictionary, prefix: String = "") -> String:
+	var rows := quotes(src, prefix)
+	if rows.is_empty():
+		return ""
+	return String(rows[0].get(KEY_BRANCH, "")) + ":"
+
+## **HOW FAR A HERD IS FROM DOMESTICATED**, 0..1: the progress of the `domesticated` rung that is not
+## also the `enclosed` one (a pen is a further step, not the taming), full once any such rung is
+## reached. What `domestication` was before the quotes.
+static func domestication_progress(src: Dictionary, prefix: String = "") -> float:
+	var best := 0.0
+	for quote in quotes(src, prefix):
+		if not has_trait(quote, TRAIT_DOMESTICATED) or has_trait(quote, TRAIT_ENCLOSED):
+			continue
+		if bool(quote.get(KEY_REACHED, false)):
+			return 1.0
+		best = maxf(best, float(quote.get(KEY_PROGRESS, 0.0)))
+	return clampf(best, 0.0, 1.0)
+
+## The best-known name of a quote's rung: `label`, else `label_fallback`, else the humanised rung id.
+static func name_of(quote: Dictionary) -> String:
+	var label := String(quote.get(KEY_LABEL, "")).strip_edges()
+	if label != "":
+		return label
+	var fallback := String(quote.get(KEY_LABEL_FALLBACK, "")).strip_edges()
+	if fallback != "":
+		return fallback
+	return HudRouteVocab.humanize_rung_key(String(quote.get(KEY_RUNG, "")))
+
+# ---- CROP PICKER QUOTES (one set per plant in the basket) -------------------------------------------
+
+## One composition entry's quote for `verb`, `{}` when the plant quotes no such rung.
+static func entry_quote(entry: Dictionary, verb: String) -> Dictionary:
+	return quote_of_verb(entry, "", verb)
+
+static func entry_can_climb(entry: Dictionary, verb: String) -> bool:
+	return bool(entry_quote(entry, verb).get(KEY_CAN_CLIMB, false))

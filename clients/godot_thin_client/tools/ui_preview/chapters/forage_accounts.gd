@@ -1869,8 +1869,7 @@ func run(harness) -> void:
 	await h._save("forage_lesson_known")
 	h._assert_hud("a lesson still being earned IS named, so the pair is not vacuous",
 		teaching_learning.contains(Readout.TEACHING_LESSON_NEEDLE)
-			and teaching_learning.contains(String(SourceForecast.RUNG_LESSONS[
-				SourceForecast.SOURCE_KIND_FORAGE][SourceForecast.IMPROVEMENT_NONE])))
+			and teaching_learning.contains("cultivation"))
 	# NO LINE AT ALL rather than an empty one: with no build in flight there is no second half to keep.
 	h._assert_hud("…and the same patch teaches nothing once the faction knows it — no line, not a blank",
 		Readout.teaching_line(h._hud._drawercompose._compose_sheet) == "")
@@ -2532,8 +2531,7 @@ func run(harness) -> void:
 	h._assert_hud("…it states the lesson it is earning, at the floor's own multiplier (%s)"
 			% at_floor_teaching,
 		at_floor_teaching.contains(SourceForecast.TEACHING_RATE_FORMAT % [
-			SourceForecast.RUNG_LESSONS[SourceForecast.SOURCE_KIND_FORAGE][
-				SourceForecast.IMPROVEMENT_NONE],
+			"cultivation",
 			SourceForecast.learn_multiplier(SourceForecast.FLOOR_FOOD_PEAK)]))
 
 	# **THE HALF THAT KEEPS ZERO REACHABLE.** The same patch drawn far enough below its floor that one

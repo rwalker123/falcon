@@ -92,6 +92,7 @@ static func floorify(src: Dictionary, prefix: String = "") -> Dictionary:
 		return src
 	floorify_ceilings(src, prefix)
 	seed_growth_terms(src, prefix)
+	RungFx.stamp_source(src, prefix)
 	return src
 
 ## Seed `per_worker_biomass` + `regrowth_samples` + the two phase-band cuts on a fixture that predates

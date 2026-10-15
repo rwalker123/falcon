@@ -1436,7 +1436,11 @@ func _assert_the_greying_follows_the_animal() -> void:
 	# renders against the herd the prologue selected and its `corralled` flag never arrives.
 	var pen := _offer_quarry(SLED_ROSTER_PEN_ID, "Wild Boar", "big", PEN_BOAR_BODY_MASS,
 		PEN_BOAR_DEFENSE, SourceForecast.HUSBANDRY_CEILING_PEN)
-	pen[KitRoster.QUARRY_CORRALLED_KEY] = true
+	pen["corralled"] = true
+	# A pen with a rung still to climb: the harness-only `animal:ranch` step above it, ceiling raised.
+	pen["extra_step"] = true
+	pen["husbandry_ceiling"] = "ranch"
+	RungFx.stamp_herd(pen)
 	# ⛔ **`NO_ENGAGEMENT_STAGE` IS WHAT THE WIRE ACTUALLY PUBLISHES FOR A PEN, and this fixture keeps
 	# it deliberately.** `core_sim/src/snapshot/subsistence.rs` still filters the field on
 	# `is_corralled()`, against the sim's own behaviour, until issue #572 closes it — so a fixture that
@@ -1504,7 +1508,8 @@ func _assert_the_greying_follows_the_animal() -> void:
 	# it is wild. What decides the greying is the ANIMAL, never the fence.
 	var pen_warren := _offer_quarry(SLED_ROSTER_PEN_WARREN_ID, "Rabbit Warren", "small",
 		OFFER_RABBIT_BODY_MASS, OFFER_RABBIT_DEFENSE, SourceForecast.HUSBANDRY_CEILING_PEN)
-	pen_warren[KitRoster.QUARRY_CORRALLED_KEY] = true
+	pen_warren["corralled"] = true
+	RungFx.stamp_herd(pen_warren)
 	pen_warren["engage_rate"] = SourceForecast.NO_ENGAGEMENT_STAGE
 	h._hud._compose.reset_hunt_source()
 	h._show_herd(pen_warren)
@@ -1773,7 +1778,8 @@ func _gear_row(band: Dictionary) -> String:
 ## reading, because `KitRoster.tier_hint` has no source parameter to hand this to.
 func _corral_twin(corralled: bool) -> Dictionary:
 	var herd := HerdFx.herd_fixture()
-	herd[KitRoster.QUARRY_CORRALLED_KEY] = corralled
+	herd["corralled"] = corralled
+	RungFx.stamp_herd(herd)
 	return herd
 
 ## ⛔ **A SYNTHETIC KIT, NAMED SO THAT IT CANNOT BE MISTAKEN FOR A SHIPPED ONE.** No id in
@@ -2208,6 +2214,7 @@ func _kit_swap_turn_estimate_states() -> void:
 	# meter filled, so the pair differs by the METER and by nothing else.
 	var finished := stocked_warren.duplicate(true)
 	finished["tame_work_done"] = HerdFx.ANIMAL_TAME_WORK_COST
+	RungFx.stamp_herd(finished)
 	h._assert_hud("a meter already at its cost finishes on the first worked turn",
 		SourceForecast.build_turns_at(finished, HudComposeVocab.BARE_FORECAST_PREFIX,
 			SourceForecast.IMPROVEMENT_TAME, OVER_GEARED_KEEPERS, SourceForecast.FLOOR_FOOD_PEAK,

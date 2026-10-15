@@ -83,14 +83,15 @@ runs out of units is REMOVED, so a worn-out item and one never made both read `r
 
 ### `unspent_testable` IS TWO QUESTIONS, AND THE CONFIG ANSWERS THE FIRST
 
-`unspent_testable` is `is_step` **and** a verb resolved by inverting `RungGates.RUNG_KNOWLEDGE_TRACKS`
+`unspent_testable` is `is_step` **and** a verb resolved off the catalog (`KnowledgeRoster.unlock_for_track`,
+the inverse of each rung's `unlock_knowledge`; `RungGates.RUNG_KNOWLEDGE_TRACKS` is retired)
 — that table is what the compose sheet gates on, so reading it backwards is what makes "using it" here
 and "allowed" there the same question.
 
 **The two halves catch different faults.** `is_step` comes off the LADDER and is what distinguishes
 `foddering` — a capability no rung waits on — from a step. The verb lookup is the client's own table,
 and a route rung missing from it would read as a knowledge unlocking nothing at all; that is why
-`grade` / `pave` are in `RUNG_KNOWLEDGE_TRACKS` beside the four food-web verbs.
+`grade` / `pave` are catalog rungs beside the four food-web verbs.
 
 ### Which sources count as the faction's — THREE webs, three answers, and the wire forces each
 
@@ -112,7 +113,7 @@ the tile card (those are per-hex questions; this one is a whole-list question).
 
 **A route verb's rung is read through a DIFFERENT FIELD NAME, and that is the one asymmetry.** A patch
 and a herd publish their standing as `current_rung`; a road publishes its as `rung`. So
-`_roads_standing_on` makes `improvement_is_done`'s own comparison — `rung_at_or_above(standing, the
+`_roads_standing_on` makes `improvement_is_done`'s own comparison — `HudRouteVocab.catalog_rung_at_or_above(standing, the
 rung this verb builds)` — rather than a second rule, which keeps *"is anything using this"* one
 question on three webs.
 
@@ -421,7 +422,7 @@ rail and the craft fan draws none"* stays a claim about the TREE rather than abo
 hangs off the end of its ladder and the capsule is what stops it reading as one more step. Drawn from
 `NODE_UNSPENT_TESTABLE`, which is the config's own `is_step` crossed with the verb lookup, never a
 client list of exceptions. **That puts the verb lookup's own blind spot on the FACE**: a ladder branch
-absent from `RungGates.RUNG_KNOWLEDGE_TRACKS` reads `unspent_testable = false`, so every one of its
+with no catalog rung unlocked by it reads `unspent_testable = false`, so every one of its
 knowledges wears the capsule — the same fault this file already records under *`unspent_testable` is
 two questions*, now visible without a click rather than only in the reading's `Where, now` line.
 

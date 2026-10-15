@@ -991,16 +991,19 @@ func _connect_recorders() -> void:
 ## The ladder catalog the guard stands up for `format_improvement`: one verb-bearing row per shipped
 ## road / deposit verb carrying its branch's `source_kind`, which is what the builder shapes the
 ## command by (issue #175). The verb lists are HARNESS DATA here, not client routing.
+const ROAD_VERBS := ["grade", "pave"]
+const DEPOSIT_VERBS := ["fell", "coppice", "quarry"]
+
 func _ladder_catalog() -> Array:
 	var rows: Array = []
-	for verb in SourceForecast.ROUTE_IMPROVEMENTS:
+	for verb in ROAD_VERBS:
 		rows.append({"verb": verb, "source_kind": HudRouteVocab.SOURCE_KIND_ROAD})
-	for verb in SourceForecast.DEPOSIT_IMPROVEMENTS:
+	for verb in DEPOSIT_VERBS:
 		rows.append({"verb": verb, "source_kind": HudRouteVocab.SOURCE_KIND_DEPOSIT})
 	return rows
 
 func _drive_road_verbs() -> void:
-	for improvement in SourceForecast.ROUTE_IMPROVEMENTS:
+	for improvement in ROAD_VERBS:
 		var payload := {
 			"improvement": improvement,
 			"faction": HudConst.PLAYER_FACTION_ID,
@@ -1043,7 +1046,7 @@ func _drive_road_verbs() -> void:
 ## builder is the whole of the client's grammar for them. The Rust half classifies all three
 ## `PlaceAddressed`, so what it asserts is the PARSE.
 func _drive_deposit_verbs() -> void:
-	for improvement in SourceForecast.DEPOSIT_IMPROVEMENTS:
+	for improvement in DEPOSIT_VERBS:
 		var payload := {
 			"improvement": improvement,
 			"faction": HudConst.PLAYER_FACTION_ID,

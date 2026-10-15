@@ -924,6 +924,18 @@ func _apply_snapshot(snapshot: Dictionary) -> void:
             _reset_per_world_state()
             _world_epoch_applied = snapshot_epoch
     _sync_fog_of_war(snapshot, is_delta)
+    # **STAMP EACH SOURCE'S RUNG QUOTES WITH THE CATALOG'S VERBS BEFORE ANYONE READS THEM** (issue #175):
+    # a patch's and a herd's `rung_quotes` carry only a `rung_key`, and every reader asks by verb or by
+    # trait, so the join against `ladder_rungs` is done once here, in place, on the dicts the map and
+    # the HUD both receive. Only on a frame that changed the sources or the catalog; the cached world
+    # is republished whole, so an untouched section keeps the stamp it already has.
+    var ladder_catalog: Variant = snapshot.get("ladder_rungs", [])
+    if ladder_catalog is Array and not (ladder_catalog as Array).is_empty():
+        var catalog_changed := SnapshotSections.changed(snapshot, "ladder_rungs")
+        for source_section in ["herds", "forage_patches"]:
+            if snapshot.has(source_section) and (catalog_changed \
+                    or SnapshotSections.changed(snapshot, source_section)):
+                RungQuotes.enrich_sources(snapshot[source_section], ladder_catalog as Array)
     var metrics: Dictionary = {}
     var t_display: int = profile.begin(PROFILE_DISPLAY)
     if map_view != null and map_view.has_method("display_snapshot"):

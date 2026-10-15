@@ -329,17 +329,15 @@ func _rung_value_lapsed() -> String:
 		SourceForecast.NOT_IN_ANY_BUILD_QUEUE)
 
 func _rung_value_at(turns: int, queue_position: int) -> String:
-	return DetailFormat.rung_row_value({
+	return DetailFormat.rung_row_value(RungFx.stamp_herd({
 		SourceForecast.FORECAST_BUILD_TURNS_KEY: turns,
 		SourceForecast.FORECAST_BUILD_QUEUE_POSITION_KEY: queue_position,
-		SourceForecast.FORECAST_BUILD_WORK_COST_KEYS[SourceForecast.IMPROVEMENT_TAME]:
-			BaseFx.PLANT_CULTIVATE_WORK_COST,
+		"tame_work_cost": BaseFx.PLANT_CULTIVATE_WORK_COST,
 		# **THE METER RIDES THE DICT, not only the `progress` argument** — `rung_row_value` asks
 		# `build_verb` whether this rung is the one in flight, and a dict with no meter answers NO, so
 		# the row would take the not-in-flight branch and never reach the sentinel under test.
-		SourceForecast.FORECAST_BUILD_METER_KEYS[SourceForecast.IMPROVEMENT_TAME]:
-			REVERTING_METER_PROGRESS,
-	}, HudComposeVocab.BARE_FORECAST_PREFIX, SourceForecast.IMPROVEMENT_TAME,
+		"domestication": REVERTING_METER_PROGRESS,
+	}), HudComposeVocab.BARE_FORECAST_PREFIX, SourceForecast.IMPROVEMENT_TAME,
 		SourceForecast.SOURCE_KIND_HERD, DetailFormat.husbandry_built_label(), false,
 		REVERTING_METER_PROGRESS, STAFFED_CREW, SourceForecast.IMPROVEMENT_NONE)
 
@@ -360,11 +358,10 @@ func _hazard_states_all_marked() -> bool:
 	# at any fullness now, so with the keeping covered it is a decision the player made, and marking it
 	# would teach them to ignore the mark. The negative rides in this conjunction rather than in a
 	# frame because this is where the SET is decided.
-	var held := DetailFormat.rung_row_value({
+	var held := DetailFormat.rung_row_value(RungFx.stamp_herd({
 		SourceForecast.FORECAST_BUILD_TURNS_KEY: SourceForecast.BUILD_TURNS_HOLDS,
-		SourceForecast.FORECAST_BUILD_METER_KEYS[SourceForecast.IMPROVEMENT_TAME]:
-			REVERTING_METER_PROGRESS,
-	}, HudComposeVocab.BARE_FORECAST_PREFIX,
+		"domestication": REVERTING_METER_PROGRESS,
+	}), HudComposeVocab.BARE_FORECAST_PREFIX,
 		SourceForecast.IMPROVEMENT_TAME, SourceForecast.SOURCE_KIND_HERD,
 		DetailFormat.husbandry_built_label(), false, REVERTING_METER_PROGRESS,
 		SourceForecast.BUILD_CREW_NONE, SourceForecast.IMPROVEMENT_NONE)
@@ -607,6 +604,7 @@ const HOVER_PROBE_ROW := "probe"
 func _under_kept_hover(src: Dictionary,
 		improvement: String = SourceForecast.IMPROVEMENT_CULTIVATE) -> String:
 	var ctx := DetailFormat.Context.new()
+	RungFx.stamp_patch(src, HudComposeVocab.FORAGE_FORECAST_PREFIX)
 	DetailFormat.note_under_kept_hover(ctx, HOVER_PROBE_ROW, src,
 		HudComposeVocab.FORAGE_FORECAST_PREFIX, SourceForecast.SOURCE_KIND_FORAGE, improvement)
 	return String(ctx.row_tooltips.get(HOVER_PROBE_ROW, ""))
@@ -2847,6 +2845,7 @@ func _the_five_states_are_a_SET(band: Dictionary) -> void:
 func _improvement_state_for(source: Dictionary, rung: String, composed: String,
 		band: Dictionary, gear: Dictionary) -> String:
 	var host := VBoxContainer.new()
+	RungFx.stamp_patch(source, HudComposeVocab.FORAGE_FORECAST_PREFIX)
 	h._hud._drawercompose._build_improvement_control(SourceForecast.LABOR_KIND_FORAGE, source,
 		HudComposeVocab.FORAGE_FORECAST_PREFIX, SourceForecast.DEFAULT_HARVEST_FLOOR,
 		composed, band, 1, gear, true, host, SourceForecast.BUILD_CREW_NONE)
@@ -2914,6 +2913,7 @@ func _a_plant_rungs_material_price_is_stated() -> void:
 	# a `0 stone`. Without this, a client that appended the good's word to every rung passes above.
 	var no_goods := patch.duplicate(true)
 	no_goods["patch_cultivation_upkeep_material_demand"] = []
+	RungFx.stamp_patch(no_goods, HudComposeVocab.FORAGE_FORECAST_PREFIX)
 	var bare_rows := RungLadder.track(SourceForecast.LABOR_KIND_FORAGE, no_goods,
 		HudComposeVocab.FORAGE_FORECAST_PREFIX, SourceForecast.IMPROVEMENT_NONE,
 		_both_plant_tracks_known())

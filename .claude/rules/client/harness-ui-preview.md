@@ -2763,7 +2763,7 @@ JOB_HUNT)` — the BYTE-IDENTICAL expression the wild pair uses, `tier_hint` hav
 parameter when issue #543 deleted `EquipmentStat::PenCarry` — while the corralled twins they were
 named for were built and handed nowhere. A block whose stated purpose was *"the fence moves NOTHING"*
 would therefore have stayed green under exactly the regression it named: a source parameter re-added
-to `tier_hint`, or a `QUARRY_CORRALLED_KEY` read off the band dict.
+to `tier_hint`, or an `enclosed` read off anything but the quote.
 
 **FOR THE HINT, THE INVARIANT IS NOW STRUCTURAL RATHER THAN TESTED**, and that is the trade this
 records: restoring a real penned reading requires `tier_hint` to take a source again, which is the
@@ -3837,4 +3837,38 @@ Appended LAST in `CHAPTERS`, so no existing frame moves; it hands the reference 
   carry the `FIXTURE_BAND_ID_OFFSET`-derived id.
 - The dock block injects a real `EventDockPanel`, ingests the sim's own label shapes, and asserts the
   host swap, the Notable rung on the three involuntary endings and the Routine receipt on a recall.
+
+## `chapters/fourth_rung.gd` -- a step the shipped ladder lacks (issue #175)
+
+Appended LAST in `CHAPTERS`, so no earlier frame moves. Four frames (`fourth_rung_farm_offered`,
+`fourth_rung_farm_part_built`, `fourth_rung_farm_locked`, `fourth_rung_ranch_offered`) and ten claims
+(`EXPECTED_CHECKPOINTS` 14, RE-MEASURED by a run). It pushes `RungFx.ladder_rungs(true)`, the
+fixture catalog with `plant:farm` (verb `farm`, above the Field) and `animal:ranch` (verb `ranch`,
+above the Pen), then stands a Field and a Pen beneath them. Nothing in `src/` names either step, so
+every claim is evidence the generic `rung_quotes` path works: the `farm` control is OFFERED beside a
+DONE `sow`, it is named by the catalog's label, the source's ladder is `cultivate, sow, farm`, a
+part-built Farm draws its own tile-card row while an unstarted one draws none, and with the step's
+knowledge unlearned no live control is offered (the sheet's teaching line names the catalog's
+`unlock_knowledge`). The `ranch` control is offered over a penned herd, which is `enclosed` by the
+catalog's trait.
+
+The fixtures author the extra steps through `RungFx`'s `extra_step` keys (`farm_*` on a patch,
+`ranch_*` on a herd, `can_farm` on a composition entry). The chapter hands the shipped catalog back.
+
+## `fixtures_rung.gd` authors the old flat keys and stamps the generic quotes
+
+Fixtures keep stating the two shipped webs with their authoring keys (`is_cultivated`, `domestication`,
+`corral_yield`, `can_sow`, ...). Those keys are read ONLY in `fixtures_rung.gd`, where
+`stamp_patch` / `stamp_herd` turn them into `rung_quotes`, `current_rung` and each composition entry's
+quotes, self-enriching them from the fixture catalog. Nothing in `src/` reads them.
+
+- **`ForageFx.floorify`, `band_panel_preview._floorify` and `map_preview._display_snapshot` stamp for
+  you** (`stamp_source` / `stamp_snapshot`), so a fixture that reaches the HUD arrives with quotes.
+- **A fixture mutated AFTER it was handed over must be re-stamped**: the quotes were derived from the
+  flat keys at stamp time. A claim that failed with *the control reads running where it should read
+  offered* was this, every time.
+- **A bare herd dict must say it is a herd** (`species`, `husbandry_ceiling` or `body_mass`), or
+  `stamp_source` classes it a patch and it has no verbs.
+- **A row that authors `rung_quotes` and no flat key is left alone**, which is how a fixture stages a
+  rung the shipped ladder lacks.
 

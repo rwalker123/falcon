@@ -744,6 +744,7 @@ func _floorify(src: Dictionary, prefix: String = "") -> Dictionary:
 		return src
 	_floorify_ceilings(src, prefix)
 	_seed_growth_terms(src, prefix)
+	RUNG_FX.stamp_source(src, prefix)
 	return src
 
 ## Is this dict a HERD? A herd carries `species`; a forage patch carries `committed_species` and never
@@ -4488,7 +4489,7 @@ const MATERIAL_SHORT_GRACE := 3
 ## CARRYING WORK**, and this penned herd's is its Tame — its corral meter is full and banked. Written
 ## down rather than asked of that router, because the claim here is that the countdown SURVIVED the
 ## good-shortfall arm; WHICH rung it names has its own assertions elsewhere in this harness.
-const MATERIAL_SHORT_AT_RISK_RUNG := SourceForecast.IMPROVEMENT_TAME
+const MATERIAL_SHORT_AT_RISK_RUNG := SourceForecast.IMPROVEMENT_CORRAL
 ## ⛔ **THE RETIRED TAIL, AS A NEEDLE** (`docs/plan_standing_upkeep.md` §4.9 item 12c). The sentence
 ## read `… a turn this pen eats.`, filled from a `MATERIAL_SHORT_NOUN_HERD`/`_PATCH` pair — feed and
 ## upkeep under one verb, on a surface whose `Fed:` row sits two lines above it. Spelled here rather
@@ -10594,7 +10595,7 @@ func _assert_rung_crop_step() -> void:
 		% [HudWorkVocab.RUNG_CROP_TITLE_GROW, live_title],
 		live_title == HudWorkVocab.RUNG_CROP_TITLE_GROW)
 	var tend_step := RungLadder.build_crop_step([], func(_s: String) -> void: pass,
-		func() -> void: pass, SourceForecast.IMPROVEMENT_CULTIVATE)
+		func() -> void: pass, false)
 	var tend_title := _title_of_crop_step(tend_step)
 	tend_step.queue_free()
 	_assert_band_panel("crop — …while a CULTIVATE's is titled `%s` (got `%s`)"
@@ -10647,12 +10648,12 @@ func _track_climbing_patch_fixtures(work_done: float = TRACK_TENDED_WORK_DONE) -
 		"field_work_done": 0.0,
 		"build_queue_position": 0,
 		"build_turns_remaining": TRACK_FIELD_LEG_TURNS,
-		"build_destination_rung": SourceForecast.RUNG_KEY_FIELD,
+		"build_destination_rung": RUNG_FX.KEY_FIELD,
 		"build_legs": [
-			{"rung": SourceForecast.RUNG_KEY_TENDED,
+			{"rung": RUNG_FX.KEY_TENDED,
 				"work_remaining": TRACK_TENDED_WORK_COST - work_done,
 				"turns_remaining": TRACK_TENDED_LEG_TURNS},
-			{"rung": SourceForecast.RUNG_KEY_FIELD,
+			{"rung": RUNG_FX.KEY_FIELD,
 				"work_remaining": TRACK_FIELD_WORK_COST,
 				"turns_remaining": TRACK_FIELD_LEG_TURNS},
 		],
@@ -10682,9 +10683,9 @@ func _track_single_leg_patch_fixtures() -> Array:
 		"field_progress": TRACK_SINGLE_LEG_FIELD_WORK_DONE / TRACK_FIELD_WORK_COST,
 		"build_queue_position": 0,
 		"build_turns_remaining": TRACK_FIELD_LEG_TURNS,
-		"build_destination_rung": SourceForecast.RUNG_KEY_FIELD,
+		"build_destination_rung": RUNG_FX.KEY_FIELD,
 		"build_legs": [
-			{"rung": SourceForecast.RUNG_KEY_FIELD,
+			{"rung": RUNG_FX.KEY_FIELD,
 				"work_remaining": TRACK_FIELD_WORK_COST - TRACK_SINGLE_LEG_FIELD_WORK_DONE,
 				"turns_remaining": TRACK_FIELD_LEG_TURNS},
 		],
@@ -10719,11 +10720,11 @@ func _track_climbing_herd_fixtures() -> Array:
 		"corralled": false, "corral_progress": 0.0,
 		"build_queue_position": 0,
 		"build_turns_remaining": TRACK_PEN_LEG_TURNS,
-		"build_destination_rung": SourceForecast.RUNG_KEY_PEN,
+		"build_destination_rung": RUNG_FX.KEY_PEN,
 		"build_legs": [
-			{"rung": SourceForecast.RUNG_KEY_PASTORAL, "work_remaining": 32.5,
+			{"rung": RUNG_FX.KEY_PASTORAL, "work_remaining": 32.5,
 				"turns_remaining": TRACK_PASTORAL_LEG_TURNS},
-			{"rung": SourceForecast.RUNG_KEY_PEN, "work_remaining": 75.0,
+			{"rung": RUNG_FX.KEY_PEN, "work_remaining": 75.0,
 				"turns_remaining": TRACK_PEN_LEG_TURNS},
 		],
 	}])
@@ -10788,7 +10789,7 @@ func _assert_rung_track_at_rest() -> void:
 		return
 	var states := _rung_track_states()
 	_assert_band_panel("track — the card draws the WHOLE plant branch, locked rung included (%s)"
-		% str(states.keys()), states.size() == SourceForecast.RUNG_BRANCH_PLANT.size())
+		% str(states.keys()), states.size() == 3)
 	# **THE SET IS THE CLAIM.** A card that marked everything `open` passes any single one of these.
 	_assert_band_panel("track — the wild floor reads as where the patch IS (%s)"
 		% String(states.get(SourceForecast.IMPROVEMENT_NONE, "")),
@@ -10920,7 +10921,7 @@ func _assert_rung_track_climbing() -> void:
 ## testify about the model and not about the control the press lands on. It builds the track detached
 ## and frees it, so it costs the walk no frame and cannot move a later one.
 func _assert_rung_track_names_every_offer() -> void:
-	var rows := RungLadder.track(SourceForecast.LABOR_KIND_HUNT, {},
+	var rows := RungLadder.track(SourceForecast.LABOR_KIND_HUNT, RUNG_FX.stamp_herd({}),
 		HudComposeVocab.BARE_FORECAST_PREFIX, SourceForecast.IMPROVEMENT_NONE,
 		_standing_knowledge_tracks())
 	# **THE PRECONDITIONS ARE THE VACUITY GUARD.** "No selectable row is blank" passes for free on a
@@ -11077,7 +11078,7 @@ func _ring_herd_fixtures() -> Array:
 		"x": RING_HERD_TILE.x, "y": RING_HERD_TILE.y,
 		"population": 60, "ecology_phase": "thriving",
 		"husbandry_ceiling": SourceForecast.HUSBANDRY_CEILING_PEN,
-		"domestication": SourceForecast.DOMESTICATION_COMPLETE,
+		"domestication": RUNG_FX.DOMESTICATION_COMPLETE,
 		"corralled": true, "corral_progress": 1.0,
 		"pen_radius": 1, "pen_footprint_tiles": 7,
 		"pen_extending": true,
@@ -11085,7 +11086,7 @@ func _ring_herd_fixtures() -> Array:
 		"pen_extend_cost": RING_WORK_COST,
 		"build_queue_position": SourceForecast.BUILD_QUEUE_HEAD,
 		"build_turns_remaining": RING_TURNS,
-		"build_destination_rung": SourceForecast.RUNG_KEY_PEN,
+		"build_destination_rung": RUNG_FX.KEY_PEN,
 		"build_legs": [],
 	}])
 
@@ -11427,12 +11428,12 @@ func _pen_price_herd_fixtures() -> Array:
 		var herd: Dictionary = herd_variant
 		if String(herd.get("id", "")) != DECLARE_CORRAL_HERD:
 			continue
-		herd["build_material_cost"] = [
+		herd["corral_build_material_cost"] = [
 			{"material_id": PEN_MATERIAL, "amount": PEN_BUILD_PILE}]
 		herd["corral_upkeep_material_demand"] = [
 			{"material_id": PEN_MATERIAL, "amount": PEN_HOLD_RATE}]
 		herd["corral_upkeep_demand"] = PEN_HOLD_WORK
-	return herds
+	return RUNG_FX.stamp_herds(herds)
 
 ## **THE RING CARD'S SUBJECT — the same Aurochs, STOOD ON the pen it was being offered.** Derived from
 ## the track's own fixture so only the position differs; `RUNG_FX.stamp_herds` re-reads `corralled` and
@@ -16352,11 +16353,11 @@ func _builders_kit_patch(queue_position: int) -> Dictionary:
 
 ## …and its animal twin, the herd this band's hunt row names.
 func _builders_kit_herd(queue_position: int) -> Dictionary:
-	return {
+	return RUNG_FX.stamp_herd({
 		"id": BUILDERS_KIT_HERD,
 		"x": BUILDERS_KIT_HERD_TILE.x, "y": BUILDERS_KIT_HERD_TILE.y,
 		"build_queue_position": queue_position,
-	}
+	})
 
 ## **THE HEAD STATES THE POOL AND THE KIT ITS HEAD ENTRY IMPLIES.**
 ##

@@ -442,8 +442,8 @@ func _assert_ladder_usage() -> void:
 
 	# PAIR 3 — the animal web, whose verbs scan the HERDS rather than the patches. A patch standing on
 	# a plant rung must not satisfy an animal knowledge, which is what the pool split is for.
-	var penned := _model(tracks, [], [_herd("pen", SourceForecast.DOMESTICATION_COMPLETE, true)])
-	var tamed := _model(tracks, [], [_herd("tame", SourceForecast.DOMESTICATION_COMPLETE, false)])
+	var penned := _model(tracks, [], [_herd("pen", RungFx.DOMESTICATION_COMPLETE, true)])
+	var tamed := _model(tracks, [], [_herd("tame", RungFx.DOMESTICATION_COMPLETE, false)])
 	_assert_unspent("Penning", "penning", penned, false)
 	_assert_unspent("Penning (a TAMED herd is below the pen)", "penning", tamed, true)
 	_assert_unspent("Herding (a pen stands above pastoral)", "herding", penned, false)
@@ -565,8 +565,8 @@ func _assert_source_ownership() -> void:
 	# **THE HERD HALF IS THE BAND'S OWN HUNT ASSIGNMENTS**, because a herd carries no owner field. The
 	# pen the band works counts; an identical pen it does not work is invisible, which is the same
 	# blindness every other herd-scoped producer in this HUD has.
-	h._set_world_herds([_herd("worked", SourceForecast.DOMESTICATION_COMPLETE, true),
-		_herd("unworked", SourceForecast.DOMESTICATION_COMPLETE, true)])
+	h._set_world_herds([_herd("worked", RungFx.DOMESTICATION_COMPLETE, true),
+		_herd("unworked", RungFx.DOMESTICATION_COMPLETE, true)])
 	await h._settle()
 	_assert_controller_unspent("Penning (the band works a pen)", "penning", controller, false)
 	h._hud.update_band_alerts([_band([])])
@@ -648,7 +648,7 @@ func _assert_new_this_turn() -> void:
 func _knowledge_frames() -> void:
 	h._hud.update_band_alerts([_band([_hunt_assignment("worked")])])
 	h._hud.update_forage_patches([_patch(6, 6, true, false)])
-	h._set_world_herds([_herd("worked", SourceForecast.DOMESTICATION_COMPLETE, true)])
+	h._set_world_herds([_herd("worked", RungFx.DOMESTICATION_COMPLETE, true)])
 	h._hud.update_crafting_catalogues([], [], _recipes(), _craft_knowledge_mixed())
 	h._hud.update_intensification([_wire_tracks(_tracks_mixed())])
 	await h._settle()

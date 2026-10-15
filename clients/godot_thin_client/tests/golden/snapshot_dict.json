@@ -929,25 +929,6 @@
       "committed_species": "forage_patches[0].committed_species",
       "composition": [
         {
-          "can_cultivate": true,
-          "can_sow": false,
-          "cultivate_fodder_payoff": 67.110001,
-          "cultivate_material_payoff": [
-            {
-              "amount": 15.26,
-              "material_id": "forage_patches[0].composition[0].cultivate_material_payoff[0].material_id"
-            },
-            {
-              "amount": 100.419998,
-              "material_id": "forage_patches[0].composition[0].cultivate_material_payoff[1].material_id"
-            },
-            {
-              "amount": 26.139999,
-              "material_id": "forage_patches[0].composition[0].cultivate_material_payoff[2].material_id"
-            }
-          ],
-          "cultivate_payoff": 18.76,
-          "cultivate_yield_ratio": 71.150002,
           "display_name": "forage_patches[0].composition[0].display_name",
           "fodder_per_biomass": 49.0,
           "material_per_biomass": [
@@ -966,48 +947,79 @@
           ],
           "provisions_per_biomass": 54.259998,
           "role": "forage_patches[0].composition[0].role",
-          "share": 4.84,
-          "sow_fodder_payoff": 70.239998,
-          "sow_material_payoff": [
+          "rung_quotes": [
             {
-              "amount": 81.18,
-              "material_id": "forage_patches[0].composition[0].sow_material_payoff[0].material_id"
+              "can_climb": true,
+              "fodder_payoff": 82.669998,
+              "food_payoff": 73.879997,
+              "material_payoff": [
+                {
+                  "amount": 56.540001,
+                  "material_id": "forage_patches[0].composition[0].rung_quotes[0].material_payoff[0].material_id"
+                },
+                {
+                  "amount": 33.07,
+                  "material_id": "forage_patches[0].composition[0].rung_quotes[0].material_payoff[1].material_id"
+                },
+                {
+                  "amount": 98.650002,
+                  "material_id": "forage_patches[0].composition[0].rung_quotes[0].material_payoff[2].material_id"
+                }
+              ],
+              "rung_key": "forage_patches[0].composition[0].rung_quotes[0].rung_key",
+              "work_cost": 88.389999,
+              "yield_ratio": 67.190002
             },
             {
-              "amount": 77.07,
-              "material_id": "forage_patches[0].composition[0].sow_material_payoff[1].material_id"
+              "can_climb": false,
+              "fodder_payoff": 99.580002,
+              "food_payoff": 31.969999,
+              "material_payoff": [
+                {
+                  "amount": 14.26,
+                  "material_id": "forage_patches[0].composition[0].rung_quotes[1].material_payoff[0].material_id"
+                },
+                {
+                  "amount": 76.449997,
+                  "material_id": "forage_patches[0].composition[0].rung_quotes[1].material_payoff[1].material_id"
+                },
+                {
+                  "amount": 32.91,
+                  "material_id": "forage_patches[0].composition[0].rung_quotes[1].material_payoff[2].material_id"
+                }
+              ],
+              "rung_key": "forage_patches[0].composition[0].rung_quotes[1].rung_key",
+              "work_cost": 57.380001,
+              "yield_ratio": 95.970001
             },
             {
-              "amount": 51.810001,
-              "material_id": "forage_patches[0].composition[0].sow_material_payoff[2].material_id"
+              "can_climb": false,
+              "fodder_payoff": 112.120003,
+              "food_payoff": 79.919998,
+              "material_payoff": [
+                {
+                  "amount": 7.25,
+                  "material_id": "forage_patches[0].composition[0].rung_quotes[2].material_payoff[0].material_id"
+                },
+                {
+                  "amount": 105.360001,
+                  "material_id": "forage_patches[0].composition[0].rung_quotes[2].material_payoff[1].material_id"
+                },
+                {
+                  "amount": 16.57,
+                  "material_id": "forage_patches[0].composition[0].rung_quotes[2].material_payoff[2].material_id"
+                }
+              ],
+              "rung_key": "forage_patches[0].composition[0].rung_quotes[2].rung_key",
+              "work_cost": 35.169998,
+              "yield_ratio": 106.769997
             }
           ],
-          "sow_payoff": 15.1,
-          "sow_work_cost": 34.66,
-          "sow_yield_ratio": 69.620003,
+          "share": 4.84,
           "species": "forage_patches[0].composition[0].species",
           "standing_biomass": 104.809998
         },
         {
-          "can_cultivate": false,
-          "can_sow": true,
-          "cultivate_fodder_payoff": 108.559998,
-          "cultivate_material_payoff": [
-            {
-              "amount": 112.279999,
-              "material_id": "forage_patches[0].composition[1].cultivate_material_payoff[0].material_id"
-            },
-            {
-              "amount": 65.690002,
-              "material_id": "forage_patches[0].composition[1].cultivate_material_payoff[1].material_id"
-            },
-            {
-              "amount": 40.27,
-              "material_id": "forage_patches[0].composition[1].cultivate_material_payoff[2].material_id"
-            }
-          ],
-          "cultivate_payoff": 42.560001,
-          "cultivate_yield_ratio": 12.23,
           "display_name": "forage_patches[0].composition[1].display_name",
           "fodder_per_biomass": 5.03,
           "material_per_biomass": [
@@ -1026,48 +1038,79 @@
           ],
           "provisions_per_biomass": 27.16,
           "role": "forage_patches[0].composition[1].role",
-          "share": 84.0,
-          "sow_fodder_payoff": 56.23,
-          "sow_material_payoff": [
+          "rung_quotes": [
             {
-              "amount": 49.650002,
-              "material_id": "forage_patches[0].composition[1].sow_material_payoff[0].material_id"
+              "can_climb": true,
+              "fodder_payoff": 63.330002,
+              "food_payoff": 97.440002,
+              "material_payoff": [
+                {
+                  "amount": 6.02,
+                  "material_id": "forage_patches[0].composition[1].rung_quotes[0].material_payoff[0].material_id"
+                },
+                {
+                  "amount": 99.230003,
+                  "material_id": "forage_patches[0].composition[1].rung_quotes[0].material_payoff[1].material_id"
+                },
+                {
+                  "amount": 48.77,
+                  "material_id": "forage_patches[0].composition[1].rung_quotes[0].material_payoff[2].material_id"
+                }
+              ],
+              "rung_key": "forage_patches[0].composition[1].rung_quotes[0].rung_key",
+              "work_cost": 0.63,
+              "yield_ratio": 66.68
             },
             {
-              "amount": 96.25,
-              "material_id": "forage_patches[0].composition[1].sow_material_payoff[1].material_id"
+              "can_climb": false,
+              "fodder_payoff": 75.300003,
+              "food_payoff": 66.300003,
+              "material_payoff": [
+                {
+                  "amount": 39.970001,
+                  "material_id": "forage_patches[0].composition[1].rung_quotes[1].material_payoff[0].material_id"
+                },
+                {
+                  "amount": 76.440002,
+                  "material_id": "forage_patches[0].composition[1].rung_quotes[1].material_payoff[1].material_id"
+                },
+                {
+                  "amount": 72.309998,
+                  "material_id": "forage_patches[0].composition[1].rung_quotes[1].material_payoff[2].material_id"
+                }
+              ],
+              "rung_key": "forage_patches[0].composition[1].rung_quotes[1].rung_key",
+              "work_cost": 74.910004,
+              "yield_ratio": 29.25
             },
             {
-              "amount": 65.519997,
-              "material_id": "forage_patches[0].composition[1].sow_material_payoff[2].material_id"
+              "can_climb": false,
+              "fodder_payoff": 44.34,
+              "food_payoff": 75.809998,
+              "material_payoff": [
+                {
+                  "amount": 52.220001,
+                  "material_id": "forage_patches[0].composition[1].rung_quotes[2].material_payoff[0].material_id"
+                },
+                {
+                  "amount": 108.830002,
+                  "material_id": "forage_patches[0].composition[1].rung_quotes[2].material_payoff[1].material_id"
+                },
+                {
+                  "amount": 13.47,
+                  "material_id": "forage_patches[0].composition[1].rung_quotes[2].material_payoff[2].material_id"
+                }
+              ],
+              "rung_key": "forage_patches[0].composition[1].rung_quotes[2].rung_key",
+              "work_cost": 89.040001,
+              "yield_ratio": 14.93
             }
           ],
-          "sow_payoff": 63.709999,
-          "sow_work_cost": 59.470001,
-          "sow_yield_ratio": 44.119999,
+          "share": 84.0,
           "species": "forage_patches[0].composition[1].species",
           "standing_biomass": 87.099998
         },
         {
-          "can_cultivate": false,
-          "can_sow": true,
-          "cultivate_fodder_payoff": 73.43,
-          "cultivate_material_payoff": [
-            {
-              "amount": 104.529999,
-              "material_id": "forage_patches[0].composition[2].cultivate_material_payoff[0].material_id"
-            },
-            {
-              "amount": 47.919998,
-              "material_id": "forage_patches[0].composition[2].cultivate_material_payoff[1].material_id"
-            },
-            {
-              "amount": 76.760002,
-              "material_id": "forage_patches[0].composition[2].cultivate_material_payoff[2].material_id"
-            }
-          ],
-          "cultivate_payoff": 63.889999,
-          "cultivate_yield_ratio": 55.889999,
           "display_name": "forage_patches[0].composition[2].display_name",
           "fodder_per_biomass": 2.52,
           "material_per_biomass": [
@@ -1086,74 +1129,84 @@
           ],
           "provisions_per_biomass": 24.65,
           "role": "forage_patches[0].composition[2].role",
-          "share": 88.650002,
-          "sow_fodder_payoff": 17.639999,
-          "sow_material_payoff": [
+          "rung_quotes": [
             {
-              "amount": 7.19,
-              "material_id": "forage_patches[0].composition[2].sow_material_payoff[0].material_id"
+              "can_climb": true,
+              "fodder_payoff": 80.309998,
+              "food_payoff": 61.41,
+              "material_payoff": [
+                {
+                  "amount": 41.32,
+                  "material_id": "forage_patches[0].composition[2].rung_quotes[0].material_payoff[0].material_id"
+                },
+                {
+                  "amount": 62.369999,
+                  "material_id": "forage_patches[0].composition[2].rung_quotes[0].material_payoff[1].material_id"
+                },
+                {
+                  "amount": 40.360001,
+                  "material_id": "forage_patches[0].composition[2].rung_quotes[0].material_payoff[2].material_id"
+                }
+              ],
+              "rung_key": "forage_patches[0].composition[2].rung_quotes[0].rung_key",
+              "work_cost": 79.160004,
+              "yield_ratio": 79.599998
             },
             {
-              "amount": 67.830002,
-              "material_id": "forage_patches[0].composition[2].sow_material_payoff[1].material_id"
+              "can_climb": false,
+              "fodder_payoff": 52.540001,
+              "food_payoff": 95.330002,
+              "material_payoff": [
+                {
+                  "amount": 46.290001,
+                  "material_id": "forage_patches[0].composition[2].rung_quotes[1].material_payoff[0].material_id"
+                },
+                {
+                  "amount": 92.599998,
+                  "material_id": "forage_patches[0].composition[2].rung_quotes[1].material_payoff[1].material_id"
+                },
+                {
+                  "amount": 84.459999,
+                  "material_id": "forage_patches[0].composition[2].rung_quotes[1].material_payoff[2].material_id"
+                }
+              ],
+              "rung_key": "forage_patches[0].composition[2].rung_quotes[1].rung_key",
+              "work_cost": 6.92,
+              "yield_ratio": 74.269997
             },
             {
-              "amount": 25.91,
-              "material_id": "forage_patches[0].composition[2].sow_material_payoff[2].material_id"
+              "can_climb": false,
+              "fodder_payoff": 28.379999,
+              "food_payoff": 58.689999,
+              "material_payoff": [
+                {
+                  "amount": 111.989998,
+                  "material_id": "forage_patches[0].composition[2].rung_quotes[2].material_payoff[0].material_id"
+                },
+                {
+                  "amount": 60.740002,
+                  "material_id": "forage_patches[0].composition[2].rung_quotes[2].material_payoff[1].material_id"
+                },
+                {
+                  "amount": 23.26,
+                  "material_id": "forage_patches[0].composition[2].rung_quotes[2].material_payoff[2].material_id"
+                }
+              ],
+              "rung_key": "forage_patches[0].composition[2].rung_quotes[2].rung_key",
+              "work_cost": 112.0,
+              "yield_ratio": 82.099998
             }
           ],
-          "sow_payoff": 72.790001,
-          "sow_work_cost": 50.66,
-          "sow_yield_ratio": 73.32,
+          "share": 88.650002,
           "species": "forage_patches[0].composition[2].species",
           "standing_biomass": 15.21
         }
       ],
-      "cultivation_progress": 14.53,
-      "cultivation_upkeep_demand": 103.889999,
-      "cultivation_upkeep_material_demand": [
-        {
-          "amount": 85.510002,
-          "material_id": "forage_patches[0].cultivation_upkeep_material_demand[0].material_id"
-        },
-        {
-          "amount": 22.92,
-          "material_id": "forage_patches[0].cultivation_upkeep_material_demand[1].material_id"
-        },
-        {
-          "amount": 5.86,
-          "material_id": "forage_patches[0].cultivation_upkeep_material_demand[2].material_id"
-        }
-      ],
-      "cultivation_work_cost": 7.12,
-      "cultivation_work_done": 106.639999,
       "current_rung": "forage_patches[0].current_rung",
       "ecology_phase": "forage_patches[0].ecology_phase",
-      "field_fodder": 51.360001,
-      "field_progress": 67.019997,
-      "field_upkeep_demand": 103.900002,
-      "field_upkeep_material_demand": [
-        {
-          "amount": 73.660004,
-          "material_id": "forage_patches[0].field_upkeep_material_demand[0].material_id"
-        },
-        {
-          "amount": 49.889999,
-          "material_id": "forage_patches[0].field_upkeep_material_demand[1].material_id"
-        },
-        {
-          "amount": 24.370001,
-          "material_id": "forage_patches[0].field_upkeep_material_demand[2].material_id"
-        }
-      ],
-      "field_work_cost": 77.150002,
-      "field_work_done": 98.610001,
-      "field_yield": 78.199997,
       "fodder_per_biomass": 74.5,
       "has_neglect_grace": true,
       "has_owner": true,
-      "is_cultivated": false,
-      "is_field": false,
       "material_per_biomass": [
         {
           "amount": 66.779999,
@@ -1189,10 +1242,168 @@
       "per_worker_yield": 54.48,
       "provisions_per_biomass": 5.97,
       "regrowth_samples": {"__packed": "PackedFloat32Array", "len": 11, "items": [64.120003, 37.02, 60.77, 28.27, 25.76, 51.169998, 22.4, 111.809998, 39.91, 108.449997, 53.68]},
-      "sow_site_refusal": "forage_patches[0].sow_site_refusal",
+      "rung_quotes": [
+        {
+          "build_material_cost": [
+            {
+              "amount": 88.230003,
+              "material_id": "forage_patches[0].rung_quotes[0].build_material_cost[0].material_id"
+            },
+            {
+              "amount": 26.129999,
+              "material_id": "forage_patches[0].rung_quotes[0].build_material_cost[1].material_id"
+            },
+            {
+              "amount": 24.280001,
+              "material_id": "forage_patches[0].rung_quotes[0].build_material_cost[2].material_id"
+            }
+          ],
+          "fodder": 88.720001,
+          "food_yield": 81.970001,
+          "material_payoff": [
+            {
+              "amount": 6.27,
+              "material_id": "forage_patches[0].rung_quotes[0].material_payoff[0].material_id"
+            },
+            {
+              "amount": 62.720001,
+              "material_id": "forage_patches[0].rung_quotes[0].material_payoff[1].material_id"
+            },
+            {
+              "amount": 70.860001,
+              "material_id": "forage_patches[0].rung_quotes[0].material_payoff[2].material_id"
+            }
+          ],
+          "progress": 48.18,
+          "reached": true,
+          "rung_key": "forage_patches[0].rung_quotes[0].rung_key",
+          "site_refusal": "forage_patches[0].rung_quotes[0].site_refusal",
+          "upkeep_demand": 53.810001,
+          "upkeep_material_demand": [
+            {
+              "amount": 106.989998,
+              "material_id": "forage_patches[0].rung_quotes[0].upkeep_material_demand[0].material_id"
+            },
+            {
+              "amount": 49.16,
+              "material_id": "forage_patches[0].rung_quotes[0].upkeep_material_demand[1].material_id"
+            },
+            {
+              "amount": 31.82,
+              "material_id": "forage_patches[0].rung_quotes[0].upkeep_material_demand[2].material_id"
+            }
+          ],
+          "work_cost": 23.290001,
+          "work_done": 35.360001
+        },
+        {
+          "build_material_cost": [
+            {
+              "amount": 49.25,
+              "material_id": "forage_patches[0].rung_quotes[1].build_material_cost[0].material_id"
+            },
+            {
+              "amount": 105.139999,
+              "material_id": "forage_patches[0].rung_quotes[1].build_material_cost[1].material_id"
+            },
+            {
+              "amount": 106.959999,
+              "material_id": "forage_patches[0].rung_quotes[1].build_material_cost[2].material_id"
+            }
+          ],
+          "fodder": 55.619999,
+          "food_yield": 29.629999,
+          "material_payoff": [
+            {
+              "amount": 88.510002,
+              "material_id": "forage_patches[0].rung_quotes[1].material_payoff[0].material_id"
+            },
+            {
+              "amount": 27.870001,
+              "material_id": "forage_patches[0].rung_quotes[1].material_payoff[1].material_id"
+            },
+            {
+              "amount": 48.419998,
+              "material_id": "forage_patches[0].rung_quotes[1].material_payoff[2].material_id"
+            }
+          ],
+          "progress": 50.02,
+          "reached": false,
+          "rung_key": "forage_patches[0].rung_quotes[1].rung_key",
+          "site_refusal": "forage_patches[0].rung_quotes[1].site_refusal",
+          "upkeep_demand": 109.940002,
+          "upkeep_material_demand": [
+            {
+              "amount": 67.540001,
+              "material_id": "forage_patches[0].rung_quotes[1].upkeep_material_demand[0].material_id"
+            },
+            {
+              "amount": 49.790001,
+              "material_id": "forage_patches[0].rung_quotes[1].upkeep_material_demand[1].material_id"
+            },
+            {
+              "amount": 11.31,
+              "material_id": "forage_patches[0].rung_quotes[1].upkeep_material_demand[2].material_id"
+            }
+          ],
+          "work_cost": 82.769997,
+          "work_done": 80.870003
+        },
+        {
+          "build_material_cost": [
+            {
+              "amount": 0.67,
+              "material_id": "forage_patches[0].rung_quotes[2].build_material_cost[0].material_id"
+            },
+            {
+              "amount": 74.080002,
+              "material_id": "forage_patches[0].rung_quotes[2].build_material_cost[1].material_id"
+            },
+            {
+              "amount": 32.259998,
+              "material_id": "forage_patches[0].rung_quotes[2].build_material_cost[2].material_id"
+            }
+          ],
+          "fodder": 105.550003,
+          "food_yield": 87.400002,
+          "material_payoff": [
+            {
+              "amount": 18.780001,
+              "material_id": "forage_patches[0].rung_quotes[2].material_payoff[0].material_id"
+            },
+            {
+              "amount": 55.66,
+              "material_id": "forage_patches[0].rung_quotes[2].material_payoff[1].material_id"
+            },
+            {
+              "amount": 60.32,
+              "material_id": "forage_patches[0].rung_quotes[2].material_payoff[2].material_id"
+            }
+          ],
+          "progress": 34.970001,
+          "reached": false,
+          "rung_key": "forage_patches[0].rung_quotes[2].rung_key",
+          "site_refusal": "forage_patches[0].rung_quotes[2].site_refusal",
+          "upkeep_demand": 1.75,
+          "upkeep_material_demand": [
+            {
+              "amount": 105.870003,
+              "material_id": "forage_patches[0].rung_quotes[2].upkeep_material_demand[0].material_id"
+            },
+            {
+              "amount": 68.120003,
+              "material_id": "forage_patches[0].rung_quotes[2].upkeep_material_demand[1].material_id"
+            },
+            {
+              "amount": 65.379997,
+              "material_id": "forage_patches[0].rung_quotes[2].upkeep_material_demand[2].material_id"
+            }
+          ],
+          "work_cost": 72.93,
+          "work_done": 39.0
+        }
+      ],
       "stressed_fraction": 35.610001,
-      "tended_fodder": 66.300003,
-      "tended_yield": 11.58,
       "tile_capacity": 74.75,
       "upkeep_demand": 46.18,
       "upkeep_hands": 52.389999,
@@ -1239,7 +1450,7 @@
           "required": 111.769997
         }
       ],
-      "upkeep_tools_short": true,
+      "upkeep_tools_short": false,
       "upkeep_workers_at_completion": 58,
       "upkeep_workers_needed": 99,
       "x": 0,
@@ -1291,25 +1502,6 @@
       "committed_species": "forage_patches[1].committed_species",
       "composition": [
         {
-          "can_cultivate": true,
-          "can_sow": false,
-          "cultivate_fodder_payoff": 53.099998,
-          "cultivate_material_payoff": [
-            {
-              "amount": 18.209999,
-              "material_id": "forage_patches[1].composition[0].cultivate_material_payoff[0].material_id"
-            },
-            {
-              "amount": 41.68,
-              "material_id": "forage_patches[1].composition[0].cultivate_material_payoff[1].material_id"
-            },
-            {
-              "amount": 101.5,
-              "material_id": "forage_patches[1].composition[0].cultivate_material_payoff[2].material_id"
-            }
-          ],
-          "cultivate_payoff": 15.93,
-          "cultivate_yield_ratio": 106.290001,
           "display_name": "forage_patches[1].composition[0].display_name",
           "fodder_per_biomass": 109.120003,
           "material_per_biomass": [
@@ -1328,48 +1520,79 @@
           ],
           "provisions_per_biomass": 0.88,
           "role": "forage_patches[1].composition[0].role",
-          "share": 72.419998,
-          "sow_fodder_payoff": 94.639999,
-          "sow_material_payoff": [
+          "rung_quotes": [
             {
-              "amount": 62.619999,
-              "material_id": "forage_patches[1].composition[0].sow_material_payoff[0].material_id"
+              "can_climb": true,
+              "fodder_payoff": 60.939999,
+              "food_payoff": 33.09,
+              "material_payoff": [
+                {
+                  "amount": 58.759998,
+                  "material_id": "forage_patches[1].composition[0].rung_quotes[0].material_payoff[0].material_id"
+                },
+                {
+                  "amount": 73.150002,
+                  "material_id": "forage_patches[1].composition[0].rung_quotes[0].material_payoff[1].material_id"
+                },
+                {
+                  "amount": 43.029999,
+                  "material_id": "forage_patches[1].composition[0].rung_quotes[0].material_payoff[2].material_id"
+                }
+              ],
+              "rung_key": "forage_patches[1].composition[0].rung_quotes[0].rung_key",
+              "work_cost": 65.980003,
+              "yield_ratio": 76.32
             },
             {
-              "amount": 92.75,
-              "material_id": "forage_patches[1].composition[0].sow_material_payoff[1].material_id"
+              "can_climb": false,
+              "fodder_payoff": 81.440002,
+              "food_payoff": 21.98,
+              "material_payoff": [
+                {
+                  "amount": 89.309998,
+                  "material_id": "forage_patches[1].composition[0].rung_quotes[1].material_payoff[0].material_id"
+                },
+                {
+                  "amount": 85.150002,
+                  "material_id": "forage_patches[1].composition[0].rung_quotes[1].material_payoff[1].material_id"
+                },
+                {
+                  "amount": 22.969999,
+                  "material_id": "forage_patches[1].composition[0].rung_quotes[1].material_payoff[2].material_id"
+                }
+              ],
+              "rung_key": "forage_patches[1].composition[0].rung_quotes[1].rung_key",
+              "work_cost": 87.660004,
+              "yield_ratio": 101.360001
             },
             {
-              "amount": 14.07,
-              "material_id": "forage_patches[1].composition[0].sow_material_payoff[2].material_id"
+              "can_climb": false,
+              "fodder_payoff": 93.739998,
+              "food_payoff": 74.690002,
+              "material_payoff": [
+                {
+                  "amount": 25.74,
+                  "material_id": "forage_patches[1].composition[0].rung_quotes[2].material_payoff[0].material_id"
+                },
+                {
+                  "amount": 14.48,
+                  "material_id": "forage_patches[1].composition[0].rung_quotes[2].material_payoff[1].material_id"
+                },
+                {
+                  "amount": 12.11,
+                  "material_id": "forage_patches[1].composition[0].rung_quotes[2].material_payoff[2].material_id"
+                }
+              ],
+              "rung_key": "forage_patches[1].composition[0].rung_quotes[2].rung_key",
+              "work_cost": 106.779999,
+              "yield_ratio": 85.269997
             }
           ],
-          "sow_payoff": 43.549999,
-          "sow_work_cost": 8.31,
-          "sow_yield_ratio": 97.620003,
+          "share": 72.419998,
           "species": "forage_patches[1].composition[0].species",
           "standing_biomass": 51.740002
         },
         {
-          "can_cultivate": false,
-          "can_sow": true,
-          "cultivate_fodder_payoff": 22.51,
-          "cultivate_material_payoff": [
-            {
-              "amount": 98.43,
-              "material_id": "forage_patches[1].composition[1].cultivate_material_payoff[0].material_id"
-            },
-            {
-              "amount": 35.84,
-              "material_id": "forage_patches[1].composition[1].cultivate_material_payoff[1].material_id"
-            },
-            {
-              "amount": 18.780001,
-              "material_id": "forage_patches[1].composition[1].cultivate_material_payoff[2].material_id"
-            }
-          ],
-          "cultivate_payoff": 50.290001,
-          "cultivate_yield_ratio": 48.369999,
           "display_name": "forage_patches[1].composition[1].display_name",
           "fodder_per_biomass": 14.33,
           "material_per_biomass": [
@@ -1388,48 +1611,79 @@
           ],
           "provisions_per_biomass": 27.99,
           "role": "forage_patches[1].composition[1].role",
-          "share": 38.57,
-          "sow_fodder_payoff": 23.5,
-          "sow_material_payoff": [
+          "rung_quotes": [
             {
-              "amount": 110.25,
-              "material_id": "forage_patches[1].composition[1].sow_material_payoff[0].material_id"
+              "can_climb": true,
+              "fodder_payoff": 22.790001,
+              "food_payoff": 51.07,
+              "material_payoff": [
+                {
+                  "amount": 101.940002,
+                  "material_id": "forage_patches[1].composition[1].rung_quotes[0].material_payoff[0].material_id"
+                },
+                {
+                  "amount": 5.71,
+                  "material_id": "forage_patches[1].composition[1].rung_quotes[0].material_payoff[1].material_id"
+                },
+                {
+                  "amount": 25.26,
+                  "material_id": "forage_patches[1].composition[1].rung_quotes[0].material_payoff[2].material_id"
+                }
+              ],
+              "rung_key": "forage_patches[1].composition[1].rung_quotes[0].rung_key",
+              "work_cost": 80.860001,
+              "yield_ratio": 19.02
             },
             {
-              "amount": 63.650002,
-              "material_id": "forage_patches[1].composition[1].sow_material_payoff[1].material_id"
+              "can_climb": false,
+              "fodder_payoff": 94.800003,
+              "food_payoff": 50.790001,
+              "material_payoff": [
+                {
+                  "amount": 95.669998,
+                  "material_id": "forage_patches[1].composition[1].rung_quotes[1].material_payoff[0].material_id"
+                },
+                {
+                  "amount": 6.64,
+                  "material_id": "forage_patches[1].composition[1].rung_quotes[1].material_payoff[1].material_id"
+                },
+                {
+                  "amount": 93.480003,
+                  "material_id": "forage_patches[1].composition[1].rung_quotes[1].material_payoff[2].material_id"
+                }
+              ],
+              "rung_key": "forage_patches[1].composition[1].rung_quotes[1].rung_key",
+              "work_cost": 47.360001,
+              "yield_ratio": 43.650002
             },
             {
-              "amount": 41.75,
-              "material_id": "forage_patches[1].composition[1].sow_material_payoff[2].material_id"
+              "can_climb": false,
+              "fodder_payoff": 90.279999,
+              "food_payoff": 84.449997,
+              "material_payoff": [
+                {
+                  "amount": 20.030001,
+                  "material_id": "forage_patches[1].composition[1].rung_quotes[2].material_payoff[0].material_id"
+                },
+                {
+                  "amount": 31.139999,
+                  "material_id": "forage_patches[1].composition[1].rung_quotes[2].material_payoff[1].material_id"
+                },
+                {
+                  "amount": 48.48,
+                  "material_id": "forage_patches[1].composition[1].rung_quotes[2].material_payoff[2].material_id"
+                }
+              ],
+              "rung_key": "forage_patches[1].composition[1].rung_quotes[2].rung_key",
+              "work_cost": 76.419998,
+              "yield_ratio": 0.62
             }
           ],
-          "sow_payoff": 37.689999,
-          "sow_work_cost": 6.5,
-          "sow_yield_ratio": 27.1,
+          "share": 38.57,
           "species": "forage_patches[1].composition[1].species",
           "standing_biomass": 9.46
         },
         {
-          "can_cultivate": false,
-          "can_sow": true,
-          "cultivate_fodder_payoff": 98.440002,
-          "cultivate_material_payoff": [
-            {
-              "amount": 84.260002,
-              "material_id": "forage_patches[1].composition[2].cultivate_material_payoff[0].material_id"
-            },
-            {
-              "amount": 0.79,
-              "material_id": "forage_patches[1].composition[2].cultivate_material_payoff[1].material_id"
-            },
-            {
-              "amount": 46.09,
-              "material_id": "forage_patches[1].composition[2].cultivate_material_payoff[2].material_id"
-            }
-          ],
-          "cultivate_payoff": 26.120001,
-          "cultivate_yield_ratio": 74.690002,
           "display_name": "forage_patches[1].composition[2].display_name",
           "fodder_per_biomass": 100.379997,
           "material_per_biomass": [
@@ -1448,74 +1702,84 @@
           ],
           "provisions_per_biomass": 104.639999,
           "role": "forage_patches[1].composition[2].role",
-          "share": 78.18,
-          "sow_fodder_payoff": 53.889999,
-          "sow_material_payoff": [
+          "rung_quotes": [
             {
-              "amount": 85.849998,
-              "material_id": "forage_patches[1].composition[2].sow_material_payoff[0].material_id"
+              "can_climb": true,
+              "fodder_payoff": 15.17,
+              "food_payoff": 70.300003,
+              "material_payoff": [
+                {
+                  "amount": 66.519997,
+                  "material_id": "forage_patches[1].composition[2].rung_quotes[0].material_payoff[0].material_id"
+                },
+                {
+                  "amount": 101.110001,
+                  "material_id": "forage_patches[1].composition[2].rung_quotes[0].material_payoff[1].material_id"
+                },
+                {
+                  "amount": 0.07,
+                  "material_id": "forage_patches[1].composition[2].rung_quotes[0].material_payoff[2].material_id"
+                }
+              ],
+              "rung_key": "forage_patches[1].composition[2].rung_quotes[0].rung_key",
+              "work_cost": 59.950001,
+              "yield_ratio": 67.660004
             },
             {
-              "amount": 90.010002,
-              "material_id": "forage_patches[1].composition[2].sow_material_payoff[1].material_id"
+              "can_climb": false,
+              "fodder_payoff": 105.080002,
+              "food_payoff": 103.779999,
+              "material_payoff": [
+                {
+                  "amount": 56.310001,
+                  "material_id": "forage_patches[1].composition[2].rung_quotes[1].material_payoff[0].material_id"
+                },
+                {
+                  "amount": 19.4,
+                  "material_id": "forage_patches[1].composition[2].rung_quotes[1].material_payoff[1].material_id"
+                },
+                {
+                  "amount": 16.57,
+                  "material_id": "forage_patches[1].composition[2].rung_quotes[1].material_payoff[2].material_id"
+                }
+              ],
+              "rung_key": "forage_patches[1].composition[2].rung_quotes[1].rung_key",
+              "work_cost": 58.810001,
+              "yield_ratio": 9.91
             },
             {
-              "amount": 104.0,
-              "material_id": "forage_patches[1].composition[2].sow_material_payoff[2].material_id"
+              "can_climb": false,
+              "fodder_payoff": 10.1,
+              "food_payoff": 75.669998,
+              "material_payoff": [
+                {
+                  "amount": 59.98,
+                  "material_id": "forage_patches[1].composition[2].rung_quotes[2].material_payoff[0].material_id"
+                },
+                {
+                  "amount": 10.07,
+                  "material_id": "forage_patches[1].composition[2].rung_quotes[2].material_payoff[1].material_id"
+                },
+                {
+                  "amount": 77.889999,
+                  "material_id": "forage_patches[1].composition[2].rung_quotes[2].material_payoff[2].material_id"
+                }
+              ],
+              "rung_key": "forage_patches[1].composition[2].rung_quotes[2].rung_key",
+              "work_cost": 103.559998,
+              "yield_ratio": 38.509998
             }
           ],
-          "sow_payoff": 27.83,
-          "sow_work_cost": 68.910004,
-          "sow_yield_ratio": 34.119999,
+          "share": 78.18,
           "species": "forage_patches[1].composition[2].species",
           "standing_biomass": 42.990002
         }
       ],
-      "cultivation_progress": 85.480003,
-      "cultivation_upkeep_demand": 28.77,
-      "cultivation_upkeep_material_demand": [
-        {
-          "amount": 54.509998,
-          "material_id": "forage_patches[1].cultivation_upkeep_material_demand[0].material_id"
-        },
-        {
-          "amount": 72.260002,
-          "material_id": "forage_patches[1].cultivation_upkeep_material_demand[1].material_id"
-        },
-        {
-          "amount": 8.46,
-          "material_id": "forage_patches[1].cultivation_upkeep_material_demand[2].material_id"
-        }
-      ],
-      "cultivation_work_cost": 17.809999,
-      "cultivation_work_done": 107.940002,
       "current_rung": "forage_patches[1].current_rung",
       "ecology_phase": "forage_patches[1].ecology_phase",
-      "field_fodder": 98.510002,
-      "field_progress": 6.39,
-      "field_upkeep_demand": 90.160004,
-      "field_upkeep_material_demand": [
-        {
-          "amount": 14.24,
-          "material_id": "forage_patches[1].field_upkeep_material_demand[0].material_id"
-        },
-        {
-          "amount": 103.849998,
-          "material_id": "forage_patches[1].field_upkeep_material_demand[1].material_id"
-        },
-        {
-          "amount": 59.169998,
-          "material_id": "forage_patches[1].field_upkeep_material_demand[2].material_id"
-        }
-      ],
-      "field_work_cost": 60.900002,
-      "field_work_done": 43.169998,
-      "field_yield": 75.790001,
       "fodder_per_biomass": 95.839996,
       "has_neglect_grace": false,
       "has_owner": false,
-      "is_cultivated": true,
-      "is_field": true,
       "material_per_biomass": [
         {
           "amount": 93.660004,
@@ -1551,10 +1815,168 @@
       "per_worker_yield": 108.360001,
       "provisions_per_biomass": 95.019997,
       "regrowth_samples": {"__packed": "PackedFloat32Array", "len": 11, "items": [50.919998, 94.879997, 68.43, 91.529999, 65.07, 109.040001, 30.07, 62.560001, 26.709999, 53.810001, 78.75]},
-      "sow_site_refusal": "forage_patches[1].sow_site_refusal",
+      "rung_quotes": [
+        {
+          "build_material_cost": [
+            {
+              "amount": 40.07,
+              "material_id": "forage_patches[1].rung_quotes[0].build_material_cost[0].material_id"
+            },
+            {
+              "amount": 59.360001,
+              "material_id": "forage_patches[1].rung_quotes[0].build_material_cost[1].material_id"
+            },
+            {
+              "amount": 61.040001,
+              "material_id": "forage_patches[1].rung_quotes[0].build_material_cost[2].material_id"
+            }
+          ],
+          "fodder": 18.040001,
+          "food_yield": 37.709999,
+          "material_payoff": [
+            {
+              "amount": 106.650002,
+              "material_id": "forage_patches[1].rung_quotes[0].material_payoff[0].material_id"
+            },
+            {
+              "amount": 7.1,
+              "material_id": "forage_patches[1].rung_quotes[0].material_payoff[1].material_id"
+            },
+            {
+              "amount": 75.360001,
+              "material_id": "forage_patches[1].rung_quotes[0].material_payoff[2].material_id"
+            }
+          ],
+          "progress": 92.459999,
+          "reached": true,
+          "rung_key": "forage_patches[1].rung_quotes[0].rung_key",
+          "site_refusal": "forage_patches[1].rung_quotes[0].site_refusal",
+          "upkeep_demand": 49.900002,
+          "upkeep_material_demand": [
+            {
+              "amount": 41.34,
+              "material_id": "forage_patches[1].rung_quotes[0].upkeep_material_demand[0].material_id"
+            },
+            {
+              "amount": 25.58,
+              "material_id": "forage_patches[1].rung_quotes[0].upkeep_material_demand[1].material_id"
+            },
+            {
+              "amount": 46.52,
+              "material_id": "forage_patches[1].rung_quotes[0].upkeep_material_demand[2].material_id"
+            }
+          ],
+          "work_cost": 61.57,
+          "work_done": 29.959999
+        },
+        {
+          "build_material_cost": [
+            {
+              "amount": 94.160004,
+              "material_id": "forage_patches[1].rung_quotes[1].build_material_cost[0].material_id"
+            },
+            {
+              "amount": 47.57,
+              "material_id": "forage_patches[1].rung_quotes[1].build_material_cost[1].material_id"
+            },
+            {
+              "amount": 22.15,
+              "material_id": "forage_patches[1].rung_quotes[1].build_material_cost[2].material_id"
+            }
+          ],
+          "fodder": 19.639999,
+          "food_yield": 8.15,
+          "material_payoff": [
+            {
+              "amount": 49.43,
+              "material_id": "forage_patches[1].rung_quotes[1].material_payoff[0].material_id"
+            },
+            {
+              "amount": 95.739998,
+              "material_id": "forage_patches[1].rung_quotes[1].material_payoff[1].material_id"
+            },
+            {
+              "amount": 97.419998,
+              "material_id": "forage_patches[1].rung_quotes[1].material_payoff[2].material_id"
+            }
+          ],
+          "progress": 81.050003,
+          "reached": false,
+          "rung_key": "forage_patches[1].rung_quotes[1].rung_key",
+          "site_refusal": "forage_patches[1].rung_quotes[1].site_refusal",
+          "upkeep_demand": 78.510002,
+          "upkeep_material_demand": [
+            {
+              "amount": 102.290001,
+              "material_id": "forage_patches[1].rung_quotes[1].upkeep_material_demand[0].material_id"
+            },
+            {
+              "amount": 41.650002,
+              "material_id": "forage_patches[1].rung_quotes[1].upkeep_material_demand[1].material_id"
+            },
+            {
+              "amount": 89.220001,
+              "material_id": "forage_patches[1].rung_quotes[1].upkeep_material_demand[2].material_id"
+            }
+          ],
+          "work_cost": 73.18,
+          "work_done": 26.48
+        },
+        {
+          "build_material_cost": [
+            {
+              "amount": 15.35,
+              "material_id": "forage_patches[1].rung_quotes[2].build_material_cost[0].material_id"
+            },
+            {
+              "amount": 63.919998,
+              "material_id": "forage_patches[1].rung_quotes[2].build_material_cost[1].material_id"
+            },
+            {
+              "amount": 61.09,
+              "material_id": "forage_patches[1].rung_quotes[2].build_material_cost[2].material_id"
+            }
+          ],
+          "fodder": 7.71,
+          "food_yield": 87.870003,
+          "material_payoff": [
+            {
+              "amount": 18.73,
+              "material_id": "forage_patches[1].rung_quotes[2].material_payoff[0].material_id"
+            },
+            {
+              "amount": 59.299999,
+              "material_id": "forage_patches[1].rung_quotes[2].material_payoff[1].material_id"
+            },
+            {
+              "amount": 30.459999,
+              "material_id": "forage_patches[1].rung_quotes[2].material_payoff[2].material_id"
+            }
+          ],
+          "progress": 89.190002,
+          "reached": false,
+          "rung_key": "forage_patches[1].rung_quotes[2].rung_key",
+          "site_refusal": "forage_patches[1].rung_quotes[2].site_refusal",
+          "upkeep_demand": 16.42,
+          "upkeep_material_demand": [
+            {
+              "amount": 108.540001,
+              "material_id": "forage_patches[1].rung_quotes[2].upkeep_material_demand[0].material_id"
+            },
+            {
+              "amount": 58.27,
+              "material_id": "forage_patches[1].rung_quotes[2].upkeep_material_demand[1].material_id"
+            },
+            {
+              "amount": 67.879997,
+              "material_id": "forage_patches[1].rung_quotes[2].upkeep_material_demand[2].material_id"
+            }
+          ],
+          "work_cost": 62.919998,
+          "work_done": 24.389999
+        }
+      ],
       "stressed_fraction": 11.05,
-      "tended_fodder": 52.509998,
-      "tended_yield": 86.169998,
       "tile_capacity": 2.22,
       "upkeep_demand": 10.09,
       "upkeep_hands": 17.91,
@@ -1601,7 +2023,7 @@
           "required": 35.0
         }
       ],
-      "upkeep_tools_short": false,
+      "upkeep_tools_short": true,
       "upkeep_workers_at_completion": 51,
       "upkeep_workers_needed": 48,
       "x": 1,
@@ -1653,25 +2075,6 @@
       "committed_species": "forage_patches[2].committed_species",
       "composition": [
         {
-          "can_cultivate": true,
-          "can_sow": false,
-          "cultivate_fodder_payoff": 8.4,
-          "cultivate_material_payoff": [
-            {
-              "amount": 106.839996,
-              "material_id": "forage_patches[2].composition[0].cultivate_material_payoff[0].material_id"
-            },
-            {
-              "amount": 62.029999,
-              "material_id": "forage_patches[2].composition[0].cultivate_material_payoff[1].material_id"
-            },
-            {
-              "amount": 83.07,
-              "material_id": "forage_patches[2].composition[0].cultivate_material_payoff[2].material_id"
-            }
-          ],
-          "cultivate_payoff": 64.760002,
-          "cultivate_yield_ratio": 80.32,
           "display_name": "forage_patches[2].composition[0].display_name",
           "fodder_per_biomass": 35.549999,
           "material_per_biomass": [
@@ -1690,48 +2093,79 @@
           ],
           "provisions_per_biomass": 62.700001,
           "role": "forage_patches[2].composition[0].role",
-          "share": 97.699997,
-          "sow_fodder_payoff": 89.169998,
-          "sow_material_payoff": [
+          "rung_quotes": [
             {
-              "amount": 44.099998,
-              "material_id": "forage_patches[2].composition[0].sow_material_payoff[0].material_id"
+              "can_climb": true,
+              "fodder_payoff": 103.18,
+              "food_payoff": 81.099998,
+              "material_payoff": [
+                {
+                  "amount": 25.129999,
+                  "material_id": "forage_patches[2].composition[0].rung_quotes[0].material_payoff[0].material_id"
+                },
+                {
+                  "amount": 73.699997,
+                  "material_id": "forage_patches[2].composition[0].rung_quotes[0].material_payoff[1].material_id"
+                },
+                {
+                  "amount": 70.870003,
+                  "material_id": "forage_patches[2].composition[0].rung_quotes[0].material_payoff[2].material_id"
+                }
+              ],
+              "rung_key": "forage_patches[2].composition[0].rung_quotes[0].rung_key",
+              "work_cost": 26.469999,
+              "yield_ratio": 72.709999
             },
             {
-              "amount": 16.76,
-              "material_id": "forage_patches[2].composition[0].sow_material_payoff[1].material_id"
+              "can_climb": false,
+              "fodder_payoff": 13.27,
+              "food_payoff": 47.619999,
+              "material_payoff": [
+                {
+                  "amount": 8.32,
+                  "material_id": "forage_patches[2].composition[0].rung_quotes[1].material_payoff[0].material_id"
+                },
+                {
+                  "amount": 42.91,
+                  "material_id": "forage_patches[2].composition[0].rung_quotes[1].material_payoff[1].material_id"
+                },
+                {
+                  "amount": 54.369999,
+                  "material_id": "forage_patches[2].composition[0].rung_quotes[1].material_payoff[2].material_id"
+                }
+              ],
+              "rung_key": "forage_patches[2].composition[0].rung_quotes[1].rung_key",
+              "work_cost": 0.59,
+              "yield_ratio": 17.959999
             },
             {
-              "amount": 27.959999,
-              "material_id": "forage_patches[2].composition[0].sow_material_payoff[2].material_id"
+              "can_climb": false,
+              "fodder_payoff": 0.91,
+              "food_payoff": 102.199997,
+              "material_payoff": [
+                {
+                  "amount": 104.639999,
+                  "material_id": "forage_patches[2].composition[0].rung_quotes[2].material_payoff[0].material_id"
+                },
+                {
+                  "amount": 58.330002,
+                  "material_id": "forage_patches[2].composition[0].rung_quotes[2].material_payoff[1].material_id"
+                },
+                {
+                  "amount": 40.049999,
+                  "material_id": "forage_patches[2].composition[0].rung_quotes[2].material_payoff[2].material_id"
+                }
+              ],
+              "rung_key": "forage_patches[2].composition[0].rung_quotes[2].rung_key",
+              "work_cost": 106.410004,
+              "yield_ratio": 37.009998
             }
           ],
-          "sow_payoff": 97.239998,
-          "sow_work_cost": 88.269997,
-          "sow_yield_ratio": 56.150002,
+          "share": 97.699997,
           "species": "forage_patches[2].composition[0].species",
           "standing_biomass": 58.419998
         },
         {
-          "can_cultivate": false,
-          "can_sow": true,
-          "cultivate_fodder_payoff": 16.77,
-          "cultivate_material_payoff": [
-            {
-              "amount": 82.260002,
-              "material_id": "forage_patches[2].composition[1].cultivate_material_payoff[0].material_id"
-            },
-            {
-              "amount": 4.35,
-              "material_id": "forage_patches[2].composition[1].cultivate_material_payoff[1].material_id"
-            },
-            {
-              "amount": 15.81,
-              "material_id": "forage_patches[2].composition[1].cultivate_material_payoff[2].material_id"
-            }
-          ],
-          "cultivate_payoff": 95.160004,
-          "cultivate_yield_ratio": 41.34,
           "display_name": "forage_patches[2].composition[1].display_name",
           "fodder_per_biomass": 3.06,
           "material_per_biomass": [
@@ -1750,48 +2184,79 @@
           ],
           "provisions_per_biomass": 30.200001,
           "role": "forage_patches[2].composition[1].role",
-          "share": 103.190002,
-          "sow_fodder_payoff": 93.150002,
-          "sow_material_payoff": [
+          "rung_quotes": [
             {
-              "amount": 77.089996,
-              "material_id": "forage_patches[2].composition[1].sow_material_payoff[0].material_id"
+              "can_climb": true,
+              "fodder_payoff": 23.85,
+              "food_payoff": 29.540001,
+              "material_payoff": [
+                {
+                  "amount": 63.59,
+                  "material_id": "forage_patches[2].composition[1].rung_quotes[0].material_payoff[0].material_id"
+                },
+                {
+                  "amount": 28.379999,
+                  "material_id": "forage_patches[2].composition[1].rung_quotes[0].material_payoff[1].material_id"
+                },
+                {
+                  "amount": 93.639999,
+                  "material_id": "forage_patches[2].composition[1].rung_quotes[0].material_payoff[2].material_id"
+                }
+              ],
+              "rung_key": "forage_patches[2].composition[1].rung_quotes[0].rung_key",
+              "work_cost": 48.98,
+              "yield_ratio": 21.25
             },
             {
-              "amount": 60.82,
-              "material_id": "forage_patches[2].composition[1].sow_material_payoff[1].material_id"
+              "can_climb": false,
+              "fodder_payoff": 15.67,
+              "food_payoff": 91.650002,
+              "material_payoff": [
+                {
+                  "amount": 35.040001,
+                  "material_id": "forage_patches[2].composition[1].rung_quotes[1].material_payoff[0].material_id"
+                },
+                {
+                  "amount": 46.299999,
+                  "material_id": "forage_patches[2].composition[1].rung_quotes[1].material_payoff[1].material_id"
+                },
+                {
+                  "amount": 67.239998,
+                  "material_id": "forage_patches[2].composition[1].rung_quotes[1].material_payoff[2].material_id"
+                }
+              ],
+              "rung_key": "forage_patches[2].composition[1].rung_quotes[1].rung_key",
+              "work_cost": 61.689999,
+              "yield_ratio": 93.370003
             },
             {
-              "amount": 73.68,
-              "material_id": "forage_patches[2].composition[1].sow_material_payoff[2].material_id"
+              "can_climb": false,
+              "fodder_payoff": 73.43,
+              "food_payoff": 13.92,
+              "material_payoff": [
+                {
+                  "amount": 38.970001,
+                  "material_id": "forage_patches[2].composition[1].rung_quotes[2].material_payoff[0].material_id"
+                },
+                {
+                  "amount": 50.09,
+                  "material_id": "forage_patches[2].composition[1].rung_quotes[2].material_payoff[1].material_id"
+                },
+                {
+                  "amount": 54.220001,
+                  "material_id": "forage_patches[2].composition[1].rung_quotes[2].material_payoff[2].material_id"
+                }
+              ],
+              "rung_key": "forage_patches[2].composition[1].rung_quotes[2].rung_key",
+              "work_cost": 43.07,
+              "yield_ratio": 52.900002
             }
           ],
-          "sow_payoff": 15.34,
-          "sow_work_cost": 32.599998,
-          "sow_yield_ratio": 107.830002,
+          "share": 103.190002,
           "species": "forage_patches[2].composition[1].species",
           "standing_biomass": 78.440002
         },
         {
-          "can_cultivate": false,
-          "can_sow": true,
-          "cultivate_fodder_payoff": 20.4,
-          "cultivate_material_payoff": [
-            {
-              "amount": 54.130001,
-              "material_id": "forage_patches[2].composition[2].cultivate_material_payoff[0].material_id"
-            },
-            {
-              "amount": 7.53,
-              "material_id": "forage_patches[2].composition[2].cultivate_material_payoff[1].material_id"
-            },
-            {
-              "amount": 98.129997,
-              "material_id": "forage_patches[2].composition[2].cultivate_material_payoff[2].material_id"
-            }
-          ],
-          "cultivate_payoff": 95.25,
-          "cultivate_yield_ratio": 31.24,
           "display_name": "forage_patches[2].composition[2].display_name",
           "fodder_per_biomass": 12.65,
           "material_per_biomass": [
@@ -1810,74 +2275,84 @@
           ],
           "provisions_per_biomass": 39.790001,
           "role": "forage_patches[2].composition[2].role",
-          "share": 61.849998,
-          "sow_fodder_payoff": 28.530001,
-          "sow_material_payoff": [
+          "rung_quotes": [
             {
-              "amount": 75.029999,
-              "material_id": "forage_patches[2].composition[2].sow_material_payoff[0].material_id"
+              "can_climb": true,
+              "fodder_payoff": 21.620001,
+              "food_payoff": 16.43,
+              "material_payoff": [
+                {
+                  "amount": 50.490002,
+                  "material_id": "forage_patches[2].composition[2].rung_quotes[0].material_payoff[0].material_id"
+                },
+                {
+                  "amount": 38.740002,
+                  "material_id": "forage_patches[2].composition[2].rung_quotes[0].material_payoff[1].material_id"
+                },
+                {
+                  "amount": 99.779999,
+                  "material_id": "forage_patches[2].composition[2].rung_quotes[0].material_payoff[2].material_id"
+                }
+              ],
+              "rung_key": "forage_patches[2].composition[2].rung_quotes[0].rung_key",
+              "work_cost": 4.66,
+              "yield_ratio": 19.940001
             },
             {
-              "amount": 45.400002,
-              "material_id": "forage_patches[2].composition[2].sow_material_payoff[1].material_id"
+              "can_climb": false,
+              "fodder_payoff": 36.470001,
+              "food_payoff": 56.259998,
+              "material_payoff": [
+                {
+                  "amount": 55.07,
+                  "material_id": "forage_patches[2].composition[2].rung_quotes[1].material_payoff[0].material_id"
+                },
+                {
+                  "amount": 99.879997,
+                  "material_id": "forage_patches[2].composition[2].rung_quotes[1].material_payoff[1].material_id"
+                },
+                {
+                  "amount": 51.880001,
+                  "material_id": "forage_patches[2].composition[2].rung_quotes[1].material_payoff[2].material_id"
+                }
+              ],
+              "rung_key": "forage_patches[2].composition[2].rung_quotes[1].rung_key",
+              "work_cost": 68.230003,
+              "yield_ratio": 103.019997
             },
             {
-              "amount": 60.540001,
-              "material_id": "forage_patches[2].composition[2].sow_material_payoff[2].material_id"
+              "can_climb": false,
+              "fodder_payoff": 43.470001,
+              "food_payoff": 65.370003,
+              "material_payoff": [
+                {
+                  "amount": 59.98,
+                  "material_id": "forage_patches[2].composition[2].rung_quotes[2].material_payoff[0].material_id"
+                },
+                {
+                  "amount": 21.17,
+                  "material_id": "forage_patches[2].composition[2].rung_quotes[2].material_payoff[1].material_id"
+                },
+                {
+                  "amount": 76.120003,
+                  "material_id": "forage_patches[2].composition[2].rung_quotes[2].material_payoff[2].material_id"
+                }
+              ],
+              "rung_key": "forage_patches[2].composition[2].rung_quotes[2].rung_key",
+              "work_cost": 13.44,
+              "yield_ratio": 12.02
             }
           ],
-          "sow_payoff": 72.25,
-          "sow_work_cost": 76.610001,
-          "sow_yield_ratio": 75.190002,
+          "share": 61.849998,
           "species": "forage_patches[2].composition[2].species",
           "standing_biomass": 61.77
         }
       ],
-      "cultivation_progress": 45.279999,
-      "cultivation_upkeep_demand": 10.48,
-      "cultivation_upkeep_material_demand": [
-        {
-          "amount": 103.580002,
-          "material_id": "forage_patches[2].cultivation_upkeep_material_demand[0].material_id"
-        },
-        {
-          "amount": 28.83,
-          "material_id": "forage_patches[2].cultivation_upkeep_material_demand[1].material_id"
-        },
-        {
-          "amount": 54.25,
-          "material_id": "forage_patches[2].cultivation_upkeep_material_demand[2].material_id"
-        }
-      ],
-      "cultivation_work_cost": 36.07,
-      "cultivation_work_done": 51.599998,
       "current_rung": "forage_patches[2].current_rung",
       "ecology_phase": "forage_patches[2].ecology_phase",
-      "field_fodder": 93.830002,
-      "field_progress": 82.970001,
-      "field_upkeep_demand": 47.91,
-      "field_upkeep_material_demand": [
-        {
-          "amount": 12.95,
-          "material_id": "forage_patches[2].field_upkeep_material_demand[0].material_id"
-        },
-        {
-          "amount": 35.689999,
-          "material_id": "forage_patches[2].field_upkeep_material_demand[1].material_id"
-        },
-        {
-          "amount": 96.970001,
-          "material_id": "forage_patches[2].field_upkeep_material_demand[2].material_id"
-        }
-      ],
-      "field_work_cost": 34.0,
-      "field_work_done": 12.15,
-      "field_yield": 107.940002,
       "fodder_per_biomass": 104.449997,
       "has_neglect_grace": false,
       "has_owner": true,
-      "is_cultivated": true,
-      "is_field": false,
       "material_per_biomass": [
         {
           "amount": 90.150002,
@@ -1913,10 +2388,168 @@
       "per_worker_yield": 77.830002,
       "provisions_per_biomass": 69.550003,
       "regrowth_samples": {"__packed": "PackedFloat32Array", "len": 11, "items": [49.049999, 25.959999, 52.41, 8.44, 87.419998, 54.919998, 90.769997, 63.669998, 73.260002, 93.290001, 3.62]},
-      "sow_site_refusal": "forage_patches[2].sow_site_refusal",
+      "rung_quotes": [
+        {
+          "build_material_cost": [
+            {
+              "amount": 52.68,
+              "material_id": "forage_patches[2].rung_quotes[0].build_material_cost[0].material_id"
+            },
+            {
+              "amount": 67.07,
+              "material_id": "forage_patches[2].rung_quotes[0].build_material_cost[1].material_id"
+            },
+            {
+              "amount": 36.950001,
+              "material_id": "forage_patches[2].rung_quotes[0].build_material_cost[2].material_id"
+            }
+          ],
+          "fodder": 83.559998,
+          "food_yield": 3.63,
+          "material_payoff": [
+            {
+              "amount": 57.709999,
+              "material_id": "forage_patches[2].rung_quotes[0].material_payoff[0].material_id"
+            },
+            {
+              "amount": 80.449997,
+              "material_id": "forage_patches[2].rung_quotes[0].material_payoff[1].material_id"
+            },
+            {
+              "amount": 29.23,
+              "material_id": "forage_patches[2].rung_quotes[0].material_payoff[2].material_id"
+            }
+          ],
+          "progress": 26.040001,
+          "reached": true,
+          "rung_key": "forage_patches[2].rung_quotes[0].rung_key",
+          "site_refusal": "forage_patches[2].rung_quotes[0].site_refusal",
+          "upkeep_demand": 97.419998,
+          "upkeep_material_demand": [
+            {
+              "amount": 88.139999,
+              "material_id": "forage_patches[2].rung_quotes[0].upkeep_material_demand[0].material_id"
+            },
+            {
+              "amount": 112.370003,
+              "material_id": "forage_patches[2].rung_quotes[0].upkeep_material_demand[1].material_id"
+            },
+            {
+              "amount": 91.330002,
+              "material_id": "forage_patches[2].rung_quotes[0].upkeep_material_demand[2].material_id"
+            }
+          ],
+          "work_cost": 23.639999,
+          "work_done": 101.949997
+        },
+        {
+          "build_material_cost": [
+            {
+              "amount": 20.139999,
+              "material_id": "forage_patches[2].rung_quotes[1].build_material_cost[0].material_id"
+            },
+            {
+              "amount": 4.38,
+              "material_id": "forage_patches[2].rung_quotes[1].build_material_cost[1].material_id"
+            },
+            {
+              "amount": 52.34,
+              "material_id": "forage_patches[2].rung_quotes[1].build_material_cost[2].material_id"
+            }
+          ],
+          "fodder": 54.459999,
+          "food_yield": 108.379997,
+          "material_payoff": [
+            {
+              "amount": 61.84,
+              "material_id": "forage_patches[2].rung_quotes[1].material_payoff[0].material_id"
+            },
+            {
+              "amount": 91.970001,
+              "material_id": "forage_patches[2].rung_quotes[1].material_payoff[1].material_id"
+            },
+            {
+              "amount": 13.29,
+              "material_id": "forage_patches[2].rung_quotes[1].material_payoff[2].material_id"
+            }
+          ],
+          "progress": 46.380001,
+          "reached": false,
+          "rung_key": "forage_patches[2].rung_quotes[1].rung_key",
+          "site_refusal": "forage_patches[2].rung_quotes[1].site_refusal",
+          "upkeep_demand": 2.46,
+          "upkeep_material_demand": [
+            {
+              "amount": 101.800003,
+              "material_id": "forage_patches[2].rung_quotes[1].upkeep_material_demand[0].material_id"
+            },
+            {
+              "amount": 24.27,
+              "material_id": "forage_patches[2].rung_quotes[1].upkeep_material_demand[1].material_id"
+            },
+            {
+              "amount": 68.949997,
+              "material_id": "forage_patches[2].rung_quotes[1].upkeep_material_demand[2].material_id"
+            }
+          ],
+          "work_cost": 92.370003,
+          "work_done": 85.139999
+        },
+        {
+          "build_material_cost": [
+            {
+              "amount": 18.24,
+              "material_id": "forage_patches[2].rung_quotes[2].build_material_cost[0].material_id"
+            },
+            {
+              "amount": 93.860001,
+              "material_id": "forage_patches[2].rung_quotes[2].build_material_cost[1].material_id"
+            },
+            {
+              "amount": 25.969999,
+              "material_id": "forage_patches[2].rung_quotes[2].build_material_cost[2].material_id"
+            }
+          ],
+          "fodder": 54.57,
+          "food_yield": 0.9,
+          "material_payoff": [
+            {
+              "amount": 81.82,
+              "material_id": "forage_patches[2].rung_quotes[2].material_payoff[0].material_id"
+            },
+            {
+              "amount": 58.049999,
+              "material_id": "forage_patches[2].rung_quotes[2].material_payoff[1].material_id"
+            },
+            {
+              "amount": 32.529999,
+              "material_id": "forage_patches[2].rung_quotes[2].material_payoff[2].material_id"
+            }
+          ],
+          "progress": 45.209999,
+          "reached": false,
+          "rung_key": "forage_patches[2].rung_quotes[2].rung_key",
+          "site_refusal": "forage_patches[2].rung_quotes[2].site_refusal",
+          "upkeep_demand": 34.259998,
+          "upkeep_material_demand": [
+            {
+              "amount": 31.18,
+              "material_id": "forage_patches[2].rung_quotes[2].upkeep_material_demand[0].material_id"
+            },
+            {
+              "amount": 87.790001,
+              "material_id": "forage_patches[2].rung_quotes[2].upkeep_material_demand[1].material_id"
+            },
+            {
+              "amount": 104.93,
+              "material_id": "forage_patches[2].rung_quotes[2].upkeep_material_demand[2].material_id"
+            }
+          ],
+          "work_cost": 54.400002,
+          "work_done": 63.689999
+        }
+      ],
       "stressed_fraction": 0.94,
-      "tended_fodder": 97.82,
-      "tended_yield": 94.239998,
       "tile_capacity": 28.540001,
       "upkeep_demand": 62.389999,
       "upkeep_hands": 60.970001,
@@ -2220,58 +2853,9 @@
       "build_work_per_worker_turn": 39.950001,
       "carrying_capacity": 59.91,
       "collapse_fraction": 9.08,
-      "corral_build_material_cost": [
-        {
-          "amount": 62.439999,
-          "material_id": "herds[0].corral_build_material_cost[0].material_id"
-        },
-        {
-          "amount": 101.650002,
-          "material_id": "herds[0].corral_build_material_cost[1].material_id"
-        },
-        {
-          "amount": 104.720001,
-          "material_id": "herds[0].corral_build_material_cost[2].material_id"
-        }
-      ],
-      "corral_material": [
-        {
-          "amount": 3.27,
-          "material_id": "herds[0].corral_material[0].material_id"
-        },
-        {
-          "amount": 80.559998,
-          "material_id": "herds[0].corral_material[1].material_id"
-        },
-        {
-          "amount": 33.32,
-          "material_id": "herds[0].corral_material[2].material_id"
-        }
-      ],
-      "corral_progress": 82.440002,
-      "corral_upkeep_demand": 12.55,
-      "corral_upkeep_material_demand": [
-        {
-          "amount": 67.690002,
-          "material_id": "herds[0].corral_upkeep_material_demand[0].material_id"
-        },
-        {
-          "amount": 3.76,
-          "material_id": "herds[0].corral_upkeep_material_demand[1].material_id"
-        },
-        {
-          "amount": 27.950001,
-          "material_id": "herds[0].corral_upkeep_material_demand[2].material_id"
-        }
-      ],
-      "corral_work_cost": 88.470001,
-      "corral_work_done": 70.900002,
-      "corral_yield": 50.880001,
-      "corralled": true,
       "current_rung": "herds[0].current_rung",
       "default_kit_id": "herds[0].default_kit_id",
       "defense": 77.480003,
-      "domestication": 25.139999,
       "durability": 52.57,
       "ecology_phase": "herds[0].ecology_phase",
       "engage_rate": 84.269997,
@@ -2280,7 +2864,7 @@
       "fodder_per_biomass": 10.07,
       "food_per_animal": 22.77,
       "graze_range_radius": 200,
-      "has_neglect_grace": false,
+      "has_neglect_grace": true,
       "herded_fraction": 57.66,
       "herders_needed": 45,
       "herders_needed_if_managed": 61,
@@ -2309,21 +2893,6 @@
       "next_ground_y": 11,
       "next_x": 68,
       "next_y": 57,
-      "pastoral_material": [
-        {
-          "amount": 74.5,
-          "material_id": "herds[0].pastoral_material[0].material_id"
-        },
-        {
-          "amount": 69.400002,
-          "material_id": "herds[0].pastoral_material[1].material_id"
-        },
-        {
-          "amount": 75.459999,
-          "material_id": "herds[0].pastoral_material[2].material_id"
-        }
-      ],
-      "pastoral_yield": 90.18,
       "pen_extend_cost": 91.480003,
       "pen_extend_progress": 34.240002,
       "pen_fed_fraction": 2.26,
@@ -2353,27 +2922,171 @@
       "provisions_per_biomass": 82.150002,
       "regrowth_samples": {"__packed": "PackedFloat32Array", "len": 11, "items": [35.630001, 62.740002, 96.269997, 59.380001, 74.0, 48.580002, 65.25, 45.23, 107.059998, 81.650002, 97.730003]},
       "route_length": 176,
+      "rung_quotes": [
+        {
+          "build_material_cost": [
+            {
+              "amount": 33.459999,
+              "material_id": "herds[0].rung_quotes[0].build_material_cost[0].material_id"
+            },
+            {
+              "amount": 95.980003,
+              "material_id": "herds[0].rung_quotes[0].build_material_cost[1].material_id"
+            },
+            {
+              "amount": 110.779999,
+              "material_id": "herds[0].rung_quotes[0].build_material_cost[2].material_id"
+            }
+          ],
+          "fodder": 105.559998,
+          "food_yield": 29.42,
+          "material_payoff": [
+            {
+              "amount": 30.780001,
+              "material_id": "herds[0].rung_quotes[0].material_payoff[0].material_id"
+            },
+            {
+              "amount": 106.809998,
+              "material_id": "herds[0].rung_quotes[0].material_payoff[1].material_id"
+            },
+            {
+              "amount": 15.53,
+              "material_id": "herds[0].rung_quotes[0].material_payoff[2].material_id"
+            }
+          ],
+          "progress": 74.559998,
+          "reached": true,
+          "rung_key": "herds[0].rung_quotes[0].rung_key",
+          "site_refusal": "herds[0].rung_quotes[0].site_refusal",
+          "upkeep_demand": 58.939999,
+          "upkeep_material_demand": [
+            {
+              "amount": 77.720001,
+              "material_id": "herds[0].rung_quotes[0].upkeep_material_demand[0].material_id"
+            },
+            {
+              "amount": 37.150002,
+              "material_id": "herds[0].rung_quotes[0].upkeep_material_demand[1].material_id"
+            },
+            {
+              "amount": 20.01,
+              "material_id": "herds[0].rung_quotes[0].upkeep_material_demand[2].material_id"
+            }
+          ],
+          "work_cost": 72.949997,
+          "work_done": 61.040001
+        },
+        {
+          "build_material_cost": [
+            {
+              "amount": 1.84,
+              "material_id": "herds[0].rung_quotes[1].build_material_cost[0].material_id"
+            },
+            {
+              "amount": 65.769997,
+              "material_id": "herds[0].rung_quotes[1].build_material_cost[1].material_id"
+            },
+            {
+              "amount": 69.809998,
+              "material_id": "herds[0].rung_quotes[1].build_material_cost[2].material_id"
+            }
+          ],
+          "fodder": 21.16,
+          "food_yield": 55.41,
+          "material_payoff": [
+            {
+              "amount": 95.330002,
+              "material_id": "herds[0].rung_quotes[1].material_payoff[0].material_id"
+            },
+            {
+              "amount": 43.470001,
+              "material_id": "herds[0].rung_quotes[1].material_payoff[1].material_id"
+            },
+            {
+              "amount": 1.55,
+              "material_id": "herds[0].rung_quotes[1].material_payoff[2].material_id"
+            }
+          ],
+          "progress": 45.860001,
+          "reached": false,
+          "rung_key": "herds[0].rung_quotes[1].rung_key",
+          "site_refusal": "herds[0].rung_quotes[1].site_refusal",
+          "upkeep_demand": 112.160004,
+          "upkeep_material_demand": [
+            {
+              "amount": 19.059999,
+              "material_id": "herds[0].rung_quotes[1].upkeep_material_demand[0].material_id"
+            },
+            {
+              "amount": 56.43,
+              "material_id": "herds[0].rung_quotes[1].upkeep_material_demand[1].material_id"
+            },
+            {
+              "amount": 87.029999,
+              "material_id": "herds[0].rung_quotes[1].upkeep_material_demand[2].material_id"
+            }
+          ],
+          "work_cost": 67.160004,
+          "work_done": 37.650002
+        },
+        {
+          "build_material_cost": [
+            {
+              "amount": 64.419998,
+              "material_id": "herds[0].rung_quotes[2].build_material_cost[0].material_id"
+            },
+            {
+              "amount": 105.089996,
+              "material_id": "herds[0].rung_quotes[2].build_material_cost[1].material_id"
+            },
+            {
+              "amount": 40.650002,
+              "material_id": "herds[0].rung_quotes[2].build_material_cost[2].material_id"
+            }
+          ],
+          "fodder": 93.169998,
+          "food_yield": 91.760002,
+          "material_payoff": [
+            {
+              "amount": 59.060001,
+              "material_id": "herds[0].rung_quotes[2].material_payoff[0].material_id"
+            },
+            {
+              "amount": 23.559999,
+              "material_id": "herds[0].rung_quotes[2].material_payoff[1].material_id"
+            },
+            {
+              "amount": 89.489998,
+              "material_id": "herds[0].rung_quotes[2].material_payoff[2].material_id"
+            }
+          ],
+          "progress": 85.769997,
+          "reached": false,
+          "rung_key": "herds[0].rung_quotes[2].rung_key",
+          "site_refusal": "herds[0].rung_quotes[2].site_refusal",
+          "upkeep_demand": 2.93,
+          "upkeep_material_demand": [
+            {
+              "amount": 26.610001,
+              "material_id": "herds[0].rung_quotes[2].upkeep_material_demand[0].material_id"
+            },
+            {
+              "amount": 83.059998,
+              "material_id": "herds[0].rung_quotes[2].upkeep_material_demand[1].material_id"
+            },
+            {
+              "amount": 91.199997,
+              "material_id": "herds[0].rung_quotes[2].upkeep_material_demand[2].material_id"
+            }
+          ],
+          "work_cost": 4.2,
+          "work_done": 74.080002
+        }
+      ],
       "size_class": "herds[0].size_class",
       "species": "herds[0].species",
       "stay_fraction": 26.790001,
       "stressed_fraction": 81.589996,
-      "tame_upkeep_demand": 56.91,
-      "tame_upkeep_material_demand": [
-        {
-          "amount": 72.57,
-          "material_id": "herds[0].tame_upkeep_material_demand[0].material_id"
-        },
-        {
-          "amount": 30.870001,
-          "material_id": "herds[0].tame_upkeep_material_demand[1].material_id"
-        },
-        {
-          "amount": 26.83,
-          "material_id": "herds[0].tame_upkeep_material_demand[2].material_id"
-        }
-      ],
-      "tame_work_cost": 86.699997,
-      "tame_work_done": 60.59,
       "upkeep_demand": 43.459999,
       "upkeep_hands": 78.230003,
       "upkeep_material_demand": [
@@ -2419,7 +3132,7 @@
           "required": 91.910004
         }
       ],
-      "upkeep_tools_short": true,
+      "upkeep_tools_short": false,
       "upkeep_workers_at_completion": 111,
       "upkeep_workers_needed": 156,
       "x": 0,
@@ -2470,58 +3183,9 @@
       "build_work_per_worker_turn": 104.040001,
       "carrying_capacity": 52.919998,
       "collapse_fraction": 77.970001,
-      "corral_build_material_cost": [
-        {
-          "amount": 111.220001,
-          "material_id": "herds[1].corral_build_material_cost[0].material_id"
-        },
-        {
-          "amount": 64.629997,
-          "material_id": "herds[1].corral_build_material_cost[1].material_id"
-        },
-        {
-          "amount": 39.209999,
-          "material_id": "herds[1].corral_build_material_cost[2].material_id"
-        }
-      ],
-      "corral_material": [
-        {
-          "amount": 37.32,
-          "material_id": "herds[1].corral_material[0].material_id"
-        },
-        {
-          "amount": 9.98,
-          "material_id": "herds[1].corral_material[1].material_id"
-        },
-        {
-          "amount": 48.200001,
-          "material_id": "herds[1].corral_material[2].material_id"
-        }
-      ],
-      "corral_progress": 69.410004,
-      "corral_upkeep_demand": 67.809998,
-      "corral_upkeep_material_demand": [
-        {
-          "amount": 24.67,
-          "material_id": "herds[1].corral_upkeep_material_demand[0].material_id"
-        },
-        {
-          "amount": 76.529999,
-          "material_id": "herds[1].corral_upkeep_material_demand[1].material_id"
-        },
-        {
-          "amount": 11.6,
-          "material_id": "herds[1].corral_upkeep_material_demand[2].material_id"
-        }
-      ],
-      "corral_work_cost": 8.6,
-      "corral_work_done": 47.380001,
-      "corral_yield": 35.5,
-      "corralled": false,
       "current_rung": "herds[1].current_rung",
       "default_kit_id": "herds[1].default_kit_id",
       "defense": 11.55,
-      "domestication": 102.790001,
       "durability": 53.200001,
       "ecology_phase": "herds[1].ecology_phase",
       "engage_rate": 1.33,
@@ -2530,7 +3194,7 @@
       "fodder_per_biomass": 75.889999,
       "food_per_animal": 45.939999,
       "graze_range_radius": 93,
-      "has_neglect_grace": true,
+      "has_neglect_grace": false,
       "herded_fraction": 76.389999,
       "herders_needed": 64,
       "herders_needed_if_managed": 186,
@@ -2559,21 +3223,6 @@
       "next_ground_y": 160,
       "next_x": 1,
       "next_y": 12,
-      "pastoral_material": [
-        {
-          "amount": 4.45,
-          "material_id": "herds[1].pastoral_material[0].material_id"
-        },
-        {
-          "amount": 49.52,
-          "material_id": "herds[1].pastoral_material[1].material_id"
-        },
-        {
-          "amount": 48.98,
-          "material_id": "herds[1].pastoral_material[2].material_id"
-        }
-      ],
-      "pastoral_yield": 53.27,
       "pen_extend_cost": 39.439999,
       "pen_extend_progress": 58.25,
       "pen_fed_fraction": 94.949997,
@@ -2603,27 +3252,171 @@
       "provisions_per_biomass": 55.490002,
       "regrowth_samples": {"__packed": "PackedFloat32Array", "len": 11, "items": [81.800003, 54.689999, 52.18, 2.83, 67.639999, 93.059998, 90.550003, 58.049999, 14.47, 99.860001, 41.220001]},
       "route_length": 161,
+      "rung_quotes": [
+        {
+          "build_material_cost": [
+            {
+              "amount": 52.900002,
+              "material_id": "herds[1].rung_quotes[0].build_material_cost[0].material_id"
+            },
+            {
+              "amount": 87.489998,
+              "material_id": "herds[1].rung_quotes[0].build_material_cost[1].material_id"
+            },
+            {
+              "amount": 13.47,
+              "material_id": "herds[1].rung_quotes[0].build_material_cost[2].material_id"
+            }
+          ],
+          "fodder": 53.48,
+          "food_yield": 16.91,
+          "material_payoff": [
+            {
+              "amount": 41.400002,
+              "material_id": "herds[1].rung_quotes[0].material_payoff[0].material_id"
+            },
+            {
+              "amount": 6.83,
+              "material_id": "herds[1].rung_quotes[0].material_payoff[1].material_id"
+            },
+            {
+              "amount": 9.2,
+              "material_id": "herds[1].rung_quotes[0].material_payoff[2].material_id"
+            }
+          ],
+          "progress": 51.75,
+          "reached": true,
+          "rung_key": "herds[1].rung_quotes[0].rung_key",
+          "site_refusal": "herds[1].rung_quotes[0].site_refusal",
+          "upkeep_demand": 61.939999,
+          "upkeep_material_demand": [
+            {
+              "amount": 8.55,
+              "material_id": "herds[1].rung_quotes[0].upkeep_material_demand[0].material_id"
+            },
+            {
+              "amount": 85.839996,
+              "material_id": "herds[1].rung_quotes[0].upkeep_material_demand[1].material_id"
+            },
+            {
+              "amount": 38.599998,
+              "material_id": "herds[1].rung_quotes[0].upkeep_material_demand[2].material_id"
+            }
+          ],
+          "work_cost": 13.16,
+          "work_done": 91.629997
+        },
+        {
+          "build_material_cost": [
+            {
+              "amount": 88.449997,
+              "material_id": "herds[1].rung_quotes[1].build_material_cost[0].material_id"
+            },
+            {
+              "amount": 83.300003,
+              "material_id": "herds[1].rung_quotes[1].build_material_cost[1].material_id"
+            },
+            {
+              "amount": 69.309998,
+              "material_id": "herds[1].rung_quotes[1].build_material_cost[2].material_id"
+            }
+          ],
+          "fodder": 56.130001,
+          "food_yield": 5.75,
+          "material_payoff": [
+            {
+              "amount": 92.970001,
+              "material_id": "herds[1].rung_quotes[1].material_payoff[0].material_id"
+            },
+            {
+              "amount": 55.220001,
+              "material_id": "herds[1].rung_quotes[1].material_payoff[1].material_id"
+            },
+            {
+              "amount": 52.48,
+              "material_id": "herds[1].rung_quotes[1].material_payoff[2].material_id"
+            }
+          ],
+          "progress": 87.550003,
+          "reached": false,
+          "rung_key": "herds[1].rung_quotes[1].rung_key",
+          "site_refusal": "herds[1].rung_quotes[1].site_refusal",
+          "upkeep_demand": 69.900002,
+          "upkeep_material_demand": [
+            {
+              "amount": 13.56,
+              "material_id": "herds[1].rung_quotes[1].upkeep_material_demand[0].material_id"
+            },
+            {
+              "amount": 29.83,
+              "material_id": "herds[1].rung_quotes[1].upkeep_material_demand[1].material_id"
+            },
+            {
+              "amount": 76.400002,
+              "material_id": "herds[1].rung_quotes[1].upkeep_material_demand[2].material_id"
+            }
+          ],
+          "work_cost": 90.059998,
+          "work_done": 112.43
+        },
+        {
+          "build_material_cost": [
+            {
+              "amount": 61.240002,
+              "material_id": "herds[1].rung_quotes[2].build_material_cost[0].material_id"
+            },
+            {
+              "amount": 10.93,
+              "material_id": "herds[1].rung_quotes[2].build_material_cost[1].material_id"
+            },
+            {
+              "amount": 42.75,
+              "material_id": "herds[1].rung_quotes[2].build_material_cost[2].material_id"
+            }
+          ],
+          "fodder": 82.860001,
+          "food_yield": 20.17,
+          "material_payoff": [
+            {
+              "amount": 26.73,
+              "material_id": "herds[1].rung_quotes[2].material_payoff[0].material_id"
+            },
+            {
+              "amount": 101.860001,
+              "material_id": "herds[1].rung_quotes[2].material_payoff[1].material_id"
+            },
+            {
+              "amount": 16.92,
+              "material_id": "herds[1].rung_quotes[2].material_payoff[2].material_id"
+            }
+          ],
+          "progress": 8.85,
+          "reached": false,
+          "rung_key": "herds[1].rung_quotes[2].rung_key",
+          "site_refusal": "herds[1].rung_quotes[2].site_refusal",
+          "upkeep_demand": 21.75,
+          "upkeep_material_demand": [
+            {
+              "amount": 109.129997,
+              "material_id": "herds[1].rung_quotes[2].upkeep_material_demand[0].material_id"
+            },
+            {
+              "amount": 47.029999,
+              "material_id": "herds[1].rung_quotes[2].upkeep_material_demand[1].material_id"
+            },
+            {
+              "amount": 45.18,
+              "material_id": "herds[1].rung_quotes[2].upkeep_material_demand[2].material_id"
+            }
+          ],
+          "work_cost": 39.700001,
+          "work_done": 92.339996
+        }
+      ],
       "size_class": "herds[1].size_class",
       "species": "herds[1].species",
       "stay_fraction": 64.949997,
       "stressed_fraction": 10.21,
-      "tame_upkeep_demand": 73.419998,
-      "tame_upkeep_material_demand": [
-        {
-          "amount": 54.849998,
-          "material_id": "herds[1].tame_upkeep_material_demand[0].material_id"
-        },
-        {
-          "amount": 62.400002,
-          "material_id": "herds[1].tame_upkeep_material_demand[1].material_id"
-        },
-        {
-          "amount": 41.459999,
-          "material_id": "herds[1].tame_upkeep_material_demand[2].material_id"
-        }
-      ],
-      "tame_work_cost": 84.620003,
-      "tame_work_done": 10.41,
       "upkeep_demand": 25.92,
       "upkeep_hands": 82.889999,
       "upkeep_material_demand": [
@@ -2669,7 +3462,7 @@
           "required": 39.720001
         }
       ],
-      "upkeep_tools_short": false,
+      "upkeep_tools_short": true,
       "upkeep_workers_at_completion": 102,
       "upkeep_workers_needed": 119,
       "x": 1,
@@ -2720,58 +3513,9 @@
       "build_work_per_worker_turn": 52.419998,
       "carrying_capacity": 66.68,
       "collapse_fraction": 62.07,
-      "corral_build_material_cost": [
-        {
-          "amount": 86.959999,
-          "material_id": "herds[2].corral_build_material_cost[0].material_id"
-        },
-        {
-          "amount": 107.400002,
-          "material_id": "herds[2].corral_build_material_cost[1].material_id"
-        },
-        {
-          "amount": 42.139999,
-          "material_id": "herds[2].corral_build_material_cost[2].material_id"
-        }
-      ],
-      "corral_material": [
-        {
-          "amount": 3.86,
-          "material_id": "herds[2].corral_material[0].material_id"
-        },
-        {
-          "amount": 65.169998,
-          "material_id": "herds[2].corral_material[1].material_id"
-        },
-        {
-          "amount": 35.150002,
-          "material_id": "herds[2].corral_material[2].material_id"
-        }
-      ],
-      "corral_progress": 97.940002,
-      "corral_upkeep_demand": 56.560001,
-      "corral_upkeep_material_demand": [
-        {
-          "amount": 81.419998,
-          "material_id": "herds[2].corral_upkeep_material_demand[0].material_id"
-        },
-        {
-          "amount": 6.67,
-          "material_id": "herds[2].corral_upkeep_material_demand[1].material_id"
-        },
-        {
-          "amount": 32.09,
-          "material_id": "herds[2].corral_upkeep_material_demand[2].material_id"
-        }
-      ],
-      "corral_work_cost": 87.529999,
-      "corral_work_done": 103.059998,
-      "corral_yield": 102.639999,
-      "corralled": false,
       "current_rung": "herds[2].current_rung",
       "default_kit_id": "herds[2].default_kit_id",
       "defense": 63.049999,
-      "domestication": 53.130001,
       "durability": 105.230003,
       "ecology_phase": "herds[2].ecology_phase",
       "engage_rate": 30.940001,
@@ -2780,11 +3524,11 @@
       "fodder_per_biomass": 32.049999,
       "food_per_animal": 66.589996,
       "graze_range_radius": 126,
-      "has_neglect_grace": true,
+      "has_neglect_grace": false,
       "herded_fraction": 58.59,
       "herders_needed": 167,
       "herders_needed_if_managed": 191,
-      "huntable": false,
+      "huntable": true,
       "husbandry_ceiling": "herds[2].husbandry_ceiling",
       "id": "herds[2].id",
       "keeping": "herds[2].keeping",
@@ -2809,21 +3553,6 @@
       "next_ground_y": 17,
       "next_x": 18,
       "next_y": 7,
-      "pastoral_material": [
-        {
-          "amount": 32.139999,
-          "material_id": "herds[2].pastoral_material[0].material_id"
-        },
-        {
-          "amount": 19.190001,
-          "material_id": "herds[2].pastoral_material[1].material_id"
-        },
-        {
-          "amount": 49.209999,
-          "material_id": "herds[2].pastoral_material[2].material_id"
-        }
-      ],
-      "pastoral_yield": 20.65,
       "pen_extend_cost": 46.43,
       "pen_extend_progress": 31.299999,
       "pen_fed_fraction": 21.35,
@@ -2853,27 +3582,171 @@
       "provisions_per_biomass": 14.63,
       "regrowth_samples": {"__packed": "PackedFloat32Array", "len": 11, "items": [101.379997, 81.360001, 110.129997, 15.33, 63.02, 95.510002, 71.760002, 98.870003, 29.950001, 62.450001, 107.620003]},
       "route_length": 58,
+      "rung_quotes": [
+        {
+          "build_material_cost": [
+            {
+              "amount": 67.360001,
+              "material_id": "herds[2].rung_quotes[0].build_material_cost[0].material_id"
+            },
+            {
+              "amount": 88.410004,
+              "material_id": "herds[2].rung_quotes[0].build_material_cost[1].material_id"
+            },
+            {
+              "amount": 93.419998,
+              "material_id": "herds[2].rung_quotes[0].build_material_cost[2].material_id"
+            }
+          ],
+          "fodder": 16.74,
+          "food_yield": 22.940001,
+          "material_payoff": [
+            {
+              "amount": 16.92,
+              "material_id": "herds[2].rung_quotes[0].material_payoff[0].material_id"
+            },
+            {
+              "amount": 105.989998,
+              "material_id": "herds[2].rung_quotes[0].material_payoff[1].material_id"
+            },
+            {
+              "amount": 18.75,
+              "material_id": "herds[2].rung_quotes[0].material_payoff[2].material_id"
+            }
+          ],
+          "progress": 2.7,
+          "reached": true,
+          "rung_key": "herds[2].rung_quotes[0].rung_key",
+          "site_refusal": "herds[2].rung_quotes[0].site_refusal",
+          "upkeep_demand": 53.990002,
+          "upkeep_material_demand": [
+            {
+              "amount": 44.27,
+              "material_id": "herds[2].rung_quotes[0].upkeep_material_demand[0].material_id"
+            },
+            {
+              "amount": 55.02,
+              "material_id": "herds[2].rung_quotes[0].upkeep_material_demand[1].material_id"
+            },
+            {
+              "amount": 85.75,
+              "material_id": "herds[2].rung_quotes[0].upkeep_material_demand[2].material_id"
+            }
+          ],
+          "work_cost": 57.25,
+          "work_done": 107.080002
+        },
+        {
+          "build_material_cost": [
+            {
+              "amount": 49.209999,
+              "material_id": "herds[2].rung_quotes[1].build_material_cost[0].material_id"
+            },
+            {
+              "amount": 13.2,
+              "material_id": "herds[2].rung_quotes[1].build_material_cost[1].material_id"
+            },
+            {
+              "amount": 67.699997,
+              "material_id": "herds[2].rung_quotes[1].build_material_cost[2].material_id"
+            }
+          ],
+          "fodder": 98.610001,
+          "food_yield": 27.719999,
+          "material_payoff": [
+            {
+              "amount": 3.99,
+              "material_id": "herds[2].rung_quotes[1].material_payoff[0].material_id"
+            },
+            {
+              "amount": 86.360001,
+              "material_id": "herds[2].rung_quotes[1].material_payoff[1].material_id"
+            },
+            {
+              "amount": 88.209999,
+              "material_id": "herds[2].rung_quotes[1].material_payoff[2].material_id"
+            }
+          ],
+          "progress": 18.16,
+          "reached": false,
+          "rung_key": "herds[2].rung_quotes[1].rung_key",
+          "site_refusal": "herds[2].rung_quotes[1].site_refusal",
+          "upkeep_demand": 83.330002,
+          "upkeep_material_demand": [
+            {
+              "amount": 78.019997,
+              "material_id": "herds[2].rung_quotes[1].upkeep_material_demand[0].material_id"
+            },
+            {
+              "amount": 29.450001,
+              "material_id": "herds[2].rung_quotes[1].upkeep_material_demand[1].material_id"
+            },
+            {
+              "amount": 33.490002,
+              "material_id": "herds[2].rung_quotes[1].upkeep_material_demand[2].material_id"
+            }
+          ],
+          "work_cost": 69.110001,
+          "work_done": 108.760002
+        },
+        {
+          "build_material_cost": [
+            {
+              "amount": 43.98,
+              "material_id": "herds[2].rung_quotes[2].build_material_cost[0].material_id"
+            },
+            {
+              "amount": 93.809998,
+              "material_id": "herds[2].rung_quotes[2].build_material_cost[1].material_id"
+            },
+            {
+              "amount": 31.450001,
+              "material_id": "herds[2].rung_quotes[2].build_material_cost[2].material_id"
+            }
+          ],
+          "fodder": 13.01,
+          "food_yield": 66.080002,
+          "material_payoff": [
+            {
+              "amount": 73.440002,
+              "material_id": "herds[2].rung_quotes[2].material_payoff[0].material_id"
+            },
+            {
+              "amount": 23.129999,
+              "material_id": "herds[2].rung_quotes[2].material_payoff[1].material_id"
+            },
+            {
+              "amount": 81.970001,
+              "material_id": "herds[2].rung_quotes[2].material_payoff[2].material_id"
+            }
+          ],
+          "progress": 43.450001,
+          "reached": false,
+          "rung_key": "herds[2].rung_quotes[2].rung_key",
+          "site_refusal": "herds[2].rung_quotes[2].site_refusal",
+          "upkeep_demand": 50.23,
+          "upkeep_material_demand": [
+            {
+              "amount": 92.169998,
+              "material_id": "herds[2].rung_quotes[2].upkeep_material_demand[0].material_id"
+            },
+            {
+              "amount": 52.73,
+              "material_id": "herds[2].rung_quotes[2].upkeep_material_demand[1].material_id"
+            },
+            {
+              "amount": 82.849998,
+              "material_id": "herds[2].rung_quotes[2].upkeep_material_demand[2].material_id"
+            }
+          ],
+          "work_cost": 91.639999,
+          "work_done": 55.93
+        }
+      ],
       "size_class": "herds[2].size_class",
       "species": "herds[2].species",
       "stay_fraction": 69.470001,
       "stressed_fraction": 70.519997,
-      "tame_upkeep_demand": 2.53,
-      "tame_upkeep_material_demand": [
-        {
-          "amount": 17.610001,
-          "material_id": "herds[2].tame_upkeep_material_demand[0].material_id"
-        },
-        {
-          "amount": 66.18,
-          "material_id": "herds[2].tame_upkeep_material_demand[1].material_id"
-        },
-        {
-          "amount": 63.349998,
-          "material_id": "herds[2].tame_upkeep_material_demand[2].material_id"
-        }
-      ],
-      "tame_work_cost": 50.41,
-      "tame_work_done": 32.84,
       "upkeep_demand": 38.830002,
       "upkeep_hands": 57.720001,
       "upkeep_material_demand": [
@@ -2919,7 +3792,7 @@
           "required": 93.360001
         }
       ],
-      "upkeep_tools_short": true,
+      "upkeep_tools_short": false,
       "upkeep_workers_at_completion": 37,
       "upkeep_workers_needed": 134,
       "x": 2,

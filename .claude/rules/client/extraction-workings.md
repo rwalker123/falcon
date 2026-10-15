@@ -136,9 +136,8 @@ diffed WHOLE like `kits` and `ladderRungs` and cleared at the world boundary
 previous game's rungs would otherwise still be on the card.
 
 ⛔ **RETIRED WITH IT: `RUNG_LABELS`, `RUNG_ORDER_FORESTRY`, `RUNG_ORDER_EXTRACTION`, `rung_label`,
-`next_rung_key` and `next_rung_label`.** The five `RUNG_KEY_*` consts SURVIVE — they are the wire's
-own join keys, spelled once for the harnesses that stage a catalog and a working standing on one of
-its rungs.
+`next_rung_key` and `next_rung_label`.** The five `RUNG_KEY_*` consts SURVIVE on the deposit side only; the plant and animal keys live in
+`fixtures_rung.gd` (`KEY_*`), spelled once for the harnesses that stage a catalog.
 
 ⛔ **ONE VECTOR CARRIES TWO LADDERS, WHICH IS WHY `branch` IS A FIELD.** `order` is a climb order
 WITHIN a branch, so every walk either filters on `branch` first or is a bug — a shared order offers a
