@@ -15,6 +15,7 @@ use crate::dict::culture::{
     axis_bias_to_dict, culture_layers_to_array, culture_tensions_to_array, influencers_to_array,
     sentiment_to_dict,
 };
+use crate::dict::dealings::{dealings_to_array, goodwill_delta_dict, treaties_delta_dict};
 use crate::dict::deposits::{deposit_rungs_to_array, deposits_to_array};
 use crate::dict::economy::faction_inventory_to_array;
 use crate::dict::governance::{
@@ -874,6 +875,27 @@ fn decode_delta_against(
     // twin is permanently stale on a delta-fed client.
     if let Some(routes) = delta.routes().and_then(|s| s.routes()) {
         frame.insert_changed("routes", &routes_to_array(routes));
+    }
+
+    // **EARLY DIPLOMACY** (#233) -- whole-section replaces like the ties above: the sim re-sends the
+    // whole list when any row moves, so presence is the change signal and present-and-EMPTY means
+    // "nothing pending / no treaty now". No emptiness gate.
+    if let Some(dealings) = delta.dealings().and_then(|s| s.dealings()) {
+        frame.insert_changed("dealings", &dealings_to_array(dealings));
+    }
+    // `goodwill` and `treaties` are tables the codec always writes, with each part an "absent =
+    // unchanged" Option, so they merge over the held dict part by part (see `goodwill_delta_dict`).
+    if let Some(goodwill) = delta.goodwill() {
+        let held = frame.dict.get("goodwill").and_then(|v| v.try_to().ok());
+        if let Some(merged) = goodwill_delta_dict(held, goodwill) {
+            frame.insert_changed("goodwill", &merged);
+        }
+    }
+    if let Some(treaties) = delta.treaties() {
+        let held = frame.dict.get("treaties").and_then(|v| v.try_to().ok());
+        if let Some(merged) = treaties_delta_dict(held, treaties) {
+            frame.insert_changed("treaties", &merged);
+        }
     }
 
     // NOT a keyed diff — a whole-section replace, so present (even EMPTY) means "this is the roster

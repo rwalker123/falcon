@@ -47,6 +47,8 @@ const PANEL_EXPEDITION_TRADE_GLYPH := "📦"
 ## the FALLBACK only (`hud/station.png` is its art), and `expedition_mission_glyph` must not hand it
 ## the scout flag, which would read a posted party as one out looking for something.
 const PANEL_EXPEDITION_STATION_GLYPH := "⚓"
+## An envoy carries a message, not goods: the letter, where a trade party wears the cart.
+const PANEL_EXPEDITION_ENVOY_GLYPH := "✉"
 
 ## The mark for a party on `expedition_mission` — the ONE resolution of the three constants above, so
 ## a surface that marks a party by its mission cannot pick a different glyph from the one
@@ -62,6 +64,8 @@ static func expedition_mission_glyph(mission: String) -> String:
         return PANEL_EXPEDITION_TRADE_GLYPH
     if key == HudExpeditionVocab.EXPEDITION_MISSION_STATION:
         return PANEL_EXPEDITION_STATION_GLYPH
+    if key == HudExpeditionVocab.EXPEDITION_MISSION_ENVOY:
+        return PANEL_EXPEDITION_ENVOY_GLYPH
     return PANEL_EXPEDITION_SCOUT_GLYPH
 
 ## The `HudSprites` mark id for a party on `mission` — `scout` / `deny` / `trade` / `station`, resolved
@@ -75,6 +79,8 @@ static func expedition_mission_mark(mission: String) -> String:
         return "trade"
     if key == HudExpeditionVocab.EXPEDITION_MISSION_STATION:
         return "station"
+    if key == HudExpeditionVocab.EXPEDITION_MISSION_ENVOY:
+        return "envoy"
     return "scout"
 
 ## **THE LAST-RESORT BAND NAME, KEYED ON THE DURABLE `band_id` — NEVER ON A ROW NUMBER.** Used only
@@ -470,6 +476,15 @@ static func panel_expedition_summary(exp: Dictionary, herd_label_for_id: Callabl
         if destination == "":
             return phase_suffix.strip_edges()
         return "%s%s" % [destination, phase_suffix]
+    # **AN ENVOY names who it is for and what it carries**: `Brackwater · Road rights · Open borders`,
+    # the proposal's terms in words (they are the whole of its errand). One line, clipped by the row,
+    # with the whole sentence on the row's hover.
+    if mission == HudExpeditionVocab.EXPEDITION_MISSION_ENVOY:
+        var envoy_to := expedition_destination_label(exp, band_label_for_id)
+        var envoy_terms := HudDealingsVocab.terms_text(Dictionary(exp.get("envoy_terms", {})))
+        if envoy_to == "":
+            return "%s%s" % [envoy_terms, phase_suffix]
+        return "%s%s" % [HudDealingsVocab.ENVOY_ROW_FORMAT % [envoy_to, envoy_terms], phase_suffix]
     # A STATIONED party names the band it is posted with, in a sentence per phase. The phase reads in
     # the sentence, so only `returning` keeps its glyph; `stationed` has none and `outbound`'s arrow
     # would repeat "Going to stay". Carries no food runway and no cargo — the home band feeds it.

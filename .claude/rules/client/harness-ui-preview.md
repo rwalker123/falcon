@@ -3838,3 +3838,63 @@ Appended LAST in `CHAPTERS`, so no existing frame moves; it hands the reference 
 - The dock block injects a real `EventDockPanel`, ingests the sim's own label shapes, and asserts the
   host swap, the Notable rung on the three involuntary endings and the Routine receipt on a recall.
 
+
+## `chapters/dealings.gd` — early diplomacy's client half (issue #233, slice C1)
+
+**Appended LAST in `CHAPTERS`**, after `station`, so no existing frame moves; it frees its panel, restores
+the world (`reset_world_state`, `FactionNames.reset`) and hands the reference band back. `EXPECTED_CHECKPOINTS`
+is the floor in the chapter. Every fixture is shaped as `dict/dealings.rs` writes it, and **every command
+is asserted by EQUALITY through the real `Main` builder**: a payload can be perfectly good and be spelled
+into a line the server's parser refuses (the same lines were also fed to `parse_command_line` once, in a
+throwaway test, and all parse).
+
+- **The gift setting is judged on the Dealings tab** (`dealings_faction_page` asserts it is NOT on the
+  faction page; `dealings_gift_setting` / `_off` assert it is the first row under the head, labelled in the
+  player's words, followed by the snapshot, with a hover that says it covers the whole people, and that
+  turning it off emits `set_accept_own_gifts 0 off`).
+- **The dock is moved on purpose.** The harness's 1500px canvas clips the right dock, so the tab, the
+  faction page and the orb are judged with the dock LEFT, and the sheets (which live in the tile drawer,
+  covered by a left dock) with it RIGHT. `set_dock(SIDE_LEFT)` precedes everything: a panel built after
+  another chapter inherits that chapter's persisted edge, and `set_dock` on the edge it already holds emits
+  no reservation, so the HUD would not yield.
+- **Five states, five kinds**: an offer addressed to the player, a proposal, a counter to the player's own
+  proposal (the player is the shipper, so the legs swap seats), a treaty proposal carried by an envoy, and an
+  outgoing offer. Each is the others' control: the assertions are that incoming sorts first, that an offer
+  has no Counter, that the window is amber beside its number, that rows are two lines of copy, and that no
+  row prints a raw id.
+- **The answer sheet is driven through the row's own buttons and the picker's own `+`**, and ends in the
+  composed command: `answer_dealing 0 11 accept food 3.000000`, a counter's `give … ask …` (give is the
+  shipper's leg whoever speaks), and a treaty counter's `counter open_borders bundle give … ask …`. A sheet
+  open on a dealing that has since lapsed closes itself.
+- **Trade and scout** states pin the mode row's order (Gift, Offer, Propose), that Propose is greyed with its
+  reason until a destination with a PUBLISHED standing link is picked and falls back to a gift when the row
+  disappears, that an offer ends in ` offer` and a gift is the same line without it, the `propose_trade` line,
+  and the scout's `strangers give pack food …` line beside the unchanged plain line.
+- **The feed block** ingests the sim's own label and detail shapes for every status and asserts the rungs
+  (an offer addressed to you and a breach against you are Notable; the player's own breach and every other
+  status are Routine), that the sender band and the people are named by the tie's and the faction's published
+  names, and that no detail leaks a token.
+- **A section label is uppercased by its widget**, so the chapter matches needles case-insensitively (`_has`).
+
+## `chapters/treaties.gd` — early diplomacy's second half (issue #233, slice C2)
+
+**Appended after `dealings` in `CHAPTERS`**, reusing that chapter's fixtures (`DEALINGS.new()` for the home
+band, ties and dealings; the same three peoples) and handing the reference band back like it.
+`EXPECTED_CHECKPOINTS` is the floor in the chapter (re-measured by raising it and reading `reached`).
+Frames and what only each can say:
+
+| frame | claim |
+|---|---|
+| `treaties_peoples` | three people blocks ascending; `They: friendly` / `They: wary` (amber) / no `They:` at all for the people nobody reported on; the treaty in words; `End treaty` only where a treaty stands; the border toggle in its three sources (treaty, override, default); every block two lines of copy |
+| `treaties_peoples_hover` | a **real engine tooltip** over a `They:` word, with the reasons in words, strongest first. The harness freezes `Engine.time_scale` at 0, and the tooltip delay is a scaled timer, so the chapter thaws the clock for the hover on a timer that ignores the scale (a plain timer would hang the run) and freezes it again |
+| `treaties_end_confirm` / `_borders_breach_confirm` | the two confirms, each saying it is a breach that costs their goodwill; confirming sends `end_treaty 0 1` / `set_open_borders 0 closed 1`; cancelling sends nothing; a plain flip asks nothing |
+| `treaties_sheet_road` / `_road_filled` | the treaty sheet over a published standing link: Propose greyed with no term (the reason in amber beside it), a bundle that carries nothing greys it too, then `propose_treaty 0 <band> <dest> road_rights bundle give … ask …` |
+| `treaties_sheet_envoy` / `_envoy_filled` | no road: the sheet names the band the envoy walks to, the party stepper, `send_envoy 0 <band> 2 <dest> road_rights open_borders` |
+| `treaties_sheet_no_target` | no band of theirs known: the send is greyed with its reason in amber |
+| `treaties_counter` / `_counter_bundle` | a treaty counter keeps the published terms ticked and adds a bundle: `answer_dealing 0 14 counter road_rights open_borders bundle … bundle …` |
+| `treaties_envoy_party` | an envoy's Parties row (destination and terms), its hover, its `✉` mark, and **the six-tab bar fitting the strip** as the badges stand and with all five at two digits |
+
+**Every command is asserted by EQUALITY through the real `Main` builder**, and the builders' refusals (no
+terms, no destination, no party, no people, no state) are asserted too. **Fixture destinations differ in
+`BandId` and entity**: the standing link's far end is the Brackwater tie, and the envoy people's band is
+known only through a dealing.

@@ -61,6 +61,12 @@ signal upkeep_mode_requested(payload: Dictionary)
 # `FactionRollup` is static and declares no signal, so the toggle reaches this through the Callable
 # `render_faction` threads in, and this controller is the signal's only emitter.
 signal open_borders_requested(payload: Dictionary)
+# A DIPLOMACY verb (early diplomacy, issue #233): answering a dealing, proposing a trade over a standing
+# link, the faction page's gift toggle -- relayed to HudLayer.diplomacy_command_requested and spelled by
+# `Main.format_diplomacy_command`. `payload["command"]` names the verb. Its own signal for
+# `open_borders_requested`'s reason: this controller is its only emitter, and the three verbs share no
+# payload key with any labor verb.
+signal diplomacy_command_requested(payload: Dictionary)
 # A build was WITHDRAWN from the band's queue (`docs/plan_standing_upkeep.md` §4.6b) — the BUILD
 # QUEUE block's row `✕`, relayed to HudLayer.unqueue_requested and formatted by `Main.format_unqueue`.
 # `{ faction, x, y, herd_id, material, road }` — the site halves `Main.site_address` spells, so a
@@ -394,6 +400,35 @@ var _band_zone_scroll: ScrollContainer = null
 var _connections_block: Control = null
 var _connections_block_band_id: int = HudConst.NO_BAND_ID
 var _connections_block_source: Array = []
+## The live DEALINGS content -- the tab in the narrow shell, its section under Parties in the wide one --
+## the band it lists and what it was built from, kept so `refresh_dealings` can re-fill it in place when
+## the `dealings` section moves on a frame that re-renders nothing else.
+var _dealings_block: Control = null
+var _dealings_block_band_id: int = HudConst.NO_BAND_ID
+var _dealings_block_source: Array = []
+## --- THE DIPLOMACY SHEETS' COMPOSING STATE (early diplomacy, issue #233) ------------------------
+## All of it belongs to ONE composing act and goes with the verb (`_reset_verb_state`).
+## How the open shipment is sent: `gift` (the default), `offer`, or `propose` (a haggle over a standing
+## link, offered only where the sim published one).
+var _trade_mode: String = HudDealingsVocab.TRADE_MODE_GIFT
+## What a PROPOSED trade asks for, `leg key -> amount` (`_leg_key_*`): the other people's holdings are
+## not this band's, so this leg has no ceiling but the pack.
+var _propose_ask: Dictionary = {}
+## What a scouting party does with the first strangers it meets: keep, give or offer its pack.
+var _strangers_order: String = HudDealingsVocab.STRANGERS_KEEP
+## The dealing the open ANSWER sheet is about and how it answers it (`accept` / `counter`).
+var _dealing_sheet_id: int = 0
+var _dealing_sheet_mode: String = ""
+## A counter's OTHER side -- the leg this band does not hold -- `leg key -> amount`; and a treaty
+## counter's terms (`{road_rights, open_borders, keep: [bool per bundle]}`).
+var _dealing_other_leg: Dictionary = {}
+var _dealing_terms: Dictionary = {}
+## **THE TREATY SHEET'S DRAFT** (C2): the people the proposal is for, the terms as ticked
+## (`{road_rights, open_borders, bundles: [{give: leg, ask: leg}]}`, a leg being `key -> amount`) and the
+## destination band picked where there is a choice. Reset with the verb.
+var _treaty_people: int = HudConst.NO_FACTION_ID
+var _treaty_draft: Dictionary = {}
+var _treaty_target: int = HudConst.NO_BAND_ID
 ## **THE PANEL'S SUBJECT IS THE FACTION PAGE, not a band** (issue #450). The pinned first entry of the
 ## cycler, and the one bit of state that decides which of `render_band` / `render_faction` every
 ## re-entry into this panel resolves to — `refresh_snapshot`, `rerender` and `_on_zones_resized`'s
@@ -473,6 +508,12 @@ const BAND_ZONE_LAYOUT: Array[Dictionary] = [
     # on a wide shell a section under Parties after Trade's, so the threshold stays 1190.
     {BandCityPanel.ZONE_SPEC_KEY: BandCityPanel.ZONE_PEOPLES,
         BandCityPanel.ZONE_SPEC_LABEL: HudWorkVocab.ZONE_TAB_PEOPLES,
+        BandCityPanel.ZONE_SPEC_WIDTH: BandCityPanel.ZONE_PARTY_WIDTH,
+        BandCityPanel.ZONE_SPEC_NARROW_ONLY: true},
+    # **DEALINGS IS NARROW-ONLY TOO** (early diplomacy, issue #233): an unbounded list gets its own tab,
+    # and on a wide shell a section under Parties after Peoples', so the threshold stays 1190.
+    {BandCityPanel.ZONE_SPEC_KEY: BandCityPanel.ZONE_DEALINGS,
+        BandCityPanel.ZONE_SPEC_LABEL: HudDealingsVocab.ZONE_TAB_DEALINGS,
         BandCityPanel.ZONE_SPEC_WIDTH: BandCityPanel.ZONE_PARTY_WIDTH,
         BandCityPanel.ZONE_SPEC_NARROW_ONLY: true},
 ]
@@ -684,6 +725,15 @@ func _faction_settling() -> Dictionary:
 ## `{}` before the snapshot has carried one — the toggle renders nothing rather than a guessed default.
 func _faction_policy() -> Dictionary:
     return _topbar.faction_policy() if _topbar != null else {}
+
+## Emit the player's "accept gifts from our own people" pick (early diplomacy) -- the standing answer to a
+## shipment from one of the player's other bands. Named by the player faction, like Open Borders.
+func _emit_accept_own_gifts(accept: bool) -> void:
+    diplomacy_command_requested.emit({
+        "command": HudDealingsVocab.COMMAND_ACCEPT_OWN_GIFTS,
+        "faction": HudConst.PLAYER_FACTION_ID,
+        "accept": accept,
+    })
 
 ## Emit the player's Open Borders pick. Named by the PLAYER faction, the only people this page speaks
 ## for; the checkbox's own state is the requested one.
@@ -1122,7 +1172,7 @@ func refresh_connections() -> void:
     if source == _connections_block_source:
         return
     ConnectionsRoster.refill(_connections_block, _connections_block_band_id, _band_labor,
-        _station_press())
+        _station_press(), _peoples_diplomacy())
     _connections_block_source = source
     if _panel != null and not _panel_is_faction:
         _panel.set_tab_badge(BandCityPanel.ZONE_PEOPLES,
@@ -1142,6 +1192,82 @@ func _sync_peoples_scroll() -> void:
     if not is_equal_approx(scroll.custom_minimum_size.y, want):
         scroll.custom_minimum_size.y = want
 
+## **RE-FILL THE DEALINGS CONTENT IN PLACE** when the `dealings` section moves (`HudLayer.update_dealings`).
+## The section moves on a command (an answer recapture) as often as on a turn, so a frame can carry it
+## and no population; only the head and the rows are rebuilt (`DealingsRoster.refill`), the tab's scroll
+## keeps its node and offset, and the tab badge is re-pushed. An answer sheet open on a dealing that has
+## since been answered or lapsed is closed -- its Accept would address an id the sim no longer holds.
+func refresh_dealings() -> void:
+    if _compose.has_verb() and _compose.verb_mission() == HudDealingsVocab.COMPOSE_MISSION_DEALING \
+            and _band_labor.dealing_by_id(_dealing_sheet_id).is_empty():
+        close_verb_form()
+        return
+    if not is_instance_valid(_dealings_block) or _dealings_block.is_queued_for_deletion():
+        return
+    var source := _dealings_source(_dealings_block_band_id)
+    if source == _dealings_block_source:
+        return
+    DealingsRoster.refill(_dealings_block, _dealings_block_band_id, _band_labor, _dealing_actions(),
+        _faction_policy())
+    _dealings_block_source = source
+    _push_dealings_badge(_dealings_block_band_id)
+
+## A frame that moves the published standing links re-renders the band page: the trade sheet offers
+## its propose mode from those rows alone, so the mode must follow the sim's answer.
+func refresh_standing_links() -> void:
+    if _compose.has_verb() and _compose.verb_mission() == HudComposeVocab.COMPOSE_MISSION_TRADE:
+        rerender()
+
+func _push_dealings_badge(band_id: int) -> void:
+    if _panel == null or _panel_is_faction:
+        return
+    var badge := DealingsRoster.badge(band_id, _band_labor)
+    _panel.set_tab_badge(BandCityPanel.ZONE_DEALINGS, String(badge["text"]), bool(badge["hot"]))
+
+## Re-declare the Dealings tab's scroll viewport against the zone's current box (`_sync_peoples_scroll`'s
+## twin). The wide section has no scroll of its own.
+func _sync_dealings_scroll() -> void:
+    if _panel == null or _trade_wide or not is_instance_valid(_dealings_block):
+        return
+    var scroll := _dealings_block.find_child(HudDealingsVocab.LIST_NAME, true, false) as ScrollContainer
+    if scroll == null:
+        return
+    var want := DealingsRoster.list_viewport_height(_panel.zone_size(BandCityPanel.ZONE_DEALINGS).y)
+    if not is_equal_approx(scroll.custom_minimum_size.y, want):
+        scroll.custom_minimum_size.y = want
+
+func _track_dealings_block(block: Control, band: Dictionary) -> void:
+    var band_id := int(band.get("band_id", HudConst.NO_BAND_ID))
+    _dealings_block = block
+    _dealings_block_band_id = band_id
+    _dealings_block_source = _dealings_source(band_id)
+
+## What the Dealings content for `band_id` is built from: its rows. Turns left ride the rows themselves.
+func _dealings_source(band_id: int) -> Array:
+    return [_band_labor.dealings_for_band(band_id), _band_labor.current_turn(),
+        bool(_faction_policy().get("accept_own_gifts", true))]
+
+## **THE ORB'S "A PEOPLE AWAITS YOUR ANSWER" LANDS HERE**: bring `band_id`'s page forward on its Dealings
+## tab (the narrow shell's tab, or the Parties flank on a wide shell, where the section sits under the
+## parties list).
+func focus_dealings(band_id: int) -> void:
+    var band := _band_labor.player_band_by_band_id(band_id)
+    if band.is_empty() or _panel == null:
+        return
+    if _panel_is_faction or int(_band_labor.panel_band().get("band_id", HudConst.NO_BAND_ID)) != band_id:
+        jump_to_band_entity(int(band.get("entity", -1)))
+    _panel.set_active_tab(BandCityPanel.ZONE_PARTIES if _panel.is_wide_shell() \
+        else BandCityPanel.ZONE_DEALINGS)
+
+## The three answers the Dealings rows hand back, by `HudDealingsVocab.ANSWER_*`.
+func _dealing_actions() -> Dictionary:
+    return {
+        HudDealingsVocab.ANSWER_ACCEPT: Callable(self, "_on_dealing_accept_pressed"),
+        HudDealingsVocab.ANSWER_REFUSE: Callable(self, "_on_dealing_refuse_pressed"),
+        HudDealingsVocab.ANSWER_COUNTER: Callable(self, "_on_dealing_counter_pressed"),
+        HudDealingsVocab.ACTION_ACCEPT_GIFTS: Callable(self, "_emit_accept_own_gifts"),
+    }
+
 ## Record the roster content just built for `band`, so `refresh_connections` can re-fill it.
 func _track_connections_block(block: Control, band: Dictionary) -> void:
     var band_id := int(band.get("band_id", HudConst.NO_BAND_ID))
@@ -1152,7 +1278,8 @@ func _track_connections_block(block: Control, band: Dictionary) -> void:
 ## What the block for `band_id` is built from: its ties and the current turn, the turn deciding
 ## growing against fading.
 func _connections_source(band_id: int) -> Array:
-    return [_band_labor.current_turn(), _band_labor.connections_for_band(band_id)]
+    return [_band_labor.current_turn(), _band_labor.connections_for_band(band_id),
+        PeoplesDiplomacy.signature(_band_labor, _faction_policy())]
 
 ## The two authored columns of a widened band flank, named for what they are ABOUT rather than by
 ## index: what the band has to eat, and who the band is. See `build_band_zone` for the measurement
@@ -1937,6 +2064,7 @@ func _on_zones_resized() -> void:
     # zone for it would be three.
     _sync_band_zone_scroll()
     _sync_peoples_scroll()
+    _sync_dealings_scroll()
     _repage_work_zone()
     # The Trade tier is chosen against the box, so a new box may re-author it — in place, after layout.
     _schedule_trade_refill()
@@ -8187,9 +8315,12 @@ func _emit_cancel_order(band: Dictionary, scope: String) -> void:
 ## connections-only frame re-fills it there too.
 func build_flat_sections(band: Dictionary) -> Array[Control]:
     var peoples := ConnectionsRoster.build_section(int(band.get("band_id", HudConst.NO_BAND_ID)),
-        _band_labor, _station_press())
+        _band_labor, _station_press(), _peoples_diplomacy())
     _track_connections_block(peoples, band)
-    return [_trade.build_section(band, _trade_zone_box()), peoples]
+    var dealings := DealingsRoster.build_section(int(band.get("band_id", HudConst.NO_BAND_ID)),
+        _band_labor, _dealing_actions(), _faction_policy())
+    _track_dealings_block(dealings, band)
+    return [_trade.build_section(band, _trade_zone_box()), peoples, dealings]
 
 # ---- zone `peoples` ---------------------------------------------------------
 
@@ -8198,8 +8329,19 @@ func build_flat_sections(band: Dictionary) -> Array[Control]:
 func build_peoples_zone(band: Dictionary) -> VBoxContainer:
     var box := _panel.zone_size(BandCityPanel.ZONE_PEOPLES) if _panel != null else Vector2.ZERO
     var tab := ConnectionsRoster.build_tab(int(band.get("band_id", HudConst.NO_BAND_ID)), _band_labor,
-        box.y, _station_press())
+        box.y, _station_press(), _peoples_diplomacy())
     _track_connections_block(tab, band)
+    return tab
+
+# ---- zone `dealings` ---------------------------------------------------------
+
+## Zone `dealings` (early diplomacy) -- the narrow shell's sixth tab: every pending item this band takes
+## part in, in a sanctioned scroll whose viewport is declared off this zone's own box.
+func build_dealings_zone(band: Dictionary) -> VBoxContainer:
+    var box := _panel.zone_size(BandCityPanel.ZONE_DEALINGS) if _panel != null else Vector2.ZERO
+    var tab := DealingsRoster.build_tab(int(band.get("band_id", HudConst.NO_BAND_ID)), _band_labor,
+        box.y, _dealing_actions(), _faction_policy())
+    _track_dealings_block(tab, band)
     return tab
 
 # ---- zone `trade` -----------------------------------------------------------
@@ -8293,7 +8435,7 @@ func _trade_zone_is_on_screen() -> bool:
 ##
 ## The scroll takes `SIZE_EXPAND_FILL`, so the list fills the zone under its head.
 func build_parties_zone(band: Dictionary, with_trade: bool = false,
-        with_peoples: bool = false) -> VBoxContainer:
+        with_peoples: bool = false, with_dealings: bool = false) -> VBoxContainer:
     var col := HudWidgets.make_zone_column()
     col.add_theme_constant_override("separation", HudWorkVocab.ZONE_BLOCK_SEPARATION)
     # Held for the Trade section's room, measured off this column's laid-out chrome (`_trade_room`).
@@ -8338,9 +8480,16 @@ func build_parties_zone(band: Dictionary, with_trade: bool = false,
     # same sanctioned scroll — Trade's wide section scrolls rather than capping, and so does this one.
     if with_peoples:
         var peoples := ConnectionsRoster.build_section(int(band.get("band_id", HudConst.NO_BAND_ID)),
-            _band_labor, _station_press())
+            _band_labor, _station_press(), _peoples_diplomacy())
         rows.add_child(peoples)
         _track_connections_block(peoples, band)
+    # **…AND FOR THE DEALINGS LIST** (early diplomacy), after Peoples': every item, no cap, inside the same
+    # sanctioned scroll.
+    if with_dealings:
+        var dealings := DealingsRoster.build_section(int(band.get("band_id", HudConst.NO_BAND_ID)),
+            _band_labor, _dealing_actions(), _faction_policy())
+        rows.add_child(dealings)
+        _track_dealings_block(dealings, band)
     return col
 
 ## The parties zone's scrolling list host — a `ScrollContainer` whose single child is the VBox the rows
@@ -8540,6 +8689,8 @@ func _build_compose_sheet(band: Dictionary, idle: int) -> VBoxContainer:
     var is_deny := mission == HudComposeVocab.COMPOSE_MISSION_DENY
     var is_trade := mission == HudComposeVocab.COMPOSE_MISSION_TRADE
     var is_station := mission == HudComposeVocab.COMPOSE_MISSION_STATION
+    var is_dealing := mission == HudDealingsVocab.COMPOSE_MISSION_DEALING
+    var is_treaty := mission == HudDealingsVocab.COMPOSE_MISSION_TREATY
     var sheet := HudWidgets.make_zone_block()
     var head := HBoxContainer.new()
     var title := Label.new()
@@ -8552,6 +8703,10 @@ func _build_compose_sheet(band: Dictionary, idle: int) -> VBoxContainer:
         title.text = HudComposeVocab.COMPOSE_TITLE_SPLIT
     elif is_station:
         title.text = HudComposeVocab.STATION_TITLE_FORMAT % _station_host_label()
+    elif is_dealing:
+        title.text = _dealing_sheet_title()
+    elif is_treaty:
+        title.text = HudDealingsVocab.TREATY_SHEET_TITLE_FORMAT % FactionMark.faction_name(_treaty_people)
     title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     head.add_child(title)
     var cancel := Button.new()
@@ -8571,6 +8726,12 @@ func _build_compose_sheet(band: Dictionary, idle: int) -> VBoxContainer:
         return sheet
     if is_station:
         _fill_station_compose_sheet(sheet, band, idle)
+        return sheet
+    if is_dealing:
+        _fill_dealing_compose_sheet(sheet, band)
+        return sheet
+    if is_treaty:
+        _fill_treaty_sheet(sheet, band, idle)
         return sheet
     if mission == HudComposeVocab.COMPOSE_MISSION_SPLIT:
         _fill_split_compose_sheet(sheet, band)
@@ -8616,7 +8777,22 @@ func _build_compose_sheet(band: Dictionary, idle: int) -> VBoxContainer:
             rerender(),
         {}, "", _send_expedition_count)
     sheet.add_child(HudWidgets.alloc_hint_label(HudComposeVocab.SEND_EXPEDITION_HINT))
+    # **THE PACK AND WHAT IT IS FOR** (early diplomacy): an optional load for the first strangers the party
+    # meets, drawn off the band's stores by the SHIPMENT'S OWN picker, and the order that says what to do
+    # with it -- keep it (the default), give it, or offer it. Give and offer need something to hand over, so
+    # either one with an empty pack is refused here, with its reason, rather than by the server's.
+    sheet.add_child(_build_strangers_row())
+    var pack_rows := _mount_cargo_picker(sheet, band, HudDealingsVocab.SCOUT_PACK_SECTION)
+    var pack_lines := _trade_manifest_lines(pack_rows)
+    var strangers := _strangers_order
     var workers := _send_expedition_count
+    if strangers != HudDealingsVocab.STRANGERS_KEEP and pack_lines.is_empty():
+        var why := HudWidgets.alloc_hint_label(HudDealingsVocab.SCOUT_STRANGERS_NEEDS_PACK)
+        why.add_theme_color_override("font_color", HudStyle.WARN)
+        sheet.add_child(why)
+        sheet.add_child(_blocked_send_button(HudComposeVocab.SEND_EXPEDITION_BUTTON,
+            HudDealingsVocab.SCOUT_STRANGERS_NEEDS_PACK))
+        return sheet
     sheet.add_child(_build_verb_send(HudComposeVocab.COMPOSE_MISSION_SCOUT,
         HudComposeVocab.SEND_EXPEDITION_BUTTON, HudComposeVocab.SEND_EXPEDITION_HINT,
         HudWidgets.SEND_EXPEDITION_CONFIRM_META,
@@ -8628,7 +8804,8 @@ func _build_compose_sheet(band: Dictionary, idle: int) -> VBoxContainer:
                     close_verb_form()
                     # `Main._kit_token` omits the kit tail when the pick equals the job default,
                     # which is why the default travels beside it.
-                    _targeting.send_expedition_to(band, workers, tile, kit_id, default_kit)
+                    _targeting.send_expedition_to(band, workers, tile, kit_id, default_kit,
+                        strangers, pack_lines)
                     return TargetingController.PICK_COMMITTED)))
     return sheet
 
@@ -9205,6 +9382,10 @@ func _fill_trade_compose_sheet(sheet: VBoxContainer, band: Dictionary, idle: int
     if tie.is_empty():
         _trade_destination = HudConst.NO_BAND_ID
     sheet.add_child(_build_trade_destination_row(band, tie))
+    # **HOW IT IS SENT** (early diplomacy): a gift, an offer, or -- where the sim published a standing
+    # link between this band and the destination -- a proposed trade. The link is never derived here.
+    _settle_trade_mode(band)
+    sheet.add_child(_build_trade_mode_row(band))
     # **THE PORTERS ARE THE CAP'S OTHER TERM**, so they are settled before the manifest is priced. The
     # ceiling is the band's IDLE WORKERS and nothing else: the sim carries no rules cap on party size,
     # and a shipment's own bound is the pack below rather than a head count.
@@ -9218,33 +9399,32 @@ func _fill_trade_compose_sheet(sheet: VBoxContainer, band: Dictionary, idle: int
     sheet.add_child(HudWidgets.alloc_hint_label(HudComposeVocab.TRADE_PORTERS_SUB_FORMAT % [
         _send_expedition_count, idle, HudCraftingVocab.BATCH_AMOUNT_FORMAT
             % float(band.get("carry_per_worker", 0.0))]))
+    var proposing := _trade_mode == HudDealingsVocab.TRADE_MODE_PROPOSE
     # **A SMALLER PARTY TRIMS THE LOAD, IT DOES NOT REFUSE IT.** Fewer porters can leave the pack
-    # over-full, so the manifest is fitted from the bottom up before it is priced — the last good
-    # first, its worst grade first (`_fit_manifest_to_pack`).
-    _fit_manifest_to_pack(band)
-    var rows := _trade_cargo_rows(band)
+    # over-full, so the manifest is fitted from the bottom up before it is priced -- inside the picker.
+    var rows := _mount_cargo_picker(sheet, band,
+        HudDealingsVocab.TRADE_YOU_GIVE_SECTION if proposing else HudComposeVocab.COMPOSE_CARGO_SECTION)
     var mass := _trade_manifest_mass(band, rows)
     var cap := _trade_carry_cap(band)
-    sheet.add_child(_build_pack_meter(mass, cap))
-    sheet.add_child(HudWidgets.alloc_section_label(HudComposeVocab.COMPOSE_CARGO_SECTION))
-    if rows.is_empty():
-        sheet.add_child(HudWidgets.alloc_hint_label(HudComposeVocab.COMPOSE_CARGO_NO_STORES))
+    if proposing:
+        # The other side of the bargain: what we ask for. It is the other people's to hold, so it has
+        # no ceiling but the pack, and a proposal may give nothing (a request) or ask nothing (a gift).
+        sheet.add_child(HudWidgets.alloc_section_label(HudDealingsVocab.TRADE_YOU_ASK_SECTION))
+        _mount_leg_editor(sheet, _propose_ask, band, HudDealingsVocab.TRADE_ASK_EMPTY)
+    elif rows.is_empty():
         sheet.add_child(_blocked_trade_send(HudComposeVocab.COMPOSE_CARGO_NO_STORES))
         return
-    var cargo := VBoxContainer.new()
-    cargo.add_theme_constant_override("separation", HudWorkVocab.WORKER_STEPPER_SEPARATION)
-    for good_variant in _trade_cargo_goods(band, rows):
-        # The WHOLE row list rides along, because a good's ceiling is bounded by what the OTHER goods
-        # already weigh — `_trade_good_max` cannot be answered from one good alone.
-        cargo.add_child(_build_cargo_good(good_variant as Dictionary, band, rows))
-    sheet.add_child(cargo)
     # **THE SEND SAYS EVERY REASON IT IS OFF, ON ITS HOVER AND UNDER IT.** One clause per failed
     # condition; over-cap stays as a guard behind the fit above, which leaves it unreachable in play.
     var reasons := PackedStringArray()
     if _trade_destination == HudConst.NO_BAND_ID:
-        reasons.append(HudComposeVocab.TRADE_SEND_NEEDS_DESTINATION)
+        reasons.append(HudDealingsVocab.TRADE_PROPOSE_NEEDS_DESTINATION if proposing \
+            else HudComposeVocab.TRADE_SEND_NEEDS_DESTINATION)
     if mass <= 0.0:
-        reasons.append(HudComposeVocab.TRADE_SEND_NEEDS_CARGO)
+        if not proposing:
+            reasons.append(HudComposeVocab.TRADE_SEND_NEEDS_CARGO)
+        elif HudDealingsVocab.leg_is_empty(_propose_ask):
+            reasons.append(HudDealingsVocab.TRADE_PROPOSE_NEEDS_TERMS)
     elif cap > 0.0 and mass > cap:
         reasons.append(HudComposeVocab.COMPOSE_CARGO_OVER_CAP_REASON)
     if not reasons.is_empty():
@@ -9258,15 +9438,765 @@ func _fill_trade_compose_sheet(sheet: VBoxContainer, band: Dictionary, idle: int
         var destination := _trade_destination
         var workers := _send_expedition_count
         var manifest := _trade_manifest_lines(rows)
+        var ask_rows := HudDealingsVocab.leg_rows(_propose_ask)
         var confirm := Button.new()
-        confirm.text = HudComposeVocab.SEND_TRADE_EXPEDITION_BUTTON
+        confirm.text = HudDealingsVocab.TRADE_PROPOSE_BUTTON if proposing \
+            else (HudDealingsVocab.TRADE_SEND_OFFER_BUTTON \
+                if _trade_mode == HudDealingsVocab.TRADE_MODE_OFFER \
+                else HudComposeVocab.SEND_TRADE_EXPEDITION_BUTTON)
         confirm.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-        confirm.tooltip_text = HudComposeVocab.SEND_TRADE_EXPEDITION_HINT
+        confirm.tooltip_text = HudDealingsVocab.TRADE_PROPOSE_HINT if proposing \
+            else HudComposeVocab.SEND_TRADE_EXPEDITION_HINT
         confirm.set_meta(HudWidgets.SEND_TRADE_CONFIRM_META, true)
         HudStyle.apply_button(confirm, HudComposeVocab.VERB_SEND_STYLE)
         confirm.pressed.connect(func() -> void:
-            _commit_trade(band, destination, workers, manifest))
+            if proposing:
+                _commit_propose(band, destination, workers, manifest, ask_rows)
+            else:
+                _commit_trade(band, destination, workers, manifest))
         sheet.add_child(confirm)
+
+# ---- EARLY DIPLOMACY (#233): the cargo picker, the choice rows, the leg editor, the answer sheet ----
+
+## **THE SHIPMENT'S OWN CARGO PICKER, mounted for any sheet that loads goods** -- the pack meter, a
+## section label, and one row per good the band HOLDS, each with its grades behind the drawn triangle.
+## The trade sheet, the scout's pack, an offer's return and a counter's own leg all call it, so a good
+## is chosen the same way on every one of them. It trims the load to the pack first (`_fit_manifest_to_pack`,
+## the party being whatever `_send_expedition_count` is), and answers the rows it drew; with nothing to
+## draw it says so and answers `[]`.
+func _mount_cargo_picker(sheet: VBoxContainer, band: Dictionary, section_label: String) -> Array:
+    _fit_manifest_to_pack(band)
+    var rows := _trade_cargo_rows(band)
+    sheet.add_child(_build_pack_meter(_trade_manifest_mass(band, rows), _trade_carry_cap(band)))
+    sheet.add_child(HudWidgets.alloc_section_label(section_label))
+    if rows.is_empty():
+        sheet.add_child(HudWidgets.alloc_hint_label(HudComposeVocab.COMPOSE_CARGO_NO_STORES))
+        return rows
+    var cargo := VBoxContainer.new()
+    cargo.add_theme_constant_override("separation", HudWorkVocab.WORKER_STEPPER_SEPARATION)
+    for good_variant in _trade_cargo_goods(band, rows):
+        # The WHOLE row list rides along, because a good's ceiling is bounded by what the OTHER goods
+        # already weigh -- `_trade_good_max` cannot be answered from one good alone.
+        cargo.add_child(_build_cargo_good(good_variant as Dictionary, band, rows))
+    sheet.add_child(cargo)
+    return rows
+
+## A row of mutually exclusive choices -- the trade sheet's gift / offer / propose, the scout's keep / give
+## / offer. `options` is `[{id, text, tip, disabled, reason}]`; the chosen one wears the primary style, the
+## rest the ghost one, and a disabled one says why on its hover. Each button carries
+## `HudDealingsVocab.CHOICE_META` = its id.
+func _build_choice_row(options: Array, current: String, on_pick: Callable) -> HBoxContainer:
+    var row := HBoxContainer.new()
+    row.add_theme_constant_override("separation", HudWorkVocab.WORKER_STEPPER_SEPARATION)
+    for option_variant in options:
+        var option: Dictionary = option_variant
+        var id := String(option["id"])
+        var button := Button.new()
+        button.text = String(option["text"])
+        button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+        button.focus_mode = Control.FOCUS_NONE
+        button.toggle_mode = true
+        button.button_pressed = id == current
+        var blocked := String(option.get("reason", ""))
+        button.disabled = bool(option.get("disabled", false))
+        button.tooltip_text = blocked if button.disabled and blocked != "" else String(option.get("tip", ""))
+        button.set_meta(HudDealingsVocab.CHOICE_META, id)
+        HudStyle.apply_button(button, "primary" if id == current else "ghost")
+        HudWidgets.compact(button, HudWorkVocab.WORK_STEPPER_FONT_SIZE, HudWorkVocab.WORK_STEPPER_PADDING_V)
+        button.pressed.connect(func() -> void: on_pick.call(id))
+        row.add_child(button)
+    return row
+
+## **GIFT / OFFER / PROPOSE**, the shipment's mode row, with the current mode's one-line meaning under it.
+## Propose is offered only where `treaties.standing_links` names this band and the picked destination:
+## greyed with its reason otherwise, and never computed from the road here.
+func _build_trade_mode_row(band: Dictionary) -> VBoxContainer:
+    var box := VBoxContainer.new()
+    box.add_theme_constant_override("separation", HudWorkVocab.WORKER_STEPPER_SEPARATION)
+    box.add_child(HudWidgets.alloc_section_label(HudDealingsVocab.TRADE_MODE_SECTION))
+    var linked := not _propose_link(band).is_empty()
+    var propose_reason := ""
+    if _trade_destination == HudConst.NO_BAND_ID:
+        propose_reason = HudDealingsVocab.TRADE_PROPOSE_NEEDS_DESTINATION
+    elif not linked:
+        propose_reason = HudDealingsVocab.TRADE_MODE_PROPOSE_NO_LINK
+    box.add_child(_build_choice_row([
+        {"id": HudDealingsVocab.TRADE_MODE_GIFT, "text": HudDealingsVocab.TRADE_MODE_GIFT_LABEL,
+            "tip": HudDealingsVocab.TRADE_MODE_GIFT_HINT},
+        {"id": HudDealingsVocab.TRADE_MODE_OFFER, "text": HudDealingsVocab.TRADE_MODE_OFFER_LABEL,
+            "tip": HudDealingsVocab.TRADE_MODE_OFFER_HINT},
+        {"id": HudDealingsVocab.TRADE_MODE_PROPOSE, "text": HudDealingsVocab.TRADE_MODE_PROPOSE_LABEL,
+            "tip": HudDealingsVocab.TRADE_MODE_PROPOSE_HINT, "disabled": propose_reason != "",
+            "reason": propose_reason},
+    ], _trade_mode, func(picked: String) -> void:
+        _trade_mode = picked
+        rerender()))
+    var hint := HudDealingsVocab.TRADE_MODE_GIFT_HINT
+    if _trade_mode == HudDealingsVocab.TRADE_MODE_OFFER:
+        hint = HudDealingsVocab.TRADE_MODE_OFFER_HINT
+    elif _trade_mode == HudDealingsVocab.TRADE_MODE_PROPOSE:
+        hint = HudDealingsVocab.TRADE_MODE_PROPOSE_HINT
+    box.add_child(HudWidgets.alloc_hint_label(hint))
+    return box
+
+## The published standing link between the sheet's band and its picked destination, or `{}`.
+func _propose_link(band: Dictionary) -> Dictionary:
+    if _trade_destination == HudConst.NO_BAND_ID:
+        return {}
+    return _band_labor.standing_link_between(int(band.get("band_id", HudConst.NO_BAND_ID)),
+        _trade_destination)
+
+## Propose is a mode only while the sim publishes the link: a destination re-picked, or a road that
+## stopped being kept, drops the sheet back to a gift rather than leaving a mode it cannot send.
+func _settle_trade_mode(band: Dictionary) -> void:
+    if _trade_mode == HudDealingsVocab.TRADE_MODE_PROPOSE and _propose_link(band).is_empty():
+        _trade_mode = HudDealingsVocab.TRADE_MODE_GIFT
+
+## The scout sheet's strangers order: keep the pack (the default), give it, or offer it.
+func _build_strangers_row() -> VBoxContainer:
+    var box := VBoxContainer.new()
+    box.add_theme_constant_override("separation", HudWorkVocab.WORKER_STEPPER_SEPARATION)
+    box.add_child(HudWidgets.alloc_section_label(HudDealingsVocab.SCOUT_STRANGERS_SECTION))
+    box.add_child(_build_choice_row([
+        {"id": HudDealingsVocab.STRANGERS_KEEP, "text": HudDealingsVocab.SCOUT_STRANGERS_KEEP_LABEL,
+            "tip": HudDealingsVocab.SCOUT_STRANGERS_KEEP_HINT},
+        {"id": HudDealingsVocab.STRANGERS_GIVE, "text": HudDealingsVocab.SCOUT_STRANGERS_GIVE_LABEL,
+            "tip": HudDealingsVocab.SCOUT_STRANGERS_GIVE_HINT},
+        {"id": HudDealingsVocab.STRANGERS_OFFER, "text": HudDealingsVocab.SCOUT_STRANGERS_OFFER_LABEL,
+            "tip": HudDealingsVocab.SCOUT_STRANGERS_OFFER_HINT},
+    ], _strangers_order, func(picked: String) -> void:
+        _strangers_order = picked
+        rerender()))
+    var hint := HudDealingsVocab.SCOUT_STRANGERS_KEEP_HINT
+    if _strangers_order == HudDealingsVocab.STRANGERS_GIVE:
+        hint = HudDealingsVocab.SCOUT_STRANGERS_GIVE_HINT
+    elif _strangers_order == HudDealingsVocab.STRANGERS_OFFER:
+        hint = HudDealingsVocab.SCOUT_STRANGERS_OFFER_HINT
+    box.add_child(HudWidgets.alloc_hint_label(hint))
+    return box
+
+## **THE PROPOSAL'S ORDER** -- `propose_trade` with both legs named. Nothing is drawn until the other
+## people accepts, so the sheet closes on the press: the dealing appears on the Dealings tab as an
+## outgoing row the moment the server confirms it.
+func _commit_propose(band: Dictionary, destination: int, workers: int, give_rows: Array,
+        ask_rows: Array) -> void:
+    var label := _band_labor.host_label_for_id(destination)
+    diplomacy_command_requested.emit({
+        "command": HudDealingsVocab.COMMAND_PROPOSE_TRADE,
+        "faction": int(band.get("faction", HudConst.PLAYER_FACTION_ID)),
+        "band_id": int(band.get("band_id", HudConst.NO_BAND_ID)),
+        "party_workers": workers,
+        "destination_band_id": destination,
+        "destination_label": label,
+        "give": give_rows,
+        "ask": ask_rows,
+    })
+    close_verb_form()
+
+# ---- the LEG EDITOR: the side of a bargain this band does not hold --------------------------------------
+
+## A leg of goods the OTHER people holds, edited in place: one row per good with `−` / amount / `+` / `✕`,
+## and `Add a good`. It has no ceiling (the other people's holdings are theirs); the sim refuses a leg that
+## does not fit the party's pack or that the answering side does not hold when it is answered.
+func _mount_leg_editor(sheet: VBoxContainer, leg: Dictionary, band: Dictionary, empty_hint: String) -> void:
+    var box := VBoxContainer.new()
+    box.add_theme_constant_override("separation", HudWorkVocab.WORKER_STEPPER_SEPARATION)
+    var keys: Array = leg.keys()
+    keys.sort()
+    if keys.is_empty():
+        box.add_child(HudWidgets.alloc_hint_label(empty_hint))
+    for key_variant in keys:
+        box.add_child(_build_leg_row(leg, String(key_variant)))
+    box.add_child(_build_leg_add_menu(leg, band))
+    sheet.add_child(box)
+
+func _build_leg_row(leg: Dictionary, key: String) -> HBoxContainer:
+    var row := HBoxContainer.new()
+    row.add_theme_constant_override("separation", HudComposeVocab.TRADE_CARGO_CONTROL_SEPARATION)
+    row.set_meta(HudDealingsVocab.LEG_ROW_META, key)
+    var name_label := Label.new()
+    name_label.text = HudDealingsVocab.leg_label(key)
+    name_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    name_label.add_theme_color_override("font_color", HudStyle.INK)
+    row.add_child(name_label)
+    row.add_child(_build_leg_step(leg, key, HudWorkVocab.STEPPER_MINUS_FACE,
+        -HudDealingsVocab.LEG_STEP, HudDealingsVocab.LEG_LESS_TOOLTIP))
+    var amount := Label.new()
+    amount.text = HudDealingsVocab.LEG_AMOUNT_FORMAT % float(leg.get(key, 0.0))
+    amount.custom_minimum_size = Vector2(HudComposeVocab.TRADE_CARGO_FIELD_WIDTH, 0.0)
+    amount.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+    amount.add_theme_color_override("font_color", HudStyle.INK)
+    row.add_child(amount)
+    row.add_child(_build_leg_step(leg, key, HudWorkVocab.STEPPER_PLUS_FACE,
+        HudDealingsVocab.LEG_STEP, HudDealingsVocab.LEG_MORE_TOOLTIP))
+    var remove := Button.new()
+    remove.text = HudWorkVocab.INSPECTOR_CLOSE_GLYPH
+    remove.focus_mode = Control.FOCUS_NONE
+    remove.tooltip_text = HudDealingsVocab.LEG_REMOVE_TOOLTIP
+    HudStyle.apply_button(remove, "ghost")
+    remove.pressed.connect(func() -> void:
+        leg.erase(key)
+        rerender())
+    row.add_child(remove)
+    return row
+
+func _build_leg_step(leg: Dictionary, key: String, face: String, step: float, tip: String) -> Button:
+    var button := Button.new()
+    button.text = face
+    button.custom_minimum_size = Vector2(HudWorkVocab.WORKER_STEPPER_BUTTON_WIDTH, 0)
+    button.focus_mode = Control.FOCUS_NONE
+    button.tooltip_text = tip
+    button.set_meta(HudDealingsVocab.LEG_STEP_META, key)
+    HudStyle.apply_button(button, "ghost")
+    HudWidgets.compact(button, HudWorkVocab.WORK_STEPPER_FONT_SIZE, HudWorkVocab.WORK_STEPPER_PADDING_V)
+    button.pressed.connect(func() -> void:
+        var next := float(leg.get(key, 0.0)) + step
+        if next <= 0.0:
+            leg.erase(key)
+        else:
+            leg[key] = next
+        rerender())
+    return button
+
+## `Add a good` -- every account and material the leg does not name yet. Materials are the world's
+## catalogue plus whatever this band holds or the dealing already names.
+func _build_leg_add_menu(leg: Dictionary, band: Dictionary) -> MenuButton:
+    var menu := MenuButton.new()
+    menu.text = HudDealingsVocab.SHEET_ADD_GOOD
+    menu.tooltip_text = HudDealingsVocab.SHEET_ADD_GOOD_TOOLTIP
+    menu.focus_mode = Control.FOCUS_NONE
+    menu.set_meta(HudDealingsVocab.LEG_ADD_META, true)
+    HudStyle.apply_button(menu, "ghost")
+    var keys: Array[String] = [HudDealingsVocab.LEG_KEY_FOOD, HudDealingsVocab.LEG_KEY_FODDER]
+    var materials: Dictionary = {}
+    for id in _band_labor.material_ids():
+        materials[String(id)] = true
+    for batch_variant in band.get(HudCraftingVocab.BAND_MATERIAL_BATCHES_KEY, []):
+        if batch_variant is Dictionary:
+            materials[String((batch_variant as Dictionary).get(HudCraftingVocab.BATCH_MATERIAL_ID_KEY, ""))] = true
+    var ids: Array = materials.keys()
+    ids.sort()
+    for id in ids:
+        if String(id) != "":
+            keys.append(HudDealingsVocab.LEG_KEY_MATERIAL_PREFIX + String(id))
+    var entries: Array = []
+    for key in keys:
+        if leg.has(key):
+            continue
+        var picked: String = key
+        entries.append({"label": HudDealingsVocab.leg_label(picked),
+            "on_pick": func() -> void:
+                leg[picked] = HudDealingsVocab.LEG_STEP
+                rerender()})
+    if entries.is_empty():
+        entries.append({"label": HudDealingsVocab.SHEET_NOTHING_TO_ADD, "disabled": true,
+            "on_pick": func() -> void: pass})
+    HudWidgets.fill_menu_popup(menu.get_popup(), entries)
+    return menu
+
+# ---- the DEALING ANSWER SHEET ------------------------------------------------------------------------------
+
+func _dealing_sheet_title() -> String:
+    var dealing := _band_labor.dealing_by_id(_dealing_sheet_id)
+    if dealing.is_empty():
+        return HudDealingsVocab.SHEET_NAME
+    var people := FactionMark.faction_name(int(dealing.get("sender_faction", HudConst.NO_FACTION_ID)))
+    match String(dealing.get("kind", "")):
+        HudDealingsVocab.KIND_OFFER:
+            return HudDealingsVocab.SHEET_TITLE_OFFER_FORMAT % people
+        HudDealingsVocab.KIND_TREATY_PROPOSAL:
+            return HudDealingsVocab.SHEET_TITLE_TREATY_FORMAT % people
+    return HudDealingsVocab.SHEET_TITLE_COUNTER_FORMAT % people
+
+## **OPEN THE ANSWER SHEET** on the band the dealing is addressed to (`accept` for an offer, which names
+## the return; `counter` for a proposal, a counter or a treaty proposal). A verb sheet of its own mission
+## that is not on the action bar -- the station sheet's shape -- so it opens in the band's own drawer and
+## closes with the verb. The legs a counter edits are seeded from the dealing as it stands.
+func _open_dealing_sheet(dealing: Dictionary, mode: String) -> void:
+    var band_id := int(dealing.get("receiver_band", HudConst.NO_BAND_ID))
+    var band := _band_labor.player_band_by_band_id(band_id)
+    if band.is_empty():
+        return
+    _reset_verb_state()
+    _targeting.disarm_verb_picks()
+    band_verb_opened.emit(HudDealingsVocab.COMPOSE_MISSION_DEALING)
+    _compose.open_verb(HudDealingsVocab.COMPOSE_MISSION_DEALING,
+        int(band.get("entity", ComposeState.NO_BAND_ENTITY)), band_id, SourceForecast.band_tile(band))
+    _dealing_sheet_id = int(dealing.get("id", 0))
+    _dealing_sheet_mode = mode
+    # The party bounds what can be carried home, and it is fixed by the dealing, not chosen here.
+    _send_expedition_count = maxi(int(dealing.get("party_workers", 0)), HudConst.WORKER_STEP)
+    _seed_dealing_legs(dealing, band)
+    _select_band_on_map(band)
+    rerender()
+
+## Seed a counter's two sides from the dealing as it stands. **Legs are stated from the SHIPPER's point of
+## view whoever is speaking**: `goods_sent` is what the shipper sends, `goods_asked` what it gets back. The
+## answering band holds its own leg (the picker, bounded by its stores) and merely NAMES the other.
+func _seed_dealing_legs(dealing: Dictionary, band: Dictionary) -> void:
+    var kind := String(dealing.get("kind", ""))
+    if kind == HudDealingsVocab.KIND_TREATY_PROPOSAL:
+        var terms := Dictionary(dealing.get("treaty", {}))
+        var keep: Array = []
+        for _bundle in Array(terms.get("bundles", [])):
+            keep.append(true)
+        _dealing_terms = {"road_rights": bool(terms.get("road_rights", false)),
+            "open_borders": bool(terms.get("open_borders", false)), "keep": keep, "added": []}
+        return
+    if kind == HudDealingsVocab.KIND_OFFER:
+        return
+    var mine_is_give := _answering_as_shipper(dealing)
+    var mine := Dictionary(dealing.get("goods_sent" if mine_is_give else "goods_asked", {}))
+    var theirs := Dictionary(dealing.get("goods_asked" if mine_is_give else "goods_sent", {}))
+    _preload_cargo(band, mine)
+    _dealing_other_leg = HudDealingsVocab.leg_from_goods(theirs)
+
+## Is the band answering the one whose party walks? It then holds the `give` leg; otherwise the `ask`.
+func _answering_as_shipper(dealing: Dictionary) -> bool:
+    return int(dealing.get("shipper_band", HudConst.NO_BAND_ID)) \
+        == int(dealing.get("receiver_band", HudConst.NO_BAND_ID))
+
+## Load a goods dict into the cargo picker's state, clamped to what the band holds.
+func _preload_cargo(band: Dictionary, goods: Dictionary) -> void:
+    _clear_trade_manifest()
+    _trade_food = float(goods.get(HudDealingsVocab.GOODS_FOOD, 0.0))
+    _trade_fodder = float(goods.get(HudDealingsVocab.GOODS_FODDER, 0.0))
+    var wanted: Dictionary = {}
+    for batch_variant in Array(goods.get(HudDealingsVocab.GOODS_MATERIALS, [])):
+        if batch_variant is Dictionary:
+            var batch: Dictionary = batch_variant
+            var id := String(batch.get("material_id", ""))
+            wanted[id] = float(wanted.get(id, 0.0)) + float(batch.get("amount", 0.0))
+    for id in wanted:
+        _write_cargo(band, _trade_cargo_rows(band), TRADE_GOOD_KEY_PREFIX + String(id), float(wanted[id]))
+
+func _on_dealing_accept_pressed(dealing: Dictionary) -> void:
+    if String(dealing.get("kind", "")) == HudDealingsVocab.KIND_OFFER:
+        _open_dealing_sheet(dealing, HudDealingsVocab.ANSWER_ACCEPT)
+        return
+    _emit_dealing_answer(dealing, {"answer": HudDealingsVocab.ANSWER_ACCEPT})
+
+func _on_dealing_refuse_pressed(dealing: Dictionary) -> void:
+    _emit_dealing_answer(dealing, {"answer": HudDealingsVocab.ANSWER_REFUSE})
+
+func _on_dealing_counter_pressed(dealing: Dictionary) -> void:
+    _open_dealing_sheet(dealing, HudDealingsVocab.ANSWER_COUNTER)
+
+## Emit one `answer_dealing`. The sheet, if it was open, closes with the press: the dealing leaves the
+## `dealings` section on the server's confirming frame, and an optimistic removal here would hide a
+## refusal (an unheld return) the server is about to state.
+func _emit_dealing_answer(dealing: Dictionary, extra: Dictionary) -> void:
+    var payload := {
+        "command": HudDealingsVocab.COMMAND_ANSWER_DEALING,
+        "faction": int(dealing.get("receiver_faction", HudConst.PLAYER_FACTION_ID)),
+        "dealing_id": int(dealing.get("id", 0)),
+    }
+    payload.merge(extra, true)
+    diplomacy_command_requested.emit(payload)
+    if _compose.has_verb() and _compose.verb_mission() == HudDealingsVocab.COMPOSE_MISSION_DEALING:
+        close_verb_form()
+
+func _fill_dealing_compose_sheet(sheet: VBoxContainer, band: Dictionary) -> void:
+    var dealing := _band_labor.dealing_by_id(_dealing_sheet_id)
+    if dealing.is_empty():
+        sheet.add_child(HudWidgets.alloc_hint_label(HudDealingsVocab.SHEET_GONE_REASON))
+        return
+    match String(dealing.get("kind", "")):
+        HudDealingsVocab.KIND_TREATY_PROPOSAL:
+            _fill_treaty_counter_sheet(sheet, band, dealing)
+        HudDealingsVocab.KIND_OFFER:
+            _fill_offer_answer_sheet(sheet, band, dealing)
+        _:
+            _fill_trade_counter_sheet(sheet, band, dealing)
+
+## An offer's answer: they name nothing back, so the return is the player's to choose from the
+## holdings, bounded by what the waiting party can carry home. **An empty return is allowed and reads as
+## a gift**, which the button says.
+func _fill_offer_answer_sheet(sheet: VBoxContainer, band: Dictionary, dealing: Dictionary) -> void:
+    sheet.add_child(HudWidgets.alloc_hint_label(HudDealingsVocab.SHEET_THEY_OFFER_FORMAT
+        % HudDealingsVocab.goods_text(Dictionary(dealing.get("goods_sent", {})))))
+    var rows := _mount_cargo_picker(sheet, band, HudDealingsVocab.SHEET_RETURN_SECTION)
+    var lines := _trade_manifest_lines(rows)
+    var cap := _trade_carry_cap(band)
+    if cap > 0.0:
+        sheet.add_child(HudWidgets.alloc_hint_label(HudDealingsVocab.SHEET_LIMIT_FORMAT
+            % (HudCraftingVocab.BATCH_AMOUNT_FORMAT % cap)))
+    if lines.is_empty():
+        sheet.add_child(HudWidgets.alloc_hint_label(HudDealingsVocab.SHEET_RETURN_EMPTY_HINT))
+    var accept := Button.new()
+    accept.text = HudDealingsVocab.SHEET_ACCEPT_GIFT_BUTTON if lines.is_empty() \
+        else HudDealingsVocab.SHEET_ACCEPT_BUTTON
+    accept.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    accept.tooltip_text = HudDealingsVocab.SHEET_ACCEPT_HINT
+    accept.set_meta(HudDealingsVocab.SHEET_ACTION_META, HudDealingsVocab.ANSWER_ACCEPT)
+    HudStyle.apply_button(accept, HudComposeVocab.VERB_SEND_STYLE)
+    accept.pressed.connect(func() -> void:
+        _emit_dealing_answer(dealing, {"answer": HudDealingsVocab.ANSWER_ACCEPT, "returned": lines}))
+    sheet.add_child(accept)
+
+## A proposal's or counter's counter: both legs shown and editable, prefilled with the dealing's own.
+## The leg this band holds is the cargo picker; the other is named, not drawn.
+func _fill_trade_counter_sheet(sheet: VBoxContainer, band: Dictionary, dealing: Dictionary) -> void:
+    var as_shipper := _answering_as_shipper(dealing)
+    var mine_label := HudDealingsVocab.SHEET_YOUR_LEG_SECTION if as_shipper \
+        else HudDealingsVocab.SHEET_RETURN_SECTION
+    var theirs_label := HudDealingsVocab.SHEET_YOU_GET_SECTION if as_shipper \
+        else HudDealingsVocab.SHEET_THEIR_LEG_SECTION
+    var rows := _mount_cargo_picker(sheet, band, mine_label)
+    sheet.add_child(HudWidgets.alloc_section_label(theirs_label))
+    _mount_leg_editor(sheet, _dealing_other_leg, band, HudDealingsVocab.SHEET_LEG_EMPTY)
+    sheet.add_child(HudWidgets.alloc_hint_label(HudDealingsVocab.SHEET_THEIR_LEG_HINT))
+    var mine := _trade_manifest_lines(rows)
+    var theirs := HudDealingsVocab.leg_rows(_dealing_other_leg)
+    var button := Button.new()
+    button.text = HudDealingsVocab.SHEET_COUNTER_BUTTON
+    button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    button.set_meta(HudDealingsVocab.SHEET_ACTION_META, HudDealingsVocab.ANSWER_COUNTER)
+    HudStyle.apply_button(button, HudComposeVocab.VERB_SEND_STYLE)
+    if mine.is_empty() and theirs.is_empty():
+        button.disabled = true
+        button.tooltip_text = HudDealingsVocab.SHEET_COUNTER_NEEDS_TERMS
+    else:
+        button.tooltip_text = HudDealingsVocab.SHEET_COUNTER_HINT
+        button.pressed.connect(func() -> void:
+            # `give` is the shipper's leg whoever is speaking.
+            _emit_dealing_answer(dealing, {"answer": HudDealingsVocab.ANSWER_COUNTER,
+                "give": mine if as_shipper else theirs, "ask": theirs if as_shipper else mine}))
+    sheet.add_child(button)
+
+## A treaty proposal's counter: tick the terms the band will agree to, and add agreed trade of its own
+## (the same bundle editor the treaty sheet uses).
+func _fill_treaty_counter_sheet(sheet: VBoxContainer, band: Dictionary, dealing: Dictionary) -> void:
+    sheet.add_child(HudWidgets.alloc_hint_label(HudDealingsVocab.SHEET_TREATY_COUNTER_HINT))
+    var terms := Dictionary(dealing.get("treaty", {}))
+    var proposed_bundles: Array = Array(terms.get("bundles", []))
+    var keep: Array = _dealing_terms.get("keep", [])
+    if bool(terms.get("road_rights", false)):
+        sheet.add_child(_build_term_check(HudDealingsVocab.SHEET_TREATY_ROAD,
+            bool(_dealing_terms.get("road_rights", false)),
+            func(on: bool) -> void: _dealing_terms["road_rights"] = on))
+    if bool(terms.get("open_borders", false)):
+        sheet.add_child(_build_term_check(HudDealingsVocab.SHEET_TREATY_BORDERS,
+            bool(_dealing_terms.get("open_borders", false)),
+            func(on: bool) -> void: _dealing_terms["open_borders"] = on))
+    for i in proposed_bundles.size():
+        var index := i
+        var bundle: Dictionary = proposed_bundles[i]
+        sheet.add_child(_build_term_check(HudDealingsVocab.SHEET_TREATY_BUNDLE_FORMAT
+            % HudDealingsVocab.terms_text({"bundles": [bundle]}),
+            bool(keep[index]) if index < keep.size() else true,
+            func(on: bool) -> void:
+                var flags: Array = _dealing_terms.get("keep", [])
+                if index < flags.size():
+                    flags[index] = on))
+    var added: Array = _dealing_terms.get("added", [])
+    sheet.add_child(HudWidgets.alloc_hint_label(HudDealingsVocab.TREATY_SHEET_ADD_HINT))
+    _mount_bundle_editor(sheet, added, band)
+    var kept_bundles: Array = []
+    for i in proposed_bundles.size():
+        if i < keep.size() and bool(keep[i]):
+            kept_bundles.append(proposed_bundles[i])
+    kept_bundles.append_array(_bundles_payload(added))
+    var counter_terms := {
+        "road_rights": bool(_dealing_terms.get("road_rights", false)),
+        "open_borders": bool(_dealing_terms.get("open_borders", false)),
+        "bundles": kept_bundles,
+    }
+    var none_kept: bool = not bool(counter_terms["road_rights"]) \
+        and not bool(counter_terms["open_borders"]) and kept_bundles.is_empty()
+    var button := Button.new()
+    button.text = HudDealingsVocab.SHEET_COUNTER_BUTTON
+    button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    button.set_meta(HudDealingsVocab.SHEET_ACTION_META, HudDealingsVocab.ANSWER_COUNTER)
+    HudStyle.apply_button(button, HudComposeVocab.VERB_SEND_STYLE)
+    if none_kept:
+        button.disabled = true
+        button.tooltip_text = HudDealingsVocab.SHEET_TREATY_NEEDS_TERMS
+    elif _bundles_need_a_shipment(added):
+        button.disabled = true
+        button.tooltip_text = HudDealingsVocab.TREATY_BUNDLE_NEEDS_SENT
+    else:
+        button.tooltip_text = HudDealingsVocab.SHEET_COUNTER_HINT
+        button.pressed.connect(func() -> void:
+            _emit_dealing_answer(dealing, {"answer": HudDealingsVocab.ANSWER_COUNTER,
+                "terms": counter_terms}))
+    sheet.add_child(button)
+
+func _build_term_check(text: String, on: bool, on_toggle: Callable) -> CheckBox:
+    var box := CheckBox.new()
+    box.text = text
+    box.focus_mode = Control.FOCUS_NONE
+    box.button_pressed = on
+    HudStyle.apply_checkbox(box)
+    box.toggled.connect(func(pressed: bool) -> void:
+        on_toggle.call(pressed)
+        rerender())
+    return box
+
+# ---- THE PEOPLES TAB'S TREATY ACTIONS AND THE TREATY SHEET (C2) -----------------------------------------
+
+## What the Peoples tab's diplomacy block reads and presses: the player's policy row (the border
+## overrides) and one Callable per action.
+func _peoples_diplomacy() -> Dictionary:
+    return {
+        "policy": _faction_policy(),
+        "actions": {
+            HudDealingsVocab.PEOPLE_ACTION_PROPOSE: Callable(self, "_on_people_propose_pressed"),
+            HudDealingsVocab.PEOPLE_ACTION_END: Callable(self, "_on_people_end_treaty_pressed"),
+            HudDealingsVocab.PEOPLE_ACTION_BORDERS: Callable(self, "_on_people_borders_pressed"),
+        },
+    }
+
+## **ENDING A TREATY IS A BREACH, so it confirms** -- and the prompt says what the breach costs.
+func _on_people_end_treaty_pressed(faction: int) -> void:
+    _confirm_destructive(HudDealingsVocab.TREATY_END_CONFIRM_FORMAT % FactionMark.faction_name(faction),
+        HudDealingsVocab.TREATY_END_CONFIRM_OK,
+        func() -> void:
+            diplomacy_command_requested.emit({
+                "command": HudDealingsVocab.COMMAND_END_TREATY,
+                "faction": HudConst.PLAYER_FACTION_ID,
+                "other_faction": faction,
+                "people_label": FactionMark.faction_name(faction),
+            }))
+
+## The per-people border toggle. `open` is the state the press asks for. **Closing to a people whose
+## treaty holds open borders ends that treaty**, so it confirms with the same breach warning; every other
+## flip fires on the press.
+func _on_people_borders_pressed(faction: int, open: bool) -> void:
+    var treaty := _band_labor.treaty_with(faction)
+    var holds_open := not treaty.is_empty() \
+        and bool(Dictionary(treaty.get("terms", {})).get("open_borders", false))
+    if not open and holds_open:
+        _confirm_destructive(HudDealingsVocab.BORDERS_BREACH_CONFIRM_FORMAT % FactionMark.faction_name(faction),
+            HudDealingsVocab.BORDERS_BREACH_CONFIRM_OK,
+            func() -> void: _emit_people_borders(faction, open))
+        return
+    _emit_people_borders(faction, open)
+
+func _emit_people_borders(faction: int, open: bool) -> void:
+    diplomacy_command_requested.emit({
+        "command": HudDealingsVocab.COMMAND_SET_BORDERS,
+        "faction": HudConst.PLAYER_FACTION_ID,
+        "open": open,
+        "other_faction": faction,
+        "people_label": FactionMark.faction_name(faction),
+    })
+
+func _on_people_propose_pressed(faction: int) -> void:
+    _open_treaty_sheet(faction)
+
+## **OPEN THE TREATY SHEET** on the band whose Peoples tab it was pressed from -- a verb sheet of its own
+## mission, off the action bar (the answer sheet's shape).
+func _open_treaty_sheet(faction: int) -> void:
+    var band_id := _connections_block_band_id
+    var band := _band_labor.player_band_by_band_id(band_id)
+    if band.is_empty():
+        return
+    _reset_verb_state()
+    _targeting.disarm_verb_picks()
+    band_verb_opened.emit(HudDealingsVocab.COMPOSE_MISSION_TREATY)
+    _compose.open_verb(HudDealingsVocab.COMPOSE_MISSION_TREATY,
+        int(band.get("entity", ComposeState.NO_BAND_ENTITY)), band_id, SourceForecast.band_tile(band))
+    _treaty_people = faction
+    _treaty_draft = {"road_rights": false, "open_borders": false, "bundles": []}
+    _select_band_on_map(band)
+    rerender()
+
+## The published standing links from `band_id` to a band of the sheet's people.
+func _treaty_links(band_id: int) -> Array:
+    var links: Array = []
+    for link_variant in _band_labor.standing_links_for_band(band_id):
+        if int((link_variant as Dictionary).get("other_faction", HudConst.NO_FACTION_ID)) == _treaty_people:
+            links.append(link_variant)
+    return links
+
+## The draft's terms in the shape `Main.format_propose_treaty` reads.
+func _treaty_terms_payload() -> Dictionary:
+    return {
+        "road_rights": bool(_treaty_draft.get("road_rights", false)),
+        "open_borders": bool(_treaty_draft.get("open_borders", false)),
+        "bundles": _bundles_payload(Array(_treaty_draft.get("bundles", []))),
+    }
+
+## Draft bundles as the wire's rows plus their words for the receipt. A bundle with nothing carried is
+## not sent (`_bundles_need_a_shipment` greys the send before it can matter).
+func _bundles_payload(bundles: Array) -> Array:
+    var rows: Array = []
+    for bundle_variant in bundles:
+        var bundle: Dictionary = bundle_variant
+        if HudDealingsVocab.leg_is_empty(Dictionary(bundle.get("give", {}))):
+            continue
+        rows.append({
+            "give_rows": HudDealingsVocab.leg_rows(Dictionary(bundle.get("give", {}))),
+            "ask_rows": HudDealingsVocab.leg_rows(Dictionary(bundle.get("ask", {}))),
+            "give_text": HudDealingsVocab.leg_text(Dictionary(bundle.get("give", {}))),
+            "ask_text": HudDealingsVocab.leg_text(Dictionary(bundle.get("ask", {}))),
+        })
+    return rows
+
+## A bundle must send something (an empty one would be covered by any cargo, however many times over), so
+## one with an empty carries-side greys the send.
+func _bundles_need_a_shipment(bundles: Array) -> bool:
+    for bundle_variant in bundles:
+        if HudDealingsVocab.leg_is_empty(Dictionary((bundle_variant as Dictionary).get("give", {}))):
+            return true
+    return false
+
+## **THE TREATY SHEET**: tick road rights / open borders, add agreed trade, then send it where it can go --
+## along the published standing link, else by an envoy the player sizes. Never computes a link.
+func _fill_treaty_sheet(sheet: VBoxContainer, band: Dictionary, idle: int) -> void:
+    var band_id := int(band.get("band_id", HudConst.NO_BAND_ID))
+    var people := FactionMark.faction_name(_treaty_people)
+    sheet.add_child(HudWidgets.alloc_section_label(HudDealingsVocab.TREATY_TERMS_SECTION))
+    sheet.add_child(_build_term_check(HudDealingsVocab.SHEET_TREATY_ROAD,
+        bool(_treaty_draft.get("road_rights", false)),
+        func(on: bool) -> void: _treaty_draft["road_rights"] = on))
+    sheet.add_child(_build_term_check(HudDealingsVocab.SHEET_TREATY_BORDERS,
+        bool(_treaty_draft.get("open_borders", false)),
+        func(on: bool) -> void: _treaty_draft["open_borders"] = on))
+    var bundles: Array = _treaty_draft["bundles"]
+    _mount_bundle_editor(sheet, bundles, band)
+
+    # ---- the route: a road if the sim publishes one, else an envoy
+    var links := _treaty_links(band_id)
+    var by_road := not links.is_empty()
+    var candidates: Array = []
+    if by_road:
+        for link_variant in links:
+            var other := int((link_variant as Dictionary).get("other_band", HudConst.NO_BAND_ID))
+            candidates.append({"band_id": other, "label": _band_labor.host_label_for_id(other)})
+    else:
+        candidates = _band_labor.known_bands_of_people(_treaty_people)
+    var picked := _treaty_target
+    var known_ids: Array = []
+    for candidate in candidates:
+        known_ids.append(int((candidate as Dictionary)["band_id"]))
+    if not known_ids.has(picked):
+        picked = int(known_ids[0]) if not known_ids.is_empty() else HudConst.NO_BAND_ID
+    _treaty_target = picked
+    var target_label := ""
+    for candidate in candidates:
+        if int((candidate as Dictionary)["band_id"]) == picked:
+            target_label = String((candidate as Dictionary)["label"])
+    if by_road:
+        sheet.add_child(HudWidgets.alloc_hint_label(HudDealingsVocab.TREATY_VIA_ROAD_FORMAT % target_label))
+    else:
+        sheet.add_child(HudWidgets.alloc_hint_label(
+            HudDealingsVocab.TREATY_VIA_ENVOY_FORMAT % target_label if picked != HudConst.NO_BAND_ID
+            else HudDealingsVocab.TREATY_VIA_ENVOY_NOBODY))
+    if candidates.size() > 1:
+        var options: Array = []
+        for candidate in candidates:
+            options.append({"id": str(int((candidate as Dictionary)["band_id"])),
+                "text": String((candidate as Dictionary)["label"]), "tip": String((candidate as Dictionary)["label"])})
+        sheet.add_child(HudWidgets.alloc_section_label(HudDealingsVocab.TREATY_ENVOY_TARGET_SECTION))
+        sheet.add_child(_build_choice_row(options, str(picked), func(choice: String) -> void:
+            _treaty_target = int(choice)
+            rerender()))
+    var workers := 0
+    if not by_road:
+        var party_max: int = maxi(idle, HudConst.WORKER_STEP)
+        _send_expedition_count = clampi(_send_expedition_count, HudConst.WORKER_STEP, party_max)
+        workers = _send_expedition_count
+        sheet.add_child(HudWidgets.build_party_stepper_row(_send_expedition_count, party_max,
+            func(n: int) -> void:
+                _send_expedition_count = clampi(n, HudConst.WORKER_STEP, party_max)
+                rerender(),
+            HudDealingsVocab.TREATY_ENVOY_PEOPLE_LABEL, HudDealingsVocab.TREATY_ENVOY_PEOPLE_AT_MAX_REASON))
+        sheet.add_child(HudWidgets.alloc_hint_label(HudComposeVocab.STATION_PEOPLE_SUB_FORMAT % [
+            _send_expedition_count, idle, HudFormat.band_name(band)]))
+
+    # ---- the send, greyed with its reason
+    var terms := _treaty_terms_payload()
+    var empty: bool = not bool(terms["road_rights"]) and not bool(terms["open_borders"]) \
+        and Array(terms["bundles"]).is_empty()
+    var reason := ""
+    if empty:
+        reason = HudDealingsVocab.TREATY_NEEDS_TERMS
+    elif _bundles_need_a_shipment(bundles):
+        reason = HudDealingsVocab.TREATY_BUNDLE_NEEDS_SENT
+    elif picked == HudConst.NO_BAND_ID:
+        reason = HudDealingsVocab.TREATY_ENVOY_NO_TARGET
+    elif not by_road and idle <= 0:
+        reason = HudDealingsVocab.TREATY_ENVOY_NO_WORKERS
+    var send := Button.new()
+    send.text = HudDealingsVocab.TREATY_PROPOSE_BUTTON if by_road else HudDealingsVocab.TREATY_ENVOY_BUTTON
+    send.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    send.set_meta(HudDealingsVocab.TREATY_SEND_META, true)
+    if reason != "":
+        send.disabled = true
+        send.tooltip_text = reason
+        HudStyle.apply_button(send, "ghost")
+        sheet.add_child(_warn_hint(reason))
+    else:
+        send.tooltip_text = HudDealingsVocab.TREATY_PROPOSE_HINT if by_road else HudDealingsVocab.TREATY_ENVOY_HINT
+        HudStyle.apply_button(send, HudComposeVocab.VERB_SEND_STYLE)
+        send.pressed.connect(func() -> void:
+            diplomacy_command_requested.emit({
+                "command": HudDealingsVocab.COMMAND_PROPOSE_TREATY if by_road \
+                    else HudDealingsVocab.COMMAND_SEND_ENVOY,
+                "faction": int(band.get("faction", HudConst.PLAYER_FACTION_ID)),
+                "band_id": band_id,
+                "party_workers": workers,
+                "destination_band_id": picked,
+                "destination_label": target_label if target_label != "" else people,
+                "people_label": people,
+                "terms": terms,
+            })
+            close_verb_form())
+    sheet.add_child(send)
+
+## An amber one-line reason set beside the control it explains.
+func _warn_hint(text: String) -> Label:
+    var label := HudWidgets.alloc_hint_label(text)
+    label.add_theme_color_override("font_color", HudStyle.WARN)
+    return label
+
+## **THE AGREED-TRADE EDITOR**, shared by the treaty sheet and a treaty counter: one block per bundle with
+## its two goods lists (what a shipment carries, what the receiver pays back -- viewpoint-free: a treaty
+## binds both peoples) and a `Remove`, then `Add agreed trade`. Both legs are NAMED, not drawn: a standing
+## exchange moves no goods until a shipment is made, so neither is bounded by a pack.
+func _mount_bundle_editor(sheet: VBoxContainer, bundles: Array, band: Dictionary) -> void:
+    sheet.add_child(HudWidgets.alloc_section_label(HudDealingsVocab.TREATY_BUNDLES_SECTION))
+    for i in bundles.size():
+        var index := i
+        var bundle: Dictionary = bundles[i]
+        var head := HBoxContainer.new()
+        var title := Label.new()
+        title.text = HudDealingsVocab.TREATY_BUNDLE_HEAD_FORMAT % (i + 1)
+        title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+        title.add_theme_color_override("font_color", HudStyle.INK)
+        head.add_child(title)
+        var remove := Button.new()
+        remove.text = HudWorkVocab.INSPECTOR_CLOSE_GLYPH
+        remove.focus_mode = Control.FOCUS_NONE
+        remove.tooltip_text = HudDealingsVocab.TREATY_REMOVE_BUNDLE_TOOLTIP
+        remove.set_meta(HudDealingsVocab.TREATY_BUNDLE_REMOVE_META, index)
+        HudStyle.apply_button(remove, "ghost")
+        remove.pressed.connect(func() -> void:
+            bundles.remove_at(index)
+            rerender())
+        head.add_child(remove)
+        head.set_meta(HudDealingsVocab.TREATY_BUNDLE_META, index)
+        sheet.add_child(head)
+        sheet.add_child(HudWidgets.alloc_section_label(HudDealingsVocab.TREATY_BUNDLE_SENT_SECTION))
+        _mount_leg_editor(sheet, bundle["give"], band, HudDealingsVocab.SHEET_LEG_EMPTY)
+        if HudDealingsVocab.leg_is_empty(bundle["give"]):
+            sheet.add_child(_warn_hint(HudDealingsVocab.TREATY_BUNDLE_NEEDS_SENT))
+        sheet.add_child(HudWidgets.alloc_section_label(HudDealingsVocab.TREATY_BUNDLE_PAID_SECTION))
+        _mount_leg_editor(sheet, bundle["ask"], band, HudDealingsVocab.SHEET_LEG_EMPTY)
+    if bundles.is_empty():
+        sheet.add_child(HudWidgets.alloc_hint_label(HudDealingsVocab.TREATY_BUNDLES_HINT))
+    var add := Button.new()
+    add.text = HudDealingsVocab.TREATY_ADD_BUNDLE
+    add.focus_mode = Control.FOCUS_NONE
+    add.tooltip_text = HudDealingsVocab.TREATY_ADD_BUNDLE_TOOLTIP
+    add.set_meta(HudDealingsVocab.TREATY_ADD_BUNDLE_META, true)
+    HudStyle.apply_button(add, "ghost")
+    add.pressed.connect(func() -> void:
+        bundles.append({"give": {}, "ask": {}})
+        rerender())
+    sheet.add_child(add)
 
 ## A tied band pre-selected as the Trade sheet's destination — the map's highlighted-band click.
 func _set_trade_destination(destination: int) -> void:
@@ -9476,6 +10406,8 @@ func _commit_trade(band: Dictionary, destination: int, workers: int, cargo: Arra
         "destination_band_id": destination,
         "destination_label": label,
         "cargo": cargo,
+        # `offer` or `gift` (the default, unspelled on the line): who names the return.
+        "mode": _trade_mode,
     })
     close_verb_form()
     return TargetingController.PICK_COMMITTED
@@ -10520,6 +11452,10 @@ func build_verb_form() -> Control:
     var verb_name := mission
     if mission == HudComposeVocab.COMPOSE_MISSION_STATION:
         verb_name = HudComposeVocab.STATION_SHEET_NAME
+    elif mission == HudDealingsVocab.COMPOSE_MISSION_DEALING:
+        verb_name = HudDealingsVocab.SHEET_NAME
+    elif mission == HudDealingsVocab.COMPOSE_MISSION_TREATY:
+        verb_name = HudDealingsVocab.TREATY_SHEET_NAME
     form.add_child(HudWidgets.alloc_section_label(HudComposeVocab.VERB_FORM_HEADER_FORMAT % [
         String(verb.get(HudComposeVocab.VERB_KEY_TOOLTIP, verb_name)), HudFormat.band_name(band)]))
     form.add_child(_build_compose_sheet(band, _band_labor.effective_idle(band)))
@@ -10574,6 +11510,18 @@ func _reset_verb_state() -> void:
     _compose.clear_party_quarry()
     _trade_destination = HudConst.NO_BAND_ID
     _station_host = HudConst.NO_BAND_ID
+    # …and the diplomacy sheets' choices: a gift mode, an ask list or a strangers order composed for a
+    # sheet the player cancelled are not choices they made for the next one.
+    _trade_mode = HudDealingsVocab.TRADE_MODE_GIFT
+    _propose_ask = {}
+    _strangers_order = HudDealingsVocab.STRANGERS_KEEP
+    _dealing_sheet_id = 0
+    _dealing_sheet_mode = ""
+    _dealing_other_leg = {}
+    _dealing_terms = {}
+    _treaty_people = HudConst.NO_FACTION_ID
+    _treaty_draft = {}
+    _treaty_target = HudConst.NO_BAND_ID
     _targeting.clear_preselect()
     # …and the manifest with it: goods loaded for a shipment the player cancelled are not goods they
     # asked to send. `_clear_trade_manifest` carries the pairing rule.
@@ -10610,6 +11558,9 @@ func _push_zone_badges(band: Dictionary) -> void:
     # Peoples carries how many ties the band holds, parked included, and nothing at none.
     _panel.set_tab_badge(BandCityPanel.ZONE_PEOPLES,
         ConnectionsRoster.badge_text(int(band.get("band_id", HudConst.NO_BAND_ID)), _band_labor), false)
+    # Dealings carries what waits on THIS band's answer (hot: the window is one turn), else how many it
+    # waits on, and nothing at none.
+    _push_dealings_badge(int(band.get("band_id", HudConst.NO_BAND_ID)))
 
 ## Recall the selected in-flight expedition (folds it home). Emits recall_expedition_requested;
 ## Main formats the `recall_expedition …` command.
@@ -10685,7 +11636,7 @@ func render_band(unit: Dictionary) -> void:
         BandCityPanel.ZONE_BAND: HudWidgets.wrap_zone(build_band_zone(_band_labor.panel_band())),
         BandCityPanel.ZONE_WORK: HudWidgets.wrap_zone(build_work_zone(_band_labor.panel_band())),
         BandCityPanel.ZONE_PARTIES: HudWidgets.wrap_zone(build_parties_zone(_band_labor.panel_band(),
-            _trade_wide, _trade_wide)),
+            _trade_wide, _trade_wide, _trade_wide)),
     }
     # The Peoples roster moves on the same flip and reads the same record: a tab of its own in the
     # narrow shell, a section after Trade's under Parties in the wide one.
@@ -10693,6 +11644,8 @@ func render_band(unit: Dictionary) -> void:
         zones[BandCityPanel.ZONE_TRADE] = HudWidgets.wrap_zone(build_trade_zone(_band_labor.panel_band()))
         zones[BandCityPanel.ZONE_PEOPLES] = HudWidgets.wrap_zone(
             build_peoples_zone(_band_labor.panel_band()))
+        zones[BandCityPanel.ZONE_DEALINGS] = HudWidgets.wrap_zone(
+            build_dealings_zone(_band_labor.panel_band()))
     _panel.set_zones(zones)
     _trade_cargo_zones_rebuilding = false
     _push_zone_badges(_band_labor.panel_band())

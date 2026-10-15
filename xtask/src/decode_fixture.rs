@@ -23,6 +23,7 @@ use flatbuffers::FlatBufferBuilder;
 use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
 use sim_schema::codec::{encode_delta_flatbuffer, encode_snapshot_flatbuffer};
 use sim_schema::fixture::{saturated_snapshot, GRID_CELLS, GRID_H, GRID_W};
+use sim_schema::state::goodwill::GoodwillState;
 use sim_schema::state::population::PopulationCohortState;
 use sim_schema::world::{SnapshotHeader, WorldDelta, WorldSnapshot};
 use std::error::Error;
@@ -280,17 +281,26 @@ struct WholeSectionWitnesses {
     /// converter, while this one is a bare `Option<String>` the decoder republishes opaquely, so a
     /// delta path that handled repeated fields and forgot the scalars would still be caught.
     equipment_config_json: bool,
+    /// The three **diplomacy** whole sections — `dealings`, `goodwill` (with its own-opinion twin
+    /// and the cuts) and `treaties` (with the standing links). Each rides a section converter of
+    /// its own, so a delta path that merged one and forgot another is caught only by carrying all
+    /// three. Delta 1 REPLACES them with visibly different rows (a dealing fewer, so "replaced
+    /// whole" is told from "patched by id"); delta 2 states none, so their survival there is the
+    /// frame-before-it merge.
+    diplomacy: bool,
 }
 
-/// Delta 1 states both witnesses; delta 2 states neither. See [`WholeSectionWitnesses`].
+/// Delta 1 states every witness; delta 2 states none. See [`WholeSectionWitnesses`].
 const DELTA_WHOLE_SECTION_WITNESSES: [WholeSectionWitnesses; 2] = [
     WholeSectionWitnesses {
         demographics: true,
         equipment_config_json: true,
+        diplomacy: true,
     },
     WholeSectionWitnesses {
         demographics: false,
         equipment_config_json: false,
+        diplomacy: false,
     },
 ];
 
@@ -303,6 +313,11 @@ const DELTA_WHOLE_SECTION_WITNESSES: [WholeSectionWitnesses; 2] = [
 /// sees the braces and quotes survive verbatim — the field is contractually **opaque** to this
 /// decoder (`native-extension.md` → THE KIT ROSTER), and a value that re-serialized or re-escaped on
 /// the way through would be visible in the merged frame rather than silent.
+/// How far delta 1 moves a diplomacy row's probe field (`turns_left`, `formed_turn`) and a goodwill
+/// row's `total`: any non-zero step reads as "the delta's value", and the baseline's rows carry
+/// the fixture's per-ordinal values, which the step never lands back on.
+const DELTA_DIPLOMACY_STEP: u32 = 11;
+
 const DELTA_EQUIPMENT_CONFIG_JSON: &str = r#"{"fixture":"delta.equipment_config_json"}"#;
 
 /// Writes the **DELTA** envelopes built against the same synthetic world [`write_fixture`] emits:
@@ -470,6 +485,38 @@ fn build_planned_delta(
         .equipment_config_json
         .then(|| DELTA_EQUIPMENT_CONFIG_JSON.to_string());
 
+    // The diplomacy whole sections. `dealings` drops its LAST row and moves the first one's
+    // `turns_left`, so the guard can tell "replaced whole" (the count fell) from "patched by id"
+    // (it could not).
+    let dealings = witnesses.diplomacy.then(|| {
+        let mut rows: Vec<_> = snapshot.dealings.clone();
+        rows.pop();
+        if let Some(first) = rows.first_mut() {
+            first.turns_left = first.turns_left.wrapping_add(DELTA_DIPLOMACY_STEP);
+        }
+        rows
+    });
+    let treaties = witnesses.diplomacy.then(|| {
+        let mut rows: Vec<_> = snapshot.treaties.clone();
+        if let Some(first) = rows.first_mut() {
+            first.formed_turn += u64::from(DELTA_DIPLOMACY_STEP);
+        }
+        rows
+    });
+    let moved_goodwill = |rows: &[GoodwillState]| {
+        let mut rows = rows.to_vec();
+        if let Some(first) = rows.first_mut() {
+            first.total += DELTA_DIPLOMACY_STEP as f32;
+        }
+        rows
+    };
+    let goodwill = witnesses
+        .diplomacy
+        .then(|| moved_goodwill(&snapshot.goodwill));
+    let own_goodwill = witnesses
+        .diplomacy
+        .then(|| moved_goodwill(&snapshot.own_goodwill));
+
     // The append-only section: rows the baseline has never seen, numbered above every seq it holds.
     // The two deltas are disjoint here as everywhere else — delta 2 continues delta 1's numbering.
     let first_new_seq = snapshot
@@ -499,6 +546,12 @@ fn build_planned_delta(
         culture_layers,
         demographics,
         equipment_config_json,
+        dealings,
+        treaties,
+        goodwill,
+        own_goodwill,
+        goodwill_cuts: witnesses.diplomacy.then(|| snapshot.goodwill_cuts.clone()),
+        standing_links: witnesses.diplomacy.then(|| snapshot.standing_links.clone()),
         command_events,
         command_events_retention_turns: Some(plan.retention_turns),
         lineage_constants: Some(Box::new(snapshot.lineage_constants)),
@@ -761,6 +814,39 @@ mod tests {
         assert_ne!(
             snapshot.demographics[0].children, carried[0].children,
             "delta 1's `demographics` row must be visibly different from the baseline's"
+        );
+
+        // The DIPLOMACY witnesses: carried by delta 1 only, visibly moved, and the dealings count
+        // must FALL — the guard tells "replaced whole" from "patched by id" by that count.
+        let carried_dealings = first
+            .dealings
+            .as_ref()
+            .expect("delta 1 must carry `dealings`");
+        assert!(
+            carried_dealings.len() < snapshot.dealings.len(),
+            "delta 1's `dealings` must hold FEWER rows than the baseline's, or a decoder that \
+             patched by id instead of replacing the section would pass"
+        );
+        assert_ne!(
+            snapshot.dealings[0].turns_left, carried_dealings[0].turns_left,
+            "delta 1's first dealing must read a different `turns_left`"
+        );
+        assert_ne!(
+            snapshot.treaties[0].formed_turn,
+            first.treaties.as_ref().expect("delta 1 carries `treaties`")[0].formed_turn,
+            "delta 1's first treaty must read a different `formed_turn`"
+        );
+        assert_ne!(
+            snapshot.goodwill[0].total,
+            first.goodwill.as_ref().expect("delta 1 carries `goodwill`")[0].total,
+            "delta 1's first goodwill row must read a different `total`"
+        );
+        assert!(
+            second.dealings.is_none()
+                && second.treaties.is_none()
+                && second.goodwill.is_none()
+                && second.own_goodwill.is_none(),
+            "delta 2 must carry NO diplomacy section — absent means unchanged"
         );
 
         // The SCALAR whole-section witness, same shape of claim. Both clauses go vacuous silently if

@@ -1258,3 +1258,35 @@ sim-ended post: the party's own home band is gone. It is a `DETAIL_STATUS_STYLE`
 with the reduced mark, and the phrase table says "their home band is gone".
 **`destination` joined `host` in `DETAIL_KEY_HIDDEN`**: its raw id had been printing as
 `Destination 5183` beside the already-named label.
+
+## `dealing` and `treaty` lines (early diplomacy, issue #233)
+
+Two kinds, both **Routine** in `RUNG_BY_KIND` (stated rather than left to the default): a post, an answer,
+a lapse, a settled exchange, a treaty formed or amended are receipts for things the player asked for or
+already saw on the Dealings tab. Two moments are lifted by the DETAIL, never by the kind:
+
+- **`status=offered` is Notable** (`HudEventVocab.is_offered_to_us`, read by `EventDockPanel._resolve_rung`):
+  the sim writes it to the RECEIVER alone and silence refuses the item after one turn. It is not in
+  `DETAIL_STATUS_STYLE`, because that table's glyph is the rung's warning mark (`▾` on Notable, "less than you
+  had") and an iff test over it requires every entry to track that; an offer takes the Notable rung's own
+  `✦` and signal ink.
+- **A treaty ended by the OTHER people is Notable; the viewer's own breach is a receipt**
+  (`HudEventVocab.is_treaty_end` / `breach_against_us`). Both sides get the same `status=ended`, and the
+  difference is a comparison, `with=<partner> breaker=<who broke it>`: a breach against the viewer has the
+  partner as the breaker, so the two match; `breaker=0` against another partner is a lapse (that people is
+  no more). A treaty end is decided by that comparison alone, because the status table's
+  `reason=borders_closed` row would otherwise lift the breaker's own line. The breach wears the reduced
+  amber mark (`BREACH_STYLE`).
+
+Every other status the sim emits (`posted`, `accepted`, `refused`, `expired`, `countered`, `withdrawn` with
+`reason=link_broken`, `failed` with `reason=launch_failed|receiver_short`, `settled`) is Routine, so none
+shows at the default floor.
+
+**Tokens become labels the existing way.** `sender=<band>` is a fourth role beside `band=` /
+`destination=` / `host=` (`DETAIL_SENDER_KEY`, the sim's lower-case `band <id>`); `with=` and `breaker=`
+join `from=` / `to=` in `PEOPLE_ID_TOKEN_KEYS` and swap the sim's `Faction <id>` for the published name.
+`dealing`, `sender`, `kind`, `with`, `breaker`, `carrier` and `reported` are hidden from the phrase (join
+keys, or said by the label), `status=ended`'s `reason` is hidden, and the new stage and reason values have
+`DETAIL_VALUE_LABELS` phrases. **A foreign band has no roster name**, so `Hud.update_band_alerts` also
+publishes the names the viewer's ties remember (`subject_name`) in `band_labels_changed`; the roster's own
+name always wins.

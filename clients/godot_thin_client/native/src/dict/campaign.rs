@@ -157,6 +157,19 @@ pub(crate) fn faction_policies_to_array(
         let mut dict = VarDictionary::new();
         let _ = dict.insert("faction", state.faction() as i64);
         let _ = dict.insert("open_borders", state.openBorders());
+        // The standing answer to a gift from this people's own people (on = lands on arrival).
+        let _ = dict.insert("accept_own_gifts", state.acceptOwnGifts());
+        // The viewer's per-people overrides of `open_borders`: [{other_faction, open}].
+        let mut overrides = VarArray::new();
+        if let Some(list) = state.borderOverrides() {
+            for row in list {
+                let mut entry = VarDictionary::new();
+                let _ = entry.insert("other_faction", row.otherFaction() as i64);
+                let _ = entry.insert("open", row.open());
+                overrides.push(&entry.to_variant());
+            }
+        }
+        let _ = dict.insert("border_overrides", &overrides);
         array.push(&dict.to_variant());
     }
     array

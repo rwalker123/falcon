@@ -353,6 +353,60 @@ func build_band_attention(player_bands: Array, player_expeditions: Array) -> Arr
     attention.append_array(_crew_handoff_attention())
     return attention
 
+## **THE DEALINGS HALF OF THE REGISTRY** (early diplomacy) -- one row per band with an item addressed to
+## it, because the answer window is ONE turn and the orb is the only surface that reaches the player on
+## the turn it opens. Built from the `dealings` section alone, so it is rebuilt whenever that section
+## moves (`HudLayer.update_dealings`), not with the band alerts.
+##
+## **NON-LOCATING AND CARRYING ITS BAND**: the row opens the receiving band's Dealings tab
+## (`ATTENTION_PANEL_SUBJECT`), where the answer is given; a map jump would put the player on a hex
+## with nothing to press. `warn` and never `blocking` -- silence is a refusal, the sim's rule, and the
+## orb's job is to say what walking away costs, not to hold the turn. Capped like the awaiting rows.
+func build_dealing_attention() -> Array:
+    var per_band: Dictionary = {}
+    var order: Array[int] = []
+    for dealing_variant in _band_labor.dealings():
+        if not (dealing_variant is Dictionary):
+            continue
+        var dealing: Dictionary = dealing_variant
+        if int(dealing.get("receiver_faction", HudConst.NO_FACTION_ID)) != HudConst.PLAYER_FACTION_ID:
+            continue
+        var band_id := int(dealing.get("receiver_band", HudConst.NO_BAND_ID))
+        if band_id == HudConst.NO_BAND_ID:
+            continue
+        if not per_band.has(band_id):
+            per_band[band_id] = []
+            order.append(band_id)
+        (per_band[band_id] as Array).append(dealing)
+    var items: Array = []
+    for i in order.size():
+        var band_id: int = order[i]
+        var rows: Array = per_band[band_id]
+        if i >= HudDealingsVocab.ATTENTION_MAX_ROWS:
+            items.append({
+                "kind": HudDealingsVocab.ATTENTION_KIND_DEALING,
+                "severity": HudAttentionVocab.ATTENTION_SEVERITY_WARN,
+                "label": HudDealingsVocab.ATTENTION_OVERFLOW_LABEL_FORMAT % (order.size() - i),
+                "detail": HudDealingsVocab.ATTENTION_OVERFLOW_DETAIL,
+                HudAttentionVocab.ATTENTION_PANEL_SUBJECT: band_id,
+                "x": HudAttentionVocab.ATTENTION_NON_LOCATING, "y": HudAttentionVocab.ATTENTION_NON_LOCATING,
+            })
+            break
+        var first: Dictionary = rows[0]
+        var people := FactionMark.faction_name(int(first.get("sender_faction", HudConst.NO_FACTION_ID)))
+        var band_name := _band_labor.band_label_for_id(band_id)
+        items.append({
+            "kind": HudDealingsVocab.ATTENTION_KIND_DEALING,
+            "owner": band_id,
+            "severity": HudAttentionVocab.ATTENTION_SEVERITY_WARN,
+            "label": HudDealingsVocab.ATTENTION_LABEL if rows.size() == 1 \
+                else HudDealingsVocab.ATTENTION_LABEL_MANY_FORMAT % rows.size(),
+            "detail": HudDealingsVocab.ATTENTION_DETAIL_FORMAT % [people, band_name],
+            HudAttentionVocab.ATTENTION_PANEL_SUBJECT: band_id,
+            "x": HudAttentionVocab.ATTENTION_NON_LOCATING, "y": HudAttentionVocab.ATTENTION_NON_LOCATING,
+        })
+    return items
+
 ## An orb row's "Jump →". A row that locates an AWAITING EXPEDITION routes through the SAME path the
 ## Band panel's Active-expeditions row click uses (`BandPanelController.select_expedition`: recenter + pin the
 ## exact expedition so its drawer opens and the panel band isn't hijacked) rather than a second,

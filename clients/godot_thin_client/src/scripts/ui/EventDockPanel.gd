@@ -576,6 +576,13 @@ func _append(tick: int, kind: String, faction: int, label: String, detail: Strin
 ## the rung now comes off the matched entry. See `HudEventVocab.DETAIL_STATUS_STYLE` for why each
 ## token sits where it does.
 func _resolve_rung(kind: String, detail: String) -> String:
+	# A treaty the OTHER people broke is Notable whatever its kind says (`breach_against_us`): the
+	# status table cannot tell the two `status=ended` lines apart, because the difference is a comparison.
+	if HudEventVocab.is_treaty_end(kind, detail):
+		return HudEventVocab.RUNG_NOTABLE if HudEventVocab.breach_against_us(kind, detail) \
+			else HudEventVocab.RUNG_ROUTINE
+	if HudEventVocab.is_offered_to_us(kind, detail):
+		return HudEventVocab.RUNG_NOTABLE
 	var token := _detail_status_key(detail)
 	if token != "":
 		return String(HudEventVocab.DETAIL_STATUS_STYLE[token]["rung"])
@@ -586,6 +593,9 @@ func _resolve_rung(kind: String, detail: String) -> String:
 func _resolve_style(kind: String, detail: String, rung: String) -> Dictionary:
 	if HudEventVocab.KIND_STYLE.has(kind):
 		return HudEventVocab.KIND_STYLE[kind]
+	if HudEventVocab.is_treaty_end(kind, detail):
+		return HudEventVocab.BREACH_STYLE if HudEventVocab.breach_against_us(kind, detail) \
+			else HudEventVocab.RUNG_STYLE[HudEventVocab.RUNG_ROUTINE]
 	var token := _detail_status_key(detail)
 	if token != "":
 		return HudEventVocab.DETAIL_STATUS_STYLE[token]

@@ -260,6 +260,14 @@ const RUNG_BY_KIND := {
 	# those. A REFUSED shipment is not this kind at all — a rejected command rides `system`, which is
 	# already Alert.
 	"trade_delivered": RUNG_NOTABLE,
+	# **DEALINGS AND TREATIES ARE RECEIPTS UNTIL ONE IS ADDRESSED TO YOU** (early diplomacy, #233). Both
+	# kinds ride Routine -- a post, an answer, a lapse, a settled exchange, a treaty formed or amended are
+	# things the player asked for or already saw on the Dealings tab -- and the two moments that are not
+	# receipts are lifted by the detail, not the kind: `status=offered` (an offer or proposal ADDRESSED
+	# TO YOU, whose window is one turn: `DETAIL_STATUS_STYLE`) and a treaty broken by the OTHER people
+	# (`breach_against_us`). Stated rather than left to `DEFAULT_RUNG`, so the choice is on the page.
+	"dealing": RUNG_ROUTINE,
+	"treaty": RUNG_ROUTINE,
 	# Routine — bracket transitions, and receipts for things the player asked for.
 	"came_of_age": RUNG_ROUTINE,
 	"aged": RUNG_ROUTINE,
@@ -412,6 +420,52 @@ static var KIND_STYLE := {}
 ## its accent are one membership.
 static var DETAIL_STATUS_STYLE := {}
 
+## **A TREATY BROKEN BY THE OTHER PEOPLE** (early diplomacy, #233) -- the one line the status table cannot
+## claim, because it is told to BOTH sides with the same `status=ended` and the difference is a comparison:
+## `with=<the other people> breaker=<who broke it>`. The viewer's own breach reads `breaker` as itself and
+## `with` as the partner, so the two differ; a breach against the viewer has the partner as the breaker,
+## so they match. `breaker=0` with a partner that is not people 0 is a lapse (that people is no more),
+## which is neither. Matched on whole `key=value` fragments like every other detail test here.
+const BREACH_STATUS_TOKEN := "status=ended"
+const BREACH_WITH_KEY := "with"
+const BREACH_BREAKER_KEY := "breaker"
+const KIND_TREATY := "treaty"
+const KIND_DEALING := "dealing"
+const OFFERED_STATUS_TOKEN := "status=offered"
+
+## **AN OFFER OR PROPOSAL ADDRESSED TO YOU IS NOTABLE** (early diplomacy, #233): the sim writes
+## `status=offered` to the RECEIVER alone, and silence refuses it after one turn, so it is the one
+## dealing line the player cannot afford to miss. It is decided here rather than in
+## `DETAIL_STATUS_STYLE` because that table's glyph is the rung's WARNING mark (`▾` on Notable, "less
+## than you had") and an offer is not a loss: the row takes the Notable rung's own `✦` and ink.
+static func is_offered_to_us(kind: String, detail: String) -> bool:
+	return (kind == KIND_DEALING or kind == KIND_TREATY) \
+		and detail.split(" ", false).has(OFFERED_STATUS_TOKEN)
+
+## Is this line a treaty ending (either side's)? Its rung is then decided by `breach_against_us` ALONE --
+## the status table's `reason=borders_closed` row would otherwise lift the breaker's own receipt.
+static func is_treaty_end(kind: String, detail: String) -> bool:
+	return kind == KIND_TREATY and detail.split(" ", false).has(BREACH_STATUS_TOKEN)
+
+static func breach_against_us(kind: String, detail: String) -> bool:
+	if kind != KIND_TREATY or detail == "":
+		return false
+	var ended := false
+	var with_id := ""
+	var breaker_id := ""
+	for token in detail.split(" ", false):
+		if token == BREACH_STATUS_TOKEN:
+			ended = true
+		elif token.begins_with(BREACH_WITH_KEY + "="):
+			with_id = token.substr(BREACH_WITH_KEY.length() + 1)
+		elif token.begins_with(BREACH_BREAKER_KEY + "="):
+			breaker_id = token.substr(BREACH_BREAKER_KEY.length() + 1)
+	return ended and with_id != "" and with_id == breaker_id
+
+## The mark a breach against the viewer wears: the reduced-and-unwelcome amber the table above uses for
+## "less than you had", built in `apply_palette` for the same reason the others are.
+static var BREACH_STYLE := {}
+
 ## **THE ALERT PAIR'S MARK** — `feral` and `lapsed`, an investment GONE. The same `⚠` the ladder's own
 ## `RUNG_ALERT` style wears and the same one every hazard in this HUD wears, which is exactly why it
 ## is worth keeping exclusive: a mark that also appears on a routine crew cut means nothing anywhere.
@@ -494,6 +548,7 @@ static func apply_palette() -> void:
 		"bracket=child": {"glyph": STATUS_SHED_GLYPH, "color": HudStyle.DANGER,
 			"rung": RUNG_ALERT},
 	}
+	BREACH_STYLE = {"glyph": STATUS_REDUCED_GLYPH, "color": HudStyle.WARN}
 	TURN_STAMP_COLOR = HudStyle.INK_DIM
 
 ## **THE STATUS TOKENS WHOSE ROW OFFERS THE WORK TAB** — a labor row the sim changed without being
@@ -596,6 +651,11 @@ const DETAIL_DESTINATION_KEY := "destination"
 ## name the home band as `band=` and the host as `host=` at once.
 const DETAIL_HOST_KEY := "host"
 
+## **THE FOURTH ROLE** (early diplomacy): the band that SENT a dealing to this people, repeated as
+## `sender=<id>` beside a label that names it through the sim's lower-case `band <id>`. Its own key for
+## the reason the others are: one line names the sender as `sender=` and the receiving band as `band=`.
+const DETAIL_SENDER_KEY := "sender"
+
 ## **THE SIM'S OWN SPELLING FOR THE DESTINATION, and it is LOWER-CASE** —
 ## `ExpeditionMission::destination_display`'s last-resort tier, `format!("band {}", id)` — reached
 ## when the party's destination is outside the viewer's roster, so no name can be resolved for it. Byte-identical to the sim or the substitution is a
@@ -612,13 +672,15 @@ const SIM_DESTINATION_LABEL_FORMAT := "band %d"
 ## `systems::population::faction_label`, output `Faction N` — byte-identical or the swap silently no-ops). `from=` / `to=`
 ## on `migrated`, `band_changed_hands` and `party_defected` are FACTION ids; `EventDockPanel` swaps the
 ## sim's `Faction <id>` for the faction's published name (`FactionMark.faction_name`).
-const PEOPLE_ID_TOKEN_KEYS: Array[String] = ["from", "to"]
+const PEOPLE_ID_TOKEN_KEYS: Array[String] = ["from", "to", "with", "breaker"]
 const SIM_FACTION_LABEL_FORMAT := "Faction %d"
 
 const BAND_ID_TOKEN_LABELS := {
 	DETAIL_BAND_KEY: SIM_BAND_LABEL_FORMAT,
 	DETAIL_DESTINATION_KEY: SIM_DESTINATION_LABEL_FORMAT,
 	DETAIL_HOST_KEY: SIM_DESTINATION_LABEL_FORMAT,
+	# A dealing's sender band (early diplomacy): the sim spells it `band <id>` like a destination.
+	DETAIL_SENDER_KEY: SIM_DESTINATION_LABEL_FORMAT,
 }
 
 # ---- rendering a detail as PROSE -------------------------------------------
@@ -663,6 +725,17 @@ const DETAIL_KEY_HIDDEN := {
 	"from": true,
 	"to": true,
 	"side": true,
+	# **DEALINGS AND TREATIES** (early diplomacy): the dealing id and the sender's band are join keys, the
+	# kind is said by the label ("A party from band 3 offers ..."), and the treaty's `with` / `breaker`
+	# are people the label names (swapped through `PEOPLE_ID_TOKEN_KEYS`). `carrier` and `reported` say
+	# how word travelled -- the label's own story -- and never read as content.
+	"dealing": true,
+	"sender": true,
+	"kind": true,
+	"with": true,
+	"breaker": true,
+	"carrier": true,
+	"reported": true,
 }
 
 ## **KEYS HIDDEN ONLY ON LINES CARRYING ONE `status=` TOKEN** — the rung-decay pair
@@ -671,6 +744,9 @@ const DETAIL_KEY_HIDDEN := {
 ## as raw tokens. Scoped rather than added to `DETAIL_KEY_HIDDEN`, because `x` / `y` are the only
 ## place a forage `trimmed` line names its tile.
 const DETAIL_KEY_HIDDEN_BY_STATUS := {
+	# A treaty's end carries `reason=ended` (the player's own command) or `borders_closed`: the label says
+	# who ended it and why in English, so the token would repeat it.
+	"status=ended": {"reason": true},
 	"status=slipping": {"rung": true, "progress": true, "x": true, "y": true, "reason": true},
 	"status=feral": {"rung": true, "progress": true, "x": true, "y": true, "reason": true},
 }
@@ -730,6 +806,15 @@ const DETAIL_VALUE_LABELS := {
 	"home_gone": "their home band is gone",
 	"host_not_found": "no sign of them where last seen",
 	"destination_not_found": "no sign of them where last seen",
+	# A dealing's stage and the reason one ended without an answer, said as phrases that continue the label.
+	"link_broken": "the road was broken",
+	"launch_failed": "the party could not set out",
+	"receiver_short": "they no longer held the return",
+	"offered": "waiting on your answer",
+	"posted": "waiting on their answer",
+	"expired": "lapsed unanswered",
+	"countered": "countered",
+	"settled": "settled",
 }
 
 ## Fragment separator. A middot rather than a comma: the fragments are peers, not a list.

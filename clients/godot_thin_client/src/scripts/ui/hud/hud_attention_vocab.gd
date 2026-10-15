@@ -252,7 +252,7 @@ const ATTENTION_PANEL_SUBJECT := "panel_subject"
 ## cannot keep is worse than no promise.
 const ATTENTION_KINDS_WITH_A_PANEL: Array[String] = [ATTENTION_KIND_DECISION,
     ATTENTION_KIND_KNOWLEDGE_LEARNED, ATTENTION_KIND_OPENING_LOADOUT,
-    ATTENTION_KIND_LOADOUT_KIT_SHORT]
+    ATTENTION_KIND_LOADOUT_KIT_SHORT, HudDealingsVocab.ATTENTION_KIND_DEALING]
 
 ## **SATISFIED / COMPLETE** — a standing requirement the player has finished meeting, drawn in
 ## `HudStyle.READY`. It ranks BELOW `info` (see `TurnOrb.SEVERITY_RANK`), so a row wearing it never

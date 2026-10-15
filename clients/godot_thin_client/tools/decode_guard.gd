@@ -424,10 +424,72 @@ func _assert_delta_chain(decoder: Object, baseline: Dictionary) -> bool:
 		_die("%s reads '%s' after the second delta but delta 1 had set it to '%s'%s. Delta 2 does not carry this field at all, so its value can only come from the frame delta 1 published." % [OPAQUE_WITNESS_KEY, opaque_after_2, opaque_after_1, note])
 		return false
 
+	if not _assert_diplomacy_witnesses(baseline, frame1, frame2):
+		return false
+
 	print("decode_guard: delta chain merged (frame %d then %d on the baseline's %d; %d of delta 1's rows survived delta 2, and so did %s and %s)" % [
 		int(frame1.get(FRAME_SEQ_KEY, -1)), int(frame2.get(FRAME_SEQ_KEY, -1)),
 		int(baseline.get(FRAME_SEQ_KEY, -1)), carried, witness_key, OPAQUE_WITNESS_KEY,
 	])
+	return true
+
+
+## The DIPLOMACY whole sections' delta witnesses (`dealings`, `goodwill`, `treaties`).
+##
+## Delta 1 carries all three, REPLACED whole with visibly different rows, and one dealing FEWER, so a
+## decoder that patched by id instead of replacing the section fails on the count. Delta 2 carries
+## none, so their survival there is the merge starting from the frame before it, and an unchanged
+## section staying out of `changed_sections` is the sparse half. Every probe is read as a plain value
+## immediately, since merged arrays share row dictionaries between frames.
+const DIPLOMACY_SECTIONS := ["dealings", "goodwill", "treaties"]
+
+func _diplomacy_probe(frame: Dictionary) -> Dictionary:
+	var dealings: Array = frame.get("dealings", [])
+	var goodwill: Dictionary = frame.get("goodwill", {})
+	var known: Array = goodwill.get("known", [])
+	var own: Array = goodwill.get("own", [])
+	var treaties: Dictionary = frame.get("treaties", {})
+	var treaty_rows: Array = treaties.get("treaties", [])
+	return {
+		"dealing_count": dealings.size(),
+		"dealing_turns_left": int(dealings[0].get("turns_left", -1)) if not dealings.is_empty() else -1,
+		"known_total": float(known[0].get("total", 0.0)) if not known.is_empty() else 0.0,
+		"own_total": float(own[0].get("total", 0.0)) if not own.is_empty() else 0.0,
+		"treaty_formed": int(treaty_rows[0].get("formed_turn", -1)) if not treaty_rows.is_empty() else -1,
+		"has_cuts": goodwill.has("cuts"),
+	}
+
+
+func _assert_diplomacy_witnesses(baseline: Dictionary, frame1: Dictionary, frame2: Dictionary) -> bool:
+	var before := _diplomacy_probe(baseline)
+	var after_1 := _diplomacy_probe(frame1)
+	var after_2 := _diplomacy_probe(frame2)
+	if int(before["dealing_count"]) == 0 or int(before["treaty_formed"]) < 0 or not bool(before["has_cuts"]):
+		_die("the baseline carries no diplomacy rows (%s), so the delta witnesses below would compare against nothing." % str(before))
+		return false
+	var changed1: PackedStringArray = frame1.get(CHANGED_SECTIONS_KEY, PackedStringArray())
+	var changed2: PackedStringArray = frame2.get(CHANGED_SECTIONS_KEY, PackedStringArray())
+	for key in DIPLOMACY_SECTIONS:
+		if not changed1.has(key):
+			_die("delta 1's %s does not name %s though it carried it; the HUD gates its diplomacy refresh on that manifest." % [CHANGED_SECTIONS_KEY, key])
+			return false
+		if changed2.has(key):
+			_die("delta 2's %s names %s, but its fixture carries no diplomacy section; that absence is what makes the persistence claim meaningful." % [CHANGED_SECTIONS_KEY, key])
+			return false
+	if int(after_1["dealing_count"]) != int(before["dealing_count"]) - 1:
+		_die("delta 1 replaced `dealings` with %d rows, but the merged frame holds %d: the section must be REPLACED whole, since a dealing the delta no longer lists is one the sim retired." % [int(before["dealing_count"]) - 1, int(after_1["dealing_count"])])
+		return false
+	for probe in ["dealing_turns_left", "known_total", "own_total", "treaty_formed"]:
+		if after_1[probe] == before[probe]:
+			_die("delta 1's `%s` reads %s, the BASELINE's value, so the diplomacy section never reached the merged frame." % [probe, str(after_1[probe])])
+			return false
+		if after_2[probe] != after_1[probe]:
+			_die("`%s` reads %s after delta 2 but delta 1 set it to %s; delta 2 carries no diplomacy section, so an unchanged section must stay as the frame before it left it." % [probe, str(after_2[probe]), str(after_1[probe])])
+			return false
+	if int(after_2["dealing_count"]) != int(after_1["dealing_count"]) or not bool(after_2["has_cuts"]):
+		_die("delta 2 lost delta 1's dealings or the goodwill cuts (%s vs %s)." % [str(after_2), str(after_1)])
+		return false
+	print("decode_guard: diplomacy sections replaced whole by delta 1 (%d -> %d dealings) and kept intact through delta 2" % [int(before["dealing_count"]), int(after_1["dealing_count"])])
 	return true
 
 

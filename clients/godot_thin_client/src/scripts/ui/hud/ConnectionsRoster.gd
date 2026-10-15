@@ -103,7 +103,8 @@ static func remembered_line(tie: Dictionary, current_turn: int) -> String:
 ## the list scrolls. The scroll reports no minimum on its axis; its declared viewport is
 ## `list_viewport_height(<the zone's box height>)`, so the list's own height never reaches the panel.
 static func build_tab(band_id: int, band_labor: HudBandLaborState,
-		box_height: float, on_station: Callable = Callable()) -> VBoxContainer:
+		box_height: float, on_station: Callable = Callable(),
+		diplomacy: Dictionary = {}) -> VBoxContainer:
 	var column := HudWidgets.make_zone_column()
 	column.name = HudConnectionsVocab.BLOCK_NAME
 	column.add_theme_constant_override("separation", HudWorkVocab.ZONE_BLOCK_SEPARATION)
@@ -132,27 +133,27 @@ static func build_tab(band_id: int, band_labor: HudBandLaborState,
 	rows.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
 	gutter.add_child(rows)
 	column.add_child(scroll)
-	_fill_rows(rows, ties, band_labor, band_id, on_station)
+	_fill_rows(rows, ties, band_labor, band_id, on_station, diplomacy)
 	return column
 
 ## **THE WIDE SHELL'S SECTION** — the same head and rows, with no scroll of its own: it rides at the
 ## foot of the Parties zone's sanctioned list, after Trade's section, and that list scrolls.
 static func build_section(band_id: int, band_labor: HudBandLaborState,
-		on_station: Callable = Callable()) -> VBoxContainer:
+		on_station: Callable = Callable(), diplomacy: Dictionary = {}) -> VBoxContainer:
 	var block := HudWidgets.make_zone_block()
 	block.name = HudConnectionsVocab.BLOCK_NAME
 	var ties := ordered(band_labor.connections_for_band(band_id))
 	block.add_child(_build_head(ties.size()))
 	var rows := _make_rows_box()
 	block.add_child(rows)
-	_fill_rows(rows, ties, band_labor, band_id, on_station)
+	_fill_rows(rows, ties, band_labor, band_id, on_station, diplomacy)
 	return block
 
 ## **RE-FILL A BUILT TAB OR SECTION IN PLACE** — the head's count and the rows, nothing else. The
 ## tab's scroll and its offset survive, which is what lets a connections-only frame refresh the list
 ## without throwing the player back to its top.
 static func refill(block: Control, band_id: int, band_labor: HudBandLaborState,
-		on_station: Callable = Callable()) -> void:
+		on_station: Callable = Callable(), diplomacy: Dictionary = {}) -> void:
 	var rows := rows_box(block)
 	if block == null or rows == null or block.get_child_count() == 0:
 		return
@@ -163,7 +164,7 @@ static func refill(block: Control, band_id: int, band_labor: HudBandLaborState,
 	var head := _build_head(ties.size())
 	block.add_child(head)
 	block.move_child(head, 0)
-	_fill_rows(rows, ties, band_labor, band_id, on_station)
+	_fill_rows(rows, ties, band_labor, band_id, on_station, diplomacy)
 
 ## The rows box inside a built tab or section, found by its node name.
 static func rows_box(block: Node) -> VBoxContainer:
@@ -195,10 +196,23 @@ static func _make_rows_box() -> VBoxContainer:
 
 ## One two-line row per tie in `ordered` order, or the one-line empty state.
 static func _fill_rows(rows: VBoxContainer, ties: Array, band_labor: HudBandLaborState,
-		band_id: int, on_station: Callable) -> void:
+		band_id: int, on_station: Callable, diplomacy: Dictionary = {}) -> void:
 	HudWidgets.clear_children(rows)
+	# **THE DIPLOMACY BLOCK RIDES ABOVE THE TIES**, in the same scroll: one block per other people
+	# (`PeoplesDiplomacy`), then the bands this one knows. It is bounded by the number of peoples, so it
+	# needs no tab of its own; the ties list below stays the unbounded one.
+	var block: Control = null
+	if not diplomacy.is_empty():
+		block = PeoplesDiplomacy.build_block(band_labor, Dictionary(diplomacy.get("policy", {})),
+			Dictionary(diplomacy.get("actions", {})))
+	if block != null:
+		rows.add_child(block)
+		if not ties.is_empty():
+			rows.add_child(HudWidgets.alloc_section_label(HudDealingsVocab.BANDS_SECTION))
 	if ties.is_empty():
-		rows.add_child(HudWidgets.alloc_hint_label(HudConnectionsVocab.EMPTY))
+		# With a diplomacy block above, "no people met" would contradict it.
+		if block == null:
+			rows.add_child(HudWidgets.alloc_hint_label(HudConnectionsVocab.EMPTY))
 		return
 	var turn := band_labor.current_turn()
 	for tie_variant in ties:
