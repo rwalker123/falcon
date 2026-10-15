@@ -1251,6 +1251,8 @@ impl TransferDirection {
 /// | `PartyHome` | route | a party's **own pack** coming home — a hunting party's drop-off, the `Returning` fold-back, a cancel in camp |
 /// | `PartyProvisions` | route | a party's **launch larder** — a scout's, and a shipment party's |
 /// | `ShipmentReturned` | route | a trade party's **undelivered cargo** coming home — the `Returning` fold-back, a cancel in camp |
+/// | `ExchangeOut` | route | the receiving band paying the return on an accepted offer (`dealings::answer_dealing`) |
+/// | `ExchangeIn` | route | that return landing in the party's home band on the fold-back |
 ///
 /// **`PartyHome`, `PartyProvisions` and the dowry are not trade**: they are the band's own people
 /// and the band's own split. The ledger still books them (they cross the larder through neither
@@ -1284,6 +1286,15 @@ pub enum TransferCause {
     /// which means *our own* party came home: these are strangers who arrived. The counterparty is
     /// the band the party was sent out from, with its people, so the row says where they came from.
     PartyDefected,
+    /// **The receiver paying the return on an accepted offer** — goods leaving the receiving band
+    /// into the waiting party's cargo (`dealings::answer_dealing`). The counterparty is the band
+    /// that sent the offer, with its people. The food it books on the route arm is the receiver's
+    /// `transferSent`, which is what keeps its larder identity closed when it pays out of the larder.
+    ExchangeOut,
+    /// **The return coming home** — the party's cargo after an accepted offer landing in its home
+    /// band on the fold-back ([`ExpeditionMission::returning_cargo_cause`]). It answers the
+    /// receiver's [`Self::ExchangeOut`]: the same party, and the destination as counterparty.
+    ExchangeIn,
 }
 
 impl TransferCause {
@@ -1299,7 +1310,9 @@ impl TransferCause {
             | TransferCause::PartyHome
             | TransferCause::PartyProvisions
             | TransferCause::ShipmentReturned
-            | TransferCause::PartyDefected => TransferLink::Route,
+            | TransferCause::PartyDefected
+            | TransferCause::ExchangeOut
+            | TransferCause::ExchangeIn => TransferLink::Route,
         }
     }
 
@@ -1316,6 +1329,8 @@ impl TransferCause {
             TransferCause::PartyProvisions => 6,
             TransferCause::ShipmentReturned => 7,
             TransferCause::PartyDefected => 8,
+            TransferCause::ExchangeOut => 9,
+            TransferCause::ExchangeIn => 10,
         }
     }
 }
@@ -2128,6 +2143,29 @@ pub struct BandId(pub u64);
 #[derive(Component, Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct BandName(pub String);
 
+/// **What a shipment is on offer as** — the one thing a `send_trade_expedition` order says beyond
+/// what it carries (`docs/plan_early_diplomacy.md` §1).
+///
+/// A shipment is an offer. The receiving people's **standing answer** resolves it the turn the party
+/// arrives (a gift to one's own people, with that people's standing answer on); every offer no
+/// standing answer covers becomes a pending [`crate::dealings::Dealing`] the receiver answers.
+/// Which of the two a shipment is does not depend on this enum alone: [`Self::Gift`] to another
+/// people is pending too, and the standing answer is what [`crate::dealings::standing_answer_covers`]
+/// reads.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ShipmentTerms {
+    /// Asks nothing back. The default — the shipment verb's behaviour before offers existed.
+    #[default]
+    Gift,
+    /// Always pending: the receiver names the return, or refuses.
+    Offer,
+    /// **The receiver accepted, and what the party carries now is the receiver's return.** Set by
+    /// the answer, never at launch. It exists so the fold-back books the cargo as the exchange's
+    /// return ([`TransferCause::ExchangeIn`]) rather than as a shipment that never arrived
+    /// ([`TransferCause::ShipmentReturned`]).
+    Returned,
+}
+
 /// What an expedition was sent to do: `Scout` (explore + report the map), `Deny` (erase a herd) or
 /// `Trade` (carry a shipment to another band) — three verbs on one traveling-party system. A far
 /// *hunt* is not a mission: it is a work party (`crate::work_party`), posted by a band's own labour.
@@ -2212,6 +2250,10 @@ pub enum ExpeditionMission {
         /// client falls back to whatever it calls that band everywhere else. Inventing a naming
         /// scheme to fill it is a separate piece of design, not a field default.
         destination_name: String,
+        /// **What the cargo is on offer as** — see [`ShipmentTerms`]. Fixed at launch (`Returned`
+        /// is the one value the party itself moves to, when its receiver accepts an offer and the
+        /// cargo aboard becomes the receiver's return).
+        terms: ShipmentTerms,
     },
     /// **Post part of a band at another band it holds a live tie with** — a stationed party
     /// (`docs/plan_contact_and_logistics.md` "Settled by #774", `.claude/rules/core_sim/expeditions.md`
@@ -2291,6 +2333,7 @@ impl ExpeditionMission {
                 destination_band: BandId(destination_band),
                 destination_faction: FactionId(destination_faction),
                 destination_name: destination_name.to_string(),
+                terms: ShipmentTerms::default(),
             },
             "station" => ExpeditionMission::Station {
                 host_band: BandId(destination_band),
@@ -2309,6 +2352,26 @@ impl ExpeditionMission {
                 destination_band, ..
             } => Some(*destination_band),
             _ => None,
+        }
+    }
+
+    /// **What a shipment is on offer as**, for the one mission that carries goods to another band
+    /// — `None` for every other verb.
+    pub fn shipment_terms(&self) -> Option<ShipmentTerms> {
+        match self {
+            ExpeditionMission::Trade { terms, .. } => Some(*terms),
+            _ => None,
+        }
+    }
+
+    /// **The cause the cargo books under when it comes home** — a return the receiver paid
+    /// ([`TransferCause::ExchangeIn`]) or a shipment that never landed
+    /// ([`TransferCause::ShipmentReturned`]). The one place the two are told apart, so the
+    /// fold-back's two sites cannot disagree.
+    pub fn returning_cargo_cause(&self) -> TransferCause {
+        match self.shipment_terms() {
+            Some(ShipmentTerms::Returned) => TransferCause::ExchangeIn,
+            _ => TransferCause::ShipmentReturned,
         }
     }
 

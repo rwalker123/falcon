@@ -306,6 +306,7 @@ fn spawn_hay_shipment(
                     destination_band: destination,
                     destination_faction,
                     destination_name: "the neighbours".to_string(),
+                    terms: Default::default(),
                 },
                 phase: ExpeditionPhase::Outbound,
                 announced: false,
@@ -384,8 +385,12 @@ fn a_hay_shipment_lands_on_the_fodder_route_arm_and_leaves_the_food_identity_alo
     let party = spawn_hay_shipment(&mut app, sender, host_id, host_pos, CARGO_FODDER);
     let party_id = band_id(&app, party);
 
+    // The party arrives and posts; measured before the answer, then the receiver accepts and the
+    // cargo lands inside the next turn's window.
+    run_turn(&mut app);
     let host_hay_before = hay(&app, host);
     let host_larder_before = larder(&app, host);
+    accept_pending(&mut app);
     run_turn(&mut app);
 
     let host_rows = rows_of(&app, host_id);
@@ -435,10 +440,11 @@ fn a_hay_shipment_lands_on_the_fodder_route_arm_and_leaves_the_food_identity_alo
             .next()
             .map(|expedition| expedition.cargo.get(FODDER).to_f32())
     };
-    assert_eq!(
-        leftover,
-        Some(0.0),
-        "a delivered shipment leaves the party's hay account empty"
+    // The party has either folded back already (it turned for home the moment the answer landed) or
+    // is still walking with an empty hold — never carrying the hay it delivered.
+    assert!(
+        leftover.is_none_or(|hay| hay == 0.0),
+        "a delivered shipment leaves the party's hay account empty: {leftover:?}"
     );
 }
 
@@ -612,6 +618,31 @@ fn hay_crossings(app: &bevy::prelude::App, band: BandId) -> Vec<(u8, u8, u8, u64
         .unwrap_or_default()
 }
 
+/// **A gift to another people waits to be answered** (`docs/plan_early_diplomacy.md` §1). What this
+/// file pins is the ledger around the hand-over, so the receiver accepts whatever is waiting,
+/// naming no return. The party is posted on one turn and the cargo lands in the next frame's window
+/// — the books close over the turn the answer falls in, and anything measured "before" is taken
+/// before the answer.
+fn accept_pending(app: &mut bevy::prelude::App) {
+    let waiting: Vec<_> = app
+        .world
+        .resource::<core_sim::PendingDealings>()
+        .iter()
+        .map(|dealing| (dealing.id, dealing.receiver_faction))
+        .collect();
+    for (id, receiver) in waiting {
+        core_sim::answer_dealing(
+            &mut app.world,
+            receiver,
+            id,
+            &core_sim::DealingAnswer::Accept {
+                returned: Vec::new(),
+            },
+        )
+        .expect("the receiver accepts a bare gift");
+    }
+}
+
 /// **A landed hay shipment is one `ShipmentIn` row on the route arm** — the whole of the fodder
 /// route arm it refines, naming the band that sent it and the party that carried it.
 #[test]
@@ -625,6 +656,8 @@ fn a_landed_hay_shipment_is_a_shipment_in_row_naming_its_sender_and_party() {
     let party = spawn_hay_shipment(&mut app, sender, host_id, host_pos, CARGO_FODDER);
     let party_id = band_id(&app, party);
 
+    run_turn(&mut app);
+    accept_pending(&mut app);
     run_turn(&mut app);
 
     let rows = hay_crossings(&app, host_id);

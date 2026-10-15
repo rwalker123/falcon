@@ -210,6 +210,11 @@ pub struct SimState {
     /// Each people's Open Borders setting. Mutated only by `set_open_borders`, which is still state
     /// a rollback has to put back — the same reason `security_policies` rides here.
     pub border_policies: FactionBorderPolicies,
+    /// **Every pending dealing, and the counter its next id comes from** (`crate::dealings`). State:
+    /// the goods of a dealing in flight have already left the sender, so a restore that dropped the
+    /// book would strand a party in a camp with nobody waiting on it, and one that dropped the
+    /// counter would re-issue an id a client still holds. Restored whole.
+    pub pending_dealings: crate::dealings::PendingDealings,
     /// Every faction's name. **The save wins**: minted once by worldgen, then carried, so a pool
     /// edit never renames a saved world's factions.
     pub faction_names: crate::faction_names::FactionNames,
@@ -448,6 +453,10 @@ pub fn capture_sim_state(world: &World) -> SimState {
         faction_inventory: world.resource::<FactionInventory>().clone(),
         security_policies: world.resource::<FactionSecurityPolicies>().clone(),
         border_policies: world.resource::<FactionBorderPolicies>().clone(),
+        pending_dealings: world
+            .get_resource::<crate::dealings::PendingDealings>()
+            .cloned()
+            .unwrap_or_default(),
         faction_names: world
             .get_resource::<crate::faction_names::FactionNames>()
             .cloned()
@@ -660,6 +669,7 @@ pub fn restore_sim_state(world: &mut World, state: &SimState) {
     world.insert_resource(state.faction_inventory.clone());
     world.insert_resource(state.security_policies.clone());
     world.insert_resource(state.border_policies.clone());
+    world.insert_resource(state.pending_dealings.clone());
     world.insert_resource(state.faction_names.clone());
     world.insert_resource(state.factions.clone());
     world.insert_resource(state.hearts.clone());

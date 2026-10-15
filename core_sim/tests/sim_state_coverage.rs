@@ -42,7 +42,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 /// Mutated across turns, and a later turn reads it. A checkpoint that omits any of these produces
 /// a world that diverges from the one it claims to restore.
-const SIM_STATE_RESOURCES: [&str; 50] = [
+const SIM_STATE_RESOURCES: [&str; 51] = [
     "ActiveCrisisLedger",
     // Belief on every place. Only ever grows and outlives the bands whose dead put it there, so
     // nothing rebuilds it — the roads' reason exactly.
@@ -74,6 +74,10 @@ const SIM_STATE_RESOURCES: [&str; 50] = [
     "EspionageRoster",
     // Mutated only by `set_open_borders`, which is still state a rollback has to put back.
     "FactionBorderPolicies",
+    // Every pending dealing and the counter its next id comes from. The goods of an offer in flight
+    // have already left the sender, so a restore that dropped the book would strand a party in a
+    // camp with nobody waiting on it.
+    "PendingDealings",
     // Minted once by worldgen and carried: the save wins over a later pool edit.
     "FactionNames",
     // **The roster.** A world static while it was built once per world; a cut-off group of bands
@@ -331,7 +335,9 @@ const CONFIG_RESOURCES: [&str; 48] = [
 
 /// The remaining config handles, split out only because Rust array consts need a fixed length and
 /// one 50-entry literal reads worse than two.
-const CONFIG_RESOURCES_CONT: [&str; 27] = [
+const CONFIG_RESOURCES_CONT: [&str; 29] = [
+    "DiplomacyConfigHandle",
+    "DiplomacyConfigMetadata",
     "BeliefConfigHandle",
     "BeliefConfigMetadata",
     "ConnectionsConfigHandle",

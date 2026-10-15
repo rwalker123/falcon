@@ -1452,6 +1452,21 @@ enum Command {
         cargo: Vec<TradeCargoItem>,
         /// See [`Command::SendDenialRaid::kit_id`].
         kit_id: Option<String>,
+        /// An offer (always pending an answer) rather than a gift.
+        offer: bool,
+    },
+    /// **The standing answer** (`docs/plan_early_diplomacy.md` §1) — whether `faction` takes a gift
+    /// from its own people on arrival. Gated like `set_open_borders`.
+    SetAcceptOwnGifts {
+        faction: FactionId,
+        accept: bool,
+    },
+    /// **Answer a pending dealing** — the one answer verb. Only the receiving people may answer.
+    AnswerDealing {
+        faction: FactionId,
+        dealing_id: u64,
+        accept: bool,
+        returned: Vec<TradeCargoItem>,
     },
     /// **The stationed party** (`docs/plan_contact_and_logistics.md` "Settled by #774") — part of a
     /// band posted at another band it holds a live tie with. Gated on the connection, and on the
@@ -7090,6 +7105,7 @@ fn handle_send_trade_expedition(
     destination_band_id: u64,
     cargo: Vec<TradeCargoItem>,
     kit_id: Option<String>,
+    offer: bool,
 ) {
     const VERB: &str = "send_trade_expedition";
     // **The kit fails closed**, resolved before anything is drawn — the rule both raiding verbs
@@ -7191,6 +7207,13 @@ fn handle_send_trade_expedition(
         destination_band: shipment.destination_band,
         destination_faction: shipment.destination_faction,
         destination_name: shipment.destination_name,
+        // What the cargo is on offer as. A gift lands on arrival when the receiver's standing
+        // answer covers it; an offer always waits for the receiving people to answer.
+        terms: if offer {
+            core_sim::ShipmentTerms::Offer
+        } else {
+            core_sim::ShipmentTerms::Gift
+        },
     };
     // Read BEFORE the mission moves into the launch: the counterparty every cargo row names, from
     // the one place an undelivered homecoming will read it too.
@@ -7563,7 +7586,12 @@ fn cancel_party_standing_in_camp(
     // with nothing against it.
     let party_band = app.world.get::<BandId>(entity).copied();
     if let Some(mut allocation) = app.world.get_mut::<LaborAllocation>(expedition.home_band) {
-        fold.book_home(&mut allocation, party_band, expedition.mission.consignee());
+        fold.book_home(
+            &mut allocation,
+            party_band,
+            expedition.mission.consignee(),
+            expedition.mission.returning_cargo_cause(),
+        );
     }
     Some(CancelledInCamp {
         position,
@@ -11134,6 +11162,7 @@ fn command_from_payload(
             destination_band_id,
             cargo,
             kit_id,
+            offer,
         } => Some(Command::SendTradeExpedition {
             faction: FactionId(faction_id),
             band_id,
@@ -11141,6 +11170,24 @@ fn command_from_payload(
             destination_band_id,
             cargo,
             kit_id,
+            offer,
+        }),
+        ProtoCommandPayload::SetAcceptOwnGifts { faction, accept } => {
+            Some(Command::SetAcceptOwnGifts {
+                faction: FactionId(faction),
+                accept,
+            })
+        }
+        ProtoCommandPayload::AnswerDealing {
+            faction,
+            dealing_id,
+            accept,
+            returned,
+        } => Some(Command::AnswerDealing {
+            faction: FactionId(faction),
+            dealing_id,
+            accept,
+            returned,
         }),
         ProtoCommandPayload::StationExpedition {
             faction_id,
@@ -11993,6 +12040,7 @@ fn command_kind_display(kind: CommandEventKind) -> &'static str {
         CommandEventKind::StartingLoadout => "Outfit",
         CommandEventKind::BandBrokeAway => "Band broke away",
         CommandEventKind::LostTouch => "Lost touch",
+        CommandEventKind::Dealing => "Dealing",
     }
 }
 
@@ -12227,6 +12275,8 @@ fn commanding_faction(command: &Command) -> Option<(FactionId, &'static str)> {
             Some((*faction, "counter_intel_budget"))
         }
         Command::SetOpenBorders { faction, .. } => Some((*faction, "set_open_borders")),
+        Command::SetAcceptOwnGifts { faction, .. } => Some((*faction, "set_accept_own_gifts")),
+        Command::AnswerDealing { faction, .. } => Some((*faction, "answer_dealing")),
         Command::SpawnCrisis { faction, .. } => Some((*faction, "spawn_crisis")),
         Command::AssignLabor { faction, .. } => Some((*faction, "assign_labor")),
         Command::MoveBand { faction, .. } => Some((*faction, "move_band")),
@@ -12595,6 +12645,7 @@ fn apply_command(app: &mut bevy::prelude::App, command: Command) {
             destination_band_id,
             cargo,
             kit_id,
+            offer,
         } => {
             handle_send_trade_expedition(
                 app,
@@ -12604,7 +12655,19 @@ fn apply_command(app: &mut bevy::prelude::App, command: Command) {
                 destination_band_id,
                 cargo,
                 kit_id,
+                offer,
             );
+        }
+        Command::SetAcceptOwnGifts { faction, accept } => {
+            handle_set_accept_own_gifts(app, faction, accept);
+        }
+        Command::AnswerDealing {
+            faction,
+            dealing_id,
+            accept,
+            returned,
+        } => {
+            handle_answer_dealing(app, faction, dealing_id, accept, returned);
         }
         Command::StationExpedition {
             faction,
@@ -13033,6 +13096,57 @@ fn handle_set_open_borders(app: &mut bevy::prelude::App, faction: FactionId, ope
         open,
         "open_borders.updated"
     );
+}
+
+/// **Set a people's standing answer to a gift from its own people**
+/// (`docs/plan_early_diplomacy.md` §1). Membership and the seat gate have already run, so this only
+/// records the setting; it is read when a shipment arrives.
+fn handle_set_accept_own_gifts(app: &mut bevy::prelude::App, faction: FactionId, accept: bool) {
+    app.world
+        .resource_mut::<FactionBorderPolicies>()
+        .set_accept_own_gifts(faction, accept);
+    info!(
+        target: "shadow_scale::server",
+        %faction,
+        accept,
+        "accept_own_gifts.updated"
+    );
+}
+
+/// **Answer a pending dealing** — `answer_dealing <faction> <id> accept [goods…] | refuse`. The
+/// seat gate and membership have run; [`core_sim::answer_dealing`] checks that the dealing is
+/// addressed to `faction`'s people and, for an accept, every fact the return depends on **before
+/// anything moves**. A refused answer is a command failure with the reason and leaves both bands
+/// and the party as they stood.
+fn handle_answer_dealing(
+    app: &mut bevy::prelude::App,
+    faction: FactionId,
+    dealing_id: u64,
+    accept: bool,
+    returned: Vec<TradeCargoItem>,
+) {
+    let answer = if accept {
+        core_sim::DealingAnswer::Accept { returned }
+    } else {
+        core_sim::DealingAnswer::Refuse
+    };
+    match core_sim::answer_dealing(
+        &mut app.world,
+        faction,
+        core_sim::DealingId(dealing_id),
+        &answer,
+    ) {
+        Ok(report) => info!(
+            target: "shadow_scale::server",
+            %faction,
+            dealing = report.id.0,
+            accepted = report.accepted,
+            "dealing.answered"
+        ),
+        Err(reason) => {
+            emit_command_failure(app, CommandEventKind::Dealing, faction, reason);
+        }
+    }
 }
 
 fn handle_adjust_counter_intel_budget(
@@ -22924,6 +23038,7 @@ mod tests {
             stranger,
             food_cargo(TRADE_CARGO_FOOD),
             None,
+            false,
         );
         assert!(
             launched_party(&mut app).is_none(),
@@ -22938,6 +23053,7 @@ mod tests {
             destination.0,
             food_cargo(TRADE_CARGO_FOOD),
             None,
+            false,
         );
         let party = launched_party(&mut app).expect("a live tie lets the shipment leave");
         let mission = app
@@ -22951,6 +23067,71 @@ mod tests {
             Some(destination),
             "the party is bound for the band the order named"
         );
+    }
+
+    /// **The verb's `offer` word reaches the party's mission**, and its default is the gift the verb
+    /// always sent (`docs/plan_early_diplomacy.md` §1).
+    #[test]
+    fn an_offer_order_launches_a_party_on_offer_terms_and_the_default_is_a_gift() {
+        for (offer, expected) in [
+            (true, core_sim::ShipmentTerms::Offer),
+            (false, core_sim::ShipmentTerms::Gift),
+        ] {
+            let mut app = build_world_app();
+            let (sender, destination, faction) = two_bands_that_know_each_other(&mut app);
+            let sender_id = app.world.get::<core_sim::BandId>(sender).expect("an id").0;
+            handle_send_trade_expedition(
+                &mut app,
+                faction,
+                Some(sender_id),
+                TRADE_PARTY,
+                destination.0,
+                food_cargo(TRADE_CARGO_FOOD),
+                None,
+                offer,
+            );
+            let party = launched_party(&mut app).expect("the shipment left");
+            assert_eq!(
+                app.world
+                    .get::<Expedition>(party)
+                    .expect("the party")
+                    .mission
+                    .shipment_terms(),
+                Some(expected)
+            );
+        }
+    }
+
+    /// **`set_accept_own_gifts` writes the standing answer**, and the answer verb refuses a dealing
+    /// nobody posted with a reason on the feed rather than moving anything.
+    #[test]
+    fn the_standing_answer_verb_sets_the_policy_and_an_unknown_dealing_is_a_command_failure() {
+        let mut app = build_world_app();
+        let faction = FactionId(0);
+        assert!(app
+            .world
+            .resource::<FactionBorderPolicies>()
+            .accepts_own_gifts(faction));
+        handle_set_accept_own_gifts(&mut app, faction, false);
+        assert!(!app
+            .world
+            .resource::<FactionBorderPolicies>()
+            .accepts_own_gifts(faction));
+        handle_set_accept_own_gifts(&mut app, faction, true);
+        assert!(app
+            .world
+            .resource::<FactionBorderPolicies>()
+            .accepts_own_gifts(faction));
+
+        handle_answer_dealing(&mut app, faction, 99, false, Vec::new());
+        let failures: Vec<String> = app
+            .world
+            .resource::<CommandEventLog>()
+            .iter()
+            .filter(|entry| matches!(entry.kind, CommandEventKind::Dealing))
+            .map(|entry| entry.label.clone())
+            .collect();
+        assert_eq!(failures.len(), 1, "one failure line: {failures:?}");
     }
 
     /// **The debit is exactly the manifest plus the walk's larder.** The sending band loses what it
@@ -22970,6 +23151,7 @@ mod tests {
             destination.0,
             food_cargo(TRADE_CARGO_FOOD),
             None,
+            false,
         );
         let party = launched_party(&mut app).expect("the shipment left");
         let (cargo, pack) = {
@@ -23014,6 +23196,7 @@ mod tests {
             destination.0,
             food_cargo(OVER_CAP_FOOD),
             None,
+            false,
         );
 
         assert!(
@@ -23112,6 +23295,7 @@ mod tests {
             destination.0,
             food_cargo(client_cap + OVER_CAP_STEP),
             None,
+            false,
         );
         assert!(
             launched_party(&mut app).is_none(),
@@ -23133,6 +23317,7 @@ mod tests {
             destination.0,
             food_cargo(client_cap),
             None,
+            false,
         );
         let party = launched_party(&mut app)
             .expect("a manifest of exactly the published cap fits the party's packs");
@@ -23199,6 +23384,7 @@ mod tests {
             destination.0,
             cargo,
             None,
+            false,
         );
         assert!(
             launched_party(&mut app).is_none(),
@@ -23231,6 +23417,7 @@ mod tests {
             destination.0,
             cargo,
             None,
+            false,
         );
         let party = launched_party(&mut app).expect("a manifest inside the pack launches");
         let expedition = app.world.get::<Expedition>(party).expect("the party");
@@ -23273,6 +23460,7 @@ mod tests {
             destination.0,
             cargo,
             None,
+            false,
         );
         let party = launched_party(&mut app).expect("the shipment left");
         let walking_larder = app
@@ -23376,6 +23564,7 @@ mod tests {
             destination.0,
             food_cargo(TRADE_CARGO_FOOD),
             None,
+            false,
         );
         let party = launched_party(&mut app).expect("the shipment left");
         let party_id = *app
@@ -23507,6 +23696,7 @@ mod tests {
             destination.0,
             manifest,
             None,
+            false,
         );
         let party = launched_party(&mut app).expect("the shipment left");
         let party_id = *app
@@ -23638,6 +23828,7 @@ mod tests {
             destination.0,
             fodder_cargo(TRADE_CARGO_FODDER),
             None,
+            false,
         );
 
         assert!(
@@ -23660,6 +23851,7 @@ mod tests {
             destination.0,
             fodder_cargo(TRADE_CARGO_FODDER),
             None,
+            false,
         );
         assert!(
             launched_party(&mut app).is_some(),
@@ -23712,6 +23904,7 @@ mod tests {
                 destination.0,
                 cargo.clone(),
                 None,
+                false,
             );
             assert!(
                 launched_party(&mut app).is_none(),
@@ -23741,6 +23934,7 @@ mod tests {
             destination.0,
             food_cargo(TRADE_CARGO_FOOD),
             None,
+            false,
         );
         let party = launched_party(&mut app).expect("the shipment left");
         let party_band = app
@@ -23757,6 +23951,7 @@ mod tests {
             party_band,
             food_cargo(TRADE_CARGO_FOOD),
             None,
+            false,
         );
         let parties = {
             let mut query = app.world.query_filtered::<Entity, With<Expedition>>();
@@ -24218,6 +24413,7 @@ mod tests {
             destination.0,
             food_cargo(TRADE_CARGO_FOOD),
             None,
+            false,
         );
         let party = launched_party(&mut app).expect("the shipment left");
         let mission = app

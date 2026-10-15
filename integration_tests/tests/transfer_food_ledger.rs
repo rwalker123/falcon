@@ -479,7 +479,11 @@ fn the_food_ledger_reconciles_when_a_shipment_lands() {
     };
     spawn_shipment(&mut app, sender, host_id, host_pos, CARGO_FOOD);
 
+    // The party arrives and posts; measured before the answer, then the receiver accepts and the
+    // cargo lands inside the next turn's window.
+    run_turn(&mut app);
     let host_before = larder(&app, host);
+    accept_pending(&mut app);
     run_turn(&mut app);
     let host_after = larder(&app, host);
 
@@ -498,6 +502,31 @@ fn the_food_ledger_reconciles_when_a_shipment_lands() {
         "the receiving band's ledger must reconcile: delta={delta} vs {} ({ledger:?})",
         ledger.expected_delta()
     );
+}
+
+/// **A gift to another people waits to be answered** (`docs/plan_early_diplomacy.md` §1). What this
+/// file pins is the ledger around the hand-over, so the receiver accepts whatever is waiting,
+/// naming no return. The party is posted on one turn and the cargo lands in the next frame's window
+/// — the books close over the turn the answer falls in, and anything measured "before" is taken
+/// before the answer.
+fn accept_pending(app: &mut bevy::prelude::App) {
+    let waiting: Vec<_> = app
+        .world
+        .resource::<core_sim::PendingDealings>()
+        .iter()
+        .map(|dealing| (dealing.id, dealing.receiver_faction))
+        .collect();
+    for (id, receiver) in waiting {
+        core_sim::answer_dealing(
+            &mut app.world,
+            receiver,
+            id,
+            &core_sim::DealingAnswer::Accept {
+                returned: Vec::new(),
+            },
+        )
+        .expect("the receiver accepts a bare gift");
+    }
 }
 
 /// Spawn a loaded trade party bound for `destination`, the way the launch command builds one. The
@@ -548,6 +577,7 @@ fn spawn_shipment(
                     destination_band: destination,
                     destination_faction,
                     destination_name: "the neighbours".to_string(),
+                    terms: Default::default(),
                 },
                 phase: ExpeditionPhase::Outbound,
                 announced: false,

@@ -174,6 +174,32 @@ pub struct ExpeditionConfigs<'w> {
     /// borders open for the post to last. `None` reads as open (the seeded value), for the hand-rolled
     /// test worlds that never installed the resource. In the bundle for the 16-parameter reason.
     pub borders: Option<Res<'w, crate::resources::FactionBorderPolicies>>,
+    /// **The pending-dealing book and its wait** — a shipment its receiver's standing answer does not
+    /// cover is posted here instead of landing. In the bundle for the 16-parameter reason.
+    pub dealings: ExpeditionDealings<'w>,
+}
+
+/// What [`advance_expeditions`] needs to post a pending dealing. Both optional, for the hand-rolled
+/// test worlds that never installed them: no book to post to means the shipment lands directly,
+/// the behaviour before offers existed.
+#[derive(bevy::ecs::system::SystemParam)]
+pub struct ExpeditionDealings<'w> {
+    pub pending: Option<ResMut<'w, crate::dealings::PendingDealings>>,
+    pub config: Option<Res<'w, crate::diplomacy_config::DiplomacyConfigHandle>>,
+}
+
+impl ExpeditionDealings<'_> {
+    /// `offers.offer_wait_turns` — the installed config's, else the builtin's.
+    pub fn offer_wait_turns(&self) -> u32 {
+        match self.config.as_deref() {
+            Some(handle) => handle.get().offers.offer_wait_turns,
+            None => {
+                crate::diplomacy_config::DiplomacyConfig::builtin()
+                    .offers
+                    .offer_wait_turns
+            }
+        }
+    }
 }
 
 /// The configs and logs [`advance_band_movement`] reads, bundled (the [`ExpeditionConfigs`] idiom).
@@ -792,7 +818,7 @@ pub fn advance_party_defection(
 #[allow(clippy::too_many_arguments)] // Bevy system parameters require explicit resource access
 pub fn advance_expeditions(
     mut commands: Commands,
-    configs: ExpeditionConfigs,
+    mut configs: ExpeditionConfigs,
     sim_config: Res<SimulationConfig>,
     tile_registry: Res<TileRegistry>,
     tick: Res<SimulationTick>,
@@ -1665,95 +1691,121 @@ pub fn advance_expeditions(
                             // standing in their camp, and presence beats the ledger. The tie gates the
                             // *launch* — deciding to send goods to a people you have no dealings with —
                             // and that decision was made turns ago.
-                            let carried_food = expedition.cargo.get(FOOD);
-                            let carried_fodder = expedition.cargo.get(FODDER);
-                            let carried_materials = materials_carried(&expedition.cargo);
-                            // **The sender, named on the host's row** — the band that outfitted the
-                            // party, in the party's own faction (a party is its home band's people).
-                            let sender =
-                                home_band_id.map(|band| TransferCounterparty { band, faction });
-                            let landed = bands.get_mut(host_entity).ok().map(
-                                |(_, mut host, _, _, allocation, _, _)| {
-                                    // The shipment lands class by class (#706): the host receives the
-                                    // flesh, greens and grain that were loaded, not a classless total.
-                                    let moved_mix = expedition.cargo.take_food_mix(carried_food);
-                                    host.stores.add_food_mix(&moved_mix);
-                                    let moved = moved_mix.total();
-                                    // **The hay lands in the host's OWN hay account** — `FODDER` is a
-                                    // second key on the same store, so the hand-over is the food
-                                    // hand-over verbatim and the two never convert on the way in.
-                                    let moved_fodder =
-                                        expedition.cargo.take(FODDER, carried_fodder);
-                                    if moved_fodder > scalar_zero() {
-                                        host.stores.add(FODDER, moved_fodder);
-                                    }
-                                    // **Batch by batch into the HOST's store** — the shipment's ratings
-                                    // are what make it a shipment of goods rather than of a number, so
-                                    // two ratings of one material arrive as two batches.
-                                    let moved_materials =
-                                        expedition.cargo.drain_materials_into(&mut host.stores);
-                                    // The receiving half of a shipment — [`TransferCause::ShipmentIn`],
-                                    // on the `TransferLink::Route` arm, because a party carried this
-                                    // here. The *sending* half was booked at launch, against the band
-                                    // the party was drawn off, as `ShipmentOut`.
-                                    //
-                                    // **The hay books on its own ledger, never the food one**
-                                    // (`book_crossing` routes each key to its account): the food
-                                    // identity closes over the FOOD larder, which a bale never enters.
-                                    // Materials book per batch, at the rating each one moved at.
-                                    if let Some(mut allocation) = allocation {
-                                        for (commodity, amount) in
-                                            [(FOOD, moved), (FODDER, moved_fodder)]
-                                        {
-                                            allocation.book_crossing(
-                                                TransferCrossing::goods(
-                                                    commodity,
-                                                    TransferDirection::In,
-                                                    TransferCause::ShipmentIn,
-                                                    amount.to_f32(),
-                                                )
-                                                .with_counterparty(sender)
-                                                .with_party(party_band),
-                                            );
-                                        }
-                                        allocation.book_material_draws(
-                                            &moved_materials,
-                                            TransferDirection::In,
-                                            TransferCause::ShipmentIn,
+                            //
+                            // **The receiver's standing answer decides whether it lands NOW.** A
+                            // shipment it covers lands exactly as it always has; every other one waits
+                            // as a pending dealing the receiving people answers
+                            // (`crate::dealings`). The only thing this arm reads of the receiver is
+                            // its people and its standing answer.
+                            let receiver_faction = bands
+                                .get(host_entity)
+                                .ok()
+                                .map(|(_, host, ..)| host.faction);
+                            // A dealing needs both ends' durable ids; a hand-rolled world without
+                            // the resource, or a party with no id, keeps the direct hand-over.
+                            let post_as = match (
+                                home_band_id,
+                                party_band,
+                                receiver_faction,
+                                configs.dealings.pending.is_some(),
+                            ) {
+                                (Some(sender_band), Some(party), Some(receiver), true)
+                                    if !crate::dealings::standing_answer_covers(
+                                        mission.shipment_terms().unwrap_or_default(),
+                                        faction,
+                                        receiver,
+                                        configs.borders.as_deref(),
+                                    ) =>
+                                {
+                                    Some((sender_band, party, receiver))
+                                }
+                                _ => None,
+                            };
+                            if let Some((sender_band, party, receiver)) = post_as {
+                                let wait = configs.dealings.offer_wait_turns();
+                                let manifest = crate::dealings::manifest(&expedition.cargo);
+                                let dealing = configs
+                                    .dealings
+                                    .pending
+                                    .as_deref_mut()
+                                    .expect("post_as is only Some when the resource is present")
+                                    .post(crate::dealings::Dealing {
+                                        // Assigned by the book.
+                                        id: crate::dealings::DealingId::default(),
+                                        kind: crate::dealings::DealingKind::Offer,
+                                        sender_faction: faction,
+                                        sender_band,
+                                        receiver_faction: receiver,
+                                        receiver_band: destination,
+                                        party: Some(party),
+                                        goods_sent: expedition.cargo.clone(),
+                                        goods_asked: crate::LocalStore::new(),
+                                        posted_turn: current_turn,
+                                        expires_turn: current_turn + u64::from(wait),
+                                    });
+                                // The party stands in their camp until the answer.
+                                expedition.phase = ExpeditionPhase::AwaitingOrders;
+                                expedition.announced = true;
+                                commands.entity(entity).remove::<BandTravel>();
+                                crate::dealings::push_posted_events(
+                                    &mut event_log,
+                                    current_turn,
+                                    dealing,
+                                    &crate::dealings::DealingEnds {
+                                        sender_faction: faction,
+                                        sender_band,
+                                        receiver_faction: receiver,
+                                        receiver_band: destination,
+                                    },
+                                    &manifest,
+                                    entity.to_bits(),
+                                );
+                            } else if receiver_faction.is_some() {
+                                let carried_materials = materials_carried(&expedition.cargo);
+                                // **The sender, named on the host's row** — the band that outfitted the
+                                // party, in the party's own faction (a party is its home band's people).
+                                let sender =
+                                    home_band_id.map(|band| TransferCounterparty { band, faction });
+                                let landed = bands.get_mut(host_entity).ok().map(
+                                    |(_, mut host, _, _, allocation, _, _)| {
+                                        land_cargo_at_band(
+                                            &mut expedition.cargo,
+                                            &mut host,
+                                            allocation.map(|allocation| allocation.into_inner()),
                                             sender,
                                             party_band,
-                                        );
-                                    }
-                                    (moved, moved_fodder)
-                                },
-                            );
-                            if let Some((moved, moved_fodder)) = landed {
-                                event_log.push(CommandEventEntry::new(
-                                    current_turn,
-                                    CommandEventKind::TradeDelivered,
-                                    faction,
-                                    format!(
-                                        "Trade party delivered {} to {}",
-                                        describe_haul(
-                                            moved.to_i64_whole(),
-                                            moved_fodder.to_i64_whole(),
-                                            carried_materials
+                                        )
+                                    },
+                                );
+                                if let Some(landed) = landed {
+                                    let (moved, moved_fodder) = (landed.food, landed.fodder);
+                                    event_log.push(CommandEventEntry::new(
+                                        current_turn,
+                                        CommandEventKind::TradeDelivered,
+                                        faction,
+                                        format!(
+                                            "Trade party delivered {} to {}",
+                                            describe_haul(
+                                                moved.to_i64_whole(),
+                                                moved_fodder.to_i64_whole(),
+                                                carried_materials
+                                            ),
+                                            mission.destination_display()
                                         ),
-                                        mission.destination_display()
-                                    ),
-                                    Some(format!(
-                                    "status=delivered destination={} fodder={} materials={:.*} \
-                                     expedition={}",
-                                    destination.0,
-                                    moved_fodder.to_i64_whole(),
-                                    HAUL_MATERIAL_DECIMALS,
-                                    carried_materials,
-                                    entity.to_bits()
-                                )),
-                                ));
-                                // One-way in this slice: the party walks home empty rather than
-                                // carrying a priced return flow, which is a later slice's model.
-                                expedition.phase = ExpeditionPhase::Returning;
+                                        Some(format!(
+                                            "status=delivered destination={} fodder={} \
+                                             materials={:.*} expedition={}",
+                                            destination.0,
+                                            moved_fodder.to_i64_whole(),
+                                            HAUL_MATERIAL_DECIMALS,
+                                            carried_materials,
+                                            entity.to_bits()
+                                        )),
+                                    ));
+                                    // One-way: the party walks home empty. A priced return comes
+                                    // only from a pending dealing the receiver accepts.
+                                    expedition.phase = ExpeditionPhase::Returning;
+                                }
                             }
                         }
                     }
@@ -1903,6 +1955,7 @@ pub fn advance_expeditions(
                                 &mut allocation,
                                 party_band,
                                 expedition.mission.consignee(),
+                                expedition.mission.returning_cargo_cause(),
                             );
                         }
                     }
@@ -2236,6 +2289,71 @@ fn materials_carried(store: &crate::LocalStore) -> f32 {
         .to_f32()
 }
 
+/// **What a hand-over put into the receiving band's store** — food and hay as amounts; the
+/// materials are summed here only for the feed line's prose, never as a stored figure.
+pub struct LandedCargo {
+    pub food: Scalar,
+    pub fodder: Scalar,
+}
+
+/// **THE hand-over — one routine for a shipment landing on arrival and for a pending offer being
+/// accepted**, so the two cannot book a delivery differently.
+///
+/// Everything the cargo holds moves into the host's own store: the food class by class (#706), the
+/// hay into the host's own hay account, and every material batch at the reading it was loaded with.
+/// The receiving half is [`TransferCause::ShipmentIn`] on the route arm, naming the sender; the
+/// sending half was booked at launch as `ShipmentOut`. Hay books on its own ledger, never the food
+/// one — `book_crossing` routes each key to its account.
+pub fn land_cargo_at_band(
+    cargo: &mut crate::LocalStore,
+    host: &mut PopulationCohort,
+    allocation: Option<&mut LaborAllocation>,
+    sender: Option<TransferCounterparty>,
+    party_band: Option<BandId>,
+) -> LandedCargo {
+    let carried_food = cargo.get(FOOD);
+    let carried_fodder = cargo.get(FODDER);
+    // The shipment lands class by class (#706): the host receives the flesh, greens and grain that
+    // were loaded, not a classless total.
+    let moved_mix = cargo.take_food_mix(carried_food);
+    host.stores.add_food_mix(&moved_mix);
+    let moved = moved_mix.total();
+    // The hay lands in the host's OWN hay account — a second key on the same store, so the
+    // hand-over is the food hand-over verbatim and the two never convert on the way in.
+    let moved_fodder = cargo.take(FODDER, carried_fodder);
+    if moved_fodder > scalar_zero() {
+        host.stores.add(FODDER, moved_fodder);
+    }
+    // Batch by batch into the HOST's store — the shipment's ratings are what make it a shipment of
+    // goods rather than of a number, so two ratings of one material arrive as two batches.
+    let moved_materials = cargo.drain_materials_into(&mut host.stores);
+    if let Some(allocation) = allocation {
+        for (commodity, amount) in [(FOOD, moved), (FODDER, moved_fodder)] {
+            allocation.book_crossing(
+                TransferCrossing::goods(
+                    commodity,
+                    TransferDirection::In,
+                    TransferCause::ShipmentIn,
+                    amount.to_f32(),
+                )
+                .with_counterparty(sender)
+                .with_party(party_band),
+            );
+        }
+        allocation.book_material_draws(
+            &moved_materials,
+            TransferDirection::In,
+            TransferCause::ShipmentIn,
+            sender,
+            party_band,
+        );
+    }
+    LandedCargo {
+        food: moved,
+        fodder: moved_fodder,
+    }
+}
+
 /// **THE fold-back — the one settlement routine for a party that has come home**, shared by the
 /// `Returning` arm of [`advance_expeditions`] and by an at-home `recall_expedition`, which cancels a
 /// party where it stands rather than sending it on a round trip it never started.
@@ -2365,12 +2483,17 @@ impl FoldBack {
     ///   coming back, not another band;
     /// - **the cargo** is [`TransferCause::ShipmentReturned`], naming `consignee` — the destination
     ///   the launch's `ShipmentOut` named ([`ExpeditionMission::consignee`]), so the returned
-    ///   shipment answers its launch instead of reading as the band's own haul.
+    ///   shipment answers its launch instead of reading as the band's own haul. **Unless the
+    ///   receiver accepted an offer**, in which case what rides home is its return and the cause is
+    ///   [`TransferCause::ExchangeIn`] — the caller passes
+    ///   [`ExpeditionMission::returning_cargo_cause`] as `cargo_cause`, the one place the two are
+    ///   told apart.
     pub fn book_home(
         &self,
         allocation: &mut LaborAllocation,
         party: Option<BandId>,
         consignee: Option<TransferCounterparty>,
+        cargo_cause: TransferCause,
     ) {
         allocation.book_crossing(
             TransferCrossing::goods(
@@ -2393,7 +2516,7 @@ impl FoldBack {
                 TransferCrossing::goods(
                     commodity,
                     TransferDirection::In,
-                    TransferCause::ShipmentReturned,
+                    cargo_cause,
                     amount.to_f32(),
                 )
                 .with_counterparty(consignee)
@@ -2403,7 +2526,7 @@ impl FoldBack {
         allocation.book_material_draws(
             &self.cargo_materials,
             TransferDirection::In,
-            TransferCause::ShipmentReturned,
+            cargo_cause,
             consignee,
             party,
         );

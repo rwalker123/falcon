@@ -185,6 +185,10 @@ pub struct VoiceMediumState {
 pub struct FactionPolicyState {
     pub faction: u32,
     pub open_borders: bool,
+    /// **The standing answer to a gift from this people's own people**
+    /// (`docs/plan_early_diplomacy.md` §1): on (the default), such a shipment lands on arrival;
+    /// off, it waits to be answered like any other dealing.
+    pub accept_own_gifts: bool,
 }
 
 /// **A faction's name** on the client stream — what its people call themselves. World-visible:

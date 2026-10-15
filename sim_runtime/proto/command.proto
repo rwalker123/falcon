@@ -76,6 +76,34 @@ message SetOpenBordersCommand {
   bool open = 2;
 }
 
+// THE STANDING ANSWER (docs/plan_early_diplomacy.md §1) — whether a gift from a people's own people
+// lands on arrival without waiting to be answered. On for every faction by default, so a parent
+// supplying its splinter is unchanged; off, the same gift becomes a pending dealing like any other.
+message SetAcceptOwnGiftsCommand {
+  uint32 faction = 1;
+  bool accept = 2;
+}
+
+// ANSWER A PENDING DEALING (docs/plan_early_diplomacy.md §1) — the one answer verb. Only the receiving
+// people may answer. ACCEPT takes the cargo into the receiving band and pays `returned` from that
+// band's holdings back to the waiting party (empty is allowed — the receiver names the return);
+// REFUSE sends the party home with its cargo. It fails closed with a reason BEFORE anything moves:
+// return goods the band does not hold, over the party's carry, an unknown material. A COUNTER is a
+// later slice; the text grammar refuses it with a reason.
+enum DealingAnswerKind {
+  DEALING_ANSWER_KIND_UNSPECIFIED = 0;
+  DEALING_ANSWER_KIND_ACCEPT = 1;
+  DEALING_ANSWER_KIND_REFUSE = 2;
+}
+
+message AnswerDealingCommand {
+  uint32 faction = 1;
+  uint64 dealing_id = 2;
+  DealingAnswerKind answer = 3;
+  // The goods the receiver pays back; meaningful on ACCEPT only.
+  repeated TradeCargoItem returned = 4;
+}
+
 message AdjustCounterIntelBudgetCommand {
   uint32 faction = 1;
   optional float reserve = 2;
@@ -519,6 +547,12 @@ message SendTradeExpeditionCommand {
   repeated TradeCargoItem cargo = 5;
   // THE KIT the party is sent out with — same rule as SendDenialRaidCommand.kit_id.
   optional string kit_id = 6;
+  // OFFER, NOT GIFT (docs/plan_early_diplomacy.md §1). False (the default) is a gift: it asks nothing
+  // back, and lands on arrival when the receiver is the sender's own people and that people's
+  // standing answer ("accept gifts from my own people") is on. True is an offer: it ALWAYS waits for
+  // the receiving people to answer (answer_dealing), naming a return from its own holdings or
+  // refusing, and silence for `offer_wait_turns` is a refusal.
+  bool offer = 7;
 }
 
 // Post part of a band at another band it holds a live tie with — a STATIONED PARTY
@@ -1738,5 +1772,9 @@ message CommandEnvelope {
     BenchAutoSkipCommand bench_auto_skip = 83;
     // 83 is held by `bench_auto_skip`, so the stationed party takes 84 (append-only; never renumber).
     StationExpeditionCommand station_expedition = 84;
+    // 84 is held by `station_expedition`, so the standing answer and the answer verb take 85-86
+    // (append-only; never renumber).
+    SetAcceptOwnGiftsCommand set_accept_own_gifts = 85;
+    AnswerDealingCommand answer_dealing = 86;
   }
 }

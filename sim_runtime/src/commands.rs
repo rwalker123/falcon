@@ -60,6 +60,22 @@ pub enum CommandPayload {
         faction: u32,
         open: bool,
     },
+    /// **The standing answer to a gift from one's own people**
+    /// (`docs/plan_early_diplomacy.md` §1). On for every people by default; off, a gift between
+    /// bands of one people waits to be answered like any other dealing. Proto field 85.
+    SetAcceptOwnGifts {
+        faction: u32,
+        accept: bool,
+    },
+    /// **Answer a pending dealing** — accept (paying `returned` from the receiving band, empty
+    /// allowed) or refuse. Only the receiving people may answer. Proto field 86.
+    AnswerDealing {
+        faction: u32,
+        dealing_id: u64,
+        accept: bool,
+        /// The goods the receiver pays back; meaningful on an accept only.
+        returned: Vec<TradeCargoItem>,
+    },
     AdjustCounterIntelBudget {
         faction: u32,
         reserve: Option<f32>,
@@ -584,6 +600,10 @@ pub enum CommandPayload {
         /// **The kit the party is sent out with**, resolved once at launch — same rule as
         /// [`Self::SendDenialRaid::kit_id`].
         kit_id: Option<String>,
+        /// **An offer rather than a gift** (`docs/plan_early_diplomacy.md` §1): it always waits for
+        /// the receiving people's answer. `false` is a gift, which lands on arrival when the
+        /// receiver's standing answer covers it.
+        offer: bool,
     },
     /// **Post part of a band at another band it holds a live tie with** — a stationed party
     /// (`docs/plan_contact_and_logistics.md` "Settled by #774"). Proto field 84.
@@ -1753,6 +1773,34 @@ impl CommandEnvelope {
                     open: *open,
                 })
             }
+            CommandPayload::SetAcceptOwnGifts { faction, accept } => {
+                pb::command_envelope::Command::SetAcceptOwnGifts(pb::SetAcceptOwnGiftsCommand {
+                    faction: *faction,
+                    accept: *accept,
+                })
+            }
+            CommandPayload::AnswerDealing {
+                faction,
+                dealing_id,
+                accept,
+                returned,
+            } => pb::command_envelope::Command::AnswerDealing(pb::AnswerDealingCommand {
+                faction: *faction,
+                dealing_id: *dealing_id,
+                answer: if *accept {
+                    pb::DealingAnswerKind::Accept
+                } else {
+                    pb::DealingAnswerKind::Refuse
+                } as i32,
+                returned: returned
+                    .iter()
+                    .map(|item| pb::TradeCargoItem {
+                        id: item.id.clone(),
+                        is_material: item.is_material,
+                        amount: item.amount,
+                    })
+                    .collect(),
+            }),
             CommandPayload::AdjustCounterIntelBudget {
                 faction,
                 reserve,
@@ -2249,8 +2297,10 @@ impl CommandEnvelope {
                 destination_band_id,
                 cargo,
                 kit_id,
+                offer,
             } => {
                 pb::command_envelope::Command::SendTradeExpedition(pb::SendTradeExpeditionCommand {
+                    offer: *offer,
                     faction_id: *faction_id,
                     band_id: *band_id,
                     party_workers: *party_workers,
@@ -2513,6 +2563,38 @@ impl CommandEnvelope {
                 faction: cmd.faction,
                 open: cmd.open,
             },
+            pb::command_envelope::Command::SetAcceptOwnGifts(cmd) => {
+                CommandPayload::SetAcceptOwnGifts {
+                    faction: cmd.faction,
+                    accept: cmd.accept,
+                }
+            }
+            pb::command_envelope::Command::AnswerDealing(cmd) => {
+                let accept = match pb::DealingAnswerKind::try_from(cmd.answer) {
+                    Ok(pb::DealingAnswerKind::Accept) => true,
+                    Ok(pb::DealingAnswerKind::Refuse) => false,
+                    _ => {
+                        return Err(CommandDecodeError::InvalidEnum {
+                            field: "AnswerDealingCommand.answer",
+                            value: cmd.answer,
+                        })
+                    }
+                };
+                CommandPayload::AnswerDealing {
+                    faction: cmd.faction,
+                    dealing_id: cmd.dealing_id,
+                    accept,
+                    returned: cmd
+                        .returned
+                        .into_iter()
+                        .map(|item| TradeCargoItem {
+                            id: item.id,
+                            is_material: item.is_material,
+                            amount: item.amount,
+                        })
+                        .collect(),
+                }
+            }
             pb::command_envelope::Command::AdjustCounterIntelBudget(cmd) => {
                 CommandPayload::AdjustCounterIntelBudget {
                     faction: cmd.faction,
@@ -2843,6 +2925,7 @@ impl CommandEnvelope {
             }
             pb::command_envelope::Command::SendTradeExpedition(cmd) => {
                 CommandPayload::SendTradeExpedition {
+                    offer: cmd.offer,
                     faction_id: cmd.faction_id,
                     band_id: cmd.band_id,
                     party_workers: cmd.party_workers,
@@ -3865,6 +3948,55 @@ mod tests {
         let bytes = envelope.encode_to_vec().expect("encode");
         let decoded = CommandEnvelope::decode(&bytes).expect("decode");
         assert_eq!(decoded.payload, payload);
+    }
+
+    /// The offer slice's three wire changes survive the envelope: the `offer` flag on a shipment,
+    /// the standing answer, and the answer verb with its return list.
+    #[test]
+    fn the_dealing_verbs_round_trip_through_the_envelope() {
+        for payload in [
+            CommandPayload::SendTradeExpedition {
+                faction_id: 0,
+                band_id: Some(7),
+                party_workers: 2,
+                destination_band_id: 12,
+                cargo: vec![TradeCargoItem {
+                    id: FOOD_CARGO_KEY.to_string(),
+                    is_material: false,
+                    amount: 4.0,
+                }],
+                kit_id: None,
+                offer: true,
+            },
+            CommandPayload::SetAcceptOwnGifts {
+                faction: 1,
+                accept: false,
+            },
+            CommandPayload::AnswerDealing {
+                faction: 1,
+                dealing_id: 9,
+                accept: true,
+                returned: vec![TradeCargoItem {
+                    id: "hide".to_string(),
+                    is_material: true,
+                    amount: 1.5,
+                }],
+            },
+            CommandPayload::AnswerDealing {
+                faction: 1,
+                dealing_id: 9,
+                accept: false,
+                returned: Vec::new(),
+            },
+        ] {
+            let envelope = CommandEnvelope {
+                payload: payload.clone(),
+                correlation_id: None,
+            };
+            let bytes = envelope.encode_to_vec().expect("encode");
+            let decoded = CommandEnvelope::decode(&bytes).expect("decode");
+            assert_eq!(decoded.payload, payload);
+        }
     }
 
     /// The three save verbs survive the envelope, `request_id` and all — a reply that could not be

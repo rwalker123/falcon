@@ -411,6 +411,7 @@ fn create_faction_policies<'a>(
                 &fb::FactionPolicyStateArgs {
                     faction: state.faction,
                     openBorders: state.open_borders,
+                    acceptOwnGifts: state.accept_own_gifts,
                 },
             )
         })
@@ -693,6 +694,7 @@ fn decode_faction_policy(state: fb::FactionPolicyState<'_>) -> FactionPolicyStat
     FactionPolicyState {
         faction: state.faction(),
         open_borders: state.openBorders(),
+        accept_own_gifts: state.acceptOwnGifts(),
     }
 }
 

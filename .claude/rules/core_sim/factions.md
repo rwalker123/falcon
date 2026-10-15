@@ -1048,7 +1048,8 @@ apply only where the row describes something that can be *seen*.
 | `tiles`, the rasters, `foodModules`, `climateBands`, the catalogues (`kits`, `materials`, `recipes`, `ladderKnowledge`, `routeRungs`, `campaignProfiles`) | various | **World** — terrain and per-world constants, carrying no faction. The client fogs the map from `visibilityRaster` |
 | `victory.modes[].progress` | `snapshot/campaign.rs` | **Viewer** — progress is one people's, so the frame carries the viewer's mode rows and nobody else's (`VictoryState::modes_for`) |
 | `victory.winner` | `snapshot/campaign.rs` | **World** — a winner is public by definition, and it names the faction that actually achieved it |
-| `factionPolicies` | `snapshot/campaign.rs` | **Viewer** — your own Open Borders row only |
+| `factionPolicies` | `snapshot/campaign.rs` | **Viewer** — your own Open Borders row and standing answer to a gift from your own people only |
+| `dealings` | `snapshot/dealings.rs` | **Viewer** — the pending dealings addressed to the viewer's people or sent by them (`diplomacy.md`) |
 | `factionNames` | `snapshot/capture.rs` | **World** — every faction's name; a name reveals nothing the roster count does not (`band-names.md` → "Faction names") |
 
 ### ⛔ A DERIVED AGGREGATE IS FACTION-KEYED DATA, EVEN WITH NO FACTION FIELD

@@ -363,6 +363,7 @@ pub mod knowledge {
                 lineage_constants: Default::default(),
                 connections: Vec::new(),
                 routes: Vec::new(),
+                dealings: Vec::new(),
                 contact_lessons: Vec::new(),
                 deposits: Vec::new(),
                 pending_forks: Vec::new(),

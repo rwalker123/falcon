@@ -38,7 +38,9 @@ mod crisis;
 mod crisis_config;
 mod culture;
 mod culture_corruption_config;
+pub mod dealings;
 mod demographics_config;
+mod diplomacy_config;
 mod equipment_config;
 mod espionage;
 mod expedition_config;
@@ -151,10 +153,11 @@ pub use components::{
     KnowledgeFragment, LaborAllocation, LaborAssignment, LaborTarget, LocalStore, MaterialBatch,
     MaterialDraw, MoraleCause, MusterBench, MusterKit, MusterPlan, PoolToeLine, PopulationCohort,
     PowerNode, QueuedBuildToe, ResidentBand, Settlement, ShedCrew, ShedFacts, ShedStep,
-    ShedSubject, SourcePriority, SourceShedFacts, SourceYield, StartingUnit, StationReport,
-    TakeSelection, Tile, TownCenter, TransferCause, TransferCounterparty, TransferCrossing,
-    TransferDirection, TransferLedger, TransferLink, YieldRange, DEFAULT_ESCAPEMENT_FLOOR, FODDER,
-    FOOD, HEAD_ORDER, MIN_ORDER_COUNT, NO_IMPROVEMENT_UNDERWAY, STRIP_IT_BARE,
+    ShedSubject, ShipmentTerms, SourcePriority, SourceShedFacts, SourceYield, StartingUnit,
+    StationReport, TakeSelection, Tile, TownCenter, TransferCause, TransferCounterparty,
+    TransferCrossing, TransferDirection, TransferLedger, TransferLink, YieldRange,
+    DEFAULT_ESCAPEMENT_FLOOR, FODDER, FOOD, HEAD_ORDER, MIN_ORDER_COUNT, NO_IMPROVEMENT_UNDERWAY,
+    STRIP_IT_BARE,
 };
 pub use config_fingerprint::{
     current_config_fingerprint, drift_between, ConfigDigest, ConfigFingerprint,
@@ -202,9 +205,18 @@ pub use culture_corruption_config::{
     CorruptionSeverityConfig, CultureCorruptionConfig, CultureCorruptionConfigHandle,
     CultureSeverityConfig, CultureTensionTuning, BUILTIN_CULTURE_CORRUPTION_CONFIG,
 };
+pub use dealings::{
+    advance_dealings, answer_dealing, standing_answer_covers, AnswerReport, Dealing, DealingAnswer,
+    DealingId, DealingKind, PendingDealings,
+};
 pub use demographics_config::{
     load_demographics_config_from_env, DemographicsConfig, DemographicsConfigHandle,
     DemographicsConfigMetadata, KeepingClass, KeepingConfig,
+};
+pub use diplomacy_config::{
+    load_diplomacy_config_from_env, DiplomacyAiConfig, DiplomacyConfig, DiplomacyConfigError,
+    DiplomacyConfigHandle, DiplomacyConfigMetadata, DiplomacyRoadsConfig, GoodwillConfig,
+    OffersConfig, BUILTIN_DIPLOMACY_CONFIG,
 };
 pub use equipment_config::{
     load_equipment_config_from_env, BandItemBudget, Crew, DefaultKitsConfig, EffectTier,
@@ -669,6 +681,10 @@ pub fn build_headless_app() -> App {
         knowledge_contact_config::load_knowledge_contact_config_from_env();
     let knowledge_contact_handle =
         knowledge_contact_config::KnowledgeContactConfigHandle::new(knowledge_contact_config);
+    // Early diplomacy: how long a pending dealing waits, and the goodwill / road / AI levers the
+    // later slices read. No hot reload — it loads here and on every world rebuild.
+    let (diplomacy_config, diplomacy_metadata) = diplomacy_config::load_diplomacy_config_from_env();
+    let diplomacy_handle = diplomacy_config::DiplomacyConfigHandle::new(diplomacy_config);
     // Belief on a place — what each source adds to a tile's stock (`belief::BeliefRegistry`).
     let (belief_config, belief_metadata) = belief_config::load_belief_config_from_env();
     let belief_handle = belief_config::BeliefConfigHandle::new(belief_config);
@@ -885,6 +901,9 @@ pub fn build_headless_app() -> App {
         .insert_resource(connections_metadata)
         .insert_resource(knowledge_contact_handle)
         .insert_resource(knowledge_contact_metadata)
+        .insert_resource(diplomacy_handle)
+        .insert_resource(diplomacy_metadata)
+        .insert_resource(dealings::PendingDealings::default())
         .insert_resource(belief_handle)
         .insert_resource(belief_metadata)
         .insert_resource(materials_handle)
@@ -1300,6 +1319,9 @@ pub fn build_headless_app() -> App {
                     // movement so it reads the party's fresh position, and before the Visibility stage's
                     // `discover_sites` picks up any site on the newly-flushed Discovered tiles.
                     systems::advance_expeditions,
+                    // Pending dealings: an offer `advance_expeditions` just posted is judged against
+                    // its deadline and its waiting party in the same turn; silence is a refusal.
+                    dealings::advance_dealings,
                     systems::advance_labor_allocation,
                     // The bench runs right after labor, for two reasons that both have to hold: it
                     // draws on the materials THIS turn's take just delivered, and its crew came out

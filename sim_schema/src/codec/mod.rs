@@ -39,6 +39,7 @@
 mod campaign;
 mod connections;
 mod culture;
+mod dealings;
 mod economy;
 mod governance;
 mod knowledge;
@@ -59,6 +60,10 @@ use crate::codec::connections::{
 use crate::codec::culture::{
     decode_culture_section, decode_culture_section_delta, serialize_culture_section,
     serialize_culture_section_delta,
+};
+use crate::codec::dealings::{
+    decode_dealings_section, decode_dealings_section_delta, serialize_dealings_section,
+    serialize_dealings_section_delta,
 };
 use crate::codec::economy::{
     decode_economy_section, decode_economy_section_delta, serialize_economy_section,
@@ -243,6 +248,10 @@ fn decode_snapshot_table(table: fb::WorldSnapshot<'_>) -> Result<WorldSnapshot, 
         &mut snapshot,
     );
     decode_route_section(required(table.routes(), "RouteSection")?, &mut snapshot);
+    decode_dealings_section(
+        required(table.dealings(), "DealingsSection")?,
+        &mut snapshot,
+    );
     witness_snapshot_is_fully_decoded(&snapshot);
     Ok(snapshot)
 }
@@ -279,6 +288,7 @@ fn decode_delta_table(table: fb::WorldDelta<'_>) -> Result<WorldDelta, DecodeErr
         &mut delta,
     );
     decode_route_section_delta(required(table.routes(), "RouteSection")?, &mut delta);
+    decode_dealings_section_delta(required(table.dealings(), "DealingsSection")?, &mut delta);
     witness_delta_is_fully_decoded(&delta);
     Ok(delta)
 }
@@ -391,6 +401,8 @@ fn witness_snapshot_is_fully_decoded(snapshot: &WorldSnapshot) {
         connections: _,
         // `decode_routes_section`
         routes: _,
+        // `decode_dealings_section`
+        dealings: _,
     } = snapshot;
 }
 
@@ -490,6 +502,8 @@ fn witness_delta_is_fully_decoded(delta: &WorldDelta) {
         connections: _,
         // `decode_routes_section_delta`
         routes: _,
+        // `decode_dealings_section_delta`
+        dealings: _,
     } = delta;
 }
 
@@ -553,6 +567,7 @@ fn build_snapshot_flatbuffer<'a>(
     let campaign = serialize_campaign_section(builder, snapshot, victory_state);
     let connections = serialize_connection_section(builder, snapshot);
     let routes = serialize_route_section(builder, snapshot);
+    let dealings = serialize_dealings_section(builder, snapshot);
 
     let snapshot_table = fb::WorldSnapshot::create(
         builder,
@@ -570,6 +585,7 @@ fn build_snapshot_flatbuffer<'a>(
             campaign: Some(campaign),
             connections: Some(connections),
             routes: Some(routes),
+            dealings: Some(dealings),
         },
     );
 
@@ -629,6 +645,7 @@ fn build_delta_flatbuffer<'a>(
     let campaign = serialize_campaign_section_delta(builder, delta, victory_state);
     let connections = serialize_connection_section_delta(builder, delta);
     let routes = serialize_route_section_delta(builder, delta);
+    let dealings = serialize_dealings_section_delta(builder, delta);
 
     let delta_table = fb::WorldDelta::create(
         builder,
@@ -646,6 +663,7 @@ fn build_delta_flatbuffer<'a>(
             campaign: Some(campaign),
             connections: Some(connections),
             routes: Some(routes),
+            dealings: Some(dealings),
         },
     );
 
@@ -1151,6 +1169,7 @@ mod round_trip_tests {
             discovery_progress: world.discovery_progress.clone(),
             connections: Some(world.connections.clone()),
             routes: Some(world.routes.clone()),
+            dealings: Some(world.dealings.clone()),
             contact_lessons: Some(world.contact_lessons.clone()),
         }
     }
@@ -1216,6 +1235,7 @@ mod round_trip_tests {
             culture_tensions: Some(Vec::new()),
             connections: Some(Vec::new()),
             routes: Some(Vec::new()),
+            dealings: Some(Vec::new()),
             contact_lessons: Some(Vec::new()),
             ..Default::default()
         }

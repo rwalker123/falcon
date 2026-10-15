@@ -888,6 +888,25 @@ fn seed_snapshot() -> WorldSnapshot {
     // own `tile_x`/`tile_y` scalars and nothing to walk.
     s.routes = rows();
 
+    // --- dealings --------------------------------------------------------
+    // The pending offers between peoples (`docs/plan_early_diplomacy.md` §1). Each row carries two
+    // goods lists, and each list carries material batches with their readings — repeated fields
+    // inside repeated fields, so both levels need elements or the decode guard never reaches the
+    // inner ones.
+    s.dealings = rows();
+    for dealing in &mut s.dealings {
+        for goods in [&mut dealing.goods_sent, &mut dealing.goods_asked] {
+            goods.materials = ["hide", "fibre"]
+                .iter()
+                .map(|material| MaterialBatchState {
+                    material_id: (*material).to_string(),
+                    readings: vec![CharacteristicReadingState::default(); 2],
+                    ..Default::default()
+                })
+                .collect();
+        }
+    }
+
     // --- deposits --------------------------------------------------------
     // The live workings on deposits (arc #583), **one row per `(tile, material)`**. Seeded for
     // the same reason every repeated field here is: an empty vector is a field the decode guard

@@ -853,10 +853,13 @@ does not — and across a faction line, where free equalization deliberately doe
 **If the tie decayed to nothing while the party walked, the shipment still lands.** The party is
 standing in their camp; presence beats the ledger, and the decision to send was made turns ago.
 
-**There is no same-faction check anywhere on this path** — not in the command, not in the arm that
-delivers. Faction is a property of the endpoint (`connections.md`), which is what makes #458
-(cross-faction trade) nearly free, and `trade_expedition.rs` delivers **cross-faction in every test**
-so the claim is exercised rather than asserted.
+**There is no same-faction check on the launch path** — not in the command, not in the connection
+gate. Faction is a property of the endpoint (`connections.md`), which is what makes #458 (cross-faction
+trade) nearly free. **The one faction comparison on the delivery path is the receiver's standing answer**
+(`dealings::standing_answer_covers`, `diplomacy.md`): a gift to one's own people lands on arrival, and
+anything else waits for the receiving people to answer. `trade_expedition.rs` delivers
+**cross-faction in every test**, through an accepted offer, so the claim is exercised rather than
+asserted.
 
 ### Cargo is food, FODDER and materials — and the hay weight is derived, not guessed
 
@@ -1032,8 +1035,10 @@ exactly two things and both already have a phase.
   `destination_display()`'s `band <id>` fallback, and that token is the only key the client has to
   swap in its own roster label (`EventDockPanel::_swap_band_label`). Without it this one row of a
   shipment's life prints a raw id beside siblings that print the band's name.
-- **One-way in this slice.** The party walks home empty; a priced return flow is a later slice, not an
-  omission here.
+- **A delivered shipment's party walks home empty.** A return exists only when the receiver accepts a
+  pending offer, and the party waits in the camp for that answer in `AwaitingOrders` — see
+  `.claude/rules/core_sim/diplomacy.md`. A shipment the receiver's standing answer covers (a gift to
+  one's own people, answer on) lands on arrival exactly as above.
 
 ### A trade party is provisioned like a SCOUT, and that is where the trip's cost lives
 

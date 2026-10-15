@@ -6,6 +6,7 @@
 pub mod campaign;
 pub mod connections;
 pub mod culture;
+pub mod dealings;
 pub mod economy;
 pub mod governance;
 pub mod knowledge;
@@ -17,6 +18,7 @@ pub mod subsistence;
 pub use campaign::*;
 pub use connections::*;
 pub use culture::*;
+pub use dealings::*;
 pub use economy::*;
 pub use governance::*;
 pub use knowledge::*;

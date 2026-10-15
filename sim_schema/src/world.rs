@@ -15,6 +15,7 @@ use crate::state::culture::{
     AxisBiasState, CultureLayerState, CultureTensionState, InfluentialIndividualState,
     SentimentTelemetryState,
 };
+use crate::state::dealings::DealingState;
 use crate::state::economy::FactionInventoryState;
 use crate::state::governance::{
     CorruptionLedger, CrisisOverlayState, CrisisTelemetryState, PowerNodeState, PowerTelemetryState,
@@ -313,6 +314,11 @@ pub struct WorldSnapshot {
     /// discovery id. Rides `KnowledgeSection.contactLessons`.
     #[serde(default)]
     pub contact_lessons: Vec<ContactLessonState>,
+    /// **The pending dealings the viewer is party to** (`docs/plan_early_diplomacy.md` §1) — the
+    /// ones addressed to the viewer's people and the ones the viewer's people sent, ordered by id.
+    /// Another pair's dealings are theirs to know. Rides `DealingsSection`.
+    #[serde(default)]
+    pub dealings: Vec<DealingState>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -479,6 +485,9 @@ pub struct WorldDelta {
     /// `None` = unchanged this frame, on `connections`' own rules.
     #[serde(default)]
     pub contact_lessons: Option<Vec<ContactLessonState>>,
+    /// `None` = unchanged this frame, on `connections`' own rules.
+    #[serde(default)]
+    pub dealings: Option<Vec<DealingState>>,
 }
 
 pub fn hash_snapshot(snapshot: &WorldSnapshot) -> u64 {

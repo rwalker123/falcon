@@ -1262,6 +1262,13 @@ pub struct TradeDiffusionRecord {
 #[derive(Resource, Debug, Clone, Default, Serialize, Deserialize)]
 pub struct FactionBorderPolicies {
     open: BTreeMap<FactionId, bool>,
+    /// **The standing answer to a gift from one's own people** (`docs/plan_early_diplomacy.md` §1):
+    /// whether a shipment of the sender's own people lands on arrival without waiting to be
+    /// answered. On by default for every people, so a parent supplying its splinter is unchanged;
+    /// off, the same gift becomes a pending dealing like any other. It lives here because this is
+    /// the per-people policy resource the roster seeds, checkpoints and re-seeds on a runtime
+    /// break-away, and a second resource would owe all three again.
+    accept_own_gifts: BTreeMap<FactionId, bool>,
 }
 
 impl FactionBorderPolicies {
@@ -1279,6 +1286,17 @@ impl FactionBorderPolicies {
     /// seeded keeps its setting.
     pub fn seed_faction(&mut self, faction: FactionId) {
         self.open.entry(faction).or_insert(true);
+        self.accept_own_gifts.entry(faction).or_insert(true);
+    }
+
+    /// Whether `faction`'s standing answer takes a gift from its own people on arrival. A faction
+    /// with no row reads **on**, the seeded value — see [`Self::contains`].
+    pub fn accepts_own_gifts(&self, faction: FactionId) -> bool {
+        self.accept_own_gifts.get(&faction).copied().unwrap_or(true)
+    }
+
+    pub fn set_accept_own_gifts(&mut self, faction: FactionId, accept: bool) {
+        self.accept_own_gifts.insert(faction, accept);
     }
 
     /// Whether `faction` accepts another people's leavers. A faction with no row reads **open**,
@@ -1725,6 +1743,18 @@ pub enum CommandEventKind {
     ///
     /// **Appended last**, after [`Self::BandBrokeAway`].
     LostTouch,
+    /// **A pending dealing's life** (`crate::dealings`, `docs/plan_early_diplomacy.md` §1): an offer
+    /// arriving, and its being accepted, refused, expired or withdrawn. One kind for the whole life,
+    /// [`Self::Road`]'s reading — the player is looking at *one dealing* — with the stage in the
+    /// detail's `status=`.
+    ///
+    /// **Pushed once per side**, [`Self::BandChangedHands`]' shape and for its reason (the feed is
+    /// per-faction on the wire): the sender's row carries `destination=<band>`, the receiver's
+    /// `sender=<band>` and `from=<faction>`, and both carry `dealing=<id>`. Band ids ride as tokens so
+    /// a client swaps in its own label.
+    ///
+    /// **Appended last**, after [`Self::LostTouch`], so no shipped variant's bincode index moved.
+    Dealing,
 }
 
 impl CommandEventKind {
@@ -1773,6 +1803,7 @@ impl CommandEventKind {
             CommandEventKind::StartingLoadout => "starting_loadout",
             CommandEventKind::BandBrokeAway => "band_broke_away",
             CommandEventKind::LostTouch => "lost_touch",
+            CommandEventKind::Dealing => "dealing",
         }
     }
 }

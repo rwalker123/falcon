@@ -15,7 +15,7 @@ use sim_runtime::{
     CraftKnowledgeState, CrisisGaugeState, CrisisMetricKind as SchemaCrisisMetricKind,
     CrisisOverlayState, CrisisSeverityBand as SchemaCrisisSeverityBand, CrisisTelemetryState,
     CrisisTrendSample as SchemaCrisisTrendSample, CultureLayerState, CultureTensionState,
-    CultureTraitEntry, DepositRungState, DepositState,
+    CultureTraitEntry, DealingState, DepositRungState, DepositState,
     DiscoveredSiteState as SchemaDiscoveredSiteState,
     DiscoveredSitesState as SchemaDiscoveredSitesState, DiscoveryProgressEntry,
     ElevationOverlayState, FactionInventoryEntryState as SchemaFactionInventoryEntryState,
@@ -113,6 +113,7 @@ mod capture;
 mod connections;
 pub(crate) mod crafting;
 mod culture;
+mod dealings;
 mod deposits;
 mod economy;
 mod flora_quotes;
@@ -1166,6 +1167,7 @@ mod tests {
             contact_lessons: Vec::new(),
             connections: Vec::new(),
             routes: Vec::new(),
+            dealings: Vec::new(),
             deposits: Vec::new(),
             demographics: Vec::new(),
             forage_patches: Vec::new(),
@@ -1251,6 +1253,7 @@ mod tests {
             contact_lessons: Vec::new(),
             connections: Vec::new(),
             routes: Vec::new(),
+            dealings: Vec::new(),
             deposits: Vec::new(),
             demographics: Vec::new(),
             forage_patches: Vec::new(),
@@ -1331,6 +1334,7 @@ mod tests {
             contact_lessons: Vec::new(),
             connections: Vec::new(),
             routes: Vec::new(),
+            dealings: Vec::new(),
             deposits: Vec::new(),
             demographics: Vec::new(),
             forage_patches: Vec::new(),

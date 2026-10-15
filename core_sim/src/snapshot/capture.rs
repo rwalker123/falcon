@@ -61,6 +61,9 @@ pub struct SnapshotContext<'w> {
     /// Each people's Open Borders setting — published as the viewer's own row only. `Option` for the
     /// same reason as the two above.
     pub border_policies: Option<Res<'w, crate::resources::FactionBorderPolicies>>,
+    /// The pending dealings — published filtered to the viewer's people (addressed to them or sent
+    /// by them). `Option` for the reason the policies above are.
+    pub pending_dealings: Option<Res<'w, crate::dealings::PendingDealings>>,
     /// Every faction's name — published world-visible. `Option` for the reason the two above are.
     pub faction_names: Option<Res<'w, crate::faction_names::FactionNames>>,
     pub victory: Res<'w, VictoryState>,
@@ -287,6 +290,7 @@ pub(crate) struct SeatPublishState {
     connections: Whole<Vec<ConnectionState>>,
     contact_lessons: Whole<Vec<ContactLessonState>>,
     routes: Whole<Vec<RouteState>>,
+    dealings: Whole<Vec<DealingState>>,
     demographics: Whole<Vec<SchemaPopulationDemographicsState>>,
     forage_patches: Whole<Vec<ForagePatchState>>,
     /// The live workings, diffed as a whole vector exactly like [`Self::forage_patches`].
@@ -657,6 +661,7 @@ struct CampaignParts {
     connections: Option<Vec<ConnectionState>>,
     contact_lessons: Option<Vec<ContactLessonState>>,
     routes: Option<Vec<RouteState>>,
+    dealings: Option<Vec<DealingState>>,
     demographics: Option<Vec<SchemaPopulationDemographicsState>>,
     intensification_knowledge: Option<Vec<IntensificationKnowledgeState>>,
     ladder_knowledge: Option<Vec<LadderKnowledgeState>>,
@@ -682,6 +687,7 @@ struct CampaignBaselines<'a> {
     connections: &'a mut Whole<Vec<ConnectionState>>,
     contact_lessons: &'a mut Whole<Vec<ContactLessonState>>,
     routes: &'a mut Whole<Vec<RouteState>>,
+    dealings: &'a mut Whole<Vec<DealingState>>,
     demographics: &'a mut Whole<Vec<SchemaPopulationDemographicsState>>,
     intensification_knowledge: &'a mut Whole<Vec<IntensificationKnowledgeState>>,
     ladder_knowledge: &'a mut Whole<Vec<LadderKnowledgeState>>,
@@ -726,6 +732,7 @@ fn diff_campaign(
         connections: diff_whole(baseline.connections, &snapshot.connections, write),
         contact_lessons: diff_whole(baseline.contact_lessons, &snapshot.contact_lessons, write),
         routes: diff_whole(baseline.routes, &snapshot.routes, write),
+        dealings: diff_whole(baseline.dealings, &snapshot.dealings, write),
         demographics: diff_whole(baseline.demographics, &snapshot.demographics, write),
         intensification_knowledge: diff_whole(
             baseline.intensification_knowledge,
@@ -951,6 +958,7 @@ impl SeatPublishState {
             connections: Whole::default(),
             contact_lessons: Whole::default(),
             routes: Whole::default(),
+            dealings: Whole::default(),
             demographics: Whole::default(),
             forage_patches: Whole::default(),
             deposits: Whole::default(),
@@ -1119,6 +1127,7 @@ impl SeatPublishState {
             connections,
             contact_lessons,
             routes,
+            dealings,
             demographics,
             intensification_knowledge,
             ladder_knowledge,
@@ -1239,6 +1248,7 @@ impl SeatPublishState {
                             connections,
                             contact_lessons,
                             routes,
+                            dealings,
                             demographics,
                             intensification_knowledge,
                             ladder_knowledge,
@@ -1348,6 +1358,7 @@ impl SeatPublishState {
             connections: campaign_parts.connections,
             contact_lessons: campaign_parts.contact_lessons,
             routes: campaign_parts.routes,
+            dealings: campaign_parts.dealings,
             demographics: campaign_parts.demographics,
             intensification_knowledge: campaign_parts.intensification_knowledge,
             ladder_knowledge: campaign_parts.ladder_knowledge,
@@ -1552,6 +1563,7 @@ impl SeatPublishState {
         self.contact_lessons
             .reset(entry.snapshot.contact_lessons.clone());
         self.routes.reset(entry.snapshot.routes.clone());
+        self.dealings.reset(entry.snapshot.dealings.clone());
         self.demographics.reset(entry.snapshot.demographics.clone());
         self.forage_patches
             .reset(entry.snapshot.forage_patches.clone());
@@ -1785,6 +1797,7 @@ impl SeatPublishState {
             connections: None,
             contact_lessons: None,
             routes: None,
+            dealings: None,
             demographics: None,
             forage_patches: None,
             deposits: None,
@@ -1934,6 +1947,7 @@ impl SeatPublishState {
             connections: None,
             contact_lessons: None,
             routes: None,
+            dealings: None,
             demographics: None,
             forage_patches: None,
             deposits: None,
@@ -2067,6 +2081,7 @@ impl SeatPublishState {
             connections: None,
             contact_lessons: None,
             routes: None,
+            dealings: None,
             demographics: None,
             forage_patches: None,
             deposits: None,
@@ -2624,6 +2639,7 @@ pub fn capture_snapshot(
         active_profile,
         starting_loadout,
         border_policies,
+        pending_dealings,
         faction_names,
         victory,
         faction_inventory,
@@ -3815,6 +3831,19 @@ pub fn capture_snapshot(
                     .map(|(_, tile, _)| tile.terrain)
             },
         );
+        // **THE PENDING DEALINGS THE VIEWER IS PARTY TO** — addressed to their people or sent by
+        // them; another pair's dealings are theirs to know.
+        let dealing_states = pending_dealings
+            .as_deref()
+            .map(|pending| {
+                crate::snapshot::dealings::dealing_states(
+                    pending,
+                    viewer,
+                    tick.0,
+                    &materials_config,
+                )
+            })
+            .unwrap_or_default();
         // **THE DEPOSITS THE VIEWER HAS EXPLORED** — the road list's `Discovered` gate, because a
         // quarry does not wander off either, over the deposit-bearing ground sweep 1 picked out. See
         // `snapshot::deposits::deposit_states`: a row is about the LAND, so it stands whether or not
@@ -3882,6 +3911,10 @@ pub fn capture_snapshot(
             open_borders: border_policies
                 .as_deref()
                 .map(|policies| policies.is_open(viewer))
+                .unwrap_or(true),
+            accept_own_gifts: border_policies
+                .as_deref()
+                .map(|policies| policies.accepts_own_gifts(viewer))
                 .unwrap_or(true),
         }];
         // Every faction's name, world-visible, in id order.
@@ -4004,6 +4037,7 @@ pub fn capture_snapshot(
             connections: connections_state.clone(),
             contact_lessons: contact_lessons_state,
             routes: route_states.clone(),
+            dealings: dealing_states,
             demographics: demographics_state.clone(),
             forage_patches: forage_patches_state.clone(),
             deposits: deposit_states.clone(),

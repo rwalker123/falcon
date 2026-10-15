@@ -388,7 +388,10 @@ const NO_BENCH_TIERS: BenchTiers = BenchTiers {
 /// **What the band HAS, per rating** — amount, the exact per-axis reading, and the band that reading
 /// falls in. Both, because the band is the merge key and the panel's word while the exact value is
 /// what crafting reads.
-fn material_batches(store: &LocalStore, materials: &MaterialsConfig) -> Vec<MaterialBatchState> {
+pub(crate) fn material_batches(
+    store: &LocalStore,
+    materials: &MaterialsConfig,
+) -> Vec<MaterialBatchState> {
     store
         .materials()
         .flat_map(|(material, batches)| {
