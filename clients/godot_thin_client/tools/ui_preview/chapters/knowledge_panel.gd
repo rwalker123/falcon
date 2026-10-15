@@ -94,6 +94,7 @@ func run(harness) -> void:
 	# ⛔ **THE ROSTER GOES IN FIRST, AND WITHOUT IT THERE IS NO LADDER AT ALL.** The rows are built
 	# from the wire now, so this push is what the panel is made of — not a detail of one state.
 	h._hud.update_ladder_knowledge(KnowledgeFx.ladder_roster())
+	h._hud.update_ladder_rungs(KnowledgeFx.ladder_rungs())
 	# …and the SUBJECT AREAS' display order beside it, the same per-world declaration one level up.
 	# Without it the screen still groups — it just orders the headings by first-seen branch — so a
 	# chapter that pushed no order would be asserting the fallback rather than the shipped shape.
@@ -181,6 +182,7 @@ func _contact_lesson_frames() -> void:
 	# The people's NAME is staged the way `Main` ingests `faction_names`, and reset at the end.
 	FactionNames.update(CONTACT_FACTION_NAMES)
 	h._hud.update_ladder_knowledge(KnowledgeFx.ladder_roster())
+	h._hud.update_ladder_rungs(KnowledgeFx.ladder_rungs())
 	h._hud.update_crafting_catalogues([], [], _recipes(), _craft_knowledge_mixed())
 	h._hud.update_intensification([_wire_tracks(_tracks_mixed())])
 	h._hud.update_contact_lessons(_contact_lessons())
@@ -336,7 +338,8 @@ func _assert_greyed_zero_tracks() -> void:
 ##    panel is drawing from something other than the wire.
 func _assert_the_roster_builds_the_rows() -> void:
 	var roster := KnowledgeFx.ladder_roster()
-	var domains := KnowledgeRoster.build_domains({KnowledgeRoster.MODEL_LADDER_ROSTER: roster})
+	var domains := KnowledgeRoster.build_domains({KnowledgeRoster.MODEL_LADDER_ROSTER: roster,
+		KnowledgeRoster.MODEL_LADDER_RUNGS: KnowledgeFx.ladder_rungs()})
 	var roads := _domain_by_key(domains, HudKnowledgeVocab.DOMAIN_KEY_ROUTES)
 	h._assert_hud("knowledge — the ROADS row exists, built from the wire's roster alone",
 		not roads.is_empty()
@@ -1128,6 +1131,7 @@ func _assert_the_card_survives_a_planned_domain_count() -> void:
 	# **PUT THE SHIPPED ROSTER BACK.** This HUD is long-lived and the chapters after this one — and
 	# the blocks after this in THIS chapter — are written against the real ladder.
 	h._hud.update_ladder_knowledge(KnowledgeFx.ladder_roster())
+	h._hud.update_ladder_rungs(KnowledgeFx.ladder_rungs())
 	await h._settle()
 
 ## The stress roster's branch count. `docs/plan_knowledge_rows.md` §1's own figure, and twice the
@@ -1397,6 +1401,7 @@ func _assert_a_narrow_room_keeps_the_last_row_reachable() -> void:
 	await h._settle()
 	probe.queue_free()
 	h._hud.update_ladder_knowledge(KnowledgeFx.ladder_roster())
+	h._hud.update_ladder_rungs(KnowledgeFx.ladder_rungs())
 	h._hud.update_crafting_catalogues([], [], [], [])
 	await h._settle()
 
@@ -1805,6 +1810,7 @@ func _assert_loaded_world_is_not_learned() -> void:
 	# then the progress row.
 	h._hud.update_overlay(TURN_LOADED_WORLD_SEED, {})
 	h._hud.update_ladder_knowledge(KnowledgeFx.ladder_roster())
+	h._hud.update_ladder_rungs(KnowledgeFx.ladder_rungs())
 	h._hud.update_intensification([_wire_tracks(wire_tracks)])
 	await h._settle()
 
@@ -2043,6 +2049,7 @@ func _assert_the_fold_rule() -> void:
 func _area_frames() -> void:
 	var controller: KnowledgePanelController = h._hud.knowledge_panel()
 	h._hud.update_ladder_knowledge(KnowledgeFx.ladder_roster())
+	h._hud.update_ladder_rungs(KnowledgeFx.ladder_rungs())
 	h._hud.update_ladder_areas(KnowledgeFx.ladder_areas())
 	h._hud.update_crafting_catalogues([], [], _recipes(), _craft_knowledge_mixed())
 	h._hud.update_intensification([_wire_tracks(_tracks_mixed())])
@@ -2094,12 +2101,14 @@ func _area_frames() -> void:
 	# the client has no word for, both beside the ordinary headings rather than alone — which is
 	# what makes "they still draw" a claim about placement and not only about presence.
 	h._hud.update_ladder_knowledge(KnowledgeFx.ladder_roster_with_fallbacks())
+	h._hud.update_ladder_rungs(KnowledgeFx.ladder_rungs())
 	await h._settle()
 	_assert_both_fallbacks_are_on_screen()
 	await h._save("knowledge_panel_area_fallbacks")
 
 	# **PUT THE SHIPPED ROSTER BACK** before anything else is asked of the screen.
 	h._hud.update_ladder_knowledge(KnowledgeFx.ladder_roster())
+	h._hud.update_ladder_rungs(KnowledgeFx.ladder_rungs())
 	await h._settle()
 	await _assert_a_folded_area_closes_its_reading()
 
@@ -2465,6 +2474,7 @@ func _filter_pill(root: Node, key: String) -> Control:
 func _model(tracks: Dictionary, patches: Array, herds: Array) -> Dictionary:
 	return {
 		KnowledgeRoster.MODEL_LADDER_ROSTER: KnowledgeFx.ladder_roster(),
+		KnowledgeRoster.MODEL_LADDER_RUNGS: KnowledgeFx.ladder_rungs(),
 		KnowledgeRoster.MODEL_TRACKS: tracks,
 		KnowledgeRoster.MODEL_CRAFT_KNOWLEDGE: [],
 		KnowledgeRoster.MODEL_PATCHES: patches,

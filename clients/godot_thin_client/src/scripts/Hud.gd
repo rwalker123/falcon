@@ -1115,6 +1115,10 @@ func update_ladder_areas(areas_variant: Variant) -> void:
 func update_ladder_rungs(catalog_variant: Variant) -> void:
     _topbar.update_ladder_rungs(catalog_variant)
 
+## The whole ladder catalog as ingested, for `Main.format_improvement`'s command shaping.
+func ladder_rungs() -> Array:
+    return _topbar.ladder_rungs()
+
 ## …and the branch declarations (`{branch, area, source_kind, label}`) beside it.
 func update_ladder_branches(branches_variant: Variant) -> void:
     _topbar.update_ladder_branches(branches_variant)

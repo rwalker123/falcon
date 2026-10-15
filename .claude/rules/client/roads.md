@@ -1732,3 +1732,16 @@ other key (`tile:bog_drain` → `Bog drain`) rather than printing the raw wire k
 is true only for the road branch's id (`ROAD_BRANCH`), so a tile-kind entry takes the generic path and
 never reads as a road. `Main.SITE_ADDRESS_ROAD_TOKEN` is that same id, and every build is
 `build <verb> <faction> [band] <source…>`.
+
+### The command's shape and the knowledge screen's counts read the catalog (issue #175)
+
+`Main.format_improvement(payload, catalog)` finds the `ladder_rungs` row whose `verb` matches and
+shapes the line by its `source_kind` (`HudRouteVocab.source_kind_of_verb`): `herd` a herd id, `patch`
+a tile, `deposit` a tile and a material, `road` / `tile` a band and a tile. A verb the catalog does
+not carry is shaped by what the payload itself carries, never by a verb list. `KnowledgeRoster`
+resolves a knowledge's verb (`unlock_for_track`), its source kind and a road's standing order off the
+same catalog (`MODEL_LADDER_RUNGS`), so a knowledge gating only a deposit or tile verb reads as
+untestable rather than as *nothing is using it*. `RungGates.RUNG_KNOWLEDGE_TRACKS`,
+`SourceForecast.IMPROVEMENT_RUNG_KEYS` / `RUNG_BRANCHES` and the `*_IMPROVEMENTS` lists still key the
+plant and animal rungs' bespoke wire fields (`cultivation_progress`, `corral_work_cost`, ...) and the
+compose sheet's gate reasons; they are the shipped plant / animal UI's data, not command routing.

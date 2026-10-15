@@ -11897,8 +11897,7 @@ func _assert_ready_mark_declares() -> void:
 		lines.append(String(MAIN_SCRIPT.format_improvement(seen[0] as Dictionary).get("line", "")))
 	lines.sort()
 	var want: Array[String] = [
-		"build corral %d %d %d" % [HudConst.PLAYER_FACTION_ID,
-			DECLARE_CORRAL_TILE.x, DECLARE_CORRAL_TILE.y],
+		"build corral %d %s" % [HudConst.PLAYER_FACTION_ID, DECLARE_CORRAL_HERD],
 		"build sow %d %d %d" % [HudConst.PLAYER_FACTION_ID, DECLARE_PATCH.x, DECLARE_PATCH.y],
 		"build tame %d %s" % [HudConst.PLAYER_FACTION_ID, DECLARE_TAME_HERD],
 	]

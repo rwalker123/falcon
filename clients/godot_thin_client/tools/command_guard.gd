@@ -988,6 +988,17 @@ func _connect_recorders() -> void:
 ## Driven straight through `Main.format_improvement`, the pure static the compose sheet's press
 ## reaches: there is no road control on the shipped HUD yet, so a click path would be a fiction and
 ## the builder is the whole of the client's side of this verb.
+## The ladder catalog the guard stands up for `format_improvement`: one verb-bearing row per shipped
+## road / deposit verb carrying its branch's `source_kind`, which is what the builder shapes the
+## command by (issue #175). The verb lists are HARNESS DATA here, not client routing.
+func _ladder_catalog() -> Array:
+	var rows: Array = []
+	for verb in SourceForecast.ROUTE_IMPROVEMENTS:
+		rows.append({"verb": verb, "source_kind": HudRouteVocab.SOURCE_KIND_ROAD})
+	for verb in SourceForecast.DEPOSIT_IMPROVEMENTS:
+		rows.append({"verb": verb, "source_kind": HudRouteVocab.SOURCE_KIND_DEPOSIT})
+	return rows
+
 func _drive_road_verbs() -> void:
 	for improvement in SourceForecast.ROUTE_IMPROVEMENTS:
 		var payload := {
@@ -997,7 +1008,7 @@ func _drive_road_verbs() -> void:
 			"x": TARGET_X,
 			"y": TARGET_Y,
 		}
-		_record(String(improvement), payload, MAIN_SCRIPT.format_improvement(payload))
+		_record(String(improvement), payload, MAIN_SCRIPT.format_improvement(payload, _ladder_catalog()))
 	# **AND A ROAD VERB WITH NO BAND BUILDS NOTHING**, which is a refusal rather than a default: the
 	# token IS the keeper, and guessing one would commit somebody else's people to a standing bill.
 	# Asserted here rather than left to the parser, because a line missing its band token parses as
@@ -1008,7 +1019,7 @@ func _drive_road_verbs() -> void:
 		"x": TARGET_X,
 		"y": TARGET_Y,
 	}
-	if not MAIN_SCRIPT.format_improvement(bandless).is_empty():
+	if not MAIN_SCRIPT.format_improvement(bandless, _ladder_catalog()).is_empty():
 		_fail("grade: a road verb with no band built a line — the keeper token is not optional")
 
 ## ⛔ **THE DEPOSIT BRANCHES' THREE TILE VERBS — the only tile commands that NAME A MATERIAL** (issue
@@ -1040,7 +1051,7 @@ func _drive_deposit_verbs() -> void:
 			"y": TARGET_Y,
 			"material": DEPOSIT_MATERIAL,
 		}
-		_record(String(improvement), payload, MAIN_SCRIPT.format_improvement(payload))
+		_record(String(improvement), payload, MAIN_SCRIPT.format_improvement(payload, _ladder_catalog()))
 	# **AND A DEPOSIT VERB WITH NO MATERIAL BUILDS NOTHING**, which is a refusal rather than a default:
 	# the material is half the working's identity and guessing one would order a rung on the other
 	# working of the same hex. Asserted here rather than left to the parser for the road verbs' own
@@ -1051,7 +1062,7 @@ func _drive_deposit_verbs() -> void:
 		"x": TARGET_X,
 		"y": TARGET_Y,
 	}
-	if not MAIN_SCRIPT.format_improvement(materialless).is_empty():
+	if not MAIN_SCRIPT.format_improvement(materialless, _ladder_catalog()).is_empty():
 		_fail("fell: a deposit verb with no material built a line — the material token is not optional")
 
 ## ⛔ **`abandon_working <faction> <x> <y> <material>` — PUTTING ONE WORKING DOWN, AND IT IS NOT

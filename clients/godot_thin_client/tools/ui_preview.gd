@@ -496,6 +496,7 @@ func _ready() -> void:
 	# the knowledge screen's domain rows are built from it: a HUD with no roster has no ladder nodes at
 	# all, whatever a faction's meters say.
 	_hud.update_ladder_knowledge(KnowledgeFx.ladder_roster())
+	_hud.update_ladder_rungs(KnowledgeFx.ladder_rungs())
 
 	# Top-bar intensification-knowledge meters (faction 0): Cultivation still learning
 	# (block-glyph bar + "learning"), Herding fully mastered ("✔ known"). Visible across frames.

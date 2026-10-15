@@ -676,6 +676,48 @@ static func raising_fallback_text(entry: Dictionary) -> String:
 static func deal_fallback_text(entry: Dictionary) -> String:
 	return DEAL_FALLBACK_FORMAT % catalog_label(entry)
 
+# ---- A VERB'S SOURCE KIND, OFF THE CATALOG (issue #175) -------------------------------------------
+
+## The five `source_kind`s the wire publishes, spelled once.
+const SOURCE_KIND_PATCH := "patch"
+const SOURCE_KIND_HERD := "herd"
+const SOURCE_KIND_ROAD := "road"
+const SOURCE_KIND_DEPOSIT := "deposit"
+const SOURCE_KIND_TILE := "tile"
+const RUNG_CATALOG_SOURCE_KIND := "source_kind"
+
+## The `source_kind` of the branch a build VERB climbs, read off the `ladder_rungs` row carrying that
+## verb. `""` when the catalog has no such row (none staged, or an unpublished verb) -- the caller's
+## cue to fall back to what its own payload carries, never to a verb list.
+static func source_kind_of_verb(catalog: Array, verb: String) -> String:
+	if verb == "":
+		return ""
+	for row in catalog:
+		if row is Dictionary and catalog_verb(row as Dictionary) == verb:
+			return String((row as Dictionary).get(RUNG_CATALOG_SOURCE_KIND, "")).strip_edges()
+	return ""
+
+## Whether `standing` is at or above `target` ON THE CATALOG'S OWN ORDER: both rungs must be rows of
+## one branch and `standing`'s `order` at least `target`'s. `false` for an empty key, a rung the
+## catalog does not carry, or two different branches -- the same asymmetric answer
+## `SourceForecast.rung_at_or_above` gives, but read off the config rather than a client rung list.
+static func catalog_rung_at_or_above(catalog: Array, standing: String, target: String) -> bool:
+	var standing_row := _row_of_rung_key(catalog, standing.strip_edges())
+	var target_row := _row_of_rung_key(catalog, target.strip_edges())
+	if standing_row.is_empty() or target_row.is_empty():
+		return false
+	if String(standing_row.get("branch", "")) != String(target_row.get("branch", "")):
+		return false
+	return catalog_order(standing_row) >= catalog_order(target_row)
+
+static func _row_of_rung_key(catalog: Array, rung_key: String) -> Dictionary:
+	if rung_key == "":
+		return {}
+	for row in catalog:
+		if row is Dictionary and catalog_rung_key(row as Dictionary) == rung_key:
+			return row
+	return {}
+
 # ---- THE BUILD QUEUE ENTRY'S BRANCH (`BuildQueueEntryState.branch`) -------------------------------
 
 ## The road branch's id in `intensification_ladder.json`, the token a road's queue address leads with.
