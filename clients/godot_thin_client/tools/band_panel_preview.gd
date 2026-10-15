@@ -8869,14 +8869,14 @@ func _faction_knowledge_fixture() -> Dictionary:
 ## both places and pass a test that only counted rows.
 func _faction_discoveries_fixture() -> Dictionary:
 	return {"faction": 0, "sites": [
-		{"site_id": "great_peak", "display_name": "Great Peak", "x": 61, "y": 12, "glyph": "⛰"},
-		{"site_id": "great_peak", "display_name": "Great Peak", "x": 44, "y": 30, "glyph": "⛰"},
-		{"site_id": "sky_arch", "display_name": "Sky Arch", "x": 70, "y": 22, "glyph": "⛰"},
-		{"site_id": "salt_spring", "display_name": "Salt Spring", "x": 66, "y": 26, "glyph": "💧"},
-		{"site_id": "bone_field", "display_name": "Bone Field", "x": 58, "y": 33, "glyph": "🦴"},
-		{"site_id": "sky_lake", "display_name": "Sky Lake", "x": 52, "y": 19, "glyph": "💧"},
-		{"site_id": "black_glass", "display_name": "Black Glass", "x": 48, "y": 41, "glyph": "◈"},
-		{"site_id": "singing_cave", "display_name": "Singing Cave", "x": 63, "y": 37, "glyph": "◈"},
+		{"site_id": "great_peak", "display_name": "Great Peak", "category": "landmark", "x": 61, "y": 12, "glyph": "⛰"},
+		{"site_id": "great_peak", "display_name": "Great Peak", "category": "landmark", "x": 44, "y": 30, "glyph": "⛰"},
+		{"site_id": "sky_arch", "display_name": "Sky Arch", "category": "landmark", "x": 70, "y": 22, "glyph": "⛰"},
+		{"site_id": "salt_spring", "display_name": "Salt Spring", "category": "settle_site", "x": 66, "y": 26, "glyph": "💧"},
+		{"site_id": "bone_field", "display_name": "Bone Field", "category": "landmark", "x": 58, "y": 33, "glyph": "🦴"},
+		{"site_id": "sky_lake", "display_name": "Sky Lake", "category": "settle_site", "x": 52, "y": 19, "glyph": "💧"},
+		{"site_id": "black_glass", "display_name": "Black Glass", "category": "oddity", "x": 48, "y": 41, "glyph": "◈"},
+		{"site_id": "singing_cave", "display_name": "Singing Cave", "category": "oddity", "x": 63, "y": 37, "glyph": "◈"},
 	]}
 
 ## THE FACTION PAGE's roster — TWO resident bands and one detached party.
@@ -9378,8 +9378,16 @@ func _assert_faction_fodder_dormant() -> void:
 	# paragraph about hay popped out from under a cursor resting on Growth, Morale or Food. Asserted
 	# on the label the block IS, since that is the only place such a sentence could land.
 	var label := _first_rich_text(band_zone)
-	_assert_band_panel("faction dormant: the dim row registers no hover — no hay reaches the block",
+	_assert_band_panel("faction dormant: no hay sentence sits on the block itself, only on the row",
 		label != null and _mentions_none_of(label.tooltip_text, RETIRED_FODDER_HOVER_WORDS))
+	var hovers: Dictionary = label.get_meta(DetailFormat.ROW_HOVERS_META, {}) if label != null else {}
+	_assert_band_panel("faction dormant: the Fodder row carries its row-scoped hover, worn as a hover run",
+		String(hovers.get(HudDisclosureVocab.DETAIL_ROW_FODDER, "")) == DetailFormat.FODDER_DORMANT_HOVER_FACTION
+		and vitals.contains("[url=" + HudDisclosureVocab.ROW_HOVER_META_PREFIX + HudDisclosureVocab.DETAIL_ROW_FODDER))
+	var band_ctx := DetailFormat.Context.new()
+	_hud._banddetail.unit_summary_lines(_fodderless_faction_roster()[0], "", band_ctx)
+	_assert_band_panel("band dormant: the Fodder row carries the band wording",
+		String(band_ctx.row_tooltips.get(HudDisclosureVocab.DETAIL_ROW_FODDER, "")) == DetailFormat.FODDER_DORMANT_HOVER_BAND)
 
 	# **AND KNOWING THE CRAFT DOES NOT MAKE AN ECONOMY.** Learn Foddering and the page is still
 	# dormant — nobody keeps a pen — which is the half that catches a page reading the knowledge track
@@ -9909,6 +9917,7 @@ func _assert_faction_settling_belief() -> void:
 	_assert_band_panel("faction settling belief: ...behind the ancestors mark",
 		_has_label_containing(zone, BandOverlayRenderer.ANCESTORS_GLYPH))
 	_assert_settling_tooltips(zone, true)
+	_assert_discovery_tooltips(zone)
 	_hud.update_sedentarization([{"faction": HudConst.PLAYER_FACTION_ID,
 		"score": TOPBAR_SEDENTARIZATION_SCORE, "stage": TOPBAR_SEDENTARIZATION_STAGE,
 		"belief_points": 0.0,
@@ -9942,6 +9951,18 @@ func _assert_faction_settling_belief() -> void:
 ## The Settling block's two tooltips. The stage row's lists every fixture input (and the `From the dead`
 ## value, which is the belief fixture while a band stands on its dead and 0 when none does); the
 ## `From the dead` row carries its own in both forms. Read off the row's Labels, which hold the tip.
+func _assert_discovery_tooltips(zone: Node) -> void:
+	var peak := _faction_row_tooltip(zone, "Great Peak")
+	_assert_band_panel("faction discoveries: a two-instance row's hover names its category and both coordinates (got '%s')" % peak.replace("\n", " | "),
+		peak == "%s\n%s" % [HudWorkVocab.FACTION_DISCOVERY_CATEGORY_LINES["landmark"],
+			"Found at (61, 12) · Found at (44, 30)"])
+	var spring := _faction_row_tooltip(zone, "Salt Spring")
+	_assert_band_panel("faction discoveries: a settle site names its own category line (got '%s')" % spring.replace("\n", " | "),
+		spring == "%s\nFound at (66, 26)" % HudWorkVocab.FACTION_DISCOVERY_CATEGORY_LINES["settle_site"])
+	var cave := _faction_row_tooltip(zone, "Black Glass")
+	_assert_band_panel("faction discoveries: an unknown category has no category line (got '%s')" % cave,
+		cave == "Found at (48, 41)")
+
 func _assert_settling_tooltips(zone: Node, tied: bool) -> void:
 	var belief := int(TOPBAR_SEDENTARIZATION_BELIEF_POINTS) if tied else 0
 	var expected := HudWorkVocab.FACTION_SETTLING_TOOLTIP_FORMAT % [

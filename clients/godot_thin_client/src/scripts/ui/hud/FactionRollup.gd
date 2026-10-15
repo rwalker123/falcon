@@ -163,10 +163,12 @@ static func _build_vitals_label(bands: Array, disclosures: DisclosureController)
     # no longer has. `Kit` and `Growth` can both return "" the same way and had the same latent bug.
     _disclosures_clear(disclosures)
     var ctx := DetailFormat.Context.new()
-    # The context is this page's alone now: the row builders below take none, the only one that ever
-    # wrote to it being the dormant `Fodder:` row's retired hover. What still reads it here is the
-    # caret state and the tint table `detail_bbcode` resolves rows through.
+    # The context is this page's alone: the row builders below take none. It carries the caret state,
+    # the tint table `detail_bbcode` resolves rows through, and the dormant `Fodder:` row's hover.
     var lines := _faction_summary_lines(bands, disclosures)
+    if not _any_fodder_economy(bands):
+        ctx.row_tooltips[HudDisclosureVocab.DETAIL_ROW_FODDER] = \
+            DetailFormat.FODDER_DORMANT_HOVER_FACTION
     # The carets are read from the CONTROLLER, not from a context the producer filled — every row
     # here registers its own disclosure as it is built, so the state is complete only after the last
     # of them. `BandDetailLines` hit exactly this ordering trap on the merged Growth clause.
@@ -290,8 +292,7 @@ static func _food_line(bands: Array, disclosures: DisclosureController) -> Strin
 ## readout for an economy that does not exist, and one that disagreed with the dim `—` every one of its
 ## own bands was showing. The two scales say it the same way now, through the same builder
 ## (`DetailFormat.fodder_dormant_row`) — and what that builder says is a dim dash and nothing else:
-## the row carries no hover at either scale, the only hover it could register being the whole
-## BLOCK's.
+## the row carries a row-scoped hover at each scale (`DetailFormat.FODDER_DORMANT_HOVER_FACTION` here).
 ##
 ## **THE GATE IS `band_has_fodder_economy` OVER THE BANDS, NOT A SECOND PREDICATE.** `_any_fodder_economy`
 ## is a fold and nothing else: whatever the per-band test admits, this page admits, and a faction test
@@ -933,6 +934,8 @@ static func _build_discoveries_block(sites: Array) -> VBoxContainer:
     var order: Array[String] = []
     var counts := {}
     var names := {}
+    var categories := {}
+    var found_at := {}
     for site_variant in sites:
         if not (site_variant is Dictionary):
             continue
@@ -945,7 +948,11 @@ static func _build_discoveries_block(sites: Array) -> VBoxContainer:
             counts[key] = 0
             var display := String(site.get("display_name", "")).strip_edges()
             names[key] = display if display != "" else HudWorkVocab.FACTION_DISCOVERY_UNNAMED
+            categories[key] = String(site.get("category", "")).strip_edges()
+            found_at[key] = []
         counts[key] = int(counts[key]) + 1
+        (found_at[key] as Array).append(HudWorkVocab.FACTION_DISCOVERY_FOUND_FORMAT % [
+            int(site.get("x", 0)), int(site.get("y", 0))])
     if order.is_empty():
         return null
     var block := HudWidgets.make_zone_block()
@@ -955,9 +962,17 @@ static func _build_discoveries_block(sites: Array) -> VBoxContainer:
     for i in range(shown):
         var key: String = order[i]
         block.add_child(_stat_row(String(names[key]),
-            HudWorkVocab.FACTION_DISCOVERY_COUNT_FORMAT % int(counts[key]), HudStyle.INK_DIM))
+            HudWorkVocab.FACTION_DISCOVERY_COUNT_FORMAT % int(counts[key]), HudStyle.INK_DIM,
+            _discovery_tooltip(String(categories[key]), found_at[key])))
     _append_more_row(block, order.size() - shown)
     return block
+
+## A DISCOVERIES row's hover: the category's line (none for a category this build has no line for), then
+## where each instance was found — one line, first-seen order.
+static func _discovery_tooltip(category: String, found_at: Array) -> String:
+    var found := HudWorkVocab.FACTION_DISCOVERY_FOUND_SEPARATOR.join(PackedStringArray(found_at))
+    var line := String(HudWorkVocab.FACTION_DISCOVERY_CATEGORY_LINES.get(category, ""))
+    return found if line == "" else "%s\n%s" % [line, found]
 
 # ---- work zone blocks -------------------------------------------------------
 

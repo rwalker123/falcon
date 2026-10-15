@@ -1568,6 +1568,18 @@ leaves the held value), and `Hud.update_mobility` re-renders the faction page.
   `_assert_faction_settling_belief` asserts it reads `38/100`; `_assert_faction_band_zone_scrolls`
   asserts it present inside the scroll on the bottom dock.
 
+## The DISCOVERIES rows' hover
+
+`FactionRollup._build_discoveries_block` is one row per site KIND (keyed on `site_id`, first-seen order),
+and each row carries a hover through `_stat_row`'s tip argument, so it is hoverable across the row.
+`_discovery_tooltip` reads: a line for the kind's `category` (the first instance's, resolved from the
+sites catalog at capture), then `Found at (x, y)` for each instance of that kind, in first-seen order,
+on ONE line joined by ` · `. `HudWorkVocab.FACTION_DISCOVERY_CATEGORY_LINES` holds the category lines
+(`settle_site`: `Fertile, sheltered ground — a good place to settle.`; `landmark`: `A landmark your
+people have found.`); a category it has no line for contributes no category line and the hover is the
+`Found at` line alone. `_assert_discovery_tooltips` asserts a two-instance kind names its category line
+and both coordinates, a settle site its own line, and an unknown category no category line.
+
 ## The parties strip's lines
 
 The parties inspector strip IS the detail panel for a launched party, and on a horizontal dock it lives

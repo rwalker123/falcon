@@ -291,6 +291,16 @@ const FACTION_DISCOVERY_COUNT_FORMAT := "%d"
 ## none at all is a lie, so the id stands.
 const FACTION_DISCOVERY_UNNAMED := "Unnamed site"
 
+## A DISCOVERIES row's hover: one line for the site's category (`category` on the site dict, resolved from
+## the sites catalog at capture), then `Found at (x, y)` for each instance of that kind in first-seen
+## order, joined on ONE line. A category this build has no line for contributes no category line.
+const FACTION_DISCOVERY_CATEGORY_LINES := {
+    "settle_site": "Fertile, sheltered ground — a good place to settle.",
+    "landmark": "A landmark your people have found.",
+}
+const FACTION_DISCOVERY_FOUND_FORMAT := "Found at (%d, %d)"
+const FACTION_DISCOVERY_FOUND_SEPARATOR := " · "
+
 ## **THE ALERT CLAUSE — what a faction row says where an aggregate would lie.** A runway is one larder
 ## against one band's drain and a kit condition is three durabilities per band; neither has a faction
 ## value, so those rows state HOW MANY bands are in trouble and the drill-down states which. The count
