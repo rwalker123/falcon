@@ -524,6 +524,10 @@ const FACTION_TAB_LABELS: Array[String] = ["Faction", "Work", "Parties"]
 ## (It was seeded for the top bar's own Sedentarization meter; that meter is retired with the
 ## top-right block, and the seed stays because the faction page now renders off the same cache.)
 const TOPBAR_SEDENTARIZATION_SCORE := 62.0
+## The mobility fixture (issue #800): the smoothed score and the two pre-smoothing inputs.
+const MOBILITY_SCORE := 38.0
+const MOBILITY_SKILLS_POINTS := 22.0
+const MOBILITY_DISTANCE_POINTS := 31.0
 ## The Beliefs fixtures (issue #701), in `CultureTraitAxis` order. The expected strings are LITERALS.
 const BELIEFS_AXIS_COUNT := 15
 const BELIEFS_AXIS_TRADITIONALIST_REVISIONIST := 3
@@ -542,6 +546,12 @@ const TOPBAR_SEDENTARIZATION_STAGE := "soft"
 ## How many of that score's points the band standing on its dead supplies (the SETTLING block's
 ## `From the dead` row). Seeded non-zero so every faction frame measures the block with the mark in.
 const TOPBAR_SEDENTARIZATION_BELIEF_POINTS := 24.0
+## The other four raw settle-score inputs, distinct and nonzero so the stage row's tooltip can be told
+## apart value by value.
+const SEDENTARIZATION_DOMESTICATION_POINTS := 11.0
+const SEDENTARIZATION_SURPLUS_POINTS := 7.0
+const SEDENTARIZATION_LAND_POINTS := 13.0
+const SEDENTARIZATION_POPULATION_POINTS := 5.0
 ## Slack allowed between a stat-row key's laid-out width and the width its own font measures for its
 ## own string (`_faction_keyless_rows`). It absorbs the sub-pixel disagreement between the container's
 ## rounded layout and the text server's float measurement, and nothing wider: a CLIPPED key comes back
@@ -1007,7 +1017,13 @@ func _ready() -> void:
 	# Seed the top bar so the HUD reflow reads against real content.
 	_hud.update_sedentarization([{"faction": 0,
 		"score": TOPBAR_SEDENTARIZATION_SCORE, "stage": TOPBAR_SEDENTARIZATION_STAGE,
-		"belief_points": TOPBAR_SEDENTARIZATION_BELIEF_POINTS}])
+		"belief_points": TOPBAR_SEDENTARIZATION_BELIEF_POINTS,
+		"domestication_points": SEDENTARIZATION_DOMESTICATION_POINTS,
+		"surplus_points": SEDENTARIZATION_SURPLUS_POINTS, "land_points": SEDENTARIZATION_LAND_POINTS,
+		"population_points": SEDENTARIZATION_POPULATION_POINTS}])
+	# The mobility row beside it (issue #800): the viewer's own row, the shape the native decoder emits.
+	_hud.update_mobility([{"faction": 0, "score": MOBILITY_SCORE,
+		"skills_points": MOBILITY_SKILLS_POINTS, "distance_points": MOBILITY_DISTANCE_POINTS}])
 
 	# Slice 3: inject the panel into the HUD and push a player band through the real snapshot
 	# path (update_band_alerts → _refresh_panel_band), so the FULL band detail relocates into the
@@ -2390,13 +2406,11 @@ func _ready() -> void:
 	_assert_zone_content_fits()
 	_report_zone_content_extent("band_panel_faction_wide")
 	_assert_faction_zone_layout()
-	# **THE BAND ZONE'S HEIGHT TIER, asserted here as the NEGATIVE half of a pair.** This dock's zone
-	# is ~300px and cannot hold every block at the page's row size, so DISCOVERIES must be gone —
-	# while `band_panel_faction`'s 1057px side dock, which asserts it PRESENT, is the positive. Either
-	# claim alone is satisfied by a gate stuck in one position, and `content-fits` cannot see it in
-	# either direction: a dropped block leaves a box that fits trivially, and a clipped one still
-	# reports a rect inside its host.
-	_assert_faction_band_zone_tier()
+	# **THE BAND ZONE SCROLLS RATHER THAN DROPS.** This dock's zone is ~300px and cannot show every
+	# block at the page's row size, so DISCOVERIES and the Mobility row must still be PRESENT — inside
+	# the sanctioned band-zone scroll — which `content-fits` cannot see in either direction: a dropped
+	# block leaves a box that fits trivially.
+	_assert_faction_band_zone_scrolls()
 	await _assert_faction_shell_threshold()
 
 	# The ROUTING claims, none of which a PNG can carry — and the last of them leaves the panel back on
@@ -8242,8 +8256,7 @@ func _assert_scroll_only_where_sanctioned() -> void:
 			% [int(counts[HudWorkVocab.PARTIES_LIST_NAME]), strays.size()],
 			int(counts[HudWorkVocab.PARTIES_LIST_NAME]) == 1)
 	var band_zone: Variant = _panel._zones.get(BandCityPanel.ZONE_BAND)
-	if band_zone is Node and _panel.is_ancestor_of(band_zone as Node) \
-			and not _hud._bandpanel._panel_is_faction:
+	if band_zone is Node and _panel.is_ancestor_of(band_zone as Node):
 		_assert_band_panel("…and the band zone scrolls its block stack, so no tier can delete a block instead (%d sanctioned)"
 			% int(counts[HudWorkVocab.BAND_ZONE_SCROLL_NAME]),
 			int(counts[HudWorkVocab.BAND_ZONE_SCROLL_NAME]) == 1)
@@ -8856,14 +8869,14 @@ func _faction_knowledge_fixture() -> Dictionary:
 ## both places and pass a test that only counted rows.
 func _faction_discoveries_fixture() -> Dictionary:
 	return {"faction": 0, "sites": [
-		{"site_id": "great_peak", "display_name": "Great Peak", "x": 61, "y": 12, "glyph": "⛰"},
-		{"site_id": "great_peak", "display_name": "Great Peak", "x": 44, "y": 30, "glyph": "⛰"},
-		{"site_id": "sky_arch", "display_name": "Sky Arch", "x": 70, "y": 22, "glyph": "⛰"},
-		{"site_id": "salt_spring", "display_name": "Salt Spring", "x": 66, "y": 26, "glyph": "💧"},
-		{"site_id": "bone_field", "display_name": "Bone Field", "x": 58, "y": 33, "glyph": "🦴"},
-		{"site_id": "sky_lake", "display_name": "Sky Lake", "x": 52, "y": 19, "glyph": "💧"},
-		{"site_id": "black_glass", "display_name": "Black Glass", "x": 48, "y": 41, "glyph": "◈"},
-		{"site_id": "singing_cave", "display_name": "Singing Cave", "x": 63, "y": 37, "glyph": "◈"},
+		{"site_id": "great_peak", "display_name": "Great Peak", "category": "landmark", "x": 61, "y": 12, "glyph": "⛰"},
+		{"site_id": "great_peak", "display_name": "Great Peak", "category": "landmark", "x": 44, "y": 30, "glyph": "⛰"},
+		{"site_id": "sky_arch", "display_name": "Sky Arch", "category": "landmark", "x": 70, "y": 22, "glyph": "⛰"},
+		{"site_id": "salt_spring", "display_name": "Salt Spring", "category": "settle_site", "x": 66, "y": 26, "glyph": "💧"},
+		{"site_id": "bone_field", "display_name": "Bone Field", "category": "landmark", "x": 58, "y": 33, "glyph": "🦴"},
+		{"site_id": "sky_lake", "display_name": "Sky Lake", "category": "settle_site", "x": 52, "y": 19, "glyph": "💧"},
+		{"site_id": "black_glass", "display_name": "Black Glass", "category": "oddity", "x": 48, "y": 41, "glyph": "◈"},
+		{"site_id": "singing_cave", "display_name": "Singing Cave", "category": "oddity", "x": 63, "y": 37, "glyph": "◈"},
 	]}
 
 ## THE FACTION PAGE's roster — TWO resident bands and one detached party.
@@ -9365,8 +9378,16 @@ func _assert_faction_fodder_dormant() -> void:
 	# paragraph about hay popped out from under a cursor resting on Growth, Morale or Food. Asserted
 	# on the label the block IS, since that is the only place such a sentence could land.
 	var label := _first_rich_text(band_zone)
-	_assert_band_panel("faction dormant: the dim row registers no hover — no hay reaches the block",
+	_assert_band_panel("faction dormant: no hay sentence sits on the block itself, only on the row",
 		label != null and _mentions_none_of(label.tooltip_text, RETIRED_FODDER_HOVER_WORDS))
+	var hovers: Dictionary = label.get_meta(DetailFormat.ROW_HOVERS_META, {}) if label != null else {}
+	_assert_band_panel("faction dormant: the Fodder row carries its row-scoped hover, worn as a hover run",
+		String(hovers.get(HudDisclosureVocab.DETAIL_ROW_FODDER, "")) == DetailFormat.FODDER_DORMANT_HOVER_FACTION
+		and vitals.contains("[url=" + HudDisclosureVocab.ROW_HOVER_META_PREFIX + HudDisclosureVocab.DETAIL_ROW_FODDER))
+	var band_ctx := DetailFormat.Context.new()
+	_hud._banddetail.unit_summary_lines(_fodderless_faction_roster()[0], "", band_ctx)
+	_assert_band_panel("band dormant: the Fodder row carries the band wording",
+		String(band_ctx.row_tooltips.get(HudDisclosureVocab.DETAIL_ROW_FODDER, "")) == DetailFormat.FODDER_DORMANT_HOVER_BAND)
 
 	# **AND KNOWING THE CRAFT DOES NOT MAKE AN ECONOMY.** Learn Foddering and the page is still
 	# dormant — nobody keeps a pen — which is the half that catches a page reading the knowledge track
@@ -9793,22 +9814,41 @@ func _assert_faction_band_zone_blocks() -> void:
 	_assert_band_panel("faction band zone: every stat row renders its key (%d keyless)" % keyless,
 		keyless == 0)
 
-## THE BAND ZONE'S HEIGHT TIER, on the height-capped horizontal dock: DISCOVERIES is dropped and the
-## blocks that survive are still there. **The second half is what stops this passing on a zone that
-## rendered nothing at all**, which is the failure a gate is most likely to produce.
-func _assert_faction_band_zone_tier() -> void:
+## THE FACTION BAND ZONE ON THE HEIGHT-CAPPED HORIZONTAL DOCK: every block is PRESENT and sits inside
+## the sanctioned band-zone scroll, which overflows its box (so a bar shows) — nothing is dropped.
+## **The overflow claim is what stops this passing on a box tall enough to need no scroll**, where
+## presence proves nothing about reachability.
+func _assert_faction_band_zone_scrolls() -> void:
 	var zone: Node = _panel._zones.get(BandCityPanel.ZONE_BAND)
 	if zone == null:
-		_assert_band_panel("faction band tier: the zone exists in the wide shell", false)
+		_assert_band_panel("faction band zone: the zone exists in the wide shell", false)
 		return
-	_assert_band_panel("faction band tier: a ~300px box DROPS the DISCOVERIES block",
-		not _has_label_containing(zone, HudWorkVocab.FACTION_HEADER_DISCOVERIES.to_upper()))
-	_assert_band_panel("faction band tier: …and KEEPS Settling",
-		_has_label_containing(zone, HudWorkVocab.FACTION_HEADER_SETTLING.to_upper()))
-	# …and the Open Borders toggle, which sits ABOVE the tier's cut: it is the one thing on the page
-	# the player can DO, and that is what the capped tier exists to keep.
-	_assert_band_panel("faction band tier: …and KEEPS the Open Borders toggle",
+	var scroll: ScrollContainer = null
+	var found: Array[Node] = []
+	_collect_scroll_containers(zone, found)
+	for node in found:
+		if String(node.name) == HudWorkVocab.BAND_ZONE_SCROLL_NAME:
+			scroll = node as ScrollContainer
+	_assert_band_panel("faction band zone: the page's band zone sits inside the sanctioned scroll",
+		scroll != null)
+	if scroll == null:
+		return
+	_assert_band_panel("faction band zone: a ~300px box KEEPS the DISCOVERIES block, inside the scroll",
+		_has_label_containing(scroll, HudWorkVocab.FACTION_HEADER_DISCOVERIES.to_upper()))
+	_assert_band_panel("faction band zone: …and the Settling block",
+		_has_label_containing(scroll, HudWorkVocab.FACTION_HEADER_SETTLING.to_upper()))
+	var mobility := _faction_stat_value(scroll, HudWorkVocab.FACTION_MOBILITY_KEY)
+	_assert_band_panel("faction band zone: …and the Mobility row, reading %d/100 (got '%s')" % [
+			int(MOBILITY_SCORE), mobility],
+		mobility.ends_with("%d/%d" % [int(MOBILITY_SCORE), HudWorkVocab.FACTION_MOBILITY_SCALE]))
+	_assert_band_panel("faction band zone: …and the Open Borders toggle",
 		_find_meta_control(zone, FactionRollup.OPEN_BORDERS_TOGGLE_META) != null)
+	var stack: Control = scroll.get_child(0) as Control
+	var needed := stack.get_combined_minimum_size().y if stack != null else 0.0
+	print("band_panel_preview: faction band zone scroll — stack %.0fpx in a %.0fpx viewport" % [
+		needed, scroll.size.y])
+	_assert_band_panel("faction band zone: the stack overflows the box, so the scrollbar is what reaches it",
+		needed > scroll.size.y)
 
 ## THE FACTION PAGE'S OPEN BORDERS TOGGLE (issue #512). Four claims, each a thing a PNG cannot carry:
 ##   • the toggle is up and CHECKED, because the snapshot said open;
@@ -9866,15 +9906,24 @@ func _assert_faction_settling_belief() -> void:
 	if zone == null:
 		_assert_band_panel("faction settling belief: the zone exists", false)
 		return
+	var mobility := _faction_stat_value(zone, HudWorkVocab.FACTION_MOBILITY_KEY)
+	_assert_band_panel("faction mobility: the row reads %d/100 (got '%s')" % [
+			int(MOBILITY_SCORE), mobility],
+		mobility.ends_with("%d/%d" % [int(MOBILITY_SCORE), HudWorkVocab.FACTION_MOBILITY_SCALE]))
 	var tied := _faction_stat_value(zone, HudWorkVocab.FACTION_SETTLING_BELIEF_KEY)
 	_assert_band_panel("faction settling belief: a band on its dead reads +%d (got '%s')" % [
 			int(TOPBAR_SEDENTARIZATION_BELIEF_POINTS), tied],
 		tied.ends_with("+%d" % int(TOPBAR_SEDENTARIZATION_BELIEF_POINTS)))
 	_assert_band_panel("faction settling belief: ...behind the ancestors mark",
 		_has_label_containing(zone, BandOverlayRenderer.ANCESTORS_GLYPH))
+	_assert_settling_tooltips(zone, true)
+	_assert_discovery_tooltips(zone)
 	_hud.update_sedentarization([{"faction": HudConst.PLAYER_FACTION_ID,
 		"score": TOPBAR_SEDENTARIZATION_SCORE, "stage": TOPBAR_SEDENTARIZATION_STAGE,
-		"belief_points": 0.0}])
+		"belief_points": 0.0,
+		"domestication_points": SEDENTARIZATION_DOMESTICATION_POINTS,
+		"surplus_points": SEDENTARIZATION_SURPLUS_POINTS, "land_points": SEDENTARIZATION_LAND_POINTS,
+		"population_points": SEDENTARIZATION_POPULATION_POINTS}])
 	_hud.update_faction_policies([_faction_policy_fixture(true)])
 	await _settle()
 	await _save("band_panel_faction_settling_untied")
@@ -9883,6 +9932,7 @@ func _assert_faction_settling_belief() -> void:
 	_assert_band_panel("faction settling belief: no band on its dead reads '%s' (got '%s')" % [
 			HudWorkVocab.FACTION_SETTLING_BELIEF_NONE, untied],
 		untied == HudWorkVocab.FACTION_SETTLING_BELIEF_NONE)
+	_assert_settling_tooltips(zone, false)
 	_assert_band_panel("faction settling belief: ...and carries no ancestors mark",
 		zone != null and not _has_label_containing(zone, BandOverlayRenderer.ANCESTORS_GLYPH))
 	# The long sentence must not widen the zone: the Settling meter beside it still renders whole.
@@ -9891,9 +9941,60 @@ func _assert_faction_settling_belief() -> void:
 	_assert_zone_content_width_fits()
 	_hud.update_sedentarization([{"faction": HudConst.PLAYER_FACTION_ID,
 		"score": TOPBAR_SEDENTARIZATION_SCORE, "stage": TOPBAR_SEDENTARIZATION_STAGE,
-		"belief_points": TOPBAR_SEDENTARIZATION_BELIEF_POINTS}])
+		"belief_points": TOPBAR_SEDENTARIZATION_BELIEF_POINTS,
+		"domestication_points": SEDENTARIZATION_DOMESTICATION_POINTS,
+		"surplus_points": SEDENTARIZATION_SURPLUS_POINTS, "land_points": SEDENTARIZATION_LAND_POINTS,
+		"population_points": SEDENTARIZATION_POPULATION_POINTS}])
 	_hud.update_faction_policies([_faction_policy_fixture(true)])
 	await _settle()
+
+## The Settling block's two tooltips. The stage row's lists every fixture input (and the `From the dead`
+## value, which is the belief fixture while a band stands on its dead and 0 when none does); the
+## `From the dead` row carries its own in both forms. Read off the row's Labels, which hold the tip.
+func _assert_discovery_tooltips(zone: Node) -> void:
+	var peak := _faction_row_tooltip(zone, "Great Peak")
+	_assert_band_panel("faction discoveries: a two-instance row's hover names its category and both coordinates (got '%s')" % peak.replace("\n", " | "),
+		peak == "%s\n%s" % [HudWorkVocab.FACTION_DISCOVERY_CATEGORY_LINES["landmark"],
+			"Found at (61, 12) · Found at (44, 30)"])
+	var spring := _faction_row_tooltip(zone, "Salt Spring")
+	_assert_band_panel("faction discoveries: a settle site names its own category line (got '%s')" % spring.replace("\n", " | "),
+		spring == "%s\nFound at (66, 26)" % HudWorkVocab.FACTION_DISCOVERY_CATEGORY_LINES["settle_site"])
+	var cave := _faction_row_tooltip(zone, "Black Glass")
+	_assert_band_panel("faction discoveries: an unknown category has no category line (got '%s')" % cave,
+		cave == "Found at (48, 41)")
+
+func _assert_settling_tooltips(zone: Node, tied: bool) -> void:
+	var belief := int(TOPBAR_SEDENTARIZATION_BELIEF_POINTS) if tied else 0
+	var expected := HudWorkVocab.FACTION_SETTLING_TOOLTIP_FORMAT % [
+		int(SEDENTARIZATION_DOMESTICATION_POINTS), int(SEDENTARIZATION_SURPLUS_POINTS),
+		int(SEDENTARIZATION_LAND_POINTS), int(SEDENTARIZATION_POPULATION_POINTS), belief]
+	var stage_tip := _faction_row_tooltip(zone, HudWorkVocab.FACTION_SETTLING_STAGE_LABELS.get(
+		TOPBAR_SEDENTARIZATION_STAGE, ""))
+	_assert_band_panel("faction settling tooltip: the stage row lists every input (got '%s')" % stage_tip.replace("\n", " | "),
+		stage_tip == expected and stage_tip.contains("Rich land: +%d" % int(SEDENTARIZATION_LAND_POINTS))
+		and stage_tip.contains("From the dead: +%d" % belief))
+	var belief_tip := _faction_row_tooltip(zone, HudWorkVocab.FACTION_SETTLING_BELIEF_KEY)
+	_assert_band_panel("faction settling tooltip: the From the dead row carries its tip (%s form)" % (
+			"+N" if tied else "zero"),
+		belief_tip == HudWorkVocab.FACTION_SETTLING_BELIEF_TOOLTIP)
+
+## The tooltip on the stat row keyed `key`: both of its Labels must carry the SAME non-empty text, so it
+## is hoverable across the row rather than on one Label.
+func _faction_row_tooltip(node: Node, key: String) -> String:
+	if node is HBoxContainer:
+		var labels: Array = []
+		for child in node.get_children():
+			if child is Label:
+				labels.append(child)
+		if labels.size() >= 2 and (labels[0] as Label).text == key:
+			var first := (labels[0] as Label).tooltip_text
+			var last := (labels[labels.size() - 1] as Label).tooltip_text
+			return first if first == last else "MISMATCH %s / %s" % [first, last]
+	for child in node.get_children():
+		var found := _faction_row_tooltip(child, key)
+		if found != "":
+			return found
+	return ""
 
 ## The player faction's `faction_policies` row, the shape the native decoder hands GDScript.
 func _faction_policy_fixture(open: bool) -> Dictionary:

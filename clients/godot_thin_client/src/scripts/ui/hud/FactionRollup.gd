@@ -103,40 +103,36 @@ const KNOWLEDGE_METER_CELLS := FactionReadouts.KNOWLEDGE_METER_CELLS
 ## here on the merits rather than merely being left over. Discoveries lands beside the count it
 ## elaborates.
 ##
-## **`full` IS A HEIGHT TIER, AND DISCOVERIES IS WHAT YIELDS**, carried over from the zone they came
-## from because the measurement that justified it is unchanged: Discoveries is the only list here with
-## no ceiling of its own (Settling is one row), and it is permanent geographic knowledge rather than a
-## call to act. What survives a short box is what the player might DO something about.
+## **EVERY BLOCK ALWAYS BUILDS.** A horizontal dock's box is shorter than the full block, so the
+## controller hosts this column inside the band zone's sanctioned scroll
+## (`BandPanelController._faction_band_zone_column`) rather than dropping a block: what the box cannot
+## show is reached by scrolling.
 ##
 ## **RE-MEASURE BEFORE ADDING ANOTHER BLOCK** — `band_panel_preview`'s `_report_zone_content_extent`
-## prints this zone's extent, and it has been at the edge of the ~300px a horizontal dock offers twice.
-## The tier's threshold is `HudWorkVocab.FACTION_BAND_FULL_MIN_HEIGHT`, and it must stay above the
-## full block's measured height.
+## prints this zone's extent against its box.
 ## **IT TAKES NO `knowledge` ROW.** It was threaded in for ONE reader — the dormant `Fodder:` row's
 ## hover, which stated how far along Foddering is — and that row carries no hover now
 ## (`DetailFormat.fodder_dormant_row`), so nothing on this page reads a knowledge track.
 ##
-## **OPEN BORDERS SITS ABOVE THE `full` CUT**, so the height-capped tier keeps it: it is the one thing
-## on this page the player can DO, which is exactly what that tier exists to keep. `policy` is the
+## **OPEN BORDERS SITS ABOVE DISCOVERIES**, the one thing on this page the player can DO, so it is the
+## last to scroll out of view. `policy` is the
 ## player faction's `faction_policies` row (`FactionReadouts.faction_policy`); `on_open_borders` takes
 ## the requested state as a `bool`.
 static func build_band_zone(labor: HudBandLaborState, disclosures: DisclosureController,
-        sedentarization: Dictionary, sites: Array, policy: Dictionary,
-        on_open_borders: Callable, full: bool) -> VBoxContainer:
+        sedentarization: Dictionary, mobility: Dictionary, sites: Array, policy: Dictionary,
+        on_open_borders: Callable) -> VBoxContainer:
     var col := HudWidgets.make_zone_column()
     var bands := labor.player_bands()
     col.add_child(_build_vitals_label(bands, disclosures))
     var people := _build_people_block(bands)
     if people != null:
         col.add_child(people)
-    var settling := _build_settling_block(sedentarization)
+    var settling := _build_settling_block(sedentarization, mobility)
     if settling != null:
         col.add_child(settling)
     var borders := _build_open_borders_row(policy, on_open_borders)
     if borders != null:
         col.add_child(borders)
-    if not full:
-        return col
     var discoveries := _build_discoveries_block(sites)
     if discoveries != null:
         col.add_child(discoveries)
@@ -167,10 +163,12 @@ static func _build_vitals_label(bands: Array, disclosures: DisclosureController)
     # no longer has. `Kit` and `Growth` can both return "" the same way and had the same latent bug.
     _disclosures_clear(disclosures)
     var ctx := DetailFormat.Context.new()
-    # The context is this page's alone now: the row builders below take none, the only one that ever
-    # wrote to it being the dormant `Fodder:` row's retired hover. What still reads it here is the
-    # caret state and the tint table `detail_bbcode` resolves rows through.
+    # The context is this page's alone: the row builders below take none. It carries the caret state,
+    # the tint table `detail_bbcode` resolves rows through, and the dormant `Fodder:` row's hover.
     var lines := _faction_summary_lines(bands, disclosures)
+    if not _any_fodder_economy(bands):
+        ctx.row_tooltips[HudDisclosureVocab.DETAIL_ROW_FODDER] = \
+            DetailFormat.FODDER_DORMANT_HOVER_FACTION
     # The carets are read from the CONTROLLER, not from a context the producer filled — every row
     # here registers its own disclosure as it is built, so the state is complete only after the last
     # of them. `BandDetailLines` hit exactly this ordering trap on the merged Growth clause.
@@ -294,8 +292,7 @@ static func _food_line(bands: Array, disclosures: DisclosureController) -> Strin
 ## readout for an economy that does not exist, and one that disagreed with the dim `—` every one of its
 ## own bands was showing. The two scales say it the same way now, through the same builder
 ## (`DetailFormat.fodder_dormant_row`) — and what that builder says is a dim dash and nothing else:
-## the row carries no hover at either scale, the only hover it could register being the whole
-## BLOCK's.
+## the row carries a row-scoped hover at each scale (`DetailFormat.FODDER_DORMANT_HOVER_FACTION` here).
 ##
 ## **THE GATE IS `band_has_fodder_economy` OVER THE BANDS, NOT A SECOND PREDICATE.** `_any_fodder_economy`
 ## is a fold and nothing else: whatever the per-band test admits, this page admits, and a faction test
@@ -774,7 +771,7 @@ static func _build_people_block(bands: Array) -> VBoxContainer:
 ## It was briefly a head carrying its whole readout on the head LINE — one line for a block that
 ## states one fact, and 22px of a box the zone was over. Reported by eye: that is not what a head is.
 ## A head names the section and the row states the reading, and a block with one row is still a block;
-## the height it costs is paid for by the zone's own height TIER instead (see the zone builder).
+## the height it costs is absorbed by the band zone's scroll (see the zone builder).
 ##
 ## **THE ROW IS KEYED BY THE STAGE**, not by a word restating the head above it: `SETTLING` over
 ## `Sedentarization` would be a row with no information in its left column, and the stage is the one
@@ -787,7 +784,7 @@ static func _build_people_block(bands: Array) -> VBoxContainer:
 ## it rendered as a lowercase enum key beside the capitalised `Nomadic` the empty case already got.
 ## `HudWorkVocab.FACTION_SETTLING_STAGE_LABELS` is the one home for those words, and an unknown or
 ## absent stage falls back to the `none` row rather than passing the raw token through.
-static func _build_settling_block(sedentarization: Dictionary) -> VBoxContainer:
+static func _build_settling_block(sedentarization: Dictionary, mobility: Dictionary) -> VBoxContainer:
     if sedentarization.is_empty():
         return null
     var score := float(sedentarization.get("score", 0.0))
@@ -809,9 +806,42 @@ static func _build_settling_block(sedentarization: Dictionary) -> VBoxContainer:
         HudWorkVocab.FACTION_SETTLING_VALUE_FORMAT % [
             HudFormat.meter_bar(score, KNOWLEDGE_METER_CELLS),
             int(round(score)), HudWorkVocab.FACTION_SETTLING_SCALE],
-        HudStyle.INK_DIM))
+        HudStyle.INK_DIM, _settling_tooltip(sedentarization)))
     block.add_child(_build_settling_belief_row(float(sedentarization.get("belief_points", 0.0))))
+    var mobility_row := _build_mobility_row(mobility)
+    if mobility_row != null:
+        block.add_child(mobility_row)
     return block
+
+## The stage row's hover: the five raw inputs to the settle score, rounded to integers. A missing key
+## reads 0.
+static func _settling_tooltip(sedentarization: Dictionary) -> String:
+    return HudWorkVocab.FACTION_SETTLING_TOOLTIP_FORMAT % [
+        int(round(float(sedentarization.get("domestication_points", 0.0)))),
+        int(round(float(sedentarization.get("surplus_points", 0.0)))),
+        int(round(float(sedentarization.get("land_points", 0.0)))),
+        int(round(float(sedentarization.get("population_points", 0.0)))),
+        int(round(float(sedentarization.get("belief_points", 0.0))))]
+
+## THE MOBILITY ROW (issue #800) — the roaming counterpart to the settling meter, the SETTLING block's
+## last row, in the stage row's own form (meter and `N/100`). Null before the snapshot has carried one
+## (no `0/100` claiming a measurement that was not made). The HOVER itemizes the two inputs with the
+## points each gave this turn, in the player's words; the wire's `skills_points` / `distance_points` are
+## the pre-smoothing contributions, so the meter (the smoothed total) follows them rather than equalling
+## their sum. It is a row of the block rather than a block of its own because it reads as one fact beside the
+## stage row, and a block would add a head for one line.
+static func _build_mobility_row(mobility: Dictionary) -> HBoxContainer:
+    if mobility.is_empty():
+        return null
+    var score := float(mobility.get("score", 0.0))
+    var tip := HudWorkVocab.FACTION_MOBILITY_TOOLTIP_FORMAT % [
+        int(round(float(mobility.get("skills_points", 0.0)))),
+        int(round(float(mobility.get("distance_points", 0.0))))]
+    return _stat_row(HudWorkVocab.FACTION_MOBILITY_KEY,
+        HudWorkVocab.FACTION_SETTLING_VALUE_FORMAT % [
+            HudFormat.meter_bar(score, KNOWLEDGE_METER_CELLS),
+            int(round(score)), HudWorkVocab.FACTION_MOBILITY_SCALE],
+        HudStyle.INK_DIM, tip)
 
 ## **THE SETTLING BLOCK'S SECOND ROW (issue #701): `From the dead  +N`** — how many of the score's 100
 ## points come from a band standing on its dead this turn. At or above `FACTION_SETTLING_BELIEF_MIN` it
@@ -819,16 +849,15 @@ static func _build_settling_block(sedentarization: Dictionary) -> VBoxContainer:
 ## below it, a dimmed `0 — stand on your dead` — a `+0` would read as a measured nothing.
 ## The mark is its own Label (a plain `Label` renders no BBCode) inserted ahead of the value.
 ##
-## The extra row's height is paid for by the zone's height TIER: `HudWorkVocab.FACTION_BAND_FULL_MIN_HEIGHT`
-## was re-measured with it in.
 static func _build_settling_belief_row(belief_points: float) -> HBoxContainer:
     if belief_points < HudWorkVocab.FACTION_SETTLING_BELIEF_MIN:
         var none_row := _stat_row(HudWorkVocab.FACTION_SETTLING_BELIEF_KEY,
-            HudWorkVocab.FACTION_SETTLING_BELIEF_NONE, HudStyle.INK_DIM)
+            HudWorkVocab.FACTION_SETTLING_BELIEF_NONE, HudStyle.INK_DIM,
+            HudWorkVocab.FACTION_SETTLING_BELIEF_TOOLTIP)
         return none_row
     var row := _stat_row(HudWorkVocab.FACTION_SETTLING_BELIEF_KEY,
         HudWorkVocab.FACTION_SETTLING_BELIEF_VALUE_FORMAT % int(round(belief_points)),
-        HudStyle.BELIEF)
+        HudStyle.BELIEF, HudWorkVocab.FACTION_SETTLING_BELIEF_TOOLTIP)
     var mark := Label.new()
     mark.text = BandOverlayRenderer.ANCESTORS_GLYPH
     mark.add_theme_font_size_override("font_size", STAT_ROW_FONT_SIZE)
@@ -905,6 +934,8 @@ static func _build_discoveries_block(sites: Array) -> VBoxContainer:
     var order: Array[String] = []
     var counts := {}
     var names := {}
+    var categories := {}
+    var found_at := {}
     for site_variant in sites:
         if not (site_variant is Dictionary):
             continue
@@ -917,7 +948,11 @@ static func _build_discoveries_block(sites: Array) -> VBoxContainer:
             counts[key] = 0
             var display := String(site.get("display_name", "")).strip_edges()
             names[key] = display if display != "" else HudWorkVocab.FACTION_DISCOVERY_UNNAMED
+            categories[key] = String(site.get("category", "")).strip_edges()
+            found_at[key] = []
         counts[key] = int(counts[key]) + 1
+        (found_at[key] as Array).append(HudWorkVocab.FACTION_DISCOVERY_FOUND_FORMAT % [
+            int(site.get("x", 0)), int(site.get("y", 0))])
     if order.is_empty():
         return null
     var block := HudWidgets.make_zone_block()
@@ -927,9 +962,17 @@ static func _build_discoveries_block(sites: Array) -> VBoxContainer:
     for i in range(shown):
         var key: String = order[i]
         block.add_child(_stat_row(String(names[key]),
-            HudWorkVocab.FACTION_DISCOVERY_COUNT_FORMAT % int(counts[key]), HudStyle.INK_DIM))
+            HudWorkVocab.FACTION_DISCOVERY_COUNT_FORMAT % int(counts[key]), HudStyle.INK_DIM,
+            _discovery_tooltip(String(categories[key]), found_at[key])))
     _append_more_row(block, order.size() - shown)
     return block
+
+## A DISCOVERIES row's hover: the category's line (none for a category this build has no line for), then
+## where each instance was found — one line, first-seen order.
+static func _discovery_tooltip(category: String, found_at: Array) -> String:
+    var found := HudWorkVocab.FACTION_DISCOVERY_FOUND_SEPARATOR.join(PackedStringArray(found_at))
+    var line := String(HudWorkVocab.FACTION_DISCOVERY_CATEGORY_LINES.get(category, ""))
+    return found if line == "" else "%s\n%s" % [line, found]
 
 # ---- work zone blocks -------------------------------------------------------
 

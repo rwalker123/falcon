@@ -240,6 +240,23 @@ const FACTION_SETTLING_BELIEF_VALUE_FORMAT := "+%d"
 const FACTION_SETTLING_BELIEF_NONE := "0 — stand on your dead"
 const FACTION_SETTLING_BELIEF_MIN := 0.5
 
+## The MOBILITY row, the SETTLING block's last (issue #800): the roaming counterpart to the settling
+## score, a `0–100` meter. The row's key names the score; its value is the same `%s  %d/%d` shape the
+## stage row uses, and the HOVER itemizes the two inputs in the player's words — each with the points it
+## contributed this turn (`skills_points` / `distance_points`, pre-smoothing, so the two sum to the
+## turn's target and the meter drifts toward it).
+const FACTION_MOBILITY_KEY := "Mobility"
+const FACTION_MOBILITY_SCALE := 100
+const FACTION_MOBILITY_TOOLTIP_FORMAT := "Roaming skills (herd lore, travois, drives): +%d\nWalking with the herds: +%d"
+
+## The Settling stage row's hover: the five inputs to the raw settle score, each the points it gave this
+## turn (`domestication_points`, `surplus_points`, `land_points`, `population_points`, `belief_points`,
+## pre-smoothing, so the five sum to the raw score and the meter follows them). A key the entry lacks
+## reads 0.
+const FACTION_SETTLING_TOOLTIP_FORMAT := "Settling score (sedentarization)\nTamed herds and tended plants: +%d\nFood to spare: +%d\nRich land: +%d\nPopulation: +%d\nFrom the dead: +%d"
+## The `From the dead` row's hover, on both of its forms (the `+N` one and the dimmed zero one).
+const FACTION_SETTLING_BELIEF_TOOLTIP := "Points to Settling from bands camped where their dead lie."
+
 ## **OPEN BORDERS — the faction page's one control** (issue #512, `docs/plan_band_fission.md`
 ## §Defection). A faction-wide policy with no other home: whether another people's unhappy leavers,
 ## and their defecting parties, may join this people's bands. The checkbox's face is the policy's
@@ -270,39 +287,19 @@ const FACTION_STAT_ROW_FONT_SIZE := 16
 ## because this page has the room the strip does not.
 const FACTION_DISCOVERY_COUNT_FORMAT := "%d"
 
-## **THE FACTION PAGE'S BAND-ZONE HEIGHT TIER.** Its blocks — the PEOPLE bar, the vitals rows,
-## SETTLING and DISCOVERIES — do not all fit the ~300px a horizontal dock's zone offers, and the zone
-## CLIPS, so a box below this drops DISCOVERIES and keeps the rest (`FactionRollup.build_band_zone`).
-##
-## **IT IS A REAL "CAN THIS BOX HOLD THE FULL BLOCK?" TEST, not a round number between two docks**,
-## and it was MEASURED when Settling and Discoveries were rehomed here from the retired KNOWLEDGE zone
-## (`docs/plan_knowledge_screen.md` §4) rather than carried over: the full block reads **461px** at its
-## worst case (`band_panel_faction`, the PEOPLE bar + four vitals rows + Settling + the sites list at
-## its cap plus its `+N more`), and the two boxes the panel actually offers are **396** on a wide
-## horizontal dock and **941** on a tall side one. So this sits above the block and below the tall box,
-## with 19px of margin over the first — and that margin, not the gap between the two docks, is what
-## protects a box that is neither and what shrinks as the block grows.
-##
-## **IT WAS GUESSED AT 400 FIRST AND THAT WAS WRONG IN BOTH DIRECTIONS**: it sat BELOW the 461 the
-## block needs, so a box between the two would have taken the full branch and clipped — and it cleared
-## the wide dock's own 396 by only 4px, which is not a threshold, it is a coincidence.
-##
-## **Re-measure before adding a row to this zone**; `band_panel_preview._report_zone_content_extent`
-## prints the full block's extent on `band_panel_faction` and the tiered one on
-## `band_panel_faction_wide`, and this threshold must stay above the first.
-##
-## **RE-MEASURED AT 531 WHEN THE OPEN BORDERS ROW LANDED (issue #512)**, over the 480 this sat at — so
-## it moved to 550, the same ~19px margin over the block. The wide dock's tiered block reads 305px of
-## a 358px box with the row in, and the tall side box is still 941, so the gap it bisects is intact.
-##
-## **RE-MEASURED AT 560 WHEN THE `From the dead` ROW LANDED (issue #701)**, over the 531 above — it
-## moved to 580, the same ~19px margin over the block. The wide dock's tiered block reads 334px of a
-## 358px box with the row in (24 spare), and the tall side box is still 941.
-const FACTION_BAND_FULL_MIN_HEIGHT := 580.0
-
 ## A discovered site whose catalog row carries no display name — the site_id is a worse name than
 ## none at all is a lie, so the id stands.
 const FACTION_DISCOVERY_UNNAMED := "Unnamed site"
+
+## A DISCOVERIES row's hover: one line for the site's category (`category` on the site dict, resolved from
+## the sites catalog at capture), then `Found at (x, y)` for each instance of that kind in first-seen
+## order, joined on ONE line. A category this build has no line for contributes no category line.
+const FACTION_DISCOVERY_CATEGORY_LINES := {
+    "settle_site": "Fertile, sheltered ground — a good place to settle.",
+    "landmark": "A landmark your people have found.",
+}
+const FACTION_DISCOVERY_FOUND_FORMAT := "Found at (%d, %d)"
+const FACTION_DISCOVERY_FOUND_SEPARATOR := " · "
 
 ## **THE ALERT CLAUSE — what a faction row says where an aggregate would lie.** A runway is one larder
 ## against one band's drain and a kit condition is three durabilities per band; neither has a faction

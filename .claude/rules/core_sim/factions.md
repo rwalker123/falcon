@@ -1033,6 +1033,7 @@ apply only where the row describes something that can be *seen*.
 | `connections` | `snapshot/connections.rs` | **Viewer** — edges whose *observer* band is the viewer's |
 | `factionInventory` | `snapshot/economy.rs` | **Viewer** |
 | `sedentarization` | `snapshot/subsistence.rs` | **Viewer** |
+| `mobility` | `snapshot/subsistence.rs` | **Viewer** - the roaming counterpart of `sedentarization`, a bare number with no visible tier |
 | `intensificationKnowledge` | `snapshot/subsistence.rs` | **Viewer** |
 | `craftKnowledge` | `snapshot/crafting.rs` | **Viewer** |
 | `discoveryProgress` | `snapshot/knowledge.rs` | **Viewer** |
