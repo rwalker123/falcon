@@ -51,7 +51,7 @@ const MUST_BE_CONCURRENT: [(&str, &str); 6] = [
 const MUST_BE_ORDERED: [(&str, &str); 4] = [
     // Documented in `lib.rs`: the band's `current_tile` must be fresh before labor reads it.
     ("advance_band_movement", "advance_labor_allocation"),
-    // The mobility score drains the steps `advance_band_movement` records beside a migrating herd.
+    // The mobility score drains the steps `advance_band_movement` records while following a herd.
     ("advance_band_movement", "mobility_tick"),
     // Declared via `.after(simulate_materials)` — an edge through a type set.
     ("simulate_materials", "advance_forage_regrowth"),

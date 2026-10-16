@@ -3,7 +3,7 @@
 //!
 //! The roaming counterpart of `SedentarizationScore`: a per-faction 0-100 readout, an EMA-smoothed
 //! blend of the roaming skills a people has learned and the hexes its bands walked this turn
-//! beside a migrating herd. These tests drive the turn's real movement systems in the Population
+//! following a herd, in any roam state. These tests drive the turn's real movement systems in the Population
 //! chain's order (the harness `roaming_skills` uses), then `mobility_tick`, and read the resource
 //! and the ENCODED snapshot back. Every claim is paired with a control so a dead input cannot pass.
 

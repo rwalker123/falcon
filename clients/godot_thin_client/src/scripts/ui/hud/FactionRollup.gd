@@ -771,7 +771,7 @@ static func _build_people_block(bands: Array) -> VBoxContainer:
 ## It was briefly a head carrying its whole readout on the head LINE — one line for a block that
 ## states one fact, and 22px of a box the zone was over. Reported by eye: that is not what a head is.
 ## A head names the section and the row states the reading, and a block with one row is still a block;
-## the height it costs is paid for by the zone's own height TIER instead (see the zone builder).
+## the height it costs is absorbed by the band zone's scroll (see the zone builder).
 ##
 ## **THE ROW IS KEYED BY THE STAGE**, not by a word restating the head above it: `SETTLING` over
 ## `Sedentarization` would be a row with no information in its left column, and the stage is the one
@@ -828,8 +828,8 @@ static func _settling_tooltip(sedentarization: Dictionary) -> String:
 ## (no `0/100` claiming a measurement that was not made). The HOVER itemizes the two inputs with the
 ## points each gave this turn, in the player's words; the wire's `skills_points` / `distance_points` are
 ## the pre-smoothing contributions, so the meter (the smoothed total) follows them rather than equalling
-## their sum. It is a row of the block rather than a block of its own because the wide dock's tiered
-## band zone is 358px and a block with its own head did not fit it.
+## their sum. It is a row of the block rather than a block of its own because it reads as one fact beside the
+## stage row, and a block would add a head for one line.
 static func _build_mobility_row(mobility: Dictionary) -> HBoxContainer:
     if mobility.is_empty():
         return null

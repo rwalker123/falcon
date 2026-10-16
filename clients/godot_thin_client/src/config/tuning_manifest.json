@@ -417,7 +417,7 @@
           "max": 1,
           "step": 0.05,
           "default": 0.5,
-          "hint": "How much of the score is the ground bands walked this turn beside a migrating herd. A people that stops roaming stops earning it."
+          "hint": "How much of the score is the ground bands walked this turn following a herd, grazing or migrating. A people that stops roaming stops earning it."
         },
         {
           "pointer": "/references/hexes_per_turn",
@@ -428,7 +428,7 @@
           "step": 0.5,
           "default": 1.0,
           "unit": "hexes",
-          "hint": "Hexes a band must step in one turn, following a migrating herd, to earn the full distance points. Matches a band's walking speed, so walking every turn saturates it."
+          "hint": "Hexes a band must step in one turn, following a herd (grazing or migrating), to earn the full distance points. Matches a band's walking speed, so walking every turn saturates it."
         }
       ]
     }

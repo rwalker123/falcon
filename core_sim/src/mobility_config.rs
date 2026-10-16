@@ -3,7 +3,7 @@
 //! Loaded from `data/mobility_config.json`. The score is a per-faction 0-100 readout of how
 //! roaming a people is (see `mobility.rs`) - the counterpart of the Sedentarization Score - a
 //! weighted blend of two normalized inputs, the roaming skills a people has learned and the
-//! distance its bands walked beside a migrating herd this turn.
+//! distance its bands walked following a herd this turn, in any roam state.
 //!
 //! **The JSON is the sole source of mobility tuning.** Like `demographics_config.rs` there is no
 //! hand-written `Default`: every field is required, unknown keys are rejected, and
@@ -32,7 +32,7 @@ pub const BUILTIN_MOBILITY_CONFIG: &str = include_str!("data/mobility_config.jso
 pub struct MobilityWeights {
     /// The roaming skills (herd lore, travois, drives): the mean of their ledger progress.
     pub skills: f32,
-    /// The distance bands walked beside a migrating herd this turn.
+    /// The distance bands walked following a herd this turn, in any roam state.
     pub distance: f32,
 }
 
@@ -40,7 +40,7 @@ pub struct MobilityWeights {
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct MobilityReferences {
-    /// Hexes one band must step in a turn, following a herd on a `Migrate` leg, to fully satisfy
+    /// Hexes one band must step in a turn, following a herd in any roam state, to fully satisfy
     /// the distance input.
     pub hexes_per_turn: f32,
 }

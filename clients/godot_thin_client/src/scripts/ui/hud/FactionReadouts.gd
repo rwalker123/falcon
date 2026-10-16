@@ -214,7 +214,7 @@ func update_sedentarization(sedentarization_variant: Variant) -> void:
 				break
 
 ## INGEST the player faction's Mobility entry (issue #800). Renders nothing — the faction page's band
-## zone draws the ROAMING block off `faction_mobility()`. Same player-faction filter as
+## zone draws the Settling block's `Mobility` row off `faction_mobility()`. Same player-faction filter as
 ## `update_sedentarization`, and for the same one-place reason.
 func update_mobility(mobility_variant: Variant) -> void:
 	_mobility = {}

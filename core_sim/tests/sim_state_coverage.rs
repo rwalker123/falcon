@@ -173,7 +173,7 @@ const DERIVED_RESOURCES: [(&str, &str); 8] = [
     ("ContactsThisTurn", "connections::advance_connections"),
     ("CultureEffectsCache", "reconcile_culture_layers"),
     ("HerdDensityMap", "advance_herds"),
-    // Filled by `advance_band_movement` (the hexes a band stepped beside a migrating herd) and
+    // Filled by `advance_band_movement` (the hexes a band stepped following a herd) and
     // DRAINED by `mobility_tick` later in the same Population chain, so it is empty at the end of
     // every turn.
     ("HerdFollowSteps", "mobility::mobility_tick"),

@@ -1354,8 +1354,8 @@ pub fn build_headless_app() -> App {
                     systems::advance_culture_splits,
                     sedentarization::sedentarization_tick,
                     // The roaming counterpart: after `advance_band_movement` (in this chain, so
-                    // the order is declared), which records the turn's steps beside a migrating
-                    // herd and which this drains.
+                    // the order is declared), which records the turn's steps following a herd
+                    // (any roam state) and which this drains.
                     mobility::mobility_tick,
                 )
                     .chain(),

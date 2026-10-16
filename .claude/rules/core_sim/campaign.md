@@ -1432,9 +1432,10 @@ the score must remember the legs.
 **viewer-scoped** like `sedentarization` (the viewer's row only). `MobilityScore` is checkpoint state
 (`SimState::mobility`, `SAVE_FORMAT_VERSION` 42).
 
-Pinned by `tests/mobility_score.rs` (each claim beside a control: a migrating herd against a
-loitering one, a following band against an idle one, the published row against the resource and a
-rival's absent) and `tests/mobility_override_takes_effect.rs` (a staged `mobility` override reaches
+Pinned by `tests/mobility_score.rs` (each claim beside a control: a band stepping after a followed
+herd earns distance whether the herd migrates or loiters, and only the migrating step teaches herd
+lore; a band standing in its herd and a band under a plain move order earn none; the published row
+against the resource and a rival's absent) and `tests/mobility_override_takes_effect.rs` (a staged `mobility` override reaches
 the new world's `MobilityConfigHandle`).
 
 ### Civilization Wellbeing (Morale → Discontent → Consequences)

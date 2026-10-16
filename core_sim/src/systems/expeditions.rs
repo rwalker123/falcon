@@ -192,8 +192,8 @@ pub struct BandMovementParams<'w> {
     pub route_traffic: ResMut<'w, crate::routes::RouteTrafficLog>,
     /// **The herds a band walks beside** (#799) — herd lore is learned from a herd on a `Migrate` leg.
     pub herds: Option<Res<'w, HerdRegistry>>,
-    /// **The distance input of the mobility score** (#800): the hexes a resident band steps beside
-    /// a migrating herd are recorded here for `mobility::mobility_tick` to drain. Optional for the
+    /// **The distance input of the mobility score** (#800): the hexes a resident band steps while
+    /// following a herd, in any roam state, are recorded here for `mobility::mobility_tick` to drain. Optional for the
     /// minimal worlds that never insert it.
     pub follow_steps: Option<ResMut<'w, crate::mobility::HerdFollowSteps>>,
     /// **What each people has learned** — the roaming skills are credited here (herd lore on a step

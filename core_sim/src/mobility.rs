@@ -83,11 +83,6 @@ impl HerdFollowSteps {
         *self.steps.entry(band).or_insert(0) += hexes;
     }
 
-    /// Hexes `band` has stepped beside a migrating herd so far this turn.
-    pub fn hexes(&self, band: BandId) -> u32 {
-        self.steps.get(&band).copied().unwrap_or(0)
-    }
-
     pub fn is_empty(&self) -> bool {
         self.steps.is_empty()
     }
@@ -138,7 +133,7 @@ pub fn mobility_tick(
 
     // Per-faction total population and sum of (normalized walk x band size); divided by the
     // population, the latter is the population-weighted mean over the resident bands. A band that
-    // did not follow a migration contributes 0.
+    // did not follow a herd contributes 0.
     let mut population: HashMap<FactionId, u64> = HashMap::new();
     let mut walked_weighted: HashMap<FactionId, f32> = HashMap::new();
     for (cohort, band_id) in cohorts.iter() {

@@ -680,7 +680,7 @@ func _player_knowledge() -> Dictionary:
 func _faction_settling() -> Dictionary:
     return _topbar.faction_sedentarization() if _topbar != null else {}
 
-## The player faction's mobility entry, for the band zone's ROAMING block. `{}` renders nothing.
+## The player faction's mobility entry, for the Settling block's `Mobility` row. `{}` renders nothing.
 func _faction_mobility() -> Dictionary:
     return _topbar.faction_mobility() if _topbar != null else {}
 
