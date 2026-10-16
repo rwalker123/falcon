@@ -1837,6 +1837,10 @@ pub struct PopulationCohortState {
     /// last.
     #[serde(default)]
     pub materials_free: Vec<MaterialAmountState>,
+    /// **Culture pressure** (#820) — one row per people pulling this band, pressure descending then
+    /// faction ascending. Own bands only; a foreign row defaults to empty. Appended last.
+    #[serde(default)]
+    pub culture_pressures: Vec<CulturePressureState>,
 }
 
 /// **An amount of one material** — a recipe input per pass ([`KitNeedRecipeState::inputs`], the
@@ -1888,6 +1892,20 @@ pub struct BenchKitOrderState {
     pub kits: u32,
     /// Items its finished parts made.
     pub done: u32,
+}
+
+/// **ONE PEOPLE PULLING ONE BAND** — a row of [`PopulationCohortState::culture_pressures`].
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct CulturePressureState {
+    /// The pulling people.
+    pub faction: u32,
+    pub pressure: f32,
+    /// `0` none, `1` pulled, `2` asked, `3` forced.
+    pub phase: u8,
+    /// The band's culture is close to that people's average.
+    pub close: bool,
+    /// Turns left on the clock toward the next phase; `0` when that clock is not running.
+    pub turns_to_next: u16,
 }
 
 /// **ONE KEEPING CLASS'S HUNTING MEAL** — a row of [`PopulationCohortState::hunt_meals`]: the food

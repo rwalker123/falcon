@@ -488,7 +488,12 @@ fn bench_state(
     let Some((worked, head)) =
         described.and_then(|index| bench.orders.get(index).map(|order| (index, order)))
     else {
+        // **THE CREW STANDS AT AN IDLE BENCH TOO** (`crafting.md` → "The crew stays with the bench"),
+        // and `BandWorkforce` nets it out of `idle`; a row that dropped it would make the client's
+        // `working_age - rows - bench` read those hands as free. No `blocked_reason`: an idle bench
+        // has no job to be blocked.
         return BenchState {
+            workers: bench.workers,
             priority: published_priority,
             orders,
             auto,

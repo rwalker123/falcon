@@ -4952,6 +4952,29 @@
       "culture_drift_axis_label": "Trait",
       "culture_drift_delta": 13.75,
       "culture_drift_source_band": 174,
+      "culture_pressures": [
+        {
+          "close": true,
+          "faction": 9,
+          "phase": 40,
+          "pressure": 111.199997,
+          "turns_to_next": 33
+        },
+        {
+          "close": false,
+          "faction": 170,
+          "phase": 171,
+          "pressure": 29.209999,
+          "turns_to_next": 38
+        },
+        {
+          "close": false,
+          "faction": 151,
+          "phase": 114,
+          "pressure": 57.080002,
+          "turns_to_next": 163
+        }
+      ],
       "culture_traits": {"__packed": "PackedFloat32Array", "len": 3, "items": [15.68, 91.290001, 50.68]},
       "current_x": 0,
       "current_y": 1,
@@ -7076,6 +7099,29 @@
       "culture_drift_axis_label": "Trait",
       "culture_drift_delta": 55.23,
       "culture_drift_source_band": 149,
+      "culture_pressures": [
+        {
+          "close": true,
+          "faction": 136,
+          "phase": 181,
+          "pressure": 10.97,
+          "turns_to_next": 8
+        },
+        {
+          "close": false,
+          "faction": 191,
+          "phase": 2,
+          "pressure": 70.029999,
+          "turns_to_next": 51
+        },
+        {
+          "close": false,
+          "faction": 66,
+          "phase": 179,
+          "pressure": 9.04,
+          "turns_to_next": 118
+        }
+      ],
       "culture_traits": {"__packed": "PackedFloat32Array", "len": 3, "items": [55.869999, 23.379999, 59.23]},
       "current_x": 1,
       "current_y": 2,
@@ -9161,6 +9207,29 @@
       "culture_drift_axis_label": "Trait",
       "culture_drift_delta": 5.61,
       "culture_drift_source_band": 88,
+      "culture_pressures": [
+        {
+          "close": true,
+          "faction": 171,
+          "phase": 174,
+          "pressure": 33.669998,
+          "turns_to_next": 143
+        },
+        {
+          "close": false,
+          "faction": 84,
+          "phase": 65,
+          "pressure": 110.57,
+          "turns_to_next": 180
+        },
+        {
+          "close": false,
+          "faction": 85,
+          "phase": 84,
+          "pressure": 32.279999,
+          "turns_to_next": 101
+        }
+      ],
       "culture_traits": {"__packed": "PackedFloat32Array", "len": 3, "items": [32.779999, 7.37, 24.040001]},
       "current_x": 2,
       "current_y": 0,

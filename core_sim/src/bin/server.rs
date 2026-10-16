@@ -5435,8 +5435,12 @@ fn handle_assign_labor(
     };
 
     let kind_label = target.kind();
+    let prior_staffing;
     let (applied, assigned_total, dropped_row) = {
         let mut allocation = band_allocation_mut(app, band.entity);
+        // The row's staffing BEFORE this order: `set_assignment`'s headroom counts these hands as
+        // free (it replaces them), so the clamp note must net them back out.
+        prior_staffing = allocation.workers_on(&target);
         let applied = allocation.set_assignment(target.clone(), workers, available, crew_kit);
         // **ONE HERD AT A TIME** — migration mode on this hunt row turns it off on the band's others.
         if let LaborTarget::Hunt {
@@ -5514,7 +5518,15 @@ fn handle_assign_labor(
     }
     // A need row takes no standing hands, so there is nothing to clamp: the count sent is ignored.
     let clamp_note = if applied < workers && !target.is_need_row() {
-        format!(" (clamped from {} — only {} idle)", workers, available)
+        // **`applied` IS THE HEADROOM when clamped**: the hands free for THIS source after the bench,
+        // the walkers and every other row — but it includes the hands already on this row, which
+        // were not idle. The idle count is the growth over the row's prior staffing.
+        let free = applied.saturating_sub(prior_staffing);
+        if free == 0 {
+            format!(" (clamped from {} — no idle hands)", workers)
+        } else {
+            format!(" (clamped from {} — only {} idle)", workers, free)
+        }
     } else {
         String::new()
     };
@@ -12278,6 +12290,7 @@ fn command_kind_display(kind: CommandEventKind) -> &'static str {
         CommandEventKind::StartingLoadout => "Outfit",
         CommandEventKind::BandBrokeAway => "Band broke away",
         CommandEventKind::LostTouch => "Lost touch",
+        CommandEventKind::CulturePull => "Culture pull",
     }
 }
 
@@ -22496,6 +22509,208 @@ mod tests {
             published_idle_workers(&mut app, band),
             0,
             "and with them staffed the band publishes nobody idle"
+        );
+    }
+
+    /// One band's hands as the ENCODED envelope states them: `(working_age, idle, bench crew, Σ rows,
+    /// homeward)`. The client derives its own "n idle of m" from exactly these.
+    fn published_hands(app: &mut bevy::prelude::App, band: Entity) -> (u32, u32, u32, u32, u32) {
+        use core_sim::{recapture_snapshot_in_place, SnapshotHistory};
+        use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
+
+        recapture_snapshot_in_place(&mut app.world);
+        let snapshot = app
+            .world
+            .resource::<SnapshotHistory>()
+            .latest_entry()
+            .expect("a snapshot was captured")
+            .snapshot;
+        let bytes = sim_schema::encode_snapshot_flatbuffer(snapshot.as_ref());
+        let envelope = fb::root_as_envelope(&bytes).expect("the snapshot encodes");
+        let cohort = envelope
+            .payload_as_snapshot()
+            .expect("the envelope carries a snapshot")
+            .population()
+            .and_then(|section| section.populations())
+            .expect("the population section carries the cohort list")
+            .iter()
+            .find(|cohort| cohort.entity() == band.to_bits())
+            .expect("the band is on the wire");
+        let rows: u32 = cohort
+            .laborAssignments()
+            .map(|rows| rows.iter().map(|row| row.workers()).sum())
+            .unwrap_or(0);
+        (
+            cohort.workingAge(),
+            cohort.idleWorkers(),
+            cohort.bench().map(|bench| bench.workers()).unwrap_or(0),
+            rows,
+            cohort.homewardWorkers(),
+        )
+    }
+
+    /// Hands the scout row takes in the idle-bench fixture below: any count that leaves hands free.
+    const IDLE_BENCH_SCOUTS: u32 = 2;
+
+    /// **An IDLE bench still publishes its crew.** The crew stays at the bench once the queue
+    /// empties and `BandWorkforce` nets it out of `idle`, so a row that dropped `workers` made the
+    /// client's `working_age - rows - bench` read those hands as free ("2 idle of 10" beside a
+    /// published idle of 0). The invariant: bench + idle + rows + homeward = working age.
+    #[test]
+    fn an_idle_bench_publishes_its_crew_and_the_hands_add_up() {
+        let mut app = build_test_app();
+        app.update();
+        let faction = FactionId(0);
+        let band = first_resident_band(&mut app);
+        handle_assign_labor(
+            &mut app,
+            faction,
+            None,
+            "scout".to_string(),
+            IDLE_BENCH_SCOUTS,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Vec::new(),
+            false,
+        );
+
+        // Control: no crew at an idle bench publishes 0 and the hands already add up.
+        let (age, idle, bench, rows, homeward) = published_hands(&mut app, band);
+        assert_eq!(rows, IDLE_BENCH_SCOUTS, "the fixture's rows must be live");
+        assert_eq!(bench, NOBODY_AT_THE_BENCH);
+        assert_eq!(bench + idle + rows + homeward, age);
+
+        // Crew the bench, then empty the queue: the crew stays at an idle bench.
+        handle_bench_enqueue(
+            &mut app,
+            faction,
+            None,
+            BENCH_IDLE_RECIPE,
+            BENCH_TEST_ORDER,
+            BENCH_IDLE_CREW,
+        );
+        handle_bench_queue_edit(&mut app, faction, None, HEAD, BenchQueueEdit::Remove);
+        assert!(
+            the_bench(&app, band).orders.is_empty(),
+            "the queue must be empty for the bench to be idle"
+        );
+        assert_eq!(bench_crew(&app, band), BENCH_IDLE_CREW);
+
+        let (age_after, idle_after, bench_after, rows_after, homeward_after) =
+            published_hands(&mut app, band);
+        assert_eq!(
+            bench_after, BENCH_IDLE_CREW,
+            "an idle bench must publish the crew standing at it"
+        );
+        assert_eq!(idle_after, idle - BENCH_IDLE_CREW);
+        assert_eq!(
+            bench_after + idle_after + rows_after + homeward_after,
+            age_after,
+            "published bench + idle + rows + homeward must equal working age"
+        );
+    }
+
+    /// **The clamp note states the hands free for THIS source**, not the pool before the other rows.
+    #[test]
+    fn the_clamp_note_names_the_hands_actually_free() {
+        let mut app = build_test_app();
+        app.update();
+        let faction = FactionId(0);
+        let band = first_resident_band(&mut app);
+        let (_, idle_before, ..) = published_hands(&mut app, band);
+        assert!(idle_before > IDLE_BENCH_SCOUTS);
+
+        // Take every hand but IDLE_BENCH_SCOUTS, then ask a second role for more than is left.
+        handle_assign_labor(
+            &mut app,
+            faction,
+            None,
+            "warrior".to_string(),
+            idle_before - IDLE_BENCH_SCOUTS,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Vec::new(),
+            false,
+        );
+        handle_assign_labor(
+            &mut app,
+            faction,
+            None,
+            "scout".to_string(),
+            IDLE_BENCH_SCOUTS + 1,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Vec::new(),
+            false,
+        );
+        let expected = format!(
+            "(clamped from {} \u{2014} only {} idle)",
+            IDLE_BENCH_SCOUTS + 1,
+            IDLE_BENCH_SCOUTS
+        );
+        let logged = app
+            .world
+            .resource::<CommandEventLog>()
+            .iter()
+            .any(|entry| entry.label.contains(&expected));
+        assert!(
+            logged,
+            "the clamp note must name the {IDLE_BENCH_SCOUTS} hands free, not the pool"
+        );
+    }
+
+    /// **Hands already on the row are not idle**: a staffed row asked for more names only the growth.
+    #[test]
+    fn the_clamp_note_excludes_the_hands_already_on_the_row() {
+        const ALREADY_ON_ROW: u32 = 4;
+        const ASKED: u32 = 1000;
+        let mut app = build_test_app();
+        app.update();
+        let faction = FactionId(0);
+        let band = first_resident_band(&mut app);
+        let assign = |app: &mut bevy::prelude::App, role: &str, n: u32| {
+            handle_assign_labor(
+                app,
+                faction,
+                None,
+                role.to_string(),
+                n,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Vec::new(),
+                false,
+            );
+        };
+        assign(&mut app, "scout", ALREADY_ON_ROW);
+        let (_, idle, ..) = published_hands(&mut app, band);
+        assert!(idle > IDLE_BENCH_SCOUTS);
+        assign(&mut app, "warrior", idle - IDLE_BENCH_SCOUTS);
+        assign(&mut app, "scout", ASKED);
+        let expected = format!("(clamped from {ASKED} \u{2014} only {IDLE_BENCH_SCOUTS} idle)");
+        let logged = app
+            .world
+            .resource::<CommandEventLog>()
+            .iter()
+            .any(|entry| entry.label.contains(&expected));
+        assert!(
+            logged,
+            "the note must name only the {IDLE_BENCH_SCOUTS} idle hands"
         );
     }
 

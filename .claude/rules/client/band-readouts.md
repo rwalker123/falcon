@@ -1745,6 +1745,26 @@ with no pull adds nothing there (`_band_beliefs_compact_clause`).
   warning must not vanish where Beliefs has no row), wearing the Beliefs hover itself. Strings and the
   key live in `HudDisclosureVocab` (`BELIEFS_BREAK_AWAY_*`). Frame `band_beliefs_break_away`; the compact
   claims are in `band_panel_preview` (`_assert_beliefs_compact_clause`).
+- **Culture pressure lines (#820, read-only).** Beneath the Beliefs row, one line per entry of the cohort's
+  `culture_pressures` (`faction`, `pressure`, `phase`, `close`, `turns_to_next`; decoded in
+  `native/src/dict/population.rs`, own bands only, a foreign band's list is empty) with `phase >= 1`.
+  The sim sorts strongest first, so the client never re-sorts. At most
+  `HudDisclosureVocab.CULTURE_PRESSURE_MAX_LINES` (3), then `+N more`. `BandDetailLines._culture_pressure_lines`
+  appends them as separate full-width lines after the row (a key/value row cannot hold a multi-line
+  value). Each is ONE sentence of copy-per-state saying what happens next (far / close with clock /
+  close without clock / asked, with the forced-join clock when `turns_to_next > 0` / forced), the people
+  by `FactionMark.faction_name`, the pressure as `×1.8`. All strings are `CULTURE_PRESSURE_*` in
+  `HudDisclosureVocab`, never inline. **The ink is the renderer's**: phases 2 and 3 lead with the hazard
+  mark so `DetailFormat.detail_bbcode` draws them amber; phase 1 is an unmarked line and draws muted.
+  Text only: joining is #821. The copy is short ("Pulled by Ashfolk's culture ×1.8 — too different to
+  join.") so each entry fits two lines in the narrow Occupants drawer, which the frame's height check
+  pins. Frame
+  `band_culture_pressure` (`band_expedition.gd` `_culture_pressure_states`). **The compact tier carries one
+  amber clause** on the Morale line (`_culture_pressure_compact_clause`; no Beliefs row there, and a warning
+  must not vanish): the strongest row with `phase >= 2`, `⚠ Wants to join X` / `⚠ Will be forced to join X`
+  (`CULTURE_PRESSURE_COMPACT_*`, no factor or clock); phases 0/1 add nothing. Pinned in `band_panel_preview`
+  (`_assert_beliefs_compact_clause`, frame `band_panel_vitals_worst_case`). The `culture_pull` event is
+  Notable (`event-dock.md`).
 - **EVERY ROW'S HOVER SHOWS OVER THAT ROW ONLY.** `ctx.row_tooltips` (keyed by row) is still the one
   source, but `DetailFormat.block_tooltip` (one `tooltip_text` joining every row's sentence) is
   retired: it put the Carry sentence under a cursor on Beliefs. A row with a hover wears a
