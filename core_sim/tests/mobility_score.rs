@@ -220,11 +220,12 @@ fn teach(app: &mut App, faction: FactionId, id: u32, progress: f32) {
 
 // ---- Distance ------------------------------------------------------------------------------------
 
-/// **WALKING BESIDE A MIGRATING HERD RAISES THE DISTANCE POINTS; A LOITERING HERD DOES NOT.**
-/// Paired, so a dead input cannot pass: the migrating arm is non-zero, the control is exactly zero.
+/// **WALKING AFTER A FOLLOWED HERD RAISES THE DISTANCE POINTS, WHATEVER ITS ROAM STATE.** Paired,
+/// so a dead input cannot pass: the migrating arm saturates the input, and the band stepping after a
+/// LOITERING herd earns distance too. Herd lore is stricter, and the two rules visibly diverge: the
+/// loitering walk teaches none.
 #[test]
-fn a_band_following_a_migrating_herd_earns_distance_points_and_one_beside_a_loitering_herd_does_not(
-) {
+fn a_band_stepping_after_a_followed_herd_earns_distance_points_migrating_or_loitering() {
     let (mut walking, _) = world(RoamState::Migrate, LEG_START, &[home_follower()]);
     for _ in 0..WALKING_TURNS {
         turn(&mut walking);
@@ -246,9 +247,45 @@ fn a_band_following_a_migrating_herd_earns_distance_points_and_one_beside_a_loit
         walking.world.resource::<HerdFollowSteps>().is_empty(),
         "the per-turn step record is drained by the tick"
     );
+    assert!(
+        walking
+            .world
+            .resource::<DiscoveryProgressLedger>()
+            .get_progress(HOME, HERD_LORE_DISCOVERY_ID)
+            > scalar_from_f32(0.0),
+        "liveness: a Migrate-leg walk teaches herd lore"
+    );
 
-    // Control: the same band standing in a loitering herd walks nowhere.
+    // The herd loiters at the far end of the leg; the band starts at the other end and steps after it.
     let (mut loitering, _) = world(
+        RoamState::Loiter {
+            turns_left: LOITER_WINDOW,
+        },
+        LEG_END,
+        &[home_follower()],
+    );
+    turn(&mut loitering);
+    let stepped = entry(&loitering, HOME);
+    assert!(
+        stepped.distance_points > 0.0,
+        "a band stepping after a loitering herd still earns distance points"
+    );
+    assert!(stepped.score > 0.0);
+    assert_eq!(
+        loitering
+            .world
+            .resource::<DiscoveryProgressLedger>()
+            .get_progress(HOME, HERD_LORE_DISCOVERY_ID),
+        scalar_from_f32(0.0),
+        "the same loitering walk teaches no herd lore"
+    );
+}
+
+/// **A BAND THAT DOES NOT STEP EARNS NOTHING** even following a loitering herd: once it has caught
+/// up and stands in the herd, a further turn earns no distance (the raw reading reads zero).
+#[test]
+fn a_band_standing_in_a_loitering_herd_earns_no_distance_points() {
+    let (mut app, _) = world(
         RoamState::Loiter {
             turns_left: LOITER_WINDOW,
         },
@@ -256,11 +293,9 @@ fn a_band_following_a_migrating_herd_earns_distance_points_and_one_beside_a_loit
         &[home_follower()],
     );
     for _ in 0..WALKING_TURNS {
-        turn(&mut loitering);
+        turn(&mut app);
     }
-    let still = entry(&loitering, HOME);
-    assert_eq!(still.distance_points, 0.0);
-    assert_eq!(still.score, 0.0);
+    assert_eq!(entry(&app, HOME).distance_points, 0.0);
 }
 
 /// **A BAND NOT FOLLOWING THE HERD EARNS NOTHING** even beside a migrating one.

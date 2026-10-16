@@ -56,9 +56,9 @@ const PRACTICE_PER_HEX: f32 = 1.0;
 const PRACTICE_PER_DRIVE_TURN: f32 = 1.0;
 
 /// **Whether a band's step beside this herd is a step beside a MIGRATION** - the herd is on a
-/// `Migrate` leg. One predicate for the two things that count such a step: herd-lore practice
-/// ([`herd_lore_practice`]) and the mobility score's distance input
-/// ([`crate::mobility::HerdFollowSteps`]). A herd that loiters counts for neither.
+/// `Migrate` leg. The predicate for herd-lore practice ([`herd_lore_practice`]) ONLY: a herd that
+/// loiters teaches nothing. The mobility score's distance input
+/// ([`crate::mobility::HerdFollowSteps`]) does not use it; it counts every followed step.
 pub fn walks_beside_a_migration(herd: &Herd) -> bool {
     matches!(herd.roam, RoamState::Migrate)
 }

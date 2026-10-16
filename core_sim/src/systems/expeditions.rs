@@ -351,12 +351,12 @@ pub fn advance_band_movement(
             if let Some(herd) = followed {
                 let hexes =
                     crate::grid_utils::hex_distance_wrapped(current, next, width, wrap_horizontal);
-                // The same step feeds the mobility score's distance input, under the same
-                // predicate (a `Migrate` leg) that gates the lesson.
-                if crate::roaming_skills::walks_beside_a_migration(herd) {
-                    if let (Some(steps), Some(id)) = (params.follow_steps.as_deref_mut(), band_id) {
-                        steps.record(*id, hexes);
-                    }
+                // The same step feeds the mobility score's distance input, but under a wider
+                // rule than the lesson: EVERY hex stepped while following counts, whatever the
+                // herd's roam state (a herd loiters 12-22 turns a ground, and the band still walks
+                // after it). Only the lesson below is gated on a `Migrate` leg.
+                if let (Some(steps), Some(id)) = (params.follow_steps.as_deref_mut(), band_id) {
+                    steps.record(*id, hexes);
                 }
                 let practice =
                     crate::roaming_skills::herd_lore_practice(hexes, herd, &ladder.knowledge);

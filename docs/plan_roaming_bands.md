@@ -207,8 +207,9 @@ ties (`docs/plan_contact_and_logistics.md` §Settled by #530). Moving well is ho
 **The formula (#800).** `raw = 100 x (weights.skills x skills_norm + weights.distance x
 distance_norm)`, then an EMA (`smoothing`, as the Sedentarization Score smooths). *Skills* is the mean
 progress of herd lore, travois and drives on the ledger. *Distance* is a **rate**: the hexes a
-resident band stepped this turn beside a herd on a `Migrate` leg, over `references.hexes_per_turn`,
-population-weighted across the faction's bands. All four numbers are Workbench levers
+resident band stepped this turn while following a herd, whatever the herd's roam state, over
+`references.hexes_per_turn`, population-weighted across the faction's bands. Herd lore is stricter and
+learns only on a `Migrate` leg. All four numbers are Workbench levers
 (`mobility_config.json`; the `mobility` kind), settled by playtest.
 
 ## Open items

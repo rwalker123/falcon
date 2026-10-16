@@ -1410,11 +1410,12 @@ faction's first reading starts from zero). There are no stages, thresholds or pr
   `clamp(ledger progress / ladder.knowledge.completion_threshold, 0, 1)` for the faction. Partial
   progress counts; progress past the bar is capped at known.
 - **distance** = the population-weighted mean over the faction's resident bands of
-  `clamp(hexes stepped this turn / references.hexes_per_turn, 0, 1)`. A band that did not walk beside
-  a migrating herd counts as 0. The hexes are those a resident band steps in `advance_band_movement`
-  while following a herd (`LaborAllocation::followed_herd`) that is on a `Migrate` leg - the same
-  step, under the same predicate (`roaming_skills::walks_beside_a_migration`), that teaches herd
-  lore. They are recorded per `BandId` in `HerdFollowSteps`, which `mobility_tick` drains, so it is
+  `clamp(hexes stepped this turn / references.hexes_per_turn, 0, 1)`. A band that did not step while
+  following a herd counts as 0. The hexes are every one a resident band steps in
+  `advance_band_movement` while following a herd (`LaborAllocation::followed_herd`), whatever the
+  herd's roam state. Herd lore is stricter: the same step teaches it only when the herd is on a
+  `Migrate` leg (`roaming_skills::walks_beside_a_migration`). Distance is not gated that way
+  because a herd loiters 12-22 turns at each ground and the band still walks after it. They are recorded per `BandId` in `HerdFollowSteps`, which `mobility_tick` drains, so it is
   empty at the end of every turn (derived, not checkpointed).
 
 `raw = 100 x (weights.skills x skills_norm + weights.distance x distance_norm)`; the two raw point

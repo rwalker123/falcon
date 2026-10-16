@@ -6,8 +6,8 @@
 //!
 //! - **skills** - the mean over [`crate::roaming_skills::ROAMING_SKILLS`] of the faction's ledger
 //!   progress against the ladder's completion threshold. Partial progress counts.
-//! - **distance** - the hexes a resident band stepped THIS turn while following a herd on a
-//!   `Migrate` leg ([`HerdFollowSteps`], filled by `advance_band_movement`), as a share of
+//! - **distance** - the hexes a resident band stepped THIS turn while following a herd, in any
+//!   roam state ([`HerdFollowSteps`], filled by `advance_band_movement`), as a share of
 //!   `references.hexes_per_turn`, population-weighted over the faction's resident bands.
 //!
 //! Distance is a **rate, not a lifetime total**: a people that stops roaming stops earning it and
@@ -67,10 +67,10 @@ impl MobilityScore {
     }
 }
 
-/// **Hexes each resident band stepped this turn while following a herd on a `Migrate` leg.**
+/// **Hexes each resident band stepped this turn while following a herd, in any roam state.**
 ///
-/// Written by `advance_band_movement` at the same seam, and under the same condition, that credits
-/// herd lore (`roaming_skills::walks_beside_a_migration`); DRAINED by [`mobility_tick`] later in
+/// Written by `advance_band_movement` at the same seam that credits herd lore, but without that
+/// lesson's `Migrate`-leg gate (`roaming_skills::walks_beside_a_migration`); DRAINED by [`mobility_tick`] later in
 /// the same Population chain, so it is empty at the end of every turn (derived, not checkpointed).
 #[derive(Resource, Debug, Clone, Default)]
 pub struct HerdFollowSteps {
