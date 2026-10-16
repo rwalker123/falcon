@@ -40,6 +40,9 @@ pub(crate) fn connections_to_array(
         // Empty is "unknown" — the client falls back to `Band near (x, y)` at the last-seen
         // position (`ConnectionsRoster.subject_label`); a raw id never reaches a label.
         let _ = dict.insert("subject_name", connection.subjectName().unwrap_or_default());
+        // Clock 1 as well: the people the subject belonged to when last SEEN. 0 is a real people,
+        // so there is no sentinel -- the client files a remembered band under its people by this.
+        let _ = dict.insert("subject_faction", connection.subjectFaction() as i64);
         array.push(&dict.to_variant());
     }
     array

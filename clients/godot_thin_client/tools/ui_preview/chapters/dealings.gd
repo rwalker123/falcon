@@ -58,6 +58,15 @@ const MOOR_ENTITY := 1286
 const MOOR_NAME := "Gorsemoor"
 const MOOR_PEOPLE := "Moorfolk"
 const MOOR_SEEN := Vector2i(44, 9)
+## The strength Moorfolk's tie is parked at for the "no live tie" treaty-sheet frame (the sim refuses an
+## envoy to a band we hold no live tie with).
+const MOOR_TIE_PARKED := 0.0
+## A fourth people met ONLY through a remembered tie -- no goodwill row, no band in sight.
+const ASH_FACTION := 4
+const ASH_ENTITY := 1287
+const ASH_NAME := "Fenmere"
+const ASH_PEOPLE := "Fenfolk"
+const ASH_SEEN := Vector2i(38, 15)
 
 ## The dealings' ids.
 const OFFER_IN := 11
@@ -1007,18 +1016,19 @@ func _batch(material_id: String, amount: float, readings: Array) -> Dictionary:
 		reading_rows.append({"axis": reading[0], "value": reading[1], "band_name": reading[2]})
 	return {"material_id": material_id, "amount": amount, "readings": reading_rows, "variety_name": ""}
 
-func _tie(subject_entity: int, name: String, seen: Vector2i, strength: float = 0.7) -> Dictionary:
+func _tie(subject_entity: int, name: String, seen: Vector2i, faction: int, strength: float = 0.7) -> Dictionary:
 	return {
 		"observer_band_id": BandFx.FIXTURE_BAND_ID_OFFSET + HOME_ENTITY,
 		"subject_band_id": BandFx.FIXTURE_BAND_ID_OFFSET + subject_entity,
 		"strength": strength, "last_seen_x": seen.x, "last_seen_y": seen.y,
 		"last_seen_turn": RESOLVED - 2, "last_contact_turn": RESOLVED - 2, "first_contact_turn": RESOLVED - 9,
-		"subject_name": name,
+		"subject_name": name, "subject_faction": faction,
 	}
 
 func _ties() -> Array:
-	return [_tie(BRACK_ENTITY, BRACK_NAME, BRACK_SEEN), _tie(THORN_ENTITY, THORN_NAME, THORN_SEEN),
-		_tie(MOOR_ENTITY, MOOR_NAME, MOOR_SEEN)]
+	return [_tie(BRACK_ENTITY, BRACK_NAME, BRACK_SEEN, BRACK_FACTION),
+		_tie(THORN_ENTITY, THORN_NAME, THORN_SEEN, THORN_FACTION),
+		_tie(MOOR_ENTITY, MOOR_NAME, MOOR_SEEN, MOOR_FACTION)]
 
 ## Only the Brackwater road is a kept road all the way: the sim publishes one standing link, and the
 ## client offers Propose from that row alone.

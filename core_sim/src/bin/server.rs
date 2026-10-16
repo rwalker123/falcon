@@ -25223,7 +25223,7 @@ mod tests {
             let key = core_sim::connections::ConnectionKey::new(sender_id, host);
             ledger.record_contact(
                 key,
-                &core_sim::Sighting::new(UVec2::new(0, 0), 0, ""),
+                &core_sim::Sighting::new(UVec2::new(0, 0), 0, "", core_sim::FactionId(0)),
                 0,
                 &cfg,
             );

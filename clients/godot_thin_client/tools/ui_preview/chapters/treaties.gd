@@ -364,6 +364,14 @@ func _sheet_states(panel: BandCityPanel) -> void:
 		h._assert_hud("sheet: …`%s` (got `%s`)" % [want, line], line == want)
 
 	# ---- nobody of theirs is known: the send is greyed with its reason ------------------------------------
+	# Moorfolk's tie is parked for this frame: a band known only by a tie with no strength is refused.
+	var parked_ties: Array = []
+	for tie_variant in _fx._ties():
+		var tie: Dictionary = (tie_variant as Dictionary).duplicate()
+		if int(tie.get("subject_faction", -1)) == DEALINGS.MOOR_FACTION:
+			tie["strength"] = DEALINGS.MOOR_TIE_PARKED
+		parked_ties.append(tie)
+	h._hud.update_connections(parked_ties)
 	panel.set_active_tab(BandCityPanel.ZONE_PEOPLES)
 	h._hud.show_unit_selection(_fx._home_band())
 	await h._settle()
@@ -380,6 +388,39 @@ func _sheet_states(panel: BandCityPanel) -> void:
 		moor_send != null and moor_send.disabled and moor_send.tooltip_text == HudDealingsVocab.TREATY_ENVOY_NO_TARGET
 			and _find_label(_form(), HudDealingsVocab.TREATY_ENVOY_NO_TARGET) != null)
 	h._hud.close_verb_form() if h._hud.has_method("close_verb_form") else null
+	panel.set_active_tab(BandCityPanel.ZONE_PEOPLES)
+	await h._settle()
+
+	# ---- a people known ONLY by a remembered tie: listed, and an envoy can go to its band -----------------
+	FactionNames.update([
+		{"faction": 0, "name": "Ashfolk"}, {"faction": DEALINGS.BRACK_FACTION, "name": DEALINGS.BRACK_PEOPLE},
+		{"faction": DEALINGS.THORN_FACTION, "name": DEALINGS.THORN_PEOPLE},
+		{"faction": DEALINGS.MOOR_FACTION, "name": DEALINGS.MOOR_PEOPLE},
+		{"faction": DEALINGS.ASH_FACTION, "name": DEALINGS.ASH_PEOPLE}])
+	var remembered_ties: Array = _fx._ties()
+	remembered_ties.append(_fx._tie(DEALINGS.ASH_ENTITY, DEALINGS.ASH_NAME, DEALINGS.ASH_SEEN,
+		DEALINGS.ASH_FACTION))
+	h._hud.update_connections(remembered_ties)
+	h._hud.show_unit_selection(_fx._home_band())
+	await h._settle()
+	rows = _people_rows(panel.find_child(HudDealingsVocab.PEOPLES_BLOCK_NAME, true, false))
+	var ash_row = _people_row(rows, DEALINGS.ASH_FACTION)
+	h._assert_hud("remembered: a people met only through a live tie is listed on the Peoples tab",
+		ash_row != null)
+	if ash_row != null:
+		_action(ash_row, HudDealingsVocab.PEOPLE_ACTION_PROPOSE).emit_signal("pressed")
+		await h._settle()
+		var ash_road: CheckBox = _fx._check_named(_form(), HudDealingsVocab.SHEET_TREATY_ROAD)
+		if ash_road != null:
+			ash_road.button_pressed = true
+		await h._settle()
+		await h._save("treaties_sheet_remembered")
+		var ash_send := Q.find_meta_node(_form(), HudDealingsVocab.TREATY_SEND_META) as Button
+		h._assert_hud("remembered: the envoy goes to the remembered band, named, send live",
+			ash_send != null and not ash_send.disabled
+				and _text(_form()).contains(HudDealingsVocab.TREATY_VIA_ENVOY_FORMAT % DEALINGS.ASH_NAME))
+		h._hud.close_verb_form() if h._hud.has_method("close_verb_form") else null
+	h._hud.update_connections(_fx._ties())
 	panel.set_active_tab(BandCityPanel.ZONE_PEOPLES)
 	await h._settle()
 

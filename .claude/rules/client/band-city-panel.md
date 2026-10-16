@@ -8146,8 +8146,10 @@ its own, and the ties list under its `Bands we know` label stays the unbounded o
   published standing link joins this band to a band of theirs (`treaties.standing_links`, never computed
   here; a choice row when several); otherwise **by an envoy** (`send_envoy <f> <band> <party> <dest_band>
   ...`): the party stepper beside the trade party picker's, the destination one of the bands of theirs the
-  client can name (`known_bands_of_people`: foreign bands in sight, standing-link ends, dealing parties),
-  greyed with its reason where none is known. The sending band is the band whose page the sheet was opened
+  client can name (`known_bands_of_people`: foreign bands in sight, standing-link ends, dealing parties,
+  then the bands a LIVE tie remembers, filed under their people by the tie's `subject_faction` -- clock 1,
+  0 is a real people; a parked tie is refused by the sim and left out; a people met only through such a
+  tie is a Peoples row via `remembered_factions`), greyed with its reason where none is known. The sending band is the band whose page the sheet was opened
   from.
 - **An envoy's row** in the Parties zone is `Brackwater · Road rights · Open borders` (its destination and
   the terms it carries, from the cohort's `envoy_terms`), one line clipped by the row, with the whole

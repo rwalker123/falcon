@@ -18,7 +18,8 @@ extends RefCounted
 ## carries the whole sentence.
 ##
 ## **WHO IS LISTED** is `HudBandLaborState.known_peoples`: every faction named by a goodwill row, a
-## treaty, a standing link or a dealing, plus the border overrides and the foreign bands in sight. A
+## treaty, a standing link or a dealing, plus the border overrides, the foreign bands in sight and the
+## peoples of the bands a live tie remembers. A
 ## people the wire has never mentioned is not a row (there is nothing to say about it).
 ##
 ## **THE BORDER STATE IS THE SIM'S, NEVER GUESSED**: the override row if one exists, else the general
@@ -29,6 +30,7 @@ extends RefCounted
 ## foreign bands.
 static func people(band_labor: HudBandLaborState, policy: Dictionary) -> Array[int]:
 	var extra: Array = band_labor.foreign_factions()
+	extra.append_array(band_labor.remembered_factions())
 	for override_variant in Array(policy.get("border_overrides", [])):
 		if override_variant is Dictionary:
 			extra.append(int((override_variant as Dictionary).get("other_faction", HudConst.NO_FACTION_ID)))
@@ -37,7 +39,8 @@ static func people(band_labor: HudBandLaborState, policy: Dictionary) -> Array[i
 ## What the block is built from, so a refresh that changes none of it touches nothing.
 static func signature(band_labor: HudBandLaborState, policy: Dictionary) -> Array:
 	return [band_labor.goodwill(), band_labor.treaties(), policy.get("open_borders", true),
-		policy.get("border_overrides", []), band_labor.foreign_factions(), band_labor.current_turn()]
+		policy.get("border_overrides", []), band_labor.foreign_factions(), band_labor.remembered_factions(),
+		band_labor.current_turn()]
 
 ## `{open, source}` for one people: the effective border state toward it and whose word it is
 ## (`SOURCE_TREATY` / `SOURCE_OVERRIDE` / `SOURCE_DEFAULT`).

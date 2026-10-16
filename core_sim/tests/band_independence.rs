@@ -123,7 +123,7 @@ fn tie(app: &mut App, a: BandId, b: BandId) {
     for key in [ConnectionKey::new(a, b), ConnectionKey::new(b, a)] {
         ledger.record_contact(
             key,
-            &Sighting::new(UVec2::ZERO, SIGHTING_TURN, ""),
+            &Sighting::new(UVec2::ZERO, SIGHTING_TURN, "", FactionId(0)),
             SIGHTING_TURN,
             &config,
         );

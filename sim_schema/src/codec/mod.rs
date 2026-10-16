@@ -918,6 +918,7 @@ mod tests {
             last_contact_turn: 1,
             first_contact_turn: 1,
             subject_name: "Reedmarsh".to_string(),
+            subject_faction: 1,
         }
     }
 

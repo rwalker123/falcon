@@ -678,14 +678,15 @@ pub fn split_band_from_parent_with(
             .map(|name| name.0.clone())
             .unwrap_or_default();
         if let Some(mut ledger) = world.get_resource_mut::<crate::connections::ConnectionLedger>() {
+            // Both halves are one people, so each remembers the other under the parent's faction.
             ledger.insert_full_tie(
                 crate::connections::ConnectionKey::new(parent_band, band),
-                &crate::connections::Sighting::new(site, turn, child_name),
+                &crate::connections::Sighting::new(site, turn, child_name, child_faction),
                 turn,
             );
             ledger.insert_full_tie(
                 crate::connections::ConnectionKey::new(band, parent_band),
-                &crate::connections::Sighting::new(site, turn, parent_name),
+                &crate::connections::Sighting::new(site, turn, parent_name, child_faction),
                 turn,
             );
         }

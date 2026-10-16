@@ -6154,8 +6154,10 @@ table OpeningKitDefault {
 // define their own use of it and own their own state. A field here that belongs to one rider is how
 // the retired `TradeLink` ended up carrying four of them.
 //
-// **Faction is a property of the ENDPOINT, never a field on the edge.** There is deliberately no
-// faction column and no same-faction/cross-faction distinction anywhere in this contract.
+// **Faction is a property of the ENDPOINT, never a key of the edge.** There is deliberately no
+// same-faction/cross-faction distinction anywhere in this contract. The one faction the row does
+// carry is `subjectFaction`, which is clock-1 MEMORY of the subject (below), not a property of the
+// tie.
 //
 // Filtered to the VIEWER: only edges whose observer band belongs to `ViewerFaction` are published —
 // you see your own ties, not other peoples'.
@@ -6180,6 +6182,12 @@ table ConnectionState {
   // named. Not refreshed without sight, so a rename you have not seen does not reach you. Never
   // expected empty for a live band; empty means "unknown".
   subjectName:string;
+  // Clock 1, with the name: the faction (people) the subject belonged to at `lastSeenTurn`, NOT a
+  // live lookup. It is what lets a client file a remembered band under a people when the band is
+  // known only by a past sighting. Not refreshed without sight, so a band that has since defected
+  // is still remembered under its old people until you see it again. Always written; every
+  // producer knows the faction, so there is no unknown sentinel.
+  subjectFaction:uint;
 }
 
 table ConnectionSection {

@@ -3890,7 +3890,8 @@ Frames and what only each can say:
 | `treaties_end_confirm` / `_borders_breach_confirm` | the two confirms, each saying it is a breach that costs their goodwill; confirming sends `end_treaty 0 1` / `set_open_borders 0 closed 1`; cancelling sends nothing; a plain flip asks nothing |
 | `treaties_sheet_road` / `_road_filled` | the treaty sheet over a published standing link: Propose greyed with no term (the reason in amber beside it), a bundle that carries nothing greys it too, then `propose_treaty 0 <band> <dest> road_rights bundle give … ask …` |
 | `treaties_sheet_envoy` / `_envoy_filled` | no road: the sheet names the band the envoy walks to, the party stepper, `send_envoy 0 <band> 2 <dest> road_rights open_borders` |
-| `treaties_sheet_no_target` | no band of theirs known: the send is greyed with its reason in amber |
+| `treaties_sheet_no_target` | no band of theirs known (Moorfolk's tie is parked): the send is greyed with its reason in amber |
+| `treaties_sheet_remembered` | a people met only through a live remembered tie (`subject_faction`): a Peoples row, and the envoy goes to that band |
 | `treaties_counter` / `_counter_bundle` | a treaty counter keeps the published terms ticked and adds a bundle: `answer_dealing 0 14 counter road_rights open_borders bundle … bundle …` |
 | `treaties_envoy_party` | an envoy's Parties row (destination and terms), its hover, its `✉` mark, and **the six-tab bar fitting the strip** as the badges stand and with all five at two digits |
 

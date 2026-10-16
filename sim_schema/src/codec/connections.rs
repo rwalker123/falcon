@@ -26,6 +26,7 @@ fn create_connections<'a>(
                     lastContactTurn: connection.last_contact_turn,
                     firstContactTurn: connection.first_contact_turn,
                     subjectName: Some(subject_name),
+                    subjectFaction: connection.subject_faction,
                 },
             )
         })
@@ -89,5 +90,6 @@ fn decode_connection(connection: fb::ConnectionState<'_>) -> ConnectionState {
         last_contact_turn: connection.lastContactTurn(),
         first_contact_turn: connection.firstContactTurn(),
         subject_name: connection.subjectName().unwrap_or_default().to_string(),
+        subject_faction: connection.subjectFaction(),
     }
 }

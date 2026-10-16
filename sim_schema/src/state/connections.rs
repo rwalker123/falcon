@@ -26,4 +26,6 @@ pub struct ConnectionState {
     /// Clock 1 — the name the subject answered to at `last_seen_turn`, not a live lookup. Empty
     /// means unknown.
     pub subject_name: String,
+    /// Clock 1 — the people the subject belonged to at `last_seen_turn`, not a live lookup.
+    pub subject_faction: u32,
 }

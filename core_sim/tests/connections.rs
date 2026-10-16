@@ -439,7 +439,7 @@ fn a_connection_grants_no_active_tile() {
         for _ in 0..4 {
             ties.record_contact(
                 ConnectionKey::new(band_id, subject),
-                &Sighting::new(*position, 0, ""),
+                &Sighting::new(*position, 0, "", FactionId(0)),
                 0,
                 &cfg,
             );
@@ -654,6 +654,11 @@ fn an_older_report_refreshes_the_tie_without_rewriting_where_they_were() {
     let seen_at = seen.last_seen_position;
     let seen_turn = seen.last_seen_turn;
     let seen_name = seen.subject_name.clone();
+    let seen_faction = seen.subject_faction;
+    assert_eq!(
+        seen_faction, faction,
+        "direct sight records the people the subject belonged to"
+    );
     assert_eq!(seen_at, home, "they were seen where they stood");
     assert_eq!(
         seen_name,
@@ -674,6 +679,8 @@ fn an_older_report_refreshes_the_tie_without_rewriting_where_they_were() {
         seen_name, STALE_NAME,
         "the stale name must differ to prove anything"
     );
+    // …and a people it did not belong to, for the same reason.
+    let stale_faction = FactionId(seen_faction.0 + 1);
     assert!(
         STALE_OBSERVATION_TURN < seen_turn,
         "the seeded report must predate what the band saw itself"
@@ -697,7 +704,7 @@ fn an_older_report_refreshes_the_tie_without_rewriting_where_they_were() {
         let mut pending_contacts = std::collections::BTreeMap::new();
         pending_contacts.insert(
             child_id,
-            Sighting::new(gone_to, STALE_OBSERVATION_TURN, STALE_NAME),
+            Sighting::new(gone_to, STALE_OBSERVATION_TURN, STALE_NAME, stale_faction),
         );
         app.world.spawn((
             cohort,
@@ -744,6 +751,10 @@ fn an_older_report_refreshes_the_tie_without_rewriting_where_they_were() {
         after.subject_name, seen_name,
         "nor rename them to what an older report called them — the name is clock 1 too"
     );
+    assert_eq!(
+        after.subject_faction, seen_faction,
+        "nor move them to the people an older report filed them under — the faction is clock 1 too"
+    );
     assert!(
         after.strength > before_flush,
         "the news still arrived, so the tie is refreshed: {before_flush:?} -> {:?}",
@@ -769,8 +780,10 @@ fn the_remembered_name_survives_a_checkpoint_round_trip() {
     use core_sim::sim_state::{capture_sim_state, restore_sim_state};
 
     const SCRIBBLE: &str = "not what the checkpoint holds";
+    const SCRIBBLE_FACTION: FactionId = FactionId(97);
     const PENDING_NAME: &str = "a name a party is still carrying";
     const PENDING_SUBJECT: BandId = BandId(u64::MAX);
+    const PENDING_FACTION: FactionId = FactionId(41);
     // A checkpoint records a cohort only under its `BandId`, so the party carries one of its own.
     const PARTY_ID: BandId = BandId(u64::MAX - 1);
 
@@ -810,7 +823,10 @@ fn the_remembered_name_survives_a_checkpoint_round_trip() {
         cohort.working = Scalar::from_f32(3.0);
         cohort.sync_size();
         let mut pending_contacts = std::collections::BTreeMap::new();
-        pending_contacts.insert(PENDING_SUBJECT, Sighting::new(home, 0, PENDING_NAME));
+        pending_contacts.insert(
+            PENDING_SUBJECT,
+            Sighting::new(home, 0, PENDING_NAME, PENDING_FACTION),
+        );
         app.world.spawn((
             cohort,
             LaborAllocation::default(),
@@ -842,7 +858,7 @@ fn the_remembered_name_survives_a_checkpoint_round_trip() {
     let mut scribbled = ConnectionLedger::default();
     scribbled.record_contact(
         ConnectionKey::new(parent_id, child_id),
-        &Sighting::new(home, 0, SCRIBBLE),
+        &Sighting::new(home, 0, SCRIBBLE, SCRIBBLE_FACTION),
         0,
         &ConnectionsConfig::default(),
     );
@@ -852,6 +868,7 @@ fn the_remembered_name_survives_a_checkpoint_round_trip() {
         for mut expedition in parties.iter_mut(&mut app.world) {
             for sighting in expedition.pending_contacts.values_mut() {
                 sighting.subject_name = SCRIBBLE.to_string();
+                sighting.subject_faction = SCRIBBLE_FACTION;
             }
         }
     }
@@ -865,15 +882,22 @@ fn the_remembered_name_survives_a_checkpoint_round_trip() {
         name,
         "the tie's remembered name comes back from the checkpoint"
     );
+    assert_eq!(
+        edge(&app, parent_id, child_id)
+            .expect("the restored ledger holds the tie")
+            .subject_faction,
+        faction,
+        "and so does the people it was filed under"
+    );
     let mut parties = app.world.query::<&Expedition>();
-    let restored: Vec<String> = parties
+    let restored: Vec<(String, FactionId)> = parties
         .iter(&app.world)
         .filter_map(|expedition| expedition.pending_contacts.get(&PENDING_SUBJECT))
-        .map(|sighting| sighting.subject_name.clone())
+        .map(|sighting| (sighting.subject_name.clone(), sighting.subject_faction))
         .collect();
     assert_eq!(
         restored,
-        vec![PENDING_NAME.to_string()],
-        "the party's unreported sighting keeps its name through the checkpoint"
+        vec![(PENDING_NAME.to_string(), PENDING_FACTION)],
+        "the party's unreported sighting keeps its name and its people through the checkpoint"
     );
 }

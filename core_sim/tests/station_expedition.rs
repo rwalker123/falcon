@@ -54,6 +54,8 @@ const EPSILON: f32 = 0.001;
 const BOUNDLESS_COMM_FACTOR: f32 = 500.0;
 /// The host's name carried on the mission.
 const HOST_NAME: &str = "the Reed People";
+/// The people a fixture sighting of the host is filed under; no test here reads it back.
+const HOST_FACTION: FactionId = RIVAL;
 /// The wire's not-food-limited runway sentinel (`NOT_FOOD_LIMITED_TURNS`).
 const NOT_FOOD_LIMITED: f32 = 999.0;
 
@@ -263,7 +265,7 @@ fn seed_full_tie(app: &mut App, from: BandId, to: BandId, at: UVec2) {
         .resource_mut::<ConnectionLedger>()
         .insert_full_tie(
             ConnectionKey::new(from, to),
-            &Sighting::new(at, turn, HOST_NAME),
+            &Sighting::new(at, turn, HOST_NAME, HOST_FACTION),
             turn,
         );
 }
@@ -357,7 +359,7 @@ fn cross_faction_rig_with_a_fresh_tie() -> Rig {
     let cfg = app.world.resource::<ConnectionsConfigHandle>().get();
     app.world.resource_mut::<ConnectionLedger>().record_contact(
         ConnectionKey::new(home_id, host_id),
-        &Sighting::new(host_pos, turn, HOST_NAME),
+        &Sighting::new(host_pos, turn, HOST_NAME, HOST_FACTION),
         turn,
         &cfg,
     );
@@ -782,7 +784,10 @@ fn the_fold_back_lands_the_reports_still_in_transit() {
         let mut expedition = rig.app.world.get_mut::<Expedition>(party).expect("party");
         expedition.phase = ExpeditionPhase::Returning;
         let mut sightings = std::collections::BTreeMap::new();
-        sightings.insert(host_id, Sighting::new(seen_at, SEEN_TURN, HOST_NAME));
+        sightings.insert(
+            host_id,
+            Sighting::new(seen_at, SEEN_TURN, HOST_NAME, HOST_FACTION),
+        );
         expedition.station_reports.push(core_sim::StationReport {
             land_turn,
             tiles: vec![unseen_tile],

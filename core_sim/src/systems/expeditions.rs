@@ -1341,6 +1341,9 @@ pub fn advance_expeditions(
     // rather than borrowed, because `bands` is re-borrowed mutably below; a band with no
     // `BandName` is recorded under the empty name, which the wire reads as "unknown".
     let mut resident_names: HashMap<BandId, String> = HashMap::new();
+    // **Whose people each resident band is**, read in the same pass for the same reason: the
+    // sighting records the people the band belonged to at the moment of sight.
+    let mut resident_factions: HashMap<BandId, FactionId> = HashMap::new();
     // **How many people each tile holds** (all resident bands, any faction), for the size sight
     // bonus — summed in the same pass.
     let mut tile_people = crate::visibility_systems::TilePeople::new();
@@ -1353,6 +1356,7 @@ pub fn advance_expeditions(
             occupancy.entry(tile.position).or_default().push(*id);
             resident_positions.insert(*id, (band_entity, tile.position));
             resident_names.insert(*id, name.map(|name| name.0.clone()).unwrap_or_default());
+            resident_factions.insert(*id, cohort.faction);
         }
     }
     // The same terrain term and size bonus the live sweep uses — sight is sight.
@@ -1708,9 +1712,16 @@ pub fn advance_expeditions(
                             }
                         }
                         let name = resident_names.get(subject).cloned().unwrap_or_default();
-                        expedition
-                            .pending_contacts
-                            .insert(*subject, Sighting::new(pos, current_turn, name));
+                        // `resident_factions` is filled in the same pass as `resident_positions`,
+                        // so this cannot miss; a subject whose people cannot be resolved records
+                        // no contact rather than one filed under a guessed people.
+                        let Some(subject_faction) = resident_factions.get(subject).copied() else {
+                            continue;
+                        };
+                        expedition.pending_contacts.insert(
+                            *subject,
+                            Sighting::new(pos, current_turn, name, subject_faction),
+                        );
                         sightings.record(entity, *subject);
                     }
                 }

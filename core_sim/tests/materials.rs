@@ -337,7 +337,7 @@ fn seed_mutual_tie(app: &mut App, a: BandId, b: BandId) {
         for _ in 0..contacts_to_full {
             ledger.record_contact(
                 key,
-                &Sighting::new(SOMEWHERE, SEEDED_ON_TURN, ""),
+                &Sighting::new(SOMEWHERE, SEEDED_ON_TURN, "", FactionId(0)),
                 SEEDED_ON_TURN,
                 &cfg,
             );

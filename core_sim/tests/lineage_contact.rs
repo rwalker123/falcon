@@ -153,7 +153,7 @@ fn contact(app: &mut App, observer: &Band, subject: &Band, turn: u64) {
     let mut ledger = app.world.resource_mut::<ConnectionLedger>();
     ledger.record_contact(
         ConnectionKey::new(observer.id, subject.id),
-        &Sighting::new(bevy::math::UVec2::ZERO, turn, ""),
+        &Sighting::new(bevy::math::UVec2::ZERO, turn, "", FactionId(0)),
         turn,
         &cfg,
     );
