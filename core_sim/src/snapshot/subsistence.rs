@@ -493,6 +493,11 @@ pub(crate) struct HerdSnapshotInputs<'a> {
     /// the row would have to re-derive the flow, and a second producer of a capacity is exactly the
     /// drift this arc keeps paying for.
     pub(crate) graze: &'a crate::graze::GrazeRegistry,
+    /// **Every faction's camps** — the tiles its resident bands stand on, which a pastoral herd's `K`
+    /// is struck over (it drifts to its owner's nearest camp). The destination quote of a herd being
+    /// tamed reads the camps of the faction building it: the herd's owner, else the viewer (the
+    /// builder state on a herd row is the viewer's own).
+    pub(crate) owner_camps: &'a std::collections::BTreeMap<FactionId, Vec<UVec2>>,
     /// The same ledger `visibility_raster_from_ledger` renders the client's fog from, read for the
     /// same faction — so a herd can never be drawn on a tile the raster paints black.
     pub(crate) visibility: &'a crate::visibility::VisibilityLedger,
@@ -586,6 +591,7 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
         grid_size,
         wrap_horizontal,
         graze,
+        owner_camps,
         parties,
         penned_parties,
         fallback_party,
@@ -1332,6 +1338,9 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
                         width,
                         height,
                         wrap_horizontal,
+                        owner_camps
+                            .get(&herd.owner.unwrap_or(viewer))
+                            .map_or(&[][..], Vec::as_slice),
                     )
                 }),
                 // **The countdown, with "queued but never estimated" told apart from "no answer"** —

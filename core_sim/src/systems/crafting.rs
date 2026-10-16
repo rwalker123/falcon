@@ -107,7 +107,7 @@ pub fn bench_tiers(
 /// **How much of one input a pass consumes** — the recipe's stated amount after the tool's
 /// efficiency. One helper, so the availability test and the withdrawal cannot disagree about the
 /// number and leave the bench short mid-draw.
-fn required(amount: f32, efficiency: f32) -> Scalar {
+pub(crate) fn required(amount: f32, efficiency: f32) -> Scalar {
     scalar_from_f32(amount * efficiency)
 }
 

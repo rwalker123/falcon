@@ -8,11 +8,12 @@ use crate::codec::{
 use crate::state::campaign::{OpeningKitDefaultState, OpeningMaterialDefaultState};
 use crate::state::population::{
     AccessibleStockpileEntryState, AccessibleStockpileState, BandKitCrewState, BandKitTiersState,
-    BandLoadoutSupplyRowState, BandLoadoutWindowState, BenchOrderState, BenchState,
-    BreedingMemberState, BreedingPeopleState, BuildQueueEntryState, CharacteristicReadingState,
-    CohortStoreState, CraftOfferState, CraftSuggestionSourceState, CraftSuggestionState,
-    DrawnInputState, EquipmentBatchState, GenerationState, HarvestTaskState, KeepingMealState,
-    KitItemConditionState, KitToeLineState, LaborAssignmentState, MaterialBatchState,
+    BandLoadoutSupplyRowState, BandLoadoutWindowState, BenchKitOrderState, BenchOrderState,
+    BenchState, BreedingMemberState, BreedingPeopleState, BuildQueueEntryState,
+    CharacteristicReadingState, CohortStoreState, CraftOfferState, CraftSuggestionSourceState,
+    CraftSuggestionState, DrawnInputState, EquipmentBatchState, GenerationState, HarvestTaskState,
+    KeepingMealState, KitItemConditionState, KitNeedItemState, KitNeedRecipeState, KitNeedState,
+    KitToeLineState, LaborAssignmentState, MaterialAmountState, MaterialBatchState,
     MaterialShortfallState, PoolCrewLineState, PoolToeLineState, PoolingLinkState,
     PopulationCohortState, PopulationDemographicsState, ScoutTaskState, SettlementStageViewState,
     SourcePriorityState, TransferCrossingState,
@@ -740,6 +741,7 @@ fn create_populations<'a>(
                     .collect();
                 let drawn_inputs = builder.create_vector(&drawn_inputs);
                 let orders = create_bench_orders(builder, &cohort.bench.orders);
+                let kit_orders = create_bench_kit_orders(builder, &cohort.bench.kit_orders);
                 let auto_skipped: Vec<_> = cohort
                     .bench
                     .auto_skipped
@@ -781,6 +783,8 @@ fn create_populations<'a>(
                         autoSkipped: Some(auto_skipped),
                         // **THE HANDS LENT TO NEXT TURN'S HUNT** — appended last.
                         lentToHunt: cohort.bench.lent_to_hunt,
+                        // **THE LIVE WHOLE-KIT ORDERS** — appended last (#780).
+                        kitOrders: Some(kit_orders),
                     },
                 )
             };
@@ -936,6 +940,8 @@ fn create_populations<'a>(
             let breeding_members = create_breeding_members(builder, &cohort.breeding_members);
             let breeding_peoples = create_breeding_peoples(builder, &cohort.breeding_peoples);
             let hunt_meals = create_hunt_meals(builder, &cohort.hunt_meals);
+            let kit_needs = create_kit_needs(builder, &cohort.kit_needs);
+            let materials_free = create_material_amounts(builder, &cohort.materials_free);
             let culture_ancestor_pull = (!cohort.culture_ancestor_pull.is_empty())
                 .then(|| builder.create_vector(&cohort.culture_ancestor_pull));
             let belief_reach_y = if cohort.belief_reach_y.is_empty() {
@@ -1222,6 +1228,8 @@ fn create_populations<'a>(
                     idleMustered: cohort.idle_mustered,
                     huntMeals: Some(hunt_meals),
                     commRangeTiles: cohort.comm_range_tiles,
+                    kitNeeds: Some(kit_needs),
+                    materialsFree: Some(materials_free),
                 },
             )
         })
@@ -1253,6 +1261,117 @@ fn create_bench_orders<'a>(
                     blockedSeverity: Some(blocked_severity),
                     shortToFinish: Some(short_to_finish),
                     auto: order.auto,
+                    kitOrder: order.kit_order,
+                },
+            )
+        })
+        .collect();
+    builder.create_vector(&rows)
+}
+
+/// `BenchState.kitOrders` — the live whole-kit orders, oldest first.
+fn create_bench_kit_orders<'a>(
+    builder: &mut FbBuilder<'a>,
+    kit_orders: &[BenchKitOrderState],
+) -> WIPOffset<flatbuffers::Vector<'a, ForwardsUOffset<fb::BenchKitOrder<'a>>>> {
+    let rows: Vec<_> = kit_orders
+        .iter()
+        .map(|kit| {
+            let kit_id = builder.create_string(&kit.kit_id);
+            fb::BenchKitOrder::create(
+                builder,
+                &fb::BenchKitOrderArgs {
+                    id: kit.id,
+                    kitId: Some(kit_id),
+                    kits: kit.kits,
+                    done: kit.done,
+                },
+            )
+        })
+        .collect();
+    builder.create_vector(&rows)
+}
+
+/// A list of material amounts — a recipe's per-pass inputs, or the band's free stock.
+fn create_material_amounts<'a>(
+    builder: &mut FbBuilder<'a>,
+    amounts: &[MaterialAmountState],
+) -> WIPOffset<flatbuffers::Vector<'a, ForwardsUOffset<fb::MaterialAmount<'a>>>> {
+    let rows: Vec<_> = amounts
+        .iter()
+        .map(|row| {
+            let material_id = builder.create_string(&row.material_id);
+            fb::MaterialAmount::create(
+                builder,
+                &fb::MaterialAmountArgs {
+                    materialId: Some(material_id),
+                    amount: row.amount,
+                },
+            )
+        })
+        .collect();
+    builder.create_vector(&rows)
+}
+
+/// `PopulationCohortState.kitNeeds` — every orderable kit's standing (#780).
+fn create_kit_needs<'a>(
+    builder: &mut FbBuilder<'a>,
+    needs: &[KitNeedState],
+) -> WIPOffset<flatbuffers::Vector<'a, ForwardsUOffset<fb::KitNeed<'a>>>> {
+    let rows: Vec<_> = needs
+        .iter()
+        .map(|need| {
+            let kit_id = builder.create_string(&need.kit_id);
+            let display_name = builder.create_string(&need.display_name);
+            let jobs: Vec<_> = need
+                .jobs
+                .iter()
+                .map(|job| builder.create_string(job))
+                .collect();
+            let jobs = builder.create_vector(&jobs);
+            let items: Vec<_> = need
+                .items
+                .iter()
+                .map(|item| {
+                    let item_id = builder.create_string(&item.item_id);
+                    let recipes: Vec<_> = item
+                        .recipes
+                        .iter()
+                        .map(|recipe| {
+                            let recipe_id = builder.create_string(&recipe.recipe_id);
+                            let inputs = create_material_amounts(builder, &recipe.inputs);
+                            fb::KitNeedRecipe::create(
+                                builder,
+                                &fb::KitNeedRecipeArgs {
+                                    recipeId: Some(recipe_id),
+                                    outputPerPass: recipe.output_per_pass,
+                                    inputs: Some(inputs),
+                                },
+                            )
+                        })
+                        .collect();
+                    let recipes = builder.create_vector(&recipes);
+                    fb::KitNeedItem::create(
+                        builder,
+                        &fb::KitNeedItemArgs {
+                            itemId: Some(item_id),
+                            workersPerUnit: item.workers_per_unit,
+                            have: item.have,
+                            queued: item.queued,
+                            recipes: Some(recipes),
+                        },
+                    )
+                })
+                .collect();
+            let items = builder.create_vector(&items);
+            fb::KitNeed::create(
+                builder,
+                &fb::KitNeedArgs {
+                    kitId: Some(kit_id),
+                    displayName: Some(display_name),
+                    jobs: Some(jobs),
+                    people: need.people,
+                    items: Some(items),
                 },
             )
         })
@@ -1561,11 +1680,18 @@ fn decode_bench(bench: fb::BenchState<'_>) -> Result<BenchState, DecodeError> {
             blocked_severity: text(order.blockedSeverity()),
             short_to_finish: decode_shortfalls(order.shortToFinish()),
             auto: order.auto(),
+            kit_order: order.kitOrder(),
         }),
         worked: bench.worked(),
         auto: bench.auto(),
         auto_skipped: decode_strings(bench.autoSkipped()),
         lent_to_hunt: bench.lentToHunt(),
+        kit_orders: map_rows(bench.kitOrders(), |kit| BenchKitOrderState {
+            id: kit.id(),
+            kit_id: text(kit.kitId()),
+            kits: kit.kits(),
+            done: kit.done(),
+        }),
     })
 }
 
@@ -1922,6 +2048,24 @@ fn decode_population(
             food: meal.food(),
         }),
         comm_range_tiles: cohort.commRangeTiles(),
+        kit_needs: map_rows(cohort.kitNeeds(), |need| KitNeedState {
+            kit_id: text(need.kitId()),
+            display_name: text(need.displayName()),
+            jobs: decode_strings(need.jobs()),
+            people: need.people(),
+            items: map_rows(need.items(), |item| KitNeedItemState {
+                item_id: text(item.itemId()),
+                workers_per_unit: item.workersPerUnit(),
+                have: item.have(),
+                queued: item.queued(),
+                recipes: map_rows(item.recipes(), |recipe| KitNeedRecipeState {
+                    recipe_id: text(recipe.recipeId()),
+                    output_per_pass: recipe.outputPerPass(),
+                    inputs: decode_material_amounts(recipe.inputs()),
+                }),
+            }),
+        }),
+        materials_free: decode_material_amounts(cohort.materialsFree()),
     })
 }
 
@@ -2057,6 +2201,16 @@ fn create_pooling_links<'a>(
         })
         .collect();
     builder.create_vector(&rows)
+}
+
+/// The inverse of [`create_material_amounts`].
+fn decode_material_amounts(
+    amounts: Option<flatbuffers::Vector<'_, ForwardsUOffset<fb::MaterialAmount<'_>>>>,
+) -> Vec<MaterialAmountState> {
+    map_rows(amounts, |row| MaterialAmountState {
+        material_id: text(row.materialId()),
+        amount: row.amount(),
+    })
 }
 
 /// The inverse of [`create_shortfalls`].

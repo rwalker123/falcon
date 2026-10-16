@@ -439,6 +439,12 @@ func _ready() -> void:
             hud.connect("bench_auto_requested", Callable(self, "_on_hud_bench_auto"))
         if hud.has_signal("bench_auto_skip_requested") and not hud.is_connected("bench_auto_skip_requested", Callable(self, "_on_hud_bench_auto_skip")):
             hud.connect("bench_auto_skip_requested", Callable(self, "_on_hud_bench_auto_skip"))
+        if hud.has_signal("bench_enqueue_kit_requested") and not hud.is_connected("bench_enqueue_kit_requested", Callable(self, "_on_hud_bench_enqueue_kit")):
+            hud.connect("bench_enqueue_kit_requested", Callable(self, "_on_hud_bench_enqueue_kit"))
+        if hud.has_signal("bench_remove_kit_requested") and not hud.is_connected("bench_remove_kit_requested", Callable(self, "_on_hud_bench_remove_kit")):
+            hud.connect("bench_remove_kit_requested", Callable(self, "_on_hud_bench_remove_kit"))
+        if hud.has_signal("bench_raise_kit_requested") and not hud.is_connected("bench_raise_kit_requested", Callable(self, "_on_hud_bench_raise_kit")):
+            hud.connect("bench_raise_kit_requested", Callable(self, "_on_hud_bench_raise_kit"))
         if hud.has_signal("set_starting_loadout_requested") and not hud.is_connected("set_starting_loadout_requested", Callable(self, "_on_hud_set_starting_loadout")):
             hud.connect("set_starting_loadout_requested", Callable(self, "_on_hud_set_starting_loadout"))
         if hud.has_signal("answer_fork_requested") and not hud.is_connected("answer_fork_requested", Callable(self, "_on_hud_answer_fork")):
@@ -2326,6 +2332,56 @@ static func format_bench_auto_skip(payload: Dictionary) -> Dictionary:
         "message": "Skipping to the next suggestion.",
     }
 
+## **`bench_enqueue_kit <faction_id> <band_id> kit <kit_id> kits <n> recipe <id> [recipe <id> ...]`** (#780)
+## — order a COUNT OF KITS as ONE bench order. `recipe_ids` is one recipe per kit item and the sim makes
+## every item `kits` times over, so this builds no line for an unnamed kit, a count below one, no recipe
+## or a blank one.
+static func format_bench_enqueue_kit(payload: Dictionary) -> Dictionary:
+    var band_id := int(payload.get("band_id", HudConst.NO_BAND_ID))
+    var kit_id := String(payload.get("kit_id", "")).strip_edges()
+    var kits := int(payload.get("kits", 0))
+    var recipe_ids = payload.get("recipe_ids", [])
+    if band_id == HudConst.NO_BAND_ID or kit_id == "" or kits < 1 or not (recipe_ids is Array) \
+            or (recipe_ids as Array).is_empty():
+        return {}
+    var tail := ""
+    for recipe in recipe_ids:
+        var recipe_id := String(recipe).strip_edges()
+        if recipe_id == "":
+            return {}
+        tail += " recipe %s" % recipe_id
+    var faction := int(payload.get("faction", HudConst.PLAYER_FACTION_ID))
+    return {
+        "line": "bench_enqueue_kit %d %d kit %s kits %d%s" % [faction, band_id, kit_id, kits, tail],
+        "message": "Queued %d × %s as one bench order." % [kits, kit_id],
+    }
+
+## **`bench_remove_kit <faction_id> <band_id> kit_order <id>`** (#780) — take a whole kit order off the
+## bench. Items already made stay in the store; a drawn pile is lost, as removing one order loses it.
+static func format_bench_remove_kit(payload: Dictionary) -> Dictionary:
+    var band_id := int(payload.get("band_id", HudConst.NO_BAND_ID))
+    var kit_order := int(payload.get("kit_order", 0))
+    if band_id == HudConst.NO_BAND_ID or kit_order < 1:
+        return {}
+    var faction := int(payload.get("faction", HudConst.PLAYER_FACTION_ID))
+    return {
+        "line": "bench_remove_kit %d %d kit_order %d" % [faction, band_id, kit_order],
+        "message": "Took a whole kit off the bench.",
+    }
+
+## **`bench_raise_kit <faction_id> <band_id> kit_order <id>`** (#780) — move a whole kit order up past the
+## unit directly ahead of it. The server refuses it at the head, which the box draws no ↑ for.
+static func format_bench_raise_kit(payload: Dictionary) -> Dictionary:
+    var band_id := int(payload.get("band_id", HudConst.NO_BAND_ID))
+    var kit_order := int(payload.get("kit_order", 0))
+    if band_id == HudConst.NO_BAND_ID or kit_order < 1:
+        return {}
+    var faction := int(payload.get("faction", HudConst.PLAYER_FACTION_ID))
+    return {
+        "line": "bench_raise_kit %d %d kit_order %d" % [faction, band_id, kit_order],
+        "message": "Moved a whole kit up the bench.",
+    }
+
 ## **RETIRED — `abandon_improvement` and its builder** (`docs/plan_standing_upkeep.md` §2.4). It
 ## existed to clear an assignment's STORED improvement, back when that field was the commitment; the
 ## build verb is DERIVED from the meter now, so there is no stored authority left to clear and a
@@ -2544,6 +2600,16 @@ func _on_hud_bench_auto(payload: Dictionary) -> void:
 
 func _on_hud_bench_auto_skip(payload: Dictionary) -> void:
     _send_formatted_command(format_bench_auto_skip(payload))
+
+## A whole kit as one bench order, and the two edits that move or drop it as one.
+func _on_hud_bench_enqueue_kit(payload: Dictionary) -> void:
+    _send_formatted_command(format_bench_enqueue_kit(payload))
+
+func _on_hud_bench_remove_kit(payload: Dictionary) -> void:
+    _send_formatted_command(format_bench_remove_kit(payload))
+
+func _on_hud_bench_raise_kit(payload: Dictionary) -> void:
+    _send_formatted_command(format_bench_raise_kit(payload))
 
 ## Compose one band's outfitting order — emitted on every stepper press, the card deferring nothing.
 ##

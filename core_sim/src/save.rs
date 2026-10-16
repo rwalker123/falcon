@@ -138,7 +138,8 @@ pub const SAVE_MAGIC: [u8; 8] = *b"SHDWSAV\x01";
 /// | 41 | `LaborAllocation` gained `last_pool_toe_head` — the queue entry the builders' `last_pool_toe` lines were struck for, which the wire compares with the live head before publishing them; it rides `BandRecord::labor` whole, so a version-40 blob does not decode |
 /// | 42 | The mobility score (#800): `SimState` gained `mobility` (`MobilityScore`, per-faction EMA score and its two raw point components), which the wire publishes as `MobilityState`; a version-41 blob has none, so it does not decode |
 /// | 43 | The sedentarization score itemized: `SedentarizationEntry` gained `domestication_points`, `surplus_points`, `land_points` and `population_points` beside `belief_points` (each input's raw pre-EMA points), which the wire publishes as `SedentarizationState.domesticationPoints` / `surplusPoints` / `landPoints` / `populationPoints`. A version-42 blob has none |
-pub const SAVE_FORMAT_VERSION: u32 = 43;
+/// | 44 | Whole-kit orders (#780): `BenchOrder` gained `kit_order` (the kit order a part belongs to, `0` = none) and `BandBench` gained `kit_orders` (each live kit order's id, kit, kit count and made-so-far) and `next_kit_order` (the id counter). They ride `BandRecord::bench`, so a version-43 blob does not decode |
+pub const SAVE_FORMAT_VERSION: u32 = 44;
 
 /// gzip level for the payload document.
 ///

@@ -26,9 +26,10 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use sim_runtime::{
-    BenchOrderState, BenchState, CharacteristicBandState, CharacteristicReadingState,
-    CraftKnowledgeState, CraftOfferState, CraftSuggestionSourceState, CraftSuggestionState,
-    DrawnInputState, EquipmentBatchState, MaterialBatchState, MaterialDefState,
+    BenchKitOrderState, BenchOrderState, BenchState, CharacteristicBandState,
+    CharacteristicReadingState, CraftKnowledgeState, CraftOfferState, CraftSuggestionSourceState,
+    CraftSuggestionState, DrawnInputState, EquipmentBatchState, KitNeedItemState,
+    KitNeedRecipeState, KitNeedState, MaterialAmountState, MaterialBatchState, MaterialDefState,
     MaterialShortfallState, RecipeDefState, RecipeInputState, RecipeOutputState,
     SourcePriorityState, OWNED_AT_TIER_UNATTRIBUTED,
 };
@@ -48,7 +49,7 @@ use crate::{
     orders::FactionId,
     recipes_config::{RecipeDef, RecipesConfig},
     resources::DiscoveryProgressLedger,
-    scalar::scalar_from_f32,
+    scalar::{scalar_from_f32, scalar_zero},
     systems::{bench_tiers, preview_grade, rate_per_turn, BenchTiers},
 };
 
@@ -483,6 +484,7 @@ fn bench_state(
     // stalled one alike, like the rank above it. The skipped set iterates sorted (`BTreeSet`).
     let auto = bench.auto;
     let auto_skipped: Vec<String> = bench.auto_skipped.iter().cloned().collect();
+    let kit_orders = published_kit_orders(bench);
     let Some((worked, head)) =
         described.and_then(|index| bench.orders.get(index).map(|order| (index, order)))
     else {
@@ -491,6 +493,7 @@ fn bench_state(
             orders,
             auto,
             auto_skipped,
+            kit_orders,
             ..BenchState::default()
         };
     };
@@ -510,6 +513,7 @@ fn bench_state(
             worked,
             auto,
             auto_skipped,
+            kit_orders,
             ..BenchState::default()
         };
     };
@@ -604,6 +608,7 @@ fn bench_state(
         worked,
         auto,
         auto_skipped,
+        kit_orders,
     }
 }
 
@@ -653,7 +658,136 @@ fn bench_orders(
                     .map(|rows| shortfall_states(rows))
                     .unwrap_or_default(),
                 auto: order.auto,
+                kit_order: order.kit_order,
             }
+        })
+        .collect()
+}
+
+/// **EVERY ORDERABLE KIT'S STANDING ON THE WIRE** (#780) — the sim-side [`crate::craft_suggestions::KitNeed`]
+/// plus, per item, **one entry per recipe that outputs it** (book order): the output per pass and each
+/// input's amount **per pass with the bench's material efficiency already applied**
+/// ([`crate::systems::required`], the call the bench draws with), so the picker's shortage arithmetic
+/// — `ceil(make / outputPerPass)` passes × `amount` against [`materials_free`] — is exact over the
+/// published terms and the client derives no tool join.
+pub(crate) fn kit_need_states(
+    needs: Vec<crate::craft_suggestions::KitNeed>,
+    wear: &BandEquipment,
+    inputs: &BandCraftInputs<'_>,
+) -> Vec<KitNeedState> {
+    let mut efficiency_by_material: BTreeMap<&str, f32> = BTreeMap::new();
+    needs
+        .into_iter()
+        .map(|need| KitNeedState {
+            kit_id: need.kit_id,
+            display_name: need.display_name,
+            jobs: need
+                .jobs
+                .iter()
+                .map(|job| job.as_str().to_string())
+                .collect(),
+            people: need.people,
+            items: need
+                .items
+                .into_iter()
+                .map(|item| {
+                    let recipes = inputs
+                        .plans
+                        .iter()
+                        .filter(|plan| plan.output_item == Some(item.item.as_str()))
+                        .map(|plan| {
+                            let efficiency = plan.bench_material.map_or(
+                                NO_BENCH_TIERS.material_efficiency,
+                                |material| {
+                                    *efficiency_by_material.entry(material).or_insert_with(|| {
+                                        bench_tiers(
+                                            material,
+                                            inputs.materials,
+                                            inputs.equipment,
+                                            wear,
+                                        )
+                                        .material_efficiency
+                                    })
+                                },
+                            );
+                            let mut amounts: Vec<MaterialAmountState> = Vec::new();
+                            for input in &plan.recipe.inputs {
+                                let amount =
+                                    crate::systems::required(input.amount, efficiency).to_f32();
+                                match amounts
+                                    .iter_mut()
+                                    .find(|row| row.material_id == input.material)
+                                {
+                                    Some(row) => row.amount += amount,
+                                    None => amounts.push(MaterialAmountState {
+                                        material_id: input.material.clone(),
+                                        amount,
+                                    }),
+                                }
+                            }
+                            KitNeedRecipeState {
+                                recipe_id: plan.id.to_string(),
+                                output_per_pass: plan
+                                    .recipe
+                                    .outputs
+                                    .iter()
+                                    .filter(|output| {
+                                        output.equipment_id() == Some(item.item.as_str())
+                                    })
+                                    .map(|output| output.amount)
+                                    .sum(),
+                                inputs: amounts,
+                            }
+                        })
+                        .collect();
+                    KitNeedItemState {
+                        item_id: item.item,
+                        workers_per_unit: item.workers_per_unit,
+                        have: item.have,
+                        queued: item.queued,
+                        recipes,
+                    }
+                })
+                .collect(),
+        })
+        .collect()
+}
+
+/// **THE STOCK LEFT AFTER EVERY QUEUED ORDER'S CLAIMS** (#780) — [`crate::systems::QueueForecast::left_of`],
+/// the term [`suggestion_shortfalls`] strikes a suggestion against — one row per material the band
+/// holds or any recipe reads, in the materials table's order.
+pub(crate) fn materials_free(
+    forecast: &crate::systems::QueueForecast,
+    store: &LocalStore,
+    inputs: &BandCraftInputs<'_>,
+) -> Vec<MaterialAmountState> {
+    let read_by_a_recipe: BTreeSet<&str> = inputs
+        .recipes
+        .recipes()
+        .flat_map(|(_, recipe)| recipe.inputs.iter().map(|input| input.material.as_str()))
+        .collect();
+    inputs
+        .materials
+        .materials()
+        .filter(|(id, _)| read_by_a_recipe.contains(id) || store.material_total(id) > scalar_zero())
+        .map(|(id, _)| MaterialAmountState {
+            material_id: id.to_string(),
+            amount: forecast.left_of(store, id).to_f32(),
+        })
+        .collect()
+}
+
+/// **THE LIVE WHOLE-KIT ORDERS ON THE WIRE** (#780), oldest first — published on an idle bench and
+/// a stalled one alike, because the grouped box is a statement about the queue, not about the job.
+fn published_kit_orders(bench: &BandBench) -> Vec<BenchKitOrderState> {
+    bench
+        .kit_orders
+        .iter()
+        .map(|kit| BenchKitOrderState {
+            id: kit.id,
+            kit_id: kit.kit_id.clone(),
+            kits: kit.kits,
+            done: kit.done,
         })
         .collect()
 }

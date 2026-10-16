@@ -466,8 +466,25 @@ fn seed_snapshot() -> WorldSnapshot {
             }),
             // The skipped item ids — a repeated string field, seeded so the guard decodes one.
             auto_skipped: vec!["spears".to_string(), "hoes".to_string()],
+            // The live whole-kit orders (#780) — a repeated field, seeded for the same reason.
+            kit_orders: rows_of(BenchKitOrderState::default()),
             ..Default::default()
         };
+        // **WHOLE-KIT ORDERS** (#780): a kit has items, an item has recipes, a recipe has inputs — a
+        // repeated field four levels deep, so every level needs elements or the guard never decodes
+        // the inner ones. The free stock is a flat list.
+        cohort.kit_needs = rows_of(KitNeedState {
+            jobs: vec!["hunt".to_string(), "forage".to_string()],
+            items: rows_of(KitNeedItemState {
+                recipes: rows_of(KitNeedRecipeState {
+                    inputs: rows_of(MaterialAmountState::default()),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+            ..Default::default()
+        });
+        cohort.materials_free = rows_of(MaterialAmountState::default());
         // **WHAT TO MAKE NEXT** — a repeated field whose rows carry a repeated field of their own
         // (the per-consumer lines), so both levels need elements or the guard never decodes one.
         cohort.craft_suggestions = ["hoes", "spears"]

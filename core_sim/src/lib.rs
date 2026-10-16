@@ -149,7 +149,7 @@ pub use components::{
     BandId, BandName, BandTravel, BandWorkforce, BatchGrade, BenchOrder, BenchQueueError, BuildJob,
     BuildQueueEntry, BuildSource, DeathCause, DemographicFlowAccumulator, DrawnInputs,
     DrawnMaterial, ElementKind, EquipmentBatch, Expedition, ExpeditionMission, ExpeditionPhase,
-    FinishedBatch, FoodBatch, FoodMix, Improvement, KeepingIssue, KeepingToolLine,
+    FinishedBatch, FoodBatch, FoodMix, Improvement, KeepingIssue, KeepingToolLine, KitOrder,
     KnowledgeFragment, LaborAllocation, LaborAssignment, LaborTarget, LocalStore, MaterialBatch,
     MaterialDraw, MoraleCause, MusterBench, MusterKit, MusterPlan, PoolToeLine, PopulationCohort,
     PowerNode, QueuedBuildToe, ResidentBand, Settlement, ShedCrew, ShedFacts, ShedStep,
