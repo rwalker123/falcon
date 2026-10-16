@@ -93,6 +93,47 @@ jobs:
     - name: Run tests
       run: cargo test --workspace --locked --verbose
 
+  # The AI bench ratchet. `sim_ai/bench/baselines.json` is read by `--check` and by nothing else,
+  # so until this job existed a PR that moved the bench merged without rewriting it and the next
+  # PR inherited the violations — #734–#764 did it, then #824. A red job here means: rerun the
+  # bench on your branch head and commit the rewritten file with the numbers in the PR body
+  # (`.claude/rules/core_sim/ai-driver.md` → "The bench"). It runs the shipped seats only.
+  ai-bench:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libasound2-dev libudev-dev unzip
+    - name: Install flatc
+      run: |
+        FLATBUFFERS_VERSION=25.9.23
+        curl -sSL -o flatc.zip "https://github.com/google/flatbuffers/releases/download/v${FLATBUFFERS_VERSION}/Linux.flatc.binary.g++-13.zip"
+        unzip -o flatc.zip flatc
+        sudo mv flatc /usr/local/bin/flatc
+        sudo chmod +x /usr/local/bin/flatc
+        rm flatc.zip
+    - name: Install stable toolchain
+      uses: dtolnay/rust-toolchain@stable
+    - name: Cache Rust dependencies
+      uses: Swatinem/rust-cache@v2
+      with:
+        shared-key: ai-bench
+    - name: Generate FlatBuffers bindings
+      run: cargo build --locked --package shadow_scale_flatbuffers
+    - name: Build the release server and sim_ai
+      run: |
+        cargo build --release --locked --package core_sim --bin server
+        cargo build --release --locked --package sim_ai
+    - name: sim_ai bench --check
+      run: |
+        target/release/sim_ai bench \
+          --seats 1=utility:forager@hard --seats 2=pass \
+          --server "$GITHUB_WORKSPACE/target/release/server" \
+          --out "$RUNNER_TEMP/bench" \
+          --check sim_ai/bench/baselines.json
+
   push-build:
     if: github.event_name == 'push'
     runs-on: ubuntu-latest

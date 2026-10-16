@@ -1497,9 +1497,10 @@ accepted), so the file's `declined` list is empty.
 eight were picked to span `stay` / `split_local` / `split_far` / `short`; the sim changes since
 (the work party, site crews, spoilage) moved the tick-2 ground reading, and the set now covers
 no `split_local` start at all. **Regenerate the entry in the PR that moves it, with the numbers
-in the PR body** — the ratchet is on-demand (no hook or CI step runs `--check`), so a PR that
-skips this leaves the next one to inherit violations it did not cause, which is how this entry
-drifted across several merges (#734 to #764) before it was rewritten.
+in the PR body**. The CI job `ai-bench` (`.github/workflows/rust.yml`) runs `--check` with the
+shipped seats on every PR and every push to main, release-built on Linux; before it existed the
+ratchet was on-demand, and a PR that skipped the rewrite left the next one to inherit violations
+it did not cause — the entry drifted across #734 to #764, and again at #824.
 
 ⛔ **The file must parse back to the f64 it was written from.** The tolerance is 0, so `sim_ai`
 takes serde_json with `float_roundtrip`: the default float parse is best-effort and read seed
