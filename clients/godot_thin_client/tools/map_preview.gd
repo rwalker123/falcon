@@ -876,6 +876,47 @@ func _ready() -> void:
 		and ready_build_face == BandOverlayRenderer.BADGE_BUILDING_FORMAT % unstaffed_build_glyph
 		and unstaffed_build_face
 			== BandOverlayRenderer.BADGE_UNSTAFFED_FORMAT % unstaffed_build_glyph)
+	# State A-wire — **THE SAME PATCHES, AS THE WIRE SHAPES THEM, JOINED AGAINST THE CATALOG THE WAY `Main` JOINS
+	# THEM.** Every state above hands MapView a row `RUNG_FX` has already stamped, which is the harness
+	# writing its own answer: a reader of a retired key, or a join that never happened, passes them all
+	# (the playtest that asked for this saw no build icon and no held-rung icon on a live map). Here each
+	# patch carries ONLY what the decoder emits per quote (`rung_key` + its numbers), the catalog arrives
+	# as `ladder_rungs`, and `RungQuotes.enrich_sources` is the one thing that turns the two into verbs --
+	# so a dead key fails this block rather than rendering as "nothing here".
+	var wire := _snapshot_work_ready()
+	RUNG_FX.stamp_snapshot(wire)
+	var catalog: Array = RUNG_FX.ladder_rungs(false)
+	for patch_variant in wire["forage_patches"]:
+		var wire_patch: Dictionary = patch_variant
+		wire_patch["rung_quotes"] = _wire_shaped_quotes(wire_patch.get("rung_quotes", []))
+		for entry_variant in wire_patch.get("composition", []):
+			(entry_variant as Dictionary)["rung_quotes"] = _wire_shaped_quotes(
+				(entry_variant as Dictionary).get("rung_quotes", []))
+	RungQuotes.enrich_sources(wire["forage_patches"], catalog)
+	_map.display_snapshot(wire)
+	_map.selected_unit_id = BAND_ENTITY
+	_map._fit_map_to_view()
+	await _settle()
+	await _save("map_worked_wire_quotes")
+	var wire_building: Dictionary = _map._band_overlays._badge_entry_for(cultivate_key)
+	_assert_map("map_worked_wire_quotes — the mid-Cultivate patch wears its BUILD glyph and meter off the joined quotes",
+		String(wire_building.get("building_glyph", "")) != ""
+		and absf(float(wire_building.get("building_progress", 0.0)) - 0.42) < 0.001)
+	var farm_patch: Dictionary = _map.forage_patch_lookup.get(Vector2i(FORAGE_A_X, FORAGE_A_Y), {})
+	_assert_map("map_worked_wire_quotes — a tended patch's held rung reads Cultivate off the joined quotes",
+		RungQuotes.held_verb(farm_patch, "") == "cultivate"
+		and SourceForecast.source_is_improved(farm_patch, ""))
+	# …and a FARM: the top plant rung, held. Its quotes are both reached, so the standing verb is `sow`.
+	for quote_variant in farm_patch.get("rung_quotes", []):
+		(quote_variant as Dictionary)["reached"] = true
+		(quote_variant as Dictionary)["progress"] = 1.0
+	_assert_map("map_worked_wire_quotes — a Farm's held rung reads Sow, and it is improved",
+		RungQuotes.held_verb(farm_patch, "") == "sow" and SourceForecast.source_is_improved(farm_patch, ""))
+	_assert_map("map_worked_wire_quotes — wild ground holds nothing (the control)",
+		RungQuotes.held_verb(
+			_map.forage_patch_lookup.get(Vector2i(WORK_CULTIVATE_X, WORK_CULTIVATE_Y), {}), "") == ""
+		and not SourceForecast.source_is_improved(
+			_map.forage_patch_lookup.get(Vector2i(WORK_CULTIVATE_X, WORK_CULTIVATE_Y), {}), ""))
 	_map.set_faction_knowledge({})  # leave the following states on the honest "knows nothing" default
 
 	# State A-far — the SAME worked band on a large grid so fitted hexes go tiny (radius <
@@ -6776,6 +6817,26 @@ func _snapshot_build_arc() -> Dictionary:
 ## The rung half of a source's badge FACE this frame, off the renderer's ONE producer
 ## (`BandOverlayRenderer.badge_rung`). `""` where the source is merely worked — which is a real answer
 ## and is asserted as one, so the badge ENTRY is checked separately wherever an absence is the claim.
+## A quote reduced to what the DECODER emits (`dict/subsistence.rs`): the rung key and its per-quote numbers,
+## and none of the catalog's verb / order / traits / lesson / gate keys, which `RungQuotes.enrich_sources`
+## joins on afterwards. A fixture quote carries them already (`RUNG_FX` stamps), so they are stripped.
+const WIRE_QUOTE_KEYS := ["rung_key", "reached", "progress", "work_done", "work_cost", "site_refusal",
+	"food_yield", "fodder", "upkeep_demand", "can_climb", "food_payoff", "yield_ratio", "fodder_payoff"]
+
+func _wire_shaped_quotes(quotes_variant: Variant) -> Array:
+	var out: Array = []
+	if not (quotes_variant is Array):
+		return out
+	for quote_variant in (quotes_variant as Array):
+		if not (quote_variant is Dictionary):
+			continue
+		var wire_quote := {}
+		for key in WIRE_QUOTE_KEYS:
+			if (quote_variant as Dictionary).has(key):
+				wire_quote[key] = (quote_variant as Dictionary)[key]
+		out.append(wire_quote)
+	return out
+
 func _badge_face(key: String) -> String:
 	var overlays: BandOverlayRenderer = _map._band_overlays
 	return String(overlays.badge_rung(overlays._badge_entry_for(key))[

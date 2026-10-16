@@ -499,11 +499,10 @@ const FOW_DISCOVERED_HIDDEN_KEYS := [
 	# which a remembered tile would arguably still know), but it is only ever read to gate the Sow
 	# affordance — and that affordance is already withheld on a hex the player cannot see, so
 	# redacting it keeps ONE rule for the whole patch payload rather than a lone exception.
-	
 	# The two build meters' WORK absolutes and the source's turn/gear pair (`plan_unit_costed_work.md`
 	# §8) travel with the fractions they decompose: they are live build state, and a remembered tile
 	# knows a build's price no better than it knows its progress.
-		"patch_build_turns_remaining", "patch_build_work_from_gear",
+	"patch_build_turns_remaining", "patch_build_work_from_gear",
 	# WHERE THIS PATCH SITS IN THE WINNING BAND'S BUILD QUEUE (§4.6b). It rides the same winner as the
 	# pair above and is redacted with them: a queue position is live state about a band's declared
 	# work, which a remembered tile knows no better than it knows the countdown it explains.
