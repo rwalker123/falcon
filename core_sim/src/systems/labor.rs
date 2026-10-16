@@ -268,6 +268,9 @@ pub struct LaborConfigs<'w> {
     /// party's walk a road takes away (`crate::work_party::resolve_walk`). Read here rather than
     /// re-stated so what a road does for a caravan and what it does for pooling are one reading.
     pub supply_network: Res<'w, crate::supply_network_config::SupplyNetworkConfigHandle>,
+    /// **Whose feet are on a road** — the treaties and the foreign-road share a party's walk is
+    /// read through ([`crate::routes::road_reach_for`]).
+    pub rights: crate::routes::RoadRights<'w>,
     /// **How food keeps** (#706) — the keeping classes a take lands in, and the shelf lives a
     /// caravan pack rots by on its walk home.
     pub demographics: Option<Res<'w, DemographicsConfigHandle>>,
@@ -4336,6 +4339,7 @@ fn post_a_party(
     labor: &crate::labor_config::LaborConfig,
     supply: &crate::supply_network_config::SupplyNetworkConfig,
     roads: &crate::routes::RoadRegistry,
+    access: &crate::routes::RoadAccess<'_>,
     widest_route_reach: u32,
 ) -> Option<PartyPosting> {
     let (walk_tiles, walk_turns) = crate::work_party::resolve_walk(
@@ -4344,6 +4348,7 @@ fn post_a_party(
         labor,
         supply,
         roads,
+        access,
         widest_route_reach,
         geometry,
     )?;
@@ -5422,6 +5427,9 @@ pub fn advance_labor_allocation(
     // two camps pool through (`crate::work_party::resolve_walk`).
     let supply_cfg = configs.supply_network.get();
     let widest_route_reach = crate::routes::max_route_reach_tiles(&ladder);
+    // **Whose feet are on the road**: each band's party walks as its own people, over the treaties
+    // in force.
+    let foreign_roads = configs.rights.foreign(&ladder);
     // The forward-projection horizon for each source's steady `realized` yield: `realized` is the
     // average food/turn the source will deliver over the next N turns, simulated forward so the
     // headline "Food /turn" is smooth where `actual` pulses. **The seed and the resolved row start
@@ -6283,6 +6291,10 @@ pub fn advance_labor_allocation(
                         &labor,
                         &supply_cfg,
                         &roads,
+                        &crate::routes::RoadAccess {
+                            walker: configs.rights.walker(faction),
+                            foreign: foreign_roads,
+                        },
                         widest_route_reach,
                     )
                 });
@@ -13016,24 +13028,35 @@ pub(crate) enum DestinationKind {
 ///   road shortens.
 /// - **Own people**: nothing more.
 /// - **Another people**: *perception* — a live band-to-band tie (`ConnectionLedger::tie_is_live`),
-///   so both bands need a durable id — and *consent* — the receiving people's borders are open.
+///   so both bands need a durable id — and *consent* — the receiving people admits the leavers
+///   ([`FactionBorderPolicies::admits`]: an open-borders treaty term, else its override for them,
+///   else its default).
 pub(crate) fn walkable_destination(
     walk: &crate::supply::WalkReach,
     roads: &crate::routes::RoadRegistry,
     connections: &ConnectionLedger,
     borders: &FactionBorderPolicies,
+    treaties: &crate::treaties::Treaties,
     src: WalkEnd,
     dest: WalkEnd,
 ) -> Option<DestinationKind> {
-    if !walk.within(roads, src.pos, dest.pos) {
+    // The leavers walk as `src`'s people: a foreign kept road is worth a share to them unless a
+    // road-rights treaty joins the two peoples.
+    if !walk.within(
+        roads,
+        crate::routes::Walker::new(src.faction, treaties),
+        src.pos,
+        dest.pos,
+    ) {
         return None;
     }
     if dest.faction == src.faction {
         return Some(DestinationKind::OwnPeople);
     }
     let (src_id, dest_id) = (src.band_id?, dest.band_id?);
-    (connections.tie_is_live(src_id, dest_id) && borders.is_open(dest.faction))
-        .then_some(DestinationKind::OtherPeople)
+    (connections.tie_is_live(src_id, dest_id)
+        && borders.admits(treaties, dest.faction, src.faction))
+    .then_some(DestinationKind::OtherPeople)
 }
 
 /// **How a number of leavers divides across a band's brackets** — `requested` split ∝
@@ -13077,8 +13100,12 @@ pub struct MigrationGates<'w> {
     /// Perception: a live band-to-band tie (`ConnectionLedger::tie_is_live`) is what "a band you
     /// have actually seen" means for a destination of another people.
     pub connections: Res<'w, ConnectionLedger>,
-    /// Consent: a closed people's bands are never another people's destination.
+    /// Consent: a people's bands are another people's destination only where it admits them
+    /// ([`FactionBorderPolicies::admits`]).
     pub borders: Res<'w, FactionBorderPolicies>,
+    /// The treaties in force, and the foreign-road share — what the leavers' walk and the consent
+    /// above are read through.
+    pub rights: crate::routes::RoadRights<'w>,
     /// `settle.parent_min_workers` — the floor below which a remnant goes over with its leavers.
     pub expedition: Res<'w, crate::expedition_config::ExpeditionConfigHandle>,
 }
@@ -13149,6 +13176,7 @@ pub fn advance_population_migration(
         mig_cfg.base_reach,
         &gates.supply.get(),
         &gates.ladder.get(),
+        gates.rights.foreign(&gates.ladder.get()),
         width,
         tile_registry.height,
         wrap,
@@ -13229,6 +13257,7 @@ pub fn advance_population_migration(
                 &followers.roads,
                 &gates.connections,
                 &gates.borders,
+                gates.rights.treaties(),
                 WalkEnd {
                     faction: bands[i].faction,
                     band_id: bands[i].band_id,

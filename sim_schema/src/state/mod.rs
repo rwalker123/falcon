@@ -6,24 +6,30 @@
 pub mod campaign;
 pub mod connections;
 pub mod culture;
+pub mod dealings;
 pub mod economy;
+pub mod goodwill;
 pub mod governance;
 pub mod knowledge;
 pub mod map;
 pub mod population;
 pub mod routes;
 pub mod subsistence;
+pub mod treaties;
 
 pub use campaign::*;
 pub use connections::*;
 pub use culture::*;
+pub use dealings::*;
 pub use economy::*;
+pub use goodwill::*;
 pub use governance::*;
 pub use knowledge::*;
 pub use map::*;
 pub use population::*;
 pub use routes::*;
 pub use subsistence::*;
+pub use treaties::*;
 
 /// Hundredths, the precision the client stream is diffed at.
 ///

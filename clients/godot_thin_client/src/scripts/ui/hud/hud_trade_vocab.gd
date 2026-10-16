@@ -59,13 +59,28 @@ const CAUSE_SHIPMENT_RETURNED := 7
 ## names the band the party was sent out from as counterparty. Not trade, and not the band's own
 ## party — the food and fodder popovers state it on its own row (`DisclosureController`).
 const CAUSE_PARTY_DEFECTED := 8
+## **AN EXCHANGE'S TWO HALVES** (early diplomacy, #233; `TransferCause::ExchangeOut` / `ExchangeIn`). The
+## receiver paying the return it named (Route/Out on the receiving band) and that return landing at the
+## party's home band (Route/In). Both are trade, and both are on the Route arm the Food popover accounts
+## for in full -- so they join `TRADE_CAUSES` and `SHIPMENT_CAUSES`, or the popover's ledger stops closing
+## and the Trade tab drops a return that really crossed.
+const CAUSE_EXCHANGE_OUT := 9
+const CAUSE_EXCHANGE_IN := 10
+## The words a row wears for them, in the tab's own register: what was GIVEN UP in a bargain, and what
+## was GOT in one. A plain shipment's rows say neither (its arrow is the whole story).
+const CAUSE_LABELS := {
+	CAUSE_EXCHANGE_OUT: "traded away",
+	CAUSE_EXCHANGE_IN: "traded for",
+}
+const EXCHANGE_CAUSES: Array[int] = [CAUSE_EXCHANGE_OUT, CAUSE_EXCHANGE_IN]
 
 ## **WHAT COUNTS AS TRADE.** The Local arm is `pooled`; the Route arm is a shipment either way. A
 ## band's own party coming home, a party's launch larder and a split's dowry are NEVER on the tab —
 ## they are the band's own hunting and foraging (the Food popover's rows) and the split's own event.
 const TRADE_CAUSES: Array[int] = [CAUSE_POOLED, CAUSE_SHIPMENT_IN, CAUSE_SHIPMENT_OUT,
-	CAUSE_SHIPMENT_RETURNED]
-const SHIPMENT_CAUSES: Array[int] = [CAUSE_SHIPMENT_IN, CAUSE_SHIPMENT_OUT, CAUSE_SHIPMENT_RETURNED]
+	CAUSE_SHIPMENT_RETURNED, CAUSE_EXCHANGE_OUT, CAUSE_EXCHANGE_IN]
+const SHIPMENT_CAUSES: Array[int] = [CAUSE_SHIPMENT_IN, CAUSE_SHIPMENT_OUT, CAUSE_SHIPMENT_RETURNED,
+	CAUSE_EXCHANGE_OUT, CAUSE_EXCHANGE_IN]
 
 ## The store keys of the two larders on a crossing. Food's is the sim's store key, `provisions`.
 const COMMODITY_FOOD := HudConst.STORE_ITEM_PROVISIONS

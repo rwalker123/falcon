@@ -409,6 +409,8 @@ func _ready() -> void:
             hud.connect("upkeep_mode_requested", Callable(self, "_on_hud_upkeep_mode"))
         if hud.has_signal("open_borders_requested") and not hud.is_connected("open_borders_requested", Callable(self, "_on_hud_open_borders")):
             hud.connect("open_borders_requested", Callable(self, "_on_hud_open_borders"))
+        if hud.has_signal("diplomacy_command_requested") and not hud.is_connected("diplomacy_command_requested", Callable(self, "_on_hud_diplomacy_command")):
+            hud.connect("diplomacy_command_requested", Callable(self, "_on_hud_diplomacy_command"))
         if hud.has_signal("improvement_requested") and not hud.is_connected("improvement_requested", Callable(self, "_on_hud_improvement")):
             hud.connect("improvement_requested", Callable(self, "_on_hud_improvement"))
         if hud.has_signal("unqueue_requested") and not hud.is_connected("unqueue_requested", Callable(self, "_on_hud_unqueue")):
@@ -1034,6 +1036,15 @@ func _apply_snapshot(snapshot: Dictionary) -> void:
         # …and the map, which draws a ghost marker for every tied band it cannot currently see.
         if map_view != null and map_view.has_method("set_connections"):
             map_view.set_connections(snapshot["connections"])
+    # EARLY DIPLOMACY (#233): the pending dealings, goodwill and treaties -- three whole-section
+    # replaces, viewer-scoped. Gated like every other whole section; `dealings` in particular moves on a
+    # command (an AI's answer recapture) and so may arrive on a frame that moves nothing else.
+    if snapshot.has("dealings") and SnapshotSections.changed(snapshot, "dealings"):
+        _hud_invoke("update_dealings", [snapshot["dealings"]])
+    if snapshot.has("goodwill") and SnapshotSections.changed(snapshot, "goodwill"):
+        _hud_invoke("update_goodwill", [snapshot["goodwill"]])
+    if snapshot.has("treaties") and SnapshotSections.changed(snapshot, "treaties"):
+        _hud_invoke("update_treaties", [snapshot["treaties"]])
     if snapshot.has("kits") and SnapshotSections.changed(snapshot, "kits"):
         # The KIT ROSTER + the FIVE job defaults, forwarded as ONE call: the compose sheets' pickers
         # need the list and the "what does the verb take when I name none" answer together, and a
@@ -1548,9 +1559,22 @@ static func format_send_expedition(payload: Dictionary) -> Dictionary:
     # …and the kit LAST, after the positionals: the parser lifts the pair out of the tail before
     # reading them, but a human reading the log should see the positional grammar unbroken.
     line += _kit_token(payload)
+    # **THEN THE STRANGERS ORDER, THEN THE PACK** (early diplomacy) -- the grammar's own order. Keep is
+    # the default and is not spelled, so a scout that never touched the sheet's new rows emits the
+    # line it always did. A pack closes the grammar: it is the verb's last words.
+    var strangers := String(payload.get("strangers", HudDealingsVocab.STRANGERS_KEEP))
+    if strangers != HudDealingsVocab.STRANGERS_KEEP:
+        line += " strangers %s" % strangers
+    var pack_parts := cargo_manifest(Array(payload.get("pack", [])))
+    var pack_tail := String(pack_parts["tail"])
+    var message := "Send scouting expedition (%d) to (%d, %d)." % [party_workers, x, y]
+    if pack_tail != "":
+        line += " pack" + pack_tail
+        message = "Send scouting expedition (%d) to (%d, %d) carrying %s." % [
+            party_workers, x, y, String(pack_parts["note"])]
     return {
         "line": line,
-        "message": "Send scouting expedition (%d) to (%d, %d)." % [party_workers, x, y],
+        "message": message,
     }
 
 ## `send_denial_raid <faction_id> <band_id> <party_workers> <fauna_id>` (`docs/plan_denial_raid.md`).
@@ -1637,13 +1661,52 @@ static func format_send_trade_expedition(payload: Dictionary) -> Dictionary:
         return {}
     var line := "send_trade_expedition %d %d %d %d" % [
         faction, band_id, party_workers, destination_band_id]
+    var manifest_parts := cargo_manifest(Array(payload.get("cargo", [])))
+    line += String(manifest_parts["tail"])
+    # …and the kit LAST, as a named pair, the `format_send_expedition` convention: the parser
+    # lifts it out of the tail, but a human reading the log sees the positional grammar unbroken.
+    line += _kit_token(payload)
+    # **THE SHIPMENT'S MODE IS THE LAST WORD** (`offer` / `gift`, early diplomacy). A gift is the
+    # default and is not spelled, so a shipment that never touched the toggle is byte-identical to
+    # the line it was before offers existed.
+    var offered := String(payload.get("mode", HudDealingsVocab.TRADE_MODE_GIFT)) \
+        == HudDealingsVocab.TRADE_MODE_OFFER
+    if offered:
+        line += " " + HudDealingsVocab.TRADE_MODE_OFFER
+    # The COMMAND addresses the destination by its `BandId`; the FEED NOTE names the people. A raw id
+    # is a database key and must never reach a player-facing line — the `fauna_label` rule.
+    var destination_label := String(payload.get("destination_label", "")).strip_edges()
+    if destination_label == "":
+        destination_label = str(destination_band_id)
+    return {
+        "line": line,
+        "message": "%s (%d) to %s carrying %s." % [
+            "Offer shipment" if offered else "Send shipment",
+            party_workers, destination_label, String(manifest_parts["note"])],
+    }
+
+## **THE MANIFEST'S TAIL AND ITS FEED CLAUSE, built once for every verb that carries goods**
+## (`send_trade_expedition`, `send_expedition`'s `pack`, `answer_dealing`'s return, `propose_trade`'s two
+## legs): `{tail, note}` where `tail` is the repeated ` food <a>` / ` fodder <a>` / ` material <id> <a>`
+## the parser reads and `note` is the prose clause (`12.0 food · 6.0 hay`).
+##
+## **THE TAIL IS A NAMED, REPEATED MANIFEST, and that is what makes it its own function.** A shipment
+## has no fixed arity — it is a list of lines — and a positional list could not say which of two
+## namespaces an id belongs to (`provisions` is a commodity key, `hide` is a material id, and the two
+## tables are authored independently). So each row emits `food <amount>` or `material <id> <amount>` in
+## the order the player built it, and the parser refuses any other token outright rather than dropping
+## it. **EVERY AMOUNT IS FLOORED, NEVER ROUNDED** — `cargo_wire_amount`, and the reason it is a
+## correctness rule rather than a formatting one is written there. An empty manifest yields an empty
+## tail and the note `nothing`; whether that is legal is the server's question.
+static func cargo_manifest(cargo: Array) -> Dictionary:
+    var material_tail := ""
     var food_total := 0.0
     # **THE SECOND COMMODITY TOTAL, SUMMED AND FLOORED APART FROM THE FIRST** (issue #590). Hay is
     # its own store at the destination, so `fodder` is its own token; pouring it into `food_total`
     # would ship a herd's winter feed as somebody's dinner and overspend the food larder besides.
     var fodder_total := 0.0
     var material_terms: Array[String] = []
-    for row_variant in Array(payload.get("cargo", [])):
+    for row_variant in cargo:
         if not (row_variant is Dictionary):
             continue
         var row: Dictionary = row_variant
@@ -1659,7 +1722,7 @@ static func format_send_trade_expedition(payload: Dictionary) -> Dictionary:
             var material_amount := cargo_wire_amount(amount)
             if material_amount <= 0.0:
                 continue
-            line += " material %s %s" % [material_id, cargo_wire_text(material_amount)]
+            material_tail += " material %s %s" % [material_id, cargo_wire_text(material_amount)]
             material_terms.append("%s %s" % [
                 TRADE_CARGO_NOTE_AMOUNT_FORMAT % material_amount, material_id])
         elif String(row.get("id", "")).strip_edges() == HudConst.CARGO_ITEM_FODDER:
@@ -1679,30 +1742,21 @@ static func format_send_trade_expedition(payload: Dictionary) -> Dictionary:
     # parts would spend either allowance twice. **Two floors, never one over the pair** — the two
     # larders are checked separately and a shared floor would be an amount neither store was asked for.
     food_total = cargo_wire_amount(food_total)
+    # The materials first, then food, then hay: the order this line has always had, so a shipment
+    # composed before this function was factored out is byte-identical.
+    var tail := material_tail
     if food_total > 0.0:
-        line += " food %s" % cargo_wire_text(food_total)
+        tail += " food %s" % cargo_wire_text(food_total)
     fodder_total = cargo_wire_amount(fodder_total)
     if fodder_total > 0.0:
-        line += " fodder %s" % cargo_wire_text(fodder_total)
-    # …and the kit LAST, as a named pair, the `format_send_expedition` convention: the parser
-    # lifts it out of the tail, but a human reading the log sees the positional grammar unbroken.
-    line += _kit_token(payload)
-    # The COMMAND addresses the destination by its `BandId`; the FEED NOTE names the people. A raw id
-    # is a database key and must never reach a player-facing line — the `fauna_label` rule.
-    var destination_label := String(payload.get("destination_label", "")).strip_edges()
-    if destination_label == "":
-        destination_label = str(destination_band_id)
-    var manifest := TRADE_CARGO_TERM_SEPARATOR.join(
+        tail += " fodder %s" % cargo_wire_text(fodder_total)
+    var note := TRADE_CARGO_TERM_SEPARATOR.join(
         ([TRADE_CARGO_FOOD_TERM_FORMAT % (TRADE_CARGO_NOTE_AMOUNT_FORMAT % food_total)] if food_total > 0.0 else [])
         + ([TRADE_CARGO_FODDER_TERM_FORMAT % (TRADE_CARGO_NOTE_AMOUNT_FORMAT % fodder_total)] if fodder_total > 0.0 else [])
         + material_terms)
-    if manifest == "":
-        manifest = TRADE_CARGO_EMPTY_TERM
-    return {
-        "line": line,
-        "message": "Send shipment (%d) to %s carrying %s." % [
-            party_workers, destination_label, manifest],
-    }
+    if note == "":
+        note = TRADE_CARGO_EMPTY_TERM
+    return {"tail": tail, "note": note}
 
 ## **A CARGO AMOUNT AS THE COMMAND LINE MAY NAME IT — FLOORED, NEVER ROUNDED** (arc #527, issue #517).
 ##
@@ -2375,6 +2429,200 @@ static func format_open_borders(payload: Dictionary) -> Dictionary:
             else HudWorkVocab.FACTION_OPEN_BORDERS_COMMAND_MESSAGE_CLOSED,
     }
 
+## **THE DIPLOMACY COMMANDS** (early diplomacy, issue #233) -- one signal, one handler, one dispatch
+## over the three verbs the Dealings tab, the trade sheet's propose mode and the faction page emit.
+## `payload["command"]` names the verb; each builder below owns its own grammar and its own refusal
+## (`{}` = declined). One dispatch rather than three signals because the three share a reader and no
+## payload key, and a fourth verb (C2's treaty proposals) is a fourth arm here, not a fourth relay.
+const DIPLOMACY_ANSWER_DEALING := HudDealingsVocab.COMMAND_ANSWER_DEALING
+const DIPLOMACY_PROPOSE_TRADE := HudDealingsVocab.COMMAND_PROPOSE_TRADE
+const DIPLOMACY_ACCEPT_OWN_GIFTS := HudDealingsVocab.COMMAND_ACCEPT_OWN_GIFTS
+const DIPLOMACY_PROPOSE_TREATY := HudDealingsVocab.COMMAND_PROPOSE_TREATY
+const DIPLOMACY_SEND_ENVOY := HudDealingsVocab.COMMAND_SEND_ENVOY
+const DIPLOMACY_END_TREATY := HudDealingsVocab.COMMAND_END_TREATY
+const DIPLOMACY_SET_BORDERS := HudDealingsVocab.COMMAND_SET_BORDERS
+
+static func format_diplomacy_command(payload: Dictionary) -> Dictionary:
+    match String(payload.get("command", "")):
+        DIPLOMACY_ANSWER_DEALING:
+            return format_answer_dealing(payload)
+        DIPLOMACY_PROPOSE_TRADE:
+            return format_propose_trade(payload)
+        DIPLOMACY_ACCEPT_OWN_GIFTS:
+            return format_accept_own_gifts(payload)
+        DIPLOMACY_PROPOSE_TREATY:
+            return format_propose_treaty(payload)
+        DIPLOMACY_SEND_ENVOY:
+            return format_send_envoy(payload)
+        DIPLOMACY_END_TREATY:
+            return format_end_treaty(payload)
+        DIPLOMACY_SET_BORDERS:
+            return format_set_borders(payload)
+    return {}
+
+## `answer_dealing <faction> <dealing_id> accept [goods] | refuse | counter give [goods] ask [goods]`
+## (or `counter [road_rights] [open_borders] [bundle give … ask …]…` for a treaty proposal).
+##
+## **A GOODS LIST IS THE SHIPMENT'S OWN SPELLING** (`cargo_manifest`) -- the same floor, the same three
+## accounts -- so an accept's return cannot be rounded over what the band holds. `give` / `ask` are from
+## the SHIPPER's point of view whoever is speaking (`DealingState.shipperBand`); the sheet that built
+## the payload decides which of its legs is which.
+static func format_answer_dealing(payload: Dictionary) -> Dictionary:
+    var dealing_id := int(payload.get("dealing_id", 0))
+    if dealing_id <= 0:
+        return {}
+    var faction := int(payload.get("faction", HudConst.PLAYER_FACTION_ID))
+    var line := "answer_dealing %d %d" % [faction, dealing_id]
+    match String(payload.get("answer", "")):
+        HudDealingsVocab.ANSWER_REFUSE:
+            return {"line": line + " refuse", "message": HudDealingsVocab.ANSWER_MESSAGE_REFUSE}
+        HudDealingsVocab.ANSWER_ACCEPT:
+            var returned := cargo_manifest(Array(payload.get("returned", [])))
+            return {
+                "line": line + " accept" + String(returned["tail"]),
+                "message": HudDealingsVocab.ANSWER_MESSAGE_ACCEPT if String(returned["tail"]) != ""
+                    else HudDealingsVocab.ANSWER_MESSAGE_ACCEPT_GIFT,
+            }
+        HudDealingsVocab.ANSWER_COUNTER:
+            if payload.has("terms"):
+                return {"line": line + " counter" + _treaty_terms_tail(Dictionary(payload["terms"])),
+                    "message": HudDealingsVocab.ANSWER_MESSAGE_COUNTER}
+            var give := cargo_manifest(Array(payload.get("give", [])))
+            var ask := cargo_manifest(Array(payload.get("ask", [])))
+            return {
+                "line": line + " counter give" + String(give["tail"]) + " ask" + String(ask["tail"]),
+                "message": HudDealingsVocab.ANSWER_MESSAGE_COUNTER,
+            }
+    return {}
+
+## A treaty's terms as the grammar's tail: ` road_rights open_borders bundle give … ask …`, each bundle
+## from the SHIPPING people's point of view, exactly as published.
+static func _treaty_terms_tail(terms: Dictionary) -> String:
+    var tail := ""
+    if bool(terms.get("road_rights", false)):
+        tail += " road_rights"
+    if bool(terms.get("open_borders", false)):
+        tail += " open_borders"
+    for bundle_variant in Array(terms.get("bundles", [])):
+        if not (bundle_variant is Dictionary):
+            continue
+        var bundle: Dictionary = bundle_variant
+        # A bundle composed on a sheet carries its own rows; a published one (a kept term of a
+        # counter) carries decoded goods dicts.
+        var sent := cargo_manifest(Array(bundle["give_rows"])) if bundle.has("give_rows") \
+            else cargo_manifest(HudDealingsVocab.goods_rows(Dictionary(bundle.get("sent", {}))))
+        var returned := cargo_manifest(Array(bundle["ask_rows"])) if bundle.has("ask_rows") \
+            else cargo_manifest(HudDealingsVocab.goods_rows(Dictionary(bundle.get("returned", {}))))
+        tail += " bundle give" + String(sent["tail"]) + " ask" + String(returned["tail"])
+    return tail
+
+## `propose_trade <faction> <band> <party_workers> <destination_band_id> give [goods] ask [goods]` --
+## stage 4's haggle over a standing link. Nothing is drawn until the other people accepts.
+static func format_propose_trade(payload: Dictionary) -> Dictionary:
+    var band_id := int(payload.get("band_id", HudConst.NO_BAND_ID))
+    var destination := int(payload.get("destination_band_id", HudConst.NO_BAND_ID))
+    var party_workers := int(payload.get("party_workers", 0))
+    if band_id == HudConst.NO_BAND_ID or destination == HudConst.NO_BAND_ID or party_workers <= 0:
+        return {}
+    var faction := int(payload.get("faction", HudConst.PLAYER_FACTION_ID))
+    var give := cargo_manifest(Array(payload.get("give", [])))
+    var ask := cargo_manifest(Array(payload.get("ask", [])))
+    var label := String(payload.get("destination_label", "")).strip_edges()
+    if label == "":
+        label = str(destination)
+    return {
+        "line": "propose_trade %d %d %d %d give%s ask%s" % [faction, band_id, party_workers,
+            destination, String(give["tail"]), String(ask["tail"])],
+        "message": HudDealingsVocab.PROPOSE_MESSAGE_FORMAT % [label, String(give["note"]),
+            String(ask["note"])],
+    }
+
+## `propose_treaty <faction> <band> <destination_band> [road_rights] [open_borders] [bundle give … ask …]…`
+## -- the proposal along a published standing link. The terms are REQUIRED to name something: a treaty of
+## nothing is refused by the sim, and the builder declines rather than send it.
+static func format_propose_treaty(payload: Dictionary) -> Dictionary:
+    var band_id := int(payload.get("band_id", HudConst.NO_BAND_ID))
+    var destination := int(payload.get("destination_band_id", HudConst.NO_BAND_ID))
+    var terms := Dictionary(payload.get("terms", {}))
+    if band_id == HudConst.NO_BAND_ID or destination == HudConst.NO_BAND_ID \
+            or _treaty_terms_are_empty(terms):
+        return {}
+    var faction := int(payload.get("faction", HudConst.PLAYER_FACTION_ID))
+    return {
+        "line": "propose_treaty %d %d %d%s" % [faction, band_id, destination, _treaty_terms_tail(terms)],
+        "message": HudDealingsVocab.TREATY_SENT_MESSAGE_FORMAT % [
+            String(payload.get("people_label", payload.get("destination_label", ""))),
+            HudDealingsVocab.terms_text(terms)],
+    }
+
+## `send_envoy <faction> <band> <party_workers> <destination_band> <terms…>` -- the same proposal carried by a
+## party that walks, for a people with no road to them.
+static func format_send_envoy(payload: Dictionary) -> Dictionary:
+    var band_id := int(payload.get("band_id", HudConst.NO_BAND_ID))
+    var destination := int(payload.get("destination_band_id", HudConst.NO_BAND_ID))
+    var party_workers := int(payload.get("party_workers", 0))
+    var terms := Dictionary(payload.get("terms", {}))
+    if band_id == HudConst.NO_BAND_ID or destination == HudConst.NO_BAND_ID or party_workers <= 0 \
+            or _treaty_terms_are_empty(terms):
+        return {}
+    var faction := int(payload.get("faction", HudConst.PLAYER_FACTION_ID))
+    return {
+        "line": "send_envoy %d %d %d %d%s" % [faction, band_id, party_workers, destination,
+            _treaty_terms_tail(terms)],
+        "message": HudDealingsVocab.TREATY_ENVOY_MESSAGE_FORMAT % [
+            String(payload.get("people_label", payload.get("destination_label", ""))),
+            HudDealingsVocab.terms_text(terms)],
+    }
+
+## `end_treaty <faction> <other_faction>`. The other people is REQUIRED (an end with no partner is not a
+## thing the sim could read).
+static func format_end_treaty(payload: Dictionary) -> Dictionary:
+    if not payload.has("other_faction"):
+        return {}
+    var faction := int(payload.get("faction", HudConst.PLAYER_FACTION_ID))
+    var other := int(payload["other_faction"])
+    return {
+        "line": "end_treaty %d %d" % [faction, other],
+        "message": HudDealingsVocab.TREATY_END_MESSAGE_FORMAT % String(payload.get("people_label", str(other))),
+    }
+
+## `set_open_borders <faction> open|closed <other_faction>` -- the per-people form of the border verb: an
+## override of the general setting toward one people. Both the state and the people are REQUIRED; the
+## general toggle keeps its own builder (`format_open_borders`).
+static func format_set_borders(payload: Dictionary) -> Dictionary:
+    if not payload.has("open") or not payload.has("other_faction"):
+        return {}
+    var open := bool(payload["open"])
+    var faction := int(payload.get("faction", HudConst.PLAYER_FACTION_ID))
+    var other := int(payload["other_faction"])
+    var people := String(payload.get("people_label", str(other)))
+    return {
+        "line": "set_open_borders %d %s %d" % [faction,
+            HudWorkVocab.OPEN_BORDERS_TOKEN_OPEN if open else HudWorkVocab.OPEN_BORDERS_TOKEN_CLOSED, other],
+        "message": (HudDealingsVocab.BORDERS_MESSAGE_OPEN_FORMAT if open \
+            else HudDealingsVocab.BORDERS_MESSAGE_CLOSED_FORMAT) % people,
+    }
+
+## Does a terms payload name nothing at all (no road rights, no open borders, no bundle)?
+static func _treaty_terms_are_empty(terms: Dictionary) -> bool:
+    return not bool(terms.get("road_rights", false)) and not bool(terms.get("open_borders", false)) \
+        and Array(terms.get("bundles", [])).is_empty()
+
+## `set_accept_own_gifts <faction> on|off`. The state is REQUIRED in the payload (a missing one
+## declines rather than defaulting), `format_open_borders`' reason: a guessed state would flip a policy
+## the player set the other way.
+static func format_accept_own_gifts(payload: Dictionary) -> Dictionary:
+    if not payload.has("accept"):
+        return {}
+    var accept := bool(payload["accept"])
+    var faction := int(payload.get("faction", HudConst.PLAYER_FACTION_ID))
+    return {
+        "line": "set_accept_own_gifts %d %s" % [faction,
+            HudDealingsVocab.ACCEPT_GIFTS_TOKEN_ON if accept else HudDealingsVocab.ACCEPT_GIFTS_TOKEN_OFF],
+        "message": HudDealingsVocab.ACCEPT_GIFTS_COMMAND_MESSAGE_ON if accept \
+            else HudDealingsVocab.ACCEPT_GIFTS_COMMAND_MESSAGE_OFF,
+    }
+
 ## Send whatever a `format_*` builder produced, or nothing at all when it declined.
 ##
 ## **`false` MEANS THE SERVER DID NOT GET IT — declined by the builder or refused by the transport,
@@ -2508,6 +2756,11 @@ func _on_hud_upkeep_mode(payload: Dictionary) -> void:
 ## off `faction_policies`, which the server's recapture after this command carries back.
 func _on_hud_open_borders(payload: Dictionary) -> void:
     _send_formatted_command(format_open_borders(payload))
+
+## Send one of the diplomacy commands (answer a dealing, propose a trade, the gift toggle). No
+## optimistic write: the pending item leaves the next `dealings` section the server sends.
+func _on_hud_diplomacy_command(payload: Dictionary) -> void:
+    _send_formatted_command(format_diplomacy_command(payload))
 
 ## Add an order to the band's bench queue (Materials & Crafting). The player staffs the bench, so
 ## this sends the recipe and its count and the crew stays where it was until the stepper moves it.

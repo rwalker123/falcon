@@ -54,8 +54,76 @@ pub const COMMAND_VERBS: &[CommandVerbHelp] = &[
     CommandVerbHelp {
         verb: "set_open_borders",
         aliases: &[],
-        summary: "Open or close a faction's borders: while open, another people's unhappy leavers (and defecting parties) may join its bands; while closed, none may. Every faction starts open. Its own bands never ask.",
-        usage: "set_open_borders <faction_id> <open|closed>",
+        summary: "Open or close a faction's borders: while open, another people's unhappy leavers (and defecting parties) may join its bands; while closed, none may. Every faction starts open. Its own bands never ask. Name another people to set it toward that people alone (an override of the general setting; an open-borders treaty term still beats it, and closing to a people you hold that term with ends the treaty).",
+        usage: "set_open_borders <faction_id> <open|closed> [<other_faction_id>]",
+    },
+    CommandVerbHelp {
+        verb: "set_accept_own_gifts",
+        aliases: &[],
+        summary: "Set a faction's standing answer to a gift from its own people: on (the default), \
+                  such a shipment lands on arrival; off, it waits to be answered like any other \
+                  dealing.",
+        usage: "set_accept_own_gifts <faction_id> <on|off>",
+    },
+    CommandVerbHelp {
+        verb: "answer_dealing",
+        aliases: &[],
+        summary: "Answer a pending dealing addressed to your people. An offer: accept it — the \
+                  cargo lands in the receiving band and the goods you name are paid back from its \
+                  holdings (none is allowed) — or refuse it, and the party goes home with its \
+                  cargo. A proposal or counter: accept it as written (the sender's party sets out), \
+                  refuse it, or counter with different legs, stated from the sender's point of \
+                  view. Silence is a refusal after the wait. Fails closed on goods the band does \
+                  not hold.",
+        usage: "answer_dealing <faction_id> <dealing_id> accept [food <amount>] [fodder <amount>] \
+                [material <material_id> <amount>]... | answer_dealing <faction_id> <dealing_id> \
+                refuse | answer_dealing <faction_id> <dealing_id> counter give [food <amount>] \
+                [fodder <amount>] [material <material_id> <amount>]... ask [food <amount>] \
+                [fodder <amount>] [material <material_id> <amount>]... | answer_dealing \
+                <faction_id> <dealing_id> counter [road_rights] [open_borders] [bundle give \
+                [goods]... ask [goods]...]... (a treaty proposal: the full terms asked for)",
+    },
+    CommandVerbHelp {
+        verb: "propose_treaty",
+        aliases: &[],
+        summary: "Propose a treaty over a standing link: road rights (each people's built roads \
+                  count fully for the other's walks), open borders (each takes in the other's \
+                  leavers and parties) and/or agreed-trade bundles (a shipment between you is \
+                  paid by the bundle on arrival). The proposal replaces any treaty already in \
+                  force when accepted. Fails closed with no standing link, no live tie, your own \
+                  people, or no term.",
+        usage: "propose_treaty <faction_id> <band_id> <destination_band_id> [road_rights] \
+                [open_borders] [bundle give [food <amount>] [fodder <amount>] [material \
+                <material_id> <amount>]... ask [food <amount>] [fodder <amount>] [material \
+                <material_id> <amount>]...]...",
+    },
+    CommandVerbHelp {
+        verb: "send_envoy",
+        aliases: &[],
+        summary: "Send an envoy: a party with no cargo walks to the destination band and posts a \
+                  treaty proposal on arrival. For a people you have no road to. You learn the \
+                  answer when the envoy walks home.",
+        usage: "send_envoy <faction_id> <band_id> <party_workers> <destination_band_id> \
+                [road_rights] [open_borders] [bundle give [goods]... ask [goods]...]...",
+    },
+    CommandVerbHelp {
+        verb: "end_treaty",
+        aliases: &[],
+        summary: "End a treaty at once. It is a breach: the other people's goodwill toward yours \
+                  takes a drop.",
+        usage: "end_treaty <faction_id> <other_faction_id>",
+    },
+    CommandVerbHelp {
+        verb: "propose_trade",
+        aliases: &[],
+        summary: "Haggle over a standing link — a kept road on every tile between two bands. Name \
+                  both legs before any party walks: what this band sends (give) and what it asks \
+                  back (ask). The proposal reaches the destination's people the turn it is made; \
+                  they accept, refuse or counter. Fails closed with no standing link, no live tie, \
+                  or goods the band does not hold.",
+        usage: "propose_trade <faction_id> <band_id> <party_workers> <destination_band_id> give \
+                [food <amount>] [fodder <amount>] [material <material_id> <amount>]... ask \
+                [food <amount>] [fodder <amount>] [material <material_id> <amount>]...",
     },
     CommandVerbHelp {
         verb: "counterintel_budget",
@@ -309,7 +377,9 @@ pub const COMMAND_VERBS: &[CommandVerbHelp] = &[
         summary: "Outfit a detached scouting party (workers + provisions) and send it to a \
                   target. The party feeds itself on the march — it gathers off a stand in reach \
                   before it hunts — so the kit it carries is what decides how much it can replace.",
-        usage: "send_expedition <faction_id> <band_id> <party_workers> <x> <y> [kit <id>]",
+        usage: "send_expedition <faction_id> <band_id> <party_workers> <x> <y> [kit <id>] \
+                [strangers give|offer|keep] [pack [food <amount>] [fodder <amount>] \
+                [material <material_id> <amount>]...]",
     },
     CommandVerbHelp {
         verb: "recall_expedition",
@@ -337,7 +407,7 @@ pub const COMMAND_VERBS: &[CommandVerbHelp] = &[
                   the destination, and fails closed on cargo the band does not hold or cannot carry.",
         usage: "send_trade_expedition <faction_id> <band_id> <party_workers> <destination_band_id> \
                 [food <amount>] [fodder <amount>] [material <material_id> <amount>]... \
-                [kit <id>]",
+                [kit <id>] [offer|gift]",
     },
     CommandVerbHelp {
         verb: "station_expedition",
@@ -374,7 +444,7 @@ pub const COMMAND_VERBS: &[CommandVerbHelp] = &[
 ];
 
 use crate::{
-    ArchetypeCount, CancelScope, CommandPayload, ConfigOverrideKind, OrdersDirective,
+    ArchetypeCount, CancelScope, CommandPayload, ConfigOverrideKind, DealingReply, OrdersDirective,
     ReloadConfigKind, SecurityPolicyKind,
 };
 
@@ -415,6 +485,11 @@ pub enum CommandParseError {
     /// acceptance would teach the player that denial takes a number.
     #[error("unexpected argument: {0}")]
     UnexpectedArgument(String),
+    /// **An answer the verb does not take.** `answer_dealing` accepts, refuses or counters
+    /// (`docs/plan_early_diplomacy.md` §1); any other word is refused with this reason rather than
+    /// parsed into an accept or dropped.
+    #[error("unsupported answer '{0}': answer_dealing takes accept [goods...], refuse, or counter give [goods...] ask [goods...]")]
+    UnsupportedAnswer(String),
     #[error("invalid orders directive '{0}'")]
     InvalidDirective(String),
     #[error("invalid security policy '{0}'")]
@@ -542,11 +617,179 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
                 "closed" | "close" => false,
                 other => parse_bool(other, "open borders state")?,
             };
-            // Closed grammar: a trailing token is a misunderstanding of the verb, not a value.
+            // The one optional trailing token is the people the setting is toward; anything else is a
+            // misunderstanding of the verb, not a value.
+            let other_faction = match parts.next() {
+                None => None,
+                Some(token) => Some(
+                    token
+                        .parse::<u32>()
+                        .map_err(|_| CommandParseError::UnexpectedArgument(token.to_string()))?,
+                ),
+            };
             if let Some(extra) = parts.next() {
                 return Err(CommandParseError::UnexpectedArgument(extra.to_string()));
             }
-            Ok(CommandPayload::SetOpenBorders { faction, open })
+            Ok(CommandPayload::SetOpenBorders {
+                faction,
+                open,
+                other_faction,
+            })
+        }
+        "set_accept_own_gifts" => {
+            let faction_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("faction"))?;
+            let state = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("on|off"))?;
+            let faction = parse_u32(faction_str, "accept own gifts faction")?;
+            let accept = parse_bool(state, "accept own gifts state")?;
+            // Closed grammar, like `set_open_borders`.
+            if let Some(extra) = parts.next() {
+                return Err(CommandParseError::UnexpectedArgument(extra.to_string()));
+            }
+            Ok(CommandPayload::SetAcceptOwnGifts { faction, accept })
+        }
+        // `answer_dealing <faction> <id> accept [food <a>] [fodder <a>] [material <id> <a>]...`
+        // or `... refuse`. The return list uses `send_trade_expedition`'s cargo words, and the
+        // grammar is closed: a goods list on a refusal is a misunderstanding, not a value to drop.
+        "answer_dealing" => {
+            let faction_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("faction_id"))?;
+            let id_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("dealing_id"))?;
+            let answer = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("accept|refuse|counter"))?;
+            let faction = parse_u32(faction_str, "answer_dealing faction")?;
+            let dealing_id = parse_u64(id_str, "answer_dealing dealing_id")?;
+            let rest: Vec<&str> = parts.collect();
+            let reply = match answer.to_ascii_lowercase().as_str() {
+                "refuse" => {
+                    if let Some(extra) = rest.first() {
+                        return Err(CommandParseError::UnexpectedArgument(extra.to_string()));
+                    }
+                    crate::commands::DealingReply::Refuse
+                }
+                "accept" => crate::commands::DealingReply::Accept {
+                    returned: parse_goods_lines(&rest, "answer_dealing")?,
+                },
+                // `counter give … ask …` is a trade counter; any other tail is a treaty counter's
+                // full terms.
+                "counter" => match rest.first() {
+                    Some(first) if !first.eq_ignore_ascii_case("give") => {
+                        crate::commands::DealingReply::CounterTerms {
+                            terms: parse_treaty_terms(&rest, "answer_dealing")?,
+                        }
+                    }
+                    _ => {
+                        let (give, ask) = parse_give_and_ask(&rest, "answer_dealing")?;
+                        crate::commands::DealingReply::Counter { give, ask }
+                    }
+                },
+                other => return Err(CommandParseError::UnsupportedAnswer(other.to_string())),
+            };
+            Ok(CommandPayload::AnswerDealing {
+                faction,
+                dealing_id,
+                reply,
+            })
+        }
+        // `propose_trade <faction> <band> <party_workers> <destination_band_id> give [goods...] ask
+        // [goods...]` — stage 4's haggle. Both lists may be empty (a request for a gift, or a gift
+        // that asks nothing); a trade naming neither is refused at the server.
+        "propose_trade" => {
+            let faction_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("faction_id"))?;
+            let band_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("band_id"))?;
+            let workers_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("party_workers"))?;
+            let destination_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("destination_band_id"))?;
+            let rest: Vec<&str> = parts.collect();
+            let (give, ask) = parse_give_and_ask(&rest, "propose_trade")?;
+            Ok(CommandPayload::ProposeTrade {
+                faction_id: parse_u32(faction_str, "propose_trade faction")?,
+                band_id: Some(parse_u64(band_str, "propose_trade band_id")?),
+                party_workers: parse_u32(workers_str, "propose_trade party_workers")?,
+                destination_band_id: parse_u64(
+                    destination_str,
+                    "propose_trade destination_band_id",
+                )?,
+                give,
+                ask,
+            })
+        }
+        // `propose_treaty <faction> <band> <destination_band_id> [road_rights] [open_borders]
+        // [bundle give [goods...] ask [goods...]]...` — the full terms asked for.
+        "propose_treaty" => {
+            let faction_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("faction_id"))?;
+            let band_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("band_id"))?;
+            let destination_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("destination_band_id"))?;
+            let rest: Vec<&str> = parts.collect();
+            Ok(CommandPayload::ProposeTreaty {
+                faction_id: parse_u32(faction_str, "propose_treaty faction")?,
+                band_id: Some(parse_u64(band_str, "propose_treaty band_id")?),
+                destination_band_id: parse_u64(
+                    destination_str,
+                    "propose_treaty destination_band_id",
+                )?,
+                terms: parse_treaty_terms(&rest, "propose_treaty")?,
+            })
+        }
+        // `send_envoy <faction> <band> <party_workers> <destination_band_id> <terms…>` — the same
+        // terms, carried by a party that walks.
+        "send_envoy" => {
+            let faction_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("faction_id"))?;
+            let band_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("band_id"))?;
+            let workers_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("party_workers"))?;
+            let destination_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("destination_band_id"))?;
+            let rest: Vec<&str> = parts.collect();
+            Ok(CommandPayload::SendEnvoy {
+                faction_id: parse_u32(faction_str, "send_envoy faction")?,
+                band_id: Some(parse_u64(band_str, "send_envoy band_id")?),
+                party_workers: parse_u32(workers_str, "send_envoy party_workers")?,
+                destination_band_id: parse_u64(destination_str, "send_envoy destination_band_id")?,
+                terms: parse_treaty_terms(&rest, "send_envoy")?,
+            })
+        }
+        "end_treaty" => {
+            let faction_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("faction_id"))?;
+            let other_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("other_faction_id"))?;
+            // Closed grammar.
+            if let Some(extra) = parts.next() {
+                return Err(CommandParseError::UnexpectedArgument(extra.to_string()));
+            }
+            Ok(CommandPayload::EndTreaty {
+                faction: parse_u32(faction_str, "end_treaty faction")?,
+                other_faction: parse_u32(other_str, "end_treaty other_faction")?,
+            })
         }
         "counterintel_budget" => {
             let faction_str = parts
@@ -1695,12 +1938,33 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
             // one optional tail this verb takes. Absent = the `expedition` job's default.
             let mut tail: Vec<&str> = parts.collect();
             let kit_id = take_named_token(&mut tail, "kit", "send_expedition kit id")?;
-            // **Nothing else may follow.** The scout's grammar is otherwise closed (its target is
-            // the five positionals), so a stray token is a misunderstanding of the verb rather than
-            // a value to drop — the same fail-closed reading `send_denial_raid` takes.
-            if let Some(extra) = tail.into_iter().next() {
-                return Err(CommandParseError::UnexpectedArgument(extra.to_string()));
-            }
+            // **The standing order for strangers is a NAMED token too** (`strangers give|offer|
+            // keep`); `keep` is the default and may be spelled out.
+            let strangers = match take_named_token(
+                &mut tail,
+                "strangers",
+                "send_expedition strangers order",
+            )? {
+                None => crate::commands::StrangersKind::Keep,
+                Some(word) => match word.to_ascii_lowercase().as_str() {
+                    "keep" => crate::commands::StrangersKind::Keep,
+                    "give" => crate::commands::StrangersKind::Give,
+                    "offer" => crate::commands::StrangersKind::Offer,
+                    other => return Err(CommandParseError::UnexpectedArgument(other.to_string())),
+                },
+            };
+            // **The pack is the `pack` word and then the shipment's own goods lines**, closing the
+            // grammar: anything else after the kit and the order is a misunderstanding of the verb
+            // rather than a value to drop — the same fail-closed reading `send_denial_raid` takes.
+            let pack = match tail.split_first() {
+                None => Vec::new(),
+                Some((first, goods)) if first.eq_ignore_ascii_case("pack") => {
+                    parse_goods_lines(goods, "send_expedition pack")?
+                }
+                Some((extra, _)) => {
+                    return Err(CommandParseError::UnexpectedArgument(extra.to_string()))
+                }
+            };
             Ok(CommandPayload::SendExpedition {
                 faction_id: parse_u32(faction_str, "send_expedition faction")?,
                 band_id: Some(parse_u64(band_str, "send_expedition band_id")?),
@@ -1708,6 +1972,8 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
                 target_x: parse_u32(x_str, "send_expedition target_x")?,
                 target_y: parse_u32(y_str, "send_expedition target_y")?,
                 kit_id,
+                pack,
+                strangers,
             })
         }
         "recall_expedition" => {
@@ -1810,8 +2076,17 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
                 .ok_or(CommandParseError::MissingArgument("destination_band_id"))?;
             let mut cargo: Vec<crate::TradeCargoItem> = Vec::new();
             let mut kit_id: Option<String> = None;
+            // `offer` / `gift` name what the shipment is on offer as; `gift` is the default and is
+            // accepted spelled out. Naming it twice, or both words, contradicts the order.
+            let mut offer: Option<bool> = None;
             while let Some(token) = parts.next() {
                 match token.to_ascii_lowercase().as_str() {
+                    word @ ("offer" | "gift") => {
+                        if offer.is_some() {
+                            return Err(CommandParseError::UnexpectedArgument(token.to_string()));
+                        }
+                        offer = Some(word == "offer");
+                    }
                     "food" => {
                         let amount = parts.next().ok_or(CommandParseError::MissingArgument(
                             "send_trade_expedition food amount",
@@ -1876,6 +2151,7 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
                 )?,
                 cargo,
                 kit_id,
+                offer: offer.unwrap_or(false),
             })
         }
         // **A stationed party's grammar is four positional tokens and an optional named `kit <id>`**,
@@ -1963,6 +2239,135 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
         "clear_config_overrides" => Ok(CommandPayload::ClearConfigOverrides),
         other => Err(CommandParseError::UnknownCommand(other.to_string())),
     }
+}
+
+/// **A goods list in `send_trade_expedition`'s own words** — `food <amount>`, `fodder <amount>`,
+/// `material <id> <amount>`, repeated. Anything else is a misunderstanding of the verb and is refused
+/// (`UnexpectedArgument`). `verb` names the command in a missing-argument reason.
+fn parse_goods_lines(
+    tokens: &[&str],
+    verb: &'static str,
+) -> Result<Vec<crate::TradeCargoItem>, CommandParseError> {
+    let mut goods = Vec::new();
+    let mut tokens = tokens.iter().copied();
+    while let Some(token) = tokens.next() {
+        match token.to_ascii_lowercase().as_str() {
+            "food" => {
+                let amount = tokens
+                    .next()
+                    .ok_or(CommandParseError::MissingArgument("food amount"))?;
+                goods.push(crate::TradeCargoItem {
+                    id: crate::commands::FOOD_CARGO_KEY.to_string(),
+                    is_material: false,
+                    amount: parse_f32(amount, verb)?,
+                });
+            }
+            "fodder" => {
+                let amount = tokens
+                    .next()
+                    .ok_or(CommandParseError::MissingArgument("fodder amount"))?;
+                goods.push(crate::TradeCargoItem {
+                    id: crate::commands::FODDER_CARGO_KEY.to_string(),
+                    is_material: false,
+                    amount: parse_f32(amount, verb)?,
+                });
+            }
+            "material" => {
+                let id = tokens
+                    .next()
+                    .ok_or(CommandParseError::MissingArgument("material id"))?;
+                let amount = tokens
+                    .next()
+                    .ok_or(CommandParseError::MissingArgument("material amount"))?;
+                goods.push(crate::TradeCargoItem {
+                    id: id.to_string(),
+                    is_material: true,
+                    amount: parse_f32(amount, verb)?,
+                });
+            }
+            _ => return Err(CommandParseError::UnexpectedArgument(token.to_string())),
+        }
+    }
+    Ok(goods)
+}
+
+/// **A treaty's terms** — `[road_rights] [open_borders] [bundle give [goods...] ask [goods...]]...`,
+/// in any order, each term at most once (a bundle as often as named). An empty tail is the empty
+/// term set, which the server refuses on a proposal.
+fn parse_treaty_terms(
+    tokens: &[&str],
+    verb: &'static str,
+) -> Result<crate::commands::TreatyTermsRequest, CommandParseError> {
+    use crate::commands::{BundleRequest, TreatyTermsRequest};
+    let mut terms = TreatyTermsRequest::default();
+    let mut index = 0;
+    while index < tokens.len() {
+        match tokens[index].to_ascii_lowercase().as_str() {
+            "road_rights" if !terms.road_rights => {
+                terms.road_rights = true;
+                index += 1;
+            }
+            "open_borders" if !terms.open_borders => {
+                terms.open_borders = true;
+                index += 1;
+            }
+            "bundle" => {
+                // A bundle runs to the next term keyword (or the end).
+                let end = tokens[index + 1..]
+                    .iter()
+                    .position(|token| {
+                        ["bundle", "road_rights", "open_borders"]
+                            .iter()
+                            .any(|keyword| token.eq_ignore_ascii_case(keyword))
+                    })
+                    .map_or(tokens.len(), |offset| index + 1 + offset);
+                let (give, ask) = parse_give_and_ask(&tokens[index + 1..end], verb)?;
+                terms.bundles.push(BundleRequest { give, ask });
+                index = end;
+            }
+            other => return Err(CommandParseError::UnexpectedArgument(other.to_string())),
+        }
+    }
+    Ok(terms)
+}
+
+/// A treaty's terms in the words [`parse_treaty_terms`] reads back.
+fn push_treaty_terms(line: &mut String, terms: &crate::commands::TreatyTermsRequest) {
+    if terms.road_rights {
+        line.push_str(" road_rights");
+    }
+    if terms.open_borders {
+        line.push_str(" open_borders");
+    }
+    for bundle in &terms.bundles {
+        line.push_str(" bundle give");
+        push_goods_lines(line, &bundle.give);
+        line.push_str(" ask");
+        push_goods_lines(line, &bundle.ask);
+    }
+}
+
+/// **The two legs of a haggle** — `give [goods...] ask [goods...]`. `give` must come first and
+/// `ask` must be named; either list may be empty.
+#[allow(clippy::type_complexity)] // a pair of goods lists, named at its two call sites
+fn parse_give_and_ask(
+    tokens: &[&str],
+    verb: &'static str,
+) -> Result<(Vec<crate::TradeCargoItem>, Vec<crate::TradeCargoItem>), CommandParseError> {
+    let Some((first, rest)) = tokens.split_first() else {
+        return Err(CommandParseError::MissingArgument("give"));
+    };
+    if !first.eq_ignore_ascii_case("give") {
+        return Err(CommandParseError::UnexpectedArgument(first.to_string()));
+    }
+    let ask_at = rest
+        .iter()
+        .position(|token| token.eq_ignore_ascii_case("ask"))
+        .ok_or(CommandParseError::MissingArgument("ask"))?;
+    Ok((
+        parse_goods_lines(&rest[..ask_at], verb)?,
+        parse_goods_lines(&rest[ask_at + 1..], verb)?,
+    ))
 }
 
 /// The **named-token** form the kit selection uses: `kit <id>`, a name followed by its value.
@@ -2323,7 +2728,74 @@ pub fn render_command_line(payload: &CommandPayload) -> String {
             };
             format!("{ORDERS_VERB} {faction_id} {directive}")
         }
+        CommandPayload::AnswerDealing {
+            faction,
+            dealing_id,
+            reply,
+        } => {
+            let mut line = format!("answer_dealing {faction} {dealing_id}");
+            match reply {
+                DealingReply::Accept { returned } => {
+                    line.push_str(" accept");
+                    push_goods_lines(&mut line, returned);
+                }
+                DealingReply::Refuse => line.push_str(" refuse"),
+                DealingReply::Counter { give, ask } => {
+                    line.push_str(" counter give");
+                    push_goods_lines(&mut line, give);
+                    line.push_str(" ask");
+                    push_goods_lines(&mut line, ask);
+                }
+                DealingReply::CounterTerms { terms } => {
+                    line.push_str(" counter");
+                    push_treaty_terms(&mut line, terms);
+                }
+            }
+            line
+        }
+        CommandPayload::ProposeTreaty {
+            faction_id,
+            band_id,
+            destination_band_id,
+            terms,
+        } => {
+            let band = band_id.map_or_else(|| NO_BAND.to_owned(), |band| band.to_string());
+            let mut line = format!("propose_treaty {faction_id} {band} {destination_band_id}");
+            push_treaty_terms(&mut line, terms);
+            line
+        }
+        CommandPayload::SendEnvoy {
+            faction_id,
+            band_id,
+            party_workers,
+            destination_band_id,
+            terms,
+        } => {
+            let band = band_id.map_or_else(|| NO_BAND.to_owned(), |band| band.to_string());
+            let mut line =
+                format!("send_envoy {faction_id} {band} {party_workers} {destination_band_id}");
+            push_treaty_terms(&mut line, terms);
+            line
+        }
+        CommandPayload::EndTreaty {
+            faction,
+            other_faction,
+        } => format!("end_treaty {faction} {other_faction}"),
         other => format!("{other:?}"),
+    }
+}
+
+/// A cargo list in the words [`parse_command_line`] reads back: `food <a>`, `fodder <a>`,
+/// `material <id> <a>`, in the order given.
+fn push_goods_lines(line: &mut String, goods: &[crate::TradeCargoItem]) {
+    for item in goods {
+        if item.is_material {
+            line.push_str(&format!(" material {} {}", item.id, item.amount));
+        } else if item.id == crate::commands::FODDER_CARGO_KEY {
+            line.push_str(&format!(" fodder {}", item.amount));
+        } else {
+            line.push_str(&format!(" food {}", item.amount));
+        }
     }
 }
 
@@ -2447,8 +2919,27 @@ mod tests {
                     amount: 5.5,
                 }],
                 kit_id: None,
+                offer: false,
             }
         );
+        // `offer` rides anywhere in the tail; `gift` is the default spelled out; both together, or
+        // either twice, contradict the order.
+        assert!(matches!(
+            parse_command_line("send_trade_expedition 0 7 4 12 offer food 5"),
+            Ok(CommandPayload::SendTradeExpedition { offer: true, .. })
+        ));
+        assert!(matches!(
+            parse_command_line("send_trade_expedition 0 7 4 12 food 5 gift"),
+            Ok(CommandPayload::SendTradeExpedition { offer: false, .. })
+        ));
+        assert!(matches!(
+            parse_command_line("send_trade_expedition 0 7 4 12 offer gift food 5"),
+            Err(CommandParseError::UnexpectedArgument(_))
+        ));
+        assert!(matches!(
+            parse_command_line("send_trade_expedition 0 7 4 12 offer offer food 5"),
+            Err(CommandParseError::UnexpectedArgument(_))
+        ));
         // A hay line reads exactly like a food line, and lands on its OWN commodity key.
         assert_eq!(
             parse_command_line("send_trade_expedition 0 7 4 12 fodder 9").unwrap(),
@@ -2463,6 +2954,7 @@ mod tests {
                     amount: 9.0,
                 }],
                 kit_id: None,
+                offer: false,
             }
         );
         // Several lines, in the order the player named them, with the kit anywhere in the tail —
@@ -3498,6 +3990,15 @@ mod tests {
             CommandPayload::SetOpenBorders {
                 faction: 1,
                 open: false,
+                other_faction: None,
+            }
+        );
+        assert_eq!(
+            parse_command_line("set_open_borders 1 closed 2").unwrap(),
+            CommandPayload::SetOpenBorders {
+                faction: 1,
+                open: false,
+                other_faction: Some(2),
             }
         );
         assert_eq!(
@@ -3505,6 +4006,7 @@ mod tests {
             CommandPayload::SetOpenBorders {
                 faction: 0,
                 open: true,
+                other_faction: None,
             }
         );
         assert!(matches!(
@@ -3513,6 +4015,358 @@ mod tests {
         ));
         assert!(matches!(
             parse_command_line("set_open_borders 0 open now"),
+            Err(CommandParseError::UnexpectedArgument(_))
+        ));
+    }
+
+    #[test]
+    fn treaty_verbs_parse_and_render_round_trip() {
+        use crate::commands::{BundleRequest, TreatyTermsRequest};
+        let hide = |amount: f32| TradeCargoItem {
+            id: "hide".to_string(),
+            is_material: true,
+            amount,
+        };
+        let food = |amount: f32| TradeCargoItem {
+            id: FOOD_CARGO_KEY.to_string(),
+            is_material: false,
+            amount,
+        };
+        let terms = TreatyTermsRequest {
+            road_rights: true,
+            open_borders: true,
+            bundles: vec![
+                BundleRequest {
+                    give: vec![hide(2.0)],
+                    ask: vec![food(5.0)],
+                },
+                BundleRequest {
+                    give: vec![food(1.0)],
+                    ask: vec![],
+                },
+            ],
+        };
+        let propose = CommandPayload::ProposeTreaty {
+            faction_id: 0,
+            band_id: Some(7),
+            destination_band_id: 12,
+            terms: terms.clone(),
+        };
+        let line = render_command_line(&propose);
+        assert_eq!(
+            line,
+            "propose_treaty 0 7 12 road_rights open_borders bundle give material hide 2 ask \
+             food 5 bundle give food 1 ask"
+        );
+        assert_eq!(parse_command_line(&line).unwrap(), propose);
+        let envoy = CommandPayload::SendEnvoy {
+            faction_id: 0,
+            band_id: Some(7),
+            party_workers: 3,
+            destination_band_id: 12,
+            terms: TreatyTermsRequest {
+                road_rights: true,
+                ..Default::default()
+            },
+        };
+        let line = render_command_line(&envoy);
+        assert_eq!(line, "send_envoy 0 7 3 12 road_rights");
+        assert_eq!(parse_command_line(&line).unwrap(), envoy);
+        assert_eq!(
+            parse_command_line("end_treaty 0 1").unwrap(),
+            CommandPayload::EndTreaty {
+                faction: 0,
+                other_faction: 1,
+            }
+        );
+        // A treaty counter carries the terms; a trade counter still carries give/ask.
+        let counter = CommandPayload::AnswerDealing {
+            faction: 1,
+            dealing_id: 4,
+            reply: DealingReply::CounterTerms { terms },
+        };
+        let line = render_command_line(&counter);
+        assert_eq!(parse_command_line(&line).unwrap(), counter);
+        assert!(matches!(
+            parse_command_line("answer_dealing 1 4 counter give food 1 ask food 2"),
+            Ok(CommandPayload::AnswerDealing {
+                reply: DealingReply::Counter { .. },
+                ..
+            })
+        ));
+        // Closed grammar: an unknown term is refused, a duplicate term too.
+        assert!(matches!(
+            parse_command_line("propose_treaty 0 7 12 free_lunch"),
+            Err(CommandParseError::UnexpectedArgument(_))
+        ));
+        assert!(matches!(
+            parse_command_line("propose_treaty 0 7 12 road_rights road_rights"),
+            Err(CommandParseError::UnexpectedArgument(_))
+        ));
+    }
+
+    #[test]
+    fn parse_set_accept_own_gifts_command() {
+        assert_eq!(
+            parse_command_line("set_accept_own_gifts 1 off").unwrap(),
+            CommandPayload::SetAcceptOwnGifts {
+                faction: 1,
+                accept: false,
+            }
+        );
+        assert_eq!(
+            parse_command_line("set_accept_own_gifts 0 on").unwrap(),
+            CommandPayload::SetAcceptOwnGifts {
+                faction: 0,
+                accept: true,
+            }
+        );
+        assert!(matches!(
+            parse_command_line("set_accept_own_gifts 0"),
+            Err(CommandParseError::MissingArgument(_))
+        ));
+        assert!(matches!(
+            parse_command_line("set_accept_own_gifts 0 maybe"),
+            Err(CommandParseError::InvalidBoolean { .. })
+        ));
+        assert!(matches!(
+            parse_command_line("set_accept_own_gifts 0 on now"),
+            Err(CommandParseError::UnexpectedArgument(_))
+        ));
+    }
+
+    /// **A rendered answer parses back to itself** — the decision log's `commands_text` for an AI's
+    /// answer is the grammar an operator would type, goods and all.
+    #[test]
+    fn a_rendered_answer_dealing_parses_back_to_itself() {
+        use crate::commands::DealingReply;
+        let line_of = |reply| {
+            render_command_line(&CommandPayload::AnswerDealing {
+                faction: 2,
+                dealing_id: 9,
+                reply,
+            })
+        };
+        for reply in [
+            DealingReply::Accept {
+                returned: Vec::new(),
+            },
+            DealingReply::Accept {
+                returned: vec![
+                    TradeCargoItem {
+                        id: FOOD_CARGO_KEY.to_string(),
+                        is_material: false,
+                        amount: 3.06,
+                    },
+                    TradeCargoItem {
+                        id: FODDER_CARGO_KEY.to_string(),
+                        is_material: false,
+                        amount: 1.5,
+                    },
+                    TradeCargoItem {
+                        id: "bone".to_string(),
+                        is_material: true,
+                        amount: 0.25,
+                    },
+                ],
+            },
+            DealingReply::Refuse,
+            DealingReply::Counter {
+                give: vec![TradeCargoItem {
+                    id: "hide".to_string(),
+                    is_material: true,
+                    amount: 2.0,
+                }],
+                ask: Vec::new(),
+            },
+        ] {
+            let line = line_of(reply.clone());
+            assert_eq!(
+                parse_command_line(&line).expect("a rendered answer parses"),
+                CommandPayload::AnswerDealing {
+                    faction: 2,
+                    dealing_id: 9,
+                    reply
+                },
+                "{line}"
+            );
+        }
+        assert_eq!(
+            line_of(DealingReply::Accept {
+                returned: Vec::new()
+            }),
+            "answer_dealing 2 9 accept"
+        );
+    }
+
+    /// `answer_dealing` accepts with a return list in `send_trade_expedition`'s cargo words, refuses
+    /// bare, and counters with two legs.
+    #[test]
+    fn parse_answer_dealing_reads_accept_with_a_return_refuse_and_counter() {
+        use crate::commands::DealingReply;
+        assert_eq!(
+            parse_command_line("answer_dealing 1 7 accept food 2.5 material hide 3").unwrap(),
+            CommandPayload::AnswerDealing {
+                faction: 1,
+                dealing_id: 7,
+                reply: DealingReply::Accept {
+                    returned: vec![
+                        TradeCargoItem {
+                            id: FOOD_CARGO_KEY.to_string(),
+                            is_material: false,
+                            amount: 2.5,
+                        },
+                        TradeCargoItem {
+                            id: "hide".to_string(),
+                            is_material: true,
+                            amount: 3.0,
+                        },
+                    ],
+                },
+            }
+        );
+        assert_eq!(
+            parse_command_line("answer_dealing 1 7 accept").unwrap(),
+            CommandPayload::AnswerDealing {
+                faction: 1,
+                dealing_id: 7,
+                reply: DealingReply::Accept {
+                    returned: Vec::new()
+                },
+            }
+        );
+        assert_eq!(
+            parse_command_line("answer_dealing 1 7 refuse").unwrap(),
+            CommandPayload::AnswerDealing {
+                faction: 1,
+                dealing_id: 7,
+                reply: DealingReply::Refuse,
+            }
+        );
+        assert!(matches!(
+            parse_command_line("answer_dealing 1 7 refuse food 1"),
+            Err(CommandParseError::UnexpectedArgument(_))
+        ));
+        assert_eq!(
+            parse_command_line("answer_dealing 1 7 counter give food 4 ask material hide 2")
+                .unwrap(),
+            CommandPayload::AnswerDealing {
+                faction: 1,
+                dealing_id: 7,
+                reply: DealingReply::Counter {
+                    give: vec![TradeCargoItem {
+                        id: FOOD_CARGO_KEY.to_string(),
+                        is_material: false,
+                        amount: 4.0,
+                    }],
+                    ask: vec![TradeCargoItem {
+                        id: "hide".to_string(),
+                        is_material: true,
+                        amount: 2.0,
+                    }],
+                },
+            }
+        );
+        assert!(matches!(
+            parse_command_line("answer_dealing 1 7 counter food 1"),
+            Err(CommandParseError::UnexpectedArgument(_))
+        ));
+        assert!(matches!(
+            parse_command_line("answer_dealing 1 7 counter give food 1"),
+            Err(CommandParseError::MissingArgument("ask"))
+        ));
+        let other = parse_command_line("answer_dealing 1 7 haggle").unwrap_err();
+        assert!(
+            matches!(other, CommandParseError::UnsupportedAnswer(ref word) if word == "haggle"),
+            "{other}"
+        );
+        assert!(matches!(
+            parse_command_line("answer_dealing 1 7"),
+            Err(CommandParseError::MissingArgument(_))
+        ));
+    }
+
+    /// `propose_trade` names both legs; either may be empty, `give` leads and `ask` is required.
+    #[test]
+    fn parse_propose_trade_reads_both_legs() {
+        assert_eq!(
+            parse_command_line("propose_trade 0 7 3 12 give food 5 fodder 2 ask material hide 1.5")
+                .unwrap(),
+            CommandPayload::ProposeTrade {
+                faction_id: 0,
+                band_id: Some(7),
+                party_workers: 3,
+                destination_band_id: 12,
+                give: vec![
+                    TradeCargoItem {
+                        id: FOOD_CARGO_KEY.to_string(),
+                        is_material: false,
+                        amount: 5.0,
+                    },
+                    TradeCargoItem {
+                        id: crate::commands::FODDER_CARGO_KEY.to_string(),
+                        is_material: false,
+                        amount: 2.0,
+                    },
+                ],
+                ask: vec![TradeCargoItem {
+                    id: "hide".to_string(),
+                    is_material: true,
+                    amount: 1.5,
+                }],
+            }
+        );
+        assert!(matches!(
+            parse_command_line("propose_trade 0 7 3 12 give ask"),
+            Ok(CommandPayload::ProposeTrade { give, ask, .. }) if give.is_empty() && ask.is_empty()
+        ));
+        assert!(matches!(
+            parse_command_line("propose_trade 0 7 3 12 give food 5"),
+            Err(CommandParseError::MissingArgument("ask"))
+        ));
+        assert!(matches!(
+            parse_command_line("propose_trade 0 7 3 12 ask food 5"),
+            Err(CommandParseError::UnexpectedArgument(_))
+        ));
+        assert!(matches!(
+            parse_command_line("propose_trade 0 7 3 12"),
+            Err(CommandParseError::MissingArgument("give"))
+        ));
+    }
+
+    /// `send_expedition` takes an optional `strangers` order and a trailing `pack` list.
+    #[test]
+    fn parse_send_expedition_reads_a_pack_and_a_strangers_order() {
+        use crate::commands::StrangersKind;
+        let CommandPayload::SendExpedition {
+            pack,
+            strangers,
+            kit_id,
+            ..
+        } = parse_command_line(
+            "send_expedition 0 7 2 5 6 kit none strangers offer pack food 3 material hide 1",
+        )
+        .unwrap()
+        else {
+            panic!("a scout");
+        };
+        assert_eq!(strangers, StrangersKind::Offer);
+        assert_eq!(kit_id.as_deref(), Some("none"));
+        assert_eq!(pack.len(), 2);
+        let CommandPayload::SendExpedition {
+            pack, strangers, ..
+        } = parse_command_line("send_expedition 0 7 2 5 6").unwrap()
+        else {
+            panic!("a scout");
+        };
+        assert!(pack.is_empty());
+        assert_eq!(strangers, StrangersKind::Keep);
+        assert!(matches!(
+            parse_command_line("send_expedition 0 7 2 5 6 strangers hug"),
+            Err(CommandParseError::UnexpectedArgument(_))
+        ));
+        assert!(matches!(
+            parse_command_line("send_expedition 0 7 2 5 6 food 3"),
             Err(CommandParseError::UnexpectedArgument(_))
         ));
     }

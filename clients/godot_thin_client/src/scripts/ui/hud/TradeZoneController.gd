@@ -375,6 +375,10 @@ func _add_counterparty(row: HBoxContainer, band: Dictionary, shipment: Dictionar
 	# `↩ Bitterbrook ⚑ (returned)` — cargo that came back, with no export in this window to net.
 	if returned:
 		row.add_child(_faint_label(HudTradeVocab.RETURNED_SUFFIX))
+	# `→ Ashfell ⚑ (traded away)` / `← Ashfell ⚑ (traded for)` -- an exchange's half says which half.
+	var cause := int(shipment.get(TradeLedger.SHIPMENT_CAUSE, HudTradeVocab.CAUSE_POOLED))
+	if HudTradeVocab.CAUSE_LABELS.has(cause):
+		row.add_child(_faint_label("(%s)" % String(HudTradeVocab.CAUSE_LABELS[cause])))
 
 ## The SHORT tier's arm row: `⇄ LOCAL EXCHANGE ····· 8 goods ›`, opening `kind` (none when empty).
 func _build_arm_row(title: String, count: String, kind: String) -> Control:

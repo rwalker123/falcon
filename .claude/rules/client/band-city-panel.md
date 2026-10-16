@@ -5,6 +5,8 @@ paths:
   - "clients/godot_thin_client/src/scripts/ui/hud/WorkInspectorDialog.gd"
   - "clients/godot_thin_client/src/scripts/ui/hud/DisclosureTriangle.gd"
   - "clients/godot_thin_client/src/scripts/ui/hud/{TradeZoneController,TradeLedger,TradeHoverCard,FactionMark,RungLinkIcon,hud_trade_vocab}.gd"
+  - "clients/godot_thin_client/src/scripts/ui/hud/{DealingsRoster,PeoplesDiplomacy,hud_dealings_vocab}.gd"
+  - "clients/godot_thin_client/tools/ui_preview/chapters/{dealings,treaties}.gd"
   - "clients/godot_thin_client/tools/band_panel_preview.gd"
   - "clients/godot_thin_client/tools/band_panel_trade_tab.gd"
 ---
@@ -27,6 +29,9 @@ paths:
 | `ui/hud/FactionRollup.gd` | **All-`static`, stateless** builder of the FACTION PAGE's FOUR zones (issue #450) — the all-band rollup the cycler pins first. `build_band_zone` (the summed PEOPLE bar + the band page's own vitals rows — Food / **Fodder** / **Upkeep** / Morale / Growth; a sixth, Trade, went with arc #527's retired account, and the `Kit` row it sat beside went with `docs/plan_standing_upkeep.md` §4.9 item 12 — durabilities never aggregated, so that row was an alert and a drill-down, and the CRAFTING panel's kit ledger already states the items in full. The **`Upkeep`** row is the standing MATERIAL bill, folded PER BAND out of `DetailFormat.band_material_bill` and rendering only where some band on the roster owes a good — see `band-readouts.md` → "THE STANDING MATERIAL BILL". The `Fodder` row is the Food row beat for beat, sums the same way, and has the band row's DORMANT form on the same gate folded across the roster — see `band-readouts.md` → "THE FACTION PAGE'S `Fodder:` ROW". `build_band_zone` took the faction's `{track: progress}` row as a sixth parameter for that row's hover alone, and **takes no knowledge row at all now** — the dormant row's hover was retired (it reached the whole block, not the row), and the parameter went with its one reader. `_build_vitals_label` CLEARS the previous render's carets before building, which this page did not do until a dormant row inherited one), `build_work_zone` (the whole workforce as one bar and the per-band roster), **`build_knowledge_zone`** (SETTLING, the craft tracks, DISCOVERIES — the fourth column the panel's ordered-list body exists to hold, with a `full` HEIGHT TIER that drops the last of the three in a height-capped horizontal dock) and `build_parties_zone` (every party and the band it left, its NAME jumping to that band — see "THE PARTIES ROW NAMES THE HOME BAND" for why `_summary_row` binds a separate `jump_owner`), plus the `_stat_row` leaf they are built from. Its two new inputs are threaded in as PARAMETERS like every other: the player faction's sedentarization entry and its discovered-site array, read off `FactionReadouts` (`faction_sedentarization` / `faction_discovered_sites`), which is where the PLAYER-FACTION FILTER over those two per-faction wire arrays already lives — a second walk looking for `PLAYER_FACTION_ID` is a second chance to disagree about whose faction is being reported. **It is a shared LAYER rather than a controller because the page is a READOUT** — no steppers, no compose sheet, no open row, nothing that survives a snapshot; its one control, the Open Borders toggle, reads its state off the snapshot and emits through a Callable the controller threads in — so it has no per-cluster state to own, which is the whole of what makes a controller one (`hud-modules.md`). The one thing it needs is threaded in as a PARAMETER: the `HudBandLaborState` instance, plus the caller's `herd_label_for_id` Callable (the treatment `HudFormat.panel_expedition_summary` already takes — a stateless layer must not reach for the roster/selection/herd-list state that resolver reads). **IT RE-DERIVES NOTHING**: every total is a SUM over answers the per-band surfaces already give (`DetailFormat.band_net_food` / `band_provisions` / `band_fodder_store` / `band_net_fodder` / `band_material_bill`, `HudBandLaborState.effective_idle` / `effective_worker_map` / `effective_role_workers` / `band_party_workers`, `FactionReadouts.faction_tracks`), so a band's own page and this one cannot disagree about a number — a rollup with its own food ledger would be a second source of truth for the identity `larder_delta == income − consumption − pen_feed − raid_forfeit` the food arc keeps closed. Dependency direction: it reads `HudWidgets` / `HudFormat` / `DetailFormat` / `SourceForecast` / `HudStyle` / the vocab leaves and `FactionReadouts`' track table, and none of them may read it back |
 | `ui/hud/ConnectionsRoster.gd` | **All-`static`** builder of the band page's **Peoples tab** and its wide-shell section under Parties (issue #549), the in-place `refill`, the tab badge, and the ONE subject-naming rule (`subject_label`) the trade shipment picker shares. See "The Peoples tab" |
 | `ui/hud/hud_connections_vocab.gd` | `HudConnectionsVocab` — the roster's head, its three tie states and their words, the parked line, the empty line, and the node names of the tab, its rows box and its sanctioned scroll (`LIST_NAME`). A leaf: reads nothing |
+| `ui/hud/PeoplesDiplomacy.gd` | **All-`static`** builder of the Peoples tab's **diplomacy block** (early diplomacy C2, issue #233): one block per other people the wire names (goodwill words, the treaty in force, `Propose a treaty` / `End treaty` / the border toggle), the border-state rule (`border_state`) and the change signature the in-place refill diffs on. It emits nothing: the three actions are Callables the controller hands in. See "The Peoples tab's diplomacy block" |
+| `ui/hud/DealingsRoster.gd` | **All-`static`** builder of the band page's **Dealings tab** and its wide-shell section under Peoples (early diplomacy, issue #233): the head, every row, the in-place `refill`, the badge and the one ordering. It emits nothing: the three answers are Callables the controller hands in. See "The Dealings tab" |
+| `ui/hud/hud_dealings_vocab.gd` | `HudDealingsVocab`, a **leaf**: the wire's tokens (`offer` / `proposal` / `counter` / `treaty_proposal`, `road` / `envoy`, `gift` / `offer`, `keep` / `give` / `offer`), every word of the Dealings tab, the answer sheet, the trade sheet's modes, the scout sheet's pack, the faction toggle and the orb row, and the pure text builders over a decoded goods list or a treaty's terms (`goods_text`, `terms_text`, `turns_left_text`, the leg helpers). Nothing here decides what the sim owns |
 | `ui/hud/TradeZoneController.gd` | `RefCounted` controller for the band page's **Trade tab** (issue #731) — builds the zone (FULL or SHORT tier, chosen by measurement), owns the list popover and the hover card. See "The Trade tab" |
 | `ui/hud/TradeLedger.gd` | **All-`static`** arithmetic for the Trade tab and the Food/Fodder popovers: which crossings are trade, one good's net across its ratings, shipments grouped by party, the network's camps and relays, one good across the network |
 | `ui/hud/TradeHoverCard.gd` | The Trade tab's hover card: a row's rating piles or a shipment's cargo, placed beside the row and never under the list panel |
@@ -7995,3 +8000,176 @@ The labor-side contract is `labor-ui.md` -> "HUNTING BY NEED". The rows it adds 
   `band_panel_need_kit_short`, `band_panel_need_kit_short_inspector`.
 - **Heights.** The meter is a party line (`_work_row_party_lines`), so the row's height and the
   board's reservation pay for it without a second edit.
+
+## The Dealings tab (issue #233, `docs/plan_early_diplomacy.md` §7)
+
+The band page's sixth zone, `dealings` (`BandCityPanel.ZONE_DEALINGS`, labelled
+`HudDealingsVocab.ZONE_TAB_DEALINGS`): every pending item this band takes part in
+(`HudBandLaborState.dealings_for_band(<its band_id>)`: sender, receiver or the party's shipper). **An
+unbounded list gets its own tab**, so it scrolls in a sanctioned `ScrollContainer` with no row cap and no
+`+N more`.
+
+- **NARROW-ONLY, exactly as Trade and Peoples** (`ZONE_SPEC_NARROW_ONLY`): a tab on a side dock, a section
+  under Parties after Peoples' on a wide shell (`build_parties_zone(band, with_trade, with_peoples,
+  with_dealings)`), and the no-dock drawer mounts it through `build_flat_sections`. The shell threshold
+  stays 1190. `BandPanelController` tracks the live content (`_dealings_block*`) and
+  `refresh_dealings()` re-fills it in place on a frame that moves only the `dealings` section.
+- **The data is held, never derived**: `HudBandLaborState` keeps `dealings`, `goodwill` and `treaties`
+  (`set_dealings` / `set_goodwill` / `set_treaties`, whole-section replaces, cleared by
+  `reset_diplomacy` at a world boundary). A turns-left, a kind, a leg and which side is shipper are the
+  sim's; the client restates none of them.
+- **A row is two lines of copy** and, where it is addressed to this band, an action strip.
+  *Incoming* (the band is the receiver): `← Brackfolk · Brackwater ……… 1 turn left` (the window in
+  `WARN` amber beside the number it explains: **`1` means answer this turn or silence refuses it**),
+  then what it says, then `Accept · Refuse · Counter`. *Outgoing*: `→ Brackfolk · Brackwater` with what
+  was sent clipped at the right end, then `Awaiting their answer · 1 turn left`, no actions.
+  **Incoming sorts first, ids ascending** (the sim's ids are monotonic, so the order is a pure function
+  of the rows).
+- **Who** is the other people's published name (`FactionMark.faction_name`) and the other band through
+  the roster's own naming rule (`HudBandLaborState.host_label_for_id`: the roster, else the name a tie
+  remembers, else where it was last seen); a raw id never reaches a label.
+- **What** is per account and per material with its readings, **never summed** (food and hay are two
+  larders, and two piles of one material at two ratings are two goods): `12.0 food · 4.0 hide (tough:
+  fair, supple: good)`. A proposal or counter is stated from the SHIPPER's point of view on the wire, so
+  the row reads it from the viewing band's seat (`You send X · you get Y` when the band is the shipper,
+  `They send X · they want Y from you` / `… · you send back Y` when it is the consignee). A treaty
+  proposal reads its terms in words (`Road rights · Open borders · Agreed trade: 5.0 flint for 10.0
+  food`) and says an envoy brought it on its hover.
+- **An offer is accepted or refused, never countered** (it names nothing: the receiver names the return
+  in its accept). Every other kind has all three.
+- **The tab badge** is how many items wait on this band's answer (hot) and otherwise how many it waits
+  on, nothing at none (`DealingsRoster.badge`).
+
+### The answer sheet
+
+A verb sheet of its own mission (`HudDealingsVocab.COMPOSE_MISSION_DEALING`), **off the action bar**, the
+station sheet's shape: opened by the row's own button (`_open_dealing_sheet`), in the receiving band's own
+drawer, closed with the verb. It reads the dealing LIVE by id, so a dealing answered or lapsed since the
+sheet opened closes it (`refresh_dealings`).
+
+- **Accept on an offer** opens it: `They offer …`, the SHIPMENT'S OWN cargo picker over this band's
+  holdings titled `What you send back`, bounded by the waiting party's carry (`partyWorkers` times the
+  cohort's `carry_per_worker`: `_send_expedition_count` is set to the dealing's party and the picker's
+  cap reads it), and `The party can carry N home`. **An empty return is allowed and the button reads
+  `Accept as a gift`**; with a return it reads `Accept`. Accept on a proposal, counter or treaty proposal
+  and Refuse on anything send at once, with no sheet.
+- **Counter on a proposal or counter** shows both legs prefilled from the dealing: the leg THIS band
+  holds is the picker, the other leg is **named, not drawn** (`_mount_leg_editor`: `−` / amount / `+` /
+  `✕` per good and `Add a good`, with no ceiling because the other people's holdings are theirs). `give` on
+  the wire is the shipper's leg whoever speaks, so `_answering_as_shipper` decides which leg is which.
+- **Counter on a treaty proposal** is one tick per proposed term (road rights, open borders, each
+  bundle), plus the **agreed-trade editor** the treaty sheet uses (`_mount_bundle_editor`) for bundles of
+  its own: kept published bundles first, then the added ones, in one `answer_dealing ... counter ...`.
+  An added bundle that carries nothing greys the send.
+
+### The trade sheet's three modes, and the scout sheet's pack
+
+- **Gift / Offer / Propose a trade** (`_build_trade_mode_row`, state `_trade_mode`, default gift). Gift
+  and offer ride `send_trade_expedition` (`offer` is the last word; a gift spells nothing, so a shipment
+  that never touched the toggle is byte-identical to before). **Propose is offered only where the sim
+  published a standing link between this band and the picked destination** (`treaties.standing_links`,
+  read through `HudBandLaborState.standing_link_between`): greyed with its reason otherwise, and dropped
+  back to a gift if the published row disappears (`_settle_trade_mode`). The link is never computed here.
+  Propose mode splits the sheet into `You give` (the shipment's own picker) and `You ask for` (the leg
+  editor) and sends `propose_trade`.
+- **The scout sheet** gains an optional pack (the shipment's own picker, `Pack for strangers`) and the
+  strangers order Keep / Give / Offer (`_build_strangers_row`, default keep). Give and offer with an empty
+  pack are refused on the sheet with their reason. `TargetingController.send_expedition_to` carries both on
+  the payload; `Main.format_send_expedition` spells `strangers <order>` (keep is unspelled) and `pack`
+  last.
+- **One manifest builder spells every goods list**: `Main.cargo_manifest(rows)` answers `{tail, note}` and
+  is shared by `send_trade_expedition`, the scout's pack, an offer's return and both legs of a counter or
+  proposal, so one flooring rule (`cargo_wire_amount`) covers them all.
+
+### The commands
+
+One signal for the diplomacy verbs: `BandPanelController.diplomacy_command_requested` → `HudLayer`
+→ `Main._on_hud_diplomacy_command` → `Main.format_diplomacy_command`, dispatching on
+`payload["command"]` (`answer_dealing`, `propose_trade`, `set_accept_own_gifts`, `propose_treaty`,
+`send_envoy`, `end_treaty`, `set_open_borders` toward one people). No optimistic write: the item leaves the
+next `dealings` section. `command_guard` drives every one of them through the real parser
+(`harness-band-panel.md`).
+
+### The gift setting (the top of the Dealings tab)
+
+`Accept gifts from our own people`, a checkbox off `faction_policies[].accept_own_gifts` (default on) as the
+**first row under the Dealings head** (`DealingsRoster._build_gift_row`, emitting through
+`BandPanelController._emit_accept_own_gifts`). It is a setting of the whole people, which its hover says,
+and it lives on the tab it governs: it was on the faction page first, where a short bottom or top dock
+(`FACTION_BAND_FULL_MIN_HEIGHT`) dropped it, so the setting was unreachable on exactly those dock shapes.
+The tab exists on every dock shape and in the no-dock drawer, so the setting is reachable on all of them.
+The state is the snapshot's on every render; `update_faction_policies` re-fills the tab in place so a
+refused command puts the box back. The row is absent until a policy row has been published (never a
+guessed default).
+
+### The Trade tab's two new causes
+
+`TransferCause::ExchangeOut` / `ExchangeIn` (wire 9 / 10) are on the Route arm, so `HudTradeVocab` names
+them (`CAUSE_EXCHANGE_OUT` / `_IN`) and adds both to `TRADE_CAUSES` and `SHIPMENT_CAUSES`: the Food
+popover accounts for the WHOLE Route arm, and a cause left out would stop its ledger closing and drop a
+return that really crossed. `TradeLedger` keeps an exchange's half as its own group (it nets against
+nothing: the return is a different good going the other way, not an undo) and stamps its cause, and a
+Trade tab row wears a faint `(traded away)` / `(traded for)` from `HudTradeVocab.CAUSE_LABELS`.
+
+## The Peoples tab's diplomacy block, the treaty sheet and the border toggle (C2, issue #233)
+
+**Goodwill, treaties and borders ride the Peoples tab** (`ConnectionsRoster` hosts `PeoplesDiplomacy`'s
+block ABOVE the ties list, in the same scroll: it is bounded by the number of peoples, so it needs no tab of
+its own, and the ties list under its `Bands we know` label stays the unbounded one).
+
+- **Who is listed** is `HudBandLaborState.known_peoples`: every faction named by a goodwill row (either
+  direction), a treaty, a standing link or a dealing, plus the policy's border overrides and the foreign
+  bands in sight; ascending by faction id. A people the wire never mentioned is not a row.
+- **Line 1** is the people's published name then `They: friendly · We: wary`: what THEY think of us (the
+  last report) and what WE think of them (live). Each is a word cut from the PUBLISHED cuts
+  (`goodwill.cuts`: below `wary_below` wary, above `friendly_above` friendly), so the client restates no
+  threshold. **A people with no row has no word, never a default neutral.** Wary is amber beside the
+  sentence it explains. The hover gives the sentence (`as of turn N` for theirs) and the non-zero
+  components in words, signed, strongest first (`+0.8 gifts`, `-0.4 a broken treaty`, `+0.2 a road
+  between us`); numbers never stand on the row.
+- **Line 2** is the treaty in force in words (`Road rights · Open borders · Agreed trade: 2.0 flint for
+  5.0 food`) with `In force since turn N` on its hover, or `No treaty`. Then the strip.
+- **The strip**: `Propose a treaty` · `End treaty` (only where a treaty stands; it confirms, and the prompt
+  says it is a breach that costs their goodwill) · the border toggle. **The border state is the sim's,
+  never guessed**: an open-borders term of a treaty in force wins, else the people's override row, else
+  the general `open_borders` (`PeoplesDiplomacy.border_state`; the hover says which of the three is
+  speaking). **Closing to a people whose treaty holds open borders ends that treaty**, so it confirms with
+  the same breach warning; every other flip fires on the press. Sent `set_open_borders <f> open|closed
+  <other>`.
+- **The treaty sheet** (`HudDealingsVocab.COMPOSE_MISSION_TREATY`, off the action bar, the answer
+  sheet's shape) opens in the drawer of the band whose Peoples tab it was pressed from: tick road rights /
+  open borders, add **agreed-trade bundles** (`_mount_bundle_editor`: what a shipment carries, what the
+  receiver pays back, both named and neither drawn, since a treaty binds both peoples and moves no goods
+  until a shipment is made), then send it where it can go. **A bundle must carry something** (the sim
+  refuses an empty carried-side, which any cargo would cover); one that does not greys the send with the
+  reason in amber beside it. **Over the road** (`propose_treaty <f> <band> <dest_band> ...`) when a
+  published standing link joins this band to a band of theirs (`treaties.standing_links`, never computed
+  here; a choice row when several); otherwise **by an envoy** (`send_envoy <f> <band> <party> <dest_band>
+  ...`): the party stepper beside the trade party picker's, the destination one of the bands of theirs the
+  client can name (`known_bands_of_people`: foreign bands in sight, standing-link ends, dealing parties,
+  then the bands a LIVE tie remembers, filed under their people by the tie's `subject_faction` -- clock 1,
+  0 is a real people; a parked tie is refused by the sim and left out; a people met only through such a
+  tie is a Peoples row via `remembered_factions`), greyed with its reason where none is known. The sending band is the band whose page the sheet was opened
+  from.
+- **An envoy's row** in the Parties zone is `Brackwater · Road rights · Open borders` (its destination and
+  the terms it carries, from the cohort's `envoy_terms`), one line clipped by the row, with the whole
+  proposal on its hover, under the `✉` mark (mission `envoy`: no bundled art, the glyph branch).
+- **The tab bar holds six tabs.** The Dealings tab made six and the bar overran the strip (the card widened
+  past its reserved edge, so the dock's border ran through the tab bar and the rows). Font 11, separation 2,
+  tab padding 2 and badge padding 3 hold it at 303px of the 354px interior as a band normally wears its
+  badges and 347px with all five at two digits; `treaties.gd` asserts both.
+
+### Frames
+
+`ui_preview`'s `treaties` chapter (`harness-ui-preview.md`): `treaties_peoples` (the regard words and
+treaty rows), `treaties_peoples_hover` (a real engine tooltip over a `They:` word), `treaties_end_confirm`,
+`treaties_borders_breach_confirm`, `treaties_sheet_road` / `_road_filled`, `treaties_sheet_envoy` /
+`_envoy_filled`, `treaties_sheet_no_target`, `treaties_counter` / `_counter_bundle` and
+`treaties_envoy_party`.
+
+`ui_preview`'s `dealings` chapter (`harness-ui-preview.md`): `dealings_tab`, `dealings_answer_offer` /
+`_offer_return`, `dealings_counter_proposal` / `_counter_edited`, `dealings_treaty_counter`,
+`dealings_trade_modes`, `dealings_trade_propose` / `_propose_ask`, `dealings_scout_sheet` /
+`_scout_give_empty` / `_scout_pack`, `dealings_faction_page` (no gift row on it), `dealings_gift_setting` /
+`_gift_setting_off`, `dealings_orb` and
+`dealings_event_dock`.

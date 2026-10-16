@@ -15,19 +15,20 @@ use sim_runtime::{
     CraftKnowledgeState, CrisisGaugeState, CrisisMetricKind as SchemaCrisisMetricKind,
     CrisisOverlayState, CrisisSeverityBand as SchemaCrisisSeverityBand, CrisisTelemetryState,
     CrisisTrendSample as SchemaCrisisTrendSample, CultureLayerState, CultureTensionState,
-    CultureTraitEntry, DepositRungState, DepositState,
+    CultureTraitEntry, DealingState, DepositRungState, DepositState,
     DiscoveredSiteState as SchemaDiscoveredSiteState,
     DiscoveredSitesState as SchemaDiscoveredSitesState, DiscoveryProgressEntry,
     ElevationOverlayState, FactionInventoryEntryState as SchemaFactionInventoryEntryState,
     FactionInventoryState as SchemaFactionInventoryState, FactionNameState, FactionPolicyState,
     FloatRasterState, FloraShareInfo, FoodModuleState, ForagePatchState, ForkChoiceState,
-    GenerationState, GlossEntryState, GreatDiscoveryDefinitionState, GreatDiscoveryProgressState,
-    GreatDiscoveryState, GreatDiscoveryTelemetryState, HerdTelemetryState,
-    InfluentialIndividualState, IntensificationKnowledgeState, KitOptionState,
-    KnowledgeLedgerEntryState, KnowledgeMetricsState, KnowledgeTimelineEventState,
-    LaborAssignmentState, LadderKnowledgeProgress, LadderKnowledgeState, LineageConstantsState,
-    MaterialDefState, MountainKind, OpeningKitDefaultState, OpeningLoadoutState,
-    OpeningMaterialDefaultState, PendingForkState, PendingForksState, PopulationCohortState,
+    GenerationState, GlossEntryState, GoodwillCutsState, GoodwillState,
+    GreatDiscoveryDefinitionState, GreatDiscoveryProgressState, GreatDiscoveryState,
+    GreatDiscoveryTelemetryState, HerdTelemetryState, InfluentialIndividualState,
+    IntensificationKnowledgeState, KitOptionState, KnowledgeLedgerEntryState,
+    KnowledgeMetricsState, KnowledgeTimelineEventState, LaborAssignmentState,
+    LadderKnowledgeProgress, LadderKnowledgeState, LineageConstantsState, MaterialDefState,
+    MountainKind, OpeningKitDefaultState, OpeningLoadoutState, OpeningMaterialDefaultState,
+    PendingForkState, PendingForksState, PopulationCohortState,
     PopulationDemographicsState as SchemaPopulationDemographicsState, PowerIncidentSeverity,
     PowerIncidentState, PowerNodeState, PowerTelemetryState, RecipeDefState, RouteRungState,
     RouteState, ScalarRasterState, SedentarizationState as SchemaSedentarizationState,
@@ -38,6 +39,8 @@ use sim_runtime::{
     VoiceMediumState, WorldDelta, WorldSnapshot, GRAZE_PHASE_COLLAPSING, GRAZE_PHASE_NONE,
     GRAZE_PHASE_STRESSED, GRAZE_PHASE_THRIVING,
 };
+
+use sim_runtime::{BorderOverrideState, StandingLinkState, TreatyState};
 
 use crate::{
     components::{
@@ -113,9 +116,11 @@ mod capture;
 mod connections;
 pub(crate) mod crafting;
 mod culture;
+mod dealings;
 mod deposits;
 mod economy;
 mod flora_quotes;
+mod goodwill;
 mod governance;
 mod knowledge;
 mod map;
@@ -123,6 +128,7 @@ pub(crate) mod population;
 mod publish;
 mod routes;
 mod subsistence;
+mod treaties;
 mod vision;
 
 pub use campaign::*;
@@ -1166,6 +1172,12 @@ mod tests {
             contact_lessons: Vec::new(),
             connections: Vec::new(),
             routes: Vec::new(),
+            dealings: Vec::new(),
+            treaties: Vec::new(),
+            standing_links: Vec::new(),
+            goodwill: Vec::new(),
+            own_goodwill: Vec::new(),
+            goodwill_cuts: Default::default(),
             deposits: Vec::new(),
             demographics: Vec::new(),
             forage_patches: Vec::new(),
@@ -1251,6 +1263,12 @@ mod tests {
             contact_lessons: Vec::new(),
             connections: Vec::new(),
             routes: Vec::new(),
+            dealings: Vec::new(),
+            treaties: Vec::new(),
+            standing_links: Vec::new(),
+            goodwill: Vec::new(),
+            own_goodwill: Vec::new(),
+            goodwill_cuts: Default::default(),
             deposits: Vec::new(),
             demographics: Vec::new(),
             forage_patches: Vec::new(),
@@ -1331,6 +1349,12 @@ mod tests {
             contact_lessons: Vec::new(),
             connections: Vec::new(),
             routes: Vec::new(),
+            dealings: Vec::new(),
+            treaties: Vec::new(),
+            standing_links: Vec::new(),
+            goodwill: Vec::new(),
+            own_goodwill: Vec::new(),
+            goodwill_cuts: Default::default(),
             deposits: Vec::new(),
             demographics: Vec::new(),
             forage_patches: Vec::new(),

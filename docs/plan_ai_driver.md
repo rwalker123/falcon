@@ -528,7 +528,7 @@ Three tiers, by cost:
 |---|---|---|---|
 | unit | a specialist over a recorded fixture frame | ms | every `cargo test` |
 | scenario | `ScriptedBrain` against a real server, asserting an *effect* (a band moved), the `live_seat_probe` shape | seconds | every `cargo test`, in `integration_tests/` |
-| bench | N seeds × T turns × the comparisons in §8.2 | minutes | on demand and before a baseline change |
+| bench | N seeds × T turns × the comparisons in §8.2 | minutes | `--check` in CI on every PR (`ai-bench`); the full comparisons on demand and before a baseline change |
 
 Fixture frames for the unit tier are recorded from a real run through the server's `FrameSink` seam
 (`snapshot/publish.rs:66`, whose doc names a file writer as an intended implementor) — a specialist is

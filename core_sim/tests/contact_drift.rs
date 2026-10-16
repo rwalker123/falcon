@@ -166,7 +166,7 @@ fn half_the_gap_closes_in_about_fifty_turns() {
 fn a_tie_that_runs_one_way_moves_nothing_and_a_mutual_one_is_the_weaker_side() {
     let app = build_test_app();
     let config = app.world.resource::<ConnectionsConfigHandle>().get();
-    let sighting = Sighting::new(UVec2::ZERO, 1, "");
+    let sighting = Sighting::new(UVec2::ZERO, 1, "", FactionId(0));
     let mut ledger = ConnectionLedger::default();
     ledger.record_contact(ConnectionKey::new(A, B), &sighting, 1, &config);
     let residents = weights(&[(A, EQUAL_WEIGHT), (B, EQUAL_WEIGHT)]);
@@ -414,7 +414,7 @@ fn a_kin_pull_moves_the_culture_and_publishes_nothing_on_the_encoded_snapshot() 
         ConnectionKey::new(home_id, sibling),
         ConnectionKey::new(sibling, home_id),
     ] {
-        ledger.insert_full_tie(key, &Sighting::new(UVec2::ZERO, 1, ""), 1);
+        ledger.insert_full_tie(key, &Sighting::new(UVec2::ZERO, 1, "", FactionId(0)), 1);
     }
     app.world.insert_resource(ledger);
     let gap_axis = CultureTraitAxis::OpenClosed.index();
@@ -536,7 +536,7 @@ fn a_foreign_pull_is_on_the_encoded_snapshot() {
         ConnectionKey::new(home_id, rival_id),
         ConnectionKey::new(rival_id, home_id),
     ] {
-        ledger.insert_full_tie(key, &Sighting::new(UVec2::ZERO, 1, ""), 1);
+        ledger.insert_full_tie(key, &Sighting::new(UVec2::ZERO, 1, "", FactionId(0)), 1);
     }
     app.world.insert_resource(ledger);
     let gap_axis = CultureTraitAxis::OpenClosed.index();

@@ -123,7 +123,7 @@ fn tie(app: &mut App, a: BandId, b: BandId) {
     for key in [ConnectionKey::new(a, b), ConnectionKey::new(b, a)] {
         ledger.record_contact(
             key,
-            &Sighting::new(UVec2::ZERO, SIGHTING_TURN, ""),
+            &Sighting::new(UVec2::ZERO, SIGHTING_TURN, "", FactionId(0)),
             SIGHTING_TURN,
             &config,
         );
@@ -255,7 +255,7 @@ fn every_roster_derived_resource_has_a_row_for_the_new_people() {
     assert!(
         app.world
             .resource::<FactionBorderPolicies>()
-            .is_open(FIRST_NEW_PEOPLE),
+            .default_open(FIRST_NEW_PEOPLE),
         "every people starts with its borders open"
     );
     let names = app.world.resource::<core_sim::FactionNames>();

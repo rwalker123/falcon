@@ -851,7 +851,8 @@ Layer 3b) also moves them to **another people's** band — nothing else about it
   tie (`ConnectionLedger::tie_is_live(src, dst)`). A band with no `BandId` cannot be tie-checked and is
   never a cross-people source or destination. There is no faction-level contact question
   (`connections.md` → "The question a rider asks the ledger").
-- **Consent is the receiver's.** `FactionBorderPolicies::is_open(dst_faction)` (below). A closed
+- **Consent is the receiver's.** `FactionBorderPolicies::admits(treaties, dst_faction, src_faction)`
+  (below). A closed
   border leaves the leavers with no destination, and the existing *trapped* rule multiplies their
   grievance — so a closed border costs the people it shuts out, never the one that closed it.
 - **Knowledge travels in proportion.** A cross-people move credits the destination people's
@@ -923,12 +924,22 @@ resets it to `0`. At `defection.party_pull_threshold` the whole party joins the 
 
 ### Open Borders — `FactionBorderPolicies`
 
-One faction-wide bool per people, **default open for every faction**, seeded from the roster (the
-roster-derived set above) and checkpointed in `SimState`. `set_open_borders <faction> <open|closed>`
-(`SetOpenBordersCommand`, proto field **76**) sets it, gated like every faction-bearing order
-(`commanding_faction` → the seat gate and the membership check). Nothing drives it for an AI faction.
-The frame publishes the **viewer's own** row only — `CampaignSection.factionPolicies`
-(`FactionPolicyState { faction, openBorders }`), another people's borders being theirs to know.
+One faction-wide bool per people (`default_open`), **default open for every faction**, seeded from
+the roster (the roster-derived set above) and checkpointed in `SimState`, plus the people's
+**per-people overrides** (`(host, from) → open`, `set_override`). `set_open_borders <faction>
+<open|closed> [<other_faction>]` (`SetOpenBordersCommand`, proto field **76**, `other_faction` = 3)
+sets the default, or with a people named the setting toward that one people; it is gated like every
+faction-bearing order (`commanding_faction` → the seat gate and the membership check). Nothing drives
+it for an AI faction. The frame publishes the **viewer's own** row only —
+`CampaignSection.factionPolicies` (`FactionPolicyState { faction, openBorders, acceptOwnGifts,
+borderOverrides }`), another people's borders being theirs to know.
+
+**Consent is ONE function, `FactionBorderPolicies::admits(treaties, host, from)`**: own people (yes),
+then an **open-borders treaty term** (yes), then the host's **override** for that people, then the
+default. Every reader asks it — the unhappy trickle's destination, a defecting party, a stationed
+party's launch and its every-turn post check, the breeding shed — and nothing reads the default alone.
+Closing the border toward a people the host holds an open-borders term with **ends the treaty** (a
+breach, `diplomacy.md` → "Treaties").
 
 A people's own bands never ask it: moving between your own camps is not crossing a border.
 
@@ -1048,7 +1059,9 @@ apply only where the row describes something that can be *seen*.
 | `tiles`, the rasters, `foodModules`, `climateBands`, the catalogues (`kits`, `materials`, `recipes`, `ladderKnowledge`, `routeRungs`, `campaignProfiles`) | various | **World** — terrain and per-world constants, carrying no faction. The client fogs the map from `visibilityRaster` |
 | `victory.modes[].progress` | `snapshot/campaign.rs` | **Viewer** — progress is one people's, so the frame carries the viewer's mode rows and nobody else's (`VictoryState::modes_for`) |
 | `victory.winner` | `snapshot/campaign.rs` | **World** — a winner is public by definition, and it names the faction that actually achieved it |
-| `factionPolicies` | `snapshot/campaign.rs` | **Viewer** — your own Open Borders row only |
+| `factionPolicies` | `snapshot/campaign.rs` | **Viewer** — your own Open Borders row and standing answer to a gift from your own people only |
+| `dealings` | `snapshot/dealings.rs` | **Viewer** — the pending dealings addressed to the viewer's people or sent by them (`diplomacy.md`) |
+| `goodwill` | `snapshot/goodwill.rs` | **Viewer** — what other peoples are *known* to think of the viewer's (carried news, never the live opinion), plus the word cuts, plus `own`: the viewer's **own** live opinion of each other people, never another people's (`diplomacy.md`) |
 | `factionNames` | `snapshot/capture.rs` | **World** — every faction's name; a name reveals nothing the roster count does not (`band-names.md` → "Faction names") |
 
 ### ⛔ A DERIVED AGGREGATE IS FACTION-KEYED DATA, EVEN WITH NO FACTION FIELD

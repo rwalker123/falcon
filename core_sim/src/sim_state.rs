@@ -210,6 +210,22 @@ pub struct SimState {
     /// Each people's Open Borders setting. Mutated only by `set_open_borders`, which is still state
     /// a rollback has to put back — the same reason `security_policies` rides here.
     pub border_policies: FactionBorderPolicies,
+    /// **Every pending dealing, and the counter its next id comes from** (`crate::dealings`). State:
+    /// the goods of a dealing in flight have already left the sender, so a restore that dropped the
+    /// book would strand a party in a camp with nobody waiting on it, and one that dropped the
+    /// counter would re-issue an id a client still holds. Restored whole.
+    pub pending_dealings: crate::dealings::PendingDealings,
+    /// **What each people thinks of each other, as its reasons** (`crate::goodwill`). State: credits
+    /// accumulate over turns and nothing rebuilds them.
+    pub goodwill: crate::goodwill::Goodwill,
+    /// **What other peoples are known to think of each viewer**, and the turn it was reported.
+    /// State for the same reason, and because the report clock must not move backwards across a
+    /// restore.
+    pub known_goodwill: crate::goodwill::KnownGoodwill,
+    /// **Every treaty in force, keyed by the unordered pair of peoples** (`crate::treaties`). State:
+    /// a treaty is a standing promise, so a restore that dropped it would quietly cancel it for
+    /// both peoples.
+    pub treaties: crate::treaties::Treaties,
     /// Every faction's name. **The save wins**: minted once by worldgen, then carried, so a pool
     /// edit never renames a saved world's factions.
     pub faction_names: crate::faction_names::FactionNames,
@@ -448,6 +464,22 @@ pub fn capture_sim_state(world: &World) -> SimState {
         faction_inventory: world.resource::<FactionInventory>().clone(),
         security_policies: world.resource::<FactionSecurityPolicies>().clone(),
         border_policies: world.resource::<FactionBorderPolicies>().clone(),
+        pending_dealings: world
+            .get_resource::<crate::dealings::PendingDealings>()
+            .cloned()
+            .unwrap_or_default(),
+        goodwill: world
+            .get_resource::<crate::goodwill::Goodwill>()
+            .cloned()
+            .unwrap_or_default(),
+        known_goodwill: world
+            .get_resource::<crate::goodwill::KnownGoodwill>()
+            .cloned()
+            .unwrap_or_default(),
+        treaties: world
+            .get_resource::<crate::treaties::Treaties>()
+            .cloned()
+            .unwrap_or_default(),
         faction_names: world
             .get_resource::<crate::faction_names::FactionNames>()
             .cloned()
@@ -660,6 +692,10 @@ pub fn restore_sim_state(world: &mut World, state: &SimState) {
     world.insert_resource(state.faction_inventory.clone());
     world.insert_resource(state.security_policies.clone());
     world.insert_resource(state.border_policies.clone());
+    world.insert_resource(state.pending_dealings.clone());
+    world.insert_resource(state.goodwill.clone());
+    world.insert_resource(state.known_goodwill.clone());
+    world.insert_resource(state.treaties.clone());
     world.insert_resource(state.faction_names.clone());
     world.insert_resource(state.factions.clone());
     world.insert_resource(state.hearts.clone());

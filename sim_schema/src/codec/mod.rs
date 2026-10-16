@@ -39,13 +39,16 @@
 mod campaign;
 mod connections;
 mod culture;
+mod dealings;
 mod economy;
+mod goodwill;
 mod governance;
 mod knowledge;
 mod map;
 mod population;
 mod routes;
 mod subsistence;
+mod treaties;
 mod vision;
 
 use crate::codec::campaign::{
@@ -60,9 +63,17 @@ use crate::codec::culture::{
     decode_culture_section, decode_culture_section_delta, serialize_culture_section,
     serialize_culture_section_delta,
 };
+use crate::codec::dealings::{
+    decode_dealings_section, decode_dealings_section_delta, serialize_dealings_section,
+    serialize_dealings_section_delta,
+};
 use crate::codec::economy::{
     decode_economy_section, decode_economy_section_delta, serialize_economy_section,
     serialize_economy_section_delta,
+};
+use crate::codec::goodwill::{
+    decode_goodwill_section, decode_goodwill_section_delta, serialize_goodwill_section,
+    serialize_goodwill_section_delta,
 };
 use crate::codec::governance::{
     decode_governance_section, decode_governance_section_delta, serialize_governance_section,
@@ -87,6 +98,10 @@ use crate::codec::routes::{
 use crate::codec::subsistence::{
     decode_subsistence_section, decode_subsistence_section_delta, serialize_subsistence_section,
     serialize_subsistence_section_delta,
+};
+use crate::codec::treaties::{
+    decode_treaties_section, decode_treaties_section_delta, serialize_treaties_section,
+    serialize_treaties_section_delta,
 };
 use crate::codec::vision::{
     decode_vision_section, decode_vision_section_delta, serialize_vision_section,
@@ -128,6 +143,11 @@ pub enum DecodeError {
 }
 
 /// A decoded frame of either kind, as the `Envelope`'s `SnapshotPayload` union names it.
+///
+/// Both variants are whole sections' worth of rows and grow with every appended section; the
+/// difference between them is the delta's `Option` wrappers, a few bytes per section. Boxing one
+/// would churn every consumer for a transient decode result, so the lint is allowed here.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone)]
 pub enum FramePayload {
     Snapshot(WorldSnapshot),
@@ -243,6 +263,15 @@ fn decode_snapshot_table(table: fb::WorldSnapshot<'_>) -> Result<WorldSnapshot, 
         &mut snapshot,
     );
     decode_route_section(required(table.routes(), "RouteSection")?, &mut snapshot);
+    decode_dealings_section(
+        required(table.dealings(), "DealingsSection")?,
+        &mut snapshot,
+    );
+    decode_goodwill_section(
+        required(table.goodwill(), "GoodwillSection")?,
+        &mut snapshot,
+    );
+    decode_treaties_section(required(table.treaties(), "TreatySection")?, &mut snapshot);
     witness_snapshot_is_fully_decoded(&snapshot);
     Ok(snapshot)
 }
@@ -279,6 +308,9 @@ fn decode_delta_table(table: fb::WorldDelta<'_>) -> Result<WorldDelta, DecodeErr
         &mut delta,
     );
     decode_route_section_delta(required(table.routes(), "RouteSection")?, &mut delta);
+    decode_dealings_section_delta(required(table.dealings(), "DealingsSection")?, &mut delta);
+    decode_goodwill_section_delta(required(table.goodwill(), "GoodwillSection")?, &mut delta);
+    decode_treaties_section_delta(required(table.treaties(), "TreatySection")?, &mut delta);
     witness_delta_is_fully_decoded(&delta);
     Ok(delta)
 }
@@ -391,6 +423,15 @@ fn witness_snapshot_is_fully_decoded(snapshot: &WorldSnapshot) {
         connections: _,
         // `decode_routes_section`
         routes: _,
+        // `decode_dealings_section`
+        dealings: _,
+        // `decode_treaties_section`
+        treaties: _,
+        standing_links: _,
+        // `decode_goodwill_section`
+        goodwill: _,
+        own_goodwill: _,
+        goodwill_cuts: _,
     } = snapshot;
 }
 
@@ -490,6 +531,15 @@ fn witness_delta_is_fully_decoded(delta: &WorldDelta) {
         connections: _,
         // `decode_routes_section_delta`
         routes: _,
+        // `decode_dealings_section_delta`
+        dealings: _,
+        // `decode_treaties_section_delta`
+        treaties: _,
+        standing_links: _,
+        // `decode_goodwill_section_delta`
+        goodwill: _,
+        own_goodwill: _,
+        goodwill_cuts: _,
     } = delta;
 }
 
@@ -553,6 +603,9 @@ fn build_snapshot_flatbuffer<'a>(
     let campaign = serialize_campaign_section(builder, snapshot, victory_state);
     let connections = serialize_connection_section(builder, snapshot);
     let routes = serialize_route_section(builder, snapshot);
+    let dealings = serialize_dealings_section(builder, snapshot);
+    let goodwill = serialize_goodwill_section(builder, snapshot);
+    let treaties = serialize_treaties_section(builder, snapshot);
 
     let snapshot_table = fb::WorldSnapshot::create(
         builder,
@@ -570,6 +623,9 @@ fn build_snapshot_flatbuffer<'a>(
             campaign: Some(campaign),
             connections: Some(connections),
             routes: Some(routes),
+            dealings: Some(dealings),
+            goodwill: Some(goodwill),
+            treaties: Some(treaties),
         },
     );
 
@@ -629,6 +685,9 @@ fn build_delta_flatbuffer<'a>(
     let campaign = serialize_campaign_section_delta(builder, delta, victory_state);
     let connections = serialize_connection_section_delta(builder, delta);
     let routes = serialize_route_section_delta(builder, delta);
+    let dealings = serialize_dealings_section_delta(builder, delta);
+    let goodwill = serialize_goodwill_section_delta(builder, delta);
+    let treaties = serialize_treaties_section_delta(builder, delta);
 
     let delta_table = fb::WorldDelta::create(
         builder,
@@ -646,6 +705,9 @@ fn build_delta_flatbuffer<'a>(
             campaign: Some(campaign),
             connections: Some(connections),
             routes: Some(routes),
+            dealings: Some(dealings),
+            goodwill: Some(goodwill),
+            treaties: Some(treaties),
         },
     );
 
@@ -856,6 +918,7 @@ mod tests {
             last_contact_turn: 1,
             first_contact_turn: 1,
             subject_name: "Reedmarsh".to_string(),
+            subject_faction: 1,
         }
     }
 
@@ -1151,6 +1214,12 @@ mod round_trip_tests {
             discovery_progress: world.discovery_progress.clone(),
             connections: Some(world.connections.clone()),
             routes: Some(world.routes.clone()),
+            dealings: Some(world.dealings.clone()),
+            treaties: Some(world.treaties.clone()),
+            standing_links: Some(world.standing_links.clone()),
+            goodwill: Some(world.goodwill.clone()),
+            own_goodwill: Some(world.own_goodwill.clone()),
+            goodwill_cuts: Some(world.goodwill_cuts.clone()),
             contact_lessons: Some(world.contact_lessons.clone()),
         }
     }
@@ -1216,6 +1285,12 @@ mod round_trip_tests {
             culture_tensions: Some(Vec::new()),
             connections: Some(Vec::new()),
             routes: Some(Vec::new()),
+            dealings: Some(Vec::new()),
+            treaties: Some(Vec::new()),
+            standing_links: Some(Vec::new()),
+            goodwill: Some(Vec::new()),
+            own_goodwill: Some(Vec::new()),
+            goodwill_cuts: Some(Default::default()),
             contact_lessons: Some(Vec::new()),
             ..Default::default()
         }

@@ -20,6 +20,7 @@ use crate::dict::culture::{
     axis_bias_to_dict, culture_layers_to_array, culture_tensions_to_array, influencers_to_array,
     sentiment_to_dict,
 };
+use crate::dict::dealings::{dealings_to_array, goodwill_to_dict, treaties_to_dict};
 use crate::dict::deposits::{deposit_rungs_to_array, deposits_to_array};
 use crate::dict::economy::faction_inventory_to_array;
 use crate::dict::fixed64_to_f32;
@@ -1636,6 +1637,18 @@ pub(crate) fn snapshot_to_dict(
     // precisely so this pair can exist.
     if let Some(routes) = snapshot.routes().and_then(|s| s.routes()) {
         let _ = dict.insert("routes", &routes_to_array(routes));
+    }
+
+    // **EARLY DIPLOMACY** (#233) -- three whole-section replaces, decoded on BOTH paths (see
+    // `dict/dealings.rs`). Present-and-empty means "nothing pending / no treaty now".
+    if let Some(dealings) = snapshot.dealings().and_then(|s| s.dealings()) {
+        let _ = dict.insert("dealings", &dealings_to_array(dealings));
+    }
+    if let Some(goodwill) = snapshot.goodwill() {
+        let _ = dict.insert("goodwill", &goodwill_to_dict(goodwill));
+    }
+    if let Some(treaties) = snapshot.treaties() {
+        let _ = dict.insert("treaties", &treaties_to_dict(treaties));
     }
 
     if let Some(tiles_fb) = snapshot.map().and_then(|s| s.tiles()) {

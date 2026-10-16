@@ -48,10 +48,17 @@ method name in `connections.rs`, and a field that belongs to one rider does not 
 ## Faction is a property of the ENDPOINT
 
 Both endpoints of `ConnectionKey` are a `BandId`. There is deliberately **no faction field on the
-edge and no same-faction / cross-faction branch anywhere in the module**. The arc is shaped so the
+key and no same-faction / cross-faction branch anywhere in the module**. The arc is shaped so the
 arrival of a second faction (#513) changes almost nothing, and that is only true if the code never
-asks. The one place faction is resolved is the snapshot filter, which asks whose ties to *publish* —
-a viewer question, not a model one.
+asks. The one place faction is resolved to decide anything is the snapshot filter, which asks whose
+ties to *publish* — a viewer question, not a model one.
+
+**The faction a connection DOES carry is memory, not a property of the tie.**
+`Connection::subject_faction` is the people the subject belonged to when it was last seen — clock 1,
+captured at the moment of sight beside the name and carried exactly as the name is (see "The three
+clocks"). It is written, held and published; nothing in this module reads it to decide anything, so
+the discipline above is unchanged. A rider that wants a live answer to "whose people is that band
+now" asks the subject's own cohort; the remembered one is what the observer last saw.
 
 ## Range is the observing BAND's sight, not the faction's
 
@@ -187,11 +194,12 @@ dead field at its only consumption point while `lastSeenTurn` published the flus
 For a live sighting the two turns are equal, so direct sight is unaffected either way — which is
 exactly why the expedition path is the one that has to be tested for it.
 
-What a party buffers per subject is a `connections::Sighting` — position, observed turn **and the
-subject's `BandName` read at the moment of sight**. `advance_expeditions` reads names off the
-resident-band query it already walks (`ExpeditionHomeBands` carries `Option<&BandName>`), cloning
-them into a per-turn map because `bands` is re-borrowed mutably later in the system. The name is
-captured on the march, not at the flush, so a report says what the party saw.
+What a party buffers per subject is a `connections::Sighting` — position, observed turn, **the
+subject's `BandName` and its faction, both read at the moment of sight**. `advance_expeditions` reads
+names and factions off the resident-band query it already walks (`ExpeditionHomeBands` carries
+`Option<&BandName>` and the cohort), cloning them into per-turn maps because `bands` is re-borrowed
+mutably later in the system. The name and the people are captured on the march, not at the flush, so
+a report says what the party saw.
 
 The buffer rides the existing checkpoint path unchanged — `capture_sim_state` clones the whole
 `Expedition` into `ExpeditionRecord` and restore clones it back.
@@ -245,7 +253,7 @@ They decay at genuinely different speeds and are three separate levers.
 
 | What decays | Speed | What it means |
 |---|---|---|
-| `last_seen_position` / `last_seen_turn` / `subject_name` | immediately on losing sight | you know where they *were*, and what they were called. Same as a remembered herd. |
+| `last_seen_position` / `last_seen_turn` / `subject_name` / `subject_faction` | immediately on losing sight | you know where they *were*, what they were called and whose people they belonged to. Same as a remembered herd. |
 | `strength` | over turns without contact, down to zero | the currency of what you know. **At zero nothing flows.** |
 | the edge itself | very slowly, but not never | eventually you have forgotten there was such a people |
 
@@ -253,22 +261,33 @@ They decay at genuinely different speeds and are three separate levers.
 have no current tie"*. That is what keeps the third clock a genuinely separate lever instead of a
 duplicate of the second — delete on zero and `forget_turns` would have nothing left to reap.
 
-**The name is part of clock 1, not a live lookup.** A connection remembers what its subject was
-called when last seen, the same way it remembers where. Two cases make that necessary rather than
-convenient: a **foreign** subject (#513) is never in the viewer's own roster, so a client has
-nothing to resolve its id against; and a subject that **died or split** drops out of every roster
+**The name and the people are part of clock 1, not a live lookup.** A connection remembers what its
+subject was called, and whose people it belonged to, when last seen, the same way it remembers
+where. Two cases make that necessary rather than convenient: a **foreign** subject (#513) is never
+in the viewer's own roster, so a client has nothing to resolve its id against; and a subject that **died or split** drops out of every roster
 while the tie lingers up to `forget_turns`. It also fixes what a rename means: a band renamed (#635)
 since you last saw it is still known to you by the old name until you see it again — a connection
 never grants live knowledge, which is the keystone below applied to identity. Empty means unknown;
 it is only reachable for a subject that carries no `BandName`, which no founding site produces.
 
+The remembered people is the same case with a worse failure. A band known only by a past sighting has
+no live row the observer may read (a foreign band outside sight publishes nothing — `factions.md` →
+"THREE TIERS"), so without `subject_faction` a client cannot say which people it was, and an envoy
+cannot be addressed to it. A band that has **defected since you last saw it is still remembered under
+its old people until it is seen again**; that is the keystone applied to allegiance, not a defect to
+correct from the live roster. Every `Sighting` producer states the faction at the moment of sight:
+the sight sweep's `Occupancy` carries `(BandId, name, faction)` per resident band, a party reads the
+subject's `PopulationCohort.faction` in the same pass that reads its name, and a split fills both
+halves of its full ties with the parent's faction (the two were one people).
+
 **Clock 1 is untouched by decay, and its being untouched is the whole feature.** `decay_all` moves
 `strength` and nothing else, so where they were survives a tie bleeding out entirely.
 
 **Clock 1 also never moves BACKWARDS.** `record_contact` advances `last_seen_position` /
-`last_seen_turn` / `subject_name` only when the incoming `observed_turn >= last_seen_turn`; a contact
-that loses that test still raises strength and refreshes `last_contact_turn`, it simply does not
-rewrite the memory — so a stale report cannot rename a band back to what it used to be called.
+`last_seen_turn` / `subject_name` / `subject_faction` only when the incoming
+`observed_turn >= last_seen_turn`; a contact that loses that test still raises strength and refreshes
+`last_contact_turn`, it simply does not rewrite the memory — so a stale report cannot rename a band
+back to what it used to be called, or move it back to the people it used to belong to.
 The guard is not decoration: `ContactsThisTurn`'s fresher-wins rule resolves collisions *within* one
 turn and never compares an incoming report against the ledger, so without it a party flushing an old
 sighting would drag a band's remembered position back to where it used to be **and stamp it as the
@@ -296,7 +315,7 @@ The occupancy index inside the sweep is a `HashMap` because it is *probed and ne
 place, so its `Sighting` is a value and not part of the identity. The sighting's turn is **when the
 subject was observed**, which is not always this turn — an expedition's report is what the party saw
 on the march — and when two reports name the same edge the **fresher observation wins, whole**:
-position and name are one observation, so they never come from two different reports.
+position, name and people are one observation, so they never come from two different reports.
 
 ## THE KEYSTONE — a connection can only ever grant `Discovered`
 
@@ -325,14 +344,22 @@ A section with no delta twin is permanently stale on a delta-fed client — the 
 `campaign_profiles` actually was, and the one `core_sim/tests/delta_streaming.rs` exists to catch.
 
 **Filtered to the viewer by the OBSERVER's faction**: you see who *you* know, not who other peoples
-know. The subject is published whatever faction it belongs to — that is the point of a contact — and
-faction never appears on the row. An observer band that cannot be resolved to a faction (despawned
-this turn) is skipped rather than published against a guess.
+know. The subject is published whatever faction it belongs to — that is the point of a contact. The
+row carries one faction, `subjectFaction`, and it is **what the subject's people were when last
+seen** (clock 1, not the subject's live faction), so the client can file a remembered band under a
+people even when the band is known only by a past sighting and has no row of its own. An observer band
+that cannot be resolved to a faction (despawned this turn) is skipped rather than published against a
+guess.
 
 Order is the ledger's `BTreeMap` order, so the section is stable frame to frame and diffs out when
 nothing moved.
 
-`subjectName` is appended last on `ConnectionState` and always written: it is clock 1's name, what
+`subjectFaction:uint` is appended after `subjectName` on `ConnectionState` and always written, from
+`snapshot/connections.rs`: every producer knows the faction, so there is no unknown sentinel and `0`
+is a real people. It is the same `uint` the schema uses for faction ids elsewhere
+(`PopulationCohortState.faction`).
+
+`subjectName` is appended before it on `ConnectionState` and always written: it is clock 1's name, what
 the subject was called at `lastSeenTurn`. The native decoder publishes it as the dict key
 `subject_name` beside `subject_band_id`; empty is "unknown". The client names a subject by its
 own roster label, else `subject_name`, else `Band near (x, y)` at the last-seen position

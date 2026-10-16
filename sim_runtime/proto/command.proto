@@ -71,9 +71,118 @@ message UpdateCounterIntelPolicyCommand {
 // another people's leavers may join its bands. Open (the default for every faction), they may: the
 // unhappy trickle's cross-people move and a defecting party both need an open destination. Closed,
 // none of this faction's bands is ever another people's destination. A faction's own bands never ask.
+//
+// PER-PEOPLE OVERRIDE (docs/plan_early_diplomacy.md §3): with `other_faction` set the order is the
+// setting toward that ONE people - it overrides the default for them and nothing else, and an
+// open-borders treaty term still beats it. Closing to a people the sender holds an open-borders term
+// with breaks the treaty.
 message SetOpenBordersCommand {
   uint32 faction = 1;
   bool open = 2;
+  optional uint32 other_faction = 3;
+}
+
+// THE STANDING ANSWER (docs/plan_early_diplomacy.md §1) — whether a gift from a people's own people
+// lands on arrival without waiting to be answered. On for every faction by default, so a parent
+// supplying its splinter is unchanged; off, the same gift becomes a pending dealing like any other.
+message SetAcceptOwnGiftsCommand {
+  uint32 faction = 1;
+  bool accept = 2;
+}
+
+// ANSWER A PENDING DEALING (docs/plan_early_diplomacy.md §1) — the one answer verb. Only the receiving
+// people may answer. ACCEPT takes the cargo into the receiving band and pays `returned` from that
+// band's holdings back to the waiting party (empty is allowed — the receiver names the return);
+// REFUSE sends the party home with its cargo. It fails closed with a reason BEFORE anything moves:
+// return goods the band does not hold, over the party's carry, an unknown material. A COUNTER is a
+// later slice; the text grammar refuses it with a reason.
+enum DealingAnswerKind {
+  DEALING_ANSWER_KIND_UNSPECIFIED = 0;
+  DEALING_ANSWER_KIND_ACCEPT = 1;
+  DEALING_ANSWER_KIND_REFUSE = 2;
+  // COUNTER (a proposal or a counter only): answer with different legs, stated from the ORIGINAL
+  // SENDER's point of view - `give` is what it would send, `ask` what it gets back - so accept always
+  // means the same thing. Closes the dealing and posts a new one the other way.
+  DEALING_ANSWER_KIND_COUNTER = 3;
+}
+
+message AnswerDealingCommand {
+  uint32 faction = 1;
+  uint64 dealing_id = 2;
+  DealingAnswerKind answer = 3;
+  // The goods the receiver pays back; meaningful on ACCEPT of an OFFER only (a proposal's terms are
+  // already written).
+  repeated TradeCargoItem returned = 4;
+  // The counter's legs, from the original sender's point of view; meaningful on COUNTER only.
+  repeated TradeCargoItem give = 5;
+  repeated TradeCargoItem ask = 6;
+  // The counter's FULL proposed terms; meaningful on COUNTER of a TREATY PROPOSAL only (a treaty
+  // proposal carries terms, not legs, so give/ask stay empty there).
+  optional TreatyTermsMsg counter_terms = 7;
+}
+
+// ONE STANDING EXCHANGE of an agreed trade (docs/plan_early_diplomacy.md §3): a shipment carrying
+// `give` is paid `ask` on arrival, `give` stated from the shipper's point of view.
+message TreatyBundleMsg {
+  repeated TradeCargoItem give = 1;
+  repeated TradeCargoItem ask = 2;
+}
+
+// THE TERMS A TREATY HOLDS OR A PROPOSAL ASKS FOR. A treaty with no term true and no bundle is not a
+// treaty: an accepted proposal carrying nothing removes whatever stood.
+message TreatyTermsMsg {
+  bool road_rights = 1;
+  bool open_borders = 2;
+  repeated TreatyBundleMsg bundles = 3;
+}
+
+// PROPOSE A TREATY OVER A STANDING LINK (docs/plan_early_diplomacy.md §3): posts a pending
+// `treaty_proposal` addressed to the destination's people the turn it is made. Fails closed (no
+// standing link, no live tie, the destination is the sender's own people, no term asked).
+message ProposeTreatyCommand {
+  uint32 faction_id = 1;
+  optional uint64 band_id = 2;
+  uint64 destination_band_id = 3;
+  TreatyTermsMsg terms = 4;
+}
+
+// SEND AN ENVOY (docs/plan_early_diplomacy.md §3): a party with no cargo that walks to the
+// destination band and posts the same proposal on arrival. For peoples with no road between them.
+message SendEnvoyCommand {
+  uint32 faction_id = 1;
+  optional uint64 band_id = 2;
+  uint32 party_workers = 3;
+  uint64 destination_band_id = 4;
+  TreatyTermsMsg terms = 5;
+}
+
+// END A TREATY (docs/plan_early_diplomacy.md §3): removes it at once and is a BREACH - the other
+// people's goodwill toward the sender takes the `broken_treaty` drop.
+message EndTreatyCommand {
+  uint32 faction = 1;
+  uint32 other_faction = 2;
+}
+
+// STAGE 4 (docs/plan_early_diplomacy.md section 1): haggle over a STANDING LINK - a kept road on every
+// tile between two bands. Names both legs before any party walks: `give` is what this band sends,
+// `ask` what it wants back. Posts a pending `proposal` addressed to the destination's people the turn
+// it is made. Fails closed (no standing link, no live tie, goods not held, give over the party's
+// carry) and draws nothing.
+message ProposeTradeCommand {
+  uint32 faction_id = 1;
+  optional uint64 band_id = 2;
+  uint32 party_workers = 3;
+  uint64 destination_band_id = 4;
+  repeated TradeCargoItem give = 5;
+  repeated TradeCargoItem ask = 6;
+}
+
+// What a scouting party does with its pack when it sights a stranger.
+enum StrangersOrderKind {
+  STRANGERS_ORDER_KIND_UNSPECIFIED = 0;
+  STRANGERS_ORDER_KIND_KEEP = 1;
+  STRANGERS_ORDER_KIND_GIVE = 2;
+  STRANGERS_ORDER_KIND_OFFER = 3;
 }
 
 message AdjustCounterIntelBudgetCommand {
@@ -447,6 +556,14 @@ message SendExpeditionCommand {
   // the stands it gathers from and the game it meets. An unknown id, or one whose `jobs` does not
   // include `expedition`, is a command failure with a reason. Appended (append-only).
   optional string kit_id = 6;
+  // THE SCOUT'S PACK (docs/plan_early_diplomacy.md section 1, stage 1): goods the party carries, the
+  // same manifest a shipment takes, bounded by the party's carry and drawn from the band at launch.
+  // Appended (append-only).
+  repeated TradeCargoItem pack = 7;
+  // THE STANDING ORDER FOR STRANGERS: GIVE hands the pack to the first stranger (a band of another
+  // people the party sights and its home band holds no live tie with) as a gift, OFFER as an offer the
+  // receiver answers by naming a return. KEEP (the default; also UNSPECIFIED) carries it home.
+  StrangersOrderKind strangers = 8;
 }
 
 // Order an in-flight expedition home (phase -> Returning; folds back on arrival).
@@ -519,6 +636,12 @@ message SendTradeExpeditionCommand {
   repeated TradeCargoItem cargo = 5;
   // THE KIT the party is sent out with — same rule as SendDenialRaidCommand.kit_id.
   optional string kit_id = 6;
+  // OFFER, NOT GIFT (docs/plan_early_diplomacy.md §1). False (the default) is a gift: it asks nothing
+  // back, and lands on arrival when the receiver is the sender's own people and that people's
+  // standing answer ("accept gifts from my own people") is on. True is an offer: it ALWAYS waits for
+  // the receiving people to answer (answer_dealing), naming a return from its own holdings or
+  // refusing, and silence for `offer_wait_turns` is a refusal.
+  bool offer = 7;
 }
 
 // Post part of a band at another band it holds a live tie with — a STATIONED PARTY
@@ -1738,5 +1861,15 @@ message CommandEnvelope {
     BenchAutoSkipCommand bench_auto_skip = 83;
     // 83 is held by `bench_auto_skip`, so the stationed party takes 84 (append-only; never renumber).
     StationExpeditionCommand station_expedition = 84;
+    // 84 is held by `station_expedition`, so the standing answer and the answer verb take 85-86
+    // (append-only; never renumber).
+    SetAcceptOwnGiftsCommand set_accept_own_gifts = 85;
+    AnswerDealingCommand answer_dealing = 86;
+    // 86 is held by `answer_dealing`, so the stage-4 proposal takes 87 (append-only; never renumber).
+    ProposeTradeCommand propose_trade = 87;
+    // 87 is held by `propose_trade`, so the treaty verbs take 88-90 (append-only; never renumber).
+    ProposeTreatyCommand propose_treaty = 88;
+    SendEnvoyCommand send_envoy = 89;
+    EndTreatyCommand end_treaty = 90;
   }
 }

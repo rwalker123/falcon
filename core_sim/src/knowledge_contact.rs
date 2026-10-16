@@ -467,7 +467,7 @@ mod tests {
             for _ in 0..contacts {
                 self.connections.record_contact(
                     ConnectionKey::new(observer, subject),
-                    &Sighting::new(SOMEWHERE, self.turn, ""),
+                    &Sighting::new(SOMEWHERE, self.turn, "", FactionId(0)),
                     self.turn,
                     &cfg,
                 );

@@ -15,7 +15,9 @@ use crate::state::culture::{
     AxisBiasState, CultureLayerState, CultureTensionState, InfluentialIndividualState,
     SentimentTelemetryState,
 };
+use crate::state::dealings::DealingState;
 use crate::state::economy::FactionInventoryState;
+use crate::state::goodwill::{GoodwillCutsState, GoodwillState};
 use crate::state::governance::{
     CorruptionLedger, CrisisOverlayState, CrisisTelemetryState, PowerNodeState, PowerTelemetryState,
 };
@@ -38,6 +40,7 @@ use crate::state::subsistence::{
     ForagePatchState, HerdTelemetryState, IntensificationKnowledgeState, KitOptionState,
     LadderKnowledgeState, MaterialDefState, RecipeDefState, RouteRungState, SedentarizationState,
 };
+use crate::state::treaties::{StandingLinkState, TreatyState};
 use ahash::RandomState;
 use serde::{Deserialize, Serialize};
 use std::hash::{BuildHasher, Hasher};
@@ -313,6 +316,34 @@ pub struct WorldSnapshot {
     /// discovery id. Rides `KnowledgeSection.contactLessons`.
     #[serde(default)]
     pub contact_lessons: Vec<ContactLessonState>,
+    /// **The pending dealings the viewer is party to** (`docs/plan_early_diplomacy.md` §1) — the
+    /// ones addressed to the viewer's people and the ones the viewer's people sent, ordered by id.
+    /// Another pair's dealings are theirs to know. Rides `DealingsSection`.
+    #[serde(default)]
+    pub dealings: Vec<DealingState>,
+    /// **The treaties the viewer's people is party to** (`docs/plan_early_diplomacy.md` §3), in the
+    /// other people's id order. Another pair's treaties are theirs to know. Rides `TreatySection`.
+    #[serde(default)]
+    pub treaties: Vec<TreatyState>,
+    /// **The standing links between the viewer's bands and other peoples' bands** — every pair a
+    /// kept road joins end to end, what `propose_treaty` needs. Rides `TreatySection`.
+    #[serde(default)]
+    pub standing_links: Vec<StandingLinkState>,
+    /// **What other peoples are known to think of the viewer's**, as last reported
+    /// (`docs/plan_early_diplomacy.md` §2). Ordered by the other people's id. Rides
+    /// `GoodwillSection`.
+    #[serde(default)]
+    pub goodwill: Vec<GoodwillState>,
+    /// **What the viewer's own people think of each other people right now** — the live opinion, one
+    /// row per other people the viewer holds an entry about (`other_faction` is the one thought
+    /// about). The viewer's own opinion is its own to know, so unlike `goodwill` this is never
+    /// carried news: `reported_turn` is the current turn. An AI weighs a proposal on it; a client
+    /// shows "what we think of them". Rides `GoodwillSection`.
+    #[serde(default)]
+    pub own_goodwill: Vec<GoodwillState>,
+    /// The word cuts the client draws `goodwill` with — published, never restated client-side.
+    #[serde(default)]
+    pub goodwill_cuts: GoodwillCutsState,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -479,6 +510,24 @@ pub struct WorldDelta {
     /// `None` = unchanged this frame, on `connections`' own rules.
     #[serde(default)]
     pub contact_lessons: Option<Vec<ContactLessonState>>,
+    /// `None` = unchanged this frame, on `connections`' own rules.
+    #[serde(default)]
+    pub dealings: Option<Vec<DealingState>>,
+    /// `None` = unchanged this frame, on `connections`' own rules.
+    #[serde(default)]
+    pub treaties: Option<Vec<TreatyState>>,
+    /// `None` = unchanged this frame, on `connections`' own rules.
+    #[serde(default)]
+    pub standing_links: Option<Vec<StandingLinkState>>,
+    /// `None` = unchanged this frame, on `connections`' own rules.
+    #[serde(default)]
+    pub goodwill: Option<Vec<GoodwillState>>,
+    /// `None` = unchanged this frame, on `connections`' own rules.
+    #[serde(default)]
+    pub own_goodwill: Option<Vec<GoodwillState>>,
+    /// `None` = unchanged this frame.
+    #[serde(default)]
+    pub goodwill_cuts: Option<GoodwillCutsState>,
 }
 
 pub fn hash_snapshot(snapshot: &WorldSnapshot) -> u64 {

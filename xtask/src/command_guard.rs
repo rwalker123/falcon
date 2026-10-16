@@ -47,6 +47,7 @@ use std::process::Command;
 
 use serde_json::Value;
 use sim_runtime::commands::CommandPayload;
+use sim_runtime::{DealingReply, StrangersKind, TreatyTermsRequest};
 
 /// Where the Godot half writes what it emitted.
 const EMITTED: &str = "clients/godot_thin_client/ui_preview_out/emitted_band_commands.json";
@@ -219,6 +220,18 @@ pub fn run(args: Vec<String>) -> Result<(), Box<dyn Error>> {
                 ));
                 continue;
             }
+            // ⛔ **THE DIPLOMACY VERBS THAT NAME A PEOPLE, NOT A BAND** (`answer_dealing`,
+            // `end_treaty`, `set_open_borders`, `set_accept_own_gifts`) — keyed on the PARSED variant,
+            // like `PlaceAddressed`, so a band-addressed command cannot be opted out by being
+            // relabelled. What there is to check is the id they DO carry (a dealing id, a people),
+            // against what the drive composed, which `faction_addressed_failures` states.
+            BandHandle::FactionAddressed => {
+                failures.extend(faction_addressed_failures(&label, &line, &payload, map));
+                if let Some(failure) = kit_failure(&label, &line, &payload, &expected_kit) {
+                    failures.push(failure);
+                }
+                continue;
+            }
             BandHandle::NotBandAddressed => {
                 failures.push(format!(
                     "{label}: parsed to a command variant that names no band, but this harness only \
@@ -256,6 +269,11 @@ pub fn run(args: Vec<String>) -> Result<(), Box<dyn Error>> {
         if let Some(failure) = kit_failure(&label, &line, &payload, &expected_kit) {
             failures.push(failure);
         }
+
+        // **THE DIPLOMACY FIELDS a band-addressed line also carries** — the destination's `BandId`
+        // (never its entity, the exact substitution this gate exists for), the offer flag, the scout's
+        // strangers order and pack, and a treaty's terms.
+        failures.extend(diplomacy_field_failures(&label, &line, &payload, map));
 
         // **THE MANIFEST, against the piles it was drawn from.** Only a shipment carries one, and
         // the pile sizes come off the drive rather than out of this file — see `manifest_failures`.
@@ -338,6 +356,8 @@ enum BandHandle {
     Omitted,
     /// A variant that names no band at all.
     NotBandAddressed,
+    /// A diplomacy verb that names a FACTION and a dealing or a people, never a band.
+    FactionAddressed,
     /// A variant that addresses a FACTION AND A PLACE and names no band — `abandon`, which drops
     /// every band-of-that-faction's holding on the tile, a forage assignment there included, and
     /// `unqueue`, which withdraws the entry on every band that has it queued. Its own outcome rather
@@ -365,6 +385,9 @@ fn band_handle(payload: &CommandPayload) -> BandHandle {
         | CommandPayload::SendDenialRaid { band_id, .. }
         | CommandPayload::SendTradeExpedition { band_id, .. }
         | CommandPayload::StationExpedition { band_id, .. }
+        | CommandPayload::ProposeTrade { band_id, .. }
+        | CommandPayload::ProposeTreaty { band_id, .. }
+        | CommandPayload::SendEnvoy { band_id, .. }
         | CommandPayload::SplitBand { band_id, .. } => *band_id,
         // ⛔ **THE ROUTE BRANCH'S TWO TILE VERBS NAME A BAND, and no other tile verb does** (arc
         // #532). A patch's keeper is whoever is already foraging it; a road has no work row at all,
@@ -431,12 +454,247 @@ fn band_handle(payload: &CommandPayload) -> BandHandle {
         | CommandPayload::Coppice { .. }
         | CommandPayload::Quarry { .. }
         | CommandPayload::AbandonWorking { .. } => return BandHandle::PlaceAddressed,
+        CommandPayload::AnswerDealing { .. }
+        | CommandPayload::EndTreaty { .. }
+        | CommandPayload::SetOpenBorders { .. }
+        | CommandPayload::SetAcceptOwnGifts { .. } => return BandHandle::FactionAddressed,
         _ => return BandHandle::NotBandAddressed,
     };
     match optional {
         Some(id) => BandHandle::Named(id),
         None => BandHandle::Omitted,
     }
+}
+
+/// The failure for an expectation the Godot half did not state: a line compared against nothing.
+fn missing(label: &str, line: &str, what: &str) -> String {
+    format!(
+        "{label}: the Godot half stated no `{what}` for this line, so it is compared against          nothing. Line: `{line}`"
+    )
+}
+
+/// A `u64` the Godot half stated beside a command, or `None` when it stated none.
+fn extra_u64(map: &serde_json::Map<String, Value>, key: &str) -> Option<u64> {
+    map.get(key).and_then(Value::as_u64)
+}
+
+fn extra_bool(map: &serde_json::Map<String, Value>, key: &str) -> Option<bool> {
+    map.get(key).and_then(Value::as_bool)
+}
+
+/// **What a faction-addressed diplomacy line must say**, against what the drive composed. Each
+/// expectation is REQUIRED for its variant: a drive that stated none would let a client that sent the
+/// wrong dealing, the wrong people or the wrong state pass on a line that merely parses.
+fn faction_addressed_failures(
+    label: &str,
+    line: &str,
+    payload: &CommandPayload,
+    map: &serde_json::Map<String, Value>,
+) -> Vec<String> {
+    let mut failures = Vec::new();
+    match payload {
+        CommandPayload::AnswerDealing {
+            dealing_id, reply, ..
+        } => {
+            match extra_u64(map, "expected_dealing_id") {
+                None => failures.push(missing(label, line, "expected_dealing_id")),
+                Some(want) if want != *dealing_id => failures.push(format!(
+                    "{label}: answered dealing {dealing_id}, the drive composed {want}. Line: `{line}`"
+                )),
+                Some(_) => {}
+            }
+            let got = match reply {
+                DealingReply::Accept { .. } => "accept",
+                DealingReply::Refuse => "refuse",
+                DealingReply::Counter { .. } => "counter",
+                DealingReply::CounterTerms { .. } => "counter_terms",
+            };
+            match map.get("expected_reply").and_then(Value::as_str) {
+                None => failures.push(missing(label, line, "expected_reply")),
+                Some(want) if want != got => failures.push(format!(
+                    "{label}: parsed as a `{got}` answer, the drive composed `{want}`. Line: `{line}`"
+                )),
+                Some(_) => {}
+            }
+            if let DealingReply::CounterTerms { terms } = reply {
+                failures.extend(terms_failures(label, line, terms, map));
+            }
+        }
+        CommandPayload::EndTreaty { other_faction, .. } => {
+            match extra_u64(map, "expected_other_faction") {
+                None => failures.push(missing(label, line, "expected_other_faction")),
+                Some(want) if want != u64::from(*other_faction) => failures.push(format!(
+                    "{label}: ended the treaty with people {other_faction}, the drive composed {want}.                      Line: `{line}`"
+                )),
+                Some(_) => {}
+            }
+        }
+        CommandPayload::SetOpenBorders {
+            open,
+            other_faction,
+            ..
+        } => {
+            // The general toggle names no people; the per-people form must name the one composed.
+            match (extra_u64(map, "expected_other_faction"), other_faction) {
+                (None, _) => failures.push(missing(label, line, "expected_other_faction")),
+                (Some(want), Some(got)) if want == u64::from(*got) => {}
+                (Some(want), got) => failures.push(format!(
+                    "{label}: set toward {got:?}, the drive composed people {want}. Line: `{line}`"
+                )),
+            }
+            match extra_bool(map, "expected_open") {
+                None => failures.push(missing(label, line, "expected_open")),
+                Some(want) if want != *open => failures.push(format!(
+                    "{label}: parsed open={open}, the drive composed open={want}. Line: `{line}`"
+                )),
+                Some(_) => {}
+            }
+        }
+        CommandPayload::SetAcceptOwnGifts { accept, .. } => {
+            match extra_bool(map, "expected_accept") {
+                None => failures.push(missing(label, line, "expected_accept")),
+                Some(want) if want != *accept => failures.push(format!(
+                "{label}: parsed accept={accept}, the drive composed accept={want}. Line: `{line}`"
+            )),
+                Some(_) => {}
+            }
+        }
+        _ => {}
+    }
+    failures
+}
+
+/// A treaty's terms against the drive's own: road rights, open borders and the bundle COUNT. Each
+/// expectation is optional only where the drive named no terms at all.
+fn terms_failures(
+    label: &str,
+    line: &str,
+    terms: &TreatyTermsRequest,
+    map: &serde_json::Map<String, Value>,
+) -> Vec<String> {
+    let mut failures = Vec::new();
+    for (key, got) in [
+        ("expected_road_rights", terms.road_rights),
+        ("expected_open_borders", terms.open_borders),
+    ] {
+        match extra_bool(map, key) {
+            None => failures.push(format!(
+                "{label}: the Godot half stated no `{key}`, so the terms are compared against nothing.                  Line: `{line}`"
+            )),
+            Some(want) if want != got => failures.push(format!(
+                "{label}: terms carry {key}={got}, the drive composed {want}. Line: `{line}`"
+            )),
+            Some(_) => {}
+        }
+    }
+    match extra_u64(map, "expected_bundles") {
+        None => failures.push(format!(
+            "{label}: the Godot half stated no `expected_bundles`. Line: `{line}`"
+        )),
+        Some(want) if want != terms.bundles.len() as u64 => failures.push(format!(
+            "{label}: terms carry {} bundle(s), the drive composed {want}. Line: `{line}`",
+            terms.bundles.len()
+        )),
+        Some(_) => {}
+    }
+    failures
+}
+
+/// **The diplomacy fields of a band-addressed line**, checked only where the drive stated an
+/// expectation for them (every other drive states none, and is unchanged):
+///
+/// * `destination_band_id` — a proposal, a treaty proposal or an envoy names its destination by its
+///   durable `BandId`, and **`destination_entity` is the number the picker also holds**; sending that
+///   one parses perfectly and addresses a band that does not exist;
+/// * `expected_offer` on a shipment, `expected_strangers` / `expected_pack_len` on a scouting party;
+/// * a treaty's terms on a proposal or an envoy.
+fn diplomacy_field_failures(
+    label: &str,
+    line: &str,
+    payload: &CommandPayload,
+    map: &serde_json::Map<String, Value>,
+) -> Vec<String> {
+    let mut failures = Vec::new();
+    let destination = match payload {
+        CommandPayload::ProposeTrade {
+            destination_band_id,
+            ..
+        }
+        | CommandPayload::ProposeTreaty {
+            destination_band_id,
+            ..
+        }
+        | CommandPayload::SendEnvoy {
+            destination_band_id,
+            ..
+        } => Some(*destination_band_id),
+        _ => None,
+    };
+    if let Some(sent) = destination {
+        match (
+            extra_u64(map, "destination_band_id"),
+            extra_u64(map, "destination_entity"),
+        ) {
+            (Some(want), Some(entity)) => {
+                if entity == want {
+                    failures.push(format!(
+                        "{label}: the fixture's destination BandId and entity are the same number                          ({want}), so this gate cannot tell the right handle from the wrong one"
+                    ));
+                } else if sent == entity {
+                    failures.push(format!(
+                        "{label}: sent the destination's ENTITY ({sent}) where the server resolves a                          BandId. Expected {want}. Line: `{line}`"
+                    ));
+                } else if sent != want {
+                    failures.push(format!(
+                        "{label}: sent destination {sent}, expected {want}. Line: `{line}`"
+                    ));
+                }
+            }
+            _ => failures.push(format!(
+                "{label}: the Godot half stated no destination BandId and entity, so the destination                  is compared against nothing. Line: `{line}`"
+            )),
+        }
+    }
+    match payload {
+        CommandPayload::ProposeTreaty { terms, .. } | CommandPayload::SendEnvoy { terms, .. } => {
+            failures.extend(terms_failures(label, line, terms, map));
+        }
+        CommandPayload::SendTradeExpedition { offer, .. } => {
+            if let Some(want) = extra_bool(map, "expected_offer") {
+                if want != *offer {
+                    failures.push(format!(
+                        "{label}: parsed offer={offer}, the drive composed offer={want}. Line: `{line}`"
+                    ));
+                }
+            }
+        }
+        CommandPayload::SendExpedition {
+            pack, strangers, ..
+        } => {
+            if let Some(want) = map.get("expected_strangers").and_then(Value::as_str) {
+                let got = match strangers {
+                    StrangersKind::Keep => "keep",
+                    StrangersKind::Give => "give",
+                    StrangersKind::Offer => "offer",
+                };
+                if want != got {
+                    failures.push(format!(
+                        "{label}: parsed strangers `{got}`, the drive composed `{want}`. Line: `{line}`"
+                    ));
+                }
+            }
+            if let Some(want) = extra_u64(map, "expected_pack_len") {
+                if want != pack.len() as u64 {
+                    failures.push(format!(
+                        "{label}: parsed a pack of {} line(s), the drive composed {want}. Line: `{line}`",
+                        pack.len()
+                    ));
+                }
+            }
+        }
+        _ => {}
+    }
+    failures
 }
 
 /// What a parsed payload says about the kit it names — the kit half of [`BandHandle`], with the same
@@ -715,6 +973,46 @@ mod tests {
         assert!(
             manifest_failures("shipment", floored, &manifest_of(floored), &held_food()).is_empty(),
             "the floored amount must survive the server's parse-and-quantise"
+        );
+    }
+
+    /// ⛔ **A DIPLOMACY LINE THAT NAMES THE DESTINATION'S ENTITY PARSES PERFECTLY**, and is the exact
+    /// substitution this gate exists for: the picker holds both numbers and a proposal carries one.
+    #[test]
+    fn a_destination_entity_in_place_of_its_band_id_is_a_failure() {
+        let mut map = serde_json::Map::new();
+        map.insert("destination_band_id".into(), Value::from(71_410_u64));
+        map.insert("destination_entity".into(), Value::from(910_u64));
+        let right = "propose_trade 0 71204 2 71410 give food 5.0 ask material hide 2.0";
+        let wrong = "propose_trade 0 71204 2 910 give food 5.0 ask material hide 2.0";
+        assert!(diplomacy_field_failures("drive", right, &parse(right), &map).is_empty());
+        let failures = diplomacy_field_failures("drive", wrong, &parse(wrong), &map);
+        assert_eq!(
+            failures.len(),
+            1,
+            "the entity must be reported: {failures:?}"
+        );
+        assert!(failures[0].contains("ENTITY"), "{}", failures[0]);
+    }
+
+    /// The faction-addressed verbs are checked against what the drive composed, and a drive that stated
+    /// nothing is itself a failure (a comparison against nothing passes everything).
+    #[test]
+    fn a_faction_addressed_line_is_compared_with_the_composed_answer() {
+        let line = "answer_dealing 0 14 refuse";
+        let mut map = serde_json::Map::new();
+        assert!(
+            !faction_addressed_failures("drive", line, &parse(line), &map).is_empty(),
+            "no expectation stated is a failure"
+        );
+        map.insert("expected_dealing_id".into(), Value::from(14_u64));
+        map.insert("expected_reply".into(), Value::from("refuse"));
+        assert!(faction_addressed_failures("drive", line, &parse(line), &map).is_empty());
+        map.insert("expected_reply".into(), Value::from("accept"));
+        assert_eq!(
+            faction_addressed_failures("drive", line, &parse(line), &map).len(),
+            1,
+            "a refuse where an accept was composed must be reported"
         );
     }
 

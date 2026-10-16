@@ -1262,6 +1262,17 @@ pub struct TradeDiffusionRecord {
 #[derive(Resource, Debug, Clone, Default, Serialize, Deserialize)]
 pub struct FactionBorderPolicies {
     open: BTreeMap<FactionId, bool>,
+    /// **A people's setting toward ONE other people**, `(host, from)` → open: it overrides the
+    /// default `open` row for that people and nothing else (`docs/plan_early_diplomacy.md` §3). Set
+    /// by `set_open_borders … <other faction>`; read only through [`Self::admits`].
+    overrides: BTreeMap<(FactionId, FactionId), bool>,
+    /// **The standing answer to a gift from one's own people** (`docs/plan_early_diplomacy.md` §1):
+    /// whether a shipment of the sender's own people lands on arrival without waiting to be
+    /// answered. On by default for every people, so a parent supplying its splinter is unchanged;
+    /// off, the same gift becomes a pending dealing like any other. It lives here because this is
+    /// the per-people policy resource the roster seeds, checkpoints and re-seeds on a runtime
+    /// break-away, and a second resource would owe all three again.
+    accept_own_gifts: BTreeMap<FactionId, bool>,
 }
 
 impl FactionBorderPolicies {
@@ -1279,11 +1290,27 @@ impl FactionBorderPolicies {
     /// seeded keeps its setting.
     pub fn seed_faction(&mut self, faction: FactionId) {
         self.open.entry(faction).or_insert(true);
+        self.accept_own_gifts.entry(faction).or_insert(true);
     }
 
-    /// Whether `faction` accepts another people's leavers. A faction with no row reads **open**,
-    /// which is the seeded value — see [`Self::contains`] for telling the two apart.
-    pub fn is_open(&self, faction: FactionId) -> bool {
+    /// Whether `faction`'s standing answer takes a gift from its own people on arrival. A faction
+    /// with no row reads **on**, the seeded value — see [`Self::contains`].
+    pub fn accepts_own_gifts(&self, faction: FactionId) -> bool {
+        self.accept_own_gifts.get(&faction).copied().unwrap_or(true)
+    }
+
+    pub fn set_accept_own_gifts(&mut self, faction: FactionId, accept: bool) {
+        self.accept_own_gifts.insert(faction, accept);
+    }
+
+    /// **A people's general setting** — the default row [`Self::admits`] falls back to, and the one
+    /// value the frame publishes beside the overrides. A faction with no row reads **open**, which
+    /// is the seeded value — see [`Self::contains`] for telling the two apart.
+    ///
+    /// ⛔ **Nothing decides admission from this alone.** It is the last rung of [`Self::admits`]; a
+    /// reader that asked it directly would ignore a treaty's open-borders term and a per-people
+    /// override.
+    pub fn default_open(&self, faction: FactionId) -> bool {
         self.open.get(&faction).copied().unwrap_or(true)
     }
 
@@ -1291,17 +1318,49 @@ impl FactionBorderPolicies {
         self.open.insert(faction, open);
     }
 
-    /// **May a party of `from` be stationed at a band of `host`?** — a stationed party's one faction
-    /// comparison, asked at its launch and again every turn of the post (`ExpeditionMission::Station`).
-    ///
-    /// A people's own bands never ask it (`factions.md`: moving between your own camps is not
-    /// crossing a border), so a same-people host is welcome whatever its borders say. Another
-    /// people's host is welcome only while that people's borders are open.
-    pub fn admits_posting(&self, host: FactionId, from: FactionId) -> bool {
-        host == from || self.is_open(host)
+    /// `host`'s setting toward `from` alone, when one was set.
+    pub fn override_for(&self, host: FactionId, from: FactionId) -> Option<bool> {
+        self.overrides.get(&(host, from)).copied()
     }
 
-    /// Whether this faction was **seeded a row of its own**. [`Self::is_open`]'s fallback *is* the
+    /// Set `host`'s setting toward the one people `from`. A same-people pair stores nothing.
+    pub fn set_override(&mut self, host: FactionId, from: FactionId, open: bool) {
+        if host != from {
+            self.overrides.insert((host, from), open);
+        }
+    }
+
+    /// `host`'s overrides, as `(other people, open)` in the other's id order.
+    pub fn overrides_of(&self, host: FactionId) -> Vec<(FactionId, bool)> {
+        self.overrides
+            .range((host, FactionId(0))..=(host, FactionId(u32::MAX)))
+            .map(|((_, from), open)| (*from, *open))
+            .collect()
+    }
+
+    /// ⛔ **ONE QUESTION, ONE ANSWER: DOES `host`'s PEOPLE TAKE IN `from`'s?** — defection intake, a
+    /// party going whole, a stationed party's post and the breeding shed's destinations all ask
+    /// here and nowhere else (`docs/plan_early_diplomacy.md` §3). In order:
+    ///
+    /// 1. **own people — yes.** A people's own bands never ask (`factions.md`: moving between your
+    ///    own camps is not crossing a border);
+    /// 2. **an open-borders treaty term — yes**, whatever the setting below says;
+    /// 3. **the override for that people**, if `host` set one;
+    /// 4. **the default.**
+    pub fn admits(
+        &self,
+        treaties: &crate::treaties::Treaties,
+        host: FactionId,
+        from: FactionId,
+    ) -> bool {
+        host == from
+            || treaties.open_borders(host, from)
+            || self
+                .override_for(host, from)
+                .unwrap_or_else(|| self.default_open(host))
+    }
+
+    /// Whether this faction was **seeded a row of its own**. [`Self::default_open`]'s fallback *is* the
     /// seeded value, so a forgotten faction reads exactly like a seeded one there; the seeding paths
     /// are asserted through this instead (`FactionSecurityPolicies::contains`'s reason).
     pub fn contains(&self, faction: FactionId) -> bool {
@@ -1725,6 +1784,22 @@ pub enum CommandEventKind {
     ///
     /// **Appended last**, after [`Self::BandBrokeAway`].
     LostTouch,
+    /// **A pending dealing's life** (`crate::dealings`, `docs/plan_early_diplomacy.md` §1): an offer
+    /// arriving, and its being accepted, refused, expired or withdrawn. One kind for the whole life,
+    /// [`Self::Road`]'s reading — the player is looking at *one dealing* — with the stage in the
+    /// detail's `status=`.
+    ///
+    /// **Pushed once per side**, [`Self::BandChangedHands`]' shape and for its reason (the feed is
+    /// per-faction on the wire): the sender's row carries `destination=<band>`, the receiver's
+    /// `sender=<band>` and `from=<faction>`, and both carry `dealing=<id>`. Band ids ride as tokens so
+    /// a client swaps in its own label.
+    ///
+    /// **Appended last**, after [`Self::LostTouch`], so no shipped variant's bincode index moved.
+    Dealing,
+    /// **A treaty's life** (`crate::treaties`): put in force, amended, ended (a breach) or lapsed
+    /// when a people is no more. Pushed once per people, [`Self::Dealing`]'s shape; the detail's
+    /// `status=` carries the stage and `with=<faction>` names the other people. Appended last.
+    Treaty,
 }
 
 impl CommandEventKind {
@@ -1773,6 +1848,8 @@ impl CommandEventKind {
             CommandEventKind::StartingLoadout => "starting_loadout",
             CommandEventKind::BandBrokeAway => "band_broke_away",
             CommandEventKind::LostTouch => "lost_touch",
+            CommandEventKind::Dealing => "dealing",
+            CommandEventKind::Treaty => "treaty",
         }
     }
 }
@@ -2429,5 +2506,106 @@ mod tests {
             0,
             "a faction that has founded nothing sits at its first slot"
         );
+    }
+}
+
+#[cfg(test)]
+mod border_admission_tests {
+    use super::*;
+    use crate::treaties::{Treaties, TreatyTerms};
+
+    const HOST: FactionId = FactionId(0);
+    const GUEST: FactionId = FactionId(1);
+    const THIRD: FactionId = FactionId(2);
+
+    fn world_of_three() -> (FactionBorderPolicies, Treaties) {
+        (
+            FactionBorderPolicies::new(&[HOST, GUEST, THIRD]),
+            Treaties::default(),
+        )
+    }
+
+    fn treaty(treaties: &mut Treaties, road_rights: bool, open_borders: bool) {
+        treaties.set(
+            HOST,
+            GUEST,
+            TreatyTerms {
+                road_rights,
+                open_borders,
+                ..Default::default()
+            },
+            1,
+        );
+    }
+
+    /// **`admits(host, from)` is ONE function and its precedence is a table**: own people, then an
+    /// open-borders treaty term, then the host's override for that people, then its default.
+    #[test]
+    fn admission_resolves_own_people_then_treaty_then_override_then_default() {
+        let (mut policies, mut treaties) = world_of_three();
+        assert!(
+            policies.admits(&treaties, HOST, GUEST),
+            "the seeded default is open"
+        );
+
+        policies.set_open(HOST, false);
+        assert!(
+            !policies.admits(&treaties, HOST, GUEST),
+            "a closed default shuts everyone out"
+        );
+        assert!(
+            policies.admits(&treaties, HOST, HOST),
+            "a people's own bands never ask: own people are always admitted"
+        );
+
+        policies.set_override(HOST, GUEST, true);
+        assert!(
+            policies.admits(&treaties, HOST, GUEST),
+            "an open override beats a closed default"
+        );
+        assert!(
+            !policies.admits(&treaties, HOST, THIRD),
+            "and applies to that people alone"
+        );
+
+        policies.set_open(HOST, true);
+        policies.set_override(HOST, GUEST, false);
+        assert!(
+            !policies.admits(&treaties, HOST, GUEST),
+            "a closed override beats an open default"
+        );
+        assert!(policies.admits(&treaties, HOST, THIRD));
+
+        treaty(&mut treaties, true, false);
+        assert!(
+            !policies.admits(&treaties, HOST, GUEST),
+            "road rights alone do not open a border"
+        );
+
+        treaty(&mut treaties, false, true);
+        assert!(
+            policies.admits(&treaties, HOST, GUEST),
+            "an open-borders term beats a closed override"
+        );
+        policies.set_open(HOST, false);
+        assert!(
+            policies.admits(&treaties, HOST, GUEST),
+            "and a closed default"
+        );
+        assert!(
+            !policies.admits(&treaties, HOST, THIRD),
+            "the term opens the border to its partner only"
+        );
+
+        // The term is mutual: the guest's own closed border admits the host too.
+        policies.set_open(GUEST, false);
+        policies.set_override(GUEST, HOST, false);
+        assert!(policies.admits(&treaties, GUEST, HOST));
+
+        // A people never overrides itself.
+        policies.set_override(HOST, HOST, false);
+        assert_eq!(policies.override_for(HOST, HOST), None);
+        assert!(policies.admits(&treaties, HOST, HOST));
+        assert_eq!(policies.overrides_of(HOST), vec![(GUEST, false)]);
     }
 }

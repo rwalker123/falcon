@@ -61,6 +61,21 @@ pub struct SnapshotContext<'w> {
     /// Each people's Open Borders setting — published as the viewer's own row only. `Option` for the
     /// same reason as the two above.
     pub border_policies: Option<Res<'w, crate::resources::FactionBorderPolicies>>,
+    /// The treaties in force — published filtered to the ones the viewer's people is party to, and
+    /// read by every walk the capture draws (a road reads full for a treaty partner). `Option` for
+    /// the reason the policies above are.
+    pub treaties: Option<Res<'w, crate::treaties::Treaties>>,
+    /// The pending dealings — published filtered to the viewer's people (addressed to them or sent
+    /// by them). `Option` for the reason the policies above are.
+    pub pending_dealings: Option<Res<'w, crate::dealings::PendingDealings>>,
+    /// What other peoples are known to think of each viewer — published as the viewer's own rows.
+    pub known_goodwill: Option<Res<'w, crate::goodwill::KnownGoodwill>>,
+    /// Every people's live opinion of every other — published as the viewer's OWN rows only (what
+    /// its own people think), never another people's.
+    pub goodwill: Option<Res<'w, crate::goodwill::Goodwill>>,
+    /// The diplomacy levers — the word cuts the goodwill rows are drawn with. `Option` on the same
+    /// rule: a hand-rolled world reads the builtin.
+    pub diplomacy_config: Option<Res<'w, crate::diplomacy_config::DiplomacyConfigHandle>>,
     /// Every faction's name — published world-visible. `Option` for the reason the two above are.
     pub faction_names: Option<Res<'w, crate::faction_names::FactionNames>>,
     pub victory: Res<'w, VictoryState>,
@@ -287,6 +302,12 @@ pub(crate) struct SeatPublishState {
     connections: Whole<Vec<ConnectionState>>,
     contact_lessons: Whole<Vec<ContactLessonState>>,
     routes: Whole<Vec<RouteState>>,
+    dealings: Whole<Vec<DealingState>>,
+    treaties: Whole<Vec<TreatyState>>,
+    standing_links: Whole<Vec<StandingLinkState>>,
+    goodwill: Whole<Vec<GoodwillState>>,
+    own_goodwill: Whole<Vec<GoodwillState>>,
+    goodwill_cuts: Whole<GoodwillCutsState>,
     demographics: Whole<Vec<SchemaPopulationDemographicsState>>,
     forage_patches: Whole<Vec<ForagePatchState>>,
     /// The live workings, diffed as a whole vector exactly like [`Self::forage_patches`].
@@ -657,6 +678,12 @@ struct CampaignParts {
     connections: Option<Vec<ConnectionState>>,
     contact_lessons: Option<Vec<ContactLessonState>>,
     routes: Option<Vec<RouteState>>,
+    dealings: Option<Vec<DealingState>>,
+    treaties: Option<Vec<TreatyState>>,
+    standing_links: Option<Vec<StandingLinkState>>,
+    goodwill: Option<Vec<GoodwillState>>,
+    own_goodwill: Option<Vec<GoodwillState>>,
+    goodwill_cuts: Option<GoodwillCutsState>,
     demographics: Option<Vec<SchemaPopulationDemographicsState>>,
     intensification_knowledge: Option<Vec<IntensificationKnowledgeState>>,
     ladder_knowledge: Option<Vec<LadderKnowledgeState>>,
@@ -682,6 +709,12 @@ struct CampaignBaselines<'a> {
     connections: &'a mut Whole<Vec<ConnectionState>>,
     contact_lessons: &'a mut Whole<Vec<ContactLessonState>>,
     routes: &'a mut Whole<Vec<RouteState>>,
+    dealings: &'a mut Whole<Vec<DealingState>>,
+    treaties: &'a mut Whole<Vec<TreatyState>>,
+    standing_links: &'a mut Whole<Vec<StandingLinkState>>,
+    goodwill: &'a mut Whole<Vec<GoodwillState>>,
+    own_goodwill: &'a mut Whole<Vec<GoodwillState>>,
+    goodwill_cuts: &'a mut Whole<GoodwillCutsState>,
     demographics: &'a mut Whole<Vec<SchemaPopulationDemographicsState>>,
     intensification_knowledge: &'a mut Whole<Vec<IntensificationKnowledgeState>>,
     ladder_knowledge: &'a mut Whole<Vec<LadderKnowledgeState>>,
@@ -726,6 +759,12 @@ fn diff_campaign(
         connections: diff_whole(baseline.connections, &snapshot.connections, write),
         contact_lessons: diff_whole(baseline.contact_lessons, &snapshot.contact_lessons, write),
         routes: diff_whole(baseline.routes, &snapshot.routes, write),
+        dealings: diff_whole(baseline.dealings, &snapshot.dealings, write),
+        treaties: diff_whole(baseline.treaties, &snapshot.treaties, write),
+        standing_links: diff_whole(baseline.standing_links, &snapshot.standing_links, write),
+        goodwill: diff_whole(baseline.goodwill, &snapshot.goodwill, write),
+        own_goodwill: diff_whole(baseline.own_goodwill, &snapshot.own_goodwill, write),
+        goodwill_cuts: diff_whole(baseline.goodwill_cuts, &snapshot.goodwill_cuts, write),
         demographics: diff_whole(baseline.demographics, &snapshot.demographics, write),
         intensification_knowledge: diff_whole(
             baseline.intensification_knowledge,
@@ -951,6 +990,12 @@ impl SeatPublishState {
             connections: Whole::default(),
             contact_lessons: Whole::default(),
             routes: Whole::default(),
+            dealings: Whole::default(),
+            treaties: Whole::default(),
+            standing_links: Whole::default(),
+            goodwill: Whole::default(),
+            own_goodwill: Whole::default(),
+            goodwill_cuts: Whole::default(),
             demographics: Whole::default(),
             forage_patches: Whole::default(),
             deposits: Whole::default(),
@@ -1119,6 +1164,12 @@ impl SeatPublishState {
             connections,
             contact_lessons,
             routes,
+            dealings,
+            treaties,
+            standing_links,
+            goodwill,
+            own_goodwill,
+            goodwill_cuts,
             demographics,
             intensification_knowledge,
             ladder_knowledge,
@@ -1239,6 +1290,12 @@ impl SeatPublishState {
                             connections,
                             contact_lessons,
                             routes,
+                            dealings,
+                            treaties,
+                            standing_links,
+                            goodwill,
+                            own_goodwill,
+                            goodwill_cuts,
                             demographics,
                             intensification_knowledge,
                             ladder_knowledge,
@@ -1348,6 +1405,12 @@ impl SeatPublishState {
             connections: campaign_parts.connections,
             contact_lessons: campaign_parts.contact_lessons,
             routes: campaign_parts.routes,
+            dealings: campaign_parts.dealings,
+            treaties: campaign_parts.treaties,
+            standing_links: campaign_parts.standing_links,
+            goodwill: campaign_parts.goodwill,
+            own_goodwill: campaign_parts.own_goodwill,
+            goodwill_cuts: campaign_parts.goodwill_cuts,
             demographics: campaign_parts.demographics,
             intensification_knowledge: campaign_parts.intensification_knowledge,
             ladder_knowledge: campaign_parts.ladder_knowledge,
@@ -1552,6 +1615,14 @@ impl SeatPublishState {
         self.contact_lessons
             .reset(entry.snapshot.contact_lessons.clone());
         self.routes.reset(entry.snapshot.routes.clone());
+        self.dealings.reset(entry.snapshot.dealings.clone());
+        self.treaties.reset(entry.snapshot.treaties.clone());
+        self.standing_links
+            .reset(entry.snapshot.standing_links.clone());
+        self.goodwill.reset(entry.snapshot.goodwill.clone());
+        self.own_goodwill.reset(entry.snapshot.own_goodwill.clone());
+        self.goodwill_cuts
+            .reset(entry.snapshot.goodwill_cuts.clone());
         self.demographics.reset(entry.snapshot.demographics.clone());
         self.forage_patches
             .reset(entry.snapshot.forage_patches.clone());
@@ -1785,6 +1856,12 @@ impl SeatPublishState {
             connections: None,
             contact_lessons: None,
             routes: None,
+            dealings: None,
+            treaties: None,
+            standing_links: None,
+            goodwill: None,
+            own_goodwill: None,
+            goodwill_cuts: None,
             demographics: None,
             forage_patches: None,
             deposits: None,
@@ -1934,6 +2011,12 @@ impl SeatPublishState {
             connections: None,
             contact_lessons: None,
             routes: None,
+            dealings: None,
+            treaties: None,
+            standing_links: None,
+            goodwill: None,
+            own_goodwill: None,
+            goodwill_cuts: None,
             demographics: None,
             forage_patches: None,
             deposits: None,
@@ -2067,6 +2150,12 @@ impl SeatPublishState {
             connections: None,
             contact_lessons: None,
             routes: None,
+            dealings: None,
+            treaties: None,
+            standing_links: None,
+            goodwill: None,
+            own_goodwill: None,
+            goodwill_cuts: None,
             demographics: None,
             forage_patches: None,
             deposits: None,
@@ -2624,6 +2713,11 @@ pub fn capture_snapshot(
         active_profile,
         starting_loadout,
         border_policies,
+        treaties,
+        pending_dealings,
+        known_goodwill,
+        goodwill,
+        diplomacy_config,
         faction_names,
         victory,
         faction_inventory,
@@ -2891,10 +2985,12 @@ pub fn capture_snapshot(
         // **How far a band's people walk** — the one `WalkReach` the culture morale term and
         // migration read, built here from the same levers so each band's published anchor reach
         // region is exactly the set of tiles that term would call near.
+        let treaties_in_force = treaties.as_deref().unwrap_or(&crate::treaties::NO_TREATIES);
         let walk = crate::supply::WalkReach::for_people(
             wellbeing_config.migration.base_reach,
             &supply_network_cfg,
             &ladder_config,
+            crate::routes::foreign_roads(diplomacy_config.as_deref(), &ladder_config),
             tile_registry.width,
             tile_registry.height,
             config.map_topology.wrap_horizontal,
@@ -2931,7 +3027,7 @@ pub fn capture_snapshot(
                 .map(|(index, (_, entity, _))| (*entity, index))
                 .collect();
             (
-                crate::belief_relay::resolve_belief_relay(&bands, &walk, &roads),
+                crate::belief_relay::resolve_belief_relay(&bands, &walk, &roads, treaties_in_force),
                 index,
             )
         };
@@ -3153,7 +3249,13 @@ pub fn capture_snapshot(
                     // walked off is re-read here on the next capture and rides that frame's delta.
                     let belief_reach: Vec<UVec2> = cohort
                         .belief_anchor
-                        .map(|anchor| walk.region_around(&roads, anchor))
+                        .map(|anchor| {
+                            walk.region_around(
+                                &roads,
+                                crate::routes::Walker::new(cohort.faction, treaties_in_force),
+                                anchor,
+                            )
+                        })
                         .unwrap_or_default();
                     // The relayed REGION is "where could this band walk NOW and be tied in", so it
                     // is struck on the frame's positions; the hop count is the turn's own reading
@@ -3163,9 +3265,18 @@ pub fn capture_snapshot(
                             let direct: std::collections::BTreeSet<(u32, u32)> =
                                 belief_reach.iter().map(|tile| (tile.y, tile.x)).collect();
                             let region: std::collections::BTreeSet<(u32, u32)> = belief_relay
-                                .relayers_without(index, &walk, &roads)
+                                .relayers_without(index, &walk, &roads, treaties_in_force)
                                 .into_iter()
-                                .flat_map(|relayer| walk.region_around(&roads, relayer))
+                                .flat_map(|relayer| {
+                                    walk.region_around(
+                                        &roads,
+                                        crate::routes::Walker::new(
+                                            cohort.faction,
+                                            treaties_in_force,
+                                        ),
+                                        relayer,
+                                    )
+                                })
                                 .map(|tile| (tile.y, tile.x))
                                 .filter(|key| !direct.contains(key))
                                 .collect();
@@ -3815,6 +3926,75 @@ pub fn capture_snapshot(
                     .map(|(_, tile, _)| tile.terrain)
             },
         );
+        // **THE PENDING DEALINGS THE VIEWER IS PARTY TO** — addressed to their people or sent by
+        // them; another pair's dealings are theirs to know.
+        let dealing_states = pending_dealings
+            .as_deref()
+            .map(|pending| {
+                crate::snapshot::dealings::dealing_states(
+                    pending,
+                    viewer,
+                    tick.0,
+                    &materials_config,
+                )
+            })
+            .unwrap_or_default();
+        // **THE TREATIES THE VIEWER'S PEOPLE IS PARTY TO**, and the standing links its bands hold
+        // with other peoples' bands it knows (`docs/plan_early_diplomacy.md` §3). Another pair's
+        // treaties are theirs to know.
+        let treaty_states = crate::snapshot::treaties::treaty_states(treaties_in_force, viewer);
+        let standing_link_states = {
+            let floor = diplomacy_config.as_deref().map_or_else(
+                || {
+                    crate::diplomacy_config::DiplomacyConfig::builtin()
+                        .offers
+                        .standing_link_floor()
+                },
+                |handle| handle.get().offers.standing_link_floor(),
+            );
+            let bands: Vec<(BandId, FactionId, UVec2)> = populations
+                .iter()
+                .filter(|(entity, ..)| resident_bands.contains(*entity))
+                .filter_map(|(_, cohort, _, _, _, band_id, _, _, _)| {
+                    let standing = tile_positions
+                        .get(&cohort.current_tile.to_bits())
+                        .copied()?;
+                    Some((*band_id?, cohort.faction, standing))
+                })
+                .collect();
+            crate::snapshot::treaties::standing_link_states(
+                &bands,
+                viewer,
+                &roads,
+                &connections,
+                (
+                    tile_registry.width,
+                    tile_registry.height,
+                    config.map_topology.wrap_horizontal,
+                ),
+                floor,
+            )
+        };
+        // **WHAT OTHER PEOPLES ARE KNOWN TO THINK OF THE VIEWER'S** — the viewer's own rows of the
+        // carried-news ledger, never the live opinion (`docs/plan_early_diplomacy.md` §2).
+        let goodwill_states = known_goodwill
+            .as_deref()
+            .map(|known| crate::snapshot::goodwill::goodwill_states(known, viewer))
+            .unwrap_or_default();
+        // **WHAT THE VIEWER'S OWN PEOPLE THINK OF EACH OTHER** — live, because it is the viewer's own
+        // opinion: the AI weighs a proposal on it and a client shows "what we think of them".
+        let own_goodwill_states = goodwill
+            .as_deref()
+            .map(|opinions| {
+                crate::snapshot::goodwill::own_goodwill_states(opinions, viewer, tick.0)
+            })
+            .unwrap_or_default();
+        let goodwill_cuts_state = crate::snapshot::goodwill::goodwill_cuts(
+            &diplomacy_config
+                .as_deref()
+                .map(|handle| handle.get())
+                .unwrap_or_else(crate::diplomacy_config::DiplomacyConfig::builtin),
+        );
         // **THE DEPOSITS THE VIEWER HAS EXPLORED** — the road list's `Discovered` gate, because a
         // quarry does not wander off either, over the deposit-bearing ground sweep 1 picked out. See
         // `snapshot::deposits::deposit_states`: a row is about the LAND, so it stands whether or not
@@ -3881,8 +4061,26 @@ pub fn capture_snapshot(
             faction: viewer.0,
             open_borders: border_policies
                 .as_deref()
-                .map(|policies| policies.is_open(viewer))
+                .map(|policies| policies.default_open(viewer))
                 .unwrap_or(true),
+            accept_own_gifts: border_policies
+                .as_deref()
+                .map(|policies| policies.accepts_own_gifts(viewer))
+                .unwrap_or(true),
+            // The viewer's per-people overrides of that default — its own settings only.
+            border_overrides: border_policies
+                .as_deref()
+                .map(|policies| {
+                    policies
+                        .overrides_of(viewer)
+                        .into_iter()
+                        .map(|(other, open)| BorderOverrideState {
+                            other_faction: other.0,
+                            open,
+                        })
+                        .collect()
+                })
+                .unwrap_or_default(),
         }];
         // Every faction's name, world-visible, in id order.
         let faction_names_state: Vec<FactionNameState> = faction_names
@@ -4004,6 +4202,12 @@ pub fn capture_snapshot(
             connections: connections_state.clone(),
             contact_lessons: contact_lessons_state,
             routes: route_states.clone(),
+            dealings: dealing_states,
+            treaties: treaty_states,
+            standing_links: standing_link_states,
+            goodwill: goodwill_states,
+            own_goodwill: own_goodwill_states,
+            goodwill_cuts: goodwill_cuts_state,
             demographics: demographics_state.clone(),
             forage_patches: forage_patches_state.clone(),
             deposits: deposit_states.clone(),

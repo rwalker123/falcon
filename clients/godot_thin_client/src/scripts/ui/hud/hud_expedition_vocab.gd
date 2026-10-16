@@ -31,6 +31,10 @@ const EXPEDITION_MISSION_TRADE := "trade"
 
 const EXPEDITION_MISSION_STATION := "station"
 
+## **AN ENVOY** (early diplomacy C2): a party with no cargo that walks a treaty proposal to another people's
+## band and posts it on arrival. It carries `envoy_terms` on its cohort row.
+const EXPEDITION_MISSION_ENVOY := "envoy"
+
 ## **A STATIONED PARTY** (issue #774) — people a band posts at a band it holds a live tie with. The
 ## host is named exactly as a shipment's destination is (`expedition_destination_band` is the key,
 ## `expedition_destination_name` the display twin), and the home band feeds the party from its own
@@ -53,6 +57,7 @@ const EXPEDITION_MISSION_LABELS := {
 	"deny": "Denial raid",
 	"trade": "Trade party",
 	"station": "Stationed people",
+	"envoy": "Envoy",
 }
 
 ## **THE PARENTHETICAL FORMS** — the mission word `HudFormat.band_name` tags a detached party's name
@@ -69,6 +74,7 @@ const PARTY_SHORT_LABELS := {
 	"deny": "Raid",
 	"trade": "Trade",
 	"station": "Station",
+	"envoy": "Envoy",
 }
 
 ## How the mission word joins the name: `<band> (<mission>)`.

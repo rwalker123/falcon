@@ -206,7 +206,7 @@ fn tie(app: &mut App, a: Entity, b: Entity) {
         for _ in 0..contacts_to_full {
             ledger.record_contact(
                 key,
-                &Sighting::new(position, SEEDED_ON_TURN, ""),
+                &Sighting::new(position, SEEDED_ON_TURN, "", core_sim::FactionId(0)),
                 SEEDED_ON_TURN,
                 &cfg,
             );

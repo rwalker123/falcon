@@ -788,7 +788,7 @@ every other carrier, and the receiver may refuse. **What changes is who sets the
 - **Stage 2 is the blind party.** You know a people exist but have no way to talk to them, so you
   send goods and see what, if anything, they give back.
 - **Stage 3 is not built here.** A diplomat who agrees terms before the party sets out is treaty work
-  (#231/#233). The offer model leaves room for it: stage 3 is an offer whose return was agreed before
+  (#231/#233, `docs/plan_early_diplomacy.md` §3). The offer model leaves room for it: stage 3 is an offer whose return was agreed before
   departure.
 - **Stage 4 needs a kept road, on every tile.** Proposing and haggling over a trade at any time needs
   a logistics link whose **every** route tile is at rung `min_route_rung` or above **with its upkeep
@@ -903,6 +903,7 @@ driver issuing the order.
 
 ## See Also
 
+- `docs/plan_early_diplomacy.md` — offers, goodwill and treaties built over this substrate (#233).
 - `docs/plan_band_fission.md` — the arc that makes this necessary: a splinter that walks away is
   severed the turn it founds.
 - `docs/plan_settlement_population.md` — §Migration and the supply network §Q4 re-founds.

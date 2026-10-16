@@ -388,13 +388,18 @@ const ZONE_TRADE := &"trade"
 ## The band page's Peoples zone (issue #549) — the ties the band holds. NARROW-ONLY like Trade: a tab in
 ## the narrow shell, a section under Parties (after Trade's) in the wide one.
 const ZONE_PEOPLES := &"peoples"
+## The band page's Dealings zone (early diplomacy, issue #233) -- the pending items this band takes part
+## in. NARROW-ONLY like Peoples: a tab in the narrow shell, a section under Parties (after Peoples') in
+## the wide one.
+const ZONE_DEALINGS := &"dealings"
 ## Every zone key the panel knows. **The persisted tab is validated against THIS rather than against
 ## the live layout**, because prefs load before any subject has declared one — the only layout
 ## standing at that moment is the bootstrap `DEFAULT_ZONE_LAYOUT`, and a player who left on the
 ## faction page's `parties` tab must have that selection survive a check against a layout no subject
 ## has authored yet. A key the live layout lacks is handled by `_effective_tab`, which falls back to
 ## the first zone that has content.
-const ZONE_KEYS: Array[StringName] = [ZONE_BAND, ZONE_WORK, ZONE_PARTIES, ZONE_TRADE, ZONE_PEOPLES]
+const ZONE_KEYS: Array[StringName] = [ZONE_BAND, ZONE_WORK, ZONE_PARTIES, ZONE_TRADE, ZONE_PEOPLES,
+		ZONE_DEALINGS]
 ## A zone descriptor's fields (`set_zone_layout`). Named consts rather than bare strings, the
 ## `HudWidgets.MENU_ENTRY_*` idiom: a mistyped key in a Dictionary literal is silent.
 const ZONE_SPEC_KEY := "key"
@@ -446,15 +451,21 @@ const DEFAULT_ZONE_LAYOUT: Array[Dictionary] = [
 ]
 ## The tab a fresh session opens on: work is the zone the player acts in.
 const DEFAULT_TAB := ZONE_WORK
-const TAB_FONT_SIZE := 12
+## 11, not 12: at 12 the five-badge worst case still overran (359px against the 354px interior).
+const TAB_FONT_SIZE := 11
 const TAB_BADGE_FONT_SIZE := 10
-const TAB_SEPARATION := 4
-const TAB_PADDING_H := 10
+## Six tabs on a band page (Dealings joined Band, Work, Parties, Trade and Peoples) overran the strip: 76px
+## at the old padding of 10, and still ~20px with four badges showing at 4. The separation (between tabs
+## and between a label and its badge), the tab padding and the badge padding are all tightened so the bar
+## fits the strip with EVERY badge showing: measured 347 of the 354px interior with all five badges at two
+## digits (303 with the badges a band normally wears), where the old padding read 454.
+const TAB_SEPARATION := 2
+const TAB_PADDING_H := 2
 const TAB_PADDING_V := 5
 ## Thickness of the active tab's underline (the prototype's SIGNAL rule under the selected tab).
 const TAB_UNDERLINE_THICKNESS := 2
 const TAB_BADGE_CORNER_RADIUS := 7
-const TAB_BADGE_PADDING_H := 5
+const TAB_BADGE_PADDING_H := 3
 const TAB_BADGE_PADDING_V := 1
 const CYCLE_PREV := -1
 const CYCLE_NEXT := 1
