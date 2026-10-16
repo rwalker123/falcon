@@ -499,6 +499,7 @@ func unit_summary_lines(unit_data: Dictionary, terrain_label: String,
             # ancestors pull wears the violet mark as a clause on this line, and the line's hover
             # carries the full sentence. With no pull it adds nothing.
             morale_line += _band_beliefs_compact_clause(unit_data, context)
+            morale_line += _culture_pressure_compact_clause(unit_data)
         if compact and growth_line != "":
             lines.append(morale_line + _band_growth_clause(unit_data, context))
         else:
@@ -1033,6 +1034,24 @@ static func _culture_pressure_sentence(row: Dictionary) -> String:
     if phase >= HudDisclosureVocab.CULTURE_PRESSURE_PHASE_ASKED:
         return HudSelectionVocab.RUNG_HAZARD_GLYPH + " " + text
     return text
+
+## The `compact` tier's culture-pressure clause (#820): the Beliefs row (and so the lines under it) is
+## absent in the short tier, and a warning must not vanish there. The SIGNALS are phases >= asked; the sim
+## sorts strongest first, so the first such row is the one shown. Amber, hazard mark first, one short
+## phrase. `""` when no row has reached the asked phase.
+func _culture_pressure_compact_clause(unit_data: Dictionary) -> String:
+    for raw in Array(unit_data.get(HudDisclosureVocab.CULTURE_PRESSURE_KEY, [])):
+        var row: Dictionary = raw
+        var phase := int(row.get("phase", 0))
+        if phase < HudDisclosureVocab.CULTURE_PRESSURE_PHASE_ASKED:
+            continue
+        var people := FactionMark.faction_name(int(row.get("faction", HudConst.NO_FACTION_ID)))
+        var format := HudDisclosureVocab.CULTURE_PRESSURE_COMPACT_FORCED_FORMAT \
+            if phase >= HudDisclosureVocab.CULTURE_PRESSURE_PHASE_FORCED \
+            else HudDisclosureVocab.CULTURE_PRESSURE_COMPACT_ASKED_FORMAT
+        return BELIEFS_TERM_SEPARATOR + "[color=#%s]%s %s[/color]" % [
+            HudStyle.WARN_HEX, HudSelectionVocab.RUNG_HAZARD_GLYPH, format % people]
+    return ""
 
 static func _culture_pressure_turns(turns: int) -> String:
     if turns == 1:

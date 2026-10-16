@@ -1177,6 +1177,7 @@ func _ready() -> void:
 	# puts a one-column horizontal dock at COMPACT, which does not merge — so docking T/B no longer
 	# reaches the tier these two claims are about. `SHORT_TIER_PROBE_HEIGHT` restores the pre-raise
 	# 300px box through the clamp, so the frame is the geometry it always was.
+	FactionNames.update([{"faction": 12, "name": "Reedwalkers"}])
 	_push_bands([_vitals_worst_case_band_fixture()])
 	await _pin_canvas(Vector2i(PREVIEW_SIZE.x, SHORT_TIER_PROBE_HEIGHT))
 	_panel.set_dock(SIDE_TOP)
@@ -15937,6 +15938,23 @@ func _assert_beliefs_compact_clause() -> void:
 	_assert_band_panel("beliefs compact: ...and the Beliefs hover names who is pulling",
 		String(drift_ctx.row_tooltips.get(HudDisclosureVocab.DETAIL_ROW_BELIEFS, "")).contains(
 			HudDisclosureVocab.BELIEFS_DRIFT_UNKNOWN_BAND))
+	# CULTURE PRESSURE (#820) in the SHORT tier: phase 2/3 wear an amber clause on the Morale line; 0/1 add none.
+	FactionNames.update([{"faction": 11, "name": "Ashfolk"}, {"faction": 12, "name": "Reedwalkers"}])
+	var pressed := _vitals_worst_case_band_fixture()
+	pressed["culture_pressures"] = [
+		{"faction": 12, "pressure": 3.1, "phase": 3, "close": true, "turns_to_next": 0},
+		{"faction": 11, "pressure": 1.8, "phase": 2, "close": true, "turns_to_next": 4}]
+	var pressed_joined := "\n".join(_hud._banddetail.unit_summary_lines(
+		pressed, "", DetailFormat.Context.new(), true))
+	var forced_clause := "[color=#%s]%s %s[/color]" % [HudStyle.WARN_HEX, HudSelectionVocab.RUNG_HAZARD_GLYPH,
+		HudDisclosureVocab.CULTURE_PRESSURE_COMPACT_FORCED_FORMAT % "Reedwalkers"]
+	_assert_band_panel("culture pressure compact: the strongest phase>=2 row wears one amber clause",
+		pressed_joined.contains(forced_clause) and not pressed_joined.contains("Ashfolk"))
+	pressed["culture_pressures"] = [{"faction": 11, "pressure": 1.8, "phase": 1, "close": true, "turns_to_next": 4}]
+	_assert_band_panel("culture pressure compact: phase 1 adds nothing",
+		not "\n".join(_hud._banddetail.unit_summary_lines(
+			pressed, "", DetailFormat.Context.new(), true)).contains("Ashfolk"))
+	FactionNames.reset()
 	_assert_band_panel("beliefs compact: a band with NO pull adds nothing to the line",
 		not untied_joined.contains(BandOverlayRenderer.ANCESTORS_GLYPH)
 		and pulled_joined.contains(BandOverlayRenderer.ANCESTORS_GLYPH)
@@ -15954,6 +15972,8 @@ func _vitals_worst_case_band_fixture() -> Dictionary:
 	var band := _arrivals_band_fixture()
 	band["entity"] = 922
 	band["id"] = "Band 11"
+	# Phase 2 pressure so the SHORT-tier frame shows the amber culture-pressure clause (#820).
+	band["culture_pressures"] = [{"faction": 12, "pressure": 2.4, "phase": 2, "close": true, "turns_to_next": 6}]
 	band["turns_of_food"] = WORST_CASE_TURNS_OF_FOOD
 	band["stores"] = {"provisions": WORST_CASE_PROVISIONS}
 	band["fodder_store"] = WORST_CASE_FODDER_STORE

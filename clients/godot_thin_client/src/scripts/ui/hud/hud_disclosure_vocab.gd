@@ -143,6 +143,10 @@ const CULTURE_PRESSURE_ASKED_FORMAT := "Wants to join %s %s"
 const CULTURE_PRESSURE_SENTENCE_END := "."
 const CULTURE_PRESSURE_ASKED_CLOCK_SUFFIX := " — forced in %s."
 const CULTURE_PRESSURE_FORCED_FORMAT := "Will be forced to join %s %s."
+# The `compact` tier's one short clause (no factor, no clock): the full sentence is too long to ride the
+# merged Morale line, and the tier has no Beliefs row to hang the lines under.
+const CULTURE_PRESSURE_COMPACT_ASKED_FORMAT := "Wants to join %s"
+const CULTURE_PRESSURE_COMPACT_FORCED_FORMAT := "Will be forced to join %s"
 
 # ---- THE CONTACT-DRIFT MARK on the Beliefs row (#702): a small violet arrow at the END of the value
 # (after the ancestors urn) while a FOREIGN people's band is pulling this band's culture, and one hover

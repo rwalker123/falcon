@@ -5435,8 +5435,12 @@ fn handle_assign_labor(
     };
 
     let kind_label = target.kind();
+    let prior_staffing;
     let (applied, assigned_total, dropped_row) = {
         let mut allocation = band_allocation_mut(app, band.entity);
+        // The row's staffing BEFORE this order: `set_assignment`'s headroom counts these hands as
+        // free (it replaces them), so the clamp note must net them back out.
+        prior_staffing = allocation.workers_on(&target);
         let applied = allocation.set_assignment(target.clone(), workers, available, crew_kit);
         // **ONE HERD AT A TIME** — migration mode on this hunt row turns it off on the band's others.
         if let LaborTarget::Hunt {
@@ -5515,9 +5519,14 @@ fn handle_assign_labor(
     // A need row takes no standing hands, so there is nothing to clamp: the count sent is ignored.
     let clamp_note = if applied < workers && !target.is_need_row() {
         // **`applied` IS THE HEADROOM when clamped**: the hands free for THIS source after the bench,
-        // the walkers and every other row. `available` is the pool before the other rows and would
-        // overstate what the player's "idle" readout means.
-        format!(" (clamped from {} — only {} idle)", workers, applied)
+        // the walkers and every other row — but it includes the hands already on this row, which
+        // were not idle. The idle count is the growth over the row's prior staffing.
+        let free = applied.saturating_sub(prior_staffing);
+        if free == 0 {
+            format!(" (clamped from {} — no idle hands)", workers)
+        } else {
+            format!(" (clamped from {} — only {} idle)", workers, free)
+        }
     } else {
         String::new()
     };
@@ -22659,6 +22668,49 @@ mod tests {
         assert!(
             logged,
             "the clamp note must name the {IDLE_BENCH_SCOUTS} hands free, not the pool"
+        );
+    }
+
+    /// **Hands already on the row are not idle**: a staffed row asked for more names only the growth.
+    #[test]
+    fn the_clamp_note_excludes_the_hands_already_on_the_row() {
+        const ALREADY_ON_ROW: u32 = 4;
+        const ASKED: u32 = 1000;
+        let mut app = build_test_app();
+        app.update();
+        let faction = FactionId(0);
+        let band = first_resident_band(&mut app);
+        let assign = |app: &mut bevy::prelude::App, role: &str, n: u32| {
+            handle_assign_labor(
+                app,
+                faction,
+                None,
+                role.to_string(),
+                n,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Vec::new(),
+                false,
+            );
+        };
+        assign(&mut app, "scout", ALREADY_ON_ROW);
+        let (_, idle, ..) = published_hands(&mut app, band);
+        assert!(idle > IDLE_BENCH_SCOUTS);
+        assign(&mut app, "warrior", idle - IDLE_BENCH_SCOUTS);
+        assign(&mut app, "scout", ASKED);
+        let expected = format!("(clamped from {ASKED} \u{2014} only {IDLE_BENCH_SCOUTS} idle)");
+        let logged = app
+            .world
+            .resource::<CommandEventLog>()
+            .iter()
+            .any(|entry| entry.label.contains(&expected));
+        assert!(
+            logged,
+            "the note must name only the {IDLE_BENCH_SCOUTS} idle hands"
         );
     }
 

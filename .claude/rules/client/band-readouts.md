@@ -1759,7 +1759,11 @@ with no pull adds nothing there (`_band_beliefs_compact_clause`).
   Text only: joining is #821. The copy is short ("Pulled by Ashfolk's culture ×1.8 — too different to
   join.") so each entry fits two lines in the narrow Occupants drawer, which the frame's height check
   pins. Frame
-  `band_culture_pressure` (`band_expedition.gd` `_culture_pressure_states`). The `culture_pull` event is
+  `band_culture_pressure` (`band_expedition.gd` `_culture_pressure_states`). **The compact tier carries one
+  amber clause** on the Morale line (`_culture_pressure_compact_clause`; no Beliefs row there, and a warning
+  must not vanish): the strongest row with `phase >= 2`, `⚠ Wants to join X` / `⚠ Will be forced to join X`
+  (`CULTURE_PRESSURE_COMPACT_*`, no factor or clock); phases 0/1 add nothing. Pinned in `band_panel_preview`
+  (`_assert_beliefs_compact_clause`, frame `band_panel_vitals_worst_case`). The `culture_pull` event is
   Notable (`event-dock.md`).
 - **EVERY ROW'S HOVER SHOWS OVER THAT ROW ONLY.** `ctx.row_tooltips` (keyed by row) is still the one
   source, but `DetailFormat.block_tooltip` (one `tooltip_text` joining every row's sentence) is
