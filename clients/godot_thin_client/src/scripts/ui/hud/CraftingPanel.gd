@@ -205,9 +205,8 @@ var _picker_in_suggestions: bool = false
 ## real reason.
 var _priority_open: bool = false
 
-## **THE KIT PICKER'S VIEW STATE (#780)** — which kit's picker is open (`NO_ROW` = none), how many people
-## it is sized for (the player's own number, seeded from the kit's head count on open) and the recipe
-## chosen per item. Exactly the standing of `_picker_row` / `_picker_choice`: it survives the
+## **THE KIT PICKER'S VIEW STATE (#780)** — which kit's picker is open (`NO_ROW` = none), how many kits
+## the order is for (the player's own number, opening at one kit) and the recipe chosen per item. Exactly the standing of `_picker_row` / `_picker_choice`: it survives the
 ## per-snapshot rebuild, is checked against every payload, and closes with the card.
 var _kit_picker: String = NO_ROW
 var _kit_count: int = HudCraftingVocab.KIT_COUNT_MIN
@@ -2324,7 +2323,7 @@ func _kit_plan(need: Dictionary, rows: Dictionary, free: Dictionary, kits: int,
 	return {"items": items, "recipe_ids": recipe_ids, "short": short, "kits": kits,
 		"queued_items": items.size() * kits, "startable": startable}
 
-## Open a kit's picker (sized for the kit's own head count) or close it when it is the open one.
+## Open a kit's picker (at one kit) or close it when it is the open one.
 func _toggle_kit_picker(kit_id: String) -> void:
 	if _kit_picker == kit_id:
 		_reset_kit_picker()

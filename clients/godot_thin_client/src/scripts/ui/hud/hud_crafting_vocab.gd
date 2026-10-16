@@ -1006,28 +1006,27 @@ const NO_KIT_ORDER := 0
 ## The ledger's KITS group — above `Gear`, folded like it, found by the same head meta.
 const KITS_HEAD := "Kits"
 
-## **THE JOB NOUNS, ONE TABLE** — plural / singular / where, keyed by the job token a kit names.
+## **THE JOB NOUNS, ONE TABLE** — plural / singular, keyed by the job token a kit names.
 ## `hunt`, `forage` and `builders` take their plural from the nouns the compose sheets already speak
 ## (`CraftingPanel._kit_job_words`), so the plural here is a fallback for those three and the only
 ## spelling for the rest.
 const KIT_JOB_WORDS := {
-	"hunt": {"noun": "hunters", "one": "hunter", "where": "on the hunt"},
-	"forage": {"noun": "harvesters", "one": "harvester", "where": "harvesting"},
-	"scout": {"noun": "scouts", "one": "scout", "where": "scouting"},
-	"warrior": {"noun": "warriors", "one": "warrior", "where": "on guard"},
-	"expedition": {"noun": "rangers", "one": "ranger", "where": "on expedition"},
-	"extract": {"noun": "cutters", "one": "cutter", "where": "cutting"},
-	"quarrywork": {"noun": "quarriers", "one": "quarrier", "where": "quarrying"},
-	"agriculture": {"noun": "tillers", "one": "tiller", "where": "tilling"},
-	"husbandry": {"noun": "herders", "one": "herder", "where": "herding"},
-	"builders": {"noun": "builders", "one": "builder", "where": "building"},
-	"roadwork": {"noun": "roadbuilders", "one": "roadbuilder", "where": "on the roads"},
+	"hunt": {"noun": "hunters", "one": "hunter"},
+	"forage": {"noun": "harvesters", "one": "harvester"},
+	"scout": {"noun": "scouts", "one": "scout"},
+	"warrior": {"noun": "warriors", "one": "warrior"},
+	"expedition": {"noun": "rangers", "one": "ranger"},
+	"extract": {"noun": "cutters", "one": "cutter"},
+	"quarrywork": {"noun": "quarriers", "one": "quarrier"},
+	"agriculture": {"noun": "tillers", "one": "tiller"},
+	"husbandry": {"noun": "herders", "one": "herder"},
+	"builders": {"noun": "builders", "one": "builder"},
+	"roadwork": {"noun": "roadbuilders", "one": "roadbuilder"},
 }
 ## A kit that names more than one job counts workers, not any one job's people.
-const KIT_MULTI_JOB_WORDS := {"noun": "workers", "one": "worker", "where": "on these jobs"}
+const KIT_MULTI_JOB_WORDS := {"noun": "workers", "one": "worker"}
 const KIT_JOB_NOUN_KEY := "noun"
 const KIT_JOB_ONE_KEY := "one"
-const KIT_JOB_WHERE_KEY := "where"
 
 # -- the ledger row
 ## `<item names joined> — <job noun>`.
@@ -1053,7 +1052,6 @@ const KIT_PICKER_COLUMN_ITEM := "Item"
 const KIT_PICKER_COLUMN_OWNED := "Owned"
 const KIT_PICKER_COLUMN_MAKE := "Make"
 const KIT_PICKER_COLUMN_RECIPE := "Recipe"
-const KIT_PICKER_RECIPE_FORMAT := "%s %s"
 const KIT_PICKER_SHORT_FORMAT := "Short %s for all %d"
 const KIT_PICKER_SHORT_PART_FORMAT := "%s %s"
 const KIT_PICKER_SHORT_SEPARATOR := " · "

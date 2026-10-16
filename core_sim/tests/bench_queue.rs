@@ -976,7 +976,7 @@ fn a_skipped_orders_reason_quotes_its_forecast_not_one_pass() {
 
 /// The stalking kit's id in `equipment.json`.
 const STALKING_KIT: &str = "big_game";
-/// People a kit order is sized for in these fixtures.
+/// How many kits the kit order asks for in these fixtures.
 const KIT_COUNT: u32 = 6;
 /// Sleds the kit order asks for.
 const KIT_SLEDS: u32 = 2;

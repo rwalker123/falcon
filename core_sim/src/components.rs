@@ -4962,8 +4962,9 @@ pub struct BenchOrder {
 /// **THE `kit_order` OF AN ORDER THAT BELONGS TO NO KIT ORDER.** Kit order ids start at `1`.
 pub const NOT_A_KIT_PART: u32 = 0;
 
-/// **ONE WHOLE-KIT ORDER** — what the player asked for with *Make* on a kit row: every missing item
-/// of the kit, queued together as one group (issue #780). It owns no queue state itself — the parts
+/// **ONE WHOLE-KIT ORDER** — what the player asked for with *Make* on a kit row: a **count of
+/// kits**, one unit of each item of the kit per kit, queued together as one group (issue #780). The
+/// count is the player's number and is never netted against who already has a kit. It owns no queue state itself — the parts
 /// are ordinary [`BenchOrder`]s tagged with [`Self::id`] — it holds the facts the grouped box
 /// shows: which kit, for how many kits, and how many items its finished parts made.
 ///

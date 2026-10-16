@@ -2051,6 +2051,11 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
     }
 }
 
+/// **A `bench_enqueue_kit` recipe is `recipe <id>`** — two tokens; this is the offset of the id
+/// within the pair and the pair's width.
+const KIT_RECIPE_VALUE: usize = 1;
+const KIT_RECIPE_TOKENS: usize = 2;
+
 /// The **named-token** form the kit selection uses: `kit <id>`, a name followed by its value.
 ///
 /// That shape is the repo's existing one — `queue_espionage_mission … owner 1 target 2 tier 2` and
@@ -2063,11 +2068,6 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
 ///
 /// Removes the pair from `tokens` and answers the value; `None` when the name is absent. A name with
 /// nothing after it is a missing argument, not a value to shrug at.
-/// **A `bench_enqueue_kit` recipe is `recipe <id>`** — two tokens; this is the offset of the id
-/// within the pair and the pair's width.
-const KIT_RECIPE_VALUE: usize = 1;
-const KIT_RECIPE_TOKENS: usize = 2;
-
 fn take_named_token(
     tokens: &mut Vec<&str>,
     name: &'static str,

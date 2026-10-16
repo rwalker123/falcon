@@ -572,7 +572,7 @@ Design: `docs/plan_crafting_and_materials.md` §7, "The queue".
 | `bench_enqueue <f> <b> recipe <id> count <n> [workers <n>]` | appends an order; onto an empty bench it is the head at once; writes `last_started` | unknown recipe, unlearned craft, `count` 0 |
 | `bench_order_count <f> <b> order <i> count <n>` | sets one order's count | no order `i`, `count` 0, `count <= made` (that would finish it — `bench_remove` is how an order stops) |
 | `bench_remove <f> <b> order <i>` | takes one order off, spending its pile | no order `i` |
-| `bench_raise <f> <b> order <i>` | swaps the order with the one above it | no order `i`, `i` is the head |
+| `bench_raise <f> <b> order <i>` | swaps the order with the one above it; above a kit order it jumps the whole kit | no order `i`, `i` is the head, `i` is a kit part |
 | `bench_crew <f> <b> workers <n>` | sets the bench's crew, idle bench included | — (clamped to `benchable()`) |
 
 The four queue verbs are `CommandEventKind::Craft` and are band-addressed with a **required** handle
@@ -1530,7 +1530,8 @@ merge), `build_queue::the_jobs_behind_the_head_are_suggested_their_tools_off_the
 ## Kit orders — a whole kit queued as ONE grouped order (#780)
 
 Design: `docs/plan_crafting_and_materials.md` §7, "Ordering a whole kit". A kit is a set of items for a
-job (`equipment.json` `kits`); the ledger's **Make** on a kit row queues every missing item at once.
+job (`equipment.json` `kits`); the ledger's **Make** on a kit row queues the player's count of whole
+kits at once.
 
 **The grouping is queue structure, not a second queue.** A kit order is the ordinary `BenchOrder`s
 for its items, appended contiguously and each tagged `BenchOrder::kit_order` (the id; `0` =
@@ -1606,7 +1607,7 @@ order; `craft_suggestions::band_kit_needs` + `snapshot::crafting::kit_need_state
 - Pinned by `components::tests` (contiguity, raise over a block, `raise_kit`, `remove_kit`, `done`
   accounting and the record dropping with its last part), `craft_suggestions::tests` (a woodcutter's
   sled is not the hunters'; a spare unit counts and a queued-build line does not; `queued`; `none` not
-  listed), `server::tests::a_kit_order_queues_every_part_as_one_group_and_refuses_whole`, the command
+  listed), `server::tests::a_kit_order_queues_every_item_as_one_group_and_refuses_whole`, the command
   text and proto round trip in `command_text::tests`, `sim_schema`'s
   `whole_kit_orders_and_kit_needs_ride_the_wire`, and, off the encoded frame,
   `bench_queue::a_kit_order_and_the_pickers_terms_reach_the_wire`.
