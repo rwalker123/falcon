@@ -1312,8 +1312,22 @@ pub fn rung_site_refusal(
     // **THE RULE THE ACTING FACTION IS JUDGED BY** - the rung's own, or the last lesson-keyed
     // relaxation it holds ([`RungDef::effective_site_requirement`]). `knows` answers "does this
     // faction hold the lesson named X"; a caller with no faction in play passes `&|_| false`.
-    let requirement = rung.effective_site_requirement(knows)?;
     let forage_capacity = tile_forage_capacity(forage, tile);
+    // **A LESSON ONLY LOOSENS**: ground the rung's own rule admits stays admitted whatever is
+    // learned (a relaxation may add a requirement the own rule lacks, such as water, and that must
+    // never take a dry gathering site away from a people that learned Worked Land).
+    if rung.site_requirement.as_ref().is_some_and(|own| {
+        own.refusal(
+            gathering_site,
+            forage_capacity,
+            fresh_water,
+            deposit_capacity,
+        )
+        .is_none()
+    }) {
+        return None;
+    }
+    let requirement = rung.effective_site_requirement(knows)?;
     let refusal = requirement.refusal(
         gathering_site,
         forage_capacity,

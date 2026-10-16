@@ -174,6 +174,51 @@ fn worked_land_opens_fertile_watered_ground_that_is_not_a_gathering_site() {
     );
 }
 
+/// **WATER MATTERS ONLY FOR NEW GROUND.** A gathering site is already the rich ground, so the Farm
+/// stands on a DRY gathering site (with Seed Selection, the lesson that gates the rung), while a dry
+/// tile off the sites stays refused even with Worked Land. The sowable counts on the pinned map are
+/// printed for the record (`--nocapture`).
+#[test]
+fn a_dry_gathering_site_takes_the_farm_and_dry_new_ground_still_does_not() {
+    let app = spawn_world();
+    let ground = patch_ground(&app);
+    let dry_site = ground
+        .iter()
+        .find(|g| g.on_site && !g.watered)
+        .expect("the standard map carries a dry gathering site");
+    assert_eq!(
+        refusal(&app, dry_site, &[]),
+        None,
+        "a dry gathering site takes the Farm"
+    );
+    let off_site_dry = ground
+        .iter()
+        .find(|g| !g.on_site && !g.watered && g.capacity >= worked_land_floor(&app))
+        .expect("the standard map carries off-site fertile dry ground");
+    assert_eq!(
+        refusal(&app, off_site_dry, &["worked_land"]),
+        Some(SiteRefusal::TooDry),
+        "new ground keeps the water rule even with Worked Land"
+    );
+
+    let on_site = ground
+        .iter()
+        .filter(|g| refusal(&app, g, &[]).is_none())
+        .count();
+    let with_lesson = ground
+        .iter()
+        .filter(|g| refusal(&app, g, &["worked_land"]).is_none())
+        .count();
+    println!(
+        "patch tiles {} | sowable on sites now {} | with Worked Land {} (off-site {})",
+        ground.len(),
+        on_site,
+        with_lesson,
+        with_lesson - on_site
+    );
+    assert!(on_site > 0 && with_lesson > on_site);
+}
+
 /// **THE WIRE SAYS IT TOO**: a patch row's Farm quote carries `needs_lesson` for the viewer who does
 /// not hold the lesson and the empty answer once they do.
 #[test]

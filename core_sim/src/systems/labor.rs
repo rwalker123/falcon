@@ -6771,7 +6771,7 @@ pub fn advance_labor_allocation(
                     // wild gather at all (`NO_FORAGE_SEASON` → zero per-worker throughput), which is
                     // exactly right — and, since slice 5, a real state rather than an impossible one:
                     // `Sow` places a Field on ground the `plant:farm` rung's `site_requirement`
-                    // accepts (a watered gathering site), module or not, and a Field's harvest is
+                    // accepts (a gathering site), module or not, and a Field's harvest is
                     // biomass-based and seasonless.
                     let seasonal = food_modules
                         .get(tile_entity)
@@ -18967,9 +18967,8 @@ mod labor_yield_tests {
     fn world_with_a_sow_queued_behind_a_pen() -> (World, Entity) {
         let (mut world, band) = world_with_a_pen_build();
         grant_knowledge(&mut world, SEED_SELECTION_DISCOVERY_ID);
-        // **`plant:farm` DECLARES `requires_fresh_water`**, so the harness's dry steppe refuses the
-        // rung on its site term and the gate never reaches the coverage test. Tagged on the source
-        // tile itself, which is `tile_is_fresh_watered`'s first arm.
+        // The Farm asks only a gathering site, so the water tag below is not needed for the gate;
+        // it is kept so the fixture's source tile is the same watered tile it always was.
         {
             let tile_entity = world
                 .resource::<TileRegistry>()

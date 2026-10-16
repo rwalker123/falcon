@@ -1940,7 +1940,7 @@ describes the sim as it is, not as it will be:
 
 | | rung 1 | rung 2 | rung 3 |
 |---|---|---|---|
-| **plant** | `wild` — no verb; **earns `cultivation`**; **`site_requirement` { requires_gathering_site }** (the branch's scarcity starts at rung 1 — gathering itself is site-bound) | `tended` — verb **`cultivate`**, gate `cultivation`, **earns `seed_selection`** (slice 4), **site rule inherited from rung 1** (Cultivate improves ground you already gather) | `farm` (was `field`) — verb **`sow`**, gate **`seed_selection`** (slice 5 — the consumer that knowledge was earned for), **`site_requirement` { requires_gathering_site, requires_fresh_water }** (a watered gathering site — rung 3 moves seed, it cannot carry water, and it does not yet break unfamiliar ground; the 195 fertility floor went when the site rule took over its scarcity job, #464), earns **`worked_land`**, whose `site_relaxations` entry opens off-site fertile watered ground (no rung 4: Worked Land is a lesson on the Farm); `movement: fixed` |
+| **plant** | `wild` — no verb; **earns `cultivation`**; **`site_requirement` { requires_gathering_site }** (the branch's scarcity starts at rung 1 — gathering itself is site-bound) | `tended` — verb **`cultivate`**, gate `cultivation`, **earns `seed_selection`** (slice 4), **site rule inherited from rung 1** (Cultivate improves ground you already gather) | `farm` (was `field`) — verb **`sow`**, gate **`seed_selection`** (slice 5 — the consumer that knowledge was earned for), **`site_requirement` { requires_gathering_site }** (a gathering site, watered or not - sites are already the rich ground; water matters only for the `worked_land` relaxation's new ground; the 195 fertility floor went when the site rule took over its scarcity job, #464), earns **`worked_land`**, whose `site_relaxations` entry opens off-site fertile watered ground (no rung 4: Worked Land is a lesson on the Farm); `movement: fixed` |
 | **animal** | `wild` — no verb; **earns `herding`**; `movement: roam` | `pastoral` — verb **`tame`**, gate `herding`, ceiling `pastoral`, **earns `penning`** (slice 4); **`movement: drift_to_owner`** (slice 3b — was `roam`) | `pen` — verb **`corral`**, gate **`penning`** (slice 4 — was `herding`), ceiling `pen`, **earns `foddering`** (Flora Roster F3 — unlocks the pen's fodder-draw; `selective_breeding` = rung 4, still parked); `movement: fixed` |
 
 Three consequences to keep straight, **all settled by slice 4**: `earns_knowledge` is **live, not
@@ -2627,12 +2627,16 @@ A rung may declare `site_relaxations: [{ knowledge, site_requirement }]` beside 
 `site_requirement`. The rule that applies is the LAST relaxation whose lesson the faction holds
 (`RungDef::effective_site_requirement`), else the rung's own. The shipped Farm (`plant:farm`) carries one:
 `worked_land` (discovery **2022**, cost 20, earned by working a Farm) drops `requires_gathering_site` and
-asks `min_forage_capacity` **80** and `requires_fresh_water`. A relaxation needs a base rule to loosen and a
-knowledge `discovery_id_for` resolves; both are refused at boot.
+asks `min_forage_capacity` **80** and `requires_fresh_water`. The Farm's own rule asks a gathering site and nothing
+else (`requires_fresh_water` false, `min_forage_capacity` 0): sites are already the rich ground, so water matters
+only for new ground. **A lesson only loosens** - `rung_site_refusal` admits whatever the rung's own rule admits
+before it consults a relaxation, so a dry gathering site never loses the Farm to the stricter relaxed rule. A
+relaxation needs a base rule to loosen and a knowledge `discovery_id_for` resolves; both are refused at boot.
 
 **F = 80 is the opening lever.** Measured on earthlike 80x52 seed 119304647 (4160 tiles, 132 gathering sites,
-2113 patch tiles): 92 tiles are sowable today (site + fresh water + patch), and the off-site watered patch
-tiles open by floor: F>=70 377, F>=80 **280** (about 3x the on-site set, 7% of the map), F>=100 ~250, F>=195 101.
+2113 patch tiles): all **132** gathering sites bearing a patch take a farm (water not asked), and the off-site
+watered patch tiles open by floor: F>=70 377, F>=80 **280** (about 2x the on-site set, 7% of the map), F>=100
+~250, F>=195 101 (412 sowable in all at F=80).
 
 **A refusal the lesson would lift is its own refusal.** `SiteRefusal::NeedsLesson` (wire key `needs_lesson`) wins
 over the ordinary refusal when an unlearned relaxation would admit the ground; the per-viewer capture sweep keys

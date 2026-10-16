@@ -4273,6 +4273,12 @@ fn validate_labor_policy(
                 });
                 match placing_refusal {
                     Some((rung, None)) => {
+                        // **THE FARM'S OWN LESSON STILL GATES IT**: an off-site crew declares the
+                        // sow with it, so it is judged by the same `unlock_knowledge` refusal every
+                        // build verb is (`validate_patch_build`).
+                        if let Some(refusal) = knowledge_refusal(app, faction, &ladder, rung) {
+                            return Err(refusal);
+                        }
                         // **WORKED LAND OPENS FARMING, NOT GATHERING.** Off a gathering site the
                         // crew is a FARMING crew: it is accepted only where the patch already holds
                         // the placing rung or is being raised to it, or when it names the crop it is
@@ -18482,8 +18488,33 @@ mod tests {
     /// **Ground the ladder will take seed on** — rich *and* watered. On the pinned map this is the
     /// river-valley set (~46 tiles of 4160), which is the scarcity the rung is made of.
     fn find_sowable_tile(app: &bevy::prelude::App) -> UVec2 {
-        find_tile(app, |verdict, _| verdict.is_none())
-            .expect("the pinned map must carry sowable river-valley ground")
+        find_site_tile(app, true).expect("the pinned map must carry sowable river-valley ground")
+    }
+
+    /// The first tile the Farm's own rule admits (a gathering site), WATERED or DRY as asked, in the
+    /// same totally ordered sweep `find_tile` uses.
+    fn find_site_tile(app: &bevy::prelude::App, watered: bool) -> Option<UVec2> {
+        let (width, height) = {
+            let registry = app.world.resource::<TileRegistry>();
+            (registry.width, registry.height)
+        };
+        for y in 0..height {
+            for x in 0..width {
+                let coord = UVec2::new(x, y);
+                if site_verdict(app, coord) != Some(None) {
+                    continue;
+                }
+                let has_patch = app
+                    .world
+                    .resource::<ForageRegistry>()
+                    .patch(coord)
+                    .is_some();
+                if has_patch && water_only_verdict(app, coord).is_none() == watered {
+                    return Some(coord);
+                }
+            }
+        }
+        None
     }
 
     /// Ground the land refuses, in the *specific* way named — the two failures are different problems
@@ -18527,6 +18558,107 @@ mod tests {
             0.5,
             "a rejected sow must not touch the band's floor"
         );
+    }
+
+    /// **A TENDED PATCH IS REFUSED THE FARM WITHOUT SEED SELECTION, AND ACCEPTED WITH IT** - the
+    /// rung's `unlock_knowledge` is enforced by the server at `validate_patch_build`, not only
+    /// hidden by the client. The queue entry exists only in the accepted half.
+    #[test]
+    fn a_tended_patch_is_refused_the_farm_without_seed_selection_and_accepted_with_it() {
+        let mut app = build_world_app();
+        let faction = FactionId(0);
+        let coord = find_sowable_tile(&app);
+        {
+            let ladder = app.world.resource::<LadderConfigHandle>().get();
+            let mut registry = app.world.resource_mut::<ForageRegistry>();
+            let capacity = registry.patch(coord).map_or(100.0, |p| p.carrying_capacity);
+            let mut patch = core_sim::ForagePatch::new(
+                coord,
+                capacity,
+                core_sim::shipped::root_standing(core_sim::shipped::plant()),
+            );
+            patch.complete_cultivation(faction, &ladder);
+            registry.patches.insert(coord, patch);
+        }
+        spawn_working_band(
+            &mut app,
+            faction,
+            LaborTarget::Forage {
+                tile: coord,
+                floor: 0.5,
+                species: None,
+                take_species: TakeSelection::EVERYTHING,
+            },
+        );
+        let queued = |app: &mut bevy::prelude::App| {
+            app.world
+                .query::<&LaborAllocation>()
+                .iter(&app.world)
+                .any(|allocation| {
+                    allocation
+                        .build_queue_position(&BuildSource::Patch(coord))
+                        .is_some()
+                })
+        };
+
+        handle_sow(&mut app, faction, coord);
+        assert!(sow_failure_detail_contains(&app, "Seed Selection"));
+        assert!(!queued(&mut app), "a refused climb queues nothing");
+
+        grant_seed_selection(&mut app, faction);
+        handle_sow(&mut app, faction, coord);
+        assert!(queued(&mut app), "with the lesson the Farm is declared");
+    }
+
+    /// **THE OFF-SITE CREW PATH IS GATED BY THE SAME LESSON**: Worked Land opens the ground, but a
+    /// crew naming a crop declares the Farm, so a people without Seed Selection is refused by name.
+    #[test]
+    fn an_off_site_crew_is_refused_without_seed_selection() {
+        let mut app = build_world_app();
+        let faction = FactionId(0);
+        let coord = find_refused_tile(&app, SiteRefusal::NeedsLesson);
+        app.world
+            .resource_mut::<DiscoveryProgressLedger>()
+            .add_progress(
+                faction,
+                core_sim::WORKED_LAND_DISCOVERY_ID,
+                scalar_from_f32(1.0),
+            );
+        let band = starting_band_id(&mut app, faction);
+        let crop = a_species_growing_at(&app, coord);
+        let assign = |app: &mut bevy::prelude::App| {
+            handle_assign_labor(
+                app,
+                faction,
+                Some(band),
+                "forage".to_string(),
+                2,
+                Some(coord.x),
+                Some(coord.y),
+                None,
+                Some(crop.clone()),
+                None,
+                None,
+                Vec::new(),
+                false,
+            );
+        };
+        let crew_on = |app: &mut bevy::prelude::App| -> u32 {
+            app.world
+                .query::<&LaborAllocation>()
+                .iter(&app.world)
+                .flat_map(|allocation| allocation.assignments.iter())
+                .filter(
+                    |row| matches!(&row.target, LaborTarget::Forage { tile, .. } if *tile == coord),
+                )
+                .map(|row| row.workers)
+                .sum()
+        };
+        assign(&mut app);
+        assert_eq!(crew_on(&mut app), 0, "no Seed Selection, no farming crew");
+        grant_seed_selection(&mut app, faction);
+        assign(&mut app);
+        assert_eq!(crew_on(&mut app), 2);
     }
 
     /// **Sow stands on ground the people already work.** Rung 3 knows how to move seed, not how to
@@ -18659,13 +18791,15 @@ mod tests {
         assert!(queued, "the farm build is queued with the crew");
     }
 
-    /// **The water rule, and it is not redundant.** Ground rich enough to farm but **dry** is refused:
-    /// rung 3 can carry seed, not water. This is what pulls the first fields into the river valleys.
+    /// **A DRY GATHERING SITE TAKES THE FARM.** Sites are already the rich ground, so the Farm's own
+    /// rule asks no water of them; water is asked only of the new ground Worked Land opens. With Seed
+    /// Selection the sow is declared on a dry site, and nothing blames the water.
     #[test]
-    fn sow_rejected_on_ground_that_is_too_dry() {
+    fn a_dry_gathering_site_takes_the_farm() {
         let mut app = build_world_app();
         let faction = FactionId(0);
-        let coord = find_refused_tile(&app, SiteRefusal::TooDry);
+        let coord = find_site_tile(&app, false)
+            .expect("the pinned map must carry a dry gathering site bearing a patch");
         grant_seed_selection(&mut app, faction);
         spawn_working_band(
             &mut app,
@@ -18681,25 +18815,8 @@ mod tests {
         handle_sow(&mut app, faction, coord);
 
         assert!(
-            sow_failure_detail_contains(&app, "too dry to take a crop"),
-            "dry ground must be refused, and the message must name the fault"
-        );
-        assert!(
-            !sow_failure_detail_contains(&app, "too thin"),
-            "...and must NOT blame the soil on rich ground"
-        );
-        assert!(
-            app.world
-                .resource::<ForageRegistry>()
-                .patch(coord)
-                .is_none()
-                || !app
-                    .world
-                    .resource::<ForageRegistry>()
-                    .patch(coord)
-                    .unwrap()
-                    .is_field(),
-            "a refused sow must not build a field"
+            !sow_failure_detail_contains(&app, "too dry"),
+            "a dry gathering site is not refused for water"
         );
     }
 
@@ -18987,7 +19104,6 @@ mod tests {
                 SiteRefusal::NotGatheringSite.as_str(),
                 Some("Nobody gathers at"),
             ),
-            (SiteRefusal::TooDry.as_str(), Some("too dry to take a crop")),
         ] {
             let mut app = build_world_app();
             let faction = FactionId(0);
@@ -19003,7 +19119,7 @@ mod tests {
                     })
                     .expect("the pinned map must carry a patch off every gathering site")
                 }
-                Some(_) => find_refused_tile(&app, SiteRefusal::TooDry),
+                Some(_) => unreachable!("only the two cases above are staged"),
             };
             grant_seed_selection(&mut app, faction);
             spawn_working_band(

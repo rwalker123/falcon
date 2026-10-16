@@ -260,9 +260,10 @@ is a record; the ladder is a list; adding a rung after farm/pen is appending a r
 **`site_requirement` is where the *scarcity* of a rung lives**, and it is why rung 4 is a config edit.
 **All three plant rungs declare one** (amended by issue #464 — see §5): rungs 1-2 carry
 `{ requires_gathering_site: true }`, and `plant:farm` carries
-`{ requires_gathering_site: true, min_forage_capacity: 0, requires_fresh_water: true }` — gathering
-itself is site-bound, so rung 3 narrows an already-scarce set by water rather than starting a second
-scarcity. **Farm (rung 4) is that record, looser**: `requires_gathering_site: false` with a fertility
+`{ requires_gathering_site: true, min_forage_capacity: 0, requires_fresh_water: false }` (amended: sites are
+already the rich ground, so the Farm asks no water of them; water is asked only of the new ground the Worked
+Land relaxation opens) — gathering itself is site-bound, so rung 3 stands on an already-scarce set rather
+than starting a second scarcity. **Farm (rung 4) is that record, looser**: `requires_gathering_site: false` with a fertility
 floor put back, which is the whole of what it unlocks. Nothing else changes.
 
 > **This paragraph was reversed once, and the earlier form is what the retired text below describes.**
@@ -504,6 +505,7 @@ interesting future rungs (selective breeding, irrigation, traction, crop rotatio
     per-worker thesis is to be restored.
   - *Remaining:* the **client** (slice 8) — nothing renders `wastedYield`, and the tended patch's card
     still needs to show four policy rows rather than one number.
+- [x] *Amended (shipped):* **the Farm asks no water of a gathering site** (`requires_fresh_water` false on its own rule): sites are already the rich ground. Water matters only for new ground - the Worked Land relaxation keeps the fresh-water rule and a fertility floor of 80. On the standard map every gathering site with a patch (132) takes a farm, and Worked Land opens 280 more watered tiles.
 - [x] *Amended (shipped):* **Worked Land** is not a fourth plant rung. It is a lesson earned by working a
   **Farm** (`plant:farm`, renamed from `plant:field`) and a `site_relaxations` entry on the Farm: with the
   lesson held the Farm's site rule drops the gathering-site requirement and asks only for fertile, watered

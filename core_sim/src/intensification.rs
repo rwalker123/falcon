@@ -9242,12 +9242,13 @@ mod tests {
             );
         }
         assert!(
-            ladder
+            !ladder
                 .rung(shipped::plant_farm())
                 .site_requirement
                 .expect("rung 3 has a site requirement")
                 .requires_fresh_water,
-            "rung 3 can carry seed but not water — the field must be near fresh water"
+            "the farm's own rule asks a gathering site and no water: sites are already the rich \
+             ground, and water is asked only of the new ground Worked Land opens"
         );
         for key in [
             shipped::animal_wild(),
@@ -9267,10 +9268,23 @@ mod tests {
     /// — teaching a player two faults they cannot act on is worse than teaching them the one they can.
     #[test]
     fn the_site_requirement_names_which_way_the_land_refuses() {
-        let site = LadderConfig::builtin()
+        // A rule that asks a site AND water (the Worked Land relaxation's water term, minus its floor):
+        // the farm's own rule no longer asks water, so the refusal vocabulary is exercised on this.
+        let site = RungSiteRequirement {
+            requires_gathering_site: true,
+            min_forage_capacity: 0.0,
+            requires_fresh_water: true,
+            min_deposit_capacity: 0.0,
+        };
+        let farm_own = LadderConfig::builtin()
             .rung(shipped::plant_farm())
             .site_requirement
             .expect("rung 3 has a site requirement");
+        assert_eq!(
+            farm_own.refusal(true, 0.0, false, NO_DEPOSIT_FLOOR),
+            None,
+            "a dry gathering site takes the Farm: water is asked only of new ground"
+        );
 
         assert_eq!(
             site.refusal(true, 0.0, true, NO_DEPOSIT_FLOOR),

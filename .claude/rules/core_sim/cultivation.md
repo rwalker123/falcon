@@ -728,13 +728,15 @@ herd has one appetite).
 
 - **Sown on ground your people already work — and SCARCITY IS THE POINT.** Rung 3 is *"I know how to
   take seed from a plant and put it somewhere else — but I do not know fertilization or water-carrying,
-  so I sow ground we already gather, near fresh water"*. That rule is the rung's **`site_requirement`**
+  so I sow ground we already gather"*. That rule is the rung's **`site_requirement`**
   on the ladder record (`RungSiteRequirement` — the plant twin of `ceiling_required`, keyed on the
   **land** instead of the species), and every dial is a lever:
   - **`requires_gathering_site: true`** — the tile must be a curated `FoodSiteRegistry` entry
     (`FoodSiteRegistry::is_site`). **Inherited from rungs 1–2, not invented here**: gathering itself is
     site-bound, so rung 3 narrows an already-scarce set rather than starting a second scarcity.
-  - **`requires_fresh_water: true`** — the tile must be on or beside **fresh** water
+  - **`requires_fresh_water: false`** on the Farm's own rule: a gathering site is already the rich ground, so
+    it is sown dry or wet. The water rule is asked only of NEW ground (the `worked_land` relaxation keeps
+    `requires_fresh_water: true`). Where asked, the tile must be on or beside **fresh** water
     (`forage::tile_is_fresh_watered`): `TerrainTags::FRESHWATER` on the tile, **or** a river along one
     of its six sides (`Tile::has_any_river_edge` — the hydrology edge primitive, set on *both* flanking
     hexes, so the riverbank needs no neighbour lookup), **or** a fresh-water hex next door (odd-r
@@ -743,10 +745,10 @@ herd has one appetite).
     RiverDelta 210, Floodplain 205, AlluvialPlain 195) while this rung had no site rule, and stacking
     the two demanded a curated site that ALSO landed on one of three biomes AND had water — scarcity
     three times over on a set the marker list had already made small. **The dial stays live because
-    rung 4 needs it**: Farm has no site rule, so fertility is the only thing between it and planting a
+    the Worked Land relaxation needs it**: it has no site rule, so fertility is the only thing between it and planting a
     glacier.
   - **Measured on the standard map** (earthlike 80×52, seed 119304647, through the **real Startup
-    chain**): **174 tiles clear the fertility+water rule of 4160 (4.2%)**, against **2113** that merely
+    chain**): **174 tiles clear a fertility+water rule of 4160 (4.2%; the retired Field rule - the Farm now asks only a gathering site, 132 of them bearing a patch)**, against **2113** that merely
     bear food; over six seeds the mean is **197**. **The measurement only means anything with
     `generate_hydrology` run**: the rule wants fresh water, and rivers/deltas are hydrology's, so a
     fixture that skips it measures 0 at every grid size and every seed. Of the tiles clearing the
