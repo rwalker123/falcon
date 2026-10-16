@@ -92,7 +92,7 @@ fn fingerprint(row: &fb::ForagePatchState<'_>) -> PatchFingerprint {
             "isField",
             format!(
                 "{}",
-                sim_schema::wire_rung_quote(row.rungQuotes(), "plant:field")
+                sim_schema::wire_rung_quote(row.rungQuotes(), "plant:farm")
                     .is_some_and(|quote| quote.reached())
             ),
         ),
@@ -100,7 +100,7 @@ fn fingerprint(row: &fb::ForagePatchState<'_>) -> PatchFingerprint {
             "fieldProgress",
             format!(
                 "{}",
-                sim_schema::wire_rung_quote(row.rungQuotes(), "plant:field")
+                sim_schema::wire_rung_quote(row.rungQuotes(), "plant:farm")
                     .map_or(0.0, |quote| quote.progress())
             ),
         ),
@@ -126,7 +126,7 @@ fn fingerprint(row: &fb::ForagePatchState<'_>) -> PatchFingerprint {
             "fieldYield",
             format!(
                 "{}",
-                sim_schema::wire_rung_quote(row.rungQuotes(), "plant:field")
+                sim_schema::wire_rung_quote(row.rungQuotes(), "plant:farm")
                     .map_or(0.0, |quote| quote.foodYield())
             ),
         ),
@@ -142,7 +142,7 @@ fn fingerprint(row: &fb::ForagePatchState<'_>) -> PatchFingerprint {
             "fieldFodder",
             format!(
                 "{}",
-                sim_schema::wire_rung_quote(row.rungQuotes(), "plant:field")
+                sim_schema::wire_rung_quote(row.rungQuotes(), "plant:farm")
                     .map_or(0.0, |quote| quote.fodder())
             ),
         ),
@@ -167,7 +167,7 @@ fn fingerprint(row: &fb::ForagePatchState<'_>) -> PatchFingerprint {
             "fieldWorkDone",
             format!(
                 "{}",
-                sim_schema::wire_rung_quote(row.rungQuotes(), "plant:field")
+                sim_schema::wire_rung_quote(row.rungQuotes(), "plant:farm")
                     .map_or(0.0, |quote| quote.workDone())
             ),
         ),
@@ -183,7 +183,7 @@ fn fingerprint(row: &fb::ForagePatchState<'_>) -> PatchFingerprint {
             "fieldWorkCost",
             format!(
                 "{}",
-                sim_schema::wire_rung_quote(row.rungQuotes(), "plant:field")
+                sim_schema::wire_rung_quote(row.rungQuotes(), "plant:farm")
                     .map_or(0.0, |quote| quote.workCost())
             ),
         ),
@@ -293,7 +293,7 @@ fn sowable_species_by_tile(app: &App) -> std::collections::HashMap<(u32, u32), S
             .into_iter()
             .flatten()
             .find(|entry| {
-                sim_schema::wire_share_rung_quote(entry.rungQuotes(), "plant:field")
+                sim_schema::wire_share_rung_quote(entry.rungQuotes(), "plant:farm")
                     .is_some_and(|quote| quote.canClimb())
             })
             .and_then(|entry| entry.species())
@@ -320,7 +320,7 @@ fn raise_to_a_field(
 ) {
     let tile_capacity = patch.carrying_capacity;
     // `(base, width)` — the rung is complete at the TOP of its span, which is their sum.
-    let (base, width) = core_sim::plant_rung_span(shipped::plant_field(), ladder);
+    let (base, width) = core_sim::plant_rung_span(shipped::plant_farm(), ladder);
     patch.set_ladder_position(base + width, ladder);
     patch.owner = Some(faction);
     patch.species = Some(species.to_string());
@@ -430,7 +430,7 @@ fn a_world_where_both_peoples_farm() -> (App, StagedTiles) {
             for tile in tiles {
                 allocation.build_queue.push(BuildQueueEntry {
                     source: BuildSource::Patch(*tile),
-                    declared: BuildJob::Climb(shipped::plant_field()),
+                    declared: BuildJob::Climb(shipped::plant_farm()),
                     priority: core_sim::SourcePriority::default(),
                 });
             }

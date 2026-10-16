@@ -49,7 +49,7 @@
       "plural": "reeds and water roots",
       "adjective": "reed",
       "role": "staple",
-      "cultivation_ceiling": "plant:field",
+      "cultivation_ceiling": "plant:farm",
       "host_biomes": {
         "FreshwaterMarsh": 0.55,
         "RiverDelta": 0.5,
@@ -72,7 +72,7 @@
       "plural": "wild emmer",
       "adjective": "emmer",
       "role": "staple",
-      "cultivation_ceiling": "plant:field",
+      "cultivation_ceiling": "plant:farm",
       "host_biomes": {
         "AlluvialPlain": 0.45,
         "Floodplain": 0.35,
@@ -192,7 +192,7 @@
       "plural": "wild tubers",
       "adjective": "tuber",
       "role": "staple",
-      "cultivation_ceiling": "plant:field",
+      "cultivation_ceiling": "plant:farm",
       "host_biomes": {
         "ImpactCraterField": 0.5,
         "SinkholeField": 0.5,
@@ -214,7 +214,7 @@
       "plural": "date palms",
       "adjective": "date",
       "role": "staple",
-      "cultivation_ceiling": "plant:field",
+      "cultivation_ceiling": "plant:farm",
       "host_biomes": {
         "OasisBasin": 0.55,
         "HotDesertErg": 0.45,
@@ -292,7 +292,7 @@
       "plural": "hay grass",
       "adjective": "hay",
       "role": "fodder",
-      "cultivation_ceiling": "plant:field",
+      "cultivation_ceiling": "plant:farm",
       "host_biomes": {
         "AlluvialPlain": 0.2,
         "Floodplain": 0.25,
@@ -316,7 +316,7 @@
       "plural": "cotton",
       "adjective": "cotton",
       "role": "cash",
-      "cultivation_ceiling": "plant:field",
+      "cultivation_ceiling": "plant:farm",
       "host_biomes": {
         "AlluvialPlain": 0.3,
         "Floodplain": 0.25,
@@ -339,7 +339,7 @@
       "plural": "flax",
       "adjective": "flax",
       "role": "cash",
-      "cultivation_ceiling": "plant:field",
+      "cultivation_ceiling": "plant:farm",
       "host_biomes": {
         "AlluvialPlain": 0.2,
         "Floodplain": 0.25,
@@ -361,7 +361,7 @@
       "plural": "tobacco",
       "adjective": "tobacco",
       "role": "cash",
-      "cultivation_ceiling": "plant:field",
+      "cultivation_ceiling": "plant:farm",
       "host_biomes": {
         "AlluvialPlain": 0.25,
         "RollingHills": 0.25,
@@ -384,7 +384,7 @@
       "plural": "tea",
       "adjective": "tea",
       "role": "cash",
-      "cultivation_ceiling": "plant:field",
+      "cultivation_ceiling": "plant:farm",
       "host_biomes": {
         "RollingHills": 0.3,
         "MixedWoodland": 0.25,
@@ -449,7 +449,7 @@
       "plural": "wild rice",
       "adjective": "rice",
       "role": "staple",
-      "cultivation_ceiling": "plant:field",
+      "cultivation_ceiling": "plant:farm",
       "host_biomes": {
         "FreshwaterMarsh": 0.4,
         "RiverDelta": 0.25,
@@ -552,7 +552,7 @@
       "plural": "wild pulses",
       "adjective": "pulse",
       "role": "staple",
-      "cultivation_ceiling": "plant:field",
+      "cultivation_ceiling": "plant:farm",
       "host_biomes": {
         "PrairieSteppe": 0.25,
         "AlluvialPlain": 0.2,
@@ -695,7 +695,7 @@
       "plural": "wild grapes",
       "adjective": "grape",
       "role": "cash",
-      "cultivation_ceiling": "plant:field",
+      "cultivation_ceiling": "plant:farm",
       "host_biomes": {
         "AlluvialPlain": 0.1,
         "Floodplain": 0.15,

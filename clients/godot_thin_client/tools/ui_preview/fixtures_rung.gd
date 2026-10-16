@@ -14,7 +14,7 @@
 ## `can_cultivate`, `sow_payoff`, ...). That is deliberate: those keys are the harness's own AUTHORING
 ## vocabulary for the two shipped webs and are read ONLY here, where they are turned into the wire's
 ## generic quotes. Nothing in `src/` reads them. A fixture that wants a rung the shipped ladder does
-## not have (the `farm` and `ranch` steps) authors `rung_quotes` directly and states no flat keys, and
+## not have (the `terrace` and `stud` steps) authors `rung_quotes` directly and states no flat keys, and
 ## `stamp_*` leaves such a row alone.
 ##
 ## **IT IS THE SIM'S DERIVATION, RESTATED, NOT AN INVENTION.** `forage::patch_rung_key` is *"sown →
@@ -27,15 +27,25 @@
 # ---- the shipped rung keys, spelled once (the harness's, not the client's) ---------------------------
 const KEY_WILD_PLANT := "plant:wild"
 const KEY_TENDED := "plant:tended"
-const KEY_FIELD := "plant:field"
+const KEY_FARM := "plant:farm"
+
+## The two lessons the Farm and the Pen teach, the Pen's size tier, and the shipped figures it carries
+## (`intensification_ladder.json`): a Pen fenced to `RANCH_MIN_RINGS` is a Ranch, whose keepers mind
+## `RANCH_KEEPER_RATIO_GAIN` times the head, and keeping one teaches Selective breeding.
+const KNOWLEDGE_WORKED_LAND := "worked_land"
+const KNOWLEDGE_SELECTIVE_BREEDING := "selective_breeding"
+const TIER_RANCH := "ranch"
+const RANCH_MIN_RINGS := 2
+const RANCH_KEEPER_RATIO_GAIN := 1.5
+const SELECTIVE_BREEDING_REGROWTH_GAIN := 1.25
 const KEY_WILD_ANIMAL := "animal:wild"
 const KEY_PASTORAL := "animal:pastoral"
 const KEY_PEN := "animal:pen"
 
 ## The harness-only rungs a fixture catalog adds beyond the shipped ladder, to prove a fourth step
 ## renders with no client edit (issue #175).
-const KEY_FARM := "plant:farm"
-const KEY_RANCH := "animal:ranch"
+const KEY_TERRACE := "plant:terrace"
+const KEY_STUD := "animal:stud"
 
 ## The shipped tame meter's full reading, which is how a herd row said it was fully tamed.
 const DOMESTICATION_COMPLETE := 1.0
@@ -49,24 +59,32 @@ static func ladder_rungs(with_extra_steps: bool = false) -> Array:
 		_rung(KEY_WILD_PLANT, "plant", 1, "", [], "", "cultivation", "", "Wild ground", "patch"),
 		_rung(KEY_TENDED, "plant", 2, "cultivate", ["managed"], "cultivation", "seed_selection",
 			KEY_WILD_PLANT, "Tended patch", "patch", ["requires_work_room", "requires_crop", "requires_ownership"]),
-		_rung(KEY_FIELD, "plant", 3, "sow", ["managed", "sown"], "seed_selection", "",
-			KEY_TENDED, "Field", "patch", ["requires_crop", "requires_ownership", "places_source"]),
+		_rung(KEY_FARM, "plant", 3, "sow", ["managed", "sown"], "seed_selection", KNOWLEDGE_WORKED_LAND,
+			KEY_TENDED, "Farm", "patch", ["requires_crop", "requires_ownership", "places_source"],
+			{"site_rule": _site_rule(true, 0.0, true),
+				"site_relaxations": [{"knowledge": KNOWLEDGE_WORKED_LAND,
+					"rule": _site_rule(false, 80.0, true)}]}),
 		_rung(KEY_WILD_ANIMAL, "animal", 1, "", [], "", "herding", "", "Wild herd", "herd"),
 		_rung(KEY_PASTORAL, "animal", 2, "tame", ["managed", "domesticated"], "herding", "penning",
 			KEY_WILD_ANIMAL, "Tamed herd", "herd", ["requires_work_room", "requires_ownership"]),
 		_rung(KEY_PEN, "animal", 3, "corral", ["managed", "domesticated", "enclosed"], "penning",
-			"foddering", KEY_PASTORAL, "Pen", "herd", ["requires_held_rung_below", "requires_ownership"]),
+			"foddering", KEY_PASTORAL, "Pen", "herd", ["requires_held_rung_below", "requires_ownership"],
+			{"size_tiers": [{"id": TIER_RANCH, "label": "Ranch", "label_fallback": "a ranch",
+				"min_rings": RANCH_MIN_RINGS, "keeper_ratio_gain": RANCH_KEEPER_RATIO_GAIN,
+				"earns_knowledge": KNOWLEDGE_SELECTIVE_BREEDING}],
+			"knowledge_gains": [{"knowledge": KNOWLEDGE_SELECTIVE_BREEDING,
+				"regrowth_gain": SELECTIVE_BREEDING_REGROWTH_GAIN}]}),
 	]
 	if with_extra_steps:
-		rows.append(_rung(KEY_FARM, "plant", 4, "farm", ["managed", "sown"], "agronomy", "",
-			KEY_FIELD, "Farm", "patch", ["requires_held_rung_below", "requires_crop", "requires_ownership", "places_source"]))
-		rows.append(_rung(KEY_RANCH, "animal", 4, "ranch", ["managed", "domesticated", "enclosed"],
-			"ranching", "", KEY_PEN, "Ranch", "herd", ["requires_held_rung_below", "requires_ownership"]))
+		rows.append(_rung(KEY_TERRACE, "plant", 4, "terrace", ["managed", "sown"], "terracing", "",
+			KEY_FARM, "Terrace", "patch", ["requires_held_rung_below", "requires_crop", "requires_ownership", "places_source"]))
+		rows.append(_rung(KEY_STUD, "animal", 4, "stud", ["managed", "domesticated", "enclosed"],
+			"studbooks", "", KEY_PEN, "Stud", "herd", ["requires_held_rung_below", "requires_ownership"]))
 	return rows
 
 static func _rung(key: String, branch: String, order: int, verb: String, traits: Array,
 		unlock: String, earns: String, requires: String, label: String, source_kind: String,
-		gates: Array = []) -> Dictionary:
+		gates: Array = [], extras: Dictionary = {}) -> Dictionary:
 	var flags := {}
 	for flag in ["requires_held_rung_below", "requires_crop", "requires_work_room",
 			"requires_ownership", "places_source"]:
@@ -76,14 +94,20 @@ static func _rung(key: String, branch: String, order: int, verb: String, traits:
 		"label": label, "label_fallback": label.to_lower(), "display_name": label,
 		"source_kind": source_kind}
 	row.merge(flags)
+	row.merge(extras)
 	return row
+
+## A catalog `site_rule` row as the native decoder writes it.
+static func _site_rule(gathering_site: bool, min_capacity: float, fresh_water: bool) -> Dictionary:
+	return {"requires_gathering_site": gathering_site, "min_forage_capacity": min_capacity,
+		"requires_fresh_water": fresh_water}
 
 # ---- the standing rung ----------------------------------------------------------------------------
 
 ## The plant web's rung, off the pair of bools a patch row carries.
 static func patch_rung_key(tended: bool, field: bool) -> String:
 	if field:
-		return KEY_FIELD
+		return KEY_FARM
 	return KEY_TENDED if tended else KEY_WILD_PLANT
 
 ## The animal web's rung, off the meter and the flag a herd row carries. `domestication` is compared
@@ -112,7 +136,7 @@ const _PATCH_FLAT_KEYS := ["is_cultivated", "is_field", "cultivation_progress", 
 const _HERD_FLAT_KEYS := ["domestication", "corralled", "corral_progress", "corral_yield",
 	"pastoral_yield", "tame_work_cost", "corral_work_cost", "tame_work_done", "corral_work_done",
 	"tame_upkeep_demand", "corral_upkeep_demand", "corral_material", "pastoral_material", "extra_step",
-	"ranch_progress", "ranch_work_cost", "ranch_work_done", "ranch_yield"]
+	"stud_progress", "stud_work_cost", "stud_work_done", "stud_yield"]
 
 static func _num(row: Dictionary, key: String, default: float = 0.0) -> float:
 	return float(row.get(key, default))
@@ -137,20 +161,20 @@ static func _patch_quotes(patch: Dictionary, prefix: String) -> Array:
 			_num(patch, prefix + "cultivation_upkeep_demand"),
 			patch.get(prefix + "cultivation_upkeep_material_demand", []),
 			_num(patch, prefix + "tended_yield"), _num(patch, prefix + "tended_fodder"), [], ""),
-		_quote(KEY_FIELD, field, field_progress, _num(patch, prefix + "field_work_done"),
+		_quote(KEY_FARM, field, field_progress, _num(patch, prefix + "field_work_done"),
 			_num(patch, prefix + "field_work_cost"), [],
 			_num(patch, prefix + "field_upkeep_demand"),
 			patch.get(prefix + "field_upkeep_material_demand", []),
 			_num(patch, prefix + "field_yield"), _num(patch, prefix + "field_fodder"), [],
 			String(patch.get(prefix + "sow_site_refusal", ""))),
 	]
-	# `extra_step` authors the harness-only fourth plant rung (`plant:farm`), reached when its meter is
-	# full, so a fixture can stand a Field with a step above it and price that step from `farm_*` keys.
+	# `extra_step` authors the harness-only fourth plant rung (`plant:terrace`), reached when its meter is
+	# full, so a fixture can stand a Field with a step above it and price that step from `terrace_*` keys.
 	if bool(patch.get(prefix + "extra_step", false)):
-		var farm_progress := _num(patch, prefix + "farm_progress")
-		quotes.append(_quote(KEY_FARM, farm_progress >= 1.0, farm_progress,
-			_num(patch, prefix + "farm_work_done"), _num(patch, prefix + "farm_work_cost"), [], 0.0, [],
-			_num(patch, prefix + "farm_yield"), 0.0, [], ""))
+		var terrace_progress := _num(patch, prefix + "terrace_progress")
+		quotes.append(_quote(KEY_TERRACE, terrace_progress >= 1.0, terrace_progress,
+			_num(patch, prefix + "terrace_work_done"), _num(patch, prefix + "terrace_work_cost"), [], 0.0, [],
+			_num(patch, prefix + "terrace_yield"), 0.0, [], ""))
 	return quotes
 
 static func _herd_quotes(herd: Dictionary, prefix: String) -> Array:
@@ -169,13 +193,13 @@ static func _herd_quotes(herd: Dictionary, prefix: String) -> Array:
 			herd.get(prefix + "corral_upkeep_material_demand", []),
 			_num(herd, prefix + "corral_yield"), 0.0, herd.get(prefix + "corral_material", []), ""),
 	]
-	# `extra_step` authors the harness-only fourth rung (`animal:ranch`) as an unreached quote, so a
+	# `extra_step` authors the harness-only fourth rung (`animal:stud`) as an unreached quote, so a
 	# fixture can stand a penned herd that still has a rung left to climb.
 	if bool(herd.get(prefix + "extra_step", false)):
-		var ranch_progress := _num(herd, prefix + "ranch_progress")
-		quotes.append(_quote(KEY_RANCH, ranch_progress >= 1.0, ranch_progress,
-			_num(herd, prefix + "ranch_work_done"), _num(herd, prefix + "ranch_work_cost"), [], 0.0, [],
-			_num(herd, prefix + "ranch_yield"), 0.0, [], ""))
+		var stud_progress := _num(herd, prefix + "stud_progress")
+		quotes.append(_quote(KEY_STUD, stud_progress >= 1.0, stud_progress,
+			_num(herd, prefix + "stud_work_done"), _num(herd, prefix + "stud_work_cost"), [], 0.0, [],
+			_num(herd, prefix + "stud_yield"), 0.0, [], ""))
 	return quotes
 
 ## One composition entry's quotes (the crop picker's per-plant figures), off the flat authoring keys.
@@ -186,16 +210,16 @@ static func _entry_quotes(entry: Dictionary) -> Array:
 			"yield_ratio": _num(entry, "cultivate_yield_ratio"),
 			"fodder_payoff": _num(entry, "cultivate_fodder_payoff"),
 			"material_payoff": entry.get("cultivate_material_payoff", []), "work_cost": 0.0},
-		{"rung_key": KEY_FIELD, "can_climb": bool(entry.get("can_sow", false)),
+		{"rung_key": KEY_FARM, "can_climb": bool(entry.get("can_sow", false)),
 			"food_payoff": _num(entry, "sow_payoff"), "yield_ratio": _num(entry, "sow_yield_ratio"),
 			"fodder_payoff": _num(entry, "sow_fodder_payoff"),
 			"material_payoff": entry.get("sow_material_payoff", []),
 			"work_cost": _num(entry, "sow_work_cost")},
 	]
-	if entry.has("can_farm"):
-		quotes.append({"rung_key": KEY_FARM, "can_climb": bool(entry.get("can_farm", false)),
-			"food_payoff": _num(entry, "farm_payoff"), "yield_ratio": _num(entry, "farm_yield_ratio"),
-			"fodder_payoff": 0.0, "material_payoff": [], "work_cost": _num(entry, "farm_work_cost")})
+	if entry.has("can_terrace"):
+		quotes.append({"rung_key": KEY_TERRACE, "can_climb": bool(entry.get("can_terrace", false)),
+			"food_payoff": _num(entry, "terrace_payoff"), "yield_ratio": _num(entry, "terrace_yield_ratio"),
+			"fodder_payoff": 0.0, "material_payoff": [], "work_cost": _num(entry, "terrace_work_cost")})
 	return quotes
 
 static func _stamp_composition(patch: Dictionary, prefix: String) -> void:
@@ -259,6 +283,17 @@ static func _held_key(row: Dictionary, prefix: String, root_key: String) -> Stri
 static func stamp_source(src: Dictionary, prefix: String = "") -> Dictionary:
 	if src.is_empty():
 		return src
+	# A `tile_info` with no `patch_` key at all carries no patch (a barren hex): stamping it would
+	# conjure quotes -- and with them a farm the server would never have admitted -- onto ground that
+	# has no patch row.
+	if prefix != "":
+		var has_patch := false
+		for key in src.keys():
+			if String(key).begins_with(prefix):
+				has_patch = true
+				break
+		if not has_patch:
+			return src
 	var is_herd := prefix == "" and not src.has("composition") \
 		and (src.has("species") or src.has("husbandry_ceiling") or src.has("body_mass"))
 	return stamp_herd(src, prefix) if is_herd else stamp_patch(src, prefix)
@@ -291,8 +326,8 @@ static func stamp_snapshot(snapshot: Dictionary) -> Dictionary:
 			patch.erase("rung_quotes")
 			var standing := String(patch.get(SourceForecast.FORECAST_CURRENT_RUNG_KEY, ""))
 			if standing != "":
-				patch["is_field"] = standing == KEY_FIELD
-				patch["is_cultivated"] = standing == KEY_FIELD or standing == KEY_TENDED
+				patch["is_field"] = standing == KEY_FARM
+				patch["is_cultivated"] = standing == KEY_FARM or standing == KEY_TENDED
 		stamp_patch(patch)
 	for herd_variant in snapshot.get("herds", []):
 		if not (herd_variant is Dictionary):

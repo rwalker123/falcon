@@ -6,10 +6,10 @@ use crate::codec::{
 use crate::state::subsistence::{
     BuildLegState, CharacteristicBandState, CraftKnowledgeState, DepositState, FloraShareInfo,
     FoodModuleState, ForagePatchState, HerdTelemetryState, IntensificationKnowledgeState,
-    KitOptionState, LadderBranchState, LadderKnowledgeProgress, LadderKnowledgeState,
-    LadderRungState, MaterialDefState, MaterialPayoff, RecipeDefState, RecipeInputState,
-    RecipeOutputState, RungQuoteState, RungShareQuoteState, SedentarizationState,
-    SpeciesMaterialRates,
+    KitOptionState, KnowledgeGainState, LadderBranchState, LadderKnowledgeProgress,
+    LadderKnowledgeState, LadderRungState, MaterialDefState, MaterialPayoff, RecipeDefState,
+    RecipeInputState, RecipeOutputState, RungQuoteState, RungShareQuoteState, SedentarizationState,
+    SiteRelaxationState, SiteRuleState, SizeTierState, SpeciesMaterialRates,
 };
 use crate::world::{WorldDelta, WorldSnapshot};
 use flatbuffers::{ForwardsUOffset, WIPOffset};
@@ -530,6 +530,7 @@ fn create_herds<'a>(
             create_material_payoffs(builder, &herd.upkeep_material_supplied);
         let upkeep_toe = create_upkeep_toe(builder, &herd.upkeep_toe);
         let rung_quotes = create_rung_quotes(builder, &herd.rung_quotes);
+        let size_tier = builder.create_string(herd.size_tier.as_str());
         let predator_eaten_by = builder.create_string(&herd.predator_eaten_by);
         let keeping = builder.create_string(&herd.keeping);
         let entry = fb::HerdTelemetryState::create(
@@ -639,6 +640,7 @@ fn create_herds<'a>(
                 buildDestinationRung: Some(build_destination_rung),
                 buildLegs: build_legs,
                 rungQuotes: Some(rung_quotes),
+                sizeTier: Some(size_tier),
                 // **WHERE THAT DESTINATION WILL LEAVE THIS HERD'S `K`** — appended last
                 // (append-only wire). `None` is *"no band has queued it"*, which crosses as the
                 // [`crate::NO_BUILD_DESTINATION_CAPACITY`] sentinel rather than as `0`: a capacity
@@ -1090,6 +1092,28 @@ fn create_ladder_areas<'a>(
 /// **THE LADDER'S RUNG CATALOG** - every rung of every branch, grouped by branch and in climb order
 /// within it, once per world. A per-world constant, written whole on a snapshot and only when it
 /// moved on a delta, exactly like the roster above.
+fn create_site_rule<'a>(
+    builder: &mut FbBuilder<'a>,
+    rule: &SiteRuleState,
+) -> WIPOffset<fb::SiteRuleState<'a>> {
+    fb::SiteRuleState::create(
+        builder,
+        &fb::SiteRuleStateArgs {
+            requiresGatheringSite: rule.requires_gathering_site,
+            minForageCapacity: rule.min_forage_capacity,
+            requiresFreshWater: rule.requires_fresh_water,
+        },
+    )
+}
+
+fn decode_site_rule(rule: fb::SiteRuleState<'_>) -> SiteRuleState {
+    SiteRuleState {
+        requires_gathering_site: rule.requiresGatheringSite(),
+        min_forage_capacity: rule.minForageCapacity(),
+        requires_fresh_water: rule.requiresFreshWater(),
+    }
+}
+
 fn create_ladder_rungs<'a>(
     builder: &mut FbBuilder<'a>,
     states: &[LadderRungState],
@@ -1115,6 +1139,60 @@ fn create_ladder_rungs<'a>(
         let requires_rung = builder.create_string(&state.requires_rung);
         // The noun the pile beside it is counted in - `""` for a rung that eats nothing.
         let build_material_id = builder.create_string(&state.build_material_id);
+        let site_rule = create_site_rule(builder, &state.site_rule);
+        let relaxation_rows: Vec<_> = state
+            .site_relaxations
+            .iter()
+            .map(|relaxation| {
+                let knowledge = builder.create_string(&relaxation.knowledge);
+                let rule = create_site_rule(builder, &relaxation.rule);
+                fb::SiteRelaxationState::create(
+                    builder,
+                    &fb::SiteRelaxationStateArgs {
+                        knowledge: Some(knowledge),
+                        rule: Some(rule),
+                    },
+                )
+            })
+            .collect();
+        let site_relaxations = builder.create_vector(&relaxation_rows);
+        let tier_rows: Vec<_> = state
+            .size_tiers
+            .iter()
+            .map(|tier| {
+                let id = builder.create_string(&tier.id);
+                let label = builder.create_string(&tier.label);
+                let label_fallback = builder.create_string(&tier.label_fallback);
+                let earns_knowledge = builder.create_string(&tier.earns_knowledge);
+                fb::SizeTierState::create(
+                    builder,
+                    &fb::SizeTierStateArgs {
+                        id: Some(id),
+                        label: Some(label),
+                        labelFallback: Some(label_fallback),
+                        minRings: tier.min_rings,
+                        keeperRatioGain: tier.keeper_ratio_gain,
+                        earnsKnowledge: Some(earns_knowledge),
+                    },
+                )
+            })
+            .collect();
+        let size_tiers = builder.create_vector(&tier_rows);
+        let gain_rows: Vec<_> = state
+            .knowledge_gains
+            .iter()
+            .map(|gain| {
+                let knowledge = builder.create_string(&gain.knowledge);
+                fb::KnowledgeGainState::create(
+                    builder,
+                    &fb::KnowledgeGainStateArgs {
+                        knowledge: Some(knowledge),
+                        regrowthGain: gain.regrowth_gain,
+                    },
+                )
+            })
+            .collect();
+        let knowledge_gains = builder.create_vector(&gain_rows);
         entries.push(fb::LadderRungState::create(
             builder,
             &fb::LadderRungStateArgs {
@@ -1147,6 +1225,10 @@ fn create_ladder_rungs<'a>(
                 requiresWorkRoom: state.requires_work_room,
                 requiresOwnership: state.requires_ownership,
                 placesSource: state.places_source,
+                siteRule: Some(site_rule),
+                siteRelaxations: Some(site_relaxations),
+                sizeTiers: Some(size_tiers),
+                knowledgeGains: Some(knowledge_gains),
             },
         ));
     }
@@ -1568,6 +1650,7 @@ fn decode_herd(herd: fb::HerdTelemetryState<'_>) -> HerdTelemetryState {
         build_destination_rung: text(herd.buildDestinationRung()),
         build_legs: decode_build_legs(herd.buildLegs()),
         rung_quotes: decode_rung_quotes(herd.rungQuotes()),
+        size_tier: text(herd.sizeTier()),
         build_destination_capacity: decode_build_destination_capacity(
             herd.buildDestinationCapacity(),
         ),
@@ -1733,6 +1816,23 @@ fn decode_ladder_rung(state: fb::LadderRungState<'_>) -> LadderRungState {
         requires_work_room: state.requiresWorkRoom(),
         requires_ownership: state.requiresOwnership(),
         places_source: state.placesSource(),
+        site_rule: state.siteRule().map(decode_site_rule).unwrap_or_default(),
+        size_tiers: map_rows(state.sizeTiers(), |tier| SizeTierState {
+            id: text(tier.id()),
+            label: text(tier.label()),
+            label_fallback: text(tier.labelFallback()),
+            min_rings: tier.minRings(),
+            keeper_ratio_gain: tier.keeperRatioGain(),
+            earns_knowledge: text(tier.earnsKnowledge()),
+        }),
+        knowledge_gains: map_rows(state.knowledgeGains(), |gain| KnowledgeGainState {
+            knowledge: text(gain.knowledge()),
+            regrowth_gain: gain.regrowthGain(),
+        }),
+        site_relaxations: map_rows(state.siteRelaxations(), |relaxation| SiteRelaxationState {
+            knowledge: text(relaxation.knowledge()),
+            rule: relaxation.rule().map(decode_site_rule).unwrap_or_default(),
+        }),
     }
 }
 

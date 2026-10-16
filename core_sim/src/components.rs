@@ -9717,7 +9717,7 @@ mod tests {
         );
 
         // **RE-ISSUING A VERB KEEPS THE ENTRY'S PLACE**, and `unqueue` is the undo.
-        assert!(allocation.enqueue_build(source.clone(), BuildJob::Climb(shipped::plant_field())));
+        assert!(allocation.enqueue_build(source.clone(), BuildJob::Climb(shipped::plant_farm())));
         assert_eq!(allocation.build_queue_position(&source), Some(0));
         assert!(allocation.unqueue_build(&source));
         assert_eq!(allocation.build_queue_position(&source), None);

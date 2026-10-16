@@ -519,7 +519,7 @@ const FOW_DISCOVERED_HIDDEN_KEYS := [
 	# ground has been taken no better than it knows how far along the job is.
 	"patch_build_destination_rung", "patch_build_legs",
 	# …and WHERE THE PATCH ITSELF STANDS on that ladder. It is redacted for the same reason
-	# `patch_carrying_capacity` above is: `plant:tended` / `plant:field` state exactly the rung
+	# `patch_carrying_capacity` above is: `plant:tended` / `plant:farm` state exactly the rung
 	# `patch_is_cultivated` and `patch_is_field` are struck out two entries up to hide, so leaving it
 	# out would hand a merely-remembered hex the redaction's own answer in one token. It travels with
 	# the destination rather than with the ground readings because it IS the ladder, not the terrain

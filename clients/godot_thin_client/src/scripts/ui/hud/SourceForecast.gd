@@ -4317,7 +4317,7 @@ static func build_is_in_flight(src: Dictionary, prefix: String, kind: String,
 ## control's Running state into its Done state, and the one definition of it.
 ##
 ## **IT IS ONE COMPARISON, ON ONE WIRE FIELD: is the rung the source STANDS on at or above the rung
-## this verb builds?** `current_rung` is branch-qualified (`plant:field`, `animal:pen`), so the same
+## this verb builds?** `current_rung` is branch-qualified (`plant:farm`, `animal:pen`), so the same
 ## read serves both webs and a third one costs a row in two tables and nothing here. `prefix` spells
 ## the key, so a `patch_`-prefixed `tile_info` cross-ref and a bare wire row both work.
 ##
@@ -4366,7 +4366,7 @@ static func standing_improvement(src: Dictionary, prefix: String) -> String:
 ## `held.is_at_or_above(PlantTended)`, `is_field()` is `held == PlantField`, and `corral_at` seats the
 ## position at the top of `animal:pen`, which nothing on the animal web ever lowers. So *achieved*
 ## implies *meter exactly full*, by construction. Plant decay re-derives the standing on the same call
-## that moves the position, so a Field slipping does not sit under `plant:field` wearing its flag; and
+## that moves the position, so a Field slipping does not sit under `plant:farm` wearing its flag; and
 ## `Tame` never had a row in that table to fall through.
 ##
 ## ⛔ **ITS ONLY LIVE TRIGGER WAS A FLOAT ARTIFACT, WHICH IS THE CLASS THIS DELETION CLOSES.** The

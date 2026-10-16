@@ -1,6 +1,6 @@
 //! **A FOURTH PLANT STEP IS A JSON EDIT, AND ITS QUOTE REACHES THE WIRE.** The patch and herd rows
 //! carry one `RungQuoteState` per rung of their branch (`snapshot.fbs` -> `rungQuotes`) instead of
-//! a field named after each step, so a `plant:farm` rung added to the ladder - reusing the `managed`
+//! a field named after each step, so a `plant:terrace` rung added to the ladder - reusing the `managed`
 //! and `sown` traits, no Rust edit - is quoted, built to and published by the machinery that
 //! already quotes the shipped three.
 //!
@@ -22,20 +22,20 @@ use core_sim::{
 use serde_json::Value;
 
 /// The overlay's rung: branch `plant`, id `farm`, one above the shipped `field`.
-const FARM: &str = "farm";
+const TERRACE: &str = "terrace";
 
-/// The Farm's declared price in work and its upkeep, distinct from the Field's (75 / 4) so a quote
+/// The Farm's declared price in work and its upkeep, distinct from the Farm's (75 / 4) so a quote
 /// wired to the wrong rung cannot pass.
-const FARM_WORK_COST: f64 = 100.0;
-const FARM_UPKEEP_PER_TURN: f64 = 5.0;
+const TERRACE_WORK_COST: f64 = 100.0;
+const TERRACE_UPKEEP_PER_TURN: f64 = 5.0;
 
 /// The fertility floor the Farm puts back on the ground it stands on (the field rung's own comment:
 /// "Farm is this record with the gathering-site rule dropped and a fertility floor put back"). Low
 /// enough that every food-bearing tile clears it - the test is about the quote, not the scarcity.
-const FARM_FERTILITY_FLOOR: f64 = 1.0;
+const TERRACE_FERTILITY_FLOOR: f64 = 1.0;
 
 /// Hands on the builders pool and on the patch's gathering-and-keeping row. The Farm costs
-/// `FARM_WORK_COST` and the keeping bill is a handful of work a turn, so these finish it well inside
+/// `TERRACE_WORK_COST` and the keeping bill is a handful of work a turn, so these finish it well inside
 /// [`TURN_BUDGET`].
 const BUILDERS: u32 = 6;
 const CREW: u32 = 4;
@@ -51,39 +51,39 @@ const MAP_SEED: u64 = 119_304_647;
 /// The escapement floor the fixture crew gathers at - the dial the shipped build tests use.
 const FOOD_PEAK: f32 = 0.5;
 
-fn farm() -> RungId {
-    RungId::new(shipped::plant(), FARM)
+fn terrace() -> RungId {
+    RungId::new(shipped::plant(), TERRACE)
 }
 
-/// **THE SHIPPED LADDER WITH A FOURTH PLANT RUNG** - a copy of the Field's record (so it inherits
+/// **THE SHIPPED LADDER WITH A FOURTH PLANT RUNG** - a copy of the Farm's record (so it inherits
 /// `managed` + `sown`, the payoff block and the cost scale) with its own id, verb, order, price and
 /// upkeep, and without the gathering-site requirement.
-fn ladder_with_a_farm() -> LadderConfig {
+fn ladder_with_a_terrace() -> LadderConfig {
     let mut ladder: Value = serde_json::from_str(BUILTIN_INTENSIFICATION_LADDER)
         .expect("the builtin ladder parses as json");
     let rungs = ladder["rungs"].as_array_mut().expect("rungs is an array");
     let mut farm = rungs
         .iter()
-        .find(|rung| rung["branch"] == "plant" && rung["id"] == "field")
-        .expect("the shipped ladder has a field rung")
+        .find(|rung| rung["branch"] == "plant" && rung["id"] == "farm")
+        .expect("the shipped ladder has a farm rung")
         .clone();
-    farm["id"] = FARM.into();
+    farm["id"] = TERRACE.into();
     farm["order"] = 4.into();
-    farm["verb"] = FARM.into();
-    farm["label"] = "Farm".into();
-    farm["label_fallback"] = "a farm".into();
-    farm["completed_line"] = "Farm raised at ({x}, {y})".into();
-    farm["requires_rung"] = "field".into();
-    // The Farm UPGRADES a standing Field rather than placing a source, so it asks the patch for its
-    // crop (committed when the Field was sown) instead of resolving one against the species'
-    // `cultivation_ceiling`s, which stop at the Field on the shipped roster - a roster edit, and one
+    farm["verb"] = TERRACE.into();
+    farm["label"] = "Terrace".into();
+    farm["label_fallback"] = "a terrace".into();
+    farm["completed_line"] = "Terrace raised at ({x}, {y})".into();
+    farm["requires_rung"] = "farm".into();
+    // The Farm UPGRADES a standing Farm rather than placing a source, so it asks the patch for its
+    // crop (committed when the Farm was sown) instead of resolving one against the species'
+    // `cultivation_ceiling`s, which stop at the Farm on the shipped roster - a roster edit, and one
     // this test does not need to make.
     farm["places_source"] = false.into();
-    farm["build"]["work_cost"] = FARM_WORK_COST.into();
-    farm["upkeep"]["work_per_turn"] = FARM_UPKEEP_PER_TURN.into();
+    farm["build"]["work_cost"] = TERRACE_WORK_COST.into();
+    farm["upkeep"]["work_per_turn"] = TERRACE_UPKEEP_PER_TURN.into();
     farm["site_requirement"] = serde_json::json!({
         "requires_gathering_site": false,
-        "min_forage_capacity": FARM_FERTILITY_FLOOR,
+        "min_forage_capacity": TERRACE_FERTILITY_FLOOR,
         "requires_fresh_water": false
     });
     rungs.push(farm);
@@ -98,23 +98,23 @@ fn spawn_world() -> App {
     config.map_seed = MAP_SEED;
     app.world.insert_resource(config);
     app.world
-        .insert_resource(LadderConfigHandle::new(Arc::new(ladder_with_a_farm())));
+        .insert_resource(LadderConfigHandle::new(Arc::new(ladder_with_a_terrace())));
     app.world
         .insert_resource(core_sim::FloraConfigHandle::new(Arc::new(
-            roster_that_climbs_to_the_farm(),
+            roster_that_climbs_to_the_terrace(),
         )));
     app.update();
     app
 }
 
-/// **THE SHIPPED ROSTER WITH EVERY FIELD-CEILING CROP LIFTED TO THE FARM** - `cultivation_ceiling` is
+/// **THE SHIPPED ROSTER WITH EVERY FARM-CEILING CROP LIFTED TO THE TERRACE** - `cultivation_ceiling` is
 /// the species-side gate on a rung (an oak's mast is a wild harvest forever), and the shipped
-/// roster's stop at the Field, so a fourth step is reachable by a crop only once the roster says so.
+/// roster's stop at the Farm, so a fourth step is reachable by a crop only once the roster says so.
 /// That is a JSON edit too, applied here as a text substitution on the builtin file.
-fn roster_that_climbs_to_the_farm() -> core_sim::FloraConfig {
+fn roster_that_climbs_to_the_terrace() -> core_sim::FloraConfig {
     let json = core_sim::BUILTIN_FLORA_CONFIG.replace(
-        "\"cultivation_ceiling\": \"plant:field\"",
         "\"cultivation_ceiling\": \"plant:farm\"",
+        "\"cultivation_ceiling\": \"plant:terrace\"",
     );
     core_sim::FloraConfig::from_json_str(&json).expect("the lifted roster loads")
 }
@@ -149,7 +149,7 @@ fn cultivable_site(app: &mut App) -> UVec2 {
                     &composition,
                     &flora,
                     &ladder,
-                    shipped::plant_field(),
+                    shipped::plant_farm(),
                 )
                 .is_some()
             })
@@ -164,7 +164,7 @@ fn cultivable_site(app: &mut App) -> UVec2 {
 /// **STAND A BAND ON A PATCH THAT HOLDS THE FIELD, WITH THE CLIMB TO FARM QUEUED**: the band's tile
 /// is moved onto the site, the patch is raised to the top of the (shipped) field rung and owned, the
 /// faction knows what gates both rungs, and a crew keeps the patch while the builders raise it.
-fn stand_on_a_field_and_queue_the_farm(app: &mut App) -> (bevy::prelude::Entity, UVec2) {
+fn stand_on_a_farm_and_queue_the_terrace(app: &mut App) -> (bevy::prelude::Entity, UVec2) {
     let site = cultivable_site(app);
     let site_entity = app
         .world
@@ -192,8 +192,8 @@ fn stand_on_a_field_and_queue_the_farm(app: &mut App) -> (bevy::prelude::Entity,
             .add_progress(faction, knowledge, core_sim::scalar_one());
     }
     let ladder = app.world.resource::<LadderConfigHandle>().get();
-    let (field_base, field_width) = core_sim::plant_rung_span(shipped::plant_field(), &ladder);
-    // The crop a standing Field was committed to - the build refuses a patch with none.
+    let (field_base, field_width) = core_sim::plant_rung_span(shipped::plant_farm(), &ladder);
+    // The crop a standing Farm was committed to - the build refuses a patch with none.
     let crop = {
         let labor = app.world.resource::<core_sim::LaborConfigHandle>().get();
         let flora = app.world.resource::<core_sim::FloraConfigHandle>().get();
@@ -205,7 +205,7 @@ fn stand_on_a_field_and_queue_the_farm(app: &mut App) -> (bevy::prelude::Entity,
             .clone();
         let composition =
             core_sim::tile_flora_composition(&flora, &labor.forage, &ground, map_seed);
-        core_sim::default_species_for_rung(&composition, &flora, &ladder, shipped::plant_field())
+        core_sim::default_species_for_rung(&composition, &flora, &ladder, shipped::plant_farm())
     };
     {
         let mut registry = app.world.resource_mut::<ForageRegistry>();
@@ -227,7 +227,7 @@ fn stand_on_a_field_and_queue_the_farm(app: &mut App) -> (bevy::prelude::Entity,
         None,
     );
     allocation.set_assignment(LaborTarget::Builders, BUILDERS, ALL_HANDS, None);
-    allocation.enqueue_build(BuildSource::Patch(site), BuildJob::Climb(farm()));
+    allocation.enqueue_build(BuildSource::Patch(site), BuildJob::Climb(terrace()));
     app.world.entity_mut(band).insert(allocation);
     (band, site)
 }
@@ -298,63 +298,63 @@ fn quote_of(quotes: &[PublishedQuote], rung: RungId) -> &PublishedQuote {
 }
 
 /// **THE FOURTH RUNG IS QUOTED BEFORE ANYONE BUILDS IT**: one quote per rung above the root, in
-/// climb order, the Farm's carrying its own price and upkeep and *not* the Field's, and the rungs
+/// climb order, the Farm's carrying its own price and upkeep and *not* the Farm's, and the rungs
 /// the patch holds reading `reached`.
 #[test]
 fn a_fourth_plant_rung_is_quoted_on_the_wire_with_its_own_price() {
     let mut app = spawn_world();
-    let (_, site) = stand_on_a_field_and_queue_the_farm(&mut app);
+    let (_, site) = stand_on_a_farm_and_queue_the_terrace(&mut app);
     app.update();
 
     let quotes = published_quotes(&app, site);
     let keys: Vec<&str> = quotes.iter().map(|quote| quote.rung_key.as_str()).collect();
     assert_eq!(
         keys,
-        ["plant:tended", "plant:field", "plant:farm"],
+        ["plant:tended", "plant:farm", "plant:terrace"],
         "one quote per rung above the root, in climb order"
     );
 
-    let (tended, field, farm_quote) = (
+    let (tended, field, terrace_quote) = (
         quote_of(&quotes, shipped::plant_tended()),
-        quote_of(&quotes, shipped::plant_field()),
-        quote_of(&quotes, farm()),
+        quote_of(&quotes, shipped::plant_farm()),
+        quote_of(&quotes, terrace()),
     );
-    assert!(tended.reached && field.reached, "the patch holds the Field");
-    assert!(!farm_quote.reached, "…and has not built the Farm");
+    assert!(tended.reached && field.reached, "the patch holds the Farm");
+    assert!(!terrace_quote.reached, "…and has not built the Terrace");
     assert!(
-        (f64::from(farm_quote.work_cost) - FARM_WORK_COST).abs() < 1.0e-3,
+        (f64::from(terrace_quote.work_cost) - TERRACE_WORK_COST).abs() < 1.0e-3,
         "the Farm quotes its own declared price: {}",
-        farm_quote.work_cost
+        terrace_quote.work_cost
     );
     assert!(
-        farm_quote.work_cost > field.work_cost,
-        "…which is dearer than the Field's"
+        terrace_quote.work_cost > field.work_cost,
+        "…which is dearer than the Farm's"
     );
     assert!(
-        farm_quote.upkeep_demand > field.upkeep_demand,
+        terrace_quote.upkeep_demand > field.upkeep_demand,
         "…and so is holding it: {} vs {}",
-        farm_quote.upkeep_demand,
+        terrace_quote.upkeep_demand,
         field.upkeep_demand
     );
     assert!(
-        farm_quote.site_refusal.is_empty(),
+        terrace_quote.site_refusal.is_empty(),
         "the Farm drops the gathering-site rule, so no ground refuses it"
     );
     assert!(
-        farm_quote.food_yield > 0.0,
-        "a sown rung pays through the Field's payoff block, resolved off its traits"
+        terrace_quote.food_yield > 0.0,
+        "a sown rung pays through the Farm's payoff block, resolved off its traits"
     );
 }
 
 /// **THE CROP PICKER QUOTES THE FOURTH RUNG TOO**: every plant in the patch's composition carries one
 /// `RungShareQuoteState` per rung above the root, the Farm's among them, with the Farm's own price
-/// where the plant can climb to it and the Field's payoff block (resolved off the shared traits).
+/// where the plant can climb to it and the Farm's payoff block (resolved off the shared traits).
 #[test]
 fn a_fourth_plant_rung_is_quoted_per_species_in_the_crop_picker() {
     use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
 
     let mut app = spawn_world();
-    let (_, site) = stand_on_a_field_and_queue_the_farm(&mut app);
+    let (_, site) = stand_on_a_farm_and_queue_the_terrace(&mut app);
     app.update();
 
     let snapshot = app
@@ -386,41 +386,41 @@ fn a_fourth_plant_rung_is_quoted_per_species_in_the_crop_picker() {
             .collect();
         assert_eq!(
             keys,
-            ["plant:tended", "plant:field", "plant:farm"],
+            ["plant:tended", "plant:farm", "plant:terrace"],
             "one quote per rung above the root, for every plant"
         );
-        let field = sim_schema::wire_share_rung_quote(share.rungQuotes(), "plant:field")
+        let field = sim_schema::wire_share_rung_quote(share.rungQuotes(), "plant:farm")
             .expect("the field is quoted");
-        let farm_quote = sim_schema::wire_share_rung_quote(share.rungQuotes(), "plant:farm")
+        let terrace_quote = sim_schema::wire_share_rung_quote(share.rungQuotes(), "plant:terrace")
             .expect("the farm is quoted");
         assert!(
-            farm_quote.canClimb(),
+            terrace_quote.canClimb(),
             "a crop whose ceiling is the Farm can climb to it"
         );
         assert!(
-            (f64::from(farm_quote.workCost()) - FARM_WORK_COST).abs() < 1.0e-3
-                || farm_quote.workCost() > field.workCost(),
+            (f64::from(terrace_quote.workCost()) - TERRACE_WORK_COST).abs() < 1.0e-3
+                || terrace_quote.workCost() > field.workCost(),
             "the Farm quotes its own price: {}",
-            farm_quote.workCost()
+            terrace_quote.workCost()
         );
         assert_eq!(
-            farm_quote.foodPayoff(),
+            terrace_quote.foodPayoff(),
             field.foodPayoff(),
-            "…and pays through the Field's block, resolved off the shared traits"
+            "…and pays through the Farm's block, resolved off the shared traits"
         );
     }
 }
 
-/// **AND IT IS BUILT TO**: the climb from the Field completes through the same machinery the shipped
+/// **AND IT IS BUILT TO**: the climb from the Farm completes through the same machinery the shipped
 /// rungs use, the patch ends holding the Farm, and the wire's Farm quote flips to `reached` with a
 /// full meter.
 #[test]
 fn a_patch_at_field_climbs_to_the_fourth_rung_and_the_wire_says_so() {
     let mut app = spawn_world();
-    let (_, site) = stand_on_a_field_and_queue_the_farm(&mut app);
+    let (_, site) = stand_on_a_farm_and_queue_the_terrace(&mut app);
 
     let mut turns = 0;
-    while held_rung(&app, site) != farm() {
+    while held_rung(&app, site) != terrace() {
         assert!(
             turns < TURN_BUDGET,
             "the climb to the farm did not complete within {TURN_BUDGET} turns"
@@ -431,18 +431,18 @@ fn a_patch_at_field_climbs_to_the_fourth_rung_and_the_wire_says_so() {
     app.update();
 
     let quotes = published_quotes(&app, site);
-    let farm_quote = quote_of(&quotes, farm());
-    assert!(farm_quote.reached, "the wire says the Farm is built");
+    let terrace_quote = quote_of(&quotes, terrace());
+    assert!(terrace_quote.reached, "the wire says the Terrace is built");
     assert!(
-        (farm_quote.progress - 1.0).abs() < 1.0e-4,
+        (terrace_quote.progress - 1.0).abs() < 1.0e-4,
         "a built rung reads a full meter: {}",
-        farm_quote.progress
+        terrace_quote.progress
     );
     assert!(quotes.iter().all(|quote| quote.reached));
 }
 
 /// The Ranch's declared price in work, distinct from the shipped pen's 75.
-const RANCH_WORK_COST: f64 = 150.0;
+const STUD_WORK_COST: f64 = 150.0;
 
 /// **THE ANIMAL BRANCH IS THE SAME STORY**: a fourth animal rung that reuses the `domesticated` and
 /// `enclosed` traits (a `ranch` above the pen) is quoted on every herd row under its own key, with
@@ -459,15 +459,15 @@ fn a_fourth_animal_rung_is_quoted_on_every_herd_row() {
         .find(|rung| rung["branch"] == "animal" && rung["id"] == "pen")
         .expect("the shipped ladder has a pen rung")
         .clone();
-    ranch["id"] = "ranch".into();
+    ranch["id"] = "stud".into();
     ranch["order"] = 4.into();
-    ranch["verb"] = "ranch".into();
-    ranch["label"] = "Ranch".into();
+    ranch["verb"] = "stud".into();
+    ranch["label"] = "Stud".into();
     ranch["label_fallback"] = "a ranch".into();
-    ranch["completed_line"] = "Ranched {id} at ({x}, {y})".into();
+    ranch["completed_line"] = "Studded {id} at ({x}, {y})".into();
     ranch["requires_rung"] = "pen".into();
-    ranch["build"]["work_cost"] = RANCH_WORK_COST.into();
-    ranch["ceiling_required"] = "animal:ranch".into();
+    ranch["build"]["work_cost"] = STUD_WORK_COST.into();
+    ranch["ceiling_required"] = "animal:stud".into();
     rungs.push(ranch);
 
     let mut app = build_test_app();
@@ -509,15 +509,15 @@ fn a_fourth_animal_rung_is_quoted_on_every_herd_row() {
             .collect();
         assert_eq!(
             keys,
-            ["animal:pastoral", "animal:pen", "animal:ranch"],
+            ["animal:pastoral", "animal:pen", "animal:stud"],
             "one quote per rung above the root"
         );
         let pen = sim_schema::wire_rung_quote(herd.rungQuotes(), "animal:pen")
             .expect("the pen is quoted");
-        let ranch = sim_schema::wire_rung_quote(herd.rungQuotes(), "animal:ranch")
+        let ranch = sim_schema::wire_rung_quote(herd.rungQuotes(), "animal:stud")
             .expect("the ranch is quoted");
         assert!(
-            (f64::from(ranch.workCost()) - RANCH_WORK_COST).abs() < 1.0e-3,
+            (f64::from(ranch.workCost()) - STUD_WORK_COST).abs() < 1.0e-3,
             "the Ranch quotes its own declared price: {}",
             ranch.workCost()
         );

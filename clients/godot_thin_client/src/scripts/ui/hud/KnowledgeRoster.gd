@@ -465,11 +465,38 @@ static func _ladder_node(entry: Dictionary, domain: StringName, model: Dictionar
 		# unlock announcement it was written for (retired, §5); this pane is its reader now. **It is
 		# COPY, not structure**: a knowledge with no note draws with nothing to say rather than not
 		# drawing, which is what keeps the roster wire-driven.
-		HudKnowledgeVocab.NODE_NOTE: String(FactionReadouts.KNOWLEDGE_UNLOCK_NOTES.get(track, "")),
+		HudKnowledgeVocab.NODE_NOTE: String(FactionReadouts.KNOWLEDGE_UNLOCK_NOTES.get(track,
+			catalog_lesson_note(track, catalog))),
 		HudKnowledgeVocab.NODE_PRACTISE: String(HudKnowledgeVocab.PRACTISE_NOTES.get(track, "")),
 		HudKnowledgeVocab.NODE_NEW: _is_new(track, state, model),
 		HudKnowledgeVocab.NODE_CONTACT_LESSON: contact_lesson_for(track, state, model),
 	}
+
+## **WHAT A LESSON DOES, READ FROM THE CATALOG** when the hand-written table above has no sentence for
+## it: a lesson named in a rung's `site_relaxations` opens ground for that rung's verb beyond the sites
+## it asked for (Worked Land), and one named in its `knowledge_gains` lifts the herds it holds (Selective
+## breeding). `""` for a lesson the catalog states no effect for -- the panel then has nothing to say,
+## which is the wire-driven roster's own rule. No lesson is named here.
+static func catalog_lesson_note(track: String, catalog: Array) -> String:
+	for entry_variant in catalog:
+		if not (entry_variant is Dictionary):
+			continue
+		var entry: Dictionary = entry_variant
+		for relaxation in entry.get("site_relaxations", []):
+			if relaxation is Dictionary and String((relaxation as Dictionary).get("knowledge", "")) == track:
+				return HudKnowledgeVocab.LESSON_NOTE_SITE_FORMAT % _rung_noun(entry)
+		for gain in entry.get("knowledge_gains", []):
+			if gain is Dictionary and String((gain as Dictionary).get("knowledge", "")) == track:
+				return HudKnowledgeVocab.LESSON_NOTE_REGROWTH_FORMAT % [
+					_rung_noun(entry),
+					DetailFormat.format_trimmed(float((gain as Dictionary).get("regrowth_gain", 1.0)),
+						HudKnowledgeVocab.LESSON_NOTE_GAIN_DECIMALS)]
+	return ""
+
+## A catalog rung's own name, lowercased, for a sentence's middle (`farm`, `pen`).
+static func _rung_noun(entry: Dictionary) -> String:
+	var label := String(entry.get("label", "")).strip_edges()
+	return (label if label != "" else String(entry.get("label_fallback", ""))).to_lower()
 
 static func _craft_node(row: Dictionary, model: Dictionary) -> Dictionary:
 	var craft_id := String(row.get(HudCraftingVocab.CRAFT_KNOWLEDGE_CRAFT_ID_KEY, ""))

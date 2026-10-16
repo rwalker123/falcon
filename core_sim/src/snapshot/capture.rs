@@ -2710,7 +2710,7 @@ pub fn capture_snapshot(
     // Forage arm of `advance_labor_allocation` folds into `forage_take`'s worker cap. The forage
     // patch forecast (below) needs it to report a per-worker yield that matches what the sim pays.
     let mut seasonal_weights: HashMap<UVec2, f32> = HashMap::new();
-    // Per-tile terrain tags, grid-indexed — what the fresh-water half of the `plant:field` rung's
+    // Per-tile terrain tags, grid-indexed — what the fresh-water half of the `plant:farm` rung's
     // site rule reads about a tile's NEIGHBOURS (`forage::tile_is_fresh_watered`). Collected in this
     // pass so the patch sweep below reads a finished grid rather than walking the world again.
     let mut tile_tags = TerrainTagGrid::new(config.grid_size);
@@ -2754,7 +2754,7 @@ pub fn capture_snapshot(
     // than a wrapping block so the (long) composition closure below keeps its indentation.
     //
     // **Why the ground under each patch will not take seed** (`sow_site_refusals`) — the
-    // `plant:field` rung's own `site_requirement`, resolved through the SAME
+    // `plant:farm` rung's own `site_requirement`, resolved through the SAME
     // `RungSiteRequirement::refusal` seam the `sow` command (`validate_sow`) and the labor arm's
     // placement gate use, so the wire, the rejection and the sim can never disagree about which
     // ground is farmable. Only refusals are stored: a coord absent from the map is ground that takes
@@ -2784,7 +2784,38 @@ pub fn capture_snapshot(
         .collect();
     let grid = config.grid_size;
     let wrap_horizontal = config.map_topology.wrap_horizontal;
-    let mut rung_site_refusals: HashMap<(UVec2, RungId), SiteRefusal> = HashMap::new();
+    // **A refusal is a fact about a TILE AND A PEOPLE**: a rung's `site_relaxations` loosen its site
+    // rule for a faction that holds the lesson, so the wire's refusal differs between viewers. The
+    // sweep therefore runs once per DISTINCT set of held site lessons among the audiences (almost
+    // always one), and each viewer's pass reads the set it holds.
+    let held_site_lessons = |faction: FactionId| -> Vec<&str> {
+        ladder_config
+            .rungs
+            .iter()
+            .flat_map(|rung| rung.site_relaxations.iter())
+            .map(|relaxation| relaxation.knowledge.as_str())
+            .filter(|name| {
+                crate::intensification::knows_lesson(
+                    &discovery_progress,
+                    faction,
+                    name,
+                    ladder_config.knowledge.completion_threshold,
+                )
+            })
+            .collect()
+    };
+    let mut lesson_sets: Vec<Vec<&str>> = audiences
+        .capture_list(viewer_faction.0)
+        .into_iter()
+        .map(held_site_lessons)
+        .collect();
+    lesson_sets.sort();
+    lesson_sets.dedup();
+    let mut rung_site_refusals: HashMap<Vec<&str>, HashMap<(UVec2, RungId), SiteRefusal>> =
+        lesson_sets
+            .iter()
+            .map(|set| (set.clone(), HashMap::new()))
+            .collect();
     // **The size of the land under each patch** — the tile's own forage `K`, through the one
     // `forage::tile_forage_capacity` seam. Every plant upkeep figure the patch row publishes is
     // quoted per **tender-load** of it (`forage::patch_tender_loads`), the plant twin of a herd's
@@ -2806,18 +2837,22 @@ pub fn capture_snapshot(
         let fresh_water = tile_is_fresh_watered(tile, grid.x, grid.y, wrap_horizontal, |coord| {
             tile_tags.get(coord)
         });
-        for rung in &site_gated_rungs {
-            if let Some(refusal) = rung_site_refusal(
-                rung,
-                tile,
-                &labor_config.forage,
-                food_sites.is_site(tile.position),
-                fresh_water,
-                // **A plant rung asks nothing of a deposit**, so the term cannot refuse it: every
-                // rung off the two deposit branches leaves `min_deposit_capacity` at this neutral.
-                crate::intensification::NO_DEPOSIT_FLOOR,
-            ) {
-                rung_site_refusals.insert((tile.position, rung.rung_id()), refusal);
+        for (lessons, refusals) in &mut rung_site_refusals {
+            for rung in &site_gated_rungs {
+                if let Some(refusal) = rung_site_refusal(
+                    rung,
+                    tile,
+                    &labor_config.forage,
+                    food_sites.is_site(tile.position),
+                    fresh_water,
+                    // **A plant rung asks nothing of a deposit**, so the term cannot refuse it:
+                    // every rung off the two deposit branches leaves `min_deposit_capacity` at this
+                    // neutral.
+                    crate::intensification::NO_DEPOSIT_FLOOR,
+                    &|name| lessons.contains(&name),
+                ) {
+                    refusals.insert((tile.position, rung.rung_id()), refusal);
+                }
             }
         }
         flora_sweep.quotes(tile);
@@ -3888,7 +3923,9 @@ pub fn capture_snapshot(
             &flora_config,
             &ladder_config,
             &seasonal_weights,
-            &rung_site_refusals,
+            rung_site_refusals
+                .get(&held_site_lessons(viewer))
+                .expect("every audience's lesson set was swept"),
             &tile_capacities,
             &flora_quotes,
             &build_kit_ids,

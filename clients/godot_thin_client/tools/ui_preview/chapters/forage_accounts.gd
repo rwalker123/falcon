@@ -1471,7 +1471,7 @@ func run(harness) -> void:
 	await _assert_plant_crew_noun("plant_crew_tended", TileFx.tended_tile_fixture(),
 		HudComposeVocab.HARVEST_CREW_LABEL)
 	# **BOTH UPPER RUNGS, NOT ONE.** A Tended Patch stands on `plant:tended` and a Field sown from wild
-	# ground on `plant:field` — two different rungs, and they were the two the retired fork reached
+	# ground on `plant:farm` — two different rungs, and they were the two the retired fork reached
 	# through one at-or-above test (`_wild_sown_field_tile_fixture` is the Field that was never
 	# cultivated). They are kept because they are still the two rungs a re-introduced fork would split.
 	await _assert_plant_crew_noun("plant_crew_field", _wild_sown_field_tile_fixture(),

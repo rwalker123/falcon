@@ -2,7 +2,7 @@
 //! (`docs/plan_standing_upkeep.md` §4.15).
 //!
 //! Sowing a crop that already holds most of the ground is tidying; sowing one that holds a tenth is
-//! replacing the tile. The `plant:field` rung's declared `work_cost` is what that job costs on
+//! replacing the tile. The `plant:farm` rung's declared `work_cost` is what that job costs on
 //! *reference* ground, and any particular patch pays it times its own multiplier — the ladder's one
 //! per-source price hook (`RungStanding::at`'s `cost_at`), which the animal web already uses for a
 //! species' `taming_cost_multiplier`.
@@ -70,7 +70,7 @@ const BUILD_HORIZON: u32 = 200;
 // The fixture
 // ---------------------------------------------------------------------------------------------
 
-/// **A watered gathering site whose basket can climb to `plant:field` AND whose crop is priced
+/// **A watered gathering site whose basket can climb to `plant:farm` AND whose crop is priced
 /// strictly between the clamps.**
 ///
 /// The second half is what makes this file's assertions mean something. On ground whose dominant crop
@@ -109,7 +109,7 @@ fn an_informatively_priced_sowable_site(app: &mut App) -> UVec2 {
                     tiles.get(&neighbor).map(|tile| tile.terrain_tags)
                 });
             if core_sim::rung_site_refusal(
-                ladder.rung(shipped::plant_field()),
+                ladder.rung(shipped::plant_farm()),
                 ground,
                 &labor.forage,
                 app.world
@@ -117,6 +117,7 @@ fn an_informatively_priced_sowable_site(app: &mut App) -> UVec2 {
                     .is_site(coord),
                 fresh_water,
                 core_sim::NO_DEPOSIT_FLOOR,
+                &|_| false,
             )
             .is_some()
             {
@@ -128,7 +129,7 @@ fn an_informatively_priced_sowable_site(app: &mut App) -> UVec2 {
                 &composition,
                 &flora,
                 shipped::ladder(),
-                shipped::plant_field(),
+                shipped::plant_farm(),
             )
             .is_none()
             {
@@ -264,7 +265,7 @@ fn spawn_the_farming_band(app: &mut App, tile: bevy::prelude::Entity, source: UV
             ],
             build_queue: vec![core_sim::BuildQueueEntry {
                 source: core_sim::BuildSource::Patch(source),
-                declared: core_sim::BuildJob::Climb(shipped::plant_field()),
+                declared: core_sim::BuildJob::Climb(shipped::plant_farm()),
                 priority: core_sim::SourcePriority::default(),
             }],
             ..Default::default()
@@ -277,7 +278,7 @@ fn spawn_the_farming_band(app: &mut App, tile: bevy::prelude::Entity, source: UV
 /// in the capture and wrong in the envelope, and the envelope is what a client sees.
 struct PublishedPatch {
     tile: UVec2,
-    /// The patch's own `plant:field` price — the one crop it is committed to (or the rung's
+    /// The patch's own `plant:farm` price — the one crop it is committed to (or the rung's
     /// auto-pick), in work units.
     field_work_cost: f32,
     /// `""` when the patch is still the wild mixed basket.
@@ -317,7 +318,7 @@ fn published_patches(app: &App) -> Vec<PublishedPatch> {
         .iter()
         .map(|row| PublishedPatch {
             tile: UVec2::new(row.x(), row.y()),
-            field_work_cost: sim_schema::wire_rung_quote(row.rungQuotes(), "plant:field")
+            field_work_cost: sim_schema::wire_rung_quote(row.rungQuotes(), "plant:farm")
                 .map_or(0.0, |quote| quote.workCost()),
             committed_species: row.committedSpecies().unwrap_or_default().to_string(),
             crops: row
@@ -330,12 +331,12 @@ fn published_patches(app: &App) -> Vec<PublishedPatch> {
                             share: entry.share(),
                             can_sow: sim_schema::wire_share_rung_quote(
                                 entry.rungQuotes(),
-                                "plant:field",
+                                "plant:farm",
                             )
                             .is_some_and(|quote| quote.canClimb()),
                             sow_work_cost: sim_schema::wire_share_rung_quote(
                                 entry.rungQuotes(),
-                                "plant:field",
+                                "plant:farm",
                             )
                             .map_or(0.0, |quote| quote.workCost()),
                         })
@@ -355,7 +356,7 @@ fn published_patch(app: &App, source: UVec2) -> PublishedPatch {
         .expect("the fixture patch is on the wire")
 }
 
-/// The `plant:field` price this patch's row publishes, read off the encoded envelope.
+/// The `plant:farm` price this patch's row publishes, read off the encoded envelope.
 fn published_field_work_cost(app: &App, source: UVec2) -> f32 {
     published_patch(app, source).field_work_cost
 }
@@ -372,11 +373,11 @@ fn ladder_position(app: &App, source: UVec2) -> f32 {
 /// schema default reads as *no figure* and a client renders no row rather than a free Sow.
 const NO_SOW_WORK_COST: f32 = 0.0;
 
-/// The `plant:field` rung's **declared** `work_cost` — the price on reference ground, which every
+/// The `plant:farm` rung's **declared** `work_cost` — the price on reference ground, which every
 /// per-patch and per-crop figure published here is a multiple of.
 fn field_declared_cost(app: &App) -> f32 {
     core_sim::plant_rung_span(
-        shipped::plant_field(),
+        shipped::plant_farm(),
         &app.world.resource::<LadderConfigHandle>().get(),
     )
     .1
@@ -384,7 +385,7 @@ fn field_declared_cost(app: &App) -> f32 {
 
 fn field_base(app: &App) -> f32 {
     core_sim::plant_rung_span(
-        shipped::plant_field(),
+        shipped::plant_farm(),
         &app.world.resource::<LadderConfigHandle>().get(),
     )
     .0
@@ -427,7 +428,7 @@ fn a_two_leg_sow_re_quotes_its_field_leg_off_the_weeded_ground() {
             &composition,
             &flora,
             shipped::ladder(),
-            shipped::plant_field(),
+            shipped::plant_farm(),
         )
         .expect("the site was chosen for having one");
         let wild_share = composition
@@ -490,7 +491,7 @@ fn a_two_leg_sow_re_quotes_its_field_leg_off_the_weeded_ground() {
 
     let ladder = app.world.resource::<LadderConfigHandle>().get();
     let quoted_at_declaration = ladder
-        .rung(shipped::plant_field())
+        .rung(shipped::plant_farm())
         .build_cost(weeded_price)
         .expect("the Field rung builds");
     assert!(
@@ -512,7 +513,7 @@ fn the_published_sow_price_is_the_work_the_field_rung_takes() {
     let (mut app, source) = a_two_leg_sow();
     let base = field_base(&app);
     let declared = core_sim::plant_rung_span(
-        shipped::plant_field(),
+        shipped::plant_farm(),
         &app.world.resource::<LadderConfigHandle>().get(),
     )
     .1;
@@ -650,7 +651,7 @@ fn assert_crop_is_priced_as_the_patch(patch: &PublishedPatch, crop: &str, when: 
     );
 }
 
-/// **The crop an unworked patch is priced on** — the `plant:field` rung's own auto-pick over the
+/// **The crop an unworked patch is priced on** — the `plant:farm` rung's own auto-pick over the
 /// tile's basket, resolved through the same `forage::default_species_for_rung` seam the readout and
 /// the labor arm both commit through.
 fn auto_picked_crop(app: &App, source: UVec2) -> String {
@@ -671,7 +672,7 @@ fn auto_picked_crop(app: &App, source: UVec2) -> String {
         &composition,
         &flora,
         shipped::ladder(),
-        shipped::plant_field(),
+        shipped::plant_farm(),
     )
     .expect("the site was chosen for having a crop that climbs to a Field")
 }

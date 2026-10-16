@@ -93,7 +93,7 @@ fn the_yield_vector_routes_by_account_with_no_role_branch() {
             forage,
             QUOTE_MULTIPLIER,
             shipped::ladder(),
-            shipped::plant_field(),
+            shipped::plant_farm(),
         );
         let fodder = commit_fodder_payoff(
             tile,
@@ -104,7 +104,7 @@ fn the_yield_vector_routes_by_account_with_no_role_branch() {
             forage,
             QUOTE_MULTIPLIER,
             shipped::ladder(),
-            shipped::plant_field(),
+            shipped::plant_farm(),
         );
         // **The material account has no per-turn QUOTE**, and that is a fact about the account
         // rather than a gap in this test: a material is a batch carrying a characteristic vector, so
@@ -568,7 +568,7 @@ fn the_picker_material_quote_is_the_material_the_sim_credits() {
         &labor.forage,
         QUOTE_MULTIPLIER,
         shipped::ladder(),
-        shipped::plant_field(),
+        shipped::plant_farm(),
     );
     assert_eq!(
         quoted.len(),
@@ -631,14 +631,14 @@ fn a_field_of_a_food_crop_quotes_an_empty_material_payoff_not_a_zero() {
     };
 
     // A grain FIELD is one plant, and that plant is made of nothing anyone builds with.
-    let grain_field = quote("wild_emmer", shipped::plant_field());
+    let grain_field = quote("wild_emmer", shipped::plant_farm());
     assert!(
         grain_field.is_empty(),
         "a grain Field names no material, so it must quote NO ROW rather than a zero: {grain_field:?}"
     );
     // …while the cash crop on the same ground at the same rung does quote one, or the assertion
     // above would pass against a seam that never returns anything.
-    let cotton_field = quote("cotton", shipped::plant_field());
+    let cotton_field = quote("cotton", shipped::plant_farm());
     assert_eq!(
         cotton_field.len(),
         1,
@@ -675,6 +675,6 @@ fn quote_absent_species(flora: &FloraConfig, tile: UVec2, capacity: f32) -> Vec<
         &labor().forage,
         QUOTE_MULTIPLIER,
         shipped::ladder(),
-        shipped::plant_field(),
+        shipped::plant_farm(),
     )
 }

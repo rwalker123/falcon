@@ -662,3 +662,9 @@ static func apply_palette() -> void:
 		NODE_STATE_LEARNING: HudStyle.INK,
 		NODE_STATE_NOT_BEGUN: HudStyle.INK_FAINT,
 	}
+
+## What a lesson the catalog states an effect for does, in the knowledge screen's own voice. The
+## hand-written `FactionReadouts.KNOWLEDGE_UNLOCK_NOTES` wins where it has a sentence.
+const LESSON_NOTE_SITE_FORMAT := "Your people can now sow a %s on well-watered ground beyond the places they gather."
+const LESSON_NOTE_REGROWTH_FORMAT := "Herds in a %s regrow %s× faster."
+const LESSON_NOTE_GAIN_DECIMALS := 2

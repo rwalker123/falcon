@@ -673,6 +673,9 @@ const DETAIL_KEY_HIDDEN := {
 const DETAIL_KEY_HIDDEN_BY_STATUS := {
 	"status=slipping": {"rung": true, "progress": true, "x": true, "y": true, "reason": true},
 	"status=feral": {"rung": true, "progress": true, "x": true, "y": true, "reason": true},
+	# A pen reaching a size tier (`status=tier action=extend_pen tier=ranch herd=... radius=2`): the tier
+	# and the ring count read as the line's detail, and the three machine tokens stay out of it.
+	"status=tier": {"status": true, "action": true, "herd": true},
 }
 
 ## **WHOLE `key=value` FRAGMENTS THE LABEL ALREADY SAYS, hidden by exact match** (issue #702). Not

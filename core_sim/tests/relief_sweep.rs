@@ -441,7 +441,7 @@ fn sowable_and_deltas(world: &World) -> (usize, usize, usize) {
                     .map(|t| t.terrain_tags)
             });
             if rung_site_refusal(
-                ladder.rung(shipped::plant_field()),
+                ladder.rung(shipped::plant_farm()),
                 ground,
                 &labor.forage,
                 world
@@ -449,6 +449,7 @@ fn sowable_and_deltas(world: &World) -> (usize, usize, usize) {
                     .is_site(UVec2::new(x, y)),
                 fresh,
                 core_sim::NO_DEPOSIT_FLOOR,
+                &|_| false,
             )
             .is_none()
             {

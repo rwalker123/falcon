@@ -6057,7 +6057,7 @@ a wild-ceiling Roe Deer offers nothing — the CONTRAST is the point), `band_pan
 ### …AND THE `⌃` OPENS A LADDER TRACK, BECAUSE AN ENTRY NAMES A DESTINATION (§2.8)
 
 The sim stores **one position per source** in cumulative work units — `plant:tended` runs `0 → 50` and
-`plant:field` `50 → 125` — and a queue entry names a **destination rung** rather than a single rung.
+`plant:farm` `50 → 125` — and a queue entry names a **destination rung** rather than a single rung.
 An entry climbs every rung between where the source stands and that destination and stays at the head
 until it ARRIVES, so `sow` declared on untended ground is a TWO-LEG climb that costs the whole branch.
 
@@ -6152,7 +6152,7 @@ when that leg finished. The legs are the row's EXPANSION:
 LOCKED rung, visible with its reason, beside the open one) · `band_panel_rung_track_banked` (the same
 ground one rung up on a faction that knows both crafts — the BANKED rung, and the claim that exactly
 ONE row on the card quotes a price) · `band_panel_rung_track_climbing` (a two-leg entry queued to
-`plant:field`, opened from the RUNNING slot — the path, the target, and both wire figures by
+`plant:farm`, opened from the RUNNING slot — the path, the target, and both wire figures by
 EQUALITY) · `band_panel_queue_legs` (the queue row opened into its climb). The four are judged as a
 SET: a card that marked every rung `open` passes any one of the state claims alone.
 
@@ -6232,7 +6232,7 @@ WHAT TO GROW                      ← on a SOW; a Cultivate reads WHAT TO TEND
 
 ### …AND THE FIELD ROW STATES ITS PRICE AND NO REASON (§4.15)
 
-`plant:field`'s build cost is scaled by the chosen crop's share of the tile — sowing a crop that
+`plant:farm`'s build cost is scaled by the chosen crop's share of the tile — sowing a crop that
 already holds most of the ground is mostly tidying, sowing one that holds a tenth means replacing the
 tile — so two Sows are quoted at wildly different work. The declaration path's own Field row states
 that price:

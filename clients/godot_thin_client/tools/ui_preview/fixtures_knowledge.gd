@@ -94,6 +94,8 @@ static func ladder_roster() -> Array:
 		_row(KNOWLEDGE_HERDING, "Herding", BRANCH_ANIMAL, 1, true, AREA_FOOD),
 		_row(KNOWLEDGE_PENNING, "Penning", BRANCH_ANIMAL, 2, true, AREA_FOOD),
 		_row(KNOWLEDGE_FODDERING, "Foddering", BRANCH_ANIMAL, 3, false, AREA_FOOD),
+		_row("worked_land", "Worked Land", BRANCH_PLANT, 3, false, AREA_FOOD),
+		_row("selective_breeding", "Selective Breeding", BRANCH_ANIMAL, 2, false, AREA_FOOD),
 		_row(KNOWLEDGE_ROADBUILDING, "Roadbuilding", BRANCH_ROUTE, 2, true, AREA_WORKS),
 		_row(KNOWLEDGE_PAVING, "Paving", BRANCH_ROUTE, 3, true, AREA_WORKS),
 		_row(KNOWLEDGE_WOODCRAFT, "Woodcraft", BRANCH_FORESTRY, 1, true, AREA_MAKING),
@@ -112,7 +114,7 @@ static func ladder_roster() -> Array:
 static func ladder_rungs() -> Array:
 	return [
 		_rung("plant:tended", BRANCH_PLANT, 1, "cultivate", KNOWLEDGE_CULTIVATION, "patch"),
-		_rung("plant:field", BRANCH_PLANT, 2, "sow", KNOWLEDGE_SEED_SELECTION, "patch"),
+		_rung("plant:farm", BRANCH_PLANT, 2, "sow", KNOWLEDGE_SEED_SELECTION, "patch"),
 		_rung("animal:pastoral", BRANCH_ANIMAL, 1, "tame", KNOWLEDGE_HERDING, "herd"),
 		_rung("animal:pen", BRANCH_ANIMAL, 2, "corral", KNOWLEDGE_PENNING, "herd"),
 		_rung("route:path", BRANCH_ROUTE, 0, "", "", "road"),

@@ -1688,7 +1688,7 @@ fn every_build_job_and_source_kind_is_stated() {
 
     for job in [
         BuildJob::Climb(shipped::plant_tended()),
-        BuildJob::Climb(shipped::plant_field()),
+        BuildJob::Climb(shipped::plant_farm()),
         BuildJob::Climb(shipped::animal_pastoral()),
         BuildJob::Climb(shipped::animal_pen()),
         BuildJob::ExtendPen,

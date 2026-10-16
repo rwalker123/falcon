@@ -1439,7 +1439,7 @@ func _assert_the_greying_follows_the_animal() -> void:
 	pen["corralled"] = true
 	# A pen with a rung still to climb: the harness-only `animal:ranch` step above it, ceiling raised.
 	pen["extra_step"] = true
-	pen["husbandry_ceiling"] = "ranch"
+	pen["husbandry_ceiling"] = "stud"
 	RungFx.stamp_herd(pen)
 	# ⛔ **`NO_ENGAGEMENT_STAGE` IS WHAT THE WIRE ACTUALLY PUBLISHES FOR A PEN, and this fixture keeps
 	# it deliberately.** `core_sim/src/snapshot/subsistence.rs` still filters the field on

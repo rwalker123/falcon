@@ -209,7 +209,7 @@ fn required_units(config: &EquipmentConfig, sites: &[(RungId, f32)]) -> Vec<(Str
 /// resolved no kit, registered no demand for its tools, and nothing anywhere would have said so.
 ///
 /// So the plough is a **fixture item**: no plough ships, and one is minted here from the hoes with a
-/// `plant:field` bound added.
+/// `plant:farm` bound added.
 ///
 /// **The worked example from §2.1 is asserted literally** — Agriculture with 4 hands on tended
 /// patches and 2 on a Field reads **6 hoes, 2 ploughs** — because that is the arithmetic the whole
@@ -232,7 +232,7 @@ fn a_rung_tied_plant_tool_resolves_per_site_instead_of_nothing() {
          before anybody adds a roster entry for it"
     );
     let derived = config
-        .build_kit_for_branch(shipped::plant(), Some(&shipped::plant_field().wire_key()))
+        .build_kit_for_branch(shipped::plant(), Some(&shipped::plant_farm().wire_key()))
         .expect("the roster still carries the tillage kit for the plant web");
     assert!(
         !derived.uses().any(|item| item == PLOUGH),
@@ -248,7 +248,7 @@ fn a_rung_tied_plant_tool_resolves_per_site_instead_of_nothing() {
         "a tended patch is served by the hoe alone — the plough is bound to the rung above it"
     );
     assert_eq!(
-        tools_for(&config, shipped::plant_field()),
+        tools_for(&config, shipped::plant_farm()),
         vec![HOES.to_string(), PLOUGH.to_string()],
         "…and a Field wants both, which is the line the retired lookup produced none of"
     );
@@ -259,7 +259,7 @@ fn a_rung_tied_plant_tool_resolves_per_site_instead_of_nothing() {
             &config,
             &[
                 (shipped::plant_tended(), HANDS_ON_TENDED_PATCHES),
-                (shipped::plant_field(), HANDS_ON_A_FIELD),
+                (shipped::plant_farm(), HANDS_ON_A_FIELD),
             ],
         ),
         vec![
@@ -270,7 +270,7 @@ fn a_rung_tied_plant_tool_resolves_per_site_instead_of_nothing() {
     );
 }
 
-/// **The shipped roster plus a hypothetical plough bound to `plant:field`.**
+/// **The shipped roster plus a hypothetical plough bound to `plant:farm`.**
 ///
 /// It is minted from the **hoes** — same wear, same durability, same worth — so the one thing that
 /// differs between the two items is the `rung` bound, and every reading below is about that bound
@@ -284,7 +284,7 @@ fn a_roster_with_a_plough(id: &str) -> EquipmentConfig {
         .clone();
     for tier in plough.tiers.iter_mut() {
         for effect in tier.effects.iter_mut() {
-            effect.rung = Some(shipped::plant_field().wire_key());
+            effect.rung = Some(shipped::plant_farm().wire_key());
         }
     }
     config.items.insert(id.to_string(), plough);

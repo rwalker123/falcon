@@ -607,14 +607,14 @@ func _tile_terrain_lines(tile_info: Dictionary,
     # **The animal web is untouched and that is the point**: `Grazing` still renders here, so the card
     # never goes silent about ground that feeds herds — what disappears is only the claim that PEOPLE
     # can eat it. Fodder needs no forage action, and it keeps its row.
-    var gathering_site := DetailFormat.tile_is_gathering_site(tile_info)
+    var workable := DetailFormat.tile_is_workable(tile_info)
     var patch_capacity := DetailFormat.patch_capacity(tile_info)
     # Hoisted because BOTH halves read it: the stock row states it against the capacity, and the
     # basket below decomposes it. Reading it twice is how the row and its own decomposition would
     # start describing different stands.
     var patch_biomass := float(tile_info.get("patch_biomass", 0.0))
     var crop_species := String(tile_info.get("patch_committed_species", "")).strip_edges()
-    if gathering_site and patch_capacity > 0.0:
+    if workable and patch_capacity > 0.0:
         lines.append_array(_forage_stock_lines(tile_info, true))
         # …AND WHAT THAT STOCK IS MADE OF — one indented row per realized plant, always visible and
         # never behind a disclosure, each led by an icon for what the plant is FOR (staple / cash /
@@ -639,6 +639,15 @@ func _tile_terrain_lines(tile_info: Dictionary,
     # nearly every land tile). Your best farm is usually not your best pasture, and a comparison the
     # player cannot make in one glance is not a comparison.
     lines.append_array(graze_lines)
+    # **GROUND A LESSON WOULD OPEN** (Worked Land): off the gathering sites and refused only for want of
+    # a lesson, the card says which lesson and what teaches it instead of going silent. The verdict is
+    # the server's (`site_refusal == needs_lesson`); once the lesson is learned the same ground reads
+    # as workable and this row gives way to the forage block above.
+    if not workable:
+        var lesson_line := DetailFormat.site_lesson_line(tile_info,
+            _topbar.knowledge_labels() if _topbar != null else {})
+        if lesson_line != "":
+            lines.append("%s: %s" % [HudFloraVocab.SITE_LESSON_ROW, lesson_line])
     # THE COMMITTED CROP — what the band committed this patch to, recorded on the FIRST worked turn,
     # ~25 turns before the build lands. It is a different fact from the basket above: committing
     # REWEIGHTS the basket as the build completes (issue #433 — a Tended Patch lifts the favored share

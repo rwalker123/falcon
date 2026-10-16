@@ -545,7 +545,7 @@ pub struct HerdTelemetryState {
     /// `-1`-because-unstarted — the same always-meaningful rule `rungQuotes[animal:pen].foodYield` follows.
     ///
     /// **Which `*_work_cost` it belongs beside** is the assignment's own `improvement`, and the
-    /// **next rung up** when that is empty (`rungQuotes[plant:tended].reached` / `rungQuotes[plant:field].reached`, `domestication` /
+    /// **next rung up** when that is empty (`rungQuotes[plant:tended].reached` / `rungQuotes[plant:farm].reached`, `domestication` /
     /// `corralled`): the pair is read as *"50 work, ≈13 turns"*, so they must name one rung.
     ///
     /// **IT IS A CHAINED DATE** (`docs/plan_standing_upkeep.md` §4.6b). The band's whole `builders`
@@ -859,6 +859,8 @@ pub struct HerdTelemetryState {
     /// `rung_key`, never a field, so a new step is a config edit. Appended last.
     #[serde(default)]
     pub rung_quotes: Vec<RungQuoteState>,
+    /// The id of the size tier this herd's fence has reached (`ranch`), empty when it is in none.
+    pub size_tier: String,
 }
 
 /// The `-1` "no ground to show" sentinel of the next-seasonal-ground pair — the same convention
@@ -965,6 +967,7 @@ impl Default for HerdTelemetryState {
             next_ground_x: no_next_ground(),
             next_ground_y: no_next_ground(),
             predator_eaten: 0.0,
+            size_tier: String::new(),
             rung_quotes: Vec::new(),
         }
     }
@@ -1002,7 +1005,7 @@ pub struct ForagePatchState {
     ///
     /// # ⛔ REDACT IT UNDER FOG — [`Self::tile_capacity`] is what replaces it there
     ///
-    /// `rungQuotes[plant:field].reached` and `rungQuotes[plant:field].progress` are already withheld on a remembered hex; publishing this one
+    /// `rungQuotes[plant:farm].reached` and `rungQuotes[plant:farm].progress` are already withheld on a remembered hex; publishing this one
     /// unredacted hands back the same ladder position, and in a finer grain than the boolean did —
     /// being interpolated it states *how far up*, not merely *whether*. Render this where the tile is
     /// **visible** and [`Self::tile_capacity`] where it is merely **discovered**.
@@ -1246,7 +1249,7 @@ pub struct ForagePatchState {
     /// `-1`-because-unstarted — the same always-meaningful rule `rungQuotes[animal:pen].foodYield` follows.
     ///
     /// **Which `*_work_cost` it belongs beside** is the assignment's own `improvement`, and the
-    /// **next rung up** when that is empty (`rungQuotes[plant:tended].reached` / `rungQuotes[plant:field].reached`, `domestication` /
+    /// **next rung up** when that is empty (`rungQuotes[plant:tended].reached` / `rungQuotes[plant:farm].reached`, `domestication` /
     /// `corralled`): the pair is read as *"50 work, ≈13 turns"*, so they must name one rung.
     ///
     /// **IT IS A CHAINED DATE** (`docs/plan_standing_upkeep.md` §4.6b). The band's whole `builders`
@@ -1472,7 +1475,7 @@ pub struct ForagePatchState {
     /// empty when nothing is queued; this one says **where the source is**, which every source has.
     ///
     /// It ships so a consumer can answer *"has this been improved, and what is above it"* without
-    /// knowing either web's private booleans (`Self::rungQuotes[plant:tended].reached` + `Self::rungQuotes[plant:field].reached` here, a
+    /// knowing either web's private booleans (`Self::rungQuotes[plant:tended].reached` + `Self::rungQuotes[plant:farm].reached` here, a
     /// float and a flag on the herd row), and so a third branch costs it nothing. Struck at capture
     /// by `core_sim`'s `forage::patch_rung_key`, the single home of the *"sown → field, cultivated →
     /// tended, else wild"* test, so it cannot disagree with the rung the sim resolves.
@@ -1832,7 +1835,7 @@ impl Default for DepositState {
 /// sim's state, and [`Self::turns_remaining`] is chained against a queue the client cannot see.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct BuildLegState {
-    /// The rung, as `<branch>:<id>` — `plant:tended`, `plant:field`.
+    /// The rung, as `<branch>:<id>` — `plant:tended`, `plant:farm`.
     pub rung: String,
     /// Work still owed **on this leg**, from the source's current position — never the rung's full
     /// span. A patch 30 units into a Cultivate owes `20` here: a previous improvement is a receipt,
@@ -1869,7 +1872,7 @@ fn not_in_any_build_queue() -> i32 {
 }
 
 /// **One material a commitment would pay, and how much of it per turn** — a row of
-/// [`FloraShareInfo::rungQuotes[plant:field].materialPayoff`] / [`FloraShareInfo::rungQuotes[plant:tended].materialPayoff`].
+/// [`FloraShareInfo::rungQuotes[plant:farm].materialPayoff`] / [`FloraShareInfo::rungQuotes[plant:tended].materialPayoff`].
 ///
 /// **A vector of these rather than one scalar is the whole point.** It replaced
 /// `sow_trade_payoff` / `cultivate_trade_payoff` (arc #527), which answered *"how much trade"* — a
@@ -1938,6 +1941,52 @@ pub static NO_RUNG_QUOTE: RungQuoteState = RungQuoteState {
     material_payoff: Vec::new(),
     site_refusal: String::new(),
 };
+
+/// **ONE LESSON-KEYED SITE RULE ON A RUNG** (`snapshot.fbs` -> `SiteRelaxationState`).
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+pub struct SiteRelaxationState {
+    /// The knowledge that selects this rule.
+    pub knowledge: String,
+    /// The rule a faction holding it is judged by instead of the rung's own.
+    pub rule: SiteRuleState,
+}
+
+/// **ONE SIZE TIER OF AN ENCLOSED RUNG** (`snapshot.fbs` -> `SizeTierState`).
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+pub struct SizeTierState {
+    /// The tier's id (`ranch`).
+    pub id: String,
+    /// What the feed and panels call a source in this tier.
+    pub label: String,
+    /// The lower-case phrase with its article.
+    pub label_fallback: String,
+    /// The fewest extension rings the fence must have reached.
+    pub min_rings: u32,
+    /// How many times more head a keeper minds (the keeping's work term only).
+    pub keeper_ratio_gain: f32,
+    /// The lesson keeping a source in this tier teaches; empty = none.
+    pub earns_knowledge: String,
+}
+
+/// **ONE LESSON'S EFFECT ON A HOLDER'S HERDS** (`snapshot.fbs` -> `KnowledgeGainState`).
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+pub struct KnowledgeGainState {
+    /// The lesson.
+    pub knowledge: String,
+    /// The multiplier on the managed regrowth rate.
+    pub regrowth_gain: f32,
+}
+
+/// **A SITE RULE** (`snapshot.fbs` -> `SiteRuleState`): what a tile must be for a rung to stand on it.
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+pub struct SiteRuleState {
+    /// The tile must be a gathering site.
+    pub requires_gathering_site: bool,
+    /// The fertility floor (`0` = none).
+    pub min_forage_capacity: f32,
+    /// The tile must be fresh-watered.
+    pub requires_fresh_water: bool,
+}
 
 impl RungQuoteState {
     /// **The quote for `rung_key` (`branch:id`) among a source's quotes**, or `None` when the source
@@ -2246,6 +2295,14 @@ pub struct LadderRungState {
     pub requires_ownership: bool,
     /// The rung places a source on bare ground rather than upgrading one (`places_source`).
     pub places_source: bool,
+    /// The rung's own site rule (all false / `0` = it asks nothing of the site).
+    pub site_rule: SiteRuleState,
+    /// The lesson-keyed rules that loosen it; the last one a faction holds replaces the rung's own.
+    pub site_relaxations: Vec<SiteRelaxationState>,
+    /// The derived size tiers an enclosed rung declares (a pen grown to `min_rings` is a Ranch).
+    pub size_tiers: Vec<SizeTierState>,
+    /// What the lessons the rung names give the herds that hold it.
+    pub knowledge_gains: Vec<KnowledgeGainState>,
 }
 
 /// The wire's own default for [`LadderRungState::friction_multiplier`]: no help.
@@ -2296,6 +2353,10 @@ impl Default for LadderRungState {
             requires_work_room: false,
             requires_ownership: false,
             places_source: false,
+            site_rule: SiteRuleState::default(),
+            site_relaxations: Vec::new(),
+            size_tiers: Vec::new(),
+            knowledge_gains: Vec::new(),
         }
     }
 }

@@ -4237,10 +4237,57 @@ fn validate_labor_policy(
             // the card advertised a stand nobody could work, and the rule lived nowhere the sim
             // could see it (issue #464).
             let ladder = app.world.resource::<LadderConfigHandle>().get();
-            if let Some(refusal) =
-                plant_rung_site_refusal(app, ladder.kind_root(SourceKind::Patch).rung_id(), *tile)
-            {
-                return Err(site_refusal_message(refusal, *tile, "gather"));
+            let root = ladder.kind_root(SourceKind::Patch).rung_id();
+            if let Some(refusal) = plant_rung_site_refusal(app, faction, root, *tile) {
+                // **GROUND A SOW COULD PLACE A SOURCE ON IS GROUND A CREW MAY BE SENT TO.** A sow is
+                // queued on a tile a crew already works, so a tile that is not a gathering site but
+                // that a higher placing rung admits for THIS faction (the Worked Land relaxation)
+                // would otherwise have no way to receive its first crew. The tile is judged by the
+                // highest placing rung: admitted, the crew is accepted; refused for want of a lesson,
+                // the refusal names it; otherwise the root's ordinary refusal stands.
+                let placing = ladder
+                    .rungs_of(ladder.branch_of_kind(SourceKind::Patch))
+                    .into_iter()
+                    .rev()
+                    .find(|rung| rung.places_source);
+                let placing_refusal = placing.map(|rung| {
+                    (
+                        rung,
+                        plant_rung_site_refusal(app, faction, rung.rung_id(), *tile),
+                    )
+                });
+                match placing_refusal {
+                    Some((rung, None)) => {
+                        // **WORKED LAND OPENS FARMING, NOT GATHERING.** Off a gathering site the
+                        // crew is a FARMING crew: it is accepted only where the patch already holds
+                        // the placing rung or is being raised to it, or when it names the crop it is
+                        // here to sow (`handle_assign_labor` then declares the sow with the crew, so
+                        // the crew is a builder from its first turn). A bare gather is refused.
+                        let farmed = app
+                            .world
+                            .resource::<ForageRegistry>()
+                            .patch(*tile)
+                            .is_some_and(|patch| {
+                                let standing = patch.standing();
+                                standing.holds_at_or_above(rung)
+                                    || standing.raising == Some(rung.rung_id())
+                            });
+                        if !farmed && species.is_none() {
+                            return Err(format!(
+                                "({}, {}) is not a gathering site. Worked Land lets you farm there, \
+                                 not gather: name the crop to {} and the crew will raise a farm.",
+                                tile.x,
+                                tile.y,
+                                rung.verb.as_deref().unwrap_or("sow")
+                            ));
+                        }
+                    }
+                    Some((rung, Some(SiteRefusal::NeedsLesson))) => {
+                        let verb = rung.verb.as_deref().unwrap_or("gather");
+                        return Err(needs_lesson_message(&ladder, rung, *tile, verb));
+                    }
+                    _ => return Err(site_refusal_message(refusal, *tile, "gather")),
+                }
             }
             // **Judge the crop the player NAMED, and only then.** Absent means "pick the tile's
             // dominant legal plant for me", which cannot be wrong and — crucially — must not drag
@@ -4323,7 +4370,7 @@ fn validate_labor_policy(
 /// 2. **Gates — one knowledge per rung-transition** (§4.3). Each verb resolves its gate off its OWN
 ///    rung record, never a hard-coded id: `Cultivate` needs **Cultivation** + a **Thriving** patch
 ///    (not already tended, not someone else's); `Sow` needs **Seed Selection** + ground the
-///    `plant:field` rung's `site_requirement` accepts; `Tame` needs **Herding**; and `Corral` needs
+///    `plant:farm` rung's `site_requirement` accepts; `Tame` needs **Herding**; and `Corral` needs
 ///    **Penning** — *not* Herding, which gates `tame` alone — plus an owned, **domesticated**,
 ///    not-yet-penned herd of a `pen`-ceiling species. Each is unchanged by the axis split.
 fn validate_improvement(
@@ -4480,6 +4527,7 @@ fn rung_below_tail(ladder: &core_sim::LadderConfig, rung: &core_sim::RungDef) ->
 /// always has the real tiles — remains the authority.
 fn plant_rung_site_refusal(
     app: &bevy::prelude::App,
+    faction: FactionId,
     rung_key: RungId,
     tile: UVec2,
 ) -> Option<SiteRefusal> {
@@ -4510,6 +4558,16 @@ fn plant_rung_site_refusal(
         // **A plant rung asks nothing of a deposit** — every rung off the two deposit branches
         // leaves `min_deposit_capacity` at this neutral, so the term cannot refuse one.
         core_sim::NO_DEPOSIT_FLOOR,
+        // **The acting faction's lessons**: a rung's `site_relaxations` loosen its site rule for a
+        // people that holds the lesson, and every gate reads the same answer.
+        &|name| {
+            core_sim::knows_lesson(
+                app.world.resource::<DiscoveryProgressLedger>(),
+                faction,
+                name,
+                ladder.knowledge.completion_threshold,
+            )
+        },
     )
 }
 
@@ -4571,6 +4629,8 @@ fn validate_deposit_verb(
         true,
         true,
         core_sim::extraction::tile_deposit_capacity(&extraction, material, ground),
+        // A deposit rung declares no `site_relaxations`, so no lesson changes its rule.
+        &|_| false,
     ) {
         return Err(site_refusal_message(refusal, tile, improvement.as_str()));
     }
@@ -4612,6 +4672,49 @@ fn site_refusal_message(refusal: SiteRefusal, tile: UVec2, verb: &str) -> String
         SiteRefusal::TooPoorAndTooDry => format!(
             "Nothing will grow at ({}, {}) — that ground is too thin and too dry to take a crop. \
              Your people can carry seed, but not yet water or feed the land.",
+            tile.x, tile.y
+        ),
+        SiteRefusal::NeedsLesson => format!(
+            "Your people have not learned how to {} ground beyond the sites they already gather, \
+             at ({}, {}) - a lesson they have not learned would open it.",
+            verb, tile.x, tile.y
+        ),
+    }
+}
+
+/// **THE REFUSAL FOR GROUND A LESSON WOULD OPEN, naming the lesson and where it is learned** - the
+/// [`SiteRefusal::NeedsLesson`] answer with its particulars filled from the rung's own
+/// `site_relaxations` and the rung that `earns_knowledge` it, so the sentence says what to do next.
+fn needs_lesson_message(
+    ladder: &core_sim::LadderConfig,
+    rung: &core_sim::RungDef,
+    tile: UVec2,
+    verb: &str,
+) -> String {
+    let Some(lesson) = rung
+        .site_relaxations
+        .last()
+        .map(|relaxation| relaxation.knowledge.as_str())
+    else {
+        return site_refusal_message(SiteRefusal::NeedsLesson, tile, verb);
+    };
+    let title = core_sim::knowledge_title_from_id(lesson);
+    let teacher = ladder
+        .branches_in_config_order()
+        .into_iter()
+        .flat_map(|branch| ladder.rungs_of(branch))
+        .find(|candidate| candidate.earns_knowledge.as_deref() == Some(lesson));
+    match teacher {
+        Some(teacher) => format!(
+            "({}, {}) is not ground your people already gather. Learn {title} to {verb} beyond \
+             the gathering sites - work a {} to learn it.",
+            tile.x,
+            tile.y,
+            teacher.label.to_lowercase()
+        ),
+        None => format!(
+            "({}, {}) is not ground your people already gather. Learn {title} to {verb} beyond \
+             the gathering sites.",
             tile.x, tile.y
         ),
     }
@@ -4716,6 +4819,27 @@ fn resolve_take_for_ground(
     })
 }
 
+/// **THE RUNG THAT PLACES A SOURCE ON `tile` WHEN THE GATHERING RULE REFUSES IT** - `Some` only for
+/// ground the root rung's site rule refuses for this faction and the highest placing rung (the
+/// Farm, through its Worked Land relaxation) admits: off-site farming ground.
+fn off_site_placing_rung(
+    app: &bevy::prelude::App,
+    faction: FactionId,
+    tile: UVec2,
+) -> Option<RungId> {
+    let ladder = app.world.resource::<LadderConfigHandle>().get();
+    let root = ladder.kind_root(SourceKind::Patch).rung_id();
+    plant_rung_site_refusal(app, faction, root, tile)?;
+    let placing = ladder
+        .rungs_of(ladder.branch_of_kind(SourceKind::Patch))
+        .into_iter()
+        .rev()
+        .find(|rung| rung.places_source)?;
+    plant_rung_site_refusal(app, faction, placing.rung_id(), tile)
+        .is_none()
+        .then(|| placing.rung_id())
+}
+
 /// **MAY THIS FACTION RAISE `rung` ON THE PATCH AT `tile`?** - every patch-kind verb's gates,
 /// composed from the rung's own properties and in one order, so the two old per-verb validators
 /// (`cultivate`, `sow`) are one function and a patch branch added by config is gated for free. The
@@ -4743,8 +4867,11 @@ fn validate_patch_build(
     let ladder = app.world.resource::<LadderConfigHandle>().get();
     let verb = rung.verb.as_deref().unwrap_or_default();
     let key = rung.rung_id();
-    if let Some(refusal) = plant_rung_site_refusal(app, key, tile) {
-        return Err(site_refusal_message(refusal, tile, verb));
+    if let Some(refusal) = plant_rung_site_refusal(app, faction, key, tile) {
+        return Err(match refusal {
+            SiteRefusal::NeedsLesson => needs_lesson_message(&ladder, rung, tile, verb),
+            other => site_refusal_message(other, tile, verb),
+        });
     }
     if let Some(refusal) = knowledge_refusal(app, faction, &ladder, rung) {
         return Err(refusal);
@@ -5441,6 +5568,14 @@ fn handle_assign_labor(
     }
 
     let kind_label = target.kind();
+    // **AN OFF-SITE CREW IS A SOWING CREW**: the root rung's rule refuses the ground and the placing
+    // rung admits it, so the crew exists to raise the farm - the sow is declared with it.
+    let off_site_sow = match &target {
+        LaborTarget::Forage { tile, .. } if workers > 0 => {
+            off_site_placing_rung(app, faction, *tile)
+        }
+        _ => None,
+    };
     let (applied, assigned_total, dropped_row) = {
         let mut allocation = band_allocation_mut(app, band.entity);
         let applied = allocation.set_assignment(target.clone(), workers, available, crew_kit);
@@ -5474,6 +5609,23 @@ fn handle_assign_labor(
     // rather than losing what was on the road with the row.
     if let Some(row) = dropped_row.as_ref() {
         core_sim::bring_the_dropped_party_home(&mut app.world, band.entity, row);
+    }
+    if let (Some(rung), true) = (off_site_sow, applied > 0) {
+        let ladder = app.world.resource::<LadderConfigHandle>().get();
+        let farmed = match &target {
+            LaborTarget::Forage { tile, .. } => app
+                .world
+                .resource::<ForageRegistry>()
+                .patch(*tile)
+                .is_some_and(|patch| patch.standing().holds_at_or_above(ladder.rung(rung))),
+            _ => false,
+        };
+        if !farmed {
+            let mut allocation = band_allocation_mut(app, band.entity);
+            if let Some(source) = BuildSource::of(&target) {
+                allocation.enqueue_build(source, BuildJob::Climb(rung));
+            }
+        }
     }
     // The seed must price the dip of whatever this band has **queued** here, rather than the
     // undipped stance — a build in flight is the queue's, not the row's. Read after the allocation
@@ -14487,7 +14639,7 @@ mod tests {
         let tile = UVec2::new(3, 4);
 
         assert!(
-            plant_rung_site_refusal(&app, shipped::plant_wild(), tile).is_none(),
+            plant_rung_site_refusal(&app, FactionId(0), shipped::plant_wild(), tile).is_none(),
             "no tiles means no ground to refuse"
         );
         assert!(
@@ -16245,7 +16397,7 @@ mod tests {
         handle_cultivate(&mut full, faction, coord);
 
         assert!(
-            cultivate_failure_detail_contains(&full, "`build sow` takes it up to field"),
+            cultivate_failure_detail_contains(&full, "`build sow` takes it up to farm"),
             "an already-built refusal names the verb that raises the next rung"
         );
         assert!(
@@ -16273,7 +16425,7 @@ mod tests {
                 take_species: TakeSelection::EVERYTHING,
             },
         );
-        let top = rung_top(&app, shipped::plant_field());
+        let top = rung_top(&app, shipped::plant_farm());
         {
             let ladder = app.world.resource::<LadderConfigHandle>().get();
             let mut registry = app.world.resource_mut::<ForageRegistry>();
@@ -17914,7 +18066,7 @@ mod tests {
     }
 
     /// **The land's own verdict on every tile**, resolved through the *real* seam the sim uses
-    /// (`rung_site_refusal` + `tile_is_fresh_watered` against the `plant:field` rung's own
+    /// (`rung_site_refusal` + `tile_is_fresh_watered` against the `plant:farm` rung's own
     /// `site_requirement`) — never a restatement of the rule. `None` = the ground will take seed.
     fn site_verdict(app: &bevy::prelude::App, coord: UVec2) -> Option<Option<SiteRefusal>> {
         let entity = app
@@ -17941,12 +18093,13 @@ mod tests {
         });
         let ladder = app.world.resource::<LadderConfigHandle>().get();
         Some(rung_site_refusal(
-            ladder.rung(shipped::plant_field()),
+            ladder.rung(shipped::plant_farm()),
             ground,
             &labor.forage,
             app.world.resource::<FoodSiteRegistry>().is_site(coord),
             fresh_water,
             core_sim::NO_DEPOSIT_FLOOR,
+            &|_| false,
         ))
     }
 
@@ -18097,6 +18250,98 @@ mod tests {
         );
     }
 
+    /// **Worked Land opens ground a gathering site does not - at the COMMAND, not only the wire.**
+    /// Fertile, watered ground that is not a gathering site is refused to a people that has not
+    /// learned Worked Land, and the refusal names the lesson and where it is learned; the same
+    /// people may not even send a crew there. Once the lesson is held the crew is accepted and the
+    /// `sow` clears the site gate (it then waits on the usual knowledge, which is granted too).
+    #[test]
+    fn worked_land_opens_off_site_ground_to_a_crew_and_a_sow() {
+        let mut app = build_world_app();
+        let faction = FactionId(0);
+        let coord = find_refused_tile(&app, SiteRefusal::NeedsLesson);
+        grant_seed_selection(&mut app, faction);
+        let band = starting_band_id(&mut app, faction);
+        let crew_on = |app: &mut bevy::prelude::App| -> u32 {
+            app.world
+                .query::<&LaborAllocation>()
+                .iter(&app.world)
+                .flat_map(|allocation| allocation.assignments.iter())
+                .filter(
+                    |row| matches!(&row.target, LaborTarget::Forage { tile, .. } if *tile == coord),
+                )
+                .map(|row| row.workers)
+                .sum()
+        };
+        let assign = |app: &mut bevy::prelude::App, crop: Option<String>| {
+            handle_assign_labor(
+                app,
+                faction,
+                Some(band),
+                "forage".to_string(),
+                2,
+                Some(coord.x),
+                Some(coord.y),
+                None,
+                crop,
+                None,
+                None,
+                Vec::new(),
+                false,
+            );
+        };
+
+        // Without the lesson: no crew, and the refusal says what to learn.
+        assign(&mut app, None);
+        assert_eq!(
+            crew_on(&mut app),
+            0,
+            "no crew goes to ground the lesson opens"
+        );
+        let refused = app.world.resource::<CommandEventLog>().iter().any(|entry| {
+            entry
+                .detail
+                .as_deref()
+                .is_some_and(|detail| detail.contains("Worked Land"))
+        });
+        assert!(refused, "the refusal names the lesson");
+
+        // With it: the crew is accepted.
+        app.world
+            .resource_mut::<DiscoveryProgressLedger>()
+            .add_progress(
+                faction,
+                core_sim::WORKED_LAND_DISCOVERY_ID,
+                scalar_from_f32(1.0),
+            );
+        // **WORKED LAND OPENS FARMING, NOT GATHERING**: a bare gather on the off-site wild ground
+        // is still refused, lesson or no lesson.
+        assign(&mut app, None);
+        assert_eq!(
+            crew_on(&mut app),
+            0,
+            "a crew may not gather wild off-site ground just because Worked Land is known"
+        );
+        // Naming the crop to sow makes it a farming crew: accepted, and the sow is declared with it.
+        let crop = a_species_growing_at(&app, coord);
+        assign(&mut app, Some(crop));
+        assert_eq!(
+            crew_on(&mut app),
+            2,
+            "a crew that names its crop is sent to raise a farm"
+        );
+        let queued = app
+            .world
+            .query::<&LaborAllocation>()
+            .iter(&app.world)
+            .any(|allocation| {
+                allocation
+                    .build_queue_position(&BuildSource::Patch(coord))
+                    .is_some()
+            });
+        assert!(queued, "the farm build is queued with the crew");
+    }
+
     /// **The water rule, and it is not redundant.** Ground rich enough to farm but **dry** is refused:
     /// rung 3 can carry seed, not water. This is what pulls the first fields into the river valleys.
     #[test]
@@ -18206,7 +18451,9 @@ mod tests {
         for y in 0..height {
             for x in 0..width {
                 let coord = UVec2::new(x, y);
-                if plant_rung_site_refusal(app, shipped::plant_field(), coord).is_some() {
+                if plant_rung_site_refusal(app, FactionId(0), shipped::plant_farm(), coord)
+                    .is_some()
+                {
                     continue;
                 }
                 let Some(ground) = app
@@ -18222,7 +18469,7 @@ mod tests {
                     &composition,
                     &flora,
                     shipped::ladder(),
-                    shipped::plant_field(),
+                    shipped::plant_farm(),
                 )
                 .is_none()
                 {
@@ -18469,7 +18716,7 @@ mod tests {
                     "every food-bearing tile carries a patch, so the wire must describe this one",
                 );
             assert_eq!(
-                patch.quote("plant:field").site_refusal,
+                patch.quote("plant:farm").site_refusal,
                 expected_wire,
                 "the wire's verdict at {coord:?}"
             );
@@ -18517,7 +18764,7 @@ mod tests {
             // position (`docs/plan_standing_upkeep.md` §2.8).
             let ladder = core_sim::LadderConfig::builtin();
             let (field_base, field_width) =
-                core_sim::plant_rung_span(shipped::plant_field(), &ladder);
+                core_sim::plant_rung_span(shipped::plant_farm(), &ladder);
             // Half-way up the Field's own span, on top of a completed tended rung.
             patch.owner = Some(FactionId(0));
             patch.set_ladder_position(field_base + field_width * HALF_SOWN, &ladder);
@@ -18540,9 +18787,9 @@ mod tests {
         // meter behind it now stores absolute work units.
         assert!((patch.quote("plant:tended").progress - 1.0).abs() < 1e-6);
         assert!(patch.quote("plant:tended").reached);
-        assert!((patch.quote("plant:field").progress - HALF_SOWN).abs() < 1e-6);
+        assert!((patch.quote("plant:farm").progress - HALF_SOWN).abs() < 1e-6);
         assert!(
-            !patch.quote("plant:field").reached,
+            !patch.quote("plant:farm").reached,
             "a half-sown field is not a Field"
         );
 
@@ -18555,14 +18802,13 @@ mod tests {
             .expect("the tended rung builds");
         assert!((patch.quote("plant:tended").work_cost - cultivate_cost).abs() < 1e-6);
         assert!(
-            (patch.quote("plant:field").work_done
-                - patch.quote("plant:field").work_cost * HALF_SOWN)
+            (patch.quote("plant:farm").work_done - patch.quote("plant:farm").work_cost * HALF_SOWN)
                 .abs()
                 < 1e-3,
             "the Field's work-done readout is the position clamped into the Field's own span"
         );
         assert!(
-            patch.quote("plant:field").work_cost > 0.0,
+            patch.quote("plant:farm").work_cost > 0.0,
             "a rung nobody has started still quotes its price"
         );
         assert_eq!(
@@ -18584,7 +18830,7 @@ mod tests {
             "the fixture patch must stand above the food peak, or its rows describe an empty patch"
         );
         // **The trio describes ONE rung and ONE turn.** This fixture patch carries a part-prepared
-        // Sow, so the rung at risk is `plant:field` — and it owes the **same** maintenance rate a
+        // Sow, so the rung at risk is `plant:farm` — and it owes the **same** maintenance rate a
         // finished Field owes, because the rate never lapses; only who supplies it moves
         // (`docs/plan_standing_upkeep.md` §2.4). Nobody is building it and nobody is keeping it, so
         // the whole of that is unmet and the shortfall is the bleed `advance_cultivation` will
@@ -18620,7 +18866,7 @@ mod tests {
             .rung(shipped::plant_tended())
             .upkeep_demand(tender_loads);
         let field_demand = ladder
-            .rung(shipped::plant_field())
+            .rung(shipped::plant_farm())
             .upkeep_demand(tender_loads);
         assert!(
             field_demand > tended_demand && tended_demand > 0.0,
@@ -18657,9 +18903,9 @@ mod tests {
         // (`docs/plan_harvest_floor.md` §1). The payoff comparison that still means something is
         // rate-against-rate, below.
         assert!(
-            patch.quote("plant:field").food_yield > patch.quote("plant:tended").food_yield,
+            patch.quote("plant:farm").food_yield > patch.quote("plant:tended").food_yield,
             "the Field out-yields the patch it replaces — that IS the reason to sow: {} vs {}",
-            patch.quote("plant:field").food_yield,
+            patch.quote("plant:farm").food_yield,
             patch.quote("plant:tended").food_yield
         );
     }
@@ -20626,7 +20872,7 @@ mod tests {
                 .clone();
             let mut registry = app.world.resource_mut::<ForageRegistry>();
             let patch = registry.patch_mut(coord).expect("the scene's patch");
-            let (base, width) = core_sim::patch_rung_span(patch, shipped::plant_field(), &ladder);
+            let (base, width) = core_sim::patch_rung_span(patch, shipped::plant_farm(), &ladder);
             patch.set_ladder_position(base + width * fraction, &ladder);
             patch.owner = Some(faction);
             // **A Field is always committed to its crop** — the reported patch was; this tile's basket

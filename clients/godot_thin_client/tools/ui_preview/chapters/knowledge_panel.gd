@@ -432,7 +432,7 @@ func _assert_ladder_usage() -> void:
 	# **PAIR 2 — AT OR ABOVE, WHICH IS THE ASSERTION THAT KILLS A PER-VERB-FLAG TEST.** A patch reached
 	# by `Sow` carries `is_field` and NO `is_cultivated`, so a test on the done FLAGS would report a
 	# faction with a working field as not using its Cultivation. The rung comparison gets it right
-	# because `plant:field` stands above `plant:tended`.
+	# because `plant:farm` stands above `plant:tended`.
 	var field := _model(tracks, [_patch(4, 4, false, true)], [])
 	_assert_unspent("Cultivation (a FIELD stands above Tended)", "cultivation", field, false)
 	_assert_unspent("Seed Selection (the field IS its own rung)", "seed_selection", field, false)

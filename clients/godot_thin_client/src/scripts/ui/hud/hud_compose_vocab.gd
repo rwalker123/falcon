@@ -335,7 +335,7 @@ const IMPROVEMENT_HINTS := {
     # standing stand to take a fraction of), and it out-yields a tended patch ~2×. The "goes feral"
     # warning is one rule for the whole plant web — an abandoned patch bleeds BOTH meters, so a
     # neglected Field reverts to WILD, not to a free tended patch.
-    "sow": "Sow — plant a Field on this ground: almost no food while the crop grows, then twice a tended patch's yield. It must stay staffed or it goes feral all the way back to wild.",
+    "sow": "Sow — plant a Farm on this ground: almost no food while the crop grows, then twice a tended patch's yield. It must stay staffed or it goes feral all the way back to wild.",
     # Tame is animal RUNG 2 — the verb that replaced the hidden Sustain side effect. Its payoff is
     # NOT "free food": 3b retired the passive rung, so the honest promise is yield PER WORKER (~1.5×
     # off the same crew) plus proximity (the herd drifts to the band instead of being chased).
@@ -399,7 +399,7 @@ const POLICY_PAYOFF_FULL_FORMAT := "builds toward %s/turn"
 # "Cultivate" reads as an act on this patch rather than as a rung name floating in a list.
 const IMPROVEMENT_OFFER_LABELS := {
     "cultivate": "Cultivate this patch",
-    "sow": "Sow a field here",
+    "sow": "Sow a farm here",
     "tame": "Tame this herd",
     "corral": "Pen this herd",
 }
@@ -456,7 +456,7 @@ static func improvement_running_label(verb: String) -> String:
 # sheet, in the Band panel and on the map.
 const IMPROVEMENT_DONE_LABELS := {
     "cultivate": "Tended Patch",
-    "sow": "Field",
+    "sow": "Farm",
     "tame": "Pastoral",
     "corral": "Penned",
 }

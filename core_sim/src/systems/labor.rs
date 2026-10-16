@@ -138,6 +138,25 @@ fn credit_rung_lesson(
     }
 }
 
+/// **Credit the lesson a SIZE TIER teaches** - [`credit_managed_rung_lesson`]'s twin for a tier of an
+/// enclosed rung: the floor axis has collapsed there too (a pen's take is its managed production at
+/// every floor), so the lesson runs at the food peak and `eligible` is only "somebody is at the pen".
+fn credit_tier_lesson(
+    tier: &crate::intensification::SizeTier,
+    crew_is_present: bool,
+    knowledge: &LadderKnowledge,
+    faction: FactionId,
+    discovery: &mut DiscoveryProgressLedger,
+) {
+    /// The floor at which `learn_multiplier` is the identity - the food peak.
+    const THE_FLOOR_AXIS_HAS_COLLAPSED: f32 = crate::fauna::MSY_BIOMASS_FRACTION;
+    if let Some((lesson, amount)) =
+        tier.knowledge_accrual(THE_FLOOR_AXIS_HAS_COLLAPSED, crew_is_present, knowledge)
+    {
+        discovery.add_progress(faction, lesson, scalar_from_f32(amount));
+    }
+}
+
 /// **Credit a RUNG-3 MANAGED source's lesson** — a Field, a penned herd — where the floor axis has
 /// **collapsed** and the crew is always working.
 ///
@@ -1712,7 +1731,7 @@ impl GateFacts {
 }
 
 /// **A RUNG'S GATE, COMPOSED FROM ITS OWN PROPERTIES** - the one function the four per-rung gates
-/// (`plant:tended`, `plant:field`, `animal:pastoral`, `animal:pen`) were, so a branch added by config
+/// (`plant:tended`, `plant:farm`, `animal:pastoral`, `animal:pen`) were, so a branch added by config
 /// is gated by what its rung record declares and by nothing named here.
 ///
 /// The terms, in the order their refusals are published in (each one the first refusal of some
@@ -1972,6 +1991,14 @@ fn head_rung_gate(
                     food_sites.is_site(ground.position),
                     fresh_water,
                     crate::intensification::NO_DEPOSIT_FLOOR,
+                    &|name| {
+                        crate::intensification::knows_lesson(
+                            discovery,
+                            faction,
+                            name,
+                            knowledge_threshold,
+                        )
+                    },
                 )
                 .is_none();
             }
@@ -2075,6 +2102,8 @@ fn deposit_head_gate(
         true,
         true,
         crate::extraction::tile_deposit_capacity(extraction, material, ground),
+        // A deposit rung declares no `site_relaxations`, so no lesson changes its rule.
+        &|_| false,
     )
     .is_none();
     let knows_rung = rung
@@ -2135,6 +2164,8 @@ fn ground_takes_the_rung_this_lesson_unlocks(
         true,
         true,
         crate::extraction::tile_deposit_capacity(extraction, material, ground),
+        // A deposit rung declares no `site_relaxations`, so no lesson changes its rule.
+        &|_| false,
     )
     .is_none()
 }
@@ -6739,13 +6770,13 @@ pub fn advance_labor_allocation(
                     // The **gather** season is the food module's. A tile with no module offers no
                     // wild gather at all (`NO_FORAGE_SEASON` → zero per-worker throughput), which is
                     // exactly right — and, since slice 5, a real state rather than an impossible one:
-                    // `Sow` places a Field on ground the `plant:field` rung's `site_requirement`
+                    // `Sow` places a Field on ground the `plant:farm` rung's `site_requirement`
                     // accepts (a watered gathering site), module or not, and a Field's harvest is
                     // biomass-based and seasonless.
                     let seasonal = food_modules
                         .get(tile_entity)
                         .map_or(NO_FORAGE_SEASON, |module| module.seasonal_weight.max(0.0));
-                    // **May this faction sow THIS ground?** — the `plant:field` rung's two gates,
+                    // **May this faction sow THIS ground?** — the `plant:farm` rung's two gates,
                     // both resolved off the rung record, both read here because each gates the *same*
                     // two things below: the seed going into the ground at all, and the build meter it
                     // then fills.
@@ -6761,6 +6792,23 @@ pub fn advance_labor_allocation(
                     // different rung** — "what would rung N+1 take this crew?" is only honest if it
                     // is judged by the gate that would actually run, so the running `Sow` and the
                     // quoted next rung resolve one expression rather than two copies of it.
+                    // **THE SITE LESSONS THIS FACTION HOLDS**, read once so the closure below does not
+                    // keep the ledger borrowed: a rung's `site_relaxations` loosen its site rule for
+                    // a faction that holds the lesson (`RungDef::effective_site_requirement`).
+                    let held_site_lessons: Vec<&str> = ladder
+                        .rungs
+                        .iter()
+                        .flat_map(|rung| rung.site_relaxations.iter())
+                        .map(|relaxation| relaxation.knowledge.as_str())
+                        .filter(|name| {
+                            crate::intensification::knows_lesson(
+                                &discovery,
+                                faction,
+                                name,
+                                knowledge_threshold,
+                            )
+                        })
+                        .collect();
                     let land_admits = |rung: &RungDef| {
                         tiles.get(tile_entity).is_ok_and(|ground| {
                             let fresh_water = tile_is_fresh_watered(
@@ -6782,6 +6830,7 @@ pub fn advance_labor_allocation(
                                 food_sites.is_site(ground.position),
                                 fresh_water,
                                 crate::intensification::NO_DEPOSIT_FLOOR,
+                                &|name| held_site_lessons.contains(&name),
                             )
                             .is_none()
                         })
@@ -7092,7 +7141,7 @@ pub fn advance_labor_allocation(
                         plant_tile_capacity,
                         &labor.forage,
                     );
-                    // **WHAT A SOW COSTS ON THIS GROUND** — the `plant:field` rung's own price
+                    // **WHAT A SOW COSTS ON THIS GROUND** — the `plant:farm` rung's own price
                     // multiplier, by how much of the tile the chosen crop has still to **replace**
                     // (`forage::patch_field_cost_multiplier`, `docs/plan_standing_upkeep.md` §4.15).
                     // The stamp once the Field leg has started, the live measure before it, so the
@@ -8340,6 +8389,19 @@ pub fn advance_labor_allocation(
                             faction,
                             &mut discovery,
                         );
+                        // **AND THE SIZE TIER'S OWN LESSON** - keeping a Ranch-sized pen teaches
+                        // Selective breeding beside Foddering ("a Ranch earns both"). A tier is a
+                        // derived standing of the footprint, so this reads it fresh; a small pen
+                        // is in no tier and teaches only what its rung does.
+                        if let Some(tier) = crate::fauna::herd_size_tier(herd, &ladder) {
+                            credit_tier_lesson(
+                                tier,
+                                crew_at_the_source,
+                                knowledge_dials,
+                                faction,
+                                &mut discovery,
+                            );
+                        }
                         // **A pen changes the INTENSITY, never the PRODUCT** — so the keeper is paid
                         // this herd's own material rows too, off what was carried home, exactly as
                         // the range take is. Penning an animal does not change what it is made of.
@@ -8453,6 +8515,8 @@ pub fn advance_labor_allocation(
                                 pen_extend_accrual,
                             );
                         }
+                        let tier_before =
+                            crate::fauna::herd_size_tier(herd, &ladder).map(|tier| tier.id.clone());
                         let ring_finished = ring_in_flight
                             && herd.accrue_pen_extension(
                                 pen_extend_accrual,
@@ -8512,6 +8576,25 @@ pub fn advance_labor_allocation(
                             completed
                                 .push((BuildSource::Herd(herd.id.clone()), BuildJob::ExtendPen));
                             let pen_tile = herd.corralled_at.unwrap_or_else(|| herd.position());
+                            // **A FENCE THAT CROSSES A TIER BECOMES SOMETHING NEW**: the feed says
+                            // so on the pen's own channel, once, on the turn the ring closes.
+                            if let Some(tier) = crate::fauna::herd_size_tier(herd, &ladder)
+                                .filter(|tier| tier_before.as_deref() != Some(tier.id.as_str()))
+                            {
+                                event_log.push(CommandEventEntry::new(
+                                    tick.0,
+                                    CommandEventKind::Corral,
+                                    faction,
+                                    format!(
+                                        "The pen for {} is now {} - each keeper minds more head",
+                                        fauna_id, tier.label_fallback
+                                    ),
+                                    Some(format!(
+                                        "status=tier action=extend_pen herd={} tier={} radius={} x={} y={}",
+                                        fauna_id, tier.id, herd.pen_radius, pen_tile.x, pen_tile.y
+                                    )),
+                                ));
+                            }
                             event_log.push(CommandEventEntry::new(
                                 tick.0,
                                 CommandEventKind::Corral,
@@ -16775,7 +16858,7 @@ mod labor_yield_tests {
         /// The pen's take crew — short of what it could use, so its forecast is carry-bound.
         const SHORT_HANDED_HUNTERS: u32 = 1;
         let pen_keepers = the_harness_keeping_crew(&world, shipped::animal_pen());
-        let field_keepers = the_harness_plant_keeping_crew(&world, shipped::plant_field());
+        let field_keepers = the_harness_plant_keeping_crew(&world, shipped::plant_farm());
         let field_band = spawn_band(
             &mut world,
             tile,
@@ -18878,13 +18961,13 @@ mod labor_yield_tests {
     /// waiting entry's coverage rule needs: the head is the shipped ladder's **only** material
     /// declarer and the entry behind it declares none at all.
     /// A species in [`SOURCE_BIOME`]'s realized basket whose `cultivation_ceiling` reaches
-    /// `plant:field` — what a `sow` on this fixture's ground can actually commit to.
+    /// `plant:farm` — what a `sow` on this fixture's ground can actually commit to.
     const SOWABLE_SPECIES: &str = "wild_emmer";
 
     fn world_with_a_sow_queued_behind_a_pen() -> (World, Entity) {
         let (mut world, band) = world_with_a_pen_build();
         grant_knowledge(&mut world, SEED_SELECTION_DISCOVERY_ID);
-        // **`plant:field` DECLARES `requires_fresh_water`**, so the harness's dry steppe refuses the
+        // **`plant:farm` DECLARES `requires_fresh_water`**, so the harness's dry steppe refuses the
         // rung on its site term and the gate never reaches the coverage test. Tagged on the source
         // tile itself, which is `tile_is_fresh_watered`'s first arm.
         {
@@ -18921,7 +19004,7 @@ mod labor_yield_tests {
                 priority: SourcePriority::default(),
             });
             assert!(
-                allocation.enqueue_build(source.clone(), BuildJob::Climb(shipped::plant_field())),
+                allocation.enqueue_build(source.clone(), BuildJob::Climb(shipped::plant_farm())),
                 "fixture: the sow is queued on a source the band works"
             );
             assert_eq!(

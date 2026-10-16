@@ -881,6 +881,9 @@ fn seed_snapshot() -> WorldSnapshot {
     // nested empty array is just as unexercised.
     s.ladder_rungs = rows_of(LadderRungState {
         traits: vec![String::new()],
+        site_relaxations: rows(),
+        size_tiers: rows(),
+        knowledge_gains: rows(),
         ..Default::default()
     });
 

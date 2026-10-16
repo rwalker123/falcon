@@ -1530,7 +1530,7 @@ is `labor-ui.md`'s; what belongs here is the fixture arithmetic, which moved in 
   subtracted 2.0 is unchanged and its IDENTITY is not** — the counts (10 at four hands, `∞` at one)
   are the same numbers about a different mechanism, which the fixture's own doc says out loud.
 - **The rot the fixture states is above what any shipped plant rung can bleed** (`plant:tended` 0.5,
-  `plant:field` 0.75, and the animal web zero by construction), so neither `∞` is reachable at a
+  `plant:farm` 0.75, and the animal web zero by construction), so neither `∞` is reachable at a
   staffed build crew on shipped config. The client must still render both, so the state is staged;
   whether it is reachable in play is the sim's question.
 - **`HerdFx.ANIMAL_METER_ROT` is a CONSTANT, not a parameter** — no animal rung declares a
@@ -3840,25 +3840,25 @@ Appended LAST in `CHAPTERS`, so no existing frame moves; it hands the reference 
 
 ## `chapters/fourth_rung.gd` -- a step the shipped ladder lacks (issue #175)
 
-Appended LAST in `CHAPTERS`, so no earlier frame moves. Four frames (`fourth_rung_farm_offered`,
-`fourth_rung_farm_part_built`, `fourth_rung_farm_locked`, `fourth_rung_ranch_offered`) and twelve claims
+Appended LAST in `CHAPTERS`, so no earlier frame moves. Four frames (`fourth_rung_terrace_offered`,
+`fourth_rung_terrace_part_built`, `fourth_rung_terrace_locked`, `fourth_rung_stud_offered`) and twelve claims
 (`EXPECTED_CHECKPOINTS` 16, RE-MEASURED by a run). It pushes `RungFx.ladder_rungs(true)`, the
-fixture catalog with `plant:farm` (verb `farm`, above the Field) and `animal:ranch` (verb `ranch`,
-above the Pen), then stands a Field and a Pen beneath them. Nothing in `src/` names either step, so
-every claim is evidence the generic `rung_quotes` path works: the `farm` control is OFFERED beside a
-DONE `sow`, it is named by the catalog's label, the source's ladder is `cultivate, sow, farm`, a
-part-built Farm draws its own tile-card row while an unstarted one draws none, and with the step's
+fixture catalog with `plant:terrace` (verb `terrace`, above the Farm) and `animal:stud` (verb `stud`,
+above the Pen), then stands a Farm and a Pen beneath them. Nothing in `src/` names either step, so
+every claim is evidence the generic `rung_quotes` path works: the `terrace` control is OFFERED beside a
+DONE `sow`, it is named by the catalog's label, the source's ladder is `cultivate, sow, farm, terrace`, a
+part-built Terrace draws its own tile-card row while an unstarted one draws none, and with the step's
 knowledge unlearned no live control is offered (the sheet's teaching line names the catalog's
-`unlock_knowledge`). The `ranch` control is offered over a penned herd, which is `enclosed` by the
+`unlock_knowledge`). The `stud` control is offered over a penned herd, which is `enclosed` by the
 catalog's trait.
 
 The fixture catalog states the five gate bools per rung from `intensification_ladder.json`, and gives
-`farm` and `ranch` `requires_held_rung_below`. A patch holding only Tended is asserted NOT offered
+`terrace` and `stud` `requires_held_rung_below`. A patch holding only Tended is asserted NOT offered
 Farm, and `RungGates.source_gates` is asserted to carry a gate for it. The unknown verbs wear
 `FoodIcons.GENERIC_POLICY` (a plain mark) rather than no glyph.
 
-The fixtures author the extra steps through `RungFx`'s `extra_step` keys (`farm_*` on a patch,
-`ranch_*` on a herd, `can_farm` on a composition entry). The chapter hands the shipped catalog back.
+The fixtures author the extra steps through `RungFx`'s `extra_step` keys (`terrace_*` on a patch,
+`stud_*` on a herd, `can_terrace` on a composition entry). The chapter hands the shipped catalog back.
 
 ## `fixtures_rung.gd` authors the old flat keys and stamps the generic quotes
 
@@ -3877,3 +3877,16 @@ quotes, self-enriching them from the fixture catalog. Nothing in `src/` reads th
 - **A row that authors `rung_quotes` and no flat key is left alone**, which is how a fixture stages a
   rung the shipped ladder lacks.
 
+## `chapters/worked_land_ranch.gd` -- off-site Farm and the Ranch (issue #175)
+
+Appended LAST in `CHAPTERS`. Four frames (`worked_land_needs_lesson`, `worked_land_sow_offered`,
+`pen_below_ranch`, `pen_is_a_ranch`) and `EXPECTED_CHECKPOINTS` 25. The same off-site tile is staged twice,
+differing only in the server's `site_refusal` (`needs_lesson` / `""`) and the lesson: the first offers no
+work and names the lesson, the second opens the sheet on the single-pick `Crop` row and its commit emits a
+forage assign carrying a crop. A gathering site is the control (no crop forced). The pen pair is one herd
+at one ring short of the Ranch tier and at it; the knowledge notes and the `status=tier` feed phrase are
+asserted PNG-less.
+
+The fixture catalog mirrors `core_sim/src/data/intensification_ladder.json` (Farm, Pen with `size_tiers`).
+The generic-step proof sits one step beyond it: `plant:terrace` (verb `terrace`) and `animal:stud` (verb
+`stud`) in `fourth_rung.gd`; the `farm` / `ranch` names that section used to stage are now shipped steps.

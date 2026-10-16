@@ -269,7 +269,7 @@ fn run_plant_build(floor: f32, verb: VerbId) -> PlantBuildOutcome {
         flora.realized_composition(REFERENCE_BIOME, UVec2::new(0, 0), REFERENCE_MAP_SEED);
     let cap = forage.capacity_for(REFERENCE_BIOME);
     let rung = ladder.rung(if verb == shipped::sow() {
-        shipped::plant_field()
+        shipped::plant_farm()
     } else {
         shipped::plant_tended()
     });
@@ -1352,7 +1352,7 @@ fn probe_build_and_teach_axis() {
             shipped::plant_tended(),
             Some(shipped::cultivate()),
         ),
-        ("plant:field", shipped::plant_field(), Some(shipped::sow())),
+        ("plant:farm", shipped::plant_farm(), Some(shipped::sow())),
         ("animal:wild", shipped::animal_wild(), None),
         (
             "animal:pastoral",
@@ -1432,7 +1432,7 @@ fn probe_build_and_teach_axis() {
 fn probe_rung_three_builds() {
     println!("\n=== Rung 3 — the builds with NO health gate (Sow / Corral) ===");
     println!(
-        "plant:field, {REFERENCE_BIOME:?}, K = {}",
+        "plant:farm, {REFERENCE_BIOME:?}, K = {}",
         LaborConfig::builtin().forage.capacity_for(REFERENCE_BIOME)
     );
     println!(

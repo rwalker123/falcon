@@ -1153,7 +1153,7 @@ mod tests {
         );
         assert_eq!(
             config.species["wild_emmer"].cultivation_ceiling,
-            Some(shipped::plant_field())
+            Some(shipped::plant_farm())
         );
         config
             .validate_against_forage(&builtin_forage_capacities())

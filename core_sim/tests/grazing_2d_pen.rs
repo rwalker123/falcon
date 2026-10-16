@@ -918,3 +918,83 @@ fn keep_the_penned_herds(app: &mut App) {
         }
     }
 }
+
+/// **KEEPING A RANCH TEACHES SELECTIVE BREEDING; KEEPING A SMALL PEN DOES NOT.** Two otherwise
+/// identical pens, one at the ranch tier's ring count and one a ring short of it, are kept for the
+/// same turns: the ranch's keeper earns the tier's lesson and the small pen's earns none of it.
+#[test]
+fn keeping_a_ranch_teaches_selective_breeding_and_a_small_pen_does_not() {
+    const TURNS_KEPT: u32 = 12;
+    let ranch_rings = core_sim::LadderConfig::builtin()
+        .rung(shipped::animal_pen())
+        .size_tiers
+        .first()
+        .expect("the shipped pen declares the ranch tier")
+        .min_rings;
+    let learned_after_keeping = |rings: u32| {
+        let mut app = base_world();
+        let (tile, _) = richest_pasture(&app);
+        let id = seat_pen(
+            &mut app,
+            tile,
+            rings,
+            0.10,
+            0.35,
+            300.0,
+            150.0,
+            PEN_BODY_MASS,
+        );
+        let keeper = spawn_keeper(&mut app, &id, tile);
+        for _ in 0..TURNS_KEPT {
+            run_pen_turn(&mut app, keeper);
+        }
+        app.world
+            .resource::<DiscoveryProgressLedger>()
+            .get_progress(FactionId(0), core_sim::SELECTIVE_BREEDING_DISCOVERY_ID)
+            .to_f32()
+    };
+    let ranch = learned_after_keeping(ranch_rings);
+    let small = learned_after_keeping(ranch_rings - 1);
+    assert!(
+        ranch > 0.0,
+        "keeping a ranch earns Selective breeding (got {ranch})"
+    );
+    assert_eq!(
+        small, 0.0,
+        "keeping a pen a ring short of a ranch earns none of it"
+    );
+}
+
+/// **KNOWING SELECTIVE BREEDING STAMPS EVERY PENNED HERD OF THE KNOWING PEOPLE, SMALL PENS INCLUDED**,
+/// and a people that has not learned it stamps nothing.
+#[test]
+fn knowing_selective_breeding_stamps_the_regrowth_gain_on_a_small_pen() {
+    let ladder = core_sim::LadderConfig::builtin();
+    let gain = ladder
+        .rung(shipped::animal_pen())
+        .knowledge_gains
+        .first()
+        .expect("the shipped pen declares the gain")
+        .regrowth_gain;
+    let mut app = base_world();
+    let (tile, _) = richest_pasture(&app);
+    let id = seat_pen(&mut app, tile, 0, 0.10, 0.35, 300.0, 150.0, PEN_BODY_MASS);
+    app.world.run_system_once(core_sim::stamp_breeding_gains);
+    let stamped = |app: &App| {
+        app.world
+            .resource::<HerdRegistry>()
+            .find(&id)
+            .unwrap()
+            .breeding_gain
+    };
+    assert_eq!(stamped(&app), 1.0, "an unlearned lesson lifts nothing");
+    app.world
+        .resource_mut::<DiscoveryProgressLedger>()
+        .add_progress(
+            FactionId(0),
+            core_sim::SELECTIVE_BREEDING_DISCOVERY_ID,
+            scalar_one(),
+        );
+    app.world.run_system_once(core_sim::stamp_breeding_gains);
+    assert_eq!(stamped(&app), gain);
+}

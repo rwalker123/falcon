@@ -99,7 +99,7 @@ const BUILD_HORIZON: u32 = 60;
 // The plant web
 // ---------------------------------------------------------------------------------------------
 
-/// **A watered gathering site whose basket can climb to `plant:field`** — every conjunct of the Sow
+/// **A watered gathering site whose basket can climb to `plant:farm`** — every conjunct of the Sow
 /// gate but the staffing, so a refusal cannot be mistaken for the number under test. The same scan
 /// `build_turns_on_the_wire.rs` runs, in a totally-ordered `(y, x)` pass rather than map iteration
 /// order.
@@ -140,7 +140,7 @@ fn a_sowable_site(app: &mut App) -> UVec2 {
                     tiles.get(&neighbor).map(|tile| tile.terrain_tags)
                 });
             let refusal = core_sim::rung_site_refusal(
-                ladder.rung(shipped::plant_field()),
+                ladder.rung(shipped::plant_farm()),
                 ground,
                 &labor.forage,
                 app.world
@@ -148,6 +148,7 @@ fn a_sowable_site(app: &mut App) -> UVec2 {
                     .is_site(coord),
                 fresh_water,
                 core_sim::NO_DEPOSIT_FLOOR,
+                &|_| false,
             );
             if refusal.is_some() {
                 continue;
@@ -158,7 +159,7 @@ fn a_sowable_site(app: &mut App) -> UVec2 {
                 &composition,
                 &flora,
                 shipped::ladder(),
-                shipped::plant_field(),
+                shipped::plant_farm(),
             )
             .is_some()
             {
@@ -177,11 +178,11 @@ fn world_with_a_sow_in_flight() -> (App, UVec2) {
     // At the **foot of the Field rung** — the Cultivate leg is paid, so the entry's remaining climb
     // is exactly the one rung that raises `K`, and the whole gain is still ahead of it.
     let seat = |ladder: &core_sim::LadderConfig| {
-        core_sim::plant_rung_span(shipped::plant_field(), ladder).0
+        core_sim::plant_rung_span(shipped::plant_farm(), ladder).0
     };
     world_with_a_plant_build(
         shipped::sow(),
-        shipped::plant_field(),
+        shipped::plant_farm(),
         A_LARGE_BUILD_POOL,
         &seat,
     )
@@ -491,7 +492,7 @@ fn a_sown_field_delivers_the_capacity_its_build_advertised() {
 ///
 /// Rung 2 buys the ground a faster curve, not a denser one, so its destination capacity is the live
 /// one. It is asserted because it is the arm that pins the reading to the **destination rung** rather
-/// than to the top of the branch: a quote that reached for `plant:field` whatever the entry named
+/// than to the top of the branch: a quote that reached for `plant:farm` whatever the entry named
 /// would publish `field_capacity_gain ×` here and be wrong by the whole gain.
 #[test]
 fn a_cultivate_destination_quotes_the_capacity_rung_two_actually_buys() {

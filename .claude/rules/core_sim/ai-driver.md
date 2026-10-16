@@ -692,7 +692,7 @@ fired and what the ledger said. The rules, in `propose` order:
   culls — with no rebuild term, because tameness never bleeds; a tamed herd's hold is `standing`.
 - **upgrade the ground declines a build the band cannot keep once it stands**
   (`docs/plan_site_crews.md` §2.1). The finished rung's bill (`rungQuotes[plant:tended].upkeepDemand` /
-  `rungQuotes[plant:field].upkeepDemand`, above what the patch owes today), in bare hands (`/ buildWorkPerWorkerTurn`),
+  `rungQuotes[plant:farm].upkeepDemand`, above what the patch owes today), in bare hands (`/ buildWorkPerWorkerTurn`),
   on top of what the band already owes (`Food::keeping_owed`: every site its rows hold, a build in
   flight at its **finished** bill, a herd's `rungQuotes[animal:pastoral].upkeepDemand` / `rungQuotes[animal:pen].upkeepDemand` while queued)
   must fit in the free hands plus the hands already keeping (`upkeepHands`), or the climb is not

@@ -108,6 +108,8 @@ const FACTION := 0
 const BAND_X := 40
 const BAND_Y := 20
 ## Where `move_band` / `send_expedition` are told to go — inside the grid, away from the band.
+## The crop an off-site farm's assign names.
+const OFFSITE_CROP := "wild_emmer"
 const TARGET_X := 44
 const TARGET_Y := 23
 
@@ -536,6 +538,14 @@ func _drive_assign_labor_kits() -> void:
 	await _settle()
 	_hud._emit_assign_labor(band, SourceForecast.LABOR_KIND_FORAGE, PARTY_WORKERS,
 		TARGET_X, TARGET_Y, "", SourceForecast.DEFAULT_HARVEST_FLOOR, "",
+		SourceForecast.IMPROVEMENT_NONE, BandFx.KIT_ID_NONE)
+	await _settle()
+	# **THE OFF-SITE FARM'S ASSIGN — a forage line that NAMES A CROP** (issue #175). On ground that is not
+	# a gathering site the server takes a forage crew only with `species` set, and that same command queues
+	# the farm build; a bare gather there is refused. The crop rides `forage <x> <y> <floor> <species>
+	# <workers>`, so this puts the species positional in front of the real parser.
+	_hud._emit_assign_labor(band, SourceForecast.LABOR_KIND_FORAGE, PARTY_WORKERS,
+		TARGET_X, TARGET_Y, "", SourceForecast.DEFAULT_HARVEST_FLOOR, OFFSITE_CROP,
 		SourceForecast.IMPROVEMENT_NONE, BandFx.KIT_ID_NONE)
 	await _settle()
 	# **THE FOURTH GRAMMAR — the deposit branches' take row** (arc #583).
@@ -1231,7 +1241,7 @@ const ASSIGN_LABOR_UNKNOWN_ROLE := "stonemason"
 ## a tile, a material AND an optional floor, where every role in that list takes a bare worker count. It is
 ## driven here for the reason the whole sweep exists: a grammar the server's dispatch takes and
 ## `sim_runtime::command_text` does not is refused INSIDE the client, with nothing failing anywhere.
-const ASSIGN_LABOR_GRAMMAR_DRIVES := 8
+const ASSIGN_LABOR_GRAMMAR_DRIVES := 9
 
 ## …and the BARE `builders` line beside its tailed one — the exact line the pool's `+` emits — plus the
 ## FAR HERD's commit (`_drive_far_herd_assign_labor`), the hunt line a sheet past the apron sends.
@@ -1239,7 +1249,7 @@ const ASSIGN_LABOR_BARE_DRIVES := 2
 
 ## What `EXPECTED_KINDS` must say for `assign_labor`. Spelled here because a `const` initializer
 ## cannot call `Array.size()`, and re-derived at runtime so the two cannot drift.
-const ASSIGN_LABOR_EXPECTED := 14
+const ASSIGN_LABOR_EXPECTED := 15
 
 ## **THE LIST ABOVE IS THE WHOLE OF WHAT THE CLIENT CAN SAY, ASSERTED RATHER THAN TRUSTED.**
 ##

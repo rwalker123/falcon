@@ -402,3 +402,13 @@ paths:
 `FaunaPanel` appends `Next grounds: (x, y)` under `Next waypoint` when the herd row's
 `next_ground_x/y` are `>= 0`, and nothing otherwise (the sim sends `-1` until the viewer knows Herd
 Lore, and always for non-migratory herds). The map draws the same tile (`map-markers.md`).
+
+## A big pen is a Ranch (issue #175)
+
+When the herd carries `size_tier`, the pen's Corral row is named by that tier's catalog label
+(`Ranch 100%`) and a `Ranch:` row states the bonus from the pen rung's `size_tiers`
+(`each keeper minds 1.5× the head`). A built pen below the first tier shows a quiet rings-to-go line,
+`1 more ring — 1.5× the head` (`min_rings` less `pen_radius`). `DetailFormat.pen_tier_lines` is empty for an
+un-penned herd and for a catalog stating no tiers; no tier is named in code. The Corral feed line
+`status=tier action=extend_pen tier=ranch herd=... radius=...` reads `Ranch · Radius 2`
+(`DETAIL_KEY_HIDDEN_BY_STATUS["status=tier"]`).

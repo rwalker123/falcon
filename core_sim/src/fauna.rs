@@ -30,7 +30,7 @@ use crate::{
     hashing::FnvHasher,
     intensification::{
         interpolate, CostScale, LadderConfig, LadderConfigHandle, RungDef, RungId, RungMovement,
-        RungStanding, RungTrait, RungTraits, SourceKind, NEGLECT_NONE, NO_BUILD_GEAR,
+        RungStanding, RungTrait, RungTraits, SizeTier, SourceKind, NEGLECT_NONE, NO_BUILD_GEAR,
         NO_CREW_ON_THIS_ACTIVITY, NO_NEGLECT_GRACE, NO_RUNG_WORK_BANKED, NO_UPKEEP_DECAY,
         NO_UPKEEP_DEMAND, RUNG_COST_UNSCALED, RUNG_UNSTARTED,
     },
@@ -160,6 +160,11 @@ pub const PENNING_DISCOVERY_ID: u32 = 2006;
 /// `starting_knowledge_tags` — nothing on the ladder is start-granted. Next free id after `penning`
 /// (2006).
 pub const FODDERING_DISCOVERY_ID: u32 = 2007;
+
+/// **The discovery id of `selective_breeding`** (`start_profile_knowledge_tags.json`) - taught by
+/// keeping a Ranch-sized pen (the `animal:pen` rung's `size_tiers` entry), and the key of the pen's
+/// `knowledge_gains`: holding it lifts the regrowth of every penned herd of the people that knows it.
+pub const SELECTIVE_BREEDING_DISCOVERY_ID: u32 = 2023;
 
 /// Coarse ecological health band derived from a group's biomass vs its carrying
 /// capacity (thresholds in `EcologyConfig`). Surfaced to the client as an early
@@ -402,6 +407,14 @@ pub struct Herd {
     /// the wire count) so β only has to grow it. Authoritative sim state — rewound by rollback with the cloned
     /// registry.
     pub pen_radius: u32,
+    /// **THE REGROWTH MULTIPLIER THE OWNER'S LESSONS GIVE THIS HERD'S MANAGED `r`** - the product of
+    /// every `knowledge_gains` entry (on the rungs the herd holds) whose lesson the owning people
+    /// holds, `1.0` for a herd nobody owns or whose owner knows none. Stamped at the head of each Logistics
+    /// fauna chain by [`stamp_breeding_gains`] (so a lesson the Population stage taught reaches
+    /// that turn's regrowth and the capture alike) and read by the ONE managed-rate function
+    /// ([`rung_regrowth_rate`]), so the ecology, the forecast and the quotes agree. Authoritative
+    /// sim state, rewound with the registry.
+    pub breeding_gain: f32,
     /// Pen-**extension** build progress **in absolute work units** for the in-flight ring (the
     /// `ExtendPen` labor ladder, 2d-β), accrued each turn the keeper tends an *extending* pen at that
     /// crew's own work output; at [`Self::pen_extend_cost`] the ring completes (`pen_radius += 1`,
@@ -878,6 +891,7 @@ impl Herd {
             owner: None,
             corralled_at: None,
             pen_radius: 0,
+            breeding_gain: NO_BREEDING_GAIN,
             pen_extend_progress: RUNG_UNSTARTED,
             pen_extend_cost: RUNG_UNSTARTED,
             // A fresh herd is all-meat, which is every herd's behaviour before a player pays to
@@ -1650,13 +1664,55 @@ pub fn herd_ecology(herd: &Herd, fauna: &FaunaConfig) -> EcologyConfig {
 /// of `forage::rung_regrowth_gain`, and the seam [`herd_ecology`] interpolates over.
 fn rung_regrowth_rate(rung: HerdPayoff, herd: &Herd, fauna: &FaunaConfig) -> f32 {
     match rung {
-        HerdPayoff::Pen => {
-            managed_regrowth_rate(herd.regrowth_rate, fauna.husbandry.pen_gain, fauna)
-        }
+        HerdPayoff::Pen => managed_regrowth_rate(
+            herd.regrowth_rate,
+            fauna.husbandry.pen_gain * herd.breeding_gain,
+            fauna,
+        ),
         HerdPayoff::Pastoral => {
             managed_regrowth_rate(herd.regrowth_rate, fauna.husbandry.pastoral_gain, fauna)
         }
         HerdPayoff::Wild => herd.regrowth_rate,
+    }
+}
+
+/// **A HERD THAT KNOWS NO BREEDING LESSON** - the multiplicative identity [`Herd::breeding_gain`] is
+/// born with and falls back to.
+pub const NO_BREEDING_GAIN: f32 = 1.0;
+
+/// **EVERY BREEDING GAIN THE HERD'S OWNER'S LESSONS EARN IT** - the product of each `knowledge_gains`
+/// entry on a rung the herd holds (or has passed) whose lesson `knows` reports held. Pure; the one
+/// place the config's gains are folded, so [`stamp_breeding_gains`] is just this per herd.
+pub fn herd_breeding_gain(herd: &Herd, ladder: &LadderConfig, knows: &dyn Fn(&str) -> bool) -> f32 {
+    let held = herd.standing().held;
+    ladder
+        .rungs_of(held.branch)
+        .into_iter()
+        .filter(|rung| ladder.at_or_above(held, rung.rung_id()))
+        .flat_map(|rung| rung.knowledge_gains.iter())
+        .filter(|gain| knows(&gain.knowledge))
+        .map(|gain| gain.regrowth_gain)
+        .product()
+}
+
+/// **RE-STAMP EVERY HERD'S BREEDING GAIN** from what its owning people now knows - at the head of the
+/// Logistics fauna chain, after the Population stage (where lessons are credited) of the turn before,
+/// so it is current for this turn's regrowth and for the capture. An unowned herd earns nothing.
+pub fn stamp_breeding_gains(
+    mut registry: ResMut<HerdRegistry>,
+    ladder: Res<crate::intensification::LadderConfigHandle>,
+    discovery: Res<crate::resources::DiscoveryProgressLedger>,
+) {
+    let ladder = ladder.get();
+    let threshold = ladder.knowledge.completion_threshold;
+    for herd in registry.herds.iter_mut() {
+        let gain = match herd.owner {
+            Some(owner) => herd_breeding_gain(herd, &ladder, &|name| {
+                crate::intensification::knows_lesson(&discovery, owner, name, threshold)
+            }),
+            None => NO_BREEDING_GAIN,
+        };
+        herd.breeding_gain = gain;
     }
 }
 
@@ -1696,7 +1752,11 @@ fn pastoral_ecology_for(herd: &Herd, fauna: &FaunaConfig) -> EcologyConfig {
 /// either side is *assembled*, rather than what those two seams say, parts them.
 fn pen_ecology_for(herd: &Herd, fauna: &FaunaConfig) -> EcologyConfig {
     EcologyConfig {
-        regrowth_rate: managed_regrowth_rate(herd.regrowth_rate, fauna.husbandry.pen_gain, fauna),
+        regrowth_rate: managed_regrowth_rate(
+            herd.regrowth_rate,
+            fauna.husbandry.pen_gain * herd.breeding_gain,
+            fauna,
+        ),
         ..fauna.husbandry.pen.ecology
     }
 }
@@ -1882,6 +1942,37 @@ pub const NO_KEEPER_LOAD: f32 = 0.0;
 /// shortfall in **work** back into a shortfall in **loads**.
 pub const ONE_KEEPER_LOAD: f32 = 1.0;
 
+/// **THE SIZE TIER THIS HERD'S FENCE HAS REACHED** - read off its footprint (`pen_radius`, the
+/// extension rings) against the `size_tiers` of the highest rung it holds that declares any. `None`
+/// below the first tier, on a herd holding no tiered rung, and on a wild or merely tamed herd. A
+/// derived standing, recomputed every time it is asked: nothing is stored, so there is nothing to
+/// go stale. (A fence's radius only ever grows - `accrue_pen_extension` is its one mutator - so a
+/// herd never falls out of a tier it has reached.)
+pub fn herd_size_tier<'a>(herd: &Herd, ladder: &'a LadderConfig) -> Option<&'a SizeTier> {
+    let held = herd.standing().held;
+    ladder
+        .rungs_of(held.branch)
+        .into_iter()
+        .rev()
+        .filter(|rung| ladder.at_or_above(held, rung.rung_id()))
+        .find(|rung| !rung.size_tiers.is_empty())
+        .and_then(|rung| rung.size_tier_for(herd.pen_radius))
+}
+
+/// **THE KEEPER LOAD THE WORK TERM OF A HERD'S KEEPING IS STRUCK AT** - [`herd_keeper_load`] divided
+/// by the size tier's `keeper_ratio_gain` (a Ranch minds more head per keeper), and the raw load for
+/// a herd in no tier. **Only the work term reads this**: the fence-mending (material) term keeps
+/// scaling with [`herd_keeper_load`] itself, because a fence needs mending in proportion to the herd
+/// it holds however few hands tend it.
+pub fn herd_work_keeper_load(herd: &Herd, fauna: &FaunaConfig, ladder: &LadderConfig) -> f32 {
+    let gain =
+        herd_size_tier(herd, ladder).map_or(NO_KEEPER_RATIO_GAIN, |tier| tier.keeper_ratio_gain);
+    herd_keeper_load(herd, fauna) / gain
+}
+
+/// A herd in no size tier minds the head per keeper its species always did.
+const NO_KEEPER_RATIO_GAIN: f32 = 1.0;
+
 /// [`herd_keeper_loads`] for a herd, resolving its species' `animals_per_herder` live off the config.
 pub fn herd_keeper_load(herd: &Herd, fauna: &FaunaConfig) -> f32 {
     herd_keeper_loads(
@@ -1955,7 +2046,7 @@ pub fn herd_herders_needed(herd: &Herd, fauna: &FaunaConfig, ladder: &LadderConf
 /// `0` for a herd standing on no keeping rung, and for one whose rung declares no upkeep.
 pub fn raw_herders_needed(herd: &Herd, fauna: &FaunaConfig, ladder: &LadderConfig) -> u32 {
     herd_keeping_rung(herd, ladder).map_or(0, |rung| {
-        rung.upkeep_crew_needed(herd_keeper_load(herd, fauna))
+        rung.upkeep_crew_needed(herd_work_keeper_load(herd, fauna, ladder))
     })
 }
 
@@ -1998,7 +2089,7 @@ pub fn would_be_herders_needed(herd: &Herd, fauna: &FaunaConfig, ladder: &Ladder
                 RungTrait::Domesticated
             },
         ))
-        .upkeep_crew_needed(herd_keeper_load(herd, fauna))
+        .upkeep_crew_needed(herd_work_keeper_load(herd, fauna, ladder))
 }
 
 /// A fully-kept managed herd — the neutral value of [`herd_herded_fraction`], and what a herd with no
@@ -5104,7 +5195,7 @@ pub fn herd_claims_keeping(
 pub fn herd_meter_rot(herd: &Herd, fauna: &FaunaConfig, ladder: &LadderConfig) -> f32 {
     herd_keeping_rung(herd, ladder).map_or(NO_UPKEEP_DECAY, |rung| {
         rung.meter_rot(
-            herd_keeper_load(herd, fauna),
+            herd_work_keeper_load(herd, fauna, ladder),
             herd.upkeep_supplied,
             herd.neglect_turns,
         )
@@ -5135,7 +5226,7 @@ pub fn herd_meter_rot(herd: &Herd, fauna: &FaunaConfig, ladder: &LadderConfig) -
 /// demand began interpolating. What the verb still decides — *does this source claim a share at all
 /// before it has banked anything* — is [`herd_claims_keeping`].
 pub fn herd_upkeep_demand(herd: &Herd, fauna: &FaunaConfig, ladder: &LadderConfig) -> f32 {
-    let load = herd_keeper_load(herd, fauna);
+    let load = herd_work_keeper_load(herd, fauna, ladder);
     interpolate(&herd.standing(), |mark| {
         ladder.rung(mark.id).upkeep_demand(load)
     })
@@ -14988,5 +15079,124 @@ mod tests {
         let mean = expected_stayers(&outcomes);
         let closed = expected_stayers_of(&party, reach, reach);
         assert!((mean - closed).abs() < 1e-3, "{mean} vs {closed}");
+    }
+
+    // ---- RANCH: A SIZE TIER OF THE PEN, AND THE LESSON IT TEACHES --------------------------------
+
+    /// Biomass the ranch fixtures keep - large enough that the keeper load is well above zero.
+    const RANCH_FIXTURE_BIOMASS: f32 = 400.0;
+    /// The shipped species the ranch fixtures keep.
+    const RANCH_FIXTURE_SPECIES: &str = "Wild Boar";
+
+    /// A tamed herd of the shipped species, pennable when `penned`, with its fence at `rings`.
+    fn ranch_fixture(penned: bool, rings: u32) -> Herd {
+        let fauna = FaunaConfig::builtin();
+        let ladder = LadderConfig::builtin();
+        let def = fauna
+            .species_by_display(RANCH_FIXTURE_SPECIES)
+            .expect("the fixture names a shipped species");
+        let mut herd = Herd::new(
+            "ranch_fixture".to_string(),
+            RANCH_FIXTURE_SPECIES.to_string(),
+            SizeClass::Big,
+            vec![UVec2::new(1, 1)],
+            RANCH_FIXTURE_BIOMASS,
+            RANCH_FIXTURE_BIOMASS * 4.0,
+            def.fodder_per_biomass,
+            def.regrowth_rate.expect("a tameable species breeds"),
+            def.body_mass,
+            shipped::root_standing(shipped::animal()),
+        );
+        herd.taming_cost_multiplier = fauna.taming_cost_multiplier_for(RANCH_FIXTURE_SPECIES);
+        assert!(herd.tame_outright(FactionId(0), &ladder));
+        if penned {
+            assert!(
+                herd.corral_at(UVec2::new(1, 1), &ladder),
+                "the species pens"
+            );
+            herd.pen_radius = rings;
+        }
+        herd
+    }
+
+    /// The ranch tier the shipped pen declares.
+    fn shipped_ranch_tier() -> SizeTier {
+        LadderConfig::builtin()
+            .rung(shipped::animal_pen())
+            .size_tiers
+            .first()
+            .expect("the shipped pen declares the ranch tier")
+            .clone()
+    }
+
+    /// **A PEN IS A RANCH ONLY ONCE THE FENCE HAS BEEN EXTENDED TO THE TIER'S RINGS**, and a merely
+    /// tamed herd is in no tier.
+    #[test]
+    fn a_pen_extended_to_the_tiers_rings_is_a_ranch() {
+        let ladder = LadderConfig::builtin();
+        let ranch_rings = shipped_ranch_tier().min_rings;
+        for rings in 0..ranch_rings {
+            assert!(
+                herd_size_tier(&ranch_fixture(true, rings), &ladder).is_none(),
+                "a pen at {rings} rings is below the ranch"
+            );
+        }
+        assert_eq!(
+            herd_size_tier(&ranch_fixture(true, ranch_rings), &ladder).map(|tier| tier.id.as_str()),
+            Some("ranch")
+        );
+        assert!(herd_size_tier(&ranch_fixture(false, 0), &ladder).is_none());
+    }
+
+    /// **A RANCH MINDS MORE HEAD PER KEEPER, BUT ITS FENCE MENDS BY THE SAME HERD**: the work load is
+    /// the raw load over the tier gain; the raw (material) load is unchanged by the tier.
+    #[test]
+    fn a_ranch_divides_the_work_load_and_not_the_material_load() {
+        let fauna = FaunaConfig::builtin();
+        let ladder = LadderConfig::builtin();
+        let tier = shipped_ranch_tier();
+        let small = ranch_fixture(true, 0);
+        let ranch = ranch_fixture(true, tier.min_rings);
+        let raw = herd_keeper_load(&ranch, &fauna);
+        assert!(raw > 0.0);
+        assert_eq!(raw, herd_keeper_load(&small, &fauna));
+        assert_eq!(herd_work_keeper_load(&small, &fauna, &ladder), raw);
+        let work = herd_work_keeper_load(&ranch, &fauna, &ladder);
+        assert!((work - raw / tier.keeper_ratio_gain).abs() < 1e-4);
+        assert!(work < raw);
+    }
+
+    /// **SELECTIVE BREEDING LIFTS EVERY PENNED HERD**, a small pen as well as a ranch; a people that
+    /// does not know it lifts nothing, and a wild rate is nobody's to lift.
+    #[test]
+    fn selective_breeding_lifts_a_penned_herds_regrowth_whatever_its_size() {
+        let fauna = FaunaConfig::builtin();
+        let ladder = LadderConfig::builtin();
+        let gain = ladder
+            .rung(shipped::animal_pen())
+            .knowledge_gains
+            .first()
+            .expect("the shipped pen declares the selective breeding gain")
+            .regrowth_gain;
+        let knows = |known: bool| move |name: &str| known && name == "selective_breeding";
+        let mut small = ranch_fixture(true, 0);
+        assert_eq!(
+            herd_breeding_gain(&small, &ladder, &knows(false)),
+            NO_BREEDING_GAIN
+        );
+        assert_eq!(herd_breeding_gain(&small, &ladder, &knows(true)), gain);
+        let base = rung_regrowth_rate(HerdPayoff::Pen, &small, &fauna);
+        small.breeding_gain = gain;
+        let lifted = rung_regrowth_rate(HerdPayoff::Pen, &small, &fauna);
+        assert!(lifted > base, "{lifted} should exceed {base}");
+        assert_eq!(
+            rung_regrowth_rate(HerdPayoff::Wild, &small, &fauna),
+            small.regrowth_rate
+        );
+        // A merely tamed herd holds no rung that names the gain, so the lesson lifts nothing there.
+        assert_eq!(
+            herd_breeding_gain(&ranch_fixture(false, 0), &ladder, &knows(true)),
+            NO_BREEDING_GAIN
+        );
     }
 }

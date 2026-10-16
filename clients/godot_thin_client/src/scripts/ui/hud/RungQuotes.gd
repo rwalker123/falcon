@@ -54,6 +54,14 @@ const TRAIT_ENCLOSED := "enclosed"
 const KEY_REQUIRES_HELD_BELOW := "requires_held_rung_below"
 const KEY_REQUIRES_CROP := "requires_crop"
 const KEY_PLACES_SOURCE := "places_source"
+## What the catalog says a rung's ground and its keepers can come to: the lessons that loosen its site
+## rule, the size tiers an enclosed rung derives, and the lessons' gains on the herds it holds.
+const KEY_SITE_RELAXATIONS := "site_relaxations"
+const KEY_SIZE_TIERS := "size_tiers"
+const KEY_KNOWLEDGE_GAINS := "knowledge_gains"
+## The server's verdict on a rung this viewer may not place a source on YET, because a lesson would
+## open the ground. `""` means the viewer may place one now.
+const SITE_REFUSAL_NEEDS_LESSON := "needs_lesson"
 const TRAIT_MANAGED := "managed"
 const TRAIT_DOMESTICATED := "domesticated"
 
@@ -104,6 +112,9 @@ static func _enrich_list(quotes_variant: Variant, by_key: Dictionary) -> void:
 		quote[KEY_UNLOCK] = String(rung.get(KEY_UNLOCK, ""))
 		quote[KEY_REQUIRES_RUNG] = String(rung.get(KEY_REQUIRES_RUNG, ""))
 		quote[KEY_EARNS] = String(rung.get(KEY_EARNS, ""))
+		quote[KEY_SITE_RELAXATIONS] = rung.get(KEY_SITE_RELAXATIONS, [])
+		quote[KEY_SIZE_TIERS] = rung.get(KEY_SIZE_TIERS, [])
+		quote[KEY_KNOWLEDGE_GAINS] = rung.get(KEY_KNOWLEDGE_GAINS, [])
 		quote[KEY_REQUIRES_HELD_BELOW] = bool(rung.get(KEY_REQUIRES_HELD_BELOW, false))
 		quote[KEY_REQUIRES_CROP] = bool(rung.get(KEY_REQUIRES_CROP, false))
 		quote[KEY_PLACES_SOURCE] = bool(rung.get(KEY_PLACES_SOURCE, false))
@@ -270,6 +281,100 @@ static func name_of(quote: Dictionary) -> String:
 	if fallback != "":
 		return fallback
 	return HudRouteVocab.humanize_rung_key(String(quote.get(KEY_RUNG, "")))
+
+# ---- THE SITE THE SERVER ADMITS, AND THE LESSON THAT WOULD WIDEN IT --------------------------------
+
+## **MAY A SOURCE BE PLACED ON THIS GROUND NOW?** The server's verdict, never the client's: some quote
+## whose rung `places_source` either stands already or carries an empty `site_refusal`. This is what
+## opens a compose sheet on ground that is not a gathering site, and the ONLY thing that does -- the
+## client holds no site rule of its own (`requires_gathering_site`, a capacity floor, fresh water).
+static func placement_admitted(src: Dictionary, prefix: String = "") -> bool:
+	for quote in quotes(src, prefix):
+		if not places_source(quote):
+			continue
+		if bool(quote.get(KEY_REACHED, false)):
+			return true
+		if String(quote.get(KEY_SITE_REFUSAL, "")).strip_edges() == "":
+			return true
+	return false
+
+## **THE VERB A CREW MUST NAME A CROP FOR, ON GROUND IT MAY NOT PLAIN-GATHER.** The placing rung the
+## server admits for this ground (empty `site_refusal`) while it does not yet stand there: its verb
+## (`sow`), `""` otherwise. Off the gathering sites the server accepts a forage crew only with a crop
+## named, and that same command queues the build; so the sheet's crop chips stop being a choice and
+## become the commit, and a bare gather is not offered.
+static func offsite_placing_verb(src: Dictionary, prefix: String = "") -> String:
+	for quote in quotes(src, prefix):
+		if not places_source(quote):
+			continue
+		if bool(quote.get(KEY_REACHED, false)):
+			return ""
+		if String(quote.get(KEY_SITE_REFUSAL, "")).strip_edges() == "":
+			return verb_of(quote)
+	return ""
+
+## The lesson id a placing rung's refusal is waiting on (`""` when none is): the knowledge of the last
+## `site_relaxation`, which is the one the server's own refusal sentence names, set against a quote the
+## server answered `needs_lesson`.
+static func lesson_to_place(src: Dictionary, prefix: String = "") -> String:
+	for quote in quotes(src, prefix):
+		if not places_source(quote):
+			continue
+		if String(quote.get(KEY_SITE_REFUSAL, "")).strip_edges() != SITE_REFUSAL_NEEDS_LESSON:
+			continue
+		var relaxations: Variant = quote.get(KEY_SITE_RELAXATIONS, [])
+		if relaxations is Array and not (relaxations as Array).is_empty():
+			var last: Variant = (relaxations as Array).back()
+			if last is Dictionary:
+				return String((last as Dictionary).get("knowledge", ""))
+	return ""
+
+## The rung that earns `knowledge_id`, by its catalog label (`Farm` for `worked_land`), `""` when the
+## source's quotes name none. The `work a farm` of a teaching line.
+static func rung_teaching(src: Dictionary, prefix: String, knowledge_id: String) -> String:
+	if knowledge_id == "":
+		return ""
+	for quote in quotes(src, prefix):
+		if String(quote.get(KEY_EARNS, "")) == knowledge_id:
+			return name_of(quote)
+	return ""
+
+# ---- SIZE TIERS (a pen fenced past a threshold is a Ranch) ------------------------------------------
+
+## The size tiers the source's enclosed rung derives, in the catalog's order (`[]` for none).
+static func size_tiers(src: Dictionary, prefix: String = "") -> Array[Dictionary]:
+	var out: Array[Dictionary] = []
+	for quote in quotes(src, prefix):
+		var rows: Variant = quote.get(KEY_SIZE_TIERS, [])
+		if rows is Array:
+			for row in (rows as Array):
+				if row is Dictionary:
+					out.append(row)
+	return out
+
+## The tier row whose `id` the herd's `size_tier` names, `{}` for none.
+static func current_size_tier(src: Dictionary, prefix: String = "") -> Dictionary:
+	var held := String(src.get(prefix + "size_tier", "")).strip_edges()
+	if held == "":
+		return {}
+	for row in size_tiers(src, prefix):
+		if String(row.get("id", "")) == held:
+			return row
+	return {}
+
+## The lowest tier ABOVE the herd's current one that its pen has not reached: the one more rings
+## would make it. `{}` where the herd already holds the top tier, or has no pen at all.
+static func next_size_tier(src: Dictionary, prefix: String = "") -> Dictionary:
+	var held_rings := -1
+	var current := current_size_tier(src, prefix)
+	if not current.is_empty():
+		held_rings = int(current.get("min_rings", 0))
+	var best := {}
+	for row in size_tiers(src, prefix):
+		var rings := int(row.get("min_rings", 0))
+		if rings > held_rings and (best.is_empty() or rings < int(best.get("min_rings", 0))):
+			best = row
+	return best
 
 # ---- CROP PICKER QUOTES (one set per plant in the basket) -------------------------------------------
 

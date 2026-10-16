@@ -148,7 +148,7 @@ LISTS ARE RETIRED" below. **Plus the investment rung**:
 > - **A ceiling row can exceed `sustainable`.** The first harvest of an untouched source is its
 >   accumulated stock, so `actual > sustainable` under *every* stance including Sustain. `sustainable`
 >   stays on the row as the long-run MSY reference; the ⚠ is `components::take_overdraws`.
-> - **A ceiling row cannot be compared with a rung PAYOFF** (`rungQuotes[plant:tended].foodYield`, `rungQuotes[plant:field].foodYield`,
+> - **A ceiling row cannot be compared with a rung PAYOFF** (`rungQuotes[plant:tended].foodYield`, `rungQuotes[plant:farm].foodYield`,
 >   `rungQuotes[animal:pastoral].foodYield`, `rungQuotes[animal:pen].foodYield`). Those are long-run rates and carry `r`; a stance ceiling is
 >   `r`-free (`B − floor·K` is `K/2` on every rung at `B = K`). "Preparing +X → then +Y" is therefore
 >   a stock beside a rate today, which the client's ladder redesign (`docs/plan_harvest_floor.md` §7,
@@ -308,7 +308,7 @@ LISTS ARE RETIRED" below. **Plus the investment rung**:
 > A **corralled herd** has `stock_cap: None` — it is never drawn down by the compose sheet's own
 > reading. **A sown FIELD is not one**: the plant web's managed harvest is retired and a Field is
 > drawn down like any other stand. *"This rung is not offerable here"* used to be said by publishing a
-> dip of `0`; with the fractions retired it is said by the rung's own state (`rungQuotes[plant:field].reached` / `corralled`)
+> dip of `0`; with the fractions retired it is said by the rung's own state (`rungQuotes[plant:farm].reached` / `corralled`)
 > and by `buildTurnsRemaining`'s `NO_BUILD_TURNS_ESTIMATE`, which is what the top of a ladder answers.
 
 `rungQuotes[plant:tended].foodYield` and, on a herd, `rungQuotes[animal:pen].foodYield` are what the source will pay **once the

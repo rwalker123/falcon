@@ -1715,11 +1715,11 @@ impl Food {
     ) -> Option<(&FloraShareInfo, f32)> {
         let legal = |plant: &FloraShareInfo| match climb {
             Climb::Tended => plant.quote(crate::rungs::PLANT_TENDED).can_climb,
-            Climb::Field => plant.quote(crate::rungs::PLANT_FIELD).can_climb,
+            Climb::Field => plant.quote(crate::rungs::PLANT_FARM).can_climb,
         };
         let payoff = |plant: &FloraShareInfo| match climb {
             Climb::Tended => plant.quote(crate::rungs::PLANT_TENDED).food_payoff,
-            Climb::Field => plant.quote(crate::rungs::PLANT_FIELD).food_payoff,
+            Climb::Field => plant.quote(crate::rungs::PLANT_FARM).food_payoff,
         };
         let committed = patch
             .composition
@@ -1771,7 +1771,7 @@ impl Food {
                     };
                     let bill = if queued_here(ROLE_FORAGE, Some(tile), None) {
                         if patch.quote(crate::rungs::PLANT_TENDED).reached {
-                            patch.quote(crate::rungs::PLANT_FIELD).upkeep_demand
+                            patch.quote(crate::rungs::PLANT_FARM).upkeep_demand
                         } else {
                             patch.quote(crate::rungs::PLANT_TENDED).upkeep_demand
                         }
@@ -1897,10 +1897,10 @@ impl Food {
             let climb = if !patch.quote(crate::rungs::PLANT_TENDED).reached {
                 cultivation.then_some(Climb::Tended)
             } else if goals.ground_rung == GroundRung::Field
-                && !patch.quote(crate::rungs::PLANT_FIELD).reached
+                && !patch.quote(crate::rungs::PLANT_FARM).reached
                 && seed_selection
                 && patch
-                    .quote(crate::rungs::PLANT_FIELD)
+                    .quote(crate::rungs::PLANT_FARM)
                     .site_refusal
                     .is_empty()
             {
@@ -1925,8 +1925,8 @@ impl Food {
                     VERB_CULTIVATE,
                 ),
                 Climb::Field => (
-                    patch.quote(crate::rungs::PLANT_FIELD).work_cost
-                        - patch.quote(crate::rungs::PLANT_FIELD).work_done,
+                    patch.quote(crate::rungs::PLANT_FARM).work_cost
+                        - patch.quote(crate::rungs::PLANT_FARM).work_done,
                     VERB_SOW,
                 ),
             };
@@ -1940,7 +1940,7 @@ impl Food {
             // is not otherwise using — its free hands plus the ones already keeping.
             let finished_bill = match climb {
                 Climb::Tended => patch.quote(crate::rungs::PLANT_TENDED).upkeep_demand,
-                Climb::Field => patch.quote(crate::rungs::PLANT_FIELD).upkeep_demand,
+                Climb::Field => patch.quote(crate::rungs::PLANT_FARM).upkeep_demand,
             };
             let finished_hands = (finished_bill - patch.upkeep_demand).max(0.0) / per_builder;
             if keeping.owed + finished_hands > free.hands as f32 + keeping.keeping_now {
@@ -2516,10 +2516,10 @@ impl Food {
                     continue;
                 }
             };
-            let (rung_yield, work_done) = if patch.quote(crate::rungs::PLANT_FIELD).reached {
+            let (rung_yield, work_done) = if patch.quote(crate::rungs::PLANT_FARM).reached {
                 (
-                    patch.quote(crate::rungs::PLANT_FIELD).food_yield,
-                    patch.quote(crate::rungs::PLANT_FIELD).work_done,
+                    patch.quote(crate::rungs::PLANT_FARM).food_yield,
+                    patch.quote(crate::rungs::PLANT_FARM).work_done,
                 )
             } else {
                 (
@@ -2530,7 +2530,7 @@ impl Food {
             // The rung's premium over the wild take the hands left harvesting make on the patch
             // — earned only once the rung is complete, and by nobody if nobody forages it.
             let complete = patch.quote(crate::rungs::PLANT_TENDED).reached
-                || patch.quote(crate::rungs::PLANT_FIELD).reached;
+                || patch.quote(crate::rungs::PLANT_FARM).reached;
             any_complete |= complete;
             let rate = patch_per_worker_yield(memory, band, patch);
             // **The row's own crew goes on harvesting** — the hands the hold adds keep the patch,
@@ -3987,7 +3987,7 @@ mod tests {
                                 ..Default::default()
                             },
                             sim_runtime::RungShareQuoteState {
-                                rung_key: crate::rungs::PLANT_FIELD.to_owned(),
+                                rung_key: crate::rungs::PLANT_FARM.to_owned(),
                                 can_climb: true,
                                 food_payoff: 80.0,
                                 ..Default::default()
@@ -3996,7 +3996,7 @@ mod tests {
                         ..Default::default()
                     }]);
                     patch.quote_mut(crate::rungs::PLANT_TENDED).work_cost = 50.0;
-                    patch.quote_mut(crate::rungs::PLANT_FIELD).work_cost = 75.0;
+                    patch.quote_mut(crate::rungs::PLANT_FARM).work_cost = 75.0;
                     patch.build_work_per_worker_turn = 1.0;
                 }
             }
@@ -6102,7 +6102,7 @@ mod tests {
                                 ..Default::default()
                             },
                             sim_runtime::RungShareQuoteState {
-                                rung_key: crate::rungs::PLANT_FIELD.to_owned(),
+                                rung_key: crate::rungs::PLANT_FARM.to_owned(),
                                 can_climb: true,
                                 food_payoff: 80.0,
                                 ..Default::default()
@@ -6111,7 +6111,7 @@ mod tests {
                         ..Default::default()
                     }]);
                     patch.quote_mut(crate::rungs::PLANT_TENDED).work_cost = 50.0;
-                    patch.quote_mut(crate::rungs::PLANT_FIELD).work_cost = 75.0;
+                    patch.quote_mut(crate::rungs::PLANT_FARM).work_cost = 75.0;
                     patch.build_work_per_worker_turn = 1.0;
                 }
             }
@@ -6279,7 +6279,7 @@ mod tests {
         // Ground that will not take seed.
         for patch in &mut view.snapshot.forage_patches {
             if Tile::new(patch.x, patch.y) == RICH_PATCH {
-                patch.quote_mut(crate::rungs::PLANT_FIELD).site_refusal = "too_dry".to_owned();
+                patch.quote_mut(crate::rungs::PLANT_FARM).site_refusal = "too_dry".to_owned();
             }
         }
         assert!(food()

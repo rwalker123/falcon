@@ -1181,7 +1181,7 @@ mod tests {
                                 ..RungShareQuoteState::default()
                             },
                             RungShareQuoteState {
-                                rung_key: "plant:field".to_string(),
+                                rung_key: "plant:farm".to_string(),
                                 material_payoff: vec![MaterialPayoff {
                                     material_id: "fibre".to_string(),
                                     amount: SOW_FIBRE,
@@ -1217,7 +1217,7 @@ mod tests {
             .expect("the patch's composition");
 
         let cotton = composition.get(0);
-        let sow = codec::wire_share_rung_quote(cotton.rungQuotes(), "plant:field")
+        let sow = codec::wire_share_rung_quote(cotton.rungQuotes(), "plant:farm")
             .and_then(|quote| quote.materialPayoff())
             .expect("the Sow quote survives the codec");
         let cultivate = codec::wire_share_rung_quote(cotton.rungQuotes(), "plant:tended")
@@ -1235,7 +1235,7 @@ mod tests {
 
         let grain = composition.get(1);
         assert!(
-            codec::wire_share_rung_quote(grain.rungQuotes(), "plant:field")
+            codec::wire_share_rung_quote(grain.rungQuotes(), "plant:farm")
                 .and_then(|quote| quote.materialPayoff())
                 .is_none_or(|rows| rows.is_empty()),
             "a food crop quotes NO ROW — never a zero-valued one"
@@ -1489,7 +1489,7 @@ mod tests {
                     RungQuoteState {
                         work_done: FIELD_DONE,
                         work_cost: FIELD_COST,
-                        ..quote("plant:field")
+                        ..quote("plant:farm")
                     },
                 ],
                 build_turns_remaining: NO_BUILD_TURNS_ESTIMATE,
@@ -1707,7 +1707,7 @@ mod tests {
                     },
                     RungQuoteState {
                         upkeep_demand: FIELD_RATE,
-                        ..quote("plant:field")
+                        ..quote("plant:farm")
                     },
                 ],
                 ..ForagePatchState::default()
@@ -1771,7 +1771,7 @@ mod tests {
             forage_patches: vec![ForagePatchState {
                 rung_quotes: vec![RungQuoteState {
                     upkeep_demand: A_DEMAND,
-                    ..quote("plant:field")
+                    ..quote("plant:farm")
                 }],
                 meter_rot_per_turn: PATCH_ROT,
                 ..ForagePatchState::default()

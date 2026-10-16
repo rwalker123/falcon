@@ -173,6 +173,95 @@ fn a_rung_publishes_its_gate_properties_as_configured() {
     }
 }
 
+/// **A RUNG'S SITE RULE AND THE LESSONS THAT LOOSEN IT RIDE THE CATALOG** as the config declares
+/// them: every row's `siteRule` is the rung's own `site_requirement` (all-clear where it has none),
+/// `siteRelaxations` lists its relaxations in order, and the shipped Farm publishes the one
+/// `worked_land` relaxation that drops the gathering-site rule and keeps the water rule - the data a
+/// client words the "learn Worked Land" hint from.
+#[test]
+fn a_rung_publishes_its_site_rule_and_the_lessons_that_loosen_it() {
+    let app = a_world_with_a_catalog();
+    let ladder = app.world.resource::<LadderConfigHandle>().get();
+    let bytes = encoded(&app);
+    let envelope = fb::root_as_envelope(bytes.as_ref()).expect("a valid envelope");
+    let rows = envelope
+        .payload_as_snapshot()
+        .expect("a snapshot")
+        .subsistence()
+        .and_then(|section| section.ladderRungs())
+        .expect("the rung catalog is published");
+    let mut saw_farm = false;
+    for row in rows.iter() {
+        let rung = ladder
+            .rungs
+            .iter()
+            .find(|rung| Some(rung.wire_key().as_str()) == row.rungKey())
+            .expect("every published row names a config rung");
+        let rule = row.siteRule().expect("every row carries its site rule");
+        let own = rung.site_requirement.as_ref();
+        assert_eq!(
+            rule.requiresGatheringSite(),
+            own.is_some_and(|site| site.requires_gathering_site),
+            "{}",
+            rung.wire_key()
+        );
+        assert_eq!(
+            rule.minForageCapacity(),
+            own.map_or(0.0, |site| site.min_forage_capacity)
+        );
+        assert_eq!(
+            rule.requiresFreshWater(),
+            own.is_some_and(|site| site.requires_fresh_water)
+        );
+        let published = row.siteRelaxations().map_or(0, |rows| rows.len());
+        assert_eq!(
+            published,
+            rung.site_relaxations.len(),
+            "{}",
+            rung.wire_key()
+        );
+        if rung.wire_key() == "plant:farm" {
+            saw_farm = true;
+            let relaxation = row.siteRelaxations().expect("the Farm is relaxed").get(0);
+            assert_eq!(relaxation.knowledge(), Some("worked_land"));
+            let loosened = relaxation.rule().expect("the relaxation carries its rule");
+            assert!(!loosened.requiresGatheringSite());
+            assert!(loosened.requiresFreshWater());
+            assert!(loosened.minForageCapacity() > rule.minForageCapacity());
+        }
+    }
+    assert!(saw_farm, "the shipped ladder has a plant:farm rung");
+}
+
+/// **THE PEN PUBLISHES ITS SIZE TIER AND THE LESSON GAINS** - the data a client words a Ranch from.
+#[test]
+fn the_pen_publishes_its_size_tiers_and_knowledge_gains() {
+    let app = a_world_with_a_catalog();
+    let ladder = app.world.resource::<LadderConfigHandle>().get();
+    let bytes = encoded(&app);
+    let envelope = fb::root_as_envelope(bytes.as_ref()).expect("a valid envelope");
+    let rows = envelope
+        .payload_as_snapshot()
+        .expect("a snapshot")
+        .subsistence()
+        .and_then(|section| section.ladderRungs())
+        .expect("the rung catalog is published");
+    let pen = ladder.rung(core_sim::shipped::animal_pen());
+    let row = rows
+        .iter()
+        .find(|row| row.rungKey() == Some(pen.wire_key().as_str()))
+        .expect("the pen is published");
+    let tier = row.sizeTiers().expect("tiers").get(0);
+    let declared = pen.size_tiers.first().expect("the pen declares a tier");
+    assert_eq!(tier.id(), Some(declared.id.as_str()));
+    assert_eq!(tier.minRings(), declared.min_rings);
+    assert_eq!(tier.keeperRatioGain(), declared.keeper_ratio_gain);
+    assert_eq!(tier.earnsKnowledge(), declared.earns_knowledge.as_deref());
+    let gain = row.knowledgeGains().expect("gains").get(0);
+    assert_eq!(gain.knowledge(), Some("selective_breeding"));
+    assert_eq!(gain.regrowthGain(), pen.knowledge_gains[0].regrowth_gain);
+}
+
 /// **THE BRANCHES ARE PUBLISHED IN THE CATALOG'S OWN ORDER** with their area, kind and heading.
 #[test]
 fn the_branches_are_published_beside_the_rungs() {

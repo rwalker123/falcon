@@ -320,7 +320,7 @@ fn seated_patch(
         // **The precondition is FORCED** — the ladder position moves to the top of the rung through
         // the fixture mutator; no knowledge and no build is run.
         let seated = match rung {
-            matched_ if matched_ == shipped::plant_field() => {
+            matched_ if matched_ == shipped::plant_farm() => {
                 patch.complete_field(SURVEY_FACTION, &s.ladder)
             }
             _ => patch.complete_cultivation(SURVEY_FACTION, &s.ladder),
@@ -410,8 +410,8 @@ fn best_crop(composition: &[FloraShare], rung: RungId, s: &Shipped) -> Option<St
         .filter_map(|share| {
             let def = s.flora.species.get(&share.species)?;
             let admits = match rung {
-                matched_ if matched_ == shipped::plant_field() => {
-                    def.cultivation_ceiling == Some(shipped::plant_field())
+                matched_ if matched_ == shipped::plant_farm() => {
+                    def.cultivation_ceiling == Some(shipped::plant_farm())
                 }
                 _ => def.cultivation_ceiling != Some(shipped::plant_wild()),
             };
@@ -942,15 +942,15 @@ fn food_rate_survey() {
             )
         });
     }
-    let field_upkeep = upkeep_work_per_turn(shipped::plant_field(), &s);
+    let field_upkeep = upkeep_work_per_turn(shipped::plant_farm(), &s);
     println!("\n## RUNG 3 — FIELD (Harvesting kit, rung FORCED, best field crop in the basket committed)\n");
     println!("| terrain | crop | K | 3 workers | 5 workers | keepers owed | 3 + keepers | 5 + keepers | line food/turn (1 tile) | crew → 95% of line | binds @3 |");
     println!("|---|---|---|---|---|---|---|---|---|---|---|");
     for terrain in forage_terrains(&s) {
-        print_plant_rung(terrain, shipped::plant_field(), &s, &mut every_cell);
+        print_plant_rung(terrain, shipped::plant_farm(), &s, &mut every_cell);
     }
     println!(
-        "\nField multipliers over tended: K×{:.2} (`field_capacity_gain`) · r×{:.2} (`field_regrowth_gain`) · conversion ×{:.2} (`field_conversion_gain`) · upkeep {:.2} work/turn per `capacity_per_tender` (`plant:field` upkeep)",
+        "\nField multipliers over tended: K×{:.2} (`field_capacity_gain`) · r×{:.2} (`field_regrowth_gain`) · conversion ×{:.2} (`field_conversion_gain`) · upkeep {:.2} work/turn per `capacity_per_tender` (`plant:farm` upkeep)",
         cultivation.field_capacity_gain,
         cultivation.field_regrowth_gain,
         cultivation.field_conversion_gain,
@@ -1288,8 +1288,8 @@ struct Plan {
 
 fn field_curve(terrain: TerrainType, s: &Shipped) -> Option<(String, SourceCurve)> {
     let composition = basket_on(terrain, s);
-    let crop = best_crop(&composition, shipped::plant_field(), s)?;
-    let patch = seated_patch(terrain, Some((&crop, shipped::plant_field())), 1.0, s);
+    let crop = best_crop(&composition, shipped::plant_farm(), s)?;
+    let patch = seated_patch(terrain, Some((&crop, shipped::plant_farm())), 1.0, s);
     let keepers = keepers_owed(patch_upkeep_demand(
         &patch,
         &s.ladder,
@@ -1420,8 +1420,8 @@ fn print_ground_pens(s: &Shipped, every_cell: &mut Vec<f32>) {
     println!("|---|---|---|---|---|---|---|---|---|---|");
     for terrain in LAND_TEST_TERRAINS {
         let composition = basket_on(terrain, s);
-        if let Some(crop) = best_crop(&composition, shipped::plant_field(), s) {
-            let patch = seated_patch(terrain, Some((&crop, shipped::plant_field())), 1.0, s);
+        if let Some(crop) = best_crop(&composition, shipped::plant_farm(), s) {
+            let patch = seated_patch(terrain, Some((&crop, shipped::plant_farm())), 1.0, s);
             let keepers = keepers_owed(patch_upkeep_demand(
                 &patch,
                 &s.ladder,

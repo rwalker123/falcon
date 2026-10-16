@@ -367,7 +367,7 @@ domestication *reduce* capacity). **Playtest dials.**
   handling gain all read `is_corralled()` — a **stored fact set at completion** — so `animal:pen`
   keeps `partial_credit: on_completion`. **Half a fence is not half a pen**: the animals are still
   roaming and nothing about them has changed. A half-sown Field genuinely has half a crop in the
-  ground, which is why `plant:field` is `continuous`; the two are different facts, not an
+  ground, which is why `plant:farm` is `continuous`; the two are different facts, not an
   inconsistency.
 - **AND SO DOES THE BILL** (`docs/plan_standing_upkeep.md` §2.8). The retired `herd_keeping_meter`
   billed the **pen** rung's upkeep from the first fencing work banked, while every benefit above waited
@@ -1905,3 +1905,11 @@ deleted.
 
 ---
 
+
+## The Ranch - a size tier of the Pen
+
+A pen whose fence has been extended to the size tier's `min_rings` is a Ranch (`fauna::herd_size_tier`; config
+and rationale in `intensification.md` -> "Size tiers and knowledge gains"). Its bonus is fewer keepers per
+animal: the herd's keeper load is divided by `keeper_ratio_gain` in every WORK-term site, while the hurdles
+(material) term keeps the raw load. Keeping a Ranch earns Selective breeding, which multiplies the managed
+regrowth rate of every penned herd of the knowing people (`Herd::breeding_gain`).

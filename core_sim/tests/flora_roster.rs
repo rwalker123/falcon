@@ -423,7 +423,7 @@ fn the_fodder_crop_pays_a_positive_fodder_yield() {
     );
     assert!(
         core_sim::shipped::ladder()
-            .ceiling_reaches(def.cultivation_ceiling, core_sim::shipped::plant_field()),
+            .ceiling_reaches(def.cultivation_ceiling, core_sim::shipped::plant_farm()),
         "`{key}` is a Field crop (you Sow hay) — it must reach the field rung"
     );
     // It competes with grain for scarce sowable tiles: every biome it hosts must also host at least
@@ -470,7 +470,7 @@ fn the_cash_crops_pay_a_positive_material_yield_and_contest_sowable_ground() {
         );
         assert!(
             core_sim::shipped::ladder()
-                .ceiling_reaches(def.cultivation_ceiling, core_sim::shipped::plant_field()),
+                .ceiling_reaches(def.cultivation_ceiling, core_sim::shipped::plant_farm()),
             "`{key}` is a Field crop (you Sow it) — it must reach the field rung"
         );
         // It must contest a sowable staple's ground: at least one biome it hosts also hosts a staple
@@ -481,7 +481,7 @@ fn the_cash_crops_pay_a_positive_material_yield_and_contest_sowable_ground() {
                 staple.yield_.provisions_per_biomass > 0.0
                     && core_sim::shipped::ladder().ceiling_reaches(
                         staple.cultivation_ceiling,
-                        core_sim::shipped::plant_field(),
+                        core_sim::shipped::plant_farm(),
                     )
             })
         });

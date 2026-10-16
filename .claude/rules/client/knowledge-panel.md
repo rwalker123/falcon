@@ -894,3 +894,11 @@ non-vacuous legs still passing.
 
 Harness: `fixtures_knowledge.gd` carries the three rows; `knowledge_panel.gd` asserts `reach` gathers
 `roam` as a fan of three and saves `knowledge_panel_roam`.
+
+## Worked Land and Selective breeding (issue #175)
+
+Both lessons are roster rows. Where the hand-written `KNOWLEDGE_UNLOCK_NOTES` has no sentence the node
+note comes from the catalog: a lesson in a rung's `site_relaxations` reads "Your people can now sow a farm
+on well-watered ground beyond the places they gather", one in `knowledge_gains` reads "Herds in a ranch
+regrow 1.25× faster" (`KnowledgeRoster.catalog_lesson_note`); a lesson the catalog states no effect for gets
+no note.

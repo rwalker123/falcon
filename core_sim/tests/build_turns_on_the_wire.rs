@@ -484,7 +484,7 @@ fn spawn_the_holding_band(
     ));
 }
 
-/// **A WATERED GATHERING SITE WHOSE BASKET CAN CLIMB TO `plant:field`** — [`a_cultivable_site`]'s
+/// **A WATERED GATHERING SITE WHOSE BASKET CAN CLIMB TO `plant:farm`** — [`a_cultivable_site`]'s
 /// rung-3 twin, and it has to be its own scan: the Field rung adds fresh water to the site rule and
 /// narrows the crop test to plants that can be sown, so a merely cultivable site would refuse the
 /// `Sow` gate and publish *no estimate* for a reason that is not the one under test.
@@ -527,7 +527,7 @@ fn a_sowable_site(app: &mut App) -> UVec2 {
                     tiles.get(&neighbor).map(|tile| tile.terrain_tags)
                 });
             let refusal = core_sim::rung_site_refusal(
-                ladder.rung(shipped::plant_field()),
+                ladder.rung(shipped::plant_farm()),
                 ground,
                 &labor.forage,
                 app.world
@@ -535,6 +535,7 @@ fn a_sowable_site(app: &mut App) -> UVec2 {
                     .is_site(coord),
                 fresh_water,
                 core_sim::NO_DEPOSIT_FLOOR,
+                &|_| false,
             );
             if refusal.is_some() {
                 continue;
@@ -545,7 +546,7 @@ fn a_sowable_site(app: &mut App) -> UVec2 {
                 &composition,
                 &flora,
                 shipped::ladder(),
-                shipped::plant_field(),
+                shipped::plant_farm(),
             )
             .is_some()
             {
@@ -593,7 +594,7 @@ fn an_abandoned_two_leg_sow_publishes_the_meter_state_rather_than_no_answer() {
         .rung(shipped::plant_tended())
         .build_cost(core_sim::RUNG_COST_UNSCALED)
         .expect("the tended rung builds");
-    let (field_base, _) = core_sim::plant_rung_span(shipped::plant_field(), &ladder);
+    let (field_base, _) = core_sim::plant_rung_span(shipped::plant_farm(), &ladder);
     let crop = {
         let labor = app.world.resource::<core_sim::LaborConfigHandle>().get();
         let flora = app.world.resource::<core_sim::FloraConfigHandle>().get();
@@ -610,7 +611,7 @@ fn an_abandoned_two_leg_sow_publishes_the_meter_state_rather_than_no_answer() {
             &composition,
             &flora,
             shipped::ladder(),
-            shipped::plant_field(),
+            shipped::plant_farm(),
         )
         .expect("the site was chosen for having one")
     };
@@ -1275,14 +1276,14 @@ fn the_published_tile_capacity_is_the_ground_and_not_the_rung() {
     // Seat a WHOLE Field, which is where the gain is fully applied.
     {
         let ladder = app.world.resource::<LadderConfigHandle>().get().clone();
-        let (field_base, field_width) = core_sim::plant_rung_span(shipped::plant_field(), &ladder);
+        let (field_base, field_width) = core_sim::plant_rung_span(shipped::plant_farm(), &ladder);
         let mut registry = app.world.resource_mut::<ForageRegistry>();
         let patch = registry.patch_mut(source).expect("the fixture patch");
         patch.set_ladder_position(field_base + field_width, &ladder);
         patch.owner = Some(FactionId(0));
         assert!(
             patch.is_field(),
-            "fixture: the patch must stand on plant:field"
+            "fixture: the patch must stand on plant:farm"
         );
     }
     core_sim::run_turn(&mut app);
@@ -1350,7 +1351,7 @@ fn a_wild_patch_publishes_the_ground_twice() {
     assert!(
         !published_patch_field(&app, source, |patch| sim_schema::wire_rung_quote(
             patch.rungQuotes(),
-            "plant:field"
+            "plant:farm"
         )
         .is_some_and(|quote| quote.reached())),
         "fixture: this arm is about ground nobody has built on"

@@ -423,7 +423,7 @@ fn seated_patch(terrain: TerrainType, rung: Option<RungId>, shipped: &Shipped) -
         // real Cultivate/Sow arm stamps it on the first turn a crew works the patch.
         patch.species = Some(basket::CROP.to_string());
         let seated = match rung {
-            matched_ if matched_ == shipped::plant_field() => {
+            matched_ if matched_ == shipped::plant_farm() => {
                 patch.complete_field(TABLE_FACTION, &shipped.ladder)
             }
             _ => patch.complete_cultivation(TABLE_FACTION, &shipped.ladder),
@@ -494,14 +494,14 @@ fn forage_food_per_worker(
     forage_preview(patch, composition, take, workers, carry, shipped).realized / workers as f32
 }
 
-/// **Cumulative work to stand on `rung`, at THIS patch's own price.** `plant:field` is priced by how
+/// **Cumulative work to stand on `rung`, at THIS patch's own price.** `plant:farm` is priced by how
 /// much of the tile the crop has to replace (`docs/plan_standing_upkeep.md` §4.15), so the Field's
 /// figure is the declared `work_cost` times the multiplier this ground quotes.
 fn plant_build_work(rung: Option<RungId>, field_multiplier: f32, shipped: &Shipped) -> f32 {
     match rung {
         None => 0.0,
-        Some(matched_) if matched_ == shipped::plant_field() => {
-            let (base, width) = plant_rung_span(shipped::plant_field(), &shipped.ladder);
+        Some(matched_) if matched_ == shipped::plant_farm() => {
+            let (base, width) = plant_rung_span(shipped::plant_farm(), &shipped.ladder);
             base + width * field_multiplier
         }
         Some(rung) => {
@@ -533,7 +533,7 @@ fn flora_rows(shipped: &Shipped) -> Vec<Row> {
     for (label, rung) in [
         ("wild", None),
         ("tended", Some(shipped::plant_tended())),
-        ("field", Some(shipped::plant_field())),
+        ("field", Some(shipped::plant_farm())),
     ] {
         let patch = seated_patch(basket::TERRAIN, rung, shipped);
         for (selection_label, take) in [
@@ -1223,9 +1223,9 @@ fn print_section_a(rows: &[Row], shipped: &Shipped) {
     println!("    production in `sustainable` rather than an escapement MSY line — and that production is THIS TURN's take at the");
     println!("    operating point, not the horizon average the food columns carry. Compare it against food/turn, not against the rungs below.");
 
-    let (base, width) = plant_rung_span(shipped::plant_field(), &shipped.ladder);
+    let (base, width) = plant_rung_span(shipped::plant_farm(), &shipped.ladder);
     println!(
-        "\n  ⛔ THE FIELD'S BUILD WORK IS SCALED: plant:field declares {width:.1} work units, and this ground quotes it at x{multiplier:.4}"
+        "\n  ⛔ THE FIELD'S BUILD WORK IS SCALED: plant:farm declares {width:.1} work units, and this ground quotes it at x{multiplier:.4}"
     );
     println!(
         "     = {:.1} for the Field leg, on top of the {base:.1} the tended leg beneath it costs (docs/plan_standing_upkeep.md §4.15).",
@@ -1504,7 +1504,7 @@ fn print_standardised(shipped: &Shipped) {
     for (label, rung) in [
         ("wild", None),
         ("tended", Some(shipped::plant_tended())),
-        ("field", Some(shipped::plant_field())),
+        ("field", Some(shipped::plant_farm())),
     ] {
         let patch = seated_patch(basket::TERRAIN, rung, shipped);
         for (selection, take) in [
@@ -1658,7 +1658,7 @@ fn print_plant_crew_curve(shipped: &Shipped) {
     for (label, rung) in [
         ("wild", None),
         ("tended", Some(shipped::plant_tended())),
-        ("field", Some(shipped::plant_field())),
+        ("field", Some(shipped::plant_farm())),
     ] {
         let patch = seated_patch(basket::TERRAIN, rung, shipped);
         for (selection_label, take) in [
@@ -1811,7 +1811,7 @@ fn print_steady_rates(shipped: &Shipped, fauna: &[(Row, FaunaExtras)]) {
     for (label, rung) in [
         ("wild", None),
         ("tended", Some(shipped::plant_tended())),
-        ("field", Some(shipped::plant_field())),
+        ("field", Some(shipped::plant_farm())),
     ] {
         let patch = seated_patch(basket::TERRAIN, rung, shipped);
         for (selection_label, take) in [

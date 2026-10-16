@@ -325,7 +325,7 @@ fn the_plant_rungs_quote_no_material_and_publish_no_row_for_it() {
         sim_schema::wire_rung_quote(row.rungQuotes(), "plant:tended")
             .map_or(0.0, |quote| quote.upkeepDemand())
             > 0.0
-            && sim_schema::wire_rung_quote(row.rungQuotes(), "plant:field")
+            && sim_schema::wire_rung_quote(row.rungQuotes(), "plant:farm")
                 .map_or(0.0, |quote| quote.upkeepDemand())
                 > 0.0,
         "fixture: the patch's work quotes must be live, or the emptiness below proves nothing"
@@ -340,7 +340,7 @@ fn the_plant_rungs_quote_no_material_and_publish_no_row_for_it() {
     );
     assert!(
         payoffs(
-            sim_schema::wire_rung_quote(row.rungQuotes(), "plant:field")
+            sim_schema::wire_rung_quote(row.rungQuotes(), "plant:farm")
                 .and_then(|quote| quote.upkeepMaterialDemand())
         )
         .is_empty(),

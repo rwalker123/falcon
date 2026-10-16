@@ -137,7 +137,9 @@ pub const SAVE_MAGIC: [u8; 8] = *b"SHDWSAV\x01";
 /// | 40 | A traveling party aims at what its people know: `Expedition` gained `aim` (the tile a Station / Trade party is walking toward, `None` for every other verb), riding `ExpeditionRecord` whole, so a version-39 blob does not decode |
 /// | 41 | `LaborAllocation` gained `last_pool_toe_head` — the queue entry the builders' `last_pool_toe` lines were struck for, which the wire compares with the live head before publishing them; it rides `BandRecord::labor` whole, so a version-40 blob does not decode |
 /// | 42 | The ladder's identities are config strings (#175): `RungStanding` (stamped on every `ForagePatch`, `Herd`, `Road` and `DepositSource`) now holds `held` / `raising` as `RungId` (serialised as the `branch:id` wire key, not an enum variant) and gained `held_order`, `traits` (the held rung's `RungTrait` names) and `raising_traits` (the raising rung's); `BuildJob::Rung(Improvement)` became `BuildJob::Climb(RungId)`, so a queue entry on `LaborAllocation::build_queue` declares the rung it raises. `SimState` also carries `tile_improvements` (the tile kind's registry, empty until a band crews one), `LaborTarget::Tile` joins the labor rows (a tile improvement's crew) and `BuildSource::Tile` joins the queue's sources. A version-41 blob names its rungs as enum variants and has neither field, so it does not decode |
-pub const SAVE_FORMAT_VERSION: u32 = 42;
+/// | 43 | The plant branch's third rung is renamed `plant:field` -> `plant:farm` (rung ids are in saves: every `RungStanding`, queue entry and ceiling names one). A version-42 blob names `plant:field`, so it does not decode |
+/// | 44 | A `Herd` carries `breeding_gain` (the regrowth multiplier its owner's Selective breeding lesson gives it, stamped each turn). A version-43 blob has no such field, so it does not decode |
+pub const SAVE_FORMAT_VERSION: u32 = 44;
 
 /// gzip level for the payload document.
 ///

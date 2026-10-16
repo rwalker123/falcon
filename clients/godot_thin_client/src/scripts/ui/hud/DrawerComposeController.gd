@@ -3980,8 +3980,11 @@ func _build_forage_assign_controls(tile_info: Dictionary, target: VBoxContainer)
     # one sheet. Note it takes `tile_info`, NOT `composed_improvement`: a build in flight keeps the
     # wild noun (see that function).
     var crew_label := HudFormat.plant_crew_label(tile_info, HudComposeVocab.FORAGE_FORECAST_PREFIX)
+    # **OFF THE GATHERING SITES THE CROP IS THE COMMIT**: the server takes a forage crew there only with a
+    # crop named, so the chips are single-pick against the placing rung and the button carries it.
+    var offsite_verb := "" if is_committed else DetailFormat.offsite_crop_verb(tile_info)
     var crop_rung := composed_improvement if composed_improvement != SourceForecast.IMPROVEMENT_NONE \
-        else String(RungGates.next_rung_offered(SourceForecast.LABOR_KIND_FORAGE, tile_info,
+        else offsite_verb if offsite_verb != "" else String(RungGates.next_rung_offered(SourceForecast.LABOR_KIND_FORAGE, tile_info,
             composed_improvement, _player_knowledge(),
             HudComposeVocab.FORAGE_FORECAST_PREFIX).get("policy", ""))
     _compose.resolve_forage_species(func(current: String) -> String:
@@ -4172,7 +4175,7 @@ func _build_forage_assign_controls(tile_info: Dictionary, target: VBoxContainer)
     #
     # It mounts BELOW the kit row and ABOVE the improvement control, so the sheet reads
     # band → floor → crew → kit → what we carry home → what we are building → the terms.
-    var single_pick := composed_improvement != SourceForecast.IMPROVEMENT_NONE
+    var single_pick := composed_improvement != SourceForecast.IMPROVEMENT_NONE or offsite_verb != ""
     _mount_take_chips(target, basket, take_selection, single_pick,
         crop_is_default, crop_rung,
         func() -> void:
@@ -4292,7 +4295,11 @@ func _build_forage_assign_controls(tile_info: Dictionary, target: VBoxContainer)
     assign_btn.text = HudComposeVocab.UNASSIGN_BUTTON if is_unassign \
         else String(HudComposeVocab.PLANT_ASSIGN_BUTTONS.get(crew_label, ""))
     HudStyle.apply_button(assign_btn, "primary")
-    assign_btn.disabled = is_noop
+    # Off the sites a crew with no crop to name is a refused command, so the button waits for one.
+    var needs_crop := offsite_verb != "" and _compose.forage_species() == ""
+    assign_btn.disabled = is_noop or needs_crop
+    if needs_crop and not is_noop:
+        assign_btn.tooltip_text = HudFloraVocab.OFFSITE_NEEDS_CROP_HINT
     # A greyed commit says why on its own hover too — the noop hint, whichever note the sheet printed.
     if is_noop:
         assign_btn.tooltip_text = String(HudComposeVocab.PLANT_NOOP_HINTS.get(crew_label, ""))
@@ -4609,7 +4616,7 @@ func _compose_anchor_rect() -> Rect2:
 ## the button can never open an empty sheet. (A workable patch is live state — redacted on a
 ## remembered hex like its occupants — and there must be a player band to staff it.)
 func _forage_compose_available(tile_info: Dictionary) -> bool:
-    return DetailFormat.tile_is_gathering_site(tile_info) \
+    return DetailFormat.tile_is_workable(tile_info) \
         and not _resolve_assign_band().is_empty() \
         and not _selectioncard.tile_contents_unseen(tile_info)
 

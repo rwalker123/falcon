@@ -140,7 +140,7 @@ static func seed_forage_rows(tile: Dictionary) -> Dictionary:
 ## build estimate — so it is the ladder's number, restated nowhere else.
 const PLANT_TENDED_UPKEEP_PER_TURN := 2.0
 
-## The Field's own, one rung up (`plant:field`, **4.0**/`flat`) — a standing crop wants four hands
+## The Field's own, one rung up (`plant:farm`, **4.0**/`flat`) — a standing crop wants four hands
 ## where tended ground wants two, which is the ladder's whole claim about a higher rung. It carried
 ## the rung's `meter_decay` (0.75) for the reason the rate above carried its own.
 const PLANT_FIELD_UPKEEP_PER_TURN := 4.0

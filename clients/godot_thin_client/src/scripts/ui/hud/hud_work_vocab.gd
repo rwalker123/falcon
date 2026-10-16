@@ -2012,9 +2012,9 @@ const WORK_ROW_RUNG_TENDED_TOOLTIP := "Tended Patch — this ground has been cul
 ## …and the committed crop when the patch carries one (`committed_display_name`, e.g. "Wild Emmer").
 const WORK_ROW_RUNG_TENDED_CROP_FORMAT := "Tended Patch — %s. This ground has been cultivated."
 
-const WORK_ROW_RUNG_FIELD_TOOLTIP := "Field — this ground has been sown, and there is no improving it further."
+const WORK_ROW_RUNG_FIELD_TOOLTIP := "Farm — this ground has been sown, and there is no improving it further."
 
-const WORK_ROW_RUNG_FIELD_CROP_FORMAT := "Field — %s sown, and there is no improving this ground further."
+const WORK_ROW_RUNG_FIELD_CROP_FORMAT := "Farm — %s sown, and there is no improving this ground further."
 
 const WORK_ROW_RUNG_PASTORAL_TOOLTIP := "Pastoral herd — tamed, and it keeps to your camp."
 

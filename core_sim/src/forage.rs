@@ -47,14 +47,14 @@
 //!   gather patch).
 //!
 //! **The Field** (rung 3, slice 5) is the same patch one rung up: `Sow` banks work on the
-//! `plant:field` rung of that same ladder position, and a completed Field is gathered through the
+//! `plant:farm` rung of that same ladder position, and a completed Field is gathered through the
 //! very same drawn-down `forage_take` — the tended patch's shape on a richer curve, never a flat
 //! managed rate. It needs no *patch* below it: sowing a qualifying tile that spawned none *creates*
 //! one (`ForagePatch::sown`), at that tile's own biome capacity.
 //!
 //! **Where it may be sown is SCARCE, and that is the mechanic** — the tile must be a **gathering
 //! site** (the curated `FoodSiteRegistry`) *and* **near fresh water**: rung 3 can move seed but not
-//! water, and does not yet work ground its people do not already gather. The `plant:field` rung's
+//! water, and does not yet work ground its people do not already gather. The `plant:farm` rung's
 //! `site_requirement` states it; `rung_site_refusal` + `tile_is_fresh_watered` are the one seam the
 //! command, the labor arm and the wire all judge through.
 //!
@@ -116,17 +116,22 @@ pub const CULTIVATION_DISCOVERY_ID: u32 = 2003;
 /// `data/start_profile_knowledge_tags.json`) purely so it is mappable, and is deliberately **not**
 /// listed in any start profile's `starting_knowledge_tags` — nothing on the ladder is start-granted.
 ///
-/// **Its consumer landed in slice 5**: it gates the `Sow` verb (the `plant:field` rung's
+/// **Its consumer landed in slice 5**: it gates the `Sow` verb (the `plant:farm` rung's
 /// `unlock_knowledge`), so a faction may only place a Field once it has learned to select seed by
 /// farming. Earned in slice 4, spent here — a knowledge you accumulate before its verb exists is
 /// exactly the "practice paces the ladder" model. Next free id after `herding` (2004).
 pub const SEED_SELECTION_DISCOVERY_ID: u32 = 2005;
 
+/// **The discovery id of `worked_land`** (`start_profile_knowledge_tags.json`) - taught by working a
+/// Farm, and the key of the Farm rung's `site_relaxations`: holding it lets a `sow` go on fertile,
+/// watered ground that is not a gathering site.
+pub const WORKED_LAND_DISCOVERY_ID: u32 = 2022;
+
 /// **The gather season of a tile with no `FoodModuleTag`** — i.e. no wild gather at all: the season
 /// scales a forager's *throughput* (`forage_per_worker_biomass`), so a zero here means no worker can
 /// gather anything there, which is exactly right for ground the wild put no food site on.
 ///
-/// It became a reachable reading in slice 5: `Sow` places a Field on any ground the `plant:field`
+/// It became a reachable reading in slice 5: `Sow` places a Field on any ground the `plant:farm`
 /// rung's `site_requirement` accepts — module or not — so a patch may now stand on a tile with no
 /// module. **A Field reads this weight like every rung beneath it**: §4.10 retired the seasonless
 /// managed harvest (see the `MANAGED_HARVEST_SEASON` gravestone below), so a rung buys a richer
@@ -156,7 +161,7 @@ pub struct ForagePatch {
     pub ecology_phase: EcologyPhase,
     /// **HOW FAR UP ITS BRANCH THIS PATCH HAS BEEN WORKED, in cumulative work units** — the plant
     /// web's **one** meter (`docs/plan_standing_upkeep.md` §2.8). `plant:tended` runs `0 → 50` and
-    /// `plant:field` `50 → 125`, each rung's span being its own `build.work_cost`, so a position of
+    /// `plant:farm` `50 → 125`, each rung's span being its own `build.work_cost`, so a position of
     /// `60` is a whole tended patch plus a Field one seventy-fifth of the way up.
     ///
     /// # IT REPLACED TWO METERS, AND THE STATE THAT ALLOWED IS WHY
@@ -187,7 +192,7 @@ pub struct ForagePatch {
     ///
     /// It is not a cache anyone may refresh: there is one writer, and it writes the pair.
     standing: RungStanding,
-    /// **WHAT THE `plant:field` RUNG COSTS ON THIS GROUND**, as a multiple of the rung's declared
+    /// **WHAT THE `plant:farm` RUNG COSTS ON THIS GROUND**, as a multiple of the rung's declared
     /// `work_cost` — this patch's own entry in the ladder's one per-source price list
     /// ([`RungStanding::at`]'s `cost_at`), and the exact plant twin of `Herd::taming_cost_multiplier`
     /// (`docs/plan_standing_upkeep.md` §4.15). A Sow is priced by how much of the tile it has to
@@ -493,7 +498,7 @@ pub fn patch_build_rung(
     let raising = patch.standing().raising?;
 
     // **A LIVE DECLARATION NAMES THE JOB, and it may name a rung ABOVE the one in flight.** A `sow`
-    // on untended ground is the player asking for a Field: the crew works toward `plant:field` and
+    // on untended ground is the player asking for a Field: the crew works toward `plant:farm` and
     // the position climbs the tended rung's range on the way, so the Field's own work still cannot
     // exist without that ground under it (`docs/plan_standing_upkeep.md` §2.8, rule 1's *outcome*).
     //
@@ -748,7 +753,7 @@ impl ForagePatch {
     /// rung's base has nothing banked on it, so the price somebody was quoted is spent: the next Sow
     /// re-measures the ground as it now stands ([`Self::field_cost_multiplier`]). The base is the
     /// tended rung's top and is the ladder's own, never this patch's — the multiplier scales
-    /// `plant:field` alone, so nothing below it can move.
+    /// `plant:farm` alone, so nothing below it can move.
     pub fn set_ladder_position(&mut self, position: f32, ladder: &LadderConfig) {
         let was = self.standing.held;
         self.ladder_position = position.max(RUNG_UNSTARTED);
@@ -782,7 +787,7 @@ impl ForagePatch {
     }
 
     /// **FIX THE FIELD LEG'S PRICE FOR THE WHOLE OF THE LEG** — called by the Sow arm on the turn it
-    /// is about to bank work toward `plant:field`, with the multiplier that arm quoted
+    /// is about to bank work toward `plant:farm`, with the multiplier that arm quoted
     /// ([`patch_field_cost_multiplier`]).
     ///
     /// **Idempotent, exactly as [`Self::commit_species`] is, and for the same reason**: re-deciding
@@ -1059,7 +1064,7 @@ pub(crate) fn plant_rung_cost(rung: &RungDef, field_cost_multiplier: f32) -> Opt
 
 /// **WHERE A PLANT RUNG STARTS AND HOW WIDE IT IS AT THE LADDER'S OWN PRICE**, in cumulative work
 /// units — [`crate::intensification::rung_span`] at [`RUNG_COST_UNSCALED`]. `plant:tended` is
-/// `(0, 50)` and `plant:field` `(50, 75)` on the shipped ladder.
+/// `(0, 50)` and `plant:farm` `(50, 75)` on the shipped ladder.
 ///
 /// **This is the REFERENCE span, not any patch's.** A Sow's price varies with how much of the tile
 /// it replaces, so a patch with a quoted Field leg is wider than this; ask [`patch_rung_span`] for
@@ -1083,7 +1088,7 @@ fn plant_rung_span_at(
 /// units — the plant twin of `Herd::rung_span`, and what every reading of this patch's meters is
 /// clamped into.
 ///
-/// It differs from [`plant_rung_span`] only on `plant:field`, and only once that leg has been quoted
+/// It differs from [`plant_rung_span`] only on `plant:farm`, and only once that leg has been quoted
 /// ([`ForagePatch::quoted_field_cost_multiplier`]).
 pub fn patch_rung_span(patch: &ForagePatch, rung: RungId, ladder: &LadderConfig) -> (f32, f32) {
     plant_rung_span_at(rung, ladder, patch.field_cost_in_force())
@@ -1108,7 +1113,7 @@ fn plant_standing(
 /// stands up to and including `destination`, each carrying what it owes **from here**
 /// (`docs/plan_standing_upkeep.md` §2.8).
 ///
-/// A `sow` on untended ground is two legs (`plant:tended` 0→50, then `plant:field` 50→125) and costs
+/// A `sow` on untended ground is two legs (`plant:tended` 0→50, then `plant:farm` 50→125) and costs
 /// the whole branch; the same order on a patch that already holds the tended rung is **one** leg
 /// owing 75; and on a patch thirty units into its Cultivate it is two legs owing **20** and 75. That
 /// last case is the one the shape exists for: a previous improvement is a **receipt, not a
@@ -1159,7 +1164,7 @@ pub fn patch_build_legs(
 /// **THE WORK BANKED ON ONE RUNG**, in work units — this patch's position read into that rung's own
 /// span **through its standing** ([`crate::intensification::rung_work_done`]). It is what lets the
 /// **wire** keep publishing two per-rung meters off one position: `cultivationWorkDone` is this at
-/// `plant:tended`, `fieldWorkDone` at `plant:field`.
+/// `plant:tended`, `fieldWorkDone` at `plant:farm`.
 ///
 /// **A readout, not a second authority** — and that is why it asks [`ForagePatch::standing`] rather
 /// than subtracting: a rung the patch *holds* reads full here because it is held, so the meter
@@ -1288,6 +1293,10 @@ pub fn tile_is_fresh_watered(
 /// land admit this rung* — and two functions answering it is how a refusal comes to differ between
 /// the command that rejects it and the labor arm that gates it.
 ///
+/// `knows` is the acting faction's lesson test ([`crate::intensification::knows_lesson`]): a rung's
+/// `site_relaxations` loosen the rule for a faction that holds the lesson, so the seam needs the
+/// faction and every gate passes the same one.
+///
 /// `None` = the rung asks nothing of the site, or the land permits it. `Some(refusal)` says **which**
 /// way the ground fell short, so the caller can phrase each distinctly — they are different problems
 /// with different answers (work a site instead, move, or wait for a rung that relaxes the dial).
@@ -1298,13 +1307,33 @@ pub fn rung_site_refusal(
     gathering_site: bool,
     fresh_water: bool,
     deposit_capacity: f32,
+    knows: &dyn Fn(&str) -> bool,
 ) -> Option<SiteRefusal> {
-    rung.site_requirement.as_ref()?.refusal(
+    // **THE RULE THE ACTING FACTION IS JUDGED BY** - the rung's own, or the last lesson-keyed
+    // relaxation it holds ([`RungDef::effective_site_requirement`]). `knows` answers "does this
+    // faction hold the lesson named X"; a caller with no faction in play passes `&|_| false`.
+    let requirement = rung.effective_site_requirement(knows)?;
+    let forage_capacity = tile_forage_capacity(forage, tile);
+    let refusal = requirement.refusal(
         gathering_site,
-        tile_forage_capacity(forage, tile),
+        forage_capacity,
         fresh_water,
         deposit_capacity,
-    )
+    )?;
+    // **A LESSON THE FACTION LACKS WOULD ADMIT THIS GROUND**: say what to learn, not what is wrong.
+    if rung
+        .lesson_that_would_admit(
+            knows,
+            gathering_site,
+            forage_capacity,
+            fresh_water,
+            deposit_capacity,
+        )
+        .is_some()
+    {
+        return Some(SiteRefusal::NeedsLesson);
+    }
+    Some(refusal)
 }
 
 /// THE forage-capacity of a tile — the single source the seeding path and the wire path both read,
@@ -1551,7 +1580,7 @@ pub(crate) fn patch_is_wild_ground(patch: &ForagePatch) -> bool {
 }
 
 /// **WHAT A SOW COSTS ON GROUND THE CROP ALREADY HOLDS `crop_share` OF**, as a multiple of the
-/// `plant:field` rung's declared `work_cost` (`docs/plan_standing_upkeep.md` §4.15).
+/// `plant:farm` rung's declared `work_cost` (`docs/plan_standing_upkeep.md` §4.15).
 ///
 /// ```text
 /// replacement = 1 - crop_share
@@ -1566,7 +1595,7 @@ pub(crate) fn patch_is_wild_ground(patch: &ForagePatch) -> bool {
 /// # ⛔ IT IS A RATIO AGAINST A REFERENCE, NOT A PENALTY
 ///
 /// [`crate::labor_config::CultivationConfig::field_reference_crop_share`] is the reference basket's
-/// own **weeded** share, so the shipped `plant:field` price is what a Sow costs on ordinary sowable
+/// own **weeded** share, so the shipped `plant:farm` price is what a Sow costs on ordinary sowable
 /// ground and moving the anchor retunes the whole curve without touching the rung. A bare penalty
 /// would make the ladder's declared 75 units the *cheapest* case and inflate the entire plant
 /// branch; a bare discount would deflate it. Exactly `capacity_per_tender`'s argument, one account
@@ -1664,7 +1693,7 @@ pub fn patch_field_cost_multiplier(
 }
 
 /// **WHAT A SOW COMMITTING THIS GROUND TO `crop` WOULD BE CHARGED**, as a multiple of the
-/// `plant:field` rung's declared `work_cost` — the *per-crop* reading of the price
+/// `plant:farm` rung's declared `work_cost` — the *per-crop* reading of the price
 /// [`patch_field_cost_multiplier`] states once per patch (`docs/plan_standing_upkeep.md` §4.15).
 ///
 /// **The crop picker is what it is for.** A patch prices exactly one crop — its commitment, or the
@@ -2967,7 +2996,7 @@ pub fn advance_forage_regrowth(
 ///   cost so the patch reverts to a wild depletable gather patch, and keeps decaying toward 0 (owner
 ///   clears at 0 — the investment is fully lost, and re-preparing must re-accrue from wherever
 ///   progress landed). At the shipped rates that is `0.5`/turn on `plant:tended` and `0.75` on
-///   `plant:field`, which is **exactly** what the retired `decay_fraction_per_turn` bled.
+///   `plant:farm`, which is **exactly** what the retired `decay_fraction_per_turn` bled.
 /// - A **partly** maintained one bleeds the difference, and that is the whole reason the term is a
 ///   rate rather than a flag: half the hands means it slides at half rate, where the retired
 ///   `tended_this_turn` boolean made a crew of one and a crew of ten equally sufficient.
@@ -3728,7 +3757,7 @@ pub fn next_turns_stand(patch: &ForagePatch, forage: &ForageLaborConfig) -> Fora
 }
 
 /// **The rung a patch stands on** — the plant ladder resolved for one patch, top-down: sown →
-/// `plant:field`, cultivated → `plant:tended`, else `plant:wild`. The exact twin of
+/// `plant:farm`, cultivated → `plant:tended`, else `plant:wild`. The exact twin of
 /// `fauna::herd_rung`, and the same seam: a system asks the patch for its rung and reads what that
 /// rung declares, rather than re-deriving the ladder from `is_cultivated()` at the call site.
 ///
@@ -4404,7 +4433,7 @@ pub fn tended_take_fodder(
 // paid in **materials** now, credited off the same `forage_take` biomass by `credit_material_yield`
 // at rungs 1, 2 and 3 alike, so the hole this closed stays closed without the scalar.
 
-// **RETIRED: `field_yield_fraction_while_building`** — the `plant:field` rung's dip, looked up here
+// **RETIRED: `field_yield_fraction_while_building`** — the `plant:farm` rung's dip, looked up here
 // because two plant sites needed it and only one of them went through the shared ceiling helper. The
 // dip itself is gone from both webs (`docs/plan_standing_upkeep.md` §2.2): a build is staffed in its
 // own right, so there is no fraction left for any seam to hand out.
@@ -4575,7 +4604,7 @@ pub(crate) fn forage_forecast_at_rate(
         // **Cultivate's "then Y"** — what this patch will pay once tended, on the tended curve. On a
         // patch that is *already* tended this is simply its own `ceiling_sustain`, which is the truth:
         // the rung is built, and the number is what it pays. (Sow's "then Y" is the same
-        // `rung_payoff` asked about `plant:field`, exported beside this one as the wire's
+        // `rung_payoff` asked about `plant:farm`, exported beside this one as the wire's
         // `fieldYield` — two rungs, two payoff quotes, never one field doing both jobs.)
         managed_yield: plant_food_only(tended_provisions(
             patch,
@@ -5001,7 +5030,7 @@ mod tests {
     /// **⛔ A FIELD NEVER PAYS LESS PER UNIT THAN THE TENDED PATCH BENEATH IT** — the reported bug,
     /// at the staffing it was reported at.
     ///
-    /// `favored_conversion_gain` fell through to the identity at `plant:field`, so a Field converted
+    /// `favored_conversion_gain` fell through to the identity at `plant:farm`, so a Field converted
     /// each unit of biomass at **half** the rung below. Play saw a completed tended patch pay 2.00
     /// food/turn and the same tile sown to a Field pay 1.33, at the same two tenders.
     ///
@@ -5052,7 +5081,7 @@ mod tests {
         };
 
         let (tended_food, tended_room, carry) = seat_and_take(shipped::plant_tended());
-        let (field_food, field_room, _) = seat_and_take(shipped::plant_field());
+        let (field_food, field_room, _) = seat_and_take(shipped::plant_farm());
 
         // **THE PRECONDITION** — both crews are bounded by their ARMS, not by the ground. If the
         // floor were binding, the Field's bigger stand would pay for the lost conversion and this
@@ -5086,7 +5115,7 @@ mod tests {
     fn the_conversion_gain_is_flat_across_the_sow() {
         let forage = test_forage_config();
         let ladder = LadderConfig::builtin();
-        let (base, width) = plant_rung_span(shipped::plant_field(), &ladder);
+        let (base, width) = plant_rung_span(shipped::plant_farm(), &ladder);
         let tended_gain = forage.cultivation.tended_conversion_gain;
         assert!(
             tended_gain > NO_CONVERSION_GAIN,
@@ -5146,7 +5175,7 @@ mod tests {
         );
         for (label, rung) in [
             ("tended", shipped::plant_tended()),
-            ("field ", shipped::plant_field()),
+            ("field ", shipped::plant_farm()),
         ] {
             let paid = commit_payoff(
                 REF_TILE,
@@ -5170,7 +5199,7 @@ mod tests {
         println!("\n  two tenders, carry-capped at {carry} biomass/turn:");
         for (label, rung) in [
             ("tended", shipped::plant_tended()),
-            ("field ", shipped::plant_field()),
+            ("field ", shipped::plant_farm()),
         ] {
             let (base, width) = plant_rung_span(rung, &ladder);
             let mut patch =
@@ -5238,7 +5267,7 @@ mod tests {
     ///
     /// This is the pacing-neutrality claim asserted rather than asserted in prose: the anchor
     /// (`field_reference_crop_share`) is the reference basket's own **weeded** share, so a Sow on the
-    /// reference tile is the `plant:field` rung's declared `work_cost` and nothing else. Move the
+    /// reference tile is the `plant:farm` rung's declared `work_cost` and nothing else. Move the
     /// anchor and this fails, which is the point of it — the shipped number means *"what a Sow costs
     /// on ordinary ground"*, and it stops meaning that silently otherwise.
     #[test]
@@ -5264,8 +5293,8 @@ mod tests {
             (multiplier - RUNG_COST_UNSCALED).abs() < SAME_JOB,
             "the reference basket must price a Sow at the ladder's own figure, got {multiplier}"
         );
-        let declared = plant_rung_span(shipped::plant_field(), &ladder).1;
-        let here = plant_rung_span_at(shipped::plant_field(), &ladder, multiplier).1;
+        let declared = plant_rung_span(shipped::plant_farm(), &ladder).1;
+        let here = plant_rung_span_at(shipped::plant_farm(), &ladder, multiplier).1;
         assert!(
             (here - declared).abs() < SAME_JOB,
             "and therefore the same span in work units: {here} against {declared}"
@@ -5328,14 +5357,14 @@ mod tests {
 
             let mut patch = reference_patch(RUNG_UNSTARTED, &ladder);
             patch.price_field_rung(multiplier, &ladder);
-            let (base, width) = patch_rung_span(&patch, shipped::plant_field(), &ladder);
+            let (base, width) = patch_rung_span(&patch, shipped::plant_farm(), &ladder);
             if base + width - base != width {
                 prices_that_round += 1;
             }
             patch.accrue_to(
                 faction,
                 WORK_ENOUGH_FOR_ANY_FIELD,
-                shipped::plant_field(),
+                shipped::plant_farm(),
                 &ladder,
             );
 
@@ -5344,7 +5373,7 @@ mod tests {
                 "PRECONDITION at share {share}: a crew with {WORK_ENOUGH_FOR_ANY_FIELD} work \
                  must finish a Field costing {width}"
             );
-            let done = patch_rung_work_done(&patch, shipped::plant_field(), &ladder);
+            let done = patch_rung_work_done(&patch, shipped::plant_farm(), &ladder);
             let fraction = intensification::build_fraction(done, width);
             assert_eq!(
                 fraction,
@@ -5430,7 +5459,7 @@ mod tests {
         let flora = crate::flora_config::FloraConfig::builtin();
         let ladder = LadderConfig::builtin();
         let composition = reference_basket();
-        let field_base = plant_rung_span(shipped::plant_field(), &ladder).0;
+        let field_base = plant_rung_span(shipped::plant_farm(), &ladder).0;
 
         // A Sow that began on ground the crop barely holds — priced dear, and stamped.
         const A_DEAR_SOW: f32 = 1.8;
@@ -5439,7 +5468,7 @@ mod tests {
             patch.price_field_rung(A_DEAR_SOW, &ladder),
             "the first quote is the quote"
         );
-        let quoted_span = patch_rung_span(&patch, shipped::plant_field(), &ladder).1;
+        let quoted_span = patch_rung_span(&patch, shipped::plant_farm(), &ladder).1;
 
         let mut shares = Vec::new();
         let mut prices = Vec::new();
@@ -5484,7 +5513,7 @@ mod tests {
     #[test]
     fn a_field_bled_back_to_its_base_is_re_quoted() {
         let ladder = LadderConfig::builtin();
-        let field_base = plant_rung_span(shipped::plant_field(), &ladder).0;
+        let field_base = plant_rung_span(shipped::plant_farm(), &ladder).0;
         const A_DEAR_SOW: f32 = 1.8;
         let mut patch = reference_patch(field_base, &ladder);
         patch.price_field_rung(A_DEAR_SOW, &ladder);
@@ -5504,7 +5533,7 @@ mod tests {
 
     /// ⛔ **HOLDING A FIELD COSTS WHAT THE PLACE IS BIG, NEVER WHAT USED TO GROW ON IT.**
     ///
-    /// `plant:field`'s upkeep is `scaled_by: source_load`, which reads the **tile's** `K`. A Sow's own
+    /// `plant:farm`'s upkeep is `scaled_by: source_load`, which reads the **tile's** `K`. A Sow's own
     /// price is a second scale term, and billing the hold against both is exactly the failure
     /// `capacity_per_tender`'s note records one account over. So a Field that was dear to sow and one
     /// that was cheap owe the identical rate once they stand.
@@ -5513,7 +5542,7 @@ mod tests {
         let forage = test_forage_config();
         let ladder = LadderConfig::builtin();
         let tile_capacity = test_tile_capacity();
-        let field_base = plant_rung_span(shipped::plant_field(), &ladder).0;
+        let field_base = plant_rung_span(shipped::plant_farm(), &ladder).0;
 
         let demands: Vec<f32> = [
             forage.cultivation.field_share_cost_floor,
@@ -5525,7 +5554,7 @@ mod tests {
             let mut patch = reference_patch(field_base, &ladder);
             patch.price_field_rung(multiplier, &ladder);
             // Each one a FINISHED Field — its own top, at its own price.
-            let (base, width) = patch_rung_span(&patch, shipped::plant_field(), &ladder);
+            let (base, width) = patch_rung_span(&patch, shipped::plant_farm(), &ladder);
             patch.set_ladder_position(base + width, &ladder);
             assert!(
                 patch.is_field(),
@@ -6051,7 +6080,7 @@ mod tests {
 
     /// The Sow job's own span, one rung up.
     fn field_cost(ladder: &LadderConfig) -> f32 {
-        plant_rung_span(shipped::plant_field(), ladder).1
+        plant_rung_span(shipped::plant_farm(), ladder).1
     }
 
     #[test]
@@ -6139,7 +6168,7 @@ mod tests {
         };
 
         let (tended_base, tended_width) = plant_rung_span(shipped::plant_tended(), &ladder);
-        let (field_base, field_width) = plant_rung_span(shipped::plant_field(), &ladder);
+        let (field_base, field_width) = plant_rung_span(shipped::plant_farm(), &ladder);
         let tended = rate_of(&committed(tended_base + tended_width));
         let field = rate_of(&committed(field_base + field_width));
         assert!(
@@ -6242,12 +6271,12 @@ mod tests {
         const HALF_WAY_UP: f32 = 0.5;
         let forage = test_forage_config();
         let ladder = LadderConfig::builtin();
-        let (field_base, field_width) = plant_rung_span(shipped::plant_field(), &ladder);
+        let (field_base, field_width) = plant_rung_span(shipped::plant_farm(), &ladder);
         let tended = ladder
             .rung(shipped::plant_tended())
             .upkeep_demand(ONE_TENDER_LOAD);
         let field = ladder
-            .rung(shipped::plant_field())
+            .rung(shipped::plant_farm())
             .upkeep_demand(ONE_TENDER_LOAD);
         assert!(
             field > tended,
@@ -6660,7 +6689,7 @@ mod tests {
     fn climbing_to_field_does_not_compound_the_capacity_gain() {
         let forage = test_forage_config();
         let ladder = LadderConfig::builtin();
-        let (field_base, field_width) = plant_rung_span(shipped::plant_field(), &ladder);
+        let (field_base, field_width) = plant_rung_span(shipped::plant_farm(), &ladder);
 
         // Deliberately NOT the reference tile, so `tile_K / capacity_per_tender ≠ 1` and the two
         // readings below are different numbers.
@@ -6691,7 +6720,7 @@ mod tests {
         );
 
         let field_rate = ladder
-            .rung(shipped::plant_field())
+            .rung(shipped::plant_farm())
             .upkeep_demand(ONE_TENDER_LOAD);
         let expected = field_rate * tile_capacity / forage.cultivation.capacity_per_tender;
         let owed = patch_upkeep_demand(&patch, &ladder, tile_capacity, &forage);
@@ -6724,7 +6753,7 @@ mod tests {
 
         for (key, expected) in [
             (shipped::plant_tended(), TENDED_RATE_BEFORE_THE_MEASURE),
-            (shipped::plant_field(), FIELD_RATE_BEFORE_THE_MEASURE),
+            (shipped::plant_farm(), FIELD_RATE_BEFORE_THE_MEASURE),
         ] {
             let (base, width) = plant_rung_span(key, &ladder);
             let mut patch = ForagePatch::new(
@@ -6917,7 +6946,7 @@ mod tests {
         /// larger than any shipped `grace_turns`, so the decay is certainly biting.
         const WELL_PAST_ANY_GRACE: u16 = 32;
         let ladder = LadderConfig::builtin();
-        for key in [shipped::plant_tended(), shipped::plant_field()] {
+        for key in [shipped::plant_tended(), shipped::plant_farm()] {
             let rung = ladder.rung(key);
             let cost = rung
                 .build_cost(RUNG_COST_UNSCALED)
@@ -7067,7 +7096,7 @@ mod tests {
             shipped::root_standing(shipped::plant()),
         );
         let field_cost = ladder
-            .rung(shipped::plant_field())
+            .rung(shipped::plant_farm())
             .build_cost(RUNG_COST_UNSCALED)
             .expect("the field rung builds");
         half_sown.set_ladder_position(cost + field_cost * HALF_WAY_UP, &ladder);

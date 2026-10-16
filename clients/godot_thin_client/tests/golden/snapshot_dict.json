@@ -3084,6 +3084,7 @@
         }
       ],
       "size_class": "herds[0].size_class",
+      "size_tier": "herds[0].size_tier",
       "species": "herds[0].species",
       "stay_fraction": 26.790001,
       "stressed_fraction": 81.589996,
@@ -3414,6 +3415,7 @@
         }
       ],
       "size_class": "herds[1].size_class",
+      "size_tier": "herds[1].size_tier",
       "species": "herds[1].species",
       "stay_fraction": 64.949997,
       "stressed_fraction": 10.21,
@@ -3744,6 +3746,7 @@
         }
       ],
       "size_class": "herds[2].size_class",
+      "size_tier": "herds[2].size_tier",
       "species": "herds[2].species",
       "stay_fraction": 69.470001,
       "stressed_fraction": 70.519997,
@@ -4158,6 +4161,20 @@
       "friction_multiplier": 38.439999,
       "grants_sight": true,
       "holds_link_to_tiles": 145,
+      "knowledge_gains": [
+        {
+          "knowledge": "ladder_rungs[0].knowledge_gains[0].knowledge",
+          "regrowth_gain": 96.849998
+        },
+        {
+          "knowledge": "ladder_rungs[0].knowledge_gains[1].knowledge",
+          "regrowth_gain": 81.93
+        },
+        {
+          "knowledge": "ladder_rungs[0].knowledge_gains[2].knowledge",
+          "regrowth_gain": 84.699997
+        }
+      ],
       "label": "ladder_rungs[0].label",
       "label_fallback": "ladder_rungs[0].label_fallback",
       "min_deposit_capacity": 77.510002,
@@ -4171,6 +4188,63 @@
       "requires_rung": "ladder_rungs[0].requires_rung",
       "requires_work_room": false,
       "rung_key": "ladder_rungs[0].rung_key",
+      "site_relaxations": [
+        {
+          "knowledge": "ladder_rungs[0].site_relaxations[0].knowledge",
+          "rule": {
+            "min_forage_capacity": 72.57,
+            "requires_fresh_water": true,
+            "requires_gathering_site": false
+          }
+        },
+        {
+          "knowledge": "ladder_rungs[0].site_relaxations[1].knowledge",
+          "rule": {
+            "min_forage_capacity": 24.68,
+            "requires_fresh_water": false,
+            "requires_gathering_site": true
+          }
+        },
+        {
+          "knowledge": "ladder_rungs[0].site_relaxations[2].knowledge",
+          "rule": {
+            "min_forage_capacity": 71.269997,
+            "requires_fresh_water": false,
+            "requires_gathering_site": true
+          }
+        }
+      ],
+      "site_rule": {
+        "min_forage_capacity": 38.73,
+        "requires_fresh_water": true,
+        "requires_gathering_site": false
+      },
+      "size_tiers": [
+        {
+          "earns_knowledge": "ladder_rungs[0].size_tiers[0].earns_knowledge",
+          "id": "ladder_rungs[0].size_tiers[0].id",
+          "keeper_ratio_gain": 106.589996,
+          "label": "ladder_rungs[0].size_tiers[0].label",
+          "label_fallback": "ladder_rungs[0].size_tiers[0].label_fallback",
+          "min_rings": 87
+        },
+        {
+          "earns_knowledge": "ladder_rungs[0].size_tiers[1].earns_knowledge",
+          "id": "ladder_rungs[0].size_tiers[1].id",
+          "keeper_ratio_gain": 79.120003,
+          "label": "ladder_rungs[0].size_tiers[1].label",
+          "label_fallback": "ladder_rungs[0].size_tiers[1].label_fallback",
+          "min_rings": 156
+        },
+        {
+          "earns_knowledge": "ladder_rungs[0].size_tiers[2].earns_knowledge",
+          "id": "ladder_rungs[0].size_tiers[2].id",
+          "keeper_ratio_gain": 83.25,
+          "label": "ladder_rungs[0].size_tiers[2].label",
+          "label_fallback": "ladder_rungs[0].size_tiers[2].label_fallback",
+          "min_rings": 49
+        }
+      ],
       "source_kind": "ladder_rungs[0].source_kind",
       "traits": [
         "ladder_rungs[0].traits[0]"
@@ -4191,6 +4265,20 @@
       "friction_multiplier": 88.849998,
       "grants_sight": false,
       "holds_link_to_tiles": 90,
+      "knowledge_gains": [
+        {
+          "knowledge": "ladder_rungs[1].knowledge_gains[0].knowledge",
+          "regrowth_gain": 96.07
+        },
+        {
+          "knowledge": "ladder_rungs[1].knowledge_gains[1].knowledge",
+          "regrowth_gain": 69.239998
+        },
+        {
+          "knowledge": "ladder_rungs[1].knowledge_gains[2].knowledge",
+          "regrowth_gain": 6.23
+        }
+      ],
       "label": "ladder_rungs[1].label",
       "label_fallback": "ladder_rungs[1].label_fallback",
       "min_deposit_capacity": 14.55,
@@ -4204,6 +4292,63 @@
       "requires_rung": "ladder_rungs[1].requires_rung",
       "requires_work_room": false,
       "rung_key": "ladder_rungs[1].rung_key",
+      "site_relaxations": [
+        {
+          "knowledge": "ladder_rungs[1].site_relaxations[0].knowledge",
+          "rule": {
+            "min_forage_capacity": 4.05,
+            "requires_fresh_water": true,
+            "requires_gathering_site": false
+          }
+        },
+        {
+          "knowledge": "ladder_rungs[1].site_relaxations[1].knowledge",
+          "rule": {
+            "min_forage_capacity": 33.119999,
+            "requires_fresh_water": false,
+            "requires_gathering_site": true
+          }
+        },
+        {
+          "knowledge": "ladder_rungs[1].site_relaxations[2].knowledge",
+          "rule": {
+            "min_forage_capacity": 91.150002,
+            "requires_fresh_water": false,
+            "requires_gathering_site": true
+          }
+        }
+      ],
+      "site_rule": {
+        "min_forage_capacity": 75.580002,
+        "requires_fresh_water": false,
+        "requires_gathering_site": true
+      },
+      "size_tiers": [
+        {
+          "earns_knowledge": "ladder_rungs[1].size_tiers[0].earns_knowledge",
+          "id": "ladder_rungs[1].size_tiers[0].id",
+          "keeper_ratio_gain": 100.769997,
+          "label": "ladder_rungs[1].size_tiers[0].label",
+          "label_fallback": "ladder_rungs[1].size_tiers[0].label_fallback",
+          "min_rings": 180
+        },
+        {
+          "earns_knowledge": "ladder_rungs[1].size_tiers[1].earns_knowledge",
+          "id": "ladder_rungs[1].size_tiers[1].id",
+          "keeper_ratio_gain": 52.400002,
+          "label": "ladder_rungs[1].size_tiers[1].label",
+          "label_fallback": "ladder_rungs[1].size_tiers[1].label_fallback",
+          "min_rings": 71
+        },
+        {
+          "earns_knowledge": "ladder_rungs[1].size_tiers[2].earns_knowledge",
+          "id": "ladder_rungs[1].size_tiers[2].id",
+          "keeper_ratio_gain": 57.0,
+          "label": "ladder_rungs[1].size_tiers[2].label",
+          "label_fallback": "ladder_rungs[1].size_tiers[2].label_fallback",
+          "min_rings": 190
+        }
+      ],
       "source_kind": "ladder_rungs[1].source_kind",
       "traits": [
         "ladder_rungs[1].traits[0]"
@@ -4224,6 +4369,20 @@
       "friction_multiplier": 46.139999,
       "grants_sight": false,
       "holds_link_to_tiles": 63,
+      "knowledge_gains": [
+        {
+          "knowledge": "ladder_rungs[2].knowledge_gains[0].knowledge",
+          "regrowth_gain": 37.290001
+        },
+        {
+          "knowledge": "ladder_rungs[2].knowledge_gains[1].knowledge",
+          "regrowth_gain": 50.599998
+        },
+        {
+          "knowledge": "ladder_rungs[2].knowledge_gains[2].knowledge",
+          "regrowth_gain": 25.09
+        }
+      ],
       "label": "ladder_rungs[2].label",
       "label_fallback": "ladder_rungs[2].label_fallback",
       "min_deposit_capacity": 91.580002,
@@ -4237,6 +4396,63 @@
       "requires_rung": "ladder_rungs[2].requires_rung",
       "requires_work_room": true,
       "rung_key": "ladder_rungs[2].rung_key",
+      "site_relaxations": [
+        {
+          "knowledge": "ladder_rungs[2].site_relaxations[0].knowledge",
+          "rule": {
+            "min_forage_capacity": 57.669998,
+            "requires_fresh_water": true,
+            "requires_gathering_site": false
+          }
+        },
+        {
+          "knowledge": "ladder_rungs[2].site_relaxations[1].knowledge",
+          "rule": {
+            "min_forage_capacity": 7.02,
+            "requires_fresh_water": false,
+            "requires_gathering_site": true
+          }
+        },
+        {
+          "knowledge": "ladder_rungs[2].site_relaxations[2].knowledge",
+          "rule": {
+            "min_forage_capacity": 75.75,
+            "requires_fresh_water": false,
+            "requires_gathering_site": true
+          }
+        }
+      ],
+      "site_rule": {
+        "min_forage_capacity": 62.970001,
+        "requires_fresh_water": false,
+        "requires_gathering_site": true
+      },
+      "size_tiers": [
+        {
+          "earns_knowledge": "ladder_rungs[2].size_tiers[0].earns_knowledge",
+          "id": "ladder_rungs[2].size_tiers[0].id",
+          "keeper_ratio_gain": 9.94,
+          "label": "ladder_rungs[2].size_tiers[0].label",
+          "label_fallback": "ladder_rungs[2].size_tiers[0].label_fallback",
+          "min_rings": 45
+        },
+        {
+          "earns_knowledge": "ladder_rungs[2].size_tiers[1].earns_knowledge",
+          "id": "ladder_rungs[2].size_tiers[1].id",
+          "keeper_ratio_gain": 40.57,
+          "label": "ladder_rungs[2].size_tiers[1].label",
+          "label_fallback": "ladder_rungs[2].size_tiers[1].label_fallback",
+          "min_rings": 74
+        },
+        {
+          "earns_knowledge": "ladder_rungs[2].size_tiers[2].earns_knowledge",
+          "id": "ladder_rungs[2].size_tiers[2].id",
+          "keeper_ratio_gain": 101.07,
+          "label": "ladder_rungs[2].size_tiers[2].label",
+          "label_fallback": "ladder_rungs[2].size_tiers[2].label_fallback",
+          "min_rings": 163
+        }
+      ],
       "source_kind": "ladder_rungs[2].source_kind",
       "traits": [
         "ladder_rungs[2].traits[0]"

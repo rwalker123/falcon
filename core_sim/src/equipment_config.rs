@@ -462,7 +462,7 @@ pub struct EquipmentEffect {
     /// `RungId::wire_key` (`"route:paved_road"`).
     ///
     /// **ABSENT MEANS EVERY RUNG ON THE BRANCH**, which is what keeps `hoes` and the crook
-    /// byte-identical: a plant tool that names no rung serves `plant:tended` and `plant:field`
+    /// byte-identical: a plant tool that names no rung serves `plant:tended` and `plant:farm`
     /// alike, exactly as it did when the branch was the only bound there was.
     ///
     /// **It exists because one branch's rungs can want DIFFERENT TOOLS.** The route ladder is the

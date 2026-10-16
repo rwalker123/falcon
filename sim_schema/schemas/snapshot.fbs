@@ -2565,7 +2565,7 @@ table RungQuoteState {
   // flags, for any rung. Read the bool, never infer a rung from `progress`.
   reached:bool = false;
   // The rung's own build meter, 0..1 (`workDone / workCost`): the retired cultivationProgress /
-  // rungQuotes[plant:field].progress / domestication / rungQuotes[animal:pen].progress. 1.0 once `reached`.
+  // rungQuotes[plant:farm].progress / domestication / rungQuotes[animal:pen].progress. 1.0 once `reached`.
   progress:float = 0;
   // The rung's meter in work units, and what the rung costs ON THIS SOURCE (a Sow priced by how
   // much of the tile the crop must replace, a Tame by the species' own multiplier). Published
@@ -2581,7 +2581,7 @@ table RungQuoteState {
   upkeepMaterialDemand:[MaterialPayoff];
   // What the source would pay per turn once at this rung: food, fodder (hay) and the materials of its
   // yield vector. The retired tendedYield / fieldYield / corralYield / pastoralYield,
-  // rungQuotes[plant:tended].fodder / rungQuotes[plant:field].fodder, and rungQuotes[animal:pen].materialPayoff / rungQuotes[animal:pastoral].materialPayoff. `fodder` is 0 on an animal
+  // rungQuotes[plant:tended].fodder / rungQuotes[plant:farm].fodder, and rungQuotes[animal:pen].materialPayoff / rungQuotes[animal:pastoral].materialPayoff. `fodder` is 0 on an animal
   // (none pays it); `materialPayoff` is EMPTY on a patch row (a plant's materials are priced per
   // species in FloraShareInfo).
   foodYield:float = 0;
@@ -2613,7 +2613,7 @@ table ForagePatchState {
   // one reads part-way between, continuously.
   //
   // ⛔ IT MUST BE REDACTED ON A REMEMBERED HEX, AND `tileCapacity` (appended last) IS WHAT REPLACES
-  // IT THERE. `rungQuotes[plant:field].reached` and `rungQuotes[plant:field].progress` are already redacted under fog; publishing this one
+  // IT THERE. `rungQuotes[plant:farm].reached` and `rungQuotes[plant:farm].progress` are already redacted under fog; publishing this one
   // unredacted hands the same ladder position back, and worse than the boolean did - being
   // interpolated, it states HOW FAR UP rather than merely whether. The pair exists precisely so the
   // client can keep stating a capacity on ground it remembers (issue #462) while giving away
@@ -2672,7 +2672,7 @@ table ForagePatchState {
   // NOTE the commitment is RECORDED before it TAKES EFFECT: a patch still being prepared names its
   // crop here while still carrying the tile's full capacity and converting at the wild basket rate —
   // both halves of the commitment (concentration and conversion) switch on when the rung completes
-  // (`rungQuotes[plant:tended].reached`/`rungQuotes[plant:field].reached`). See docs/plan_flora_roster.md §4.3.
+  // (`rungQuotes[plant:tended].reached`/`rungQuotes[plant:farm].reached`). See docs/plan_flora_roster.md §4.3.
   committedSpecies:string;
   committedDisplayName:string;
   // --- THE NEGLECT GRACE (appended) --------------------------------------------------------------
@@ -2805,7 +2805,7 @@ table ForagePatchState {
   stressedFraction:float = 0;
   // --- WHAT A GATHER OF THIS PATCH IS MADE OF (appended last, arc #527) ---
   // The successor to the retired trade-goods rate, and the RUNG-1 half of the material
-  // story: FloraShareInfo.rungQuotes[plant:field].materialPayoff/rungQuotes[plant:tended].materialPayoff quote rungs 3 and 2, and a WILD
+  // story: FloraShareInfo.rungQuotes[plant:farm].materialPayoff/rungQuotes[plant:tended].materialPayoff quote rungs 3 and 2, and a WILD
   // gather had nothing at all - a tile whose basket is 32% cotton and 26% tobacco read
   // "0.24 FOOD, - FODDER" while the turn banked fibre and leaf.
   //
@@ -2835,7 +2835,7 @@ table ForagePatchState {
   // never `-1`-because-unstarted — the same always-meaningful rule `rungQuotes[animal:pen].foodYield` follows on a herd.
   //
   // READ IT BESIDE the `*WorkCost` for the assignment's own `improvement`, or for the next rung up
-  // (`rungQuotes[plant:tended].reached`/`rungQuotes[plant:field].reached`) when that is empty — the pair reads "50 work, ~25 turns", so they
+  // (`rungQuotes[plant:tended].reached`/`rungQuotes[plant:farm].reached`) when that is empty — the pair reads "50 work, ~25 turns", so they
   // must name one rung.
   //
   // FIVE NEGATIVES, FIVE FACTS, and they must not be collapsed:
@@ -3052,7 +3052,7 @@ table ForagePatchState {
   buildQueuePosition:int = -1;
   // WHY THE QUEUE IS BLOCKED HERE (appended, docs/plan_standing_upkeep.md 4.6b) - "" whenever this
   // source is not a blocked build, else a short lowercase cause key on the free-form-string
-  // convention `ecologyPhase` / `rungQuotes[plant:field].siteRefusal` already use.
+  // convention `ecologyPhase` / `rungQuotes[plant:farm].siteRefusal` already use.
   //
   // READ IT BESIDE `buildTurnsRemaining`'s `-4`, never instead of it: that field says the pool is
   // stuck, this says which conjunct of the rung's own gate refused. `-4` with no reason is the state
@@ -3065,7 +3065,7 @@ table ForagePatchState {
   // how the two come to disagree.
   //
   // IT IS A CAUSE, NOT A SENTENCE - no player-facing prose crosses the wire; the client owns the
-  // wording, exactly as it does for `rungQuotes[plant:field].siteRefusal`.
+  // wording, exactly as it does for `rungQuotes[plant:farm].siteRefusal`.
   //
   // The keys, and the conjunct each names:
   //   knowledge      - the faction does not know the rung's `unlock_knowledge`
@@ -3249,7 +3249,7 @@ table ForagePatchState {
   //
   // WHY IT SHIPS. Answering "has this been improved, and what is above it" off the wire otherwise
   // means knowing each food web's PRIVATE SPELLING for its own ladder: a patch says `rungQuotes[plant:tended].reached`
-  // plus `rungQuotes[plant:field].reached` (two bools, read in the right order), a herd says `domestication` over a
+  // plus `rungQuotes[plant:farm].reached` (two bools, read in the right order), a herd says `domestication` over a
   // threshold plus `corralled` (a float and a flag). So every consumer hand-writes one reader per
   // web, and a third source type - a route climbing trail -> road - would cost it a third. One
   // branch-qualified token is the same read on every web, and costs the client nothing at all for
@@ -3265,7 +3265,7 @@ table ForagePatchState {
   // would be a fourth state on a three-rung ladder and every client would have to guess which of the
   // three it meant.
   //
-  // IT ARRIVES UNREDACTED, exactly as `rungQuotes[plant:tended].reached`/`rungQuotes[plant:field].reached` beside it do - the fog rule on this
+  // IT ARRIVES UNREDACTED, exactly as `rungQuotes[plant:tended].reached`/`rungQuotes[plant:farm].reached` beside it do - the fog rule on this
   // table is the CLIENT's (see `carryingCapacity`). This token states the same ladder position those
   // bools do, so a client that redacts them on a merely-remembered hex must redact this one with
   // them.
@@ -3363,7 +3363,7 @@ table ForagePatchState {
 // the sim's state, and the turns below are chained against a build queue the client cannot see. A
 // client that reconstructed them would be a second producer of a verdict that already has one.
 table BuildLegState {
-  // The rung this leg raises, as `<branch>:<id>` - `plant:tended`, `plant:field`. Branch-qualified
+  // The rung this leg raises, as `<branch>:<id>` - `plant:tended`, `plant:farm`. Branch-qualified
   // because `wild` names a rung on each web; the same spelling the sim's validation messages use.
   rung:string;
 
@@ -3423,7 +3423,7 @@ table BuildQueueEntryState {
 }
 
 // ONE MATERIAL A COMMITMENT WOULD PAY, AND HOW MUCH OF IT PER TURN (appended, arc #527) - a row of
-// FloraShareInfo.rungQuotes[plant:field].materialPayoff / rungQuotes[plant:tended].materialPayoff.
+// FloraShareInfo.rungQuotes[plant:farm].materialPayoff / rungQuotes[plant:tended].materialPayoff.
 //
 // A VECTOR RATHER THAN A SCALAR IS THE WHOLE POINT. It replaced sowTradePayoff/cultivateTradePayoff,
 // which answered "how much trade" - a number a market could total and a player could not act on.
@@ -3490,7 +3490,7 @@ table FloraShareInfo {
   // SHIPPED RATHER THAN DERIVED FROM THE PAYOFFS ABOVE, which cannot answer it: those are rung-2 and
   // rung-3 numbers, so they fold in the weeding and conversion gains rather than stating the plant's
   // own vector, and they are ALL ZERO for a species that cannot climb on this ground
-  // (`rungQuotes[plant:tended].canClimb`/`rungQuotes[plant:field].canClimb` false) — exactly the wild-ceiling case where the role is still a true
+  // (`rungQuotes[plant:tended].canClimb`/`rungQuotes[plant:farm].canClimb` false) — exactly the wild-ceiling case where the role is still a true
   // and useful fact.
   role:string;
   // --- THIS PLANT'S QUOTE AT EVERY RUNG (appended last; replaces the per-step fields) ----------
@@ -4337,6 +4337,9 @@ table HerdTelemetryState {
   // --- EVERY RUNG'S QUOTE ON THIS SOURCE (appended last; replaces the per-step fields) ----------
   // One row per rung of this source's branch above the root - see RungQuoteState.
   rungQuotes:[RungQuoteState];
+  // The id of the size tier this herd's fence has reached (LadderRungState.sizeTiers; "ranch" on a
+  // pen extended far enough), "" when it is in none. Derived from penRadius every capture.
+  sizeTier:string;
 }
 
 table CommandEventState {
@@ -5307,6 +5310,56 @@ table LadderRungState {
   requiresWorkRoom:bool = false;
   requiresOwnership:bool = false;
   placesSource:bool = false;
+  // --- THE RUNG'S SITE RULE AND THE LESSONS THAT LOOSEN IT (appended last) ---------------------------
+  // The rung's own `site_requirement` (all false/0 on a rung that asks nothing of the site), and one
+  // row per `site_relaxations` entry: the lesson that selects it and the rule a faction holding that
+  // lesson is judged by instead. The EFFECTIVE rule for a faction is the LAST relaxation it holds,
+  // else the rung's own. A source row's `siteRefusal` is already resolved for the viewer (and reads
+  // "needs_lesson" when an unlearned relaxation would admit the ground); these say WHICH lesson and
+  // WHAT it opens, so a client can word the hint and draw the ground a lesson would open.
+  siteRule:SiteRuleState;
+  siteRelaxations:[SiteRelaxationState];
+  // --- SIZE TIERS AND LESSON GAINS (appended last) ------------------------------------------------
+  // The derived size tiers an ENCLOSED rung declares (a pen grown to `minRings` extension rings is a
+  // Ranch) and the gains the lessons it names give the herds that hold the rung - straight from the
+  // ladder config, so a client words the tier and explains the bonus from data. A herd's CURRENT tier
+  // is `HerdTelemetryState.sizeTier`.
+  sizeTiers:[SizeTierState];
+  knowledgeGains:[KnowledgeGainState];
+}
+
+// One size tier of an enclosed rung (LadderRungState.sizeTiers).
+table SizeTierState {
+  id:string;
+  label:string;
+  labelFallback:string;
+  // The fewest extension rings (HerdTelemetryState.penRadius) the fence must have reached.
+  minRings:uint = 0;
+  // How many times more head a keeper minds in this tier (the keeping's WORK term only).
+  keeperRatioGain:float = 1;
+  // The lesson keeping a source in this tier teaches; "" = none.
+  earnsKnowledge:string;
+}
+
+// One lesson's effect on the herds of the people that holds it (LadderRungState.knowledgeGains).
+table KnowledgeGainState {
+  knowledge:string;
+  // The multiplier on a herd's managed regrowth rate.
+  regrowthGain:float = 1;
+}
+
+// A site rule: what a tile must be for a rung to be placed on it (all false / 0 = asks nothing).
+table SiteRuleState {
+  requiresGatheringSite:bool = false;
+  minForageCapacity:float = 0;
+  requiresFreshWater:bool = false;
+}
+
+// One lesson-keyed site rule on a rung (LadderRungState.siteRelaxations).
+table SiteRelaxationState {
+  // The knowledge name (a tag in start_profile_knowledge_tags.json) that selects this rule.
+  knowledge:string;
+  rule:SiteRuleState;
 }
 
 // ONE BRANCH OF THE LADDER, AS THE CONFIG DECLARES IT - once per world, beside `LadderRungState`.

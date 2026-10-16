@@ -22,7 +22,7 @@
 //! function's input set, split by scope:
 //!
 //! - **World-level** (`map_seed`, `grid_size`, and the flora / labor / ladder config `Arc`s by
-//!   pointer identity — the ladder because each crop's published Sow price is the `plant:field`
+//!   pointer identity — the ladder because each crop's published Sow price is the `plant:farm`
 //!   rung's own `work_cost` times what that crop's share earns) — checked once per capture in
 //!   [`FloraQuoteCache::sweep`], which clears everything on a mismatch. `Arc::ptr_eq` is exact for a
 //!   config hot reload, because `*ConfigHandle::replace` swaps the `Arc` rather than mutating
@@ -46,7 +46,7 @@
 //!
 //! # What is deliberately NOT memoized
 //!
-//! The `plant:field` **site refusal** stays a per-turn derivation at its call site, for a reason
+//! The `plant:farm` **site refusal** stays a per-turn derivation at its call site, for a reason
 //! worth stating: `forage::tile_is_fresh_watered` reads a tile's *neighbours'* tags, so its input set
 //! is not local to the tile and could not be fingerprinted per entry the way the quotes are. It is
 //! also cheap — a flat `TerrainTagGrid` probe per neighbour — so there is nothing to win by trying.
@@ -255,7 +255,7 @@ pub(crate) struct FloraQuoteSweep<'a> {
     entries: &'a mut HashMap<UVec2, CachedQuotes>,
     flora: &'a FloraConfig,
     forage: &'a ForageLaborConfig,
-    /// The rung price list — the `plant:field` `work_cost` each crop's published Sow price is a
+    /// The rung price list — the `plant:farm` `work_cost` each crop's published Sow price is a
     /// multiple of. Part of the memo's identity for the same reason the other two config handles
     /// are.
     ladder: &'a LadderConfig,
@@ -880,8 +880,8 @@ mod tests {
             for quote in &quotes {
                 for (rung, published) in [
                     (
-                        shipped::plant_field(),
-                        &quote.quote("plant:field").material_payoff,
+                        shipped::plant_farm(),
+                        &quote.quote("plant:farm").material_payoff,
                     ),
                     (
                         shipped::plant_tended(),
@@ -916,7 +916,7 @@ mod tests {
                     }
                     saw_a_material |= !published.is_empty();
                 }
-                saw_a_bare_staple |= quote.quote("plant:field").material_payoff.is_empty();
+                saw_a_bare_staple |= quote.quote("plant:farm").material_payoff.is_empty();
             }
         }
         assert!(

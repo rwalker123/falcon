@@ -1123,6 +1123,12 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
                         crate::fauna::herd_rung_key,
                     )
                     .wire_key(),
+                // **THE SIZE TIER THIS HERD'S FENCE HAS REACHED** (`ranch`), empty in none - derived
+                // from the footprint through the one `fauna::herd_size_tier`.
+                size_tier: herd
+                    .and_then(|herd| crate::fauna::herd_size_tier(herd, ladder))
+                    .map(|tier| tier.id.clone())
+                    .unwrap_or_default(),
                 // **EVERY RUNG'S QUOTE** - one row per rung of the herd branch above the root, built
                 // by iterating the ladder; see [`herd_rung_quotes`].
                 rung_quotes: herd_rung_quotes(&HerdQuoteInputs {
@@ -1260,6 +1266,17 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
         .collect()
 }
 
+/// A rung's site rule as the catalog publishes it.
+fn site_rule_state(
+    site: &crate::intensification::RungSiteRequirement,
+) -> sim_runtime::SiteRuleState {
+    sim_runtime::SiteRuleState {
+        requires_gathering_site: site.requires_gathering_site,
+        min_forage_capacity: site.min_forage_capacity,
+        requires_fresh_water: site.requires_fresh_water,
+    }
+}
+
 /// **WHAT A PLANT ROW'S RUNG QUOTES ARE STRUCK FROM** - one patch (already redacted to wild ground
 /// where the viewer may not read its improvement), the tile's basket and the three configs, plus the
 /// two measures a rung's price and bill are quoted at.
@@ -1379,7 +1396,12 @@ fn herd_rung_quotes(inputs: &HerdQuoteInputs<'_>) -> Vec<RungQuoteState> {
         .skip(BRANCH_ROOT_RUNGS)
         .map(|def| {
             let rung = def.rung_id();
-            let keeper_load = herd.map(|herd| crate::fauna::herd_keeper_load(herd, fauna));
+            // **Two loads, because a tier loosens the hands and not the fence**: the WORK term is
+            // struck at the load a size tier divides (a Ranch minds more head per keeper); the
+            // MATERIAL term at the raw load (a fence mends in proportion to the herd it holds).
+            let work_load =
+                herd.map(|herd| crate::fauna::herd_work_keeper_load(herd, fauna, ladder));
+            let material_load = herd.map(|herd| crate::fauna::herd_keeper_load(herd, fauna));
             // `(food, the biomass the material rows are struck at)` for the block this rung pays.
             let (food_yield, payoff_biomass) = match crate::fauna::HerdPayoff::of(def.trait_set()) {
                 crate::fauna::HerdPayoff::Pen => (
@@ -1414,8 +1436,8 @@ fn herd_rung_quotes(inputs: &HerdQuoteInputs<'_>) -> Vec<RungQuoteState> {
                     })
                     .unwrap_or(NO_RUNG_WIDTH),
                 build_material_cost: rung_material_pile(ladder, rung),
-                upkeep_demand: keeper_load.map_or(NO_UPKEEP_DEMAND, |load| def.upkeep_demand(load)),
-                upkeep_material_demand: keeper_load
+                upkeep_demand: work_load.map_or(NO_UPKEEP_DEMAND, |load| def.upkeep_demand(load)),
+                upkeep_material_demand: material_load
                     .map_or_else(Vec::new, |load| rung_material_rate(ladder, rung, load)),
                 food_yield,
                 fodder: NO_ANIMAL_PAYS_FODDER,
@@ -1459,7 +1481,7 @@ const NO_RUNG_PAYOFF: f32 = 0.0;
 /// forecast's per-worker throughput exactly as the Forage labor arm folds it into `forage_take`. A
 /// patch whose tile carries no food module forecasts at [`NO_FORAGE_SEASON`] — no per-worker gather at
 /// all, which is exactly what such a tile offers. **That is a reachable state since slice 5**: `Sow`
-/// places a Field on any ground the `plant:field` rung's `site_requirement` accepts — module or not —
+/// places a Field on any ground the `plant:farm` rung's `site_requirement` accepts — module or not —
 /// and a Field is gathered through the same seasonless `forage_take` path as every rung beneath it, so it forecasts correctly regardless. Captured at
 /// `output_multiplier = 1.0`: the client scales by the acting band's `outputMultiplier`.
 ///
@@ -2443,6 +2465,39 @@ pub(crate) fn snapshot_ladder_rungs(ladder: &LadderConfig) -> Vec<LadderRungStat
                     requires_work_room: rung.requires_work_room,
                     requires_ownership: rung.requires_ownership,
                     places_source: rung.places_source,
+                    site_rule: rung
+                        .site_requirement
+                        .as_ref()
+                        .map(site_rule_state)
+                        .unwrap_or_default(),
+                    size_tiers: rung
+                        .size_tiers
+                        .iter()
+                        .map(|tier| sim_runtime::SizeTierState {
+                            id: tier.id.clone(),
+                            label: tier.label.clone(),
+                            label_fallback: tier.label_fallback.clone(),
+                            min_rings: tier.min_rings,
+                            keeper_ratio_gain: tier.keeper_ratio_gain,
+                            earns_knowledge: tier.earns_knowledge.clone().unwrap_or_default(),
+                        })
+                        .collect(),
+                    knowledge_gains: rung
+                        .knowledge_gains
+                        .iter()
+                        .map(|gain| sim_runtime::KnowledgeGainState {
+                            knowledge: gain.knowledge.clone(),
+                            regrowth_gain: gain.regrowth_gain,
+                        })
+                        .collect(),
+                    site_relaxations: rung
+                        .site_relaxations
+                        .iter()
+                        .map(|relaxation| sim_runtime::SiteRelaxationState {
+                            knowledge: relaxation.knowledge.clone(),
+                            rule: site_rule_state(&relaxation.site_requirement),
+                        })
+                        .collect(),
                     min_deposit_capacity: rung
                         .site_requirement
                         .as_ref()

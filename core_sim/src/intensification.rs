@@ -1619,7 +1619,7 @@ pub const NO_RUNG_WIDTH: f32 = 0.0;
 ///
 /// The one definition of a rung's place on the ladder: [`RungStanding::at`] walks it, and every
 /// per-rung readout that has to state a meter in the wire's old two-meter shape divides by it. A
-/// second spelling of *"where does `plant:field` begin"* is the drift this arc has already paid for
+/// second spelling of *"where does `plant:farm` begin"* is the drift this arc has already paid for
 /// three times.
 ///
 /// `cost_at` is the source's own resolver, exactly as [`RungStanding::at`] takes it. A branch's root
@@ -1664,7 +1664,7 @@ pub fn rung_span<F: Fn(&RungDef) -> Option<f32>>(
 /// the fix either. **Asking `held` is**: the meter then says what the completion test said, by
 /// construction rather than to within a tolerance somebody has to keep in sync.
 ///
-/// It bites exactly on the rungs whose `base` is non-zero and whose price is scaled — `plant:field`
+/// It bites exactly on the rungs whose `base` is non-zero and whose price is scaled — `plant:farm`
 /// (its base is the tended rung's width, its width the patch's quoted Sow price) and `animal:pen`
 /// (its base is the herd's taming price). A branch's first investment rung has `base == 0`, where
 /// `fl(0 + width) − 0` is `width` exactly and the two readings never parted.
@@ -1990,6 +1990,48 @@ pub struct RungSiteRequirement {
     pub min_deposit_capacity: f32,
 }
 
+/// **ONE SIZE TIER OF AN ENCLOSED RUNG** ([`RungDef::size_tiers`]): a derived standing, read off how
+/// many rings the fence has been extended to.
+#[derive(Debug, Clone, Deserialize)]
+pub struct SizeTier {
+    /// The tier's id (`ranch`), published beside the herd so a client names the tier without a roster.
+    pub id: String,
+    /// What the feed and the panels call a source in this tier, capitalised.
+    pub label: String,
+    /// The lower-case phrase with its article ("a ranch").
+    pub label_fallback: String,
+    /// The fewest extension rings (`Herd::pen_radius`) the footprint must have reached. Strictly
+    /// ascending across a rung's tiers and at least 1 (ring 0 is the pen itself).
+    pub min_rings: u32,
+    /// **How many times more head one keeper minds in this tier** - the herd's keeper load, for the
+    /// WORK term of its keeping, is divided by this. The fence-mending (material) term is NOT: a
+    /// fence needs mending in proportion to the herd it holds however few hands tend it.
+    pub keeper_ratio_gain: f32,
+    /// The lesson **keeping a source in this tier teaches**, beside the rung's own. `None` = none.
+    #[serde(default)]
+    pub earns_knowledge: Option<String>,
+}
+
+/// **A LESSON'S EFFECT ON THE HERDS OF THE PEOPLE THAT HOLDS IT** ([`RungDef::knowledge_gains`]).
+#[derive(Debug, Clone, Deserialize)]
+pub struct KnowledgeGain {
+    /// The knowledge whose holder gets the gain.
+    pub knowledge: String,
+    /// The multiplier on the herd's managed regrowth rate `r` (on top of the per-species pen gain
+    /// and capped by `husbandry_regrowth_cap`, as the pen gain is).
+    pub regrowth_gain: f32,
+}
+
+/// **ONE KNOWLEDGE-KEYED SITE RULE** ([`RungDef::site_relaxations`]): the lesson, and the rule a
+/// faction holding it is judged by.
+#[derive(Debug, Clone, Deserialize)]
+pub struct SiteRelaxation {
+    /// The knowledge (a tag in `start_profile_knowledge_tags.json`) that selects this rule.
+    pub knowledge: String,
+    /// The rule that replaces the rung's own for a faction holding [`Self::knowledge`].
+    pub site_requirement: RungSiteRequirement,
+}
+
 /// **A RUNG THAT ASKS NOTHING OF A DEPOSIT** — [`RungSiteRequirement::min_deposit_capacity`]'s
 /// neutral, and the reading every plant, animal and route rung takes. Named because the predicate
 /// *"does this rung care about rock at all"* is exactly the comparison against it.
@@ -2022,6 +2064,11 @@ pub enum SiteRefusal {
     TooDry,
     /// Both.
     TooPoorAndTooDry,
+    /// **A LESSON THE FACTION DOES NOT YET HOLD WOULD ADMIT THIS GROUND** - the rung's own rule
+    /// refuses the tile, but a [`RungDef::site_relaxations`] rule the faction has not learned would
+    /// not. It supersedes the ordinary refusal: the useful answer is what to LEARN, not what is
+    /// wrong with the ground. A tile no lesson would admit keeps its ordinary refusal.
+    NeedsLesson,
 }
 
 impl SiteRefusal {
@@ -2036,6 +2083,7 @@ impl SiteRefusal {
             SiteRefusal::TooPoor => "too_poor",
             SiteRefusal::TooDry => "too_dry",
             SiteRefusal::TooPoorAndTooDry => "too_poor_and_too_dry",
+            SiteRefusal::NeedsLesson => "needs_lesson",
         }
     }
 }
@@ -2044,6 +2092,31 @@ impl SiteRefusal {
 /// [`SiteRefusal::as_str`]. Named because both the capture and its tests state it, and "" is exactly
 /// the kind of literal that means nothing at a call site.
 pub const SITE_ACCEPTED: &str = "";
+
+impl SizeTier {
+    /// **THE TIER'S OWN EARN SEAM** - [`RungDef::knowledge_accrual`] for the lesson a tier teaches:
+    /// `(discovery id, ledger credit)` at the pace `floor` earns, `None` for a tier that teaches
+    /// nothing, an ineligible turn, or a floor that earns no practice.
+    pub fn knowledge_accrual(
+        &self,
+        floor: f32,
+        eligible: bool,
+        knowledge: &LadderKnowledge,
+    ) -> Option<(u32, f32)> {
+        if !eligible {
+            return None;
+        }
+        let practice = knowledge.learn_rate * learn_multiplier(floor);
+        if practice <= 0.0 {
+            return None;
+        }
+        let name = self.earns_knowledge.as_deref()?;
+        let amount = knowledge
+            .ledger_credit(name, practice)
+            .expect("validate requires a lesson cost for every knowledge a tier teaches");
+        discovery_id_for(name).map(|lesson| (lesson, amount))
+    }
+}
 
 impl RungSiteRequirement {
     /// **THE site seam** — the twin of [`RungDef::build_accrual`]: the rung states the rule, the
@@ -2305,7 +2378,7 @@ pub struct RungUpkeep {
 /// *Shortfall was the decay*: a patch short by `0.75` work lost `0.75` off its meter. That welded
 /// **how much work holding this wants** to **how fast it rots when you stop**, so the demand could
 /// never be retuned — raising it made the improvement rot faster in exact proportion, and lowering
-/// it made neglect cheaper. Splitting them is what lets `plant:field` ask for four hands a turn and
+/// it made neglect cheaper. Splitting them is what lets `plant:farm` ask for four hands a turn and
 /// still rot at the three-quarters of a work unit it always rotted at.
 ///
 /// # ⛔ AND `retain_fraction` IS **DELETED**, NOT RETUNED
@@ -2378,7 +2451,7 @@ pub struct RungDef {
     /// a herd that isn't pastoral; `cultivate` refuses a patch that is already tended), because the
     /// rule genuinely differs per branch: `Corral` needs a herd you already tamed, while **`Sow`
     /// needs no prior *patch*** — it places a source on a tile that grew none, so it starts from
-    /// ground rather than from a source. Both facts are true at once: `plant:field` still sits
+    /// ground rather than from a source. Both facts are true at once: `plant:farm` still sits
     /// directly above `plant:tended` on the ladder, and sowing an unpatched tile skips no *step of
     /// the ladder*.
     ///
@@ -2397,11 +2470,34 @@ pub struct RungDef {
     ///
     /// **Today that is the animal rungs only: all three plant rungs state one**, each requiring a
     /// gathering site (`every_plant_rung_is_bound_to_a_gathering_site` asserts it). It used to read
-    /// "every rung but `plant:field`" — the gathering-site arc pushed the requirement down the whole
+    /// "every rung but `plant:farm`" — the gathering-site arc pushed the requirement down the whole
     /// plant branch, so a new plant rung without a `site_requirement` is now the anomaly rather than
     /// the norm. **Rung 4 (Farm) differs from rungs 1–3, not from rung 3 alone**: it is the first to
     /// set `requires_gathering_site: false`, and puts a fertility floor back in its place.
     pub site_requirement: Option<RungSiteRequirement>,
+    /// **LESSONS THAT LOOSEN THIS RUNG'S SITE RULE** - each names a knowledge and the rule a faction
+    /// that holds it is judged by instead of [`Self::site_requirement`]. **The effective rule for a
+    /// faction is the LAST listed relaxation whose knowledge it holds**, else the rung's own
+    /// ([`Self::effective_site_requirement`]); every gate resolves it through the one
+    /// `forage::rung_site_refusal` seam, which therefore needs the acting faction. Empty = the rung's
+    /// rule is the same for everyone. Knowledge names are validated at load like `unlock_knowledge`.
+    ///
+    /// This is how "Worked Land opens fertile ground that is not a gathering site" is config: the
+    /// plant branch ends at the Farm, and the lesson - not another step - widens where it may stand.
+    #[serde(default)]
+    pub site_relaxations: Vec<SiteRelaxation>,
+    /// **SIZE TIERS OF AN `enclosed` RUNG** - derived standings of a source that holds the rung, read
+    /// off the footprint (`rings`) and never built as a rung of their own. The highest tier whose
+    /// `min_rings` the footprint meets applies ([`Self::size_tier_for`]). A tier may loosen the
+    /// keeping (`keeper_ratio_gain`) and teach a lesson of its own (`earns_knowledge`); the rung's
+    /// own lesson keeps being taught beside it. Enclosed rungs only (refused at load elsewhere).
+    #[serde(default)]
+    pub size_tiers: Vec<SizeTier>,
+    /// **WHAT KNOWING A LESSON DOES TO A SOURCE THAT HOLDS THIS RUNG OR HIGHER** - each entry names a
+    /// knowledge and the multiplier its holder's herds' managed regrowth rate takes on top of the
+    /// per-species pen gain ([`KnowledgeGain`]). Herd rungs only. Empty = none.
+    #[serde(default)]
+    pub knowledge_gains: Vec<KnowledgeGain>,
     /// The build meter's dials, or `None` for a rung with nothing to build.
     pub build: Option<RungBuild>,
     /// **WHETHER THIS RUNG IS WORTH ANYTHING BEFORE IT IS FINISHED** ([`RungPartialCredit`]).
@@ -2648,6 +2744,69 @@ impl RungDef {
         self.partial_credit.unwrap_or_default()
     }
 
+    /// **THE SITE RULE A FACTION IS JUDGED BY** - the last [`Self::site_relaxations`] entry whose
+    /// knowledge `knows` reports held, else [`Self::site_requirement`]. `None` = the rung asks
+    /// nothing of the site (a relaxation without a base rule is refused at load).
+    pub fn effective_site_requirement(
+        &self,
+        knows: &dyn Fn(&str) -> bool,
+    ) -> Option<&RungSiteRequirement> {
+        self.site_relaxations
+            .iter()
+            .rev()
+            .find(|relaxation| knows(&relaxation.knowledge))
+            .map(|relaxation| &relaxation.site_requirement)
+            .or(self.site_requirement.as_ref())
+    }
+
+    /// **THE LESSON THAT WOULD ADMIT THIS GROUND** - the first relaxation the faction does not hold
+    /// whose rule leaves `refusal` empty for the same four readings. What turns an ordinary refusal
+    /// into [`SiteRefusal::NeedsLesson`] and names what to learn.
+    pub fn lesson_that_would_admit(
+        &self,
+        knows: &dyn Fn(&str) -> bool,
+        gathering_site: bool,
+        forage_capacity: f32,
+        fresh_water: bool,
+        deposit_capacity: f32,
+    ) -> Option<&str> {
+        self.site_relaxations
+            .iter()
+            .filter(|relaxation| !knows(&relaxation.knowledge))
+            .find(|relaxation| {
+                relaxation
+                    .site_requirement
+                    .refusal(
+                        gathering_site,
+                        forage_capacity,
+                        fresh_water,
+                        deposit_capacity,
+                    )
+                    .is_none()
+            })
+            .map(|relaxation| relaxation.knowledge.as_str())
+    }
+
+    /// **THE SIZE TIER A FOOTPRINT OF `rings` REACHES** - the highest tier whose `min_rings` it meets,
+    /// `None` below the first (or on a rung that declares none).
+    pub fn size_tier_for(&self, rings: u32) -> Option<&SizeTier> {
+        self.size_tiers
+            .iter()
+            .rev()
+            .find(|tier| rings >= tier.min_rings)
+    }
+
+    /// **EVERY LESSON PRACTISING THIS RUNG CAN TEACH** - its own `earns_knowledge`, then each size
+    /// tier's. The one place "what does this rung teach" is spelled, so the roster, the lesson-cost
+    /// check and the knowledge-tag check all walk the same list.
+    pub fn taught_lessons(&self) -> impl Iterator<Item = &str> {
+        self.earns_knowledge.as_deref().into_iter().chain(
+            self.size_tiers
+                .iter()
+                .filter_map(|tier| tier.earns_knowledge.as_deref()),
+        )
+    }
+
     /// The discovery gating this rung's verb. `None` for an ungated rung. (Validated at load.)
     pub fn unlock_discovery_id(&self) -> Option<u32> {
         self.unlock_knowledge
@@ -2698,7 +2857,7 @@ impl RungDef {
     ///   used to carry, which was a gate where the model now wants a rate. It is deliberately the
     ///   escapement **room** and not the take — see the predicate for why `killed == 0` is a
     ///   quantisation fact rather than a fact about work.
-    /// - the rung simply teaches nothing (`earns_knowledge: null` — today the `plant:field` rung, whose
+    /// - the rung simply teaches nothing (`earns_knowledge: null` — today the `plant:farm` rung, whose
     ///   `irrigation`/`rotation` is a future rung's business; the `animal:pen` rung teaches Foddering).
     ///
     /// A zero amount is returned as `None` rather than as `Some(id, 0.0)`: at `floor = 0` there is no
@@ -3084,7 +3243,7 @@ impl RungDef {
     /// stood on the source to be handed anywhere (§2.5). What completion does now is **retire the
     /// entry from the band's build queue**, which hands the pool to whatever the player put next.
     ///
-    /// **`true` on all four managed rungs** — `plant:tended`, `plant:field`, `animal:pastoral` and
+    /// **`true` on all four managed rungs** — `plant:tended`, `plant:farm`, `animal:pastoral` and
     /// `animal:pen` each declare one. Only the two `wild` rungs answer `false`, and nothing is ever
     /// *built* on those.
     pub fn declares_upkeep(&self) -> bool {
@@ -4162,22 +4321,20 @@ impl LadderConfig {
     pub fn knowledge_roster(&self) -> Vec<LadderKnowledgeEntry<'_>> {
         let mut roster: Vec<LadderKnowledgeEntry<'_>> = Vec::new();
         for rung in &self.rungs {
-            let Some(name) = rung.earns_knowledge.as_deref() else {
-                continue;
-            };
-            if roster.iter().any(|entry| entry.knowledge == name) {
-                continue;
+            for name in rung.taught_lessons() {
+                if roster.iter().any(|entry| entry.knowledge == name) {
+                    continue;
+                }
+                roster.push(LadderKnowledgeEntry {
+                    knowledge: name,
+                    branch: rung.branch.as_str(),
+                    area: self.branch_area(rung.branch),
+                    order: rung.order,
+                    is_step: self.knowledge_gates_a_rung(name),
+                    discovery_id: discovery_id_for(name)
+                        .expect("a taught knowledge resolves to a discovery (validated at load)"),
+                });
             }
-            roster.push(LadderKnowledgeEntry {
-                knowledge: name,
-                branch: rung.branch.as_str(),
-                area: self.branch_area(rung.branch),
-                order: rung.order,
-                is_step: self.knowledge_gates_a_rung(name),
-                discovery_id: rung
-                    .earns_discovery_id()
-                    .expect("a taught knowledge resolves to a discovery (validated at load)"),
-            });
         }
         // The knowledges no rung teaches but the config files under a branch of their own — the
         // roaming skills. Appended after the rung-taught ones, in the config's declared order.
@@ -4776,10 +4933,7 @@ impl LadderConfig {
     /// find the dial for — which is the parked-`0` failure mode in a new costume. `knowledge_accrual`
     /// and `credit_craft_lesson` therefore both read the map as total.
     fn validate_lesson_cost_coverage(&self) -> Result<(), LadderConfigError> {
-        let taught = self
-            .rungs
-            .iter()
-            .filter_map(|rung| rung.earns_knowledge.as_deref());
+        let taught = self.rungs.iter().flat_map(|rung| rung.taught_lessons());
         let rot_taught = std::iter::once(crate::spoilage::STORAGE_KNOWLEDGE);
         let roaming = crate::roaming_skills::ROAMING_SKILLS.iter().copied();
         for name in taught
@@ -5072,6 +5226,22 @@ impl LadderConfig {
                 ("earns_knowledge", rung.earns_knowledge.as_deref()),
             ]
             .into_iter()
+            .chain(
+                rung.site_relaxations
+                    .iter()
+                    .map(|relaxation| ("site_relaxations", Some(relaxation.knowledge.as_str()))),
+            )
+            .chain(rung.size_tiers.iter().map(|tier| {
+                (
+                    "size_tiers.earns_knowledge",
+                    tier.earns_knowledge.as_deref(),
+                )
+            }))
+            .chain(
+                rung.knowledge_gains
+                    .iter()
+                    .map(|gain| ("knowledge_gains", Some(gain.knowledge.as_str()))),
+            )
             .filter_map(|(field, name)| name.map(|name| (field, name)))
         });
         let standalone = self
@@ -5427,6 +5597,7 @@ fn validate_rung_properties(
     source: SourceKind,
     where_: &str,
 ) -> Result<(), LadderConfigError> {
+    validate_size_tiers_and_gains(rung, source, where_)?;
     for (field, text) in [
         ("label", &rung.label),
         ("label_fallback", &rung.label_fallback),
@@ -5553,10 +5724,134 @@ pub const NO_FRICTION_LEFT: f32 = 0.0;
 /// trail**'s live reading rather than a parked dial.
 pub const FRICTION_UNCHANGED: f32 = 1.0;
 
+/// **SIZE TIERS AND KNOWLEDGE GAINS ARE ENCLOSED-HERD CONFIG, VALIDATED AT BOOT** - a tier reads a
+/// fence's rings, so only an `enclosed` rung can declare one; gains are positive finite multipliers
+/// on a herd's regrowth rate; every lesson named resolves to a discovery.
+fn validate_size_tiers_and_gains(
+    rung: &RungDef,
+    source: SourceKind,
+    where_: &str,
+) -> Result<(), LadderConfigError> {
+    if !rung.size_tiers.is_empty() && !rung.trait_set().has(RungTrait::Enclosed) {
+        return Err(LadderConfigError::Invalid {
+            field: format!("{where_}.size_tiers"),
+            constraint: "sit on an `enclosed` rung - a size tier reads how far the fence has been \
+                         extended"
+                .to_string(),
+            value: format!("{} tier(s)", rung.size_tiers.len()),
+        });
+    }
+    let mut last_rings = 0;
+    for (index, tier) in rung.size_tiers.iter().enumerate() {
+        let at = format!("{where_}.size_tiers[{index}]");
+        if tier.id.trim().is_empty()
+            || tier.label.trim().is_empty()
+            || tier.label_fallback.trim().is_empty()
+        {
+            return Err(LadderConfigError::Invalid {
+                field: at,
+                constraint: "name the tier (`id`, `label`, `label_fallback`) - the feed and the \
+                             panels are worded from them"
+                    .to_string(),
+                value: "empty".to_string(),
+            });
+        }
+        if tier.min_rings <= last_rings {
+            return Err(LadderConfigError::Invalid {
+                field: at,
+                constraint:
+                    "list tiers with `min_rings` strictly ascending from at least 1 - ring \
+                             0 is the pen itself, and two tiers on one footprint are one tier"
+                        .to_string(),
+                value: format!("min_rings = {}", tier.min_rings),
+            });
+        }
+        last_rings = tier.min_rings;
+        if !tier.keeper_ratio_gain.is_finite() || tier.keeper_ratio_gain <= 0.0 {
+            return Err(LadderConfigError::Invalid {
+                field: at,
+                constraint: "set a finite `keeper_ratio_gain` above 0 - it divides the keeper load"
+                    .to_string(),
+                value: format!("keeper_ratio_gain = {}", tier.keeper_ratio_gain),
+            });
+        }
+        if let Some(name) = tier.earns_knowledge.as_deref() {
+            if discovery_id_for(name).is_none() {
+                return Err(LadderConfigError::Invalid {
+                    field: format!("{at}.earns_knowledge"),
+                    constraint: "name a knowledge the sim has a discovery for (see \
+                                 `discovery_id_for`)"
+                        .to_string(),
+                    value: format!("earns_knowledge = '{name}'"),
+                });
+            }
+        }
+    }
+    if !rung.knowledge_gains.is_empty() && source != SourceKind::Herd {
+        return Err(LadderConfigError::Invalid {
+            field: format!("{where_}.knowledge_gains"),
+            constraint: "sit on a herd rung - a gain scales a herd's regrowth rate".to_string(),
+            value: format!("{} gain(s)", rung.knowledge_gains.len()),
+        });
+    }
+    for (index, gain) in rung.knowledge_gains.iter().enumerate() {
+        let at = format!("{where_}.knowledge_gains[{index}]");
+        if discovery_id_for(&gain.knowledge).is_none() {
+            return Err(LadderConfigError::Invalid {
+                field: format!("{at}.knowledge"),
+                constraint: "name a knowledge the sim has a discovery for (see `discovery_id_for`)"
+                    .to_string(),
+                value: format!("knowledge = '{}'", gain.knowledge),
+            });
+        }
+        if !gain.regrowth_gain.is_finite() || gain.regrowth_gain <= 0.0 {
+            return Err(LadderConfigError::Invalid {
+                field: at,
+                constraint: "set a finite `regrowth_gain` above 0 - it multiplies the herd's \
+                             regrowth rate"
+                    .to_string(),
+                value: format!("regrowth_gain = {}", gain.regrowth_gain),
+            });
+        }
+    }
+    Ok(())
+}
+
 fn validate_site_requirement(rung: &RungDef, where_: &str) -> Result<(), LadderConfigError> {
-    let Some(site) = rung.site_requirement.as_ref() else {
-        return Ok(());
-    };
+    if rung.site_requirement.is_none() && !rung.site_relaxations.is_empty() {
+        return Err(LadderConfigError::Invalid {
+            field: format!("{where_}.site_relaxations"),
+            constraint:
+                "relax a site rule the rung has - a rung with `site_requirement: null` asks \
+                         nothing of the site, so there is nothing for a lesson to loosen"
+                    .to_string(),
+            value: format!("{} relaxation(s)", rung.site_relaxations.len()),
+        });
+    }
+    for (index, relaxation) in rung.site_relaxations.iter().enumerate() {
+        if discovery_id_for(&relaxation.knowledge).is_none() {
+            return Err(LadderConfigError::Invalid {
+                field: format!("{where_}.site_relaxations[{index}].knowledge"),
+                constraint: "name a knowledge the sim has a discovery for (see `discovery_id_for`)"
+                    .to_string(),
+                value: format!("knowledge = '{}'", relaxation.knowledge),
+            });
+        }
+        validate_one_site_requirement(
+            &relaxation.site_requirement,
+            &format!("{where_}.site_relaxations[{index}]"),
+        )?;
+    }
+    match rung.site_requirement.as_ref() {
+        Some(site) => validate_one_site_requirement(site, where_),
+        None => Ok(()),
+    }
+}
+
+fn validate_one_site_requirement(
+    site: &RungSiteRequirement,
+    where_: &str,
+) -> Result<(), LadderConfigError> {
     if !site.min_forage_capacity.is_finite() || site.min_forage_capacity < NO_FORAGE_CAPACITY {
         return Err(LadderConfigError::Invalid {
             field: where_.to_string(),
@@ -5787,6 +6082,18 @@ pub fn knows(
     threshold: f32,
 ) -> bool {
     ledger.get_progress(faction, discovery) >= scalar_from_f32(threshold)
+}
+
+/// **DOES `faction` HOLD THE LESSON CALLED `name`?** - [`knows`] keyed by the knowledge's config name
+/// (`worked_land`), the question a rung's `site_relaxations` ask. A name the tag table does not map
+/// is never held (a ladder naming one is refused at load).
+pub fn knows_lesson(
+    ledger: &DiscoveryProgressLedger,
+    faction: FactionId,
+    name: &str,
+    threshold: f32,
+) -> bool {
+    discovery_id_for(name).is_some_and(|id| knows(ledger, faction, id, threshold))
 }
 
 #[derive(Debug, Error)]
@@ -6325,10 +6632,10 @@ mod tests {
     #[test]
     fn a_verb_is_unique_across_the_ladder() {
         let err = reject(|json| {
-            let index = rung_index(json, "plant", "field");
+            let index = rung_index(json, "plant", "farm");
             json["rungs"][index]["verb"] = Value::String("cultivate".to_string());
         });
-        assert_rejects(err, "plant:field");
+        assert_rejects(err, "plant:farm");
     }
 
     /// **THE SHIPPED LADDER'S PROPERTIES ARE WHAT THE ENGINE'S IDENTITY TESTS USED TO BE.** Each
@@ -6343,7 +6650,7 @@ mod tests {
                 .unwrap_or_else(|| panic!("{branch}:{id} is shipped"))
         };
         let tended = rung("plant", "tended");
-        let field = rung("plant", "field");
+        let field = rung("plant", "farm");
         let pastoral = rung("animal", "pastoral");
         let pen = rung("animal", "pen");
         assert_eq!(tended.trait_set(), RungTraits::of(&[RungTrait::Managed]));
@@ -6369,7 +6676,7 @@ mod tests {
         let words = [
             ("plant:wild", "Wild ground", "wild ground"),
             ("plant:tended", "Tended patch", "a tended patch"),
-            ("plant:field", "Field", "a field"),
+            ("plant:farm", "Farm", "a farm"),
             ("animal:wild", "Wild herd", "a wild herd"),
             ("animal:pastoral", "Tamed herd", "a tamed herd"),
             ("animal:pen", "Pen", "a pen"),
@@ -6653,7 +6960,7 @@ mod tests {
         let ladder = LadderConfig::builtin();
         let price = |rung: &RungDef| rung.build_cost(RUNG_COST_UNSCALED);
         let tended = raise_cost(&ladder, shipped::plant_tended());
-        let field = raise_cost(&ladder, shipped::plant_field());
+        let field = raise_cost(&ladder, shipped::plant_farm());
         let at = |position| RungStanding::at(&ladder, shipped::plant(), position, price);
         assert_eq!(at(RUNG_UNSTARTED).traits, RungTraits::NONE);
         let tended_done = at(tended);
@@ -6894,7 +7201,7 @@ mod tests {
         let ladder = LadderConfig::builtin();
         for key in [
             shipped::plant_tended(),
-            shipped::plant_field(),
+            shipped::plant_farm(),
             shipped::animal_pastoral(),
             shipped::animal_pen(),
         ] {
@@ -6975,7 +7282,7 @@ mod tests {
 
         for key in [
             shipped::plant_tended(),
-            shipped::plant_field(),
+            shipped::plant_farm(),
             shipped::animal_pen(),
         ] {
             let rung = ladder.rung(key);
@@ -7449,7 +7756,7 @@ mod tests {
         // upkeep (`docs/plan_standing_upkeep.md` §2.4). The penalties still differ in kind (a plant
         // meter bleeds, an animal flock sheds); the grace that gates them does not.
         let tended = ladder.rung(shipped::plant_tended()).upkeep_grace_turns();
-        let field = ladder.rung(shipped::plant_field()).upkeep_grace_turns();
+        let field = ladder.rung(shipped::plant_farm()).upkeep_grace_turns();
         let pastoral = ladder.rung(shipped::animal_pastoral()).upkeep_grace_turns();
         let pen = ladder.rung(shipped::animal_pen()).upkeep_grace_turns();
 
@@ -7503,7 +7810,7 @@ mod tests {
         let ladder = LadderConfig::builtin();
         for key in [
             shipped::plant_tended(),
-            shipped::plant_field(),
+            shipped::plant_farm(),
             shipped::animal_pastoral(),
             shipped::animal_pen(),
         ] {
@@ -7603,7 +7910,7 @@ mod tests {
         let ladder = LadderConfig::builtin();
         for key in [
             shipped::plant_tended(),
-            shipped::plant_field(),
+            shipped::plant_farm(),
             shipped::animal_pastoral(),
             shipped::animal_pen(),
         ] {
@@ -7730,15 +8037,118 @@ mod tests {
     }
 
     // Both knowledge-link rejection tests used to reach for `penning` / `seed_selection` as their
-    // *unknown* name. Slice 4 coded both, so they need a name that is still genuinely unmapped —
-    // `selective_breeding` (rung 4, §6: named in the design, deliberately not built).
+    // *unknown* name. Slice 4 coded both, so they need a name that is still genuinely unmapped -
+    // `animal_magnetism` (a name no discovery maps).
     #[test]
     fn rejects_an_unknown_unlock_knowledge() {
         let err = reject(|json| {
             let idx = rung_index(json, "animal", "pen");
-            json["rungs"][idx]["unlock_knowledge"] = "selective_breeding".into();
+            json["rungs"][idx]["unlock_knowledge"] = "animal_magnetism".into();
         });
         assert_rejects(err, "animal:pen");
+    }
+
+    /// **A SITE RELAXATION NAMES A LESSON THE SIM HAS.** The boot check is the same one
+    /// `unlock_knowledge` gets, so a typo cannot ship a rule no faction can ever select.
+    #[test]
+    fn rejects_a_site_relaxation_naming_an_unknown_lesson() {
+        let err = reject(|json| {
+            let idx = rung_index(json, "plant", "farm");
+            json["rungs"][idx]["site_relaxations"][0]["knowledge"] = "irrigation".into();
+        });
+        assert_rejects(err, "site_relaxations[0].knowledge");
+    }
+
+    /// **A SIZE TIER IS CONFIG THE BOOT CHECKS**: a non-positive keeper gain, rings that do not ascend
+    /// from 1, a tier on a rung that is not enclosed and an unknown taught lesson are all refused.
+    #[test]
+    fn rejects_a_malformed_size_tier() {
+        let err = reject(|json| {
+            let idx = rung_index(json, "animal", "pen");
+            json["rungs"][idx]["size_tiers"][0]["keeper_ratio_gain"] = 0.0.into();
+        });
+        assert_rejects(err, "size_tiers[0]");
+        let err = reject(|json| {
+            let idx = rung_index(json, "animal", "pen");
+            json["rungs"][idx]["size_tiers"][0]["min_rings"] = 0.into();
+        });
+        assert_rejects(err, "size_tiers[0]");
+        let err = reject(|json| {
+            let idx = rung_index(json, "animal", "pastoral");
+            let tiers = json["rungs"][rung_index(json, "animal", "pen")]["size_tiers"].clone();
+            json["rungs"][idx]["size_tiers"] = tiers;
+        });
+        assert_rejects(err, "size_tiers");
+        let err = reject(|json| {
+            let idx = rung_index(json, "animal", "pen");
+            json["rungs"][idx]["size_tiers"][0]["earns_knowledge"] = "animal_magnetism".into();
+        });
+        assert_rejects(err, "earns_knowledge");
+    }
+
+    /// **A KNOWLEDGE GAIN IS A POSITIVE MULTIPLIER ON A KNOWN LESSON**, on a herd rung only.
+    #[test]
+    fn rejects_a_malformed_knowledge_gain() {
+        let err = reject(|json| {
+            let idx = rung_index(json, "animal", "pen");
+            json["rungs"][idx]["knowledge_gains"][0]["regrowth_gain"] = (-1.0).into();
+        });
+        assert_rejects(err, "knowledge_gains[0]");
+        let err = reject(|json| {
+            let idx = rung_index(json, "animal", "pen");
+            json["rungs"][idx]["knowledge_gains"][0]["knowledge"] = "animal_magnetism".into();
+        });
+        assert_rejects(err, "knowledge_gains[0].knowledge");
+    }
+
+    /// **THE RANCH IS A TIER OF THE PEN AND ITS LESSON IS ON THE ROSTER**: the shipped pen's tier is
+    /// found by rings, a ring short of it is no tier, and the roster carries the lesson the tier teaches.
+    #[test]
+    fn the_shipped_pen_declares_a_ranch_whose_lesson_is_on_the_roster() {
+        let ladder = LadderConfig::builtin();
+        let pen = ladder.rung(shipped::animal_pen());
+        let tier = pen.size_tiers.first().expect("the pen declares a tier");
+        assert_eq!(
+            pen.size_tier_for(tier.min_rings).map(|t| t.id.as_str()),
+            Some("ranch")
+        );
+        assert!(pen.size_tier_for(tier.min_rings - 1).is_none());
+        assert!(ladder
+            .knowledge_roster()
+            .iter()
+            .any(|entry| entry.knowledge == "selective_breeding"));
+    }
+
+    /// **A RELAXATION LOOSENS A RULE THE RUNG HAS**: on a rung with `site_requirement: null` there is
+    /// nothing to loosen, and the load says so.
+    #[test]
+    fn rejects_a_site_relaxation_on_a_rung_that_asks_nothing_of_the_site() {
+        let err = reject(|json| {
+            let idx = rung_index(json, "plant", "farm");
+            json["rungs"][idx]["site_requirement"] = Value::Null;
+        });
+        assert_rejects(err, "site_relaxations");
+    }
+
+    /// **THE EFFECTIVE RULE IS THE LAST RELAXATION THE FACTION HOLDS**, else the rung's own - the
+    /// shipped Farm's own rule needs a gathering site, and Worked Land drops it.
+    #[test]
+    fn the_effective_site_rule_is_the_last_held_relaxation() {
+        let ladder = LadderConfig::builtin();
+        let farm = ladder.rung(shipped::plant_farm());
+        let own = farm
+            .effective_site_requirement(&|_| false)
+            .expect("the Farm asks something of the site");
+        assert!(own.requires_gathering_site);
+        let relaxed = farm
+            .effective_site_requirement(&|name| name == "worked_land")
+            .expect("the relaxation still asks something");
+        assert!(!relaxed.requires_gathering_site);
+        assert!(
+            relaxed.requires_fresh_water,
+            "the water rule survives the lesson"
+        );
+        assert!(relaxed.min_forage_capacity > own.min_forage_capacity);
     }
 
     #[test]
@@ -8624,12 +9034,19 @@ mod tests {
                 .map(|(lesson, _)| lesson),
             Some(FODDERING_DISCOVERY_ID)
         );
-        // A rung that teaches nothing yields nothing even when everything else holds (`plant:field`'s
-        // `irrigation`/`rotation` is a parked rung-4 lesson).
+        // Working a Farm teaches **Worked Land**, the lesson that loosens the Farm's own site rule.
         assert_eq!(
-            ladder.rung(shipped::plant_field()).knowledge_accrual(
+            ladder
+                .rung(shipped::plant_farm())
+                .knowledge_accrual(FOOD_PEAK_FLOOR, true, &ladder.knowledge)
+                .map(|(lesson, _)| lesson),
+            Some(crate::forage::WORKED_LAND_DISCOVERY_ID)
+        );
+        // A rung that teaches nothing yields nothing even when everything else holds.
+        assert_eq!(
+            ladder.rung(shipped::plant_tended()).knowledge_accrual(
                 FOOD_PEAK_FLOOR,
-                true,
+                false,
                 &ladder.knowledge
             ),
             None
@@ -8672,7 +9089,7 @@ mod tests {
         const FIELD_REFERENCE_CREW: u32 = 3;
         for (key, crew) in [
             (shipped::plant_tended(), TENDED_REFERENCE_CREW),
-            (shipped::plant_field(), FIELD_REFERENCE_CREW),
+            (shipped::plant_farm(), FIELD_REFERENCE_CREW),
             (shipped::animal_pastoral(), PASTORAL_REFERENCE_CREW),
             (shipped::animal_pen(), PEN_REFERENCE_CREW),
         ] {
@@ -8717,7 +9134,7 @@ mod tests {
         let ladder = LadderConfig::builtin();
         for key in [
             shipped::plant_tended(),
-            shipped::plant_field(),
+            shipped::plant_farm(),
             shipped::animal_pastoral(),
             shipped::animal_pen(),
         ] {
@@ -8812,7 +9229,7 @@ mod tests {
         for key in [
             shipped::plant_wild(),
             shipped::plant_tended(),
-            shipped::plant_field(),
+            shipped::plant_farm(),
         ] {
             let site = ladder
                 .rung(key)
@@ -8826,7 +9243,7 @@ mod tests {
         }
         assert!(
             ladder
-                .rung(shipped::plant_field())
+                .rung(shipped::plant_farm())
                 .site_requirement
                 .expect("rung 3 has a site requirement")
                 .requires_fresh_water,
@@ -8851,7 +9268,7 @@ mod tests {
     #[test]
     fn the_site_requirement_names_which_way_the_land_refuses() {
         let site = LadderConfig::builtin()
-            .rung(shipped::plant_field())
+            .rung(shipped::plant_farm())
             .site_requirement
             .expect("rung 3 has a site requirement");
 
@@ -8910,7 +9327,7 @@ mod tests {
         // at rung 4. That difference IS what Farm unlocks.
         assert_eq!(
             LadderConfig::builtin()
-                .rung(shipped::plant_field())
+                .rung(shipped::plant_farm())
                 .site_requirement
                 .expect("rung 3 has a site requirement")
                 .refusal(false, 195.0, true, NO_DEPOSIT_FLOOR),
@@ -8922,10 +9339,10 @@ mod tests {
     #[test]
     fn rejects_a_negative_fertility_floor() {
         let err = reject(|json| {
-            let idx = rung_index(json, "plant", "field");
+            let idx = rung_index(json, "plant", "farm");
             json["rungs"][idx]["site_requirement"]["min_forage_capacity"] = (-1.0).into();
         });
-        assert_rejects(err, "plant:field");
+        assert_rejects(err, "plant:farm");
     }
 
     /// A `site_requirement` that admits every tile is a placement rule that places no rule — say
@@ -8933,12 +9350,12 @@ mod tests {
     #[test]
     fn rejects_a_site_requirement_that_requires_nothing() {
         let err = reject(|json| {
-            let idx = rung_index(json, "plant", "field");
+            let idx = rung_index(json, "plant", "farm");
             json["rungs"][idx]["site_requirement"]["requires_gathering_site"] = false.into();
             json["rungs"][idx]["site_requirement"]["min_forage_capacity"] = (0.0).into();
             json["rungs"][idx]["site_requirement"]["requires_fresh_water"] = false.into();
         });
-        assert_rejects(err, "plant:field");
+        assert_rejects(err, "plant:farm");
     }
 
     /// **A LADDER MISSING THE TRAIT A PAYOFF TABLE IS KEYED BY IS REFUSED** - the herd ladder's
@@ -8984,7 +9401,7 @@ mod tests {
     fn a_position_resolves_to_one_place_on_the_plant_branch() {
         let ladder = LadderConfig::builtin();
         let tended = raise_cost(&ladder, shipped::plant_tended());
-        let field = raise_cost(&ladder, shipped::plant_field());
+        let field = raise_cost(&ladder, shipped::plant_farm());
 
         let unstarted = RungStanding::at(&ladder, shipped::plant(), RUNG_UNSTARTED, |key| {
             key.build_cost(RUNG_COST_UNSCALED)
@@ -9004,7 +9421,7 @@ mod tests {
             key.build_cost(RUNG_COST_UNSCALED)
         });
         assert_eq!(tended_done.held, shipped::plant_tended());
-        assert_eq!(tended_done.raising, Some(shipped::plant_field()));
+        assert_eq!(tended_done.raising, Some(shipped::plant_farm()));
         assert!((tended_done.credit - NO_RUNG_CREDIT).abs() < 1e-6);
 
         let mid_field = RungStanding::at(
@@ -9014,13 +9431,13 @@ mod tests {
             |rung| rung.build_cost(RUNG_COST_UNSCALED),
         );
         assert_eq!(mid_field.held, shipped::plant_tended());
-        assert_eq!(mid_field.raising, Some(shipped::plant_field()));
+        assert_eq!(mid_field.raising, Some(shipped::plant_farm()));
         assert!((mid_field.credit - HALF_WAY_UP).abs() < 1e-6);
 
         let topped_out = RungStanding::at(&ladder, shipped::plant(), tended + field, |key| {
             key.build_cost(RUNG_COST_UNSCALED)
         });
-        assert_eq!(topped_out.held, shipped::plant_field());
+        assert_eq!(topped_out.held, shipped::plant_farm());
         assert_eq!(topped_out.raising, None);
     }
 
@@ -9031,9 +9448,9 @@ mod tests {
     fn a_half_raised_rung_pays_the_rung_below_in_full_plus_its_share_of_the_step() {
         let ladder = LadderConfig::builtin();
         let tended = raise_cost(&ladder, shipped::plant_tended());
-        let field = raise_cost(&ladder, shipped::plant_field());
+        let field = raise_cost(&ladder, shipped::plant_farm());
         let value_at = |mark: RungMark| {
-            if mark.id == shipped::plant_field() {
+            if mark.id == shipped::plant_farm() {
                 FIELD_PAYS
             } else {
                 TENDED_PAYS
@@ -9126,10 +9543,10 @@ mod tests {
                 .as_f64()
                 .expect("the tended rung declares a demand")
                 / 2.0;
-            let field = rung_index(json, "plant", "field");
+            let field = rung_index(json, "plant", "farm");
             json["rungs"][field]["upkeep"]["work_per_turn"] = cheaper.into();
         });
-        assert_rejects(err, "plant:field");
+        assert_rejects(err, "plant:farm");
     }
 
     /// A rung with nothing to build has no part-filled meter, so it has no shape to declare — and

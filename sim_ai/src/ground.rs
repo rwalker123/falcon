@@ -824,7 +824,7 @@ fn patch_site(memory: &SeatMemory, band: &PopulationCohortState, patch: &ForageP
     // the crop already committed (nothing, at the start).
     let tended_food = Food::climb_payoff(patch, Climb::Tended).map_or(0.0, |(_, payoff)| payoff);
     let field_food = if patch
-        .quote(crate::rungs::PLANT_FIELD)
+        .quote(crate::rungs::PLANT_FARM)
         .site_refusal
         .is_empty()
     {
@@ -858,11 +858,11 @@ fn patch_site(memory: &SeatMemory, band: &PopulationCohortState, patch: &ForageP
         field_food,
         field_hands: crew_for(field_food, rate)
             + crew_for(
-                patch.quote(crate::rungs::PLANT_FIELD).upkeep_demand,
+                patch.quote(crate::rungs::PLANT_FARM).upkeep_demand,
                 per_turn,
             ),
         field_hands_hoed: crew_for(field_food, rate)
-            + crew_for(patch.quote(crate::rungs::PLANT_FIELD).upkeep_demand, hoed),
+            + crew_for(patch.quote(crate::rungs::PLANT_FARM).upkeep_demand, hoed),
         kit_needed: None,
         kit_units_held: None,
         unforecast: false,

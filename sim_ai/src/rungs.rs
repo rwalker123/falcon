@@ -7,7 +7,7 @@
 /// The plant branch's tended rung (verb `cultivate`).
 pub const PLANT_TENDED: &str = "plant:tended";
 /// The plant branch's sown rung (verb `sow`).
-pub const PLANT_FIELD: &str = "plant:field";
+pub const PLANT_FARM: &str = "plant:farm";
 /// The animal branch's domesticated rung (verb `tame`).
 pub const ANIMAL_PASTORAL: &str = "animal:pastoral";
 /// The animal branch's enclosed rung (verb `corral`).

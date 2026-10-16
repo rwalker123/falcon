@@ -259,14 +259,14 @@ is a record; the ladder is a list; adding a rung after farm/pen is appending a r
 
 **`site_requirement` is where the *scarcity* of a rung lives**, and it is why rung 4 is a config edit.
 **All three plant rungs declare one** (amended by issue #464 — see §5): rungs 1-2 carry
-`{ requires_gathering_site: true }`, and `plant:field` carries
+`{ requires_gathering_site: true }`, and `plant:farm` carries
 `{ requires_gathering_site: true, min_forage_capacity: 0, requires_fresh_water: true }` — gathering
 itself is site-bound, so rung 3 narrows an already-scarce set by water rather than starting a second
 scarcity. **Farm (rung 4) is that record, looser**: `requires_gathering_site: false` with a fertility
 floor put back, which is the whole of what it unlocks. Nothing else changes.
 
 > **This paragraph was reversed once, and the earlier form is what the retired text below describes.**
-> It read *"`plant:field` declares `{ min_forage_capacity: 195, requires_fresh_water: true }` — rung 3
+> It read *"`plant:farm` declares `{ min_forage_capacity: 195, requires_fresh_water: true }` — rung 3
 > moves seed but cannot fertilize, so the land must do it"*, with rung 4 as "a lower floor and
 > `requires_fresh_water: false`". See §5's amendment for why it did not survive contact with the
 > shipped client.
@@ -295,8 +295,11 @@ interesting future rungs (selective breeding, irrigation, traction, crop rotatio
   field (a yield vector, aligning with the "command yield-vector" task in `plan_intensification.md`).
 - **Reliability / no flight** — a tamed herd is *owned*: won't migrate away, won't be hunted out by a
   rival, no failed-hunt variance. "Steady and owned" is worth intensifying for even at equal mean yield.
-- **Selective breeding (rung 4)** — a long-penned herd slowly improves (`r`/`K` creep up): the patient
-  rancher's payoff, and the first config-only rung the engine should be able to express.
+- **Selective breeding** — *amended (shipped)*: not a rung. It is a lesson earned by keeping a **Ranch**
+  (a pen whose fence has been extended to the size tier's `min_rings`, a derived size tier of the Pen
+  rung, `size_tiers` in the ladder config), and knowing it multiplies the regrowth rate of every penned
+  herd of that people (`knowledge_gains`). The Ranch's own bonus is fewer keepers per animal
+  (`keeper_ratio_gain`, the work term of the keeping only).
 
 ---
 
@@ -501,7 +504,11 @@ interesting future rungs (selective breeding, irrigation, traction, crop rotatio
     per-worker thesis is to be restored.
   - *Remaining:* the **client** (slice 8) — nothing renders `wastedYield`, and the tended patch's card
     still needs to show four policy rows rather than one number.
-- [ ] **Rung 4 (future, own arc): Worked Land** (plants) — irrigation / clearing / terracing makes
+- [x] *Amended (shipped):* **Worked Land** is not a fourth plant rung. It is a lesson earned by working a
+  **Farm** (`plant:farm`, renamed from `plant:field`) and a `site_relaxations` entry on the Farm: with the
+  lesson held the Farm's site rule drops the gathering-site requirement and asks only for fertile, watered
+  ground. The text below is the original plan.
+- [ ] **Rung 4 (original plan): Worked Land** (plants) — irrigation / clearing / terracing makes
   unwilling ground farmable; this is where `plan_intensification.md`'s "plant on **arbitrary** tiles"
   actually lives. Its animal twin is **Selective Breeding**. Both should be config-shaped rungs on the
   slice-2 engine; Worked Land likely needs one new behavior primitive (mutating a tile's suitability).

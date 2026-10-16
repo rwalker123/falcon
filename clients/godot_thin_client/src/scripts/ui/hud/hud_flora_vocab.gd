@@ -181,6 +181,17 @@ const SOW_REFUSAL_NOT_GATHERING_SITE := "not_gathering_site"
 
 const SOW_REFUSAL_TOO_DRY := "too_dry"
 
+# The server's verdict for ground a LESSON would open: a placing rung whose `site_relaxations` name a
+# lesson this people has not learned. It reads like the other refusals but names the lesson, which the
+# gate layer composes from the quote's own relaxation rather than from this table.
+const SOW_REFUSAL_NEEDS_LESSON := "needs_lesson"
+const SOW_NEEDS_LESSON_FORMAT := "Off your gathering sites — learn %s to farm ground like this."
+
+# The tile card's teaching line for such ground, and its key. `Learn Worked Land — work a farm`.
+const SITE_LESSON_ROW := "Farming"
+const SITE_LESSON_FORMAT := "Learn %s"
+const SITE_LESSON_TEACHER_FORMAT := "Learn %s — work a %s"
+
 const SOW_REFUSAL_TOO_POOR_AND_TOO_DRY := "too_poor_and_too_dry"
 
 const SOW_REFUSAL_REASONS := {
@@ -214,7 +225,7 @@ const SOW_REFUSAL_FALLBACK := "This ground will not take seed — your people ca
 # may stand on ground that was never tended. "Sowing N%" follows the pen's "Building N%" / the fence's
 # "Fencing N%" build-verb convention; the completed badge is a Field — deliberately a different WORD
 # and a different glyph from "🌾 Tended Patch", because rung 3 is a different thing, not a bigger number.
-const FIELD_ROW := "Field"
+const FIELD_ROW := "Farm"
 
 # One plant's row within the basket — `Wild Grain 45%`. Shared with the crop picker, which prints its
 # own rows with it too (beside the `· N.N×` payoff term the picker adds).
@@ -665,3 +676,8 @@ const TAKE_UNQUOTED_NOTE := "This selection is not priced yet — no take is quo
 # `compositionMaterialPerBiomass` publishes it per plant, and the sheet composes it per MATERIAL ID
 # through the same weighted mean the two scalars take, so *tick cotton, see how much fibre* — the
 # case the whole feature was argued on — is answered with a real number.
+
+## Hover on the commit button off the gathering sites when no crop can be named: the server takes a
+## crew there only for a crop it can raise a farm of.
+const OFFSITE_NEEDS_CROP_HINT := "Pick a crop to sow - a crew works ground like this only to raise a farm."
+

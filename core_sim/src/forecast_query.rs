@@ -1234,7 +1234,7 @@ fn answer_work_party_forecast(
     // **The source and the job its kit must serve.** A herd id the registry does not carry, a tile
     // with no patch on it, or ground holding none of the asked material, is refused by name.
     enum Asked {
-        Hunt(Herd),
+        Hunt(Box<Herd>),
         Forage {
             patch: crate::forage::ForagePatch,
             tile: bevy::math::UVec2,
@@ -1255,7 +1255,7 @@ fn answer_work_party_forecast(
                 return query_failure(query_error::UNKNOWN_HERD);
             };
             (
-                Asked::Hunt(herd),
+                Asked::Hunt(Box::new(herd)),
                 crate::components::LaborTarget::Hunt {
                     fauna_id: herd_id.clone(),
                     floor: ask.floor,

@@ -323,7 +323,7 @@ material-half-of-upkeep arc's SEVEN at once — see `harness-headless-guards.md`
 `FOW_DISCOVERED_HIDDEN_KEYS` under the one rule the whole patch payload follows.
 
 **`patch_current_rung` is the worked example of the fog half.** The wire's `currentRung` states the
-rung a patch STANDS on (`plant:tended`, `plant:field`) — which is exactly the ladder position
+rung a patch STANDS on (`plant:tended`, `plant:farm`) — which is exactly the ladder position
 `patch_is_cultivated` / `patch_is_field` are redacted to hide, and the same reading
 `patch_carrying_capacity` was added to that list to withhold. A cross-ref line without the redaction
 entry re-opens that leak in one token, on a hex the player cannot currently see.

@@ -140,7 +140,7 @@ fn the_tiles_capacity_is_the_same_at_every_rung() {
             // patch, the top of the Field's for a Field, and zero for a wild stand.
             let ladder = core_sim::LadderConfig::builtin();
             let rung = match field {
-                Some(true) => Some(shipped::plant_field()),
+                Some(true) => Some(shipped::plant_farm()),
                 Some(false) => Some(shipped::plant_tended()),
                 None => None,
             };
@@ -1088,16 +1088,16 @@ fn the_published_field_yield_never_inherits_the_tended_rungs_basket() {
     let as_field = row(&mut app, coord);
 
     assert!(
-        as_field.quote("plant:field").food_yield > 0.0,
+        as_field.quote("plant:farm").food_yield > 0.0,
         "the fixture must quote a real Field"
     );
     assert!(
-        (tended.quote("plant:field").food_yield - as_field.quote("plant:field").food_yield).abs()
-            <= EPSILON * as_field.quote("plant:field").food_yield,
+        (tended.quote("plant:farm").food_yield - as_field.quote("plant:farm").food_yield).abs()
+            <= EPSILON * as_field.quote("plant:farm").food_yield,
         "fieldYield on a tended patch must be what the Field it would become actually pays: \
          {} vs {}",
-        tended.quote("plant:field").food_yield,
-        as_field.quote("plant:field").food_yield
+        tended.quote("plant:farm").food_yield,
+        as_field.quote("plant:farm").food_yield
     );
 
     // …and it IS the crop picker's own Sow payoff for that crop on this tile — quote and payout are
@@ -1107,12 +1107,12 @@ fn the_published_field_yield_never_inherits_the_tended_rungs_basket() {
         .iter()
         .find(|share| share.species == crop)
         .expect("the committed crop is on its own patch's basket")
-        .quote("plant:field")
+        .quote("plant:farm")
         .food_payoff;
     assert!(
-        (tended.quote("plant:field").food_yield - picker).abs() <= EPSILON * picker.max(1.0),
+        (tended.quote("plant:farm").food_yield - picker).abs() <= EPSILON * picker.max(1.0),
         "the published fieldYield on a tended patch must BE the picker's sowPayoff: {} vs {picker}",
-        tended.quote("plant:field").food_yield
+        tended.quote("plant:farm").food_yield
     );
 
     // And the converse, so the two rungs cannot collapse onto one number from the other side: the
@@ -1132,11 +1132,11 @@ fn the_published_field_yield_never_inherits_the_tended_rungs_basket() {
         tended.quote("plant:tended").food_yield
     );
     assert!(
-        (tended.quote("plant:tended").food_yield - tended.quote("plant:field").food_yield).abs()
+        (tended.quote("plant:tended").food_yield - tended.quote("plant:farm").food_yield).abs()
             > EPSILON,
         "the two rungs must not share a number: tended {} vs field {}",
         tended.quote("plant:tended").food_yield,
-        tended.quote("plant:field").food_yield
+        tended.quote("plant:farm").food_yield
     );
 }
 
@@ -1166,7 +1166,7 @@ fn the_composition_seam_answers_the_rung_it_is_asked_about_not_the_one_the_patch
             &composition,
             &FloraConfig::builtin(),
             &labor.forage,
-            core_sim::PlantPayoff::of_rung(shipped::ladder(), shipped::plant_field()),
+            core_sim::PlantPayoff::of_rung(shipped::ladder(), shipped::plant_farm()),
         );
         assert_eq!(
             planted.len(),

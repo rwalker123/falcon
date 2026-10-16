@@ -478,12 +478,11 @@ impl Observation {
                     owner: patch.and_then(|patch| patch.owner),
                     cultivated: patch
                         .is_some_and(|patch| patch.quote(crate::rungs::PLANT_TENDED).reached),
-                    field: patch
-                        .is_some_and(|patch| patch.quote(crate::rungs::PLANT_FIELD).reached),
+                    field: patch.is_some_and(|patch| patch.quote(crate::rungs::PLANT_FARM).reached),
                     cultivation_progress: patch
                         .map(|patch| patch.quote(crate::rungs::PLANT_TENDED).progress),
                     field_progress: patch
-                        .map(|patch| patch.quote(crate::rungs::PLANT_FIELD).progress),
+                        .map(|patch| patch.quote(crate::rungs::PLANT_FARM).progress),
                     build: patch.and_then(patch_build),
                     upkeep: patch.and_then(patch_upkeep),
                     herd,
@@ -538,7 +537,7 @@ impl Observation {
                     .filter(|patch| patch.quote(crate::rungs::PLANT_TENDED).reached)
                     .count(),
                 patches_field: owned_patches(view, faction)
-                    .filter(|patch| patch.quote(crate::rungs::PLANT_FIELD).reached)
+                    .filter(|patch| patch.quote(crate::rungs::PLANT_FARM).reached)
                     .count(),
             },
             bands,

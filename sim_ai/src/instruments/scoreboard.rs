@@ -135,7 +135,7 @@ impl ScoreRow {
             .iter()
             .filter(|patch| {
                 patch.quote(crate::rungs::PLANT_TENDED).reached
-                    || patch.quote(crate::rungs::PLANT_FIELD).reached
+                    || patch.quote(crate::rungs::PLANT_FARM).reached
             })
             .count();
 
@@ -271,7 +271,7 @@ mod tests {
             .quote_mut(crate::rungs::PLANT_TENDED)
             .reached = false;
         snapshot.forage_patches[0]
-            .quote_mut(crate::rungs::PLANT_FIELD)
+            .quote_mut(crate::rungs::PLANT_FARM)
             .reached = false;
         snapshot.forage_patches[1].owner = Some(faction);
         snapshot.forage_patches[1]

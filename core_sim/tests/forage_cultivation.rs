@@ -2779,7 +2779,7 @@ fn probe_the_price_of_holding_a_plant_rung() {
     println!("\nWHAT IT COSTS TO HOLD A *FINISHED* IMPROVEMENT, forever:");
     for (label, key) in [
         ("plant:tended", shipped::plant_tended()),
-        ("plant:field", shipped::plant_field()),
+        ("plant:farm", shipped::plant_farm()),
     ] {
         let rung = ladder.rung(key);
         let demand = rung.upkeep_demand(fixture_tender_loads());

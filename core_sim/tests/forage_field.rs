@@ -142,7 +142,7 @@ fn spawn_world_on(grid_size: UVec2, seed: u64) -> App {
     // **Hydrology is not optional here, and leaving it out is what broke this file.**
     // `spawn_initial_world` builds terrain; `generate_hydrology` is a separate Startup system, and it
     // is the *only* stage that stamps `RiverDelta`/`Floodplain` and sets the `river_edges` bits.
-    // `plant:field`'s site rule wants rich ground **and fresh water**, and `tile_is_fresh_watered`
+    // `plant:farm`'s site rule wants rich ground **and fresh water**, and `tile_is_fresh_watered`
     // reads exactly those river edges — so a fixture that skipped hydrology was asking whether a map
     // *with no rivers on it* had riverbank farmland. It does not, and cannot, at any grid size or any
     // seed. Run the pipeline the game runs.
@@ -193,7 +193,7 @@ fn spawn_world_on(grid_size: UVec2, seed: u64) -> App {
 }
 
 /// **The land's own verdict on a tile**, resolved through the *real* seam the sim uses
-/// (`rung_site_refusal` + `tile_is_fresh_watered` against the `plant:field` rung's own
+/// (`rung_site_refusal` + `tile_is_fresh_watered` against the `plant:farm` rung's own
 /// `site_requirement`) — never a restatement of the rule, so a retune of the floor or the water rule
 /// moves these fixtures with the game. `None` = the ground will take seed.
 fn site_verdict(app: &App, coord: UVec2) -> Option<SiteRefusal> {
@@ -222,12 +222,13 @@ fn site_verdict(app: &App, coord: UVec2) -> Option<SiteRefusal> {
     });
     let ladder = app.world.resource::<LadderConfigHandle>().get();
     rung_site_refusal(
-        ladder.rung(shipped::plant_field()),
+        ladder.rung(shipped::plant_farm()),
         ground,
         &labor.forage,
         app.world.resource::<FoodSiteRegistry>().is_site(coord),
         fresh_water,
         core_sim::NO_DEPOSIT_FLOOR,
+        &|_| false,
     )
 }
 
@@ -321,7 +322,7 @@ fn default_sowable_species(app: &App, coord: UVec2) -> Option<String> {
         &composition,
         &flora,
         shipped::ladder(),
-        shipped::plant_field(),
+        shipped::plant_farm(),
     )
 }
 
@@ -356,7 +357,7 @@ fn field_span_here(app: &App, coord: UVec2) -> f32 {
     let registry = app.world.resource::<ForageRegistry>();
     let patch = registry.patch(coord).unwrap_or(&unworked);
     ladder
-        .rung(shipped::plant_field())
+        .rung(shipped::plant_farm())
         .build_cost(core_sim::patch_field_cost_multiplier(
             patch,
             &composition,
@@ -460,7 +461,7 @@ fn spawn_forager_of(
         app.world
             .resource::<LadderConfigHandle>()
             .get()
-            .rung(shipped::plant_field())
+            .rung(shipped::plant_farm())
             .upkeep_crew_needed(loads)
     };
     let band = app
@@ -560,7 +561,7 @@ fn spawn_forager_of(
     // reach for the same hoe, so taking it off disarms both, which is right for a fixture measuring
     // the build's pace and wrong for one measuring the keeping.
     if improvement.is_some() {
-        core_sim::disarm_the_builders(&mut app.world, band, shipped::plant_field());
+        core_sim::disarm_the_builders(&mut app.world, band, shipped::plant_farm());
     }
     band
 }
@@ -601,16 +602,16 @@ fn field_progress_of(app: &App, coord: UVec2) -> f32 {
         .map(|patch| {
             core_sim::patch_rung_work_done(
                 patch,
-                shipped::plant_field(),
+                shipped::plant_farm(),
                 &core_sim::LadderConfig::builtin(),
             )
         })
         .unwrap_or(0.0)
 }
 
-/// The `plant:field` rung's build dials, read off the ladder — the same seam the sim drives sowing
+/// The `plant:farm` rung's build dials, read off the ladder — the same seam the sim drives sowing
 /// with, so a retune moves the tests with the game rather than against it.
-/// **The `plant:field` rung's neglect grace** — the consecutive turns of **shortfall** the feral
+/// **The `plant:farm` rung's neglect grace** — the consecutive turns of **shortfall** the feral
 /// bleed forgives before it starts (`docs/plan_standing_upkeep.md` §2.4). Read off the ladder's
 /// `upkeep` block, never restated; the build's own grace is absent on both plant rungs, because
 /// this branch counts unmet demand rather than un-worked turns.
@@ -639,17 +640,17 @@ fn field_grace(app: &App) -> u32 {
     app.world
         .resource::<LadderConfigHandle>()
         .get()
-        .rung(shipped::plant_field())
+        .rung(shipped::plant_farm())
         .upkeep_grace_turns()
 }
 
-/// **What this file's crew produces on the `plant:field` rung in one turn, and the rung's feral
+/// **What this file's crew produces on the `plant:farm` rung in one turn, and the rung's feral
 /// bleed** — both in absolute work units. The accrual is read at [`SOW_CREW`], the head count the
 /// build fixtures actually staff, because the crew *is* the throughput now
 /// (`docs/plan_unit_costed_work.md` §1.2).
 fn field_build(app: &App, coord: UVec2) -> (f32, f32) {
     let ladder = app.world.resource::<LadderConfigHandle>().get();
-    let field = ladder.rung(shipped::plant_field());
+    let field = ladder.rung(shipped::plant_farm());
     (
         field.build_accrual(
             Some(shipped::sow()),
@@ -676,7 +677,7 @@ const WELL_PAST_ANY_GRACE: u16 = 32;
 /// any size. Derived from the rung's own dials, so a retune of any of the three moves it.
 fn unmaintained_field_turns_before_loss(app: &App, coord: UVec2) -> u32 {
     let ladder = app.world.resource::<LadderConfigHandle>().get();
-    let field = ladder.rung(shipped::plant_field());
+    let field = ladder.rung(shipped::plant_farm());
     let cost = field_cost(app);
     // The Field's whole span is erodable now: there is no retention bar below it
     // (`docs/plan_standing_upkeep.md` §2.8), so what a bleed has to eat before the rung is lost is
@@ -696,7 +697,7 @@ fn unmaintained_field_turns_before_loss(app: &App, coord: UVec2) -> u32 {
 /// (`docs/plan_unit_costed_work.md` §3). The one-turn over-crewed build is real and pinned on
 /// purpose by `forage_cultivation::over_crewing_a_build_is_no_longer_capped`.
 fn sow_crew(app: &App, coord: UVec2) -> u32 {
-    /// The net supply the `plant:field` rung's 75-unit `work_cost` was priced against — the
+    /// The net supply the `plant:farm` rung's 75-unit `work_cost` was priced against — the
     /// staffing this file's paces are all quoted at.
     const NET_WORKER_TURNS: u32 = 3;
     // **Plus the rung's maintenance rate**, which the *keeping* pool owes while the meter is being
@@ -707,7 +708,7 @@ fn sow_crew(app: &App, coord: UVec2) -> u32 {
     app.world
         .resource::<LadderConfigHandle>()
         .get()
-        .rung(shipped::plant_field())
+        .rung(shipped::plant_farm())
         .upkeep_crew_needed(tender_loads_at(app, coord))
         .saturating_add(NET_WORKER_TURNS)
 }
@@ -722,12 +723,12 @@ fn tended_cost(app: &App) -> f32 {
         .expect("the tended rung builds")
 }
 
-/// The whole `plant:field` job, in work units.
+/// The whole `plant:farm` job, in work units.
 fn field_cost(app: &App) -> f32 {
     app.world
         .resource::<LadderConfigHandle>()
         .get()
-        .rung(shipped::plant_field())
+        .rung(shipped::plant_farm())
         .build_cost(RUNG_COST_UNSCALED)
         .expect("the field rung builds")
 }
@@ -743,7 +744,7 @@ fn field_cost(app: &App) -> f32 {
 /// a failed Sow.
 fn turns_to_sow(app: &App, coord: UVec2) -> u32 {
     let ladder = app.world.resource::<LadderConfigHandle>().get();
-    let (base, _) = core_sim::plant_rung_span(shipped::plant_field(), &ladder);
+    let (base, _) = core_sim::plant_rung_span(shipped::plant_farm(), &ladder);
     // **THIS GROUND'S price for the Field** — a Sow's cost varies with how much of the tile it
     // replaces, so a fixture that counted turns off the ladder's declared span would over- or
     // under-shoot the completion by whatever this patch's own multiplier is.
@@ -761,7 +762,7 @@ fn turns_to_sow(app: &App, coord: UVec2) -> u32 {
 /// Every other test in this file runs on [`MECHANIC_GRID`], pinned so a config edit cannot move what
 /// it measures. This one does the opposite **on purpose**: it reads the **shipped** `grid_size` out
 /// of `simulation_config.json` and asks whether the map a player actually gets carries ground that
-/// rung 3 can take seed on. If it does not, `plant:field` is unreachable in the real game — the
+/// rung 3 can take seed on. If it does not, `plant:farm` is unreachable in the real game — the
 /// ladder's top plant rung is decoration — and no mechanic test would ever say so.
 ///
 /// It asserts the *existence* of sowable ground, not a count: the count is an emergent property of
@@ -815,7 +816,7 @@ fn the_shipped_map_carries_sowable_ground() {
         sowable > 0,
         "INTENSIFICATION RUNG 3 IS UNREACHABLE ON THE SHIPPED MAP.\n\
          The shipped grid ({}x{}, seed {PINNED_SEED}) carries 0 tiles that satisfy the \
-         `plant:field` rung's site requirement (rich enough ground, on fresh water), so no band can \
+         `plant:farm` rung's site requirement (rich enough ground, on fresh water), so no band can \
          ever sow a Field and the plant ladder dead-ends at rung 2.\n\
          This is a WORLDGEN result, not a test-fixture problem: the rule is emergent from the \
          heightfield. Do NOT fix it by lowering `min_forage_capacity`, relaxing the fresh-water \
@@ -866,7 +867,7 @@ fn sowing_bare_hospitable_ground_creates_a_patch_and_builds_a_field() {
     // head until it arrives.
     let ladder = core_sim::LadderConfig::builtin();
     let (tended_base, tended_width) = core_sim::plant_rung_span(shipped::plant_tended(), &ladder);
-    let (field_base, _) = core_sim::plant_rung_span(shipped::plant_field(), &ladder);
+    let (field_base, _) = core_sim::plant_rung_span(shipped::plant_farm(), &ladder);
     // **THIS GROUND'S price for the Field, not the ladder's declared one** — see `field_span_here`.
     let field_width = field_span_here(&app, coord);
     fn published_legs(app: &App, coord: UVec2) -> Vec<(String, f32)> {
@@ -889,7 +890,7 @@ fn sowing_bare_hospitable_ground_creates_a_patch_and_builds_a_field() {
         "sowing untouched ground is a two-leg climb, got {legs:?}"
     );
     assert_eq!(legs[0].0, "plant:tended", "…and it clears first: {legs:?}");
-    assert_eq!(legs[1].0, "plant:field", "…then sows: {legs:?}");
+    assert_eq!(legs[1].0, "plant:farm", "…then sows: {legs:?}");
     // **The legs sum to what is LEFT of the climb**, so the whole order is that plus what the first
     // turn above already banked — 125 work units on the shipped ladder, never the Field's own 75.
     let banked = app
@@ -974,7 +975,7 @@ fn a_sow_ordered_on_tended_ground_lays_one_leg_owing_the_fields_own_span() {
     run_turns_with_forage(&mut app, 1);
 
     let ladder = core_sim::LadderConfig::builtin();
-    let (_, field_width) = core_sim::plant_rung_span(shipped::plant_field(), &ladder);
+    let (_, field_width) = core_sim::plant_rung_span(shipped::plant_farm(), &ladder);
     let legs: Vec<_> = app
         .world
         .resource::<ForageRegistry>()
@@ -987,7 +988,7 @@ fn a_sow_ordered_on_tended_ground_lays_one_leg_owing_the_fields_own_span() {
         1,
         "ground that already holds the tended rung has one leg left: {legs:?}"
     );
-    assert_eq!(legs[0].leg.rung, shipped::plant_field());
+    assert_eq!(legs[0].leg.rung, shipped::plant_farm());
     // A turn of work has already landed, so the leg owes the Field's span less that turn's banking —
     // asserted as a bound rather than an equality, because the pool's output is the fixture's, not
     // this test's subject.
@@ -1147,7 +1148,7 @@ fn a_bare_ground_sow_wears_the_builders_kit_on_its_first_leg() {
     // span the per-rung reading cannot see. Without this the arm would pass on a climb that had
     // already crossed into the Field.
     let ladder = app.world.resource::<LadderConfigHandle>().get();
-    let (field_base, _) = core_sim::plant_rung_span(shipped::plant_field(), &ladder);
+    let (field_base, _) = core_sim::plant_rung_span(shipped::plant_farm(), &ladder);
     let position = app
         .world
         .resource::<ForageRegistry>()
@@ -1221,7 +1222,7 @@ fn the_plant_ladder_climbs_wild_then_tended_then_field() {
         let mut app = spawn_world();
         let (tile, coord) = prime_thriving_patch(&mut app);
         match rung {
-            Some(true) => seat_completed_rung(&mut app, coord, shipped::plant_field()),
+            Some(true) => seat_completed_rung(&mut app, coord, shipped::plant_farm()),
             Some(false) => seat_completed_rung(&mut app, coord, shipped::plant_tended()),
             None => {}
         }
@@ -1305,7 +1306,7 @@ fn the_plant_ladder_climbs_wild_then_tended_then_field() {
     ));
     let produced_field = ladder_climbs(core_sim::PlantPayoff::of_rung(
         shipped::ladder(),
-        shipped::plant_field(),
+        shipped::plant_farm(),
     ));
     // Rungs 1–2 are both *gathered*, off the same MSY curve at the same biomass, so the only thing
     // between them is the tended curve's `r` multiplier: a bare rung-2 patch produces **exactly** the
@@ -1468,7 +1469,7 @@ fn sowing_a_tended_patch_leaves_the_gatherers_take_alone_then_upgrades_it() {
 fn a_field_worked_by(crew: u32, ledger: core_sim::BandEquipment) -> (App, Entity, UVec2) {
     let mut app = spawn_world();
     let (tile, coord) = prime_thriving_patch(&mut app);
-    seat_completed_rung(&mut app, coord, shipped::plant_field());
+    seat_completed_rung(&mut app, coord, shipped::plant_farm());
     let crop = default_sowable_species(&app, coord);
     {
         let mut registry = app.world.resource_mut::<ForageRegistry>();
@@ -1563,7 +1564,7 @@ fn field_bill_in_bare_hands(app: &App) -> f32 {
     app.world
         .resource::<LadderConfigHandle>()
         .get()
-        .rung(shipped::plant_field())
+        .rung(shipped::plant_farm())
         .upkeep_demand(ONE_TENDER_LOAD)
         / core_sim::PER_WORKER_OUTPUT
 }
@@ -1615,14 +1616,14 @@ fn a_field_finished_short_of_its_bill_keeps_the_rung_for_its_full_grace() {
     let (mut app, _, coord) = a_field_worked_by(SHORT_CREW, core_sim::BandEquipment::default());
     {
         let ladder = app.world.resource::<LadderConfigHandle>().get();
-        let (base, width) = core_sim::plant_rung_span(shipped::plant_field(), &ladder);
+        let (base, width) = core_sim::plant_rung_span(shipped::plant_farm(), &ladder);
         let mut registry = app.world.resource_mut::<ForageRegistry>();
         let patch = registry.patch_mut(coord).expect("the fixture patch");
         patch.set_ladder_position(base + width - LAST_STEP, &ladder);
         patch.neglect_turns = WELL_PAST_ANY_GRACE;
         patch.set_ladder_position(base + width, &ladder);
         assert!(
-            patch.standing().held == shipped::plant_field(),
+            patch.standing().held == shipped::plant_farm(),
             "fixture: the Field is finished"
         );
     }
@@ -1633,7 +1634,7 @@ fn a_field_finished_short_of_its_bill_keeps_the_rung_for_its_full_grace() {
             .expect("the fixture patch")
             .standing()
             .held
-            == shipped::plant_field()
+            == shipped::plant_farm()
     };
     for turn in 1..=field_grace(&app) {
         run_turns_with_forage(&mut app, 1);
@@ -1796,7 +1797,7 @@ fn a_completed_field_retires_the_sow_verb_onto_the_harvest_rung() {
     );
     assert_eq!(
         queued_job(&app, band, coord),
-        Some(core_sim::BuildJob::Climb(shipped::plant_field())),
+        Some(core_sim::BuildJob::Climb(shipped::plant_farm())),
         "an unfinished build keeps its entry — only completion retires it"
     );
     // **The row's whole crew** — the gatherers and the hands that keep the ground before they
@@ -1894,7 +1895,7 @@ fn an_abandoned_field_goes_feral_and_fully_lapses() {
 
     // The feral pass reads a flag the labor arm wrote **last** turn (Logistics runs before Population
     // — the deliberate one-turn lag), so the first pass after the crew leaves still sees the ground
-    // as worked and spares it. On top of that the `plant:field` rung forgives `grace_turns` of
+    // as worked and spares it. On top of that the `plant:farm` rung forgives `grace_turns` of
     // consecutive neglect. Both are read off the ladder rather than restated, so a retune moves this
     // test with the game.
     const SPARED_LAG_TURNS: u32 = 1;
@@ -1932,7 +1933,7 @@ fn an_abandoned_field_goes_feral_and_fully_lapses() {
     // > continuously — **the keeping demand**, `2.0 → 4.0` across the Field's span — and the position
     // > pair beside it. The food cliff is flagged for a decision rather than asserted away here.
     let ladder = core_sim::LadderConfig::builtin();
-    let (field_base, field_width) = core_sim::plant_rung_span(shipped::plant_field(), &ladder);
+    let (field_base, field_width) = core_sim::plant_rung_span(shipped::plant_farm(), &ladder);
     let billed_at = |app: &App, position: f32| -> f32 {
         let mut probe = app
             .world
@@ -2017,7 +2018,7 @@ fn an_abandoned_field_goes_feral_and_fully_lapses() {
     // rung's span as well as the Field's before the ground is unstarted; running only the Field's own
     // 75 units leaves it standing on tended ground with an owner, which is correct and is not the end
     // state this asserts.
-    // **The rot rate CHANGES as the position falls between the rungs** — `plant:field` bleeds `0.75`
+    // **The rot rate CHANGES as the position falls between the rungs** — `plant:farm` bleeds `0.75`
     // and `plant:tended` `0.5` — so there is no single divisor that predicts the span. Run it until
     // the ground is unstarted, under a bound generous enough for the slower rate and tight enough to
     // catch a decay that has stopped.
@@ -2138,10 +2139,10 @@ fn a_completed_field_clears_the_sow_verb_for_every_band_that_was_building_it() {
         app.world
             .resource::<CommandEventLog>()
             .iter()
-            .filter(|entry| entry.label.contains("Field sown at"))
+            .filter(|entry| entry.label.contains("Farm sown at"))
             .count(),
         1,
-        "one Field was sown, so the player is told once — not once per crew"
+        "one Farm was sown, so the player is told once — not once per crew"
     );
 }
 
@@ -2177,7 +2178,7 @@ fn an_unworked_patch_unwinds_its_newest_rung_first() {
         let mut registry = app.world.resource_mut::<ForageRegistry>();
         let patch = registry.patch_mut(coord).expect("patch");
         patch.set_ladder_position(
-            core_sim::plant_rung_span(shipped::plant_field(), &core_sim::LadderConfig::builtin()).0
+            core_sim::plant_rung_span(shipped::plant_farm(), &core_sim::LadderConfig::builtin()).0
                 + (part_built_field),
             &core_sim::LadderConfig::builtin(),
         );
@@ -2196,14 +2197,14 @@ fn an_unworked_patch_unwinds_its_newest_rung_first() {
         assert!(
             core_sim::patch_rung_work_done(
                 patch,
-                shipped::plant_field(),
+                shipped::plant_farm(),
                 &core_sim::LadderConfig::builtin()
             ) < field_decay,
             "the Field's own meter is spent (an `f32` subtracted turn by turn lands a few ULPs \
              above zero, which is still `> RUNG_UNSTARTED` — correctly, that is the guard): {}",
             core_sim::patch_rung_work_done(
                 patch,
-                shipped::plant_field(),
+                shipped::plant_farm(),
                 &core_sim::LadderConfig::builtin()
             )
         );
@@ -2228,7 +2229,7 @@ fn an_unworked_patch_unwinds_its_newest_rung_first() {
     assert_eq!(
         core_sim::patch_rung_work_done(
             patch,
-            shipped::plant_field(),
+            shipped::plant_farm(),
             &core_sim::LadderConfig::builtin()
         ),
         core_sim::RUNG_UNSTARTED,
@@ -2294,7 +2295,7 @@ fn a_gap_in_a_sow_cannot_strand_the_tended_rung_below_complete() {
     // where the tended rung's ends, so no reachable position puts a Field over incomplete ground.
     // Swept rather than spot-checked, and past the top, because the bug was a boundary fault.
     let ladder = core_sim::LadderConfig::builtin();
-    let (field_base, field_width) = core_sim::plant_rung_span(shipped::plant_field(), &ladder);
+    let (field_base, field_width) = core_sim::plant_rung_span(shipped::plant_farm(), &ladder);
     const SWEEP_STEPS: u32 = 400;
     const PAST_THE_TOP: f32 = 1.25;
     let mut probe = app
@@ -2335,24 +2336,24 @@ fn losing_a_field_pushes_one_slip_and_one_loss_on_the_sow_channel() {
         let mut registry = app.world.resource_mut::<ForageRegistry>();
         registry.patch_mut(coord).expect("patch").owner = Some(FactionId(0));
     }
-    seat_completed_rung(&mut app, coord, shipped::plant_field());
+    seat_completed_rung(&mut app, coord, shipped::plant_farm());
 
     let grace = field_grace(&app);
     run_turns_untended(&mut app, grace);
     assert_eq!(
-        decay_lines(&app, "slipping", "plant:field"),
+        decay_lines(&app, "slipping", "plant:farm"),
         0,
         "nothing is said while the grace holds"
     );
 
     run_turns_untended(&mut app, 1);
     assert_eq!(
-        decay_lines(&app, "slipping", "plant:field"),
+        decay_lines(&app, "slipping", "plant:farm"),
         1,
         "the Field slips on the first bleeding turn past its grace"
     );
     assert_eq!(
-        decay_lines(&app, "feral", "plant:field"),
+        decay_lines(&app, "feral", "plant:farm"),
         0,
         "…and is not lost yet"
     );
@@ -2362,12 +2363,12 @@ fn losing_a_field_pushes_one_slip_and_one_loss_on_the_sow_channel() {
     let to_the_tended_top = (field_cost(&app) / bleed).ceil() as u32;
     run_turns_untended(&mut app, survives.max(to_the_tended_top));
     assert_eq!(
-        decay_lines(&app, "slipping", "plant:field"),
+        decay_lines(&app, "slipping", "plant:farm"),
         1,
         "the Field's slip is announced once, not every turn of the bleed"
     );
     assert_eq!(
-        decay_lines(&app, "feral", "plant:field"),
+        decay_lines(&app, "feral", "plant:farm"),
         1,
         "the Field's loss is announced once, the turn its last work is gone"
     );
@@ -2377,7 +2378,7 @@ fn losing_a_field_pushes_one_slip_and_one_loss_on_the_sow_channel() {
         .iter()
         .find(|entry| {
             entry.detail.as_deref().is_some_and(|detail| {
-                detail.contains("status=feral") && detail.contains("rung=plant:field")
+                detail.contains("status=feral") && detail.contains("rung=plant:farm")
             })
         })
         .expect("the Field's loss line")
@@ -2409,7 +2410,7 @@ fn a_part_built_field_rotting_to_empty_is_not_announced_lost() {
     let (_tile, coord) = find_sowable_tile(&app);
     let tended_top = {
         let ladder = app.world.resource::<LadderConfigHandle>().get();
-        let (base, width) = core_sim::plant_rung_span(shipped::plant_field(), &ladder);
+        let (base, width) = core_sim::plant_rung_span(shipped::plant_farm(), &ladder);
         let mut registry = app.world.resource_mut::<ForageRegistry>();
         let patch = registry.patch_mut(coord).expect("patch");
         patch.owner = Some(FactionId(0));
@@ -2431,12 +2432,12 @@ fn a_part_built_field_rotting_to_empty_is_not_announced_lost() {
         "fixture: the half-sown meter rotted to the tended rung's top ({position} vs {tended_top})"
     );
     assert_eq!(
-        decay_lines(&app, "feral", "plant:field"),
+        decay_lines(&app, "feral", "plant:farm"),
         0,
         "a Field never had is not announced lost"
     );
     assert_eq!(
-        decay_lines(&app, "slipping", "plant:field"),
+        decay_lines(&app, "slipping", "plant:farm"),
         0,
         "…nor slipping — it never stood at its top"
     );
@@ -2474,7 +2475,7 @@ fn a_cultivate_on_a_field_is_handed_back_rather_than_stalling_forever() {
         let mut registry = app.world.resource_mut::<ForageRegistry>();
         registry.patch_mut(coord).expect("patch").owner = Some(FactionId(0));
     }
-    seat_completed_rung(&mut app, coord, shipped::plant_field());
+    seat_completed_rung(&mut app, coord, shipped::plant_farm());
     let band = spawn_builder(&mut app, tile, coord, shipped::cultivate());
     // **THE FIXTURE'S SHAPE MOVED, THE CLAIM DID NOT.** "A Field on ground that was never tended"
     // was a two-meter state (`field_progress` full, `cultivation_progress` zero) and is now
@@ -2489,7 +2490,7 @@ fn a_cultivate_on_a_field_is_handed_back_rather_than_stalling_forever() {
             .ladder_position(),
         {
             let ladder = core_sim::LadderConfig::builtin();
-            let (base, width) = core_sim::plant_rung_span(shipped::plant_field(), &ladder);
+            let (base, width) = core_sim::plant_rung_span(shipped::plant_farm(), &ladder);
             base + width
         },
         "the fixture stands at the top of the plant branch, where a Cultivate has nothing to do"
@@ -2519,7 +2520,7 @@ fn a_cultivate_on_a_field_is_handed_back_rather_than_stalling_forever() {
         patch.ladder_position(),
         {
             let ladder = core_sim::LadderConfig::builtin();
-            let (base, width) = core_sim::plant_rung_span(shipped::plant_field(), &ladder);
+            let (base, width) = core_sim::plant_rung_span(shipped::plant_farm(), &ladder);
             base + width
         },
         "…and the position never moved — a handed-back verb banks nothing, and the source is still \

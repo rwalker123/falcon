@@ -4576,7 +4576,7 @@ the `∞` pair survives with a new denominator:
   on.
 
 > **ONE THING TO WATCH, and it is the sim's to answer.** On shipped config no plant rung bleeds faster
-> than one worker banks — `plant:tended`'s `meter_decay.per_turn` is 0.5, `plant:field`'s 0.75 — and
+> than one worker banks — `plant:tended`'s `meter_decay.per_turn` is 0.5, `plant:farm`'s 0.75 — and
 > the animal web rots at nothing by construction. So neither `∞` is currently reachable at a staffed
 > build crew, and the harness stages the rot directly in order to render them.
 
@@ -7240,7 +7240,7 @@ is the one distinction the mark exists to draw.
 > **A FIELD IS NOT NECESSARILY `is_cultivated`, and assuming it was cost a defect.** `Sow` needs no
 > prior patch, so a Field sown from wild ground carries `cultivation_progress == 0` forever. Ordering
 > alone therefore does not retire the lower rung — `SourceForecast.improvement_is_done` compares the
-> STANDING rung at-or-above (`plant:field` sits above `plant:tended` in the catalog's order), mirroring the
+> STANDING rung at-or-above (`plant:farm` sits above `plant:tended` in the catalog's order), mirroring the
 > sim's `forage_rung_already_built` (`Cultivate => patch.is_managed()`). It was a second table saying
 > only that, `FORECAST_RETIRED_BY_HIGHER_RUNG`, until the wire's `current_rung` answered it directly. Without it a completed Field OFFERED `Cultivate this patch`:
 > a live checkbox for a build the server treats as already built, which its own docstring records as
@@ -8346,3 +8346,22 @@ id, so a rung is admitted when its order is at or below the ceiling rung's. `req
 **The remembered-hex fog redacts `patch_rung_quotes` whole** (`MapView.FOW_DISCOVERED_HIDDEN_KEYS`);
 `patch_current_rung` is kept, so a remembered hex still names what it stood on.
 
+## Off-site farming: the server's site verdict opens the sheet, and a crop is the commit (issue #175)
+
+The client holds no site rule. `RungQuotes.placement_admitted` reads the placing rung's `site_refusal` off
+the quotes; `DetailFormat.tile_is_workable` (gathering site OR admitted) gates the land row, the card's
+forage block, the Assign button and the compose sheet.
+
+- **Refusals.** Empty opens the sheet; `needs_lesson` shows the catalog-derived teaching line on the card
+  (`Learn Worked Land — work a farm`, `DetailFormat.site_lesson_line`); any other refusal keeps its hint.
+- **A crop is the commit off the sites.** The server takes a forage crew on a non-gathering-site tile only
+  with `species` set, and that command queues the farm build; a bare gather there is refused ("is not a
+  gathering site ... name the crop to sow"). `DetailFormat.offsite_crop_verb` returns the placing verb
+  where the tile is off the sites and the patch does not yet stand at that rung, and the forage sheet then
+  makes its chips the single-pick `Crop` row against that verb, always sends the resolved crop, and greys
+  the commit when no legal crop exists. A patch already at the rung (or committed) uses the ordinary crew
+  controls with no crop. The server does not tell a plain gather from a farm-raising one on committed
+  ground, so nothing client-side forbids the former there.
+- **Off-site guard.** `command_guard` drives a forage `assign_labor` naming a crop through the real parser.
+- **A refusal that arrives** comes back as a command echo and is shown by the event dock's System channel;
+  the sheet does not roll back its pending entry on it.

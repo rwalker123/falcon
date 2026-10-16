@@ -2542,7 +2542,7 @@ mod tests {
             vec![
                 shipped::plant_wild().wire_key(),
                 shipped::plant_tended().wire_key(),
-                shipped::plant_field().wire_key(),
+                shipped::plant_farm().wire_key(),
             ],
             "each patch must publish its OWN rung, bottom rung included"
         );
@@ -2585,7 +2585,7 @@ mod tests {
             seed.order, 2,
             "it is taught by `plant:tended`, so it sits at that rung's order"
         );
-        assert!(seed.is_step, "`plant:field` waits on it");
+        assert!(seed.is_step, "`plant:farm` waits on it");
         assert_eq!(
             seed.display_name, "Seed Selection",
             "the player-facing name is resolved sim-side, not by a client table"

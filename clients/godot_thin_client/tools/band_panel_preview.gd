@@ -1728,7 +1728,7 @@ func _ready() -> void:
 	_assert_zones_within_bounds()
 	_assert_zone_content_fits()
 
-	# …and the SAME ground mid-climb, with a TWO-LEG entry queued to `plant:field`: the destination
+	# …and the SAME ground mid-climb, with a TWO-LEG entry queued to `plant:farm`: the destination
 	# picker opened from the RUNNING build slot, and the queue row opened into its own legs.
 	_hud.update_intensification([_standing_knowledge_row()])
 	_set_forage_patches(_track_climbing_patch_fixtures())
@@ -10629,7 +10629,7 @@ func _want_work_clause(work_cost: float) -> String:
 		% DetailFormat.format_work_units(work_cost)).trim_prefix(
 			HudFloraVocab.FLORA_CROP_CLAUSE_LEAD)
 
-## **THE SAME GROUND MID-CLIMB, WITH A TWO-LEG ENTRY QUEUED TO `plant:field`.** It is the shape the
+## **THE SAME GROUND MID-CLIMB, WITH A TWO-LEG ENTRY QUEUED TO `plant:farm`.** It is the shape the
 ## whole arc is about: one position, one queue row, and a destination two rungs above where the patch
 ## stands. `build_legs` is the WIRE's — the client re-derives neither the owing nor the dates — and
 ## the first leg is the one in flight, the list being published first-incomplete first.
@@ -10648,12 +10648,12 @@ func _track_climbing_patch_fixtures(work_done: float = TRACK_TENDED_WORK_DONE) -
 		"field_work_done": 0.0,
 		"build_queue_position": 0,
 		"build_turns_remaining": TRACK_FIELD_LEG_TURNS,
-		"build_destination_rung": RUNG_FX.KEY_FIELD,
+		"build_destination_rung": RUNG_FX.KEY_FARM,
 		"build_legs": [
 			{"rung": RUNG_FX.KEY_TENDED,
 				"work_remaining": TRACK_TENDED_WORK_COST - work_done,
 				"turns_remaining": TRACK_TENDED_LEG_TURNS},
-			{"rung": RUNG_FX.KEY_FIELD,
+			{"rung": RUNG_FX.KEY_FARM,
 				"work_remaining": TRACK_FIELD_WORK_COST,
 				"turns_remaining": TRACK_FIELD_LEG_TURNS},
 		],
@@ -10683,9 +10683,9 @@ func _track_single_leg_patch_fixtures() -> Array:
 		"field_progress": TRACK_SINGLE_LEG_FIELD_WORK_DONE / TRACK_FIELD_WORK_COST,
 		"build_queue_position": 0,
 		"build_turns_remaining": TRACK_FIELD_LEG_TURNS,
-		"build_destination_rung": RUNG_FX.KEY_FIELD,
+		"build_destination_rung": RUNG_FX.KEY_FARM,
 		"build_legs": [
-			{"rung": RUNG_FX.KEY_FIELD,
+			{"rung": RUNG_FX.KEY_FARM,
 				"work_remaining": TRACK_FIELD_WORK_COST - TRACK_SINGLE_LEG_FIELD_WORK_DONE,
 				"turns_remaining": TRACK_FIELD_LEG_TURNS},
 		],

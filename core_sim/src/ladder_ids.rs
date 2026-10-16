@@ -334,8 +334,8 @@ pub mod shipped {
     pub fn plant_tended() -> RungId {
         RungId::new(plant(), "tended")
     }
-    pub fn plant_field() -> RungId {
-        RungId::new(plant(), "field")
+    pub fn plant_farm() -> RungId {
+        RungId::new(plant(), "farm")
     }
     pub fn animal_wild() -> RungId {
         RungId::new(animal(), "wild")

@@ -440,7 +440,9 @@ func _ungathered_tile_fixture() -> Dictionary:
 	tile["food_module"] = ""
 	tile["food_module_label"] = ""
 	tile.erase("food_kind")
-	return tile
+	# What the server says of ground off the gathering sites: not workable, and no lesson would open it.
+	tile["patch_sow_site_refusal"] = "not_gathering_site"
+	return RungFx.stamp_patch(tile, HudComposeVocab.FORAGE_FORECAST_PREFIX)
 
 ## Ground that offers NOTHING to gather: no food module, no patch. The land row's meta must read
 ## "No forage" (not a blank), and the drawer must carry terrain rows with no compose block.

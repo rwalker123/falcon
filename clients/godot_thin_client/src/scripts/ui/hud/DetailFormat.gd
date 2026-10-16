@@ -679,7 +679,7 @@ const CORRAL_PROGRESS_COMPLETE := 1.0
 const HUSBANDRY_PROGRESS_COMPLETE := 1.0
 const CULTIVATION_PROGRESS_COMPLETE := 1.0
 const FIELD_PROGRESS_COMPLETE := 1.0
-const FIELD_BADGE_LABEL := "Field"
+const FIELD_BADGE_LABEL := "Farm"
 
 # ---- RETIRED — **`PEN_STARVING_LABEL`** (`⚠ Starving — %d%% fed`), the Corral row's starving face.
 # It welded two unrelated percentages into one row: a built rung row renders `<label> <meter %>`, so a
@@ -691,6 +691,38 @@ const FIELD_BADGE_LABEL := "Field"
 # feed story. Every reader is `herd_summary_lines` below, so the whole block lives here.
 const PEN_FOOTPRINT_ROW := "Pen"
 const PEN_FOOTPRINT_FORMAT := "radius %d · %d tiles"
+
+# **A PEN FENCED PAST A THRESHOLD IS A DIFFERENT KIND OF PEN, and the catalog names the tiers** (the
+# pen rung's `size_tiers`: the id, its label, the rings it takes, what it does for the keepers). A herd
+# standing in one reads its row by the tier's own label and states the bonus; a pen short of the first
+# tier states how many more rings would reach it. Both lines are DATA -- no tier is named here.
+const PEN_TIER_BONUS_FORMAT := "each keeper minds %s× the head"
+const PEN_TIER_RINGS_FORMAT := "%d more %s — %s× the head"
+const PEN_TIER_RING_ONE := "ring"
+const PEN_TIER_RING_MANY := "rings"
+const PEN_TIER_BONUS_DECIMALS := 2
+
+## The pen's size-tier rows: the held tier's bonus, else the next tier's rings-to-go. `[]` for a pen
+## whose catalog states no tiers. Pure over the herd dict (the quotes carry the catalog's tiers).
+static func pen_tier_lines(herd_data: Dictionary, prefix: String) -> Array[String]:
+    var out: Array[String] = []
+    if not RungQuotes.is_enclosed(herd_data, prefix):
+        return out
+    var current := RungQuotes.current_size_tier(herd_data, prefix)
+    if not current.is_empty():
+        out.append("%s: %s" % [String(current.get("label", "")), PEN_TIER_BONUS_FORMAT
+            % format_trimmed(float(current.get("keeper_ratio_gain", 1.0)), PEN_TIER_BONUS_DECIMALS)])
+        return out
+    var upcoming := RungQuotes.next_size_tier(herd_data, prefix)
+    if upcoming.is_empty():
+        return out
+    var to_go := int(upcoming.get("min_rings", 0)) - int(herd_data.get("pen_radius", 0))
+    if to_go <= 0:
+        return out
+    out.append("%s: %s" % [String(upcoming.get("label", "")), PEN_TIER_RINGS_FORMAT % [
+        to_go, PEN_TIER_RING_ONE if to_go == 1 else PEN_TIER_RING_MANY,
+        format_trimmed(float(upcoming.get("keeper_ratio_gain", 1.0)), PEN_TIER_BONUS_DECIMALS)]])
+    return out
 
 # **THE ROW IS NAMED FOR WHAT IT MEASURES, NOT FOR ONE OF ITS TERMS.** It read `Fed by pasture` and
 # then listed hay, naming one feed source in the label and the other in the value. `Fed:` leads with
@@ -1297,6 +1329,42 @@ static func _split_kv(line: String) -> Array:
 ## IS the answer; there is no "has a module but is not a site" case to distinguish client-side.
 static func tile_is_gathering_site(tile_info: Dictionary) -> bool:
     return String(tile_info.get("food_module", "")).strip_edges() != ""
+
+## **CAN A CREW WORK THIS GROUND?** A gathering site, OR ground the server's own verdict lets a source be
+## placed on now (`RungQuotes.placement_admitted`: a placing rung stands there, or its `site_refusal` is
+## empty -- which is how a lesson like Worked Land opens ground that is not a gathering site).
+##
+## **THE CLIENT DECIDES NO SITE RULE HERE.** Whether a tile is thin, dry or off the sites is the sim's
+## to say and arrives as the quote's `site_refusal`; this reads that verdict and nothing else. It is the
+## one predicate the land row, the card's forage block and the compose sheet's availability share, so
+## the three cannot disagree about whether this ground can be worked.
+static func tile_is_workable(tile_info: Dictionary) -> bool:
+    return tile_is_gathering_site(tile_info) \
+        or RungQuotes.placement_admitted(tile_info, HudComposeVocab.FORAGE_FORECAST_PREFIX)
+
+## **DOES A CREW HERE HAVE TO NAME A CROP?** Ground that is not a gathering site, which the server admits
+## a placing rung on: the only assignment it takes there is a farm-raising one, so the sheet sends a crop
+## and offers no plain gather. `""` where a plain gather is allowed (a gathering site, or a patch that
+## already stands at the placing rung).
+static func offsite_crop_verb(tile_info: Dictionary) -> String:
+    if tile_is_gathering_site(tile_info):
+        return ""
+    return RungQuotes.offsite_placing_verb(tile_info, HudComposeVocab.FORAGE_FORECAST_PREFIX)
+
+## **THE TEACHING LINE FOR GROUND A LESSON WOULD OPEN**, `""` unless the server answered `needs_lesson`
+## for a placing rung. `Learn Worked Land — work a farm`: the lesson's own name off the knowledge roster
+## (`labels`, `{knowledge_id: display_name}`), the rung that teaches it off the catalog. Two lines at
+## most on the card; with no teaching rung to name it states the lesson alone.
+static func site_lesson_line(tile_info: Dictionary, labels: Dictionary) -> String:
+    var prefix: String = HudComposeVocab.FORAGE_FORECAST_PREFIX
+    var lesson := RungQuotes.lesson_to_place(tile_info, prefix)
+    if lesson == "":
+        return ""
+    var lesson_name := String(labels.get(lesson, lesson.capitalize()))
+    var teacher := RungQuotes.rung_teaching(tile_info, prefix, lesson).to_lower()
+    if teacher == "":
+        return HudFloraVocab.SITE_LESSON_FORMAT % lesson_name
+    return HudFloraVocab.SITE_LESSON_TEACHER_FORMAT % [lesson_name, teacher]
 
 ## **THE ONE ANSWER TO "WHAT FORAGE CAPACITY DOES THIS CARD SHOW"** — the patch's live ceiling where
 ## the player can see it, the tile's own ground `K` where they only remember it. `0.0` where the
@@ -3813,8 +3881,12 @@ static func herd_summary_lines(herd_data: Dictionary, world_herds: Array,
                 # whatever fodder its keeper carries in. The rung row states the RUNG and nothing else
                 # (it wore the starving face beside its own build meter, which read as two unrelated
                 # percentages); the pen is fenced LAND, so its footprint and the `Fed:` row follow.
+                # A pen fenced to a size tier is named by that tier (`Ranch 100%`), not as a plain pen.
+                var tier_row := RungQuotes.current_size_tier(herd_data, herd_prefix)
                 var built_enclosed_value := rung_row_value(herd_data, herd_prefix, verb,
-                    SourceForecast.SOURCE_KIND_HERD, rung_label, true, CORRAL_PROGRESS_COMPLETE,
+                    SourceForecast.SOURCE_KIND_HERD,
+                    ("%s %s" % [CORRAL_GLYPH, String(tier_row.get("label", ""))]) if not tier_row.is_empty() else rung_label,
+                    true, CORRAL_PROGRESS_COMPLETE,
                     SourceForecast.BUILD_CREW_NONE, SourceForecast.IMPROVEMENT_NONE)
                 lines.append("%s: %s" % [row_key, built_enclosed_value])
                 note_lapsed_hover(ctx, row_key, built_enclosed_value)
@@ -3823,6 +3895,7 @@ static func herd_summary_lines(herd_data: Dictionary, world_herds: Array,
                 var pen_radius := int(herd_data.get("pen_radius", 0))
                 var footprint_tiles := int(herd_data.get("pen_footprint_tiles", 0))
                 lines.append("%s: %s" % [PEN_FOOTPRINT_ROW, PEN_FOOTPRINT_FORMAT % [pen_radius, footprint_tiles]])
+                lines.append_array(pen_tier_lines(herd_data, herd_prefix))
                 lines.append("%s: %s" % [PEN_FEED_ROW, pen_feed_value(herd_data)])
             elif reached or progress > BUILD_METER_EMPTY or declared:
                 # **A HERD NOBODY IS ON READS AS *HELD* HERE, and that is the sim's own `-2`**

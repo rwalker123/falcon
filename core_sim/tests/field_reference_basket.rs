@@ -108,7 +108,7 @@ fn measured(rung: Option<RungId>) -> f32 {
 fn the_re_expressed_field_lands_where_the_managed_rate_did() {
     let wild = measured(None);
     let tended = measured(Some(shipped::plant_tended()));
-    let field = measured(Some(shipped::plant_field()));
+    let field = measured(Some(shipped::plant_farm()));
 
     assert!(
         (wild - WILD_YIELD_BEFORE).abs() <= WILD_YIELD_BEFORE * UNCHANGED_BAND,

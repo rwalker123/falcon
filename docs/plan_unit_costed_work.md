@@ -128,7 +128,7 @@ Pacing-neutral means `work_cost = today's turns × the crew that made "25 turns"
 | rung | today | `work_cost` (neutral) | the eventual spread |
 |---|---|---|---|
 | `plant:tended` (Cultivate) | 25 turns at `crew_needed` 2 | **50** | 50 |
-| `plant:field` (Sow) | 25 turns at `crew_needed` 3 | **75** | ~90 — rung 3 is the heavier job |
+| `plant:farm` (Sow) | 25 turns at `crew_needed` 3 | **75** | ~90 — rung 3 is the heavier job |
 | `animal:pastoral` (Tame) | 25 turns, crew-blind | **50** | 50 |
 | `animal:pen` (Corral) | 25 turns, crew-blind | **75** | ~90 |
 | `plant:farm` (rung 4, unbuilt) | — | — | **~300** — born large, which is the point |
@@ -445,7 +445,7 @@ under the old model it could not be: every job cost the same 25 turns, so going 
 first was pure loss — you paid a rung you were about to overwrite. Once jobs have sizes the question
 becomes real, and the ladder should be able to answer it.
 
-**It is declared on the CONSUMING rung, and that is the load-bearing choice.** `plant:field` says
+**It is declared on the CONSUMING rung, and that is the load-bearing choice.** `plant:farm` says
 what helps it; `plant:tended` says nothing about what it helps. Ladder order implies nothing —
 *"it is up to the next tech to say the previous ones benefit me."* The early rungs happen to build on
 each other, but a later one may not benefit from anything below it, and a rung two steps down may
@@ -453,7 +453,7 @@ help more than the one directly beneath. Deriving the relationship from `require
 in a claim that is only true today.
 
 ```json
-"plant:field": {
+"plant:farm": {
   "build": {
     "work_cost": 90,
     "eased_by": [

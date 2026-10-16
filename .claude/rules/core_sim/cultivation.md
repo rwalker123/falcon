@@ -15,7 +15,7 @@ paths:
 
 **A patch has ONE number: `ForagePatch::ladder_position`, how far up the plant branch it has been
 worked, in cumulative work units** (`docs/plan_standing_upkeep.md` §2.8). `plant:tended` runs `0 → 50`
-and `plant:field` `50 → 125`, each rung's span being its own `build.work_cost`.
+and `plant:farm` `50 → 125`, each rung's span being its own `build.work_cost`.
 `cultivation_progress`, `field_progress` and their four stamped companions (`*_cost`,
 `*_retain_bar`) are **gone**; prose below that names them is describing the retired shape, and the
 seam it points at is `forage::patch_rung_work_done` — the position read into a rung's own span
@@ -40,7 +40,7 @@ completed Field once published `0.99999994` and a finished Field's card read *"F
   is not a blend of two baskets"* ruling was overturned, and for the take-selection repair that rides
   the commitment.
 - **A QUEUE ENTRY NAMES A DESTINATION, so `sow` on untended ground costs the WHOLE BRANCH — 125 work
-  units, not 75.** It lays two legs (`plant:tended`, then `plant:field`), passes through Cultivated on
+  units, not 75.** It lays two legs (`plant:tended`, then `plant:farm`), passes through Cultivated on
   the way — announced on Cultivate's own channel — and holds the head of the queue until it arrives.
   The same order on ground that is already tended is **one** leg owing 75, and on a patch 30 units
   into its Cultivate it owes **20** on that leg: a previous improvement is a receipt, not a discount.
@@ -133,7 +133,7 @@ the odd web out.
   `0xF10A_5EED_C011_0010`, committed to `wild_emmer`): wild **0.703** → tended **1.328** → Field
   **6.240** before, and **0.703 → 1.328 → 6.241** after. A re-expression, not a rebalance.
 - **A per-rung QUOTE re-bases the land onto the rung it is asked about** (`rung_msy_take`), because
-  `rungQuotes[plant:field].foodYield` is published for every patch including a tended one. It is a *ratio*, so a patch
+  `rungQuotes[plant:farm].foodYield` is published for every patch including a tended one. It is a *ratio*, so a patch
   already standing on that rung re-bases by exactly `1.0` — which is what keeps the live reading and
   the quote one number. `composition_for_rung`'s rule, applied to the land instead of the basket.
 - **A Field now needs HANDS.** It holds far more standing crop, so one gatherer brings home a
@@ -397,7 +397,7 @@ the exact twin, one `ladder_position` beside a stamped `standing`; the checkpoin
     on the shipped demands, and at the seam by
     `forage::tests::a_half_staffed_keeping_is_half_short_on_the_meter_it_is_raising`.
   - **The bleed is in absolute WORK UNITS** — the rung's `upkeep.meter_decay.per_turn`, `0.5` on
-    `plant:tended` and `0.75` on `plant:field`. Both are **the pacing-neutral inversion of the
+    `plant:tended` and `0.75` on `plant:farm`. Both are **the pacing-neutral inversion of the
     retired `0.01 × work_cost`** and were held there through the demand retune, so a wholly
     unmaintained improvement decays at exactly the rate it always did (~100 bleeding turns to lapse
     fully); they are *not* a considered spread. Pinned as arithmetic by
@@ -609,7 +609,7 @@ the exact twin, one `ladder_position` beside a stamped `standing`; the checkpoin
   read as live dials. **PLAYTEST DIAL**, and the number moves in `plan_standing_upkeep.md` §4.14.)
   **`field_reference_crop_share`** (0.5625), **`field_share_cost_floor`** (0.25) and
   **`field_share_cost_ceiling`** (2.0) — **WHAT A SOW COSTS BY HOW MUCH OF THE TILE IT REPLACES**, the
-  `plant:field` rung's own per-source price multiplier (`forage::field_cost_multiplier_at_share`; see
+  `plant:farm` rung's own per-source price multiplier (`forage::field_cost_multiplier_at_share`; see
   "A Sow is priced by what it replaces" below). The anchor is the reference basket's own **weeded**
   share of `wild_emmer` on `AlluvialPlain` (`0.375 × tended_weeding_gain`), which is what makes the
   shipped 75-work-unit price pacing-neutral there, exactly as `capacity_per_tender` is that tile's own
@@ -679,7 +679,7 @@ the exact twin, one `ladder_position` beside a stamped `standing`; the checkpoin
 sim. `plant:wild` now carries a `site_requirement` of its own (`requires_gathering_site: true`),
 enforced in `validate_labor_policy`'s `Forage` arm through `server::plant_rung_site_refusal` — the one
 seam `validate_cultivate`, `validate_sow`, the labor arm's `Sow` placement gate and the wire's
-`rungQuotes[plant:field].siteRefusal` all resolve, so no two of them can disagree about which ground may be worked.
+`rungQuotes[plant:farm].siteRefusal` all resolve, so no two of them can disagree about which ground may be worked.
 
 **Why it is not "the tile has a `FoodModuleTag`".** `classify_food_module` tags essentially every land
 biome and `spawn_initial_forage` seeds a patch on every tagged tile with capacity, so a module test
@@ -843,7 +843,7 @@ herd has one appetite).
 - **Feral if abandoned — one rule for the whole plant web, and rung 3 goes FIRST.**
   `advance_cultivation` bleeds **one** meter per untended turn, the highest rung that still has
   progress on it, each at its own rung's `upkeep.meter_decay.per_turn` and past its own
-  `upkeep.grace_turns` (`plant:field`: `work_cost` **75**, upkeep demand **4.0**/turn per
+  `upkeep.grace_turns` (`plant:farm`: `work_cost` **75**, upkeep demand **4.0**/turn per
   **tender-load**, rot
   **0.75**/turn held to **0.75** of its cost, grace **1** — a standing crop is the most perishable
   thing on the ladder and wants hands every turn; the 75-unit cost is 25 turns at three hands, sowing
@@ -905,7 +905,7 @@ herd has one appetite).
 
 ## A Sow is priced by what it replaces
 
-**`plant:field`'s build cost is the rung's declared `work_cost` times a per-patch multiplier** set by
+**`plant:farm`'s build cost is the rung's declared `work_cost` times a per-patch multiplier** set by
 how much of the tile the chosen crop still has to displace (`docs/plan_standing_upkeep.md` §4.15).
 Sowing a crop that already holds most of the ground is tidying; sowing one that holds a tenth is
 replacing the tile. **`plant:tended` is not scaled** — clearing wild ground is clearing wild ground —
@@ -960,9 +960,9 @@ multiplier  = clamp(share_load, field_share_cost_floor, field_share_cost_ceiling
 - **Every surface that states what a Sow will cost resolves through one seam**,
   `forage::patch_field_cost_multiplier` — the arm that charges it, `patch_build_legs`' work figures and
   their chained dates, the pre-commit `projected_build_quote` the `⌃` mark and the compose sheet read,
-  and the published `rungQuotes[plant:field].workCost`, which already carried the price and now carries the scaled one.
+  and the published `rungQuotes[plant:farm].workCost`, which already carried the price and now carries the scaled one.
   That seam answers the patch's **own** price list whenever the position stands above the Field rung's
-  base, quoted or not, so the published cost and the published `rungQuotes[plant:field].workDone` can never divide by two
+  base, quoted or not, so the published cost and the published `rungQuotes[plant:farm].workDone` can never divide by two
   different denominators.
 - **The crop picker prices every crop, through the same expression** (`FloraShareInfo::sow_work_cost`,
   `sowWorkCost` on the wire, `sow_work_cost` in the client dict). A patch prices exactly *one* crop, so
@@ -971,7 +971,7 @@ multiplier  = clamp(share_load, field_share_cost_floor, field_share_cost_ceiling
   **that** crop, through `field_cost_multiplier_at_share` — priced by the ladder's own `build_cost`;
   `patch_field_cost_multiplier` spends the same private `field_cost_multiplier_for_crop`, so it is one
   expression and not two. The figure published for the crop a patch is committed to is therefore
-  that patch's `rungQuotes[plant:field].workCost`, on the encoded envelope, at declaration and with the leg stamped alike
+  that patch's `rungQuotes[plant:farm].workCost`, on the encoded envelope, at declaration and with the leg stamped alike
   (`sow_share_cost::the_per_crop_sow_price_is_the_price_this_patch_is_charged`).
 - **A crop that cannot climb to a Field here publishes NO figure** (`species_climbs` at
   the field rung) — `0`, which a client renders as no row. A measured price is never `0`: the
@@ -988,3 +988,10 @@ See Also: "Cultivation (Intensification Phase 1a)" (the rung below), "Corral (In
 
 ---
 
+
+## Worked Land - the Farm off the gathering sites
+
+The Farm (`plant:farm`, formerly `plant:field`) is sown only on a gathering site until the faction learns
+**Worked Land** (earned by working a Farm); the lesson swaps in the Farm's `site_relaxations` rule (fertile,
+watered ground, no gathering site). Mechanism, the F lever and the counts: `intensification.md` -> "Site
+relaxations".

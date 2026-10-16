@@ -627,9 +627,30 @@ pub(crate) fn herds_to_array(
         // **EVERY RUNG'S QUOTE** (`HerdTelemetryState.rungQuotes`) - one dictionary per rung of the
         // animal branch above the root, keyed by `rung_key`; replaces the per-step fields.
         let _ = dict.insert("rung_quotes", &rung_quotes_to_array(herd.rungQuotes()));
+        // The size tier this herd's fence has reached ("ranch"), "" when it is in none.
+        let _ = dict.insert("size_tier", herd.sizeTier().unwrap_or_default());
         array.push(&dict.to_variant());
     }
     array
+}
+
+/// **A SITE RULE** (`SiteRuleState`) as a dictionary: `requires_gathering_site`, `min_forage_capacity`,
+/// `requires_fresh_water`. An absent table reads as the rule that asks nothing.
+fn site_rule_to_dict(rule: Option<fb::SiteRuleState<'_>>) -> VarDictionary {
+    let mut dict = VarDictionary::new();
+    let _ = dict.insert(
+        "requires_gathering_site",
+        rule.is_some_and(|rule| rule.requiresGatheringSite()),
+    );
+    let _ = dict.insert(
+        "min_forage_capacity",
+        f64::from(rule.map_or(0.0, |rule| rule.minForageCapacity())),
+    );
+    let _ = dict.insert(
+        "requires_fresh_water",
+        rule.is_some_and(|rule| rule.requiresFreshWater()),
+    );
+    dict
 }
 
 /// **A PLANT'S QUOTES AT EVERY RUNG** (`FloraShareInfo.rungQuotes`) as an array of dictionaries, one per
@@ -904,7 +925,7 @@ pub(crate) fn forage_patches_to_array(
         }
         // The plant twin of the herd row's DESTINATION and its remaining LEGS — and the web the
         // distinction is real on: this patch carries ONE position in cumulative work units
-        // (`plant:tended` runs 0→50, `plant:field` 50→125), so a `sow` declared on untended ground is
+        // (`plant:tended` runs 0→50, `plant:farm` 50→125), so a `sow` declared on untended ground is
         // a TWO-leg climb that holds the head of the queue through its Cultivate leg. See the herd
         // block for why neither field may be re-derived.
         let _ = dict.insert(
@@ -912,7 +933,7 @@ pub(crate) fn forage_patches_to_array(
             patch.buildDestinationRung().unwrap_or_default(),
         );
         // The plant twin of the herd row's STANDING rung — `plant:wild` / `plant:tended` /
-        // `plant:field`, the private `isCultivated` + `isField` pair read once by the sim instead of
+        // `plant:farm`, the private `isCultivated` + `isField` pair read once by the sim instead of
         // once per consumer. See the herd block, and the `.fbs` comment for the fog obligation this
         // one carries: it states the same ladder position `is_cultivated`/`is_field` do, so
         // `MapView.FOW_DISCOVERED_HIDDEN_KEYS` redacts it with them.
@@ -1368,6 +1389,44 @@ pub(crate) fn ladder_rungs_to_array(
         let _ = dict.insert("requires_work_room", rung.requiresWorkRoom());
         let _ = dict.insert("requires_ownership", rung.requiresOwnership());
         let _ = dict.insert("places_source", rung.placesSource());
+        // The rung's own site rule, and the lessons that loosen it (the last one a faction holds
+        // replaces the rung's own rule).
+        let _ = dict.insert("site_rule", &site_rule_to_dict(rung.siteRule()));
+        let mut relaxations = VarArray::new();
+        if let Some(rows) = rung.siteRelaxations() {
+            for relaxation in rows {
+                let mut row = VarDictionary::new();
+                let _ = row.insert("knowledge", relaxation.knowledge().unwrap_or_default());
+                let _ = row.insert("rule", &site_rule_to_dict(relaxation.rule()));
+                relaxations.push(&row.to_variant());
+            }
+        }
+        let _ = dict.insert("site_relaxations", &relaxations);
+        // The derived size tiers an enclosed rung declares, and the lessons' gains on its herds.
+        let mut tiers = VarArray::new();
+        if let Some(rows) = rung.sizeTiers() {
+            for tier in rows {
+                let mut row = VarDictionary::new();
+                let _ = row.insert("id", tier.id().unwrap_or_default());
+                let _ = row.insert("label", tier.label().unwrap_or_default());
+                let _ = row.insert("label_fallback", tier.labelFallback().unwrap_or_default());
+                let _ = row.insert("min_rings", i64::from(tier.minRings()));
+                let _ = row.insert("keeper_ratio_gain", f64::from(tier.keeperRatioGain()));
+                let _ = row.insert("earns_knowledge", tier.earnsKnowledge().unwrap_or_default());
+                tiers.push(&row.to_variant());
+            }
+        }
+        let _ = dict.insert("size_tiers", &tiers);
+        let mut gains = VarArray::new();
+        if let Some(rows) = rung.knowledgeGains() {
+            for gain in rows {
+                let mut row = VarDictionary::new();
+                let _ = row.insert("knowledge", gain.knowledge().unwrap_or_default());
+                let _ = row.insert("regrowth_gain", f64::from(gain.regrowthGain()));
+                gains.push(&row.to_variant());
+            }
+        }
+        let _ = dict.insert("knowledge_gains", &gains);
         array.push(&dict.to_variant());
     }
     array

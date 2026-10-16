@@ -246,7 +246,7 @@ fn a_snapshot_round_trip_keeps_a_worked_field_and_pen() {
         patch.ladder_position(),
         core_sim::patch_rung_work_done(
             &patch,
-            shipped::plant_field(),
+            shipped::plant_farm(),
             &core_sim::LadderConfig::builtin(),
         )
     );

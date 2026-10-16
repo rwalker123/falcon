@@ -275,7 +275,7 @@ fn a_reweighted_basket_still_sums_to_the_whole_basket() {
                 patch.set_ladder_position(
                     if field {
                         let (base, width) = core_sim::plant_rung_span(
-                            shipped::plant_field(),
+                            shipped::plant_farm(),
                             &core_sim::LadderConfig::builtin(),
                         );
                         base + width
@@ -414,7 +414,7 @@ fn the_published_commit_ratio_is_the_sims_own_payoff_divided_by_the_wild_payoff(
         );
 
         for share in composition {
-            for rung in [shipped::plant_tended(), shipped::plant_field()] {
+            for rung in [shipped::plant_tended(), shipped::plant_farm()] {
                 let payoff = core_sim::commit_payoff(
                     tile,
                     capacity,
@@ -428,10 +428,10 @@ fn the_published_commit_ratio_is_the_sims_own_payoff_divided_by_the_wild_payoff(
                 );
                 let ratio = core_sim::commit_yield_ratio(payoff, wild);
                 let climbs = match rung {
-                    matched_ if matched_ == shipped::plant_field() => core_sim::shipped::ladder()
+                    matched_ if matched_ == shipped::plant_farm() => core_sim::shipped::ladder()
                         .ceiling_reaches(
                             flora.species[&share.species].cultivation_ceiling,
-                            core_sim::shipped::plant_field(),
+                            core_sim::shipped::plant_farm(),
                         ),
                     _ => core_sim::shipped::ladder().ceiling_reaches(
                         flora.species[&share.species].cultivation_ceiling,
@@ -574,13 +574,8 @@ fn legality_follows_the_cultivation_ceiling_and_the_tiles_own_basket() {
     // A river plain: emmer leads the basket and climbs the whole ladder.
     let plain = flora.composition(TerrainType::AlluvialPlain);
     assert_eq!(
-        core_sim::default_species_for_rung(
-            plain,
-            &flora,
-            shipped::ladder(),
-            shipped::plant_field()
-        )
-        .as_deref(),
+        core_sim::default_species_for_rung(plain, &flora, shipped::ladder(), shipped::plant_farm())
+            .as_deref(),
         Some("wild_emmer"),
         "the auto-pick is the highest-share species the rung permits"
     );
