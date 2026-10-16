@@ -3880,10 +3880,10 @@ quotes, self-enriching them from the fixture catalog. Nothing in `src/` reads th
 ## `chapters/worked_land_ranch.gd` -- off-site Farm and the Ranch (issue #175)
 
 Appended LAST in `CHAPTERS`. Four frames (`worked_land_needs_lesson`, `worked_land_sow_offered`,
-`pen_below_ranch`, `pen_is_a_ranch`) and `EXPECTED_CHECKPOINTS` 25. The same off-site tile is staged twice,
+`pen_below_ranch`, `pen_is_a_ranch`) and `EXPECTED_CHECKPOINTS` 28. The same off-site tile is staged twice,
 differing only in the server's `site_refusal` (`needs_lesson` / `""`) and the lesson: the first offers no
-work and names the lesson, the second opens the sheet on the single-pick `Crop` row and its commit emits a
-forage assign carrying a crop. A gathering site is the control (no crop forced). The pen pair is one herd
+work and names the lesson, the second opens the sheet headed `Raise a farm`, on the single-pick `Crop` row, with a `Sow farm`
+commit that emits a forage assign carrying a crop and no Sow checkbox. A gathering site is the control (no crop forced). The pen pair is one herd
 at one ring short of the Ranch tier and at it; the knowledge notes and the `status=tier` feed phrase are
 asserted PNG-less.
 

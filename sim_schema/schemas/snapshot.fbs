@@ -5924,7 +5924,7 @@ table DepositState {
   regrowthRate:float = 0;
 
   // --- THE RUNG ----------------------------------------------------------------------------------
-  // The rung this working HOLDS, as "<branch>:<id>" via RungKey::wire_key - "forestry:deadfall",
+  // The rung this working HOLDS, as "<branch>:<id>" (a RungId wire key) - "forestry:deadfall",
   // "forestry:felling", "forestry:coppice", "extraction:gathering", "extraction:quarry".
   //
   // *** READ THE RUNG, NEVER THRESHOLD buildFraction TO INFER ONE. *** That meter belongs to the
@@ -6169,7 +6169,7 @@ table RouteState {
   // to name.
   tileX:uint;
   tileY:uint;
-  // The rung this road HOLDS, as "<branch>:<id>" via RungKey::wire_key - "route:path",
+  // The rung this road HOLDS, as "<branch>:<id>" (a RungId wire key) - "route:path",
   // "route:trail", "route:dirt_road", "route:paved_road".
   //
   // *** READ THE RUNG, NEVER INFER ONE FROM A FLOAT. *** `buildFraction` below is the meter on the

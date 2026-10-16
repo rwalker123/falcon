@@ -679,5 +679,10 @@ const TAKE_UNQUOTED_NOTE := "This selection is not priced yet — no take is quo
 
 ## Hover on the commit button off the gathering sites when no crop can be named: the server takes a
 ## crew there only for a crop it can raise a farm of.
+## Off the gathering sites THIS order starts the farm: the sheet's header, its commit and the one line
+## under the crop chips. `%s` is the placing rung's lowercased name (`farm`) / the picked crop's name.
+const OFFSITE_SHEET_EYEBROW_FORMAT := "Raise a %s"
+const OFFSITE_COMMIT_FORMAT := "%s %s"
+const OFFSITE_CREW_LINE_FORMAT := "The crew will raise a %s of %s here."
 const OFFSITE_NEEDS_CROP_HINT := "Pick a crop to sow - a crew works ground like this only to raise a farm."
 

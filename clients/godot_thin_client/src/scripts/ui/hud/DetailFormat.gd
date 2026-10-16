@@ -1351,6 +1351,14 @@ static func offsite_crop_verb(tile_info: Dictionary) -> String:
         return ""
     return RungQuotes.offsite_placing_verb(tile_info, HudComposeVocab.FORAGE_FORECAST_PREFIX)
 
+## The placing rung's own name, lowercased (`farm`), for the off-site sheet's words; `""` where
+## `offsite_crop_verb` is.
+static func offsite_crop_label(tile_info: Dictionary) -> String:
+    if offsite_crop_verb(tile_info) == "":
+        return ""
+    return RungQuotes.name_of(RungQuotes.offsite_placing_quote(
+        tile_info, HudComposeVocab.FORAGE_FORECAST_PREFIX)).to_lower()
+
 ## **THE TEACHING LINE FOR GROUND A LESSON WOULD OPEN**, `""` unless the server answered `needs_lesson`
 ## for a placing rung. `Learn Worked Land — work a farm`: the lesson's own name off the knowledge roster
 ## (`labels`, `{knowledge_id: display_name}`), the rung that teaches it off the catalog. Two lines at

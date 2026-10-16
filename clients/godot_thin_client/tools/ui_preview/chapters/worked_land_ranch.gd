@@ -13,7 +13,7 @@ extends RefCounted
 ## catalog's tier row: a pen below it says how many rings reach it, a pen in it says what it does.
 
 ## The checkpoints this chapter owes the walk -- assertions made plus frames saved, as a FLOOR.
-const EXPECTED_CHECKPOINTS := 25
+const EXPECTED_CHECKPOINTS := 28
 
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 const ForageFx := preload("res://tools/ui_preview/fixtures_forage.gd")
@@ -42,6 +42,9 @@ const PEN_FOOTPRINT_SHORT := 7
 const PEN_FOOTPRINT_AT_TIER := 19
 
 ## The words the claims spell out, as the player reads them (never composed through the producers).
+const SOW_BUTTON := "Sow farm"
+const RAISE_EYEBROW := "Raise a farm"
+const CREW_LINE := "The crew will raise a farm of Wild Tubers here."
 const LESSON_LINE := "Learn Worked Land — work a farm"
 const RANCH_BONUS_LINE := "each keeper minds 1.5× the head"
 const RANCH_ONE_RING_LINE := "1 more ring — 1.5× the head"
@@ -106,8 +109,17 @@ func _off_site_states() -> void:
 		h._hud._drawercompose._forage_compose_available(admitted)
 			and h._hud._drawercompose.is_compose_sheet_open())
 	var sheet = h._hud._drawercompose._compose_sheet
-	h._assert_hud("…and Sow is OFFERED there, off the server's empty refusal alone",
-		ForageFx.improvement_state(sheet, "sow") == HudWidgets.IMPROVEMENT_STATE_OFFERED)
+	var commit := Q.compose_commit_button(sheet)
+	h._assert_hud("…and the commit says what it does, `%s` (got `%s`)" % [SOW_BUTTON, commit.text if commit != null else ""],
+		commit != null and commit.text == SOW_BUTTON and not commit.disabled)
+	h._assert_hud("…the header reads `%s`, not `Assign harvesters`" % RAISE_EYEBROW,
+		Q.has_label_containing(sheet, RAISE_EYEBROW.to_upper())
+			and not Q.has_label_containing(sheet, "ASSIGN HARVESTERS"))
+	h._assert_hud("…the one line says the crew raises a farm of the PICKED crop: `%s`" % CREW_LINE,
+		Q.has_label_containing(sheet, CREW_LINE) and not Q.has_label_containing(sheet, "Nothing picked")
+			and not Q.has_label_containing(sheet, "Work tab"))
+	h._assert_hud("…and no separate Sow checkbox is offered (this order IS the sow)",
+		ForageFx.improvement_state(sheet, "sow") == "")
 	h._assert_hud("…with no lesson line, the lesson being learned",
 		DetailFormat.site_lesson_line(admitted, {}) == "")
 	# Off the sites the server takes a crew only with a crop named, so the chips are the single-pick

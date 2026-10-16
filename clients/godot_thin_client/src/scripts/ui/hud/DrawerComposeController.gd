@@ -1712,7 +1712,7 @@ func _wordless_take_model(notes: Array[String]) -> Dictionary:
 func _mount_take_chips(target: VBoxContainer, basket: Array[Dictionary],
         selection: PackedStringArray, single_pick: bool,
         crop_is_default: bool, crop_rung: String, rebuild: Callable,
-        ground_committed: String, rung_percent: int) -> void:
+        ground_committed: String, rung_percent: int, offsite_label: String = "") -> void:
     if basket.is_empty():
         return
     var committed := ground_committed if ground_committed != "" else _compose.forage_species()
@@ -1743,6 +1743,10 @@ func _mount_take_chips(target: VBoxContainer, basket: Array[Dictionary],
     # nothing draws in. `""` is the whole of the forage answer now (`_take_consequence_note`).
     var consequence := _take_consequence_note(single_pick, crop_is_default, crop_rung, committed,
         basket, ground_committed != "", rung_percent)
+    # Off the sites the crop IS picked (the default is a pick), and this order raises the farm of it.
+    if offsite_label != "" and ground_committed == "" and committed != "":
+        consequence = HudFloraVocab.OFFSITE_CREW_LINE_FORMAT % [offsite_label,
+            _take_display_name(committed, basket)]
     if consequence != "":
         block.add_child(HudWidgets.alloc_hint_label(consequence))
     # **THE IDLE WARNING IS NOT WRITTEN HERE, AND NOT BECAUSE IT WAS DROPPED.** It is the crew
@@ -4182,7 +4186,8 @@ func _build_forage_assign_controls(tile_info: Dictionary, target: VBoxContainer)
             _build_forage_assign_controls(_live_tile_info(subject_key, tile_info), target),
         committed_species if is_committed else "",
         HudFormat.progress_percent(SourceForecast.improvement_progress(tile_info,
-            HudComposeVocab.FORAGE_FORECAST_PREFIX, crop_rung)))
+            HudComposeVocab.FORAGE_FORECAST_PREFIX, crop_rung)),
+        DetailFormat.offsite_crop_label(tile_info) if offsite_verb != "" else "")
     # **THE WORK PARTY, PAST THE APRON** — the hunt sheet's section on the plant web, asked with the
     # take selection the chips above just stated (empty = the whole basket), so narrowing the take
     # re-prices what arrives home. It is AFTER the chips because the take is part of its question.
@@ -4207,7 +4212,7 @@ func _build_forage_assign_controls(tile_info: Dictionary, target: VBoxContainer)
     # beneath it are read first and the terms they buy immediately after. Nothing is offered on an
     # UNASSIGN: what abandoning costs is already on the card in the rung's own hint ("It must stay
     # staffed or it goes feral"), so a second warning here would state one fact twice.
-    if not is_unassign:
+    if not is_unassign and offsite_verb == "":
         # **THE CROP PICKER IS NOT HERE ANY MORE** (`docs/plan_standing_upkeep.md` §4.7a ③). It rode
         # beneath the box on the reasoning that which crop the rung commits to is part of the same
         # decision — and the decision left this sheet, so the crop went with it to the job's own BUILD
@@ -4293,6 +4298,8 @@ func _build_forage_assign_controls(tile_info: Dictionary, target: VBoxContainer)
     # `Tend` for tenders — keyed off the ONE resolved label, exactly as the hunt web's noop hint is.
     assign_btn.set_meta(HudWidgets.COMPOSE_COMMIT_META, true)
     assign_btn.text = HudComposeVocab.UNASSIGN_BUTTON if is_unassign \
+        else HudFloraVocab.OFFSITE_COMMIT_FORMAT % [offsite_verb.capitalize(),
+            DetailFormat.offsite_crop_label(tile_info)] if offsite_verb != "" \
         else String(HudComposeVocab.PLANT_ASSIGN_BUTTONS.get(crew_label, ""))
     HudStyle.apply_button(assign_btn, "primary")
     # Off the sites a crew with no crop to name is a refused command, so the button waits for one.
@@ -4699,9 +4706,13 @@ func open_forage_compose(tile_info: Dictionary) -> void:
         subject = HudFormat.food_module_label(String(tile_info.get("food_module", "")))
     # The eyebrow names the crew the sheet is about to staff, through the SAME resolver the stepper
     # inside it uses — `ASSIGN FORAGERS` on wild ground, `ASSIGN TENDERS` on a Tended Patch or a Field.
+    var offsite_label := "" if String(tile_info.get("patch_committed_species", "")).strip_edges() != "" \
+        else DetailFormat.offsite_crop_label(tile_info)
+    var eyebrow := HudFloraVocab.OFFSITE_SHEET_EYEBROW_FORMAT % offsite_label if offsite_label != "" \
+        else HudComposeVocab.COMPOSE_SHEET_EYEBROW_FORMAT % HudFormat.plant_crew_label(
+            tile_info, HudComposeVocab.FORAGE_FORECAST_PREFIX).to_lower()
     var content := _compose_sheet.open(
-        HudComposeVocab.COMPOSE_SHEET_EYEBROW_FORMAT % HudFormat.plant_crew_label(
-            tile_info, HudComposeVocab.FORAGE_FORECAST_PREFIX).to_lower(),
+        eyebrow,
         subject, _compose.subject(), _compose_anchor_rect())
     _build_forage_assign_controls(tile_info, content)
     refresh_drawer_actions()

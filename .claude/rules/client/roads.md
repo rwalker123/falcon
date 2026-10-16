@@ -811,7 +811,7 @@ and gate reason on the card.
 
 ### The wire catalog, and the one table it must NOT be read from
 
-`LadderRungState`, published once per snapshot beside `ladderKnowledge` (issue #175: ONE catalog for every branch; the road view is the `source_kind: "road"` slice, which `FactionReadouts.update_ladder_rungs` splits out for `route_rungs()`; `ladderBranches` declares `{branch, area, source_kind, label}`): `rungKey` · `branch` · `order` ·
+`LadderRungState`, published once per snapshot beside `ladderKnowledge` (issue #175: ONE catalog for every branch; the road view is the `source_kind: "road"` slice, which `FactionReadouts.update_ladder_rungs` filters out of the stored catalog with `ladder_rungs_of_kind("road")` (the tile card reads that view back through `route_rungs()`; `ladder_rungs()` is the whole catalog); `ladderBranches` declares `{branch, area, source_kind, label}`): `rungKey` · `branch` · `order` ·
 `displayName` · `label` · `labelFallback` · `sourceKind` · `traits` · `verb` · `unlockKnowledge` · `requiresRung` · `workCost` · `upkeepWorkPerTurn` ·
 `frictionMultiplier` · `holdsLinkToTiles` · `grantsSight` · `earnsKnowledge`. Per WORLD, carrying no faction and no
 tile, so it is diffed whole like `kits` and cleared at the world boundary

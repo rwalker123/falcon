@@ -304,14 +304,18 @@ static func placement_admitted(src: Dictionary, prefix: String = "") -> bool:
 ## named, and that same command queues the build; so the sheet's crop chips stop being a choice and
 ## become the commit, and a bare gather is not offered.
 static func offsite_placing_verb(src: Dictionary, prefix: String = "") -> String:
+	return verb_of(offsite_placing_quote(src, prefix))
+
+## The quote `offsite_placing_verb` reads (`{}` when none), so a caller can name the rung too.
+static func offsite_placing_quote(src: Dictionary, prefix: String = "") -> Dictionary:
 	for quote in quotes(src, prefix):
 		if not places_source(quote):
 			continue
 		if bool(quote.get(KEY_REACHED, false)):
-			return ""
+			return {}
 		if String(quote.get(KEY_SITE_REFUSAL, "")).strip_edges() == "":
-			return verb_of(quote)
-	return ""
+			return quote
+	return {}
 
 ## The lesson id a placing rung's refusal is waiting on (`""` when none is): the knowledge of the last
 ## `site_relaxation`, which is the one the server's own refusal sentence names, set against a quote the

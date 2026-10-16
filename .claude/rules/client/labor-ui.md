@@ -8362,6 +8362,10 @@ forage block, the Assign button and the compose sheet.
   the commit when no legal crop exists. A patch already at the rung (or committed) uses the ordinary crew
   controls with no crop. The server does not tell a plain gather from a farm-raising one on committed
   ground, so nothing client-side forbids the former there.
+- **The sheet says it starts the farm.** On such ground the header reads `Raise a farm`, the commit
+  `Sow farm` (the placing rung's verb and catalog label), the one line under the chips `The crew will raise a
+  farm of <picked crop> here.` (the default crop counts as picked), and the Work-tab Sow checkbox is not
+  mounted, since this order is the sow.
 - **Off-site guard.** `command_guard` drives a forage `assign_labor` naming a crop through the real parser.
 - **A refusal that arrives** comes back as a command echo and is shown by the event dock's System channel;
   the sheet does not roll back its pending entry on it.
