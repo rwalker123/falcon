@@ -198,8 +198,9 @@ Knowledge panel's *reach* area.
   same arm the pastoral and pen rungs use, so the forecast and the crew curves read it too.
 
 **2. The score.** It reads the band's standing on that roaming track and how far it has travelled with
-its herds — the roaming counterpart to `SedentarizationScore`. It feeds the manual's **Cultural
-Diffusion (Nomadic)** victory (§Victory Conditions). That link is real, not decorative: range is the
+its herds — the roaming counterpart to `SedentarizationScore`. It becomes **Influence**, with a
+ladder of bonuses and a part in the Cultural, Diplomatic and Legacy victories
+([`docs/plan_heritage_and_influence.md`](plan_heritage_and_influence.md)). That link is real, not decorative: range is the
 observing band's sight and contact is found inside the sight sweep (`.claude/rules/core_sim/connections.md`),
 so a band that walks long migrations meets more peoples, holds more ties, and culture spreads over
 ties (`docs/plan_contact_and_logistics.md` §Settled by #530). Moving well is how a nomadic people wins.
@@ -214,8 +215,8 @@ learns only on a `Migrate` leg. All four numbers are Workbench levers
 
 ## Open items
 
-- **The victory threshold** — Cultural Diffusion (#234) is the score's consumer. Opening values are
-  Workbench levers, settled by playtest.
+- **What the score feeds** — its ladder, bonuses and victories are
+  [`docs/plan_heritage_and_influence.md`](plan_heritage_and_influence.md)'s.
 
 ## Slices
 
@@ -228,7 +229,7 @@ Sub-issues of the arc, #251.
 3. **Hunting by need** (#798) — the need-paced trigger for a band in migration mode.
 4. **The roaming skills** (#799) — Herd lore, travois, drives, on the knowledge ledger. Drying is
    #708's.
-5. **The mobility score** (#800) — the readout, and its input to Cultural Diffusion.
+5. **The mobility score** (#800) — the readout; it becomes Influence (`docs/plan_heritage_and_influence.md`).
 
 ## See Also
 

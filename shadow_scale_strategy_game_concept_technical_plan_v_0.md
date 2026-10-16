@@ -107,6 +107,7 @@ The first thing a surplus teaches you is that you cannot keep it. (designed — 
 - **There is no "found a settlement" action.** A camp/settlement/town/city is the *emergent, derived label* for a cluster of populated tiles — the accumulated result of a population that builds place-bound improvements it must attend. Settling is the point where the cost of leaving (abandoning built improvements + stored surplus) exceeds the benefit of moving. See `docs/plan_settlement_population.md` for the population/labor/improvement model this arc implements; the Sedentarization Score below is the *readout* of that accumulated tether.
 - Sedentarization Score (0–100): emergent pressure to root in place. Inputs: local resource density (now including the live herd-density overlay), food stability, storage/spoilage reductions, domestication progress, trade hub potential, travel fatigue, security, **belief on the ground** (the dead, gatherings, a monument) and the **presence of partner bands** within reach.
 - Soft prompt at ~40 (“establish seasonal base?”); hard opportunity at ~70 (“invest in storehouses/fields and settle?”). You can ignore prompts and remain nomadic.
+- **This score becomes Heritage** (designed — see `docs/plan_heritage_and_influence.md`). A band's settlement stage — Nomadic band, Seasonal camp, Village — is earned by its head count *and* its Heritage, and each stage pays a bonus that only a band that stays can use: a larder that keeps longer, then land worked further out. The roaming counterpart is **Influence**, with its own ladder of bonuses for a band that keeps moving.
 - Multiple settlement on-ramps:
   - Farming path: tending patches → seed selection → fields, coupled with storage breakthroughs (sealed pottery/pits).
   - Pastoral path: herd growth + corrals → semi-sedentary calving/winter grounds.
@@ -150,14 +151,21 @@ These milestones are resolved by the Great Discovery System (GDS). When their ef
 
 ### Victory Conditions (Multiple Paths)
 Shadow-Scale supports several victory archetypes; scenarios can enable/disable sets. Because worlds differ, thresholds scale to world size and discovery density.
-- Hegemony (Domination): control a supermajority of population and production (e.g., ≥60%), hold all opposing capitals for N turns, and maintain internal stability.
-- Cultural Diffusion (Nomadic): sustain dominant cultural influence across route networks/seasonal circuits and alliances while meeting stewardship minimums and cohesion.
+Two scores run under several of them: **Heritage**, how deeply a people holds the land it stands on, and **Influence**, how far its world reaches beyond it (see `docs/plan_heritage_and_influence.md`). Each band climbs a ladder on each score, and every rung pays a bonus that is worth something only while the band keeps playing that way.
+
+One victory is **balanced**; the rest reward a specialist.
+- Legacy (balanced): lead across the board — population, production, stability, Heritage and Influence together.
+- Cultural (specialist): your Influence wins over the other peoples. Influence carried over your ties to a people pushes against that people's own Heritage; a deeply rooted people is hard to win over.
+- Diplomatic (specialist): treaties and goodwill with the other peoples, with Influence as what diplomacy spends.
+- Military (specialist): hold all opposing capitals for N turns.
+- Economic (specialist): sustain a dominant share of global trade throughput and reserve currency influence while meeting stability and emissions/impact limits. (Enabled midgame+.)
+- Scientific/Ascension (specialist): resolve a defined set of late-tier Great Discoveries and complete an Ascension Project (advanced power megaproject). Survive resulting crisis pressure for N turns. (Enabled mid/late.)
 - Stewardship: meet ecological recovery targets across biomes (pollution drawdown, biodiversity/chemistry harmony) while achieving minimum development thresholds.
 - Survival/Crises: neutralize or co-govern the endgame crisis vector (eradicate, contain, or integrate) depending on its nature (see §8 Crises).
-- Economic Hegemon: sustain a dominant share of global trade throughput and reserve currency influence while meeting stability and emissions/impact limits. (Enabled midgame+.)
-- Scientific/Ascension: resolve a defined set of late-tier Great Discoveries and complete an Ascension Project (advanced power megaproject). Survive resulting crisis pressure for N turns. (Enabled mid/late.)
 
-Default scenario enables: Hegemony, Cultural Diffusion (Nomadic), Stewardship, Survival. Economic and Ascension unlock when mid/late capability milestones are reached or if the chosen scenario pre-enables them.
+A victory measures a people against the others — a share of the world, or one people against another — never a capped score, which every people could fill.
+
+Which victories a default scenario enables is open. Economic and Ascension unlock when mid/late capability milestones are reached or if the chosen scenario pre-enables them.
 
 Loss states include extinction, collapse below recoverable thresholds (population, food/energy), or federations failing critical cohesion votes during crises.
 
