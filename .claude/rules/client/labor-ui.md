@@ -8369,3 +8369,13 @@ forage block, the Assign button and the compose sheet.
 - **Off-site guard.** `command_guard` drives a forage `assign_labor` naming a crop through the real parser.
 - **A refusal that arrives** comes back as a command echo and is shown by the event dock's System channel;
   the sheet does not roll back its pending entry on it.
+
+## A rung held back only by a lesson says so in the aside (issue #175)
+
+The compose sheet draws no control for a rung whose sole refusal is an unlearned lesson (a tended patch
+at Seed Selection 90% shows no Farm). The readout's teaching line carries that fact instead:
+`SourceForecast.lesson_opens_clause` appends `Seed Selection 90% - the farm waits on it.` to both
+teaching lines, from the next rung's catalog label and `unlock_knowledge` and the faction's progress,
+and appends nothing once the lesson is known. `harness-ui-preview.md` -> `worked_land_ranch.gd` asserts
+the clause and that a tended patch with the lesson learned, on watered ground, is offered the Farm.
+

@@ -418,22 +418,10 @@ property of the domain descriptor, not a branch in the renderer.** It is the col
 rotated ninety degrees, and only the ladder's connector carries `RAIL_META`, so *"a ladder draws its
 rail and the craft fan draws none"* stays a claim about the TREE rather than about a pixel.
 
-**A knowledge that gates nothing wears a capsule** reading `gates nothing` — `foddering` today. It
-hangs off the end of its ladder and the capsule is what stops it reading as one more step. Drawn from
-`NODE_UNSPENT_TESTABLE`, which is the config's own `is_step` crossed with the verb lookup, never a
-client list of exceptions. **That puts the verb lookup's own blind spot on the FACE**: a ladder branch
-with no catalog rung unlocked by it reads `unspent_testable = false`, so every one of its
-knowledges wears the capsule — the same fault this file already records under *`unspent_testable` is
-two questions*, now visible without a click rather than only in the reading's `Where, now` line.
-
-⛔ **AND THE SHIPPED SCREEN HAS THREE OF THOSE TODAY** — `woodcraft`, `conservationism` and
-`quarrying` all read `gates nothing` while the config says each one gates a rung. That table is
-keyed on a VERB, and the two deposit branches declare no verb at all: their gates are keyed on the
-RUNG instead (`RungGates`' deposit section says so at the point of the split), so there is nothing
-for the inversion to find. The `unused` filter cannot count them either — a knowledge that gates
-nothing cannot be unspent. Closing it is not one table entry: the controller resolves patches, herds
-and roads, and a deposit has no fourth scan behind it, so *"is anything using Quarrying"* has no
-answer to read yet.
+**A chip carries no "gates nothing" tag.** What a lesson does is the reading's job (`NODE_NOTE`, and the
+`Where, now` line on click); a tag on the face said less, and was wrong for any knowledge the verb lookup
+could not resolve (the deposit branches' Woodcraft, Conservationism and Quarrying). `NODE_UNSPENT_TESTABLE`
+survives for one purpose: it decides whether the unspent mark can be asked of a node at all.
 
 ## A NODE CHIP IS A `PanelContainer` WITH `gui_input`, NEVER A `Button`
 
@@ -882,10 +870,8 @@ non-vacuous legs still passing.
   `FactionReadouts.KNOWLEDGE_UNLOCK_NOTES` (*See where a migrating herd goes next.* / *Each worker
   carries more on the move.* / *Hunters take more from a big herd.*) and the learning lines in
   `HudKnowledgeVocab.PRACTISE_NOTES`.
-- **The chips do NOT wear the `gates nothing` capsule**: each skill changes play by itself. The
-  roster marks every node of a step-less branch `standalone` (`NODE_STANDALONE`, set in
-  `build_domains` from the same no-step test that picks the fan), and the capsule is skipped for it.
-  `foddering` (non-step, but in a branch that has steps) and the rung knowledges keep the capsule.
+- **A step-less branch draws a fan and no rail**, each skill changing play by itself; the roster
+  derives that from the same no-step test that picks the fan.
 
 Harness: `fixtures_knowledge.gd` carries the three rows; `knowledge_panel.gd` asserts `reach` gathers
 `roam` as a fan of three and saves `knowledge_panel_roam`.

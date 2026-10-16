@@ -147,11 +147,6 @@ static func build_domains(model: Dictionary) -> Array[Dictionary]:
 			if bool((row_variant as Dictionary).get(HudKnowledgeVocab.ROSTER_IS_STEP, false)):
 				has_step = true
 				break
-		# A knowledge in a step-less branch is STANDALONE: it works on its own, so the panel must not
-		# tag it "gates nothing" (that tag is for a capability hanging off a ladder, like foddering).
-		if not has_step:
-			for node in nodes:
-				node[HudKnowledgeVocab.NODE_STANDALONE] = true
 		domains.append({
 			HudKnowledgeVocab.DOMAIN_KEY: branch,
 			HudKnowledgeVocab.DOMAIN_LABEL: HudKnowledgeVocab.domain_label(branch),
@@ -433,13 +428,10 @@ static func _ladder_node(entry: Dictionary, domain: StringName, model: Dictionar
 	# waits on has nothing to stand on it, so *"nothing is using it"* would be a sentence about
 	# nothing. The client used to declare that set; the roster derives it from the ladder.
 	#
-	# ⛔ **`testable` IS TWO QUESTIONS, AND THE SECOND IS THE CLIENT'S.** `is_step` is the config's,
-	# but `unlocks` comes from inverting `RungGates.RUNG_KNOWLEDGE_TRACKS` — a table in this client —
-	# so a branch that IS a step and is missing from it reads `testable = false`, and the chip then
-	# says *"gates nothing"* about a knowledge that gates something (`HudKnowledgeVocab`'s
-	# `CAPABILITY_CAPSULE`). Every synthetic branch in `knowledge_panel_stress` lands there, which is
-	# what makes the blind spot visible rather than theoretical. A new ladder branch needs its verbs
-	# in that table, exactly as `grade` / `pave` did.
+	# `testable` is two questions, and the second is the client's: `is_step` is the config's, but
+	# `unlocks` comes from inverting `RungGates.RUNG_KNOWLEDGE_TRACKS`. It drives the unspent mark only
+	# (no chip says a knowledge "gates nothing" -- the reading says what a lesson does). A new ladder
+	# branch needs its verbs in that table, exactly as `grade` / `pave` did.
 	var is_step := bool(entry.get(HudKnowledgeVocab.ROSTER_IS_STEP, false))
 	var testable := is_step and unlocks != SourceForecast.IMPROVEMENT_NONE \
 		and _kind_is_countable(HudRouteVocab.source_kind_of_verb(catalog, unlocks))

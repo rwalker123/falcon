@@ -3276,6 +3276,7 @@ const TEACHING_RATE_FORMAT := "Teaching %s at ×%.2f"
 # building source now states no line at all, which is what it always meant: the top of the dial buys
 # that source nothing further.
 const TEACHING_RATE_FLOOR_TAIL := " — a higher floor teaches faster."
+const TEACHING_OPENS_FORMAT := " %s %d%% - the %s waits on it."
 const TEACHING_NOTHING_STRIPPED := "Teaching nothing: nothing is left standing."
 # …and the other end: the escapement room is empty (or nobody is assigned), so the sim's work
 # predicate is false and no practice happens at any multiplier. Watching teaches nothing.
@@ -3365,6 +3366,23 @@ static func crew_is_taking(workers: int, biomass: float, capacity: float, floor:
 static func crew_is_taking_next_turn(workers: int, room_next_turn: float) -> bool:
     return workers > 0 and room_next_turn > 0.0
 
+## **WHAT THE UNLEARNED LESSON IS HOLDING BACK, as one sentence** -- `" Seed selection 90% -- the farm
+## waits on it."`. The sheet draws NO control for a rung whose only refusal is a lesson (the aside is
+## what states it), so without this the aside named the craft and never the rung or how far along it
+## is, and a tended patch simply showed no Farm. `""` once the lesson is known or the source has no
+## next rung. Names come off the quote (its label, its `unlock_knowledge`), never a table here.
+static func lesson_opens_clause(src: Dictionary, prefix: String, knowledge: Dictionary,
+        lesson_known: bool) -> String:
+    if lesson_known:
+        return ""
+    var quote := RungQuotes.next(src, prefix)
+    var unlock := String(quote.get(RungQuotes.KEY_UNLOCK, ""))
+    if quote.is_empty() or unlock == "":
+        return ""
+    return TEACHING_OPENS_FORMAT % [unlock.replace("_", " ").capitalize(),
+        HudFormat.progress_percent(RungGates.track(knowledge, unlock)),
+        RungQuotes.name_of(quote).to_lower()]
+
 ## The aside's teaching line as `{text, teaching}` — `teaching` is whether the source is actually
 ## being taught at a rate, which is what earns the line SIGNAL cyan. `{}` when this rung teaches
 ## nothing at all, which is the caller's cue to render no line rather than an empty one.
@@ -3378,7 +3396,7 @@ static func crew_is_taking_next_turn(workers: int, room_next_turn: float) -> boo
 ## tracks). The `TEACHING_NOTHING_*` ends below are UNLEARNED-only for the same reason: they name why
 ## no lesson is being earned, which is not a question for someone who already has it.
 static func teaching_note(lesson: String, floor: float, taking: bool,
-        lesson_known: bool) -> Dictionary:
+        lesson_known: bool, opens_clause: String = "") -> Dictionary:
     if lesson == "":
         return {}
     # **A LESSON ALREADY LEARNED LEAVES NOTHING FOR THE DIAL TO BUY ON THIS SOURCE.** It used to keep
@@ -3392,12 +3410,13 @@ static func teaching_note(lesson: String, floor: float, taking: bool,
     var stripped := floor_zone(floor) == FLOOR_ZONE_STRIP
     if stripped or not taking:
         return {
-            "text": TEACHING_NOTHING_STRIPPED if stripped else TEACHING_NOTHING_UNWORKED,
+            "text": (TEACHING_NOTHING_STRIPPED if stripped else TEACHING_NOTHING_UNWORKED)
+                + opens_clause,
             "teaching": false,
         }
     return {
         "text": (TEACHING_RATE_FORMAT % [lesson, learn_multiplier(floor)]) \
-            + TEACHING_RATE_FLOOR_TAIL,
+            + TEACHING_RATE_FLOOR_TAIL + opens_clause,
         "teaching": true,
     }
 
@@ -3480,7 +3499,8 @@ static func harvest_verdict(walk: Dictionary, workers: int, biomass: float, capa
 ## curve-reading section above for why leaving them there was the panel being two models at once.
 static func floor_chart_model(src: Dictionary, kind: String, prefix: String, floor: float,
         workers: int, crew_noun: String, lesson_known: bool,
-        per_crew: Array = [], take_crew: float = WHOLE_CREW_TAKES) -> Dictionary:
+        per_crew: Array = [], take_crew: float = WHOLE_CREW_TAKES,
+        knowledge: Dictionary = {}) -> Dictionary:
     var capacity := float(src.get(prefix + FORECAST_CAPACITY_KEY, 0.0))
     var biomass := float(src.get(prefix + FORECAST_BIOMASS_KEY, 0.0))
     var samples := regrowth_samples(src, prefix)
@@ -3619,7 +3639,8 @@ static func floor_chart_model(src: Dictionary, kind: String, prefix: String, flo
         # lesson the sim was crediting at full multiplier, was told *"nothing is being taken"* while
         # the verdict one row up correctly read *"At the floor and holding it"*.
         "teaching_note": teaching_note(rung_lesson(kind, src, prefix), floor_value,
-            crew_is_taking_next_turn(workers, room_next_turn), lesson_known),
+            crew_is_taking_next_turn(workers, room_next_turn), lesson_known,
+            lesson_opens_clause(src, prefix, knowledge, lesson_known)),
     }
 
 ## The herd's per-worker rate, ceiling AT `floor` and one-animal quantum ON THE AXIS IT IS QUANTISED

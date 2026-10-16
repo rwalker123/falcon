@@ -13,7 +13,7 @@ extends RefCounted
 ## catalog's tier row: a pen below it says how many rings reach it, a pen in it says what it does.
 
 ## The checkpoints this chapter owes the walk -- assertions made plus frames saved, as a FLOOR.
-const EXPECTED_CHECKPOINTS := 28
+const EXPECTED_CHECKPOINTS := 34
 
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 const ForageFx := preload("res://tools/ui_preview/fixtures_forage.gd")
@@ -56,7 +56,44 @@ func run(harness) -> void:
 	h._hud._band_labor._player_band = BandFx.band_fixture()
 	await _off_site_states()
 	await _pen_states()
+	_tended_patch_offers_farm()
 	h._hud._drawercompose.close_compose_sheet()
+
+## **A TENDED PATCH MUST OFFER THE FARM** (playtest, #175): Seed Selection known, the ground watered
+## (the server's `site_refusal` empty), and a crop in the basket that climbs to the farm. The same patch
+## with its seed lesson unlearned, and on dry ground, are the controls: the offer is gated by exactly the
+## facts the server states, and by nothing the client invents.
+func _tended_patch_offers_farm() -> void:
+	var knows := {"cultivation": KNOWN, "seed_selection": KNOWN}
+	var lacks := {"cultivation": KNOWN, "seed_selection": 0.4}
+	var tended := RungFx.stamp_patch({
+		"ecology_phase": "thriving", "is_cultivated": true, "cultivation_progress": 1.0,
+		"is_field": false, "sow_site_refusal": "",
+		"composition": [{"can_cultivate": true, "can_sow": true}],
+	})
+	var offer := RungGates.next_rung_offered("forage", tended, "", knows)
+	h._assert_hud("a tended patch with Seed Selection, watered, and a crop that climbs OFFERS the Farm (got `%s`)"
+		% str(offer), String(offer.get("policy", "")) == "sow" and offer.get("reasons", []).is_empty())
+	h._assert_hud("...and it is READY (the work row's mark), not merely offered",
+		String(RungGates.next_rung_ready("forage", tended, "", knows).get("policy", "")) == "sow")
+	var unlearned := RungGates.next_rung_offered("forage", tended, "", lacks)
+	h._assert_hud("...with the lesson unlearned it is still OFFERED, gated, with the reason",
+		String(unlearned.get("policy", "")) == "sow" and not unlearned.get("reasons", []).is_empty())
+	# The reason a tended patch shows NO Farm control is the lesson at 90%: the sheet's aside must name the
+	# lesson's progress and the rung that waits on it, and must say nothing once it is learned.
+	h._assert_hud("the unlearned lesson's aside names its progress and the rung it holds back",
+		SourceForecast.lesson_opens_clause(tended, "", {"cultivation": KNOWN, "seed_selection": 0.9}, false)
+			== " Seed Selection 90% - the farm waits on it.")
+	h._assert_hud("...and states nothing once the lesson is known",
+		SourceForecast.lesson_opens_clause(tended, "", knows, true) == "")
+	var dry := RungFx.stamp_patch({
+		"ecology_phase": "thriving", "is_cultivated": true, "cultivation_progress": 1.0,
+		"sow_site_refusal": "too_dry",
+		"composition": [{"can_cultivate": true, "can_sow": true}],
+	})
+	var dry_offer := RungGates.next_rung_offered("forage", dry, "", knows)
+	h._assert_hud("...and dry ground is OFFERED gated with the server's reason, never silently absent",
+		String(dry_offer.get("policy", "")) == "sow" and not dry_offer.get("reasons", []).is_empty())
 
 func _knowledge(worked_land: float) -> void:
 	h._hud.update_intensification([{"faction": 0, "knowledges": {

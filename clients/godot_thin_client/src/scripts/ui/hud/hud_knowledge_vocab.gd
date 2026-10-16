@@ -175,9 +175,6 @@ const NODE_UNSPENT := "unspent"
 ## filter's count and the detail pane's line can tell *"nothing is using it"* apart from *"there is
 ## nothing for anything to use"*.
 const NODE_UNSPENT_TESTABLE := "unspent_testable"
-## True on every node of a branch with no step in it (the roaming skills): it works on its own rather
-## than hanging off a ladder, so it never wears the `gates nothing` capsule. Absent otherwise.
-const NODE_STANDALONE := "standalone"
 ## Was this knowledge completed THIS turn — see `KnowledgePanelController`.
 const NODE_NEW := "new_this_turn"
 ## What the knowledge lets the faction's hands do, one sentence.
@@ -239,16 +236,6 @@ const METER_CELLS := FactionReadouts.KNOWLEDGE_METER_CELLS
 const UNSPENT_CLAUSE := "nothing is using it"
 const UNSPENT_MARK := "◇"
 
-## What a knowledge that GATES NOTHING wears on its chip — `foddering` today. It hangs off the end of
-## its ladder and says so, so it reads as hanging off rather than as continuing the steps. Drawn from
-## `NODE_UNSPENT_TESTABLE` being false, never a client list of exceptions.
-##
-## ⛔ **BUT THAT FLAG IS TWO TERMS.** `KnowledgeRoster._ladder_node` crosses the config's own
-## `ROSTER_IS_STEP` with a verb resolved by inverting `RungGates.RUNG_KNOWLEDGE_TRACKS`, which is a
-## CLIENT table — so a branch that is a step and is simply missing from that table says *"gates
-## nothing"* about a knowledge that gates something. Every chip in `knowledge_panel_stress` wears the
-## capsule for exactly that reason, the synthetic branches being in no rung table.
-const CAPABILITY_CAPSULE := "gates nothing"
 
 # ---- learning by contact (#531) ------------------------------------------------------------------
 # A people learns a discovery it lacks by being around another people that knows it
@@ -558,16 +545,11 @@ const RAIL_THICKNESS := 1.0
 ## inside these margins — so selecting a knowledge never reflows its row.
 const CHIP_PADDING_H := 9
 const CHIP_PADDING_V := 5
-## Between the chip's own parts: glyph, name, percent, unspent mark, contact mark, capability
-## capsule — and between the reading's state line and its contact clause.
+## Between the chip's own parts: glyph, name, percent, unspent mark, contact mark — and between
+## the reading's state line and its contact clause.
 const CHIP_SEPARATION := 6
 const CHIP_BORDER_THICKNESS := 1
 
-## The capability capsule (`CAPABILITY_CAPSULE`) — a fully-rounded outline, so it reads as a tag
-## hanging off the chip rather than as another word in its name.
-const CAPSULE_FONT_SIZE := 10
-const CAPSULE_PADDING_H := 7
-const CAPSULE_PADDING_V := 3
 
 # ---- the INLINE detail --------------------------------------------------------------------------
 ## **DERIVED, so the reading lines up under the row's first chip** rather than under the card's edge:

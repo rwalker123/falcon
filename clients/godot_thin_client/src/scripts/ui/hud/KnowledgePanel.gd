@@ -547,7 +547,7 @@ func _build_connector(is_ladder: bool) -> Control:
 	return rail
 
 ## ONE NODE'S CHIP: `● Cultivation`, plus a percent while it is being learned, plus the `◇` when
-## nothing is using it, plus the capability capsule when it gates nothing.
+## nothing is using it.
 ##
 ## **A `PanelContainer` WITH `gui_input`, NOT A `Button`, and that is the panel's own documented
 ## rule.** A Button is not a Container, so a face parented to one is NEVER LAID OUT — the children
@@ -610,22 +610,8 @@ func _build_node_chip(node: Dictionary, filter: StringName, selected: String) ->
 		face.add_child(_chip_label(HudKnowledgeVocab.CONTACT_MARK, HudStyle.SIGNAL,
 			HudKnowledgeVocab.NODE_NAME_FONT_SIZE))
 
-	# **A KNOWLEDGE THAT GATES NOTHING SAYS SO ON ITS FACE.** `foddering` hangs off the end of its
-	# ladder, and the capsule is what stops it reading as one more step. Off `NODE_UNSPENT_TESTABLE` —
-	# never a client list of exceptions. Crafts publish it `true`, so the capsule cannot land on one.
-	#
-	# ⛔ **THAT FLAG IS TWO TERMS, AND ONLY THE FIRST IS THE LADDER'S.** `KnowledgeRoster._ladder_node`
-	# computes `is_step and unlocks != IMPROVEMENT_NONE`, where `unlocks` comes from inverting
-	# `RungGates.RUNG_KNOWLEDGE_TRACKS` — a CLIENT table. So a branch that genuinely IS a step but is
-	# absent from that table puts the player-facing words *"gates nothing"* on a knowledge that gates
-	# something, which is exactly why every chip in `knowledge_panel_stress` wears the capsule. The
-	# lookup's blind spot is on the FACE now rather than only in the reading's `Where, now` line.
-	if not bool(node.get(HudKnowledgeVocab.NODE_UNSPENT_TESTABLE, false)) \
-			and not bool(node.get(HudKnowledgeVocab.NODE_STANDALONE, false)):
-		face.add_child(_build_capability_capsule())
-
 	# **DIM, NEVER HIDE** — see the class docstring. `modulate` on the CHIP itself: there is no row
-	# host any more, and a per-Label tint would leave the capsule bright over a faded name.
+	# host any more, and a per-Label tint would leave the mark bright over a faded name.
 	if not KnowledgeRoster.matches(node, filter):
 		chip.modulate = Color(1.0, 1.0, 1.0, HudKnowledgeVocab.FILTERED_OUT_ALPHA)
 	return chip
@@ -646,26 +632,6 @@ func _chip_tooltip(node: Dictionary) -> String:
 		lines.append("%s %s" % [HudKnowledgeVocab.CONTACT_MARK, contact])
 		lines.append(HudKnowledgeVocab.contact_rate(node))
 	return "\n".join(lines)
-
-## The `gates nothing` tag — a fully-rounded outline around a faint caption, so it reads as something
-## hanging off the chip rather than as another word in the knowledge's name.
-func _build_capability_capsule() -> Control:
-	var capsule := PanelContainer.new()
-	capsule.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	capsule.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	var sb := StyleBoxFlat.new()
-	sb.bg_color = Color(0.0, 0.0, 0.0, 0.0)
-	sb.set_border_width_all(HudKnowledgeVocab.CHIP_BORDER_THICKNESS)
-	sb.border_color = HudStyle.LINE
-	sb.set_corner_radius_all(HudStyle.PILL_CORNER_RADIUS)
-	sb.content_margin_left = HudKnowledgeVocab.CAPSULE_PADDING_H
-	sb.content_margin_right = HudKnowledgeVocab.CAPSULE_PADDING_H
-	sb.content_margin_top = HudKnowledgeVocab.CAPSULE_PADDING_V
-	sb.content_margin_bottom = HudKnowledgeVocab.CAPSULE_PADDING_V
-	capsule.add_theme_stylebox_override("panel", sb)
-	capsule.add_child(_chip_label(HudKnowledgeVocab.CAPABILITY_CAPSULE, HudStyle.INK_FAINT,
-		HudKnowledgeVocab.CAPSULE_FONT_SIZE))
-	return capsule
 
 func _chip_label(text: String, ink: Color, font_size: int) -> Label:
 	var label := Label.new()
@@ -852,7 +818,7 @@ func _detail_stylebox(open: bool) -> StyleBoxFlat:
 	return sb
 
 ## What `Where, now` says. Three shapes, and the third exists because a knowledge that unlocks
-## nothing has no source to stand on it — the capsule on its chip says the same thing shorter.
+## nothing has no source to stand on it.
 func _where_text(node: Dictionary) -> String:
 	if not bool(node.get(HudKnowledgeVocab.NODE_UNSPENT_TESTABLE, false)):
 		return HudKnowledgeVocab.DETAIL_WHERE_UNLOCKLESS

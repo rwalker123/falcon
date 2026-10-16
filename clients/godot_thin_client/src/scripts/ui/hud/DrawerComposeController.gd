@@ -3198,7 +3198,7 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
     chart_model = SourceForecast.floor_chart_model(_hunt_priced_herd(herd, band),
         SourceForecast.SOURCE_KIND_HERD,
         HudComposeVocab.BARE_FORECAST_PREFIX, _compose.hunt_floor(), _compose.hunt_count(), crew_label.to_lower(), lesson_known,
-        crew_take)
+        crew_take, SourceForecast.WHOLE_CREW_TAKES, _player_knowledge())
     if bool(chart_model.get("known", false)):
         # **THE DRAG'S REFILL, PUBLISHED RATHER THAN INLINE.** A forecast answer landing mid-drag has
         # to reach these hosts too — it is the whole point of asking during the drag — and the seam's
@@ -3215,7 +3215,7 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
                 _hunt_priced_herd(_live_herd(herd_id, herd), band),
                 SourceForecast.SOURCE_KIND_HERD,
                 HudComposeVocab.BARE_FORECAST_PREFIX, floor, _compose.hunt_count(), crew_label.to_lower(), lesson_known,
-                _hunt_live_crew_take),
+                _hunt_live_crew_take, SourceForecast.WHOLE_CREW_TAKES, _player_knowledge()),
                 _compose.hunt_count())
         target.add_child(HudWidgets.build_floor_chart(chart_model,
             func(floor: float, committed: bool) -> void:
@@ -4096,7 +4096,8 @@ func _build_forage_assign_controls(tile_info: Dictionary, target: VBoxContainer)
         _forage_priced_patch(take_tile, band),
         SourceForecast.SOURCE_KIND_FORAGE, HudComposeVocab.FORAGE_FORECAST_PREFIX,
         _compose.forage_floor(), _compose.forage_count(),
-        crew_label.to_lower(), lesson_known, [], _kept_take_crew(kept, _compose.forage_count())),
+        crew_label.to_lower(), lesson_known, [], _kept_take_crew(kept, _compose.forage_count()),
+        _player_knowledge()),
         kept)
     if bool(chart_model.get("known", false)):
         # The plant twin of the hunt sheet's published refill, and it exists for the narrower half of
@@ -4114,7 +4115,8 @@ func _build_forage_assign_controls(tile_info: Dictionary, target: VBoxContainer)
                     _live_tile_info(subject_key, tile_info), take_state), band),
                 SourceForecast.SOURCE_KIND_FORAGE,
                 HudComposeVocab.FORAGE_FORECAST_PREFIX, floor, _compose.forage_count(), crew_label.to_lower(),
-                lesson_known, [], _kept_take_crew(kept, _compose.forage_count())), kept),
+                lesson_known, [], _kept_take_crew(kept, _compose.forage_count()),
+                _player_knowledge()), kept),
                 _compose.forage_count())
         target.add_child(HudWidgets.build_floor_chart(chart_model,
             func(floor: float, committed: bool) -> void:
