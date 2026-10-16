@@ -1190,3 +1190,10 @@ Corral, a wild-ceiling wolf offers nothing), `map_raid_party_quarry`, `map_overf
 `map_band_label_overlap` (the slot-anchored labels), and the workings' own four in `map-markers.md`
 — of which `map_working_beside_herd` is the PARITY frame, a worked working and a hunted herd in one
 picture with each hex probed for its own web's mark colour and for the absence of the other's.
+
+## The held-step mark on a worked marker (issue #175)
+
+`BandOverlayRenderer.held_step_mark` / `held_working_mark` and the upper-left disc are specified in
+`map-markers.md` -> "The step a source holds is on its marker". It reads the same `rung_quotes` the badge's
+build and ready faces read, so the three cannot name different rungs for one source.
+

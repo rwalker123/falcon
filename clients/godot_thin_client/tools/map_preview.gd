@@ -917,6 +917,40 @@ func _ready() -> void:
 			_map.forage_patch_lookup.get(Vector2i(WORK_CULTIVATE_X, WORK_CULTIVATE_Y), {}), "") == ""
 		and not SourceForecast.source_is_improved(
 			_map.forage_patch_lookup.get(Vector2i(WORK_CULTIVATE_X, WORK_CULTIVATE_Y), {}), ""))
+	# State A-held -- **THE STEP A SOURCE HOLDS, ON ITS MARKER.** Three frames over the worked-ready fixture, each
+	# moving only the held rung of the three worked sources (patch A, patch B, the deer), asserted off the badge
+	# entry the renderer queues (`held_glyph` / `held_label`) -- a draw call renders into a canvas and no
+	# harness reads a glyph back off one. A is the hex that is never building anything, B is the one with a
+	# live build above its held step, and the deer is the herd.
+	_display_held(true, false, true, 0.3, false, "")
+	await _held_frame("map_held_tended_building_farm")
+	_assert_held("patch B, tended and building a Farm: the Tended mark AND the build arc coexist",
+		_held_entry(false), "Tended patch", true)
+	_assert_held("…patch A, tended and idle, wears the same Tended mark and no arc", _held_entry(true), "Tended patch", false)
+	_assert_held("…the tamed deer wears its own mark", _held_herd_entry(), "", false, false)
+	await _zoom_on(Vector2i(FORAGE_A_X + 1, FORAGE_A_Y + 1))
+	await _save("map_held_tended_building_farm_close")
+	_display_held(true, true, false, 0.0, false, "")
+	await _held_frame("map_held_farm")
+	_assert_held("a Farm wears the Farm mark", _held_entry(true), "Farm", false)
+	_display_held(true, true, false, 0.0, true, "")
+	await _held_frame("map_held_pen")
+	_assert_held("a Pen wears the Pen mark", _held_herd_entry(), "", false, false)
+	_display_held(true, true, false, 0.0, true, "ranch")
+	await _held_frame("map_held_ranch")
+	var ranch_entry := _held_herd_entry()
+	_assert_map("map_held_ranch -- a Pen at a size tier wears the TIER's mark, not the Pen's (`%s`)"
+			% String(ranch_entry.get(BandOverlayRenderer.HELD_MARK_GLYPH_KEY, "")),
+		String(ranch_entry.get(BandOverlayRenderer.HELD_MARK_GLYPH_KEY, ""))
+			== String(HudSelectionVocab.HELD_TIER_MARKS["ranch"])
+		and String(ranch_entry.get(BandOverlayRenderer.HELD_MARK_LABEL_KEY, "")) != "")
+	await _zoom_on(Vector2i(_map._herd_by_id("game_deer_07").get("x", 0), _map._herd_by_id("game_deer_07").get("y", 0)))
+	await _save("map_held_ranch_close")
+	_assert_map("map_held_ranch -- wild ground wears NO mark (the control): the wolf's marker carries none",
+		BandOverlayRenderer.held_step_mark(_map._herd_by_id("game_wolf_03")).is_empty()
+		and BandOverlayRenderer.held_step_mark({}).is_empty())
+	_assert_map("map_held_ranch -- the mark is DRIVEN by the quotes: a source with its quotes emptied wears none",
+		BandOverlayRenderer.held_step_mark({"rung_quotes": []}).is_empty())
 	_map.set_faction_knowledge({})  # leave the following states on the honest "knows nothing" default
 
 	# State A-far — the SAME worked band on a large grid so fitted hexes go tiny (radius <
@@ -6836,6 +6870,78 @@ func _wire_shaped_quotes(quotes_variant: Variant) -> Array:
 				wire_quote[key] = (quote_variant as Dictionary)[key]
 		out.append(wire_quote)
 	return out
+
+## The worked-ready snapshot with the three worked sources' HELD rungs set, stamped and displayed.
+## `a_tended` / `a_farm` set patch A's rung; `b_sow` is B's Farm meter (a live build above its held step);
+## `deer_pen` / `deer_tier` set the deer's rung.
+func _display_held(a_tended: bool, a_farm: bool, b_building_farm: bool, b_sow: float,
+		deer_pen: bool, deer_tier: String) -> bool:
+	var snap := _snapshot_work_ready()
+	for patch_variant in snap["forage_patches"]:
+		var patch: Dictionary = patch_variant
+		if int(patch.get("x", -1)) == FORAGE_A_X:
+			patch["is_cultivated"] = a_tended or a_farm
+			patch["is_field"] = a_farm
+		elif int(patch.get("x", -1)) == WORK_CULTIVATE_X:
+			patch["is_cultivated"] = b_building_farm
+			patch["cultivation_progress"] = 1.0 if b_building_farm else 0.42
+			patch["field_progress"] = b_sow
+			patch["sow_site_refusal"] = ""
+			patch["composition"] = [{"species": "wild_emmer", "display_name": "Wild Emmer",
+				"share": 1.0, "can_cultivate": true, "can_sow": true}]
+			patch.erase("current_rung")
+		patch.erase("current_rung")
+	for entry_variant in snap["populations"][0]["labor_assignments"]:
+		var entry: Dictionary = entry_variant
+		if String(entry.get("kind", "")) == "forage" and int(entry.get("target_x", -1)) == WORK_CULTIVATE_X:
+			entry["improvement"] = "sow" if b_building_farm else "cultivate"
+	for herd_variant in snap["herds"]:
+		var herd: Dictionary = herd_variant
+		if String(herd.get("id", "")) == "game_deer_07":
+			herd["corralled"] = deer_pen
+			herd["size_tier"] = deer_tier
+			herd.erase("current_rung")
+	_display_snapshot(snap)
+	_map.set_faction_knowledge({"cultivation": 1.0, "seed_selection": 1.0, "herding": 1.0, "penning": 1.0})
+	return true
+
+func _held_frame(frame_name: String) -> void:
+	_map.selected_unit_id = BAND_ENTITY
+	_map._fit_map_to_view()
+	await _settle()
+	await _save(frame_name)
+
+func _held_entry(patch_a: bool) -> Dictionary:
+	var key: String = _map.secondary_food_key(FORAGE_A_X, FORAGE_A_Y) if patch_a \
+		else _map.secondary_food_key(WORK_CULTIVATE_X, WORK_CULTIVATE_Y)
+	return _map._band_overlays._badge_entry_for(key)
+
+func _held_herd_entry() -> Dictionary:
+	return _map._band_overlays._badge_entry_for(_map.secondary_herd_key("game_deer_07"))
+
+## A marker's held-step claim: it carries a glyph and (when `label` is stated) that label, and a live build above it
+## puts the arc on the same marker. An empty `label` only requires one to be present.
+func _assert_held(claim: String, entry: Dictionary, label: String, building: bool, check_label: bool = true) -> void:
+	var glyph := String(entry.get(BandOverlayRenderer.HELD_MARK_GLYPH_KEY, ""))
+	var held_label := String(entry.get(BandOverlayRenderer.HELD_MARK_LABEL_KEY, ""))
+	_assert_map("map_held -- %s (glyph `%s`, label `%s`)" % [claim, glyph, held_label],
+		glyph != "" and held_label != ""
+		and (not check_label or label == "" or held_label == label)
+		and (String(entry.get("building_glyph", "")) != "") == building)
+
+## Zoom to the close rung the player works at and centre `tile`, so a mark's LEGIBILITY can be judged at the
+## size it is drawn at in play rather than at the fit-the-map zoom, where every marker is a few pixels.
+func _zoom_on(tile: Vector2i) -> void:
+	_map.set_zoom_factor(MAP_VIEW.MAX_ZOOM_FACTOR * HELD_CLOSE_ZOOM_SHARE)
+	await _settle()
+	for _pass in 3:
+		var tile_center: Vector2 = _map._hex_center_wrapped(tile.x, tile.y, _map.last_hex_radius, _map.last_origin)
+		_map.pan_offset += _map._get_adjusted_viewport_size() * 0.5 - tile_center
+		_map._clamp_pan_offset()
+		_map.queue_redraw()
+		await _settle()
+
+const HELD_CLOSE_ZOOM_SHARE := 0.5
 
 func _badge_face(key: String) -> String:
 	var overlays: BandOverlayRenderer = _map._band_overlays

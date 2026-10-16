@@ -22,6 +22,11 @@ const ROSTER_HEADER_FONT_SIZE := 10
 # The leading MARK on a land / herd row — the species or site's bundled art where the client has any
 # (issue #439), the emoji where it does not. A square box, sized to sit inside `ROSTER_ROW_MIN_HEIGHT`
 # (30) with the row's vertical padding intact rather than to fill it.
+## The mark a held SIZE TIER wears on the map, keyed by the tier's catalog id. A tier absent here wears
+## its rung's own mark, so a tier the config adds is drawn with no edit; this table only lets one be
+## told apart from the plain rung.
+const HELD_TIER_MARKS := {"ranch": "★"}
+
 const ROSTER_ROW_ICON_BOX := 18.0
 
 # The emoji FALLBACK's size. It matches the size the row's own name label renders at — the stock

@@ -997,6 +997,11 @@ var road_tile_lookup: Dictionary = {}
 ## registry is sparse and lazy, so an untouched map fills none of this; what a tile HOLDS is a pure
 ## function of its terrain and is not on this table.
 var deposit_tile_lookup: Dictionary = {}
+
+## The ladder catalog (`ladder_rungs`), retained whole: a deposit row names the rung it holds by key and
+## the catalog is what says what that rung's verb and label are. Patches and herds carry their own
+## stamped quotes and do not need it.
+var ladder_rung_catalog: Array = []
 # Forage patches (cultivation/tended state, decoded from ForagePatchState), keyed by
 # Vector2i(x, y); read by `_tile_info_at` for the Tile-card cultivation/tended readout.
 var forage_patch_lookup: Dictionary = {}
@@ -1624,6 +1629,9 @@ func display_snapshot(snapshot: Dictionary) -> Dictionary:
 	# They were also nested inside `if food_variant is Array`, which the file's own comment called
 	# an accidental coupling; gating them separately forces the untangle, because a block must never
 	# be gated on a key it does not read.
+	var catalog_variant: Variant = snapshot.get("ladder_rungs", [])
+	if catalog_variant is Array and not (catalog_variant as Array).is_empty():
+		ladder_rung_catalog = catalog_variant
 	if SnapshotSections.changed(snapshot, SECTION_FOOD_MODULES):
 		var t_sites_food: int = profile.begin(PROFILE_SITES_FOOD)
 		_ingest_food_modules(snapshot)
@@ -2568,6 +2576,7 @@ func set_labor_pending(pending: Dictionary) -> void:
 ## Not cleared, deliberately: `active_overlay_key`, the terrain highlight id
 ## and the texture/grid toggles are VIEW preferences (or keyed on stable terrain ids), not world data.
 func reset_world_state() -> void:
+	ladder_rung_catalog = []
 	# PUSHED IN from the HUD and keyed by tracks the new world reuses — the third shape
 	# `.claude/rules/core_sim/world-handoff.md` names as needing a clear. A new world knows nothing,
 	# and stale knowledge here would mark its wild sources as ready to climb.
