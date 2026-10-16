@@ -192,6 +192,10 @@ pub struct BandMovementParams<'w> {
     pub route_traffic: ResMut<'w, crate::routes::RouteTrafficLog>,
     /// **The herds a band walks beside** (#799) — herd lore is learned from a herd on a `Migrate` leg.
     pub herds: Option<Res<'w, HerdRegistry>>,
+    /// **The distance input of the mobility score** (#800): the hexes a resident band steps while
+    /// following a herd, in any roam state, are recorded here for `mobility::mobility_tick` to drain. Optional for the
+    /// minimal worlds that never insert it.
+    pub follow_steps: Option<ResMut<'w, crate::mobility::HerdFollowSteps>>,
     /// **What each people has learned** — the roaming skills are credited here (herd lore on a step
     /// beside a migrating herd, travois on a departure's shed) and travois lifts the pack the shed
     /// is measured against.
@@ -347,6 +351,13 @@ pub fn advance_band_movement(
             if let Some(herd) = followed {
                 let hexes =
                     crate::grid_utils::hex_distance_wrapped(current, next, width, wrap_horizontal);
+                // The same step feeds the mobility score's distance input, but under a wider
+                // rule than the lesson: EVERY hex stepped while following counts, whatever the
+                // herd's roam state (a herd loiters 12-22 turns a ground, and the band still walks
+                // after it). Only the lesson below is gated on a `Migrate` leg.
+                if let (Some(steps), Some(id)) = (params.follow_steps.as_deref_mut(), band_id) {
+                    steps.record(*id, hexes);
+                }
                 let practice =
                     crate::roaming_skills::herd_lore_practice(hexes, herd, &ladder.knowledge);
                 if let Some(ledger) = params.discovery.as_deref_mut() {

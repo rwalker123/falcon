@@ -792,6 +792,8 @@ enum ConfigOverrideKind {
   CONFIG_OVERRIDE_KIND_WELLBEING = 8;
   // The fauna table — staged for the roaming-skills drive levers (#799). Append-only.
   CONFIG_OVERRIDE_KIND_FAUNA = 9;
+  // The mobility score (#800) - staged for its smoothing, weights and distance reference. Append-only.
+  CONFIG_OVERRIDE_KIND_MOBILITY = 10;
 }
 
 // Stage a config-tuning override that takes effect at the NEXT new_game — `build_headless_app`

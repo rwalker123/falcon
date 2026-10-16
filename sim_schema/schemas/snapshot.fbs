@@ -2580,6 +2580,25 @@ table SedentarizationState {
   // clamp(belief on the band's STANDING tile / references.belief, 0, 1). Pre-EMA - the score above
   // is smoothed, this is not; 0 when no band stands on belief. Appended last.
   beliefPoints:float = 0;
+  // The other four inputs' shares of this turn's raw points, same meaning as beliefPoints
+  // (100 x weight x norm, pre-EMA): domestication (herds + cultivated patches), surplus (larder),
+  // land (map-wide resource density), population. With beliefPoints they sum to the raw score the
+  // EMA smooths into `score`. Appended last.
+  domesticationPoints:float = 0;
+  surplusPoints:float = 0;
+  landPoints:float = 0;
+  populationPoints:float = 0;
+}
+
+// One faction's mobility score (#800) - the roaming counterpart of `SedentarizationState`. `score`
+// is the EMA-smoothed 0-100 readout; `skillsPoints` / `distancePoints` are the two inputs' raw
+// points this turn (100 x weight x norm), BEFORE the EMA that smooths `score`. Viewer-scoped like
+// `sedentarization`: a viewer sees its own people's row only. No stage and no thresholds.
+table MobilityState {
+  faction:uint;
+  score:float = 0;
+  skillsPoints:float = 0;
+  distancePoints:float = 0;
 }
 
 // ONE COMPOSITION ENTRY'S MATERIAL RATES (the selective gather) - FlatBuffers has no
@@ -5953,6 +5972,10 @@ table SubsistenceSection {
   // `defaultHuntKitId` stands behind a herd's own `defaultKitId`. Never empty: it always names a
   // real roster entry.
   defaultExtractKitId:string;
+  // --- THE MOBILITY SCORE, per faction (appended last, #800) ------------------------------------
+  // The roaming counterpart of `sedentarization`: viewer-scoped, whole-vector on both snapshot and
+  // delta (absent on a delta = unchanged). See `MobilityState`.
+  mobility:[MobilityState];
 }
 
 // ONE discovery the VIEWER'S people is learning BY CONTACT this turn — the knowledge rider on a

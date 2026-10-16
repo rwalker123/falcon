@@ -964,6 +964,10 @@ func _apply_snapshot(snapshot: Dictionary) -> void:
         _hud_invoke("update_build_info", [String(snapshot["server_build"])])
     if snapshot.has("sedentarization") and SnapshotSections.changed(snapshot, "sedentarization"):
         _hud_invoke("update_sedentarization", [snapshot["sedentarization"]])
+    # Mobility (issue #800): like sedentarization, a delta that omits the key means UNCHANGED — the
+    # `has` guard is what keeps the held value, since the ingest replaces wholesale when called.
+    if snapshot.has("mobility") and SnapshotSections.changed(snapshot, "mobility"):
+        _hud_invoke("update_mobility", [snapshot["mobility"]])
     # The player faction's POLICY row (Open Borders, issue #512) — a campaign-section table that moves
     # on a `set_open_borders` command rather than on a turn. Before `populations` below, like the
     # sedentarization it sits beside, so a frame carrying both renders the faction page once current.

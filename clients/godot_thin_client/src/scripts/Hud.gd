@@ -1091,6 +1091,13 @@ func update_overlay(turn: int, metrics: Dictionary) -> void:
 func update_sedentarization(sedentarization_variant: Variant) -> void:
     _topbar.update_sedentarization(sedentarization_variant)
 
+## The mobility score (issue #800). A thin delegator for `update_sedentarization`'s reason, plus a
+## faction-page re-render: the key can arrive on a frame that moves no band.
+func update_mobility(mobility_variant: Variant) -> void:
+    _topbar.update_mobility(mobility_variant)
+    if _bandpanel != null and _bandpanel.is_faction_page():
+        _bandpanel.rerender()
+
 ## **THE PLAYER FACTION'S POLICY ROW** (`faction_policies`, issue #512) — Open Borders. A thin
 ## delegator because `Main` reaches it BY NAME through `_hud_invoke`.
 ##

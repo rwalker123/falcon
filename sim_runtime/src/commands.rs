@@ -1575,6 +1575,9 @@ pub enum ConfigOverrideKind {
     /// The fauna table (`fauna_config.json`) — staged for the `drives` roaming-skill levers
     /// (`hunt.drive_engage_gain`, `hunt.drive_full_head_count`, #799).
     Fauna,
+    /// The mobility score (`mobility_config.json`, #800) - staged for its EMA `smoothing`, the two
+    /// input `weights` and the `hexes_per_turn` reference.
+    Mobility,
 }
 
 impl ConfigOverrideKind {
@@ -1590,6 +1593,7 @@ impl ConfigOverrideKind {
         ConfigOverrideKind::Recipes,
         ConfigOverrideKind::Wellbeing,
         ConfigOverrideKind::Fauna,
+        ConfigOverrideKind::Mobility,
     ];
 
     /// The wire spelling, shared with the client's `tuning_manifest.json` `kind` field.
@@ -1604,6 +1608,7 @@ impl ConfigOverrideKind {
             ConfigOverrideKind::Recipes => "recipes",
             ConfigOverrideKind::Wellbeing => "wellbeing",
             ConfigOverrideKind::Fauna => "fauna",
+            ConfigOverrideKind::Mobility => "mobility",
         }
     }
 
@@ -3505,6 +3510,7 @@ fn config_override_kind_to_proto(kind: ConfigOverrideKind) -> pb::ConfigOverride
         ConfigOverrideKind::Recipes => pb::ConfigOverrideKind::Recipes,
         ConfigOverrideKind::Wellbeing => pb::ConfigOverrideKind::Wellbeing,
         ConfigOverrideKind::Fauna => pb::ConfigOverrideKind::Fauna,
+        ConfigOverrideKind::Mobility => pb::ConfigOverrideKind::Mobility,
     }
 }
 
@@ -3519,6 +3525,7 @@ fn config_override_kind_from_proto(value: i32) -> Result<ConfigOverrideKind, Com
         Ok(pb::ConfigOverrideKind::Recipes) => Ok(ConfigOverrideKind::Recipes),
         Ok(pb::ConfigOverrideKind::Wellbeing) => Ok(ConfigOverrideKind::Wellbeing),
         Ok(pb::ConfigOverrideKind::Fauna) => Ok(ConfigOverrideKind::Fauna),
+        Ok(pb::ConfigOverrideKind::Mobility) => Ok(ConfigOverrideKind::Mobility),
         Ok(pb::ConfigOverrideKind::Unspecified) | Err(_) => Err(CommandDecodeError::InvalidEnum {
             field: "ConfigOverrideKind",
             value,

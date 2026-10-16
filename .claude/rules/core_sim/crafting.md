@@ -1556,7 +1556,7 @@ worked like any order.
 - `complete_item` banks a finished part's `made` into its `KitOrder::done` before the part leaves; a
   part still queued reports its own `made` (the grouped box's progress is `done` + the live parts').
 - **Auto-craft is unchanged** — it fills an empty queue only, so it never interleaves with a kit block.
-- **Persisted** (`BandRecord::bench`; `SAVE_FORMAT_VERSION` 42).
+- **Persisted** (`BandRecord::bench`; `SAVE_FORMAT_VERSION` 44).
 
 **Commands** (proto 85-87, `CommandEventKind::Craft`, band-addressed with a required handle in `xtask`'s
 guard):

@@ -344,6 +344,7 @@ fn witness_snapshot_is_fully_decoded(snapshot: &WorldSnapshot) {
         route_rungs: _,
         deposits: _,
         deposit_rungs: _,
+        mobility: _,
         sedentarization: _,
         // `decode_knowledge_section`
         discovered_sites: _,
@@ -439,6 +440,7 @@ fn witness_delta_is_fully_decoded(delta: &WorldDelta) {
         route_rungs: _,
         deposits: _,
         deposit_rungs: _,
+        mobility: _,
         sedentarization: _,
         // `decode_knowledge_section_delta`
         discovered_sites: _,
@@ -1125,6 +1127,7 @@ mod round_trip_tests {
             route_rungs: Some(world.route_rungs.clone()),
             deposits: Some(world.deposits.clone()),
             deposit_rungs: Some(world.deposit_rungs.clone()),
+            mobility: Some(world.mobility.clone()),
             moisture_raster: Some(world.moisture_raster.clone()),
             elevation_overlay: Some(world.elevation_overlay.clone()),
             climate_bands: Some(world.climate_bands),
@@ -1181,6 +1184,7 @@ mod round_trip_tests {
             food_modules: Some(Vec::new()),
             faction_inventory: Some(Vec::new()),
             sedentarization: Some(Vec::new()),
+            mobility: Some(Vec::new()),
             discovered_sites: Some(Vec::new()),
             demographics: Some(Vec::new()),
             forage_patches: Some(Vec::new()),

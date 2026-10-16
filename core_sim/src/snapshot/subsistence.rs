@@ -335,6 +335,30 @@ pub(crate) fn snapshot_sedentarization(
             score: entry.score,
             stage: entry.stage.as_str().to_string(),
             belief_points: entry.belief_points,
+            domestication_points: entry.domestication_points,
+            surplus_points: entry.surplus_points,
+            land_points: entry.land_points,
+            population_points: entry.population_points,
+        })
+        .collect()
+}
+
+/// **The viewer's own mobility score, and nobody else's** - `snapshot_sedentarization`'s rule: a bare
+/// number with nothing on the map to look at, so it has no visible tier (`factions.md` -> "Which
+/// frame sections are viewer-scoped").
+pub(crate) fn snapshot_mobility(
+    score: &crate::mobility::MobilityScore,
+    viewer: FactionId,
+) -> Vec<SchemaMobilityState> {
+    score
+        .iter_sorted()
+        .into_iter()
+        .filter(|(faction, _)| *faction == viewer)
+        .map(|(faction, entry)| SchemaMobilityState {
+            faction: faction.0,
+            score: entry.score,
+            skills_points: entry.skills_points,
+            distance_points: entry.distance_points,
         })
         .collect()
 }
