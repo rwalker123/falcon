@@ -199,6 +199,15 @@ signal bench_auto_requested(payload: Dictionary)
 ## Emitted when the Skip link under a waiting auto order is pressed. Payload keys: { faction, band_id }.
 ## Main formats `bench_auto_skip <faction> <band>`. RELAYED from `CraftingPanelController`.
 signal bench_auto_skip_requested(payload: Dictionary)
+## Emitted when a kit picker's Start is pressed (#780). Payload keys: { faction, band_id, kit_id, kits,
+## recipe_ids }. Main formats `bench_enqueue_kit <faction> <band> kit <id> kits <n> recipe <id> ...`. RELAYED from `CraftingPanelController`.
+signal bench_enqueue_kit_requested(payload: Dictionary)
+## Emitted when a kit order's box ✕ is pressed. Payload keys: { faction, band_id, kit_order }. Main formats
+## `bench_remove_kit <faction> <band> kit_order <id>`. RELAYED from `CraftingPanelController`.
+signal bench_remove_kit_requested(payload: Dictionary)
+## Emitted when a kit order's box ↑ is pressed. Payload keys: { faction, band_id, kit_order }. Main formats
+## `bench_raise_kit <faction> <band> kit_order <id>`. RELAYED from `CraftingPanelController`.
+signal bench_raise_kit_requested(payload: Dictionary)
 ## Emitted on EVERY stepper press on the OPENING LOADOUT picker (issue #629) — the card holds no
 ## draft and defers no order. Payload keys:
 ## { faction, band_id, kits: [{id, count}], materials: [{id, units}], revert_kits, revert_materials }.
@@ -843,6 +852,12 @@ func _ready() -> void:
         func(payload: Dictionary) -> void: bench_auto_requested.emit(payload))
     _crafting.bench_auto_skip_requested.connect(
         func(payload: Dictionary) -> void: bench_auto_skip_requested.emit(payload))
+    _crafting.bench_enqueue_kit_requested.connect(
+        func(payload: Dictionary) -> void: bench_enqueue_kit_requested.emit(payload))
+    _crafting.bench_remove_kit_requested.connect(
+        func(payload: Dictionary) -> void: bench_remove_kit_requested.emit(payload))
+    _crafting.bench_raise_kit_requested.connect(
+        func(payload: Dictionary) -> void: bench_raise_kit_requested.emit(payload))
     _bandpanel.crafting_requested.connect(
         func(band: Dictionary) -> void: _crafting.toggle_for(band))
     # The knowledge screen, on the same room and the same launch idiom. It takes `_topbar` as well,
@@ -1075,6 +1090,13 @@ func update_overlay(turn: int, metrics: Dictionary) -> void:
 
 func update_sedentarization(sedentarization_variant: Variant) -> void:
     _topbar.update_sedentarization(sedentarization_variant)
+
+## The mobility score (issue #800). A thin delegator for `update_sedentarization`'s reason, plus a
+## faction-page re-render: the key can arrive on a frame that moves no band.
+func update_mobility(mobility_variant: Variant) -> void:
+    _topbar.update_mobility(mobility_variant)
+    if _bandpanel != null and _bandpanel.is_faction_page():
+        _bandpanel.rerender()
 
 ## **THE PLAYER FACTION'S POLICY ROW** (`faction_policies`, issue #512) — Open Borders. A thin
 ## delegator because `Main` reaches it BY NAME through `_hud_invoke`.

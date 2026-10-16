@@ -1368,6 +1368,7 @@ fn ground_pen(
         FIXTURE_MAP,
         FIXTURE_MAP,
         FIXTURE_WRAP,
+        &[],
     )
     .expect("a queued pen quotes its destination capacity");
     herd.build_destination = None;

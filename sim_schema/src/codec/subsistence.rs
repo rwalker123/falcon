@@ -7,9 +7,9 @@ use crate::state::subsistence::{
     BuildLegState, CharacteristicBandState, CraftKnowledgeState, DepositState, FloraShareInfo,
     FoodModuleState, ForagePatchState, HerdTelemetryState, IntensificationKnowledgeState,
     KitOptionState, KnowledgeGainState, LadderBranchState, LadderKnowledgeProgress,
-    LadderKnowledgeState, LadderRungState, MaterialDefState, MaterialPayoff, RecipeDefState,
-    RecipeInputState, RecipeOutputState, RungQuoteState, RungShareQuoteState, SedentarizationState,
-    SiteRelaxationState, SiteRuleState, SizeTierState, SpeciesMaterialRates,
+    LadderKnowledgeState, LadderRungState, MaterialDefState, MaterialPayoff, MobilityState,
+    RecipeDefState, RecipeInputState, RecipeOutputState, RungQuoteState, RungShareQuoteState,
+    SedentarizationState, SiteRelaxationState, SiteRuleState, SizeTierState, SpeciesMaterialRates,
 };
 use crate::world::{WorldDelta, WorldSnapshot};
 use flatbuffers::{ForwardsUOffset, WIPOffset};
@@ -81,6 +81,7 @@ pub(crate) fn serialize_subsistence_section<'a>(
     let ladder_rungs = create_ladder_rungs(builder, &snapshot.ladder_rungs);
     let ladder_branches = create_ladder_branches(builder, &snapshot.ladder_branches);
     let deposits = create_deposits(builder, &snapshot.deposits);
+    let mobility = create_mobility(builder, &snapshot.mobility);
     fb::SubsistenceSection::create(
         builder,
         &fb::SubsistenceSectionArgs {
@@ -108,6 +109,7 @@ pub(crate) fn serialize_subsistence_section<'a>(
             deposits: Some(deposits),
             ladderBranches: Some(ladder_branches),
             ladderAreas: Some(ladder_areas),
+            mobility: Some(mobility),
         },
     )
 }
@@ -204,6 +206,10 @@ pub(crate) fn serialize_subsistence_section_delta<'a>(
         .deposits
         .as_ref()
         .map(|entries| create_deposits(builder, entries));
+    let mobility = delta
+        .mobility
+        .as_ref()
+        .map(|entries| create_mobility(builder, entries));
     fb::SubsistenceSection::create(
         builder,
         &fb::SubsistenceSectionArgs {
@@ -229,6 +235,7 @@ pub(crate) fn serialize_subsistence_section_delta<'a>(
             deposits,
             ladderBranches: ladder_branches,
             ladderAreas: ladder_areas,
+            mobility,
         },
     )
 }
@@ -455,10 +462,35 @@ fn create_sedentarization<'a>(
                 score: state.score,
                 stage: Some(stage),
                 beliefPoints: state.belief_points,
+                domesticationPoints: state.domestication_points,
+                surplusPoints: state.surplus_points,
+                landPoints: state.land_points,
+                populationPoints: state.population_points,
             },
         );
         entries.push(entry);
     }
+    builder.create_vector(&entries)
+}
+
+fn create_mobility<'a>(
+    builder: &mut FbBuilder<'a>,
+    states: &[MobilityState],
+) -> WIPOffset<flatbuffers::Vector<'a, ForwardsUOffset<fb::MobilityState<'a>>>> {
+    let entries: Vec<_> = states
+        .iter()
+        .map(|state| {
+            fb::MobilityState::create(
+                builder,
+                &fb::MobilityStateArgs {
+                    faction: state.faction,
+                    score: state.score,
+                    skillsPoints: state.skills_points,
+                    distancePoints: state.distance_points,
+                },
+            )
+        })
+        .collect();
     builder.create_vector(&entries)
 }
 
@@ -1448,6 +1480,7 @@ pub(crate) fn decode_subsistence_section(
     snapshot.ladder_rungs = map_rows(section.ladderRungs(), decode_ladder_rung);
     snapshot.deposits = map_rows(section.deposits(), decode_deposit);
     snapshot.ladder_branches = map_rows(section.ladderBranches(), decode_ladder_branch);
+    snapshot.mobility = map_rows(section.mobility(), decode_mobility);
 }
 
 pub(crate) fn decode_subsistence_section_delta(
@@ -1483,6 +1516,7 @@ pub(crate) fn decode_subsistence_section_delta(
     delta.ladder_rungs = map_rows_if_present(section.ladderRungs(), decode_ladder_rung);
     delta.deposits = map_rows_if_present(section.deposits(), decode_deposit);
     delta.ladder_branches = map_rows_if_present(section.ladderBranches(), decode_ladder_branch);
+    delta.mobility = map_rows_if_present(section.mobility(), decode_mobility);
 }
 
 fn decode_material(state: fb::MaterialDefState<'_>) -> MaterialDefState {
@@ -1559,12 +1593,25 @@ fn decode_kit(state: fb::KitOption<'_>) -> KitOptionState {
     }
 }
 
+fn decode_mobility(state: fb::MobilityState<'_>) -> MobilityState {
+    MobilityState {
+        faction: state.faction(),
+        score: state.score(),
+        skills_points: state.skillsPoints(),
+        distance_points: state.distancePoints(),
+    }
+}
+
 fn decode_sedentarization(state: fb::SedentarizationState<'_>) -> SedentarizationState {
     SedentarizationState {
         faction: state.faction(),
         score: state.score(),
         stage: text(state.stage()),
         belief_points: state.beliefPoints(),
+        domestication_points: state.domesticationPoints(),
+        surplus_points: state.surplusPoints(),
+        land_points: state.landPoints(),
+        population_points: state.populationPoints(),
     }
 }
 

@@ -40,21 +40,15 @@ const PEOPLE_VALUE_FORMAT := "+%d families"
 const FADING_SUFFIX := " · fading"
 const CONTACT_NOTE := "Contact with unrelated peoples raises the limit."
 
-# ---- the bullet under the row ---------------------------------------------------------------------
-## The amber bullet's lead mark — the work board's `◆`, so a warning reads the same on every tab.
+## The amber `◆` lead mark — the work board's, so a warning reads the same on every tab. The split
+## sheet's FAMILY LIMIT warning is its only user.
 const BULLET_MARK := "◆"
-## UNRELATED, not "another faction": a people that broke off from yours carries copies of your
-## lines, and a shared line counts once, so meeting it raises nothing (#690).
-const BULLET_OVER_LIMIT := "Over the limit. Meet an unrelated people to grow again."
-const BULLET_KIN := "Too closely related. Meet an unrelated people to grow."
-const BULLET_ROOM_FORMAT := "Room for %d more. Meet an unrelated people to grow."
-## The line under the faction row when bands have lost touch with the main group (one / several).
-const BULLET_OUT_ONE_FORMAT := "%s is out of touch. Bring it back to share the limit."
-const BULLET_OUT_MANY_FORMAT := "%d bands are out of touch. Bring them back to share the limit."
+
+# ---- the popover's out-of-touch and stay-in-touch lines ---------------------------------------------
 ## The popover's sub-label over the groups that are not in touch with the main one.
 const OUT_OF_TOUCH_LABEL := "OUT OF TOUCH"
 const GROUP_NAME_SEPARATOR := ", "
-## The DIM line (not amber) a people one step from freedom is shown.
+## The faint popover line a people one step from freedom is shown.
 const STAY_IN_TOUCH_FORMAT := "Stay in touch until %d and the limit is gone for good."
 
 # ---- the line sentinels `DetailFormat.detail_bbcode` recognises -----------------------------------
@@ -70,8 +64,11 @@ const ROW_NAME_GAP_PX := 14
 
 ## True for a line `DetailFormat.detail_bbcode` renders through this module.
 static func is_lineage_line(line: String) -> bool:
-	return line.begins_with(ROW_MARK) or line.begins_with(FAINT_MARK) \
-		or line.begins_with(BULLET_MARK + " ")
+	return line.begins_with(ROW_MARK) or line.begins_with(FAINT_MARK)
+
+## The amber bullet line (the split sheet's warning; the detail renderer does not draw it).
+static func bullet_line(text: String) -> String:
+	return "%s %s" % [BULLET_MARK, text]
 
 ## A two-column popover row: `left` in `left_hex`, `right` in `right_hex`.
 static func table_row(left: String, left_hex: String, right: String, right_hex: String) -> String:
@@ -80,10 +77,6 @@ static func table_row(left: String, left_hex: String, right: String, right_hex: 
 ## A last-line note in the faintest ink.
 static func faint_line(text: String) -> String:
 	return FAINT_MARK + text
-
-## The amber bullet line.
-static func bullet_line(text: String) -> String:
-	return "%s %s" % [BULLET_MARK, text]
 
 ## The BBCode for one lineage line; `table_open` says whether a `[table=2]` is already open so
 ## consecutive rows share one (their columns align). Returns `{bbcode, table_open}`.
@@ -95,11 +88,8 @@ static func line_bbcode(line: String, table_open: bool) -> Dictionary:
 			ROW_NAME_GAP_PX, fields[1], fields[0], fields[3], fields[2]]
 		return {"bbcode": out, "table_open": true}
 	var closing := "[/table]\n" if table_open else ""
-	if line.begins_with(FAINT_MARK):
-		return {"bbcode": "%s[color=#%s]%s[/color]\n" % [
-			closing, HudStyle.INK_FAINT.to_html(false), line.substr(FAINT_MARK.length())],
-			"table_open": false}
-	return {"bbcode": "%s[color=#%s]%s[/color]\n" % [closing, HudStyle.WARN_HEX, line],
+	return {"bbcode": "%s[color=#%s]%s[/color]\n" % [
+		closing, HudStyle.INK_FAINT.to_html(false), line.substr(FAINT_MARK.length())],
 		"table_open": false}
 
 # ---- readings --------------------------------------------------------------------------------------
@@ -125,23 +115,6 @@ static func limit_binds(band: Dictionary) -> bool:
 ## `142 / 198`.
 static func row_value(band: Dictionary) -> String:
 	return VALUE_FORMAT % [population_of(band), ceiling_of(band)]
-
-## The one line under the row, by precedence — `""` when there is nothing to say. Amber lines come
-## back through `bullet_line`; the dim "stay in touch" line comes back through `faint_line`.
-static func note_line(band: Dictionary) -> String:
-	var population := population_of(band)
-	var ceiling := ceiling_of(band)
-	var factor := ceiling_factor(band)
-	if population > ceiling:
-		return bullet_line(BULLET_OVER_LIMIT)
-	if factor <= 0.0:
-		return bullet_line(BULLET_KIN)
-	if factor < FACTOR_UNBOUND:
-		return bullet_line(BULLET_ROOM_FORMAT % (ceiling - population))
-	var free := LineageWorld.free_breeding_at()
-	if free > 0 and ceiling == free:
-		return faint_line(STAY_IN_TOUCH_FORMAT % free)
-	return ""
 
 ## The main group's rows: one per member band, then one per other people.
 ## `band_name` resolves a band id to the roster's name (`""` = unknown).
@@ -228,23 +201,9 @@ static func faction_row_shown(groups: Dictionary) -> bool:
 	var main: Dictionary = groups.get("main", {})
 	return not main.is_empty() and limit_stated(main)
 
-## The line under the faction row: over the limit, kin, room, bands out of touch, then the faint
-## stay-in-touch line. `band_name` (band id -> name) names a single out-of-touch band.
-static func faction_note_line(groups: Dictionary, band_name: Callable) -> String:
-	var out: Array = groups["out"]
-	var core := note_line(groups["main"])
-	if core.begins_with(BULLET_MARK):
-		return core
-	var count := out_band_count(out)
-	if count == 1:
-		return bullet_line(BULLET_OUT_ONE_FORMAT
-			% String(band_name.call(_band_id_of(out[0]["bands"][0]))))
-	if count > 1:
-		return bullet_line(BULLET_OUT_MANY_FORMAT % count)
-	return core
-
 ## The faction popover: the main group's rows, the groups out of touch (a faint caps label, then one
-## row each: its band names against its own `population / ceiling` in amber), then the contact note.
+## row each: its band names against its own `population / ceiling` in amber), then, when the main
+## group's ceiling is one step from free, the stay-in-touch line, then the contact note.
 static func faction_popover_lines(groups: Dictionary, band_name: Callable) -> Array[String]:
 	var lines := member_rows(groups["main"], band_name)
 	var out: Array = groups["out"]
@@ -256,6 +215,9 @@ static func faction_popover_lines(groups: Dictionary, band_name: Callable) -> Ar
 				names.append(String(band_name.call(_band_id_of(band))))
 			lines.append(table_row(GROUP_NAME_SEPARATOR.join(names), HudStyle.INK_DIM_HEX,
 				row_value(group["rep"]), HudStyle.WARN_HEX))
+	var free := LineageWorld.free_breeding_at()
+	if free > 0 and ceiling_of(groups["main"]) == free:
+		lines.append(faint_line(STAY_IN_TOUCH_FORMAT % free))
 	lines.append(faint_line(CONTACT_NOTE))
 	return lines
 

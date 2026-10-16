@@ -137,7 +137,7 @@ func run(harness) -> void:
 	h._assert_band_panel("family limit: …in order, directly after Growth",
 		text.find("Growth") < text.find("Family limit"))
 	h._assert_band_panel("family limit: …and says nothing under it while there is room",
-		not text.contains(HudLineageVocab.BULLET_MARK) and not text.contains("Stay in touch")
+		not text.contains("◆") and not text.contains("Stay in touch")
 			and not text.contains(HudWorkVocab.FACTION_ALERT_GLYPH + " 1 band"))
 
 	# ---- 2. NEAR THE LIMIT, one member fading ----------------------------------------------------
@@ -145,14 +145,17 @@ func run(harness) -> void:
 	await _show_faction(_pair({"breeding_population": 190, "breeding_ceiling": 200,
 		"fertility_ceiling": 0.4, "breeding_members": fading}))
 	text = _vitals_text()
-	h._assert_band_panel("family limit: near the limit, the amber line counts the room (got `%s`)"
+	h._assert_band_panel("family limit: near the limit the row still renders its value and no line sits under it (got `%s`)"
 			% text.replace("\n", " | "),
-		text.contains(HudLineageVocab.BULLET_ROOM_FORMAT % 10))
+		text.contains("Family limit") and text.contains("190 / 200") and not text.contains("◆")
+			and not text.contains("Room for") and not text.contains("Stay in touch"))
 	await _open(limit_kind, "family_limit_near")
 	var pop := _popover_text()
 	h._assert_band_panel("family limit: the popover lists each member, tags the fading one and ends on the note",
 		pop.contains("2 families · 120") and pop.contains(HudLineageVocab.FADING_SUFFIX.strip_edges())
 			and pop.contains(HudLineageVocab.CONTACT_NOTE))
+	h._assert_band_panel("family limit: …and a ceiling short of free states no stay-in-touch line",
+		not pop.contains("Stay in touch"))
 	_close()
 
 	# ---- 3. AT THE LIMIT: births stopped, kin ----------------------------------------------------
@@ -160,8 +163,9 @@ func run(harness) -> void:
 		"fertility_ceiling": 0.0, "breeding_members": both}))
 	await h._save("family_limit_at")
 	text = _vitals_text()
-	h._assert_band_panel("family limit: at the limit the line under the row is the kin sentence",
-		text.contains(HudLineageVocab.BULLET_KIN))
+	h._assert_band_panel("family limit: at the limit the row renders its value and no kin sentence sits under it",
+		text.contains("Family limit") and text.contains("200 / 200") and not text.contains("◆")
+			and not text.contains("Too closely related"))
 	h._assert_band_panel("family limit: …and the faction Growth reads `Births stopped` beside its flag, not `0% of normal`",
 		text.contains(DetailFormat.GROWTH_STOPPED_TEXT) and not text.contains("0% of normal"))
 
@@ -181,8 +185,8 @@ func run(harness) -> void:
 		% text.replace("\n", " | "), text.contains("150 / 400"))
 	h._assert_band_panel("family limit: …a band out of touch wears the page's own `⚠ 1 band` flag",
 		text.contains(HudWorkVocab.FACTION_ALERT_GLYPH + " " + HudWorkVocab.FACTION_ALERT_ONE))
-	h._assert_band_panel("family limit: …and is named in the line under the row",
-		text.contains(HudLineageVocab.BULLET_OUT_ONE_FORMAT % KIN_BAND_NAME))
+	h._assert_band_panel("family limit: …and no line under the row names it (the popover does)",
+		not text.contains("◆") and not text.contains("out of touch") and not text.contains(KIN_BAND_NAME))
 	h._assert_band_panel("family limit: …the popover lists it under OUT OF TOUCH against its own limit",
 		pop.contains(HudLineageVocab.OUT_OF_TOUCH_LABEL) and pop.contains(KIN_BAND_NAME)
 			and pop.contains("60 / 100"))
@@ -193,11 +197,14 @@ func run(harness) -> void:
 		"breeding_members": [_member(SUBJECT_ENTITY, 2, 140), _member(KIN_BAND_ENTITY, 2, 190)],
 		"breeding_peoples": [_people(FOREIGN_FACTION_A, 3), _people(FOREIGN_FACTION_B, 2, true)]}))
 	text = _vitals_text()
-	h._assert_band_panel("family limit: a people one step from free gets the dim `stay in touch` line",
-		text.contains(HudLineageVocab.STAY_IN_TOUCH_FORMAT % FREE_BREEDING_AT)
-			and not text.contains(HudLineageVocab.BULLET_MARK))
+	h._assert_band_panel("family limit: a people one step from free shows its row and no `stay in touch` line under it",
+		text.contains("Family limit") and text.contains("330 / %d" % FREE_BREEDING_AT)
+			and not text.contains("Stay in touch") and not text.contains("◆"))
 	await _open(limit_kind, "family_limit_peoples")
 	pop = _popover_text()
+	h._assert_band_panel("family limit: …the popover carries the stay-in-touch sentence, before the contact note",
+		pop.contains(HudLineageVocab.STAY_IN_TOUCH_FORMAT % FREE_BREEDING_AT)
+			and pop.find("Stay in touch") < pop.find(HudLineageVocab.CONTACT_NOTE))
 	h._assert_band_panel("family limit: the popover names the other factions by their published names",
 		pop.contains("Marrow Clan") and pop.contains("+3 families") and pop.contains("Reedfolk")
 			and pop.contains("+2 families"))
@@ -220,7 +227,7 @@ func run(harness) -> void:
 	await h._save("family_limit_band_tab")
 	text = _vitals_text()
 	h._assert_band_panel("family limit: the Band tab no longer carries the row or its line",
-		not text.contains("Family limit") and not text.contains(HudLineageVocab.BULLET_MARK))
+		not text.contains("Family limit") and not text.contains("◆"))
 	h._assert_band_panel("family limit: …Growth reads `Births stopped` and its breakdown keeps `too few families`",
 		text.contains(DetailFormat.GROWTH_STOPPED_TEXT)
 			and _popover_text().contains(DetailFormat.FERTILITY_LABEL_CEILING))

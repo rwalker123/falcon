@@ -1831,6 +1831,85 @@ pub struct PopulationCohortState {
     /// party's report lands the turn it leaves inside it. Global config echoed per cohort. Appended last.
     #[serde(default)]
     pub comm_range_tiles: u32,
+    /// **Every orderable kit's standing with the band** (#780) — one row per roster kit that carries
+    /// something, in config order. The terms the client's *Make a whole kit* picker does its
+    /// arithmetic over. Appended last.
+    #[serde(default)]
+    pub kit_needs: Vec<KitNeedState>,
+    /// **The material stock left after every queued order's claims**, one row per material the band
+    /// holds or any recipe reads — what a picker's summed recipe inputs are compared with. Appended
+    /// last.
+    #[serde(default)]
+    pub materials_free: Vec<MaterialAmountState>,
+    /// **Culture pressure** (#820) — one row per people pulling this band, pressure descending then
+    /// faction ascending. Own bands only; a foreign row defaults to empty. Appended last.
+    #[serde(default)]
+    pub culture_pressures: Vec<CulturePressureState>,
+}
+
+/// **An amount of one material** — a recipe input per pass ([`KitNeedRecipeState::inputs`], the
+/// bench's material efficiency already applied) or a free stock
+/// ([`PopulationCohortState::materials_free`]).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct MaterialAmountState {
+    pub material_id: String,
+    pub amount: f32,
+}
+
+/// **One orderable kit's standing** (#780) — a row of [`PopulationCohortState::kit_needs`].
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct KitNeedState {
+    pub kit_id: String,
+    pub display_name: String,
+    /// The job tokens the kit is sent on, config order.
+    pub jobs: Vec<String>,
+    /// People on those jobs.
+    pub people: u32,
+    pub items: Vec<KitNeedItemState>,
+}
+
+/// **One item of a kit** — `have` counts only units that serve the kit's own jobs (plus spare units
+/// nobody holds); `queued` is what the bench already owes.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct KitNeedItemState {
+    pub item_id: String,
+    pub workers_per_unit: u32,
+    pub have: u32,
+    pub queued: u32,
+    /// One per recipe that outputs the item, book order.
+    pub recipes: Vec<KitNeedRecipeState>,
+}
+
+/// **One recipe that makes a kit item** — its output per pass and its per-pass inputs.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct KitNeedRecipeState {
+    pub recipe_id: String,
+    pub output_per_pass: f32,
+    pub inputs: Vec<MaterialAmountState>,
+}
+
+/// **One whole-kit order on the bench's queue** (#780) — a row of [`BenchState::kit_orders`].
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct BenchKitOrderState {
+    pub id: u32,
+    pub kit_id: String,
+    pub kits: u32,
+    /// Items its finished parts made.
+    pub done: u32,
+}
+
+/// **ONE PEOPLE PULLING ONE BAND** — a row of [`PopulationCohortState::culture_pressures`].
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct CulturePressureState {
+    /// The pulling people.
+    pub faction: u32,
+    pub pressure: f32,
+    /// `0` none, `1` pulled, `2` asked, `3` forced.
+    pub phase: u8,
+    /// The band's culture is close to that people's average.
+    pub close: bool,
+    /// Turns left on the clock toward the next phase; `0` when that clock is not running.
+    pub turns_to_next: u16,
 }
 
 /// **ONE KEEPING CLASS'S HUNTING MEAL** — a row of [`PopulationCohortState::hunt_meals`]: the food
@@ -2199,6 +2278,9 @@ pub struct BenchState {
     /// turn. `0` when nothing is lent. Appended last.
     #[serde(default)]
     pub lent_to_hunt: u32,
+    /// **The live whole-kit orders**, oldest first (#780). Appended last.
+    #[serde(default)]
+    pub kit_orders: Vec<BenchKitOrderState>,
 }
 
 /// **One order on a bench's queue** — `recipe × count`, a row of [`BenchState::orders`].
@@ -2230,6 +2312,10 @@ pub struct BenchOrderState {
     /// Auto-craft queued this order rather than the player — the only kind a skip applies to.
     #[serde(default)]
     pub auto: bool,
+    /// **The kit order this order is a part of** ([`BenchKitOrderState::id`]); `0` for a plain
+    /// order. A kit order's parts are contiguous in [`BenchState::orders`]. Appended last (#780).
+    #[serde(default)]
+    pub kit_order: u32,
 }
 
 /// **One craft suggestion** — an item the band's consumers went without, and how many to make. A row

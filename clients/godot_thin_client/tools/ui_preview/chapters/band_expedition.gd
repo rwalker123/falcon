@@ -1151,6 +1151,8 @@ func _heart_states() -> void:
 		HudEventVocab.RUNG_BY_KIND.get("band_broke_away", "") == HudEventVocab.RUNG_ALERT)
 	h._assert_hud("`lost_touch` is Notable",
 		HudEventVocab.RUNG_BY_KIND.get("lost_touch", "") == HudEventVocab.RUNG_NOTABLE)
+	h._assert_hud("`culture_pull` is Notable",
+		HudEventVocab.RUNG_BY_KIND.get("culture_pull", "") == HudEventVocab.RUNG_NOTABLE)
 	h._hud._band_labor.set_turn(prev_turn)
 
 func _find_label_with_text(node: Node, text: String) -> Label:
@@ -1447,6 +1449,7 @@ func _belief_culture_states() -> void:
 		_beliefs_row_count(String(h._hud.occupant_detail.get_parsed_text())) == 0)
 	await _break_away_states()
 	await _culture_drift_states()
+	await _culture_pressure_states()
 	h._hud.show_unit_selection(BandFx.band_fixture())
 	await h._settle()
 
@@ -1527,6 +1530,68 @@ func _culture_drift_states() -> void:
 	h._assert_hud("source 0 shows neither",
 		not bool(none["glyph"]) and not String(none["hover"]).contains(DRIFT_SENTENCE_NEEDLE))
 	h._hud._band_labor.set_foreign_bands([])
+
+## CULTURE PRESSURE (#820): the lines under the Beliefs row. One band, three rows - phase 1 not close,
+## phase 2 with a clock, phase 3 - plus a fourth and fifth to prove the 3-line cap and `+2 more`.
+const PRESSURE_BAND_ENTITY := 940
+const PRESSURE_PEOPLES := [
+	{"faction": 11, "name": "Ashfolk"}, {"faction": 12, "name": "Reedwalkers"},
+	{"faction": 13, "name": "Tidecallers"}, {"faction": 14, "name": "Stonekin"},
+	{"faction": 15, "name": "Dunemen"},
+]
+const PRESSURE_ROWS := [
+	{"faction": 11, "pressure": 1.8, "phase": 1, "close": false, "turns_to_next": 0},
+	{"faction": 12, "pressure": 2.4, "phase": 2, "close": true, "turns_to_next": 6},
+	{"faction": 13, "pressure": 3.1, "phase": 3, "close": true, "turns_to_next": 0},
+	{"faction": 14, "pressure": 1.2, "phase": 1, "close": true, "turns_to_next": 9},
+	{"faction": 15, "pressure": 1.1, "phase": 1, "close": true, "turns_to_next": 0},
+]
+const PRESSURE_FAR_NEEDLE := "Pulled by Ashfolk's culture ×1.8 — too different to join."
+const PRESSURE_ASKED_NEEDLE := "Wants to join Reedwalkers ×2.4 — forced in 6 turns."
+const PRESSURE_FORCED_NEEDLE := "Will be forced to join Tidecallers ×3.1."
+const PRESSURE_MORE_NEEDLE := "+2 more"
+## Three shown rows' worth of two-line entries is the most the block may add over the no-pressure band.
+const PRESSURE_MAX_LINES_PER_ENTRY := 2
+
+func _culture_pressure_states() -> void:
+	FactionNames.update(PRESSURE_PEOPLES)
+	var calm := BandFx.band_fixture()
+	calm["entity"] = PRESSURE_BAND_ENTITY
+	calm["culture_traits"] = _culture_vector(BELIEFS_TIED_DEVOUT, BELIEFS_TIED_TRADITIONAL)
+	h._hud.show_unit_selection(calm)
+	await h._settle()
+	var baseline_height: int = h._hud.occupant_detail.get_content_height()
+	var band := calm.duplicate(true)
+	band["culture_pressures"] = PRESSURE_ROWS.duplicate(true)
+	h._hud.show_unit_selection(band)
+	await h._settle()
+	await h._save("band_culture_pressure")
+	var text := _flat(String(h._hud.occupant_detail.get_parsed_text()))
+	h._assert_hud("phase 1 not close says the ways are too different",
+		text.contains(PRESSURE_FAR_NEEDLE))
+	h._assert_hud("phase 2 names the people and the forced-join clock",
+		text.contains(PRESSURE_ASKED_NEEDLE))
+	h._assert_hud("phase 3 says it will be forced", text.contains(PRESSURE_FORCED_NEEDLE))
+	h._assert_hud("a fourth and fifth row collapse to `+2 more`, not drawn",
+		text.contains(PRESSURE_MORE_NEEDLE) and not text.contains("Stonekin")
+		and not text.contains("Dunemen"))
+	h._assert_hud("phases 2 and 3 are in the WARNING ink",
+		String(h._hud.occupant_detail.text).contains("[color=#%s]%s" % [
+			HudStyle.WARN_HEX, HudSelectionVocab.RUNG_HAZARD_GLYPH]))
+	var line_height := float(baseline_height) / BELIEFS_BASELINE_ROWS
+	var added := float(h._hud.occupant_detail.get_content_height() - baseline_height)
+	# Three two-line entries plus the one-line `+N more`; the half line absorbs separator spacing.
+	var max_lines := HudDisclosureVocab.CULTURE_PRESSURE_MAX_LINES * PRESSURE_MAX_LINES_PER_ENTRY + 1.5
+	h._assert_hud("each entry fits in at most two lines", added <= line_height * max_lines)
+	var none := BandFx.band_fixture()
+	none["entity"] = PRESSURE_BAND_ENTITY
+	none["culture_traits"] = _culture_vector(BELIEFS_TIED_DEVOUT, BELIEFS_TIED_TRADITIONAL)
+	none["culture_pressures"] = [{"faction": 11, "pressure": 0.4, "phase": 0, "close": false, "turns_to_next": 0}]
+	h._hud.show_unit_selection(none)
+	await h._settle()
+	h._assert_hud("a phase-0 row draws no line",
+		not _flat(String(h._hud.occupant_detail.get_parsed_text())).contains("Pulled by"))
+	FactionNames.reset()
 
 ## THE BREAK-AWAY WARNING (#702): `Beliefs  devout · traditional · may break away`, the clause in the
 ## warning ink and the Beliefs hover one sentence longer. A flag false draws none.

@@ -668,14 +668,9 @@ practice and neither unlocks a verb — which is exactly why they did not follow
 What they state is what the faction has BECOME and what it has FOUND, and "who is this faction" is
 that zone's question, so they belong there on the merits rather than merely being left over.
 
-**The height tier came with them and was RE-MEASURED rather than carried over.**
-`FACTION_BAND_FULL_MIN_HEIGHT` is 480: the full block reads **461px** and the two boxes the panel
-offers are **396** on a wide horizontal dock and **941** on a tall side one. It was GUESSED at 400
-first, which was wrong in both directions — below the 461 the block needs, so a box between the two
-would have taken the full branch and clipped, and clearing the wide dock's own 396 by 4px, which is
-not a threshold but a coincidence.
-**It is 550 now**: the Open Borders row (issue #512) joined the band zone ABOVE the tier's cut, and the
-full block re-measured at **531px** with it in (`band_panel_faction`), past the old 480.
+**The band zone scrolls, so neither block can be dropped for a short box.** The faction page's band
+zone sits inside the same sanctioned scroll the band page uses; the full block reads **589px** against a
+horizontal dock's 358px box and a scrollbar carries the rest.
 
 **The shell threshold follows by derivation**: it is a sum over the LIVE zone list, so the page's flip
 moved from 1569 to the 1190 a band's three cost. The harness's equality claim now pins the SEPARATOR

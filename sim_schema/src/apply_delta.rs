@@ -117,6 +117,7 @@ impl WorldSnapshot {
             ladder_rungs,
             deposits,
             ladder_branches,
+            mobility,
             moisture_raster,
             elevation_overlay,
             climate_bands,
@@ -263,6 +264,7 @@ impl WorldSnapshot {
         replace_if_some(&mut self.ladder_rungs, ladder_rungs);
         replace_if_some(&mut self.deposits, deposits);
         replace_if_some(&mut self.ladder_branches, ladder_branches);
+        replace_if_some(&mut self.mobility, mobility);
         replace_if_some(&mut self.moisture_raster, moisture_raster);
         replace_if_some(&mut self.elevation_overlay, elevation_overlay);
         replace_if_some(&mut self.climate_bands, climate_bands);
@@ -583,6 +585,7 @@ mod tests {
         delta.ladder_rungs = Some(Vec::new());
         delta.deposits = Some(Vec::new());
         delta.ladder_branches = Some(Vec::new());
+        delta.mobility = Some(Vec::new());
         delta.moisture_raster = Some(Default::default());
         delta.lineage_constants = Some(Default::default());
         delta.elevation_overlay = Some(Default::default());

@@ -396,6 +396,7 @@ pub mod knowledge {
                 ladder_areas: Vec::new(),
                 ladder_rungs: Vec::new(),
                 ladder_branches: Vec::new(),
+                mobility: Vec::new(),
                 moisture_raster: FloatRasterState::default(),
                 terrain: TerrainOverlayState::default(),
                 sentiment_raster: ScalarRasterState::default(),

@@ -4504,6 +4504,26 @@
       "tool_item_id": "materials[2].tool_item_id"
     }
   ],
+  "mobility": [
+    {
+      "distance_points": 40.369999,
+      "faction": 185,
+      "score": 79.75,
+      "skills_points": 74.389999
+    },
+    {
+      "distance_points": 49.099998,
+      "faction": 114,
+      "score": 79.389999,
+      "skills_points": 44.060001
+    },
+    {
+      "distance_points": 3.69,
+      "faction": 79,
+      "score": 89.910004,
+      "skills_points": 77.739998
+    }
+  ],
   "opening_loadout": {
     "craftable_recipe_ids": [
       "opening_loadout.craftable_recipe_ids[0]",
@@ -5572,6 +5592,26 @@
             "material_id": "populations[0].bench.drawn_inputs[2].material_id"
           }
         ],
+        "kit_orders": [
+          {
+            "done": 52,
+            "id": 171,
+            "kit_id": "populations[0].bench.kit_orders[0].kit_id",
+            "kits": 143
+          },
+          {
+            "done": 113,
+            "id": 102,
+            "kit_id": "populations[0].bench.kit_orders[1].kit_id",
+            "kits": 46
+          },
+          {
+            "done": 150,
+            "id": 101,
+            "kit_id": "populations[0].bench.kit_orders[2].kit_id",
+            "kits": 65
+          }
+        ],
         "lent_to_hunt": 43,
         "orders": [
           {
@@ -5580,6 +5620,7 @@
             "blocked_severity": "populations[0].bench.orders[0].blocked_severity",
             "count": 198,
             "drawn": false,
+            "kit_order": 146,
             "made": 140,
             "progress": 66.239998,
             "recipe_id": "populations[0].bench.orders[0].recipe_id",
@@ -5610,6 +5651,7 @@
             "blocked_severity": "populations[0].bench.orders[1].blocked_severity",
             "count": 157,
             "drawn": true,
+            "kit_order": 169,
             "made": 1,
             "progress": 75.010002,
             "recipe_id": "populations[0].bench.orders[1].recipe_id",
@@ -5640,6 +5682,7 @@
             "blocked_severity": "populations[0].bench.orders[2].blocked_severity",
             "count": 172,
             "drawn": true,
+            "kit_order": 48,
             "made": 10,
             "progress": 22.700001,
             "recipe_id": "populations[0].bench.orders[2].recipe_id",
@@ -6060,6 +6103,29 @@
       "culture_drift_axis_label": "Trait",
       "culture_drift_delta": 13.75,
       "culture_drift_source_band": 174,
+      "culture_pressures": [
+        {
+          "close": true,
+          "faction": 9,
+          "phase": 40,
+          "pressure": 111.199997,
+          "turns_to_next": 33
+        },
+        {
+          "close": false,
+          "faction": 170,
+          "phase": 171,
+          "pressure": 29.209999,
+          "turns_to_next": 38
+        },
+        {
+          "close": false,
+          "faction": 151,
+          "phase": 114,
+          "pressure": 57.080002,
+          "turns_to_next": 163
+        }
+      ],
       "culture_traits": {"__packed": "PackedFloat32Array", "len": 3, "items": [15.68, 91.290001, 50.68]},
       "current_x": 0,
       "current_y": 1,
@@ -6239,6 +6305,599 @@
           "remaining": 67.139999,
           "workers_holding": 106.089996,
           "workers_on_quoted_job": 36.75
+        }
+      ],
+      "kit_needs": [
+        {
+          "display_name": "populations[0].kit_needs[0].display_name",
+          "items": [
+            {
+              "have": 16,
+              "item_id": "populations[0].kit_needs[0].items[0].item_id",
+              "queued": 1,
+              "recipes": [
+                {
+                  "inputs": [
+                    {
+                      "amount": 72.559998,
+                      "material_id": "populations[0].kit_needs[0].items[0].recipes[0].inputs[0].material_id"
+                    },
+                    {
+                      "amount": 86.610001,
+                      "material_id": "populations[0].kit_needs[0].items[0].recipes[0].inputs[1].material_id"
+                    },
+                    {
+                      "amount": 51.59,
+                      "material_id": "populations[0].kit_needs[0].items[0].recipes[0].inputs[2].material_id"
+                    }
+                  ],
+                  "output_per_pass": 27.129999,
+                  "recipe_id": "populations[0].kit_needs[0].items[0].recipes[0].recipe_id"
+                },
+                {
+                  "inputs": [
+                    {
+                      "amount": 45.040001,
+                      "material_id": "populations[0].kit_needs[0].items[0].recipes[1].inputs[0].material_id"
+                    },
+                    {
+                      "amount": 74.669998,
+                      "material_id": "populations[0].kit_needs[0].items[0].recipes[1].inputs[1].material_id"
+                    },
+                    {
+                      "amount": 24.530001,
+                      "material_id": "populations[0].kit_needs[0].items[0].recipes[1].inputs[2].material_id"
+                    }
+                  ],
+                  "output_per_pass": 18.450001,
+                  "recipe_id": "populations[0].kit_needs[0].items[0].recipes[1].recipe_id"
+                },
+                {
+                  "inputs": [
+                    {
+                      "amount": 23.33,
+                      "material_id": "populations[0].kit_needs[0].items[0].recipes[2].inputs[0].material_id"
+                    },
+                    {
+                      "amount": 94.129997,
+                      "material_id": "populations[0].kit_needs[0].items[0].recipes[2].inputs[1].material_id"
+                    },
+                    {
+                      "amount": 90.089996,
+                      "material_id": "populations[0].kit_needs[0].items[0].recipes[2].inputs[2].material_id"
+                    }
+                  ],
+                  "output_per_pass": 49.630001,
+                  "recipe_id": "populations[0].kit_needs[0].items[0].recipes[2].recipe_id"
+                }
+              ],
+              "workers_per_unit": 68
+            },
+            {
+              "have": 141,
+              "item_id": "populations[0].kit_needs[0].items[1].item_id",
+              "queued": 156,
+              "recipes": [
+                {
+                  "inputs": [
+                    {
+                      "amount": 43.529999,
+                      "material_id": "populations[0].kit_needs[0].items[1].recipes[0].inputs[0].material_id"
+                    },
+                    {
+                      "amount": 89.839996,
+                      "material_id": "populations[0].kit_needs[0].items[1].recipes[0].inputs[1].material_id"
+                    },
+                    {
+                      "amount": 81.699997,
+                      "material_id": "populations[0].kit_needs[0].items[1].recipes[0].inputs[2].material_id"
+                    }
+                  ],
+                  "output_per_pass": 88.110001,
+                  "recipe_id": "populations[0].kit_needs[0].items[1].recipes[0].recipe_id"
+                },
+                {
+                  "inputs": [
+                    {
+                      "amount": 112.5,
+                      "material_id": "populations[0].kit_needs[0].items[1].recipes[1].inputs[0].material_id"
+                    },
+                    {
+                      "amount": 102.690002,
+                      "material_id": "populations[0].kit_needs[0].items[1].recipes[1].inputs[1].material_id"
+                    },
+                    {
+                      "amount": 33.73,
+                      "material_id": "populations[0].kit_needs[0].items[1].recipes[1].inputs[2].material_id"
+                    }
+                  ],
+                  "output_per_pass": 3.34,
+                  "recipe_id": "populations[0].kit_needs[0].items[1].recipes[1].recipe_id"
+                },
+                {
+                  "inputs": [
+                    {
+                      "amount": 42.209999,
+                      "material_id": "populations[0].kit_needs[0].items[1].recipes[2].inputs[0].material_id"
+                    },
+                    {
+                      "amount": 39.139999,
+                      "material_id": "populations[0].kit_needs[0].items[1].recipes[2].inputs[1].material_id"
+                    },
+                    {
+                      "amount": 34.48,
+                      "material_id": "populations[0].kit_needs[0].items[1].recipes[2].inputs[2].material_id"
+                    }
+                  ],
+                  "output_per_pass": 93.239998,
+                  "recipe_id": "populations[0].kit_needs[0].items[1].recipes[2].recipe_id"
+                }
+              ],
+              "workers_per_unit": 33
+            },
+            {
+              "have": 162,
+              "item_id": "populations[0].kit_needs[0].items[2].item_id",
+              "queued": 103,
+              "recipes": [
+                {
+                  "inputs": [
+                    {
+                      "amount": 102.019997,
+                      "material_id": "populations[0].kit_needs[0].items[2].recipes[0].inputs[0].material_id"
+                    },
+                    {
+                      "amount": 66.370003,
+                      "material_id": "populations[0].kit_needs[0].items[2].recipes[0].inputs[1].material_id"
+                    },
+                    {
+                      "amount": 89.489998,
+                      "material_id": "populations[0].kit_needs[0].items[2].recipes[0].inputs[2].material_id"
+                    }
+                  ],
+                  "output_per_pass": 98.639999,
+                  "recipe_id": "populations[0].kit_needs[0].items[2].recipes[0].recipe_id"
+                },
+                {
+                  "inputs": [
+                    {
+                      "amount": 52.07,
+                      "material_id": "populations[0].kit_needs[0].items[2].recipes[1].inputs[0].material_id"
+                    },
+                    {
+                      "amount": 16.059999,
+                      "material_id": "populations[0].kit_needs[0].items[2].recipes[1].inputs[1].material_id"
+                    },
+                    {
+                      "amount": 70.559998,
+                      "material_id": "populations[0].kit_needs[0].items[2].recipes[1].inputs[2].material_id"
+                    }
+                  ],
+                  "output_per_pass": 94.870003,
+                  "recipe_id": "populations[0].kit_needs[0].items[2].recipes[1].recipe_id"
+                },
+                {
+                  "inputs": [
+                    {
+                      "amount": 27.65,
+                      "material_id": "populations[0].kit_needs[0].items[2].recipes[2].inputs[0].material_id"
+                    },
+                    {
+                      "amount": 64.120003,
+                      "material_id": "populations[0].kit_needs[0].items[2].recipes[2].inputs[1].material_id"
+                    },
+                    {
+                      "amount": 59.990002,
+                      "material_id": "populations[0].kit_needs[0].items[2].recipes[2].inputs[2].material_id"
+                    }
+                  ],
+                  "output_per_pass": 26.959999,
+                  "recipe_id": "populations[0].kit_needs[0].items[2].recipes[2].recipe_id"
+                }
+              ],
+              "workers_per_unit": 42
+            }
+          ],
+          "jobs": [
+            "hunt",
+            "forage"
+          ],
+          "kit_id": "populations[0].kit_needs[0].kit_id",
+          "people": 85
+        },
+        {
+          "display_name": "populations[0].kit_needs[1].display_name",
+          "items": [
+            {
+              "have": 55,
+              "item_id": "populations[0].kit_needs[1].items[0].item_id",
+              "queued": 2,
+              "recipes": [
+                {
+                  "inputs": [
+                    {
+                      "amount": 34.259998,
+                      "material_id": "populations[0].kit_needs[1].items[0].recipes[0].inputs[0].material_id"
+                    },
+                    {
+                      "amount": 66.43,
+                      "material_id": "populations[0].kit_needs[1].items[0].recipes[0].inputs[1].material_id"
+                    },
+                    {
+                      "amount": 16.110001,
+                      "material_id": "populations[0].kit_needs[1].items[0].recipes[0].inputs[2].material_id"
+                    }
+                  ],
+                  "output_per_pass": 44.529999,
+                  "recipe_id": "populations[0].kit_needs[1].items[0].recipes[0].recipe_id"
+                },
+                {
+                  "inputs": [
+                    {
+                      "amount": 22.299999,
+                      "material_id": "populations[0].kit_needs[1].items[0].recipes[1].inputs[0].material_id"
+                    },
+                    {
+                      "amount": 43.349998,
+                      "material_id": "populations[0].kit_needs[1].items[0].recipes[1].inputs[1].material_id"
+                    },
+                    {
+                      "amount": 48.360001,
+                      "material_id": "populations[0].kit_needs[1].items[0].recipes[1].inputs[2].material_id"
+                    }
+                  ],
+                  "output_per_pass": 110.110001,
+                  "recipe_id": "populations[0].kit_needs[1].items[0].recipes[1].recipe_id"
+                },
+                {
+                  "inputs": [
+                    {
+                      "amount": 31.6,
+                      "material_id": "populations[0].kit_needs[1].items[0].recipes[2].inputs[0].material_id"
+                    },
+                    {
+                      "amount": 66.190002,
+                      "material_id": "populations[0].kit_needs[1].items[0].recipes[2].inputs[1].material_id"
+                    },
+                    {
+                      "amount": 104.669998,
+                      "material_id": "populations[0].kit_needs[1].items[0].recipes[2].inputs[2].material_id"
+                    }
+                  ],
+                  "output_per_pass": 61.860001,
+                  "recipe_id": "populations[0].kit_needs[1].items[0].recipes[2].recipe_id"
+                }
+              ],
+              "workers_per_unit": 79
+            },
+            {
+              "have": 26,
+              "item_id": "populations[0].kit_needs[1].items[1].item_id",
+              "queued": 15,
+              "recipes": [
+                {
+                  "inputs": [
+                    {
+                      "amount": 81.860001,
+                      "material_id": "populations[0].kit_needs[1].items[1].recipes[0].inputs[0].material_id"
+                    },
+                    {
+                      "amount": 7.11,
+                      "material_id": "populations[0].kit_needs[1].items[1].recipes[0].inputs[1].material_id"
+                    },
+                    {
+                      "amount": 32.529999,
+                      "material_id": "populations[0].kit_needs[1].items[1].recipes[0].inputs[2].material_id"
+                    }
+                  ],
+                  "output_per_pass": 58.720001,
+                  "recipe_id": "populations[0].kit_needs[1].items[1].recipes[0].recipe_id"
+                },
+                {
+                  "inputs": [
+                    {
+                      "amount": 67.089996,
+                      "material_id": "populations[0].kit_needs[1].items[1].recipes[1].inputs[0].material_id"
+                    },
+                    {
+                      "amount": 107.660004,
+                      "material_id": "populations[0].kit_needs[1].items[1].recipes[1].inputs[1].material_id"
+                    },
+                    {
+                      "amount": 105.839996,
+                      "material_id": "populations[0].kit_needs[1].items[1].recipes[1].inputs[2].material_id"
+                    }
+                  ],
+                  "output_per_pass": 42.509998,
+                  "recipe_id": "populations[0].kit_needs[1].items[1].recipes[1].recipe_id"
+                },
+                {
+                  "inputs": [
+                    {
+                      "amount": 28.73,
+                      "material_id": "populations[0].kit_needs[1].items[1].recipes[2].inputs[0].material_id"
+                    },
+                    {
+                      "amount": 77.300003,
+                      "material_id": "populations[0].kit_needs[1].items[1].recipes[2].inputs[1].material_id"
+                    },
+                    {
+                      "amount": 74.470001,
+                      "material_id": "populations[0].kit_needs[1].items[1].recipes[2].inputs[2].material_id"
+                    }
+                  ],
+                  "output_per_pass": 55.0,
+                  "recipe_id": "populations[0].kit_needs[1].items[1].recipes[2].recipe_id"
+                }
+              ],
+              "workers_per_unit": 146
+            },
+            {
+              "have": 29,
+              "item_id": "populations[0].kit_needs[1].items[2].item_id",
+              "queued": 60,
+              "recipes": [
+                {
+                  "inputs": [
+                    {
+                      "amount": 9.53,
+                      "material_id": "populations[0].kit_needs[1].items[2].recipes[0].inputs[0].material_id"
+                    },
+                    {
+                      "amount": 33.0,
+                      "material_id": "populations[0].kit_needs[1].items[2].recipes[0].inputs[1].material_id"
+                    },
+                    {
+                      "amount": 92.82,
+                      "material_id": "populations[0].kit_needs[1].items[2].recipes[0].inputs[2].material_id"
+                    }
+                  ],
+                  "output_per_pass": 87.849998,
+                  "recipe_id": "populations[0].kit_needs[1].items[2].recipes[0].recipe_id"
+                },
+                {
+                  "inputs": [
+                    {
+                      "amount": 107.099998,
+                      "material_id": "populations[0].kit_needs[1].items[2].recipes[1].inputs[0].material_id"
+                    },
+                    {
+                      "amount": 30.610001,
+                      "material_id": "populations[0].kit_needs[1].items[2].recipes[1].inputs[1].material_id"
+                    },
+                    {
+                      "amount": 111.290001,
+                      "material_id": "populations[0].kit_needs[1].items[2].recipes[1].inputs[2].material_id"
+                    }
+                  ],
+                  "output_per_pass": 1.4,
+                  "recipe_id": "populations[0].kit_needs[1].items[2].recipes[1].recipe_id"
+                },
+                {
+                  "inputs": [
+                    {
+                      "amount": 8.31,
+                      "material_id": "populations[0].kit_needs[1].items[2].recipes[2].inputs[0].material_id"
+                    },
+                    {
+                      "amount": 108.620003,
+                      "material_id": "populations[0].kit_needs[1].items[2].recipes[2].inputs[1].material_id"
+                    },
+                    {
+                      "amount": 49.82,
+                      "material_id": "populations[0].kit_needs[1].items[2].recipes[2].inputs[2].material_id"
+                    }
+                  ],
+                  "output_per_pass": 11.08,
+                  "recipe_id": "populations[0].kit_needs[1].items[2].recipes[2].recipe_id"
+                }
+              ],
+              "workers_per_unit": 41
+            }
+          ],
+          "jobs": [
+            "hunt",
+            "forage"
+          ],
+          "kit_id": "populations[0].kit_needs[1].kit_id",
+          "people": 60
+        },
+        {
+          "display_name": "populations[0].kit_needs[2].display_name",
+          "items": [
+            {
+              "have": 198,
+              "item_id": "populations[0].kit_needs[2].items[0].item_id",
+              "queued": 99,
+              "recipes": [
+                {
+                  "inputs": [
+                    {
+                      "amount": 60.849998,
+                      "material_id": "populations[0].kit_needs[2].items[0].recipes[0].inputs[0].material_id"
+                    },
+                    {
+                      "amount": 21.41,
+                      "material_id": "populations[0].kit_needs[2].items[0].recipes[0].inputs[1].material_id"
+                    },
+                    {
+                      "amount": 51.529999,
+                      "material_id": "populations[0].kit_needs[2].items[0].recipes[0].inputs[2].material_id"
+                    }
+                  ],
+                  "output_per_pass": 15.11,
+                  "recipe_id": "populations[0].kit_needs[2].items[0].recipes[0].recipe_id"
+                },
+                {
+                  "inputs": [
+                    {
+                      "amount": 97.949997,
+                      "material_id": "populations[0].kit_needs[2].items[0].recipes[1].inputs[0].material_id"
+                    },
+                    {
+                      "amount": 109.07,
+                      "material_id": "populations[0].kit_needs[2].items[0].recipes[1].inputs[1].material_id"
+                    },
+                    {
+                      "amount": 0.7,
+                      "material_id": "populations[0].kit_needs[2].items[0].recipes[1].inputs[2].material_id"
+                    }
+                  ],
+                  "output_per_pass": 65.18,
+                  "recipe_id": "populations[0].kit_needs[2].items[0].recipes[1].recipe_id"
+                },
+                {
+                  "inputs": [
+                    {
+                      "amount": 74.900002,
+                      "material_id": "populations[0].kit_needs[2].items[0].recipes[2].inputs[0].material_id"
+                    },
+                    {
+                      "amount": 57.150002,
+                      "material_id": "populations[0].kit_needs[2].items[0].recipes[2].inputs[1].material_id"
+                    },
+                    {
+                      "amount": 18.67,
+                      "material_id": "populations[0].kit_needs[2].items[0].recipes[2].inputs[2].material_id"
+                    }
+                  ],
+                  "output_per_pass": 44.490002,
+                  "recipe_id": "populations[0].kit_needs[2].items[0].recipes[2].recipe_id"
+                }
+              ],
+              "workers_per_unit": 158
+            },
+            {
+              "have": 107,
+              "item_id": "populations[0].kit_needs[2].items[1].item_id",
+              "queued": 14,
+              "recipes": [
+                {
+                  "inputs": [
+                    {
+                      "amount": 42.830002,
+                      "material_id": "populations[0].kit_needs[2].items[1].recipes[0].inputs[0].material_id"
+                    },
+                    {
+                      "amount": 55.779999,
+                      "material_id": "populations[0].kit_needs[2].items[1].recipes[0].inputs[1].material_id"
+                    },
+                    {
+                      "amount": 97.019997,
+                      "material_id": "populations[0].kit_needs[2].items[1].recipes[0].inputs[2].material_id"
+                    }
+                  ],
+                  "output_per_pass": 106.400002,
+                  "recipe_id": "populations[0].kit_needs[2].items[1].recipes[0].recipe_id"
+                },
+                {
+                  "inputs": [
+                    {
+                      "amount": 81.309998,
+                      "material_id": "populations[0].kit_needs[2].items[1].recipes[1].inputs[0].material_id"
+                    },
+                    {
+                      "amount": 25.26,
+                      "material_id": "populations[0].kit_needs[2].items[1].recipes[1].inputs[1].material_id"
+                    },
+                    {
+                      "amount": 33.400002,
+                      "material_id": "populations[0].kit_needs[2].items[1].recipes[1].inputs[2].material_id"
+                    }
+                  ],
+                  "output_per_pass": 74.059998,
+                  "recipe_id": "populations[0].kit_needs[2].items[1].recipes[1].recipe_id"
+                },
+                {
+                  "inputs": [
+                    {
+                      "amount": 66.779999,
+                      "material_id": "populations[0].kit_needs[2].items[1].recipes[2].inputs[0].material_id"
+                    },
+                    {
+                      "amount": 4.26,
+                      "material_id": "populations[0].kit_needs[2].items[1].recipes[2].inputs[1].material_id"
+                    },
+                    {
+                      "amount": 8.17,
+                      "material_id": "populations[0].kit_needs[2].items[1].recipes[2].inputs[2].material_id"
+                    }
+                  ],
+                  "output_per_pass": 78.730003,
+                  "recipe_id": "populations[0].kit_needs[2].items[1].recipes[2].recipe_id"
+                }
+              ],
+              "workers_per_unit": 179
+            },
+            {
+              "have": 140,
+              "item_id": "populations[0].kit_needs[2].items[2].item_id",
+              "queued": 149,
+              "recipes": [
+                {
+                  "inputs": [
+                    {
+                      "amount": 79.199997,
+                      "material_id": "populations[0].kit_needs[2].items[2].recipes[0].inputs[0].material_id"
+                    },
+                    {
+                      "amount": 95.470001,
+                      "material_id": "populations[0].kit_needs[2].items[2].recipes[0].inputs[1].material_id"
+                    },
+                    {
+                      "amount": 29.540001,
+                      "material_id": "populations[0].kit_needs[2].items[2].recipes[0].inputs[2].material_id"
+                    }
+                  ],
+                  "output_per_pass": 22.83,
+                  "recipe_id": "populations[0].kit_needs[2].items[2].recipes[0].recipe_id"
+                },
+                {
+                  "inputs": [
+                    {
+                      "amount": 40.98,
+                      "material_id": "populations[0].kit_needs[2].items[2].recipes[1].inputs[0].material_id"
+                    },
+                    {
+                      "amount": 24.65,
+                      "material_id": "populations[0].kit_needs[2].items[2].recipes[1].inputs[1].material_id"
+                    },
+                    {
+                      "amount": 102.889999,
+                      "material_id": "populations[0].kit_needs[2].items[2].recipes[1].inputs[2].material_id"
+                    }
+                  ],
+                  "output_per_pass": 78.370003,
+                  "recipe_id": "populations[0].kit_needs[2].items[2].recipes[1].recipe_id"
+                },
+                {
+                  "inputs": [
+                    {
+                      "amount": 106.410004,
+                      "material_id": "populations[0].kit_needs[2].items[2].recipes[2].inputs[0].material_id"
+                    },
+                    {
+                      "amount": 45.099998,
+                      "material_id": "populations[0].kit_needs[2].items[2].recipes[2].inputs[1].material_id"
+                    },
+                    {
+                      "amount": 89.339996,
+                      "material_id": "populations[0].kit_needs[2].items[2].recipes[2].inputs[2].material_id"
+                    }
+                  ],
+                  "output_per_pass": 17.91,
+                  "recipe_id": "populations[0].kit_needs[2].items[2].recipes[2].recipe_id"
+                }
+              ],
+              "workers_per_unit": 16
+            }
+          ],
+          "jobs": [
+            "hunt",
+            "forage"
+          ],
+          "kit_id": "populations[0].kit_needs[2].kit_id",
+          "people": 187
         }
       ],
       "kit_tiers": [
@@ -6866,6 +7525,20 @@
           "material_id": "populations[0].material_upkeep_need[2].material_id"
         }
       ],
+      "materials_free": [
+        {
+          "amount": 65.309998,
+          "material_id": "populations[0].materials_free[0].material_id"
+        },
+        {
+          "amount": 104.120003,
+          "material_id": "populations[0].materials_free[1].material_id"
+        },
+        {
+          "amount": 65.900002,
+          "material_id": "populations[0].materials_free[2].material_id"
+        }
+      ],
       "morale": 0.000022,
       "morale_cause": 86,
       "morale_climate": 0.00015,
@@ -7069,6 +7742,26 @@
             "material_id": "populations[1].bench.drawn_inputs[2].material_id"
           }
         ],
+        "kit_orders": [
+          {
+            "done": 65,
+            "id": 94,
+            "kit_id": "populations[1].bench.kit_orders[0].kit_id",
+            "kits": 78
+          },
+          {
+            "done": 188,
+            "id": 179,
+            "kit_id": "populations[1].bench.kit_orders[1].kit_id",
+            "kits": 15
+          },
+          {
+            "done": 163,
+            "id": 40,
+            "kit_id": "populations[1].bench.kit_orders[2].kit_id",
+            "kits": 24
+          }
+        ],
         "lent_to_hunt": 170,
         "orders": [
           {
@@ -7077,6 +7770,7 @@
             "blocked_severity": "populations[1].bench.orders[0].blocked_severity",
             "count": 189,
             "drawn": false,
+            "kit_order": 161,
             "made": 17,
             "progress": 84.480003,
             "recipe_id": "populations[1].bench.orders[0].recipe_id",
@@ -7107,6 +7801,7 @@
             "blocked_severity": "populations[1].bench.orders[1].blocked_severity",
             "count": 46,
             "drawn": true,
+            "kit_order": 186,
             "made": 180,
             "progress": 38.209999,
             "recipe_id": "populations[1].bench.orders[1].recipe_id",
@@ -7137,6 +7832,7 @@
             "blocked_severity": "populations[1].bench.orders[2].blocked_severity",
             "count": 75,
             "drawn": true,
+            "kit_order": 159,
             "made": 15,
             "progress": 27.290001,
             "recipe_id": "populations[1].bench.orders[2].recipe_id",
@@ -7557,6 +8253,29 @@
       "culture_drift_axis_label": "Trait",
       "culture_drift_delta": 55.23,
       "culture_drift_source_band": 149,
+      "culture_pressures": [
+        {
+          "close": true,
+          "faction": 136,
+          "phase": 181,
+          "pressure": 10.97,
+          "turns_to_next": 8
+        },
+        {
+          "close": false,
+          "faction": 191,
+          "phase": 2,
+          "pressure": 70.029999,
+          "turns_to_next": 51
+        },
+        {
+          "close": false,
+          "faction": 66,
+          "phase": 179,
+          "pressure": 9.04,
+          "turns_to_next": 118
+        }
+      ],
       "culture_traits": {"__packed": "PackedFloat32Array", "len": 3, "items": [55.869999, 23.379999, 59.23]},
       "current_x": 1,
       "current_y": 2,
@@ -7736,6 +8455,599 @@
           "remaining": 1.56,
           "workers_holding": 53.900002,
           "workers_on_quoted_job": 88.160004
+        }
+      ],
+      "kit_needs": [
+        {
+          "display_name": "populations[1].kit_needs[0].display_name",
+          "items": [
+            {
+              "have": 113,
+              "item_id": "populations[1].kit_needs[0].items[0].item_id",
+              "queued": 56,
+              "recipes": [
+                {
+                  "inputs": [
+                    {
+                      "amount": 94.470001,
+                      "material_id": "populations[1].kit_needs[0].items[0].recipes[0].inputs[0].material_id"
+                    },
+                    {
+                      "amount": 5.35,
+                      "material_id": "populations[1].kit_needs[0].items[0].recipes[0].inputs[1].material_id"
+                    },
+                    {
+                      "amount": 3.5,
+                      "material_id": "populations[1].kit_needs[0].items[0].recipes[0].inputs[2].material_id"
+                    }
+                  ],
+                  "output_per_pass": 70.139999,
+                  "recipe_id": "populations[1].kit_needs[0].items[0].recipes[0].recipe_id"
+                },
+                {
+                  "inputs": [
+                    {
+                      "amount": 70.709999,
+                      "material_id": "populations[1].kit_needs[0].items[0].recipes[1].inputs[0].material_id"
+                    },
+                    {
+                      "amount": 29.01,
+                      "material_id": "populations[1].kit_needs[0].items[0].recipes[1].inputs[1].material_id"
+                    },
+                    {
+                      "amount": 24.969999,
+                      "material_id": "populations[1].kit_needs[0].items[0].recipes[1].inputs[2].material_id"
+                    }
+                  ],
+                  "output_per_pass": 12.59,
+                  "recipe_id": "populations[1].kit_needs[0].items[0].recipes[1].recipe_id"
+                },
+                {
+                  "inputs": [
+                    {
+                      "amount": 92.419998,
+                      "material_id": "populations[1].kit_needs[0].items[0].recipes[2].inputs[0].material_id"
+                    },
+                    {
+                      "amount": 9.55,
+                      "material_id": "populations[1].kit_needs[0].items[0].recipes[2].inputs[1].material_id"
+                    },
+                    {
+                      "amount": 71.910004,
+                      "material_id": "populations[1].kit_needs[0].items[0].recipes[2].inputs[2].material_id"
+                    }
+                  ],
+                  "output_per_pass": 8.43,
+                  "recipe_id": "populations[1].kit_needs[0].items[0].recipes[2].recipe_id"
+                }
+              ],
+              "workers_per_unit": 13
+            },
+            {
+              "have": 188,
+              "item_id": "populations[1].kit_needs[0].items[1].item_id",
+              "queued": 197,
+              "recipes": [
+                {
+                  "inputs": [
+                    {
+                      "amount": 22.879999,
+                      "material_id": "populations[1].kit_needs[0].items[1].recipes[0].inputs[0].material_id"
+                    },
+                    {
+                      "amount": 96.57,
+                      "material_id": "populations[1].kit_needs[0].items[1].recipes[0].inputs[1].material_id"
+                    },
+                    {
+                      "amount": 39.02,
+                      "material_id": "populations[1].kit_needs[0].items[1].recipes[0].inputs[2].material_id"
+                    }
+                  ],
+                  "output_per_pass": 40.169998,
+                  "recipe_id": "populations[1].kit_needs[0].items[1].recipes[0].recipe_id"
+                },
+                {
+                  "inputs": [
+                    {
+                      "amount": 2.66,
+                      "material_id": "populations[1].kit_needs[0].items[1].recipes[1].inputs[0].material_id"
+                    },
+                    {
+                      "amount": 17.049999,
+                      "material_id": "populations[1].kit_needs[0].items[1].recipes[1].inputs[1].material_id"
+                    },
+                    {
+                      "amount": 99.43,
+                      "material_id": "populations[1].kit_needs[0].items[1].recipes[1].inputs[2].material_id"
+                    }
+                  ],
+                  "output_per_pass": 11.61,
+                  "recipe_id": "populations[1].kit_needs[0].items[1].recipes[1].recipe_id"
+                },
+                {
+                  "inputs": [
+                    {
+                      "amount": 8.83,
+                      "material_id": "populations[1].kit_needs[0].items[1].recipes[2].inputs[0].material_id"
+                    },
+                    {
+                      "amount": 86.739998,
+                      "material_id": "populations[1].kit_needs[0].items[1].recipes[2].inputs[1].material_id"
+                    },
+                    {
+                      "amount": 65.059998,
+                      "material_id": "populations[1].kit_needs[0].items[1].recipes[2].inputs[2].material_id"
+                    }
+                  ],
+                  "output_per_pass": 83.550003,
+                  "recipe_id": "populations[1].kit_needs[0].items[1].recipes[2].recipe_id"
+                }
+              ],
+              "workers_per_unit": 72
+            },
+            {
+              "have": 59,
+              "item_id": "populations[1].kit_needs[0].items[2].item_id",
+              "queued": 94,
+              "recipes": [
+                {
+                  "inputs": [
+                    {
+                      "amount": 88.870003,
+                      "material_id": "populations[1].kit_needs[0].items[2].recipes[0].inputs[0].material_id"
+                    },
+                    {
+                      "amount": 92.980003,
+                      "material_id": "populations[1].kit_needs[0].items[2].recipes[0].inputs[1].material_id"
+                    },
+                    {
+                      "amount": 1.56,
+                      "material_id": "populations[1].kit_needs[0].items[2].recipes[0].inputs[2].material_id"
+                    }
+                  ],
+                  "output_per_pass": 7.74,
+                  "recipe_id": "populations[1].kit_needs[0].items[2].recipes[0].recipe_id"
+                },
+                {
+                  "inputs": [
+                    {
+                      "amount": 34.73,
+                      "material_id": "populations[1].kit_needs[0].items[2].recipes[1].inputs[0].material_id"
+                    },
+                    {
+                      "amount": 85.040001,
+                      "material_id": "populations[1].kit_needs[0].items[2].recipes[1].inputs[1].material_id"
+                    },
+                    {
+                      "amount": 30.540001,
+                      "material_id": "populations[1].kit_needs[0].items[2].recipes[1].inputs[2].material_id"
+                    }
+                  ],
+                  "output_per_pass": 38.220001,
+                  "recipe_id": "populations[1].kit_needs[0].items[2].recipes[1].recipe_id"
+                },
+                {
+                  "inputs": [
+                    {
+                      "amount": 7.84,
+                      "material_id": "populations[1].kit_needs[0].items[2].recipes[2].inputs[0].material_id"
+                    },
+                    {
+                      "amount": 99.900002,
+                      "material_id": "populations[1].kit_needs[0].items[2].recipes[2].inputs[1].material_id"
+                    },
+                    {
+                      "amount": 90.290001,
+                      "material_id": "populations[1].kit_needs[0].items[2].recipes[2].inputs[2].material_id"
+                    }
+                  ],
+                  "output_per_pass": 17.93,
+                  "recipe_id": "populations[1].kit_needs[0].items[2].recipes[2].recipe_id"
+                }
+              ],
+              "workers_per_unit": 123
+            }
+          ],
+          "jobs": [
+            "hunt",
+            "forage"
+          ],
+          "kit_id": "populations[1].kit_needs[0].kit_id",
+          "people": 102
+        },
+        {
+          "display_name": "populations[1].kit_needs[1].display_name",
+          "items": [
+            {
+              "have": 82,
+              "item_id": "populations[1].kit_needs[1].items[0].item_id",
+              "queued": 183,
+              "recipes": [
+                {
+                  "inputs": [
+                    {
+                      "amount": 43.459999,
+                      "material_id": "populations[1].kit_needs[1].items[0].recipes[0].inputs[0].material_id"
+                    },
+                    {
+                      "amount": 109.650002,
+                      "material_id": "populations[1].kit_needs[1].items[0].recipes[0].inputs[1].material_id"
+                    },
+                    {
+                      "amount": 64.349998,
+                      "material_id": "populations[1].kit_needs[1].items[0].recipes[0].inputs[2].material_id"
+                    }
+                  ],
+                  "output_per_pass": 76.940002,
+                  "recipe_id": "populations[1].kit_needs[1].items[0].recipes[0].recipe_id"
+                },
+                {
+                  "inputs": [
+                    {
+                      "amount": 68.150002,
+                      "material_id": "populations[1].kit_needs[1].items[0].recipes[1].inputs[0].material_id"
+                    },
+                    {
+                      "amount": 6.16,
+                      "material_id": "populations[1].kit_needs[1].items[0].recipes[1].inputs[1].material_id"
+                    },
+                    {
+                      "amount": 23.219999,
+                      "material_id": "populations[1].kit_needs[1].items[0].recipes[1].inputs[2].material_id"
+                    }
+                  ],
+                  "output_per_pass": 75.480003,
+                  "recipe_id": "populations[1].kit_needs[1].items[0].recipes[1].recipe_id"
+                },
+                {
+                  "inputs": [
+                    {
+                      "amount": 40.93,
+                      "material_id": "populations[1].kit_needs[1].items[0].recipes[2].inputs[0].material_id"
+                    },
+                    {
+                      "amount": 26.540001,
+                      "material_id": "populations[1].kit_needs[1].items[0].recipes[2].inputs[1].material_id"
+                    },
+                    {
+                      "amount": 50.25,
+                      "material_id": "populations[1].kit_needs[1].items[0].recipes[2].inputs[2].material_id"
+                    }
+                  ],
+                  "output_per_pass": 89.720001,
+                  "recipe_id": "populations[1].kit_needs[1].items[0].recipes[2].recipe_id"
+                }
+              ],
+              "workers_per_unit": 138
+            },
+            {
+              "have": 39,
+              "item_id": "populations[1].kit_needs[1].items[1].item_id",
+              "queued": 146,
+              "recipes": [
+                {
+                  "inputs": [
+                    {
+                      "amount": 4.9,
+                      "material_id": "populations[1].kit_needs[1].items[1].recipes[0].inputs[0].material_id"
+                    },
+                    {
+                      "amount": 101.07,
+                      "material_id": "populations[1].kit_needs[1].items[1].recipes[0].inputs[1].material_id"
+                    },
+                    {
+                      "amount": 39.790001,
+                      "material_id": "populations[1].kit_needs[1].items[1].recipes[0].inputs[2].material_id"
+                    }
+                  ],
+                  "output_per_pass": 18.190001,
+                  "recipe_id": "populations[1].kit_needs[1].items[1].recipes[0].recipe_id"
+                },
+                {
+                  "inputs": [
+                    {
+                      "amount": 43.119999,
+                      "material_id": "populations[1].kit_needs[1].items[1].recipes[1].inputs[0].material_id"
+                    },
+                    {
+                      "amount": 59.389999,
+                      "material_id": "populations[1].kit_needs[1].items[1].recipes[1].inputs[1].material_id"
+                    },
+                    {
+                      "amount": 105.959999,
+                      "material_id": "populations[1].kit_needs[1].items[1].recipes[1].inputs[2].material_id"
+                    }
+                  ],
+                  "output_per_pass": 75.150002,
+                  "recipe_id": "populations[1].kit_needs[1].items[1].recipes[1].recipe_id"
+                },
+                {
+                  "inputs": [
+                    {
+                      "amount": 111.599998,
+                      "material_id": "populations[1].kit_needs[1].items[1].recipes[2].inputs[0].material_id"
+                    },
+                    {
+                      "amount": 96.330002,
+                      "material_id": "populations[1].kit_needs[1].items[1].recipes[2].inputs[1].material_id"
+                    },
+                    {
+                      "amount": 9.35,
+                      "material_id": "populations[1].kit_needs[1].items[1].recipes[2].inputs[2].material_id"
+                    }
+                  ],
+                  "output_per_pass": 85.260002,
+                  "recipe_id": "populations[1].kit_needs[1].items[1].recipes[2].recipe_id"
+                }
+              ],
+              "workers_per_unit": 47
+            },
+            {
+              "have": 128,
+              "item_id": "populations[1].kit_needs[1].items[2].item_id",
+              "queued": 129,
+              "recipes": [
+                {
+                  "inputs": [
+                    {
+                      "amount": 76.400002,
+                      "material_id": "populations[1].kit_needs[1].items[2].recipes[0].inputs[0].material_id"
+                    },
+                    {
+                      "amount": 79.650002,
+                      "material_id": "populations[1].kit_needs[1].items[2].recipes[0].inputs[1].material_id"
+                    },
+                    {
+                      "amount": 27.110001,
+                      "material_id": "populations[1].kit_needs[1].items[2].recipes[0].inputs[2].material_id"
+                    }
+                  ],
+                  "output_per_pass": 14.75,
+                  "recipe_id": "populations[1].kit_needs[1].items[2].recipes[0].recipe_id"
+                },
+                {
+                  "inputs": [
+                    {
+                      "amount": 105.300003,
+                      "material_id": "populations[1].kit_needs[1].items[2].recipes[1].inputs[0].material_id"
+                    },
+                    {
+                      "amount": 48.849998,
+                      "material_id": "populations[1].kit_needs[1].items[2].recipes[1].inputs[1].material_id"
+                    },
+                    {
+                      "amount": 67.120003,
+                      "material_id": "populations[1].kit_needs[1].items[2].recipes[1].inputs[2].material_id"
+                    }
+                  ],
+                  "output_per_pass": 9.79,
+                  "recipe_id": "populations[1].kit_needs[1].items[2].recipes[1].recipe_id"
+                },
+                {
+                  "inputs": [
+                    {
+                      "amount": 17.469999,
+                      "material_id": "populations[1].kit_needs[1].items[2].recipes[2].inputs[0].material_id"
+                    },
+                    {
+                      "amount": 79.57,
+                      "material_id": "populations[1].kit_needs[1].items[2].recipes[2].inputs[1].material_id"
+                    },
+                    {
+                      "amount": 45.75,
+                      "material_id": "populations[1].kit_needs[1].items[2].recipes[2].inputs[2].material_id"
+                    }
+                  ],
+                  "output_per_pass": 48.349998,
+                  "recipe_id": "populations[1].kit_needs[1].items[2].recipes[2].recipe_id"
+                }
+              ],
+              "workers_per_unit": 20
+            }
+          ],
+          "jobs": [
+            "hunt",
+            "forage"
+          ],
+          "kit_id": "populations[1].kit_needs[1].kit_id",
+          "people": 95
+        },
+        {
+          "display_name": "populations[1].kit_needs[2].display_name",
+          "items": [
+            {
+              "have": 67,
+              "item_id": "populations[1].kit_needs[2].items[0].item_id",
+              "queued": 166,
+              "recipes": [
+                {
+                  "inputs": [
+                    {
+                      "amount": 102.559998,
+                      "material_id": "populations[1].kit_needs[2].items[0].recipes[0].inputs[0].material_id"
+                    },
+                    {
+                      "amount": 46.669998,
+                      "material_id": "populations[1].kit_needs[2].items[0].recipes[0].inputs[1].material_id"
+                    },
+                    {
+                      "amount": 63.810001,
+                      "material_id": "populations[1].kit_needs[2].items[0].recipes[0].inputs[2].material_id"
+                    }
+                  ],
+                  "output_per_pass": 49.41,
+                  "recipe_id": "populations[1].kit_needs[2].items[0].recipes[0].recipe_id"
+                },
+                {
+                  "inputs": [
+                    {
+                      "amount": 33.400002,
+                      "material_id": "populations[1].kit_needs[2].items[0].recipes[1].inputs[0].material_id"
+                    },
+                    {
+                      "amount": 100.830002,
+                      "material_id": "populations[1].kit_needs[2].items[0].recipes[1].inputs[1].material_id"
+                    },
+                    {
+                      "amount": 43.209999,
+                      "material_id": "populations[1].kit_needs[2].items[0].recipes[1].inputs[2].material_id"
+                    }
+                  ],
+                  "output_per_pass": 86.589996,
+                  "recipe_id": "populations[1].kit_needs[2].items[0].recipes[1].recipe_id"
+                },
+                {
+                  "inputs": [
+                    {
+                      "amount": 10.05,
+                      "material_id": "populations[1].kit_needs[2].items[0].recipes[2].inputs[0].material_id"
+                    },
+                    {
+                      "amount": 14.21,
+                      "material_id": "populations[1].kit_needs[2].items[0].recipes[2].inputs[1].material_id"
+                    },
+                    {
+                      "amount": 28.200001,
+                      "material_id": "populations[1].kit_needs[2].items[0].recipes[2].inputs[2].material_id"
+                    }
+                  ],
+                  "output_per_pass": 46.740002,
+                  "recipe_id": "populations[1].kit_needs[2].items[0].recipes[2].recipe_id"
+                }
+              ],
+              "workers_per_unit": 91
+            },
+            {
+              "have": 158,
+              "item_id": "populations[1].kit_needs[2].items[1].item_id",
+              "queued": 11,
+              "recipes": [
+                {
+                  "inputs": [
+                    {
+                      "amount": 70.760002,
+                      "material_id": "populations[1].kit_needs[2].items[1].recipes[0].inputs[0].material_id"
+                    },
+                    {
+                      "amount": 55.0,
+                      "material_id": "populations[1].kit_needs[2].items[1].recipes[0].inputs[1].material_id"
+                    },
+                    {
+                      "amount": 102.959999,
+                      "material_id": "populations[1].kit_needs[2].items[1].recipes[0].inputs[2].material_id"
+                    }
+                  ],
+                  "output_per_pass": 84.82,
+                  "recipe_id": "populations[1].kit_needs[2].items[1].recipes[0].recipe_id"
+                },
+                {
+                  "inputs": [
+                    {
+                      "amount": 75.260002,
+                      "material_id": "populations[1].kit_needs[2].items[1].recipes[1].inputs[0].material_id"
+                    },
+                    {
+                      "amount": 12.74,
+                      "material_id": "populations[1].kit_needs[2].items[1].recipes[1].inputs[1].material_id"
+                    },
+                    {
+                      "amount": 105.690002,
+                      "material_id": "populations[1].kit_needs[2].items[1].recipes[1].inputs[2].material_id"
+                    }
+                  ],
+                  "output_per_pass": 3.07,
+                  "recipe_id": "populations[1].kit_needs[2].items[1].recipes[1].recipe_id"
+                },
+                {
+                  "inputs": [
+                    {
+                      "amount": 85.830002,
+                      "material_id": "populations[1].kit_needs[2].items[1].recipes[2].inputs[0].material_id"
+                    },
+                    {
+                      "amount": 19.92,
+                      "material_id": "populations[1].kit_needs[2].items[1].recipes[2].inputs[1].material_id"
+                    },
+                    {
+                      "amount": 22.66,
+                      "material_id": "populations[1].kit_needs[2].items[1].recipes[2].inputs[2].material_id"
+                    }
+                  ],
+                  "output_per_pass": 95.139999,
+                  "recipe_id": "populations[1].kit_needs[2].items[1].recipes[2].recipe_id"
+                }
+              ],
+              "workers_per_unit": 86
+            },
+            {
+              "have": 17,
+              "item_id": "populations[1].kit_needs[2].items[2].item_id",
+              "queued": 176,
+              "recipes": [
+                {
+                  "inputs": [
+                    {
+                      "amount": 33.66,
+                      "material_id": "populations[1].kit_needs[2].items[2].recipes[0].inputs[0].material_id"
+                    },
+                    {
+                      "amount": 61.0,
+                      "material_id": "populations[1].kit_needs[2].items[2].recipes[0].inputs[1].material_id"
+                    },
+                    {
+                      "amount": 33.07,
+                      "material_id": "populations[1].kit_needs[2].items[2].recipes[0].inputs[2].material_id"
+                    }
+                  ],
+                  "output_per_pass": 5.81,
+                  "recipe_id": "populations[1].kit_needs[2].items[2].recipes[0].recipe_id"
+                },
+                {
+                  "inputs": [
+                    {
+                      "amount": 97.580002,
+                      "material_id": "populations[1].kit_needs[2].items[2].recipes[1].inputs[0].material_id"
+                    },
+                    {
+                      "amount": 70.239998,
+                      "material_id": "populations[1].kit_needs[2].items[2].recipes[1].inputs[1].material_id"
+                    },
+                    {
+                      "amount": 108.459999,
+                      "material_id": "populations[1].kit_needs[2].items[2].recipes[1].inputs[2].material_id"
+                    }
+                  ],
+                  "output_per_pass": 10.82,
+                  "recipe_id": "populations[1].kit_needs[2].items[2].recipes[1].recipe_id"
+                },
+                {
+                  "inputs": [
+                    {
+                      "amount": 24.549999,
+                      "material_id": "populations[1].kit_needs[2].items[2].recipes[2].inputs[0].material_id"
+                    },
+                    {
+                      "amount": 48.32,
+                      "material_id": "populations[1].kit_needs[2].items[2].recipes[2].inputs[1].material_id"
+                    },
+                    {
+                      "amount": 99.779999,
+                      "material_id": "populations[1].kit_needs[2].items[2].recipes[2].inputs[2].material_id"
+                    }
+                  ],
+                  "output_per_pass": 8.38,
+                  "recipe_id": "populations[1].kit_needs[2].items[2].recipes[2].recipe_id"
+                }
+              ],
+              "workers_per_unit": 53
+            }
+          ],
+          "jobs": [
+            "hunt",
+            "forage"
+          ],
+          "kit_id": "populations[1].kit_needs[2].kit_id",
+          "people": 8
         }
       ],
       "kit_tiers": [
@@ -8307,6 +9619,20 @@
           "material_id": "populations[1].material_upkeep_need[2].material_id"
         }
       ],
+      "materials_free": [
+        {
+          "amount": 59.549999,
+          "material_id": "populations[1].materials_free[0].material_id"
+        },
+        {
+          "amount": 10.54,
+          "material_id": "populations[1].materials_free[1].material_id"
+        },
+        {
+          "amount": 91.889999,
+          "material_id": "populations[1].materials_free[2].material_id"
+        }
+      ],
       "morale": 0.000167,
       "morale_cause": 171,
       "morale_climate": 0.000195,
@@ -8527,6 +9853,26 @@
             "material_id": "populations[2].bench.drawn_inputs[2].material_id"
           }
         ],
+        "kit_orders": [
+          {
+            "done": 118,
+            "id": 61,
+            "kit_id": "populations[2].bench.kit_orders[0].kit_id",
+            "kits": 169
+          },
+          {
+            "done": 195,
+            "id": 88,
+            "kit_id": "populations[2].bench.kit_orders[1].kit_id",
+            "kits": 144
+          },
+          {
+            "done": 172,
+            "id": 35,
+            "kit_id": "populations[2].bench.kit_orders[2].kit_id",
+            "kits": 47
+          }
+        ],
         "lent_to_hunt": 137,
         "orders": [
           {
@@ -8535,6 +9881,7 @@
             "blocked_severity": "populations[2].bench.orders[0].blocked_severity",
             "count": 40,
             "drawn": false,
+            "kit_order": 156,
             "made": 142,
             "progress": 34.880001,
             "recipe_id": "populations[2].bench.orders[0].recipe_id",
@@ -8565,6 +9912,7 @@
             "blocked_severity": "populations[2].bench.orders[1].blocked_severity",
             "count": 183,
             "drawn": true,
+            "kit_order": 187,
             "made": 147,
             "progress": 31.74,
             "recipe_id": "populations[2].bench.orders[1].recipe_id",
@@ -8595,6 +9943,7 @@
             "blocked_severity": "populations[2].bench.orders[2].blocked_severity",
             "count": 170,
             "drawn": true,
+            "kit_order": 22,
             "made": 72,
             "progress": 57.529999,
             "recipe_id": "populations[2].bench.orders[2].recipe_id",
@@ -9015,6 +10364,29 @@
       "culture_drift_axis_label": "Trait",
       "culture_drift_delta": 5.61,
       "culture_drift_source_band": 88,
+      "culture_pressures": [
+        {
+          "close": true,
+          "faction": 171,
+          "phase": 174,
+          "pressure": 33.669998,
+          "turns_to_next": 143
+        },
+        {
+          "close": false,
+          "faction": 84,
+          "phase": 65,
+          "pressure": 110.57,
+          "turns_to_next": 180
+        },
+        {
+          "close": false,
+          "faction": 85,
+          "phase": 84,
+          "pressure": 32.279999,
+          "turns_to_next": 101
+        }
+      ],
       "culture_traits": {"__packed": "PackedFloat32Array", "len": 3, "items": [32.779999, 7.37, 24.040001]},
       "current_x": 2,
       "current_y": 0,
@@ -9194,6 +10566,599 @@
           "remaining": 53.18,
           "workers_holding": 58.380001,
           "workers_on_quoted_job": 109.889999
+        }
+      ],
+      "kit_needs": [
+        {
+          "display_name": "populations[2].kit_needs[0].display_name",
+          "items": [
+            {
+              "have": 66,
+              "item_id": "populations[2].kit_needs[0].items[0].item_id",
+              "queued": 15,
+              "recipes": [
+                {
+                  "inputs": [
+                    {
+                      "amount": 53.259998,
+                      "material_id": "populations[2].kit_needs[0].items[0].recipes[0].inputs[0].material_id"
+                    },
+                    {
+                      "amount": 103.089996,
+                      "material_id": "populations[2].kit_needs[0].items[0].recipes[0].inputs[1].material_id"
+                    },
+                    {
+                      "amount": 40.73,
+                      "material_id": "populations[2].kit_needs[0].items[0].recipes[0].inputs[2].material_id"
+                    }
+                  ],
+                  "output_per_pass": 108.900002,
+                  "recipe_id": "populations[2].kit_needs[0].items[0].recipes[0].recipe_id"
+                },
+                {
+                  "inputs": [
+                    {
+                      "amount": 3.31,
+                      "material_id": "populations[2].kit_needs[0].items[0].recipes[1].inputs[0].material_id"
+                    },
+                    {
+                      "amount": 79.800003,
+                      "material_id": "populations[2].kit_needs[0].items[0].recipes[1].inputs[1].material_id"
+                    },
+                    {
+                      "amount": 107.279999,
+                      "material_id": "populations[2].kit_needs[0].items[0].recipes[1].inputs[2].material_id"
+                    }
+                  ],
+                  "output_per_pass": 105.129997,
+                  "recipe_id": "populations[2].kit_needs[0].items[0].recipes[1].recipe_id"
+                },
+                {
+                  "inputs": [
+                    {
+                      "amount": 64.370003,
+                      "material_id": "populations[2].kit_needs[0].items[0].recipes[2].inputs[0].material_id"
+                    },
+                    {
+                      "amount": 15.36,
+                      "material_id": "populations[2].kit_needs[0].items[0].recipes[2].inputs[1].material_id"
+                    },
+                    {
+                      "amount": 11.23,
+                      "material_id": "populations[2].kit_needs[0].items[0].recipes[2].inputs[2].material_id"
+                    }
+                  ],
+                  "output_per_pass": 37.220001,
+                  "recipe_id": "populations[2].kit_needs[0].items[0].recipes[2].recipe_id"
+                }
+              ],
+              "workers_per_unit": 162
+            },
+            {
+              "have": 39,
+              "item_id": "populations[2].kit_needs[0].items[1].item_id",
+              "queued": 146,
+              "recipes": [
+                {
+                  "inputs": [
+                    {
+                      "amount": 86.0,
+                      "material_id": "populations[2].kit_needs[0].items[1].recipes[0].inputs[0].material_id"
+                    },
+                    {
+                      "amount": 75.25,
+                      "material_id": "populations[2].kit_needs[0].items[1].recipes[0].inputs[1].material_id"
+                    },
+                    {
+                      "amount": 70.129997,
+                      "material_id": "populations[2].kit_needs[0].items[1].recipes[0].inputs[2].material_id"
+                    }
+                  ],
+                  "output_per_pass": 101.650002,
+                  "recipe_id": "populations[2].kit_needs[0].items[1].recipes[0].recipe_id"
+                },
+                {
+                  "inputs": [
+                    {
+                      "amount": 7.56,
+                      "material_id": "populations[2].kit_needs[0].items[1].recipes[1].inputs[0].material_id"
+                    },
+                    {
+                      "amount": 0.01,
+                      "material_id": "populations[2].kit_needs[0].items[1].recipes[1].inputs[1].material_id"
+                    },
+                    {
+                      "amount": 2.38,
+                      "material_id": "populations[2].kit_needs[0].items[1].recipes[1].inputs[2].material_id"
+                    }
+                  ],
+                  "output_per_pass": 88.949997,
+                  "recipe_id": "populations[2].kit_needs[0].items[1].recipes[1].recipe_id"
+                },
+                {
+                  "inputs": [
+                    {
+                      "amount": 36.700001,
+                      "material_id": "populations[2].kit_needs[0].items[1].recipes[2].inputs[0].material_id"
+                    },
+                    {
+                      "amount": 17.41,
+                      "material_id": "populations[2].kit_needs[0].items[1].recipes[2].inputs[1].material_id"
+                    },
+                    {
+                      "amount": 79.449997,
+                      "material_id": "populations[2].kit_needs[0].items[1].recipes[2].inputs[2].material_id"
+                    }
+                  ],
+                  "output_per_pass": 85.760002,
+                  "recipe_id": "populations[2].kit_needs[0].items[1].recipes[2].recipe_id"
+                }
+              ],
+              "workers_per_unit": 183
+            },
+            {
+              "have": 104,
+              "item_id": "populations[2].kit_needs[0].items[2].item_id",
+              "queued": 113,
+              "recipes": [
+                {
+                  "inputs": [
+                    {
+                      "amount": 23.799999,
+                      "material_id": "populations[2].kit_needs[0].items[2].recipes[0].inputs[0].material_id"
+                    },
+                    {
+                      "amount": 37.849998,
+                      "material_id": "populations[2].kit_needs[0].items[2].recipes[0].inputs[1].material_id"
+                    },
+                    {
+                      "amount": 88.309998,
+                      "material_id": "populations[2].kit_needs[0].items[2].recipes[0].inputs[2].material_id"
+                    }
+                  ],
+                  "output_per_pass": 37.389999,
+                  "recipe_id": "populations[2].kit_needs[0].items[2].recipes[0].recipe_id"
+                },
+                {
+                  "inputs": [
+                    {
+                      "amount": 108.779999,
+                      "material_id": "populations[2].kit_needs[0].items[2].recipes[1].inputs[0].material_id"
+                    },
+                    {
+                      "amount": 111.389999,
+                      "material_id": "populations[2].kit_needs[0].items[2].recipes[1].inputs[1].material_id"
+                    },
+                    {
+                      "amount": 88.269997,
+                      "material_id": "populations[2].kit_needs[0].items[2].recipes[1].inputs[2].material_id"
+                    }
+                  ],
+                  "output_per_pass": 28.709999,
+                  "recipe_id": "populations[2].kit_needs[0].items[2].recipes[1].recipe_id"
+                },
+                {
+                  "inputs": [
+                    {
+                      "amount": 60.049999,
+                      "material_id": "populations[2].kit_needs[0].items[2].recipes[2].inputs[0].material_id"
+                    },
+                    {
+                      "amount": 18.35,
+                      "material_id": "populations[2].kit_needs[0].items[2].recipes[2].inputs[1].material_id"
+                    },
+                    {
+                      "amount": 14.31,
+                      "material_id": "populations[2].kit_needs[0].items[2].recipes[2].inputs[2].material_id"
+                    }
+                  ],
+                  "output_per_pass": 59.889999,
+                  "recipe_id": "populations[2].kit_needs[0].items[2].recipes[2].recipe_id"
+                }
+              ],
+              "workers_per_unit": 172
+            }
+          ],
+          "jobs": [
+            "hunt",
+            "forage"
+          ],
+          "kit_id": "populations[2].kit_needs[0].kit_id",
+          "people": 151
+        },
+        {
+          "display_name": "populations[2].kit_needs[1].display_name",
+          "items": [
+            {
+              "have": 161,
+              "item_id": "populations[2].kit_needs[1].items[0].item_id",
+              "queued": 136,
+              "recipes": [
+                {
+                  "inputs": [
+                    {
+                      "amount": 93.150002,
+                      "material_id": "populations[2].kit_needs[1].items[0].recipes[0].inputs[0].material_id"
+                    },
+                    {
+                      "amount": 22.35,
+                      "material_id": "populations[2].kit_needs[1].items[0].recipes[0].inputs[1].material_id"
+                    },
+                    {
+                      "amount": 25.18,
+                      "material_id": "populations[2].kit_needs[1].items[0].recipes[0].inputs[2].material_id"
+                    }
+                  ],
+                  "output_per_pass": 49.84,
+                  "recipe_id": "populations[2].kit_needs[1].items[0].recipes[0].recipe_id"
+                },
+                {
+                  "inputs": [
+                    {
+                      "amount": 2.77,
+                      "material_id": "populations[2].kit_needs[1].items[0].recipes[1].inputs[0].material_id"
+                    },
+                    {
+                      "amount": 64.870003,
+                      "material_id": "populations[2].kit_needs[1].items[0].recipes[1].inputs[1].material_id"
+                    },
+                    {
+                      "amount": 31.049999,
+                      "material_id": "populations[2].kit_needs[1].items[0].recipes[1].inputs[2].material_id"
+                    }
+                  ],
+                  "output_per_pass": 2.43,
+                  "recipe_id": "populations[2].kit_needs[1].items[0].recipes[1].recipe_id"
+                },
+                {
+                  "inputs": [
+                    {
+                      "amount": 5.12,
+                      "material_id": "populations[2].kit_needs[1].items[0].recipes[2].inputs[0].material_id"
+                    },
+                    {
+                      "amount": 34.150002,
+                      "material_id": "populations[2].kit_needs[1].items[0].recipes[2].inputs[1].material_id"
+                    },
+                    {
+                      "amount": 79.449997,
+                      "material_id": "populations[2].kit_needs[1].items[0].recipes[2].inputs[2].material_id"
+                    }
+                  ],
+                  "output_per_pass": 76.370003,
+                  "recipe_id": "populations[2].kit_needs[1].items[0].recipes[2].recipe_id"
+                }
+              ],
+              "workers_per_unit": 45
+            },
+            {
+              "have": 76,
+              "item_id": "populations[2].kit_needs[1].items[1].item_id",
+              "queued": 85,
+              "recipes": [
+                {
+                  "inputs": [
+                    {
+                      "amount": 75.900002,
+                      "material_id": "populations[2].kit_needs[1].items[1].recipes[0].inputs[0].material_id"
+                    },
+                    {
+                      "amount": 78.970001,
+                      "material_id": "populations[2].kit_needs[1].items[1].recipes[0].inputs[1].material_id"
+                    },
+                    {
+                      "amount": 34.360001,
+                      "material_id": "populations[2].kit_needs[1].items[1].recipes[0].inputs[2].material_id"
+                    }
+                  ],
+                  "output_per_pass": 42.529999,
+                  "recipe_id": "populations[2].kit_needs[1].items[1].recipes[0].recipe_id"
+                },
+                {
+                  "inputs": [
+                    {
+                      "amount": 42.34,
+                      "material_id": "populations[2].kit_needs[1].items[1].recipes[1].inputs[0].material_id"
+                    },
+                    {
+                      "amount": 91.349998,
+                      "material_id": "populations[2].kit_needs[1].items[1].recipes[1].inputs[1].material_id"
+                    },
+                    {
+                      "amount": 0.07,
+                      "material_id": "populations[2].kit_needs[1].items[1].recipes[1].inputs[2].material_id"
+                    }
+                  ],
+                  "output_per_pass": 46.950001,
+                  "recipe_id": "populations[2].kit_needs[1].items[1].recipes[1].recipe_id"
+                },
+                {
+                  "inputs": [
+                    {
+                      "amount": 7.11,
+                      "material_id": "populations[2].kit_needs[1].items[1].recipes[2].inputs[0].material_id"
+                    },
+                    {
+                      "amount": 30.540001,
+                      "material_id": "populations[2].kit_needs[1].items[1].recipes[2].inputs[1].material_id"
+                    },
+                    {
+                      "amount": 36.48,
+                      "material_id": "populations[2].kit_needs[1].items[1].recipes[2].inputs[2].material_id"
+                    }
+                  ],
+                  "output_per_pass": 92.93,
+                  "recipe_id": "populations[2].kit_needs[1].items[1].recipes[2].recipe_id"
+                }
+              ],
+              "workers_per_unit": 16
+            },
+            {
+              "have": 11,
+              "item_id": "populations[2].kit_needs[1].items[2].item_id",
+              "queued": 22,
+              "recipes": [
+                {
+                  "inputs": [
+                    {
+                      "amount": 89.730003,
+                      "material_id": "populations[2].kit_needs[1].items[2].recipes[0].inputs[0].material_id"
+                    },
+                    {
+                      "amount": 107.480003,
+                      "material_id": "populations[2].kit_needs[1].items[2].recipes[0].inputs[1].material_id"
+                    },
+                    {
+                      "amount": 43.68,
+                      "material_id": "populations[2].kit_needs[1].items[2].recipes[0].inputs[2].material_id"
+                    }
+                  ],
+                  "output_per_pass": 4.44,
+                  "recipe_id": "populations[2].kit_needs[1].items[2].recipes[0].recipe_id"
+                },
+                {
+                  "inputs": [
+                    {
+                      "amount": 4.99,
+                      "material_id": "populations[2].kit_needs[1].items[2].recipes[1].inputs[0].material_id"
+                    },
+                    {
+                      "amount": 54.900002,
+                      "material_id": "populations[2].kit_needs[1].items[2].recipes[1].inputs[1].material_id"
+                    },
+                    {
+                      "amount": 37.84,
+                      "material_id": "populations[2].kit_needs[1].items[2].recipes[1].inputs[2].material_id"
+                    }
+                  ],
+                  "output_per_pass": 94.099998,
+                  "recipe_id": "populations[2].kit_needs[1].items[2].recipes[1].recipe_id"
+                },
+                {
+                  "inputs": [
+                    {
+                      "amount": 86.599998,
+                      "material_id": "populations[2].kit_needs[1].items[2].recipes[2].inputs[0].material_id"
+                    },
+                    {
+                      "amount": 48.16,
+                      "material_id": "populations[2].kit_needs[1].items[2].recipes[2].inputs[1].material_id"
+                    },
+                    {
+                      "amount": 45.09,
+                      "material_id": "populations[2].kit_needs[1].items[2].recipes[2].inputs[2].material_id"
+                    }
+                  ],
+                  "output_per_pass": 51.310001,
+                  "recipe_id": "populations[2].kit_needs[1].items[2].recipes[2].recipe_id"
+                }
+              ],
+              "workers_per_unit": 27
+            }
+          ],
+          "jobs": [
+            "hunt",
+            "forage"
+          ],
+          "kit_id": "populations[2].kit_needs[1].kit_id",
+          "people": 54
+        },
+        {
+          "display_name": "populations[2].kit_needs[2].display_name",
+          "items": [
+            {
+              "have": 76,
+              "item_id": "populations[2].kit_needs[2].items[0].item_id",
+              "queued": 53,
+              "recipes": [
+                {
+                  "inputs": [
+                    {
+                      "amount": 98.730003,
+                      "material_id": "populations[2].kit_needs[2].items[0].recipes[0].inputs[0].material_id"
+                    },
+                    {
+                      "amount": 84.339996,
+                      "material_id": "populations[2].kit_needs[2].items[0].recipes[0].inputs[1].material_id"
+                    },
+                    {
+                      "amount": 81.029999,
+                      "material_id": "populations[2].kit_needs[2].items[0].recipes[0].inputs[2].material_id"
+                    }
+                  ],
+                  "output_per_pass": 7.74,
+                  "recipe_id": "populations[2].kit_needs[2].items[0].recipes[0].recipe_id"
+                },
+                {
+                  "inputs": [
+                    {
+                      "amount": 39.630001,
+                      "material_id": "populations[2].kit_needs[2].items[0].recipes[1].inputs[0].material_id"
+                    },
+                    {
+                      "amount": 18.58,
+                      "material_id": "populations[2].kit_needs[2].items[0].recipes[1].inputs[1].material_id"
+                    },
+                    {
+                      "amount": 12.52,
+                      "material_id": "populations[2].kit_needs[2].items[0].recipes[1].inputs[2].material_id"
+                    }
+                  ],
+                  "output_per_pass": 15.08,
+                  "recipe_id": "populations[2].kit_needs[2].items[0].recipes[1].recipe_id"
+                },
+                {
+                  "inputs": [
+                    {
+                      "amount": 101.260002,
+                      "material_id": "populations[2].kit_needs[2].items[0].recipes[2].inputs[0].material_id"
+                    },
+                    {
+                      "amount": 54.950001,
+                      "material_id": "populations[2].kit_needs[2].items[0].recipes[2].inputs[1].material_id"
+                    },
+                    {
+                      "amount": 9.65,
+                      "material_id": "populations[2].kit_needs[2].items[0].recipes[2].inputs[2].material_id"
+                    }
+                  ],
+                  "output_per_pass": 107.459999,
+                  "recipe_id": "populations[2].kit_needs[2].items[0].recipes[2].recipe_id"
+                }
+              ],
+              "workers_per_unit": 32
+            },
+            {
+              "have": 25,
+              "item_id": "populations[2].kit_needs[2].items[1].item_id",
+              "queued": 104,
+              "recipes": [
+                {
+                  "inputs": [
+                    {
+                      "amount": 21.219999,
+                      "material_id": "populations[2].kit_needs[2].items[1].recipes[0].inputs[0].material_id"
+                    },
+                    {
+                      "amount": 71.199997,
+                      "material_id": "populations[2].kit_needs[2].items[1].recipes[0].inputs[1].material_id"
+                    },
+                    {
+                      "amount": 51.650002,
+                      "material_id": "populations[2].kit_needs[2].items[1].recipes[0].inputs[2].material_id"
+                    }
+                  ],
+                  "output_per_pass": 82.309998,
+                  "recipe_id": "populations[2].kit_needs[2].items[1].recipes[0].recipe_id"
+                },
+                {
+                  "inputs": [
+                    {
+                      "amount": 16.719999,
+                      "material_id": "populations[2].kit_needs[2].items[1].recipes[1].inputs[0].material_id"
+                    },
+                    {
+                      "amount": 0.96,
+                      "material_id": "populations[2].kit_needs[2].items[1].recipes[1].inputs[1].material_id"
+                    },
+                    {
+                      "amount": 21.9,
+                      "material_id": "populations[2].kit_needs[2].items[1].recipes[1].inputs[2].material_id"
+                    }
+                  ],
+                  "output_per_pass": 51.560001,
+                  "recipe_id": "populations[2].kit_needs[2].items[1].recipes[1].recipe_id"
+                },
+                {
+                  "inputs": [
+                    {
+                      "amount": 6.81,
+                      "material_id": "populations[2].kit_needs[2].items[1].recipes[2].inputs[0].material_id"
+                    },
+                    {
+                      "amount": 61.48,
+                      "material_id": "populations[2].kit_needs[2].items[1].recipes[2].inputs[1].material_id"
+                    },
+                    {
+                      "amount": 44.139999,
+                      "material_id": "populations[2].kit_needs[2].items[1].recipes[2].inputs[2].material_id"
+                    }
+                  ],
+                  "output_per_pass": 78.080002,
+                  "recipe_id": "populations[2].kit_needs[2].items[1].recipes[2].recipe_id"
+                }
+              ],
+              "workers_per_unit": 149
+            },
+            {
+              "have": 30,
+              "item_id": "populations[2].kit_needs[2].items[2].item_id",
+              "queued": 139,
+              "recipes": [
+                {
+                  "inputs": [
+                    {
+                      "amount": 42.040001,
+                      "material_id": "populations[2].kit_needs[2].items[2].recipes[0].inputs[0].material_id"
+                    },
+                    {
+                      "amount": 80.480003,
+                      "material_id": "populations[2].kit_needs[2].items[2].recipes[0].inputs[1].material_id"
+                    },
+                    {
+                      "amount": 26.780001,
+                      "material_id": "populations[2].kit_needs[2].items[2].recipes[0].inputs[2].material_id"
+                    }
+                  ],
+                  "output_per_pass": 2.98,
+                  "recipe_id": "populations[2].kit_needs[2].items[2].recipes[0].recipe_id"
+                },
+                {
+                  "inputs": [
+                    {
+                      "amount": 20.200001,
+                      "material_id": "populations[2].kit_needs[2].items[2].recipes[1].inputs[0].material_id"
+                    },
+                    {
+                      "amount": 94.260002,
+                      "material_id": "populations[2].kit_needs[2].items[2].recipes[1].inputs[1].material_id"
+                    },
+                    {
+                      "amount": 91.190002,
+                      "material_id": "populations[2].kit_needs[2].items[2].recipes[1].inputs[2].material_id"
+                    }
+                  ],
+                  "output_per_pass": 88.489998,
+                  "recipe_id": "populations[2].kit_needs[2].items[2].recipes[1].recipe_id"
+                },
+                {
+                  "inputs": [
+                    {
+                      "amount": 78.110001,
+                      "material_id": "populations[2].kit_needs[2].items[2].recipes[2].inputs[0].material_id"
+                    },
+                    {
+                      "amount": 15.52,
+                      "material_id": "populations[2].kit_needs[2].items[2].recipes[2].inputs[1].material_id"
+                    },
+                    {
+                      "amount": 110.959999,
+                      "material_id": "populations[2].kit_needs[2].items[2].recipes[2].inputs[2].material_id"
+                    }
+                  ],
+                  "output_per_pass": 45.799999,
+                  "recipe_id": "populations[2].kit_needs[2].items[2].recipes[2].recipe_id"
+                }
+              ],
+              "workers_per_unit": 118
+            }
+          ],
+          "jobs": [
+            "hunt",
+            "forage"
+          ],
+          "kit_id": "populations[2].kit_needs[2].kit_id",
+          "people": 41
         }
       ],
       "kit_tiers": [
@@ -9821,6 +11786,20 @@
           "material_id": "populations[2].material_upkeep_need[2].material_id"
         }
       ],
+      "materials_free": [
+        {
+          "amount": 12.14,
+          "material_id": "populations[2].materials_free[0].material_id"
+        },
+        {
+          "amount": 104.199997,
+          "material_id": "populations[2].materials_free[1].material_id"
+        },
+        {
+          "amount": 67.57,
+          "material_id": "populations[2].materials_free[2].material_id"
+        }
+      ],
       "morale": 0.000096,
       "morale_cause": 196,
       "morale_climate": 0.000176,
@@ -10291,21 +12270,33 @@
   "sedentarization": [
     {
       "belief_points": 93.480003,
+      "domestication_points": 108.779999,
       "faction": 8,
+      "land_points": 53.099998,
+      "population_points": 88.410004,
       "score": 80.769997,
-      "stage": "sedentarization[0].stage"
+      "stage": "sedentarization[0].stage",
+      "surplus_points": 16.74
     },
     {
       "belief_points": 97.150002,
+      "domestication_points": 9.99,
       "faction": 71,
+      "land_points": 95.290001,
+      "population_points": 23.690001,
       "score": 26.860001,
-      "stage": "sedentarization[1].stage"
+      "stage": "sedentarization[1].stage",
+      "surplus_points": 54.009998
     },
     {
       "belief_points": 22.790001,
+      "domestication_points": 28.280001,
       "faction": 170,
+      "land_points": 94.809998,
+      "population_points": 76.260002,
       "score": 31.299999,
-      "stage": "sedentarization[2].stage"
+      "stage": "sedentarization[2].stage",
+      "surplus_points": 17.450001
     }
   ],
   "sentiment": {

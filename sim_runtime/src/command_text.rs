@@ -184,6 +184,24 @@ pub const COMMAND_VERBS: &[CommandVerbHelp] = &[
         usage: "bench_raise <faction_id> <band_id> order <index>",
     },
     CommandVerbHelp {
+        verb: "bench_enqueue_kit",
+        aliases: &[],
+        summary: "ORDER A WHOLE KIT: build 'kits' kits of one `equipment.json` kit as ONE grouped order at the back of a band's bench queue. One kit is one unit of each item the kit uses, so every item is queued 'kits' times; the order is a count you choose and is never netted against who already has a kit. Name one 'recipe <id>' per item of the kit; the parts stay together on the queue. Refused WHOLE (nothing is queued) when the kit is unknown or 'none', kits is below 1, a recipe is unknown or unlearned (as 'bench_enqueue' refuses it), a recipe makes an item the kit does not use, two recipes make the same item, or an item of the kit has no recipe. The crew is left exactly as it is.",
+        usage: "bench_enqueue_kit <faction_id> <band_id> kit <kit_id> kits <n> recipe <recipe_id> [recipe <recipe_id> ...]",
+    },
+    CommandVerbHelp {
+        verb: "bench_remove_kit",
+        aliases: &[],
+        summary: "Take a whole kit order off a band's bench queue - every part at once. Materials already drawn for a part in flight are spent, as 'bench_remove' spends them; items already made stay in the store. 'kit_order' is the id the bench state publishes.",
+        usage: "bench_remove_kit <faction_id> <band_id> kit_order <id>",
+    },
+    CommandVerbHelp {
+        verb: "bench_raise_kit",
+        aliases: &[],
+        summary: "Move a whole kit order up the bench queue, over the single order (or whole kit order) directly ahead of it. Refused when the kit order is already at the head. Every part keeps its progress and any materials it drew.",
+        usage: "bench_raise_kit <faction_id> <band_id> kit_order <id>",
+    },
+    CommandVerbHelp {
         verb: "set_starting_loadout",
         aliases: &[],
         summary: "OUTFIT ONE BAND, the ONE source of gear and material - a spawning band owns nothing at all. EVERY BAND GETS A WINDOW, not just the one that spawned: a band that splits hands its splinter one, pre-filled with the proportional share the split already gives its people and food. A window stays open until the turn advances, and an order REPLACES the last one rather than adding to it. WHAT A PICK COSTS DEPENDS ON THE BAND'S WINDOW. A grant window MINTS: one KIT per working-age hand (derived from the band, never configured) and the start profile's material points, one point per unit. A window a split opened on a parent with no grant left MOVES: the gear comes out of the parent's own ledger and the cap is what the parent can supply. Every item a named kit uses lands 'count' times, so two kits sharing an item ADD. Anything unspent when the turn advances is forfeited. It fails CLOSED and WHOLE: a closed window, an unknown kit, a kit that carries nothing, a material the profile does not offer, a repeated line, a budget overspent, a pick the home band cannot cover, or a revision that would strand a take a further split already moved rejects the entire order and changes nothing.",
@@ -1103,6 +1121,74 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
                 }
             })
         }
+        "bench_enqueue_kit" => {
+            let faction_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("faction_id"))?;
+            let band_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("band_id"))?;
+            let mut tail: Vec<&str> = parts.collect();
+            let kit_id = take_named_token(&mut tail, "kit", "bench_enqueue_kit kit id")?
+                .ok_or(CommandParseError::MissingArgument("kit"))?;
+            let kits = take_named_token(&mut tail, "kits", "bench_enqueue_kit kits")?
+                .ok_or(CommandParseError::MissingArgument("kits"))?;
+            // **Every `recipe <id>` pair names one item's recipe**, in the order given: the named
+            // token repeats, so the pairs are taken one by one rather than by `take_named_token`'s
+            // first-match.
+            let mut recipes: Vec<String> = Vec::new();
+            while let Some(token) = tail.first() {
+                if !token.eq_ignore_ascii_case("recipe") {
+                    return Err(CommandParseError::UnexpectedToken(token.to_string()));
+                }
+                let recipe_id = tail
+                    .get(KIT_RECIPE_VALUE)
+                    .ok_or(CommandParseError::MissingArgument("recipe"))?
+                    .to_string();
+                recipes.push(recipe_id);
+                tail.drain(..KIT_RECIPE_TOKENS);
+            }
+            if recipes.is_empty() {
+                return Err(CommandParseError::MissingArgument("recipe"));
+            }
+            Ok(CommandPayload::BenchEnqueueKit {
+                faction_id: parse_u32(faction_str, "bench_enqueue_kit faction")?,
+                band_id: parse_u64(band_str, "bench_enqueue_kit band_id")?,
+                kit_id,
+                kits: parse_u32(&kits, "bench_enqueue_kit kits")?,
+                recipes,
+            })
+        }
+        verb @ ("bench_remove_kit" | "bench_raise_kit") => {
+            let faction_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("faction_id"))?;
+            let band_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("band_id"))?;
+            let mut tail: Vec<&str> = parts.collect();
+            let kit_order = take_named_token(&mut tail, "kit_order", "bench kit order id")?
+                .ok_or(CommandParseError::MissingArgument("kit_order"))?;
+            if let Some(extra) = tail.first() {
+                return Err(CommandParseError::UnexpectedToken(extra.to_string()));
+            }
+            let faction_id = parse_u32(faction_str, "bench kit faction")?;
+            let band_id = parse_u64(band_str, "bench kit band_id")?;
+            let kit_order = parse_u32(&kit_order, "bench kit order id")?;
+            Ok(if verb == "bench_remove_kit" {
+                CommandPayload::BenchRemoveKit {
+                    faction_id,
+                    band_id,
+                    kit_order,
+                }
+            } else {
+                CommandPayload::BenchRaiseKit {
+                    faction_id,
+                    band_id,
+                    kit_order,
+                }
+            })
+        }
         "bench_crew" => {
             let faction_str = parts
                 .next()
@@ -1831,6 +1917,11 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
         other => Err(CommandParseError::UnknownCommand(other.to_string())),
     }
 }
+
+/// **A `bench_enqueue_kit` recipe is `recipe <id>`** — two tokens; this is the offset of the id
+/// within the pair and the pair's width.
+const KIT_RECIPE_VALUE: usize = 1;
+const KIT_RECIPE_TOKENS: usize = 2;
 
 /// The **named-token** form the kit selection uses: `kit <id>`, a name followed by its value.
 ///
@@ -4003,6 +4094,32 @@ mod tests {
                     faction_id: 1,
                     band_id: 7,
                     order: 2,
+                },
+            ),
+            (
+                "bench_enqueue_kit 1 7 kit stalking kits 3 recipe spears recipe sled",
+                CommandPayload::BenchEnqueueKit {
+                    faction_id: 1,
+                    band_id: 7,
+                    kit_id: "stalking".to_string(),
+                    kits: 3,
+                    recipes: vec!["spears".to_string(), "sled".to_string()],
+                },
+            ),
+            (
+                "bench_remove_kit 1 7 kit_order 3",
+                CommandPayload::BenchRemoveKit {
+                    faction_id: 1,
+                    band_id: 7,
+                    kit_order: 3,
+                },
+            ),
+            (
+                "bench_raise_kit 1 7 kit_order 3",
+                CommandPayload::BenchRaiseKit {
+                    faction_id: 1,
+                    band_id: 7,
+                    kit_order: 3,
                 },
             ),
         ];

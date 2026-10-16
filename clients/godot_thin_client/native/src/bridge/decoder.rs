@@ -33,8 +33,8 @@ use crate::dict::subsistence::{
     characteristic_bands_to_array, craft_knowledge_to_array, food_modules_to_array,
     forage_patches_to_array, herds_to_array, intensification_knowledge_to_array, kits_to_array,
     ladder_areas_to_array, ladder_branches_to_array, ladder_knowledge_to_array,
-    ladder_rungs_to_array, materials_to_array, recipes_to_array, sedentarization_to_array,
-    tile_improvements_to_array,
+    ladder_rungs_to_array, materials_to_array, mobility_to_array, recipes_to_array,
+    sedentarization_to_array, tile_improvements_to_array,
 };
 use crate::dict::{
     u16_vector_to_packed_int32, u32_vector_to_packed_int32, u64_vector_to_packed_int64,
@@ -682,6 +682,10 @@ fn decode_delta_against(
             "sedentarization",
             &sedentarization_to_array(sedentarization),
         );
+    }
+
+    if let Some(mobility) = delta.subsistence().and_then(|s| s.mobility()) {
+        frame.insert_changed("mobility", &mobility_to_array(mobility));
     }
 
     if let Some(forage_patches) = delta.subsistence().and_then(|s| s.foragePatches()) {

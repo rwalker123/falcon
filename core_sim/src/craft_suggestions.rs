@@ -232,6 +232,135 @@ pub fn band_tool_shortfall_lines<'a>(
     lines
 }
 
+/// **THE KEEPING JOBS A SITE CREW KEEPS ITS SOURCE UNDER** — a site's tools are the keeping kits'
+/// (`tillage` for a patch, `hurdling` for a herd, the road kits for a road, the deposit branches'
+/// for a working), so a [`SupplySource::Site`] line is attributed to a kit through its source's
+/// keeping job rather than through a labor row (a keeping job has no row of its own).
+fn site_keeping_jobs(source: &BuildSource) -> &'static [KitJob] {
+    match source {
+        BuildSource::Patch(_) => &[KitJob::Agriculture],
+        BuildSource::Herd(_) => &[KitJob::Husbandry],
+        BuildSource::Road(_) | BuildSource::Tile { .. } => &[KitJob::Roadwork],
+        BuildSource::Deposit { .. } => &[KitJob::Quarrywork, KitJob::Extraction],
+    }
+}
+
+impl SupplySource {
+    /// **WHETHER THIS CONSUMER IS ONE OF A KIT'S JOBS** — the attribution [`band_kit_needs`] counts a
+    /// unit by. A queued build is a forecast of a later job's claim, never a consumer holding a unit
+    /// today, so it serves no job.
+    fn serves_any(&self, jobs: &[KitJob]) -> bool {
+        match self {
+            SupplySource::Pool(job) => jobs.contains(job),
+            SupplySource::Take { job, .. } => jobs.iter().any(|kit_job| kit_job.as_str() == *job),
+            SupplySource::Site(source) => site_keeping_jobs(source)
+                .iter()
+                .any(|job| jobs.contains(job)),
+            SupplySource::BuildQueue { .. } => false,
+        }
+    }
+}
+
+/// **ONE ITEM OF A KIT, AS THE BAND STANDS ON IT** — a row of [`KitNeed::items`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KitNeedItem {
+    /// The `equipment.json` item id.
+    pub item: String,
+    /// How many people one unit equips (the item definition's own).
+    pub workers_per_unit: u32,
+    /// Units that serve THIS kit's jobs: the units the settlement issued to those jobs' consumers,
+    /// plus the spare units nobody holds. A unit another job holds never counts.
+    pub have: u32,
+    /// Units the bench's queue already owes (and the finished ones parked for delivery).
+    pub queued: u32,
+}
+
+/// **ONE KIT'S STANDING WITH THE BAND** — the facts the client's *Make a whole kit* picker is
+/// computed from. See [`band_kit_needs`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KitNeed {
+    pub kit_id: String,
+    pub display_name: String,
+    pub jobs: Vec<KitJob>,
+    /// People currently on the kit's jobs ([`LaborAllocation::workers_on_job`] summed over them).
+    pub people: u32,
+    pub items: Vec<KitNeedItem>,
+}
+
+/// **A SUMMED `f32` LINE READ AS WHOLE UNITS** — the settlement issues whole units, so a sum is a
+/// whole number up to rounding; [`WHOLE_UNIT_TOLERANCE`] keeps `1.9999` from reading as one.
+fn whole_units(units: f32) -> u32 {
+    (units.max(NOTHING_MISSING) + WHOLE_UNIT_TOLERANCE).floor() as u32
+}
+
+/// **EVERY ORDERABLE KIT'S STANDING, from the lines the turn settled** — one [`KitNeed`] per roster
+/// kit that carries something (the shipped `none` carries nothing and is not orderable), in config
+/// order.
+///
+/// - `people` is the head count on the kit's jobs.
+/// - `have` per item is the units issued to **this kit's jobs' consumers** (`Σ filled` over the
+///   lines [`SupplySource::serves_any`] attributes to them) **plus the spare units** — owned live
+///   units less everything the settlement issued to anyone, floored at zero. **A unit held by
+///   another job never counts**: a sled in a woodcutter's hands does not equip a hunter, so counting
+///   it would tell the picker nobody needs a sled while the hunters walk without one. A queued
+///   build's line is a forecast, so it never counts as a unit held (though it is still part of what
+///   is spoken for when the spare is struck).
+/// - `queued` is the one [`queued_units`] the suggestions net by.
+pub fn band_kit_needs(
+    allocation: &LaborAllocation,
+    lines: &[ToolShortfallLine],
+    bench: Option<&BandBench>,
+    recipes: &RecipesConfig,
+    equipment: &EquipmentConfig,
+    wear: &BandEquipment,
+) -> Vec<KitNeed> {
+    equipment
+        .kits()
+        .iter()
+        .filter(|kit| !kit.uses.is_empty())
+        .map(|kit| {
+            let items = kit
+                .uses
+                .iter()
+                .map(|item| {
+                    let to_these_jobs: f32 = lines
+                        .iter()
+                        .filter(|line| line.item == *item && line.source.serves_any(&kit.jobs))
+                        .map(|line| line.filled)
+                        .sum();
+                    let to_anyone: f32 = lines
+                        .iter()
+                        .filter(|line| line.item == *item)
+                        .map(|line| line.filled)
+                        .sum();
+                    let spare = wear
+                        .live_units(item, equipment)
+                        .saturating_sub(whole_units(to_anyone));
+                    KitNeedItem {
+                        item: item.clone(),
+                        workers_per_unit: equipment
+                            .item(item)
+                            .map_or(ONE_WORKER_PER_UNIT, |def| def.workers_per_unit),
+                        have: whole_units(to_these_jobs).saturating_add(spare),
+                        queued: whole_units(queued_units(bench, recipes, item)),
+                    }
+                })
+                .collect();
+            KitNeed {
+                kit_id: kit.id.clone(),
+                display_name: kit.display_name.clone(),
+                jobs: kit.jobs.clone(),
+                people: kit
+                    .jobs
+                    .iter()
+                    .map(|job| allocation.workers_on_job(*job))
+                    .sum(),
+                items,
+            }
+        })
+        .collect()
+}
+
 /// **A ROW THAT CLAIMS NONE OF AN ITEM WRITES NO KIT LINE FOR IT** — `required` is never `0` on the
 /// wire, so a reader may divide by it.
 const NOTHING_CLAIMED: f32 = 0.0;
@@ -833,6 +962,7 @@ mod tests {
     const HOES: &str = "hoes";
     const SPEARS: &str = "spears";
     const HOES_RECIPE: &str = "hoes";
+    const SLED_RECIPE: &str = "sled";
     const PATCH: UVec2 = UVec2::new(3, 4);
 
     fn configs() -> (
@@ -1177,6 +1307,145 @@ mod tests {
             ranked[0].sources.len(),
             2,
             "both lines ride the one suggestion"
+        );
+    }
+
+    // ---- KitNeed (#780) ------------------------------------------------------------------
+
+    const STALKING_KIT: &str = "big_game";
+    const SLED: &str = "sled";
+    const HUNTERS: u32 = 6;
+
+    fn extract(tile: UVec2) -> SupplySource {
+        SupplySource::Take {
+            job: "extract",
+            source: Some(BuildSource::Deposit {
+                tile,
+                material: "wood".to_string(),
+            }),
+        }
+    }
+
+    /// A band of six hunters.
+    fn hunting_band() -> LaborAllocation {
+        let mut allocation = LaborAllocation::default();
+        allocation.set_assignment(
+            LaborTarget::Hunt {
+                fauna_id: "deer".to_string(),
+                floor: 0.5,
+                move_with_herd: false,
+            },
+            HUNTERS,
+            HUNTERS,
+            None,
+        );
+        allocation
+    }
+
+    /// A ledger holding `count` live units of `item`.
+    fn holding(equipment: &EquipmentConfig, items: &[(&str, u32)]) -> BandEquipment {
+        let mut wear = BandEquipment::default();
+        for (item, count) in items {
+            let tier = equipment.item(item).expect("a shipped item").default_tier();
+            wear.stock(item, *count, &tier.id, None);
+        }
+        wear
+    }
+
+    fn stalking(needs: &[KitNeed]) -> &KitNeed {
+        needs
+            .iter()
+            .find(|need| need.kit_id == STALKING_KIT)
+            .expect("the stalking kit is orderable")
+    }
+
+    fn item_of<'a>(need: &'a KitNeed, item: &str) -> &'a KitNeedItem {
+        need.items
+            .iter()
+            .find(|row| row.item == item)
+            .expect("the kit uses the item")
+    }
+
+    /// **A sled in a woodcutter's hands does not equip a hunter.** Six hunters, six spears, one sled
+    /// used by the hunters and one held by a woodcutter: the stalking kit's spears are all six, its
+    /// sled count is the hunters' one - the woodcutter's is another job's.
+    #[test]
+    fn another_jobs_unit_never_counts_towards_a_kit() {
+        let (recipes, equipment) = configs();
+        let wear = holding(&equipment, &[(SPEARS, 6), (SLED, 2)]);
+        let lines = [
+            line(take("deer"), SPEARS, 6.0, 6.0),
+            line(take("deer"), SLED, 1.0, 1.0),
+            line(extract(PATCH), SLED, 1.0, 1.0),
+        ];
+        let needs = band_kit_needs(&hunting_band(), &lines, None, &recipes, &equipment, &wear);
+        let kit = stalking(&needs);
+        assert_eq!(kit.people, HUNTERS, "the hunters are the kit's people");
+        assert_eq!(
+            item_of(kit, SPEARS).have,
+            6,
+            "six spears issued to the six hunters"
+        );
+        assert_eq!(
+            item_of(kit, SLED).have,
+            1,
+            "the woodcutter's sled is not the hunters' (and no unit is spare)"
+        );
+        assert_eq!(
+            item_of(kit, SLED).workers_per_unit,
+            equipment.item(SLED).unwrap().workers_per_unit
+        );
+    }
+
+    /// **A spare unit nobody holds counts; a queued build's forecast line never counts as held.**
+    #[test]
+    fn a_spare_unit_counts_and_a_queued_build_line_does_not() {
+        let (recipes, equipment) = configs();
+        let wear = holding(&equipment, &[(SLED, 3)]);
+        let lines = [
+            line(take("deer"), SLED, 1.0, 1.0),
+            line(extract(PATCH), SLED, 1.0, 1.0),
+            line(
+                SupplySource::BuildQueue {
+                    position: 1,
+                    source: BuildSource::Patch(PATCH),
+                },
+                SLED,
+                1.0,
+                1.0,
+            ),
+        ];
+        let needs = band_kit_needs(&hunting_band(), &lines, None, &recipes, &equipment, &wear);
+        // Three live sleds, all three spoken for (hunt, extract, the queued build's forecast).
+        assert_eq!(item_of(stalking(&needs), SLED).have, 1);
+
+        let spare = holding(&equipment, &[(SLED, 4)]);
+        let needs = band_kit_needs(&hunting_band(), &lines, None, &recipes, &equipment, &spare);
+        assert_eq!(
+            item_of(stalking(&needs), SLED).have,
+            2,
+            "the hunters' one plus the one spare sled"
+        );
+    }
+
+    /// **`queued` is the one `queued_units` the suggestions net by, and `none` is not orderable.**
+    #[test]
+    fn queued_is_the_benchs_owed_units_and_the_empty_kit_is_not_listed() {
+        let (recipes, equipment) = configs();
+        let mut bench = BandBench::default();
+        bench.enqueue(SLED_RECIPE, 3);
+        let needs = band_kit_needs(
+            &hunting_band(),
+            &[],
+            Some(&bench),
+            &recipes,
+            &equipment,
+            &BandEquipment::default(),
+        );
+        assert_eq!(item_of(stalking(&needs), SLED).queued, 3);
+        assert!(
+            needs.iter().all(|need| need.kit_id != "none"),
+            "a kit that carries nothing is not orderable"
         );
     }
 }

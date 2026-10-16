@@ -1,0 +1,10 @@
+{
+  "smoothing": 0.95,
+  "weights": {
+    "skills": 0.5,
+    "distance": 0.5
+  },
+  "references": {
+    "hexes_per_turn": 1.0
+  }
+}

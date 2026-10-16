@@ -42,7 +42,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 /// Mutated across turns, and a later turn reads it. A checkpoint that omits any of these produces
 /// a world that diverges from the one it claims to restore.
-const SIM_STATE_RESOURCES: [&str; 51] = [
+const SIM_STATE_RESOURCES: [&str; 53] = [
     "ActiveCrisisLedger",
     // Belief on every place. Only ever grows and outlives the bands whose dead put it there, so
     // nothing rebuilds it — the roads' reason exactly.
@@ -83,6 +83,10 @@ const SIM_STATE_RESOURCES: [&str; 51] = [
     // Every band's standing toward its people's heart. The lost-touch line is an edge read off the
     // previous turn's reading, and the capture publishes it before a restored world runs a turn.
     "HeartLedger",
+    // Every people's culture strength and every band's standing under another people's pull
+    // (#820). The asked / forced clocks run across turns and the `culture_pull` line is an edge
+    // read off the previous entry, so a restored world cannot rebuild it.
+    "CulturePressureLedger",
     // The peoples whose breeding the head-count freed for good (#691). The latch outlives the
     // population that earned it, so a restored world cannot rebuild it.
     "FreeBreedingPeoples",
@@ -110,6 +114,7 @@ const SIM_STATE_RESOURCES: [&str; 51] = [
     "PendingCrisisSeeds",
     "PendingCrisisSpawns",
     "SedentarizationScore",
+    "MobilityScore",
     // **The roads.** A road is in the ground and outlives the bands that wore it in, so nothing
     // rebuilds one — a restore that dropped this would hand back a world whose roads had never been
     // walked, with every band's pooling silently back at the unrouted friction.
@@ -164,7 +169,7 @@ const SIM_STATE_RESOURCES: [&str; 51] = [
 /// The second half is the load-bearing one, and it is why `HerdTelemetry`, `PowerGridState` and
 /// `SimulationMetrics` are not here despite each having a system that rebuilds it: `capture_snapshot`
 /// publishes all three within the same turn. See the comment on them in `SIM_STATE_RESOURCES`.
-const DERIVED_RESOURCES: [(&str, &str); 7] = [
+const DERIVED_RESOURCES: [(&str, &str); 8] = [
     // Filled by `reconcile_culture_layers` (Influence) and DRAINED by `advance_culture_splits`
     // (Population) the same turn, so it is empty at the end of every turn.
     ("CultureSplitQueue", "systems::advance_culture_splits"),
@@ -176,6 +181,10 @@ const DERIVED_RESOURCES: [(&str, &str); 7] = [
     ("ContactsThisTurn", "connections::advance_connections"),
     ("CultureEffectsCache", "reconcile_culture_layers"),
     ("HerdDensityMap", "advance_herds"),
+    // Filled by `advance_band_movement` (the hexes a band stepped following a herd) and
+    // DRAINED by `mobility_tick` later in the same Population chain, so it is empty at the end of
+    // every turn.
+    ("HerdFollowSteps", "mobility::mobility_tick"),
     // Filled by `advance_expeditions` from its own sight sweep and DRAINED by
     // `advance_party_defection` later in the same Population chain, so it is empty at the end of
     // every turn — `ContactsThisTurn`'s shape.
@@ -282,7 +291,7 @@ const NOT_SIM_STATE_RESOURCES: [(&str, &str); 11] = [
 /// record beside each handle. `SimulationConfig` sits here because it is config the operator edits,
 /// not state the turn evolves — note the hot-reload path in `bin/server.rs` means a replay is only
 /// reproducible against the config it originally ran with.
-const CONFIG_RESOURCES: [&str; 48] = [
+const CONFIG_RESOURCES: [&str; 50] = [
     "BandNameCatalogHandle",
     "BandNameCatalogMetadata",
     "FactionNameCatalogHandle",
@@ -317,6 +326,8 @@ const CONFIG_RESOURCES: [&str; 48] = [
     "KnowledgeLedgerConfigHandle",
     "LaborConfigHandle",
     "LaborConfigMetadata",
+    "MobilityConfigHandle",
+    "MobilityConfigMetadata",
     "LadderConfigHandle",
     "LadderConfigMetadata",
     "MapPresetsHandle",

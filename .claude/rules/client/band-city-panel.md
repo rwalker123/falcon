@@ -24,7 +24,7 @@ paths:
 | `ui/BandCityPanel.gd` / `.tscn` | The dockable **Band/City command center** CanvasLayer — persistent whenever ≥1 player band exists, dockable to any of the 4 edges (default left, persisted to `user://band_city_dock.cfg`) + collapse-to-rail (the rail runs along the dock's PLENTIFUL axis — stacked on L/R, one line with the restore toggle right-justified on T/B — and `COLLAPSED_SIZE` is a FLOOR on the strip it reserves, not an answer; see "The collapsed rail runs along the dock's plentiful axis"). Header (stage glyph/name/label + the band's hex coordinates + `◀ n/N ▶` cycler + 2×2 dock chooser + collapse) plus an **ACTION REGISTRY** — a registration seam (`register_action` / `action_invoked`) holding every verb the panel offers, the `⚒` included, rendered on its own BAR row under the header on a vertical dock, on the SUBJECT ROW itself on a horizontal one and on the COLLAPSED RAIL in either, taking zero height wherever it is not the live mount; see "The action registry is ONE list with THREE mount points" — body hosts **AN ORDERED LIST OF NAMED ZONES AT A FIXED CROSS-AXIS SIZE**, declared by the SUBJECT via **`set_zone_layout(specs)`** and filled by **`set_zones(contents)`** (keys `&"band"`/`&"work"`/`&"knowledge"`/`&"parties"`; the panel OWNS and frees them, and frees a content handed in for a zone the layout does not declare). A band declares three, the faction page four — see "THE BODY IS AN ORDERED LIST OF ZONES". Two shells, chosen by the panel's own **WIDTH** (`wide_shell_min_width()` — never a dock-edge test, so a resizable dock needs no special case). **That threshold is DERIVED FROM THE LIVE ZONE LIST, never hand-picked and never a fixed set of terms**: it sums each declared zone's flank (an EXPANDING zone contributing `ZONE_WORK_MIN_WIDTH`, the one readable board column the test exists to protect) plus **one `RAIL_SEPARATOR_SPAN` per GAP** plus `PANEL_CHROME_H` — so a band's three come to 380 + 380 + 354 + 2×25 + 26 = **1190** and the faction page's four to 380 + 380 + 354 + 354 + 3×25 + 26 = **1569**. **It is therefore PER-SUBJECT**: on a window between the two the faction page correctly tabs while a band's page stays abreast, which is also why `set_zone_layout` is called BEFORE the zone contents are built. `ZONE_WORK_MIN_WIDTH` (380) MIRRORS Hud's `WORK_COLUMN_MIN_WIDTH` — one readable board column — exactly as `ZONE_WORK_MAX_WIDTH` (1520) mirrors `WORK_COLUMN_MIN_WIDTH × WORK_MAX_COLUMNS`; the two are a PAIR with Hud's column consts and move with them. The chrome term is load-bearing because the threshold is tested against the panel's OUTER `_panel_extent().x` while the zones live in `_interior_size()`. It shipped hand-picked at **900**, which broke the whole 900–1055 band (the derived threshold was 1056 then, before the flanks widened): the work zone came out 224px, Hud clamped to one column, its labels clipped — and the NARROW shell would have given the board the full 874px, so flipping wide early made it ~4× narrower, degrading the thing the wide shell exists to improve. `PANEL_CHROME_H` is a `const`; `_wide_separator_span()` and `_fixed_zone_span()` are FUNCTIONS over `_zone_layout`, shared by `wide_shell_min_width()`, `_card_width()`, `_affordable_work_columns()` and `zone_size()` so none of them can disagree about how much width the chrome eats. (`WIDE_SEPARATOR_SPAN`, the `const` that hard-wired TWO gaps, is deleted — it was the one term a fourth column could not have been added around.) **wide** (in practice T/B) = every declared zone side by side, the flanks fixed at `ZONE_BAND_WIDTH` (380) / `ZONE_PARTY_WIDTH` (`PANEL_WIDTH − PANEL_CHROME_H` = 354 — see "The wide shell's flanks are never narrower than the narrow shell's zone") / `ZONE_KNOWLEDGE_WIDTH` (the same 354, taking the same floor for the same rule), work EXPAND_FILL, `LINE_SOFT` hairlines in every gap, no tab bar; **narrow** (in practice L/R) = the subject's own tab bar under the header + exactly one zone beneath it (active tab = SIGNAL ink + a 2px SIGNAL underline, badges via `set_tab_badge(zone, text, hot)`, selection persisted as `CONFIG_KEY_TAB`). **The cross-axis size is FIXED** — `PANEL_WIDTH` 380 (L/R) / `_horizontal_panel_height()` = the body budget (`PANEL_HEIGHT_WIDE` 418 at one band column, `PANEL_HEIGHT_WIDE_TWO_COLUMN` 335 at two, the `maxf` making 418 the live answer at both) **plus the active shell's own chrome** (`_shell_chrome_height()`: 0 wide, the tab bar narrow), clamped to `MAX_WIDE_HEIGHT_FRACTION` of the window (T/B) — see "The strip's height is 418 at ONE band column and 335 at two" — so `current_reservation_size()` changes ONLY on dock/collapse/hide/viewport-resize and a content edit can no longer re-emit `reservation_changed` → `MapView.set_reserved_inset` → cache invalidation (the map flicker on every `+` press). **TWO sanctioned `ScrollContainer`s exist in the panel — the PARTIES list and the BAND zone** — and the harness asserts both halves for each: that it exists, and that no OTHER zone has grown one (`_assert_scroll_only_where_sanctioned`, a table of `(node name, owning zone)` pairs, so a scroll under the wrong zone still fails). Everything else is no-scroll by design; the work zone pages itself against **`work_zone_size()`** — a named reader of the KEYED **`zone_size(zone)`**, which is one answer with one parameter rather than a named accessor per zone that a fourth zone would have to add a fifth of — the zone's interior after chrome — e.g. 354×1107 in a 380 L dock, 789×300 in a 1920 bottom dock with the chrome rail sharing that row — and re-pages on the **`zones_resized`** signal). **Zone hosts are plain `Control`s, not containers**, so an over-wide zone content cannot push the card past its fixed cross-axis size; `clip_contents` keeps overflow inside its own zone. Reserves its edge via `reservation_changed(edge, size)` → `Main._apply_reservation(&"band_panel", …)`, which since issue #377 fans a HORIZONTAL dock's reservation to the map at 0 (the card floats over live map) and a TOP dock's to the HUD at 0 as well (its readouts belong beside the card, not below the strip). On a **BOTTOM** dock the strip also carries **a trailing CHROME RAIL** the HUD parks its stacked bottom-bar chrome into (`rail_slot_host` / `set_rail_width`, issue #324) — a SIBLING of the card, not a cell of its row, and bottom-only since #377 (a top dock never displaces `BottomBar`, so its chrome stays home). See "Band/City dockable panel". See "Band/City dockable panel" + `docs/plan_band_city_dock.md` |
 | `ui/hud/DisclosureTriangle.gd` | The Work tab section head's fold control's MARK — a filled triangle (`▼` open, `▶` folded) DRAWN with `draw_colored_polygon`, its bounding box (`drawn_rect`) centred in its rect by geometry; laid full-rect over the ghost Button that is the hit area. See "THE SECTION HEAD'S TRIANGLE IS DRAWN" |
 | `ui/hud/WorkInspectorDialog.gd` | **The work board's inspector, rehosted OUT of the work zone** (`docs/plan_standing_upkeep.md` §4.9 item 12d) — see "THE WORK INSPECTOR IS A DIALOG" below. An **`AutoSizingPanel`** on its OWN `CanvasLayer` (`HudLayer.work_inspector_host()`, `WORK_INSPECTOR_LAYER_INDEX` = 105), holding the `PanelContainer` `BandPanelController._build_work_inspector` still builds — the head line, the conditional notes, the arrivals strip, and (since item 12d's SECOND pass) the POLICY / PRIORITY / KITS **sections** with their controls drawn, over a two-button actions row. **A `Control` on a layer and never a `Popup`**: `Popup` auto-hides on an outside click and on parent focus loss, which is precisely the dismissal this surface forbids (it RE-TARGETS when another board row is selected, so a stepper press elsewhere is ordinary use). **NON-MODAL — no catcher, no scrim**: every pixel it claims is a pixel of dead map, so it claims only the card. **Centred in the ROOM the dock leaves — one placement for all four dock edges**, no `room_bounds` (it is a surface you WRITE INTO, so it takes a layer above the docked ones rather than dodging them — `panel-framework.md`'s table). `_room()` is the viewport inside `VIEWPORT_MARGIN` cut back to the panel card's MAP-FACING side, read through `BandCityPanel.map_facing_edge`, the one table naming which side of a docked card faces the map. It was centred in the raw viewport for one slice, which held only while the card was ~104–156px tall; the sections took it to 340 and a viewport centre then ran straight through a bottom dock's panel. `mount(strip, reserved, card_rect, map_facing)` is the whole API: `reserved` is `BandPanelController._work_inspector_height`'s answer for the same model and becomes the card's `min_height`, which is how *reserved ≥ drawn* survived the move. Rebuilt per render, never patched (the rung track's rule — every figure on the strip moves per snapshot), and the re-mount IS the re-target |
-| `ui/hud/FactionRollup.gd` | **All-`static`, stateless** builder of the FACTION PAGE's FOUR zones (issue #450) — the all-band rollup the cycler pins first. `build_band_zone` (the summed PEOPLE bar + the band page's own vitals rows — Food / **Fodder** / **Upkeep** / Morale / Growth; a sixth, Trade, went with arc #527's retired account, and the `Kit` row it sat beside went with `docs/plan_standing_upkeep.md` §4.9 item 12 — durabilities never aggregated, so that row was an alert and a drill-down, and the CRAFTING panel's kit ledger already states the items in full. The **`Upkeep`** row is the standing MATERIAL bill, folded PER BAND out of `DetailFormat.band_material_bill` and rendering only where some band on the roster owes a good — see `band-readouts.md` → "THE STANDING MATERIAL BILL". The `Fodder` row is the Food row beat for beat, sums the same way, and has the band row's DORMANT form on the same gate folded across the roster — see `band-readouts.md` → "THE FACTION PAGE'S `Fodder:` ROW". `build_band_zone` took the faction's `{track: progress}` row as a sixth parameter for that row's hover alone, and **takes no knowledge row at all now** — the dormant row's hover was retired (it reached the whole block, not the row), and the parameter went with its one reader. `_build_vitals_label` CLEARS the previous render's carets before building, which this page did not do until a dormant row inherited one), `build_work_zone` (the whole workforce as one bar and the per-band roster), **`build_knowledge_zone`** (SETTLING, the craft tracks, DISCOVERIES — the fourth column the panel's ordered-list body exists to hold, with a `full` HEIGHT TIER that drops the last of the three in a height-capped horizontal dock) and `build_parties_zone` (every party and the band it left, its NAME jumping to that band — see "THE PARTIES ROW NAMES THE HOME BAND" for why `_summary_row` binds a separate `jump_owner`), plus the `_stat_row` leaf they are built from. Its two new inputs are threaded in as PARAMETERS like every other: the player faction's sedentarization entry and its discovered-site array, read off `FactionReadouts` (`faction_sedentarization` / `faction_discovered_sites`), which is where the PLAYER-FACTION FILTER over those two per-faction wire arrays already lives — a second walk looking for `PLAYER_FACTION_ID` is a second chance to disagree about whose faction is being reported. **It is a shared LAYER rather than a controller because the page is a READOUT** — no steppers, no compose sheet, no open row, nothing that survives a snapshot; its one control, the Open Borders toggle, reads its state off the snapshot and emits through a Callable the controller threads in — so it has no per-cluster state to own, which is the whole of what makes a controller one (`hud-modules.md`). The one thing it needs is threaded in as a PARAMETER: the `HudBandLaborState` instance, plus the caller's `herd_label_for_id` Callable (the treatment `HudFormat.panel_expedition_summary` already takes — a stateless layer must not reach for the roster/selection/herd-list state that resolver reads). **IT RE-DERIVES NOTHING**: every total is a SUM over answers the per-band surfaces already give (`DetailFormat.band_net_food` / `band_provisions` / `band_fodder_store` / `band_net_fodder` / `band_material_bill`, `HudBandLaborState.effective_idle` / `effective_worker_map` / `effective_role_workers` / `band_party_workers`, `FactionReadouts.faction_tracks`), so a band's own page and this one cannot disagree about a number — a rollup with its own food ledger would be a second source of truth for the identity `larder_delta == income − consumption − pen_feed − raid_forfeit` the food arc keeps closed. Dependency direction: it reads `HudWidgets` / `HudFormat` / `DetailFormat` / `SourceForecast` / `HudStyle` / the vocab leaves and `FactionReadouts`' track table, and none of them may read it back |
+| `ui/hud/FactionRollup.gd` | **All-`static`, stateless** builder of the FACTION PAGE's FOUR zones (issue #450) — the all-band rollup the cycler pins first. `build_band_zone` (the summed PEOPLE bar + the band page's own vitals rows — Food / **Fodder** / **Upkeep** / Morale / Growth; a sixth, Trade, went with arc #527's retired account, and the `Kit` row it sat beside went with `docs/plan_standing_upkeep.md` §4.9 item 12 — durabilities never aggregated, so that row was an alert and a drill-down, and the CRAFTING panel's kit ledger already states the items in full. The **`Upkeep`** row is the standing MATERIAL bill, folded PER BAND out of `DetailFormat.band_material_bill` and rendering only where some band on the roster owes a good — see `band-readouts.md` → "THE STANDING MATERIAL BILL". The `Fodder` row is the Food row beat for beat, sums the same way, and has the band row's DORMANT form on the same gate folded across the roster — see `band-readouts.md` → "THE FACTION PAGE'S `Fodder:` ROW". `build_band_zone` took the faction's `{track: progress}` row as a sixth parameter for that row's hover alone, and **takes no knowledge row at all now** — the dormant row's hover was retired (it reached the whole block, not the row), and the parameter went with its one reader. `_build_vitals_label` CLEARS the previous render's carets before building, which this page did not do until a dormant row inherited one), `build_work_zone` (the whole workforce as one bar and the per-band roster), **`build_knowledge_zone`** (SETTLING, the craft tracks, DISCOVERIES — the fourth column the panel's ordered-list body exists to hold, retired) and `build_parties_zone` (every party and the band it left, its NAME jumping to that band — see "THE PARTIES ROW NAMES THE HOME BAND" for why `_summary_row` binds a separate `jump_owner`), plus the `_stat_row` leaf they are built from. Its two new inputs are threaded in as PARAMETERS like every other: the player faction's sedentarization entry and its discovered-site array, read off `FactionReadouts` (`faction_sedentarization` / `faction_discovered_sites`), which is where the PLAYER-FACTION FILTER over those two per-faction wire arrays already lives — a second walk looking for `PLAYER_FACTION_ID` is a second chance to disagree about whose faction is being reported. **It is a shared LAYER rather than a controller because the page is a READOUT** — no steppers, no compose sheet, no open row, nothing that survives a snapshot; its one control, the Open Borders toggle, reads its state off the snapshot and emits through a Callable the controller threads in — so it has no per-cluster state to own, which is the whole of what makes a controller one (`hud-modules.md`). The one thing it needs is threaded in as a PARAMETER: the `HudBandLaborState` instance, plus the caller's `herd_label_for_id` Callable (the treatment `HudFormat.panel_expedition_summary` already takes — a stateless layer must not reach for the roster/selection/herd-list state that resolver reads). **IT RE-DERIVES NOTHING**: every total is a SUM over answers the per-band surfaces already give (`DetailFormat.band_net_food` / `band_provisions` / `band_fodder_store` / `band_net_fodder` / `band_material_bill`, `HudBandLaborState.effective_idle` / `effective_worker_map` / `effective_role_workers` / `band_party_workers`, `FactionReadouts.faction_tracks`), so a band's own page and this one cannot disagree about a number — a rollup with its own food ledger would be a second source of truth for the identity `larder_delta == income − consumption − pen_feed − raid_forfeit` the food arc keeps closed. Dependency direction: it reads `HudWidgets` / `HudFormat` / `DetailFormat` / `SourceForecast` / `HudStyle` / the vocab leaves and `FactionReadouts`' track table, and none of them may read it back |
 | `ui/hud/ConnectionsRoster.gd` | **All-`static`** builder of the band page's **Peoples tab** and its wide-shell section under Parties (issue #549), the in-place `refill`, the tab badge, and the ONE subject-naming rule (`subject_label`) the trade shipment picker shares. See "The Peoples tab" |
 | `ui/hud/hud_connections_vocab.gd` | `HudConnectionsVocab` — the roster's head, its three tie states and their words, the parked line, the empty line, and the node names of the tab, its rows box and its sanctioned scroll (`LIST_NAME`). A leaf: reads nothing |
 | `ui/hud/TradeZoneController.gd` | `RefCounted` controller for the band page's **Trade tab** (issue #731) — builds the zone (FULL or SHORT tier, chosen by measurement), owns the list popover and the hover card. See "The Trade tab" |
@@ -1159,9 +1159,8 @@ scrolling surface.
 > than four, so `wide_shell_min_width()` sums two gaps instead of three and its threshold is the
 > **1190** a band's three cost rather than 1569; the tab strip reads `Faction · Work · Parties`; the
 > KNOWLEDGE zone's own section and its 300px budget row describe a zone that no longer exists; and the
-> height tier that dropped DISCOVERIES moved to the `band` zone as
-> `HudWorkVocab.FACTION_BAND_FULL_MIN_HEIGHT`, **re-measured at 480** against a 461px block (it is NOT
-> the retired 480 arrived at from the old zone's 452 — the coincidence is worth knowing about).
+> `band` zone took SETTLING and DISCOVERIES and scrolls inside the band page's sanctioned scroll, so
+> no block is dropped for a short box.
 >
 > **Everything else in this section stands**, which is why it is banner-corrected rather than rewritten:
 > the ordered-list body, the declare-before-build ordering, the per-subject shell threshold, the three
@@ -1239,16 +1238,14 @@ page emits a signal, which is also what lets its builders be `static` at all.
 **ONE EXCEPTION: THE OPEN BORDERS TOGGLE** (issue #512, `docs/plan_band_fission.md` §Defection). It
 is a FACTION-WIDE policy — whether another people's leavers and defecting parties may join this
 people's bands — so no band page can host it, and this page is the one surface scoped to the whole
-people. It is a `CheckBox` (`HudStyle.apply_checkbox`) in the band zone, after SETTLING and ABOVE the
-`full` height cut, so the capped horizontal tier keeps it — the one thing on the page the player can
+people. It is a `CheckBox` (`HudStyle.apply_checkbox`) in the band zone, after SETTLING and above DISCOVERIES, so it is the last to scroll out of view — the one thing on the page the player can
 DO. The builders stay `static`: `FactionRollup.build_band_zone` takes the player's `faction_policies`
 row (`FactionReadouts.faction_policy`) and a Callable, and `BandPanelController` owns the
 `open_borders_requested` signal, relayed through `HudLayer` to `Main.format_open_borders`
 (`set_open_borders <faction> open|closed`). **The state is the snapshot's every render** — no
 optimistic copy; `HudLayer.update_faction_policies` re-renders the page when it is up, because the
 recapture after the command may carry no `populations` change. An absent policy row renders no
-toggle rather than a guessed default. `FACTION_BAND_FULL_MIN_HEIGHT` moved 480 → 550 with it
-(`knowledge-panel.md`).
+toggle rather than a guessed default.
 
 **THE HEADER NAMES THE PEOPLE.** Factions carry sim-minted names (`faction_names`, stored in
 `FactionNames`), so the faction page's title is the player's people by that name
@@ -1360,10 +1357,8 @@ cannot express the rule and only the constants can. Re-sabotaged after the rewri
 > **The zone this section is about is GONE** (`docs/plan_knowledge_screen.md` §4, and the banner at
 > the head of this section). The craft tracks are a free-floating screen now and SETTLING and
 > DISCOVERIES are `band`-zone blocks. What is kept below is the REASONING, which outlived the zone:
-> why a height tier is a real "can this box hold it" test rather than a round number between two
-> docks, why DISCOVERIES is the block that yields, why an unknown box must answer FULL, and the
-> `meter_bar` scale trap that bit both meters in opposite directions. The `band` zone's own tier
-> (`FACTION_BAND_FULL_MIN_HEIGHT`) was measured the same way and is recorded in `knowledge-panel.md`.
+> the zone-budget measurements and the `meter_bar` scale trap that bit both meters in opposite
+> directions. The `band` zone has no height tier: it scrolls (see "A horizontal dock grows in WIDTH").
 
 
 The craft tracks began as the WORK zone's last block, and the placement argument for them there still
@@ -1374,7 +1369,7 @@ fact** — what the faction *is* and what it *knows*, neither of which any band 
 carrying all three would have been the roster of hands with a second page stapled under it, in a box
 that clips. So the panel's body became an ordered list and this subject declares a fourth column.
 
-**THE 300px BOX IS THE BINDING CONSTRAINT, AND IT IS WHY THIS ZONE HAS A HEIGHT TIER.** Measured on
+**THE 300px BOX WAS THE BINDING CONSTRAINT** of the retired zone. Measured on
 `band_panel_faction_wide` (`_report_zone_content_extent`, which prints all four):
 
 | zone | of a 300px box |
@@ -1385,41 +1380,21 @@ that clips. So the panel's body became an ordered list and this subject declares
 | `parties` | 54 |
 
 All three blocks at the page's row size measured **336px** with the sites list capped at two, 36 over,
-so a horizontal dock's zone **drops DISCOVERIES** and keeps Settling + the craft tracks — the `_build_food_outlook_block`
-idiom, gated on `HudWorkVocab.FACTION_KNOWLEDGE_FULL_MIN_HEIGHT` against the box the panel is offering
-THIS zone (never the dock edge: a short window and a collapsed box hit the same wall, and an edge test
-misses both). Discoveries is the block that yields on two counts — it is the only list here with no
-ceiling of its own (Settling is one row, the craft ladder five), and it is permanent geographic
-knowledge rather than a call to act, with the top bar's own `◈ Discoveries N` still carrying the
-count. What survives is what a player might DO something about.
+so a horizontal dock's zone was over its box. Its blocks now live in the `band` zone, which scrolls
+rather than dropping one, so the discovery list takes the page's shared `FACTION_LIST_ROWS_MAX` (6)
+and the side dock — where a player actually reads this page — shows six kinds and a `+N more`. One
+cap for all three of this page's lists.
 
-**An unknown box answers FULL, not compact.** The no-dock host and every frame before the first layout
-pass report nothing, and that is not evidence of a small box; silently dropping a block is the drastic
-branch and must be positively justified.
+**Re-measure before adding a row anywhere on this page.** The harness fixture stages every block at
+its worst case (MORE discovered kinds than the list shows, so the `+N more` row is in the
+measurement), because each block OMITS ITSELF when its data is absent and an unseeded fixture
+measures a zone with blocks missing.
 
-**The tier is what retired the discovery list's own cap.** `FACTION_DISCOVERY_ROWS_MAX` (2) existed to
-squeeze three blocks into 300px; with the block gated on height instead, the list takes the page's
-shared `FACTION_LIST_ROWS_MAX` (6) and the side dock — where a player actually reads this page — shows
-six kinds and a `+N more`. One cap for all three of this page's lists.
-
-**The threshold is a real "can this box hold it?" test rather than a round number between two docks.**
-At that cap the full block measures **452px of the side dock's 1057** (`band_panel_faction_knowledge`
-prints it), so `FACTION_KNOWLEDGE_FULL_MIN_HEIGHT` at 480 leaves a box that only just clears the gate
-28px of room — and that margin, not the gap between ~300 and ~1055, is what a fifth block or a sixth
-craft track eats into.
-
-**Re-measure before adding a row anywhere on this page.** The band zone has been over its box once
-already in this arc's own history, this zone has now been over it twice, and every row here is
-unconditional — so those figures are the zones' heights rather than their best cases. The harness
-fixture stages all three blocks at their worst case (five tracks, one finished; MORE discovered kinds
-than the list shows, so the `+N more` row is in the measurement), because each block OMITS ITSELF when
-its data is absent and an unseeded fixture measures a zone with two of its three blocks missing.
-
-**The tier is asserted as a PAIR and neither half is a claim alone.** `band_panel_faction_wide`
-requires DISCOVERIES gone AND the other two present (without the second, a zone that rendered nothing
-passes); `band_panel_faction_knowledge`'s 1057px side dock requires it there. `_assert_zone_content_fits`
-can see neither direction — a dropped block leaves a box that fits trivially, and a clipped one still
-reports a rect inside its host.
+**Every block is asserted PRESENT inside the scroll.** `band_panel_faction_wide` requires DISCOVERIES,
+Settling, the Mobility row and the Open Borders toggle all present inside the sanctioned band-zone
+scroll, with the stack taller than the viewport (so a presence claim cannot pass on a box that needs
+no scroll). `_assert_zone_content_fits` cannot see a dropped block: it leaves a box that fits
+trivially.
 
 **`HudFormat.meter_bar` GRADES A 0–100 SCORE, NOT A FRACTION, and both meters on this page got it
 wrong in opposite directions.** A track's progress is `0..1`, so the knowledge block's bare `progress`
@@ -1557,12 +1532,53 @@ from the player's `sedentarization` entry, which `FactionReadouts.update_sedenta
   inserted ahead of the value (a plain `Label` renders no BBCode).
 - **Below it** the row reads `0 — stand on your dead` in `INK_DIM`. It fits the zone without an ellipsis
   and says what to do next.
-- **The zone's height tier pays for the row.** `FACTION_BAND_FULL_MIN_HEIGHT` was re-measured with it in:
-  the full block reads 560px against the 531 it read before, so the threshold moved 550 to 580 (the same
-  ~19px margin). The wide dock's tiered block reads 334px of a 358px box.
+- **Both forms carry the same hover**, `FACTION_SETTLING_BELIEF_TOOLTIP` (`Points to Settling from bands
+  camped where their dead lie.`), routed through `_stat_row`'s tip argument so it is set on both Labels
+  of the row (a bare `Label.tooltip_text` is a silent no-op) and hoverable across it.
+- **The stage row's hover itemizes the five inputs** (`FACTION_SETTLING_TOOLTIP_FORMAT`, built by
+  `FactionRollup._settling_tooltip`): `Tamed herds and tended plants`, `Food to spare`, `Rich land`,
+  `Population` and `From the dead`, each `+N` from the entry's `domestication_points`, `surplus_points`,
+  `land_points`, `population_points` and `belief_points`. They are raw, pre-smoothing points on the
+  0-100 scale that sum to the raw score, not shares of the smoothed `score`; a missing key reads 0.
+  `_assert_settling_tooltips` asserts the stage tip lists every fixture value and the belief row carries
+  its tip in both forms.
+- **The row's height is reached by the band zone's scroll** on a horizontal dock.
 - **Frames:** `band_panel_faction` (the seeded `+24`, `TOPBAR_SEDENTARIZATION_BELIEF_POINTS`) and
   `band_panel_faction_settling_untied` (`_assert_faction_settling_belief`, which re-pushes the entry with
   `belief_points` 0 and asserts the zone still fits its box and its width).
+
+## The Settling block's `Mobility` row (issue #800)
+
+`FactionRollup._build_mobility_row` is the Settling block's last row, in the stage row's own form: a
+`Mobility` key over the `HudFormat.meter_bar` meter and `N/100`. The score is the sim's per-faction
+mobility (`docs/plan_roaming_bands.md` -> The mobility score), the roaming counterpart to the settling
+score; `FactionReadouts.update_mobility` / `faction_mobility()` retain the player's row off the
+snapshot's `mobility` key, `Main` calls `update_mobility` only when the key moved (a delta that omits it
+leaves the held value), and `Hud.update_mobility` re-renders the faction page.
+
+- **The hover itemizes the two inputs**, each with the points it gave this turn
+  (`HudWorkVocab.FACTION_MOBILITY_TOOLTIP_FORMAT`): `Roaming skills (herd lore, travois, drives): +N` and
+  `Walking with the herds: +N`, off `skills_points` / `distance_points`. Those are pre-smoothing, so the
+  meter (the smoothed `score`) follows them rather than equalling their sum.
+- **No mobility entry, no row** - never a `0/100` claiming a measurement that was not made.
+- **It is a row, not a block with its own head**, because a block cost 29px more and overflowed the wide
+  dock's 358px box; the row is always built, and on a horizontal dock the band zone's scroll carries it
+  (stack 589px in a 358px viewport).
+- **Frame / claim:** `band_panel_faction` carries the seeded row (`MOBILITY_SCORE` 38) and
+  `_assert_faction_settling_belief` asserts it reads `38/100`; `_assert_faction_band_zone_scrolls`
+  asserts it present inside the scroll on the bottom dock.
+
+## The DISCOVERIES rows' hover
+
+`FactionRollup._build_discoveries_block` is one row per site KIND (keyed on `site_id`, first-seen order),
+and each row carries a hover through `_stat_row`'s tip argument, so it is hoverable across the row.
+`_discovery_tooltip` reads: a line for the kind's `category` (the first instance's, resolved from the
+sites catalog at capture), then `Found at (x, y)` for each instance of that kind, in first-seen order,
+on ONE line joined by ` · `. `HudWorkVocab.FACTION_DISCOVERY_CATEGORY_LINES` holds the category lines
+(`settle_site`: `Fertile, sheltered ground — a good place to settle.`; `landmark`: `A landmark your
+people have found.`); a category it has no line for contributes no category line and the hover is the
+`Found at` line alone. `_assert_discovery_tooltips` asserts a two-instance kind names its category line
+and both coordinates, a settle site its own line, and an unknown category no category line.
 
 ## The parties strip's lines
 
@@ -1679,7 +1695,9 @@ shell it is about to get.
 
 **The fix is a shared bound, NOT a `ScrollContainer`** — for the fixed CROSS-AXIS size, which is what
 that rule was ever about. The no-scroll rule has since been **narrowed twice rather than deleted**:
-the parties LIST scrolls, and since the interface-scale arc the BAND zone does too.
+the parties LIST scrolls, and since the interface-scale arc the BAND zone does too — on the faction
+page as well as the band page (`BandPanelController._faction_band_zone_column` wraps
+`FactionRollup.build_band_zone` in `_build_band_zone_scroll`; the no-dock host gets no scroll).
 `_assert_scroll_only_where_sanctioned` keeps the rule everywhere else.
 
 **The band zone's exception overturns an argument stated here, and the reason is worth keeping.** The
@@ -7929,16 +7947,14 @@ player's own RESIDENT bands (parties excluded), `HudLineageVocab.faction_groups`
   `Context.family_limit_amber`, key via the caret) while its `fertility_ceiling < 1`. Bands in the
   other groups append the page's own `_alert_clause` (`N` = bands outside the main group), which
   also turns the key amber.
-- **One line under it, by precedence:** over the limit, kin (`fertility_ceiling` 0), room for N
-  more - amber `◆` lines - then `{Band} is out of touch. Bring it back to share the limit.` / `{N}
-  bands are out of touch. Bring them back to share the limit.` (amber), then the faint stay-in-touch
-  line when the ceiling equals `lineage_free_breeding_at`.
+- **Nothing sits under the row**: the popover carries every sentence the row would repeat.
 - **Popover** (`BREAKDOWN_KIND_FAMILY_LIMIT`, `register_faction`): the main group's member rows and
   other-faction rows (names by `FactionMark.faction_name`, READY blue; ` · fading` amber), then, if
   any group is out of touch, a faint `OUT OF TOUCH` label and one row per group (its band names
-  joined `, ` against its own `population / ceiling` in amber), then the faint `CONTACT_NOTE`. Rows
-  ride behind control-character sentinels (`HudLineageVocab.ROW_MARK` / `FAINT_MARK`, bullets lead
-  with `◆ `) that `DetailFormat.detail_bbcode` renders through `HudLineageVocab.line_bbcode`.
+  joined `, ` against its own `population / ceiling` in amber), then, when the main group's ceiling
+  equals `lineage_free_breeding_at`, the faint `STAY_IN_TOUCH_FORMAT` line, then the faint
+  `CONTACT_NOTE`. Rows ride behind control-character sentinels (`HudLineageVocab.ROW_MARK` /
+  `FAINT_MARK`) that `DetailFormat.detail_bbcode` renders through `HudLineageVocab.line_bbcode`.
 - **Frames:** `family_limit_room` / `_near` / `_at` / `_lost_touch` / `_peoples` / `_lifted`.
 
 ## The split sheet's families and FAMILY LIMIT block (issue #691)

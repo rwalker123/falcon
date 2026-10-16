@@ -852,6 +852,23 @@ fn the_husbandry_density_ladder_scales_carrying_capacity_per_species() {
         let mut graze = app.world.resource_mut::<GrazeRegistry>();
         graze.patches.retain(|&t, _| t == tile);
     }
+    // A pastoral herd is held at its owner's camp and its `K` is struck over that camp's footprint,
+    // so the owner's bands stand on the probe tile: the one footprint is then shared by all three
+    // rungs and the ratio still isolates the density gain.
+    {
+        let probe_tile = {
+            let registry = app.world.resource::<TileRegistry>();
+            registry
+                .index(tile.x, tile.y)
+                .expect("the probe tile is on the map")
+        };
+        let mut bands = app
+            .world
+            .query_filtered::<&mut PopulationCohort, bevy::prelude::With<core_sim::ResidentBand>>();
+        for mut cohort in bands.iter_mut(&mut app.world) {
+            cohort.current_tile = probe_tile;
+        }
+    }
 
     // --- Crag Goats: the prime grazer domesticate, dials 2.0 / 3.6073. ---
     let goat_wild = k_for(&mut app, tile, "Crag Goats", Rung::Wild);

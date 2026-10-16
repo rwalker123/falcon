@@ -39,8 +39,8 @@ use crate::dict::subsistence::{
     characteristic_bands_to_array, craft_knowledge_to_array, food_modules_to_array,
     forage_patches_to_array, herds_to_array, intensification_knowledge_to_array, kits_to_array,
     ladder_areas_to_array, ladder_branches_to_array, ladder_knowledge_to_array,
-    ladder_rungs_to_array, materials_to_array, recipes_to_array, sedentarization_to_array,
-    tile_improvements_to_array,
+    ladder_rungs_to_array, materials_to_array, mobility_to_array, recipes_to_array,
+    sedentarization_to_array, tile_improvements_to_array,
 };
 use crate::snapshot::cache::RasterCache;
 use crate::snapshot::delta::CrisisAnnotationRecord;
@@ -1422,6 +1422,10 @@ pub(crate) fn snapshot_to_dict(
             "sedentarization",
             &sedentarization_to_array(sedentarization),
         );
+    }
+
+    if let Some(mobility) = snapshot.subsistence().and_then(|s| s.mobility()) {
+        let _ = dict.insert("mobility", &mobility_to_array(mobility));
     }
 
     if let Some(forage_patches) = snapshot.subsistence().and_then(|s| s.foragePatches()) {

@@ -960,3 +960,175 @@ const COST_YIELD_FORMAT := "→ %s %s"
 ## A cost amount reads whole where it is whole — a recipe asking for 12 fibre should not say 12.0.
 const COST_AMOUNT_DECIMALS := 1
 const COST_WHOLE_EPSILON := 0.05
+
+# ---- A WHOLE KIT AS ONE BENCH ORDER (issue #780) --------------------------------------------------
+# `.claude/rules/client/crafting-panel.md` -> "A WHOLE KIT IS ONE BENCH ORDER". Every number here comes
+# off the wire (`PopulationCohortState.kitNeeds` / `materialsFree`, `BenchState.kitOrders`,
+# `BenchOrder.kitOrder`); this block holds their keys, the words the KITS group, its picker and the
+# grouped queue box speak, and the geometry measured off the approved prototype.
+
+## `PopulationCohortState.kitNeeds` — one row per orderable kit, config order: its `jobs` (job
+## tokens), the head count `people` on them and one `items` entry per item the kit uses.
+const BAND_KIT_NEEDS_KEY := "kit_needs"
+const KIT_NEED_KIT_ID_KEY := "kit_id"
+const KIT_NEED_DISPLAY_NAME_KEY := "display_name"
+const KIT_NEED_JOBS_KEY := "jobs"
+const KIT_NEED_PEOPLE_KEY := "people"
+const KIT_NEED_ITEMS_KEY := "items"
+## One kit item: how many workers one unit serves, the units that serve THIS kit's jobs (`have`) and the
+## units the bench already owes (`queued`), and one `recipes` row per recipe that makes it.
+const KIT_ITEM_ID_KEY := "item_id"
+const KIT_ITEM_WORKERS_PER_UNIT_KEY := "workers_per_unit"
+const KIT_ITEM_HAVE_KEY := "have"
+const KIT_ITEM_QUEUED_KEY := "queued"
+const KIT_ITEM_RECIPES_KEY := "recipes"
+## One recipe of a kit item: what a PASS yields and what a pass costs, the bench's material efficiency
+## already applied — the terms the picker's shortage arithmetic is exact over.
+const KIT_RECIPE_ID_KEY := "recipe_id"
+const KIT_RECIPE_OUTPUT_PER_PASS_KEY := "output_per_pass"
+const KIT_RECIPE_INPUTS_KEY := "inputs"
+## `{material_id, amount}` — an input row and a `materials_free` row alike.
+const MATERIAL_AMOUNT_MATERIAL_ID_KEY := "material_id"
+const MATERIAL_AMOUNT_AMOUNT_KEY := "amount"
+## `PopulationCohortState.materialsFree` — the stock left after every queued order's claims.
+const BAND_MATERIALS_FREE_KEY := "materials_free"
+## `BenchState.kitOrders` — the live whole-kit orders, oldest first — and `BenchOrder.kitOrder`, the
+## one a part belongs to (`NO_KIT_ORDER` for a plain order).
+const BENCH_KIT_ORDERS_KEY := "kit_orders"
+const KIT_ORDER_ID_KEY := "id"
+const KIT_ORDER_KIT_ID_KEY := "kit_id"
+const KIT_ORDER_KITS_KEY := "kits"
+## Items its FINISHED parts made; a part still on the queue reports its own `made`.
+const KIT_ORDER_DONE_KEY := "done"
+const ORDER_KIT_ORDER_KEY := "kit_order"
+const NO_KIT_ORDER := 0
+
+## The ledger's KITS group — above `Gear`, folded like it, found by the same head meta.
+const KITS_HEAD := "Kits"
+
+## **THE JOB NOUNS, ONE TABLE** — plural / singular, keyed by the job token a kit names.
+## `hunt`, `forage` and `builders` take their plural from the nouns the compose sheets already speak
+## (`CraftingPanel._kit_job_words`), so the plural here is a fallback for those three and the only
+## spelling for the rest.
+const KIT_JOB_WORDS := {
+	"hunt": {"noun": "hunters", "one": "hunter"},
+	"forage": {"noun": "harvesters", "one": "harvester"},
+	"scout": {"noun": "scouts", "one": "scout"},
+	"warrior": {"noun": "warriors", "one": "warrior"},
+	"expedition": {"noun": "rangers", "one": "ranger"},
+	"extract": {"noun": "cutters", "one": "cutter"},
+	"quarrywork": {"noun": "quarriers", "one": "quarrier"},
+	"agriculture": {"noun": "tillers", "one": "tiller"},
+	"husbandry": {"noun": "herders", "one": "herder"},
+	"builders": {"noun": "builders", "one": "builder"},
+	"roadwork": {"noun": "roadbuilders", "one": "roadbuilder"},
+}
+## A kit that names more than one job counts workers, not any one job's people.
+const KIT_MULTI_JOB_WORDS := {"noun": "workers", "one": "worker"}
+const KIT_JOB_NOUN_KEY := "noun"
+const KIT_JOB_ONE_KEY := "one"
+
+# -- the ledger row
+## `<item names joined> — <job noun>`.
+const KIT_ROLE_FORMAT := "%s — %s"
+const KIT_ROLE_ITEM_SEPARATOR := " · "
+const KIT_OWNED_FORMAT := "%d of %d"
+const KIT_OWNED_CHIP := "equipped"
+const KIT_NONE_EQUIPPED := "None equipped"
+const KIT_NOT_USED := "Not used"
+## One kit at each item's suggested recipe — said once under the cost.
+const KIT_COST_EACH := "each"
+## `<g> <noun|one> without <item>`, the first item with a gap nobody has queued.
+const KIT_REASON_WITHOUT_FORMAT := "%d %s without %s"
+const KIT_REASON_QUEUED_FORMAT := "Queued — %s"
+const KIT_REASON_QUEUED_PART_FORMAT := "%d %s"
+const KIT_REASON_QUEUED_SEPARATOR := " · "
+const KIT_REASON_ALL_FORMAT := "All %d %s equipped"
+const KIT_REASON_NONE_FORMAT := "No %s yet"
+
+# -- the picker
+const KIT_PICKER_HEADING_FORMAT := "Make how many %ss?"
+const KIT_PICKER_COLUMN_ITEM := "Item"
+const KIT_PICKER_COLUMN_OWNED := "Owned"
+const KIT_PICKER_COLUMN_MAKE := "Make"
+const KIT_PICKER_COLUMN_RECIPE := "Recipe"
+const KIT_PICKER_SHORT_FORMAT := "Short %s for all %d"
+const KIT_PICKER_SHORT_PART_FORMAT := "%s %s"
+const KIT_PICKER_SHORT_SEPARATOR := " · "
+const KIT_PICKER_QUEUES_FORMAT := "Queues %d items as one kit order"
+const KIT_PICKER_QUEUES_ONE_FORMAT := "Queues %d item as one kit order"
+const KIT_PICKER_OPEN_LABEL := "Close"
+## A shortage under this reads as `0.0` at the display's one decimal, so it is not drawn as one.
+const KIT_SHORT_EPSILON := 0.05
+const KIT_PICKER_COUNT_DECREMENT := "−"
+const KIT_PICKER_COUNT_INCREMENT := "+"
+## A kit order is for at least one kit.
+const KIT_COUNT_MIN := 1
+
+# -- the grouped queue box
+const KIT_ORDER_TITLE_FORMAT := "%s ×%d"
+const KIT_ORDER_PROGRESS_FORMAT := "%d of %d made"
+const KIT_ORDER_PART_FORMAT := "%s %d/%d"
+const KIT_ORDER_PART_SEPARATOR := " · "
+const ORDER_STATUS_WORKING := "Working"
+const KIT_ORDER_RAISE_TOOLTIP := "Move the whole kit up one place."
+const KIT_ORDER_REMOVE_TOOLTIP := "Take the whole kit off the bench — items already made stay in the store"
+const KIT_ORDER_FOLD_TOOLTIP := "Show or hide the kit's parts."
+## The bench well's title, when the worked order belongs to a kit order.
+const BENCH_FOR_KIT_FORMAT := " · for %s"
+
+# -- how a harness reaches them
+const KIT_ROW_META := "crafting_kit_row"
+const KIT_MAKE_BUTTON_META := "crafting_kit_make"
+const KIT_OWNED_META := "crafting_kit_owned"
+const KIT_REASON_META := "crafting_kit_reason"
+const KIT_COST_META := "crafting_kit_cost"
+const KIT_PICKER_META := "crafting_kit_picker"
+const KIT_PICKER_FACE_META := "crafting_kit_picker_people"
+const KIT_PICKER_MINUS_META := "crafting_kit_picker_minus"
+const KIT_PICKER_PLUS_META := "crafting_kit_picker_plus"
+## Valued the item id: the MAKE cell and the OWNED cell of one item's row.
+const KIT_PICKER_MAKE_META := "crafting_kit_picker_make"
+const KIT_PICKER_OWNED_META := "crafting_kit_picker_owned"
+const KIT_PICKER_RECIPE_CELL_META := "crafting_kit_picker_recipe_cell"
+## Valued the recipe id: one radio.
+const KIT_PICKER_RADIO_META := "crafting_kit_picker_radio"
+const KIT_PICKER_MESSAGE_META := "crafting_kit_picker_message"
+const KIT_PICKER_START_META := "crafting_kit_picker_start"
+const KIT_PICKER_CANCEL_META := "crafting_kit_picker_cancel"
+## Valued the kit order id.
+const KIT_ORDER_BOX_META := "crafting_kit_order_box"
+const KIT_ORDER_STATUS_META := "crafting_kit_order_status"
+const KIT_ORDER_TITLE_META := "crafting_kit_order_title"
+const KIT_ORDER_PROGRESS_META := "crafting_kit_order_progress"
+const KIT_ORDER_SUMMARY_META := "crafting_kit_order_summary"
+const KIT_ORDER_FOLD_META := "crafting_kit_order_fold"
+const KIT_ORDER_RAISE_META := "crafting_kit_order_raise"
+const KIT_ORDER_REMOVE_META := "crafting_kit_order_remove"
+## Valued the part's ORDER index.
+const KIT_ORDER_PART_META := "crafting_kit_order_part"
+const KIT_ORDER_PART_STATUS_META := "crafting_kit_order_part_status"
+## The well's `· for <Kit>` suffix.
+const BENCH_FOR_KIT_META := "crafting_bench_for_kit"
+
+# -- geometry, measured off the prototype
+const KIT_PICKER_ITEM_WIDTH := 110.0
+const KIT_PICKER_OWNED_WIDTH := 64.0
+const KIT_PICKER_MAKE_WIDTH := 56.0
+const KIT_PICKER_CELL_FONT_SIZE := 12
+const KIT_PICKER_COST_FONT_SIZE := 11
+const KIT_PICKER_GRID_H_SEPARATION := 8
+const KIT_PICKER_GRID_V_SEPARATION := 8
+const KIT_PICKER_RADIO_SEPARATION := 12
+const KIT_EACH_FONT_SIZE := 10
+const KIT_ORDER_BOX_BORDER_WIDTH := 1
+const KIT_ORDER_BOX_CORNER_RADIUS := 6
+const KIT_ORDER_BOX_PADDING_H := 4
+const KIT_ORDER_BOX_PADDING_V := 3
+const KIT_ORDER_BOX_MARGIN_V := 4
+const KIT_ORDER_BAR_WIDTH := 120.0
+const KIT_ORDER_BAR_HEIGHT := 3.0
+const KIT_ORDER_PART_INDENT := 30.0
+const KIT_ORDER_PART_STATUS_MARGIN := 6
+## An `output_per_pass` of nothing is read as one unit a pass, so the passes arithmetic divides by something.
+const KIT_DEFAULT_OUTPUT_PER_PASS := 1.0

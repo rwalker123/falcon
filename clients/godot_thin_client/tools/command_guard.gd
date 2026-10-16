@@ -267,6 +267,7 @@ func _ready() -> void:
 	await _drive_road_abandon()
 	await _drive_set_starting_loadout()
 	await _drive_bench_queue()
+	await _drive_bench_kit_orders()
 
 	_assert_every_command_emitted()
 	_assert_every_role_is_emittable()
@@ -316,6 +317,48 @@ func _drive_bench_queue() -> void:
 	for retired in ["format_set_bench", "format_clear_bench"]:
 		if _main_has_static(retired):
 			_fail("the retired `%s` builder still exists on Main" % retired)
+
+## **A WHOLE KIT AS ONE BENCH ORDER (#780)** — the picker's Start, then the two edits that move or drop
+## the kit order as one, each naming the band positionally like every bench verb. Driven from the crafting
+## PANEL's own signals through the real controller and `HudLayer` relay. The order carries TWO parts so
+## the line the real parser reads is the multi-part shape the picker sends, and the kit order the edits
+## name is not 0 (an unset id and a dropped field both look like it).
+func _drive_bench_kit_orders() -> void:
+	var band: Dictionary = _hud._band_labor.panel_band()
+	_hud.open_crafting_panel(band)
+	await _settle()
+	var crafting: CraftingPanel = _hud.crafting_panel().panel()
+	if crafting == null:
+		_fail("bench kit orders: the crafting panel did not open on the fixture band")
+		return
+	crafting.kit_enqueue_requested.emit(BENCH_KIT_ID, BENCH_KIT_COUNT,
+		[BENCH_KIT_SPEARS_RECIPE, BENCH_KIT_SLED_RECIPE])
+	crafting.kit_remove_requested.emit(BENCH_KIT_ORDER_ID)
+	crafting.kit_raise_requested.emit(BENCH_KIT_ORDER_ID)
+	await _settle()
+	_hud.close_crafting_panel()
+	var faction := HudConst.PLAYER_FACTION_ID
+	if not MAIN_SCRIPT.format_bench_enqueue_kit({"faction": faction, "band_id": BAND_ID,
+			"kit_id": BENCH_KIT_ID, "kits": BENCH_KIT_COUNT, "recipe_ids": []}).is_empty():
+		_fail("bench_enqueue_kit: a line was built for a kit order with NO recipes")
+	if not MAIN_SCRIPT.format_bench_enqueue_kit({"faction": faction, "band_id": BAND_ID,
+			"kit_id": BENCH_KIT_ID, "kits": 0,
+			"recipe_ids": [BENCH_KIT_SPEARS_RECIPE]}).is_empty():
+		_fail("bench_enqueue_kit: a line was built for ZERO kits")
+	if not MAIN_SCRIPT.format_bench_remove_kit({"faction": faction, "band_id": BAND_ID,
+			"kit_order": 0}).is_empty():
+		_fail("bench_remove_kit: a line was built for kit order 0, which is no kit order")
+	if not MAIN_SCRIPT.format_bench_raise_kit({"faction": faction, "band_id": BAND_ID,
+			"kit_order": 0}).is_empty():
+		_fail("bench_raise_kit: a line was built for kit order 0, which is no kit order")
+
+## The kit the order is for, how many kits, and the one recipe per kit item.
+const BENCH_KIT_ID := "big_game"
+const BENCH_KIT_COUNT := 3
+const BENCH_KIT_SPEARS_RECIPE := "spears"
+const BENCH_KIT_SLED_RECIPE := "sled"
+## The kit order the edits name — never 0, the id of "not a kit order".
+const BENCH_KIT_ORDER_ID := 1
 
 ## A recipe id for the bench drive. The guard parses the line and checks its BAND; the recipe is any
 ## token the grammar accepts.
@@ -967,6 +1010,12 @@ func _connect_recorders() -> void:
 		_record("bench_remove", p, MAIN_SCRIPT.format_bench_remove(p)))
 	_hud.bench_raise_requested.connect(func(p: Dictionary) -> void:
 		_record("bench_raise", p, MAIN_SCRIPT.format_bench_raise(p)))
+	_hud.bench_enqueue_kit_requested.connect(func(p: Dictionary) -> void:
+		_record("bench_enqueue_kit", p, MAIN_SCRIPT.format_bench_enqueue_kit(p)))
+	_hud.bench_remove_kit_requested.connect(func(p: Dictionary) -> void:
+		_record("bench_remove_kit", p, MAIN_SCRIPT.format_bench_remove_kit(p)))
+	_hud.bench_raise_kit_requested.connect(func(p: Dictionary) -> void:
+		_record("bench_raise_kit", p, MAIN_SCRIPT.format_bench_raise_kit(p)))
 	# **THE SHIPMENT RECORDS ITS PILES BESIDE ITS LINE.** They are the only thing the emitted amounts
 	# mean anything against, and they are stated in the sim's own TICKS so the comparison is exact —
 	# see the header. The cargo ids are the sender's own store keys, which is what the parser rebuilds.
@@ -1388,6 +1437,11 @@ const EXPECTED_KINDS := {
 	"bench_order_count": 1,
 	"bench_remove": 1,
 	"bench_raise": 1,
+	# ONE EACH — a whole kit ordered as ONE bench order (two parts, the line the picker's Start sends),
+	# then the two edits that move or drop it as one. See `_drive_bench_kit_orders`.
+	"bench_enqueue_kit": 1,
+	"bench_remove_kit": 1,
+	"bench_raise_kit": 1,
 }
 
 func _assert_every_command_emitted() -> void:

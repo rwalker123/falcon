@@ -386,12 +386,16 @@ which is a property of the tier and not of the merge.
   - **NO CARET, AND NOTHING REGISTERED.** `fodder_breakdown_lines` produces no rows for a band with
     neither flow, so the dormant branch registers no disclosure at all and `_key_cell` draws a plain
     dim key. An empty pull-down is worse than no pull-down.
-  - **AND IT CARRIES NO HOVER.** A dormant account states itself with the dim dash and nothing
-    else. The row once registered two sentences (a Foddering lock in the forage panel's words, and a
-    calm *no fodder yet*); while a detail block had one block-wide tooltip they surfaced under a cursor
-    on **Growth**, **Morale** or **Food** (reported from play). Hovers are per-row now
-    (`DetailFormat.hover_wrap` / `wire_row_hovers`), but the dormant row still has nothing to say a
-    hover would add.
+  - **AND IT CARRIES A ROW-SCOPED HOVER.** The row once registered two sentences (a Foddering lock in
+    the forage panel's words, and a calm *no fodder yet*); while a detail block had one block-wide
+    tooltip they surfaced under a cursor on **Growth**, **Morale** or **Food** (reported from play).
+    Hovers are per-row now (`Context.row_tooltips`, worn by `DetailFormat.hover_wrap` /
+    `wire_row_hovers`), so the row states what it is under its own cursor alone: the faction page
+    files `FODDER_DORMANT_HOVER_FACTION` (`Hay for penned animals. None of your bands holds or uses
+    any yet.`) and a band's page files `FODDER_DORMANT_HOVER_BAND` (`This band holds no hay and
+    feeds no pen with it.`), each under `HudDisclosureVocab.DETAIL_ROW_FODDER` by the CALLER
+    (`FactionRollup` after the page's lines are built, `BandDetailLines`' dormant branch). The hover
+    is a fixed sentence: it registers no disclosure and does not tint the dash.
   - **AND THE KNOWLEDGE READ WENT WITH BOTH SENTENCES.** The live Foddering percent was the only
     thing either scale needed that a band dict does not carry, so `BandDetailLines` holds no
     `FactionReadouts` cluster now and `FactionRollup.build_band_zone` takes no `knowledge` row: the
@@ -452,8 +456,8 @@ which is a property of the tier and not of the merge.
     warned against calm, live against dormant — and a contrast checked one half at a time is not
     checked. Falsified: dropping the warn (2), restoring the store-only gate (1), printing the
     sentinel raw (1), dropping the rate clauses (3), re-gating the row (9), dropping the dim
-    treatment (2), re-registering a hover on the dormant row (2 — the negatives that replaced the
-    five hover claims, a sentence registered there reaching the whole block), putting a caret on the
+    treatment (2), a hay sentence reaching the whole block instead of the row (1), the dormant row
+    losing its row-scoped hover on either page (2), putting a caret on the
     dormant row (2).
     `band_panel_preview`'s `_vitals_worst_case_band_fixture` carries the ledger too: the widened row
     is by some distance the longest optional row a band can hold, so a worst case seeding the stock
@@ -517,8 +521,8 @@ which is a property of the tier and not of the merge.
     readers can reach it, and a static rollup must not reach into a stateful producer. One builder is
     also what stops the band's dim dash and the faction's coming to mean different things.
   - **AND IT TAKES NOTHING — NOT EVEN THE FACTION'S FODDERING.** The builder's one argument was the
-    Foddering percent its hover stated, and the row carries no hover now (see "THE DORMANT ROW" above
-    for why a row's hover here is the whole block's). So `build_band_zone` takes no `knowledge` row,
+    Foddering percent its old hover stated; the hover is a fixed sentence now (see "THE DORMANT ROW"
+    above). So `build_band_zone` takes no `knowledge` row,
     this page reads no `{track: progress}` row through `RungGates` at all, and a caller that
     re-threads one is restoring a parameter nothing downstream reads.
   - **A DORMANT FACTION ROW REGISTERS NO DISCLOSURE**, so it wears no caret: with no band holding a
@@ -1741,6 +1745,26 @@ with no pull adds nothing there (`_band_beliefs_compact_clause`).
   warning must not vanish where Beliefs has no row), wearing the Beliefs hover itself. Strings and the
   key live in `HudDisclosureVocab` (`BELIEFS_BREAK_AWAY_*`). Frame `band_beliefs_break_away`; the compact
   claims are in `band_panel_preview` (`_assert_beliefs_compact_clause`).
+- **Culture pressure lines (#820, read-only).** Beneath the Beliefs row, one line per entry of the cohort's
+  `culture_pressures` (`faction`, `pressure`, `phase`, `close`, `turns_to_next`; decoded in
+  `native/src/dict/population.rs`, own bands only, a foreign band's list is empty) with `phase >= 1`.
+  The sim sorts strongest first, so the client never re-sorts. At most
+  `HudDisclosureVocab.CULTURE_PRESSURE_MAX_LINES` (3), then `+N more`. `BandDetailLines._culture_pressure_lines`
+  appends them as separate full-width lines after the row (a key/value row cannot hold a multi-line
+  value). Each is ONE sentence of copy-per-state saying what happens next (far / close with clock /
+  close without clock / asked, with the forced-join clock when `turns_to_next > 0` / forced), the people
+  by `FactionMark.faction_name`, the pressure as `×1.8`. All strings are `CULTURE_PRESSURE_*` in
+  `HudDisclosureVocab`, never inline. **The ink is the renderer's**: phases 2 and 3 lead with the hazard
+  mark so `DetailFormat.detail_bbcode` draws them amber; phase 1 is an unmarked line and draws muted.
+  Text only: joining is #821. The copy is short ("Pulled by Ashfolk's culture ×1.8 — too different to
+  join.") so each entry fits two lines in the narrow Occupants drawer, which the frame's height check
+  pins. Frame
+  `band_culture_pressure` (`band_expedition.gd` `_culture_pressure_states`). **The compact tier carries one
+  amber clause** on the Morale line (`_culture_pressure_compact_clause`; no Beliefs row there, and a warning
+  must not vanish): the strongest row with `phase >= 2`, `⚠ Wants to join X` / `⚠ Will be forced to join X`
+  (`CULTURE_PRESSURE_COMPACT_*`, no factor or clock); phases 0/1 add nothing. Pinned in `band_panel_preview`
+  (`_assert_beliefs_compact_clause`, frame `band_panel_vitals_worst_case`). The `culture_pull` event is
+  Notable (`event-dock.md`).
 - **EVERY ROW'S HOVER SHOWS OVER THAT ROW ONLY.** `ctx.row_tooltips` (keyed by row) is still the one
   source, but `DetailFormat.block_tooltip` (one `tooltip_text` joining every row's sentence) is
   retired: it put the Carry sentence under a cursor on Beliefs. A row with a hover wears a

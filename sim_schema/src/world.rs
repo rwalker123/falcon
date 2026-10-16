@@ -36,7 +36,8 @@ use crate::state::routes::{RouteState, TileImprovementState};
 use crate::state::subsistence::{
     CharacteristicBandState, CraftKnowledgeState, DepositState, FoodModuleState, ForagePatchState,
     HerdTelemetryState, IntensificationKnowledgeState, KitOptionState, LadderBranchState,
-    LadderKnowledgeState, LadderRungState, MaterialDefState, RecipeDefState, SedentarizationState,
+    LadderKnowledgeState, LadderRungState, MaterialDefState, MobilityState, RecipeDefState,
+    SedentarizationState,
 };
 use ahash::RandomState;
 use serde::{Deserialize, Serialize};
@@ -265,6 +266,10 @@ pub struct WorldSnapshot {
     /// order. A per-world constant, diffed whole beside it. See [`LadderBranchState`].
     #[serde(default)]
     pub ladder_branches: Vec<LadderBranchState>,
+    /// **Per faction: the mobility score** (#800), the roaming counterpart of `sedentarization` and
+    /// viewer-scoped the same way. Diffed whole each frame.
+    #[serde(default)]
+    pub mobility: Vec<MobilityState>,
     pub moisture_raster: FloatRasterState,
     pub elevation_overlay: ElevationOverlayState,
     /// Climate-band cut points (`docs/plan_climate_authority.md` §8.3), a per-map constant.
@@ -435,6 +440,9 @@ pub struct WorldDelta {
     /// rebuilt. `None` means unchanged.
     #[serde(default)]
     pub ladder_branches: Option<Vec<LadderBranchState>>,
+    /// The mobility score (#800), diffed whole. `None` means unchanged.
+    #[serde(default)]
+    pub mobility: Option<Vec<MobilityState>>,
     pub moisture_raster: Option<FloatRasterState>,
     pub elevation_overlay: Option<ElevationOverlayState>,
     /// Climate-band cut points; a per-map constant, so a delta re-sends it only when the map is

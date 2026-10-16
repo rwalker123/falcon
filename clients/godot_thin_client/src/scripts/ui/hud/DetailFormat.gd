@@ -994,8 +994,8 @@ static func detail_bbcode(lines: Array, ctx: Context = null) -> String:
                 table_open = false
             out += "\n"
             continue
-        # THE BREEDING CEILING'S LINES (issue #691): popover table rows, the amber `◆` bullet and the
-        # faint notes. They ride behind control-character sentinels (`HudLineageVocab`) because the
+        # THE BREEDING CEILING'S LINES (issue #691): popover table rows and the faint notes. They ride behind
+        # control-character sentinels (`HudLineageVocab`) because the
         # popover payload is a list of strings and a plain `Key: value` carries one ink per row.
         if HudLineageVocab.is_lineage_line(line):
             var rendered := HudLineageVocab.line_bbcode(line, table_open)
@@ -3318,14 +3318,21 @@ const FODDER_DORMANT_ROW_FORMAT := HudDisclosureVocab.DETAIL_ROW_FODDER + ": [co
 
 const FODDER_DORMANT_VALUE := HudComposeVocab.YIELD_LOCKED_GLYPH
 
+## The dormant row's hover, per surface.
+const FODDER_DORMANT_HOVER_FACTION := "Hay for penned animals. None of your bands holds or uses any yet."
+const FODDER_DORMANT_HOVER_BAND := "This band holds no hay and feeds no pen with it."
+
 ## The dormant row, and the WHOLE of that state: a dim dash, and nothing a caller can add to it. It
 ## takes no arguments for that reason — there is no per-faction, per-band or per-render fact left in
 ## the row to vary.
 ##
-## ⛔ **IT CARRIES NO HOVER.** It used to register two (a Foddering lock, and a calm *no fodder yet*)
-## when a hover answered for the whole block, so a paragraph about HAY popped out from under a cursor
-## resting on Growth, Morale or Food. Hovers are per-row now, but a dim dash for an account that does
-## not exist needs no sentence: **a dormant account states itself with the dash and nothing else.**
+## **IT CARRIES A ROW-SCOPED HOVER, filed by the CALLER.** The old pair of hovers (a Foddering lock and
+## a calm *no fodder yet*) answered for the whole block, so a paragraph about HAY popped out from under a
+## cursor resting on Growth, Morale or Food. Hovers are per-row now (`Context.row_tooltips`, keyed by the
+## row's own key, worn through `hover_wrap` / `wire_row_hovers`), so the row states what it is on hover
+## alone. This builder stays argument-free and returns the row; the caller files the sentence under
+## `HudDisclosureVocab.DETAIL_ROW_FODDER`: `FODDER_DORMANT_HOVER_FACTION` on the faction page,
+## `FODDER_DORMANT_HOVER_BAND` on a band's page.
 ##
 ## **THE RUNWAY CONTEXT IS DELIBERATELY LEFT ALONE.** Callers reset `Context.fodder_turns` to `NAN`
 ## per render; writing a real `turns_of_fodder` for this row (999 for anything that drains nothing)

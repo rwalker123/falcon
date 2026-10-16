@@ -72,6 +72,8 @@ mod map_preset;
 mod mapgen;
 mod materials_config;
 pub mod metrics;
+mod mobility;
+mod mobility_config;
 pub mod network;
 mod orders;
 pub mod personalities;
@@ -149,7 +151,7 @@ pub use components::{
     BandId, BandName, BandTravel, BandWorkforce, BatchGrade, BenchOrder, BenchQueueError, BuildJob,
     BuildQueueEntry, BuildSource, DeathCause, DemographicFlowAccumulator, DrawnInputs,
     DrawnMaterial, ElementKind, EquipmentBatch, Expedition, ExpeditionMission, ExpeditionPhase,
-    FinishedBatch, FoodBatch, FoodMix, KeepingIssue, KeepingToolLine, KnowledgeFragment,
+    FinishedBatch, FoodBatch, FoodMix, KeepingIssue, KeepingToolLine, KitOrder, KnowledgeFragment,
     LaborAllocation, LaborAssignment, LaborTarget, LocalStore, MaterialBatch, MaterialDraw,
     MoraleCause, MusterBench, MusterKit, MusterPlan, PoolToeLine, PopulationCohort, PowerNode,
     QueuedBuildToe, ResidentBand, Settlement, ShedCrew, ShedFacts, ShedStep, ShedSubject,
@@ -193,12 +195,12 @@ pub use crisis_config::{
     BUILTIN_CRISIS_TELEMETRY_CONFIG,
 };
 pub use culture::{
-    culture_region_at, may_break_away, mutual_contact_ties, reconcile_band_culture_layers,
-    reconcile_culture_layers, seeded_modifiers_for_band, ContactPull, ContactTie,
-    CultureEffectsCache, CultureLayer, CultureLayerId, CultureLayerScope, CultureManager,
-    CultureOwner, CultureSchismEvent, CultureSplitQueue, CultureTensionEvent, CultureTensionKind,
-    CultureTensionRecord, CultureTraitAxis, CultureTraitVector, StartingCultureLean,
-    CULTURE_TRAIT_AXES, CULTURE_TRAIT_SPAN, FALLBACK_CULTURE_REGION_ID,
+    culture_region_at, max_axis_gap, may_break_away, mutual_contact_ties,
+    reconcile_band_culture_layers, reconcile_culture_layers, seeded_modifiers_for_band,
+    ContactPull, ContactTie, CultureEffectsCache, CultureLayer, CultureLayerId, CultureLayerScope,
+    CultureManager, CultureOwner, CultureSchismEvent, CultureSplitQueue, CultureTensionEvent,
+    CultureTensionKind, CultureTensionRecord, CultureTraitAxis, CultureTraitVector,
+    StartingCultureLean, CULTURE_TRAIT_AXES, CULTURE_TRAIT_SPAN, FALLBACK_CULTURE_REGION_ID,
 };
 pub use culture_corruption_config::{
     CorruptionSeverityConfig, CultureCorruptionConfig, CultureCorruptionConfigHandle,
@@ -373,6 +375,10 @@ pub use materials_config::{
     MaterialYieldError, MaterialsConfig, MaterialsConfigError, MaterialsConfigHandle,
     MaterialsConfigMetadata, BUILTIN_MATERIALS_CONFIG,
 };
+pub use mobility::{mobility_tick, HerdFollowSteps, MobilityEntry, MobilityScore};
+pub use mobility_config::{
+    load_mobility_config_from_env, MobilityConfig, MobilityConfigHandle, MobilityConfigMetadata,
+};
 pub use recipes_config::{
     load_recipes_config_from_env, CraftingTuning, RecipeDef, RecipeGrade, RecipeInput,
     RecipeOutput, RecipesConfig, RecipesConfigError, RecipesConfigHandle, RecipesConfigMetadata,
@@ -497,18 +503,19 @@ pub use snapshot::{
 };
 pub use systems::spawn_initial_world;
 pub use systems::{
-    advance_band_independence, advance_band_movement, advance_crafting, advance_culture_splits,
-    advance_expeditions, advance_labor_allocation, advance_party_defection,
+    advance_band_independence, advance_band_movement, advance_crafting, advance_culture_pressure,
+    advance_culture_splits, advance_expeditions, advance_labor_allocation, advance_party_defection,
     advance_population_migration, advance_predator_raids, advance_tick,
     announce_bench_material_short, band_label, bench_material_rate, bench_tiers,
     bill_and_stock_roads, break_off_breeding_excess, bring_the_dropped_party_home,
-    deliver_bench_output, denial_forecast, expedition_returned_event, fold_party_into_band,
-    follow_hunted_herds, grow_faction_roster, hunt_per_worker_provisions, hunt_report_event,
-    hunt_take, output_multiplier, party_owes_a_report, prospective_keep_hands,
-    publish_turn_transfers, settle_bands_roadwork, settle_scarce_tools, shed_breeding_excess,
-    simulate_population, simulate_power, source_has_a_meter_at_risk, split_band_from_parent,
-    split_band_from_parent_with, split_refusals, BenchTiers, BreakOffAsk, BreedingBreakOffs,
-    DenialForecast, DenialOutcome, HeartLedger, HeartReading, HuntOutcome, LineDivision, PartyGear,
+    culture_strength, deliver_bench_output, denial_forecast, expedition_returned_event,
+    fold_party_into_band, follow_hunted_herds, grow_faction_roster, hunt_per_worker_provisions,
+    hunt_report_event, hunt_take, joining_pressure, output_multiplier, party_owes_a_report,
+    prospective_keep_hands, publish_turn_transfers, settle_bands_roadwork, settle_scarce_tools,
+    shed_breeding_excess, simulate_population, simulate_power, source_has_a_meter_at_risk,
+    split_band_from_parent, split_band_from_parent_with, split_refusals, BenchTiers, BreakOffAsk,
+    BreedingBreakOffs, CulturePressureLedger, CulturePressureReading, DenialForecast,
+    DenialOutcome, HeartLedger, HeartReading, HuntOutcome, JoiningPhase, LineDivision, PartyGear,
     PartySightings, PoolToolPlan, PowerSimParams, RaidRoll, SplitBand, SplitRefusal, SplitRefusals,
     ToolClaimStage, TradeDiffusionEvent, POST_RECALLED,
 };
@@ -759,6 +766,8 @@ pub fn build_headless_app() -> App {
         sedentarization_config::load_sedentarization_config_from_env();
     let sedentarization_handle =
         sedentarization_config::SedentarizationConfigHandle::new(sedentarization_config);
+    let (mobility_config, mobility_metadata) = mobility_config::load_mobility_config_from_env();
+    let mobility_handle = mobility_config::MobilityConfigHandle::new(mobility_config);
     let (settlement_stage_config, settlement_stage_metadata) =
         settlement_stage_config::load_settlement_stage_config_from_env();
     let settlement_stage_handle =
@@ -953,6 +962,10 @@ pub fn build_headless_app() -> App {
         .insert_resource(sedentarization_handle)
         .insert_resource(sedentarization_metadata)
         .insert_resource(sedentarization::SedentarizationScore::default())
+        .insert_resource(mobility_handle)
+        .insert_resource(mobility_metadata)
+        .insert_resource(mobility::MobilityScore::default())
+        .insert_resource(mobility::HerdFollowSteps::default())
         .insert_resource(beat_config_handle)
         .insert_resource(beat_config_metadata)
         .insert_resource(beat_catalog_handle)
@@ -982,6 +995,7 @@ pub fn build_headless_app() -> App {
         .insert_resource(visibility::VisibilitySweepTracker::default())
         .insert_resource(connections::ConnectionLedger::default())
         .insert_resource(systems::HeartLedger::default())
+        .insert_resource(systems::CulturePressureLedger::default())
         .insert_resource(systems::BreedingBreakOffs::default())
         .insert_resource(culture::CultureSplitQueue::default())
         .insert_resource(lineage::FreeBreedingPeoples::default())
@@ -1396,6 +1410,10 @@ pub fn build_headless_app() -> App {
                     // this turn is skipped.
                     systems::advance_culture_splits,
                     sedentarization::sedentarization_tick,
+                    // The roaming counterpart: after `advance_band_movement` (in this chain, so
+                    // the order is declared), which records the turn's steps following a herd
+                    // (any roam state) and which this drains.
+                    mobility::mobility_tick,
                 )
                     .chain(),
                 // Pure telemetry: reads `TradeTelemetry`, which two systems write (the cross-people
@@ -1409,6 +1427,13 @@ pub fn build_headless_app() -> App {
                     .after(systems::advance_population_migration)
                     .after(systems::shed_breeding_excess)
                     .after(systems::break_off_breeding_excess),
+                // Culture pressure (#820): read-only. After every band's people is final for the
+                // turn — the last system that changes a band's people is the culture split —
+                // measure each people's strength and each band's pull under another. It shares the
+                // event log with `sedentarization_tick`, so that edge is declared too.
+                systems::advance_culture_pressure
+                    .after(systems::advance_culture_splits)
+                    .before(sedentarization::sedentarization_tick),
                 // **RETIRED: `settle_route_keeping`, the third keeping pool as a SYSTEM OF ITS
                 // OWN.** It ran `.after(advance_labor_allocation)` because the `roadwork` head count
                 // it divides has to be the one the shedding order left — and that put the payment a

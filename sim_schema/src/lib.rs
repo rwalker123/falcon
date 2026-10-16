@@ -89,6 +89,73 @@ mod tests {
         );
     }
 
+    /// **Whole-kit orders ride the wire** (#780): `BenchOrder.kitOrder`, `BenchState.kitOrders`,
+    /// `PopulationCohortState.kitNeeds` (four levels deep) and `materialsFree`. Decoded rows are
+    /// compared, so a field that never reached the codec fails here.
+    #[test]
+    fn whole_kit_orders_and_kit_needs_ride_the_wire() {
+        let kit_need = KitNeedState {
+            kit_id: "big_game".to_string(),
+            display_name: "Stalking kit".to_string(),
+            jobs: vec!["hunt".to_string()],
+            people: 6,
+            items: vec![KitNeedItemState {
+                item_id: "sled".to_string(),
+                workers_per_unit: 6,
+                have: 1,
+                queued: 2,
+                recipes: vec![KitNeedRecipeState {
+                    recipe_id: "sled_framed".to_string(),
+                    output_per_pass: 1.0,
+                    inputs: vec![MaterialAmountState {
+                        material_id: "hide".to_string(),
+                        amount: 2.4,
+                    }],
+                }],
+            }],
+        };
+        let snapshot = WorldSnapshot {
+            populations: vec![PopulationCohortState {
+                entity: 7,
+                bench: BenchState {
+                    orders: vec![BenchOrderState {
+                        recipe_id: "sled".to_string(),
+                        count: 1,
+                        kit_order: 3,
+                        ..Default::default()
+                    }],
+                    kit_orders: vec![BenchKitOrderState {
+                        id: 3,
+                        kit_id: "big_game".to_string(),
+                        kits: 6,
+                        done: 2,
+                    }],
+                    ..Default::default()
+                },
+                kit_needs: vec![kit_need.clone()],
+                materials_free: vec![MaterialAmountState {
+                    material_id: "wood".to_string(),
+                    amount: 4.5,
+                }],
+                ..Default::default()
+            }],
+            ..WorldSnapshot::default()
+        };
+        let bytes = encode_snapshot_flatbuffer(&snapshot);
+        let decoded = decode_snapshot_flatbuffer(&bytes).expect("the snapshot decodes");
+        let cohort = &decoded.populations[0];
+        assert_eq!(cohort.bench.orders[0].kit_order, 3);
+        assert_eq!(
+            cohort.bench.kit_orders,
+            snapshot.populations[0].bench.kit_orders
+        );
+        assert_eq!(cohort.kit_needs, vec![kit_need]);
+        assert_eq!(
+            cohort.materials_free,
+            snapshot.populations[0].materials_free
+        );
+    }
+
     /// A `WorldSnapshot` carrying exactly one herd — the rest of the world is irrelevant to the herd
     /// telemetry's wire encoding.
     fn snapshot_with_herd(herd: HerdTelemetryState) -> WorldSnapshot {

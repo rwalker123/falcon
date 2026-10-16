@@ -1571,6 +1571,76 @@ table PopulationCohortState {
   // it leaves when the party stands within this many tiles of its home band; beyond it, a runner's
   // walk behind. Global config echoed per cohort (the `moveFerryReachTiles` idiom); derived, never saved.
   commRangeTiles:uint = 0;
+  // --- WHOLE-KIT ORDERS (appended last, #780) -----------------------------------------------------
+  // One entry per orderable kit (every `equipment.json` kit that carries something; the empty `none`
+  // is not orderable), in config order: what the crafting panel's "Make a whole kit" picker is
+  // computed from. THE CLIENT DOES THE PICKER'S ARITHMETIC over these published terms and the sim
+  // re-derives nothing: `bench_enqueue_kit` carries the counts the picker showed.
+  kitNeeds:[KitNeed];
+  // THE STOCK LEFT AFTER EVERY QUEUED ORDER'S CLAIMS (the figure the suggestions' own shortfalls are
+  // struck against), one row per material the band holds or any recipe reads. What a picker compares
+  // its recipes' summed inputs with.
+  materialsFree:[MaterialAmount];
+
+  // --- CULTURE PRESSURE (appended last, #820) ---------------------------------------------------
+  // Own bands only: a foreign (redacted) row carries the default (empty). One row per people whose
+  // culture is pulling this band (pressure >= joining.pulled), sorted by pressure descending, then
+  // faction ascending. Read-only: no band changes hands in this slice.
+  culturePressures:[CulturePressureState];
+}
+
+// An amount of one material: a recipe input per PASS (the bench's material efficiency already
+// applied - the amount the bench draws) in `KitNeedRecipe.inputs`, or the free stock in
+// `PopulationCohortState.materialsFree`.
+table MaterialAmount {
+  materialId:string;
+  amount:float;
+}
+
+// ONE ORDERABLE KIT'S STANDING WITH THE BAND (issue #780). A row of `PopulationCohortState.kitNeeds`.
+table KitNeed {
+  kitId:string;
+  displayName:string;
+  // The `KitJob` tokens the kit is sent on (`hunt`, `forage`, `builders`, ...), config order.
+  jobs:[string];
+  // People on those jobs: `LaborAllocation::workers_on_job` summed over `jobs`.
+  people:uint;
+  items:[KitNeedItem];
+}
+
+// ONE ITEM OF A KIT. `have` is the units that serve THIS kit's jobs: those the settlement issued to
+// the jobs' consumers, plus the spare units nobody holds. A unit another job holds never counts, and
+// a queued build's forecast line never counts either. `queued` is the units the bench already owes
+// (finished-but-undelivered included) - the same figure the craft suggestions net by.
+table KitNeedItem {
+  itemId:string;
+  workersPerUnit:uint;
+  have:uint;
+  queued:uint;
+  // One entry per recipe that outputs the item, book order.
+  recipes:[KitNeedRecipe];
+}
+
+table KitNeedRecipe {
+  recipeId:string;
+  // Items one pass produces.
+  outputPerPass:float;
+  inputs:[MaterialAmount];
+}
+
+// ONE PEOPLE PULLING ONE BAND - a row of `PopulationCohortState.culturePressures`. Appended last.
+// pressure = (strength_B / strength_A) x (people_B / people_A) ^ size_exponent (docs/plan_minor_peoples.md).
+table CulturePressureState {
+  // The pulling people.
+  faction:uint;
+  pressure:float;
+  // 0 none, 1 pulled, 2 asked, 3 forced.
+  phase:ubyte = 0;
+  // The band's culture is within joining.max_culture_distance of that people's average.
+  close:bool = false;
+  // Turns left on the clock toward the next phase (pulled -> asked, asked -> forced); 0 when that
+  // clock is not running.
+  turnsToNext:ushort = 0;
 }
 
 // One keeping class's hunting meal - a row of `PopulationCohortState.huntMeals`.
@@ -2537,6 +2607,25 @@ table SedentarizationState {
   // clamp(belief on the band's STANDING tile / references.belief, 0, 1). Pre-EMA - the score above
   // is smoothed, this is not; 0 when no band stands on belief. Appended last.
   beliefPoints:float = 0;
+  // The other four inputs' shares of this turn's raw points, same meaning as beliefPoints
+  // (100 x weight x norm, pre-EMA): domestication (herds + cultivated patches), surplus (larder),
+  // land (map-wide resource density), population. With beliefPoints they sum to the raw score the
+  // EMA smooths into `score`. Appended last.
+  domesticationPoints:float = 0;
+  surplusPoints:float = 0;
+  landPoints:float = 0;
+  populationPoints:float = 0;
+}
+
+// One faction's mobility score (#800) - the roaming counterpart of `SedentarizationState`. `score`
+// is the EMA-smoothed 0-100 readout; `skillsPoints` / `distancePoints` are the two inputs' raw
+// points this turn (100 x weight x norm), BEFORE the EMA that smooths `score`. Viewer-scoped like
+// `sedentarization`: a viewer sees its own people's row only. No stage and no thresholds.
+table MobilityState {
+  faction:uint;
+  score:float = 0;
+  skillsPoints:float = 0;
+  distancePoints:float = 0;
 }
 
 // ONE COMPOSITION ENTRY'S MATERIAL RATES (the selective gather) - FlatBuffers has no
@@ -4917,6 +5006,9 @@ table BenchState {
   // player set; this is the part of it that is out hunting for the one turn. 0 when the bench lends
   // nothing, and on a band with no need row sending a crew.
   lentToHunt:uint = 0;
+  // --- WHOLE-KIT ORDERS (appended last, #780) ----------------------------------------------------
+  // The live kit orders, oldest first. Each is the group some `orders[].kitOrder` points at.
+  kitOrders:[BenchKitOrder];
 }
 
 // ONE ORDER ON A BENCH'S QUEUE — `recipe x count`. Every order has a count (>= 1); the
@@ -4951,6 +5043,18 @@ table BenchOrder {
   // AUTO-CRAFT QUEUED THIS ORDER rather than the player. Only an auto head can be skipped
   // (`bench_auto_skip`); otherwise an ordinary order. Appended last.
   auto:bool = false;
+  // THE KIT ORDER THIS ORDER IS A PART OF (`BenchKitOrder.id`), 0 for a plain order. The parts of one
+  // kit order are contiguous in `BenchState.orders`. Appended last (#780).
+  kitOrder:uint = 0;
+}
+
+// ONE WHOLE-KIT ORDER on the bench's queue (#780) - what `bench_enqueue_kit` queued. `done` is the
+// items its FINISHED parts made; a part still queued reports its own `BenchOrder.made`.
+table BenchKitOrder {
+  id:uint;
+  kitId:string;
+  kits:uint;
+  done:uint;
 }
 
 // ONE SUGGESTION — an item the band's consumers are short of, and how many to make.
@@ -5433,15 +5537,6 @@ table SubsistenceSection {
   // Per faction per craft. Not per-world-constant like the two above (a craft is learned), so it is
   // diffed as a whole vector each frame — three crafts times the factions in the ledger.
   craftKnowledge:[CraftKnowledgeState];
-  // --- THE LADDER'S RUNG CATALOG, once per world (appended last) --------------------------------
-  // Every rung of every branch of `intensification_ladder.json`, grouped by branch and in climb
-  // order within it - see `LadderRungState`. A per-world constant, so it is diffed whole exactly
-  // like `kits`, and it rides beside `ladderKnowledge` because the two are the same kind of thing:
-  // the DECLARATION of what the ladder holds, carrying no faction and no tile. It replaces the
-  // route and deposit catalogs.
-  ladderRungs:[LadderRungState];
-  // The branches those rungs sit on, in the same order - see `LadderBranchState`.
-  ladderBranches:[LadderBranchState];
   // --- THE RANGING PARTY'S DEFAULT (appended last) ----------------------------------------------
   // Which kit `send_expedition` / `send_trade_expedition` launch with when the player names none —
   // the `expedition` job's default (`ranging`). It is its own default beside the four above because
@@ -5475,6 +5570,19 @@ table SubsistenceSection {
   // `defaultHuntKitId` stands behind a herd's own `defaultKitId`. Never empty: it always names a
   // real roster entry.
   defaultExtractKitId:string;
+  // --- THE MOBILITY SCORE, per faction (appended last, #800) ------------------------------------
+  // The roaming counterpart of `sedentarization`: viewer-scoped, whole-vector on both snapshot and
+  // delta (absent on a delta = unchanged). See `MobilityState`.
+  mobility:[MobilityState];
+  // --- THE LADDER'S RUNG CATALOG, once per world (appended last, after the mobility score) --------------------------------
+  // Every rung of every branch of `intensification_ladder.json`, grouped by branch and in climb
+  // order within it - see `LadderRungState`. A per-world constant, so it is diffed whole exactly
+  // like `kits`, and it rides beside `ladderKnowledge` because the two are the same kind of thing:
+  // the DECLARATION of what the ladder holds, carrying no faction and no tile. It replaces the
+  // route and deposit catalogs.
+  ladderRungs:[LadderRungState];
+  // The branches those rungs sit on, in the same order - see `LadderBranchState`.
+  ladderBranches:[LadderBranchState];
 }
 
 // ONE discovery the VIEWER'S people is learning BY CONTACT this turn — the knowledge rider on a

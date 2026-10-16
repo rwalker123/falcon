@@ -405,6 +405,9 @@ fn band_handle(payload: &CommandPayload) -> BandHandle {
         | CommandPayload::BenchOrderCount { band_id, .. }
         | CommandPayload::BenchRemoveOrder { band_id, .. }
         | CommandPayload::BenchRaiseOrder { band_id, .. }
+        | CommandPayload::BenchEnqueueKit { band_id, .. }
+        | CommandPayload::BenchRemoveKit { band_id, .. }
+        | CommandPayload::BenchRaiseKit { band_id, .. }
         | CommandPayload::BenchAuto { band_id, .. }
         | CommandPayload::BenchAutoSkip { band_id, .. } => Some(*band_id),
         // ⛔ **AND `abandon` NAMES A PLACE** (arc #532). The roadwork roster's `✕` is its only
