@@ -24,8 +24,8 @@ extends RefCounted
 ## did. The is-this-mine test is NOT part of that surface — `HudConst.is_player_unit` is a
 ## `class_name` static, so it is called directly and needs no Callable. It holds NO faction-scope
 ## cluster: the one reading it ever wanted off `FactionReadouts` was the live Foddering percent for
-## the dormant Fodder row's hover, and that row carries no hover now
-## (`DetailFormat.fodder_dormant_row`).
+## the dormant Fodder row's old hover, which is a fixed sentence now
+## (`DetailFormat.FODDER_DORMANT_HOVER_BAND`).
 ##
 ## IT NEVER SEES THE SELECTION MODEL. The old producers read `_selection` at exactly two sites, both
 ## `tile_info()["terrain_label"]` for the morale row's "it's the hex you're on" payload — ONE display
@@ -429,11 +429,12 @@ func unit_summary_lines(unit_data: Dictionary, terrain_label: String,
                     HudDisclosureVocab.BREAKDOWN_KIND_FODDER, unit_data,
                     _disclosures.fodder_breakdown_lines(unit_data))
             else:
-                # **NOTHING IS REGISTERED HERE**, deliberately: there is no flow to put behind a
-                # caret, so the row renders as a plain dim key with no clickable run at all — and no
-                # hover either, the block's being the only hover a row here can reach
-                # (`DetailFormat.fodder_dormant_row`). The dim dash IS the whole state, which is why
-                # this side contributes nothing to it and calls the shared builder bare.
+                # **NO DISCLOSURE IS REGISTERED HERE**, deliberately: there is no flow to put behind a
+                # caret, so the row renders as a plain dim key with no clickable run at all. It does
+                # carry its own row-scoped hover, filed on the context the way every other row's is.
+                # The dim dash IS the state, so the dash itself stays the shared builder's bare one.
+                context.row_tooltips[HudDisclosureVocab.DETAIL_ROW_FODDER] = \
+                    DetailFormat.FODDER_DORMANT_HOVER_BAND
                 lines.append(DetailFormat.fodder_dormant_row())
         # **THE STANDING MATERIAL BILL, BESIDE THE TWO LARDERS** (`docs/plan_standing_upkeep.md`
         # §2.7) — what this band's holdings swallow every turn in GOODS. A pen frays its fence; a

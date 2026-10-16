@@ -71,6 +71,8 @@ mod map_preset;
 mod mapgen;
 mod materials_config;
 pub mod metrics;
+mod mobility;
+mod mobility_config;
 pub mod network;
 mod orders;
 pub mod personalities;
@@ -147,7 +149,7 @@ pub use components::{
     BandId, BandName, BandTravel, BandWorkforce, BatchGrade, BenchOrder, BenchQueueError, BuildJob,
     BuildQueueEntry, BuildSource, DeathCause, DemographicFlowAccumulator, DrawnInputs,
     DrawnMaterial, ElementKind, EquipmentBatch, Expedition, ExpeditionMission, ExpeditionPhase,
-    FinishedBatch, FoodBatch, FoodMix, Improvement, KeepingIssue, KeepingToolLine,
+    FinishedBatch, FoodBatch, FoodMix, Improvement, KeepingIssue, KeepingToolLine, KitOrder,
     KnowledgeFragment, LaborAllocation, LaborAssignment, LaborTarget, LocalStore, MaterialBatch,
     MaterialDraw, MoraleCause, MusterBench, MusterKit, MusterPlan, PoolToeLine, PopulationCohort,
     PowerNode, QueuedBuildToe, ResidentBand, Settlement, ShedCrew, ShedFacts, ShedStep,
@@ -367,6 +369,10 @@ pub use materials_config::{
     CharacteristicBand, HandWorking, MaterialDef, MaterialPayoff, MaterialYieldDef,
     MaterialYieldError, MaterialsConfig, MaterialsConfigError, MaterialsConfigHandle,
     MaterialsConfigMetadata, BUILTIN_MATERIALS_CONFIG,
+};
+pub use mobility::{mobility_tick, HerdFollowSteps, MobilityEntry, MobilityScore};
+pub use mobility_config::{
+    load_mobility_config_from_env, MobilityConfig, MobilityConfigHandle, MobilityConfigMetadata,
 };
 pub use recipes_config::{
     load_recipes_config_from_env, CraftingTuning, RecipeDef, RecipeGrade, RecipeInput,
@@ -737,6 +743,8 @@ pub fn build_headless_app() -> App {
         sedentarization_config::load_sedentarization_config_from_env();
     let sedentarization_handle =
         sedentarization_config::SedentarizationConfigHandle::new(sedentarization_config);
+    let (mobility_config, mobility_metadata) = mobility_config::load_mobility_config_from_env();
+    let mobility_handle = mobility_config::MobilityConfigHandle::new(mobility_config);
     let (settlement_stage_config, settlement_stage_metadata) =
         settlement_stage_config::load_settlement_stage_config_from_env();
     let settlement_stage_handle =
@@ -910,6 +918,10 @@ pub fn build_headless_app() -> App {
         .insert_resource(sedentarization_handle)
         .insert_resource(sedentarization_metadata)
         .insert_resource(sedentarization::SedentarizationScore::default())
+        .insert_resource(mobility_handle)
+        .insert_resource(mobility_metadata)
+        .insert_resource(mobility::MobilityScore::default())
+        .insert_resource(mobility::HerdFollowSteps::default())
         .insert_resource(beat_config_handle)
         .insert_resource(beat_config_metadata)
         .insert_resource(beat_catalog_handle)
@@ -1342,10 +1354,11 @@ pub fn build_headless_app() -> App {
                     // independence, so every band's people is final and one independence took
                     // this turn is skipped.
                     systems::advance_culture_splits,
-                    // Culture pressure (#820): read-only. After every band's people is final for
-                    // the turn, measure each people's strength and each band's pull under another.
-                    systems::advance_culture_pressure,
                     sedentarization::sedentarization_tick,
+                    // The roaming counterpart: after `advance_band_movement` (in this chain, so
+                    // the order is declared), which records the turn's steps following a herd
+                    // (any roam state) and which this drains.
+                    mobility::mobility_tick,
                 )
                     .chain(),
                 // Pure telemetry: reads `TradeTelemetry`, which two systems write (the cross-people
@@ -1359,6 +1372,13 @@ pub fn build_headless_app() -> App {
                     .after(systems::advance_population_migration)
                     .after(systems::shed_breeding_excess)
                     .after(systems::break_off_breeding_excess),
+                // Culture pressure (#820): read-only. After every band's people is final for the
+                // turn — the last system that changes a band's people is the culture split —
+                // measure each people's strength and each band's pull under another. It shares the
+                // event log with `sedentarization_tick`, so that edge is declared too.
+                systems::advance_culture_pressure
+                    .after(systems::advance_culture_splits)
+                    .before(sedentarization::sedentarization_tick),
                 // **RETIRED: `settle_route_keeping`, the third keeping pool as a SYSTEM OF ITS
                 // OWN.** It ran `.after(advance_labor_allocation)` because the `roadwork` head count
                 // it divides has to be the one the shedding order left — and that put the payment a

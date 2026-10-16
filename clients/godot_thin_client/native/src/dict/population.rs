@@ -1602,6 +1602,9 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
             // AUTO-CRAFT QUEUED THIS ORDER (not the player) - the only kind `bench_auto_skip`
             // applies to.
             let _ = row.insert("auto", order.auto());
+            // THE KIT ORDER THIS ORDER IS A PART OF (`bench.kit_orders[].id`); `0` for a plain order.
+            // A kit order's parts are contiguous in this array.
+            let _ = row.insert("kit_order", i64::from(order.kitOrder()));
             bench_orders.push(&row.to_variant());
         }
     }
@@ -1623,6 +1626,22 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
         "lent_to_hunt",
         i64::from(cohort.bench().map_or(0, |b| b.lentToHunt())),
     );
+    // **THE LIVE WHOLE-KIT ORDERS** (#780), oldest first: `id` (what `bench_remove_kit` /
+    // `bench_raise_kit` address), `kit_id`, `kits` (how many kits were ordered) and `done` (items
+    // its FINISHED parts made; a part still queued reports its own `made`). Always inserted (empty
+    // when none) so the entry shape is stable.
+    let mut kit_orders = VarArray::new();
+    if let Some(list) = cohort.bench().and_then(|b| b.kitOrders()) {
+        for kit in list.iter() {
+            let mut row = VarDictionary::new();
+            let _ = row.insert("id", i64::from(kit.id()));
+            let _ = row.insert("kit_id", kit.kitId().unwrap_or(""));
+            let _ = row.insert("kits", i64::from(kit.kits()));
+            let _ = row.insert("done", i64::from(kit.done()));
+            kit_orders.push(&row.to_variant());
+        }
+    }
+    let _ = bench_dict.insert("kit_orders", &kit_orders);
     let _ = dict.insert("bench", &bench_dict);
 
     // **WHAT TO MAKE NEXT, RANKED SIM-SIDE BY WHO IS GOING WITHOUT** (§7 → "Suggestions"). In rank
@@ -1674,6 +1693,60 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
         }
     }
     let _ = dict.insert("craft_suggestions", &craft_suggestions);
+
+    // **WHOLE-KIT ORDERS** (#780): one row per orderable kit (config order). `jobs` are job tokens,
+    // `people` the head count on them. Each item: `workers_per_unit`, `have` (units serving THIS
+    // kit's jobs plus spare units; another job's units never count), `queued` (units the bench owes)
+    // and `recipes` — one per recipe making it: `outputPerPass` and its `inputs` PER PASS with the
+    // bench's material efficiency applied, so the picker's shortage arithmetic is exact over these
+    // terms and `materials_free` below.
+    let mut kit_needs = VarArray::new();
+    if let Some(list) = cohort.kitNeeds() {
+        for need in list.iter() {
+            let mut row = VarDictionary::new();
+            let _ = row.insert("kit_id", need.kitId().unwrap_or(""));
+            let _ = row.insert("display_name", need.displayName().unwrap_or(""));
+            let jobs = need
+                .jobs()
+                .map(crate::dict::strings_to_variant_array)
+                .unwrap_or_default();
+            let _ = row.insert("jobs", &jobs);
+            let _ = row.insert("people", i64::from(need.people()));
+            let mut items = VarArray::new();
+            if let Some(item_list) = need.items() {
+                for item in item_list.iter() {
+                    let mut entry = VarDictionary::new();
+                    let _ = entry.insert("item_id", item.itemId().unwrap_or(""));
+                    let _ = entry.insert("workers_per_unit", i64::from(item.workersPerUnit()));
+                    let _ = entry.insert("have", i64::from(item.have()));
+                    let _ = entry.insert("queued", i64::from(item.queued()));
+                    let mut recipes = VarArray::new();
+                    if let Some(recipe_list) = item.recipes() {
+                        for recipe in recipe_list.iter() {
+                            let mut recipe_row = VarDictionary::new();
+                            let _ = recipe_row.insert("recipe_id", recipe.recipeId().unwrap_or(""));
+                            let _ = recipe_row
+                                .insert("output_per_pass", f64::from(recipe.outputPerPass()));
+                            let _ = recipe_row
+                                .insert("inputs", &material_amounts_to_array(recipe.inputs()));
+                            recipes.push(&recipe_row.to_variant());
+                        }
+                    }
+                    let _ = entry.insert("recipes", &recipes);
+                    items.push(&entry.to_variant());
+                }
+            }
+            let _ = row.insert("items", &items);
+            kit_needs.push(&row.to_variant());
+        }
+    }
+    let _ = dict.insert("kit_needs", &kit_needs);
+    // The stock left after every queued order's claims, one `{material_id, amount}` per material the
+    // band holds or any recipe reads - what a picker's summed recipe inputs are compared with.
+    let _ = dict.insert(
+        "materials_free",
+        &material_amounts_to_array(cohort.materialsFree()),
+    );
 
     // **ONE ROW PER RECIPE, ALWAYS**, and `reason` + `severity` are the contract rather than
     // `available`: "Not needed yet" is a SHRUG and "Short 4.9 bone" is a PROBLEM, and a client
@@ -2131,6 +2204,23 @@ fn drawn_inputs_to_array(
             let mut row = VarDictionary::new();
             let _ = row.insert("material_id", input.materialId().unwrap_or(""));
             let _ = row.insert("amount", input.amount() as f64);
+            array.push(&row.to_variant());
+        }
+    }
+    array
+}
+
+/// **AN AMOUNT OF EACH OF SEVERAL MATERIALS** — `{material_id, amount}` rows, the shape a kit
+/// recipe's per-pass `inputs` and the band's `materials_free` share.
+fn material_amounts_to_array(
+    amounts: Option<Vector<'_, ForwardsUOffset<fb::MaterialAmount<'_>>>>,
+) -> VarArray {
+    let mut array = VarArray::new();
+    if let Some(list) = amounts {
+        for amount in list.iter() {
+            let mut row = VarDictionary::new();
+            let _ = row.insert("material_id", amount.materialId().unwrap_or(""));
+            let _ = row.insert("amount", f64::from(amount.amount()));
             array.push(&row.to_variant());
         }
     }

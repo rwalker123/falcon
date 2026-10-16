@@ -145,6 +145,11 @@ var _intensification_knowledge: Dictionary = {}
 ## faction is being reported. Stored as the raw entry / raw array, so what a reader gets is what the
 ## snapshot said.
 var _sedentarization: Dictionary = {}
+## The player faction's MOBILITY entry (`{score, skills_points, distance_points}`, issue #800) — the
+## roaming counterpart to `_sedentarization`. Unlike that table, a DELTA omits the `mobility` key when it
+## is unchanged, and `Main` only calls `update_mobility` when the key is present, so the last value
+## persists across such deltas; a world change clears it.
+var _mobility: Dictionary = {}
 var _discovered_sites: Array = []
 ## The player faction's own POLICY row (`{faction, open_borders}`) from the campaign section's
 ## `faction_policies` (issue #512). Retained for the faction page's Open Borders toggle, which reads
@@ -190,6 +195,7 @@ func reset_world_state() -> void:
 	update_intensification([])
 	update_discoveries([])
 	update_sedentarization([])
+	update_mobility([])
 	update_faction_policies([])
 
 ## INGEST the player faction's Sedentarization entry. **It renders nothing** — this was a compact
@@ -205,6 +211,17 @@ func update_sedentarization(sedentarization_variant: Variant) -> void:
 		for entry in sedentarization_variant:
 			if entry is Dictionary and int(entry.get("faction", -1)) == HudConst.PLAYER_FACTION_ID:
 				_sedentarization = entry
+				break
+
+## INGEST the player faction's Mobility entry (issue #800). Renders nothing — the faction page's band
+## zone draws the Settling block's `Mobility` row off `faction_mobility()`. Same player-faction filter as
+## `update_sedentarization`, and for the same one-place reason.
+func update_mobility(mobility_variant: Variant) -> void:
+	_mobility = {}
+	if mobility_variant is Array:
+		for entry in mobility_variant:
+			if entry is Dictionary and int(entry.get("faction", -1)) == HudConst.PLAYER_FACTION_ID:
+				_mobility = entry
 				break
 
 ## INGEST the player faction's POLICY row (Open Borders, issue #512). **It renders nothing** — the
@@ -422,6 +439,11 @@ func faction_tracks(faction: int) -> Dictionary:
 ## different answer available to it. The caller decides what an unsettled faction reads as.
 func faction_sedentarization() -> Dictionary:
 	return _sedentarization
+
+## The PLAYER faction's mobility entry (`{score, skills_points, distance_points}`) as the snapshot sent
+## it, or `{}` when it has sent none. Returned BY REFERENCE; every reader is read-only.
+func faction_mobility() -> Dictionary:
+	return _mobility
 
 ## The PLAYER faction's policy row (`{faction, open_borders}`) as the snapshot sent it, or `{}` when it
 ## has sent none — in which case the faction page renders no toggle rather than guessing a default.

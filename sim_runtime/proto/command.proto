@@ -792,6 +792,8 @@ enum ConfigOverrideKind {
   CONFIG_OVERRIDE_KIND_WELLBEING = 8;
   // The fauna table — staged for the roaming-skills drive levers (#799). Append-only.
   CONFIG_OVERRIDE_KIND_FAUNA = 9;
+  // The mobility score (#800) - staged for its smoothing, weights and distance reference. Append-only.
+  CONFIG_OVERRIDE_KIND_MOBILITY = 10;
 }
 
 // Stage a config-tuning override that takes effect at the NEXT new_game — `build_headless_app`
@@ -860,6 +862,37 @@ message BenchRaiseOrderCommand {
   uint32 faction_id = 1;
   uint64 band_id = 2;
   uint32 order = 3;
+}
+
+// ORDER A WHOLE KIT (issue #780): `kits` kits, queued as ONE grouped order. One kit is one unit of each
+// item the kit uses, so the sim queues `kits` of every item; the order is never sized by, or netted
+// against, who already has a kit. `recipe_ids` names one recipe per item of the kit. Refused whole
+// when the kit is unknown or `none`, `kits` is below 1, a recipe is refused exactly as
+// `bench_enqueue` would refuse it, a recipe's output item is not one the kit uses, two recipes make
+// the same item, or an item of the kit has no recipe. The crew is untouched.
+message BenchEnqueueKitCommand {
+  uint32 faction_id = 1;
+  uint64 band_id = 2;
+  string kit_id = 3;
+  uint32 kits = 4;                 // how many kits to build, >= 1
+  repeated string recipe_ids = 5;  // one recipe per item of the kit
+}
+
+// TAKE A WHOLE KIT ORDER OFF THE QUEUE: every part leaves; drawn piles are lost exactly as a single
+// `bench_remove` loses them, items already made stay in the store. `kit_order` is
+// `BenchKitOrder.id` from the bench state.
+message BenchRemoveKitCommand {
+  uint32 faction_id = 1;
+  uint64 band_id = 2;
+  uint32 kit_order = 3;
+}
+
+// MOVE A WHOLE KIT ORDER UP: it jumps the single order, or whole kit order, directly ahead of it.
+// Refused at the head.
+message BenchRaiseKitCommand {
+  uint32 faction_id = 1;
+  uint64 band_id = 2;
+  uint32 kit_order = 3;
 }
 
 // Change the crew on a band's bench, leaving the queue and every order's progress alone.
@@ -1738,5 +1771,10 @@ message CommandEnvelope {
     BenchAutoSkipCommand bench_auto_skip = 83;
     // 83 is held by `bench_auto_skip`, so the stationed party takes 84 (append-only; never renumber).
     StationExpeditionCommand station_expedition = 84;
+    // 84 is held by `station_expedition`, so the whole-kit order's three verbs take 85-87
+    // (append-only; never renumber).
+    BenchEnqueueKitCommand bench_enqueue_kit = 85;
+    BenchRemoveKitCommand bench_remove_kit = 86;
+    BenchRaiseKitCommand bench_raise_kit = 87;
   }
 }

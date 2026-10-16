@@ -143,6 +143,31 @@ pub struct SedentarizationState {
     /// EMA that smooths `score`. Appended last.
     #[serde(default)]
     pub belief_points: f32,
+    /// The domestication input's raw points this turn, before the EMA. Appended last.
+    #[serde(default)]
+    pub domestication_points: f32,
+    /// The surplus (larder) input's raw points this turn, before the EMA.
+    #[serde(default)]
+    pub surplus_points: f32,
+    /// The land (resource density) input's raw points this turn, before the EMA.
+    #[serde(default)]
+    pub land_points: f32,
+    /// The population input's raw points this turn, before the EMA.
+    #[serde(default)]
+    pub population_points: f32,
+}
+
+/// One faction's mobility score (#800) — the roaming counterpart of [`SedentarizationState`].
+/// `skills_points` / `distance_points` are the two inputs' raw points this turn (`100 × weight ×
+/// norm`), before the EMA that smooths `score`. No stage: mobility has no prompt thresholds.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct MobilityState {
+    pub faction: u32,
+    pub score: f32,
+    #[serde(default)]
+    pub skills_points: f32,
+    #[serde(default)]
+    pub distance_points: f32,
 }
 
 /// A fully-fed pen — the neutral value of [`HerdTelemetryState::pen_fed_fraction`], so an un-penned

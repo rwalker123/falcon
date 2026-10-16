@@ -32,6 +32,7 @@ use crate::{
     fauna_config::{FaunaConfig, BUILTIN_FAUNA_CONFIG},
     labor_config::{LaborConfig, BUILTIN_LABOR_CONFIG},
     materials_config::{MaterialsConfig, BUILTIN_MATERIALS_CONFIG},
+    mobility_config::{MobilityConfig, BUILTIN_MOBILITY_CONFIG},
     recipes_config::{RecipesConfig, BUILTIN_RECIPES_CONFIG},
     resources::{SimulationConfig, BUILTIN_SIMULATION_CONFIG},
     wellbeing_config::{WellbeingConfig, BUILTIN_WELLBEING_CONFIG},
@@ -130,6 +131,13 @@ pub fn spec_for(kind: ConfigOverrideKind) -> ConfigKindSpec {
             default_rel_path: "src/data/fauna_config.json",
             builtin_json: BUILTIN_FAUNA_CONFIG,
             validate: |json| erase(FaunaConfig::from_json_str(json)),
+        },
+        ConfigOverrideKind::Mobility => ConfigKindSpec {
+            kind,
+            env_var: "MOBILITY_CONFIG_PATH",
+            default_rel_path: "src/data/mobility_config.json",
+            builtin_json: BUILTIN_MOBILITY_CONFIG,
+            validate: |json| erase(MobilityConfig::from_json_str(json)),
         },
     }
 }

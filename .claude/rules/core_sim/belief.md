@@ -274,7 +274,9 @@ is in `campaign.md` §Sedentarization.
   `PartialEq`.
 - **`SedentarizationState.beliefPoints:float`** (appended last) — `SedentarizationEntry::belief_points`,
   the belief input's raw pre-EMA points, `0` when no band stands on belief. `SedentarizationEntry`
-  is in `SimState`, so adding it bumped `SAVE_FORMAT_VERSION` to 27.
+  is in `SimState`, so adding it bumped `SAVE_FORMAT_VERSION` to 27. The table's other four inputs
+  ride beside it as `domesticationPoints`, `surplusPoints`, `landPoints` and `populationPoints`
+  (`campaign.md` §Sedentarization); the five sum to the raw score.
 - **The anchor**: `hasBeliefAnchor:bool` gating `beliefAnchorX` / `beliefAnchorY:uint` (`0,0` with no
   anchor — the `isTraveling` / `travelTargetX/Y` idiom on the same table).
 - **The reach region**: `beliefReachX` / `beliefReachY:[uint]`, zipped and row-major (the

@@ -2363,6 +2363,42 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         }
         _ => Vec::new(),
     };
+    // **WHOLE-KIT ORDERS** (#780) - what the crafting panel's picker is computed from. The kit needs
+    // read the same settled lines the suggestions do (a detached party is not resupplied, so it
+    // publishes none); the free materials are the stock after the whole queue's claims.
+    let kit_needs = match (expedition, allocation) {
+        (None, Some(alloc)) => {
+            let take_rows = row_gear
+                .iter()
+                .enumerate()
+                .flat_map(|(row, (_, _, kit_toe))| {
+                    kit_toe
+                        .iter()
+                        .map(move |line| (row, line.item_id.as_str(), line.required, line.filled))
+                });
+            let lines = crate::craft_suggestions::band_tool_shortfall_lines(
+                alloc,
+                take_rows,
+                craft_inputs.equipment,
+                &kit,
+            );
+            crate::snapshot::crafting::kit_need_states(
+                crate::craft_suggestions::band_kit_needs(
+                    alloc,
+                    &lines,
+                    bench,
+                    craft_inputs.recipes,
+                    craft_inputs.equipment,
+                    &kit,
+                ),
+                &kit,
+                craft_inputs,
+            )
+        }
+        _ => Vec::new(),
+    };
+    let materials_free =
+        crate::snapshot::crafting::materials_free(&queue_forecast, &cohort.stores, craft_inputs);
     PopulationCohortState {
         entity: entity.to_bits(),
         band_id: band_id.map(|id| id.0).unwrap_or_default(),
@@ -2522,6 +2558,8 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         craft_offers,
         equipment_batches,
         craft_suggestions,
+        kit_needs,
+        materials_free,
         // The two derived halves of the published triple; `working_age` above is the third.
         children_count: age_brackets.children,
         elders_count: age_brackets.elders,

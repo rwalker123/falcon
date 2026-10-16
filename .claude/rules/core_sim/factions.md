@@ -1014,7 +1014,7 @@ clock toward the next phase: `turns − asked_turns` in Pulled with the asked cl
 `redacted_population_state`'s allow-list, so a foreign viewer's row is empty by construction
 (`core_sim/tests/culture_pressure.rs` pins it with fog off, where the redacted row exists).
 
-The ledger is checkpoint state (`SimState::culture_pressure`, `SAVE_FORMAT_VERSION` 42): the clocks
+The ledger is checkpoint state (`SimState::culture_pressure`, `SAVE_FORMAT_VERSION` 45): the clocks
 run across turns and the capture publishes the rows before a restored world has run a turn.
 
 ## What a foreign band publishes — THREE TIERS, by what the viewer can see
@@ -1118,6 +1118,7 @@ apply only where the row describes something that can be *seen*.
 | `connections` | `snapshot/connections.rs` | **Viewer** — edges whose *observer* band is the viewer's |
 | `factionInventory` | `snapshot/economy.rs` | **Viewer** |
 | `sedentarization` | `snapshot/subsistence.rs` | **Viewer** |
+| `mobility` | `snapshot/subsistence.rs` | **Viewer** - the roaming counterpart of `sedentarization`, a bare number with no visible tier |
 | `intensificationKnowledge` | `snapshot/subsistence.rs` | **Viewer** |
 | `craftKnowledge` | `snapshot/crafting.rs` | **Viewer** |
 | `discoveryProgress` | `snapshot/knowledge.rs` | **Viewer** |

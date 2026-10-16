@@ -386,12 +386,16 @@ which is a property of the tier and not of the merge.
   - **NO CARET, AND NOTHING REGISTERED.** `fodder_breakdown_lines` produces no rows for a band with
     neither flow, so the dormant branch registers no disclosure at all and `_key_cell` draws a plain
     dim key. An empty pull-down is worse than no pull-down.
-  - **AND IT CARRIES NO HOVER.** A dormant account states itself with the dim dash and nothing
-    else. The row once registered two sentences (a Foddering lock in the forage panel's words, and a
-    calm *no fodder yet*); while a detail block had one block-wide tooltip they surfaced under a cursor
-    on **Growth**, **Morale** or **Food** (reported from play). Hovers are per-row now
-    (`DetailFormat.hover_wrap` / `wire_row_hovers`), but the dormant row still has nothing to say a
-    hover would add.
+  - **AND IT CARRIES A ROW-SCOPED HOVER.** The row once registered two sentences (a Foddering lock in
+    the forage panel's words, and a calm *no fodder yet*); while a detail block had one block-wide
+    tooltip they surfaced under a cursor on **Growth**, **Morale** or **Food** (reported from play).
+    Hovers are per-row now (`Context.row_tooltips`, worn by `DetailFormat.hover_wrap` /
+    `wire_row_hovers`), so the row states what it is under its own cursor alone: the faction page
+    files `FODDER_DORMANT_HOVER_FACTION` (`Hay for penned animals. None of your bands holds or uses
+    any yet.`) and a band's page files `FODDER_DORMANT_HOVER_BAND` (`This band holds no hay and
+    feeds no pen with it.`), each under `HudDisclosureVocab.DETAIL_ROW_FODDER` by the CALLER
+    (`FactionRollup` after the page's lines are built, `BandDetailLines`' dormant branch). The hover
+    is a fixed sentence: it registers no disclosure and does not tint the dash.
   - **AND THE KNOWLEDGE READ WENT WITH BOTH SENTENCES.** The live Foddering percent was the only
     thing either scale needed that a band dict does not carry, so `BandDetailLines` holds no
     `FactionReadouts` cluster now and `FactionRollup.build_band_zone` takes no `knowledge` row: the
@@ -452,8 +456,8 @@ which is a property of the tier and not of the merge.
     warned against calm, live against dormant — and a contrast checked one half at a time is not
     checked. Falsified: dropping the warn (2), restoring the store-only gate (1), printing the
     sentinel raw (1), dropping the rate clauses (3), re-gating the row (9), dropping the dim
-    treatment (2), re-registering a hover on the dormant row (2 — the negatives that replaced the
-    five hover claims, a sentence registered there reaching the whole block), putting a caret on the
+    treatment (2), a hay sentence reaching the whole block instead of the row (1), the dormant row
+    losing its row-scoped hover on either page (2), putting a caret on the
     dormant row (2).
     `band_panel_preview`'s `_vitals_worst_case_band_fixture` carries the ledger too: the widened row
     is by some distance the longest optional row a band can hold, so a worst case seeding the stock
@@ -517,8 +521,8 @@ which is a property of the tier and not of the merge.
     readers can reach it, and a static rollup must not reach into a stateful producer. One builder is
     also what stops the band's dim dash and the faction's coming to mean different things.
   - **AND IT TAKES NOTHING — NOT EVEN THE FACTION'S FODDERING.** The builder's one argument was the
-    Foddering percent its hover stated, and the row carries no hover now (see "THE DORMANT ROW" above
-    for why a row's hover here is the whole block's). So `build_band_zone` takes no `knowledge` row,
+    Foddering percent its old hover stated; the hover is a fixed sentence now (see "THE DORMANT ROW"
+    above). So `build_band_zone` takes no `knowledge` row,
     this page reads no `{track: progress}` row through `RungGates` at all, and a caller that
     re-threads one is restoring a parameter nothing downstream reads.
   - **A DORMANT FACTION ROW REGISTERS NO DISCLOSURE**, so it wears no caret: with no band holding a
