@@ -165,6 +165,13 @@ pub struct CraftSuggestion {
     pub expires_in_turns: f32,
     /// The bench's lead time for one more unit, in whole turns (`>= 1`). `0` with no forecast.
     pub lead_turns: u32,
+    /// **What the suggestion is called** - an item's own name, a material's title. Resolved by the
+    /// capture; empty off it.
+    pub display_name: String,
+    /// **Why it is suggested, when the reason is not a kit going without** - a build-material
+    /// suggestion states the job it feeds (`for Corral Wild Boar`). Empty for a kit suggestion, whose
+    /// reason is its sources' `workers_without`.
+    pub reason: String,
 }
 
 /// **A LINE THAT IS NOT SHORT** — the boundary at and below which a consumer went without nothing.
@@ -645,6 +652,8 @@ fn suggestions_from(
                 upcoming_count: coming as u32,
                 expires_in_turns: forecast.map_or(NO_FORECAST_TURNS, |f| f.expires_in_turns),
                 lead_turns: forecast.map_or(NO_FORECAST_LEAD, |f| f.lead_turns),
+                display_name: String::new(),
+                reason: String::new(),
             })
         })
         .collect();
@@ -740,6 +749,152 @@ pub fn queued_units(bench: Option<&BandBench>, recipes: &RecipesConfig, item: &s
         .map(|batch| batch.count as f32)
         .sum();
     owed + parked
+}
+
+/// **WHAT THE CAPTURE KNOWS ABOUT A QUEUED BUILD THAT THIS MODULE CANNOT** - the goods it still has to
+/// draw (the registries hold the source's progress) and the words naming the job.
+pub struct BuildPileView<'a> {
+    /// The goods the entry has **still to draw**, per material: the pile times the share of the climb
+    /// left, so a build 64% done owes 36% of it.
+    pub remaining: &'a dyn Fn(&crate::components::BuildQueueEntry) -> BTreeMap<String, f32>,
+    /// The job in words, `Corral Wild Boar` - the suggestion's reason reads `for {label}`.
+    pub label: &'a dyn Fn(&crate::components::BuildQueueEntry) -> String,
+}
+
+/// **THE STOCK MATERIAL A QUEUED BUILD DRAWS, SUGGESTED AS WHAT TO MAKE NEXT.** A queued build eats
+/// goods as its work goes in (hurdles for a pen or a ring); a band short of them stalls, and "Make
+/// next" has to say so. The queue is walked in order against the store: each entry's **remaining**
+/// pile (`view.remaining`) is added to a running need and the part of it the stock does not cover is
+/// that entry's shortfall, so a later job is short only of what the earlier ones leave. Every line is
+/// a [`SupplySource::BuildQueue`] carrying its queue position and source - the head included, which
+/// is what lets a reader name the job - and the suggestion's `reason` is the first short entry's
+/// `for {job}`. Only a material some recipe makes is suggested - a raw one is fetched, not made - and
+/// the count is whole **passes** of that recipe (`ceil(short / output per pass) x output per pass`),
+/// less what the bench's queue already owes. A holding under
+/// [`crate::components::MATERIAL_DUST_UNITS`] is nothing. The suggestions merge into the kit list in
+/// [`merge_build_material_suggestions`], which keeps the module's one ranking.
+pub fn build_material_suggestions(
+    allocation: &LaborAllocation,
+    store: &crate::components::LocalStore,
+    recipes: &RecipesConfig,
+    bench: Option<&BandBench>,
+    view: &BuildPileView<'_>,
+) -> Vec<CraftSuggestion> {
+    use crate::components::MATERIAL_DUST_UNITS;
+    let mut need: BTreeMap<String, f32> = BTreeMap::new();
+    let mut counted: BTreeMap<String, f32> = BTreeMap::new();
+    let mut lines: BTreeMap<String, Vec<SuggestionSourceLine>> = BTreeMap::new();
+    let mut reasons: BTreeMap<String, String> = BTreeMap::new();
+    for (position, entry) in allocation.build_queue.iter().enumerate() {
+        for (material, pile) in (view.remaining)(entry) {
+            let running = need.entry(material.clone()).or_insert(NOTHING_MISSING);
+            *running += pile;
+            let held = store.material_total(&material).to_f32();
+            let held = if held < MATERIAL_DUST_UNITS {
+                NOTHING_MISSING
+            } else {
+                held
+            };
+            let short_through = (*running - held).max(NOTHING_MISSING);
+            let already = counted
+                .insert(material.clone(), short_through)
+                .unwrap_or(NOTHING_MISSING);
+            let missing_units = short_through - already;
+            if missing_units <= NOTHING_MISSING {
+                continue;
+            }
+            reasons
+                .entry(material.clone())
+                .or_insert_with(|| format!("for {}", (view.label)(entry)));
+            lines
+                .entry(material)
+                .or_default()
+                .push(SuggestionSourceLine {
+                    source: SupplySource::BuildQueue {
+                        position: position as u32,
+                        source: entry.source.clone(),
+                    },
+                    missing_units,
+                    workers_without: NOTHING_MISSING,
+                    work_per_turn: NO_WORK_RECOVERED,
+                });
+        }
+    }
+    lines
+        .into_iter()
+        .filter_map(|(material, sources)| {
+            let per_pass: f32 = recipes
+                .recipes()
+                .filter(|(_, recipe)| recipe.row_key() == Some(material.as_str()))
+                .find_map(|(_, recipe)| {
+                    let amount: f32 = recipe
+                        .outputs
+                        .iter()
+                        .filter(|output| output.material_id() == Some(material.as_str()))
+                        .map(|output| output.amount)
+                        .sum();
+                    (amount > NOTHING_TO_MAKE).then_some(amount)
+                })?;
+            let missing: f32 = sources.iter().map(|line| line.missing_units).sum();
+            let passes = ((missing - WHOLE_UNIT_TOLERANCE) / per_pass)
+                .ceil()
+                .max(NOTHING_TO_MAKE);
+            let count = (passes * per_pass - queued_material_units(bench, recipes, &material))
+                .ceil()
+                .max(NOTHING_TO_MAKE);
+            (count > NOTHING_TO_MAKE).then(|| CraftSuggestion {
+                reason: reasons.get(&material).cloned().unwrap_or_default(),
+                item: material,
+                count: count as u32,
+                workers_without: NOTHING_MISSING,
+                work_per_turn: NO_WORK_RECOVERED,
+                sources,
+                upcoming_count: 0,
+                expires_in_turns: NO_FORECAST_TURNS,
+                lead_turns: NO_FORECAST_LEAD,
+                display_name: String::new(),
+            })
+        })
+        .collect()
+}
+
+/// **WHAT THE BENCH'S QUEUE STILL OWES OF A MATERIAL** - `remaining × the recipe's output amount`,
+/// over the orders whose recipe makes it. The material twin of [`queued_units`].
+fn queued_material_units(
+    bench: Option<&BandBench>,
+    recipes: &RecipesConfig,
+    material: &str,
+) -> f32 {
+    let Some(bench) = bench else {
+        return NOTHING_TO_MAKE;
+    };
+    bench
+        .orders
+        .iter()
+        .filter_map(|order| {
+            let recipe = recipes.recipe(&order.recipe_id)?;
+            let per_pass: f32 = recipe
+                .outputs
+                .iter()
+                .filter(|output| output.material_id() == Some(material))
+                .map(|output| output.amount)
+                .sum();
+            Some(order.remaining() as f32 * per_pass)
+        })
+        .sum()
+}
+
+/// **MERGE THE BUILD-MATERIAL SUGGESTIONS INTO A KIT LIST** and re-rank, so the module has one order.
+pub fn merge_build_material_suggestions(
+    suggestions: &mut Vec<CraftSuggestion>,
+    extra: Vec<CraftSuggestion>,
+) {
+    suggestions.extend(extra);
+    suggestions.sort_by(|a, b| {
+        rank_of(a)
+            .partial_cmp(&rank_of(b))
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
 }
 
 /// **THE TWO CONFIGS A SUGGESTION LIST IS RANKED AND NETTED WITH.**

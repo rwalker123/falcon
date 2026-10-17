@@ -1434,6 +1434,21 @@ those zeros as the zeros they are.
   from it **cumulatively, in queue order, items in id order**: 2 crooks held and two Tame jobs of 2
   each leave job 2 short 2; Tame, Cultivate, Tame on 2 crooks and 0 hoes leaves job 2 short 2 hoes and
   job 3 short 2 crooks.
+- **A queued build short of the GOODS it draws is a suggestion too** (`craft_suggestions::
+  build_material_suggestions`, merged by `merge_build_material_suggestions` into the one ranking).
+  The build queue is walked in order against the store: each entry's **remaining** pile
+  (`systems::remaining_build_materials`: pile x the share of its climb still owed, off the same legs
+  the settlement draws - a pen 64% built owes 36% of its hurdles; a road or tile improvement is quoted
+  its whole pile) is added to a running need, and the part the stock does not cover is that entry's
+  shortfall. Every line is a `build_queue` source carrying its queue position and source, the head's
+  included (position 0), so the job can be named. The suggestion is emitted only when a recipe makes
+  the material; `count` is whole passes of that recipe covering the shortfall, less what the bench's
+  queue owes; a holding under `MATERIAL_DUST_UNITS` is nothing. Its words are the sim's:
+  `CraftSuggestion.displayName` (an item's name or a material's title, set for every suggestion) and
+  `reason` (`for Corral Wild Boar` on a build-material suggestion, empty for a kit one).
+  `CraftOffer.outputMaterialId` (appended) is the join key onto the offer, as `outputItemId` is for
+  equipment, so `shortfalls` fill and a client finds the queueable craft. Auto-craft does not read it.
+  Pinned by `build_queue::make_next_names_the_hurdles_a_queued_pen_build_is_still_short_of`.
 - **A detached party is not a source.** `population_state` publishes an empty list for any cohort
   with an `Expedition`: it carries the kit it left with and is never resupplied. A far work party is
   a take **row** of its home band, so it counts.

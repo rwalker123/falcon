@@ -2344,6 +2344,13 @@ pub struct CraftSuggestionState {
     pub expires_in_turns: f32,
     /// The bench's lead time for one more unit, in whole turns (`>= 1`); `0` with no forecast.
     pub lead_turns: u32,
+    /// What the suggestion is called - an item's name or a material's title; never the raw id.
+    #[serde(default)]
+    pub display_name: String,
+    /// Why, when it is not a kit going without: `for Corral Wild Boar` on a build-material
+    /// suggestion; empty for a kit suggestion.
+    #[serde(default)]
+    pub reason: String,
 }
 
 /// **One consumer going without a suggested item** — a row of [`CraftSuggestionState::sources`].
@@ -2456,6 +2463,9 @@ pub struct CraftOfferState {
     /// **May this recipe be queued** — every craft it requires is known; the Make button's gate.
     /// Materials and tools do not gate it (`available` is "a pass can run now").
     pub queueable: bool,
+    /// The material id a stock recipe makes (`hurdles`), empty for an equipment recipe - the join
+    /// key onto a craft suggestion that names a material.
+    pub output_material_id: String,
 }
 
 /// **What [`CraftOfferState::owned_at_tier`] publishes when a per-recipe count would be invented** —
@@ -2482,6 +2492,7 @@ impl Default for CraftOfferState {
             suggested: false,
             owned_at_tier: OWNED_AT_TIER_UNATTRIBUTED,
             queueable: false,
+            output_material_id: String::new(),
         }
     }
 }

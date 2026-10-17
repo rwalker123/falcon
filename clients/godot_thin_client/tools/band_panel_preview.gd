@@ -8721,6 +8721,13 @@ func _find_vitals_label(node: Node) -> RichTextLabel:
 			return found
 	return null
 
+## The summed width of the panel's zone hosts: what a content row that refuses to clip widens.
+func _zone_hosts_width() -> float:
+	var total := 0.0
+	for host_variant in _find_zone_hosts(_panel):
+		total += (host_variant as Control).size.x
+	return total
+
 func _assert_zones_within_bounds() -> void:
 	var failures: Array[String] = []
 	for host_variant in _find_zone_hosts(_panel):
@@ -11170,12 +11177,15 @@ const RING_WORK_DONE := 30.0
 
 const RING_PERCENT := 75
 
+## A turn so large the queue row's date text runs far past any column (`turn 2101264` was a live one).
+const ABSURD_QUEUE_TURN := 9000000000000000000
+
 ## A BUILT pen with a ring in flight: fully tamed, `Corralled 100%`, and an `extend_pen` entry at the
 ## head of its band's queue. `build_legs` is EMPTY because a ring lays none — there is no leg to
 ## climb, only more of the one the source is already on — and `build_destination_rung` is the pen
 ## rung it widens, which is what keeps the row titled `Corral …`.
-func _ring_herd_fixtures() -> Array:
-	return RUNG_FX.stamp_herds([{
+func _ring_herd_fixtures(pile: Array = []) -> Array:
+	var fixture := {
 		"id": RING_HERD_ID, "species": "Wild Fowl",
 		"x": RING_HERD_TILE.x, "y": RING_HERD_TILE.y,
 		"population": 60, "ecology_phase": "thriving",
@@ -11190,7 +11200,10 @@ func _ring_herd_fixtures() -> Array:
 		"build_turns_remaining": RING_TURNS,
 		"build_destination_rung": RUNG_FX.KEY_PEN,
 		"build_legs": [],
-	}])
+	}
+	if not pile.is_empty():
+		fixture["corral_build_material_cost"] = pile
+	return RUNG_FX.stamp_herds([fixture])
 
 ## The band KEEPING that pen, carrying the wire's own `extend_pen` job token on its row — the one
 ## thing that tells a ring entry from a rung entry, and the reason no new wire field is needed.
@@ -11247,6 +11260,78 @@ func _assert_queue_row_ring_quotes_its_own_meter() -> void:
 	await _save("band_panel_queue_ring")
 	_assert_zones_within_bounds()
 	_assert_zone_content_fits()
+	# 4. **NO DATE THE WIRE CAN SPELL WIDENS THE PANEL.** A queue row's date label carried no clip, so its
+	#    text was its minimum width and a corrupt countdown (`turn 2101264`) pushed the whole panel wider
+	#    and cut it off. The same row is re-drawn at an absurd turn: the panel keeps its width, the date
+	#    column stays at or under its cap, and the full text is on the row's tooltip.
+	var width_before := _zone_hosts_width()
+	var prior_turn: int = _hud._band_labor.current_turn()
+	_hud._band_labor.set_turn(ABSURD_QUEUE_TURN)
+	_push_bands([_ring_band_fixture()])
+	await _settle()
+	var long_rows := _build_queue_rows()
+	var long_date := _find_meta_control(long_rows[0], HudWorkVocab.BUILD_QUEUE_DATE_META) if not long_rows.is_empty() else null
+	var long_text := "" if long_date == null else String(long_date.get_meta(HudWorkVocab.BUILD_QUEUE_DATE_META))
+	await _save("band_panel_queue_long_date")
+	var long_natural := 0.0 if long_date == null else long_date.get_theme_default_font().get_string_size(
+		long_text, HORIZONTAL_ALIGNMENT_LEFT, -1, HudWorkVocab.ALLOC_SECTION_FONT_SIZE).x
+	_assert_band_panel("long date — the text really outruns the cap (\"%s\", %.0f > %.0f)"
+			% [long_text, long_natural, HudWorkVocab.BUILD_QUEUE_DATE_MAX_WIDTH],
+		long_natural > HudWorkVocab.BUILD_QUEUE_DATE_MAX_WIDTH)
+	_assert_band_panel("long date — the panel keeps its width (%.0f -> %.0f)" % [width_before, _zone_hosts_width()],
+		is_equal_approx(_zone_hosts_width(), width_before))
+	_assert_band_panel("long date — the date column is held at its cap (%.0f <= %.0f)"
+			% [long_date.size.x if long_date != null else -1.0, HudWorkVocab.BUILD_QUEUE_DATE_MAX_WIDTH],
+		long_date != null and long_date.size.x <= HudWorkVocab.BUILD_QUEUE_DATE_MAX_WIDTH + 0.5)
+	_assert_band_panel("long date — the full text is on the row's tooltip",
+		not long_rows.is_empty() and (long_rows[0] as Control).tooltip_text.contains(long_text))
+	_assert_zones_within_bounds()
+	_hud._band_labor.set_turn(prior_turn)
+	_push_bands([_ring_band_fixture()])
+	await _settle()
+	await _assert_queue_head_says_what_the_shelf_lacks()
+
+## **A HEAD THE SHELF CANNOT FEED SAYS SO, IN THE PLAYER'S WORDS.** Reported from play: a Pen climbing on
+## a band holding no hurdles read only `builders short of crooks`, and nothing anywhere named the good the
+## build was actually stalled on. The ring is the head here, weighed at its own meter (30 of 40 work, so a
+## quarter of the 6-hurdle pile is still to draw = 1.5). Three shelves: none, some, enough.
+func _assert_queue_head_says_what_the_shelf_lacks() -> void:
+	var pile := [{"material_id": PEN_MATERIAL, "amount": PEN_BUILD_PILE}]
+	var left := PEN_BUILD_PILE * (1.0 - RING_WORK_DONE / RING_WORK_COST)
+	_set_world_herds(_ring_herd_fixtures(pile))
+	for shelf in [0.0, 1.0, PEN_BUILD_PILE]:
+		var band := _ring_band_fixture()
+		band["material_store"] = [] if shelf == 0.0 else [{"material_id": PEN_MATERIAL, "amount": shelf}]
+		_push_bands([band])
+		await _settle()
+		var rows := _build_queue_rows()
+		var clause := _find_meta_control(rows[0], HudWorkVocab.BUILD_QUEUE_MATERIAL_LINE_META) as Label \
+			if not rows.is_empty() else null
+		var drawn := "" if clause == null else String(clause.get_meta(HudWorkVocab.BUILD_QUEUE_MATERIAL_LINE_META))
+		if shelf >= PEN_BUILD_PILE:
+			_assert_band_panel("hurdles — a shelf that covers the pile draws no clause (got \"%s\")" % drawn,
+				clause == null)
+			continue
+		var short := {
+			DetailFormat.MATERIAL_SHORT_ID_KEY: PEN_MATERIAL,
+			DetailFormat.MATERIAL_SHORT_HELD_KEY: shelf,
+			DetailFormat.MATERIAL_SHORT_MISSING_KEY: left - shelf}
+		var wanted := DetailFormat.build_material_short_text(short)
+		_assert_band_panel("hurdles — a shelf of %.1f draws \"%s\" (got \"%s\")" % [shelf, wanted, drawn],
+			drawn == wanted and wanted != "")
+		_assert_band_panel("hurdles — the clause is in the missing-good ink",
+			clause != null and clause.get_theme_color(FONT_COLOR_THEME_KEY).is_equal_approx(HudStyle.DANGER))
+		await _save("band_panel_queue_no_hurdles" if shelf == 0.0 else "band_panel_queue_short_hurdles")
+		_assert_zones_within_bounds()
+	# The producer on the shape the live wire sent: a 6-hurdle pen at 64.98%, nothing on the shelf.
+	var live := DetailFormat.build_material_shortfall(
+		[{"material_id": PEN_MATERIAL, "amount": PEN_BUILD_PILE}] as Array[Dictionary], {}, 0.64981526)
+	_assert_band_panel("hurdles — the live pen (6 hurdles, 65%%, none held) misses %.2f" % float(
+		live.get(DetailFormat.MATERIAL_SHORT_MISSING_KEY, -1.0)),
+		is_equal_approx(float(live.get(DetailFormat.MATERIAL_SHORT_MISSING_KEY, -1.0)),
+			PEN_BUILD_PILE * (1.0 - 0.64981526)))
+	_push_bands([_ring_band_fixture()])
+	await _settle()
 
 ## **THE FOUR CLAIMS, ON BOTH WORK-TAB READOUTS AT ONCE** — the queue row's title, its date column,
 ## and the source row's rung chip, every one composed through the SHIPPED format so a claim pins the

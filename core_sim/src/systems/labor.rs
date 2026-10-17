@@ -3402,8 +3402,10 @@ pub fn bill_and_stock_roads(
                     )
                 })
                 .collect();
-            let settled =
-                settle_scarce_store(&bids, cohort.stores.material_total(id.as_str()).to_f32());
+            let settled = settle_scarce_material_store(
+                &bids,
+                cohort.stores.material_total(id.as_str()).to_f32(),
+            );
             for (claim, paid) in claims.iter().zip(&settled) {
                 if *paid <= NOTHING_DEMANDED {
                     continue;
@@ -3755,6 +3757,27 @@ fn settle_scarce_store(demands: &[(SourcePriority, f32)], available: f32) -> Vec
             }
         }
         remaining = (remaining - tier_demand.min(remaining)).max(NOTHING_DEMANDED);
+    }
+    settled
+}
+
+/// **[`settle_scarce_store`] FOR A MATERIAL: A HOLDING OR A PAYMENT UNDER [`crate::components::MATERIAL_DUST_UNITS`] IS
+/// NOTHING.** A store of micro-units can carry a one-micro-unit residue of an earlier debit; read as
+/// stock it pays a claim a sliver, the build's coverage becomes `1e-6 / wanted` and its countdown
+/// millions of turns. Both ends snap: a store under the line has nothing to settle, and a share
+/// under it settles to nothing, so the coverage is exactly zero and the quote is `Blocked` /
+/// `Materials` ("no hurdles"). Every material settlement goes through this.
+fn settle_scarce_material_store(demands: &[(SourcePriority, f32)], held: f32) -> Vec<f32> {
+    let available = if held < crate::components::MATERIAL_DUST_UNITS {
+        NOTHING_DEMANDED
+    } else {
+        held
+    };
+    let mut settled = settle_scarce_store(demands, available);
+    for share in &mut settled {
+        if *share < crate::components::MATERIAL_DUST_UNITS {
+            *share = NOTHING_DEMANDED;
+        }
     }
     settled
 }
@@ -4950,7 +4973,8 @@ fn settle_material_upkeep(
             .copied()
             .unwrap_or(NOTHING_DEMANDED);
         claims.push((build_priority, wanted));
-        let settled = settle_scarce_store(&claims, stores.material_total(id.as_str()).to_f32());
+        let settled =
+            settle_scarce_material_store(&claims, stores.material_total(id.as_str()).to_f32());
         for (index, share) in upkeep.iter_mut().enumerate() {
             if settled[index] > NOTHING_DEMANDED {
                 share.settled.insert(id.clone(), settled[index]);
@@ -5156,6 +5180,47 @@ fn head_ring_leg(
     let width = pen.build_cost(RUNG_COST_UNSCALED)?;
     let owed = (width - herd.pen_extend_progress).max(NOTHING_DEMANDED);
     (owed > NOTHING_DEMANDED).then_some((pen.rung_id(), owed, width))
+}
+
+/// **THE GOODS A QUEUED BUILD STILL HAS TO DRAW, PER MATERIAL** - the entry's pile times the share of
+/// its climb left (`pile x owed / width` per leg, the same legs and draw the settlement uses), so a
+/// pen 64% built owes 36% of its hurdles. A source this cannot lay legs for (a road or a tile
+/// improvement, whose registries the capture does not hold) is quoted its whole pile - the honest
+/// over-estimate - and a job that eats nothing (`set_herd_output`) owes nothing.
+pub(crate) fn remaining_build_materials(
+    entry: &BuildQueueEntry,
+    forage_registry: &ForageRegistry,
+    registry: &HerdRegistry,
+    deposits: &crate::extraction::DepositRegistry,
+    ladder: &LadderConfig,
+) -> BTreeMap<String, f32> {
+    let legs = match &entry.declared {
+        BuildJob::Climb(rung) => {
+            let legs = head_build_legs(
+                &entry.source,
+                *rung,
+                forage_registry,
+                registry,
+                &crate::routes::RoadRegistry::default(),
+                &crate::tile_improvement::TileImprovementRegistry::default(),
+                deposits,
+                ladder,
+            );
+            if legs.is_empty() {
+                let def = ladder.rung(*rung);
+                return def
+                    .build_materials()
+                    .map(|(id, amount)| (id.to_string(), amount))
+                    .collect();
+            }
+            legs
+        }
+        BuildJob::ExtendPen => head_ring_leg(&entry.source, registry, ladder)
+            .into_iter()
+            .collect(),
+        BuildJob::SetHerdOutput(_) => Vec::new(),
+    };
+    build_material_wants(&legs, f32::INFINITY, ladder)
 }
 
 fn build_material_wants(

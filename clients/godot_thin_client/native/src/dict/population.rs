@@ -1666,6 +1666,10 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
             let _ = row.insert("upcoming_count", suggestion.upcomingCount() as i64);
             let _ = row.insert("expires_in_turns", suggestion.expiresInTurns() as f64);
             let _ = row.insert("lead_turns", suggestion.leadTurns() as i64);
+            // What to CALL it ("Hurdles") and, for a build-material suggestion, why ("for Corral
+            // Wild Boar"); `reason` is `""` for a kit suggestion, whose reason is its workers.
+            let _ = row.insert("display_name", suggestion.displayName().unwrap_or(""));
+            let _ = row.insert("reason", suggestion.reason().unwrap_or(""));
             let mut sources = VarArray::new();
             if let Some(list) = suggestion.sources() {
                 for source in list.iter() {
@@ -1795,6 +1799,9 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
             // The Make/Queue button's gate: every craft the recipe needs is known. Materials and
             // tools do not gate it — `available` is "a pass can run now".
             let _ = row.insert("queueable", offer.queueable());
+            // The material id a stock recipe makes (`hurdles`), `""` for equipment - the join key
+            // onto a craft suggestion whose `item_id` names a material.
+            let _ = row.insert("output_material_id", offer.outputMaterialId().unwrap_or(""));
             craft_offers.push(&row.to_variant());
         }
     }

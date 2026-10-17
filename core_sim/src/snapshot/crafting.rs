@@ -824,7 +824,11 @@ pub(crate) fn suggestion_shortfalls(
     for suggestion in suggestions {
         let Some(recipe) = offers
             .iter()
-            .find(|offer| offer.suggested && offer.output_item_id == suggestion.item_id)
+            .find(|offer| {
+                offer.suggested
+                    && (offer.output_item_id == suggestion.item_id
+                        || offer.output_material_id == suggestion.item_id)
+            })
             .and_then(|offer| inputs.recipes.recipe(&offer.recipe_id))
         else {
             continue;
@@ -933,6 +937,8 @@ pub(crate) fn craft_suggestion_states(
             upcoming_count: suggestion.upcoming_count,
             expires_in_turns: suggestion.expires_in_turns,
             lead_turns: suggestion.lead_turns,
+            display_name: suggestion.display_name,
+            reason: suggestion.reason,
             sources: suggestion
                 .sources
                 .into_iter()
@@ -1092,6 +1098,13 @@ fn craft_offer(
         display_name: plan.row_name.clone(),
         group: plan.group.to_string(),
         output_item_id: plan.output_item.unwrap_or_default().to_string(),
+        // The stock material a recipe with no equipment output makes - the join key a build-material
+        // suggestion ("Hurdles") reads its recipe through.
+        output_material_id: if plan.output_item.is_some() {
+            String::new()
+        } else {
+            plan.recipe.row_key().unwrap_or_default().to_string()
+        },
         available,
         reason,
         severity: severity.to_string(),

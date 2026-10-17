@@ -17,7 +17,7 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 328
+const EXPECTED_CHECKPOINTS := 336
 
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 
@@ -3566,6 +3566,7 @@ func _recipe_states() -> void:
 	await _make_is_live_when_any_recipe_is()
 	await _assert_a_single_recipe_bench_names_no_recipe()
 	await _assert_one_row_per_material_made()
+	await _material_suggestion_state()
 	h._hud.close_crafting_panel()
 	await h._settle()
 
@@ -3821,6 +3822,55 @@ func _assert_one_row_per_material_made() -> void:
 		_craft_knowledge())
 	h._hud.update_band_alerts([_crafting_band()])
 
+## **A MAKE-NEXT ENTRY THAT NAMES A MATERIAL** — a queued Pen short of hurdles. The suggestion's `item_id` is
+## the bare material id while its ledger row is keyed `material:hurdles`, so the join found nothing: Queue was
+## dead, the name was the raw id and the reason read `0 builders without`. Joined now (through the offer's
+## published `output_material_id`), the row is named by the material's title, states GOODS (`2.1 more
+## Hurdles, for the top job`), and its Queue sends the recipe the Materials row sends.
+const HURDLES_MISSING := 2.1
+const HURDLES_COUNT := 6
+
+func _material_suggestion_state() -> void:
+	var recipes := _recipes()
+	recipes.append(_stock_recipe(HURDLES_WOOD_RECIPE, HURDLES_WOOD_LABEL, [["wood", 4.0, ""],
+		["hide", 2.0, ""]]))
+	h._hud.update_crafting_catalogues(_materials(), _characteristic_bands(), recipes, _craft_knowledge())
+	var band := _crafting_band()
+	var offers: Array = band["craft_offers"]
+	offers.append(_offer(HURDLES_WOOD_RECIPE, HURDLES_NAME, HudCraftingVocab.GROUP_STOCK, "", true,
+		"Hide, no tanning frame", HudCraftingVocab.SEVERITY_NEUTRAL, [], false,
+		{"output_material_id": HURDLES_MATERIAL}))
+	band["craft_suggestions"] = [_suggestion(HURDLES_MATERIAL, HURDLES_COUNT, 0.0, 0.0, [
+		_source(HudCraftingVocab.SOURCE_KIND_POOL, "builders", 0, 0, "", "", HURDLES_MISSING, 0.0, 0.0)])]
+	h._hud.update_band_alerts([band])
+	h._hud.open_crafting_panel(band)
+	await h._settle()
+	var panel: CraftingPanel = h._hud.crafting_panel().panel()
+	if panel == null:
+		h._assert_hud("crafting/material suggestion — the panel opens", false)
+		return
+	var button := _suggestion_queue_button(panel, HURDLES_MATERIAL)
+	h._assert_hud("crafting/material suggestion — a material's Queue is LIVE",
+		button != null and not button.disabled)
+	var row := _auto_meta_value_node(panel, HudCraftingVocab.SUGGESTION_META, HURDLES_MATERIAL)
+	var texts: Array = [] if row == null else _label_texts(row)
+	var said := " | ".join(texts)
+	h._assert_hud("crafting/material suggestion — named by its title, not the raw id (%s)" % said,
+		said.begins_with("Hurdles ×%d" % HURDLES_COUNT))
+	h._assert_hud("crafting/material suggestion — the reason states goods, never `builders without` (%s)" % said,
+		said.contains("2.1 more Hurdles, for the top job") and not said.contains("without"))
+	var sent: Array = []
+	if button != null:
+		panel.enqueue_requested.connect(func(recipe_id: String, count: int) -> void:
+			sent.append([recipe_id, count]))
+		button.pressed.emit()
+	h._assert_hud("crafting/material suggestion — Queue sends the material's recipe and the whole count (%s)"
+			% str(sent),
+		sent == [[HURDLES_WOOD_RECIPE, HURDLES_COUNT]])
+	await h._save("crafting_material_suggestion")
+	h._hud.update_crafting_catalogues(_materials(), _characteristic_bands(), _recipes(), _craft_knowledge())
+	h._hud.update_band_alerts([_crafting_band()])
+
 ## A material recipe: its output is `material_id`, which is what the ledger keys its row by.
 func _stock_recipe(id: String, label: String, inputs: Array) -> Dictionary:
 	var rows: Array = []
@@ -4036,6 +4086,13 @@ func _kit_order_states() -> void:
 	# --- (1) THE LEDGER'S KITS GROUP
 	_assert_the_kits_group_reads(panel)
 	await h._save("crafting_kits_ledger")
+
+	# --- (1b) A KIT THE SIM SETTLED SHORT IS NOT `All N workers equipped`
+	await _settled_short_kit_state(band)
+	h._hud.update_band_alerts([band])
+	h._hud.open_crafting_panel(band)
+	await h._settle()
+	panel = h._hud.crafting_panel().panel()
 
 	# --- (2) THE PICKER at its default of ONE kit — nothing short, Start live
 	await _press_control(_by_meta(panel, HudCraftingVocab.KIT_MAKE_BUTTON_META, KIT_STALKING) as Control)
@@ -4336,6 +4393,41 @@ func _kit_band() -> Dictionary:
 		{"material_id": "bone", "amount": 3.1}, {"material_id": "wood", "amount": 14.0},
 		{"material_id": "stone", "amount": 6.0}]
 	return band
+
+## **THE HURDLING KIT, 8 CROOKS HELD, THE BUILDERS SETTLED AT 5 OF 6.** Reported from play: the ledger said
+## `6 of 6 equipped` / `All 6 workers equipped` while the queue head said the builders were short of crooks.
+## Both were reading the wire — the ledger the band's held count, the head the settlement — and the
+## settlement is the authority: keeping is served before building, so the herd's keepers took three of the
+## eight first. The ledger now caps a served pool's short line (`pool_toe`) onto the held count.
+const HURDLING_KIT := "hurdling"
+const HURDLING_CROOKS_HELD := 8
+const HURDLING_BUILDERS := 6
+const HURDLING_CROOKS_SETTLED := 5
+
+func _settled_short_kit_state(base_band: Dictionary) -> void:
+	var band := base_band.duplicate(true)
+	var needs: Array = band["kit_needs"]
+	needs.append(_need(HURDLING_KIT, "Hurdling kit", ["builders", "husbandry"], HURDLING_BUILDERS, [
+		_need_item("crook", 1, HURDLING_CROOKS_HELD, 0, [
+			_need_recipe("crook", 1.0, [["bone", 1.0], ["fibre", 2.0]])])]))
+	band["kit_needs"] = needs
+	band["pool_toe"] = [{"pool": "builders", "item_id": "crook",
+		"required": float(HURDLING_BUILDERS), "filled": float(HURDLING_CROOKS_SETTLED)}]
+	h._hud.update_band_alerts([band])
+	h._hud.open_crafting_panel(band)
+	await h._settle()
+	var panel: CraftingPanel = h._hud.crafting_panel().panel()
+	if panel == null:
+		h._assert_hud("crafting/kits — the hurdling band's panel opens", false)
+		return
+	var owned := _owned_of(panel, HURDLING_KIT)
+	h._assert_hud("crafting/kits — a kit the settlement left 5 of 6 reads \"5 of 6\", not all equipped (%s)" % [owned],
+		owned.begins_with("%d of %d" % [HURDLING_CROOKS_SETTLED, HURDLING_BUILDERS]))
+	var texts := _label_texts(panel)
+	var said := " | ".join(texts)
+	h._assert_hud("crafting/kits — …and the row says one worker is without crook (%s)" % [said],
+		said.contains("1 worker without crook") and not said.contains("All 6 workers equipped"))
+	await h._save("crafting_kit_settled_short")
 
 func _kit_needs() -> Array:
 	return [

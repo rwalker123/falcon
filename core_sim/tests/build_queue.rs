@@ -2938,6 +2938,256 @@ fn an_empty_store_stalls_a_paving_and_a_part_store_stalls_it_proportionally() {
     );
 }
 
+/// ⛔ **A STORE HOLDING DUST IS EMPTY, SO A HEAD THAT NEEDS ITS GOODS PUBLISHES "NO MATERIALS", NOT A
+/// DATE MILLIONS OF TURNS OUT.** A fixed-point store can be left one micro-unit (`0.000001`) by an
+/// earlier debit; read as stock it paid the head a sliver, coverage became `1e-6 / wanted` and the
+/// countdown `ceil(remaining / (work × 1e-6 …))` - 2,101,109 turns on a live pen. The settlement
+/// treats a holding or a payment under `MATERIAL_DUST_UNITS` as nothing, so coverage is exactly zero
+/// and the quote is `Blocked` for `materials`.
+///
+/// **Three arms**: dust blocks; a real (above-dust) sliver still publishes a finite date, which is
+/// what stops "everything blocks" from passing; and a debit that would leave dust takes it whole.
+#[test]
+fn a_store_holding_dust_blocks_a_head_for_materials_instead_of_publishing_a_huge_date() {
+    use core_sim::{BuildGate, BuildTurns};
+    /// One micro-unit - the residue the live store carried.
+    const DUST: f32 = 0.000_001;
+    /// A sliver well above the dust line: a real, if poor, store.
+    const A_SLIVER: f32 = 0.01;
+
+    let countdown = |stock: f32| {
+        let (mut app, band, sources) = world_with_a_queue(ONE_SOURCE, BUILDERS);
+        let road_tile = sources[0];
+        pave_a_road(&mut app, road_tile);
+        queue_a_pave(&mut app, band, road_tile);
+        stock_road_material(&mut app, band, stock);
+        resolve_a_turn_with_roads(&mut app);
+        let road = app
+            .world
+            .resource::<core_sim::RoadRegistry>()
+            .road(road_tile)
+            .expect("the fixture road survives")
+            .clone();
+        (road.build_turns_remaining, road.build_blocked_reason)
+    };
+
+    let (dusty, why) = countdown(DUST);
+    assert_eq!(
+        dusty,
+        Some(BuildTurns::Blocked),
+        "a store holding one micro-unit is empty: the head must publish Blocked, not {dusty:?}"
+    );
+    assert_eq!(
+        why,
+        BuildGate::Materials,
+        "and it must say it is the materials"
+    );
+
+    let (poor, _) = countdown(A_SLIVER);
+    assert!(
+        matches!(poor, Some(BuildTurns::Turns(_))),
+        "**LIVENESS**: a real sliver above the dust line still publishes a date ({poor:?}), or the \
+         dust arm above would pass on a build that blocks everything"
+    );
+}
+
+/// ⛔ **EVERY ENTRY BEHIND A MATERIALS-BLOCKED HEAD PUBLISHES THE SAME BLOCK - NOT A DATE INHERITED
+/// FROM THE HEAD'S.** The existing contract (`publish_build_chain`'s `carried`): a blocked head
+/// propagates, because nothing behind a head that never finishes finishes either. Live, a road behind
+/// a stalled pen read 2,101,139 turns - the head's own absurd date plus its own span - because the
+/// head was not Blocked in the first place (dust coverage). With the head Blocked the patch queued
+/// behind a pen ring on a dust-stocked band publishes the wire's blocked sentinel too, with the
+/// head's cause.
+#[test]
+fn a_materials_blocked_head_blocks_everything_queued_behind_it() {
+    use core_sim::{BuildGate, BuildTurns};
+    /// One micro-unit of the pen's material - the residue the live store carried.
+    const DUST: f32 = 0.000_001;
+
+    let (mut app, band, herd_id, source) = world_with_a_ring_at_the_head(BUILDERS);
+    // The fixture stocks the pen's panels; replace the shelf with dust of the same batch.
+    {
+        let ample = pen_materials_support::stocked_with_pen_materials();
+        let mut cohort = app
+            .world
+            .get_mut::<PopulationCohort>(band)
+            .expect("the fixture band");
+        cohort.stores = LocalStore::new();
+        for (id, batches) in ample.materials() {
+            for (key, batch) in batches {
+                cohort.stores.deposit_material(
+                    id,
+                    key.clone(),
+                    scalar_from_f32(DUST),
+                    &batch.characteristics,
+                );
+            }
+        }
+    }
+    resolve_a_pen_turn(&mut app);
+
+    assert_eq!(
+        published_ring_turns(&app, &herd_id),
+        sim_schema::BUILD_QUEUE_BLOCKED,
+        "the ring at the head, with only dust to eat, publishes the blocked sentinel"
+    );
+    let behind = app
+        .world
+        .resource::<core_sim::ForageRegistry>()
+        .patch(source)
+        .expect("the fixture patch")
+        .clone();
+    assert_eq!(
+        behind.build_turns_remaining,
+        Some(BuildTurns::Blocked),
+        "the entry behind a blocked head is blocked too, not dated off it"
+    );
+    assert_eq!(
+        behind.build_blocked_reason,
+        BuildGate::Materials,
+        "and it carries the head's cause"
+    );
+}
+
+/// **THE WORDS A PUBLISHED SUGGESTION CARRIES**: `(display_name, reason)`.
+fn published_suggestion_words(app: &App, band: Entity, item: &str) -> Option<(String, String)> {
+    use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
+
+    let snapshot = app
+        .world
+        .resource::<SnapshotHistory>()
+        .latest_entry()
+        .expect("a snapshot was captured")
+        .snapshot;
+    let bytes = sim_schema::encode_snapshot_flatbuffer(snapshot.as_ref());
+    let envelope = fb::root_as_envelope(bytes.as_ref()).expect("a valid envelope");
+    let cohort = envelope
+        .payload_as_snapshot()
+        .expect("a snapshot")
+        .population()
+        .and_then(|section| section.populations())
+        .expect("the cohort list")
+        .iter()
+        .find(|cohort| cohort.entity() == band.to_bits())
+        .expect("the band is on the wire");
+    cohort
+        .craftSuggestions()?
+        .iter()
+        .find(|row| row.itemId() == Some(item))
+        .map(|row| {
+            (
+                row.displayName().unwrap_or_default().to_string(),
+                row.reason().unwrap_or_default().to_string(),
+            )
+        })
+}
+
+/// ⛔ **"MAKE NEXT" NAMES THE GOODS A QUEUED BUILD IS SHORT OF, BY NAME, FOR THE JOB, FOR WHAT IS
+/// STILL OWED.** A pen ring at the head eats hurdles as its work goes in. A band holding none (or
+/// only dust) is stalled on them, and the panel's list used to name kit items only. The suggestion
+/// states its own words (`displayName` "Hurdles", `reason` "for Extend pen ..."), a count of the
+/// recipe's passes covering **what is still to draw** - a ring 64% built owes 36% of the pile, not
+/// all of it - and the head's line is a `build_queue` source at position 0 so the job can be named.
+/// A stocked band is suggested nothing: the liveness half.
+#[test]
+fn make_next_names_the_hurdles_a_queued_pen_build_is_still_short_of() {
+    const HURDLES: &str = "hurdles";
+    /// One micro-unit of hurdles - dust, i.e. nothing.
+    const DUST: f32 = 0.000_001;
+    /// How far through the ring the fixture is.
+    const BUILT: f32 = 0.64;
+
+    let suggested = |stock: Option<f32>| {
+        let (mut app, band, herd_id, _source) = world_with_a_ring_at_the_head(BUILDERS);
+        {
+            let width = pen_ring_work_cost();
+            let mut registry = app.world.resource_mut::<core_sim::HerdRegistry>();
+            let herd = registry
+                .herds
+                .iter_mut()
+                .find(|herd| herd.id == herd_id)
+                .expect("the fixture pen");
+            herd.pen_extend_progress = BUILT * width;
+        }
+        if let Some(units) = stock {
+            let ample = pen_materials_support::stocked_with_pen_materials();
+            let mut cohort = app
+                .world
+                .get_mut::<PopulationCohort>(band)
+                .expect("the fixture band");
+            cohort.stores = LocalStore::new();
+            for (id, batches) in ample.materials() {
+                for (key, batch) in batches {
+                    cohort.stores.deposit_material(
+                        id,
+                        key.clone(),
+                        scalar_from_f32(units),
+                        &batch.characteristics,
+                    );
+                }
+            }
+        }
+        resolve_a_pen_turn(&mut app);
+        (
+            published_suggestion(&app, band, HURDLES),
+            published_suggestion_words(&app, band, HURDLES),
+        )
+    };
+
+    let pile: f32 = core_sim::LadderConfig::builtin()
+        .rung(shipped::animal_pen())
+        .build_materials()
+        .map(|(_, amount)| amount)
+        .sum();
+    let owed = pile * (1.0 - BUILT);
+    let (found, words) = suggested(Some(DUST));
+    let (count, lines) = found.expect("a dust-stocked band is told to make hurdles");
+    assert_eq!(
+        count,
+        owed.ceil() as u32,
+        "the count is the passes covering what is still to draw ({owed}), not the whole pile {pile}"
+    );
+    assert!(
+        lines
+            .iter()
+            .any(|line| line.0 == "build_queue" && line.2 == 0),
+        "the head's shortage is a build_queue line at position 0, so its job can be named: {lines:?}"
+    );
+    let (name, reason) = words.expect("the words ride the same row");
+    assert_eq!(name, "Hurdles", "the material's title, never the raw id");
+    assert!(
+        reason.starts_with("for "),
+        "the reason names the job it feeds: {reason:?}"
+    );
+    assert!(
+        suggested(None).0.is_none(),
+        "**LIVENESS**: the ample shelf the fixture stocks needs no hurdles, so nothing is suggested"
+    );
+}
+
+/// A debit that would leave a batch under the dust line takes it whole: the store never carries the
+/// residue in the first place.
+#[test]
+fn a_debit_that_would_leave_dust_takes_the_batch_whole() {
+    let materials = core_sim::MaterialsConfig::builtin();
+    let characteristics = opening_readings(&materials, ROAD_MATERIAL);
+    let key = materials
+        .band_key(ROAD_MATERIAL, &characteristics)
+        .expect("the shipped roster rates the paving material");
+    let mut store = LocalStore::new();
+    store.deposit_material(ROAD_MATERIAL, key, scalar_from_f32(1.0), &characteristics);
+    // Leave one micro-unit behind.
+    store.take_material_batches(
+        ROAD_MATERIAL,
+        scalar_from_f32(1.0) - scalar_from_f32(0.000_001),
+    );
+    assert_eq!(
+        store.material_total(ROAD_MATERIAL),
+        scalar_from_f32(0.0),
+        "a one-micro-unit residue is dust and is not kept"
+    );
+}
+
 /// ⛔ **A ROAD AT THE HEAD OF THE QUEUE MUST NOT BLOCK EVERYTHING BEHIND IT.**
 ///
 /// `publish_build_chain` mints [`BuildTurns::Blocked`] for a staffed head that recorded no

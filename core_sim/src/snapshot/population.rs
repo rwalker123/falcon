@@ -2349,23 +2349,82 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
                 kit_levers.config,
                 sending_pass.as_ref(),
             );
-            let mut states = crate::snapshot::crafting::craft_suggestion_states(
-                crate::craft_suggestions::band_suggestions(
+            let mut suggestions = crate::craft_suggestions::band_suggestions(
+                alloc,
+                take_rows,
+                hunt_turn_lines.as_deref(),
+                bench,
+                crate::craft_suggestions::SuggestionConfigs {
+                    recipes: craft_inputs.recipes,
+                    equipment: craft_inputs.equipment,
+                },
+                &kit,
+                Some(crate::craft_suggestions::ForecastInputs {
+                    offers: &craft_offers,
+                    materials: craft_inputs.materials,
+                }),
+            );
+            // **A QUEUED BUILD SHORT OF THE GOODS IT DRAWS** (hurdles for a pen) is something to make
+            // next too, ranked with the build-queue shortages.
+            crate::craft_suggestions::merge_build_material_suggestions(
+                &mut suggestions,
+                crate::craft_suggestions::build_material_suggestions(
                     alloc,
-                    take_rows,
-                    hunt_turn_lines.as_deref(),
+                    &cohort.stores,
+                    craft_inputs.recipes,
                     bench,
-                    crate::craft_suggestions::SuggestionConfigs {
-                        recipes: craft_inputs.recipes,
-                        equipment: craft_inputs.equipment,
+                    &crate::craft_suggestions::BuildPileView {
+                        remaining: &|entry| {
+                            crate::systems::remaining_build_materials(
+                                entry,
+                                claim_sources.forage,
+                                claim_sources.herds,
+                                claim_sources.deposits,
+                                claim_sources.ladder,
+                            )
+                        },
+                        label: &|entry| {
+                            let job = match &entry.declared {
+                                crate::components::BuildJob::Climb(rung) => claim_sources
+                                    .ladder
+                                    .rung(*rung)
+                                    .verb
+                                    .as_deref()
+                                    .map(crate::crafting::title_from_id)
+                                    .unwrap_or_default(),
+                                crate::components::BuildJob::ExtendPen => "Extend pen".to_string(),
+                                crate::components::BuildJob::SetHerdOutput(_) => {
+                                    "Set herd output".to_string()
+                                }
+                            };
+                            let target = match &entry.source {
+                                crate::components::BuildSource::Herd(id) => claim_sources
+                                    .herds
+                                    .find(id)
+                                    .map(|herd| herd.species.clone())
+                                    .unwrap_or_default(),
+                                crate::components::BuildSource::Patch(tile) => {
+                                    format!("({}, {})", tile.x, tile.y)
+                                }
+                                _ => String::new(),
+                            };
+                            format!("{job} {target}").trim().to_string()
+                        },
                     },
-                    &kit,
-                    Some(crate::craft_suggestions::ForecastInputs {
-                        offers: &craft_offers,
-                        materials: craft_inputs.materials,
-                    }),
                 ),
             );
+            // **WHAT EACH SUGGESTION IS CALLED**, resolved here so a client never shows a raw id: an
+            // item's own name, else the material's title.
+            for suggestion in &mut suggestions {
+                suggestion.display_name = match craft_inputs.equipment.item(&suggestion.item) {
+                    Some(_) => craft_inputs
+                        .equipment
+                        .item_display_name(&suggestion.item)
+                        .to_string(),
+                    None => crate::crafting::title_from_id(&suggestion.item),
+                };
+            }
+            let mut states = crate::snapshot::crafting::craft_suggestion_states(suggestions);
             // **What the whole count needs that the stock cannot cover**, off the same forecast the
             // bench's orders publish — a suggestion lands at the queue's end.
             crate::snapshot::crafting::suggestion_shortfalls(

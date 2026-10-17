@@ -1350,6 +1350,16 @@ already read `self.build.as_ref()` and every other reader was already borrowing.
   coverage is the one the settlement HANDED the entry**, never a fresh availability probe, and only
   the **head** has one: a waiting entry has bid on nothing, so it is quoted at `FULLY_SERVED` on the
   same convention that quotes it at the full pool.
+- **A STORE HOLDING DUST IS EMPTY** (`components::MATERIAL_DUST_UNITS`, `0.00001`). A material store is
+  fixed-point micro-units, and a debit rounded through `f32` can leave one micro-unit (`0.000001`)
+  that pooling then parks on a band. Read as stock it paid a head a sliver: coverage `1e-6 / wanted`
+  and a countdown of millions of turns (2,101,109 on a live pen) in place of "no hurdles". Two seams
+  close it: every `LocalStore` debit (`take_material`, `take_material_batches`, `take_material_batch`)
+  removes a batch it leaves under the line, and `settle_scarce_material_store` (the only entry to the
+  material settlement, upkeep and build alike) settles a holding or a payment under the line to
+  nothing, so the coverage is exactly zero and `BuildQuote::turns` / `blocking_gate` publish
+  `Blocked` / `materials`. A deposit is never swept: a rate below the line accumulates toward a whole
+  unit. Pinned by `build_queue::a_store_holding_dust_blocks_a_head_for_materials_instead_of_publishing_a_huge_date`.
 - **THE STORE IS SPLIT BY `settle_scarce_store`, AND `SourcePriority` IS THE ONLY ORDERING.** One pass
   per band per material id, before the assignment loop, with **both accounts bidding at once**: every
   source's upkeep rate and the head entry's pile — **the head's, whether it climbs a rung or widens a

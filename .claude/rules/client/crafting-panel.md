@@ -884,6 +884,26 @@ over four wire terms — `kit_needs[]` and `materials_free[]` on the cohort, `be
   each part has a `− made/count +` addressing it by its own order index, and no ↑ or ✕. The worked part
   is in the box as well as in the well.
 - **The well's title appends `· for <Kit>`** when the worked order belongs to a kit order.
+- **A kit row's `N of P equipped` is capped by the sim's settlement, where a served pool is short.** The
+  held count (`kit_needs[].items[].have`) against the people on the kit's jobs said `All 6 workers
+  equipped` on a band holding 8 crooks while the builders' `pool_toe` line read `required 6 / filled 5`:
+  keeping is served before building (`docs/plan_pool_toe.md` §2.2), so the herd's keepers had taken three
+  of the eight. For each job the kit names, a `pool_toe` line for the item that is short
+  (`HudWorkVocab.pool_toe_row_is_short`) caps the held count at `floor(filled)`
+  (`CraftingPanel._kit_item_settled_cap`), so the row reads `5 of 6 equipped` / `1 worker without crook`.
+  A kit whose pools are not short is unchanged. `kit_needs[].people` counts only the people assigned to the
+  kit's jobs, not the keeping hands of the sites that share its units; the settlement line is what states
+  the contention. Pinned by `crafting_bench` frame `crafting_kit_settled_short`.
+- **A Make Next entry can name a MATERIAL** (a queued build short of the goods it draws): its `item_id` is
+  the bare material id (`hurdles`) while its ledger row is keyed `material:hurdles`.
+  `CraftingPanel._row_in` falls back to the `material:` key after an item's own row, and
+  `_row_key_of` keys a stock offer by the published `output_material_id` before the recipe-book lookup.
+  Without the join the Queue button was dead (`ledger_row.is_empty()`), the name was the raw id and the
+  reason read kit wording. A material entry is named by the offer's `display_name` ("Hurdles"), states goods
+  (`2.1 more Hurdles, for the top job`, or the queue row's own label for a later build; the amount is the
+  sources' `missing_units` summed), its hover lines read `<who>: N short` with no crew count, and Queue sends
+  the material's recipe and the suggestion's whole count, as the Materials row's Make does. Pinned by
+  `crafting_bench` frame `crafting_material_suggestion`.
 
 ## Key scripts
 

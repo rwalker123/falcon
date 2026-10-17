@@ -3641,6 +3641,20 @@ const BUILD_QUEUE_ROW_TOOLS_LINE_META := "build_queue_row_tools_line"
 ## `_work_board_capacity` through their `head_tools_height`.
 const BUILD_QUEUE_ROW_TOOLS_LINE_HEIGHT := WORK_ROW_TWO_LINE_HEIGHT - WORK_ROW_HEIGHT
 
+## The widest the date column on a queue row's second line may ask for. The label is as wide as its text
+## up to this and ellipsises beyond it (the full text rides the row's tooltip), so no string the sim
+## publishes can widen the panel; the room left of it holds the `Build: Normal` mark.
+const BUILD_QUEUE_DATE_MAX_WIDTH := 120.0
+
+## **A QUEUE HEAD THE SHELF CANNOT FEED SAYS SO ON ITS OWN SECOND LINE**, in the player's words and
+## naming the good: `⚠ No hurdles — needs 2.1 more` while the shelf holds none of it, `⚠ Short of
+## hurdles — needs 1.1 more` while it holds some. It takes the slot the builders' `◆` clause uses and
+## wins it, because a build with no hurdles banks nothing whatever the tools are.
+const BUILD_QUEUE_MATERIAL_NONE_FORMAT := "%s No %s — needs %s more"
+const BUILD_QUEUE_MATERIAL_SHORT_FORMAT := "%s Short of %s — needs %s more"
+## The line's handle, carrying the drawn text — a harness finds the clause by meta, never by glyph.
+const BUILD_QUEUE_MATERIAL_LINE_META := "build_queue_row_material_line"
+
 ## …and the same fact on the head ROW's hover, as a sentence, beside the job's price and cause.
 const BUILD_QUEUE_HEAD_TOOLS_SHORT_TOOLTIP := "The builders are short of tools for this job — more tools would speed it up."
 ## …and NAMED: `The builders are short of hoes for this job — more hoes would speed it up.`

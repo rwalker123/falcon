@@ -4905,8 +4905,12 @@ func _build_build_queue_row(band: Dictionary, model: Dictionary, is_head: bool,
     # it — and, on a tool-short head whose strip is closed, the builders' `◆` after it. One height
     # for every row, so the block's reservation is `rows × BUILD_QUEUE_ROW_HEIGHT` with no fork.
     row.custom_minimum_size.y = HudWorkVocab.BUILD_QUEUE_ROW_HEIGHT
+    var material_short: Dictionary = model.get("build_material_short", {}) as Dictionary
+    if _build_queue_row_is_pending(model) \
+            or _build_queue_row_rank(model) != SourceForecast.BUILD_QUEUE_HEAD:
+        material_short = {}
     var second := _build_queue_row_second_line(band, model,
-        tools_short and String(model.get("key", "")) != _queue_open_key)
+        tools_short and String(model.get("key", "")) != _queue_open_key, material_short)
     body.add_child(second)
     line.add_child(_build_queue_row_marker(band, model, is_head))
     # **AND THE ROW IS THE DROP TARGET, where the marker alone is the grab** — a drop that only
@@ -4995,6 +4999,15 @@ func _build_build_queue_row(band: Dictionary, model: Dictionary, is_head: bool,
         HudStyle.WARN if pending else DetailFormat.rung_value_color(value))
     date.add_theme_font_size_override("font_size", HudWorkVocab.ALLOC_SECTION_FONT_SIZE)
     date.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    # **A LABEL'S TEXT IS ITS MINIMUM WIDTH unless it clips**, and this one states whatever the wire's date
+    # spells. It is as wide as its text up to `BUILD_QUEUE_DATE_MAX_WIDTH` and trims with an ellipsis beyond
+    # it; the full text is on the row's tooltip below.
+    date.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+    date.clip_text = true
+    var date_font := date.get_theme_default_font()
+    var date_natural := date_font.get_string_size(value, HORIZONTAL_ALIGNMENT_LEFT, -1,
+        HudWorkVocab.ALLOC_SECTION_FONT_SIZE).x
+    date.custom_minimum_size.x = minf(date_natural, HudWorkVocab.BUILD_QUEUE_DATE_MAX_WIDTH)
     second.add_child(date)
     second.move_child(date, QUEUE_SECOND_LINE_DATE_INDEX)
     if second.get_child_count() > QUEUE_SECOND_LINE_DATE_INDEX + 1:
@@ -5060,7 +5073,7 @@ func _build_build_queue_row(band: Dictionary, model: Dictionary, is_head: bool,
 const QUEUE_SECOND_LINE_DATE_INDEX := 1
 
 func _build_queue_row_second_line(band: Dictionary, model: Dictionary,
-        wears_tools: bool) -> HBoxContainer:
+        wears_tools: bool, material_short: Dictionary = {}) -> HBoxContainer:
     var line := HBoxContainer.new()
     line.add_theme_constant_override("separation", HudWorkVocab.WORK_ROW_SEPARATION)
     line.custom_minimum_size = Vector2(0.0, HudWorkVocab.BUILD_QUEUE_ROW_TOOLS_LINE_HEIGHT)
@@ -5076,6 +5089,22 @@ func _build_queue_row_second_line(band: Dictionary, model: Dictionary,
         mark.set_meta(HudWorkVocab.BUILD_QUEUE_ROW_BUILD_MARK_META, HudWorkVocab.work_priority_of(level))
         mark.mouse_filter = Control.MOUSE_FILTER_IGNORE
         line.add_child(mark)
+    # **A SHELF THAT CANNOT FEED THE HEAD WINS THE LINE'S LAST SLOT** — a build with no hurdles banks
+    # nothing whatever the tools are, so the `◆` clause moves to the row's hover (it is already there).
+    # The slot trims rather than widening the line, as the tools clause does.
+    var material_text := DetailFormat.build_material_short_text(material_short)
+    if material_text != "":
+        if line.get_child_count() > 1:
+            var material_sep := HudWidgets.build_status_part(
+                HudWorkVocab.BUILD_QUEUE_DETAIL_SEPARATOR.strip_edges(), HudStyle.INK_DIM)
+            material_sep.mouse_filter = Control.MOUSE_FILTER_IGNORE
+            line.add_child(material_sep)
+        var material_label := HudWidgets.build_status_part(material_text, HudStyle.DANGER, true)
+        material_label.set_meta(HudWorkVocab.BUILD_QUEUE_MATERIAL_LINE_META, material_text)
+        material_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+        material_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+        line.add_child(material_label)
+        wears_tools = false
     if wears_tools:
         var text := HudWorkVocab.BUILD_QUEUE_ROW_TOOLS_SHORT_FORMAT % [HudWorkVocab.KIT_SHORT_MARK,
             HudWorkVocab.build_queue_tools_text(_builders_short_tool_names(band))]
@@ -5085,8 +5114,10 @@ func _build_queue_row_second_line(band: Dictionary, model: Dictionary,
             sep.mouse_filter = Control.MOUSE_FILTER_IGNORE
             line.add_child(sep)
         var label := HudWidgets.build_status_part(text,
-            HudWorkVocab.note_color(HudWorkVocab.KIT_SHORT_SEVERITY))
+            HudWorkVocab.note_color(HudWorkVocab.KIT_SHORT_SEVERITY), true)
         label.set_meta(HudWorkVocab.BUILD_QUEUE_ROW_TOOLS_LINE_META, text)
+        # It ends the line, so it takes what the date and mark leave and trims rather than widening it.
+        label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
         label.mouse_filter = Control.MOUSE_FILTER_IGNORE
         line.add_child(label)
     return line
@@ -7866,6 +7897,19 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
             # sentence. **`DetailFormat.build_blocked_lines` is that producer for BOTH surfaces** —
             # two copies of a refusal is how the card and the queue come to disagree — and the indent
             # is dropped because a tooltip hangs beneath no rung row.
+            # **WHAT THE SHELF LACKS OF THE PILE THIS BUILD STILL DRAWS** — the queue row's own clause,
+            # which the sim's `materials` cause cannot be: that key rides `-4` and fires only on an
+            # EMPTY shelf. A pen ring weighs the pen rung's own pile at the ring's own meter.
+            "build_material_short": DetailFormat.build_material_shortfall(
+                SourceForecast.corral_build_material_cost(rung_source,
+                    HudComposeVocab.BARE_FORECAST_PREFIX) \
+                    if improvement == SourceForecast.BUILD_JOB_EXTEND_PEN \
+                    else SourceForecast.build_material_cost(rung_source,
+                        HudComposeVocab.BARE_FORECAST_PREFIX),
+                DetailFormat.band_material_stock(band),
+                SourceForecast.pen_extend_fraction(live_herd) \
+                    if improvement == SourceForecast.BUILD_JOB_EXTEND_PEN \
+                    else float(building.get("progress", 0.0))),
             "build_blocked_lines": DetailFormat.build_blocked_lines(
                 rung_source, HudComposeVocab.BARE_FORECAST_PREFIX,
                 SourceForecast.source_kind_for_labor(kind),

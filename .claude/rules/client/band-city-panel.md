@@ -3589,7 +3589,30 @@ percentage in one string. The fixture's pair (30 of 40 work → 75%) deliberatel
 drawer's (42 of 70 → 60%), so a row quoting the wrong ring fails on the number rather than coinciding
 with it.
 
-### A ROW EXPANDS INTO THE JOB'S SETTINGS, AND THE ROW ITSELF TAKES NO SIXTH COLUMN (§4.7a ③)
+**A queue row's second line cannot widen the panel.** A Label with no clip reports its full text width
+as its minimum, so the date label (`BUILD_QUEUE_DATE_META`) once carried a corrupt `turn 2101264`
+countdown into the zone's width and cut the panel off. It now trims with an ellipsis, its minimum width
+is the text's own up to `HudWorkVocab.BUILD_QUEUE_DATE_MAX_WIDTH` (120px), and the full text is on the
+row's tooltip. The `◆ builders short of tools` label beside it is `build_status_part(..., elide=true)`
+with `SIZE_EXPAND_FILL`, so it takes the line's remainder and trims. `band_panel_preview` re-draws the
+ring row at `ABSURD_QUEUE_TURN` (`band_panel_queue_long_date`) and asserts the summed zone-host width
+is unchanged, the date column is at its cap, and the tooltip holds the full text.
+
+**A queue head the shelf cannot feed names the good on its second line.** The sim's `materials`
+cause rides `-4` and fires only on a shelf covering nothing, so a partly-stocked shelf (which stalls the
+build in proportion) and a frame the cause has not reached both read as a plain date. The head row
+therefore compares two things the wire already states: the rung's pile (`SourceForecast.build_material_cost`,
+or `corral_build_material_cost` for a pen ring) against the band's `material_store`, at what is still to be
+drawn, `pile × (1 − meter)` (`DetailFormat.build_material_shortfall`, the good with the largest uncovered
+share, never a sum). The clause is `⚠ No hurdles — needs 2.1 more` while none is held and `⚠ Short of
+hurdles — needs 1.1 more` while some is, in `HudStyle.DANGER` (a missing good is red, a missing hand amber),
+and it takes the line's last slot from the builders' `◆` clause, which stays on the row's hover. The
+hover adds nothing for it; the sim's own cause line is there where the cause arrives. Head only: entries behind the head claim nothing. A road's or a working's pile is not read here (a
+road's shortfall is the sim's own `buildMaterialDemand` / `buildMaterialSupplied` pair). Pinned by
+`band_panel_preview._assert_queue_head_says_what_the_shelf_lacks` (`band_panel_queue_no_hurdles`,
+`band_panel_queue_short_hurdles`; shelves of none, some and enough, plus the live pen's 6 hurdles at 65%).
+
+### A ROW EXPANDS INTO THE JOB'S SETTINGS### A ROW EXPANDS INTO THE JOB'S SETTINGS, AND THE ROW ITSELF TAKES NO SIXTH COLUMN (§4.7a ③)
 
 The crop moved off the compose sheet — *"the CROP TO TEND shouldn't be a selection here as the user can't
 do the cultivate here"* — and its first home was a sixth column on this row. **At the narrow shell's

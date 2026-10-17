@@ -2421,6 +2421,61 @@ static func build_blocked_lines(src: Dictionary, prefix: String, kind: String,
         predator_display_name(src, prefix, world_herds))])
     return lines
 
+## **THE BAND'S SHELF AS `{material_id: amount}`** — public twin of the private lookup, for a reader
+## that weighs a pile against what is held. One term per good; never a total.
+static func band_material_stock(band: Dictionary) -> Dictionary:
+    return _material_amounts(band.get(BAND_MATERIAL_STORE_KEY, []))
+
+## The keys `build_material_shortfall` answers with.
+const MATERIAL_SHORT_ID_KEY := "material_id"
+const MATERIAL_SHORT_HELD_KEY := "held"
+const MATERIAL_SHORT_MISSING_KEY := "missing"
+
+## **WHAT A BUILD STILL NEEDS IN GOODS THAT THE SHELF DOES NOT HOLD** — `{material_id, held, missing}` for
+## the good the shelf is shortest of, `{}` when the pile is covered or the rung eats nothing.
+##
+## **THE PILE IS DRAWN AS THE METER CLIMBS** (`snapshot.fbs` `buildMaterialCost`: the whole pile at full
+## coverage, work banked and goods drawn scaling together), so what is still to be drawn is
+## `pile × (1 − progress)`; a build at 65% needs 35% of its pile more. The shelf is weighed against that,
+## good by good, and the answer names the good with the largest uncovered share — never a summed figure.
+##
+## **IT DOES NOT WAIT FOR THE SIM'S `materials` CAUSE**: that key rides `-4` and only fires on a shelf
+## covering NOTHING, so a shelf with some of the good — which stalls the build in proportion — never
+## carries it. The pair compared here is two things the wire already states (the pile and the band's
+## `material_store`); the sim's own cause, where it arrives, goes through `build_blocked_lines`.
+static func build_material_shortfall(pile: Array[Dictionary], store: Dictionary,
+        progress: float) -> Dictionary:
+    var left := SourceForecast.BUILD_METER_FULL - clampf(progress, 0.0, SourceForecast.BUILD_METER_FULL)
+    var worst := {}
+    var worst_share := 1.0
+    for row in pile:
+        var id := String(row.get(SourceForecast.MATERIAL_PAYOFF_ID_KEY, ""))
+        var needed := float(row.get(SourceForecast.MATERIAL_PAYOFF_AMOUNT_KEY, 0.0)) * left
+        if id == "" or needed < SourceForecast.MATERIAL_FLOW_MIN:
+            continue
+        var held := float(store.get(id, 0.0))
+        var missing := needed - held
+        if missing < SourceForecast.MATERIAL_FLOW_MIN:
+            continue
+        var share := held / needed
+        if share < worst_share:
+            worst_share = share
+            worst = {MATERIAL_SHORT_ID_KEY: id, MATERIAL_SHORT_HELD_KEY: held,
+                MATERIAL_SHORT_MISSING_KEY: missing}
+    return worst
+
+## The queue row's clause for a shortfall, `""` for none.
+static func build_material_short_text(short: Dictionary) -> String:
+    if short.is_empty():
+        return ""
+    var amount := format_trimmed(float(short[MATERIAL_SHORT_MISSING_KEY]),
+        HudWorkVocab.RUNG_TRACK_MATERIAL_DECIMALS)
+    var id := String(short[MATERIAL_SHORT_ID_KEY])
+    var format := HudWorkVocab.BUILD_QUEUE_MATERIAL_NONE_FORMAT \
+        if float(short[MATERIAL_SHORT_HELD_KEY]) < SourceForecast.MATERIAL_FLOW_MIN \
+        else HudWorkVocab.BUILD_QUEUE_MATERIAL_SHORT_FORMAT
+    return format % [HudSelectionVocab.RUNG_HAZARD_GLYPH, id, amount]
+
 ## **THE PREDATOR THAT ATE THE GROWTH, IN THE PLAYER'S WORDS.** The wire names it by its fauna_config
 ## species KEY (`predator_eaten_by`, `"wolf"`) and the client holds no fauna roster, so the name comes
 ## from the vocabulary the herd cards already use: a visible herd of that species, whose own `species`

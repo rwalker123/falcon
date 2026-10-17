@@ -5093,6 +5093,12 @@ table CraftSuggestion {
   // covers the first loss, so this can be later than the unit in hand's life (a float: the rate is
   // an average). 0 with no forecast for the item. Only the coming-up entries are ordered by it.
   expiresInTurns:float = 0;
+  // What the suggestion is called ("Hurdles", "Spears"): an item's own display name or a material's
+  // title, resolved by the sim - the client never shows `itemId`. Appended last.
+  displayName:string;
+  // WHY it is suggested when that is not a kit going without: a build-material suggestion states the
+  // job it feeds, "for Corral Wild Boar". "" for a kit suggestion (its reason is `workersWithout`).
+  reason:string;
   // The bench's lead time for one more unit of the item, in whole turns (>= 1): the work already
   // queued ahead plus one unit, at the bench's crew (one crafter when unstaffed). It is the horizon
   // the forecast looks ahead by. 0 with no forecast for the item.
@@ -5221,6 +5227,9 @@ table CraftOffer {
   // skips a short order and `BenchOrder.shortToFinish` speaks for it. Distinct from `available`,
   // which says a pass can run NOW (drives the readouts and which recipe a row suggests).
   queueable:bool;
+  // The material id this recipe makes ("hurdles"), "" when it makes equipment - the join key onto a
+  // `CraftSuggestion.itemId` that names a stock material (a queued build short of the goods it draws).
+  outputMaterialId:string;
 }
 
 // ONE BATCH OF ONE ITEM a band owns, plus the CONFIG's items it owns none of (one row each, count 0)

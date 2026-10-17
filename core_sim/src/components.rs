@@ -665,6 +665,16 @@ impl FoodMix {
     }
 }
 
+/// **THE LEAST A MATERIAL BATCH MAY BE LEFT HOLDING AFTER A DEBIT** (units). A store is fixed-point
+/// micro-units, so a debit rounded through `f32` can leave one micro-unit (`0.000001`) behind, and the
+/// supply network's pooling then parks that residue on a band; the build settlement read it as
+/// "the store can pay a sliver", coverage became `1e-6 / wanted` and a head build published a date
+/// millions of turns out instead of "no hurdles". A debit that leaves a batch under this is taken
+/// whole, and `systems::labor::settle_scarce_material_store` treats a holding or a payment under it
+/// as nothing. Ten micro-units: above the rounding residue, far below any real yield (the smallest
+/// authored per-turn material rate is `0.0000455`, and a deposit is never swept).
+pub const MATERIAL_DUST_UNITS: f32 = 0.00001;
+
 /// A location-local store of goods held by a band (and, later, a populated tile or storage pit).
 /// Keyed by commodity so the supply network can balance *any* good; a `BTreeMap` keeps iteration
 /// deterministic for balancing and snapshotting. Quantities are fixed-point (`Scalar`) so small
@@ -884,6 +894,13 @@ impl LocalStore {
             .flat_map(|batches| batches.iter())
     }
 
+    /// **A batch a debit leaves under [`MATERIAL_DUST_UNITS`] is gone** - see the constant. Applied
+    /// to the batch a take just drew from and to nothing else, so a deposit that is still
+    /// accumulating toward a whole unit is never swept.
+    fn is_dust(amount: Scalar) -> bool {
+        amount <= scalar_zero() || amount < scalar_from_f32(MATERIAL_DUST_UNITS)
+    }
+
     /// **How much of `material` the store holds in total** — the sum over its batches, which is the
     /// shortfall readout's number. Never stored beside the batches: a cached total is a second
     /// statement of one fact.
@@ -971,7 +988,7 @@ impl LocalStore {
                 amount: taken,
                 characteristics: batch.characteristics.clone(),
             });
-            if batch.amount <= scalar_zero() {
+            if Self::is_dust(batch.amount) {
                 batches.remove(&key);
             }
         }
@@ -1057,7 +1074,7 @@ impl LocalStore {
                 amount: taken,
                 characteristics: batch.characteristics.clone(),
             });
-            if batch.amount <= scalar_zero() {
+            if Self::is_dust(batch.amount) {
                 batches.remove(&key);
             }
         }
@@ -1083,7 +1100,7 @@ impl LocalStore {
         };
         let taken = min(amount.max(scalar_zero()), batch.amount);
         batch.amount -= taken;
-        if batch.amount <= scalar_zero() {
+        if Self::is_dust(batch.amount) {
             batches.remove(band);
         }
         if batches.is_empty() {
