@@ -252,7 +252,12 @@ const YIELD_TOOLTIP_OVERDRAW := " — " + YIELD_OVERDRAW_WORD
 # **ITS RATES ARE `format_signed`, NOT `format_yield`.** The unit is carried by the WORDS on both
 # sides — *a turn on average*, *this turn* — so the `/turn` suffix would print `+1.96 /turn a turn on
 # average`, i.e. the same unit twice in four words.
-const YIELD_TOOLTIP_RATES_FORMAT := "%s a turn on average · %s this turn"
+## **THE HOVER'S YIELD LINE IS ONE LINE OF FACTS**: `+0.30/turn · sustainable +0.30`, the headline average
+## and the sustainable rate, with `· this turn +0.45` appended ONLY where the resolved take differs from
+## the average (compared as printed, so two figures that read alike never state a distinction).
+const YIELD_TOOLTIP_RATE_FORMAT := "%s/turn"
+const YIELD_TOOLTIP_SUSTAINABLE_FORMAT := " · sustainable %s"
+const YIELD_TOOLTIP_THIS_TURN_FORMAT := " · this turn %s"
 # Overstaffing (wasted labor) — DISTINCT from the ⚠ overdraw flag. Every policy caps a source's take at
 # its ceiling (policy ceiling / resource biomass), so past `workers_needed` extra workers produce
 # nothing HERE and should move elsewhere. A source can be overstaffed while perfectly sustainable (and
@@ -267,7 +272,6 @@ const YIELD_TOOLTIP_RATES_FORMAT := "%s a turn on average · %s this turn"
 # escapement floor two gatherers carry the whole regrowth and the third brings nothing home. Nothing
 # on either side of it reads a build crew (`systems::labor`: *"both about the TAKE activity alone"*).
 const OVERSTAFF_NOTE_FORMAT := " · only %d of %d bring anything home"
-const OVERSTAFF_TOOLTIP := "Overstaffed — this source's yield is capped by the stock standing above its escapement floor; the extra workers produce nothing here. Reassign them to another source."
 # Joins the yield readout and the overstaffing explanation into one row tooltip.
 const TOOLTIP_LINE_SEPARATOR := "\n"
 # Band food flow gate: a rate below this reads as absent rather than as a zero. A claim about the
@@ -5835,7 +5839,13 @@ static func expected_yield_account(forecast: Dictionary, workers: int, band: Dic
 ## hunt row and a working is the take this crew RAN, inverted — never more than the crew — so it could
 ## call a crew overstaffed whom the `+` beside it still offered a hand to. A defaulted argument would
 ## put that second number back silently.
-static func source_yield_readout(m: Dictionary, kind: String, overstaff_ceiling: int) -> Dictionary:
+## The overstaffed hover line, one fact: the hands past the ceiling and the row's own crew noun
+## (`⚠ Overstaffed: 5 of 6 herders add nothing`).
+const OVERSTAFF_HOVER_FORMAT := "⚠ Overstaffed: %d of %d %s add nothing"
+const OVERSTAFF_DEFAULT_NOUN := "workers"
+
+static func source_yield_readout(m: Dictionary, kind: String, overstaff_ceiling: int,
+        crew_noun: String = OVERSTAFF_DEFAULT_NOUN) -> Dictionary:
     var label_suffix := ""
     var warn := false
     var tooltip := ""
@@ -5889,7 +5899,7 @@ static func source_yield_readout(m: Dictionary, kind: String, overstaff_ceiling:
         # exactly the string it always did — `states_food` is true for every `forage` and `hunt` row —
         # and on a working it composes nothing, leaving the material clause below as the whole hover.
         if states_food:
-            tooltip = YIELD_TOOLTIP_RATES_FORMAT % [format_signed(rate), format_signed(actual)]
+            tooltip = YIELD_TOOLTIP_RATE_FORMAT % format_signed(rate)
             # **THE ACTUAL IS AN EXPECTATION NOW, AND ITS BAND RIDES BESIDE IT** (§6.4). The headline
             # stays the expectation — that is what `forecast == actual` is restated on — and the band
             # QUALIFIES it rather than replacing it. `""` where the distribution is degenerate, which
@@ -5899,9 +5909,11 @@ static func source_yield_readout(m: Dictionary, kind: String, overstaff_ceiling:
             if renewable:
                 tooltip += YIELD_TOOLTIP_RENEWABLE
             else:
-                tooltip += " · Sustainable %s" % format_yield(sustainable)
+                tooltip += YIELD_TOOLTIP_SUSTAINABLE_FORMAT % format_signed(sustainable)
                 if warn:
                     tooltip += YIELD_TOOLTIP_OVERDRAW
+            if format_signed(actual) != format_signed(rate):
+                tooltip += YIELD_TOOLTIP_THIS_TURN_FORMAT % format_signed(actual)
         # THE SECOND PRODUCT (issue #449), under the SAME render-only-when-non-zero gate: a sown hay
         # Field pays no provisions, so without this its row headlined `+0.00 /turn` while it fed the
         # band's pens every turn. The word rather than a glyph — fodder has none, the reason
@@ -5946,8 +5958,9 @@ static func source_yield_readout(m: Dictionary, kind: String, overstaff_ceiling:
     var workers := int(m.get("workers", 0))
     if crew_is_wasted(workers, overstaff_ceiling):
         note = OVERSTAFF_NOTE_FORMAT % [overstaff_ceiling, workers]
-        tooltip = OVERSTAFF_TOOLTIP if tooltip == "" \
-            else tooltip + TOOLTIP_LINE_SEPARATOR + OVERSTAFF_TOOLTIP
+        var overstaff_line := OVERSTAFF_HOVER_FORMAT % [workers - overstaff_ceiling, workers, crew_noun]
+        tooltip = overstaff_line if tooltip == "" \
+            else tooltip + TOOLTIP_LINE_SEPARATOR + overstaff_line
     # There is no understaffing ("wasted") note: a hunt or pen kill is kept WHOLE (landed in the larder
     # or ferried home), so a herd's `wasted_yield` is always 0, and on a patch the same wire field is
     # stock the crew did not reach — still standing and regrowing, nothing owed — so no row states it.

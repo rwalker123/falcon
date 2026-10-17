@@ -7453,7 +7453,14 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
         # `hunt_useful_workers`, so a crew the `+` allowed could read overstaffed.
         var published_ceiling := SourceForecast.worked_row_published_ceiling(kind, m,
             patch if kind == SourceForecast.LABOR_KIND_FORAGE else live_herd)
-        var yld := SourceForecast.source_yield_readout(m, kind, published_ceiling)
+        # The row's own worker noun for the overstaffed hover line, through the same fork the inspector's
+        # take key makes (herders on a managed hunt source, hunters on a wild one, harvesters on a patch).
+        var row_crew_noun := (HudComposeVocab.HARVEST_CREW_LABEL \
+            if kind == SourceForecast.LABOR_KIND_FORAGE \
+            else (HudComposeVocab.HERD_CREW_LABEL \
+                if SourceForecast.is_managed_hunt_source(live_herd, String(m.get("improvement", ""))) \
+                else HudComposeVocab.HUNT_CREW_LABEL)).to_lower()
+        var yld := SourceForecast.source_yield_readout(m, kind, published_ceiling, row_crew_noun)
         var overstaffed := "" \
             if published_ceiling != SourceForecast.MAX_USEFUL_UNBOUNDED \
             else HudDepositVocab.overstaffed_clause(workers, useful)
@@ -7943,14 +7950,18 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
                 # row cannot carry a mark the player cannot read: on a band with no idle hands the
                 # cap note above is empty, so without this the attention flag would have no sentence
                 # anywhere on the row explaining what it is for.
-                overstaffed,
+                # **ONE LINE, ONE FACT, ON EITHER SPELLING OF THE CONDITION**: the closed-form clause
+                # (`⚠ overstaffed`, where the wire published no ceiling) states its figure on the hover
+                # in the same words the published one does — `⚠ Overstaffed: 2 of 3 herders add nothing`.
+                "" if overstaffed == "" else SourceForecast.OVERSTAFF_HOVER_FORMAT % [
+                    workers - useful, workers, row_crew_noun],
                 # **THE KIT SHORTFALL RIDES THE HOVER for the same reason `overstaffed` does**: it
                 # raises the row's attention flag, and a row may not carry a mark whose sentence is
                 # nowhere on it. The board row has no prose line — the full pair is drawn in the
                 # inspector card's KITS section, beside the picker that chose the kit.
                 kit_note,
                 under_kept_hint,
-                DetailFormat.PEN_FEED_REMEDY_TOOLTIP if pen_underfed else "",
+                DetailFormat.pen_underfed_hover(rung_source) if pen_underfed else "",
                 ready_tooltip,
                 building_tooltip,
                 HudWorkVocab.WORK_ROW_OPEN_HINT]),

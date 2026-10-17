@@ -11312,8 +11312,14 @@ func _assert_work_row_warns_of_an_underfed_pen() -> void:
 			UNDERFED_SHORTFALL))
 	_assert_band_panel("underfed pen — …the ⚠ mark and the attention flag",
 		String(model.get("marks", "")).contains(HudComposeVocab.OVERHUNT_FLAG) and bool(model.get("attention", false)))
-	_assert_band_panel("underfed pen — …and the remedies on the row's hover",
-		String(model.get("tooltip", "")).contains(DetailFormat.PEN_FEED_REMEDY_TOOLTIP))
+	var hover_lines: Array = String(model.get("tooltip", "")).split(SourceForecast.TOOLTIP_LINE_SEPARATOR)
+	_assert_band_panel("underfed pen — …the hover is one fact a line, hazard then Fix, closing on the open hint (%s)"
+			% str(hover_lines),
+		String(model.get("tooltip", "")).contains(DetailFormat.pen_underfed_hover(
+			_hud._band_labor.find_world_herd(RING_HERD_ID)))
+		and String(hover_lines[hover_lines.size() - 1]) == HudWorkVocab.WORK_ROW_OPEN_HINT
+		and String(hover_lines[0]).begins_with("+")
+		and String(hover_lines[1]).begins_with("⚠ Overstaffed: ") and String(hover_lines[1]).ends_with(" add nothing"))
 	await _save("band_panel_work_pen_underfed")
 	_hud._bandpanel._toggle_work_inspector(String(model.get("key", "")))
 	await _settle()
@@ -11325,7 +11331,7 @@ func _assert_work_row_warns_of_an_underfed_pen() -> void:
 	var fed := _hunt_row_model()
 	_assert_band_panel("underfed pen — a fully fed pen's row carries no pen warning (\"%s\")" % str(fed.get("note", "")),
 		not String(fed.get("note", "")).begins_with("Underfed")
-		and not String(fed.get("tooltip", "")).contains(DetailFormat.PEN_FEED_REMEDY_TOOLTIP))
+		and not String(fed.get("tooltip", "")).contains(DetailFormat.PEN_FEED_FIX_LINE))
 
 ## The ring band's hunt row model, off the controller's own producer.
 func _hunt_row_model() -> Dictionary:
@@ -15213,7 +15219,7 @@ func _assert_a_crew_bigger_than_its_source_is_flagged() -> void:
 	# the flag would have no sentence anywhere on the row explaining it.
 	_assert_band_panel("wasted crew — …and its hover names the state in the shared word (`%s`)"
 			% HudDepositVocab.OVERSTAFFED_WORD,
-		String(wasted.get("tooltip", "")).contains(HudDepositVocab.OVERSTAFFED_WORD))
+		String(wasted.get("tooltip", "")).to_lower().contains(HudDepositVocab.OVERSTAFFED_WORD))
 	# ⛔ **THE HALF THE STRICTNESS EXISTS FOR.** A fully staffed source is the GOOD state, and flagging
 	# it would mark every correctly-crewed source on every board in the game.
 	_assert_band_panel(("wasted crew — …while the FULLY STAFFED row is calm, its `+` dead and its "

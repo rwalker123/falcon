@@ -318,12 +318,14 @@ paths:
       must not read `short 0.0`**. It states what is MISSING, in both the `no fodder` and the part-fed
       states (it read `needs N /turn` and `needs N more/turn`, which said what the pen wanted rather than
       what it lacked).
-    - **The remedies ride the row's hover** (`DetailFormat.PEN_FEED_REMEDY_TOOLTIP`, set in the producer's
-      `row_tooltips` on `PenStatus.is_starving` only): sow a hay field so the keeper band has fodder to
-      feed out (the FODDER store, which needs Foddering - `graze.md` -> "FODDER is a STOCK"), or extend
-      the pen (a wider fence grazes more land: `pen_pasture_fraction` is the footprint's intake over the
-      herd's demand, and the footprint is `hex_range_tiles(corralled_at, pen_radius)`). The Work row's
-      hover carries the same constant.
+    - **The `Fed` row's hover is two lines** (`DetailFormat.pen_fed_row_hover`, set in the producer's
+      `row_tooltips` on `PenStatus.is_starving` only): `Short 6.6 feed/turn` (`Only N% fed` where no
+      shortfall is published) over `Fix: hay field (Foddering) · extend pen`. The fixes are the ones the sim
+      supports: a hay field fills the keeper band's FODDER store (which needs Foddering - `graze.md` ->
+      "FODDER is a STOCK"), and a wider fence grazes more land (`pen_pasture_fraction` is the footprint's
+      intake over the herd's demand, and the footprint is `hex_range_tiles(corralled_at, pen_radius)`).
+      The Work row's hover states the same two facts (`pen_underfed_hover`): `⚠ Underfed: short 6.6
+      feed/turn` and the Fix line indented under it.
     - **The Work tab's herd row warns by the same test.** `BandPanelController._work_source_models` asks
       `PenStatus.herd_is_starving` (the tile card's, the map badge's and the turn orb's one test) on a hunt
       row: the row gets the `⚠` mark, the amber stripe, the attention flag, the remedy hover and, in the note

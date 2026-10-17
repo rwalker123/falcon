@@ -877,8 +877,10 @@ func run(harness) -> void:
 		and _lines_any_contain(starving_lines, PEN_SPLIT_NEED_WORD)
 		and _lines_any_contain(unfoddered_lines, PEN_SPLIT_NEED_WORD))
 	h._assert_hud("…and the remedies ride a starving pen's `Fed` row hover, a fed pen carrying none",
-		_fed_row_hover_of(HerdFx.starving_pen_herd_fixture()) == DetailFormat.PEN_FEED_REMEDY_TOOLTIP
-		and _fed_row_hover_of(HerdFx.unfoddered_pen_herd_fixture()) == DetailFormat.PEN_FEED_REMEDY_TOOLTIP
+		_fed_row_hover_of(HerdFx.starving_pen_herd_fixture()) == DetailFormat.pen_fed_row_hover(
+			HerdFx.starving_pen_herd_fixture())
+		and _fed_row_hover_of(HerdFx.unfoddered_pen_herd_fixture()) == DetailFormat.pen_fed_row_hover(
+			HerdFx.unfoddered_pen_herd_fixture())
 		and _fed_row_hover_of(_self_feeding_pen_herd_fixture()) == ""
 		and _fed_row_hover_of(_foddered_pen_herd_fixture()) == "")
 	# **THE CORRAL ROW IS THE RUNG AND NOTHING ELSE NOW** — the regression risk of collapsing

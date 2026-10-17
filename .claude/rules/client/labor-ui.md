@@ -2059,9 +2059,15 @@ surviving-zero rule is otherwise untouched: `empty` is computed over the pairs, 
 component is non-empty the synthesized zero is suppressed exactly as the food zero is beside a
 material row.
 
+**The work row's hover is one fact a line**: `+N/turn · sustainable +M` (`YIELD_TOOLTIP_RATE_FORMAT`,
+`_SUSTAINABLE_FORMAT`; `renewable` replaces the sustainable clause on a renewable patch, `— overdrawing`
+follows it), with `· this turn +X` appended only where the resolved take reads differently from the average,
+then the overstaffed line, any pen-underfed pair (`herd-readouts.md`), and the closing `Click for details`
+(`WORK_ROW_OPEN_HINT`).
+
 ⛔ **THE HOVER IS THE SAME ROW AND TOOK THE SAME FORK.** `source_yield_readout` composes a face and a
-tooltip out of one row, so a button reading `+0.60 wood` over a hover reading `+0.00 a turn on average
-· Sustainable +0.00 /turn` is worse than either being wrong alone: the player is handed two accounts
+tooltip out of one row, so a button reading `+0.60 wood` over a hover reading `+0.00/turn
+· sustainable +0.00` is worse than either being wrong alone: the player is handed two accounts
 for one working with nothing saying which is the source's. `zero_account` is therefore resolved ONCE at
 the top of the block and `states_food` is the one question every food-scalar clause turns on — the
 rates clause, the `actual_yield_low/high` band (on the tooltip **and** in the `muted_note` that mirrors
@@ -5386,7 +5392,10 @@ spelled and never a raw count.
     `overdraws` field, at compose time, and the forecast is not a lumpy `actual`.) **Each source row also flags overstaffing** — a
     WARN-tinted `· only N of M working` note (`OVERSTAFF_NOTE_FORMAT`) when `workers > workers_needed`
     (and `workers_needed > 0`), i.e. the source's take was capped at its ceiling so the surplus workers
-    idled HERE and should be reassigned; the `tooltip_text` (`OVERSTAFF_TOOLTIP`) explains it. This is
+    idled HERE and should be reassigned; the row's hover states it as one line, `⚠ Overstaffed: N of M <crew noun> add nothing`
+    (`OVERSTAFF_HOVER_FORMAT`, N the hands past the ceiling, the noun the row's own - herders on a managed
+    hunt source, hunters on a wild one, harvesters on a patch - and the closed-form `⚠ overstaffed` fallback
+    states its figure in the same words). This is
     **orthogonal to the ⚠ overdraw flag** and deliberately NOT the same glyph: overdraw is *ecological*
     (taking past regrowth), overstaffing is *labor* (wasted workers) — a source can be overstaffed while
     perfectly sustainable (every policy has a ceiling), or overdrawn while fully used. `workers_needed

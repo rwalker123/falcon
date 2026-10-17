@@ -1059,9 +1059,9 @@ func _assert_readout_names_both_rates() -> void:
 		is_equal_approx(float(forage["rate"]), READOUT_REALIZED_RATE))
 	# (2) EQUALITY, never `contains`: half the claim is the LABELLING, and a containment test on either
 	# number passes on a line that quotes it anonymously.
-	var forage_tooltip := SourceForecast.YIELD_TOOLTIP_RATES_FORMAT % [
-		SourceForecast.format_signed(READOUT_REALIZED_RATE),
-		SourceForecast.format_signed(READOUT_ACTUAL_RATE)] + SourceForecast.YIELD_TOOLTIP_RENEWABLE
+	var forage_tooltip := SourceForecast.YIELD_TOOLTIP_RATE_FORMAT % SourceForecast.format_signed(
+		READOUT_REALIZED_RATE) + SourceForecast.YIELD_TOOLTIP_RENEWABLE \
+		+ SourceForecast.YIELD_TOOLTIP_THIS_TURN_FORMAT % SourceForecast.format_signed(READOUT_ACTUAL_RATE)
 	h._assert_hud("…and its hover names BOTH quantities — \"%s\"" % String(forage["tooltip"]),
 		String(forage["tooltip"]) == forage_tooltip)
 	# (3) THE OTHER BRANCH, because the renewable one appends nothing after the pair and an overdrawing
@@ -1070,11 +1070,11 @@ func _assert_readout_names_both_rates() -> void:
 	var hunt := SourceForecast.source_yield_readout(
 		_spread_rate_assignment(SourceForecast.LABOR_KIND_HUNT, true),
 		SourceForecast.LABOR_KIND_HUNT, SourceForecast.MAX_USEFUL_UNBOUNDED)
-	var hunt_tooltip := SourceForecast.YIELD_TOOLTIP_RATES_FORMAT % [
-		SourceForecast.format_signed(READOUT_REALIZED_RATE),
-		SourceForecast.format_signed(READOUT_ACTUAL_RATE)] \
-		+ " · Sustainable %s" % SourceForecast.format_yield(READOUT_SUSTAINABLE_RATE) \
-		+ SourceForecast.YIELD_TOOLTIP_OVERDRAW
+	var hunt_tooltip := SourceForecast.YIELD_TOOLTIP_RATE_FORMAT % SourceForecast.format_signed(
+		READOUT_REALIZED_RATE) \
+		+ SourceForecast.YIELD_TOOLTIP_SUSTAINABLE_FORMAT % SourceForecast.format_signed(READOUT_SUSTAINABLE_RATE) \
+		+ SourceForecast.YIELD_TOOLTIP_OVERDRAW \
+		+ SourceForecast.YIELD_TOOLTIP_THIS_TURN_FORMAT % SourceForecast.format_signed(READOUT_ACTUAL_RATE)
 	h._assert_hud("an overdrawing hunt row names the same pair ahead of its own clauses — \"%s\""
 			% String(hunt["tooltip"]),
 		String(hunt["tooltip"]) == hunt_tooltip)

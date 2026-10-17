@@ -1979,7 +1979,7 @@ const WORK_ROW_PLANT_FORMATS := {
 
 const WORK_ROW_HUNT_FORMAT := "Hunt %s"
 
-const WORK_ROW_OPEN_HINT := "Click the row for detail and actions."
+const WORK_ROW_OPEN_HINT := "Click for details"
 
 ## THE SOURCE-RUNG MARK — what the source IS, beside the policy glyph's what-the-band-is-DOING.
 ## The two are ORTHOGONAL and the row carries both: a Tended Patch being Sustained and a Tended Patch

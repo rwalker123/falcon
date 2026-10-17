@@ -793,12 +793,36 @@ const PEN_FEED_SHORTFALL_SEGMENT := " · short %s feed/turn"
 ## demand, and `hex_range_tiles(corralled_at, pen_radius)` grows with each ring), so a ring raises the
 ## pasture share wherever the new ground carries grass. Shared by the tile card's `Fed` row and the Work
 ## row's hover so the two cannot word one fix differently.
-const PEN_FEED_REMEDY_TOOLTIP := "This pen is short of feed, so the herd is shrinking.\nBring fodder: sow a hay field — your keeper band feeds it out of its fodder store (needs Foddering).\nOr extend the pen: a wider fence grazes more land."
+const PEN_FEED_FIX_LINE := "Fix: hay field (Foddering) · extend pen"
+const PEN_FEED_ROW_HOVER_SHORT_FORMAT := "Short %s feed/turn"
+const PEN_FEED_ROW_HOVER_FED_FORMAT := "Only %d%% fed"
+## The Work row's two hover lines for the same state: the hazard and the fix, the fix indented under it.
+const PEN_UNDERFED_HOVER_SHORT_FORMAT := "⚠ Underfed: short %s feed/turn"
+const PEN_UNDERFED_HOVER_FED_FORMAT := "⚠ Underfed: only %d%% fed"
+const PEN_UNDERFED_FIX_INDENT := "   "
 
 ## The Work row's one-line note for the same state. The shortfall is the sim's `pen_fodder_shortfall`
 ## (the gap the footprint leaves, less the fodder drawn); with none published the fed share says it.
 const PEN_UNDERFED_NOTE_SHORT_FORMAT := "Underfed — short %s feed/turn"
 const PEN_UNDERFED_NOTE_FED_FORMAT := "Underfed — only %d%% fed"
+
+## The tile card's `Fed` row hover: what is missing, then the fix. Only called for a starving pen.
+static func pen_fed_row_hover(herd_data: Dictionary) -> String:
+    var shortfall := float(herd_data.get("pen_fodder_shortfall", 0.0))
+    var first := PEN_FEED_ROW_HOVER_SHORT_FORMAT % SourceForecast.format_fodder(shortfall) \
+        if shortfall >= SourceForecast.FODDER_FLOW_MIN \
+        else PEN_FEED_ROW_HOVER_FED_FORMAT % int(round(
+            PenStatus.fed_fraction(herd_data) * HudConst.PROGRESS_PERCENT_SCALE))
+    return first + SourceForecast.TOOLTIP_LINE_SEPARATOR + PEN_FEED_FIX_LINE
+
+## The Work row's hover lines for an underfed pen (`⚠ Underfed: …` and its indented Fix line).
+static func pen_underfed_hover(herd_data: Dictionary) -> String:
+    var shortfall := float(herd_data.get("pen_fodder_shortfall", 0.0))
+    var first := PEN_UNDERFED_HOVER_SHORT_FORMAT % SourceForecast.format_fodder(shortfall) \
+        if shortfall >= SourceForecast.FODDER_FLOW_MIN \
+        else PEN_UNDERFED_HOVER_FED_FORMAT % int(round(
+            PenStatus.fed_fraction(herd_data) * HudConst.PROGRESS_PERCENT_SCALE))
+    return first + SourceForecast.TOOLTIP_LINE_SEPARATOR + PEN_UNDERFED_FIX_INDENT + PEN_FEED_FIX_LINE
 
 static func pen_underfed_note(herd_data: Dictionary) -> String:
     var shortfall := float(herd_data.get("pen_fodder_shortfall", 0.0))
@@ -3985,7 +4009,7 @@ static func herd_summary_lines(herd_data: Dictionary, world_herds: Array,
                 lines.append_array(pen_tier_lines(herd_data, herd_prefix))
                 lines.append("%s: %s" % [PEN_FEED_ROW, pen_feed_value(herd_data)])
                 if ctx != null and PenStatus.is_starving(PenStatus.fed_fraction(herd_data)):
-                    ctx.row_tooltips[PEN_FEED_ROW] = PEN_FEED_REMEDY_TOOLTIP
+                    ctx.row_tooltips[PEN_FEED_ROW] = pen_fed_row_hover(herd_data)
             elif reached or progress > BUILD_METER_EMPTY or declared:
                 # **A HERD NOBODY IS ON READS AS *HELD* HERE, and that is the sim's own `-2`**
                 # (`docs/plan_standing_upkeep.md` section 4.6a): no animal rung declares a `meter_decay`,

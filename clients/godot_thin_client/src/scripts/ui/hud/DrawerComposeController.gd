@@ -6477,7 +6477,7 @@ func _standing_summary_model(assignment: Dictionary, kind: String, noun: String,
     var m := assignment.duplicate()
     m["has_yield"] = assignment.has("actual_yield")
     var readout := SourceForecast.source_yield_readout(m, kind,
-        _overstaff_note_ceiling(assignment, kind))
+        _overstaff_note_ceiling(assignment, kind), noun.to_lower())
     var floor := float(assignment.get("floor", SourceForecast.DEFAULT_HARVEST_FLOOR))
     var mark := HudDepositVocab.floor_mark(working, floor) \
         if kind == HudConst.LABOR_KIND_EXTRACT \
