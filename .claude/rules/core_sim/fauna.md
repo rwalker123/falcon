@@ -82,8 +82,8 @@ is what `LocalStore::material_total` actually holds** (asserted against the stor
 re-derivation); and every material's `credited ÷ published rate` is the **same** positive number — the
 carried biomass — which a rate published from a second derivation would not satisfy.
 
-**The two INVESTMENT rungs quote materials too** — `HerdTelemetryState.corralMaterial` /
-`pastoralMaterial`, the twins of `corralYield`/`pastoralYield` and the replacement for the retired
+**The two INVESTMENT rungs quote materials too** — `rungQuotes[animal:pen].materialPayoff` /
+`rungQuotes[animal:pastoral].materialPayoff`, the twins of `rungQuotes[animal:pen].foodYield`/`rungQuotes[animal:pastoral].foodYield` and the replacement for the retired
 `corralTrade`/`pastoralTrade`. Without them an inedible quarry's Tame and Corral rungs quoted nothing
 at all: a wolf's food payoff on both is honestly `0`, so the compose sheet's *"→ then +Y"* had no
 number on either. They are priced on the **same** pen/pastoral MSY biomass their food siblings are —
@@ -96,8 +96,8 @@ off on a species whose currency components are all `0`.
 **That "one harvest" claim is asserted rather than asserted-in-prose.**
 `crafting_wire::every_sources_material_rate_reaches_the_wire` reads each rung's vector off the
 decoded snapshot, derives the **single** biomass factor it is `materialPerBiomass` scaled by, and
-requires that factor `×` the row's own `provisionsPerBiomass` to reproduce `corralYield` /
-`pastoralYield`. A rung priced off a second `sustainable_yield` call fails it; so does a swap of the
+requires that factor `×` the row's own `provisionsPerBiomass` to reproduce `rungQuotes[animal:pen].foodYield` /
+`rungQuotes[animal:pastoral].foodYield`. A rung priced off a second `sustainable_yield` call fails it; so does a swap of the
 two slots, which the ordering check (`corral >= pastoral` — the pen breeds at `r × 4` against the
 pastoral rung's `r × 2`) catches even on an inedible quarry, where there is no food sibling to tie
 to.
@@ -384,7 +384,7 @@ verbs — a free-form `species` string means new species need no schema change).
 >   Remembering the **last seen** herd is a separate, deliberate feature (issue #214) layered on top
 >   of this — never a weaker filter.
 > - **Ownership is not a leak.** A tamed or penned herd is your property. Without that clause a
->   pastoral herd drifting a hex out of sight would take its `corralProgress` /
+>   pastoral herd drifting a hex out of sight would take its `rungQuotes[animal:pen].progress` /
 >   `penFedFraction` starving warning with it, and a pen alert that vanishes because of fog is a bug.
 > - **The heading arrow is filtered separately** — `next_x`/`next_y` name a *second* tile, so a herd
 >   visible at the edge of your sight would otherwise hand you a free look at where it is walking.
@@ -808,7 +808,7 @@ deleted along with the Fog-of-Knowledge `fogRaster` overlay it existed to feed (
 > top with the asking faction as owner — its bill cleared so the keeping re-strikes at the finished
 > rung, and the curve re-run through the same `hunt_crew_take_curve`. `0` and `NO_HANDS` at the top
 > of the branch or where the husbandry ceiling forbids the rung. It is the compose sheet's *once
-> tamed / once corralled* figure; `pastoralYield` / `corralYield` are crew-blind rung payoffs and
+> tamed / once corralled* figure; `rungQuotes[animal:pastoral].foodYield` / `rungQuotes[animal:pen].foodYield` are crew-blind rung payoffs and
 > must not stand in for it. Pinned by
 > `forecast_query::tests::a_wild_herds_once_tamed_figure_is_the_tamed_herds_own_row`.
 >
@@ -1225,7 +1225,7 @@ elsewhere). Seeded per-turn from `map_seed ^ tick ^ salt` (deterministic under r
 `corral_progress`, each with its own stamped `*_cost` — is **gone**; both webs are now on the one
 position (`intensification.md` → "The storage: ONE position, and a STAMPED standing beside it").
 - *Accrual — the **`Tame`** verb, not a side effect of hunting*: in `advance_labor_allocation`
-  (Population), a Hunt assignment carrying **`Improvement::Tame`** adds the
+  (Population), a Hunt assignment carrying the **`tame`** verb adds the
   crew's own output in work units against `work_cost × the species' taming_cost_multiplier`, for the acting faction
   (sets `owner` on first accrual; only the owner accrues; gated on **Herding** + the species'
   husbandry ceiling + something standing above the crew's floor); the work lands on the herd's one

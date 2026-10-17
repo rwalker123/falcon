@@ -463,7 +463,7 @@ the per-pen remainder, and the sim is what sums and subtracts.
 > #### ⛔ THE GAP ITSELF HAD A HERD-ROW FIELD, AND NOTHING READ IT
 >
 > `penHayNeed` published one pen's gap un-differenced, and it is off the wire: what a pen row says
-> is *"needs 11.3 more/turn"*, which is the shortfall, and a client holding both terms of a
+> is *"short 11.3 feed/turn"*, which is the shortfall, and a client holding both terms of a
 > subtraction the sim already does is one expression away from a difference that describes two
 > different turns. The **quantity** is untouched — the corral arm still strikes it,
 > still sums it into `LaborAllocation::last_fodder_need`, and still differences it — only the copy on
@@ -486,7 +486,7 @@ the per-pen remainder, and the sim is what sums and subtracts.
 
 #### The number the player acts on is `penFodderShortfall`, and the sim subtracts
 
-A pen row states `Fed: ⚠ 47% — 40% pasture · 7% fodder · needs 11.3 more/turn`. That last figure is
+A pen row states `Fed: ⚠ 47% — 40% pasture · 7% fodder · short 11.3 feed/turn`. That last figure is
 **neither** of the terms it is taken from: the gap is what the *land* leaves and `fodderDraw` is what
 the keeper actually carried in, so what is still missing is their difference — `max(0, gap −
 fodderDraw)`, in fodder units per turn. The client could not subtract even if it wanted to, because
@@ -574,7 +574,7 @@ investment worked off over turns, reusing the corral build ladder — no materia
 
 **2d-δ — the husbandry ceiling: which species climb the ladder** (§4a). Not every animal can be herded,
 and not every herdable one can be penned. The ladder is a **sequence** (wild → pastoral → pen), so a
-species' reach is a single **enum** (`fauna_config::HusbandryCeiling` = `Wild | Pastoral | Pen`), not
+species' reach is a single **enum** (`SpeciesDef::husbandry_ceiling`, an `Option<RungId>`: `animal:wild` | `animal:pastoral` | `animal:pen`, omitted = the whole ladder), not
 two flags — which makes the incoherent "pennable but not tameable" state unrepresentable (no
 `validate()` combo guard).
 

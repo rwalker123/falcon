@@ -94,6 +94,8 @@ static func ladder_roster() -> Array:
 		_row(KNOWLEDGE_HERDING, "Herding", BRANCH_ANIMAL, 1, true, AREA_FOOD),
 		_row(KNOWLEDGE_PENNING, "Penning", BRANCH_ANIMAL, 2, true, AREA_FOOD),
 		_row(KNOWLEDGE_FODDERING, "Foddering", BRANCH_ANIMAL, 3, false, AREA_FOOD),
+		_row("worked_land", "Worked Land", BRANCH_PLANT, 3, false, AREA_FOOD),
+		_row("selective_breeding", "Selective Breeding", BRANCH_ANIMAL, 2, false, AREA_FOOD),
 		_row(KNOWLEDGE_ROADBUILDING, "Roadbuilding", BRANCH_ROUTE, 2, true, AREA_WORKS),
 		_row(KNOWLEDGE_PAVING, "Paving", BRANCH_ROUTE, 3, true, AREA_WORKS),
 		_row(KNOWLEDGE_WOODCRAFT, "Woodcraft", BRANCH_FORESTRY, 1, true, AREA_MAKING),
@@ -103,6 +105,28 @@ static func ladder_roster() -> Array:
 		_row(KNOWLEDGE_TRAVOIS, "Travois", BRANCH_ROAM, 2, false, AREA_REACH),
 		_row(KNOWLEDGE_DRIVES, "Drives", BRANCH_ROAM, 3, false, AREA_REACH),
 	]
+
+## **THE LADDER CATALOG's verb-bearing rows for the shipped branches** (`ladder_rungs`, issue #175):
+## what the client reads to learn WHICH verb a knowledge unlocks and WHICH kind of source it is raised
+## on. The four route rungs are all here, floor included, because `catalog_rung_at_or_above` orders a
+## road's standing rung against the verb's rung off these rows. A transcription for the same reason
+## the roster is: a fixture that derived it would pass against a client reading nothing.
+static func ladder_rungs() -> Array:
+	return [
+		_rung("plant:tended", BRANCH_PLANT, 1, "cultivate", KNOWLEDGE_CULTIVATION, "patch"),
+		_rung("plant:farm", BRANCH_PLANT, 2, "sow", KNOWLEDGE_SEED_SELECTION, "patch"),
+		_rung("animal:pastoral", BRANCH_ANIMAL, 1, "tame", KNOWLEDGE_HERDING, "herd"),
+		_rung("animal:pen", BRANCH_ANIMAL, 2, "corral", KNOWLEDGE_PENNING, "herd"),
+		_rung("route:path", BRANCH_ROUTE, 0, "", "", "road"),
+		_rung("route:trail", BRANCH_ROUTE, 1, "", "", "road"),
+		_rung("route:dirt_road", BRANCH_ROUTE, 2, "grade", KNOWLEDGE_ROADBUILDING, "road"),
+		_rung("route:paved_road", BRANCH_ROUTE, 3, "pave", KNOWLEDGE_PAVING, "road"),
+	]
+
+static func _rung(key: String, branch: String, order: int, verb: String, unlock: String,
+		source_kind: String) -> Dictionary:
+	return {"rung_key": key, "branch": branch, "order": order, "verb": verb,
+		"unlock_knowledge": unlock, "source_kind": source_kind}
 
 # ---- the two DEGENERATE rosters, one per FALLBACK ----------------------------------------------
 # `docs/plan_knowledge_rows.md` §5. Both states are reachable by an incomplete config edit and both

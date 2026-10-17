@@ -22,12 +22,13 @@ use bevy::app::App;
 use bevy::ecs::system::RunSystemOnce;
 use bevy::math::UVec2;
 use bevy::prelude::Entity;
+use core_sim::shipped;
 
 use core_sim::{
     build_test_app, recapture_snapshot_in_place, scalar_from_f32, scalar_one, scalar_zero,
-    BuildJob, BuildSource, FactionId, GenerationId, Improvement, LaborAllocation, LaborAssignment,
-    LaborTarget, LocalStore, MoraleCause, PopulationCohort, ResidentBand, SnapshotHistory,
-    SourcePriority, TileRegistry,
+    BuildJob, BuildSource, FactionId, GenerationId, LaborAllocation, LaborAssignment, LaborTarget,
+    LocalStore, MoraleCause, PopulationCohort, ResidentBand, SnapshotHistory, SourcePriority,
+    TileRegistry,
 };
 use sim_schema::{
     BUILD_METER_HOLDS, BUILD_NOT_YET_ESTIMATED, BUILD_QUEUE_BLOCKED, NOT_IN_ANY_BUILD_QUEUE,
@@ -95,7 +96,13 @@ fn cultivable_sites_in_one_work_range(app: &mut App) -> Vec<UVec2> {
             };
             let composition =
                 core_sim::tile_flora_composition(&flora, &labor.forage, tile, map_seed);
-            core_sim::default_species_for_rung(&composition, &flora, RungKey::PlantTended).is_some()
+            core_sim::default_species_for_rung(
+                &composition,
+                &flora,
+                shipped::ladder(),
+                shipped::plant_tended(),
+            )
+            .is_some()
         })
         .collect();
     cultivable.sort_by_key(|tile| (tile.y, tile.x));
@@ -127,7 +134,6 @@ fn cultivable_sites_in_one_work_range(app: &mut App) -> Vec<UVec2> {
 
 mod pen_materials_support;
 
-use core_sim::RungKey;
 use core_sim::TakeSelection;
 
 /// A world with one band that works `count` cultivable patches in its own work range, staffs
@@ -213,7 +219,7 @@ fn world_with_a_queue_knowing(
         .iter()
         .map(|source| core_sim::BuildQueueEntry {
             source: BuildSource::Patch(*source),
-            declared: BuildJob::Rung(Improvement::Cultivate),
+            declared: BuildJob::Climb(shipped::plant_tended()),
             // ⛔ **AN ENTRY'S KIT PRICES NOTHING** since `docs/plan_pool_toe.md`: a pool's tools
             // follow from the rung. The gear axis is held on the LEDGER below.
             priority: core_sim::SourcePriority::default(),
@@ -271,7 +277,7 @@ fn world_with_a_queue_knowing(
             },
         ))
         .id();
-    core_sim::disarm_the_builders(&mut app.world, band, RungKey::PlantTended);
+    core_sim::disarm_the_builders(&mut app.world, band, shipped::plant_tended());
     (app, band, sources)
 }
 
@@ -430,7 +436,7 @@ fn keeping_for(sources: usize) -> u32 {
         .world
         .resource::<core_sim::LadderConfigHandle>()
         .get()
-        .rung(RungKey::PlantTended)
+        .rung(shipped::plant_tended())
         .upkeep_crew_needed(richest);
     hands * sources as u32
 }
@@ -929,7 +935,7 @@ fn world_with_a_half_tamed_herd(crew: u32, floor: f32) -> (App, Entity, String) 
                 .clone()
         };
         ladder
-            .rung(RungKey::AnimalPastoral)
+            .rung(shipped::animal_pastoral())
             .build_cost(fauna.taming_cost_multiplier_for(&species))
             .expect("the pastoral rung builds")
     };
@@ -1030,7 +1036,7 @@ fn world_with_a_half_tamed_herd(crew: u32, floor: f32) -> (App, Entity, String) 
                 assignments,
                 build_queue: vec![core_sim::BuildQueueEntry {
                     source: BuildSource::Herd(herd_id.clone()),
-                    declared: BuildJob::Rung(Improvement::Tame),
+                    declared: BuildJob::Climb(shipped::animal_pastoral()),
                     priority: core_sim::SourcePriority::default(),
                 }],
                 ..Default::default()
@@ -1090,7 +1096,7 @@ fn herd_meter(app: &App, id: &str) -> f32 {
     let r = app.world.resource::<core_sim::HerdRegistry>();
     match r.find(id) {
         Some(h) => h.rung_work_done(
-            core_sim::RungKey::AnimalPastoral,
+            shipped::animal_pastoral(),
             &core_sim::LadderConfig::builtin(),
         ),
         None => panic!(
@@ -1147,7 +1153,7 @@ fn cost_of_taming(app: &App, id: &str) -> f32 {
     app.world
         .resource::<core_sim::LadderConfigHandle>()
         .get()
-        .rung(RungKey::AnimalPastoral)
+        .rung(shipped::animal_pastoral())
         .build_cost(fauna.taming_cost_multiplier_for(&species))
         .expect("the pastoral rung builds")
 }
@@ -1171,7 +1177,7 @@ fn keeping_a_herd_needs(app: &App, id: &str) -> u32 {
     app.world
         .resource::<core_sim::LadderConfigHandle>()
         .get()
-        .rung(RungKey::AnimalPastoral)
+        .rung(shipped::animal_pastoral())
         .upkeep_crew_needed(at_capacity)
 }
 
@@ -1320,7 +1326,7 @@ fn a_parked_half_built_meter_stays_the_neutral_holding_sentinel() {
             .world
             .resource::<core_sim::LadderConfigHandle>()
             .get()
-            .rung(RungKey::PlantTended)
+            .rung(shipped::plant_tended())
             .build_cost(core_sim::RUNG_COST_UNSCALED)
             .expect("the tended rung builds");
         let mut registry = app.world.resource_mut::<core_sim::ForageRegistry>();
@@ -1462,7 +1468,7 @@ fn abandon_drops_the_row_and_its_entry_and_leaves_the_meter_to_rot() {
     let grace = {
         let probe = build_test_app();
         let handle = probe.world.resource::<core_sim::LadderConfigHandle>().get();
-        handle.rung(RungKey::PlantTended).upkeep_grace_turns()
+        handle.rung(shipped::plant_tended()).upkeep_grace_turns()
     };
     for _ in 0..=(grace + 1) {
         resolve_a_turn(&mut app);
@@ -1615,7 +1621,11 @@ fn every_build_job_and_source_kind_is_stated() {
         tile: UVec2::new(3, 3),
         material: "stone".to_string(),
     };
-    for source in [&patch, &herd, &road, &deposit] {
+    let tile_improvement = BuildSource::Tile {
+        tile: UVec2::new(4, 4),
+        branch: shipped::plant(),
+    };
+    for source in [&patch, &herd, &road, &deposit, &tile_improvement] {
         match source {
             // A patch is named by its tile; a herd by an id that outlives its position; a ROAD by
             // its tile, because a road IS a tile (`docs/plan_standing_upkeep.md` §4.13b); and a
@@ -1627,6 +1637,12 @@ fn every_build_job_and_source_kind_is_stated() {
             BuildSource::Deposit { tile, material } => {
                 assert_eq!(*tile, UVec2::new(3, 3));
                 assert_eq!(material, "stone");
+            }
+            // A tile improvement is named by its tile AND its branch - one tile can carry an
+            // improvement of several branches.
+            BuildSource::Tile { tile, branch } => {
+                assert_eq!(*tile, UVec2::new(4, 4));
+                assert_eq!(*branch, shipped::plant());
             }
         }
     }
@@ -1671,24 +1687,21 @@ fn every_build_job_and_source_kind_is_stated() {
     }));
 
     for job in [
-        BuildJob::Rung(Improvement::Cultivate),
-        BuildJob::Rung(Improvement::Sow),
-        BuildJob::Rung(Improvement::Tame),
-        BuildJob::Rung(Improvement::Corral),
+        BuildJob::Climb(shipped::plant_tended()),
+        BuildJob::Climb(shipped::plant_farm()),
+        BuildJob::Climb(shipped::animal_pastoral()),
+        BuildJob::Climb(shipped::animal_pen()),
         BuildJob::ExtendPen,
-        BuildJob::SetHerdOutput(core_sim::RungKey::AnimalPen),
+        BuildJob::SetHerdOutput(shipped::animal_pen()),
     ] {
         match job {
             // A rung verb names a meter, so the derived rung can answer for it.
-            BuildJob::Rung(improvement) => assert!(!improvement.as_str().is_empty()),
+            BuildJob::Climb(_) => {}
             // A ring names none — that is the gap this kind fills.
             BuildJob::ExtendPen => {}
             // Nor does an output commitment; it carries the rung it was priced against instead.
             BuildJob::SetHerdOutput(rung) => {
-                assert!(matches!(
-                    rung,
-                    core_sim::RungKey::AnimalPastoral | core_sim::RungKey::AnimalPen
-                ));
+                assert!(rung == shipped::animal_pastoral() || rung == shipped::animal_pen());
             }
         }
     }
@@ -1810,7 +1823,7 @@ fn world_with_a_ring_at_the_head(builders: u32) -> (App, Entity, String, UVec2) 
                     },
                     core_sim::BuildQueueEntry {
                         source: BuildSource::Patch(source),
-                        declared: BuildJob::Rung(Improvement::Cultivate),
+                        declared: BuildJob::Climb(shipped::plant_tended()),
                         priority: core_sim::SourcePriority::default(),
                     },
                 ],
@@ -1824,8 +1837,8 @@ fn world_with_a_ring_at_the_head(builders: u32) -> (App, Entity, String, UVec2) 
     pen_materials_support::stock_pen_materials(&mut app.world, band);
     // **Both branches this band builds on** — the ring stands on `animal:pen` and the entry behind
     // it on `plant:tended`, so the gear axis is held on each.
-    core_sim::disarm_the_builders(&mut app.world, band, RungKey::AnimalPen);
-    core_sim::disarm_the_builders(&mut app.world, band, RungKey::PlantTended);
+    core_sim::disarm_the_builders(&mut app.world, band, shipped::animal_pen());
+    core_sim::disarm_the_builders(&mut app.world, band, shipped::plant_tended());
     (app, band, RING_HERD.to_string(), source)
 }
 
@@ -1850,6 +1863,7 @@ fn seat_a_pen_mid_ring(app: &mut App, tile: UVec2) {
         RING_HERD_FODDER,
         RING_HERD_REGROWTH,
         RING_HERD_BODY_MASS,
+        core_sim::shipped::root_standing(core_sim::shipped::animal()),
     );
     herd.tame_outright(FactionId(0), &core_sim::LadderConfig::builtin());
     assert!(
@@ -1982,7 +1996,7 @@ fn pen_ring_work_cost() -> f32 {
         .world
         .resource::<core_sim::LadderConfigHandle>()
         .get()
-        .rung(RungKey::AnimalPen)
+        .rung(shipped::animal_pen())
         .build_cost(core_sim::RUNG_COST_UNSCALED)
         .expect("the pen rung builds")
 }
@@ -2084,7 +2098,7 @@ fn tended_work_cost() -> f32 {
         .world
         .resource::<core_sim::LadderConfigHandle>()
         .get()
-        .rung(RungKey::PlantTended)
+        .rung(shipped::plant_tended())
         .build_cost(core_sim::RUNG_COST_UNSCALED)
         .expect("the tended rung builds")
 }
@@ -2137,7 +2151,7 @@ fn world_with_two_bands_on_one_source() -> (App, Entity, Vec<UVec2>) {
     };
     let cultivate = |source: UVec2| core_sim::BuildQueueEntry {
         source: BuildSource::Patch(source),
-        declared: BuildJob::Rung(Improvement::Cultivate),
+        declared: BuildJob::Climb(shipped::plant_tended()),
         priority: core_sim::SourcePriority::default(),
     };
 
@@ -2200,7 +2214,7 @@ fn world_with_two_bands_on_one_source() -> (App, Entity, Vec<UVec2>) {
             .find(|(_, id)| id.0 == spawned)
             .map(|(entity, _)| entity)
             .expect("the fixture spawned this band");
-        core_sim::disarm_the_builders(&mut app.world, entity, RungKey::PlantTended);
+        core_sim::disarm_the_builders(&mut app.world, entity, shipped::plant_tended());
     }
     (app, band, sources)
 }
@@ -2433,7 +2447,7 @@ const A_WHOLE_CULTIVATE: usize = 80;
 fn erode_the_finished_meter(app: &mut App, source: UVec2) -> f32 {
     let ladder = app.world.resource::<core_sim::LadderConfigHandle>().get();
     let cost = ladder
-        .rung(RungKey::PlantTended)
+        .rung(shipped::plant_tended())
         .build_cost(core_sim::RUNG_COST_UNSCALED)
         .expect("the tended rung has a build meter");
     let mut registry = app.world.resource_mut::<core_sim::ForageRegistry>();
@@ -2522,7 +2536,7 @@ fn an_unqueued_eroded_meter_publishes_no_estimate_and_a_re_queued_one_repairs_it
             .expect("the band keeps its allocation");
         allocation.enqueue_build(
             BuildSource::Patch(source),
-            BuildJob::Rung(Improvement::Cultivate),
+            BuildJob::Climb(shipped::plant_tended()),
         );
     }
     resolve_a_turn(&mut app);
@@ -2768,7 +2782,7 @@ const ROAD_MATERIAL: &str = "stone";
 /// The `route:paved_road` rung's declared pile — what a whole tile of pavement swallows.
 fn paving_pile() -> f32 {
     core_sim::LadderConfig::builtin()
-        .rung(core_sim::RungKey::RoutePavedRoad)
+        .rung(shipped::route_paved_road())
         .build_materials()
         .map(|(_, amount)| amount)
         .sum()
@@ -2780,7 +2794,7 @@ fn paving_pile() -> f32 {
 fn pave_a_road(app: &mut App, tile: UVec2) {
     let ladder = app.world.resource::<core_sim::LadderConfigHandle>().get();
     let (base, width) = core_sim::road_rung_span(
-        core_sim::RungKey::RouteDirtRoad,
+        shipped::route_dirt_road(),
         &ladder,
         core_sim::NEAR_ENOUGH_TO_KEEP,
     );
@@ -2857,7 +2871,7 @@ fn queue_a_pave(app: &mut App, band: Entity, tile: UVec2) {
             0,
             core_sim::BuildQueueEntry {
                 source: BuildSource::Road(tile),
-                declared: BuildJob::Rung(Improvement::Pave),
+                declared: BuildJob::Climb(shipped::route_paved_road()),
                 priority: core_sim::SourcePriority::default(),
             },
         );
@@ -2911,7 +2925,7 @@ fn an_empty_store_stalls_a_paving_and_a_part_store_stalls_it_proportionally() {
     // covers part of the pile and the arm must bank exactly that part.
     let one_turns_pile = full * paving_pile()
         / core_sim::road_rung_span(
-            core_sim::RungKey::RoutePavedRoad,
+            shipped::route_paved_road(),
             &core_sim::LadderConfig::builtin(),
             core_sim::NEAR_ENOUGH_TO_KEEP,
         )
@@ -2921,6 +2935,256 @@ fn an_empty_store_stalls_a_paving_and_a_part_store_stalls_it_proportionally() {
         part > 0.0 && part < full,
         "a store covering half a turn's pile banks strictly between nothing and a whole turn: \
          {part} against 0 and {full}"
+    );
+}
+
+/// ⛔ **A STORE HOLDING DUST IS EMPTY, SO A HEAD THAT NEEDS ITS GOODS PUBLISHES "NO MATERIALS", NOT A
+/// DATE MILLIONS OF TURNS OUT.** A fixed-point store can be left one micro-unit (`0.000001`) by an
+/// earlier debit; read as stock it paid the head a sliver, coverage became `1e-6 / wanted` and the
+/// countdown `ceil(remaining / (work × 1e-6 …))` - 2,101,109 turns on a live pen. The settlement
+/// treats a holding or a payment under `MATERIAL_DUST_UNITS` as nothing, so coverage is exactly zero
+/// and the quote is `Blocked` for `materials`.
+///
+/// **Three arms**: dust blocks; a real (above-dust) sliver still publishes a finite date, which is
+/// what stops "everything blocks" from passing; and a debit that would leave dust takes it whole.
+#[test]
+fn a_store_holding_dust_blocks_a_head_for_materials_instead_of_publishing_a_huge_date() {
+    use core_sim::{BuildGate, BuildTurns};
+    /// One micro-unit - the residue the live store carried.
+    const DUST: f32 = 0.000_001;
+    /// A sliver well above the dust line: a real, if poor, store.
+    const A_SLIVER: f32 = 0.01;
+
+    let countdown = |stock: f32| {
+        let (mut app, band, sources) = world_with_a_queue(ONE_SOURCE, BUILDERS);
+        let road_tile = sources[0];
+        pave_a_road(&mut app, road_tile);
+        queue_a_pave(&mut app, band, road_tile);
+        stock_road_material(&mut app, band, stock);
+        resolve_a_turn_with_roads(&mut app);
+        let road = app
+            .world
+            .resource::<core_sim::RoadRegistry>()
+            .road(road_tile)
+            .expect("the fixture road survives")
+            .clone();
+        (road.build_turns_remaining, road.build_blocked_reason)
+    };
+
+    let (dusty, why) = countdown(DUST);
+    assert_eq!(
+        dusty,
+        Some(BuildTurns::Blocked),
+        "a store holding one micro-unit is empty: the head must publish Blocked, not {dusty:?}"
+    );
+    assert_eq!(
+        why,
+        BuildGate::Materials,
+        "and it must say it is the materials"
+    );
+
+    let (poor, _) = countdown(A_SLIVER);
+    assert!(
+        matches!(poor, Some(BuildTurns::Turns(_))),
+        "**LIVENESS**: a real sliver above the dust line still publishes a date ({poor:?}), or the \
+         dust arm above would pass on a build that blocks everything"
+    );
+}
+
+/// ⛔ **EVERY ENTRY BEHIND A MATERIALS-BLOCKED HEAD PUBLISHES THE SAME BLOCK - NOT A DATE INHERITED
+/// FROM THE HEAD'S.** The existing contract (`publish_build_chain`'s `carried`): a blocked head
+/// propagates, because nothing behind a head that never finishes finishes either. Live, a road behind
+/// a stalled pen read 2,101,139 turns - the head's own absurd date plus its own span - because the
+/// head was not Blocked in the first place (dust coverage). With the head Blocked the patch queued
+/// behind a pen ring on a dust-stocked band publishes the wire's blocked sentinel too, with the
+/// head's cause.
+#[test]
+fn a_materials_blocked_head_blocks_everything_queued_behind_it() {
+    use core_sim::{BuildGate, BuildTurns};
+    /// One micro-unit of the pen's material - the residue the live store carried.
+    const DUST: f32 = 0.000_001;
+
+    let (mut app, band, herd_id, source) = world_with_a_ring_at_the_head(BUILDERS);
+    // The fixture stocks the pen's panels; replace the shelf with dust of the same batch.
+    {
+        let ample = pen_materials_support::stocked_with_pen_materials();
+        let mut cohort = app
+            .world
+            .get_mut::<PopulationCohort>(band)
+            .expect("the fixture band");
+        cohort.stores = LocalStore::new();
+        for (id, batches) in ample.materials() {
+            for (key, batch) in batches {
+                cohort.stores.deposit_material(
+                    id,
+                    key.clone(),
+                    scalar_from_f32(DUST),
+                    &batch.characteristics,
+                );
+            }
+        }
+    }
+    resolve_a_pen_turn(&mut app);
+
+    assert_eq!(
+        published_ring_turns(&app, &herd_id),
+        sim_schema::BUILD_QUEUE_BLOCKED,
+        "the ring at the head, with only dust to eat, publishes the blocked sentinel"
+    );
+    let behind = app
+        .world
+        .resource::<core_sim::ForageRegistry>()
+        .patch(source)
+        .expect("the fixture patch")
+        .clone();
+    assert_eq!(
+        behind.build_turns_remaining,
+        Some(BuildTurns::Blocked),
+        "the entry behind a blocked head is blocked too, not dated off it"
+    );
+    assert_eq!(
+        behind.build_blocked_reason,
+        BuildGate::Materials,
+        "and it carries the head's cause"
+    );
+}
+
+/// **THE WORDS A PUBLISHED SUGGESTION CARRIES**: `(display_name, reason)`.
+fn published_suggestion_words(app: &App, band: Entity, item: &str) -> Option<(String, String)> {
+    use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
+
+    let snapshot = app
+        .world
+        .resource::<SnapshotHistory>()
+        .latest_entry()
+        .expect("a snapshot was captured")
+        .snapshot;
+    let bytes = sim_schema::encode_snapshot_flatbuffer(snapshot.as_ref());
+    let envelope = fb::root_as_envelope(bytes.as_ref()).expect("a valid envelope");
+    let cohort = envelope
+        .payload_as_snapshot()
+        .expect("a snapshot")
+        .population()
+        .and_then(|section| section.populations())
+        .expect("the cohort list")
+        .iter()
+        .find(|cohort| cohort.entity() == band.to_bits())
+        .expect("the band is on the wire");
+    cohort
+        .craftSuggestions()?
+        .iter()
+        .find(|row| row.itemId() == Some(item))
+        .map(|row| {
+            (
+                row.displayName().unwrap_or_default().to_string(),
+                row.reason().unwrap_or_default().to_string(),
+            )
+        })
+}
+
+/// ⛔ **"MAKE NEXT" NAMES THE GOODS A QUEUED BUILD IS SHORT OF, BY NAME, FOR THE JOB, FOR WHAT IS
+/// STILL OWED.** A pen ring at the head eats hurdles as its work goes in. A band holding none (or
+/// only dust) is stalled on them, and the panel's list used to name kit items only. The suggestion
+/// states its own words (`displayName` "Hurdles", `reason` "for Extend pen ..."), a count of the
+/// recipe's passes covering **what is still to draw** - a ring 64% built owes 36% of the pile, not
+/// all of it - and the head's line is a `build_queue` source at position 0 so the job can be named.
+/// A stocked band is suggested nothing: the liveness half.
+#[test]
+fn make_next_names_the_hurdles_a_queued_pen_build_is_still_short_of() {
+    const HURDLES: &str = "hurdles";
+    /// One micro-unit of hurdles - dust, i.e. nothing.
+    const DUST: f32 = 0.000_001;
+    /// How far through the ring the fixture is.
+    const BUILT: f32 = 0.64;
+
+    let suggested = |stock: Option<f32>| {
+        let (mut app, band, herd_id, _source) = world_with_a_ring_at_the_head(BUILDERS);
+        {
+            let width = pen_ring_work_cost();
+            let mut registry = app.world.resource_mut::<core_sim::HerdRegistry>();
+            let herd = registry
+                .herds
+                .iter_mut()
+                .find(|herd| herd.id == herd_id)
+                .expect("the fixture pen");
+            herd.pen_extend_progress = BUILT * width;
+        }
+        if let Some(units) = stock {
+            let ample = pen_materials_support::stocked_with_pen_materials();
+            let mut cohort = app
+                .world
+                .get_mut::<PopulationCohort>(band)
+                .expect("the fixture band");
+            cohort.stores = LocalStore::new();
+            for (id, batches) in ample.materials() {
+                for (key, batch) in batches {
+                    cohort.stores.deposit_material(
+                        id,
+                        key.clone(),
+                        scalar_from_f32(units),
+                        &batch.characteristics,
+                    );
+                }
+            }
+        }
+        resolve_a_pen_turn(&mut app);
+        (
+            published_suggestion(&app, band, HURDLES),
+            published_suggestion_words(&app, band, HURDLES),
+        )
+    };
+
+    let pile: f32 = core_sim::LadderConfig::builtin()
+        .rung(shipped::animal_pen())
+        .build_materials()
+        .map(|(_, amount)| amount)
+        .sum();
+    let owed = pile * (1.0 - BUILT);
+    let (found, words) = suggested(Some(DUST));
+    let (count, lines) = found.expect("a dust-stocked band is told to make hurdles");
+    assert_eq!(
+        count,
+        owed.ceil() as u32,
+        "the count is the passes covering what is still to draw ({owed}), not the whole pile {pile}"
+    );
+    assert!(
+        lines
+            .iter()
+            .any(|line| line.0 == "build_queue" && line.2 == 0),
+        "the head's shortage is a build_queue line at position 0, so its job can be named: {lines:?}"
+    );
+    let (name, reason) = words.expect("the words ride the same row");
+    assert_eq!(name, "Hurdles", "the material's title, never the raw id");
+    assert!(
+        reason.starts_with("for "),
+        "the reason names the job it feeds: {reason:?}"
+    );
+    assert!(
+        suggested(None).0.is_none(),
+        "**LIVENESS**: the ample shelf the fixture stocks needs no hurdles, so nothing is suggested"
+    );
+}
+
+/// A debit that would leave a batch under the dust line takes it whole: the store never carries the
+/// residue in the first place.
+#[test]
+fn a_debit_that_would_leave_dust_takes_the_batch_whole() {
+    let materials = core_sim::MaterialsConfig::builtin();
+    let characteristics = opening_readings(&materials, ROAD_MATERIAL);
+    let key = materials
+        .band_key(ROAD_MATERIAL, &characteristics)
+        .expect("the shipped roster rates the paving material");
+    let mut store = LocalStore::new();
+    store.deposit_material(ROAD_MATERIAL, key, scalar_from_f32(1.0), &characteristics);
+    // Leave one micro-unit behind.
+    store.take_material_batches(
+        ROAD_MATERIAL,
+        scalar_from_f32(1.0) - scalar_from_f32(0.000_001),
+    );
+    assert_eq!(
+        store.material_total(ROAD_MATERIAL),
+        scalar_from_f32(0.0),
+        "a one-micro-unit residue is dust and is not kept"
     );
 }
 
@@ -2997,7 +3261,7 @@ fn a_road_entry_dies_with_its_keeper_and_frees_the_pool_behind_it() {
             0,
             core_sim::BuildQueueEntry {
                 source: BuildSource::Road(road_tile),
-                declared: BuildJob::Rung(Improvement::Grade),
+                declared: BuildJob::Climb(shipped::route_dirt_road()),
                 priority: core_sim::SourcePriority::default(),
             },
         );
@@ -3104,7 +3368,7 @@ fn build_work_per_hoed_worker() -> f32 {
     let worth = config.build_work_per_worker(
         &plant_build_kit,
         &core_sim::BandEquipment::start_stocked(&config),
-        core_sim::RungBranch::Plant,
+        shipped::plant(),
         None,
     );
     assert!(
@@ -3212,7 +3476,7 @@ fn a_build_head_beside_its_kept_site(head: KeptBuildHead) -> (App, Entity, UVec2
     {
         let ladder = app.world.resource::<core_sim::LadderConfigHandle>().get();
         let cost = ladder
-            .rung(RungKey::PlantTended)
+            .rung(shipped::plant_tended())
             .build_cost(core_sim::RUNG_COST_UNSCALED)
             .expect("the tended rung has a build meter");
         let mut registry = app.world.resource_mut::<core_sim::ForageRegistry>();
@@ -3856,6 +4120,7 @@ fn tame_at_floor(with_wolves: bool, floor: f32) -> (App, String) {
                 0.0,
                 WOLF_PACK_REGROWTH,
                 WOLF_PACK_BODY_MASS,
+                core_sim::shipped::root_standing(core_sim::shipped::animal()),
             ));
     }
     resolve_a_predated_turn(&mut app);
@@ -4052,3 +4317,150 @@ fn the_jobs_behind_the_head_are_suggested_their_tools_off_the_encoded_frame() {
         "ONE suggestion whose count is the total over every consumer"
     );
 }
+
+/// **THE KIT LEDGER'S `claimed` / `short` ARE WHAT THE CLAIMS ON THE KIT ASKED FOR, off the encoded
+/// frame.** The queue behind the head asks for hoes; the band holds none. The tillage kit (which
+/// carries the hoes on the builders job) reads those claims, its `short` is exactly the count Make Next
+/// asks for before the bench's queue nets it, and a kit nothing claims through - the trapping kit -
+/// reads `claimed` 0 and `short` 0.
+#[test]
+fn the_kit_ledger_claims_and_shortfall_agree_with_make_next_off_the_encoded_frame() {
+    use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
+
+    let (mut app, band, _sources) = world_with_a_queue(THE_WHOLE_QUEUE, BUILDERS);
+    *app.world
+        .get_mut::<core_sim::BandEquipment>(band)
+        .expect("a spawned band carries an equipment ledger") = core_sim::BandEquipment::default();
+    resolve_a_turn(&mut app);
+
+    let (count, _) = published_suggestion(&app, band, SHARED_TOOL)
+        .expect("hoes are suggested to a band that holds none");
+    let snapshot = app
+        .world
+        .resource::<SnapshotHistory>()
+        .latest_entry()
+        .expect("a snapshot was captured")
+        .snapshot;
+    let bytes = sim_schema::encode_snapshot_flatbuffer(snapshot.as_ref());
+    let envelope = fb::root_as_envelope(bytes.as_ref()).expect("a valid envelope");
+    let cohort = envelope
+        .payload_as_snapshot()
+        .and_then(|snapshot| snapshot.population())
+        .and_then(|section| section.populations())
+        .expect("the population section")
+        .iter()
+        .find(|cohort| cohort.entity() == band.to_bits())
+        .expect("the band is on the wire");
+    let needs = cohort.kitNeeds().expect("the band publishes its kit needs");
+    let reading = |kit: &str, item: &str| {
+        needs
+            .iter()
+            .find(|need| need.kitId() == Some(kit))
+            .and_then(|need| need.items())
+            .and_then(|items| items.iter().find(|row| row.itemId() == Some(item)))
+            .map(|row| (row.claimed(), row.short()))
+    };
+    let (claimed, short) = reading("tillage", SHARED_TOOL).expect("the tillage kit carries hoes");
+    assert!(
+        claimed > 0.0,
+        "the queued jobs claim hoes on the tillage kit"
+    );
+    assert_eq!(
+        short, count,
+        "with nothing on the bench, the ledger's short is Make Next's whole count"
+    );
+    for kit in ["trapping", "paving", "big_game"] {
+        for need in needs.iter().filter(|need| need.kitId() == Some(kit)) {
+            for row in need.items().into_iter().flat_map(|items| items.iter()) {
+                assert_eq!(
+                    (row.claimed(), row.short()),
+                    (0.0, 0),
+                    "{kit} {:?} is nobody's claim",
+                    row.itemId()
+                );
+            }
+        }
+    }
+}
+
+/// **A fixture band at a 64% built pen ring, holding no goods, with an AUTO bench and an empty queue.**
+fn an_auto_bench_beside_a_pen_short_of_hurdles() -> (App, Entity) {
+    let (mut app, band, _herd, _source) = world_with_a_ring_at_the_head(BUILDERS);
+    {
+        let width = pen_ring_work_cost();
+        let mut registry = app.world.resource_mut::<core_sim::HerdRegistry>();
+        for herd in registry.herds.iter_mut() {
+            herd.pen_extend_progress = 0.64 * width;
+        }
+    }
+    app.world
+        .get_mut::<PopulationCohort>(band)
+        .expect("the fixture band")
+        .stores = LocalStore::new();
+    // Fully kitted, so no tool outranks the hurdles in Make Next (kit shortages rank first).
+    app.world
+        .entity_mut(band)
+        .insert(core_sim::BandEquipment::start_stocked_for(
+            &core_sim::EquipmentConfig::for_a_stocked_fixture(),
+            A_WHOLE_BAND_OF_GEAR,
+        ));
+    // The fixture band is hand-built and carries no bench of its own; give it an auto one.
+    app.world.entity_mut(band).insert(core_sim::BandBench {
+        auto: true,
+        ..Default::default()
+    });
+    resolve_a_pen_turn(&mut app);
+    (app, band)
+}
+
+/// **AUTO-CRAFT WORKS DOWN A BUILD-MATERIAL SUGGESTION LIKE ANY OTHER.** Reported live: Make Next said
+/// `Hurdles x6` for a Corral while the auto bench read "nothing to make" for three turns, because the
+/// fill matched a suggestion to its offer on the equipment id alone. An empty auto bench beside a pen
+/// short of hurdles now queues an auto hurdles order at the suggestion's count.
+#[test]
+fn an_empty_auto_bench_queues_the_hurdles_a_pen_build_is_short_of() {
+    let (mut app, band) = an_auto_bench_beside_a_pen_short_of_hurdles();
+    let (published_count, _) = published_suggestion(&app, band, "hurdles")
+        .expect("Make Next names the hurdles a pen build is short of");
+
+    assert!(
+        core_sim::auto_craft::auto_craft_fill(&mut app.world, band),
+        "the fill must find a usable suggestion"
+    );
+    let bench = app
+        .world
+        .get::<core_sim::BandBench>(band)
+        .expect("the bench");
+    assert_eq!(bench.orders.len(), 1, "one auto order");
+    let order = &bench.orders[0];
+    assert!(order.auto, "queued by auto-craft");
+    assert_eq!(order.recipe_id, "hurdles");
+    assert_eq!(
+        order.count, published_count,
+        "at the suggestion's own count"
+    );
+}
+
+/// **A build-material auto order can be skipped, and the skip is keyed by the material.**
+#[test]
+fn a_hurdles_auto_order_can_be_skipped_and_stays_skipped() {
+    let (mut app, band) = an_auto_bench_beside_a_pen_short_of_hurdles();
+    assert!(core_sim::auto_craft::auto_craft_fill(&mut app.world, band));
+    // The store holds no wood or hide, so the bench cannot work the order: it is waiting.
+    let skipped = core_sim::auto_craft::auto_craft_skip(&mut app.world, band)
+        .expect("a waiting auto head can be skipped");
+    assert_eq!(skipped, "hurdles");
+    let bench = app
+        .world
+        .get::<core_sim::BandBench>(band)
+        .expect("the bench");
+    assert!(bench.auto_skipped.contains("hurdles"));
+    assert!(
+        bench.orders.is_empty(),
+        "nothing else is suggested, so the skipped material is not re-queued: {:?}",
+        bench.orders
+    );
+}
+
+/// Enough fixture workers that every kit unit is stocked for everyone.
+const A_WHOLE_BAND_OF_GEAR: f32 = 200.0;

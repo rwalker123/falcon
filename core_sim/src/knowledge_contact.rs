@@ -390,10 +390,11 @@ pub fn learn_over_connections(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ladder_ids::shipped;
     use crate::{
         connections::Sighting,
         connections_config::ConnectionsConfig,
-        intensification::{LadderConfig, RungKey},
+        intensification::LadderConfig,
         knowledge_contact_config::KnowledgeContactConfig,
         routes::{road_rung_span, RoadKeeper, NEAR_ENOUGH_TO_KEEP},
         scalar::Scalar,
@@ -510,8 +511,11 @@ mod tests {
         /// its keeping met (no bill stamped reads as met). The position is written before the
         /// keeper: `set_position` releases a keeper on a road in the free floor.
         fn kept_road(&mut self, keeper: RoadKeeper) {
-            let (base, width) =
-                road_rung_span(RungKey::RouteDirtRoad, &self.ladder, NEAR_ENOUGH_TO_KEEP);
+            let (base, width) = road_rung_span(
+                shipped::route_dirt_road(),
+                &self.ladder,
+                NEAR_ENOUGH_TO_KEEP,
+            );
             let road = self.roads.road_or_trail(SOMEWHERE, &self.ladder);
             road.set_position(base + width, &self.ladder);
             road.take_keeper(keeper, NEAR_ENOUGH_TO_KEEP, &self.ladder);

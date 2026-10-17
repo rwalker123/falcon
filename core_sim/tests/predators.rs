@@ -9,6 +9,7 @@
 use bevy::app::App;
 use bevy::ecs::system::RunSystemOnce;
 use bevy::MinimalPlugins;
+use core_sim::shipped;
 
 use bevy::math::UVec2;
 
@@ -70,6 +71,8 @@ fn spawn_world() -> App {
     // is the shipped turn-1 state — no traffic has worn anything in yet — so this harness's
     // keeping numbers are the roadless reading they have always been.
     app.world.insert_resource(core_sim::RoadRegistry::default());
+    app.world
+        .insert_resource(core_sim::TileImprovementRegistry::default());
     app.world.insert_resource(WellbeingConfigHandle::default());
     app.world
         .insert_resource(core_sim::CombatConfigHandle::default());
@@ -515,6 +518,7 @@ fn seat(app: &mut App, id: &str, species: &str, pos: UVec2, biomass: f32, cap: f
         0.0,
         r,
         30.0,
+        shipped::root_standing(shipped::animal()),
     ));
 }
 

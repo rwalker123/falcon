@@ -33,7 +33,7 @@
       "loiter_radius": 2,
       "fodder_per_biomass": 0.011,
       "regrowth_rate": 0.04,
-      "husbandry_ceiling": "wild",
+      "husbandry_ceiling": "animal:wild",
       "combat": { "attack": 8.0, "defense": 12.0, "durability": 500, "wariness": 0.10, "range": "melee" },
       "ferocity": 0.9,
       "hunt_yield": {
@@ -66,7 +66,7 @@
       "fodder_per_biomass": 0.05,
       "regrowth_rate": 0.04,
       "taming_cost_multiplier": 5.0,
-      "husbandry_ceiling": "pastoral",
+      "husbandry_ceiling": "animal:pastoral",
       "pastoral_resistance": 0.75,
       "pastoral_density": 1.5,
       "pen_density": 1.0,
@@ -101,7 +101,7 @@
       "fodder_per_biomass": 0.03,
       "regrowth_rate": 0.04,
       "taming_cost_multiplier": 5.0,
-      "husbandry_ceiling": "pastoral",
+      "husbandry_ceiling": "animal:pastoral",
       "pastoral_resistance": 0.75,
       "pastoral_density": 1.5,
       "pen_density": 1.0,
@@ -131,7 +131,7 @@
       "dwell_turns": 1,
       "fodder_per_biomass": 0.05,
       "regrowth_rate": 0.10,
-      "husbandry_ceiling": "wild",
+      "husbandry_ceiling": "animal:wild",
       "hunt_yield": {
         "materials": [
           { "material": "hide", "per_biomass": 0.014, "characteristics": { "toughness": 0.55, "suppleness": 0.6 } },
@@ -160,7 +160,7 @@
       "fodder_per_biomass": 0.06,
       "regrowth_rate": 0.10,
       "taming_cost_multiplier": 1.25,
-      "husbandry_ceiling": "pen",
+      "husbandry_ceiling": "animal:pen",
       "pastoral_density": 1.5,
       "pen_engage_gain": 6.6,
       "pen_density": 3.1713,
@@ -189,7 +189,7 @@
       "fodder_per_biomass": 0.10,
       "regrowth_rate": 0.35,
       "taming_cost_multiplier": 1.0,
-      "husbandry_ceiling": "pen",
+      "husbandry_ceiling": "animal:pen",
       "pastoral_resistance": 0.5,
       "pastoral_density": 1.1,
       "pen_engage_gain": 12.5,
@@ -219,7 +219,7 @@
       "fodder_per_biomass": 0.09,
       "regrowth_rate": 0.35,
       "taming_cost_multiplier": 1.0,
-      "husbandry_ceiling": "pen",
+      "husbandry_ceiling": "animal:pen",
       "pen_engage_gain": 44.0,
       "pastoral_resistance": 0.5,
       "pastoral_density": 1.1,
@@ -254,7 +254,7 @@
       "fodder_per_biomass": 0.05,
       "regrowth_rate": 0.09,
       "taming_cost_multiplier": 2.0,
-      "husbandry_ceiling": "pen",
+      "husbandry_ceiling": "animal:pen",
       "pastoral_engage_gain": 4.0,
       "pastoral_resistance": 0.75,
       "pastoral_density": 2.0,
@@ -291,7 +291,7 @@
       "fodder_per_biomass": 0.05,
       "regrowth_rate": 0.22,
       "taming_cost_multiplier": 1.0,
-      "husbandry_ceiling": "pen",
+      "husbandry_ceiling": "animal:pen",
       "pastoral_resistance": 0.5,
       "pastoral_density": 2.0,
       "pen_engage_gain": 5.266667,
@@ -329,7 +329,7 @@
       "fodder_per_biomass": 0.05,
       "regrowth_rate": 0.20,
       "taming_cost_multiplier": 1.0,
-      "husbandry_ceiling": "pen",
+      "husbandry_ceiling": "animal:pen",
       "pastoral_resistance": 0.5,
       "pastoral_density": 2.0,
       "pen_engage_gain": 5.1,
@@ -369,7 +369,7 @@
       "fodder_per_biomass": 0.05,
       "regrowth_rate": 0.04,
       "taming_cost_multiplier": 5.0,
-      "husbandry_ceiling": "pastoral",
+      "husbandry_ceiling": "animal:pastoral",
       "pastoral_density": 1.5,
       "pen_density": 1.0,
       "hunt_yield": {
@@ -401,7 +401,7 @@
       "fodder_per_biomass": 0.05,
       "regrowth_rate": 0.04,
       "taming_cost_multiplier": 5.0,
-      "husbandry_ceiling": "pastoral",
+      "husbandry_ceiling": "animal:pastoral",
       "pastoral_density": 1.5,
       "pen_density": 1.0,
       "hunt_yield": {
@@ -430,7 +430,7 @@
       "adjacent_water": "salt",
       "dwell_turns": 1,
       "regrowth_rate": 0.08,
-      "husbandry_ceiling": "wild",
+      "husbandry_ceiling": "animal:wild",
       "hunt_yield": {
         "materials": [
           { "material": "hide", "per_biomass": 0.018, "characteristics": { "toughness": 0.66, "suppleness": 0.74 } },
@@ -456,7 +456,7 @@
       "dwell_turns": 1,
       "fodder_per_biomass": 0.05,
       "regrowth_rate": 0.10,
-      "husbandry_ceiling": "wild",
+      "husbandry_ceiling": "animal:wild",
       "hunt_yield": {
         "materials": [
           { "material": "hide", "per_biomass": 0.01, "characteristics": { "toughness": 0.74, "suppleness": 0.4 } },
@@ -482,7 +482,7 @@
       "dwell_turns": 1,
       "fodder_per_biomass": 0.05,
       "regrowth_rate": 0.22,
-      "husbandry_ceiling": "wild",
+      "husbandry_ceiling": "animal:wild",
       "hunt_yield": {
         "materials": [
           { "material": "hide", "per_biomass": 0.015, "characteristics": { "toughness": 0.5, "suppleness": 0.58 } },
@@ -508,7 +508,7 @@
       "dwell_turns": 1,
       "fodder_per_biomass": 0.06,
       "regrowth_rate": 0.25,
-      "husbandry_ceiling": "wild",
+      "husbandry_ceiling": "animal:wild",
       "hunt_yield": {
         "materials": [
           { "material": "hide", "per_biomass": 0.018, "characteristics": { "toughness": 0.32, "suppleness": 0.82 } },
@@ -532,7 +532,7 @@
       "dwell_turns": 1,
       "fodder_per_biomass": 0.09,
       "regrowth_rate": 0.35,
-      "husbandry_ceiling": "wild",
+      "husbandry_ceiling": "animal:wild",
       "hunt_yield": {
         "materials": [
           { "material": "bone", "per_biomass": 0.0016, "characteristics": { "density": 0.32, "length": 0.08 } },
@@ -556,7 +556,7 @@
       "adjacent_water": "any",
       "dwell_turns": 1,
       "regrowth_rate": 0.30,
-      "husbandry_ceiling": "wild",
+      "husbandry_ceiling": "animal:wild",
       "hunt_yield": {
         "materials": [
           { "material": "bone", "per_biomass": 0.0014, "characteristics": { "density": 0.44, "length": 0.1 } }
@@ -581,7 +581,7 @@
       "fodder_per_biomass": 0.10,
       "regrowth_rate": 0.30,
       "taming_cost_multiplier": 1.0,
-      "husbandry_ceiling": "pen",
+      "husbandry_ceiling": "animal:pen",
       "pastoral_resistance": 0.5,
       "pastoral_density": 1.1,
       "pen_engage_gain": 9.4,
@@ -609,7 +609,7 @@
       "diet": "carnivore",
       "prey_per_biomass": 0.3,
       "regrowth_rate": 0.15,
-      "husbandry_ceiling": "wild",
+      "husbandry_ceiling": "animal:wild",
       "combat": { "attack": 3.0, "defense": 3.0, "durability": 20, "wariness": 0.70, "range": "melee" },
       "ferocity": 0.8,
       "aggression": 0.6,

@@ -9,6 +9,7 @@
 //! The report at the bottom (`#[ignore]`) is the measurement the lever's opening value was chosen
 //! from — see its own doc.
 
+use core_sim::shipped;
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 use bevy::ecs::system::RunSystemOnce;
@@ -77,6 +78,7 @@ fn land_world() -> World {
     world.insert_resource(HerdTelemetry::default());
     world.insert_resource(HerdDensityMap::default());
     world.insert_resource(RoadRegistry::default());
+    world.insert_resource(core_sim::TileImprovementRegistry::default());
     world.insert_resource(RouteTrafficLog::default());
 
     let mut tiles = Vec::with_capacity((WORLD_WIDTH * WORLD_HEIGHT) as usize);
@@ -115,6 +117,7 @@ fn fixture_herd(id: &str, species: &str, size_class: SizeClass, route: Vec<UVec2
         FIXTURE_FODDER_PER_BIOMASS,
         FIXTURE_REGROWTH_RATE,
         FIXTURE_BODY_MASS,
+        shipped::root_standing(shipped::animal()),
     );
     herd.dwell_remaining = 0;
     herd

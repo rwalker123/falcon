@@ -366,13 +366,15 @@ fn band_handle(payload: &CommandPayload) -> BandHandle {
         | CommandPayload::SendTradeExpedition { band_id, .. }
         | CommandPayload::StationExpedition { band_id, .. }
         | CommandPayload::SplitBand { band_id, .. } => *band_id,
-        // ⛔ **THE ROUTE BRANCH'S TWO TILE VERBS NAME A BAND, and no other tile verb does** (arc
-        // #532). A patch's keeper is whoever is already foraging it; a road has no work row at all,
-        // so the band that will KEEP the tile has to be a token — and the handle is REQUIRED, since
-        // a road with nobody on the hook is not a road the sim will accept.
-        CommandPayload::Grade { band_id, .. } | CommandPayload::Pave { band_id, .. } => {
-            Some(*band_id)
-        }
+        // ⛔ **A `build` LINE NAMES A BAND ONLY FOR A SOURCE KIND WITH NO WORK ROW** (the road
+        // branch, arc #532): a patch's keeper is whoever is already foraging it, but a road has no
+        // work row at all, so the band that will KEEP the tile has to be a token - and when it is
+        // there it is the handle the gate checks. Without one the line names a PLACE (a tile, a
+        // herd, a working), whose keepers are the bands already working it.
+        CommandPayload::BuildRung {
+            band_id: Some(id), ..
+        } => Some(*id),
+        CommandPayload::BuildRung { band_id: None, .. } => return BandHandle::PlaceAddressed,
         CommandPayload::RecallExpedition {
             expedition_band_id, ..
         } => Some(*expedition_band_id),
@@ -415,25 +417,11 @@ fn band_handle(payload: &CommandPayload) -> BandHandle {
         CommandPayload::Abandon { .. } | CommandPayload::Unqueue { .. } => {
             return BandHandle::PlaceAddressed
         }
-        // ⛔ **AND SO DO THE TWO DEPOSIT BRANCHES' THREE TILE VERBS** (issue #650). `fell`,
-        // `coppice` and `quarry` name a faction, a tile and a MATERIAL — a working's key is
-        // `(tile, material)` because one hex can hold two — and no band at all: a working belongs
-        // to a camp exactly as a patch does, so its keeper is whoever already cuts or digs it and
-        // the declaration reaches every band of the faction with an `extract` row there. They are
-        // `cultivate`'s shape with a material token, not `grade`'s with a band one, so the handle
-        // assertion has nothing to check and the parse assertion is the whole of what this gate
-        // proves about them.
-        //
-        // ⛔ **AND `abandon_working` RIDES THAT SAME ARM, WHICH IS WHY IT IS LISTED WITH THEM.** It
-        // names a faction, a tile and a MATERIAL and no band: a working's keeper is whoever already
-        // cuts it, so the verb drops that band's hold on the one working the pair names. It is a
-        // separate verb from `abandon` — which names a place and drops every holding on it — and
-        // being on this arm is what keeps the material's position and the closed tail identical to
-        // the three rung verbs'.
-        CommandPayload::Fell { .. }
-        | CommandPayload::Coppice { .. }
-        | CommandPayload::Quarry { .. }
-        | CommandPayload::AbandonWorking { .. } => return BandHandle::PlaceAddressed,
+        // ⛔ **AND `abandon_working` NAMES A PLACE TOO**: a faction, a tile and a MATERIAL and no
+        // band - a working's keeper is whoever already cuts it, so the verb drops that band's hold
+        // on the one working the pair names. It is a separate verb from `abandon` - which names a
+        // place and drops every holding on it.
+        CommandPayload::AbandonWorking { .. } => return BandHandle::PlaceAddressed,
         _ => return BandHandle::NotBandAddressed,
     };
     match optional {
@@ -653,8 +641,8 @@ mod tests {
         for line in [
             "work_priority 0 71204 44 23 wood low",
             "build_priority 0 71204 44 23 stone high",
-            "build_priority 0 71204 road 44 23 normal",
-            "build_order 0 71204 road 44 23 0",
+            "build_priority 0 71204 route 44 23 normal",
+            "build_order 0 71204 route 44 23 0",
             "build_order 0 71204 44 23 wood 1",
         ] {
             assert!(

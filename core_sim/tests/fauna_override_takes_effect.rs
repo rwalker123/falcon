@@ -9,6 +9,7 @@
 //! any other test's world.
 
 use bevy::math::UVec2;
+use core_sim::shipped;
 use core_sim::{
     build_test_app, config_override::clear_config_overrides,
     config_override::install_config_override, herd_engage_rate, FaunaConfigHandle, Herd,
@@ -54,6 +55,7 @@ fn a_staged_fauna_override_changes_the_drive_reach_a_new_world_hunts_with() {
         def.fodder_per_biomass,
         def.regrowth_rate.unwrap_or(fauna.ecology.regrowth_rate),
         def.body_mass,
+        shipped::root_standing(shipped::animal()),
     );
     let bare = herd_engage_rate(&herd, &fauna, false);
     let driven = herd_engage_rate(&herd, &fauna, true);

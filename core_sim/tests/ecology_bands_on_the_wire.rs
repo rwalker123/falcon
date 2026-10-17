@@ -18,6 +18,7 @@
 use bevy::app::App;
 use bevy::ecs::system::RunSystemOnce;
 use bevy::math::UVec2;
+use core_sim::shipped;
 
 use core_sim::{
     advance_forage_regrowth, advance_herds, FactionId, FaunaConfigHandle, ForageRegistry,
@@ -172,7 +173,10 @@ fn a_herds_published_bands_bracket_its_published_phase_at_every_rung() {
             // the way `advance_herds` ends its own pass, through `HerdRegistry::snapshot_entries`.
             // Driving the whole Logistics system instead would regrow (and, in the collapsing band,
             // eventually despawn) the herd, which is a different test.
-            let entries = app.world.resource::<HerdRegistry>().snapshot_entries();
+            let entries = app
+                .world
+                .resource::<HerdRegistry>()
+                .snapshot_entries(shipped::ladder());
             app.world.resource_mut::<HerdTelemetry>().entries = entries;
             reveal_herd(&mut app, &id);
             let snapshot = recapture(&mut app);
@@ -407,7 +411,9 @@ fn a_seeded_herd(app: &App) -> String {
         .herds
         .iter()
         .find(|herd| {
-            herd.id.starts_with("game_") && herd.carrying_capacity > 0.0 && herd.can_domesticate()
+            herd.id.starts_with("game_")
+                && herd.carrying_capacity > 0.0
+                && herd.can_domesticate(shipped::ladder())
         })
         .map(|herd| herd.id.clone())
         .expect("the standard map seeds a tameable game herd")

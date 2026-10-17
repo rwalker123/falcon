@@ -606,7 +606,7 @@ const KIT_BREAKDOWN_ROW_FORMAT := "%s%s %s %s — %s"
 # **THE CLIFF, IN ONE SENTENCE.** Without it a player reads the conditions as a performance gradient
 # and paces their hunting against a number that does not move anything — which is the exact
 # misreading the flat-until-expiry model invites.
-const KIT_BREAKDOWN_CLIFF_NOTE := "A kit works at full strength until it runs out — the condition is how long you have, not how well it works. There is no way to make more yet."
+const KIT_BREAKDOWN_CLIFF_NOTE := "Full strength until worn out"
 
 const BREAKDOWN_CARET_OPEN := "▾"
 const BREAKDOWN_CARET_CLOSED := "▸"
@@ -679,7 +679,7 @@ const CORRAL_PROGRESS_COMPLETE := 1.0
 const HUSBANDRY_PROGRESS_COMPLETE := 1.0
 const CULTIVATION_PROGRESS_COMPLETE := 1.0
 const FIELD_PROGRESS_COMPLETE := 1.0
-const FIELD_BADGE_LABEL := "Field"
+const FIELD_BADGE_LABEL := "Farm"
 
 # ---- RETIRED — **`PEN_STARVING_LABEL`** (`⚠ Starving — %d%% fed`), the Corral row's starving face.
 # It welded two unrelated percentages into one row: a built rung row renders `<label> <meter %>`, so a
@@ -691,6 +691,38 @@ const FIELD_BADGE_LABEL := "Field"
 # feed story. Every reader is `herd_summary_lines` below, so the whole block lives here.
 const PEN_FOOTPRINT_ROW := "Pen"
 const PEN_FOOTPRINT_FORMAT := "radius %d · %d tiles"
+
+# **A PEN FENCED PAST A THRESHOLD IS A DIFFERENT KIND OF PEN, and the catalog names the tiers** (the
+# pen rung's `size_tiers`: the id, its label, the rings it takes, what it does for the keepers). A herd
+# standing in one reads its row by the tier's own label and states the bonus; a pen short of the first
+# tier states how many more rings would reach it. Both lines are DATA -- no tier is named here.
+const PEN_TIER_BONUS_FORMAT := "each keeper minds %s× the head"
+const PEN_TIER_RINGS_FORMAT := "%d more %s — %s× the head"
+const PEN_TIER_RING_ONE := "ring"
+const PEN_TIER_RING_MANY := "rings"
+const PEN_TIER_BONUS_DECIMALS := 2
+
+## The pen's size-tier rows: the held tier's bonus, else the next tier's rings-to-go. `[]` for a pen
+## whose catalog states no tiers. Pure over the herd dict (the quotes carry the catalog's tiers).
+static func pen_tier_lines(herd_data: Dictionary, prefix: String) -> Array[String]:
+    var out: Array[String] = []
+    if not RungQuotes.is_enclosed(herd_data, prefix):
+        return out
+    var current := RungQuotes.current_size_tier(herd_data, prefix)
+    if not current.is_empty():
+        out.append("%s: %s" % [String(current.get("label", "")), PEN_TIER_BONUS_FORMAT
+            % format_trimmed(float(current.get("keeper_ratio_gain", 1.0)), PEN_TIER_BONUS_DECIMALS)])
+        return out
+    var upcoming := RungQuotes.next_size_tier(herd_data, prefix)
+    if upcoming.is_empty():
+        return out
+    var to_go := int(upcoming.get("min_rings", 0)) - int(herd_data.get("pen_radius", 0))
+    if to_go <= 0:
+        return out
+    out.append("%s: %s" % [String(upcoming.get("label", "")), PEN_TIER_RINGS_FORMAT % [
+        to_go, PEN_TIER_RING_ONE if to_go == 1 else PEN_TIER_RING_MANY,
+        format_trimmed(float(upcoming.get("keeper_ratio_gain", 1.0)), PEN_TIER_BONUS_DECIMALS)]])
+    return out
 
 # **THE ROW IS NAMED FOR WHAT IT MEASURES, NOT FOR ONE OF ITS TERMS.** It read `Fed by pasture` and
 # then listed hay, naming one feed source in the label and the other in the value. `Fed:` leads with
@@ -752,8 +784,52 @@ const PEN_PASTURE_COVERS_ALL := 1.0
 # it is short of fodder, so the `no fodder` state takes the plain form. The "/turn" is spelled tight
 # in the compact spelling `SourceForecast.POLICY_CAP_FODDER_FORMAT` uses, not `YIELD_PER_TURN_SUFFIX`'s
 # spaced standalone form.
-const PEN_FEED_SHORTFALL_MORE_SEGMENT := " · needs %s more/turn"
-const PEN_FEED_SHORTFALL_SEGMENT := " · needs %s /turn"
+const PEN_FEED_SHORTFALL_SEGMENT := " · short %s feed/turn"
+
+## **THE REMEDIES, AS THE SIM SUPPORTS THEM — and only those.** A pen is fed by its fenced footprint's
+## grass and the keeper band's FODDER store (`graze.md` → "The pasture offset", "FODDER is a STOCK"): a
+## hay Field the band sows credits that store, and a band that has not learned Foddering draws none.
+## A wider fence grazes more land (`pen_pasture_fraction` is the footprint's intake over the herd's
+## demand, and `hex_range_tiles(corralled_at, pen_radius)` grows with each ring), so a ring raises the
+## pasture share wherever the new ground carries grass. Shared by the tile card's `Fed` row and the Work
+## row's hover so the two cannot word one fix differently.
+const PEN_FEED_FIX_LINE := "Fix: hay field (Foddering) · extend pen"
+const PEN_FEED_ROW_HOVER_SHORT_FORMAT := "Short %s feed/turn"
+const PEN_FEED_ROW_HOVER_FED_FORMAT := "Only %d%% fed"
+## The Work row's two hover lines for the same state: the hazard and the fix, the fix indented under it.
+const PEN_UNDERFED_HOVER_SHORT_FORMAT := "⚠ Underfed: short %s feed/turn"
+const PEN_UNDERFED_HOVER_FED_FORMAT := "⚠ Underfed: only %d%% fed"
+const PEN_UNDERFED_FIX_INDENT := "   "
+
+## The Work row's one-line note for the same state. The shortfall is the sim's `pen_fodder_shortfall`
+## (the gap the footprint leaves, less the fodder drawn); with none published the fed share says it.
+const PEN_UNDERFED_NOTE_SHORT_FORMAT := "Underfed — short %s feed/turn"
+const PEN_UNDERFED_NOTE_FED_FORMAT := "Underfed — only %d%% fed"
+
+## The tile card's `Fed` row hover: what is missing, then the fix. Only called for a starving pen.
+static func pen_fed_row_hover(herd_data: Dictionary) -> String:
+    var shortfall := float(herd_data.get("pen_fodder_shortfall", 0.0))
+    var first := PEN_FEED_ROW_HOVER_SHORT_FORMAT % SourceForecast.format_fodder(shortfall) \
+        if shortfall >= SourceForecast.FODDER_FLOW_MIN \
+        else PEN_FEED_ROW_HOVER_FED_FORMAT % int(round(
+            PenStatus.fed_fraction(herd_data) * HudConst.PROGRESS_PERCENT_SCALE))
+    return first + SourceForecast.TOOLTIP_LINE_SEPARATOR + PEN_FEED_FIX_LINE
+
+## The Work row's hover lines for an underfed pen (`⚠ Underfed: …` and its indented Fix line).
+static func pen_underfed_hover(herd_data: Dictionary) -> String:
+    var shortfall := float(herd_data.get("pen_fodder_shortfall", 0.0))
+    var first := PEN_UNDERFED_HOVER_SHORT_FORMAT % SourceForecast.format_fodder(shortfall) \
+        if shortfall >= SourceForecast.FODDER_FLOW_MIN \
+        else PEN_UNDERFED_HOVER_FED_FORMAT % int(round(
+            PenStatus.fed_fraction(herd_data) * HudConst.PROGRESS_PERCENT_SCALE))
+    return first + SourceForecast.TOOLTIP_LINE_SEPARATOR + PEN_UNDERFED_FIX_INDENT + PEN_FEED_FIX_LINE
+
+static func pen_underfed_note(herd_data: Dictionary) -> String:
+    var shortfall := float(herd_data.get("pen_fodder_shortfall", 0.0))
+    if shortfall >= SourceForecast.FODDER_FLOW_MIN:
+        return PEN_UNDERFED_NOTE_SHORT_FORMAT % SourceForecast.format_fodder(shortfall)
+    return PEN_UNDERFED_NOTE_FED_FORMAT % int(round(
+        PenStatus.fed_fraction(herd_data) * HudConst.PROGRESS_PERCENT_SCALE))
 
 # ---- Husbandry-ceiling stand-ins. Rendered in place of the whole husbandry section on a wild-ceiling
 # herd, and where the corral affordance would sit on a pastoral one — so the missing controls read as
@@ -1298,6 +1374,50 @@ static func _split_kv(line: String) -> Array:
 static func tile_is_gathering_site(tile_info: Dictionary) -> bool:
     return String(tile_info.get("food_module", "")).strip_edges() != ""
 
+## **CAN A CREW WORK THIS GROUND?** A gathering site, OR ground the server's own verdict lets a source be
+## placed on now (`RungQuotes.placement_admitted`: a placing rung stands there, or its `site_refusal` is
+## empty -- which is how a lesson like Worked Land opens ground that is not a gathering site).
+##
+## **THE CLIENT DECIDES NO SITE RULE HERE.** Whether a tile is thin, dry or off the sites is the sim's
+## to say and arrives as the quote's `site_refusal`; this reads that verdict and nothing else. It is the
+## one predicate the land row, the card's forage block and the compose sheet's availability share, so
+## the three cannot disagree about whether this ground can be worked.
+static func tile_is_workable(tile_info: Dictionary) -> bool:
+    return tile_is_gathering_site(tile_info) \
+        or RungQuotes.placement_admitted(tile_info, HudComposeVocab.FORAGE_FORECAST_PREFIX)
+
+## **DOES A CREW HERE HAVE TO NAME A CROP?** Ground that is not a gathering site, which the server admits
+## a placing rung on: the only assignment it takes there is a farm-raising one, so the sheet sends a crop
+## and offers no plain gather. `""` where a plain gather is allowed (a gathering site, or a patch that
+## already stands at the placing rung).
+static func offsite_crop_verb(tile_info: Dictionary) -> String:
+    if tile_is_gathering_site(tile_info):
+        return ""
+    return RungQuotes.offsite_placing_verb(tile_info, HudComposeVocab.FORAGE_FORECAST_PREFIX)
+
+## The placing rung's own name, lowercased (`farm`), for the off-site sheet's words; `""` where
+## `offsite_crop_verb` is.
+static func offsite_crop_label(tile_info: Dictionary) -> String:
+    if offsite_crop_verb(tile_info) == "":
+        return ""
+    return RungQuotes.name_of(RungQuotes.offsite_placing_quote(
+        tile_info, HudComposeVocab.FORAGE_FORECAST_PREFIX)).to_lower()
+
+## **THE TEACHING LINE FOR GROUND A LESSON WOULD OPEN**, `""` unless the server answered `needs_lesson`
+## for a placing rung. `Learn Worked Land — work a farm`: the lesson's own name off the knowledge roster
+## (`labels`, `{knowledge_id: display_name}`), the rung that teaches it off the catalog. Two lines at
+## most on the card; with no teaching rung to name it states the lesson alone.
+static func site_lesson_line(tile_info: Dictionary, labels: Dictionary) -> String:
+    var prefix: String = HudComposeVocab.FORAGE_FORECAST_PREFIX
+    var lesson := RungQuotes.lesson_to_place(tile_info, prefix)
+    if lesson == "":
+        return ""
+    var lesson_name := String(labels.get(lesson, lesson.capitalize()))
+    var teacher := RungQuotes.rung_teaching(tile_info, prefix, lesson).to_lower()
+    if teacher == "":
+        return HudFloraVocab.SITE_LESSON_FORMAT % lesson_name
+    return HudFloraVocab.SITE_LESSON_TEACHER_FORMAT % [lesson_name, teacher]
+
 ## **THE ONE ANSWER TO "WHAT FORAGE CAPACITY DOES THIS CARD SHOW"** — the patch's live ceiling where
 ## the player can see it, the tile's own ground `K` where they only remember it. `0.0` where the
 ## ground carries no patch at all, which is every caller's "print no row" test.
@@ -1591,7 +1711,8 @@ static func unqueued_rung_value(src: Dictionary, prefix: String, kind: String, i
 ## **THEY STAY SEPARATE FUNCTIONS.** Each is called by name from the row that owns it and each carries
 ## its own note (`corral_built_label`'s records that it stopped speaking for the feed); this is a
 ## dispatcher over them, not a replacement.
-static func rung_built_label(improvement: String) -> String:
+static func rung_built_label(improvement: String, src: Dictionary = {},
+        prefix: String = "") -> String:
     match improvement:
         SourceForecast.IMPROVEMENT_CULTIVATE:
             return cultivation_built_label()
@@ -1601,7 +1722,13 @@ static func rung_built_label(improvement: String) -> String:
             return husbandry_built_label()
         SourceForecast.IMPROVEMENT_CORRAL:
             return corral_built_label()
-    return ""
+    if improvement == SourceForecast.IMPROVEMENT_NONE:
+        return ""
+    # A rung the hand-written badges do not know reads as the catalog's own name behind a plain mark.
+    return "%s %s" % [GENERIC_RUNG_GLYPH, rung_badge_word(improvement, src, prefix)]
+
+## The mark a rung with no hand-written badge wears.
+const GENERIC_RUNG_GLYPH := FoodIcons.GENERIC_POLICY
 
 ## **THE FACE OF THE RUNG A SOURCE STANDS ON — `▦ Field 100%`, `🐄 Corralled 100%`, and the hazard
 ## states with them** (`docs/plan_standing_upkeep.md` §4.9 item 12c). `""` on a source standing on its
@@ -1631,7 +1758,7 @@ static func rung_built_label(improvement: String) -> String:
 ## face does not have and invite a caller to pass a rung in flight, which is the other row's story.
 static func standing_rung_face(src: Dictionary, prefix: String, kind: String) -> String:
     var improvement := SourceForecast.standing_improvement(src, prefix)
-    var label := rung_built_label(improvement)
+    var label := rung_built_label(improvement, src, prefix)
     if label == "":
         return ""
     var progress := SourceForecast.improvement_progress(src, prefix, improvement)
@@ -1643,7 +1770,7 @@ static func standing_rung_face(src: Dictionary, prefix: String, kind: String) ->
 ## **THE UNQUEUED ROW'S OWN SENTENCE, on the hover of the row carrying a rung nobody is building.**
 ## `99% built · not queued` is short and the state needs three facts — what the state IS,
 ## that the banked work survives, and the one click that resumes it — so the words go where there is
-## room for them (`HudSelectionVocab.RUNG_UNQUEUED_TOOLTIP`, which names no CAUSE, and says there why).
+## room for them (`lapsed_hover_text`, which names no CAUSE).
 ##
 ## ⛔ **IT TAKES THE COMPOSED VALUE, NEVER THE SOURCE, so the verdict is reached exactly once.**
 ## `build_sentinel_value` already forked on the countdown, the meter and the queue position; a hover
@@ -1657,12 +1784,20 @@ static func standing_rung_face(src: Dictionary, prefix: String, kind: String) ->
 ## a job whose keeping is unpaid buys the player a second lapse.
 ##
 ## Silent on every value that is not lapsed, and silent for a caller passing no context.
-static func note_lapsed_hover(ctx: Context, row_key: String, value: String) -> void:
+static func note_lapsed_hover(ctx: Context, row_key: String, value: String,
+        progress: float = SourceForecast.BUILD_METER_UNSTARTED, rot: float = SourceForecast.NO_METER_ROT) -> void:
     if ctx == null or not value.contains(HudSelectionVocab.RUNG_UNQUEUED_PHRASE):
         return
-    ctx.row_tooltips[row_key] = HudSelectionVocab.RUNG_UNQUEUED_ROTTING_TOOLTIP \
-        if value.contains(HudSelectionVocab.RUNG_ROTTING_PHRASE) \
-        else HudSelectionVocab.RUNG_UNQUEUED_TOOLTIP
+    ctx.row_tooltips[row_key] = lapsed_hover_text(progress,
+        value.contains(HudSelectionVocab.RUNG_ROTTING_PHRASE), rot)
+
+## The unqueued rung's hover, two lines: `99% built · not queued` (plus ` · losing 0.5/turn` while the
+## meter is rotting and the source publishes its rot) over `Fix: re-queue from Work row`.
+static func lapsed_hover_text(progress: float, rotting: bool, rot: float) -> String:
+    var first := HudSelectionVocab.RUNG_UNQUEUED_TOOLTIP_FORMAT % HudFormat.progress_percent(progress)
+    if rotting and rot >= SourceForecast.MATERIAL_FLOW_MIN:
+        first += HudSelectionVocab.RUNG_UNQUEUED_ROTTING_CLAUSE_FORMAT % rot
+    return first + SourceForecast.TOOLTIP_LINE_SEPARATOR + HudSelectionVocab.RUNG_UNQUEUED_FIX_LINE
 
 ## **THE REMEDY, ON THE HOVER OF THE ROW THAT IS SLIPPING** — the whole of what replaced the `At risk:`
 ## row and its indented instruction. Registers `HudWorkVocab.under_kept_tooltip_for_source` against the
@@ -1815,11 +1950,56 @@ static func husbandry_payoff_hover(herd_data: Dictionary, prefix: String) -> Str
 static func husbandry_payoff_climbing_line(herd_data: Dictionary, prefix: String, body_mass: float,
         quarry: String) -> String:
     var destination := SourceForecast.build_destination_capacity(herd_data, prefix)
-    var rung := rung_badge_word(SourceForecast.build_destination_rung(herd_data, prefix))
+    var rung := rung_badge_word(SourceForecast.build_destination_rung(herd_data, prefix),
+        herd_data, prefix)
     if not SourceForecast.states_destination_capacity(destination) or rung.is_empty():
         return HUSBANDRY_PAYOFF_CLIMBING
     return HUSBANDRY_PAYOFF_DESTINATION_FORMAT % [rung,
         SourceForecast.stock_face(destination, body_mass, quarry)]
+
+## **THE STATE A FINISHED RUNG LEAVES A SOURCE IN, AS A NOUN** (`Tended Patch`, `Field`, `Pastoral`,
+## `Penned` for the shipped verbs): the hand-written word where `IMPROVEMENT_DONE_LABELS` has one, else
+## the catalog's own name off the source's quote (or the verb capitalised where no quote is in hand) --
+## so a rung the config adds reads as English, never blank and never `Wild`.
+static func improvement_done_noun(verb: String, src: Dictionary = {}, prefix: String = "") -> String:
+    if HudComposeVocab.IMPROVEMENT_DONE_LABELS.has(verb):
+        return String(HudComposeVocab.IMPROVEMENT_DONE_LABELS[verb])
+    if verb == SourceForecast.IMPROVEMENT_NONE:
+        return ""
+    return rung_badge_word(verb, src, prefix)
+
+## **THE ROW KEY A PATCH'S RUNG IS STATED UNDER**: the two shipped words (`Cultivation`, `Field`) for the
+## verbs that have them, and the catalog's own name for any other rung the config adds.
+static func patch_rung_row_key(quote: Dictionary) -> String:
+    match RungQuotes.verb_of(quote):
+        SourceForecast.IMPROVEMENT_CULTIVATE:
+            return CULTIVATION_ROW
+        SourceForecast.IMPROVEMENT_SOW:
+            return HudFloraVocab.FIELD_ROW
+    return RungQuotes.name_of(quote)
+
+## **THE ROW KEY A HERD'S RUNG IS STATED UNDER**: the two shipped words for a domesticated and an
+## enclosed rung (`Husbandry`, `Corral`), keyed off the rung's TRAITS rather than its verb, and the
+## catalog's own name for any other -- so a rung the config adds reads as English, never blank.
+static func herd_rung_row_key(quote: Dictionary) -> String:
+    if RungQuotes.has_trait(quote, RungQuotes.TRAIT_ENCLOSED):
+        return CORRAL_ROW
+    if RungQuotes.has_trait(quote, RungQuotes.TRAIT_DOMESTICATED):
+        return HUSBANDRY_ROW
+    return RungQuotes.name_of(quote)
+
+## Where the species stops: the hand-written sentence for a species that goes no further than the
+## pastoral rung, and a catalog-driven one for any other ceiling.
+static func herd_ceiling_hint(herd_data: Dictionary, prefix: String) -> String:
+    var ceiling := SourceForecast.husbandry_ceiling(herd_data)
+    if ceiling == SourceForecast.HUSBANDRY_CEILING_PASTORAL:
+        return HUSBANDRY_PASTORAL_HINT
+    var ceiling_quote := RungQuotes.quote_of_rung(herd_data, prefix,
+        RungQuotes.branch_prefix(herd_data, prefix) + ceiling)
+    return HUSBANDRY_CEILING_FALLBACK_FORMAT % (RungQuotes.name_of(ceiling_quote).to_lower() \
+        if not ceiling_quote.is_empty() else ceiling)
+
+const HUSBANDRY_CEILING_FALLBACK_FORMAT := "This animal goes no further than a %s."
 
 ## **WHAT AN UNDER-KEPT RUNG IS DOING, IN ONE WORD, PER WEB** — the state that rides the built row's
 ## `⚠`. The pair is the work board's two notes reduced to their verb (`WORK_ROW_UNDER_KEPT_NOTE` says
@@ -1836,13 +2016,18 @@ static func rung_under_kept_word(kind: String) -> String:
 ## is the badges' own words rather than a fifth spelling of them. `""` for a rung with no badge —
 ## `IMPROVEMENT_NONE`, and anything the ladder gains before this table does — which is the caller's cue
 ## to state the remedy without a countdown rather than to count down an unnamed thing.
-static func rung_badge_word(improvement: String) -> String:
+static func rung_badge_word(improvement: String, src: Dictionary = {},
+        prefix: String = "") -> String:
     match improvement:
         SourceForecast.IMPROVEMENT_CULTIVATE: return CULTIVATION_BUILT_WORD
         SourceForecast.IMPROVEMENT_SOW: return FIELD_BADGE_LABEL
         SourceForecast.IMPROVEMENT_TAME: return HUSBANDRY_BUILT_WORD
         SourceForecast.IMPROVEMENT_CORRAL: return CORRAL_BUILT_WORD
-    return ""
+    if improvement == SourceForecast.IMPROVEMENT_NONE:
+        return ""
+    # Any other rung: the catalog's own name off the source's quote, else the verb capitalised.
+    var quote := RungQuotes.quote_of_verb(src, prefix, improvement)
+    return RungQuotes.name_of(quote) if not quote.is_empty() else improvement.capitalize()
 
 ## **THE SENTINEL FORK, ON ITS OWN — the countdown half of `rung_row_value`.** Everything above it in
 ## that function is ROUTING (which of a card's two rows may print the source's one countdown, and
@@ -2288,6 +2473,61 @@ static func build_blocked_lines(src: Dictionary, prefix: String, kind: String,
         predator_display_name(src, prefix, world_herds))])
     return lines
 
+## **THE BAND'S SHELF AS `{material_id: amount}`** — public twin of the private lookup, for a reader
+## that weighs a pile against what is held. One term per good; never a total.
+static func band_material_stock(band: Dictionary) -> Dictionary:
+    return _material_amounts(band.get(BAND_MATERIAL_STORE_KEY, []))
+
+## The keys `build_material_shortfall` answers with.
+const MATERIAL_SHORT_ID_KEY := "material_id"
+const MATERIAL_SHORT_HELD_KEY := "held"
+const MATERIAL_SHORT_MISSING_KEY := "missing"
+
+## **WHAT A BUILD STILL NEEDS IN GOODS THAT THE SHELF DOES NOT HOLD** — `{material_id, held, missing}` for
+## the good the shelf is shortest of, `{}` when the pile is covered or the rung eats nothing.
+##
+## **THE PILE IS DRAWN AS THE METER CLIMBS** (`snapshot.fbs` `buildMaterialCost`: the whole pile at full
+## coverage, work banked and goods drawn scaling together), so what is still to be drawn is
+## `pile × (1 − progress)`; a build at 65% needs 35% of its pile more. The shelf is weighed against that,
+## good by good, and the answer names the good with the largest uncovered share — never a summed figure.
+##
+## **IT DOES NOT WAIT FOR THE SIM'S `materials` CAUSE**: that key rides `-4` and only fires on a shelf
+## covering NOTHING, so a shelf with some of the good — which stalls the build in proportion — never
+## carries it. The pair compared here is two things the wire already states (the pile and the band's
+## `material_store`); the sim's own cause, where it arrives, goes through `build_blocked_lines`.
+static func build_material_shortfall(pile: Array[Dictionary], store: Dictionary,
+        progress: float) -> Dictionary:
+    var left := SourceForecast.BUILD_METER_FULL - clampf(progress, 0.0, SourceForecast.BUILD_METER_FULL)
+    var worst := {}
+    var worst_share := 1.0
+    for row in pile:
+        var id := String(row.get(SourceForecast.MATERIAL_PAYOFF_ID_KEY, ""))
+        var needed := float(row.get(SourceForecast.MATERIAL_PAYOFF_AMOUNT_KEY, 0.0)) * left
+        if id == "" or needed < SourceForecast.MATERIAL_FLOW_MIN:
+            continue
+        var held := float(store.get(id, 0.0))
+        var missing := needed - held
+        if missing < SourceForecast.MATERIAL_FLOW_MIN:
+            continue
+        var share := held / needed
+        if share < worst_share:
+            worst_share = share
+            worst = {MATERIAL_SHORT_ID_KEY: id, MATERIAL_SHORT_HELD_KEY: held,
+                MATERIAL_SHORT_MISSING_KEY: missing}
+    return worst
+
+## The queue row's clause for a shortfall, `""` for none.
+static func build_material_short_text(short: Dictionary) -> String:
+    if short.is_empty():
+        return ""
+    var amount := format_trimmed(float(short[MATERIAL_SHORT_MISSING_KEY]),
+        HudWorkVocab.RUNG_TRACK_MATERIAL_DECIMALS)
+    var id := String(short[MATERIAL_SHORT_ID_KEY])
+    var format := HudWorkVocab.BUILD_QUEUE_MATERIAL_NONE_FORMAT \
+        if float(short[MATERIAL_SHORT_HELD_KEY]) < SourceForecast.MATERIAL_FLOW_MIN \
+        else HudWorkVocab.BUILD_QUEUE_MATERIAL_SHORT_FORMAT
+    return format % [HudSelectionVocab.RUNG_HAZARD_GLYPH, id, amount]
+
 ## **THE PREDATOR THAT ATE THE GROWTH, IN THE PLAYER'S WORDS.** The wire names it by its fauna_config
 ## species KEY (`predator_eaten_by`, `"wolf"`) and the client holds no fauna roster, so the name comes
 ## from the vocabulary the herd cards already use: a visible herd of that species, whose own `species`
@@ -2686,10 +2926,7 @@ static func pen_feed_value(herd_data: Dictionary) -> String:
     var shortfall := float(herd_data.get("pen_fodder_shortfall", 0.0))
     var shortfall_segment := ""
     if shortfall >= SourceForecast.FODDER_FLOW_MIN:
-        var shortfall_format := PEN_FEED_SHORTFALL_MORE_SEGMENT \
-            if float(herd_data.get("fodder_draw", 0.0)) >= SourceForecast.FODDER_FLOW_MIN \
-            else PEN_FEED_SHORTFALL_SEGMENT
-        shortfall_segment = shortfall_format % SourceForecast.format_fodder(shortfall)
+        shortfall_segment = PEN_FEED_SHORTFALL_SEGMENT % SourceForecast.format_fodder(shortfall)
     return PEN_FEED_VALUE_FORMAT % [hazard, fed_percent, sources, shortfall_segment]
 
 
@@ -3689,7 +3926,7 @@ static func herd_summary_lines(herd_data: Dictionary, world_herds: Array,
     # comment carries the reasoning): the phase is a condition OF the stock, and `_value_hex` keys
     # both row names to `ecology_value_hex`, which matches the phase word wherever in the value it
     # sits. So folding costs no styling fork.
-    var corralled := bool(herd_data.get("corralled", false))
+    var corralled := RungQuotes.is_enclosed(herd_data)
     var carrying_capacity := float(herd_data.get("carrying_capacity", 0.0))
     var biomass: float = float(herd_data.get("biomass", 0.0))
     var phase := String(herd_data.get("ecology_phase", "")).strip_edges().to_lower()
@@ -3730,109 +3967,100 @@ static func herd_summary_lines(herd_data: Dictionary, world_herds: Array,
     # A WILD-ceiling herd shows NO husbandry track at all (just the hunt-only hint); a PASTORAL one
     # keeps the domestication track but can never be penned (hint where Corral would sit); a PEN one
     # (or empty/absent) shows the full ladder, exactly as before.
-    var ceiling := SourceForecast.husbandry_ceiling(herd_data)
-    if ceiling == SourceForecast.HUSBANDRY_CEILING_WILD:
+    # **THE LADDER IS THE HERD'S OWN `rung_quotes`** (issue #175): one row per rung above the root that
+    # the species' husbandry ceiling admits, in climb order, so a fourth step the config adds draws a row
+    # here with no edit. A WILD-ceiling herd admits no rung and shows NO husbandry track (just the
+    # hunt-only hint); a ceiling short of the top keeps the rows below it and states where the species
+    # stops; a herd with no ceiling shows the full ladder.
+    var herd_prefix: String = HudComposeVocab.BARE_FORECAST_PREFIX
+    var herd_quotes := RungQuotes.quotes(herd_data, herd_prefix)
+    var admitted_quotes: Array[Dictionary] = []
+    for herd_quote in herd_quotes:
+        if RungQuotes.admits(herd_data, herd_prefix, herd_quote):
+            admitted_quotes.append(herd_quote)
+    if admitted_quotes.is_empty():
         lines.append(HUSBANDRY_WILD_PREDATOR_HINT if is_predator else HUSBANDRY_WILD_HINT)
     else:
-        # **ONE ROW PER LIVE METER, AND THE TURNS LEAD IT** (issue #545) — the animal twin of the tile
-        # card's rows, through the same `rung_row_value` fork, so a rung's four hazard states cannot
-        # be worded one way on a patch and another on a herd. The work absolutes came off this
-        # surface with them: `0.3 / 100 work` is compose-sheet detail.
-        var domestication := float(herd_data.get("domestication", 0.0))
-        var herd_prefix: String = HudComposeVocab.BARE_FORECAST_PREFIX
-        var tamed := domestication >= HUSBANDRY_PROGRESS_COMPLETE
-        var tame_declared := unstaffed_build == SourceForecast.IMPROVEMENT_TAME
-        # **BOTH ROWS RENDER WHEN BOTH METERS ARE LIVE.** A herd holding a finished Tame while its pen
-        # goes up states `Husbandry: 🐄 Domesticated 100%` over `Corral: ≈40 turns (8%)` — one row
-        # would silently drop either the rung you hold or the build in flight.
-        if tamed or domestication > BUILD_METER_EMPTY or tame_declared:
-            # **A HERD NOBODY IS ON READS AS *HELD* HERE, and that is the sim's own `-2`**
-            # (`docs/plan_standing_upkeep.md` §4.6a). No animal rung declares a `meter_decay`, so an
-            # animal meter never goes backwards: an abandoned Tame is parked exactly where it was
-            # left, which is a decision rather than a failure and takes no mark. It rendered
-            # `⚠ Stalled` while the wire answered `-1` for an unstaffed source.
-            var husbandry_value := rung_row_value(herd_data, herd_prefix,
-                SourceForecast.IMPROVEMENT_TAME, SourceForecast.SOURCE_KIND_HERD,
-                husbandry_built_label(), tamed, domestication, build_crew, unstaffed_build)
-            lines.append("%s: %s" % [HUSBANDRY_ROW, husbandry_value])
-            note_lapsed_hover(ctx, HUSBANDRY_ROW, husbandry_value)
-            note_under_kept_hover(ctx, HUSBANDRY_ROW, herd_data, herd_prefix,
-                SourceForecast.SOURCE_KIND_HERD, SourceForecast.IMPROVEMENT_TAME)
-            # …and, on a row with no REMEDY to state, what the ladder is buying. The remedy wins the
-            # slot outright when both apply: a herd shedding animals is not asking what a finished
-            # Tame would be worth.
-            if ctx != null and not ctx.row_tooltips.has(HUSBANDRY_ROW):
-                var payoff := husbandry_payoff_hover(herd_data, herd_prefix)
-                if payoff != "":
-                    ctx.row_tooltips[HUSBANDRY_ROW] = payoff
-            if not tamed:
-                lines.append_array(build_gear_lines(herd_data, herd_prefix))
-                # …and, on a BLOCKED queue alone, what frees it. This is the web the measured case
-                # lives on: a half-tamed herd drawn to its escapement floor by hunters while its
-                # keeping goes unpaid (`build_blocked_lines`).
-                lines.append_array(build_blocked_lines(herd_data, herd_prefix,
-                    SourceForecast.SOURCE_KIND_HERD, MORALE_BREAKDOWN_INDENT, blocked_floor,
-                    world_herds))
-        # **THE CONSEQUENCE OF AN UNDER-KEPT HERD IS THE ONE KEEPER FACT THAT SURVIVED THE `Keepers:`
-        # ROW** (issue #545). That row stated a demand every turn, on a herd where nothing was wrong,
-        # and read as noise; this fires ONLY when the herd's own crew failed to keep it
-        # (`SourceForecast.is_under_kept`, the same test the work board's ⚠ makes), and it is the only
-        # place in the client that says animals are drifting off.
-        # It carries the head count because a head count only matters when it is short.
-        if int(herd_data.get("herders_needed", 0)) > 0 and domestication > BUILD_METER_EMPTY \
-                and SourceForecast.is_under_kept(herd_data, herd_prefix):
-            lines.append(HERDERS_SHED_FORMAT % SourceForecast.keepers_wanted(
-                herd_data, herd_prefix))
-        # A corralled herd is penned by the band (intensification ladder). SIGNAL-tinted, mirroring the
-        # Husbandry/Ecology row treatment. While the keepers are still BUILDING the pen (0 < progress < 1
-        # under the Corral policy) the same row reports the meter — the animal twin of the tile card's
-        # "Cultivation N%" row, so the investment the player committed to is visibly under way.
-        # A PENNED herd is a managed population: it eats its fenced footprint's grass plus whatever
-        # fodder its keeper carries in, and an underfed one is shrinking right now. That is the loudest
-        # thing the drawer can say about it, and the `Fed:` row below says it — the mark, the fed
-        # fraction, where the feed came from and what would fix it. **The Corral row states the RUNG
-        # and nothing else**: it wore the starving face beside its own build meter, which read as two
-        # unrelated percentages on one row. There is no companion cost row either — a pen bills the
-        # FOOD larder for nothing, so the shortfall has a consequence, never a price.
-        # The whole corral/pen readout is PEN-ceiling only — a pastoral herd can never be penned (the
-        # server never builds one), so its Corral/pen rows are suppressed and a hint stands in their place.
-        if ceiling == SourceForecast.HUSBANDRY_CEILING_PEN:
-            var corral_progress := float(herd_data.get("corral_progress", 0.0))
-            if bool(herd_data.get("corralled", false)):
-                var built_corral_value := rung_row_value(herd_data, herd_prefix,
-                    SourceForecast.IMPROVEMENT_CORRAL, SourceForecast.SOURCE_KIND_HERD,
-                    corral_built_label(), true, CORRAL_PROGRESS_COMPLETE,
+        # **ONE ROW PER LIVE METER, AND THE TURNS LEAD IT** (issue #545) -- the animal twin of the tile
+        # card's rows, through the same `rung_row_value` fork, so a rung's four hazard states cannot be
+        # worded one way on a patch and another on a herd. **BOTH ROWS RENDER WHEN BOTH METERS ARE
+        # LIVE**: a herd holding a finished Tame while its pen goes up states `Husbandry: Domesticated
+        # 100%` over `Corral: ~40 turns (8%)` -- one row would silently drop either the rung you hold or
+        # the build in flight.
+        for quote in admitted_quotes:
+            var verb := RungQuotes.verb_of(quote)
+            var reached := bool(quote.get(RungQuotes.KEY_REACHED, false))
+            var progress := clampf(float(quote.get(RungQuotes.KEY_PROGRESS, 0.0)), 0.0, 1.0)
+            var declared := verb != "" and unstaffed_build == verb
+            var enclosed := RungQuotes.has_trait(quote, RungQuotes.TRAIT_ENCLOSED)
+            var row_key := herd_rung_row_key(quote)
+            var rung_label := rung_built_label(verb, herd_data, herd_prefix)
+            if reached and enclosed:
+                # A PENNED herd is a managed population: it eats its fenced footprint's grass plus
+                # whatever fodder its keeper carries in. The rung row states the RUNG and nothing else
+                # (it wore the starving face beside its own build meter, which read as two unrelated
+                # percentages); the pen is fenced LAND, so its footprint and the `Fed:` row follow.
+                # A pen fenced to a size tier is named by that tier (`Ranch 100%`), not as a plain pen.
+                var tier_row := RungQuotes.current_size_tier(herd_data, herd_prefix)
+                var built_enclosed_value := rung_row_value(herd_data, herd_prefix, verb,
+                    SourceForecast.SOURCE_KIND_HERD,
+                    ("%s %s" % [CORRAL_GLYPH, String(tier_row.get("label", ""))]) if not tier_row.is_empty() else rung_label,
+                    true, CORRAL_PROGRESS_COMPLETE,
                     SourceForecast.BUILD_CREW_NONE, SourceForecast.IMPROVEMENT_NONE)
-                lines.append("%s: %s" % [CORRAL_ROW, built_corral_value])
-                note_lapsed_hover(ctx, CORRAL_ROW, built_corral_value)
-                note_under_kept_hover(ctx, CORRAL_ROW, herd_data, herd_prefix,
-                    SourceForecast.SOURCE_KIND_HERD, SourceForecast.IMPROVEMENT_CORRAL)
-                # The pen is fenced LAND (Grazing 2d-γ): its footprint (radius + the SERVER's in-bounds
-                # tile count, shown verbatim) and the `Fed:` row — how much of its demand arrived, which
-                # of its TWO sources it came from, and how much more fodder a turn would close the gap.
+                lines.append("%s: %s" % [row_key, built_enclosed_value])
+                note_lapsed_hover(ctx, row_key, built_enclosed_value, CORRAL_PROGRESS_COMPLETE,
+                    SourceForecast.meter_rot_per_turn(herd_data, herd_prefix))
+                note_under_kept_hover(ctx, row_key, herd_data, herd_prefix,
+                    SourceForecast.SOURCE_KIND_HERD, verb)
                 var pen_radius := int(herd_data.get("pen_radius", 0))
                 var footprint_tiles := int(herd_data.get("pen_footprint_tiles", 0))
                 lines.append("%s: %s" % [PEN_FOOTPRINT_ROW, PEN_FOOTPRINT_FORMAT % [pen_radius, footprint_tiles]])
+                lines.append_array(pen_tier_lines(herd_data, herd_prefix))
                 lines.append("%s: %s" % [PEN_FEED_ROW, pen_feed_value(herd_data)])
-            elif corral_progress > 0.0 \
-                    or unstaffed_build == SourceForecast.IMPROVEMENT_CORRAL:
-                # Penning is a flat job for every species — a fence is a fence — so unlike the Tame
-                # row above this cost carries no species multiplier, and the turns leading the row
-                # move only with the keeper crew, their floor and their kit.
-                var corral_value := rung_row_value(herd_data, herd_prefix,
-                    SourceForecast.IMPROVEMENT_CORRAL, SourceForecast.SOURCE_KIND_HERD,
-                    corral_built_label(), false, corral_progress,
-                    build_crew, unstaffed_build)
-                lines.append("%s: %s" % [CORRAL_ROW, corral_value])
-                note_lapsed_hover(ctx, CORRAL_ROW, corral_value)
-                note_under_kept_hover(ctx, CORRAL_ROW, herd_data, herd_prefix,
-                    SourceForecast.SOURCE_KIND_HERD, SourceForecast.IMPROVEMENT_CORRAL)
-                lines.append_array(build_gear_lines(herd_data, herd_prefix))
-                lines.append_array(build_blocked_lines(herd_data, herd_prefix,
-                    SourceForecast.SOURCE_KIND_HERD, MORALE_BREAKDOWN_INDENT, blocked_floor,
-                    world_herds))
-        elif ceiling == SourceForecast.HUSBANDRY_CEILING_PASTORAL:
-            lines.append(HUSBANDRY_PASTORAL_HINT)
+                if ctx != null and PenStatus.is_starving(PenStatus.fed_fraction(herd_data)):
+                    ctx.row_tooltips[PEN_FEED_ROW] = pen_fed_row_hover(herd_data)
+            elif reached or progress > BUILD_METER_EMPTY or declared:
+                # **A HERD NOBODY IS ON READS AS *HELD* HERE, and that is the sim's own `-2`**
+                # (`docs/plan_standing_upkeep.md` section 4.6a): no animal rung declares a `meter_decay`,
+                # so an animal meter never goes backwards and an abandoned build is parked where it was
+                # left, which is a decision rather than a failure and takes no mark.
+                var rung_value := rung_row_value(herd_data, herd_prefix, verb,
+                    SourceForecast.SOURCE_KIND_HERD, rung_label, reached, progress,
+                    build_crew if not reached else SourceForecast.BUILD_CREW_NONE,
+                    unstaffed_build if not reached else SourceForecast.IMPROVEMENT_NONE)
+                lines.append("%s: %s" % [row_key, rung_value])
+                note_lapsed_hover(ctx, row_key, rung_value, progress,
+                    SourceForecast.meter_rot_per_turn(herd_data, herd_prefix))
+                note_under_kept_hover(ctx, row_key, herd_data, herd_prefix,
+                    SourceForecast.SOURCE_KIND_HERD, verb)
+                # …and, on a row with no REMEDY to state, what the ladder is buying. The remedy wins the
+                # slot outright when both apply: a herd shedding animals is not asking what a finished
+                # rung would be worth.
+                if not enclosed and RungQuotes.has_trait(quote, RungQuotes.TRAIT_DOMESTICATED) \
+                        and ctx != null and not ctx.row_tooltips.has(row_key):
+                    var payoff := husbandry_payoff_hover(herd_data, herd_prefix)
+                    if payoff != "":
+                        ctx.row_tooltips[row_key] = payoff
+                if not reached:
+                    lines.append_array(build_gear_lines(herd_data, herd_prefix))
+                    # …and, on a BLOCKED queue alone, what frees it.
+                    lines.append_array(build_blocked_lines(herd_data, herd_prefix,
+                        SourceForecast.SOURCE_KIND_HERD, MORALE_BREAKDOWN_INDENT, blocked_floor,
+                        world_herds))
+        # **THE CONSEQUENCE OF AN UNDER-KEPT HERD IS THE ONE KEEPER FACT THAT SURVIVED THE `Keepers:`
+        # ROW** (issue #545): this fires ONLY when the herd's own crew failed to keep it
+        # (`SourceForecast.is_under_kept`, the same test the work board's warning makes), and it is the
+        # only place in the client that says animals are drifting off. It carries the head count
+        # because a head count only matters when it is short.
+        if int(herd_data.get("herders_needed", 0)) > 0 \
+                and RungQuotes.domestication_progress(herd_data, herd_prefix) > BUILD_METER_EMPTY \
+                and SourceForecast.is_under_kept(herd_data, herd_prefix):
+            lines.append(HERDERS_SHED_FORMAT % SourceForecast.keepers_wanted(
+                herd_data, herd_prefix))
+        # A ceiling short of the top of the ladder says where the species stops -- those rungs are
+        # withheld outright, not gated, because no work or craft will ever raise them.
+        if admitted_quotes.size() < herd_quotes.size():
+            lines.append(herd_ceiling_hint(herd_data, herd_prefix))
     # **NO `Position` ROW.** These lines render in ONE place — the tile card's subject drawer — and
     # the card's own header states the hex two rows above them (`TILE (34, 24)`), so a herd stating
     # it again was the same coordinate pair twice on one card. `Next waypoint` below is a different

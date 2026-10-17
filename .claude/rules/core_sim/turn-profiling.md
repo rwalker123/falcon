@@ -57,7 +57,7 @@ walk of that subset that builds both. Collecting `&Tile` out of the query is sou
 query is read-only and outlives the vec.
 
 **The second pass cannot fold into the first, and that is a property of the rule, not of the
-code.** `forage::tile_is_fresh_watered` reads a tile's *neighbours'* tags, so the `plant:field`
+code.** `forage::tile_is_fresh_watered` reads a tile's *neighbours'* tags, so the `plant:farm`
 site refusal needs the tag grid **finished** before the first refusal is judged. Anything else
 per-tile and self-contained belongs in sweep 1.
 
@@ -192,7 +192,7 @@ memo-off arm forces every tile to miss, so both arms are the same binary and the
 the growth callout above gives. The `patches` pair is current (0.246 with the bare-ground block added
 to the same fill), and it is the pair this change is measured in.
 
-What is left in `patches` is the `plant:field` **site refusal**, which stays per-turn deliberately:
+What is left in `patches` is the `plant:farm` **site refusal**, which stays per-turn deliberately:
 `tile_is_fresh_watered` reads a tile's *neighbours'* tags, so its input set is not local to the tile
 and cannot be fingerprinted per entry the way the quotes are — and at ~62 ns/patch-tile there is
 nothing to win by trying.

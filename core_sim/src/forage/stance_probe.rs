@@ -28,14 +28,15 @@
 //! ```
 
 use super::*;
-use crate::components::Improvement;
+use crate::components::VerbId;
 use crate::fauna::{
     herd_capacity, herd_ecology, regrow_biomass, EcologyPhase as FaunaEcologyPhase, Herd,
 };
-use crate::fauna_config::{FaunaConfig, HusbandryCeiling, SizeClass};
+use crate::fauna_config::{FaunaConfig, SizeClass};
 use crate::flora_config::FloraConfig;
-use crate::intensification::{LadderConfig, RungDef, RungKey, RUNG_COST_UNSCALED};
+use crate::intensification::{LadderConfig, RungDef, RUNG_COST_UNSCALED};
 use crate::labor_config::LaborConfig;
+use crate::ladder_ids::shipped;
 use crate::systems::hunt_take;
 use sim_runtime::TerrainType;
 
@@ -80,8 +81,10 @@ const PROBE_REFERENCE_LOAD: f32 = ONE_TENDER_LOAD;
 /// report where they used to report `yield_fraction_while_building`. A build is staffed in its own
 /// right now (`docs/plan_standing_upkeep.md` §2.2), so what a build costs the *take* is simply the
 /// hands that are not on it, and there is no factor left to print.
-fn builder_work_per_turn(ladder: &LadderConfig, verb: Improvement) -> f32 {
-    let rung = ladder.rung_for(verb);
+fn builder_work_per_turn(ladder: &LadderConfig, verb: VerbId) -> f32 {
+    let rung = ladder
+        .rung_for_verb(verb)
+        .expect("the probe names a shipped verb");
     rung.build_accrual(
         Some(verb),
         true,
@@ -165,17 +168,13 @@ struct PlantOutcome {
 /// Drive one forage patch forward under one `(stance, improvement)` pair, fully staffed, **without**
 /// ever accruing or completing a build — so the equilibrium reported is the one the ceiling holds
 /// the patch at for as long as that pair is in force.
-fn run_patch(floor: f32, improvement: Option<Improvement>) -> PlantOutcome {
+fn run_patch(floor: f32, improvement: Option<VerbId>) -> PlantOutcome {
     run_patch_with_crew(floor, improvement, FULLY_STAFFED_FORAGERS)
 }
 
 /// [`run_patch`] at a chosen crew size, so the properties can be swept over the labor-bound regime
 /// as well as the ceiling-bound one.
-fn run_patch_with_crew(
-    floor: f32,
-    _improvement: Option<Improvement>,
-    foragers: u32,
-) -> PlantOutcome {
+fn run_patch_with_crew(floor: f32, _improvement: Option<VerbId>, foragers: u32) -> PlantOutcome {
     let labor = LaborConfig::builtin();
     let forage = &labor.forage;
     let flora = FloraConfig::builtin();
@@ -183,7 +182,11 @@ fn run_patch_with_crew(
         flora.realized_composition(REFERENCE_BIOME, UVec2::new(0, 0), REFERENCE_MAP_SEED);
     let cap = forage.capacity_for(REFERENCE_BIOME);
 
-    let mut patch = ForagePatch::new(UVec2::new(0, 0), cap);
+    let mut patch = ForagePatch::new(
+        UVec2::new(0, 0),
+        cap,
+        shipped::root_standing(shipped::plant()),
+    );
     patch.refresh_ecology_phase(&patch_ecology(&patch, forage));
 
     let mut tail_fraction = 0.0;
@@ -257,7 +260,7 @@ struct PlantBuildOutcome {
 /// is the point of parameterising this:** rung 2 (`Cultivate`) requires the patch to be `Thriving`
 /// and to carry a committed crop; rung 3 (`Sow`) requires only the site rule + Seed Selection, so its
 /// `eligible` is unconditional here.
-fn run_plant_build(floor: f32, verb: Improvement) -> PlantBuildOutcome {
+fn run_plant_build(floor: f32, verb: VerbId) -> PlantBuildOutcome {
     let labor = LaborConfig::builtin();
     let forage = &labor.forage;
     let flora = FloraConfig::builtin();
@@ -265,13 +268,18 @@ fn run_plant_build(floor: f32, verb: Improvement) -> PlantBuildOutcome {
     let composition =
         flora.realized_composition(REFERENCE_BIOME, UVec2::new(0, 0), REFERENCE_MAP_SEED);
     let cap = forage.capacity_for(REFERENCE_BIOME);
-    let rung = ladder.rung(match verb {
-        Improvement::Sow => RungKey::PlantField,
-        _ => RungKey::PlantTended,
+    let rung = ladder.rung(if verb == shipped::sow() {
+        shipped::plant_farm()
+    } else {
+        shipped::plant_tended()
     });
     let improvement = Some(verb);
 
-    let mut patch = ForagePatch::new(UVec2::new(0, 0), cap);
+    let mut patch = ForagePatch::new(
+        UVec2::new(0, 0),
+        cap,
+        shipped::root_standing(shipped::plant()),
+    );
     patch.refresh_ecology_phase(&patch_ecology(&patch, forage));
     // The crew commits the patch to the best crop its own basket offers at this rung — the same
     // choice `resolve_committed_species` makes when the player names none.
@@ -281,7 +289,7 @@ fn run_plant_build(floor: f32, verb: Improvement) -> PlantBuildOutcome {
             flora
                 .species
                 .get(&share.species)
-                .is_some_and(|def| def.cultivation_ceiling.allows_cultivate())
+                .is_some_and(|_| flora.can_reach(&share.species, &ladder, shipped::plant_tended()))
         })
         .map(|share| share.species.clone());
 
@@ -311,13 +319,14 @@ fn run_plant_build(floor: f32, verb: Improvement) -> PlantBuildOutcome {
         .to_f32();
         if turns_to_complete.is_none() {
             provisions_over_build += provisions;
-            let eligible = match verb {
+            let eligible = if verb == shipped::cultivate() {
                 // The Cultivate arm's gate, minus the knowledge check this probe grants. The health
                 // gate is gone (`docs/plan_harvest_floor.md` §3.2); the escapement room replaced it.
-                Improvement::Cultivate => standing_above_floor > 0.0 && patch.species.is_some(),
+                standing_above_floor > 0.0 && patch.species.is_some()
+            } else {
                 // `accrue_field`'s gate is the site rule + Seed Selection and NOTHING else — no
                 // health check and no work predicate, deliberately: sown ground draws nothing.
-                _ => true,
+                true
             };
             let accrual = rung.build_accrual(
                 improvement,
@@ -334,9 +343,10 @@ fn run_plant_build(floor: f32, verb: Improvement) -> PlantBuildOutcome {
                 // One accrual seam, whichever rung the probe is climbing: the position decides
                 // which rung the work lands on, so the probe no longer names it.
                 let _completed_this_turn = patch.accrue_rung(PROBE_FACTION, accrual, &ladder);
-                let done = match verb {
-                    Improvement::Cultivate => patch.is_cultivated(),
-                    _ => patch.is_field(),
+                let done = if verb == shipped::cultivate() {
+                    patch.is_cultivated()
+                } else {
+                    patch.is_field()
                 };
                 if done {
                     turns_to_complete = Some(turn);
@@ -351,7 +361,7 @@ fn run_plant_build(floor: f32, verb: Improvement) -> PlantBuildOutcome {
         provisions_over_build,
         progress_at_horizon: crate::forage::patch_rung_work_done(
             &patch,
-            crate::intensification::RungKey::PlantTended,
+            shipped::plant_tended(),
             &ladder,
         ),
         fraction_at_completion,
@@ -405,7 +415,7 @@ const HALF_K_HERD: f32 = 0.5;
 fn a_tame_begun_on_the_floor_completes_at_every_crew_size() {
     let fauna = probe_fauna();
     let ladder = LadderConfig::builtin();
-    let pastoral = ladder.rung(RungKey::AnimalPastoral);
+    let pastoral = ladder.rung(shipped::animal_pastoral());
 
     for crew in FLOOR_SQUEEZE_CREWS {
         let mut herd = probe_herd(&fauna, FLOOR_SQUEEZE_SPECIES, ON_THE_FLOOR);
@@ -426,7 +436,7 @@ fn a_tame_begun_on_the_floor_completes_at_every_crew_size() {
                 turns_at_zero += 1;
             }
             let accrual = pastoral.build_accrual(
-                Some(Improvement::Tame),
+                Some(shipped::tame()),
                 room > 0.0,
                 crew,
                 crate::intensification::NO_BUILD_GEAR,
@@ -498,7 +508,7 @@ const FLOOR_SQUEEZE_HORIZON: u32 = 200;
 fn probe_the_tame_floor_squeeze() {
     let fauna = probe_fauna();
     let ladder = LadderConfig::builtin();
-    let pastoral = ladder.rung(RungKey::AnimalPastoral);
+    let pastoral = ladder.rung(shipped::animal_pastoral());
 
     println!(
         "\n=== A TAME FROM EXACTLY ON THE FLOOR — room above it, in animals, per turn ===\n\
@@ -550,7 +560,7 @@ fn probe_the_tame_floor_squeeze() {
                     turns_at_zero += 1;
                 }
                 let accrual = pastoral.build_accrual(
-                    Some(Improvement::Tame),
+                    Some(shipped::tame()),
                     room > 0.0,
                     crew,
                     crate::intensification::NO_BUILD_GEAR,
@@ -598,6 +608,7 @@ fn probe_herd(fauna: &FaunaConfig, species_key: &str, start_fraction: f32) -> He
         def.fodder_per_biomass,
         def.regrowth_rate.unwrap_or(fauna.ecology.regrowth_rate),
         def.body_mass,
+        shipped::root_standing(shipped::animal()),
     );
     herd.husbandry_ceiling = def.husbandry_ceiling;
     herd.refresh_ecology_phase(fauna);
@@ -607,7 +618,7 @@ fn probe_herd(fauna: &FaunaConfig, species_key: &str, start_fraction: f32) -> He
 fn run_herd(
     species_key: &str,
     floor: f32,
-    improvement: Option<Improvement>,
+    improvement: Option<VerbId>,
     start_fraction: f32,
 ) -> HerdOutcome {
     run_herd_with_crew(
@@ -624,7 +635,7 @@ fn run_herd(
 fn run_herd_with_crew(
     species_key: &str,
     floor: f32,
-    _improvement: Option<Improvement>,
+    _improvement: Option<VerbId>,
     start_fraction: f32,
     hunters: u32,
 ) -> HerdOutcome {
@@ -709,8 +720,8 @@ fn run_corral(species_key: &str, floor: f32, start_fraction: f32) -> HerdBuildOu
     let fauna = probe_fauna();
     let labor = LaborConfig::builtin();
     let ladder = LadderConfig::builtin();
-    let pen = ladder.rung(RungKey::AnimalPen);
-    let improvement = Some(Improvement::Corral);
+    let pen = ladder.rung(shipped::animal_pen());
+    let improvement = Some(shipped::corral());
     let mut herd = probe_herd(&fauna, species_key, start_fraction);
     herd.tame_outright(PROBE_FACTION, &ladder);
     let cap = herd_capacity(&herd, &fauna);
@@ -737,8 +748,9 @@ fn run_corral(species_key: &str, floor: f32, start_fraction: f32) -> HerdBuildOu
             provisions_over_build += hunt_yield
                 .apply(take.carried, UNIT_OUTPUT_MULTIPLIER)
                 .provisions;
-            let eligible =
-                herd.can_pen() && herd.is_domesticated() && herd.owner == Some(PROBE_FACTION);
+            let eligible = herd.can_pen(shipped::ladder())
+                && herd.is_domesticated()
+                && herd.owner == Some(PROBE_FACTION);
             let pen_load = crate::fauna::herd_keeper_load(&herd, &fauna);
             let accrual = pen.build_accrual(
                 improvement,
@@ -759,7 +771,7 @@ fn run_corral(species_key: &str, floor: f32, start_fraction: f32) -> HerdBuildOu
     HerdBuildOutcome {
         turns_to_complete,
         provisions_over_build,
-        progress_at_horizon: herd.rung_work_done(RungKey::AnimalPen, &ladder),
+        progress_at_horizon: herd.rung_work_done(shipped::animal_pen(), &ladder),
         fraction_at_completion,
     }
 }
@@ -771,8 +783,8 @@ fn run_tame(species_key: &str, floor: f32, start_fraction: f32) -> HerdBuildOutc
     let fauna = probe_fauna();
     let labor = LaborConfig::builtin();
     let ladder = LadderConfig::builtin();
-    let pastoral = ladder.rung(RungKey::AnimalPastoral);
-    let improvement = Some(Improvement::Tame);
+    let pastoral = ladder.rung(shipped::animal_pastoral());
+    let improvement = Some(shipped::tame());
     let mut herd = probe_herd(&fauna, species_key, start_fraction);
     let cap = herd_capacity(&herd, &fauna);
     let hunt_yield = fauna.hunt_yield_for(&herd.species);
@@ -806,7 +818,7 @@ fn run_tame(species_key: &str, floor: f32, start_fraction: f32) -> HerdBuildOutc
             // The Tame arm's gate, minus the knowledge check this probe grants. The health gate is
             // gone (`docs/plan_harvest_floor.md` §3.2); what replaced it is the **escapement room**,
             // read pre-take and pre-quantisation, never "an animal died".
-            let eligible = herd.can_domesticate() && standing_above_floor > 0.0;
+            let eligible = herd.can_domesticate(shipped::ladder()) && standing_above_floor > 0.0;
             let tame_load = crate::fauna::herd_keeper_load(&herd, &fauna);
             let accrual = pastoral.build_accrual(
                 improvement,
@@ -827,7 +839,7 @@ fn run_tame(species_key: &str, floor: f32, start_fraction: f32) -> HerdBuildOutc
     HerdBuildOutcome {
         turns_to_complete,
         provisions_over_build,
-        progress_at_horizon: herd.rung_work_done(RungKey::AnimalPastoral, &ladder),
+        progress_at_horizon: herd.rung_work_done(shipped::animal_pastoral(), &ladder),
         fraction_at_completion,
     }
 }
@@ -1102,7 +1114,11 @@ fn floor_zero_strips_a_patch_that_recovers_and_a_herd_that_does_not() {
     );
 
     // Left alone, the same stand climbs back out — no despawn, no permanent dead ground.
-    let mut recovering = ForagePatch::new(UVec2::new(0, 0), cap);
+    let mut recovering = ForagePatch::new(
+        UVec2::new(0, 0),
+        cap,
+        shipped::root_standing(shipped::plant()),
+    );
     recovering.biomass = cap * forage.reseed_floor_fraction;
     recovering.refresh_ecology_phase(&patch_ecology(&recovering, forage));
     for _ in 0..PROBE_TURNS {
@@ -1177,7 +1193,7 @@ fn probe_plant_stances() {
         labor.forage.ecology.stressed_fraction,
         labor.forage.reseed_floor_fraction,
         floor_ladder(),
-        builder_work_per_turn(&ladder, Improvement::Cultivate),
+        builder_work_per_turn(&ladder, shipped::cultivate()),
     );
 
     println!("\n-- Part 1: no build running ({PROBE_TURNS} turns, starting at K) --");
@@ -1214,8 +1230,8 @@ fn probe_plant_stances() {
         "B at done"
     );
     for stance in REPORT_FLOORS {
-        let held = run_patch(stance, Some(Improvement::Cultivate));
-        let built = run_plant_build(stance, Improvement::Cultivate);
+        let held = run_patch(stance, Some(shipped::cultivate()));
+        let built = run_plant_build(stance, shipped::cultivate());
         println!(
             "{:<10} {:>8.3}K {:>11} {:>10.3} {:>10.3} {:>8} {:>11} {:>11.2} {:>8.3}K",
             format!("{stance:.2}K"),
@@ -1246,7 +1262,7 @@ fn probe_animal_stances() {
         fauna.ecology.stressed_fraction,
         fauna.ecology.extinction_floor,
         floor_ladder(),
-        builder_work_per_turn(&ladder, Improvement::Tame),
+        builder_work_per_turn(&ladder, shipped::tame()),
     );
 
     for key in PROBE_SPECIES {
@@ -1278,7 +1294,7 @@ fn probe_animal_stances() {
                 opt(out.turns_to_extinction_floor),
             );
         }
-        if def.husbandry_ceiling == HusbandryCeiling::Wild {
+        if def.husbandry_ceiling == Some(shipped::animal_wild()) {
             println!("  (Tame: n/a — husbandry_ceiling is `wild`, the species never tames)");
             continue;
         }
@@ -1300,7 +1316,7 @@ fn probe_animal_stances() {
                 "B at done"
             );
             for stance in REPORT_FLOORS {
-                let held = run_herd(key, stance, Some(Improvement::Tame), start);
+                let held = run_herd(key, stance, Some(shipped::tame()), start);
                 let built = run_tame(key, stance, start);
                 println!(
                     "  {:<10} {:>8.3}K {:>11} {:>10.3} {:>10.3} {:>8} {:>11} {:>11.2} {:>8.3}K",
@@ -1330,20 +1346,20 @@ fn probe_animal_stances() {
 fn probe_build_and_teach_axis() {
     let ladder = LadderConfig::builtin();
     let rungs = [
-        ("plant:wild", RungKey::PlantWild, None),
+        ("plant:wild", shipped::plant_wild(), None),
         (
             "plant:tended",
-            RungKey::PlantTended,
-            Some(Improvement::Cultivate),
+            shipped::plant_tended(),
+            Some(shipped::cultivate()),
         ),
-        ("plant:field", RungKey::PlantField, Some(Improvement::Sow)),
-        ("animal:wild", RungKey::AnimalWild, None),
+        ("plant:farm", shipped::plant_farm(), Some(shipped::sow())),
+        ("animal:wild", shipped::animal_wild(), None),
         (
             "animal:pastoral",
-            RungKey::AnimalPastoral,
-            Some(Improvement::Tame),
+            shipped::animal_pastoral(),
+            Some(shipped::tame()),
         ),
-        ("animal:pen", RungKey::AnimalPen, Some(Improvement::Corral)),
+        ("animal:pen", shipped::animal_pen(), Some(shipped::corral())),
     ];
 
     println!("\n=== Part 3 — what each rung TEACHES, per floor (RungDef::knowledge_accrual) ===");
@@ -1416,7 +1432,7 @@ fn probe_build_and_teach_axis() {
 fn probe_rung_three_builds() {
     println!("\n=== Rung 3 — the builds with NO health gate (Sow / Corral) ===");
     println!(
-        "plant:field, {REFERENCE_BIOME:?}, K = {}",
+        "plant:farm, {REFERENCE_BIOME:?}, K = {}",
         LaborConfig::builtin().forage.capacity_for(REFERENCE_BIOME)
     );
     println!(
@@ -1424,7 +1440,7 @@ fn probe_rung_three_builds() {
         "stance", "buildturns", "food/build", "B at done"
     );
     for stance in REPORT_FLOORS {
-        let built = run_plant_build(stance, Improvement::Sow);
+        let built = run_plant_build(stance, shipped::sow());
         println!(
             "{:<10} {:>12} {:>12.2} {:>8.3}K",
             format!("{stance:.2}K"),

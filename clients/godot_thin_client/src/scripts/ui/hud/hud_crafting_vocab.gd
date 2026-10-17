@@ -229,6 +229,9 @@ const OFFER_GROUP_KEY := "group"
 ## The equipment id this recipe makes, `""` for a material recipe — the JOIN key onto the band's
 ## `equipment_batches`, which is what supplies the row's tier, count and life.
 const OFFER_OUTPUT_ITEM_ID_KEY := "output_item_id"
+## The material a stock recipe makes (`hurdles`), `""` for equipment. It is the join key a
+## `craft_suggestions` entry naming a MATERIAL (`item_id` = the material id) reaches its ledger row by.
+const OFFER_OUTPUT_MATERIAL_ID_KEY := "output_material_id"
 ## `available` = a pass can run NOW; `queueable` = every required craft is learned (the server's own
 ## enqueue test). **Whether the player MAY QUEUE reads `queueable`** — materials and tools no longer gate
 ## the queue. `available` stays for readouts only.
@@ -626,6 +629,12 @@ const SUGGESTION_COMING_UP_TOOLTIP_ONE := "The bench needs about 1 turn to make 
 const SUGGESTION_COMING_UP_META := "crafting_suggestion_coming_up"
 ## The tooltip: one line per source — who, where, how many units short, and what it costs.
 const SUGGESTION_SOURCE_FORMAT := "%s: %s missing, %s without"
+## A MATERIAL suggestion states goods, not people: `2 more Hurdles, for Corral Wild Boar`, and for the head
+## job (the builders' own, no queue row to name) `2 more Hurdles, for the top job`. Its hover lines state
+## the units short and no crew count (`%s: %s short`).
+const SUGGESTION_MATERIAL_FORMAT := "%s more %s, for %s"
+const SUGGESTION_MATERIAL_TOP_JOB := "the top job"
+const SUGGESTION_MATERIAL_SOURCE_FORMAT := "%s: %s short"
 const SUGGESTION_SOURCE_WORK_FORMAT := ", +%s work a turn"
 const SUGGESTION_SOURCE_AT_TILE_FORMAT := "%s at (%d, %d)"
 const SUGGESTION_SOURCE_ON_FAUNA_FORMAT := "%s on %s"
@@ -981,6 +990,12 @@ const KIT_ITEM_ID_KEY := "item_id"
 const KIT_ITEM_WORKERS_PER_UNIT_KEY := "workers_per_unit"
 const KIT_ITEM_HAVE_KEY := "have"
 const KIT_ITEM_QUEUED_KEY := "queued"
+## Units actually claimed by rows, pools, sites and queued builds on this kit (a float), and the whole
+## units missing on those claims before the bench's queue is netted off (an int).
+const KIT_ITEM_CLAIMED_KEY := "claimed"
+const KIT_ITEM_SHORT_KEY := "short"
+## A claim under this is none (float noise in the sim's sums).
+const KIT_CLAIMED_MIN := 0.005
 const KIT_ITEM_RECIPES_KEY := "recipes"
 ## One recipe of a kit item: what a PASS yields and what a pass costs, the bench's material efficiency
 ## already applied — the terms the picker's shortage arithmetic is exact over.
@@ -1039,12 +1054,15 @@ const KIT_NOT_USED := "Not used"
 ## One kit at each item's suggested recipe — said once under the cost.
 const KIT_COST_EACH := "each"
 ## `<g> <noun|one> without <item>`, the first item with a gap nobody has queued.
-const KIT_REASON_WITHOUT_FORMAT := "%d %s without %s"
-const KIT_REASON_QUEUED_FORMAT := "Queued — %s"
-const KIT_REASON_QUEUED_PART_FORMAT := "%d %s"
-const KIT_REASON_QUEUED_SEPARATOR := " · "
+## The item's OWN name is a label (`Sled 5 short`), never a noun to be counted: display names are
+## mixed singular and plural (Sled, Crook, Baskets, Hoes) and no pluraliser is built.
+const KIT_REASON_SHORT_FORMAT := "%s %d short"
+## `, 3 coming` — the units the bench's queue already owes of a short item.
+const KIT_REASON_COMING_FORMAT := ", %d coming"
+const KIT_REASON_SHORT_SEPARATOR := " · "
 const KIT_REASON_ALL_FORMAT := "All %d %s equipped"
-const KIT_REASON_NONE_FORMAT := "No %s yet"
+## Nothing claims any item of the kit: it costs nobody anything yet, so it says so quietly.
+const KIT_REASON_NOT_IN_USE := "Not in use"
 
 # -- the picker
 const KIT_PICKER_HEADING_FORMAT := "Make how many %ss?"

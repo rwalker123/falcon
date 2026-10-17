@@ -98,7 +98,7 @@ func _tame_worker_cap_herd_fixture() -> Dictionary:
 ## server can produce, and the frame would be asserting against it.
 func _fully_herded_herd_fixture() -> Dictionary:
 	var fixture := HerdFx.taming_herd_fixture()
-	fixture["domestication"] = SourceForecast.DOMESTICATION_COMPLETE
+	fixture["domestication"] = RungFx.DOMESTICATION_COMPLETE
 	HerdFx.price_animal_build(fixture)
 	HerdFx.set_managed_herders(fixture, 4)
 	_set_keeper_upkeep(fixture, 4, POOL_COVERS_IT)
@@ -197,6 +197,13 @@ func _lines_contain(lines: Array, text: String) -> bool:
 	return false
 
 ## True when SOME produced line CONTAINS `text` (used to pin the shed copy / prove the old copy is gone).
+## The hover the `Fed` row carries, `""` for none: the producer's own `row_tooltips` entry.
+func _fed_row_hover_of(herd: Dictionary) -> String:
+	var ctx := DetailFormat.Context.new()
+	DetailFormat.herd_summary_lines(herd, h._hud._band_labor.world_herds(),
+		SourceForecast.IMPROVEMENT_NONE, SourceForecast.BUILD_CREW_NONE, ctx)
+	return String(ctx.row_tooltips.get(DetailFormat.PEN_FEED_ROW, ""))
+
 func _lines_any_contain(lines: Array, text: String) -> bool:
 	for line in lines:
 		if String(line).contains(text):
@@ -400,9 +407,9 @@ const PEN_FED_ALL_PASTURE_NEEDLE := "Fed: 100% — all pasture"
 
 const PEN_FED_MIXED_NEEDLE := "Fed: 100% — 88% pasture · 12% fodder"
 
-const PEN_FED_STARVING_NEEDLE := "Fed: ⚠ 47% — 40% pasture · 7% fodder · needs 11.3 more/turn"
+const PEN_FED_STARVING_NEEDLE := "Fed: ⚠ 47% — 40% pasture · 7% fodder · short 11.3 feed/turn"
 
-const PEN_FED_UNFODDERED_NEEDLE := "Fed: ⚠ 40% — 40% pasture · no fodder · needs 12.0 /turn"
+const PEN_FED_UNFODDERED_NEEDLE := "Fed: ⚠ 40% — 40% pasture · no fodder · short 12.0 feed/turn"
 
 ## **THE CORRAL ROW MEANS THE RUNG AGAIN.** A starving pen's Corral row must read the plain badge and
 ## its build meter — no fed percentage welded on, and above all not the word "starving", which is the
@@ -419,7 +426,7 @@ const PEN_RETIRED_HAY_WORD := "hay"
 
 ## The NEEDS segment's own word, for the negative half of the pair. Matched on the VERB rather than on
 ## a number, so a covered pen printing `needs 0.0 /turn` fails here however the zero is spelled.
-const PEN_SPLIT_NEED_WORD := "needs"
+const PEN_SPLIT_NEED_WORD := "feed/turn"
 
 ## …and the `more` that only a pen with SOMETHING arriving may say. A pen drawing nothing is not short
 ## of MORE fodder, so this word separates the two shortfall spellings on its own.
@@ -869,9 +876,13 @@ func run(harness) -> void:
 		and not _lines_any_contain(mixed_lines, PEN_SPLIT_NEED_WORD)
 		and _lines_any_contain(starving_lines, PEN_SPLIT_NEED_WORD)
 		and _lines_any_contain(unfoddered_lines, PEN_SPLIT_NEED_WORD))
-	h._assert_hud("…and `more` is said ONLY by the pen something arrived at",
-		_lines_any_contain(starving_lines, PEN_SPLIT_MORE_WORD)
-		and not _lines_any_contain(unfoddered_lines, PEN_SPLIT_MORE_WORD))
+	h._assert_hud("…and the remedies ride a starving pen's `Fed` row hover, a fed pen carrying none",
+		_fed_row_hover_of(HerdFx.starving_pen_herd_fixture()) == DetailFormat.pen_fed_row_hover(
+			HerdFx.starving_pen_herd_fixture())
+		and _fed_row_hover_of(HerdFx.unfoddered_pen_herd_fixture()) == DetailFormat.pen_fed_row_hover(
+			HerdFx.unfoddered_pen_herd_fixture())
+		and _fed_row_hover_of(_self_feeding_pen_herd_fixture()) == ""
+		and _fed_row_hover_of(_foddered_pen_herd_fixture()) == "")
 	# **THE CORRAL ROW IS THE RUNG AND NOTHING ELSE NOW** — the regression risk of collapsing
 	# `corral_built_label` to the badge is that the starving face comes back and welds a fed percentage
 	# onto a build meter (`⚠ Starving — 47% fed 100%`). Pinned on the STARVING pens, which are the only
@@ -963,8 +974,7 @@ func run(harness) -> void:
 	# craft this herd's standing rung teaches — penning — in the same frame, live.
 	h._assert_hud("…while the aside still names the lesson being earned, so the rung is not silent",
 		Readout.teaching_line(h._hud._drawercompose._compose_sheet).contains(
-			String(SourceForecast.RUNG_LESSONS[SourceForecast.SOURCE_KIND_HERD][
-				SourceForecast.IMPROVEMENT_TAME])))
+			"penning"))
 	# …and the rung it has already climbed reads as the STATE it is, above the one it cannot start.
 	h._assert_hud("…beneath the DONE label for the rung this herd has climbed",
 		ForageFx.improvement_face(h._hud._drawercompose._compose_sheet, HudConst.LABOR_POLICY_TAME).contains(
@@ -1181,8 +1191,7 @@ func run(harness) -> void:
 	# claim: the sheet is where the lesson is being earned, the strip is where its progress is read.
 	h._assert_hud("…and the aside's teaching line is the bridge: the craft this herd's rung teaches",
 		Readout.teaching_line(h._hud._drawercompose._compose_sheet).contains(
-			String(SourceForecast.RUNG_LESSONS[SourceForecast.SOURCE_KIND_HERD][
-				SourceForecast.IMPROVEMENT_TAME])))
+			"penning"))
 
 	# State 6b-tame — the ◎ Tame affordance itself: a 6th option in the LOCAL hunt picker, beside
 	# Sustain/Surplus/Deplete/Eradicate/Corral, ENABLED (Herding is known) and selected on a

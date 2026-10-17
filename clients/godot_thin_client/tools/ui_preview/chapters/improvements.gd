@@ -329,17 +329,15 @@ func _rung_value_lapsed() -> String:
 		SourceForecast.NOT_IN_ANY_BUILD_QUEUE)
 
 func _rung_value_at(turns: int, queue_position: int) -> String:
-	return DetailFormat.rung_row_value({
+	return DetailFormat.rung_row_value(RungFx.stamp_herd({
 		SourceForecast.FORECAST_BUILD_TURNS_KEY: turns,
 		SourceForecast.FORECAST_BUILD_QUEUE_POSITION_KEY: queue_position,
-		SourceForecast.FORECAST_BUILD_WORK_COST_KEYS[SourceForecast.IMPROVEMENT_TAME]:
-			BaseFx.PLANT_CULTIVATE_WORK_COST,
+		"tame_work_cost": BaseFx.PLANT_CULTIVATE_WORK_COST,
 		# **THE METER RIDES THE DICT, not only the `progress` argument** — `rung_row_value` asks
 		# `build_verb` whether this rung is the one in flight, and a dict with no meter answers NO, so
 		# the row would take the not-in-flight branch and never reach the sentinel under test.
-		SourceForecast.FORECAST_BUILD_METER_KEYS[SourceForecast.IMPROVEMENT_TAME]:
-			REVERTING_METER_PROGRESS,
-	}, HudComposeVocab.BARE_FORECAST_PREFIX, SourceForecast.IMPROVEMENT_TAME,
+		"domestication": REVERTING_METER_PROGRESS,
+	}), HudComposeVocab.BARE_FORECAST_PREFIX, SourceForecast.IMPROVEMENT_TAME,
 		SourceForecast.SOURCE_KIND_HERD, DetailFormat.husbandry_built_label(), false,
 		REVERTING_METER_PROGRESS, STAFFED_CREW, SourceForecast.IMPROVEMENT_NONE)
 
@@ -360,11 +358,10 @@ func _hazard_states_all_marked() -> bool:
 	# at any fullness now, so with the keeping covered it is a decision the player made, and marking it
 	# would teach them to ignore the mark. The negative rides in this conjunction rather than in a
 	# frame because this is where the SET is decided.
-	var held := DetailFormat.rung_row_value({
+	var held := DetailFormat.rung_row_value(RungFx.stamp_herd({
 		SourceForecast.FORECAST_BUILD_TURNS_KEY: SourceForecast.BUILD_TURNS_HOLDS,
-		SourceForecast.FORECAST_BUILD_METER_KEYS[SourceForecast.IMPROVEMENT_TAME]:
-			REVERTING_METER_PROGRESS,
-	}, HudComposeVocab.BARE_FORECAST_PREFIX,
+		"domestication": REVERTING_METER_PROGRESS,
+	}), HudComposeVocab.BARE_FORECAST_PREFIX,
 		SourceForecast.IMPROVEMENT_TAME, SourceForecast.SOURCE_KIND_HERD,
 		DetailFormat.husbandry_built_label(), false, REVERTING_METER_PROGRESS,
 		SourceForecast.BUILD_CREW_NONE, SourceForecast.IMPROVEMENT_NONE)
@@ -607,6 +604,7 @@ const HOVER_PROBE_ROW := "probe"
 func _under_kept_hover(src: Dictionary,
 		improvement: String = SourceForecast.IMPROVEMENT_CULTIVATE) -> String:
 	var ctx := DetailFormat.Context.new()
+	RungFx.stamp_patch(src, HudComposeVocab.FORAGE_FORECAST_PREFIX)
 	DetailFormat.note_under_kept_hover(ctx, HOVER_PROBE_ROW, src,
 		HudComposeVocab.FORAGE_FORECAST_PREFIX, SourceForecast.SOURCE_KIND_FORAGE, improvement)
 	return String(ctx.row_tooltips.get(HOVER_PROBE_ROW, ""))
@@ -614,9 +612,9 @@ func _under_kept_hover(src: Dictionary,
 ## …and the LAPSED row's hover, read back the same way. It takes the COMPOSED VALUE rather than the
 ## source, because that is the producer's own seam: `build_sentinel_value` reaches the verdict once
 ## and the hover is routed off the word the row printed.
-func _lapsed_hover(value: String) -> String:
+func _lapsed_hover(value: String, progress: float = FERAL_FIELD_METER, rot: float = 0.0) -> String:
 	var ctx := DetailFormat.Context.new()
-	DetailFormat.note_lapsed_hover(ctx, HOVER_PROBE_ROW, value)
+	DetailFormat.note_lapsed_hover(ctx, HOVER_PROBE_ROW, value, progress, rot)
 	return String(ctx.row_tooltips.get(HOVER_PROBE_ROW, ""))
 
 ## **THE FIELD THAT COMPLETED AND WENT FERAL THE NEXT TURN — the measured shape, from the live export
@@ -1775,8 +1773,11 @@ func run(harness) -> void:
 		rotting_value == rotting_want
 			and DetailFormat.rung_value_hex(rotting_value, "") == HudStyle.DANGER_HEX)
 	h._assert_hud("…and its hover says it is losing work, where the stable one's does not",
-		_lapsed_hover(rotting_value) == HudSelectionVocab.RUNG_UNQUEUED_ROTTING_TOOLTIP
-			and _lapsed_hover(lapsed_value) == HudSelectionVocab.RUNG_UNQUEUED_TOOLTIP)
+		_lapsed_hover(rotting_value, FERAL_FIELD_METER, UNQUEUED_ROT_PER_TURN)
+				== DetailFormat.lapsed_hover_text(FERAL_FIELD_METER, true, UNQUEUED_ROT_PER_TURN)
+			and _lapsed_hover(lapsed_value) == DetailFormat.lapsed_hover_text(FERAL_FIELD_METER, false, 0.0)
+			and _lapsed_hover(rotting_value, FERAL_FIELD_METER, UNQUEUED_ROT_PER_TURN).contains("losing 0.5/turn")
+			and not _lapsed_hover(lapsed_value).contains("losing"))
 	# **AND THE NEGATIVE THAT NAMES THE DEFECT.** `⚠ Stalled 100%` is exactly what shipped, so both
 	# halves of it must be absent from this frame.
 	h._assert_hud("…and NOT *Stalled*, which names builders standing on it and a gate that refuses",
@@ -1797,7 +1798,8 @@ func run(harness) -> void:
 	# **THE HOVER CARRIES THE SENTENCE, the mark being two words on a ~245px card.** It has to say the
 	# work survived and where the click is, or the word names a loss without a remedy.
 	h._assert_hud("the lapsed row's hover states the part-built rung, the banked work and the re-queue",
-		_lapsed_hover(lapsed_value) == HudSelectionVocab.RUNG_UNQUEUED_TOOLTIP)
+		_lapsed_hover(lapsed_value) == DetailFormat.lapsed_hover_text(FERAL_FIELD_METER, false, 0.0)
+			and _lapsed_hover(lapsed_value).ends_with(HudSelectionVocab.RUNG_UNQUEUED_FIX_LINE))
 	# ⛔ **AND IT NAMES NO CAUSE, which is a claim about every row this hover is registered on.**
 	# `DetailFormat.note_lapsed_hover` mounts it on `HUSBANDRY_ROW` and `CORRAL_ROW` as well as the two
 	# plant rows, and it opened *"The ground went feral…"* — ground a HERD does not have. The three
@@ -1805,10 +1807,10 @@ func run(harness) -> void:
 	# where nothing went feral at all. The word `Lapsed` is right in all three; a cause would be a
 	# guess, so the sentence asserts none.
 	h._assert_hud("…and it blames no cause it cannot know — no ground, no feralness, on a hover herds share",
-		not HudSelectionVocab.RUNG_UNQUEUED_TOOLTIP.to_lower().contains("feral")
-			and not HudSelectionVocab.RUNG_UNQUEUED_TOOLTIP.to_lower().contains("ground")
-			and not HudSelectionVocab.RUNG_UNQUEUED_ROTTING_TOOLTIP.to_lower().contains("feral")
-			and not HudSelectionVocab.RUNG_UNQUEUED_ROTTING_TOOLTIP.to_lower().contains("ground"))
+		not DetailFormat.lapsed_hover_text(FERAL_FIELD_METER, false, 0.0).to_lower().contains("feral")
+			and not DetailFormat.lapsed_hover_text(FERAL_FIELD_METER, false, 0.0).to_lower().contains("ground")
+			and not DetailFormat.lapsed_hover_text(FERAL_FIELD_METER, true, UNQUEUED_ROT_PER_TURN).to_lower().contains("feral")
+			and not DetailFormat.lapsed_hover_text(FERAL_FIELD_METER, true, UNQUEUED_ROT_PER_TURN).to_lower().contains("ground"))
 	h._assert_hud("…and a row that is NOT lapsed registers no such hover",
 		_lapsed_hover(_rung_value_for_turns(SourceForecast.BUILD_TURNS_NO_ESTIMATE)) == "")
 
@@ -2847,6 +2849,7 @@ func _the_five_states_are_a_SET(band: Dictionary) -> void:
 func _improvement_state_for(source: Dictionary, rung: String, composed: String,
 		band: Dictionary, gear: Dictionary) -> String:
 	var host := VBoxContainer.new()
+	RungFx.stamp_patch(source, HudComposeVocab.FORAGE_FORECAST_PREFIX)
 	h._hud._drawercompose._build_improvement_control(SourceForecast.LABOR_KIND_FORAGE, source,
 		HudComposeVocab.FORAGE_FORECAST_PREFIX, SourceForecast.DEFAULT_HARVEST_FLOOR,
 		composed, band, 1, gear, true, host, SourceForecast.BUILD_CREW_NONE)
@@ -2914,6 +2917,7 @@ func _a_plant_rungs_material_price_is_stated() -> void:
 	# a `0 stone`. Without this, a client that appended the good's word to every rung passes above.
 	var no_goods := patch.duplicate(true)
 	no_goods["patch_cultivation_upkeep_material_demand"] = []
+	RungFx.stamp_patch(no_goods, HudComposeVocab.FORAGE_FORECAST_PREFIX)
 	var bare_rows := RungLadder.track(SourceForecast.LABOR_KIND_FORAGE, no_goods,
 		HudComposeVocab.FORAGE_FORECAST_PREFIX, SourceForecast.IMPROVEMENT_NONE,
 		_both_plant_tracks_known())

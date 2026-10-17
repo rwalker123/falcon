@@ -14,6 +14,7 @@
 use bevy::app::App;
 use bevy::ecs::system::RunSystemOnce;
 use bevy::MinimalPlugins;
+use core_sim::shipped;
 
 use core_sim::{
     scalar_one, scalar_zero, sedentarization_tick, spawn_initial_herds, spawn_initial_world,
@@ -167,7 +168,7 @@ pub fn domesticate(app: &mut App, faction: FactionId, count: usize) {
     let tameable = registry
         .herds
         .iter_mut()
-        .filter(|herd| herd.can_domesticate())
+        .filter(|herd| herd.can_domesticate(shipped::ladder()))
         .take(count);
     for herd in tameable {
         herd.tame_outright(faction, &core_sim::LadderConfig::builtin());

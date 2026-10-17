@@ -373,7 +373,7 @@ func run(harness) -> void:
 	# capacity the source will have at the rung the entry was sent to, so the flag can say what the
 	# climb ends at instead of only that it is under way (`buildDestinationCapacity`).
 	var penned_herd := HerdFx.taming_herd_fixture()
-	penned_herd[SourceForecast.FORECAST_BUILD_DESTINATION_KEY] = SourceForecast.RUNG_KEY_PEN
+	penned_herd[SourceForecast.FORECAST_BUILD_DESTINATION_KEY] = RungFx.KEY_PEN
 	penned_herd[SourceForecast.FORECAST_BUILD_DESTINATION_CAPACITY_KEY] = \
 		PENNED_DESTINATION_CAPACITY
 	h._hud._band_labor._player_band = _tame_standing_band_fixture()
@@ -432,7 +432,7 @@ func run(harness) -> void:
 	# left to hold the ceiling back. Without this line the pair above passes on a hover that never
 	# looked at the capacity at all.
 	var unpriced_herd := ForageFx.floorify(HerdFx.taming_herd_fixture())
-	unpriced_herd[SourceForecast.FORECAST_BUILD_DESTINATION_KEY] = SourceForecast.RUNG_KEY_PEN
+	unpriced_herd[SourceForecast.FORECAST_BUILD_DESTINATION_KEY] = RungFx.KEY_PEN
 	var unpriced_hover := DetailFormat.husbandry_payoff_hover(unpriced_herd,
 		HudComposeVocab.BARE_FORECAST_PREFIX)
 	h._assert_hud("a NAMED destination the wire prices at the sentinel quotes no ceiling either (got '%s')"
@@ -441,7 +441,7 @@ func run(harness) -> void:
 	# is out of range for. A hover that swallowed this as *nothing queued* would hide the one pen the
 	# player most needs talking out of.
 	var barren_herd := ForageFx.floorify(HerdFx.taming_herd_fixture())
-	barren_herd[SourceForecast.FORECAST_BUILD_DESTINATION_KEY] = SourceForecast.RUNG_KEY_PEN
+	barren_herd[SourceForecast.FORECAST_BUILD_DESTINATION_KEY] = RungFx.KEY_PEN
 	barren_herd[SourceForecast.FORECAST_BUILD_DESTINATION_CAPACITY_KEY] = BARREN_DESTINATION_CAPACITY
 	var barren_hover := DetailFormat.husbandry_payoff_hover(barren_herd,
 		HudComposeVocab.BARE_FORECAST_PREFIX)

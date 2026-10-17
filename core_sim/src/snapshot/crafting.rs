@@ -220,7 +220,7 @@ pub(crate) struct BandCraftInputs<'a> {
     /// [`Self::plans`] and become a second reading of the bench.
     pub(crate) recipes: &'a RecipesConfig,
     /// **The reference job an equipment life gauge is quoted against**, in work units — the ladder's
-    /// [`crate::intensification::REFERENCE_BUILD_RUNG`] `work_cost`, resolved once per capture. See
+    /// [`crate::intensification::LadderConfig::reference_build_rung`] `work_cost`, resolved once per capture. See
     /// [`quantum_units_per_noun`] for why a build's wear cannot be counted in its own units.
     pub(crate) reference_build_cost: f32,
     /// **The equipped values that live OUTSIDE `equipment.json`**, for the `makes` line of an item
@@ -750,6 +750,8 @@ pub(crate) fn kit_need_states(
                         workers_per_unit: item.workers_per_unit,
                         have: item.have,
                         queued: item.queued,
+                        claimed: item.claimed,
+                        short: item.short,
                         recipes,
                     }
                 })
@@ -824,7 +826,11 @@ pub(crate) fn suggestion_shortfalls(
     for suggestion in suggestions {
         let Some(recipe) = offers
             .iter()
-            .find(|offer| offer.suggested && offer.output_item_id == suggestion.item_id)
+            .find(|offer| {
+                offer.suggested
+                    && (offer.output_item_id == suggestion.item_id
+                        || offer.output_material_id == suggestion.item_id)
+            })
             .and_then(|offer| inputs.recipes.recipe(&offer.recipe_id))
         else {
             continue;
@@ -933,6 +939,8 @@ pub(crate) fn craft_suggestion_states(
             upcoming_count: suggestion.upcoming_count,
             expires_in_turns: suggestion.expires_in_turns,
             lead_turns: suggestion.lead_turns,
+            display_name: suggestion.display_name,
+            reason: suggestion.reason,
             sources: suggestion
                 .sources
                 .into_iter()
@@ -954,7 +962,7 @@ pub(crate) fn craft_suggestion_states(
                             state.job = source.kind().to_string();
                             Some(source)
                         }
-                        SupplySource::Take { job, source } => {
+                        SupplySource::Take { job, source, .. } => {
                             state.kind = SUGGESTION_SOURCE_TAKE.to_string();
                             state.job = (*job).to_string();
                             source.as_ref()
@@ -967,7 +975,9 @@ pub(crate) fn craft_suggestion_states(
                         }
                     };
                     match target {
-                        Some(BuildSource::Patch(tile)) | Some(BuildSource::Road(tile)) => {
+                        Some(BuildSource::Patch(tile))
+                        | Some(BuildSource::Road(tile))
+                        | Some(BuildSource::Tile { tile, .. }) => {
                             state.target_x = tile.x;
                             state.target_y = tile.y;
                         }
@@ -1090,6 +1100,13 @@ fn craft_offer(
         display_name: plan.row_name.clone(),
         group: plan.group.to_string(),
         output_item_id: plan.output_item.unwrap_or_default().to_string(),
+        // The stock material a recipe with no equipment output makes - the join key a build-material
+        // suggestion ("Hurdles") reads its recipe through.
+        output_material_id: if plan.output_item.is_some() {
+            String::new()
+        } else {
+            plan.recipe.row_key().unwrap_or_default().to_string()
+        },
         available,
         reason,
         severity: severity.to_string(),
@@ -1387,7 +1404,7 @@ fn invitation(
 /// became one when improvements were priced in work (`docs/plan_unit_costed_work.md` §6.3): its unit
 /// is a **work unit** — one worker-turn at the food peak — while a player holding a hoe thinks in
 /// *builds*. So it is quoted against the **reference job**
-/// ([`crate::intensification::REFERENCE_BUILD_RUNG`], the `plant:tended` rung's own `work_cost`) and
+/// ([`crate::intensification::LadderConfig::reference_build_rung`], the `plant:tended` rung's own `work_cost`) and
 /// its noun reads *"gardens' worth"*.
 ///
 /// **The reference is the LADDER's, resolved here rather than carried as a literal**, so a retune of

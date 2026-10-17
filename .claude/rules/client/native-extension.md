@@ -33,7 +33,7 @@ server side, so the two ends of the wire have the same shape.
 | `snapshot/cache.rs` | `WorldCache` — the world a delta is applied *to*: the last complete client dict, the pre-normalization `RasterCache` behind it, the `SectionCaches` (one complete array + identity index per diff-carried section, configured by the `KEYED_SECTIONS` registry), and the epoch/frame-sequence gate that says whether an incoming delta may be merged at all |
 | `dict/mod.rs` | ONLY the leaf helpers with consumers in two or more sections: `strings_to_variant_array`, `string_vector_to_packed`, the `u16/u32/u64_vector_to_packed_*` packers, `fixed64_to_f32` / `fixed64_to_f64` |
 | `dict/{map,economy,population,subsistence,knowledge,governance,culture,campaign,connections}.rs` | The ~60 `*_to_dict` / `*_to_array` / `*_label` converters, one module per `snapshot.fbs` section |
-| `dict/{routes,deposits}.rs` | The two ARC-scoped converters that do not follow the section split. `routes.rs` holds `RouteState` **and** `RouteRungState`, whose catalog rides `SubsistenceSection`; `deposits.rs` holds `DepositState`, which rides `SubsistenceSection` too. Both are here rather than in `subsistence.rs` because the arc, not the section, is what a reader of either needs open — and because keeping them apart is what stops two concurrent worktrees editing one 1,600-line file |
+| `dict/{routes,deposits}.rs` | The two ARC-scoped converters that do not follow the section split. `routes.rs` holds `RouteState`; `deposits.rs` holds `DepositState`, which rides `SubsistenceSection`. The unified ladder catalog (`ladder_rungs_to_array`, `ladder_branches_to_array`, issue #175) and `tile_improvements_to_array` (`RouteSection.tileImprovements`) live in `dict/subsistence.rs` beside `build_legs_to_array`, which they share. Both are here rather than in `subsistence.rs` because the arc, not the section, is what a reader of either needs open — and because keeping them apart is what stops two concurrent worktrees editing one 1,600-line file |
 
 There is deliberately **no `dict/vision.rs`** — the vision section is only the
 fog/visibility/military rasters, which `snapshot/raster.rs` and the assemblers already
@@ -676,8 +676,8 @@ and the two tending forecasts as `patch_upkeep_workers_at_completion` / `patch_u
 (`BuildQueueEntryState.buildPriority`, `high` | `normal` | `low`), read through
 `HudBandLaborState.build_priority_for_key`, which normalises an unwritten value to `normal`. It also
 carries its site halves, **`material`** (`BuildQueueEntryState.material`, `""` unless the entry is a
-working) and **`road`** (`.road`, true for a road build), which `HudBandLaborState.queue_entry_key`
-keys on — the tile alone cannot tell two workings, or a road and a patch, on one hex apart.
+working) and **`branch`** (`.branch`, issue #175: the road branch's id on a road build, a tile-kind branch's id on a tile build, `""` otherwise — it replaced the retired `road` bool), which `HudBandLaborState.queue_entry_key`
+keys on (through `HudRouteVocab.queue_entry_is_road`) — the tile alone cannot tell two workings, or a road and a patch, on one hex apart.
 
 ## The `connections` section, and the cohort fields the shipment arc appended
 

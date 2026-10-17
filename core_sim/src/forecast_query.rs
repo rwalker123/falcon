@@ -956,7 +956,12 @@ fn answer_deposit_crew_take(world: &mut World, ask: &DepositCrewTakeQuery) -> Qu
         .source(tile, &ask.material)
         .cloned()
         .unwrap_or_else(|| {
-            crate::extraction::DepositSource::opening(tile, &ask.material, capacity, branch)
+            crate::extraction::DepositSource::opening(
+                tile,
+                &ask.material,
+                capacity,
+                crate::intensification::RungStanding::unstarted_on(&ladder, branch),
+            )
         });
     crate::extraction::renew_deposit(&mut working, &ground, &extraction, &ladder);
     let held_rung = working.rung();
@@ -1016,8 +1021,8 @@ fn answer_deposit_crew_take(world: &mut World, ask: &DepositCrewTakeQuery) -> Qu
     QueryReply::DepositCrewTake(DepositCrewTakeReply {
         per_crew,
         held_rung: held_rung.wire_key(),
-        next_rung: held_rung
-            .above()
+        next_rung: ladder
+            .above_id(held_rung)
             .map(|rung| rung.wire_key())
             .unwrap_or_default(),
         in_range,
@@ -1070,23 +1075,27 @@ fn herd_once_raised(
     ladder: &crate::intensification::LadderConfig,
     faction: FactionId,
 ) -> Option<crate::fauna::Herd> {
-    use crate::intensification::RungKey;
+    use crate::intensification::RungTrait;
     let standing = herd.standing();
-    let rung = standing.raising.or_else(|| standing.held.above())?;
+    let rung = standing
+        .raising
+        .or_else(|| ladder.above_id(standing.held))?;
     let mut raised = herd.clone();
     raised.upkeep_demanded = None;
     raised.owner.get_or_insert(faction);
-    match rung {
-        RungKey::AnimalPen => {
-            let tile = raised.current_pos;
-            raised.corral_at(tile, ladder).then_some(raised)
-        }
-        RungKey::AnimalPastoral if raised.can_domesticate() => {
-            let (base, width) = raised.rung_span(rung, ladder);
-            raised.set_ladder_position(base + width, ladder);
-            Some(raised)
-        }
-        _ => None,
+    // **What the rung IS decides how it is seated** (its traits, never its name): an `enclosed`
+    // rung is a pen, laid through `corral_at`; a `domesticated` one is seated at its top when the
+    // species' ceiling allows taming.
+    let traits = ladder.rung(rung).trait_set();
+    if traits.has(RungTrait::Enclosed) {
+        let tile = raised.current_pos;
+        raised.corral_at(tile, ladder).then_some(raised)
+    } else if traits.has(RungTrait::Domesticated) && raised.can_domesticate(ladder) {
+        let (base, width) = raised.rung_span(rung, ladder);
+        raised.set_ladder_position(base + width, ladder);
+        Some(raised)
+    } else {
+        None
     }
 }
 
@@ -1124,7 +1133,9 @@ fn patch_once_raised(
     tile_capacity: Option<f32>,
 ) -> Option<crate::forage::ForagePatch> {
     let standing = patch.standing();
-    let rung = standing.raising.or_else(|| standing.held.above())?;
+    let rung = standing
+        .raising
+        .or_else(|| ladder.above_id(standing.held))?;
     let (base, width) = crate::forage::patch_rung_span(patch, rung, ladder);
     let mut raised = patch.clone();
     raised.set_ladder_position(base + width, ladder);
@@ -1223,7 +1234,7 @@ fn answer_work_party_forecast(
     // **The source and the job its kit must serve.** A herd id the registry does not carry, a tile
     // with no patch on it, or ground holding none of the asked material, is refused by name.
     enum Asked {
-        Hunt(Herd),
+        Hunt(Box<Herd>),
         Forage {
             patch: crate::forage::ForagePatch,
             tile: bevy::math::UVec2,
@@ -1244,7 +1255,7 @@ fn answer_work_party_forecast(
                 return query_failure(query_error::UNKNOWN_HERD);
             };
             (
-                Asked::Hunt(herd),
+                Asked::Hunt(Box::new(herd)),
                 crate::components::LaborTarget::Hunt {
                     fauna_id: herd_id.clone(),
                     floor: ask.floor,
@@ -1299,11 +1310,12 @@ fn answer_work_party_forecast(
                         } else {
                             standing
                                 .raising
-                                .or_else(|| standing.held.above())
+                                .or_else(|| ladder.above_id(standing.held))
                                 .and_then(|rung| {
                                     crate::forage::default_species_for_rung(
                                         &composition,
                                         &flora,
+                                        &ladder,
                                         rung,
                                     )
                                 })
@@ -1348,6 +1360,7 @@ fn answer_work_party_forecast(
                         material,
                         ground,
                         &extraction,
+                        &ladder,
                     )?;
                     let weight = world
                         .resource::<crate::materials_config::MaterialsConfigHandle>()
@@ -1418,7 +1431,7 @@ fn answer_work_party_forecast(
     // own crew-weighted rate, the term the turn's forecast steps with.
     let deposit_gear_per_worker = |working: &crate::extraction::DepositSource| {
         let rung = working.standing().held;
-        pricing.deposit_gear_per_worker(&equipment, &wear, rung.branch(), &rung.wire_key())
+        pricing.deposit_gear_per_worker(&equipment, &wear, rung.branch, &rung.wire_key())
     };
     let walk = crate::work_party::resolve_walk(
         band_pos,
@@ -1460,7 +1473,7 @@ fn answer_work_party_forecast(
     let declared = crate::components::BuildSource::of(&target)
         .and_then(|source| allocation.build_queue_entry(&source))
         .and_then(|entry| match entry.declared {
-            crate::components::BuildJob::Rung(improvement) => Some(improvement),
+            crate::components::BuildJob::Climb(rung) => Some(rung),
             // Neither "work on a rung already held" kind raises a rung.
             crate::components::BuildJob::ExtendPen
             | crate::components::BuildJob::SetHerdOutput(_) => None,
@@ -1893,6 +1906,7 @@ const NEVER_PAST_RECOVERY: u32 = 0;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ladder_ids::shipped;
     use bevy::math::UVec2;
     use bevy::prelude::Entity;
 
@@ -1942,6 +1956,7 @@ mod tests {
             0.0,
             0.4,
             60.0,
+            shipped::root_standing(shipped::animal()),
         )
     }
 
@@ -2207,6 +2222,7 @@ mod tests {
             0.0,
             0.4,
             body_mass,
+            shipped::root_standing(shipped::animal()),
         )
     }
 
@@ -3470,10 +3486,7 @@ mod tests {
                 &ladder,
             )
         };
-        let scaled = ladder.with_upkeep_scaled(
-            crate::intensification::RungKey::AnimalPastoral,
-            bill / current,
-        );
+        let scaled = ladder.with_upkeep_scaled(shipped::animal_pastoral(), bill / current);
         world
             .resource_mut::<crate::intensification::LadderConfigHandle>()
             .replace(std::sync::Arc::new(scaled));
@@ -3981,6 +3994,7 @@ mod tests {
             0.0,
             0.4,
             FOWL_BODY,
+            shipped::root_standing(shipped::animal()),
         )
     }
 

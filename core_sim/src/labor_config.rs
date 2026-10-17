@@ -177,7 +177,7 @@ const DEFAULT_CULTIVATION_FIELD_CONVERSION_GAIN: f32 = 2.0;
 const DEFAULT_CULTIVATION_CAPACITY_PER_TENDER: f32 = 195.0;
 
 /// **THE CROP SHARE A SOW IS PRICED AGAINST** — the share of the ground the chosen crop already holds
-/// at the moment the `plant:field` leg starts, at which the rung costs exactly its declared
+/// at the moment the `plant:farm` leg starts, at which the rung costs exactly its declared
 /// `work_cost` (`docs/plan_standing_upkeep.md` §4.15). Sowing ground the crop already dominates is
 /// tidying; sowing ground it barely stands on is replacing the tile, and this is the share those two
 /// are measured either side of.
@@ -186,7 +186,7 @@ const DEFAULT_CULTIVATION_CAPACITY_PER_TENDER: f32 = 195.0;
 /// [`DEFAULT_CULTIVATION_CAPACITY_PER_TENDER`] is the reference tile's own `K`: `wild_emmer` holds
 /// `0.375` of `AlluvialPlain`'s realized basket (`tests/field_reference_basket.rs`), a Cultivate weeds
 /// it to `0.375 × 1.5 = 0.5625`, and a Field leg always begins from the weeded mix — so the shipped
-/// `plant:field` price is **provably pacing-neutral there**. An anchor rather than a bare penalty is
+/// `plant:farm` price is **provably pacing-neutral there**. An anchor rather than a bare penalty is
 /// what keeps the ladder's declared cost meaning what it says: a penalty would make 75 work units the
 /// cheapest case and inflate the whole plant branch.
 const DEFAULT_CULTIVATION_FIELD_REFERENCE_CROP_SHARE: f32 = 0.5625;
@@ -222,7 +222,7 @@ const DEFAULT_CULTIVATION_FIELD_SHARE_COST_CEILING: f32 = 2.0;
 /// managed rate. They stay here for the same reason `pastoral_gain`/`pen_gain` stay in `fauna_config`:
 /// a rung's *payoff* is its web's economy, where its *build* is the ladder's grammar.
 ///
-/// A patch worked with the **Cultivate** improvement in flight ([`crate::components::Improvement::Cultivate`])
+/// A patch worked with the **Cultivate** improvement in flight (the `cultivate` verb)
 /// — faction knows Cultivation, and something stands above the crew's floor
 /// (`systems::labor::crew_is_working_the_source`; the old `Thriving` health gate is gone,
 /// `docs/plan_harvest_floor.md` §3.2) — accrues the `plant:tended` rung's
@@ -308,12 +308,12 @@ pub struct CultivationConfig {
     /// Validated finite and `> 0`: a `0` is a division by zero and a negative one an inverted load —
     /// both silent nonsense. See [`DEFAULT_CULTIVATION_CAPACITY_PER_TENDER`].
     pub capacity_per_tender: f32,
-    /// **THE CROP SHARE A SOW IS PRICED AGAINST** — the reference the `plant:field` rung's own
+    /// **THE CROP SHARE A SOW IS PRICED AGAINST** — the reference the `plant:farm` rung's own
     /// `work_cost` is the price *at* (`forage::field_cost_multiplier_at_share`). A Sow that replaces
     /// more of the basket than this costs proportionally more, one that replaces less costs
     /// proportionally less, and the ratio is clamped by the two dials below.
     ///
-    /// **It scales the BUILD and nothing else.** `plant:field`'s standing upkeep is
+    /// **It scales the BUILD and nothing else.** `plant:farm`'s standing upkeep is
     /// `scaled_by: source_load`, which reads the tile's `K` — holding a field is about how big the
     /// place is, never about what used to grow on it — and `plant:tended`'s build cost does not move
     /// at all: clearing wild ground is clearing wild ground.

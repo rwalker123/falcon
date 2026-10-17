@@ -814,6 +814,7 @@ static func _build_settling_block(sedentarization: Dictionary, mobility: Diction
 ## reads 0.
 static func _settling_tooltip(sedentarization: Dictionary) -> String:
     return HudWorkVocab.FACTION_SETTLING_TOOLTIP_FORMAT % [
+        int(round(float(sedentarization.get("score", 0.0)))),
         int(round(float(sedentarization.get("domestication_points", 0.0)))),
         int(round(float(sedentarization.get("surplus_points", 0.0)))),
         int(round(float(sedentarization.get("land_points", 0.0)))),
@@ -850,11 +851,11 @@ static func _build_settling_belief_row(belief_points: float) -> HBoxContainer:
     if belief_points < HudWorkVocab.FACTION_SETTLING_BELIEF_MIN:
         var none_row := _stat_row(HudWorkVocab.FACTION_SETTLING_BELIEF_KEY,
             HudWorkVocab.FACTION_SETTLING_BELIEF_NONE, HudStyle.INK_DIM,
-            HudWorkVocab.FACTION_SETTLING_BELIEF_TOOLTIP)
+            HudWorkVocab.FACTION_SETTLING_BELIEF_TOOLTIP_FORMAT % int(round(belief_points)))
         return none_row
     var row := _stat_row(HudWorkVocab.FACTION_SETTLING_BELIEF_KEY,
         HudWorkVocab.FACTION_SETTLING_BELIEF_VALUE_FORMAT % int(round(belief_points)),
-        HudStyle.BELIEF, HudWorkVocab.FACTION_SETTLING_BELIEF_TOOLTIP)
+        HudStyle.BELIEF, HudWorkVocab.FACTION_SETTLING_BELIEF_TOOLTIP_FORMAT % int(round(belief_points)))
     var mark := Label.new()
     mark.text = BandOverlayRenderer.ANCESTORS_GLYPH
     mark.add_theme_font_size_override("font_size", STAT_ROW_FONT_SIZE)
@@ -1009,7 +1010,7 @@ static func _build_workforce_block(labor: HudBandLaborState) -> VBoxContainer:
             match String(model.get("kind", "")):
                 SourceForecast.LABOR_KIND_FORAGE: forage_workers += workers
                 SourceForecast.LABOR_KIND_HUNT: hunt_workers += workers
-                HudConst.LABOR_KIND_EXTRACT: extract_workers += workers
+                HudConst.LABOR_KIND_EXTRACT, HudConst.LABOR_KIND_TILE: extract_workers += workers
         extract_workers -= int((muster_out["by_kind"] as Dictionary).get(HudConst.LABOR_KIND_EXTRACT, 0))
         forage_workers -= int((muster_out["by_kind"] as Dictionary).get(SourceForecast.LABOR_KIND_FORAGE, 0))
         hunt_workers -= int((muster_out["by_kind"] as Dictionary).get(SourceForecast.LABOR_KIND_HUNT, 0))
@@ -1053,7 +1054,7 @@ static func _build_workforce_block(labor: HudBandLaborState) -> VBoxContainer:
     var block := HudWidgets.make_zone_block()
     block.add_child(HudWidgets.zone_head(HudWorkVocab.ZONE_HEADER_WORKFORCE, readout,
         null, HudStyle.SIGNAL if idle > 0 else HudStyle.INK_DIM,
-        HudWorkVocab.WORKFORCE_AWAY_TOOLTIP if party_workers > 0 else ""))
+        HudWorkVocab.WORKFORCE_AWAY_TOOLTIP_FORMAT % party_workers if party_workers > 0 else ""))
     if not segments.is_empty():
         block.add_child(HudWidgets.build_composition_bar(segments))
         block.add_child(HudWidgets.build_composition_key(segments))
@@ -1113,7 +1114,7 @@ static func _work_summary(labor: HudBandLaborState, band: Dictionary) -> String:
         if herd_id.is_empty():
             continue
         var herd := labor.find_world_herd(herd_id)
-        if not herd.is_empty() and bool(herd.get("corralled", false)):
+        if not herd.is_empty() and RungQuotes.is_enclosed(herd):
             pens += 1
     var parts: Array[String] = [HudWorkVocab.FACTION_SOURCES_ONE if sources == 1 \
         else HudWorkVocab.FACTION_SOURCES_FORMAT % sources]

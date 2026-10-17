@@ -23,6 +23,7 @@ use thiserror::Error;
 
 use crate::combat::CombatStats;
 use crate::config_load::{load_config_from_env, ConfigLoadError};
+use crate::ladder_ids::RungId;
 
 pub const BUILTIN_FAUNA_CONFIG: &str = include_str!("data/fauna_config.json");
 
@@ -88,56 +89,6 @@ impl SizeClass {
             "migratory" => SizeClass::Migratory,
             _ => SizeClass::Small,
         }
-    }
-}
-
-/// **How far up the husbandry ladder a species can climb** (Grazing 2d-δ, `docs/plan_grazing_2d.md`
-/// §4a). The ladder is a *sequence* (wild → pastoral → pen), so a species' reach is a single ceiling,
-/// not two independent flags — which makes the incoherent "pennable but not tameable" state
-/// unrepresentable (no `validate()` combination guard needed). `Wild` is hunt-only (domestication never
-/// accrues, `tame`/`corral`/`extend_pen` reject); `Pastoral` tames + roams but never pens
-/// (`corral`/`extend_pen` reject); `Pen` is the full ladder. **Default `Pen`** preserves the pre-δ
-/// universal-full-ladder behaviour for any untagged/future species.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Default, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum HusbandryCeiling {
-    /// Hunt-only. Domestication never accrues.
-    Wild,
-    /// Reaches the mobile-tamed rung but never the pen.
-    Pastoral,
-    /// The full ladder — the default.
-    #[default]
-    Pen,
-}
-
-impl HusbandryCeiling {
-    /// Stable string key (also the snapshot `husbandry_ceiling` field / the wire `husbandryCeiling`).
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            HusbandryCeiling::Wild => "wild",
-            HusbandryCeiling::Pastoral => "pastoral",
-            HusbandryCeiling::Pen => "pen",
-        }
-    }
-
-    /// Parse the stable string key back (inverse of `as_str`; the rollback restore path). Unknown/empty
-    /// strings resolve to the `Default` (`Pen`), preserving the full ladder.
-    pub fn from_key(key: &str) -> Self {
-        match key {
-            "wild" => HusbandryCeiling::Wild,
-            "pastoral" => HusbandryCeiling::Pastoral,
-            _ => HusbandryCeiling::Pen,
-        }
-    }
-
-    /// Can this species be **tamed** (mobile domestication)? True for `Pastoral` and `Pen`.
-    pub fn allows_domestication(&self) -> bool {
-        !matches!(self, HusbandryCeiling::Wild)
-    }
-
-    /// Can this species be **penned** (corralled)? True only for `Pen`.
-    pub fn allows_pen(&self) -> bool {
-        matches!(self, HusbandryCeiling::Pen)
     }
 }
 
@@ -413,7 +364,7 @@ pub struct SpeciesDef {
     ///
     /// Per-species for the same reason [`SpeciesDef::body_mass`] / [`SpeciesDef::taming_cost_multiplier`] /
     /// [`SpeciesDef::husbandry_ceiling`] are: a herder minds far more birds than aurochs. Deer and
-    /// mammoth omit it — a `wild` [`HusbandryCeiling`] is never herded at all.
+    /// mammoth omit it — a hunt-only ceiling (`animal:wild`) is never herded at all.
     ///
     /// **These are UNASSISTED numbers — pre-dog, pre-horse.** A couple of herders on foot mind a large
     /// herd; dogs and riding horses are future herding **gear**, and gear is productivity, so the
@@ -433,12 +384,14 @@ pub struct SpeciesDef {
     /// fully staffed).
     #[serde(default = "default_animals_per_herder")]
     pub animals_per_herder: f32,
-    /// **How far up the husbandry ladder this species climbs** (Grazing 2d-δ) — `wild` | `pastoral` |
-    /// `pen`. Cached onto `Herd` at spawn (mirroring `fodder_per_biomass` / `regrowth_rate`) and gates
-    /// domestication accrual + the `tame` / `corral` / `extend_pen` paths. Defaults to `pen`
-    /// (the full ladder) when omitted. See [`HusbandryCeiling`].
+    /// **How far up the husbandry ladder this species climbs** (Grazing 2d-δ) - the animal-branch
+    /// rung it can be taken to and no further (`"animal:wild"` is hunt-only, `"animal:pastoral"`
+    /// tames but never pens). Cached onto `Herd` at spawn (mirroring `fodder_per_biomass` /
+    /// `regrowth_rate`) and gates domestication accrual + the `tame` / `corral` / `extend_pen`
+    /// paths. **Omitted = the whole ladder.** A rung id, so a fourth husbandry rung needs no new
+    /// variant; `FaunaConfig::validate_against_ladder` checks it names a rung of the herd branch.
     #[serde(default)]
-    pub husbandry_ceiling: HusbandryCeiling,
+    pub husbandry_ceiling: Option<RungId>,
     /// **The K (carrying-capacity) multiplier at the mobile-tamed (pastoral) rung** — domestication
     /// makes the *land* hold more animals, non-linearly by species. Distinct from the global
     /// r-gains (`husbandry.pastoral_gain` / `pen_gain`), which scale a herd's *breeding rate*: this
@@ -2855,6 +2808,32 @@ impl FaunaConfig {
             .map(|def| def.keeping.as_str())
     }
 
+    /// **EVERY SPECIES' `husbandry_ceiling` NAMES A RUNG OF THE HERD LADDER**, reconciled at boot
+    /// against the loaded ladder (the config is read before the ladder exists, so this is the one
+    /// place both are in scope). A ceiling naming a rung nobody defines, or one on another branch,
+    /// would parse and then be a ceiling no rung is ever compared with.
+    pub fn validate_against_ladder(
+        &self,
+        ladder: &crate::intensification::LadderConfig,
+    ) -> Result<(), FaunaConfigError> {
+        for (key, def) in &self.species {
+            let Some(ceiling) = def.husbandry_ceiling else {
+                continue;
+            };
+            let on_herd_branch = ladder.rung_by_id(ceiling).is_some_and(|rung| {
+                ladder.source_kind(rung.branch) == Some(crate::intensification::SourceKind::Herd)
+            });
+            if !on_herd_branch {
+                return Err(FaunaConfigError::Invalid {
+                    field: "species.husbandry_ceiling",
+                    constraint: format!("name a rung of the herd ladder (species `{key}`)"),
+                    value: ceiling.to_string(),
+                });
+            }
+        }
+        Ok(())
+    }
+
     /// **Every species names a configured keeping class** (#706) — the cross-config half of the
     /// keeping field, run at boot against the demographics config's class table. A misspelt class
     /// would otherwise put the species' meat into a class nothing rots or eats in order.
@@ -3434,7 +3413,8 @@ pub fn load_fauna_config_from_env(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::intensification::{LadderConfig, RungKey};
+    use crate::intensification::{LadderConfig, RungId};
+    use crate::ladder_ids::shipped;
 
     #[test]
     fn builtin_config_parses() {
@@ -3453,33 +3433,61 @@ mod tests {
             .contains("boar"));
     }
 
+    /// **A CEILING MUST NAME A RUNG OF THE HERD LADDER** - an unknown rung and a rung of the plant
+    /// web are both refused at boot, while the shipped roster reconciles.
+    #[test]
+    fn a_ceiling_naming_no_herd_rung_is_refused() {
+        let ladder = shipped::ladder();
+        FaunaConfig::builtin()
+            .validate_against_ladder(ladder)
+            .expect("the shipped roster names rungs of the shipped herd ladder");
+        for bad in [
+            RungId::new(shipped::animal(), "stable"),
+            shipped::plant_tended(),
+        ] {
+            let mut config = (*FaunaConfig::builtin()).clone();
+            config
+                .species
+                .get_mut("deer")
+                .expect("deer is on the roster")
+                .husbandry_ceiling = Some(bad);
+            assert!(
+                matches!(
+                    config.validate_against_ladder(ladder),
+                    Err(FaunaConfigError::Invalid { .. })
+                ),
+                "{bad} is not a rung of the herd ladder"
+            );
+        }
+    }
+
     /// Grazing 2d-δ: the shipped roster's husbandry ceilings, and the `pen` default for an omitted one.
     #[test]
     fn builtin_husbandry_ceilings_match_the_roster() {
         let config = FaunaConfig::builtin();
-        use HusbandryCeiling::*;
         for (key, expected) in [
-            ("mammoth", Wild),
-            ("deer", Wild),
-            ("steppe_runner", Pastoral),
-            ("marsh_grazer", Pastoral),
-            ("boar", Pen),
-            ("rabbit", Pen),
-            ("fowl", Pen),
+            ("mammoth", shipped::animal_wild()),
+            ("deer", shipped::animal_wild()),
+            ("steppe_runner", shipped::animal_pastoral()),
+            ("marsh_grazer", shipped::animal_pastoral()),
+            ("boar", shipped::animal_pen()),
+            ("rabbit", shipped::animal_pen()),
+            ("fowl", shipped::animal_pen()),
         ] {
             assert_eq!(
-                config.species[key].husbandry_ceiling, expected,
+                config.species[key].husbandry_ceiling,
+                Some(expected),
                 "{key} husbandry_ceiling"
             );
         }
-        // An omitted field defaults to `pen` (the full ladder), preserving pre-δ behaviour.
+        // An omitted field is the whole ladder (no ceiling), preserving pre-δ behaviour.
         // `body_mass` is REQUIRED (slice 8) — a species with no quantum is not a species, so it must
         // fail to parse rather than default to something.
         let def: SpeciesDef = serde_json::from_str(
             r#"{"display_name":"X","keeping":"flesh","route_len":[1,1],"biomass":[1,1],"body_mass":1,"engage_rate":1}"#,
         )
         .unwrap();
-        assert_eq!(def.husbandry_ceiling, HusbandryCeiling::Pen);
+        assert_eq!(def.husbandry_ceiling, None);
     }
 
     /// The shipped per-species taming **costs**, and the `1.0` default for an omitted one. The
@@ -3489,7 +3497,7 @@ mod tests {
     fn builtin_taming_costs_match_the_roster() {
         let config = FaunaConfig::builtin();
         let ladder = LadderConfig::builtin();
-        let pastoral = ladder.rung(RungKey::AnimalPastoral);
+        let pastoral = ladder.rung(shipped::animal_pastoral());
 
         for (key, multiplier, work_units) in [
             ("rabbit", 1.0_f32, 50.0_f32),
@@ -3515,7 +3523,7 @@ mod tests {
         for key in ["deer", "mammoth"] {
             assert_eq!(
                 config.species[key].husbandry_ceiling,
-                HusbandryCeiling::Wild
+                Some(shipped::animal_wild())
             );
             assert_eq!(
                 config.species[key].taming_cost_multiplier,

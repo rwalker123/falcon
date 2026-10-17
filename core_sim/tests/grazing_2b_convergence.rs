@@ -18,6 +18,7 @@ use bevy::app::App;
 use bevy::ecs::system::RunSystemOnce;
 use bevy::math::UVec2;
 use bevy::MinimalPlugins;
+use core_sim::shipped;
 
 use core_sim::{
     advance_graze_regrowth, advance_herd_grazing, advance_herds, spawn_initial_graze,
@@ -144,6 +145,7 @@ fn seat_herds(app: &mut App, tile: UVec2, count: usize, fodder: f32, r: f32, bio
             fodder,
             r,
             CONVERGENCE_BODY_MASS,
+            shipped::root_standing(shipped::animal()),
         ));
     }
 }

@@ -2582,7 +2582,7 @@ pub fn reconcile_food_modules(
 /// offers no Forage button — and `sow` requires a band already foraging the tile. The ~130 markers
 /// (`site_land_fraction` 0.08 of land) are therefore the whole of the ground a player can climb the
 /// plant ladder on, out of ~2,000 food-bearing hexes. Curation chose them by spatial bucket, latitude
-/// quota and min-spacing — and fresh water, the thing `plant:field`'s site rule actually demands, was
+/// quota and min-spacing — and fresh water, the thing `plant:farm`'s site rule actually demands, was
 /// invisible to it.
 ///
 /// **What this pass overrides in curation's ranking.** `compare_food_site` sorts on `seasonal_weight`
@@ -2688,7 +2688,7 @@ pub fn bias_food_sites_toward_fresh_water(
 
     // **Site quality** — the tile's own forage capacity plus what fresh water is worth, in the same
     // units. Read through `tile_forage_capacity`, never a private table, so a marker is ranked by the
-    // very number that sizes the patch it will carry and that `plant:field`'s floor is compared against.
+    // very number that sizes the patch it will carry and that `plant:farm`'s floor is compared against.
     let quality = |tile: &Tile| -> f32 {
         crate::tile_forage_capacity(forage, tile)
             + if is_watered(tile.position) {

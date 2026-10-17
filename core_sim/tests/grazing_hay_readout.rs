@@ -61,6 +61,7 @@ use bevy::app::App;
 use bevy::ecs::system::RunSystemOnce;
 use bevy::math::UVec2;
 use bevy::prelude::Entity;
+use core_sim::shipped;
 
 use core_sim::{
     advance_labor_allocation, build_test_app, recapture_snapshot_in_place, scalar_from_f32,
@@ -158,6 +159,7 @@ fn seat_pens(app: &mut App, tile: UVec2, pens: &[(&str, f32)]) {
             FODDER_RATE,
             WILD_R,
             PEN_BODY_MASS,
+            shipped::root_standing(shipped::animal()),
         );
         herd.tame_outright(FACTION, &ladder);
         assert!(
@@ -307,7 +309,10 @@ fn resolve_and_publish(app: &mut App) {
     // rebuilds it at the end of its own pass, so a fixture that seats herds and captures without
     // driving Logistics has to rebuild it here or the wire carries the map's own animals. Driving
     // the real system instead would regraze and regrow the pens, which is a different fixture.
-    let entries = app.world.resource::<HerdRegistry>().snapshot_entries();
+    let entries = app
+        .world
+        .resource::<HerdRegistry>()
+        .snapshot_entries(shipped::ladder());
     app.world.resource_mut::<core_sim::HerdTelemetry>().entries = entries;
     recapture_snapshot_in_place(&mut app.world);
 }

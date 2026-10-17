@@ -1086,7 +1086,7 @@ impl CaravanPricing {
         &self,
         equipment: &crate::equipment_config::EquipmentConfig,
         wear: &crate::components::BandEquipment,
-        branch: crate::intensification::RungBranch,
+        branch: crate::ladder_ids::BranchId,
         rung: &str,
     ) -> f32 {
         self.coverage
@@ -1628,6 +1628,7 @@ pub fn forecast_forage_caravan(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ladder_ids::shipped;
 
     /// A crew-linear take: `present × rate` biomass, one food per biomass. The regime the
     /// steady-state formula is exact in, with `r` the whole per-hunter take.
@@ -2017,7 +2018,7 @@ mod tests {
     /// a caravan and what it does for pooling are one reading of one road.
     #[test]
     fn a_road_shortens_the_walk_and_one_covering_the_run_takes_it_to_zero() {
-        use crate::intensification::{LadderConfig, RungKey};
+        use crate::intensification::LadderConfig;
         use crate::routes::{road_rung_span, trace_path, traffic_ceiling, RoadRegistry};
         let ladder = LadderConfig::builtin();
         let labor = LaborConfig::builtin();
@@ -2049,7 +2050,7 @@ mod tests {
             "a worn trail must shorten the walk: {trail} vs {bare}"
         );
         let (base, span) = road_rung_span(
-            RungKey::RouteDirtRoad,
+            shipped::route_dirt_road(),
             &ladder,
             crate::routes::remoteness_multiplier(0, &ladder),
         );

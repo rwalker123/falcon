@@ -1642,6 +1642,7 @@ fn the_tethers_input_points_sum_to_the_raw_score_on_the_encoded_snapshot() {
             let mut patch = core_sim::ForagePatch::new(
                 UVec2::new(i, FIXTURE_PATCH_ROW),
                 FIXTURE_PATCH_CAPACITY,
+                core_sim::shipped::root_standing(core_sim::shipped::plant()),
             );
             patch.complete_cultivation(HOME, &core_sim::LadderConfig::builtin());
             registry.patches.insert(patch.tile, patch);

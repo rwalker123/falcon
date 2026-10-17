@@ -546,7 +546,7 @@ stretch, and widening it into that gap would put it over a live HUD column.
   turn is `-1`), and, when the band carries grievance, a second amber line `Drifting away — grievance
   0.42 / 1.00` — the warning beside the number it explains, the threshold being the sim's
   `independence_grievance_threshold` echo. Both lines carry one tooltip naming the lever (a visit by
-  another band or a returning scout restores contact) and the threshold. **No row for a LONE heart**
+  another band or a returning scout restores contact) and the threshold (`⚠ Cut off · breaks away at 0.60 grievance` over `Fix: visit with a band · scout home`). **No row for a LONE heart**
   (`heart_bond >= 1` and not cut off — nothing to watch) **and none for a band with no reading** (not
   cut off and a zero bond: an unjudged band or a party publishes `false / 0 / -1`, a foreign redacted
   row `false / 0 / 0`; a heart member always holds a live tie, so the gate keys on the bond, never on
@@ -618,7 +618,7 @@ stretch, and widening it into that gap would put it over a live HUD column.
   through `BandFoodStatus.color_for_output`, a `Color` accessor rather than a hex one because this
   head is built out of `Label`s rather than BBCode — and, since the head is now the multiplier's ONE
   surface, the only accessor there is (`hex_for_output` went with the vitals row that called it). Vocabulary (`WORK_OUTPUT_FORMAT` /
-  `WORK_OUTPUT_TOOLTIP`) is `HudWorkVocab`'s, like every other head item's.
+  `WORK_OUTPUT_TOOLTIP_FORMAT`, `⚠ Output 80% (low morale)` over `Fix: raise morale`) is `HudWorkVocab`'s, like every other head item's.
   **A ROW THE BAND HAS ONLY BUILDERS ON IS STILL A ROW.** The admission test read the TAKE crew alone,
   so a source with three hands raising its meter and nobody gathering was dropped from the board, from
   its chip counts and from the WORK tab's badge — the one place a player would look to see what those
@@ -1532,8 +1532,7 @@ from the player's `sedentarization` entry, which `FactionReadouts.update_sedenta
   inserted ahead of the value (a plain `Label` renders no BBCode).
 - **Below it** the row reads `0 — stand on your dead` in `INK_DIM`. It fits the zone without an ellipsis
   and says what to do next.
-- **Both forms carry the same hover**, `FACTION_SETTLING_BELIEF_TOOLTIP` (`Points to Settling from bands
-  camped where their dead lie.`), routed through `_stat_row`'s tip argument so it is set on both Labels
+- **Both forms carry the same hover**, `FACTION_SETTLING_BELIEF_TOOLTIP_FORMAT` (`Camped by their dead: +N`), routed through `_stat_row`'s tip argument so it is set on both Labels
   of the row (a bare `Label.tooltip_text` is a silent no-op) and hoverable across it.
 - **The stage row's hover itemizes the five inputs** (`FACTION_SETTLING_TOOLTIP_FORMAT`, built by
   `FactionRollup._settling_tooltip`): `Tamed herds and tended plants`, `Food to spare`, `Rich land`,
@@ -3589,7 +3588,30 @@ percentage in one string. The fixture's pair (30 of 40 work → 75%) deliberatel
 drawer's (42 of 70 → 60%), so a row quoting the wrong ring fails on the number rather than coinciding
 with it.
 
-### A ROW EXPANDS INTO THE JOB'S SETTINGS, AND THE ROW ITSELF TAKES NO SIXTH COLUMN (§4.7a ③)
+**A queue row's second line cannot widen the panel.** A Label with no clip reports its full text width
+as its minimum, so the date label (`BUILD_QUEUE_DATE_META`) once carried a corrupt `turn 2101264`
+countdown into the zone's width and cut the panel off. It now trims with an ellipsis, its minimum width
+is the text's own up to `HudWorkVocab.BUILD_QUEUE_DATE_MAX_WIDTH` (120px), and the full text is on the
+row's tooltip. The `◆ builders short of tools` label beside it is `build_status_part(..., elide=true)`
+with `SIZE_EXPAND_FILL`, so it takes the line's remainder and trims. `band_panel_preview` re-draws the
+ring row at `ABSURD_QUEUE_TURN` (`band_panel_queue_long_date`) and asserts the summed zone-host width
+is unchanged, the date column is at its cap, and the tooltip holds the full text.
+
+**A queue head the shelf cannot feed names the good on its second line.** The sim's `materials`
+cause rides `-4` and fires only on a shelf covering nothing, so a partly-stocked shelf (which stalls the
+build in proportion) and a frame the cause has not reached both read as a plain date. The head row
+therefore compares two things the wire already states: the rung's pile (`SourceForecast.build_material_cost`,
+or `corral_build_material_cost` for a pen ring) against the band's `material_store`, at what is still to be
+drawn, `pile × (1 − meter)` (`DetailFormat.build_material_shortfall`, the good with the largest uncovered
+share, never a sum). The clause is `⚠ No hurdles — needs 2.1 more` while none is held and `⚠ Short of
+hurdles — needs 1.1 more` while some is, in `HudStyle.DANGER` (a missing good is red, a missing hand amber),
+and it takes the line's last slot from the builders' `◆` clause, which stays on the row's hover. The
+hover adds nothing for it; the sim's own cause line is there where the cause arrives. Head only: entries behind the head claim nothing. A road's or a working's pile is not read here (a
+road's shortfall is the sim's own `buildMaterialDemand` / `buildMaterialSupplied` pair). Pinned by
+`band_panel_preview._assert_queue_head_says_what_the_shelf_lacks` (`band_panel_queue_no_hurdles`,
+`band_panel_queue_short_hurdles`; shelves of none, some and enough, plus the live pen's 6 hurdles at 65%).
+
+### A ROW EXPANDS INTO THE JOB'S SETTINGS### A ROW EXPANDS INTO THE JOB'S SETTINGS, AND THE ROW ITSELF TAKES NO SIXTH COLUMN (§4.7a ③)
 
 The crop moved off the compose sheet — *"the CROP TO TEND shouldn't be a selection here as the user can't
 do the cultivate here"* — and its first home was a sixth column on this row. **At the narrow shell's
@@ -3849,8 +3871,7 @@ strip CLOSED                                                     strip OPEN
   text on its hover and on `BUILD_QUEUE_DETAIL_META` — because the line's height is reserved and the
   zone clips. A cause reads in the kit-short amber; a bare price in `INK_DIM`.
 - **The withdrawal rides the detail line**, right-aligned: `Remove from queue`, DANGER ink, tooltip
-  *"Take this job out of the build queue. The work already done on it is kept, and the source keeps
-  its crew — queue it again to carry on."* It is **150px** and does not fit beside the crop picker at
+  *"Unqueue · progress kept"*. It is **150px** and does not fit beside the crop picker at
   the tall LEFT dock (344px of strip content less key 30, picker 168 and three separations leaves
   134), so the detail label is the child that gives (**190px** of it left at that dock). The detail
   line has no key column.
@@ -5402,7 +5423,7 @@ applied one level up: a second total beside the first, shown only when non-zero.
 **FODDER IS THAT SIBLING** (issue #449), and it credits the band's `FODDER` store and never the larder,
 so folding it into the food figure would break the identity
 `larder_delta == income − consumption − raid_forfeit − food_spoiled − food_left_behind + received − sent`. The head reads `2 sources +0.20
-/turn +0.40 fodder` (`WORK_FODDER_TOTAL_TOOLTIP` making the beside-not-in point) and a chip covering
+/turn +0.40 fodder` (`WORK_FODDER_TOTAL_TOOLTIP_FORMAT`, `Fodder +0.40/turn` over `Feeds pens, not people`, making the beside-not-in point) and a chip covering
 only hay-bearing patches reads `🌿 1 · 0.40 fodder` — via `SourceForecast.magnitude_components`, the
 bare-magnitude twin of `yield_components` (a chip states levels, not deltas, so no `+`). A kind whose
 whole set pays fodder alone drops the food term rather than printing a `0.00` denying its sources
@@ -6075,7 +6096,7 @@ a wild-ceiling Roe Deer offers nothing — the CONTRAST is the point), `band_pan
 ### …AND THE `⌃` OPENS A LADDER TRACK, BECAUSE AN ENTRY NAMES A DESTINATION (§2.8)
 
 The sim stores **one position per source** in cumulative work units — `plant:tended` runs `0 → 50` and
-`plant:field` `50 → 125` — and a queue entry names a **destination rung** rather than a single rung.
+`plant:farm` `50 → 125` — and a queue entry names a **destination rung** rather than a single rung.
 An entry climbs every rung between where the source stands and that destination and stays at the head
 until it ARRIVES, so `sow` declared on untended ground is a TWO-LEG climb that costs the whole branch.
 
@@ -6170,7 +6191,7 @@ when that leg finished. The legs are the row's EXPANSION:
 LOCKED rung, visible with its reason, beside the open one) · `band_panel_rung_track_banked` (the same
 ground one rung up on a faction that knows both crafts — the BANKED rung, and the claim that exactly
 ONE row on the card quotes a price) · `band_panel_rung_track_climbing` (a two-leg entry queued to
-`plant:field`, opened from the RUNNING slot — the path, the target, and both wire figures by
+`plant:farm`, opened from the RUNNING slot — the path, the target, and both wire figures by
 EQUALITY) · `band_panel_queue_legs` (the queue row opened into its climb). The four are judged as a
 SET: a card that marked every rung `open` passes any one of the state claims alone.
 
@@ -6250,7 +6271,7 @@ WHAT TO GROW                      ← on a SOW; a Cultivate reads WHAT TO TEND
 
 ### …AND THE FIELD ROW STATES ITS PRICE AND NO REASON (§4.15)
 
-`plant:field`'s build cost is scaled by the chosen crop's share of the tile — sowing a crop that
+`plant:farm`'s build cost is scaled by the chosen crop's share of the tile — sowing a crop that
 already holds most of the ground is mostly tidying, sowing one that holds a tenth means replacing the
 tile — so two Sows are quoted at wildly different work. The declaration path's own Field row states
 that price:
@@ -7860,7 +7881,7 @@ is gone after a re-render** — its good now nets even, the tier flipped FULL↔
 the list closes rather than re-anchoring elsewhere (`trade_tab_list_anchor_gone`).
 
 The camps list: this band first, its direct links (rung as icon + word, link distance, rung facts off
-the published `route_rungs` table), then the relay camps — `via <first hop>` on the shortest chain
+the published road slice of `ladder_rungs`), then the relay camps — `via <first hop>` on the shortest chain
 (BFS over every member's own `pooling_links`, ties on the hop's link distance then name) and the
 plain hex distance. Scoped to a good: each camp's net of it off its own pooled crossings, this band
 first, movers by `|net|`, then the even ones, and a `lost in transit — friction` row that is

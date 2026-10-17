@@ -802,7 +802,7 @@ func _ready() -> void:
 	# State A — a band working two forage tiles + hunting a distant herd. Shows the
 	# work-range ring (Chebyshev square), two strong-green worked forage tiles, and the
 	# red herd ring + band→herd link (the herd sits OUTSIDE the ring: a far herd is worked by a work party).
-	_map.display_snapshot(_snapshot_work())
+	_display_snapshot(_snapshot_work())
 	_map.selected_unit_id = BAND_ENTITY
 	_map._fit_map_to_view()
 	await _settle()
@@ -816,7 +816,7 @@ func _ready() -> void:
 	# hex + dashed band→herd link straight across the herd's label, on top of the confirmed red ring +
 	# link), and a pending move whose dashed link crosses the second forage tile's label. The labels are
 	# flushed LAST in _draw, so all of it must read UNDER the pills — no glyph or dash on the numbers.
-	_map.display_snapshot(_snapshot_work_overlap())
+	_display_snapshot(_snapshot_work_overlap())
 	_map.selected_unit_id = BAND_ENTITY
 	_map.set_labor_pending({
 		BAND_ENTITY: {
@@ -837,7 +837,7 @@ func _ready() -> void:
 	# Faction knowledge is PUSHED, not inherited: `map_preview` has no HUD, so the row that
 	# `Hud.faction_knowledge_changed` normally supplies is set here directly. Without it every source
 	# reads "not ready", which is the correct degradation but an unreadable frame.
-	_map.display_snapshot(_snapshot_work_ready())
+	_display_snapshot(_snapshot_work_ready())
 	_map.set_faction_knowledge({
 		"cultivation": 1.0, "seed_selection": 1.0, "herding": 1.0, "penning": 1.0,
 	})
@@ -853,7 +853,7 @@ func _ready() -> void:
 	# plate: `🌱42%` in the deep signal ink becomes `🌱⚠` in WARN. **The A/B is the claim** — a plate
 	# that always warned would pass this frame alone, and the percentage is what a build nobody is
 	# staffing must stop showing.
-	_map.display_snapshot(_snapshot_work_unstaffed())
+	_display_snapshot(_snapshot_work_unstaffed())
 	_map.selected_unit_id = BAND_ENTITY
 	_map._fit_map_to_view()
 	await _settle()
@@ -876,12 +876,87 @@ func _ready() -> void:
 		and ready_build_face == BandOverlayRenderer.BADGE_BUILDING_FORMAT % unstaffed_build_glyph
 		and unstaffed_build_face
 			== BandOverlayRenderer.BADGE_UNSTAFFED_FORMAT % unstaffed_build_glyph)
+	# State A-wire — **THE SAME PATCHES, AS THE WIRE SHAPES THEM, JOINED AGAINST THE CATALOG THE WAY `Main` JOINS
+	# THEM.** Every state above hands MapView a row `RUNG_FX` has already stamped, which is the harness
+	# writing its own answer: a reader of a retired key, or a join that never happened, passes them all
+	# (the playtest that asked for this saw no build icon and no held-rung icon on a live map). Here each
+	# patch carries ONLY what the decoder emits per quote (`rung_key` + its numbers), the catalog arrives
+	# as `ladder_rungs`, and `RungQuotes.enrich_sources` is the one thing that turns the two into verbs --
+	# so a dead key fails this block rather than rendering as "nothing here".
+	var wire := _snapshot_work_ready()
+	RUNG_FX.stamp_snapshot(wire)
+	var catalog: Array = RUNG_FX.ladder_rungs(false)
+	for patch_variant in wire["forage_patches"]:
+		var wire_patch: Dictionary = patch_variant
+		wire_patch["rung_quotes"] = _wire_shaped_quotes(wire_patch.get("rung_quotes", []))
+		for entry_variant in wire_patch.get("composition", []):
+			(entry_variant as Dictionary)["rung_quotes"] = _wire_shaped_quotes(
+				(entry_variant as Dictionary).get("rung_quotes", []))
+	RungQuotes.enrich_sources(wire["forage_patches"], catalog)
+	_map.display_snapshot(wire)
+	_map.selected_unit_id = BAND_ENTITY
+	_map._fit_map_to_view()
+	await _settle()
+	await _save("map_worked_wire_quotes")
+	var wire_building: Dictionary = _map._band_overlays._badge_entry_for(cultivate_key)
+	_assert_map("map_worked_wire_quotes — the mid-Cultivate patch wears its BUILD glyph and meter off the joined quotes",
+		String(wire_building.get("building_glyph", "")) != ""
+		and absf(float(wire_building.get("building_progress", 0.0)) - 0.42) < 0.001)
+	var farm_patch: Dictionary = _map.forage_patch_lookup.get(Vector2i(FORAGE_A_X, FORAGE_A_Y), {})
+	_assert_map("map_worked_wire_quotes — a tended patch's held rung reads Cultivate off the joined quotes",
+		RungQuotes.held_verb(farm_patch, "") == "cultivate"
+		and SourceForecast.source_is_improved(farm_patch, ""))
+	# …and a FARM: the top plant rung, held. Its quotes are both reached, so the standing verb is `sow`.
+	for quote_variant in farm_patch.get("rung_quotes", []):
+		(quote_variant as Dictionary)["reached"] = true
+		(quote_variant as Dictionary)["progress"] = 1.0
+	_assert_map("map_worked_wire_quotes — a Farm's held rung reads Sow, and it is improved",
+		RungQuotes.held_verb(farm_patch, "") == "sow" and SourceForecast.source_is_improved(farm_patch, ""))
+	_assert_map("map_worked_wire_quotes — wild ground holds nothing (the control)",
+		RungQuotes.held_verb(
+			_map.forage_patch_lookup.get(Vector2i(WORK_CULTIVATE_X, WORK_CULTIVATE_Y), {}), "") == ""
+		and not SourceForecast.source_is_improved(
+			_map.forage_patch_lookup.get(Vector2i(WORK_CULTIVATE_X, WORK_CULTIVATE_Y), {}), ""))
+	# State A-held -- **THE STEP A SOURCE HOLDS, ON ITS MARKER.** Three frames over the worked-ready fixture, each
+	# moving only the held rung of the three worked sources (patch A, patch B, the deer), asserted off the badge
+	# entry the renderer queues (`held_glyph` / `held_label`) -- a draw call renders into a canvas and no
+	# harness reads a glyph back off one. A is the hex that is never building anything, B is the one with a
+	# live build above its held step, and the deer is the herd.
+	_display_held(true, false, true, 0.3, false, "")
+	await _held_frame("map_held_tended_building_farm")
+	_assert_held("patch B, tended and building a Farm: the Tended mark AND the build arc coexist",
+		_held_entry(false), "Tended patch", true)
+	_assert_held("…patch A, tended and idle, wears the same Tended mark and no arc", _held_entry(true), "Tended patch", false)
+	_assert_held("…the tamed deer wears its own mark", _held_herd_entry(), "", false, false)
+	await _zoom_on(Vector2i(FORAGE_A_X + 1, FORAGE_A_Y + 1))
+	await _save("map_held_tended_building_farm_close")
+	_display_held(true, true, false, 0.0, false, "")
+	await _held_frame("map_held_farm")
+	_assert_held("a Farm wears the Farm mark", _held_entry(true), "Farm", false)
+	_display_held(true, true, false, 0.0, true, "")
+	await _held_frame("map_held_pen")
+	_assert_held("a Pen wears the Pen mark", _held_herd_entry(), "", false, false)
+	_display_held(true, true, false, 0.0, true, "ranch")
+	await _held_frame("map_held_ranch")
+	var ranch_entry := _held_herd_entry()
+	_assert_map("map_held_ranch -- a Pen at a size tier wears the TIER's mark, not the Pen's (`%s`)"
+			% String(ranch_entry.get(BandOverlayRenderer.HELD_MARK_GLYPH_KEY, "")),
+		String(ranch_entry.get(BandOverlayRenderer.HELD_MARK_GLYPH_KEY, ""))
+			== String(HudSelectionVocab.HELD_TIER_MARKS["ranch"])
+		and String(ranch_entry.get(BandOverlayRenderer.HELD_MARK_LABEL_KEY, "")) != "")
+	await _zoom_on(Vector2i(_map._herd_by_id("game_deer_07").get("x", 0), _map._herd_by_id("game_deer_07").get("y", 0)))
+	await _save("map_held_ranch_close")
+	_assert_map("map_held_ranch -- wild ground wears NO mark (the control): the wolf's marker carries none",
+		BandOverlayRenderer.held_step_mark(_map._herd_by_id("game_wolf_03")).is_empty()
+		and BandOverlayRenderer.held_step_mark({}).is_empty())
+	_assert_map("map_held_ranch -- the mark is DRIVEN by the quotes: a source with its quotes emptied wears none",
+		BandOverlayRenderer.held_step_mark({"rung_quotes": []}).is_empty())
 	_map.set_faction_knowledge({})  # leave the following states on the honest "knows nothing" default
 
 	# State A-far — the SAME worked band on a large grid so fitted hexes go tiny (radius <
 	# ICON_MIN_DETAIL_RADIUS): the per-source yield labels + ⚠ must LOD-SUPPRESS so far zoom stays a
 	# clean token/highlight view, not floating-text soup. Regression guard for the yield-label LOD gate.
-	_map.display_snapshot(_snapshot_work_on_grid(YIELD_FAR_GRID_W, YIELD_FAR_GRID_H))
+	_display_snapshot(_snapshot_work_on_grid(YIELD_FAR_GRID_W, YIELD_FAR_GRID_H))
 	_map.selected_unit_id = BAND_ENTITY
 	_map.selected_tile = Vector2i(-1, -1)
 	_map._fit_map_to_view()
@@ -894,7 +969,7 @@ func _ready() -> void:
 	# (its effect is the extended sight visible in the fog; `scout_reveal_radius` is a
 	# sight-range bonus, not a reveal disc). This state is a regression guard that NO blue
 	# scouted disc appears — only the work-range ring + the single worked forage tile.
-	_map.display_snapshot(_snapshot_scout())
+	_display_snapshot(_snapshot_scout())
 	_map.selected_unit_id = BAND_ENTITY
 	_map._fit_map_to_view()
 	await _settle()
@@ -902,7 +977,7 @@ func _ready() -> void:
 
 	# State C — optimistic pending overlay: a just-issued forage assign (new tile) + a pending
 	# move destination show in a distinct dashed-amber style, over the confirmed highlights.
-	_map.display_snapshot(_snapshot_work())
+	_display_snapshot(_snapshot_work())
 	_map.selected_unit_id = BAND_ENTITY
 	_map.set_labor_pending({
 		BAND_ENTITY: {
@@ -919,7 +994,7 @@ func _ready() -> void:
 	# placed on the herd tile to exercise the overlap nudge (offset up so both stay legible).
 	_map.set_labor_pending({})  # clear State C's pending overlay so this frame reads clean
 	_map.set_fow_enabled(false)
-	_map.display_snapshot(_snapshot_sites())
+	_display_snapshot(_snapshot_sites())
 	_map.selected_unit_id = BAND_ENTITY
 	_map._fit_map_to_view()
 	await _settle()
@@ -929,7 +1004,7 @@ func _ready() -> void:
 	# band's own hex (Active). A discovered site is permanent knowledge, so all three glyph markers
 	# must STILL render on the fogged/remembered tiles (unlike the Active-only herd/food markers).
 	_map.set_fow_enabled(true)
-	_map.display_snapshot(_snapshot_sites_fogged())
+	_display_snapshot(_snapshot_sites_fogged())
 	_map.selected_unit_id = BAND_ENTITY
 	_map._fit_map_to_view()
 	await _settle()
@@ -940,7 +1015,7 @@ func _ready() -> void:
 	# flag discs — one Outbound, one Awaiting-orders (pulsing amber ring). Verifies the distinct
 	# marker + idle indicator without disturbing resident-band rendering.
 	_map.set_fow_enabled(false)
-	_map.display_snapshot(_snapshot_expeditions())
+	_display_snapshot(_snapshot_expeditions())
 	_map.selected_unit_id = -1
 	_map._fit_map_to_view()
 	await _settle()
@@ -951,7 +1026,7 @@ func _ready() -> void:
 	# carries the white selection outline, and the active (selected) band is the full-brightness top
 	# card — no per-token ring.
 	_map.set_fow_enabled(false)
-	_map.display_snapshot(_snapshot_stack(4))
+	_display_snapshot(_snapshot_stack(4))
 	_map.selected_tile = Vector2i(BAND_X, BAND_Y)
 	_map.selected_unit_id = STACK_ENTITY_BASE + 1   # not the first band → verifies active reordering
 	_map._fit_map_to_view()
@@ -962,7 +1037,7 @@ func _ready() -> void:
 	# Exercises the fixed edge slots (3 visible icons) AND the `+N` overflow chip (2 spill over), on a
 	# selected hex (white outline). Priority fill is wonder → food → herd.
 	_map.set_fow_enabled(false)
-	_map.display_snapshot(_snapshot_mixed())
+	_display_snapshot(_snapshot_mixed())
 	_map.selected_tile = Vector2i(BAND_X, BAND_Y)
 	_map.selected_unit_id = BAND_ENTITY
 	_map._fit_map_to_view()
@@ -974,7 +1049,7 @@ func _ready() -> void:
 	# so both worked sources fall past the cap and have no marker to ring. Without the roll-up the chip
 	# would read a bare `+2` over a hex where two sources are staffed and one can climb a rung, which
 	# is precisely the "silent cap reads as nothing here" failure this feature exists to fix.
-	_map.display_snapshot(_snapshot_mixed_worked())
+	_display_snapshot(_snapshot_mixed_worked())
 	_map.set_faction_knowledge({
 		"cultivation": 1.0, "seed_selection": 1.0, "herding": 1.0, "penning": 1.0,
 	})
@@ -989,7 +1064,7 @@ func _ready() -> void:
 	# the RIGHT marker on a dry alluvial-plain floodplain (🎋). Proof that FoodIcons.for_site splits
 	# fish↔reeds off the terrain MapView stamps onto each site (so the map marker + HUD row can't disagree).
 	_map.set_fow_enabled(false)
-	_map.display_snapshot(_snapshot_riverine_split())
+	_display_snapshot(_snapshot_riverine_split())
 	_map.selected_unit_id = -1
 	_map.selected_herd_id = ""
 	_map.selected_tile = Vector2i(-1, -1)
@@ -1000,7 +1075,7 @@ func _ready() -> void:
 	# State "site sprites" — the FOOD-SITE SPRITE ROSTER: every bundled site icon in one frame,
 	# including the hunted-site deer and the unknown-module sprig. Judge swapped/clipped art here.
 	_map.set_fow_enabled(false)
-	_map.display_snapshot(_snapshot_site_sprites())
+	_display_snapshot(_snapshot_site_sprites())
 	_map.selected_unit_id = -1
 	_map.selected_herd_id = ""
 	_map.selected_tile = Vector2i(-1, -1)
@@ -1012,7 +1087,7 @@ func _ready() -> void:
 	# ICON_MIN_DETAIL_RADIUS), so secondary edge icons + count/overflow chips are suppressed — only
 	# the primary band tokens draw. Regression guard that far zoom stays legible, not a glyph soup.
 	_map.set_fow_enabled(false)
-	_map.display_snapshot(_snapshot_far_zoom())
+	_display_snapshot(_snapshot_far_zoom())
 	_map.selected_unit_id = -1
 	_map.selected_tile = Vector2i(-1, -1)
 	_map._fit_map_to_view()
@@ -1023,7 +1098,7 @@ func _ready() -> void:
 	# the herd glyph gets NO ring (fixes the redundant/confusing circle and the split-state where a
 	# migrating herd's ring diverged from the outline). selected_herd_id targets the herd on the tile.
 	_map.set_fow_enabled(false)
-	_map.display_snapshot(_snapshot_herd_on_tile())
+	_display_snapshot(_snapshot_herd_on_tile())
 	_map.selected_tile = Vector2i(BAND_X, BAND_Y)
 	_map.selected_herd_id = HERD_ON_TILE_ID
 	_map.selected_unit_id = -1
@@ -1038,7 +1113,7 @@ func _ready() -> void:
 	# red-ish" eye test and failed this one: full-color emoji swallow a modulate).
 	_map.selected_herd_id = ""
 	_map.selected_tile = Vector2i(-1, -1)
-	_map.display_snapshot(_snapshot_pens())
+	_display_snapshot(_snapshot_pens())
 	_map._fit_map_to_view()
 	await _settle()
 	await _save("map_herd_starving")
@@ -1049,7 +1124,7 @@ func _ready() -> void:
 	# prove coverage: `FAUNA_SPRITE_ROSTER` (see its doc comment) is hand-written on the CLIENT side,
 	# so it can only show species the client already knows about. **The coverage claim belongs to
 	# `cargo xtask fauna-icon-guard`**, which checks this side against the sim's `fauna_config.json`.
-	_map.display_snapshot(_snapshot_fauna_sprites())
+	_display_snapshot(_snapshot_fauna_sprites())
 	_map._fit_map_to_view()
 	await _settle()
 	await _save("map_fauna_sprites")
@@ -1059,7 +1134,7 @@ func _ready() -> void:
 	# stays on selected_tile; NO active-ring may draw on the band's actual hex (group_tile !=
 	# selected_tile). Confirms the ring can never diverge from the outline into a split selection.
 	_map.set_fow_enabled(false)
-	_map.display_snapshot(_snapshot_stack(1))       # one band on (BAND_X, BAND_Y)
+	_display_snapshot(_snapshot_stack(1))       # one band on (BAND_X, BAND_Y)
 	_map.selected_unit_id = STACK_ENTITY_BASE       # that band
 	_map.selected_herd_id = ""
 	_map.selected_tile = Vector2i(BAND_X - 3, BAND_Y - 2)   # a different, empty hex
@@ -1071,7 +1146,7 @@ func _ready() -> void:
 	# side by side with DIFFERENT factions, so the ⛺→🛖→🏘️ progression + distinct faction-colored
 	# nameplate banners read at a glance (no selection chrome).
 	_map.set_fow_enabled(false)
-	_map.display_snapshot(_snapshot_stages_row())
+	_display_snapshot(_snapshot_stages_row())
 	_map.selected_unit_id = -1
 	_map.selected_herd_id = ""
 	_map.selected_tile = Vector2i(-1, -1)
@@ -1085,7 +1160,7 @@ func _ready() -> void:
 	# a chip floating beside it. Ownership is the pill's BORDER: the plate stays dark so the name is
 	# legible whatever the faction colour is.
 	_map.set_fow_enabled(false)
-	_map.display_snapshot(_snapshot_band_names())
+	_display_snapshot(_snapshot_band_names())
 	_map.selected_unit_id = -1
 	_map.selected_herd_id = ""
 	_map.selected_tile = Vector2i(-1, -1)
@@ -1103,7 +1178,7 @@ func _ready() -> void:
 	# entirely (no pill AND no fall back to the scaled bar — the tokens, not the nameplates, are what
 	# says a band is there). The survivor is the SELECTED band, which is second in snapshot order, so
 	# a renderer with no priority rule keeps the wrong one and fails here.
-	_map.display_snapshot(_snapshot_band_names_crowded())
+	_display_snapshot(_snapshot_band_names_crowded())
 	_map.selected_unit_id = NAME_PILL_CULL_EAST_ENTITY
 	_map.selected_tile = NAME_PILL_CULL_EAST_TILE
 	_map._fit_map_to_view()
@@ -1123,7 +1198,7 @@ func _ready() -> void:
 
 	# map_band_names_gate — the pill at the smallest zoom it is ever drawn at (a grid fitting JUST
 	# above BAND_NAME_PILL_MIN_RADIUS). Anything smaller takes the scaled faction bar instead.
-	_map.display_snapshot(_snapshot_band_name_gate(NAME_PILL_GATE_ABOVE_GRID_W, NAME_PILL_GATE_ABOVE_GRID_H))
+	_display_snapshot(_snapshot_band_name_gate(NAME_PILL_GATE_ABOVE_GRID_W, NAME_PILL_GATE_ABOVE_GRID_H))
 	_map.selected_unit_id = -1
 	_map.selected_tile = Vector2i(-1, -1)
 	_map._fit_map_to_view()
@@ -1140,7 +1215,7 @@ func _ready() -> void:
 	# carries a faction-coloured nameplate here, so this frame distinguishes which FORM was chosen
 	# rather than merely observing a zoom where nothing would have been visible.
 	var below_gate_tile := Vector2i(NAME_PILL_GATE_BELOW_GRID_W / 2, NAME_PILL_GATE_BELOW_GRID_H / 2)
-	_map.display_snapshot(_snapshot_band_name_gate(NAME_PILL_GATE_BELOW_GRID_W, NAME_PILL_GATE_BELOW_GRID_H))
+	_display_snapshot(_snapshot_band_name_gate(NAME_PILL_GATE_BELOW_GRID_W, NAME_PILL_GATE_BELOW_GRID_H))
 	_map._fit_map_to_view()
 	await _settle()
 	_assert_map("premise: the below-gate frame fits JUST below the pill gate (radius %.1f < %.1f)"
@@ -1161,7 +1236,7 @@ func _ready() -> void:
 	# beyond-reach rule, so `min_distance` is `QUARRY_NO_REACH_BOUND` — the render-side mirror of
 	# `TargetingController.is_expedition_quarry` — and BOTH visible, huntable herds wear the ring.
 	_map.set_fow_enabled(false)
-	_map.display_snapshot(_snapshot_quarry_targeting())
+	_display_snapshot(_snapshot_quarry_targeting())
 	_map.selected_unit_id = -1
 	_map._fit_map_to_view()
 	_map.set_targeting({
@@ -1216,7 +1291,7 @@ func _ready() -> void:
 
 	# State M5 — EXPEDITION MARKER ART: a scouting, a denying and a trading party wear their bundled
 	# `expeditions/` art centred in the dark disc and ring. The trading party is AWAITING, so its orders pulse draws over the art face.
-	_map.display_snapshot(_snapshot_expedition_art())
+	_display_snapshot(_snapshot_expedition_art())
 	_map.selected_unit_id = -1
 	_map._fit_map_to_view()
 	await _settle()
@@ -1235,7 +1310,7 @@ func _ready() -> void:
 	# destination hex + a target reticle on that hex. Only drawn because the band is selected.
 	_map.set_fow_enabled(false)
 	_map.set_labor_pending({})
-	_map.display_snapshot(_snapshot_travel_band())
+	_display_snapshot(_snapshot_travel_band())
 	_map.selected_unit_id = BAND_ENTITY
 	_map.selected_herd_id = ""
 	_map.selected_tile = Vector2i(BAND_X, BAND_Y)
@@ -1247,7 +1322,7 @@ func _ready() -> void:
 	# with a migratory herd wears a 👣 badge on its token, and the herd it follows wears a dashed ring and
 	# keeps its migration arrow drawn although nothing is hovered or selected on it.
 	_map.set_fow_enabled(false)
-	_map.display_snapshot(_snapshot_follow())
+	_display_snapshot(_snapshot_follow())
 	_map.selected_unit_id = -1
 	_map.selected_herd_id = ""
 	_map.selected_tile = Vector2i(-1, -1)
@@ -1258,18 +1333,18 @@ func _ready() -> void:
 		MapView.unit_follows_herd(_map.units[0]) and not MapView.unit_follows_herd(_map.units[1]))
 	_assert_map("only the herd a player band follows is in the followed set",
 		_map.followed_herd_ids().keys() == [FOLLOW_HERD_ID])
-	_map.display_snapshot(_snapshot_follow(false))
+	_display_snapshot(_snapshot_follow(false))
 	_assert_map("…and with the flag off no herd is followed and no badge is worn",
 		_map.followed_herd_ids().is_empty() and not MapView.unit_follows_herd(_map.units[0]))
 
 	# State N3 — HERD LORE (#799): the followed herd's next seasonal ground wears a hollow diamond and a
 	# dotted tether back to the herd. A second frame has the herd unfollowed and unselected: the diamond
 	# stays (the viewer knows the ground), the tether goes.
-	_map.display_snapshot(_snapshot_follow(true, true))
+	_display_snapshot(_snapshot_follow(true, true))
 	_map._fit_map_to_view()
 	await _settle()
 	await _save("map_herd_lore_ground")
-	_map.display_snapshot(_snapshot_follow(false, true))
+	_display_snapshot(_snapshot_follow(false, true))
 	_map._fit_map_to_view()
 	await _settle()
 	await _save("map_herd_lore_ground_unfollowed")
@@ -1278,7 +1353,7 @@ func _ready() -> void:
 	# the left edge and its target near the RIGHT edge. The short path crosses the seam, so the line
 	# must head LEFT (toward the wrapped-nearest copy of the target), not shoot right across the map.
 	_map.set_fow_enabled(false)
-	_map.display_snapshot(_snapshot_travel_seam())
+	_display_snapshot(_snapshot_travel_seam())
 	_map.selected_unit_id = BAND_ENTITY
 	_map.selected_herd_id = ""
 	_map.selected_tile = Vector2i(TRAVEL_SEAM_BAND_X, BAND_Y)
@@ -1294,7 +1369,7 @@ func _ready() -> void:
 	# State P — selected TRAVELLING expedition: a detached scout party in transit draws the same
 	# destination reticle + line (the draw is unit-agnostic — band OR expedition).
 	_map.set_fow_enabled(false)
-	_map.display_snapshot(_snapshot_travel_expedition())
+	_display_snapshot(_snapshot_travel_expedition())
 	_map.selected_unit_id = TRAVEL_EXPEDITION_ENTITY
 	_map.selected_herd_id = ""
 	_map.selected_tile = Vector2i(5, 9)
@@ -1306,7 +1381,7 @@ func _ready() -> void:
 	# pack while the resident band hunts the deer locally: two different routes to a worked source,
 	# both wearing the same red ring and crew badge, because the mark describes the SOURCE and not who
 	# reached it.
-	_map.display_snapshot(_snapshot_raid_party_quarry())
+	_display_snapshot(_snapshot_raid_party_quarry())
 	_map.selected_unit_id = TRAVEL_EXPEDITION_ENTITY
 	_map._fit_map_to_view()
 	await _settle()
@@ -1324,7 +1399,7 @@ func _ready() -> void:
 	_map.enable_terrain_textures(true)
 	# Force the direct (non-cached) per-hex path for the blend-OFF reference frame (deterministic).
 	_map._map_cache_enabled = false
-	_map.display_snapshot(_snapshot_biomes())
+	_display_snapshot(_snapshot_biomes())
 	_map.selected_unit_id = -1
 	_map.selected_herd_id = ""
 	_map.selected_tile = Vector2i(-1, -1)
@@ -1352,7 +1427,7 @@ func _ready() -> void:
 	# (radius << EDGE_BLEND_MIN_RADIUS, so the flat↔flat blend LOD is OFF). Verifies the DECOUPLED canopy
 	# LOD (canopy_min_radius): the woodland band must still read as a distinct darker-green forest mass —
 	# clearly NOT the prairie grass to its left — with no shimmer/aliasing (mipmapped crown array).
-	_map.display_snapshot(_snapshot_biomes_far())
+	_display_snapshot(_snapshot_biomes_far())
 	_map._fit_map_to_view()
 	await _settle()
 	await _save("map_biome_farzoom")
@@ -1367,7 +1442,7 @@ func _ready() -> void:
 	_map.enable_terrain_textures(true)
 	TerrainTextureManager.use_edge_blending = true
 	_map._map_cache_enabled = false  # shader path bypasses the cache anyway
-	_map.display_snapshot(_snapshot_biomes())
+	_display_snapshot(_snapshot_biomes())
 	_map.selected_unit_id = -1
 	_map.selected_herd_id = ""
 	_map.selected_tile = Vector2i(-1, -1)
@@ -1402,7 +1477,7 @@ func _ready() -> void:
 	_map.enable_terrain_textures(true)
 	TerrainTextureManager.use_edge_blending = true
 	_map._map_cache_enabled = false
-	_map.display_snapshot(_snapshot_repetition())
+	_display_snapshot(_snapshot_repetition())
 	_map.selected_unit_id = -1
 	_map.selected_herd_id = ""
 	_map.selected_tile = Vector2i(-1, -1)
@@ -1424,11 +1499,11 @@ func _ready() -> void:
 	_map.selected_unit_id = -1
 	_map.selected_herd_id = ""
 	_map.selected_tile = Vector2i(-1, -1)
-	_map.display_snapshot(_snapshot_swatch(GRID_W, GRID_H, SWATCH_PRAIRIE_COLS))
+	_display_snapshot(_snapshot_swatch(GRID_W, GRID_H, SWATCH_PRAIRIE_COLS))
 	_map._fit_map_to_view()
 	await _settle()
 	await _save("map_swatch")
-	_map.display_snapshot(_snapshot_swatch(FAR_GRID_W, FAR_GRID_H, SWATCH_FAR_PRAIRIE_COLS))
+	_display_snapshot(_snapshot_swatch(FAR_GRID_W, FAR_GRID_H, SWATCH_FAR_PRAIRIE_COLS))
 	_map._fit_map_to_view()
 	await _settle()
 	await _save("map_swatch_farzoom")
@@ -1444,11 +1519,11 @@ func _ready() -> void:
 	_map.selected_unit_id = -1
 	_map.selected_herd_id = ""
 	_map.selected_tile = Vector2i(-1, -1)
-	_map.display_snapshot(_snapshot_cohesion(COHESION_GRID_W, COHESION_GRID_H))
+	_display_snapshot(_snapshot_cohesion(COHESION_GRID_W, COHESION_GRID_H))
 	_map._fit_map_to_view()
 	await _settle()
 	await _save("map_cohesion")
-	_map.display_snapshot(_snapshot_cohesion(COHESION_FAR_GRID_W, COHESION_FAR_GRID_H))
+	_display_snapshot(_snapshot_cohesion(COHESION_FAR_GRID_W, COHESION_FAR_GRID_H))
 	_map._fit_map_to_view()
 	await _settle()
 	await _save("map_cohesion_farzoom")
@@ -1473,7 +1548,7 @@ func _ready() -> void:
 	_map.selected_tile = Vector2i(-1, -1)
 	await _set_canvas(PASTURE_WINDOW_SIZE)   # match the grid's aspect — see PASTURE_WINDOW_SIZE
 	await _settle()
-	_map.display_snapshot(_snapshot_pasture())
+	_display_snapshot(_snapshot_pasture())
 	# display_snapshot re-ingests the channels and clears the active overlay (the Inspector re-applies
 	# the player's selection every snapshot), so the channel is selected AFTER the snapshot lands.
 	_map.set_overlay_channel(PASTURE_OVERLAY_KEY)
@@ -1494,7 +1569,7 @@ func _ready() -> void:
 	# the exact ground the sim derives the herd's carrying capacity from). A tile one hex EAST of the herd
 	# — inside the graze disc, not the anchor — is also selected: the white selection outline must survive
 	# on top of the graze rim that the overlay stamps on every tile of the disc (issue #405).
-	_map.display_snapshot(_snapshot_pasture_herd())
+	_display_snapshot(_snapshot_pasture_herd())
 	_map.set_overlay_channel(PASTURE_OVERLAY_KEY)
 	_map.selected_herd_id = PASTURE_HERD_ID
 	_map.selected_tile = Vector2i(PASTURE_HERD_COL + 1, PASTURE_HERD_ROW)
@@ -1511,7 +1586,7 @@ func _ready() -> void:
 	# replacement is carnivore-only). Read against map_pasture_herd_range.png: bigger disk, orange not gold.
 	# A tile two hexes east of the wolf — well inside the radius-4 disk, not the anchor — is selected: the
 	# white selection outline must survive on top of the prey-sense rim stamped on every disk tile (#405).
-	_map.display_snapshot(_snapshot_pasture_wolf())
+	_display_snapshot(_snapshot_pasture_wolf())
 	_map.set_overlay_channel(PASTURE_OVERLAY_KEY)
 	_map.selected_herd_id = PASTURE_WOLF_ID
 	_map.selected_tile = Vector2i(PASTURE_HERD_COL + 2, PASTURE_HERD_ROW)
@@ -1528,7 +1603,7 @@ func _ready() -> void:
 	# map_pasture_herd_range.png: same herd tile, green disc instead of gold. Same off-anchor tile inside
 	# the footprint is selected: the white selection outline must survive on top of the enclosure rim the
 	# footprint stamps on every tile of the disc (issue #405).
-	_map.display_snapshot(_snapshot_pasture_pen())
+	_display_snapshot(_snapshot_pasture_pen())
 	_map.set_overlay_channel(PASTURE_OVERLAY_KEY)
 	_map.selected_herd_id = PASTURE_HERD_ID
 	_map.selected_tile = Vector2i(PASTURE_HERD_COL + 1, PASTURE_HERD_ROW)
@@ -1546,7 +1621,7 @@ func _ready() -> void:
 	#   * only deep ocean / glacier / lava are barren, and a barren forage tile can still be good land.
 	await _set_canvas(PASTURE_WINDOW_SIZE)   # same aspect as pasture — the two are meant to be compared
 	await _settle()
-	_map.display_snapshot(_snapshot_forage())
+	_display_snapshot(_snapshot_forage())
 	_map.set_overlay_channel(FORAGE_OVERLAY_KEY)
 	_map._fit_map_to_view()
 	await _settle()
@@ -1573,7 +1648,7 @@ func _ready() -> void:
 	_map.selected_tile = Vector2i(-1, -1)
 	await _set_canvas(PASTURE_WINDOW_SIZE)
 	await _settle()
-	_map.display_snapshot(_snapshot_danger())
+	_display_snapshot(_snapshot_danger())
 	_map.set_overlay_channel(HUNT_DANGER_OVERLAY_KEY)
 	_map._fit_map_to_view()
 	await _settle()
@@ -1612,10 +1687,10 @@ func _ready() -> void:
 	# builds. The pasture snapshot carries no `temperature` on its tiles, so it is the honest negative
 	# — and it is asked FIRST, because a positive alone would pass against a row that is simply always
 	# present, which is the failure this predicate exists to prevent.
-	_map.display_snapshot(_snapshot_pasture())
+	_display_snapshot(_snapshot_pasture())
 	_assert_map("a world with no tile temperatures does not offer the Temperature channel",
 		not _roster_has_key(OverlayChannels.TEMPERATURE_KEY))
-	_map.display_snapshot(_snapshot_temperature(PASTURE_GRID_W, PASTURE_GRID_H))
+	_display_snapshot(_snapshot_temperature(PASTURE_GRID_W, PASTURE_GRID_H))
 	_assert_map("a world that carries tile temperatures does offer it",
 		_roster_has_key(OverlayChannels.TEMPERATURE_KEY))
 
@@ -1683,7 +1758,7 @@ func _ready() -> void:
 	# smear that reads as a solid tint, i.e. colour carrying lethality again, so the hatch drops out
 	# and the CONTOUR alone has to carry the reading. A bigger grid rather than a zoom-out, because the
 	# fit IS the minimum zoom.
-	_map.display_snapshot(_snapshot_temperature(TEMPERATURE_FAR_GRID_W, TEMPERATURE_FAR_GRID_H))
+	_display_snapshot(_snapshot_temperature(TEMPERATURE_FAR_GRID_W, TEMPERATURE_FAR_GRID_H))
 	_map.set_overlay_channel(OverlayChannels.TEMPERATURE_KEY)
 	_map._fit_map_to_view()
 	await _settle()
@@ -1717,7 +1792,7 @@ func _ready() -> void:
 	_map.selected_tile = Vector2i(-1, -1)
 	await _set_canvas(DEFAULT_CANVAS_SIZE)
 	await _settle()
-	_map.display_snapshot(_snapshot_band_lethal(GRID_W, GRID_H))
+	_display_snapshot(_snapshot_band_lethal(GRID_W, GRID_H))
 	_map._fit_map_to_view()
 	await _settle()
 	_assert_map("premise: the close frame really is above the marker detail gate (radius %.1f >= %.1f)"
@@ -1737,7 +1812,7 @@ func _ready() -> void:
 	# gated off entirely. Sized by rendering it — the first cut pinned a 9 px floor that vanished into
 	# the terrain here, which would have made the gate the only thing keeping an unreadable glyph off
 	# the map rather than a deliberate LOD decision.
-	_map.display_snapshot(_snapshot_band_lethal(MARK_GATE_ABOVE_GRID_W, MARK_GATE_ABOVE_GRID_H))
+	_display_snapshot(_snapshot_band_lethal(MARK_GATE_ABOVE_GRID_W, MARK_GATE_ABOVE_GRID_H))
 	_map._fit_map_to_view()
 	await _settle()
 	_assert_map("premise: the gate frame fits JUST above the detail gate (radius %.1f >= %.1f)"
@@ -1754,7 +1829,7 @@ func _ready() -> void:
 	# **An absence is only worth asserting where a presence would have shown**: at a genuinely distant
 	# zoom the glyph is invisible whether or not it is drawn, and this assertion passed with the gate
 	# deleted until the grid moved up to here.
-	_map.display_snapshot(_snapshot_band_lethal(MARK_GATE_BELOW_GRID_W, MARK_GATE_BELOW_GRID_H))
+	_display_snapshot(_snapshot_band_lethal(MARK_GATE_BELOW_GRID_W, MARK_GATE_BELOW_GRID_H))
 	_map._fit_map_to_view()
 	await _settle()
 	_assert_map("premise: the far frame fits JUST below that gate (radius %.1f < %.1f)"
@@ -1787,7 +1862,7 @@ func _ready() -> void:
 	_map.selected_unit_id = -1
 	_map.selected_herd_id = ""
 	_map.selected_tile = Vector2i(-1, -1)
-	_map.display_snapshot(_snapshot_rivers(GRID_W, GRID_H))
+	_display_snapshot(_snapshot_rivers(GRID_W, GRID_H))
 	_map._fit_map_to_view()
 	await _settle()  # last_hex_radius is only refreshed on draw — settle before panning by it
 	# Pan up so the trunk + the lake (lower rows, clipped by the cover-fit on a wide window) are in frame.
@@ -1861,7 +1936,7 @@ func _ready() -> void:
 	# inverted-V at the corner (the tributary looked like it hooked into the wrong corner). Read for: the
 	# tributary flowing SMOOTHLY from its edge ribbon into the channel and straight out the SW exit, with NO
 	# notch/V at the bottom, and the slim bank following the new flow line.
-	_map.display_snapshot(_snapshot_rivers_notch(GRID_W, GRID_H))
+	_display_snapshot(_snapshot_rivers_notch(GRID_W, GRID_H))
 	_map._fit_map_to_view()
 	# Zoom in so the head hex fills the crop — the notch is a small feature at the corner and reads clearly
 	# only with plenty of pixels on the channel.
@@ -1883,7 +1958,7 @@ func _ready() -> void:
 	# on those three edges (a hard seam now that the bank renders the valley terrain). The mouth test must now
 	# draw the lake its FULL ring INCLUDING the navigable-adjacent edges. Read for: an unbroken beach/foam ring
 	# around the whole lake, and the navigable valley getting a normal coast against it.
-	_map.display_snapshot(_snapshot_rivers_lake_alongside(GRID_W, GRID_H))
+	_display_snapshot(_snapshot_rivers_lake_alongside(GRID_W, GRID_H))
 	_map._fit_map_to_view()
 	_map._apply_zoom(NOTCH_ZOOM_IN, get_viewport().get_visible_rect().size * 0.5)
 	await _settle()
@@ -1900,7 +1975,7 @@ func _ready() -> void:
 	# Far-zoom LOD: the same field on a large grid so hexes go tiny (radius ≪ EDGE_BLEND_MIN_RADIUS, so
 	# the flat↔flat blend is off). The DECOUPLED river LOD (river_min_radius) must keep the river drawn,
 	# smooth (mipmapped river array) and not shimmering.
-	_map.display_snapshot(_snapshot_rivers(FAR_GRID_W, FAR_GRID_H))
+	_display_snapshot(_snapshot_rivers(FAR_GRID_W, FAR_GRID_H))
 	_map._fit_map_to_view()
 	await _settle()
 	await _save("map_rivers_farzoom")
@@ -1911,7 +1986,7 @@ func _ready() -> void:
 	# chain hex, so nothing is orphaned — the only difference between right and wrong is whether the
 	# renderer takes the sim's river_channel or guesses from the terrain. If it ever guesses again, this
 	# frame turns into a mesh.
-	_map.display_snapshot(_snapshot_rivers_web(GRID_W, GRID_H))
+	_display_snapshot(_snapshot_rivers_web(GRID_W, GRID_H))
 	_map._fit_map_to_view()
 	await _settle()
 	_map.pan_offset += Vector2(0.0, RIVER_PAN_ROWS * _map.last_hex_radius)
@@ -1942,7 +2017,7 @@ func _ready() -> void:
 	_map.set_fow_enabled(false)
 	_map.enable_terrain_textures(false)
 	_map._map_cache_enabled = false
-	_map.display_snapshot(_snapshot_crisis_annotations())
+	_display_snapshot(_snapshot_crisis_annotations())
 	_map.set_overlay_channel(CRISIS_CHANNEL_KEY)
 	_map._fit_map_to_view()
 	await _settle()
@@ -1956,7 +2031,7 @@ func _ready() -> void:
 	_map.set_fow_enabled(false)
 	_map.enable_terrain_textures(false)
 	_map._map_cache_enabled = false
-	_map.display_snapshot(_snapshot_biomes())
+	_display_snapshot(_snapshot_biomes())
 	_map.set_terrain_highlight(TERRAIN_HIGHLIGHT_TARGET_ID)
 	_map._fit_map_to_view()
 	await _settle()
@@ -1970,7 +2045,7 @@ func _ready() -> void:
 	_map.set_fow_enabled(false)
 	_map.enable_terrain_textures(false)
 	_map._map_cache_enabled = false
-	_map.display_snapshot(_snapshot_routes())
+	_display_snapshot(_snapshot_routes())
 	_map.selected_unit_id = -1
 	_map._fit_map_to_view()
 	await _settle()
@@ -1992,7 +2067,7 @@ func _ready() -> void:
 	# at all, exit 0, and assert nothing. Do not let the inherit come back.
 	_map.enable_terrain_textures(true)
 	TerrainTextureManager.use_edge_blending = true
-	_map.display_snapshot(_snapshot_road_network())
+	_display_snapshot(_snapshot_road_network())
 	_map.selected_unit_id = -1
 	_map._fit_map_to_view()
 	await _settle()
@@ -2002,7 +2077,7 @@ func _ready() -> void:
 	# ordinary road rows, trail-rung at the north end down to a one-pass path under the herd. Read for:
 	# the corridor reading as ONE worn line with no amber polyline over it, and what the low-wear tiles
 	# at the south end look like against the idle path/trail art.
-	_map.display_snapshot(_snapshot_herd_corridor_trail())
+	_display_snapshot(_snapshot_herd_corridor_trail())
 	_map.selected_unit_id = -1
 	_map._fit_map_to_view()
 	await _settle()
@@ -2034,7 +2109,7 @@ func _ready() -> void:
 	_map.enable_terrain_textures(true)
 	TerrainTextureManager.use_edge_blending = true
 	_map._map_cache_enabled = false
-	_map.display_snapshot(_snapshot_work_on_grid(MAX_ZOOM_GRID_W, MAX_ZOOM_GRID_H))
+	_display_snapshot(_snapshot_work_on_grid(MAX_ZOOM_GRID_W, MAX_ZOOM_GRID_H))
 	_map.selected_unit_id = BAND_ENTITY
 	_map.selected_herd_id = ""
 	_map.selected_tile = Vector2i(-1, -1)
@@ -2077,7 +2152,7 @@ func _faction_palette_state() -> void:
 	_map.set_fow_enabled(false)
 	_map.enable_terrain_textures(false)
 	_map._map_cache_enabled = false
-	_map.display_snapshot(_snapshot_faction_palette())
+	_display_snapshot(_snapshot_faction_palette())
 	_map.selected_unit_id = -1
 	_map.selected_herd_id = ""
 	_map.selected_tile = Vector2i(-1, -1)
@@ -2253,7 +2328,7 @@ func _overlay_picker_state() -> void:
 	_map.selected_unit_id = -1
 	_map.selected_herd_id = ""
 	_map.selected_tile = Vector2i(-1, -1)
-	_map.display_snapshot(_snapshot_overlay_channels())
+	_display_snapshot(_snapshot_overlay_channels())
 	_map._fit_map_to_view()
 	await _settle()
 
@@ -2292,7 +2367,7 @@ func _overlay_picker_state() -> void:
 	# Inspector panel this replaced did the re-apply from its own ingest; the picker does it off
 	# `overlay_channels_ingested`, and this is the assertion that says so. NOT off
 	# `overlay_legend_changed` — re-asserting on THAT signal is the regression the next block guards.
-	_map.display_snapshot(_snapshot_overlay_channels())
+	_display_snapshot(_snapshot_overlay_channels())
 	await _settle()
 	_assert_map("overlay picker — the chosen channel survives the next snapshot (active_overlay_key = '%s')"
 		% _map.active_overlay_key,
@@ -2489,7 +2564,7 @@ func _overlay_picker_state() -> void:
 	# The `terrain_tags` row's `available` predicate is the registry's one gate, and a world with no
 	# tag data is the case it exists for — the tag channel has no wire raster to fall back on.
 	picker.close_popover()
-	_map.display_snapshot(_base_snapshot(_band([], 2, 0), []))
+	_display_snapshot(_base_snapshot(_band([], 2, 0), []))
 	await _settle()
 	var untagged := PackedStringArray()
 	for descriptor in picker.roster():
@@ -2532,7 +2607,7 @@ func _ready_for_improvement_state() -> void:
 	# ingest would state the PREVIOUS turn's knowledge for the whole turn a discovery arrives on. This
 	# state drives that order deliberately: the snapshot goes in with the knowledge row still EMPTY.
 	_map.set_faction_knowledge({})
-	_map.display_snapshot(_snapshot_ready_for_improvement())
+	_display_snapshot(_snapshot_ready_for_improvement())
 	_map.selected_unit_id = BAND_ENTITY
 	_map._fit_map_to_view()
 	await _settle()
@@ -2705,7 +2780,7 @@ func _ready_for_improvement_state() -> void:
 	# state: "does not contain the key" is also true of a roster the merge dropped, so the empty key
 	# has to survive alongside it.
 	picker.close_popover()
-	_map.display_snapshot(_base_snapshot(_band([], 2, 0), []))
+	_display_snapshot(_base_snapshot(_band([], 2, 0), []))
 	await _settle()
 	_assert_map("ready for improvement — a world with no patches and no herds keeps the empty key and is not offered the channel (%s)"
 		% ", ".join(_roster_keys(picker)),
@@ -2752,7 +2827,7 @@ func _roster_keys(picker: OverlayPicker) -> PackedStringArray:
 ## world, so the microseconds printed beside it are about that world and not about an empty one.
 func _assert_ready_for_improvement_scale() -> void:
 	_map.set_faction_knowledge(READY_FULL_KNOWLEDGE)
-	_map.display_snapshot(_snapshot_ready_probe())
+	_display_snapshot(_snapshot_ready_probe())
 	var sources: int = _map.forage_patch_lookup.size() + _map.herds.size()
 	var started: int = Time.get_ticks_usec()
 	var model: Dictionary = ReadyForImprovement.derive(_map)
@@ -2849,6 +2924,12 @@ func _snapshot_ready_for_improvement() -> Dictionary:
 ## this patch turns out to have one — `_stamp_patch_owner` decides whether it does — and defaults to
 ## the player because that is what every owned source in this state is; the one foreign patch says so
 ## explicitly.
+## Every snapshot this harness hands the map goes through here so its patches and herds carry their
+## `rung_quotes` (the real client stamps them at ingest, in `Main._apply_snapshot`).
+func _display_snapshot(snapshot: Dictionary) -> Dictionary:
+	RUNG_FX.stamp_snapshot(snapshot)
+	return _map.display_snapshot(snapshot)
+
 func _ready_patch(tile: Vector2i, tended: bool, can_cultivate: bool, can_sow: bool,
 		progress: float = 0.0, owner: int = HudConst.PLAYER_FACTION_ID,
 		field_progress: float = 0.0) -> Dictionary:
@@ -2906,15 +2987,14 @@ func _stamp_patch_owner(patch: Dictionary, owner: int) -> Dictionary:
 
 ## Has this patch FINISHED the rung `improvement` builds — the wire's done-flag for it.
 func _patch_rung_built(patch: Dictionary, improvement: String) -> bool:
-	return bool(patch.get(
-		String(SourceForecast.FORECAST_DONE_FLAG_KEYS[improvement]), false))
+	return bool(patch.get("is_cultivated" if improvement == SourceForecast.IMPROVEMENT_CULTIVATE \
+		else "is_field", false))
 
 ## …and has it put any work at all into that rung's meter. Strictly above the floor, because a meter
 ## resting AT `READY_LADDER_UNSTARTED` is untouched ground, not a part-built rung.
 func _patch_rung_started(patch: Dictionary, improvement: String) -> bool:
-	return float(patch.get(
-		String(SourceForecast.FORECAST_BUILD_METER_KEYS[improvement]),
-		READY_LADDER_UNSTARTED)) > READY_LADDER_UNSTARTED
+	return float(patch.get("cultivation_progress" if improvement == SourceForecast.IMPROVEMENT_CULTIVATE \
+		else "field_progress", READY_LADDER_UNSTARTED)) > READY_LADDER_UNSTARTED
 
 ## The SCALING probe's world: a full-size grid with a patch on every tile and one band, which is the
 ## ceiling on how many sources the derivation can ever be handed. Deliberately not a plausible map —
@@ -3112,13 +3192,13 @@ func _assert_herd_draws_no_trail() -> void:
 
 	_map.reset_world_state()
 	for row in HERD_CORRIDOR_ROWS:
-		_map.display_snapshot(_snapshot_herd_walk(int(row)))
+		_display_snapshot(_snapshot_herd_walk(int(row)))
 	_map._fit_map_to_view()
 	await _settle()
 	var walked: Image = await _capture()
 
 	_map.reset_world_state()
-	_map.display_snapshot(_snapshot_herd_walk(last_row))
+	_display_snapshot(_snapshot_herd_walk(last_row))
 	_map._fit_map_to_view()
 	await _settle()
 	var fresh: Image = await _capture()
@@ -3126,7 +3206,7 @@ func _assert_herd_draws_no_trail() -> void:
 	var no_herd := _snapshot_herd_walk(last_row)
 	no_herd["herds"] = []
 	_map.reset_world_state()
-	_map.display_snapshot(no_herd)
+	_display_snapshot(no_herd)
 	_map._fit_map_to_view()
 	await _settle()
 	var empty: Image = await _capture()
@@ -6101,7 +6181,7 @@ func _worked_working_states() -> void:
 	# State "worked working" — ONE working being cut (wood, ⚒3) beside a hex carrying the SAME two
 	# deposits with nobody on them. Read for: a single 🪵 in an edge slot on the left hex with its
 	# `⚒3` plate under it, and the right hex completely bare.
-	_map.display_snapshot(_snapshot_workings(GRID_W, GRID_H, [WORKING_MATERIAL_WOOD]))
+	_display_snapshot(_snapshot_workings(GRID_W, GRID_H, [WORKING_MATERIAL_WOOD]))
 	_map.selected_unit_id = BAND_ENTITY
 	_map._fit_map_to_view()
 	await _settle()
@@ -6120,7 +6200,7 @@ func _worked_working_states() -> void:
 	# State "worked pair" — the same hex with BOTH workings crewed. Read for: two DIFFERENT glyphs
 	# (🪵 wood and 🪨 stone) in two edge slots of one hex, each with its own plate (`⚒3` / `⚒2`), so a
 	# hex cutting timber and quarrying rock cannot read as one working.
-	_map.display_snapshot(_snapshot_workings(GRID_W, GRID_H,
+	_display_snapshot(_snapshot_workings(GRID_W, GRID_H,
 		[WORKING_MATERIAL_WOOD, WORKING_MATERIAL_STONE]))
 	_map.selected_unit_id = BAND_ENTITY
 	_map._fit_map_to_view()
@@ -6155,7 +6235,7 @@ func _worked_working_states() -> void:
 	# State "working overflow" — the crowded hex, where three wonders take every visible slot before
 	# the working is reached. Read for: the `+N` chip carrying `⚒`, which is what stops a capped
 	# marker reading as "nothing is happening here".
-	_map.display_snapshot(_snapshot_workings_overflow())
+	_display_snapshot(_snapshot_workings_overflow())
 	_map.selected_unit_id = BAND_ENTITY
 	_map.selected_tile = Vector2i(BAND_X, BAND_Y)
 	_map._fit_map_to_view()
@@ -6177,7 +6257,7 @@ func _worked_working_states() -> void:
 	# asserted with the measured radius**, because an absence is only worth asserting where a presence
 	# would have been visible — and the pair frame above IS that presence.
 	_map.selected_tile = Vector2i(-1, -1)
-	_map.display_snapshot(_snapshot_workings(WORKING_FAR_GRID_W, WORKING_FAR_GRID_H,
+	_display_snapshot(_snapshot_workings(WORKING_FAR_GRID_W, WORKING_FAR_GRID_H,
 		[WORKING_MATERIAL_WOOD, WORKING_MATERIAL_STONE]))
 	_map.selected_unit_id = BAND_ENTITY
 	_map._fit_map_to_view()
@@ -6221,7 +6301,7 @@ func _worked_working_states() -> void:
 	# SOURCE and stay whatever is selected, exactly as a hunted herd's ring does. Read for a slate
 	# ring around the 🪵 and its plate, and for NO band link and NO rate pill — those are what
 	# selection buys, and the frame after this one is where they appear.
-	_map.display_snapshot(_snapshot_workings(GRID_W, GRID_H, [WORKING_MATERIAL_WOOD]))
+	_display_snapshot(_snapshot_workings(GRID_W, GRID_H, [WORKING_MATERIAL_WOOD]))
 	_map.selected_unit_id = -1
 	_map._fit_map_to_view()
 	await _settle()
@@ -6243,7 +6323,7 @@ func _worked_working_states() -> void:
 	# back to the band's token and a rate pill, differing only in the colour the ring already states.
 	# A frame alone cannot say the two are alike, so the marks are probed by colour: each hex must be
 	# reached by its OWN web's mark and not by the other's.
-	_map.display_snapshot(_snapshot_working_beside_herd())
+	_display_snapshot(_snapshot_working_beside_herd())
 	_map.selected_unit_id = BAND_ENTITY
 	_map._fit_map_to_view()
 	await _settle()
@@ -6285,7 +6365,7 @@ func _worked_working_states() -> void:
 	# their rings, pills and links anchor to two points — anchoring to the hex centre would stack both
 	# sets on one spot and read as one working. Asserted as a separation wider than a ring's own
 	# diameter, which is what "do not overlap" means for the widest part either set draws.
-	_map.display_snapshot(_snapshot_workings(GRID_W, GRID_H,
+	_display_snapshot(_snapshot_workings(GRID_W, GRID_H,
 		[WORKING_MATERIAL_WOOD, WORKING_MATERIAL_STONE]))
 	_map.selected_unit_id = BAND_ENTITY
 	_map._fit_map_to_view()
@@ -6312,7 +6392,7 @@ func _worked_working_states() -> void:
 	# three columns the other side of it. Read for: three pills of ONE shape, each over its own
 	# marker, each stating a figure and no noun — and the ♻ on the wood and the forage and NOT on
 	# the rate-0 rock between them.
-	_map.display_snapshot(_snapshot_working_pills())
+	_display_snapshot(_snapshot_working_pills())
 	_map.selected_unit_id = BAND_ENTITY
 	_map._fit_map_to_view()
 	await _settle()
@@ -6390,7 +6470,7 @@ func _worked_working_states() -> void:
 	# both cuts rested on and that the leader lines now rest on: each source keeps its OWN anchor, at
 	# its own marker's slot centre, never at the shared hex centre — which is what stops two rows
 	# pointing at one point and reading as one working.
-	_map.display_snapshot(_snapshot_workings(WORKING_CROWDED_GRID_W, WORKING_CROWDED_GRID_H,
+	_display_snapshot(_snapshot_workings(WORKING_CROWDED_GRID_W, WORKING_CROWDED_GRID_H,
 		[WORKING_MATERIAL_WOOD, WORKING_MATERIAL_STONE]))
 	_map.selected_unit_id = BAND_ENTITY
 	_map._fit_map_to_view()
@@ -6678,7 +6758,7 @@ func _snapshot_source_list_homeward() -> Dictionary:
 ## `map_source_list_homeward`: the crew-0 source KEEPS its row, and the row's detail cell states its
 ## walkers in the quiet ink, the whole line on the row's hover.
 func _source_list_homeward_state() -> void:
-	_map.display_snapshot(_snapshot_source_list_homeward())
+	_display_snapshot(_snapshot_source_list_homeward())
 	_map.selected_unit_id = BAND_ENTITY
 	_map._fit_map_to_view()
 	await _settle()
@@ -6771,6 +6851,98 @@ func _snapshot_build_arc() -> Dictionary:
 ## The rung half of a source's badge FACE this frame, off the renderer's ONE producer
 ## (`BandOverlayRenderer.badge_rung`). `""` where the source is merely worked — which is a real answer
 ## and is asserted as one, so the badge ENTRY is checked separately wherever an absence is the claim.
+## A quote reduced to what the DECODER emits (`dict/subsistence.rs`): the rung key and its per-quote numbers,
+## and none of the catalog's verb / order / traits / lesson / gate keys, which `RungQuotes.enrich_sources`
+## joins on afterwards. A fixture quote carries them already (`RUNG_FX` stamps), so they are stripped.
+const WIRE_QUOTE_KEYS := ["rung_key", "reached", "progress", "work_done", "work_cost", "site_refusal",
+	"food_yield", "fodder", "upkeep_demand", "can_climb", "food_payoff", "yield_ratio", "fodder_payoff"]
+
+func _wire_shaped_quotes(quotes_variant: Variant) -> Array:
+	var out: Array = []
+	if not (quotes_variant is Array):
+		return out
+	for quote_variant in (quotes_variant as Array):
+		if not (quote_variant is Dictionary):
+			continue
+		var wire_quote := {}
+		for key in WIRE_QUOTE_KEYS:
+			if (quote_variant as Dictionary).has(key):
+				wire_quote[key] = (quote_variant as Dictionary)[key]
+		out.append(wire_quote)
+	return out
+
+## The worked-ready snapshot with the three worked sources' HELD rungs set, stamped and displayed.
+## `a_tended` / `a_farm` set patch A's rung; `b_sow` is B's Farm meter (a live build above its held step);
+## `deer_pen` / `deer_tier` set the deer's rung.
+func _display_held(a_tended: bool, a_farm: bool, b_building_farm: bool, b_sow: float,
+		deer_pen: bool, deer_tier: String) -> bool:
+	var snap := _snapshot_work_ready()
+	for patch_variant in snap["forage_patches"]:
+		var patch: Dictionary = patch_variant
+		if int(patch.get("x", -1)) == FORAGE_A_X:
+			patch["is_cultivated"] = a_tended or a_farm
+			patch["is_field"] = a_farm
+		elif int(patch.get("x", -1)) == WORK_CULTIVATE_X:
+			patch["is_cultivated"] = b_building_farm
+			patch["cultivation_progress"] = 1.0 if b_building_farm else 0.42
+			patch["field_progress"] = b_sow
+			patch["sow_site_refusal"] = ""
+			patch["composition"] = [{"species": "wild_emmer", "display_name": "Wild Emmer",
+				"share": 1.0, "can_cultivate": true, "can_sow": true}]
+			patch.erase("current_rung")
+		patch.erase("current_rung")
+	for entry_variant in snap["populations"][0]["labor_assignments"]:
+		var entry: Dictionary = entry_variant
+		if String(entry.get("kind", "")) == "forage" and int(entry.get("target_x", -1)) == WORK_CULTIVATE_X:
+			entry["improvement"] = "sow" if b_building_farm else "cultivate"
+	for herd_variant in snap["herds"]:
+		var herd: Dictionary = herd_variant
+		if String(herd.get("id", "")) == "game_deer_07":
+			herd["corralled"] = deer_pen
+			herd["size_tier"] = deer_tier
+			herd.erase("current_rung")
+	_display_snapshot(snap)
+	_map.set_faction_knowledge({"cultivation": 1.0, "seed_selection": 1.0, "herding": 1.0, "penning": 1.0})
+	return true
+
+func _held_frame(frame_name: String) -> void:
+	_map.selected_unit_id = BAND_ENTITY
+	_map._fit_map_to_view()
+	await _settle()
+	await _save(frame_name)
+
+func _held_entry(patch_a: bool) -> Dictionary:
+	var key: String = _map.secondary_food_key(FORAGE_A_X, FORAGE_A_Y) if patch_a \
+		else _map.secondary_food_key(WORK_CULTIVATE_X, WORK_CULTIVATE_Y)
+	return _map._band_overlays._badge_entry_for(key)
+
+func _held_herd_entry() -> Dictionary:
+	return _map._band_overlays._badge_entry_for(_map.secondary_herd_key("game_deer_07"))
+
+## A marker's held-step claim: it carries a glyph and (when `label` is stated) that label, and a live build above it
+## puts the arc on the same marker. An empty `label` only requires one to be present.
+func _assert_held(claim: String, entry: Dictionary, label: String, building: bool, check_label: bool = true) -> void:
+	var glyph := String(entry.get(BandOverlayRenderer.HELD_MARK_GLYPH_KEY, ""))
+	var held_label := String(entry.get(BandOverlayRenderer.HELD_MARK_LABEL_KEY, ""))
+	_assert_map("map_held -- %s (glyph `%s`, label `%s`)" % [claim, glyph, held_label],
+		glyph != "" and held_label != ""
+		and (not check_label or label == "" or held_label == label)
+		and (String(entry.get("building_glyph", "")) != "") == building)
+
+## Zoom to the close rung the player works at and centre `tile`, so a mark's LEGIBILITY can be judged at the
+## size it is drawn at in play rather than at the fit-the-map zoom, where every marker is a few pixels.
+func _zoom_on(tile: Vector2i) -> void:
+	_map.set_zoom_factor(MAP_VIEW.MAX_ZOOM_FACTOR * HELD_CLOSE_ZOOM_SHARE)
+	await _settle()
+	for _pass in 3:
+		var tile_center: Vector2 = _map._hex_center_wrapped(tile.x, tile.y, _map.last_hex_radius, _map.last_origin)
+		_map.pan_offset += _map._get_adjusted_viewport_size() * 0.5 - tile_center
+		_map._clamp_pan_offset()
+		_map.queue_redraw()
+		await _settle()
+
+const HELD_CLOSE_ZOOM_SHARE := 0.5
+
 func _badge_face(key: String) -> String:
 	var overlays: BandOverlayRenderer = _map._band_overlays
 	return String(overlays.badge_rung(overlays._badge_entry_for(key))[
@@ -6819,7 +6991,7 @@ func _source_list_states() -> void:
 	# State "source list" (issue #650) — **THE FRAME TO LOOK AT.** One band working six sources across
 	# all three webs, selected, with the docked list beside its token and a leader line from every row
 	# to its own hex.
-	_map.display_snapshot(_snapshot_source_list())
+	_display_snapshot(_snapshot_source_list())
 	_map.selected_unit_id = BAND_ENTITY
 	_map._fit_map_to_view()
 	await _settle()
@@ -7073,7 +7245,7 @@ func _source_list_states() -> void:
 	_map.pan_offset = Vector2.ZERO
 
 	# State "source list paged" (issue #650) — **TEN A PAGE, AND A TOTAL THAT DOES NOT MOVE.**
-	_map.display_snapshot(_snapshot_source_list_paged())
+	_display_snapshot(_snapshot_source_list_paged())
 	_map.selected_unit_id = BAND_ENTITY
 	_map._fit_map_to_view()
 	await _settle()
@@ -7154,7 +7326,7 @@ func _source_list_states() -> void:
 
 	# State "build arc" (issue #650) — **THE RING CARRIES THE BUILD NOW.** Three sources in one frame:
 	# a rung in flight, a worked source with none, and a build the wire says is rotting.
-	_map.display_snapshot(_snapshot_build_arc())
+	_display_snapshot(_snapshot_build_arc())
 	_map.selected_unit_id = BAND_ENTITY
 	_map._fit_map_to_view()
 	await _settle()
@@ -7349,7 +7521,7 @@ func _exchange_network_states() -> void:
 	_map.set_labor_pending({})
 	_map.enable_terrain_textures(false)
 	_map._map_cache_enabled = false
-	_map.display_snapshot(_snapshot_exchange_network())
+	_display_snapshot(_snapshot_exchange_network())
 	_map.selected_unit_id = int(EXCHANGE_GIVER["entity"])
 	_map.selected_herd_id = ""
 	_map.selected_tile = Vector2i(int(EXCHANGE_GIVER["x"]), int(EXCHANGE_GIVER["y"]))
@@ -7645,7 +7817,7 @@ func _remembered_band_states() -> void:
 		REMEMBERED_OUTBOUND_PARTY_TILE, REMEMBERED_OUTBOUND_HOST_ID, "outbound"))
 	snapshot["turn"] = REMEMBERED_TURN
 	_map.set_connections([])
-	_map.display_snapshot(snapshot)
+	_display_snapshot(snapshot)
 	_map.set_current_turn(REMEMBERED_TURN)
 	_map.selected_unit_id = -1
 	_map._fit_map_to_view()
@@ -7706,12 +7878,12 @@ func _band_ancestors_states() -> void:
 	_map.selected_herd_id = ""
 	_map.selected_tile = Vector2i(-1, -1)
 	# The SAME band with no anchor first — the control the anchored frame is diffed against.
-	_map.display_snapshot(_snapshot_band_ancestors(false))
+	_display_snapshot(_snapshot_band_ancestors(false))
 	_map.selected_unit_id = BAND_ENTITY
 	_map._fit_map_to_view()
 	await _settle()
 	var bare: Image = await _capture()
-	_map.display_snapshot(_snapshot_band_ancestors(true))
+	_display_snapshot(_snapshot_band_ancestors(true))
 	_map.selected_unit_id = BAND_ENTITY
 	await _settle()
 	var anchored: Image = await _capture()
@@ -7722,7 +7894,7 @@ func _band_ancestors_states() -> void:
 		_count_changed_pixels(bare, anchored,
 			_hex_probe_rect(anchored, ANCESTORS_BEND_TILE, ANCESTORS_PROBE_RADII)) > 0)
 	# A band with NO anchor draws nothing of it: deselecting must not change the frame either way.
-	_map.display_snapshot(_snapshot_band_ancestors(false))
+	_display_snapshot(_snapshot_band_ancestors(false))
 	_map.selected_unit_id = BAND_ENTITY
 	await _settle()
 	_assert_map("ancestors — a band with no anchor draws no mark and no outline",
@@ -7730,7 +7902,7 @@ func _band_ancestors_states() -> void:
 	# The same anchored region over snow, grass, forest and water.
 	var over_ground := _snapshot_band_ancestors(true)
 	over_ground["overlays"] = {"terrain": _ancestors_ground_terrain()}
-	_map.display_snapshot(over_ground)
+	_display_snapshot(over_ground)
 	_map.selected_unit_id = BAND_ENTITY
 	await _settle()
 	await _save("map_band_ancestors_ground")
@@ -7747,7 +7919,7 @@ func _band_ancestors_states() -> void:
 	kin_band["belief_relay_hops"] = ANCESTORS_KIN_HOPS
 	kin_band["belief_relay_reach_x"] = kin_xs
 	kin_band["belief_relay_reach_y"] = kin_ys
-	_map.display_snapshot(kin)
+	_display_snapshot(kin)
 	_map.selected_unit_id = BAND_ENTITY
 	await _settle()
 	var kin_frame: Image = await _capture()

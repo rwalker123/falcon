@@ -41,6 +41,7 @@ fn equipped_haul_rate() -> f32 {
 use bevy::app::App;
 use bevy::ecs::system::RunSystemOnce;
 use bevy::math::UVec2;
+use core_sim::shipped;
 
 use core_sim::{
     animals_affordable, animals_engaged, build_test_app, herd_capacity, herd_hunt_yield,
@@ -481,6 +482,7 @@ fn the_takes_retreat_is_scaled_by_the_rung_and_never_switched_off() {
             def.fodder_per_biomass,
             def.regrowth_rate.unwrap_or(0.1),
             def.body_mass,
+            shipped::root_standing(shipped::animal()),
         );
         if rung >= 2 {
             assert!(

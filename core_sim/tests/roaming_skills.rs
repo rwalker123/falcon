@@ -10,6 +10,7 @@ use bevy::app::App;
 use bevy::ecs::system::RunSystemOnce;
 use bevy::math::UVec2;
 use bevy::prelude::Entity;
+use core_sim::shipped;
 
 use core_sim::roaming_skills::{DRIVES_DISCOVERY_ID, HERD_LORE_DISCOVERY_ID, TRAVOIS_DISCOVERY_ID};
 use core_sim::{
@@ -67,6 +68,7 @@ fn world(roam: RoamState, herd_at: UVec2, band_at: UVec2, follow: bool) -> (App,
             FODDER_PER_BIOMASS,
             REGROWTH_RATE,
             BODY_MASS,
+            shipped::root_standing(shipped::animal()),
         );
         herd.roam = roam;
         herd.dwell_remaining = 0;

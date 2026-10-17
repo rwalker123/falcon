@@ -1665,7 +1665,7 @@ static func build_crew_targets(model: Dictionary, workers: int, on_pick: Callabl
         var count := int(spec[1])
         var unreachable := count == SourceForecast.NO_CREW_ANSWER
         var btn := Button.new()
-        btn.tooltip_text = String(spec[4] if unreachable else spec[3])
+        btn.tooltip_text = String(spec[4]) if unreachable else String(spec[3]) % count
         btn.set_meta(CREW_TARGET_META, String(spec[0]))
         btn.set_meta(CREW_TARGET_COUNT_META, count)
         # The target the crew is ALREADY on wears the selected fill, so the two numbers double as a

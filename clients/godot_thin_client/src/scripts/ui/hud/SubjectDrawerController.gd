@@ -41,7 +41,7 @@ var _selection: HudSelectionState = null
 var _band_labor: HudBandLaborState = null
 ## ⛔ **THE PER-WORLD READOUTS, HELD FOR ONE FIELD: THE ROUTE RUNG CATALOG.** The road block's `Upkeep`
 ## row states a shortfall in HANDS, which needs the branch's published bare work rate — and that rate
-## rides the catalog (`RouteRungState.buildWorkPerWorkerTurn`), the wire's only home for a number that
+## rides the catalog (`LadderRungState.buildWorkPerWorkerTurn`), the wire's only home for a number that
 ## is the same for every road in the world. It is resolved HERE and handed to the composer, exactly as
 ## the keeper's name is: `HudRouteVocab` is a vocabulary leaf that holds no catalog, and joining
 ## road→catalog inside it would give it one.
@@ -477,7 +477,7 @@ func _tile_terrain_lines(tile_info: Dictionary,
     # `route:paved_road` owes stone every turn it stands, and the `Upkeep` row has to be able to say
     # WHICH currency is short — *"you cannot mend a road with no stone, so a shortfall message that
     # names the pool is wrong advice"* (`docs/plan_standing_upkeep.md` §2.7). The noun is
-    # `RouteRungState.buildMaterialId` for the rung the tile **holds**, not the one it is climbing
+    # `LadderRungState.buildMaterialId` for the rung the tile **holds**, not the one it is climbing
     # toward, so it is resolved per ROAD below off the same ladder this rate comes from — and never
     # spelled `stone` in this client, which would be a second authority for a config fact.
     var ladder: Array[Dictionary] = []
@@ -524,7 +524,7 @@ func _tile_terrain_lines(tile_info: Dictionary,
     #
     # ⛔ **THE CATALOG JOIN IS RESOLVED HERE AND HANDED OVER**, exactly as the road block's keeper
     # name, build rate and material noun are: the rung's display name, its reach and its renewal all
-    # ride `SubsistenceSection.depositRungs`, and `HudDepositVocab` stays a leaf with no catalog
+    # ride `SubsistenceSection.ladderRungs`, and `HudDepositVocab` stays a leaf with no catalog
     # dependency. `[]` before a catalog has arrived, which the composer reads as *the rung cannot be
     # named* and answers with the raw wire key rather than a blank.
     var deposit_ladder: Array[Dictionary] = []
@@ -607,14 +607,14 @@ func _tile_terrain_lines(tile_info: Dictionary,
     # **The animal web is untouched and that is the point**: `Grazing` still renders here, so the card
     # never goes silent about ground that feeds herds — what disappears is only the claim that PEOPLE
     # can eat it. Fodder needs no forage action, and it keeps its row.
-    var gathering_site := DetailFormat.tile_is_gathering_site(tile_info)
+    var workable := DetailFormat.tile_is_workable(tile_info)
     var patch_capacity := DetailFormat.patch_capacity(tile_info)
     # Hoisted because BOTH halves read it: the stock row states it against the capacity, and the
     # basket below decomposes it. Reading it twice is how the row and its own decomposition would
     # start describing different stands.
     var patch_biomass := float(tile_info.get("patch_biomass", 0.0))
     var crop_species := String(tile_info.get("patch_committed_species", "")).strip_edges()
-    if gathering_site and patch_capacity > 0.0:
+    if workable and patch_capacity > 0.0:
         lines.append_array(_forage_stock_lines(tile_info, true))
         # …AND WHAT THAT STOCK IS MADE OF — one indented row per realized plant, always visible and
         # never behind a disclosure, each led by an icon for what the plant is FOR (staple / cash /
@@ -639,6 +639,15 @@ func _tile_terrain_lines(tile_info: Dictionary,
     # nearly every land tile). Your best farm is usually not your best pasture, and a comparison the
     # player cannot make in one glance is not a comparison.
     lines.append_array(graze_lines)
+    # **GROUND A LESSON WOULD OPEN** (Worked Land): off the gathering sites and refused only for want of
+    # a lesson, the card says which lesson and what teaches it instead of going silent. The verdict is
+    # the server's (`site_refusal == needs_lesson`); once the lesson is learned the same ground reads
+    # as workable and this row gives way to the forage block above.
+    if not workable:
+        var lesson_line := DetailFormat.site_lesson_line(tile_info,
+            _topbar.knowledge_labels() if _topbar != null else {})
+        if lesson_line != "":
+            lines.append("%s: %s" % [HudFloraVocab.SITE_LESSON_ROW, lesson_line])
     # THE COMMITTED CROP — what the band committed this patch to, recorded on the FIRST worked turn,
     # ~25 turns before the build lands. It is a different fact from the basket above: committing
     # REWEIGHTS the basket as the build completes (issue #433 — a Tended Patch lifts the favored share
@@ -678,82 +687,50 @@ func _tile_terrain_lines(tile_info: Dictionary,
     # webs, and it is what guarantees every failure state carries a mark: with the `Keeping:` row gone,
     # a bare row is the only thing that says this rung is fine.
     var prefix: String = HudComposeVocab.FORAGE_FORECAST_PREFIX
-    var cultivated := bool(tile_info.get("patch_is_cultivated", false))
-    var cultivation_progress := float(tile_info.get("patch_cultivation_progress", 0.0))
-    # **DECLARED AND UNMANNED is its own state**, and the row renders at a meter of ZERO for it — the
-    # state the old `> 0` gate suppressed entirely while the map drew a `0%` badge over it.
-    var cultivate_declared := unstaffed_rung == SourceForecast.IMPROVEMENT_CULTIVATE
-    if cultivated or cultivation_progress > DetailFormat.BUILD_METER_EMPTY or cultivate_declared:
+    # **ONE ROW PER RUNG THE PATCH QUOTES, IN CLIMB ORDER** (issue #175): the patch's own `rung_quotes`
+    # (stamped from the catalog with each rung's verb), so a fourth step the config adds draws its own
+    # row here with no edit. Each rung has its OWN meter -- a Field may stand on ground that was never
+    # tended (seed travels, so `Sow` needs no prior patch) -- so they are rows, never one merged number;
+    # a patch holding a Tended rung while a Field goes up reads `Cultivation: Tended 100%` over
+    # `Field: ~30 turns (12%)`, and one merged row would silently drop either the rung you hold or the
+    # build in flight. The FACTION's knowledge is not shown here; it is a property of your people.
+    var tile_x := int(tile_info.get("x", -1))
+    var tile_y := int(tile_info.get("y", -1))
+    for quote in RungQuotes.quotes(tile_info, prefix):
+        var verb := RungQuotes.verb_of(quote)
+        if verb == "":
+            continue
+        var reached := bool(quote.get(RungQuotes.KEY_REACHED, false))
+        var progress := float(quote.get(RungQuotes.KEY_PROGRESS, 0.0))
+        # **DECLARED AND UNMANNED is its own state**, and the row renders at a meter of ZERO for it.
+        var declared := unstaffed_rung == verb
+        if not (reached or progress > DetailFormat.BUILD_METER_EMPTY or declared):
+            continue
         # **THE ROW TAKES THE REAL BUILD CREW, NOT A *THIS RUNG IS IN FLIGHT* BOOL**
-        # (`docs/plan_standing_upkeep.md` §4.6a). It was `building_rung == CULTIVATE and not declared`,
-        # which says *this rung is the one being built* and was being read as *there are builders on
-        # it*. The two part on a state this arc built a whole readout for: a Cultivate that has been
-        # completed and has since eroded back below its cost carries NO declared improvement (completion
-        # clears it; the sim's retention BAR this used to name is retired with the cliff it patched),
-        # so the bool answered `true` on a meter nobody is touching and the row wore the amber
-        # `⚠ ∞ turns` where the deliberate-hold `Held at 92%` belongs. **The crew is what
-        # `BUILD_METER_HOLDS` cannot carry**, so the crew is what the row is given.
-        var cultivate_crew := _band_labor.build_crew_forage(
-            int(tile_info.get("x", -1)), int(tile_info.get("y", -1)))
-        var cultivate_value := DetailFormat.rung_row_value(
-            tile_info, prefix, SourceForecast.IMPROVEMENT_CULTIVATE,
-            SourceForecast.SOURCE_KIND_FORAGE, DetailFormat.cultivation_built_label(), cultivated,
-            cultivation_progress, cultivate_crew, unstaffed_rung)
-        lines.append("%s: %s" % [DetailFormat.CULTIVATION_ROW, cultivate_value])
-        # …and the LAPSED row's sentence, routed off the value the row just composed rather than
-        # re-asking the three questions behind it. Registered before the keeping hover below, which
-        # outranks it wherever a rung is both lapsed and under-kept.
-        DetailFormat.note_lapsed_hover(ctx, DetailFormat.CULTIVATION_ROW, cultivate_value)
-        # **THE REMEDY IS THE ROW'S HOVER NOW** — the `At risk:` row, its shortfall, its countdown and
-        # the indented instruction under it are all retired, and this is what replaced the four of
-        # them: `⚠ slipping` on the row, and one sentence naming the role that pays behind it.
-        DetailFormat.note_under_kept_hover(ctx, DetailFormat.CULTIVATION_ROW, tile_info, prefix,
-            SourceForecast.SOURCE_KIND_FORAGE, SourceForecast.IMPROVEMENT_CULTIVATE)
-        # **THE GEAR'S SAVING HANGS OFF THE RUNG ACTUALLY IN FLIGHT.** The wire field is per SOURCE
-        # (at most one improvement is ever in flight on one), so it attaches to whichever meter the
-        # build is on and to nothing else — on the other row it would describe a build nobody is doing,
-        # which is the same per-source-number-on-the-wrong-row mistake the countdown had.
+        # (`docs/plan_standing_upkeep.md` section 4.6a): the crew is what `BUILD_METER_HOLDS` cannot carry.
+        var crew := _band_labor.build_crew_forage(tile_x, tile_y)
+        var row_key := DetailFormat.patch_rung_row_key(quote)
+        var value := DetailFormat.rung_row_value(tile_info, prefix, verb,
+            SourceForecast.SOURCE_KIND_FORAGE, DetailFormat.rung_built_label(verb, tile_info, prefix),
+            reached, progress, crew, unstaffed_rung)
+        lines.append("%s: %s" % [row_key, value])
+        # …and the LAPSED row's sentence, routed off the value the row just composed, registered before
+        # the keeping hover below, which outranks it wherever a rung is both lapsed and under-kept.
+        DetailFormat.note_lapsed_hover(ctx, row_key, value, progress,
+            SourceForecast.meter_rot_per_turn(tile_info, prefix))
+        # **THE REMEDY IS THE ROW'S HOVER**: `slipping` on the row, and one sentence naming the role that
+        # pays behind it.
+        DetailFormat.note_under_kept_hover(ctx, row_key, tile_info, prefix,
+            SourceForecast.SOURCE_KIND_FORAGE, verb)
+        # **THE GEAR'S SAVING HANGS OFF THE RUNG ACTUALLY IN FLIGHT.** The wire field is per SOURCE (at
+        # most one improvement is ever in flight on one), so it attaches to whichever meter the build is
+        # on and to nothing else, and so does the BLOCKED queue's remedy.
         if SourceForecast.build_verb(tile_info, prefix, SourceForecast.SOURCE_KIND_FORAGE,
-                unstaffed_rung) == SourceForecast.IMPROVEMENT_CULTIVATE:
-            lines.append_array(DetailFormat.build_gear_lines(tile_info, prefix))
-            # …and, on a BLOCKED queue alone, what frees it. Hung off the rung in flight for the
-            # gear line's own reason: the countdown is per SOURCE, so its remedy belongs on the one
-            # row that countdown is about.
-            lines.append_array(DetailFormat.build_blocked_lines(tile_info, prefix,
-                SourceForecast.SOURCE_KIND_FORAGE, DetailFormat.MORALE_BREAKDOWN_INDENT,
-                _band_labor.working_floor_forage(
-                    int(tile_info.get("x", -1)), int(tile_info.get("y", -1)))))
-    # PLANT RUNG 3 — the Field, on its OWN row beside Cultivation. The patch carries TWO independent
-    # build meters (a Field may stand on ground that was never tended: seed travels, so `Sow` needs no
-    # prior patch), so they are two rows, never one merged "progress" number. This is the per-source
-    # half of the two-meter split (§4.1) — the FACTION's Seed Selection knowledge is NOT shown here;
-    # it lives in the top-bar knowledge strip, because it is a property of your people, not of this
-    # ground. Both rows are the source's own, and both decay if the patch is abandoned.
-    # The Sow twin of the Cultivation branch above, on its OWN row: a patch holding a Tended rung
-    # while a Field goes up reads `Cultivation: 🌾 Tended 100%` over `Field: ≈30 turns (12%)`, and a
-    # single merged row would silently drop either the rung you hold or the build in flight.
-    var is_field := bool(tile_info.get("patch_is_field", false))
-    var field_progress := float(tile_info.get("patch_field_progress", 0.0))
-    var sow_declared := unstaffed_rung == SourceForecast.IMPROVEMENT_SOW
-    if is_field or field_progress > DetailFormat.BUILD_METER_EMPTY or sow_declared:
-        # The Cultivation branch's own two corrections, on the twin row: the REAL build crew rather
-        # than a *this rung is in flight* bool, and the gear line hung off `build_verb`'s answer.
-        var field_value := DetailFormat.rung_row_value(
-            tile_info, prefix, SourceForecast.IMPROVEMENT_SOW,
-            SourceForecast.SOURCE_KIND_FORAGE, DetailFormat.field_built_label(), is_field,
-            field_progress, _band_labor.build_crew_forage(int(tile_info.get("x", -1)),
-                int(tile_info.get("y", -1))), unstaffed_rung)
-        lines.append("%s: %s" % [HudFloraVocab.FIELD_ROW, field_value])
-        DetailFormat.note_lapsed_hover(ctx, HudFloraVocab.FIELD_ROW, field_value)
-        DetailFormat.note_under_kept_hover(ctx, HudFloraVocab.FIELD_ROW, tile_info, prefix,
-            SourceForecast.SOURCE_KIND_FORAGE, SourceForecast.IMPROVEMENT_SOW)
-        if SourceForecast.build_verb(tile_info, prefix, SourceForecast.SOURCE_KIND_FORAGE,
-                unstaffed_rung) == SourceForecast.IMPROVEMENT_SOW:
+                unstaffed_rung) == verb:
             lines.append_array(DetailFormat.build_gear_lines(tile_info, prefix))
             lines.append_array(DetailFormat.build_blocked_lines(tile_info, prefix,
                 SourceForecast.SOURCE_KIND_FORAGE, DetailFormat.MORALE_BREAKDOWN_INDENT,
-                _band_labor.working_floor_forage(
-                    int(tile_info.get("x", -1)), int(tile_info.get("y", -1)))))
+                _band_labor.working_floor_forage(tile_x, tile_y)))
     # **AND NOTHING BENEATH THEM ABOUT THE KEEPING.** The `At risk:` row that used to close this
     # producer — a shortfall, a countdown and an indented remedy — is retired: the state is on the rung
     # row (`⚠ slipping`) and the remedy is that row's hover, so the card carries one row where it

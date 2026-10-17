@@ -5,6 +5,110 @@ use crate::routes::{
     road_upkeep_workers_needed, RoadRegistry,
 };
 
+/// **A TILE IMPROVEMENT NOBODY IS RAISING NAMES NO DESTINATION** - the `buildDestinationRung` an
+/// improvement with nothing queued (or whose builder is not the viewer's) publishes.
+const NO_DESTINATION: &str = "";
+
+/// **THE TILE IMPROVEMENTS THE VIEWER CAN SEE, ON THE WIRE - ONE ROW PER `(TILE, BRANCH)`.**
+///
+/// The road list's gate and its reasoning: `Discovered`, not `Active`, because an improvement is in
+/// the ground and does not wander off; fails closed on an absent faction map. Order is the
+/// registry's own `(y, x, branch)` key order, so the section is stable frame to frame and diffs out
+/// when nothing moved.
+///
+/// # THE BUILDER'S SCRATCH FOLLOWS THE BUILDER
+///
+/// `buildDestinationRung`, `buildLegs`, `buildTurnsRemaining` and `buildBlockedReason` describe a
+/// band's queue, not the ground - the source rows' rule (`factions.md` -> "The improvement follows
+/// the GROUND; the BUILDER'S state follows the builder"). They publish only where one of the
+/// viewer's own bands has the improvement queued (`build_kits`), and read their no-estimate values
+/// everywhere else, so a rival's queue is not legible from a row on explored ground.
+///
+/// # EVERY NUMBER COMES OFF THE STAMPED BILL
+///
+/// `demand - supplied == shortfall` must hold verbatim on the wire, so all three resolve through
+/// [`crate::tile_improvement::TileImprovement::keeping_basis`], the stamp `advance_tile_improvements`
+/// struck and the labour pass paid against this turn.
+pub(crate) fn tile_improvement_states(
+    registry: &crate::tile_improvement::TileImprovementRegistry,
+    visibility: &crate::visibility::VisibilityLedger,
+    viewer: FactionId,
+    fog_enabled: bool,
+    ladder: &LadderConfig,
+    build_kits: &crate::snapshot::subsistence::QueuedBuildSources,
+) -> Vec<sim_runtime::TileImprovementState> {
+    registry
+        .iter()
+        .filter(|improvement| {
+            !fog_enabled || visibility.is_discovered(viewer, improvement.tile.x, improvement.tile.y)
+        })
+        .map(|improvement| {
+            let demand = improvement.keeping_basis(ladder);
+            let at_risk = ladder.rung(improvement.at_risk_rung());
+            let grace = at_risk.upkeep.as_ref().map(|_| {
+                crate::intensification::neglect_grace_remaining(
+                    improvement.neglect_turns,
+                    at_risk.upkeep_grace_turns(),
+                )
+            });
+            // **The viewer's own queue, or nothing** - the builder's scratch rule above.
+            let queued = build_kits.tile_is_queued(improvement.tile, improvement.branch);
+            sim_runtime::TileImprovementState {
+                tile_x: improvement.tile.x,
+                tile_y: improvement.tile.y,
+                branch: improvement.branch.as_str().to_string(),
+                current_rung: improvement.held_rung().wire_key(),
+                build_destination_rung: if queued {
+                    improvement
+                        .build_destination
+                        .map_or_else(|| NO_DESTINATION.to_string(), |rung| rung.wire_key())
+                } else {
+                    NO_DESTINATION.to_string()
+                },
+                build_legs: if queued {
+                    crate::snapshot::subsistence::published_build_legs(&improvement.build_legs)
+                } else {
+                    Vec::new()
+                },
+                build_turns_remaining: if queued {
+                    crate::snapshot::subsistence::published_build_countdown(
+                        improvement.build_turns_remaining,
+                        improvement.build_queue_position,
+                        queued,
+                    )
+                } else {
+                    sim_runtime::NO_BUILD_TURNS_ESTIMATE
+                },
+                build_blocked_reason: if queued {
+                    improvement.build_blocked_reason.key().to_string()
+                } else {
+                    String::new()
+                },
+                upkeep_demand: demand,
+                upkeep_supplied: improvement.upkeep_supplied,
+                upkeep_shortfall: crate::intensification::upkeep_shortfall(
+                    demand,
+                    improvement.upkeep_supplied,
+                ),
+                neglect_turns: u32::from(improvement.neglect_turns),
+                has_neglect_grace: grace.is_some(),
+                neglect_grace_remaining: grace.unwrap_or(NO_NEGLECT_REMAINING),
+                upkeep_workers_needed: improvement.upkeep_workers_needed(ladder),
+                upkeep_hands: improvement.upkeep_hands,
+                upkeep_tools_short: crate::snapshot::subsistence::viewer_keeping_tools_short(
+                    &improvement.upkeep_toe,
+                    viewer,
+                ),
+                upkeep_toe: crate::snapshot::subsistence::upkeep_toe_lines(
+                    &improvement.upkeep_toe,
+                    viewer,
+                ),
+                is_queued: queued,
+            }
+        })
+        .collect()
+}
+
 /// **The countdown a road with nothing at risk publishes.** Paired with `has_neglect_grace: false`,
 /// which is the field a reader must check — this number is only here because the wire has no
 /// optional scalars, and it deliberately reuses the *"biting now"* value rather than inventing a

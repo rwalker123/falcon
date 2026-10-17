@@ -1351,7 +1351,7 @@ func _build_workforce_block(band: Dictionary) -> VBoxContainer:
         match String(m.get("kind", "")):
             SourceForecast.LABOR_KIND_FORAGE: forage_workers += workers
             SourceForecast.LABOR_KIND_HUNT: hunt_workers += workers
-            HudConst.LABOR_KIND_EXTRACT: extract_workers += workers
+            HudConst.LABOR_KIND_EXTRACT, HudConst.LABOR_KIND_TILE: extract_workers += workers
     var scout_eff := _band_labor.effective_role_workers(band, HudConst.LABOR_KIND_SCOUT)
     var warrior_eff := _band_labor.effective_role_workers(band, HudConst.LABOR_KIND_WARRIOR)
     # **THE ROADWORK POOL IS A ROLE, so it is in the Roles SEGMENT though its line is on the Work
@@ -1402,7 +1402,7 @@ func _build_workforce_block(band: Dictionary) -> VBoxContainer:
     var block := HudWidgets.make_zone_block()
     block.add_child(HudWidgets.zone_head(HudWorkVocab.ZONE_HEADER_WORKFORCE, readout,
         null, HudStyle.SIGNAL if idle > 0 else HudStyle.INK_DIM,
-        HudWorkVocab.WORKFORCE_AWAY_TOOLTIP if away_workers > 0 else ""))
+        HudWorkVocab.WORKFORCE_AWAY_TOOLTIP_FORMAT % away_workers if away_workers > 0 else ""))
     if not segments.is_empty():
         block.add_child(HudWidgets.build_composition_bar(segments))
         block.add_child(HudWidgets.build_composition_key(segments))
@@ -2072,6 +2072,7 @@ func _fill_work_zone_column(col: VBoxContainer, band: Dictionary) -> void:
     var idle := _band_labor.effective_idle(band)
     var models := _work_source_models(band, idle)
     var extract_models := _extract_source_models(band)
+    var tile_models := _tile_source_models(band)
     col.add_child(_build_work_head(band, models,
         _work_component_sum(models, "rate"),
         _work_component_sum(models, "fodder_rate")))
@@ -2099,7 +2100,7 @@ func _fill_work_zone_column(col: VBoxContainer, band: Dictionary) -> void:
         _work_open_key = ""
     _work_inspected = inspected
     col.add_child(_flow_work_sections(_work_section_items(band, models, extract_models, queued,
-        roster_models, roster_unseen)))
+        roster_models, roster_unseen, tile_models)))
 
 ## One placeable ITEM of the sections list: a control, the height it reserves, and whether it must
 ## stay in the same column as the item after it (a section's gap and head ride with its first row).
@@ -2117,7 +2118,7 @@ func _work_item(node: Control, keep_with_next: bool = false) -> Dictionary:
 ## and GROUNDWORK draw only where the band has a row on that web. A band working nothing also gets the
 ## board's own empty hint, after the sections.
 func _work_section_items(band: Dictionary, models: Array, extract_models: Array, queued: Array,
-        roster_models: Array, roster_unseen: bool) -> Array:
+        roster_models: Array, roster_unseen: bool, tile_models: Array = []) -> Array:
     var items: Array = []
     _attach_muster_sources(band, models, extract_models)
     var builders := int(_band_labor.effective_role_workers(
@@ -2148,13 +2149,16 @@ func _work_section_items(band: Dictionary, models: Array, extract_models: Array,
         _append_work_section(items, HudWorkVocab.WORK_SECTION_ROADWORK,
             _build_roadwork_head(roster_models.size() - roster_drawn),
             [_build_roadwork_block(band, roster_models, roster_unseen)])
-    if not extract_models.is_empty():
+    if not extract_models.is_empty() or not tile_models.is_empty():
         var nodes: Array = []
         for model in extract_models:
             nodes.append(_build_extract_row(band, model as Dictionary))
+        # Tile crews are site crews like a working's, so they ride the same section.
+        for model in tile_models:
+            nodes.append(_build_tile_row(band, model as Dictionary))
         _append_work_section(items, HudWorkVocab.WORK_SECTION_GROUNDWORK,
             _build_work_section_head(HudWorkVocab.WORK_SECTION_GROUNDWORK), nodes)
-    if models.is_empty() and extract_models.is_empty():
+    if models.is_empty() and extract_models.is_empty() and tile_models.is_empty():
         var hint := HudWidgets.alloc_hint_label(HudWorkVocab.WORK_EMPTY_HINT)
         hint.custom_minimum_size = Vector2(0.0, HudWorkVocab.WORK_ROW_HEIGHT)
         items.append(_work_item(hint))
@@ -2405,7 +2409,7 @@ func _build_work_head(band: Dictionary, models: Array, income: float,
         fodder_total.text = SourceForecast.PICKER_FODDER_PRODUCT_FORMAT % SourceForecast.format_signed(fodder_income)
         fodder_total.add_theme_font_size_override("font_size", HudWorkVocab.ZONE_HEAD_FONT_SIZE)
         fodder_total.add_theme_color_override("font_color", HudStyle.HEALTHY)
-        HudWidgets.set_label_tooltip(fodder_total, HudWorkVocab.WORK_FODDER_TOTAL_TOOLTIP)
+        HudWidgets.set_label_tooltip(fodder_total, HudWorkVocab.WORK_FODDER_TOTAL_TOOLTIP_FORMAT % SourceForecast.format_signed(fodder_income))
         head.add_child(fodder_total)
         head.move_child(fodder_total, head.get_child_count() - 2)
     # THE OUTPUT ITEM — a THIRD sibling, and it qualifies the two beside it rather than adding to
@@ -2420,7 +2424,7 @@ func _build_work_head(band: Dictionary, models: Array, income: float,
         output_item.text = HudWorkVocab.WORK_OUTPUT_FORMAT % int(round(output * 100.0))
         output_item.add_theme_font_size_override("font_size", HudWorkVocab.ZONE_HEAD_FONT_SIZE)
         output_item.add_theme_color_override("font_color", BandFoodStatus.color_for_output(output))
-        HudWidgets.set_label_tooltip(output_item, HudWorkVocab.WORK_OUTPUT_TOOLTIP)
+        HudWidgets.set_label_tooltip(output_item, HudWorkVocab.WORK_OUTPUT_TOOLTIP_FORMAT % int(round(output * 100.0)))
         head.add_child(output_item)
         head.move_child(output_item, head.get_child_count() - 2)
     return head
@@ -2440,7 +2444,7 @@ func _build_build_queue_head(band: Dictionary, builders: int, remaining: int) ->
     var head := HudWidgets.zone_head(
         String(HudWorkVocab.WORK_SECTION_TITLES[HudWorkVocab.WORK_SECTION_BUILD_QUEUE]),
         HudWorkVocab.BUILD_QUEUE_NO_BUILDERS_MARK if unfunded else "", null, HudStyle.WARN,
-        HudWorkVocab.BUILD_QUEUE_BUILDERS_TOOLTIP)
+        HudWorkVocab.BUILD_QUEUE_BUILDERS_TOOLTIP_FORMAT % builders)
     _make_queue_head_a_toggle(head, remaining)
     return head
 
@@ -2875,6 +2879,108 @@ func _extract_source_models(band: Dictionary) -> Array:
         models.append(model)
     return models
 
+## **THE TILE CREW ROWS THIS BAND HOLDS** (issue #175) -- one model per `tile` labor row, nearest
+## first. No tile branch ships yet, so this is empty on every shipped world; it exists so the FIRST one
+## renders with no edit here. **Everything a row says comes off the catalog**: the branch's name from
+## `ladder_branches`, the rung it stands on from `ladder_rungs`, and the standing bill and tools from the
+## `tile_improvements` row, which carries the keys a deposit's does. A branch or rung the catalog does
+## not carry reads as its humanised id, never blank.
+func _tile_source_models(band: Dictionary) -> Array:
+    var models: Array = []
+    var camp := SourceForecast.band_tile(band)
+    var branches: Array = _topbar.ladder_branches() if _topbar != null else []
+    var catalog: Array = _topbar.ladder_rungs() if _topbar != null else []
+    for assignment_variant in _band_labor.tile_assignments_of(band):
+        var assignment: Dictionary = assignment_variant
+        var x := int(assignment.get("target_x", -1))
+        var y := int(assignment.get("target_y", -1))
+        var branch := String(assignment.get("branch", ""))
+        var row := _band_labor.tile_improvement_at(x, y, branch)
+        var rung_key := String(row.get("current_rung", ""))
+        var distance := SourceForecast.hex_distance_wrapped(camp.x, camp.y, x, y,
+            _band_labor.grid_width(), _band_labor.wrap_horizontal())
+        var key := _band_labor.pending_key(HudConst.LABOR_KIND_TILE, x, y, "", branch)
+        models.append({
+            "kind": HudConst.LABOR_KIND_TILE,
+            "key": key, "x": x, "y": y, "herd_id": "", "branch": branch,
+            "tile": Vector2i(x, y),
+            "tile_row": row,
+            "assignment": assignment,
+            "distance": distance,
+            "workers": _band_labor.effective_worker_map(band).get(key, {}).get(
+                "workers", int(assignment.get("workers", 0))),
+            "name": HudWorkVocab.WORKINGS_ROSTER_NAME_FORMAT % [
+                HudRouteVocab.branch_name(branches, branch),
+                _roadwork_roster_locator(distance, camp, Vector2i(x, y))],
+            "rung_name": HudRouteVocab.rung_name_in(catalog, rung_key) \
+                if rung_key != "" else HudRouteVocab.branch_root_name(catalog, branch),
+        })
+    models.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
+        if int(a["distance"]) != int(b["distance"]):
+            return int(a["distance"]) < int(b["distance"])
+        var ta: Vector2i = a["tile"]
+        var tb: Vector2i = b["tile"]
+        if ta.y != tb.y:
+            return ta.y < tb.y
+        if ta.x != tb.x:
+            return ta.x < tb.x
+        return String(a["branch"]) < String(b["branch"]))
+    return models
+
+## **ONE TILE CREW'S ROW** -- a site row's shell (`_site_row_shell`) carrying the catalog's name for the
+## branch and its rung, the keeping mark off the standing bill, the crew count and, on a far posting, the
+## party block a deposit crew draws. READ-ONLY: there is no stepper and no inspector, because assigning a
+## tile crew has no UI until the first tile branch ships.
+func _build_tile_row(band: Dictionary, model: Dictionary) -> PanelContainer:
+    var tile: Vector2i = model["tile"]
+    var branch := String(model["branch"])
+    var improvement: Dictionary = model["tile_row"]
+    var assignment: Dictionary = model["assignment"]
+    var workers := int(model.get("workers", 0))
+    var shell := _site_row_shell(HudWorkVocab.EXTRACT_ROW_HEIGHT, false, Color(0.0, 0.0, 0.0, 0.0))
+    var row: PanelContainer = shell[SITE_ROW_SHELL_ROW]
+    var col: VBoxContainer = shell[SITE_ROW_SHELL_COLUMN]
+    var line: HBoxContainer = shell[SITE_ROW_SHELL_LINE]
+    row.set_meta(HudWorkVocab.TILE_ROW_META, "%d,%d:%s" % [tile.x, tile.y, branch])
+    row.mouse_filter = Control.MOUSE_FILTER_PASS
+    # An empty icon slot keeps the name in the site rows' column (no mark exists for a branch yet).
+    line.add_child(HudWidgets.build_marker_icon(null, "", HudWorkVocab.WORK_ROW_ICON_WIDTH,
+        HudWorkVocab.WORK_ROW_FONT_SIZE))
+    var title := Label.new()
+    title.text = String(model["name"])
+    title.clip_text = true
+    title.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+    title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    title.add_theme_font_size_override("font_size", HudWorkVocab.WORK_ROW_FONT_SIZE)
+    title.add_theme_color_override("font_color", HudStyle.INK)
+    title.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    line.add_child(title)
+    var kept := float(improvement.get("upkeep_supplied", SourceForecast.NO_UPKEEP_DEMAND))
+    var demand := float(improvement.get("upkeep_demand", SourceForecast.NO_UPKEEP_DEMAND))
+    var tools_short := SourceForecast.upkeep_tools_short(improvement,
+        HudComposeVocab.BARE_FORECAST_PREFIX)
+    line.add_child(_build_site_keeping_mark(kept, demand, tools_short,
+        _site_short_tool_names(improvement) if tools_short else "",
+        HudWorkVocab.tending_of(improvement, HudComposeVocab.BARE_FORECAST_PREFIX, "")))
+    var count := Label.new()
+    count.text = str(workers)
+    count.add_theme_font_size_override("font_size", HudWorkVocab.WORK_ROW_FONT_SIZE)
+    count.add_theme_color_override("font_color", HudStyle.INK)
+    count.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    line.add_child(count)
+    col.add_child(_build_site_crew_line(HudWorkVocab.site_crew_line(String(model["rung_name"])),
+        HudWorkVocab.SITE_CREW_LINE_META, _crew_split_for_row(workers,
+            float(assignment.get(SourceForecast.ASSIGNMENT_KEEP_HANDS_KEY,
+                SourceForecast.NO_UPKEEP_DEMAND)), HudConst.LABOR_KIND_TILE)))
+    var party := SourceForecast.party_readout(assignment)
+    if SourceForecast.party_is_posted(party):
+        var lines: Array[String] = HudWorkVocab.party_block_lines(party, HudWorkVocab.TILE_CREW_NOUN,
+            HudWorkVocab.WORK_ROW_PARTY_WALK_TARGET_TILE)
+        for party_line in lines:
+            col.add_child(_build_working_yield_line(party_line, HudStyle.INK_DIM,
+                HudWorkVocab.WORK_ROW_PARTY_META))
+    return row
+
 ## **ONE WORKING'S ROW — a harvest or hunt row's shape** (the site rows' shell, `_site_row_shell`).
 ## Line one is the icon (the MATERIAL's mark), the name (`Wood · 2 tiles SE`, one ink — it names the
 ## working, the rung is line two's), the keeping mark, the `⌃` that opens its ladder and the crew
@@ -3187,7 +3293,7 @@ func _workings_roster_max_useful(band: Dictionary, model: Dictionary) -> int:
     return HudDepositVocab.published_useful_cutters(_band_labor.extract_assignment_of(
         band, tile.x, tile.y, String(model["material"])))
 
-## **THE DEPOSIT BRANCHES' CATALOG, as ordered rows** — `SubsistenceSection.depositRungs`, per world.
+## **THE DEPOSIT BRANCHES' CATALOG, as ordered rows** — `SubsistenceSection.ladderRungs`, per world.
 ## `[]` before any snapshot has arrived, which every consumer renders as *no ladder to show* rather
 ## than as branches with nothing on them.
 func _deposit_ladder() -> Array[Dictionary]:
@@ -3869,7 +3975,7 @@ func _road_queue_models(band: Dictionary) -> Dictionary:
         if not (entry_variant is Dictionary):
             continue
         var wire: Dictionary = entry_variant
-        if not bool(wire.get("road", false)):
+        if not HudRouteVocab.queue_entry_is_road(wire):
             continue
         var x := int(wire.get("target_x", -1))
         var y := int(wire.get("target_y", -1))
@@ -4799,8 +4905,12 @@ func _build_build_queue_row(band: Dictionary, model: Dictionary, is_head: bool,
     # it — and, on a tool-short head whose strip is closed, the builders' `◆` after it. One height
     # for every row, so the block's reservation is `rows × BUILD_QUEUE_ROW_HEIGHT` with no fork.
     row.custom_minimum_size.y = HudWorkVocab.BUILD_QUEUE_ROW_HEIGHT
+    var material_short: Dictionary = model.get("build_material_short", {}) as Dictionary
+    if _build_queue_row_is_pending(model) \
+            or _build_queue_row_rank(model) != SourceForecast.BUILD_QUEUE_HEAD:
+        material_short = {}
     var second := _build_queue_row_second_line(band, model,
-        tools_short and String(model.get("key", "")) != _queue_open_key)
+        tools_short and String(model.get("key", "")) != _queue_open_key, material_short)
     body.add_child(second)
     line.add_child(_build_queue_row_marker(band, model, is_head))
     # **AND THE ROW IS THE DROP TARGET, where the marker alone is the grab** — a drop that only
@@ -4889,6 +4999,15 @@ func _build_build_queue_row(band: Dictionary, model: Dictionary, is_head: bool,
         HudStyle.WARN if pending else DetailFormat.rung_value_color(value))
     date.add_theme_font_size_override("font_size", HudWorkVocab.ALLOC_SECTION_FONT_SIZE)
     date.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    # **A LABEL'S TEXT IS ITS MINIMUM WIDTH unless it clips**, and this one states whatever the wire's date
+    # spells. It is as wide as its text up to `BUILD_QUEUE_DATE_MAX_WIDTH` and trims with an ellipsis beyond
+    # it; the full text is on the row's tooltip below.
+    date.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+    date.clip_text = true
+    var date_font := date.get_theme_default_font()
+    var date_natural := date_font.get_string_size(value, HORIZONTAL_ALIGNMENT_LEFT, -1,
+        HudWorkVocab.ALLOC_SECTION_FONT_SIZE).x
+    date.custom_minimum_size.x = minf(date_natural, HudWorkVocab.BUILD_QUEUE_DATE_MAX_WIDTH)
     second.add_child(date)
     second.move_child(date, QUEUE_SECOND_LINE_DATE_INDEX)
     if second.get_child_count() > QUEUE_SECOND_LINE_DATE_INDEX + 1:
@@ -4954,7 +5073,7 @@ func _build_build_queue_row(band: Dictionary, model: Dictionary, is_head: bool,
 const QUEUE_SECOND_LINE_DATE_INDEX := 1
 
 func _build_queue_row_second_line(band: Dictionary, model: Dictionary,
-        wears_tools: bool) -> HBoxContainer:
+        wears_tools: bool, material_short: Dictionary = {}) -> HBoxContainer:
     var line := HBoxContainer.new()
     line.add_theme_constant_override("separation", HudWorkVocab.WORK_ROW_SEPARATION)
     line.custom_minimum_size = Vector2(0.0, HudWorkVocab.BUILD_QUEUE_ROW_TOOLS_LINE_HEIGHT)
@@ -4970,6 +5089,22 @@ func _build_queue_row_second_line(band: Dictionary, model: Dictionary,
         mark.set_meta(HudWorkVocab.BUILD_QUEUE_ROW_BUILD_MARK_META, HudWorkVocab.work_priority_of(level))
         mark.mouse_filter = Control.MOUSE_FILTER_IGNORE
         line.add_child(mark)
+    # **A SHELF THAT CANNOT FEED THE HEAD WINS THE LINE'S LAST SLOT** — a build with no hurdles banks
+    # nothing whatever the tools are, so the `◆` clause moves to the row's hover (it is already there).
+    # The slot trims rather than widening the line, as the tools clause does.
+    var material_text := DetailFormat.build_material_short_text(material_short)
+    if material_text != "":
+        if line.get_child_count() > 1:
+            var material_sep := HudWidgets.build_status_part(
+                HudWorkVocab.BUILD_QUEUE_DETAIL_SEPARATOR.strip_edges(), HudStyle.INK_DIM)
+            material_sep.mouse_filter = Control.MOUSE_FILTER_IGNORE
+            line.add_child(material_sep)
+        var material_label := HudWidgets.build_status_part(material_text, HudStyle.DANGER, true)
+        material_label.set_meta(HudWorkVocab.BUILD_QUEUE_MATERIAL_LINE_META, material_text)
+        material_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+        material_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+        line.add_child(material_label)
+        wears_tools = false
     if wears_tools:
         var text := HudWorkVocab.BUILD_QUEUE_ROW_TOOLS_SHORT_FORMAT % [HudWorkVocab.KIT_SHORT_MARK,
             HudWorkVocab.build_queue_tools_text(_builders_short_tool_names(band))]
@@ -4979,8 +5114,10 @@ func _build_queue_row_second_line(band: Dictionary, model: Dictionary,
             sep.mouse_filter = Control.MOUSE_FILTER_IGNORE
             line.add_child(sep)
         var label := HudWidgets.build_status_part(text,
-            HudWorkVocab.note_color(HudWorkVocab.KIT_SHORT_SEVERITY))
+            HudWorkVocab.note_color(HudWorkVocab.KIT_SHORT_SEVERITY), true)
         label.set_meta(HudWorkVocab.BUILD_QUEUE_ROW_TOOLS_LINE_META, text)
+        # It ends the line, so it takes what the date and mark leave and trims rather than widening it.
+        label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
         label.mouse_filter = Control.MOUSE_FILTER_IGNORE
         line.add_child(label)
     return line
@@ -5433,12 +5570,11 @@ func _queue_crop_choices(band: Dictionary, model: Dictionary) -> Array:
     var rung := String(model.get("improvement", "")).strip_edges().to_lower()
     if rung == SourceForecast.IMPROVEMENT_NONE:
         rung = String(model.get("building_policy", ""))
-    var flag := String(RungGates.CROP_LEGALITY_FLAGS.get(rung, ""))
-    if flag == "":
-        return []
     var x := int(model.get("x", -1))
     var y := int(model.get("y", -1))
     var patch: Dictionary = _band_labor.forage_patch_lookup().get(Vector2i(x, y), {})
+    if RungQuotes.quote_of_verb(patch, "", rung).is_empty():
+        return []
     var workers := int(model.get("workers", 0))
     var entries: Array = [{
         "label": HudWorkVocab.BUILD_QUEUE_CROP_DEFAULT_LABEL,
@@ -5448,7 +5584,7 @@ func _queue_crop_choices(band: Dictionary, model: Dictionary) -> Array:
     }]
     for entry_variant in SourceForecast.flora_basket_entries(patch.get("composition", [])):
         var entry: Dictionary = entry_variant
-        if not bool(entry.get(flag, false)):
+        if not RungQuotes.entry_can_climb(entry, rung):
             continue
         var species := String(entry.get("species", ""))
         entries.append({
@@ -5624,7 +5760,7 @@ func _open_rung_track(band: Dictionary, model: Dictionary, anchor: Control) -> v
 ## nothing in it is a click that answers nothing.
 func _pick_rung(band: Dictionary, model: Dictionary, source: Dictionary, rung: String,
         anchor: Control) -> void:
-    if RungLadder.rung_commits_a_crop(rung):
+    if RungLadder.rung_commits_a_crop(String(model.get("kind", ""))):
         var crops := RungLadder.crop_choices(source, HudComposeVocab.BARE_FORECAST_PREFIX, rung)
         if not crops.is_empty():
             _open_crop_step(band, model, source, rung, crops, anchor)
@@ -5663,7 +5799,7 @@ func _open_crop_step(band: Dictionary, model: Dictionary, source: Dictionary, ru
         # source's position, the faction's knowledge and whatever entry is queued all move per
         # snapshot, and a step left up across one of those would offer a rung already climbed.
         func() -> void: _open_rung_track(band, model, anchor),
-        rung))
+        RungQuotes.places_source(RungQuotes.quote_of_verb(source, HudComposeVocab.BARE_FORECAST_PREFIX, rung))))
     track.popup(_rung_track_anchor_rect(anchor))
 
 ## **THE RING'S PRICE CARD, OPENED FROM THE STANDING-RUNG MARK** (`docs/plan_standing_upkeep.md` §4.9
@@ -7317,7 +7453,14 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
         # `hunt_useful_workers`, so a crew the `+` allowed could read overstaffed.
         var published_ceiling := SourceForecast.worked_row_published_ceiling(kind, m,
             patch if kind == SourceForecast.LABOR_KIND_FORAGE else live_herd)
-        var yld := SourceForecast.source_yield_readout(m, kind, published_ceiling)
+        # The row's own worker noun for the overstaffed hover line, through the same fork the inspector's
+        # take key makes (herders on a managed hunt source, hunters on a wild one, harvesters on a patch).
+        var row_crew_noun := (HudComposeVocab.HARVEST_CREW_LABEL \
+            if kind == SourceForecast.LABOR_KIND_FORAGE \
+            else (HudComposeVocab.HERD_CREW_LABEL \
+                if SourceForecast.is_managed_hunt_source(live_herd, String(m.get("improvement", ""))) \
+                else HudComposeVocab.HUNT_CREW_LABEL)).to_lower()
+        var yld := SourceForecast.source_yield_readout(m, kind, published_ceiling, row_crew_noun)
         var overstaffed := "" \
             if published_ceiling != SourceForecast.MAX_USEFUL_UNBOUNDED \
             else HudDepositVocab.overstaffed_clause(workers, useful)
@@ -7491,8 +7634,10 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
         var site_short := HudWorkVocab.site_keeping_is_short(keep_kept, keep_demand)
         var standing := SourceForecast.standing_improvement(rung_source,
             HudComposeVocab.BARE_FORECAST_PREFIX)
-        var rung_word := String(HudComposeVocab.IMPROVEMENT_DONE_LABELS.get(standing,
-            HudWorkVocab.SITE_CREW_RUNG_WILD))
+        var rung_word := DetailFormat.improvement_done_noun(standing, rung_source,
+            HudComposeVocab.BARE_FORECAST_PREFIX)
+        if rung_word == "":
+            rung_word = HudWorkVocab.SITE_CREW_RUNG_WILD
         var under_kept_hint := ""
         if at_risk:
             var source_kind := SourceForecast.source_kind_for_labor(kind)
@@ -7500,7 +7645,8 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
                 HudComposeVocab.BARE_FORECAST_PREFIX)
             under_kept_hint = HudWorkVocab.under_kept_tooltip(kind,
                 DetailFormat.rung_badge_word(SourceForecast.at_risk_rung(
-                    rung_source, HudComposeVocab.BARE_FORECAST_PREFIX, source_kind)),
+                    rung_source, HudComposeVocab.BARE_FORECAST_PREFIX, source_kind), rung_source,
+                    HudComposeVocab.BARE_FORECAST_PREFIX),
                 int(upkeep["grace"]) if bool(upkeep.get("at_risk", false)) else 0, material_note,
                 tools_short, tools_named)
         # **THE KEEPING SHORTFALL FLIES THE ROW'S OWN KEEPING MARK** (`_build_site_keeping_mark`), so
@@ -7518,6 +7664,18 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
             # nothing home, and this one says the ground or the flock is being lost.
             note = HudWorkVocab.under_kept_note(kind, material_note, tools_short, tools_named)
             note_severity = HudWorkVocab.under_kept_note_severity(material_note)
+        # **A PEN THE SIM SAYS IS UNDERFED FLIES THE SAME WARNING THE MAP AND THE TURN ORB DO** —
+        # `PenStatus.herd_is_starving`, the one test the tile card's `Fed` row, the map's distress badge
+        # and the orb's `starving_pen` item all ask. The row said `Penned` and nothing else while all
+        # three warned. It takes the note slot only when the rung-loss note above has not (that is the
+        # graver one), and always the `⚠` and the hover.
+        var pen_underfed := kind == SourceForecast.LABOR_KIND_HUNT and PenStatus.herd_is_starving(rung_source)
+        if pen_underfed:
+            if not marks.contains(HudComposeVocab.OVERHUNT_FLAG):
+                marks += " " + HudComposeVocab.OVERHUNT_FLAG
+            if note == "":
+                note = DetailFormat.pen_underfed_note(rung_source)
+                note_severity = HudWorkVocab.NOTE_SEVERITY_WARN
         # **AND THE ROW FLIES A MARK OF ITS OWN FOR IT** — a KIT, never a second ⚠. The two hazards
         # have opposite remedies (the bench against the stepper), so one glyph for both would make a
         # player hover every marked row to learn which it is: the discovery problem this arc was
@@ -7603,8 +7761,8 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
             # bill both render it. The rung after the build is the DECLARED destination, `""` while no
             # build is in flight here.
             "tending": HudWorkVocab.tending_of(rung_source, HudComposeVocab.BARE_FORECAST_PREFIX,
-                String(HudComposeVocab.IMPROVEMENT_DONE_LABELS.get(destination_rung, ""))
-                    if not building.is_empty() else ""),
+                DetailFormat.improvement_done_noun(destination_rung, rung_source,
+                    HudComposeVocab.BARE_FORECAST_PREFIX) if not building.is_empty() else ""),
             "upkeep_material_terms": RungLadder.upkeep_material_terms(
                 rung_source, HudComposeVocab.BARE_FORECAST_PREFIX),
             "build_queued": queued_keys.has(String(key)),
@@ -7758,6 +7916,19 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
             # sentence. **`DetailFormat.build_blocked_lines` is that producer for BOTH surfaces** —
             # two copies of a refusal is how the card and the queue come to disagree — and the indent
             # is dropped because a tooltip hangs beneath no rung row.
+            # **WHAT THE SHELF LACKS OF THE PILE THIS BUILD STILL DRAWS** — the queue row's own clause,
+            # which the sim's `materials` cause cannot be: that key rides `-4` and fires only on an
+            # EMPTY shelf. A pen ring weighs the pen rung's own pile at the ring's own meter.
+            "build_material_short": DetailFormat.build_material_shortfall(
+                SourceForecast.corral_build_material_cost(rung_source,
+                    HudComposeVocab.BARE_FORECAST_PREFIX) \
+                    if improvement == SourceForecast.BUILD_JOB_EXTEND_PEN \
+                    else SourceForecast.build_material_cost(rung_source,
+                        HudComposeVocab.BARE_FORECAST_PREFIX),
+                DetailFormat.band_material_stock(band),
+                SourceForecast.pen_extend_fraction(live_herd) \
+                    if improvement == SourceForecast.BUILD_JOB_EXTEND_PEN \
+                    else float(building.get("progress", 0.0))),
             "build_blocked_lines": DetailFormat.build_blocked_lines(
                 rung_source, HudComposeVocab.BARE_FORECAST_PREFIX,
                 SourceForecast.source_kind_for_labor(kind),
@@ -7779,13 +7950,18 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
                 # row cannot carry a mark the player cannot read: on a band with no idle hands the
                 # cap note above is empty, so without this the attention flag would have no sentence
                 # anywhere on the row explaining what it is for.
-                overstaffed,
+                # **ONE LINE, ONE FACT, ON EITHER SPELLING OF THE CONDITION**: the closed-form clause
+                # (`⚠ overstaffed`, where the wire published no ceiling) states its figure on the hover
+                # in the same words the published one does — `⚠ Overstaffed: 2 of 3 herders add nothing`.
+                "" if overstaffed == "" else SourceForecast.overstaff_hover(
+                    workers - useful, workers, row_crew_noun),
                 # **THE KIT SHORTFALL RIDES THE HOVER for the same reason `overstaffed` does**: it
                 # raises the row's attention flag, and a row may not carry a mark whose sentence is
                 # nowhere on it. The board row has no prose line — the full pair is drawn in the
                 # inspector card's KITS section, beside the picker that chose the kit.
                 kit_note,
                 under_kept_hint,
+                DetailFormat.pen_underfed_hover(rung_source) if pen_underfed else "",
                 ready_tooltip,
                 building_tooltip,
                 HudWorkVocab.WORK_ROW_OPEN_HINT]),
@@ -7800,7 +7976,7 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
             # band-level *"you are short N kits"* readout Ray declined: *"we don't need it if in the
             # work tab we show each row that is short of kits."*
             "attention": bool(yld.get("warn", false)) or note != "" or pending
-                or overstaffed != "" or kit_note != "",
+                or overstaffed != "" or kit_note != "" or pen_underfed,
         })
     return models
 

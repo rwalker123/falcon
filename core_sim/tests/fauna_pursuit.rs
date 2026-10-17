@@ -21,6 +21,7 @@
 use bevy::ecs::system::RunSystemOnce;
 use bevy::math::UVec2;
 use bevy::prelude::World;
+use core_sim::shipped;
 
 use core_sim::grid_utils::hex_distance_wrapped;
 use core_sim::{
@@ -85,7 +86,8 @@ fn herd(id: &str, species: &str, start: UVec2, route: Vec<UVec2>) -> Herd {
         1000.0, // carrying_capacity
         0.0,    // fodder_per_biomass (no grazing)
         0.10,   // regrowth_rate
-        20.0,   // body_mass
+        20.0,   // body_mass,
+        shipped::root_standing(shipped::animal()),
     );
     h.current_pos = start;
     h

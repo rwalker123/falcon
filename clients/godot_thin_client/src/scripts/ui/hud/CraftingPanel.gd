@@ -1206,8 +1206,10 @@ func _row_key_of(offer: Dictionary, payload: Dictionary) -> String:
 	if item_id != "":
 		return item_id
 	var recipe_id := String(offer.get(HudCraftingVocab.OFFER_RECIPE_ID_KEY, ""))
-	var material_id := String(_stock_output(_recipe_of(recipe_id, payload)).get(
-		HudCraftingVocab.RECIPE_OUTPUT_MATERIAL_ID_KEY, ""))
+	var material_id := String(offer.get(HudCraftingVocab.OFFER_OUTPUT_MATERIAL_ID_KEY, ""))
+	if material_id == "":
+		material_id = String(_stock_output(_recipe_of(recipe_id, payload)).get(
+			HudCraftingVocab.RECIPE_OUTPUT_MATERIAL_ID_KEY, ""))
 	if material_id != "":
 		return HudCraftingVocab.LEDGER_MATERIAL_ROW_KEY_FORMAT % material_id
 	return HudCraftingVocab.LEDGER_STOCK_ROW_KEY_FORMAT % recipe_id
@@ -1216,8 +1218,16 @@ func _row_key_of(offer: Dictionary, payload: Dictionary) -> String:
 func _row_in(payload: Dictionary, key: String) -> Dictionary:
 	if key == NO_ROW:
 		return {}
-	for row in _ledger_rows(payload.get(PAYLOAD_BAND, {}), payload):
+	var rows := _ledger_rows(payload.get(PAYLOAD_BAND, {}), payload)
+	for row in rows:
 		if String(row["key"]) == key:
+			return row
+	# **A CRAFT SUGGESTION NAMES A MATERIAL BY ITS BARE ID** (`hurdles`) while its ledger row is keyed
+	# `material:hurdles`, so the join found nothing: the Queue button was dead, the name fell back to the
+	# raw id and the reason read as kit wording. An item's own row always wins above.
+	var material_key := HudCraftingVocab.LEDGER_MATERIAL_ROW_KEY_FORMAT % key
+	for row in rows:
+		if String(row["key"]) == material_key:
 			return row
 	return {}
 
@@ -2174,14 +2184,19 @@ func _kit_job_words(need: Dictionary) -> Dictionary:
 func _kit_workers_per_unit(item: Dictionary) -> int:
 	return maxi(int(item.get(HudCraftingVocab.KIT_ITEM_WORKERS_PER_UNIT_KEY, 1)), 1)
 
-## `min(have × workers_per_unit, N)` — the people the held units cover, capped at the head count.
-func _kit_item_equipped(item: Dictionary, people: int) -> int:
-	return mini(int(item.get(HudCraftingVocab.KIT_ITEM_HAVE_KEY, 0)) * _kit_workers_per_unit(item), people)
-
-## `max(0, ceil(N / workers_per_unit) − have)` — the units still missing.
-func _kit_item_gap(item: Dictionary, people: int) -> int:
-	return maxi(0, ceili(float(people) / float(_kit_workers_per_unit(item)))
-		- int(item.get(HudCraftingVocab.KIT_ITEM_HAVE_KEY, 0)))
+## **WHAT A KIT ITEM IS CLAIMED FOR, IN PEOPLE, AND HOW MANY OF THOSE ARE EQUIPPED** (`claimed` is the
+## sim's: units actually claimed by rows, pools, sites and queued builds on this kit). The headcount on
+## the kit's jobs is NOT the need — a job counts everyone on it against every kit it could use, which
+## read `6 hunters without traps` while no row used traps. Need is `ceil(claimed) × workers_per_unit`,
+## equipped is what is held against it. `{}` for an item nothing claims.
+func _kit_item_claim(item: Dictionary) -> Dictionary:
+	var claimed := float(item.get(HudCraftingVocab.KIT_ITEM_CLAIMED_KEY, 0.0))
+	if claimed < HudCraftingVocab.KIT_CLAIMED_MIN:
+		return {}
+	var per_unit := _kit_workers_per_unit(item)
+	var need := ceili(claimed - HudCraftingVocab.KIT_CLAIMED_MIN) * per_unit
+	var held := int(item.get(HudCraftingVocab.KIT_ITEM_HAVE_KEY, 0)) * per_unit
+	return {"need": need, "equipped": mini(held, need)}
 
 ## The ledger rows by row key (an equipment item's key IS its item id).
 func _rows_by_key(band: Dictionary, payload: Dictionary) -> Dictionary:
@@ -2388,46 +2403,56 @@ func _build_kit_row(need: Dictionary, rows: Dictionary) -> Control:
 	var kit_id := String(need.get(HudCraftingVocab.KIT_NEED_KIT_ID_KEY, ""))
 	var words := _kit_job_words(need)
 	var noun := String(words[HudCraftingVocab.KIT_JOB_NOUN_KEY])
-	var one := String(words[HudCraftingVocab.KIT_JOB_ONE_KEY])
-	var people := int(need.get(HudCraftingVocab.KIT_NEED_PEOPLE_KEY, 0))
 	var items: Array = need.get(HudCraftingVocab.KIT_NEED_ITEMS_KEY, [])
 
-	# What the kit as a whole has equipped is its WEAKEST item: a hunter with spears and no sled is not
-	# equipped for the kit.
-	var equipped := people if not items.is_empty() else 0
+	# **THE OWNED CELL READS THE WEAKEST CLAIMED ITEM**: a hunter with spears and no sled is not equipped
+	# for the kit, but only for what rows actually claim — `Y` is that claim rounded up, never the
+	# headcount. An item nothing claims takes no part in it.
 	var names: Array[String] = []
+	var in_use := false
+	var need_total := 0
+	var equipped := 0
+	var worst_deficit := -1
+	var short_parts: Array[String] = []
+	var any_uncovered := false
 	for item_variant in items:
 		var item: Dictionary = item_variant
-		equipped = mini(equipped, _kit_item_equipped(item, people))
-		names.append(_suggestion_item_name(String(item.get(HudCraftingVocab.KIT_ITEM_ID_KEY, "")),
-			rows.get(String(item.get(HudCraftingVocab.KIT_ITEM_ID_KEY, "")), {})))
+		var item_id := String(item.get(HudCraftingVocab.KIT_ITEM_ID_KEY, ""))
+		var item_name := _suggestion_item_name(item_id, rows.get(item_id, {}))
+		names.append(item_name)
+		var claim := _kit_item_claim(item)
+		if claim.is_empty():
+			continue
+		in_use = true
+		var claim_need := int(claim["need"])
+		var claim_equipped := int(claim["equipped"])
+		var deficit := claim_need - claim_equipped
+		if deficit > worst_deficit or (deficit == worst_deficit and claim_need > need_total):
+			worst_deficit = deficit
+			need_total = claim_need
+			equipped = claim_equipped
+		var short := int(item.get(HudCraftingVocab.KIT_ITEM_SHORT_KEY, 0))
+		if short > 0:
+			var queued := int(item.get(HudCraftingVocab.KIT_ITEM_QUEUED_KEY, 0))
+			var part := HudCraftingVocab.KIT_REASON_SHORT_FORMAT % [item_name, short]
+			if queued > 0:
+				part += HudCraftingVocab.KIT_REASON_COMING_FORMAT % queued
+			short_parts.append(part)
+			if queued < short:
+				any_uncovered = true
 
+	# **THREE STATES, AND ONLY THE SECOND IS A PROBLEM.** Nothing claims any item of the kit: quiet `Not
+	# in use`, no `N without`. Something claimed and short: the missing units by item, red while any is
+	# not on the bench's queue and dim once every gap is coming. Claimed and covered: `All N equipped`.
 	var reason := ""
 	var reason_ink := HudStyle.INK_FAINT
-	if people == 0:
-		reason = HudCraftingVocab.KIT_REASON_NONE_FORMAT % noun
-	elif equipped >= people:
-		reason = HudCraftingVocab.KIT_REASON_ALL_FORMAT % [people, noun]
+	if not in_use:
+		reason = HudCraftingVocab.KIT_REASON_NOT_IN_USE
+	elif not short_parts.is_empty():
+		reason = HudCraftingVocab.KIT_REASON_SHORT_SEPARATOR.join(short_parts)
+		reason_ink = HudStyle.DANGER if any_uncovered else HudStyle.INK_DIM
 	else:
-		var queued_parts: Array[String] = []
-		var unqueued_found := false
-		for i in range(items.size()):
-			var item: Dictionary = items[i]
-			var unit_gap := _kit_item_gap(item, people)
-			if unit_gap <= 0:
-				continue
-			var item_name := names[i].to_lower()
-			if not unqueued_found and unit_gap > int(item.get(HudCraftingVocab.KIT_ITEM_QUEUED_KEY, 0)):
-				unqueued_found = true
-				var without := people - _kit_item_equipped(item, people)
-				reason = HudCraftingVocab.KIT_REASON_WITHOUT_FORMAT % [without,
-					one if without == 1 else noun, item_name]
-				reason_ink = HudStyle.DANGER
-			queued_parts.append(HudCraftingVocab.KIT_REASON_QUEUED_PART_FORMAT % [unit_gap, item_name])
-		if not unqueued_found:
-			reason = HudCraftingVocab.KIT_REASON_QUEUED_FORMAT % \
-				HudCraftingVocab.KIT_REASON_QUEUED_SEPARATOR.join(queued_parts)
-			reason_ink = HudStyle.INK_DIM
+		reason = HudCraftingVocab.KIT_REASON_ALL_FORMAT % [need_total, noun]
 
 	# --- the item cell
 	var item_cell := VBoxContainer.new()
@@ -2450,13 +2475,13 @@ func _build_kit_row(need: Dictionary, rows: Dictionary) -> Control:
 	owned.set_meta(HudCraftingVocab.KIT_OWNED_META, kit_id)
 	if equipped > 0:
 		var count_label := Label.new()
-		count_label.text = HudCraftingVocab.KIT_OWNED_FORMAT % [equipped, people]
+		count_label.text = HudCraftingVocab.KIT_OWNED_FORMAT % [equipped, need_total]
 		count_label.add_theme_font_size_override("font_size", HudCraftingVocab.OWNED_COUNT_FONT_SIZE)
 		count_label.add_theme_color_override("font_color", HudStyle.INK)
 		owned.add_child(count_label)
 		owned.add_child(_chip(HudCraftingVocab.KIT_OWNED_CHIP, HudCraftingVocab.OWNED_GRADE_MID_COLOR,
 			HudCraftingVocab.OWNED_CHIP_FONT_SIZE))
-	elif people > 0:
+	elif in_use:
 		owned.add_child(_chip(HudCraftingVocab.KIT_NONE_EQUIPPED, HudStyle.DANGER,
 			HudCraftingVocab.OWNED_CHIP_FONT_SIZE))
 	else:
@@ -3036,7 +3061,8 @@ func _build_suggestion_row(suggestion: Dictionary, payload: Dictionary) -> Contr
 	var ledger_row := _row_in(payload, item_id)
 	var row := _ledger_row_container()
 	row.set_meta(HudCraftingVocab.SUGGESTION_META, item_id)
-	row.tooltip_text = _coming_up_tooltip(suggestion) if coming_up_only else _suggestion_tooltip(suggestion)
+	row.tooltip_text = _coming_up_tooltip(suggestion) if coming_up_only \
+		else _suggestion_tooltip(suggestion, _is_material_row(ledger_row))
 	row.mouse_filter = Control.MOUSE_FILTER_PASS
 	if coming_up_only:
 		row.set_meta(HudCraftingVocab.SUGGESTION_COMING_UP_META, item_id)
@@ -3148,6 +3174,9 @@ func _suggestion_item_name(item_id: String, ledger_row: Dictionary) -> String:
 ## because a builder's gear always adds work, so the work clause would hide which build it is for. Both
 ## numbers are the sim's, rendered as they arrive.
 func _suggestion_consequence(suggestion: Dictionary, payload: Dictionary = {}) -> String:
+	var ledger_row := _row_in(payload, String(suggestion.get(HudCraftingVocab.SUGGESTION_ITEM_ID_KEY, "")))
+	if _is_material_row(ledger_row):
+		return _material_suggestion_consequence(suggestion, payload, ledger_row)
 	var queued := _earliest_build_queue_source(suggestion)
 	if not queued.is_empty():
 		var builders := float(queued.get(HudCraftingVocab.SOURCE_WORKERS_WITHOUT_KEY, 0.0))
@@ -3161,6 +3190,26 @@ func _suggestion_consequence(suggestion: Dictionary, payload: Dictionary = {}) -
 	return HudCraftingVocab.SUGGESTION_WITHOUT_FORMAT % [
 		_amount_text(float(suggestion.get(HudCraftingVocab.SUGGESTION_WORKERS_WITHOUT_KEY, 0.0))),
 		_suggestion_crew_noun(suggestion)]
+
+## Is this ledger row a material the bench makes (a `stock` recipe), not a piece of equipment?
+func _is_material_row(row: Dictionary) -> bool:
+	return not row.is_empty() and String(row.get("group", "")) == HudCraftingVocab.GROUP_STOCK
+
+## **A MATERIAL SUGGESTION'S REASON IS GOODS, NEVER PEOPLE**: the units the queued builds still lack
+## (the sources' `missing_units`, summed), named by the material's own title and the build it holds up
+## (`2 more Hurdles, for Corral Wild Boar`; the head job has no queue row, so `the top job`). The kit
+## wording (`N builders without`) states a crew and a material has none.
+func _material_suggestion_consequence(suggestion: Dictionary, payload: Dictionary,
+		ledger_row: Dictionary) -> String:
+	var missing := 0.0
+	for source_variant in suggestion.get(HudCraftingVocab.SUGGESTION_SOURCES_KEY, []):
+		if source_variant is Dictionary:
+			missing += float((source_variant as Dictionary).get(HudCraftingVocab.SOURCE_MISSING_UNITS_KEY, 0.0))
+	var queued := _earliest_build_queue_source(suggestion)
+	var subject := HudCraftingVocab.SUGGESTION_MATERIAL_TOP_JOB if queued.is_empty() \
+		else _build_queue_label(queued, payload)
+	return HudCraftingVocab.SUGGESTION_MATERIAL_FORMAT % [_amount_text(missing),
+		_suggestion_item_name("", ledger_row), subject]
 
 ## **THE EARLIEST QUEUED-BUILD SOURCE, WHEN NOTHING ELSE IS SHORT** - `{}` unless the suggestion carries a
 ## `build_queue` line and every other line is the builders' own (the head job). Any take, site or other
@@ -3220,14 +3269,14 @@ static func _job_crew_noun(job: String) -> String:
 
 ## **THE SOURCES, ONE LINE EACH, ON THE ROW'S HOVER** — who is short, where, by how many units, how
 ## many people that leaves without, and the work a turn where the shortage costs work.
-func _suggestion_tooltip(suggestion: Dictionary) -> String:
+func _suggestion_tooltip(suggestion: Dictionary, is_material: bool = false) -> String:
 	var lines: Array[String] = []
 	for source_variant in suggestion.get(HudCraftingVocab.SUGGESTION_SOURCES_KEY, []):
 		if source_variant is Dictionary:
-			lines.append(_suggestion_source_line(source_variant))
+			lines.append(_suggestion_source_line(source_variant, is_material))
 	return HudCraftingVocab.SUGGESTION_TOOLTIP_SEPARATOR.join(lines)
 
-func _suggestion_source_line(source: Dictionary) -> String:
+func _suggestion_source_line(source: Dictionary, is_material: bool = false) -> String:
 	var job := String(source.get(HudCraftingVocab.SOURCE_JOB_KEY, ""))
 	var who := _job_crew_noun(job)
 	if who == "":
@@ -3245,6 +3294,9 @@ func _suggestion_source_line(source: Dictionary) -> String:
 		who = HudCraftingVocab.SUGGESTION_SOURCE_MATERIAL_FORMAT % [who, material]
 	if kind == HudCraftingVocab.SOURCE_KIND_SITE:
 		who = HudCraftingVocab.SUGGESTION_SOURCE_KEEPING_FORMAT % who
+	if is_material:
+		return HudCraftingVocab.SUGGESTION_MATERIAL_SOURCE_FORMAT % [who,
+			_amount_text(float(source.get(HudCraftingVocab.SOURCE_MISSING_UNITS_KEY, 0.0)))]
 	var line := HudCraftingVocab.SUGGESTION_SOURCE_FORMAT % [who,
 		_amount_text(float(source.get(HudCraftingVocab.SOURCE_MISSING_UNITS_KEY, 0.0))),
 		_amount_text(float(source.get(HudCraftingVocab.SOURCE_WORKERS_WITHOUT_KEY, 0.0)))]

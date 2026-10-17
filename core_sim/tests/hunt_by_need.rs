@@ -11,6 +11,7 @@ use bevy::app::App;
 use bevy::ecs::system::RunSystemOnce;
 use bevy::math::UVec2;
 use bevy::prelude::Entity;
+use core_sim::shipped;
 
 use core_sim::hunt_by_need::NO_HUNT_NEEDED;
 use core_sim::{
@@ -135,6 +136,7 @@ fn resident_herd(
         FODDER_PER_BIOMASS,
         REGROWTH_RATE,
         body,
+        shipped::root_standing(shipped::animal()),
     );
     herd.roam = RoamState::Loiter {
         turns_left: LOITER_WINDOW,

@@ -43,13 +43,14 @@ mod pen_materials_support;
 
 use bevy::app::App;
 use bevy::math::UVec2;
+use core_sim::shipped;
 
 use core_sim::{
     build_test_app, recapture_snapshot_in_place, run_turn, scalar_from_f32, scalar_one,
     scalar_zero, FactionId, FaunaConfigHandle, ForageRegistry, GenerationId, GrazeRegistry,
-    HerdRegistry, Improvement, LaborAllocation, LaborAssignment, LaborTarget, LadderConfigHandle,
-    LocalStore, MoraleCause, PopulationCohort, ResidentBand, RungKey, SnapshotHistory,
-    SourcePriority, StartingUnit, TakeSelection, TileRegistry, DEFAULT_ESCAPEMENT_FLOOR,
+    HerdRegistry, LaborAllocation, LaborAssignment, LaborTarget, LadderConfigHandle, LocalStore,
+    MoraleCause, PopulationCohort, ResidentBand, RungId, SnapshotHistory, SourcePriority,
+    StartingUnit, TakeSelection, TileRegistry, VerbId, DEFAULT_ESCAPEMENT_FLOOR,
 };
 use sim_schema::NO_BUILD_DESTINATION_CAPACITY;
 
@@ -98,7 +99,7 @@ const BUILD_HORIZON: u32 = 60;
 // The plant web
 // ---------------------------------------------------------------------------------------------
 
-/// **A watered gathering site whose basket can climb to `plant:field`** — every conjunct of the Sow
+/// **A watered gathering site whose basket can climb to `plant:farm`** — every conjunct of the Sow
 /// gate but the staffing, so a refusal cannot be mistaken for the number under test. The same scan
 /// `build_turns_on_the_wire.rs` runs, in a totally-ordered `(y, x)` pass rather than map iteration
 /// order.
@@ -139,7 +140,7 @@ fn a_sowable_site(app: &mut App) -> UVec2 {
                     tiles.get(&neighbor).map(|tile| tile.terrain_tags)
                 });
             let refusal = core_sim::rung_site_refusal(
-                ladder.rung(RungKey::PlantField),
+                ladder.rung(shipped::plant_farm()),
                 ground,
                 &labor.forage,
                 app.world
@@ -147,14 +148,20 @@ fn a_sowable_site(app: &mut App) -> UVec2 {
                     .is_site(coord),
                 fresh_water,
                 core_sim::NO_DEPOSIT_FLOOR,
+                &|_| false,
             );
             if refusal.is_some() {
                 continue;
             }
             let composition =
                 core_sim::tile_flora_composition(&flora, &labor.forage, ground, map_seed);
-            if core_sim::default_species_for_rung(&composition, &flora, RungKey::PlantField)
-                .is_some()
+            if core_sim::default_species_for_rung(
+                &composition,
+                &flora,
+                shipped::ladder(),
+                shipped::plant_farm(),
+            )
+            .is_some()
             {
                 return coord;
             }
@@ -170,11 +177,12 @@ fn a_sowable_site(app: &mut App) -> UVec2 {
 fn world_with_a_sow_in_flight() -> (App, UVec2) {
     // At the **foot of the Field rung** — the Cultivate leg is paid, so the entry's remaining climb
     // is exactly the one rung that raises `K`, and the whole gain is still ahead of it.
-    let seat =
-        |ladder: &core_sim::LadderConfig| core_sim::plant_rung_span(RungKey::PlantField, ladder).0;
+    let seat = |ladder: &core_sim::LadderConfig| {
+        core_sim::plant_rung_span(shipped::plant_farm(), ladder).0
+    };
     world_with_a_plant_build(
-        Improvement::Sow,
-        RungKey::PlantField,
+        shipped::sow(),
+        shipped::plant_farm(),
         A_LARGE_BUILD_POOL,
         &seat,
     )
@@ -185,14 +193,14 @@ fn world_with_a_sow_in_flight() -> (App, UVec2) {
 /// stands and the row quotes it.
 fn world_with_a_cultivate_in_flight() -> (App, UVec2) {
     let seat = |ladder: &core_sim::LadderConfig| {
-        let (base, width) = core_sim::plant_rung_span(RungKey::PlantTended, ladder);
+        let (base, width) = core_sim::plant_rung_span(shipped::plant_tended(), ladder);
         base + width * HALF_BUILT
     };
     // **A crew small enough that the rung does NOT land in the fixture's one turn** — the entry
     // has to still be standing when the row is read, or the arm measures the unqueued case.
     world_with_a_plant_build(
-        Improvement::Cultivate,
-        RungKey::PlantTended,
+        shipped::cultivate(),
+        shipped::plant_tended(),
         A_SLOW_BUILD_POOL,
         &seat,
     )
@@ -205,8 +213,8 @@ const HALF_BUILT: f32 = 0.5;
 /// The shared plant fixture: a staffed build on sowable ground, seated wherever `seat` says and
 /// committed to a crop that can climb `crop_rung`.
 fn world_with_a_plant_build(
-    declared: Improvement,
-    crop_rung: RungKey,
+    declared: VerbId,
+    crop_rung: RungId,
     builders: u32,
     seat: &dyn Fn(&core_sim::LadderConfig) -> f32,
 ) -> (App, UVec2) {
@@ -240,7 +248,7 @@ fn world_with_a_plant_build(
             .clone();
         let composition =
             core_sim::tile_flora_composition(&flora, &labor.forage, &ground, map_seed);
-        core_sim::default_species_for_rung(&composition, &flora, crop_rung)
+        core_sim::default_species_for_rung(&composition, &flora, shipped::ladder(), crop_rung)
             .expect("the site was chosen for having one")
     };
     {
@@ -264,7 +272,7 @@ fn spawn_the_farming_band(
     source: UVec2,
     gatherers: u32,
     builders: u32,
-    declared: Improvement,
+    declared: VerbId,
 ) {
     // **The keeping is staffed generously**, because an unkept plant meter *rots* — this fixture is
     // about where the build is going, not about whether it survives neglect.
@@ -339,7 +347,7 @@ fn spawn_the_farming_band(
             ],
             build_queue: vec![core_sim::BuildQueueEntry {
                 source: core_sim::BuildSource::Patch(source),
-                declared: core_sim::BuildJob::Rung(declared),
+                declared: core_sim::BuildJob::Climb(core_sim::shipped::rung_of_verb(declared)),
                 priority: core_sim::SourcePriority::default(),
             }],
             ..Default::default()
@@ -484,7 +492,7 @@ fn a_sown_field_delivers_the_capacity_its_build_advertised() {
 ///
 /// Rung 2 buys the ground a faster curve, not a denser one, so its destination capacity is the live
 /// one. It is asserted because it is the arm that pins the reading to the **destination rung** rather
-/// than to the top of the branch: a quote that reached for `plant:field` whatever the entry named
+/// than to the top of the branch: a quote that reached for `plant:farm` whatever the entry named
 /// would publish `field_capacity_gain ×` here and be wrong by the whole gain.
 #[test]
 fn a_cultivate_destination_quotes_the_capacity_rung_two_actually_buys() {
@@ -497,7 +505,7 @@ fn a_cultivate_destination_quotes_the_capacity_rung_two_actually_buys() {
     });
     assert_eq!(
         rung,
-        RungKey::PlantTended.wire_key(),
+        shipped::plant_tended().wire_key(),
         "fixture: the entry must be aimed at the tended rung"
     );
     let (live, destination) = published_patch_capacities(&app, source);
@@ -564,13 +572,13 @@ const PASTORAL_SPECIES: &str = "Wild Boar";
 /// A headless world whose one game herd is a [`PASTORAL_SPECIES`] flock with a staffed `Tame` queued
 /// on it, standing still on a range held at full graze.
 fn world_with_a_tame_in_flight() -> (App, String) {
-    world_with_an_animal_build(Improvement::Tame, ALREADY_TAMED_NO)
+    world_with_an_animal_build(shipped::tame(), ALREADY_TAMED_NO)
 }
 
 /// [`world_with_a_tame_in_flight`]'s rung-3 twin: the same flock, **already tamed**, knowing Penning,
 /// with a `Corral` in the queue.
 fn world_with_a_corral_in_flight() -> (App, String) {
-    world_with_an_animal_build(Improvement::Corral, ALREADY_TAMED_YES)
+    world_with_an_animal_build(shipped::corral(), ALREADY_TAMED_YES)
 }
 
 /// Whether the fixture hands the band a herd it has already tamed — rung 3's precondition, and the
@@ -579,7 +587,7 @@ const ALREADY_TAMED_YES: bool = true;
 const ALREADY_TAMED_NO: bool = false;
 
 /// The shared animal fixture.
-fn world_with_an_animal_build(declared: Improvement, already_tamed: bool) -> (App, String) {
+fn world_with_an_animal_build(declared: VerbId, already_tamed: bool) -> (App, String) {
     let mut app = build_test_app();
     app.update();
 
@@ -658,7 +666,7 @@ fn spawn_the_herding_band(
     app: &mut App,
     tile: bevy::prelude::Entity,
     herd_id: &str,
-    declared: Improvement,
+    declared: VerbId,
 ) {
     let hunters = 2;
     let keepers = 12;
@@ -736,7 +744,7 @@ fn spawn_the_herding_band(
             ],
             build_queue: vec![core_sim::BuildQueueEntry {
                 source: core_sim::BuildSource::Herd(herd_id.to_string()),
-                declared: core_sim::BuildJob::Rung(declared),
+                declared: core_sim::BuildJob::Climb(core_sim::shipped::rung_of_verb(declared)),
                 priority: core_sim::SourcePriority::default(),
             }],
             ..Default::default()

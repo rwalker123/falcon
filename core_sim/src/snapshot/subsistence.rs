@@ -1,4 +1,4 @@
-use sim_runtime::{MaterialPayoff, SpeciesMaterialRates};
+use sim_runtime::{MaterialPayoff, RungQuoteState, SpeciesMaterialRates};
 
 use std::collections::BTreeMap;
 
@@ -9,12 +9,12 @@ use crate::fauna::{
 };
 use crate::forage::{
     forage_per_worker_biomass, patch_ecology, patch_fodder_per_biomass,
-    patch_neglect_grace_remaining, patch_provisions_per_biomass, tended_fodder,
+    patch_neglect_grace_remaining, patch_provisions_per_biomass,
 };
 use crate::intensification::{
-    build_fraction, build_work_per_worker_turn, knowledge_title_from_id, NOT_IN_ANY_BUILD_QUEUE,
-    NO_BUILD_GEAR, NO_CREW_ON_THIS_ACTIVITY, NO_DEPOSIT_FLOOR, NO_RUNG_WIDTH, NO_UPKEEP_DECAY,
-    NO_UPKEEP_DEMAND, RUNG_COST_UNSCALED,
+    build_fraction, build_work_per_worker_turn, knowledge_title_from_id, SourceKind,
+    NOT_IN_ANY_BUILD_QUEUE, NO_BUILD_GEAR, NO_CREW_ON_THIS_ACTIVITY, NO_DEPOSIT_FLOOR,
+    NO_RUNG_WIDTH, NO_UPKEEP_DECAY, NO_UPKEEP_DEMAND, RUNG_COST_UNSCALED,
 };
 use sim_schema::{
     BUILD_METER_HOLDS, BUILD_METER_ROTS, BUILD_NOT_YET_ESTIMATED, BUILD_QUEUE_BLOCKED,
@@ -135,7 +135,7 @@ pub(crate) fn graze_phase_code(patch: Option<&GrazePatch>) -> u8 {
 
 /// **WHERE THE QUEUED ENTRY IS TAKING THIS SOURCE, in the wire's spelling** — the destination rung as
 /// `<branch>:<id>`, or `""` for a source no band has queued.
-fn published_destination_rung(destination: Option<crate::intensification::RungKey>) -> String {
+fn published_destination_rung(destination: Option<crate::intensification::RungId>) -> String {
     destination.map_or_else(String::new, |rung| rung.wire_key())
 }
 
@@ -144,7 +144,7 @@ fn published_destination_rung(destination: Option<crate::intensification::RungKe
 /// **The client must not re-derive these.** The rung spans are the sim's config, the source's
 /// position is the sim's state, and the dates are chained against a build queue the client cannot
 /// see — so a client reconstructing them would be a second producer of a verdict that has one.
-fn published_build_legs(
+pub(crate) fn published_build_legs(
     legs: &[crate::intensification::PublishedBuildLeg],
 ) -> Vec<sim_runtime::BuildLegState> {
     legs.iter()
@@ -191,9 +191,22 @@ pub(crate) struct QueuedBuildSources {
     /// **The workings some band has queued**, keyed `(tile, material)` because one tile can hold two
     /// and a `fell` queued on the timber is not a `quarry` queued on the rock beneath it.
     deposits: std::collections::HashSet<(UVec2, String)>,
+    /// **The tile improvements some band has queued**, keyed `(tile, branch)` - the registry's own
+    /// key, since one tile can carry an improvement of several branches.
+    tiles: std::collections::HashSet<(UVec2, crate::intensification::BranchId)>,
 }
 
 impl QueuedBuildSources {
+    /// **IS THIS TILE IMPROVEMENT IN SOME BAND'S LIVE QUEUE?** - the tile kind's twin of
+    /// [`Self::road_is_queued`], and the gate on the builder's scratch a rival may not read.
+    pub(crate) fn tile_is_queued(
+        &self,
+        tile: UVec2,
+        branch: crate::intensification::BranchId,
+    ) -> bool {
+        self.tiles.contains(&(tile, branch))
+    }
+
     /// **Is this road tile in some band's live build queue?** — the route twin of
     /// [`Self::patch_is_queued`], and the `queued_live` term of [`published_build_countdown`].
     pub(crate) fn road_is_queued(&self, tile: UVec2) -> bool {
@@ -244,6 +257,9 @@ pub(crate) fn resolve_queued_build_sources<'a>(
                 }
                 crate::components::BuildSource::Deposit { tile, material } => {
                     resolved.deposits.insert((*tile, material.clone()));
+                }
+                crate::components::BuildSource::Tile { tile, branch } => {
+                    resolved.tiles.insert((*tile, *branch));
                 }
             }
         }
@@ -780,43 +796,7 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
                     }
                     _ => entry.ecology_phase.clone(),
                 },
-                // **THE BUILD METERS COME OFF THE LIVE HERD, NOT THE DISPLAY ENTRY.**
-                // `HerdTelemetry` is written in Startup and Logistics, and the build accrual runs
-                // in `advance_labor_allocation` at **Population** — after both — so `entry`'s copy
-                // of these three is always the meter as of the *previous* turn. That was invisible
-                // while the row said only "Domesticating 96%", and became a self-contradiction once
-                // the live `tameWorkDone`/`tameWorkCost` pair joined it in the same sentence: a
-                // finished Tame published as "50 / 50 work (99%)". Read live, as
-                // `penExtendProgress` below already is. `entry` remains the fallback for the
-                // unreachable "in telemetry, gone from the registry" case, exactly like every other
-                // field here.
-                domestication: herd
-                    .map(|herd| {
-                        build_fraction(
-                            herd.rung_work_done(RungKey::AnimalPastoral, ladder),
-                            herd.rung_cost(RungKey::AnimalPastoral, ladder),
-                        )
-                    })
-                    .unwrap_or(entry.domestication),
-                corralled: herd
-                    .map(|herd| herd.is_corralled())
-                    .unwrap_or(entry.corralled),
-                // **THE RAW METER, not the standing's credit.** `animal:pen` is `on_completion`, so
-                // its credit is `0` until the fence closes — that rule governs what a half-built pen
-                // is *worth*, never what its progress bar reads. A player fencing a range watches it
-                // fill, exactly as the plant web publishes `cultivationProgress`.
-                corral_progress: herd
-                    .map(|herd| {
-                        build_fraction(
-                            herd.rung_work_done(RungKey::AnimalPen, ladder),
-                            herd.rung_cost(RungKey::AnimalPen, ladder),
-                        )
-                    })
-                    .unwrap_or(entry.corral_progress),
                 per_worker_yield: forecast.per_worker_yield.provisions,
-                // The Corral investment rung's (gross) payoff once penned; the preparing dip is
-                // `hunt_policy_ceilings[stance] × corral_build_fraction` (issue #442).
-                corral_yield: forecast.managed_yield.provisions,
                 // The pen as a managed population: whether its grass and hay are feeding it.
                 // `pen_fed_fraction` is the value the keeper's tend branch wrote this turn (Population
                 // runs before the capture), so the client reads the CURRENT turn's feeding, and `1.0`
@@ -977,7 +957,12 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
                 // Husbandry ceiling (Grazing 2d-δ) — the client hides the corral/extend affordance on a
                 // non-`pen` herd and the domestication track on a `wild` one.
                 husbandry_ceiling: herd
-                    .map(|herd| herd.husbandry_ceiling.as_str().to_string())
+                    .map(|herd| {
+                        inputs
+                            .ladder
+                            .ceiling_wire_id(herd.husbandry_ceiling, SourceKind::Herd)
+                            .to_string()
+                    })
                     .unwrap_or_default(),
                 // Body mass (slice 8b) — the client turns a per-turn rate into a kill-rhythm with it.
                 body_mass: herd.map(|herd| herd.body_mass).unwrap_or(0.0),
@@ -1002,38 +987,6 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
                 herded_fraction: herd
                     .map(|herd| crate::fauna::herd_herded_fraction(herd, fauna, ladder))
                     .unwrap_or(FULLY_HERDED),
-                // The Tame rung's payoff — the pastoral twin of `corral_yield`: what a Sustain hunt
-                // pays once this herd is tamed (the pastoral MSY), so the client can quote Tame's
-                // `→ +Y` beside its during-building dip. Sourced from the same `hunt_forecast` object
-                // every ceiling above reads, so it cannot drift; `0` for a source that never offers
-                // Tame (penned/forage), which is exactly `SourceYieldForecast::pastoral_yield`.
-                pastoral_yield: forecast.pastoral_yield.provisions,
-                // **THE TWO INVESTMENT RUNGS' MATERIAL PAYOFFS** (arc #527) — the twins of
-                // `corral_yield`/`pastoral_yield` above, and the replacement for the retired
-                // `corral_trade`/`pastoral_trade`. Without them an inedible quarry's Tame and Corral
-                // rungs quote nothing at all: a wolf's food payoff on both is honestly `0`.
-                //
-                // Priced on the **same** MSY biomass the food quotes are — the forecast hands both
-                // over (`managed_yield_biomass` / `pastoral_yield_biomass`) precisely so a rung's two
-                // readouts cannot describe different harvests.
-                corral_material: herd
-                    .map(|herd| {
-                        material_rates(
-                            fauna.hunt_materials_for(&herd.species),
-                            forecast.managed_yield_biomass,
-                            FORECAST_OUTPUT_MULTIPLIER,
-                        )
-                    })
-                    .unwrap_or_default(),
-                pastoral_material: herd
-                    .map(|herd| {
-                        material_rates(
-                            fauna.hunt_materials_for(&herd.species),
-                            forecast.pastoral_yield_biomass,
-                            FORECAST_OUTPUT_MULTIPLIER,
-                        )
-                    })
-                    .unwrap_or_default(),
                 // The hay this pen drew last turn (Flora Roster F3) — the transient `Herd::fodder_draw`
                 // the corral-tend branch wrote. **It is the whole of the feed split beside
                 // `pen_pasture_fraction`**: grass and hay in one unit against one demand, so the
@@ -1164,100 +1117,6 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
                 // `assign_labor … hunt <herd> <n>` resolves with no `kit` token. Off the single
                 // `quoted` resolution above, so it names the kit the row's own tiers came from.
                 default_kit_id: quoted.kit_id.clone(),
-                // **THE BUILD, PRICED IN WORK** (`docs/plan_unit_costed_work.md` §8). `work_done` is
-                // the herd's own meter; `work_cost` is what that job costs **on this herd**, resolved
-                // LIVE off the ladder (times the species' `taming_cost_multiplier` for the Tame) and
-                // published **whether or not a build is in flight** — the compose sheet has to quote
-                // the price before the player commits, and the herd's *stamped* cost is `0` until
-                // someone starts. Penning takes no species multiplier: a fence is a fence.
-                tame_work_done: herd
-                    .map(|herd| herd.rung_work_done(RungKey::AnimalPastoral, ladder))
-                    .unwrap_or(0.0),
-                tame_work_cost: ladder
-                    .rung(RungKey::AnimalPastoral)
-                    .build_cost(fauna.taming_cost_multiplier_for(&entry.species))
-                    .unwrap_or(0.0),
-                corral_work_done: herd
-                    .map(|herd| herd.rung_work_done(RungKey::AnimalPen, ladder))
-                    .unwrap_or(0.0),
-                corral_work_cost: ladder
-                    .rung(RungKey::AnimalPen)
-                    .build_cost(RUNG_COST_UNSCALED)
-                    .unwrap_or(0.0),
-                // **AND WHAT HOLDING IT WILL COST** — the *second* term of the same quote, resolved
-                // here for the same reason and by the same rule as the `*_work_cost` above: off the
-                // **ladder**, per rung, **whether or not a build is in flight**. A price with no
-                // standing bell beside it is half a quote: the player is committing to a rate their
-                // keeping pool will owe forever, from the first work banked.
-                //
-                // **It is NOT netted off the build** (`docs/plan_standing_upkeep.md` §4.6a) — the
-                // keeping owes it whatever the builders do, so `work_cost / crew` really is the
-                // pace. What a build's closed form nets is `meter_rot_per_turn`, published below.
-                //
-                // **`upkeep_demand` above cannot answer this**, and deliberately: it is what this
-                // herd is *billed* today — `0` on a herd nobody has started, which is exactly the
-                // herd a compose sheet is looking at.
-                //
-                // **⛔ THE TWO NO LONGER COINCIDE ONCE A BUILD IS IN FLIGHT.** This line used to say
-                // they did, and that stopped being true when the animal keeping demand began
-                // **interpolating on the herd's position**: a herd part-way up the pastoral rung is
-                // billed a *fraction* of that rung's rate, so the bill sits strictly below this quote
-                // for the whole build and meets it only at the rung's top. That is the plant web's
-                // shape exactly, and `build_turns_closed_form` pins it as the ordering
-                // `0 < billed <= quoted` rather than as an equality.
-                //
-                // **At this herd's own keeper load**, because both animal rungs quote their rate per
-                // keeper-load (`scaled_by: source_load`), and the load is ownership-independent —
-                // `herders_needed_if_managed`'s rule, for its reason: a quote has to exist before
-                // the herd is anyone's.
-                tame_upkeep_demand: herd.map_or(NO_UPKEEP_DEMAND, |herd| {
-                    ladder
-                        .rung(RungKey::AnimalPastoral)
-                        .upkeep_demand(crate::fauna::herd_keeper_load(herd, fauna))
-                }),
-                corral_upkeep_demand: herd.map_or(NO_UPKEEP_DEMAND, |herd| {
-                    ladder
-                        .rung(RungKey::AnimalPen)
-                        .upkeep_demand(crate::fauna::herd_keeper_load(herd, fauna))
-                }),
-                // **THE MATERIAL TWIN OF THAT PAIR** — the rung's own rate at this herd's keeper
-                // load, resolved live because it prices a rung the herd may not be on. It is what
-                // makes the `⌃` track's aside reachable at all: a **pastoral** herd is the only
-                // source that track ever offers the Pen rung from, and its own rung declares no
-                // material, so the stamped `upkeep_material_demand` beside it is empty on exactly
-                // the row the player is deciding on.
-                tame_upkeep_material_demand: herd.map_or_else(Vec::new, |herd| {
-                    rung_material_rate(
-                        ladder,
-                        RungKey::AnimalPastoral,
-                        crate::fauna::herd_keeper_load(herd, fauna),
-                    )
-                }),
-                corral_upkeep_material_demand: herd.map_or_else(Vec::new, |herd| {
-                    rung_material_rate(
-                        ladder,
-                        RungKey::AnimalPen,
-                        crate::fauna::herd_keeper_load(herd, fauna),
-                    )
-                }),
-                // **THE BUILD TWIN OF THAT PAIR, AND THE ONLY PLACE A RING'S PILE IS PRICED** —
-                // the whole `animal:pen` build pile, at full coverage. It exists for word-for-word
-                // the reason `corral_upkeep_material_demand` above does: a **corralled** herd is the
-                // only source a ring is ever offered from, `RungKey::AnimalPen.above()` is `None`,
-                // and `build_material_cost` below is therefore empty on exactly the row the player
-                // is deciding on. `systems::labor::head_ring_leg` prices a ring's width at this same
-                // rung's `build_cost(RUNG_COST_UNSCALED)` and `build_material_wants` draws this same
-                // rung's pile against it, so a whole ring swallows exactly this list.
-                //
-                // **It takes NO herd**, unlike every neighbour here: those scale by
-                // `herd_keeper_load`, and this one must not. Penning carries no per-species
-                // multiplier and the ring's width is unscaled, so a scaled quote would show one
-                // price and charge another. The pile is a property of the ladder rung alone.
-                //
-                // On a **pastoral** herd this equals `build_material_cost` below **by
-                // construction** — the same `rung_material_pile(ladder, RungKey::AnimalPen)` reached
-                // through two selectors, never a second reading of the ladder.
-                corral_build_material_cost: rung_material_pile(ladder, RungKey::AnimalPen),
                 // **The plant twin's field**, so a client's build estimate is one expression across
                 // both webs — and **always `0` here**, because neither animal rung declares a
                 // `meter_decay`: an under-kept flock sheds animals instead. Nothing eats an animal
@@ -1289,10 +1148,28 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
                 // The unreachable "in telemetry, gone from the registry" row falls back to the
                 // branch's bottom rung, like every other field here falls back rather than lying.
                 current_rung: herd
-                    .map_or(RungKey::AnimalWild, crate::fauna::herd_rung_key)
+                    .map_or(
+                        ladder.kind_root(SourceKind::Herd).rung_id(),
+                        crate::fauna::herd_rung_key,
+                    )
                     .wire_key(),
+                // **THE SIZE TIER THIS HERD'S FENCE HAS REACHED** (`ranch`), empty in none - derived
+                // from the footprint through the one `fauna::herd_size_tier`.
+                size_tier: herd
+                    .and_then(|herd| crate::fauna::herd_size_tier(herd, ladder))
+                    .map(|tier| tier.id.clone())
+                    .unwrap_or_default(),
+                // **EVERY RUNG'S QUOTE** - one row per rung of the herd branch above the root, built
+                // by iterating the ladder; see [`herd_rung_quotes`].
+                rung_quotes: herd_rung_quotes(&HerdQuoteInputs {
+                    herd,
+                    species: &entry.species,
+                    fauna,
+                    ladder,
+                    forecast: &forecast,
+                }),
                 // **THE MATERIAL HALF OF THE LADDER'S PRICE** (`docs/plan_standing_upkeep.md` §2.7).
-                // The pile is the rung the `⌃` track would offer next — `RungKey::above` the one the
+                // The pile is the rung the `⌃` track would offer next — `LadderConfig::above_id` the one the
                 // herd stands on — resolved off the **ladder** at capture and published whether or
                 // not a build is in flight, exactly as `*WorkCost` beside it is. Empty at the top of
                 // the branch, which is the honest reading rather than a repeat of the pen's own —
@@ -1301,8 +1178,9 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
                 // as "a ring is free", and the gap gets re-derived.
                 build_material_cost: herd
                     .map(|herd| {
-                        crate::fauna::herd_rung_key(herd)
-                            .above()
+                        inputs
+                            .ladder
+                            .above_id(crate::fauna::herd_rung_key(herd))
                             .map_or_else(Vec::new, |next| rung_material_pile(inputs.ladder, next))
                     })
                     .unwrap_or_default(),
@@ -1335,6 +1213,7 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
                         graze,
                         &prey_index,
                         fauna,
+                        ladder,
                         width,
                         height,
                         wrap_horizontal,
@@ -1420,6 +1299,204 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
         .collect()
 }
 
+/// A rung's site rule as the catalog publishes it.
+fn site_rule_state(
+    site: &crate::intensification::RungSiteRequirement,
+) -> sim_runtime::SiteRuleState {
+    sim_runtime::SiteRuleState {
+        requires_gathering_site: site.requires_gathering_site,
+        min_forage_capacity: site.min_forage_capacity,
+        requires_fresh_water: site.requires_fresh_water,
+    }
+}
+
+/// **WHAT A PLANT ROW'S RUNG QUOTES ARE STRUCK FROM** - one patch (already redacted to wild ground
+/// where the viewer may not read its improvement), the tile's basket and the three configs, plus the
+/// two measures a rung's price and bill are quoted at.
+struct PatchQuoteInputs<'a> {
+    patch: &'a crate::forage::ForagePatch,
+    tile_composition: &'a [crate::flora_config::FloraShare],
+    forage: &'a ForageLaborConfig,
+    flora: &'a FloraConfig,
+    ladder: &'a LadderConfig,
+    /// The tile's tender-loads: the measure every `source_load` rung quotes its rate per.
+    tender_loads: f32,
+    /// What a `replaced_share` rung is priced at on this patch.
+    field_cost_multiplier: f32,
+    /// Why each site-gated rung refuses this tile; absent = it takes the rung.
+    site_refusals: &'a HashMap<(UVec2, RungId), SiteRefusal>,
+}
+
+/// **EVERY RUNG OF THE PLANT BRANCH, QUOTED ON THIS PATCH** - the one producer of what the retired
+/// `cultivation*` / `tended*` / `field*` / `sowSiteRefusal` fields carried. It **iterates the
+/// ladder's rungs above the root** and prices each by its own record and its own traits
+/// ([`crate::forage::PlantPayoff::of_rung`]); nothing here names a rung, so a fourth plant step is a
+/// JSON edit that appears on the wire with no code change.
+///
+/// Every figure is the same seam the sim pays or gates with, so a quote and its outcome cannot
+/// disagree: the work cost through `forage::plant_rung_cost`, the meter through
+/// `forage::patch_rung_work_done`, the yield and fodder through `forage::rung_payoff` /
+/// `rung_fodder_payoff`, the refusal through the capture's `RungSiteRequirement::refusal` sweep.
+fn patch_rung_quotes(inputs: &PatchQuoteInputs<'_>) -> Vec<RungQuoteState> {
+    let PatchQuoteInputs {
+        patch,
+        tile_composition,
+        forage,
+        flora,
+        ladder,
+        tender_loads,
+        field_cost_multiplier,
+        site_refusals,
+    } = *inputs;
+    let held = patch.standing().held;
+    ladder
+        .rungs_of(ladder.branch_of_kind(SourceKind::Patch))
+        .into_iter()
+        .skip(BRANCH_ROOT_RUNGS)
+        .map(|def| {
+            let rung = def.rung_id();
+            let work_done = crate::forage::patch_rung_work_done(patch, rung, ladder);
+            let work_cost =
+                crate::forage::plant_rung_cost(def, field_cost_multiplier).unwrap_or(NO_RUNG_WIDTH);
+            let payoff = crate::forage::PlantPayoff::of_rung(ladder, rung);
+            RungQuoteState {
+                rung_key: rung.wire_key(),
+                reached: ladder.at_or_above(held, rung),
+                progress: build_fraction(work_done, work_cost),
+                work_done,
+                work_cost,
+                build_material_cost: rung_material_pile(ladder, rung),
+                upkeep_demand: def.upkeep_demand(tender_loads),
+                upkeep_material_demand: rung_material_rate(ladder, rung, tender_loads),
+                food_yield: crate::forage::rung_payoff(
+                    patch,
+                    tile_composition,
+                    forage,
+                    flora,
+                    FORECAST_OUTPUT_MULTIPLIER,
+                    payoff,
+                ),
+                fodder: crate::forage::rung_fodder_payoff(
+                    patch,
+                    tile_composition,
+                    forage,
+                    flora,
+                    FORECAST_OUTPUT_MULTIPLIER,
+                    payoff,
+                ),
+                // A plant's materials are priced per species (`FloraShareInfo`), not per rung.
+                material_payoff: Vec::new(),
+                site_refusal: site_refusals
+                    .get(&(patch.tile, rung))
+                    .map_or(SITE_ACCEPTED, |refusal| refusal.as_str())
+                    .to_string(),
+            }
+        })
+        .collect()
+}
+
+/// **WHAT A HERD ROW'S RUNG QUOTES ARE STRUCK FROM** - the live herd (`None` only for the
+/// unreachable "in telemetry, gone from the registry" row, which quotes prices and no standing), the
+/// species, the configs and the row's own yield forecast.
+struct HerdQuoteInputs<'a> {
+    herd: Option<&'a crate::fauna::Herd>,
+    species: &'a str,
+    fauna: &'a FaunaConfig,
+    ladder: &'a LadderConfig,
+    forecast: &'a crate::fauna::SourceYieldForecast,
+}
+
+/// **EVERY RUNG OF THE HERD BRANCH, QUOTED ON THIS HERD** - the animal twin of
+/// [`patch_rung_quotes`], and the one producer of what the retired `domestication*` / `tame*` /
+/// `corral*` / `pastoral*` fields carried. It iterates the ladder's rungs above the root and prices
+/// each by its record and its traits ([`crate::fauna::HerdPayoff::of`]); nothing here names a rung.
+///
+/// The payoff block is the **forecast's own**: an `enclosed` rung pays `managed_yield` and a
+/// `domesticated` one `pastoral_yield` (which the forecast already zeroes past the pastoral rung -
+/// an offer that is no longer on the table), both converted into the species' material rows at the
+/// same MSY biomass the food quote is, so the two accounts describe one harvest.
+fn herd_rung_quotes(inputs: &HerdQuoteInputs<'_>) -> Vec<RungQuoteState> {
+    let HerdQuoteInputs {
+        herd,
+        species,
+        fauna,
+        ladder,
+        forecast,
+    } = *inputs;
+    ladder
+        .rungs_of(ladder.branch_of_kind(SourceKind::Herd))
+        .into_iter()
+        .skip(BRANCH_ROOT_RUNGS)
+        .map(|def| {
+            let rung = def.rung_id();
+            // **Two loads, because a tier loosens the hands and not the fence**: the WORK term is
+            // struck at the load a size tier divides (a Ranch minds more head per keeper); the
+            // MATERIAL term at the raw load (a fence mends in proportion to the herd it holds).
+            let work_load =
+                herd.map(|herd| crate::fauna::herd_work_keeper_load(herd, fauna, ladder));
+            let material_load = herd.map(|herd| crate::fauna::herd_keeper_load(herd, fauna));
+            // `(food, the biomass the material rows are struck at)` for the block this rung pays.
+            let (food_yield, payoff_biomass) = match crate::fauna::HerdPayoff::of(def.trait_set()) {
+                crate::fauna::HerdPayoff::Pen => (
+                    forecast.managed_yield.provisions,
+                    forecast.managed_yield_biomass,
+                ),
+                crate::fauna::HerdPayoff::Pastoral => (
+                    forecast.pastoral_yield.provisions,
+                    forecast.pastoral_yield_biomass,
+                ),
+                crate::fauna::HerdPayoff::Wild => (NO_RUNG_PAYOFF, NO_RUNG_PAYOFF),
+            };
+            let work_done = herd.map_or(NO_RUNG_WIDTH, |herd| herd.rung_work_done(rung, ladder));
+            RungQuoteState {
+                rung_key: rung.wire_key(),
+                reached: herd.is_some_and(|herd| ladder.at_or_above(herd.standing().held, rung)),
+                // **The raw meter, not the standing's credit**: an `on_completion` rung (the pen)
+                // credits nothing until its fence closes, which governs what a half-built pen is
+                // *worth*, never what its progress bar reads.
+                progress: herd.map_or(NO_RUNG_WIDTH, |herd| {
+                    build_fraction(work_done, herd.rung_cost(rung, ladder))
+                }),
+                work_done,
+                // The ladder's price on THIS species: a `species_taming` rung times the species'
+                // own multiplier, every other rung the ladder's own.
+                work_cost: def
+                    .build_cost(match def.cost_scale {
+                        crate::intensification::CostScale::SpeciesTaming => {
+                            fauna.taming_cost_multiplier_for(species)
+                        }
+                        _ => RUNG_COST_UNSCALED,
+                    })
+                    .unwrap_or(NO_RUNG_WIDTH),
+                build_material_cost: rung_material_pile(ladder, rung),
+                upkeep_demand: work_load.map_or(NO_UPKEEP_DEMAND, |load| def.upkeep_demand(load)),
+                upkeep_material_demand: material_load
+                    .map_or_else(Vec::new, |load| rung_material_rate(ladder, rung, load)),
+                food_yield,
+                fodder: NO_ANIMAL_PAYS_FODDER,
+                material_payoff: herd
+                    .map(|herd| {
+                        material_rates(
+                            fauna.hunt_materials_for(&herd.species),
+                            payoff_biomass,
+                            FORECAST_OUTPUT_MULTIPLIER,
+                        )
+                    })
+                    .unwrap_or_default(),
+                site_refusal: SITE_ACCEPTED.to_string(),
+            }
+        })
+        .collect()
+}
+
+/// How many leading rungs of a branch carry no quote: the root, which is what a source stands on
+/// before anything is built and so has no price, bill or payoff of its own to state.
+const BRANCH_ROOT_RUNGS: usize = 1;
+
+/// The payoff a rung that pays no block (a rung carrying neither `domesticated` nor `enclosed`)
+/// quotes: nothing.
+const NO_RUNG_PAYOFF: f32 = 0.0;
+
 /// Per-tile depletable-forage cultivation/ecology display state (Intensification Phase 1a) for the
 /// client tile card, plus each patch's **pre-commit yield forecast** (`forage::forage_forecast` —
 /// the same ceiling/conversion helpers `forage_take` pays with, so forecast == actual). One entry per
@@ -1427,16 +1504,17 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
 /// `ForageRegistry` map iteration order is not). `owner` crosses as the tending faction's `u32`
 /// (`None` for a wild/untended patch).
 ///
-/// `sow_site_refusals` maps tile coord → **why the `plant:field` rung refuses that ground**, resolved
+/// `rung_site_refusals` maps `(tile coord, rung)` → **why that rung refuses that ground**, resolved
 /// by the caller (which has the tiles and the hydrology) through the one shared
-/// `RungSiteRequirement::refusal` seam. **Absent = the land takes seed** — the same
-/// absent-means-nothing convention `seasonal_weights` uses.
+/// `RungSiteRequirement::refusal` seam, for every plant rung that declares a `site_requirement`.
+/// **Absent = the land takes the rung** — the same absent-means-nothing convention
+/// `seasonal_weights` uses.
 ///
 /// `seasonal_weights` maps tile coord → that tile's `FoodModuleTag::seasonal_weight`, folded into the
 /// forecast's per-worker throughput exactly as the Forage labor arm folds it into `forage_take`. A
 /// patch whose tile carries no food module forecasts at [`NO_FORAGE_SEASON`] — no per-worker gather at
 /// all, which is exactly what such a tile offers. **That is a reachable state since slice 5**: `Sow`
-/// places a Field on any ground the `plant:field` rung's `site_requirement` accepts — module or not —
+/// places a Field on any ground the `plant:farm` rung's `site_requirement` accepts — module or not —
 /// and a Field is gathered through the same seasonless `forage_take` path as every rung beneath it, so it forecasts correctly regardless. Captured at
 /// `output_multiplier = 1.0`: the client scales by the acting band's `outputMultiplier`.
 ///
@@ -1556,7 +1634,7 @@ pub(crate) fn snapshot_forage_patches(
     flora: &FloraConfig,
     ladder: &LadderConfig,
     seasonal_weights: &HashMap<UVec2, f32>,
-    sow_site_refusals: &HashMap<UVec2, SiteRefusal>,
+    rung_site_refusals: &HashMap<(UVec2, RungId), SiteRefusal>,
     tile_capacities: &HashMap<UVec2, f32>,
     tile_quotes: &FloraQuoteCache,
     // **The live builders kit per queued source** — read off the bands' queues at capture rather
@@ -1657,7 +1735,14 @@ pub(crate) fn snapshot_forage_patches(
         let patch = if improvement_is_legible {
             patch
         } else {
-            wild_ground = patch.as_wild_ground(tile_capacity, forage);
+            wild_ground = patch.as_wild_ground(
+                tile_capacity,
+                forage,
+                crate::intensification::RungStanding::unstarted_on(
+                    ladder,
+                    ladder.branch_of_kind(SourceKind::Patch),
+                ),
+            );
             &wild_ground
         };
         // ⛔ **AND WHOSE BUILD THIS IS FOLLOWS THE BUILDER, NOT THE GROUND.** The improvement
@@ -1701,38 +1786,26 @@ pub(crate) fn snapshot_forage_patches(
         // The patch's own ecology — the seam `refresh_ecology_phase` classified the published
         // `ecology_phase` word with, so the bands and the word describe the same source.
         let ecology = patch_ecology(patch, forage);
-        // **THE LADDER'S price for each plant rung, resolved once and used by both halves of the
-        // pair.** The fraction and the work pair must divide by the same number or the wire
-        // states one meter twice, from two denominators.
-        //
-        // **`RUNG_COST_UNSCALED` on the tended rung, THIS PATCH'S OWN PRICE on the Field.**
-        // Clearing wild ground is clearing wild ground, so Cultivate is flat; a Sow is priced by
-        // how much of the tile the crop still has to replace
-        // (`forage::patch_field_cost_multiplier`, `docs/plan_standing_upkeep.md` §4.15). The
+        // **THE PRICE OF A REPLACED-SHARE RUNG ON THIS PATCH, resolved once** and handed to every
+        // rung quote below, so a rung's progress fraction and its work cost divide by the same
+        // number. A rung priced `replaced_share` (the shipped Sow) is priced by how much of the
+        // tile the crop still has to replace (`forage::patch_field_cost_multiplier`,
+        // `docs/plan_standing_upkeep.md` §4.15); every other rung is the ladder's own price. The
         // **published** figure has to be the scaled one, because this is the price the compose
-        // sheet and the `⌃` mark quote a Sow at — and a quote that disagreed with the charge is
-        // exactly the defect class §4.3's rule exists to catch. Before the leg starts it is the
-        // live measure, which is the same number that leg will be stamped with (see
-        // `forage::field_replaced_share`).
-        let cultivation_work_cost = ladder
-            .rung(RungKey::PlantTended)
-            .build_cost(RUNG_COST_UNSCALED)
-            .unwrap_or(NO_RUNG_WIDTH);
-        let field_work_cost = ladder
-            .rung(RungKey::PlantField)
-            .build_cost(wild.map_or_else(
-                || {
-                    crate::forage::patch_field_cost_multiplier(
-                        patch,
-                        tile_composition,
-                        flora,
-                        forage,
-                        ladder,
-                    )
-                },
-                |wild| wild.field_cost_multiplier,
-            ))
-            .unwrap_or(NO_RUNG_WIDTH);
+        // sheet and the `⌃` mark quote at, and a quote that disagreed with the charge is exactly
+        // the defect class §4.3's rule exists to catch.
+        let field_cost_multiplier = wild.map_or_else(
+            || {
+                crate::forage::patch_field_cost_multiplier(
+                    patch,
+                    tile_composition,
+                    flora,
+                    forage,
+                    ladder,
+                )
+            },
+            |wild| wild.field_cost_multiplier,
+        );
         // **THE CONVERSION RATE, RESOLVED ONCE FOR THE ROW AND THE FORECAST BOTH.** It is
         // published as `provisionsPerBiomass` *and* is the rate every ceiling the forecast
         // composes is struck at, so deriving it in both places evaluated one basket average
@@ -1789,26 +1862,6 @@ pub(crate) fn snapshot_forage_patches(
         ForagePatchState {
             x: patch.tile.x,
             y: patch.tile.y,
-            // **The wire keeps the 0..1 fraction; the source keeps ONE position** — the
-            // per-rung meter is that position read into the rung's own span **through the
-            // patch's standing** (`forage::patch_rung_work_done`), divided by the rung's live
-            // cost. So a patch that holds the tended rung reads exactly `1.0` beside an
-            // `is_cultivated` that is already true, and a Field at 40% still reads its Cultivate
-            // as complete — which is the rung-ordering bug made unrepresentable rather than
-            // merely forbidden.
-            //
-            // ⛔ **"CLAMPED INTO THE RUNG'S OWN SPAN" IS WHAT THIS USED TO SAY, AND IT IS WHY A
-            // FINISHED FIELD READ 99%.** The clamp is `position − base` against a completion
-            // test of `position >= base + width`, and `fl(base + width) − base` is not `width`
-            // whenever that addition rounds — so `isField` and `fieldProgress` were two readings
-            // of one question and could contradict each other. The meter asks the standing now
-            // (`intensification::rung_work_done`); the equality above is a construction rather
-            // than a coincidence of the arithmetic.
-            cultivation_progress: build_fraction(
-                crate::forage::patch_rung_work_done(patch, RungKey::PlantTended, ladder),
-                cultivation_work_cost,
-            ),
-            is_cultivated: patch.is_cultivated(),
             owner: patch.owner.map(|faction| faction.0),
             biomass: patch.biomass,
             // **WHAT THE PATCH HOLDS NOW — the rung is IN this number.** It is the tile's `K`
@@ -1828,36 +1881,6 @@ pub(crate) fn snapshot_forage_patches(
             // `forage::PLANT_FODDER_FORECAST_NOT_YET_PROJECTED` (a known gap, #426), so these
             // project the provisions component rather than shipping a false `0` fodder line.
             per_worker_yield: forecast.per_worker_yield.provisions,
-            // The Cultivate investment rung: the preparing dip + the payoff once cultivated.
-            tended_yield: forecast.managed_yield.provisions,
-            // The Sow rung (plant 3): its own two meters — independent of cultivation's, since a
-            // Field may stand on ground that was never tended — and its own preparing/payoff
-            // pair. `field_yield` below comes off the same `rung_payoff` seam the labor arm pays a
-            // Field with, so the client's "then Y" is the number the sim will hand over.
-            field_progress: build_fraction(
-                crate::forage::patch_rung_work_done(patch, RungKey::PlantField, ladder),
-                field_work_cost,
-            ),
-            is_field: patch.is_field(),
-            // **Through `rung_payoff` at rung 3** — the same seam the sim pays every plant rung
-            // with, asked about the Field by name. It used to call a rung-3-only managed rate;
-            // that model is retired, so the quote and the payout are one expression again.
-            field_yield: crate::forage::rung_payoff(
-                patch,
-                tile_composition,
-                forage,
-                flora,
-                FORECAST_OUTPUT_MULTIPLIER,
-                RungKey::PlantField,
-            ),
-            // **Why this ground will not take seed** — resolved by the caller through the *same*
-            // `RungSiteRequirement::refusal` seam the `sow` command and the labor arm gate on, so
-            // the wire cannot disagree with the gate. Absent from the map = the land takes seed
-            // (`SITE_ACCEPTED`), mirroring `seasonal_weights`' absent-means-none convention.
-            sow_site_refusal: sow_site_refusals
-                .get(&patch.tile)
-                .map_or(SITE_ACCEPTED, |refusal| refusal.as_str())
-                .to_string(),
             // **THE PER-BIOMASS YIELD VECTOR** — what one unit of this patch's standing crop
             // is worth, in every account (`docs/plan_harvest_floor.md` §5), at the patch's own
             // basket-averaged rates: the same `patch_*_per_biomass` seams `forage_take` pays
@@ -1898,54 +1921,18 @@ pub(crate) fn snapshot_forage_patches(
                 forage_per_worker_biomass(equipped_gather_rate, seasonal),
                 FORECAST_OUTPUT_MULTIPLIER,
             ),
-            // **THE BUILD, PRICED IN WORK** (`docs/plan_unit_costed_work.md` §8). `work_done` is
-            // the patch's own meter; `work_cost` is what that job costs, resolved LIVE off the
-            // ladder and published **whether or not a build is in flight** — the compose sheet
-            // has to quote the price before the player commits, and the patch's *stamped* cost is
-            // `0` until someone starts. `RUNG_COST_UNSCALED` on both: the only per-source cost
-            // multiplier on the ladder is a species' taming cost, and a plant has no species.
-            cultivation_work_done: crate::forage::patch_rung_work_done(
+            // **EVERY RUNG'S QUOTE** - one row per rung of the plant branch above the root, built by
+            // iterating the ladder; see [`patch_rung_quotes`].
+            rung_quotes: patch_rung_quotes(&PatchQuoteInputs {
                 patch,
-                RungKey::PlantTended,
+                tile_composition,
+                forage,
+                flora,
                 ladder,
-            ),
-            cultivation_work_cost,
-            field_work_done: crate::forage::patch_rung_work_done(
-                patch,
-                RungKey::PlantField,
-                ladder,
-            ),
-            field_work_cost,
-            // **AND THE RATE THAT EATS IT** — the plant twin; the herd row has the reasoning.
-            // `upkeep_demand` below resolves through the **at-risk** rung
-            // (`forage::patch_unwinding_rung`) and is therefore `0` on a wild patch, which is
-            // precisely the patch a compose sheet is quoting.
-            //
-            // # ⛔ THE QUOTE MOVES WITH THE BILL, or there are two producers of one verdict
-            //
-            // Both plant rungs declare `scaled_by: source_load` and quote their rate **per
-            // tender-load**, so these are struck through **this patch's own tile capacity** —
-            // the same measure `patch_upkeep_demand` bills against. Quoting the bare ladder rate
-            // would price every patch in the game identically and promise `4.0` for a Field that
-            // will actually be billed `4.31`.
-            cultivation_upkeep_demand: ladder
-                .rung(RungKey::PlantTended)
-                .upkeep_demand(tender_loads),
-            field_upkeep_demand: ladder.rung(RungKey::PlantField).upkeep_demand(tender_loads),
-            // **The material twin of that pair** — the herd row's own rule, one web over, at this
-            // patch's own tender-loads. Empty on both plant rungs today; the seam exists because
-            // the route branch's stone is what lands in it next, and a per-web asymmetry here
-            // would be a second model.
-            cultivation_upkeep_material_demand: rung_material_rate(
-                ladder,
-                RungKey::PlantTended,
                 tender_loads,
-            ),
-            field_upkeep_material_demand: rung_material_rate(
-                ladder,
-                RungKey::PlantField,
-                tender_loads,
-            ),
+                field_cost_multiplier,
+                site_refusals: rung_site_refusals,
+            }),
             // **WHAT THE GROUND WILL LOSE UNDER THE BUILDERS** — exactly what the next
             // decay pass will bleed off the at-risk meter, and the term a build's closed form
             // nets (`docs/plan_standing_upkeep.md` §4.6a). See `RungDef::meter_rot` for why the
@@ -1989,8 +1976,8 @@ pub(crate) fn snapshot_forage_patches(
             // No plant rung on the shipped ladder declares a material, so all three are empty
             // today; the seam exists because the route branch's stone is the next thing to land
             // in it and a per-web asymmetry here would be a second model.
-            build_material_cost: crate::forage::patch_rung_key(patch)
-                .above()
+            build_material_cost: ladder
+                .above_id(crate::forage::patch_rung_key(patch))
                 .map_or_else(Vec::new, |next| rung_material_pile(ladder, next)),
             upkeep_material_demand: material_payoffs(&crate::forage::patch_material_keeping_basis(
                 patch,
@@ -2010,6 +1997,7 @@ pub(crate) fn snapshot_forage_patches(
                 tile_capacity,
                 patch,
                 forage,
+                ladder,
             ),
             // **WHAT THE PATCH'S OWN CREW SPENT KEEPING IT THIS TURN** (`docs/plan_site_crews.md`
             // §2.1) — stamped by the labour pass beside `upkeep_supplied`, reported not re-derived.
@@ -2102,26 +2090,6 @@ pub(crate) fn snapshot_forage_patches(
             // patch, which is most of them.
             has_neglect_grace: neglect_grace.is_some(),
             neglect_grace_remaining: neglect_grace.unwrap_or(NO_NEGLECT_REMAINING),
-            // The two investment rungs' PAYOFF twins — each projected at **its own** rung
-            // (`tended_*` at rung 2, `field_*` at rung 3), never at the rung the patch happens to
-            // stand on. That is the #433 rule, and getting it wrong is the exact defect #433
-            // fixed: a Sow quote that inherited the tended basket's conversion gain overstated by
-            // 10% on the reference tile and by the full 2× wherever weeding saturates.
-            tended_fodder: tended_fodder(
-                patch,
-                tile_composition,
-                forage,
-                flora,
-                FORECAST_OUTPUT_MULTIPLIER,
-            ),
-            field_fodder: crate::forage::rung_fodder_payoff(
-                patch,
-                tile_composition,
-                forage,
-                flora,
-                FORECAST_OUTPUT_MULTIPLIER,
-                RungKey::PlantField,
-            ),
             // **What is growing here — as this PATCH has it** (#433). The tile names the
             // plants (§2, per-tile realization §10) and the patch's rung then says how much of
             // each: a tended patch's basket visibly collapses toward its crop and a Field
@@ -2421,191 +2389,170 @@ const NO_BUILD_WORK: f32 = 0.0;
 /// `route:paved_road` sits here.
 const NO_BUILD_MATERIAL: f32 = 0.0;
 
-/// **WHAT A ROAD MAY BECOME** — the route branch's rung catalog, once per world and carrying no
-/// tile. `RouteState` publishes the rung a tile **stands on**; this publishes the whole climb, so a
-/// client can price a rung nothing has built yet.
+/// **A RUNG WITH NO ROAD PAYOFF HELPS NO HAUL** - the `friction_multiplier` a rung without a
+/// `route_payoff` publishes: the wire's neutral 1.0 (no help), so a defaulted row never claims a
+/// non-road rung makes a road cheaper.
+const NO_ROUTE_FRICTION_HELP: f32 = 1.0;
+
+/// **A RUNG WITH NO ROAD PAYOFF HOLDS NO LINK OPEN** - its `holds_link_to_tiles`.
+const NO_LINK_HELD_OPEN: u32 = 0;
+
+/// **A RUNG WITH NO EXTRACTION PAYOFF TAKES NOTHING** - the neutral `yield_per_worker_turn` and
+/// `recovery_fraction` a non-deposit rung publishes.
+const NO_EXTRACTION_TAKE: f32 = 0.0;
+
+/// **WHAT ANY SOURCE MAY BECOME** - the ladder's rung catalog, once per world and carrying no tile.
+/// The source rows publish the rung a source **stands on**; this publishes every branch's whole
+/// climb, so a client can price a rung nothing has built yet, on a ground where nothing has been.
 ///
 /// ⛔ **EVERY FIELD IS DERIVED FROM `intensification_ladder.json`, EXACTLY AS THE KNOWLEDGE ROSTER
 /// ABOVE IS.** Nothing here is separately authored and no value is restated: the cost and the bill
-/// are the rung's own `build` / `upkeep` blocks, the payoff is its `route_payoff`, and the chain is
-/// its `requires_rung`. A rung added to that config appears in the ladder with no further edit,
+/// are the rung's own `build` / `upkeep` blocks, a road's payoff is its `route_payoff`, a deposit's
+/// is its `extraction_payoff`, the site rule is its `site_requirement`, and the chain is its
+/// `requires_rung`. A rung or a whole branch added to that config appears with no further edit,
 /// which is the whole reason this rides the wire instead of a client-side table.
 ///
-/// **The two rates are the rung's own, before the tile's multipliers.** A road's real price also
-/// carries its keeper's remoteness quote and its ground's `infrastructure_cost`, and both of those
-/// are per-tile facts published on `RouteState` — a catalog row is the branch's figure, which is the
-/// only one that is the same for every road in the world.
+/// **Branches in the config's own order, rungs in climb order within each.** The payoff fields of a block
+/// the rung does not declare read the wire's neutral value, so a plant rung never claims to be a
+/// road that helps a haul.
 ///
-/// **`build_work_per_worker_turn` is the one field that is the SIM'S and not the config rung's**,
-/// and it rides here for that same reason: it is identical for every rung and for every road in the
-/// world, which is the only kind of number a ladder can quote. Every source row publishes its own
-/// copy; a road's own row does not repeat it — one constant per road on the map — so without this
-/// the client would have to hold a transcription of
-/// [`crate::intensification::PER_WORKER_OUTPUT`] and would not learn of a second term landing in it.
-pub(crate) fn snapshot_route_rungs(ladder: &LadderConfig) -> Vec<RouteRungState> {
-    crate::routes::route_rungs_in_climb_order(ladder)
+/// **The two rates are the rung's own, before the source's multipliers.** A road's real price also
+/// carries its keeper's remoteness quote and its ground's `infrastructure_cost`, a working's bill
+/// its keeper-loads - per-source facts published on those rows. A catalog row is the branch's
+/// figure, the only one that is the same for every source on it.
+///
+/// **`build_work_per_worker_turn` is the one field that is the SIM'S and not the config rung's**:
+/// identical for every rung and every source, so it rides the catalog, and a client left to
+/// transcribe [`crate::intensification::PER_WORKER_OUTPUT`] would not learn of a second term landing
+/// in it.
+pub(crate) fn snapshot_ladder_rungs(ladder: &LadderConfig) -> Vec<LadderRungState> {
+    ladder
+        .branches_in_config_order()
         .into_iter()
-        .map(|rung| {
-            // The same `expect` `routes::road_payoff_at` makes, and for the same reason: the ladder's
-            // own `validate` requires a payoff on every route rung and rejects one anywhere else, so
-            // a neutral default here would be a second, quieter answer to a config that cannot load.
-            let payoff = rung
-                .route_payoff
-                .as_ref()
-                .expect("validate requires a route_payoff on every route rung");
-            // **THE PILE AND ITS NOUN, FROM ONE LOOKUP** — so the amount and the material it is
-            // counted in can never disagree. `None` for a rung that eats nothing, which is every
-            // route rung but `route:paved_road`.
-            //
-            // ⛔ **THE FIRST ENTRY, NOT A SUM.** One material per rung is the branch's model: the
-            // wire carries a single float, so a second declared material would make the *amount*
-            // meaningless before the id had to choose between them. Summing would publish a number
-            // no id could honestly name.
-            let pile = rung.build_materials().next();
-            RouteRungState {
-                rung_key: rung.wire_key(),
-                order: rung.order,
-                // The same spelling the knowledge roster resolves its titles with — both are
-                // underscored ladder ids, and a second capitalization rule would be a second answer
-                // to one question.
-                display_name: knowledge_title_from_id(&rung.id),
-                verb: rung.verb.clone().unwrap_or_default(),
-                unlock_knowledge: rung.unlock_knowledge.clone().unwrap_or_default(),
-                requires_rung: rung.requires_rung_wire_key().unwrap_or_default(),
-                // Unscaled: the remoteness quote is the tile's, not the rung's.
-                work_cost: rung.build_cost(RUNG_COST_UNSCALED).unwrap_or(NO_BUILD_WORK),
-                upkeep_work_per_turn: rung
-                    .upkeep
-                    .as_ref()
-                    .map_or(NO_UPKEEP_DEMAND, |upkeep| upkeep.work_per_turn),
-                friction_multiplier: payoff.friction_multiplier,
-                holds_link_to_tiles: payoff.holds_link_to_tiles,
-                grants_sight: crate::routes::rung_grants_sight(rung),
-                // **The remedy a gate asks for**, and it is the rung's own `earns_knowledge` rather
-                // than anything read off the chain: the rung that TEACHES a knowledge and the rung
-                // directly beneath the one it gates are two different facts that merely coincide on
-                // the shipped four.
-                earns_knowledge: rung.earns_knowledge.clone().unwrap_or_default(),
-                // **The bare rate, read and not restated** — through the same
-                // `build_work_per_worker_turn` seam the patch and herd rows publish theirs by, at
-                // `NO_BUILD_GEAR`, because it is the *sum of terms* the model is written as and a
-                // second term added there must reach this row too.
-                //
-                // It is the same figure for every rung — the sim's one answer to *what does a
-                // worker bank in a turn* — so it rides the CATALOG and not the tile row. A road
-                // does not repeat it on its own row for that reason, and a client left to
-                // transcribe the constant instead would go stale in silence the day that sum grows.
-                build_work_per_worker_turn: build_work_per_worker_turn(NO_BUILD_GEAR),
-                // ⛔ **THE PILE, AND IT IS FLAT WHERE `work_cost` ABOVE IS NOT.** The work is quoted
-                // unscaled here because the *tile's* remoteness still has to be applied to it; the
-                // material takes no such multiplier at all, so this figure is already the whole
-                // truth for every tile on the map. A tile of road needs the same stone wherever it
-                // lies, and remoteness already taxes the getting there.
-                //
-                build_material_cost: pile.map_or(NO_BUILD_MATERIAL, |(_, amount)| amount),
-                // ⛔ **THE NOUN, BECAUSE THE AMOUNT ALONE CANNOT BE A SENTENCE.** The rung row read
-                // *"+ 20 to raise it"* without it — twenty of *what*. The client must not supply
-                // `stone` itself: which material a rung eats is a fact about the **config**, so a
-                // transcribed noun is a second authority that goes stale the day a rung is retuned,
-                // which is the mistake `build_work_per_worker_turn` above exists to have prevented.
-                build_material_id: pile.map_or_else(String::new, |(id, _)| id.to_string()),
-            }
+        .filter_map(|branch| ladder.branch_def(branch).map(|def| (branch, def)))
+        .flat_map(|(branch, def)| {
+            ladder.rungs_of(branch).into_iter().map(move |rung| {
+                // **THE PILE AND ITS NOUN, FROM ONE LOOKUP**, so the amount and the material it is
+                // counted in can never disagree. `None` for a rung that eats nothing. The first
+                // entry and not a sum: the wire carries a single float, so a second declared
+                // material would make the *amount* meaningless before the id had to choose.
+                let pile = rung.build_materials().next();
+                let route = rung.route_payoff.as_ref();
+                let extraction = rung.extraction_payoff.as_ref();
+                LadderRungState {
+                    rung_key: rung.wire_key(),
+                    // One vector carries every ladder, so each row says which it is on.
+                    branch: rung.branch.as_str().to_string(),
+                    order: rung.order,
+                    // The same spelling the knowledge roster resolves its titles with - a second
+                    // capitalization rule would be a second answer to one question.
+                    display_name: knowledge_title_from_id(&rung.id),
+                    label: rung.label.clone(),
+                    label_fallback: rung.label_fallback.clone(),
+                    verb: rung.verb.clone().unwrap_or_default(),
+                    source_kind: def.source.as_str().to_string(),
+                    traits: rung
+                        .trait_set()
+                        .members()
+                        .map(|trait_| trait_.as_str().to_string())
+                        .collect(),
+                    unlock_knowledge: rung.unlock_knowledge.clone().unwrap_or_default(),
+                    // **The remedy a gate asks for**: the rung that TEACHES a knowledge and the
+                    // rung directly beneath the one it gates are two different facts.
+                    earns_knowledge: rung.earns_knowledge.clone().unwrap_or_default(),
+                    requires_rung: rung.requires_rung_wire_key().unwrap_or_default(),
+                    // Unscaled: any per-source quote (a road's remoteness) is the source's.
+                    work_cost: rung.build_cost(RUNG_COST_UNSCALED).unwrap_or(NO_BUILD_WORK),
+                    upkeep_work_per_turn: rung
+                        .upkeep
+                        .as_ref()
+                        .map_or(NO_UPKEEP_DEMAND, |upkeep| upkeep.work_per_turn),
+                    // ⛔ **THE PILE IS FLAT WHERE `work_cost` IS NOT**, and the noun rides with it
+                    // because the amount alone cannot be a sentence - and a client must not supply
+                    // the noun, which is a fact about the config.
+                    build_material_cost: pile.map_or(NO_BUILD_MATERIAL, |(_, amount)| amount),
+                    build_material_id: pile.map_or_else(String::new, |(id, _)| id.to_string()),
+                    // **The bare rate, read and not restated** - through the same
+                    // `build_work_per_worker_turn` seam every source row publishes by.
+                    build_work_per_worker_turn: build_work_per_worker_turn(NO_BUILD_GEAR),
+                    friction_multiplier: route
+                        .map_or(NO_ROUTE_FRICTION_HELP, |payoff| payoff.friction_multiplier),
+                    holds_link_to_tiles: route
+                        .map_or(NO_LINK_HELD_OPEN, |payoff| payoff.holds_link_to_tiles),
+                    grants_sight: route.is_some() && crate::routes::rung_grants_sight(rung),
+                    yield_per_worker_turn: extraction
+                        .map_or(NO_EXTRACTION_TAKE, |payoff| payoff.yield_per_worker_turn),
+                    // ⛔ **PUBLISHED, NEVER DERIVED FROM `reachable / capacity`**, which falls as
+                    // the rock is worked on a rung whose reach never moved.
+                    recovery_fraction: extraction
+                        .map_or(NO_EXTRACTION_TAKE, |payoff| payoff.recovery_fraction),
+                    regrowth_multiplier: extraction
+                        .map_or(sim_schema::DEPOSIT_RUNG_REGROWTH_UNCHANGED, |payoff| {
+                            payoff.regrowth_multiplier
+                        }),
+                    // **Why a rung is refused, and not merely that it is** - the rung's own floor,
+                    // struck against the capacity a working already publishes. A rung with no
+                    // `site_requirement` reads [`NO_DEPOSIT_FLOOR`].
+                    requires_held_rung_below: rung.requires_held_rung_below,
+                    requires_crop: rung.requires_crop,
+                    requires_work_room: rung.requires_work_room,
+                    requires_ownership: rung.requires_ownership,
+                    places_source: rung.places_source,
+                    site_rule: rung
+                        .site_requirement
+                        .as_ref()
+                        .map(site_rule_state)
+                        .unwrap_or_default(),
+                    size_tiers: rung
+                        .size_tiers
+                        .iter()
+                        .map(|tier| sim_runtime::SizeTierState {
+                            id: tier.id.clone(),
+                            label: tier.label.clone(),
+                            label_fallback: tier.label_fallback.clone(),
+                            min_rings: tier.min_rings,
+                            keeper_ratio_gain: tier.keeper_ratio_gain,
+                            earns_knowledge: tier.earns_knowledge.clone().unwrap_or_default(),
+                        })
+                        .collect(),
+                    knowledge_gains: rung
+                        .knowledge_gains
+                        .iter()
+                        .map(|gain| sim_runtime::KnowledgeGainState {
+                            knowledge: gain.knowledge.clone(),
+                            regrowth_gain: gain.regrowth_gain,
+                        })
+                        .collect(),
+                    site_relaxations: rung
+                        .site_relaxations
+                        .iter()
+                        .map(|relaxation| sim_runtime::SiteRelaxationState {
+                            knowledge: relaxation.knowledge.clone(),
+                            rule: site_rule_state(&relaxation.site_requirement),
+                        })
+                        .collect(),
+                    min_deposit_capacity: rung
+                        .site_requirement
+                        .as_ref()
+                        .map_or(NO_DEPOSIT_FLOOR, |site| site.min_deposit_capacity),
+                }
+            })
         })
         .collect()
 }
 
-/// **WHAT A WOOD OR A ROCK BODY MAY BECOME** — the forestry and extraction branches' rung catalog,
-/// once per world and carrying no working. `DepositState` publishes the rung a working **stands
-/// on**; this publishes both climbs, so a client can price a rung nothing has opened yet — including
-/// on ground where nothing has been opened at all.
-///
-/// ⛔ **EVERY FIELD IS DERIVED FROM `intensification_ladder.json`, EXACTLY AS THE ROUTE CATALOG
-/// ABOVE IS.** Nothing here is separately authored and no value is restated: the cost and the bill
-/// are the rung's own `build` / `upkeep` blocks, the payoff is its `extraction_payoff`, the site rule
-/// is its `site_requirement`, and the chain is its `requires_rung`. A rung added to that config
-/// appears in the ladder with no further edit — which is not hypothetical on these two branches, the
-/// minerals arc's `mine` being already reserved above `extraction:quarry`.
-///
-/// **The rates are the rung's own, before the working's own multipliers.** A working's real bill
-/// also carries its keeper-loads (`DepositState::upkeep_demand` is that resolved reading) and its
-/// real take is capped by the reachable stock; a catalog row is the branch's figure, which is the
-/// only one that is the same for every wood and every seam in the world.
-///
-/// **`build_work_per_worker_turn` is the one field that is the SIM'S and not the config rung's**,
-/// and it rides here for the route catalog's reason: it is identical for every rung and every
-/// working, so a client left to transcribe [`crate::intensification::PER_WORKER_OUTPUT`] would not
-/// learn of a second term landing in it.
-pub(crate) fn snapshot_deposit_rungs(ladder: &LadderConfig) -> Vec<DepositRungState> {
-    crate::extraction::deposit_rungs_in_climb_order(ladder)
+/// **THE LADDER'S BRANCHES** - the grouping [`snapshot_ladder_rungs`] is drawn under, once per
+/// world, in the config's branch order. Derived from the config's branch descriptors alone.
+pub(crate) fn snapshot_ladder_branches(ladder: &LadderConfig) -> Vec<LadderBranchState> {
+    ladder
+        .branches_in_config_order()
         .into_iter()
-        .map(|rung| {
-            // The same `expect` `extraction::deposit_payoff` makes, and for the same reason: the
-            // ladder's own `validate` requires an `extraction_payoff` on every forestry and
-            // extraction rung and rejects one anywhere else, so a neutral default here would be a
-            // second, quieter answer to a config that cannot load.
-            let payoff = rung
-                .extraction_payoff
-                .as_ref()
-                .expect("validate requires an extraction_payoff on every deposit rung");
-            // **THE PILE AND ITS NOUN, FROM ONE LOOKUP**, so the amount and the material it is
-            // counted in can never disagree. `None` for a rung that eats nothing, which is every
-            // rung on either branch but `extraction:quarry`. The first entry and not a sum, for
-            // `snapshot_route_rungs`' reason: the wire carries a single float, so a second declared
-            // material would make the *amount* meaningless before the id had to choose between them.
-            let pile = rung.build_materials().next();
-            DepositRungState {
-                rung_key: rung.wire_key(),
-                // One vector carries both ladders, so every row says which one it is on — the field
-                // the single-branch route catalog has no need of.
-                branch: rung.branch.as_str().to_string(),
-                order: rung.order,
-                // The same spelling the knowledge roster and the route catalog resolve their titles
-                // with — all three are underscored ladder ids, and a second capitalization rule
-                // would be a second answer to one question.
-                display_name: knowledge_title_from_id(&rung.id),
-                verb: rung.verb.clone().unwrap_or_default(),
-                unlock_knowledge: rung.unlock_knowledge.clone().unwrap_or_default(),
-                requires_rung: rung.requires_rung_wire_key().unwrap_or_default(),
-                // **The remedy a gate asks for**, and it is the rung's own `earns_knowledge` rather
-                // than anything read off the chain: the rung that TEACHES a knowledge and the rung
-                // directly beneath the one it gates are two different facts that merely coincide on
-                // the shipped five.
-                earns_knowledge: rung.earns_knowledge.clone().unwrap_or_default(),
-                // Unscaled, and on these two branches that is already the whole price: the deposit
-                // ladder's own rung price is the unscaled one, so unlike a road there is no per-tile
-                // multiplier still to be applied to this figure.
-                work_cost: rung.build_cost(RUNG_COST_UNSCALED).unwrap_or(NO_BUILD_WORK),
-                upkeep_work_per_turn: rung
-                    .upkeep
-                    .as_ref()
-                    .map_or(NO_UPKEEP_DEMAND, |upkeep| upkeep.work_per_turn),
-                build_material_cost: pile.map_or(NO_BUILD_MATERIAL, |(_, amount)| amount),
-                // ⛔ **THE NOUN, BECAUSE THE AMOUNT ALONE CANNOT BE A SENTENCE** — and the client
-                // must not supply `wood` itself: which material a rung eats is a fact about the
-                // **config**, so a transcribed noun is a second authority that goes stale the day a
-                // rung is retuned.
-                build_material_id: pile.map_or_else(String::new, |(id, _)| id.to_string()),
-                // **The bare rate, read and not restated** — through the same
-                // `build_work_per_worker_turn` seam every other catalog and source row publishes
-                // theirs by, at `NO_BUILD_GEAR`, because it is the *sum of terms* the model is
-                // written as and a second term added there must reach this row too.
-                build_work_per_worker_turn: build_work_per_worker_turn(NO_BUILD_GEAR),
-                yield_per_worker_turn: payoff.yield_per_worker_turn,
-                // ⛔ **PUBLISHED, NEVER DERIVED FROM `reachable / capacity`.** `deposit_reachable`
-                // clamps to the **stock**, so that ratio stops being the rung's recovery the moment
-                // the seam is drawn down — a payoff row computing it would quote a number that falls
-                // as the rock is worked, on a rung whose reach never moved.
-                recovery_fraction: payoff.recovery_fraction,
-                regrowth_multiplier: payoff.regrowth_multiplier,
-                // **Why a rung is refused, and not merely that it is** — the rung's own floor,
-                // struck against the capacity a working already publishes. A rung with no
-                // `site_requirement` reads [`NO_DEPOSIT_FLOOR`]: it has never heard of deposits,
-                // which is not the same statement as a deposit rule of zero but is the same number.
-                min_deposit_capacity: rung
-                    .site_requirement
-                    .as_ref()
-                    .map_or(NO_DEPOSIT_FLOOR, |site| site.min_deposit_capacity),
-            }
+        .filter_map(|branch| ladder.branch_def(branch).map(|def| (branch, def)))
+        .map(|(branch, def)| LadderBranchState {
+            branch: branch.as_str().to_string(),
+            area: def.area.clone(),
+            source_kind: def.source.as_str().to_string(),
+            label: def.label.clone(),
         })
         .collect()
 }
@@ -2693,7 +2640,7 @@ fn material_payoffs(ledger: &BTreeMap<String, f32>) -> Vec<MaterialPayoff> {
 /// `scaled_by`: quoting the bare ladder rate would show one price and charge another.
 fn rung_material_rate(
     ladder: &LadderConfig,
-    rung: RungKey,
+    rung: RungId,
     source_measure: f32,
 ) -> Vec<MaterialPayoff> {
     let def = ladder.rung(rung);
@@ -2711,7 +2658,7 @@ fn rung_material_rate(
 /// **THE WHOLE PILE ONE RUNG SWALLOWS TO RAISE**, per material — the ladder's own declaration, at no
 /// per-source multiplier. A species' `taming_cost_multiplier` prices the *job*; there is no reading
 /// under which it is five times the fence panels.
-fn rung_material_pile(ladder: &LadderConfig, rung: RungKey) -> Vec<MaterialPayoff> {
+fn rung_material_pile(ladder: &LadderConfig, rung: RungId) -> Vec<MaterialPayoff> {
     ladder
         .rung(rung)
         .build_materials()
@@ -2756,6 +2703,7 @@ mod tests {
     use super::*;
     use crate::fauna_config::{FaunaConfig, SizeClass};
     use crate::labor_config::LaborConfig;
+    use crate::ladder_ids::shipped;
 
     /// The index of the sample taken **at the food peak** — `K/2`, the middle of an odd-length
     /// evenly-spaced sweep. Named because "the peak of this curve IS the food peak" is the reason the
@@ -2767,7 +2715,11 @@ mod tests {
     const PROBE_CAPACITY: f32 = 1_000.0;
 
     fn probe_patch() -> ForagePatch {
-        let mut patch = ForagePatch::new(UVec2::new(0, 0), PROBE_CAPACITY);
+        let mut patch = ForagePatch::new(
+            UVec2::new(0, 0),
+            PROBE_CAPACITY,
+            shipped::root_standing(shipped::plant()),
+        );
         patch.biomass = PROBE_CAPACITY;
         patch
     }
@@ -2785,6 +2737,7 @@ mod tests {
             0.0,
             fauna.ecology.regrowth_rate,
             PROBE_BODY_MASS,
+            shipped::root_standing(shipped::animal()),
         )
     }
 

@@ -475,27 +475,26 @@ interesting ones are in the lit set rather than behind a second count.
 
 **THE RUNG LABEL IS WHAT MAKES THE IMPROVED HALF BRANCH-BLIND.** `ForagePatchState.currentRung` /
 `HerdTelemetryState.currentRung` spell the rung a source STANDS on as `<branch>:<id>` —
-`plant:tended`, `animal:pastoral` — so `SourceForecast.rung_above_branch_floor` answers without being
+`plant:tended`, `animal:pastoral` — so the catalog-order comparison (`RungQuotes`; `rung_above_branch_floor` is retired) answers without being
 told which food web it is looking at. The alternative is each web's private booleans (`is_cultivated` +
 `is_field` here, `domestication` against a threshold + `corralled` there), which costs every consumer
-a reader per web and a route ladder a third. **A new branch costs this channel nothing: one entry in
-`SourceForecast.RUNG_BRANCHES`.** An unknown key — a branch a stale client has not been taught, or the
+a reader per web and a route ladder a third. **A new branch costs this channel nothing: its rows in `ladder_rungs`
+(`SourceForecast.RUNG_BRANCHES` is retired).** An unknown key — a branch a stale client has not been taught, or the
 `""` a hand-built fixture carries — answers `false`, which shows nothing rather than lighting a whole
 branch including its untouched floor.
 
 > **`SourceForecast.improvement_is_done` READS THE SAME LABEL NOW**, which is what makes the branch
 > blindness the whole client's rather than this channel's. It is inside `next_rung_ready` and asked of
 > every candidate here, and it was a TAME special case plus three keyed tables, one of them existing
-> only to say a Field is also tended. It is one comparison — `rung_at_or_above(current_rung, the rung
-> this verb builds)` — over `IMPROVEMENT_RUNG_KEYS`, the inverse of `RUNG_KEY_IMPROVEMENTS` and the
-> table that must be kept in step with it. **The two readings are provably one fact**:
+> only to say a Field is also tended. It is one question of the source's `rung_quotes` (a quote's `reached` is *standing at or above
+> that rung*; the old `rung_at_or_above` / `IMPROVEMENT_RUNG_KEYS` tables are retired). **The two readings are provably one fact**:
 > `forage::patch_rung_key` IS `patch.standing().held` and `ForagePatch::is_cultivated` is
 > `standing.held.is_at_or_above(PlantTended)`, so the retention-bar divergence that would have made the
 > swap unsafe does not exist (`forage.rs`, "RETIRED: `cultivation_meter_full`"). `FORECAST_DONE_FLAG_KEYS`
-> now has **no shipped reader at all** — it survived for `rung_needs_repair`, which is itself retired
+> is RETIRED and had **no shipped reader at all** — it survived for `rung_needs_repair`, which is itself retired
 > (`labor-ui.md` → "THE OFFER TEST AND THE TRACK TEST ASK ONE QUESTION"), and the test tree keeps the
 > table to derive a fixture's `current_rung` from its flags. `FORECAST_RETIRED_BY_HIGHER_RUNG` is
-> deleted: *a higher rung retires the one below it* is the ORDER of `RUNG_BRANCHES` now rather than a
+> deleted: *a higher rung retires the one below it* is the catalog's ORDER now rather than a
 > table beside it.
 >
 > **AN UNKNOWN OR EMPTY RUNG KEY ANSWERS `false` ON BOTH SIDES OF THE COMPARISON**, for the reason the
@@ -1191,3 +1190,10 @@ Corral, a wild-ceiling wolf offers nothing), `map_raid_party_quarry`, `map_overf
 `map_band_label_overlap` (the slot-anchored labels), and the workings' own four in `map-markers.md`
 — of which `map_working_beside_herd` is the PARITY frame, a worked working and a hunted herd in one
 picture with each hex probed for its own web's mark colour and for the absence of the other's.
+
+## The held-step mark on a worked marker (issue #175)
+
+`BandOverlayRenderer.held_step_mark` / `held_working_mark` and the upper-left disc are specified in
+`map-markers.md` -> "The step a source holds is on its marker". It reads the same `rung_quotes` the badge's
+build and ready faces read, so the three cannot name different rungs for one source.
+

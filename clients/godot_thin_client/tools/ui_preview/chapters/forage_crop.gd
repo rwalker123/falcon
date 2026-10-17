@@ -340,8 +340,7 @@ func run(harness) -> void:
 	# aside's siblings move with the floor too, so a whole-aside search says nothing about this line.
 	h._assert_hud("…while the aside still names the lesson being earned, so the rung is not silent",
 		Readout.teaching_line(h._hud._drawercompose._compose_sheet).contains(
-			String(SourceForecast.RUNG_LESSONS[SourceForecast.SOURCE_KIND_FORAGE][
-				SourceForecast.IMPROVEMENT_NONE])))
+			"cultivation"))
 
 	# Learning Cultivation crosses 0.55 → 1.0 between snapshots: the one-shot command-feed nudge fires
 	# ("Cultivation learned — The Cultivate policy is now available on Thriving patches."), visible in

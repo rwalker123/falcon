@@ -12,8 +12,9 @@
 //! rate against the wild basket's. That rate is exactly what these tests compare.
 
 use bevy::math::UVec2;
+use core_sim::shipped;
 use core_sim::{
-    FactionId, FloraConfig, FloraShare, ForagePatch, LaborConfig, RungKey, BUILTIN_LABOR_CONFIG,
+    FactionId, FloraConfig, FloraShare, ForagePatch, LaborConfig, BUILTIN_LABOR_CONFIG,
     WHOLE_BASKET,
 };
 use sim_runtime::TerrainType;
@@ -61,7 +62,11 @@ fn labor() -> LaborConfig {
 
 /// A patch standing on the **tended** rung, committed to `species`, on `terrain`'s basket.
 fn tended_patch(terrain: TerrainType, species: Option<&str>, capacity: f32) -> ForagePatch {
-    let mut patch = ForagePatch::new(bevy::math::UVec2::new(terrain as u32, 0), capacity);
+    let mut patch = ForagePatch::new(
+        bevy::math::UVec2::new(terrain as u32, 0),
+        capacity,
+        shipped::root_standing(shipped::plant()),
+    );
     // The rung is FINISHED here — the quotes below are about a committed patch's basket, not about
     // the build that reaches it. A meter set to a bare `1.0` no longer completes anything now that a
     // job has a size (`docs/plan_unit_costed_work.md`), so this runs the real accrual.
@@ -118,7 +123,7 @@ fn assert_basket_is_sorted(basket: &[FloraShare], what: &str) {
 /// The share-weighted food rate of a raw basket — what a **wild** patch on it converts at. Stated
 /// here so the assertions below can name the wild baseline without re-deriving `basket_rate`.
 fn wild_basket_rate(flora: &FloraConfig, labor: &LaborConfig, composition: &[FloraShare]) -> f32 {
-    let wild = ForagePatch::new(UVec2::ZERO, 1.0);
+    let wild = ForagePatch::new(UVec2::ZERO, 1.0, shipped::root_standing(shipped::plant()));
     core_sim::patch_provisions_per_biomass(&wild, composition, flora, &labor.forage)
 }
 
@@ -181,7 +186,7 @@ fn a_build_in_flight_is_part_of_the_way_to_its_weeded_basket_and_its_tended_rate
     let composition = flora.composition(terrain);
     let mut building = tended_patch(terrain, Some("wild_emmer"), capacity);
     building.set_ladder_position(ONE_WORK_UNIT, &ladder);
-    let (_, tended_span) = core_sim::plant_rung_span(core_sim::RungKey::PlantTended, &ladder);
+    let (_, tended_span) = core_sim::plant_rung_span(shipped::plant_tended(), &ladder);
     let share = ONE_WORK_UNIT / tended_span;
 
     // The mix, species by species, against the two baskets it is between. Asserted as the delta
@@ -194,7 +199,7 @@ fn a_build_in_flight_is_part_of_the_way_to_its_weeded_basket_and_its_tended_rate
         composition,
         &flora,
         &labor.forage,
-        RungKey::PlantTended,
+        core_sim::PlantPayoff::of_rung(shipped::ladder(), shipped::plant_tended()),
     );
     assert_ne!(
         in_flight, composition,
@@ -270,7 +275,7 @@ fn a_reweighted_basket_still_sums_to_the_whole_basket() {
                 patch.set_ladder_position(
                     if field {
                         let (base, width) = core_sim::plant_rung_span(
-                            core_sim::RungKey::PlantField,
+                            shipped::plant_farm(),
                             &core_sim::LadderConfig::builtin(),
                         );
                         base + width
@@ -310,7 +315,10 @@ fn committing_is_worth_it_where_a_crop_realizes_dominant_and_a_tile_is_not_alway
     let flora = FloraConfig::builtin();
     let crop = "wild_emmer";
     assert!(
-        flora.species[crop].cultivation_ceiling.allows_cultivate(),
+        core_sim::shipped::ladder().ceiling_reaches(
+            flora.species[crop].cultivation_ceiling,
+            core_sim::shipped::plant_tended()
+        ),
         "the fixture crop must actually climb"
     );
 
@@ -398,6 +406,7 @@ fn the_published_commit_ratio_is_the_sims_own_payoff_divided_by_the_wild_payoff(
             &flora,
             forage,
             QUOTE_MULTIPLIER,
+            shipped::ladder(),
         );
         assert!(
             wild > 0.0,
@@ -405,7 +414,7 @@ fn the_published_commit_ratio_is_the_sims_own_payoff_divided_by_the_wild_payoff(
         );
 
         for share in composition {
-            for rung in [RungKey::PlantTended, RungKey::PlantField] {
+            for rung in [shipped::plant_tended(), shipped::plant_farm()] {
                 let payoff = core_sim::commit_payoff(
                     tile,
                     capacity,
@@ -414,16 +423,20 @@ fn the_published_commit_ratio_is_the_sims_own_payoff_divided_by_the_wild_payoff(
                     &flora,
                     forage,
                     QUOTE_MULTIPLIER,
+                    shipped::ladder(),
                     rung,
                 );
                 let ratio = core_sim::commit_yield_ratio(payoff, wild);
                 let climbs = match rung {
-                    RungKey::PlantField => flora.species[&share.species]
-                        .cultivation_ceiling
-                        .allows_sow(),
-                    _ => flora.species[&share.species]
-                        .cultivation_ceiling
-                        .allows_cultivate(),
+                    matched_ if matched_ == shipped::plant_farm() => core_sim::shipped::ladder()
+                        .ceiling_reaches(
+                            flora.species[&share.species].cultivation_ceiling,
+                            core_sim::shipped::plant_farm(),
+                        ),
+                    _ => core_sim::shipped::ladder().ceiling_reaches(
+                        flora.species[&share.species].cultivation_ceiling,
+                        core_sim::shipped::plant_tended(),
+                    ),
                 };
                 if !climbs {
                     assert_eq!(
@@ -514,7 +527,8 @@ fn the_cultivate_ratio_carries_the_regrowth_curve_and_both_tended_gains() {
             &flora,
             forage,
             QUOTE_MULTIPLIER,
-            RungKey::PlantTended,
+            shipped::ladder(),
+            shipped::plant_tended(),
         ),
         core_sim::wild_payoff(
             tile,
@@ -523,6 +537,7 @@ fn the_cultivate_ratio_carries_the_regrowth_curve_and_both_tended_gains() {
             &flora,
             forage,
             QUOTE_MULTIPLIER,
+            shipped::ladder(),
         ),
     );
     assert!(
@@ -546,20 +561,33 @@ fn legality_follows_the_cultivation_ceiling_and_the_tiles_own_basket() {
     // An open-water fishery: shellfish alone, `wild` forever.
     let shelf = flora.composition(TerrainType::ContinentalShelf);
     assert!(
-        core_sim::default_species_for_rung(shelf, &flora, RungKey::PlantTended).is_none(),
+        core_sim::default_species_for_rung(
+            shelf,
+            &flora,
+            shipped::ladder(),
+            shipped::plant_tended()
+        )
+        .is_none(),
         "a basket of wild harvests can be committed to nothing"
     );
 
     // A river plain: emmer leads the basket and climbs the whole ladder.
     let plain = flora.composition(TerrainType::AlluvialPlain);
     assert_eq!(
-        core_sim::default_species_for_rung(plain, &flora, RungKey::PlantField).as_deref(),
+        core_sim::default_species_for_rung(plain, &flora, shipped::ladder(), shipped::plant_farm())
+            .as_deref(),
         Some("wild_emmer"),
         "the auto-pick is the highest-share species the rung permits"
     );
     // A plant that grows elsewhere is not legal here, however well it climbs.
     assert!(
-        !core_sim::species_is_legal_here("date_palm", plain, &flora, RungKey::PlantTended),
+        !core_sim::species_is_legal_here(
+            "date_palm",
+            plain,
+            &flora,
+            shipped::ladder(),
+            shipped::plant_tended()
+        ),
         "a plant that does not grow on this tile may not be committed to it"
     );
 }

@@ -65,6 +65,7 @@ pub mod knowledge_contact;
 mod knowledge_contact_config;
 mod knowledge_ledger;
 mod labor_config;
+pub mod ladder_ids;
 mod lineage;
 pub mod log_stream;
 mod map_preset;
@@ -105,6 +106,7 @@ mod systems;
 pub mod take_claims;
 pub mod telling;
 mod terrain;
+pub mod tile_improvement;
 mod turn_pipeline_config;
 pub mod turn_profile;
 mod victory;
@@ -149,14 +151,14 @@ pub use components::{
     BandId, BandName, BandTravel, BandWorkforce, BatchGrade, BenchOrder, BenchQueueError, BuildJob,
     BuildQueueEntry, BuildSource, DeathCause, DemographicFlowAccumulator, DrawnInputs,
     DrawnMaterial, ElementKind, EquipmentBatch, Expedition, ExpeditionMission, ExpeditionPhase,
-    FinishedBatch, FoodBatch, FoodMix, Improvement, KeepingIssue, KeepingToolLine, KitOrder,
-    KnowledgeFragment, LaborAllocation, LaborAssignment, LaborTarget, LocalStore, MaterialBatch,
-    MaterialDraw, MoraleCause, MusterBench, MusterKit, MusterPlan, PoolToeLine, PopulationCohort,
-    PowerNode, QueuedBuildToe, ResidentBand, Settlement, ShedCrew, ShedFacts, ShedStep,
-    ShedSubject, SourcePriority, SourceShedFacts, SourceYield, StartingUnit, StationReport,
-    TakeSelection, Tile, TownCenter, TransferCause, TransferCounterparty, TransferCrossing,
-    TransferDirection, TransferLedger, TransferLink, YieldRange, DEFAULT_ESCAPEMENT_FLOOR, FODDER,
-    FOOD, HEAD_ORDER, MIN_ORDER_COUNT, NO_IMPROVEMENT_UNDERWAY, STRIP_IT_BARE,
+    FinishedBatch, FoodBatch, FoodMix, KeepingIssue, KeepingToolLine, KitOrder, KnowledgeFragment,
+    LaborAllocation, LaborAssignment, LaborTarget, LocalStore, MaterialBatch, MaterialDraw,
+    MoraleCause, MusterBench, MusterKit, MusterPlan, PoolToeLine, PopulationCohort, PowerNode,
+    QueuedBuildToe, ResidentBand, Settlement, ShedCrew, ShedFacts, ShedStep, ShedSubject,
+    SourcePriority, SourceShedFacts, SourceYield, StartingUnit, StationReport, TakeSelection, Tile,
+    TownCenter, TransferCause, TransferCounterparty, TransferCrossing, TransferDirection,
+    TransferLedger, TransferLink, YieldRange, DEFAULT_ESCAPEMENT_FLOOR, FODDER, FOOD, HEAD_ORDER,
+    MIN_ORDER_COUNT, NO_IMPROVEMENT_UNDERWAY, STRIP_IT_BARE,
 };
 pub use config_fingerprint::{
     current_config_fingerprint, drift_between, ConfigDigest, ConfigFingerprint,
@@ -235,41 +237,42 @@ pub use fauna::{
     build_prey_index, cancel_dropped_rings, carnivore_k_at, crew_keep_hands,
     crew_needed_with_keeping, drop_holding_and_cancel_ring, escapement_ceiling,
     expected_kill_over_retreat, expected_stayers, forecast_expected_take, forecast_take_range,
-    herd_build_verb, herd_capacity, herd_carry_rate, herd_claims_keeping, herd_crew_keeping,
-    herd_crew_keeping_next_turn, herd_default_hunt_kit, herd_density_gain,
-    herd_destination_capacity, herd_ecology, herd_engage_rate, herd_fight_stage, herd_head_count,
-    herd_herded_fraction, herd_herders_needed, herd_hunt_yield, herd_keeper_load,
+    herd_breeding_gain, herd_build_rung, herd_build_verb, herd_capacity, herd_carry_rate,
+    herd_claims_keeping, herd_crew_keeping, herd_crew_keeping_next_turn, herd_default_hunt_kit,
+    herd_density_gain, herd_destination_capacity, herd_ecology, herd_engage_rate, herd_fight_stage,
+    herd_head_count, herd_herded_fraction, herd_herders_needed, herd_hunt_yield, herd_keeper_load,
     herd_keeper_loads, herd_keeping_basis, herd_meter_rot, herd_past_recovery, herd_quarry_fight,
-    herd_rung_already_built, herd_rung_key, herd_space_capacity, herd_standing_provisions,
-    herd_standing_rung_share, herd_standing_scale, herd_take_room, herd_upkeep_demand,
-    herd_upkeep_shortfall, herd_upkeep_supply, herd_upkeep_workers_needed, herd_wariness,
-    hunt_armed_crew, hunt_crew_needed, hunt_crew_room, hunt_crew_take_curve,
-    hunt_crew_turns_to_kill, hunt_engage_workers, hunt_escapement_ceiling, hunt_haul_workers,
-    hunt_kill_progress, hunt_source_yield_preview, hunt_take_bound, hunt_take_overdraws,
-    hunt_take_workers, hunt_useful_crew, kill_carry_rate, kill_over_retreat,
+    herd_rung_already_built, herd_rung_key, herd_size_tier, herd_space_capacity,
+    herd_standing_provisions, herd_standing_rung_share, herd_standing_scale, herd_take_room,
+    herd_upkeep_demand, herd_upkeep_shortfall, herd_upkeep_supply, herd_upkeep_workers_needed,
+    herd_wariness, herd_work_keeper_load, hunt_armed_crew, hunt_crew_needed, hunt_crew_room,
+    hunt_crew_take_curve, hunt_crew_turns_to_kill, hunt_engage_workers, hunt_escapement_ceiling,
+    hunt_haul_workers, hunt_kill_progress, hunt_source_yield_preview, hunt_take_bound,
+    hunt_take_overdraws, hunt_take_workers, hunt_useful_crew, kill_carry_rate, kill_over_retreat,
     migratory_corridor_tiles, next_turns_quarry, per_hunter_take_biomass, project_arrivals_hunt,
     project_realized_hunt, quantise_animal_take, quarry_default_hunt_kit, regrow_biomass,
     regrowth_delta_at, repopulate_fauna, resolve_hunt_engagement, resolve_hunt_fight,
     retreat_band_edge, retreat_mean, retreat_seed, spawn_initial_herds, species_requires_denial,
-    stamp_migratory_game_trails, stay_fraction, sustainable_yield, unqueue_build_and_cancel_ring,
-    would_be_herders_needed, AnimalTake, Contact, CrewContact, CrewKeeping, EcologyPhase,
-    EngagementQuantum, EngagementStop, FightCasualties, Herd, HerdDensityMap, HerdRegistry,
-    HerdTelemetry, HerdTelemetryEntry, HuntCrew, HuntCrewCurveInputs, HuntCrewTake, HuntDraw,
-    HuntEngagement, HuntFight, HuntProjection, HuntTakeBound, HuntingParty, OutcomeKills,
-    PartyResolution, PreyDatum, ProjectedHuntTurn, ProjectionStart, QuarryFight, RetreatOutcome,
-    RoamState, SourceYieldForecast, TakeRange, TakeReading, FODDERING_DISCOVERY_ID, FULLY_HERDED,
-    HERDING_DISCOVERY_ID, MSY_BIOMASS_FRACTION, NO_DEATHS_TO_REPORT, NO_HANDS,
-    NO_STANDING_COMMITMENT, NO_USEFUL_CREW, ONE_KEEPER_LOAD, PENNING_DISCOVERY_ID,
+    stamp_breeding_gains, stamp_migratory_game_trails, stay_fraction, sustainable_yield,
+    unqueue_build_and_cancel_ring, would_be_herders_needed, AnimalTake, Contact, CrewContact,
+    CrewKeeping, EcologyPhase, EngagementQuantum, EngagementStop, FightCasualties, Herd,
+    HerdDensityMap, HerdPayoff, HerdRegistry, HerdTelemetry, HerdTelemetryEntry, HuntCrew,
+    HuntCrewCurveInputs, HuntCrewTake, HuntDraw, HuntEngagement, HuntFight, HuntProjection,
+    HuntTakeBound, HuntingParty, OutcomeKills, PartyResolution, PreyDatum, ProjectedHuntTurn,
+    ProjectionStart, QuarryFight, RetreatOutcome, RoamState, SourceYieldForecast, TakeRange,
+    TakeReading, FODDERING_DISCOVERY_ID, FULLY_HERDED, HERDING_DISCOVERY_ID, MSY_BIOMASS_FRACTION,
+    NO_DEATHS_TO_REPORT, NO_HANDS, NO_STANDING_COMMITMENT, NO_USEFUL_CREW, ONE_KEEPER_LOAD,
+    PENNING_DISCOVERY_ID, SELECTIVE_BREEDING_DISCOVERY_ID,
 };
 pub use fauna_config::{
     load_fauna_config_from_env, Diet, EcologyConfig, FaunaConfig, FaunaConfigHandle,
-    FaunaConfigMetadata, GrazeConfig, HuntYield, HuntYieldDef, HusbandryCeiling,
-    MigratoryAbundanceConfig, ShoreRequirement, SizeClass, SpeciesDef, YieldAccounts,
-    BUILTIN_FAUNA_CONFIG, NO_GRAZE_CAPACITY, NO_RETREAT,
+    FaunaConfigMetadata, GrazeConfig, HuntYield, HuntYieldDef, MigratoryAbundanceConfig,
+    ShoreRequirement, SizeClass, SpeciesDef, YieldAccounts, BUILTIN_FAUNA_CONFIG,
+    NO_GRAZE_CAPACITY, NO_RETREAT,
 };
 pub use flora_config::{
-    load_flora_config_from_env, CultivationCeiling, FloraConfig, FloraConfigHandle,
-    FloraConfigMetadata, FloraDef, FloraRole, FloraShare, YieldVector, BUILTIN_FLORA_CONFIG,
+    load_flora_config_from_env, FloraConfig, FloraConfigHandle, FloraConfigMetadata, FloraDef,
+    FloraRole, FloraShare, YieldVector, BUILTIN_FLORA_CONFIG,
 };
 pub use food::{
     classify_food_module, classify_food_module_from_traits, FoodModule, FoodModuleTag,
@@ -280,7 +283,7 @@ pub use forage::{
     commit_payoff, commit_yield_ratio, composition_for_rung, crew_take_room,
     crop_field_cost_multiplier, default_species_for_rung, field_cost_multiplier_at_share,
     forage_crew_needed, forage_per_worker_biomass, forage_provisions, forage_source_yield_preview,
-    forage_take_overdraws, next_turns_stand, patch_build_legs, patch_build_verb,
+    forage_take_overdraws, next_turns_stand, patch_build_legs, patch_build_rung, patch_build_verb,
     patch_carrying_capacity, patch_claims_keeping, patch_composition, patch_crew_keeping,
     patch_destination_capacity, patch_ecology, patch_field_cost_multiplier, patch_keeping_basis,
     patch_land_capacity, patch_material_yields, patch_material_yields_taking, patch_meter_rot,
@@ -291,9 +294,9 @@ pub use forage::{
     resolve_take_selection, rung_material_yields, rung_payoff, rung_site_refusal,
     selected_biomass_share, spawn_initial_forage, species_is_legal_here, species_stands_in,
     tended_take_fodder, tile_flora_composition, tile_forage_capacity, tile_is_fresh_watered,
-    wild_payoff, ForagePatch, ForageRegistry, SpeciesRate, SpeciesRefusal, CANNOT_CLIMB_RATIO,
-    CULTIVATION_DISCOVERY_ID, NO_FORAGE_SEASON, NO_TENDER_LOAD, ONE_TENDER_LOAD,
-    SEED_SELECTION_DISCOVERY_ID, WHOLE_BASKET,
+    wild_payoff, ForagePatch, ForageRegistry, PlantPayoff, SpeciesRate, SpeciesRefusal,
+    CANNOT_CLIMB_RATIO, CULTIVATION_DISCOVERY_ID, NO_FORAGE_SEASON, NO_TENDER_LOAD,
+    ONE_TENDER_LOAD, SEED_SELECTION_DISCOVERY_ID, WHOLE_BASKET, WORKED_LAND_DISCOVERY_ID,
 };
 pub use generations::{GenerationBias, GenerationId, GenerationProfile, GenerationRegistry};
 pub use graze::{advance_graze_regrowth, spawn_initial_graze, GrazePatch, GrazeRegistry};
@@ -327,7 +330,7 @@ pub use personalities::{
 pub use extraction::{
     advance_deposits, deposit_at_risk_rung, deposit_keeper_loads, deposit_keeping_basis,
     deposit_measure, deposit_meter_rot, deposit_rungs_in_climb_order, deposit_upkeep_demand,
-    renew_deposit, DepositRegistry, DepositSource, DEPOSIT_BRANCHES, DEPOSIT_EMPTY,
+    renew_deposit, DepositRegistry, DepositSource, DEPOSIT_EMPTY,
 };
 pub use extraction_config::{
     load_extraction_config_from_env, DepositDef, DepositTerrain, ExtractionConfig,
@@ -341,17 +344,18 @@ pub use influencers::{
 };
 pub use intensification::{
     activity_work, build_fraction, build_turns_estimate, build_turns_remaining,
-    build_work_per_worker_turn, distribute_upkeep_pool, gear_work_supply, interpolate, knows,
-    learn_multiplier, load_intensification_ladder_from_env, pool_work_supply, rung_work_done,
-    upkeep_shortfall, upkeep_shortfall_fraction, BuildGate, BuildTurns, LadderConfig,
-    LadderConfigHandle, LadderConfigMetadata, RungBehavior, RungBranch, RungBuild, RungDef,
-    RungExtractionPayoff, RungKey, RungMeterDecay, RungMovement, RungPartialCredit,
-    RungSiteRequirement, RungStanding, RungUpkeep, SiteRefusal, UpkeepFundMode, UpkeepScale,
-    ALL_BRANCHES, BUILTIN_INTENSIFICATION_LADDER, FABRICATED_BUILD_COST, FULLY_SUPPLIED,
-    NOTHING_IN_FLIGHT, NO_BUILD_GEAR, NO_CREW_ON_THIS_ACTIVITY, NO_DEPOSIT_FLOOR,
-    NO_DEPOSIT_REACHED, NO_RUNG_CREDIT, NO_RUNG_WORK_BANKED, NO_UPKEEP_DECAY, NO_UPKEEP_DEMAND,
-    PER_WORKER_OUTPUT, PRACTICE_AT_THE_PLAIN_RATE, REGROWTH_UNCHANGED, RUNG_COST_UNSCALED,
-    RUNG_UNSTARTED, SITE_ACCEPTED, WHOLE_DEPOSIT_REACHED, WHOLLY_UNSUPPLIED,
+    build_work_per_worker_turn, distribute_upkeep_pool, gear_work_supply, interpolate,
+    knowledge_title_from_id, knows, knows_lesson, learn_multiplier,
+    load_intensification_ladder_from_env, pool_work_supply, rung_work_done, upkeep_shortfall,
+    upkeep_shortfall_fraction, BuildGate, BuildTurns, CostScale, LadderConfig, LadderConfigHandle,
+    LadderConfigMetadata, RungBehavior, RungBuild, RungDef, RungExtractionPayoff, RungMeterDecay,
+    RungMovement, RungPartialCredit, RungSiteRequirement, RungStanding, RungTrait, RungTraits,
+    RungUpkeep, SiteRefusal, SourceKind, UpkeepFundMode, UpkeepScale,
+    BUILTIN_INTENSIFICATION_LADDER, FABRICATED_BUILD_COST, FULLY_SUPPLIED, NOTHING_IN_FLIGHT,
+    NO_BUILD_GEAR, NO_CREW_ON_THIS_ACTIVITY, NO_DEPOSIT_FLOOR, NO_DEPOSIT_REACHED, NO_RUNG_CREDIT,
+    NO_RUNG_WORK_BANKED, NO_UPKEEP_DECAY, NO_UPKEEP_DEMAND, PER_WORKER_OUTPUT,
+    PRACTICE_AT_THE_PLAIN_RATE, REGROWTH_UNCHANGED, RUNG_COST_UNSCALED, RUNG_UNSTARTED,
+    SITE_ACCEPTED, WHOLE_DEPOSIT_REACHED, WHOLLY_UNSUPPLIED,
 };
 pub use knowledge_ledger::{
     CounterIntelSweepEvent, EspionageProbeEvent, KnowledgeCountermeasure, KnowledgeLedger,
@@ -362,6 +366,7 @@ pub use labor_config::{
     load_labor_config_from_env, LaborConfig, LaborConfigHandle, LaborConfigMetadata,
     BUILTIN_LABOR_CONFIG, NO_FORAGE_CAPACITY,
 };
+pub use ladder_ids::{shipped, BranchId, RungId, Sym, VerbId};
 pub use map_preset::{ErosionConfig, MapPreset, MapPresets, MapPresetsHandle, BUILTIN_MAP_PRESETS};
 pub use mapgen::WorldGenSeed;
 pub use materials_config::{
@@ -380,14 +385,14 @@ pub use recipes_config::{
     BUILTIN_RECIPES_CONFIG,
 };
 pub use routes::{
-    advance_roads, credit_route_lessons, max_route_reach_tiles, path_friction_multiplier,
-    path_lesson_rung, path_reach_tiles, remoteness_multiplier, road_at_risk_rung,
-    road_build_fraction, road_keeping_basis, road_keeping_range, road_measure,
-    road_neglect_grace_remaining, road_rung_span, road_upkeep_demand, road_upkeep_measure,
-    road_upkeep_workers_needed, route_rungs_in_climb_order, rung_grants_sight, trace_path,
-    traffic_ceiling, Road, RoadKeeper, RoadRegistry, RouteJourney, RouteTrafficLog, TrafficSource,
-    FIRST_BUILT_RUNG, FREE_FLOOR_TOP_RUNG, METER_FULL, NEAR_ENOUGH_TO_KEEP, NO_HERD_HAS_CROSSED,
-    NO_REACH_HELD_OPEN, PAVING_DISCOVERY_ID, ROADBUILDING_DISCOVERY_ID,
+    advance_roads, credit_route_lessons, first_built_rung, free_floor_top_rung,
+    max_route_reach_tiles, path_friction_multiplier, path_lesson_rung, path_reach_tiles,
+    remoteness_multiplier, road_at_risk_rung, road_build_fraction, road_keeping_basis,
+    road_keeping_range, road_measure, road_neglect_grace_remaining, road_rung_span,
+    road_upkeep_demand, road_upkeep_measure, road_upkeep_workers_needed,
+    route_rungs_in_climb_order, rung_grants_sight, trace_path, traffic_ceiling, Road, RoadKeeper,
+    RoadRegistry, RouteJourney, RouteTrafficLog, TrafficSource, METER_FULL, NEAR_ENOUGH_TO_KEEP,
+    NO_HERD_HAS_CROSSED, NO_REACH_HELD_OPEN, PAVING_DISCOVERY_ID, ROADBUILDING_DISCOVERY_ID,
 };
 pub use sedentarization::{
     sedentarization_tick, SedentarizationEntry, SedentarizationScore, SedentarizationStage,
@@ -434,6 +439,11 @@ pub use supply::{
 pub use supply_network_config::{
     load_supply_network_config_from_env, SupplyNetworkConfig, SupplyNetworkConfigHandle,
     SupplyNetworkConfigMetadata,
+};
+pub use tile_improvement::{
+    advance_tile_improvements, is_tile_branch, tile_rung_cost, tile_rung_span, tile_standing_at,
+    TileImprovement, TileImprovementKey, TileImprovementRegistry, NO_HANDS_ON_THE_IMPROVEMENT,
+    TILE_KEEPING_LOAD,
 };
 pub use turn_pipeline_config::{
     load_turn_pipeline_config_from_env, PopulationPhaseConfig, PowerPhaseConfig,
@@ -729,6 +739,18 @@ pub fn build_headless_app() -> App {
     if let Err(err) = ladder_config.validate_against_materials(&materials_config) {
         panic!("intensification ladder does not reconcile with the materials table: {err}");
     }
+    // **Every deposit in the extraction table is worked by a `deposit` branch** — the cross-file half
+    // of the ladder's kind-level rule. A deposit naming a food web's branch (or a branch the ladder
+    // does not declare) would otherwise parse on both sides and then be raised by a ladder whose
+    // rungs are about something else.
+    if let Err(err) = ladder_config.validate_against_extraction(&extraction_handle.get()) {
+        panic!("intensification ladder does not reconcile with the extraction table: {err}");
+    }
+    // **Every knowledge name the ladder uses is a tag in the table that loaded**, mapped to the id
+    // the ladder resolves it to - the ladder reads names, the tag table owns what they mean.
+    if let Err(err) = ladder_config.validate_against_knowledge_tags(&knowledge_tags) {
+        panic!("intensification ladder does not reconcile with the knowledge tag table: {err}");
+    }
     // **Every knowledge tag contact can teach is priced** (`docs/plan_contact_and_logistics.md`
     // §Settled by #531): the rider can teach any tag in `start_profile_knowledge_tags.json`, so a
     // tag the ladder's `lesson_costs` does not price is a boot panic rather than a lesson paced off a
@@ -738,6 +760,7 @@ pub fn build_headless_app() -> App {
     {
         panic!("knowledge tags do not reconcile with the intensification ladder: {err}");
     }
+    let ladder_for_reconcile = ladder_config.clone();
     let ladder_handle = intensification::LadderConfigHandle::new(ladder_config);
     let (sedentarization_config, sedentarization_metadata) =
         sedentarization_config::load_sedentarization_config_from_env();
@@ -768,6 +791,27 @@ pub fn build_headless_app() -> App {
     // validate, and then be the bench tool for nothing.
     if let Err(err) = equipment_config.validate_against_materials(&materials_config) {
         panic!("equipment config does not reconcile with the materials table: {err}");
+    }
+    // **Every branch and rung a tool is bound to exists in the ladder**, and a `deposit_take` tool
+    // is bound to a `deposit` branch: a tool bound to a rung nobody defines would take nothing off
+    // any build, for ever, with no fault reported.
+    if let Err(err) = equipment_config.validate_against_ladder(&ladder_for_reconcile) {
+        panic!("equipment config does not reconcile with the intensification ladder: {err}");
+    }
+    // **Every species' ceiling names a rung the ladder defines** - a flora `cultivation_ceiling` or a
+    // fauna `husbandry_ceiling` is a rung id, and one nobody defines (or one on the other web's
+    // branch) would parse and then be a ceiling no rung is ever compared with.
+    if let Err(err) = flora_handle
+        .get()
+        .validate_against_ladder(&ladder_for_reconcile)
+    {
+        panic!("flora config does not reconcile with the intensification ladder: {err}");
+    }
+    if let Err(err) = fauna_handle
+        .get()
+        .validate_against_ladder(&ladder_for_reconcile)
+    {
+        panic!("fauna config does not reconcile with the intensification ladder: {err}");
     }
     // **The opening loadout's pick list is reconciled against the materials table**, the same
     // `UnknownItem` debt every other roster pays: a profile offering `hyde` would parse, validate,
@@ -961,6 +1005,9 @@ pub fn build_headless_app() -> App {
         // `advance_herds` (which migratory herds walked their corridor) — to `routes::advance_roads`,
         // which spends them.
         .insert_resource(routes::RoadRegistry::default())
+        // **The improvements standing on the tile-kind branches** - the road's shape for a thing that
+        // is not a road. World state, empty until a band places one.
+        .insert_resource(tile_improvement::TileImprovementRegistry::default())
         .insert_resource(routes::RouteTrafficLog::default())
         .insert_resource(connections::ContactsThisTurn::default())
         .insert_resource(visibility::ViewerFaction::default())
@@ -1172,6 +1219,10 @@ pub fn build_headless_app() -> App {
                 // so the executor could not overlap them even if they were left unordered.
                 (
                     systems::simulate_materials,
+                    // **The lessons a people holds, folded into its herds' breeding** - before the
+                    // herds grow, so this turn's regrowth reads what the last Population stage
+                    // taught (`fauna::stamp_breeding_gains`).
+                    stamp_breeding_gains,
                     advance_herds,
                     advance_herd_grazing,
                     advance_predation,
@@ -1230,6 +1281,10 @@ pub fn build_headless_app() -> App {
                 extraction::advance_deposits
                     .after(systems::simulate_materials)
                     .after(routes::advance_roads),
+                // **THE TILE IMPROVEMENTS' DECAY, THIS TURN'S BILL AND THE ONE-TURN CYCLE** - the
+                // tile kind's twin of `advance_deposits`. It announces a slip or a loss on the feed
+                // the passes above write, so it takes its place after the last of them.
+                tile_improvement::advance_tile_improvements.after(extraction::advance_deposits),
             )
                 .in_set(TurnStage::Logistics)
                 .run_if(capability_enabled(
@@ -1637,7 +1692,7 @@ pub fn build_test_app() -> App {
 /// a fixture that inserted a differently-sized ledger would quietly re-stock every take row. So the
 /// ledger the pass would have resolved is rebuilt here and only this rung's requirement is emptied
 /// out of it.
-pub fn disarm_the_builders(world: &mut World, band: Entity, rung: crate::intensification::RungKey) {
+pub fn disarm_the_builders(world: &mut World, band: Entity, rung: crate::intensification::RungId) {
     let equipment = world
         .resource::<crate::equipment_config::EquipmentConfigHandle>()
         .get();
@@ -1652,7 +1707,7 @@ pub fn disarm_the_builders(world: &mut World, band: Entity, rung: crate::intensi
         .cloned()
         .unwrap_or_else(|| BandEquipment::start_stocked_for(&equipment, available as f32));
     for tool in equipment
-        .pool_toe(rung.branch(), Some(&rung.wire_key()))
+        .pool_toe(rung.branch, Some(&rung.wire_key()))
         .tools()
     {
         ledger.restore_batches(&tool.item, Vec::new());

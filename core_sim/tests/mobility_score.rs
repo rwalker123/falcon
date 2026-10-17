@@ -93,6 +93,7 @@ fn world(roam: RoamState, herd_at: UVec2, bands: &[Placed]) -> (App, Vec<Entity>
             0.0,
             REGROWTH_RATE,
             BODY_MASS,
+            core_sim::shipped::root_standing(core_sim::shipped::animal()),
         );
         herd.roam = roam;
         herd.dwell_remaining = 0;

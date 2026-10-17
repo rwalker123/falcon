@@ -930,6 +930,18 @@ func _apply_snapshot(snapshot: Dictionary) -> void:
             _reset_per_world_state()
             _world_epoch_applied = snapshot_epoch
     _sync_fog_of_war(snapshot, is_delta)
+    # **STAMP EACH SOURCE'S RUNG QUOTES WITH THE CATALOG'S VERBS BEFORE ANYONE READS THEM** (issue #175):
+    # a patch's and a herd's `rung_quotes` carry only a `rung_key`, and every reader asks by verb or by
+    # trait, so the join against `ladder_rungs` is done once here, in place, on the dicts the map and
+    # the HUD both receive. Only on a frame that changed the sources or the catalog; the cached world
+    # is republished whole, so an untouched section keeps the stamp it already has.
+    var ladder_catalog: Variant = snapshot.get("ladder_rungs", [])
+    if ladder_catalog is Array and not (ladder_catalog as Array).is_empty():
+        var catalog_changed := SnapshotSections.changed(snapshot, "ladder_rungs")
+        for source_section in ["herds", "forage_patches"]:
+            if snapshot.has(source_section) and (catalog_changed \
+                    or SnapshotSections.changed(snapshot, source_section)):
+                RungQuotes.enrich_sources(snapshot[source_section], ladder_catalog as Array)
     var metrics: Dictionary = {}
     var t_display: int = profile.begin(PROFILE_DISPLAY)
     if map_view != null and map_view.has_method("display_snapshot"):
@@ -999,16 +1011,14 @@ func _apply_snapshot(snapshot: Dictionary) -> void:
     # whole screen whenever a rung was added.
     if snapshot.has("ladder_areas") and SnapshotSections.changed(snapshot, "ladder_areas"):
         _hud_invoke("update_ladder_areas", [snapshot["ladder_areas"]])
-    # …and the ROUTE branch's rung catalog beside it, another per-world constant. It is what lets the
-    # tile card's road action open a whole ladder rather than one button per verb, so a rung added to
+    # …and the whole LADDER CATALOG beside it (issue #175), another per-world constant: every branch's
+    # rungs, road and deposit and plant and animal and tile alike. The HUD splits it by source kind
+    # into the road ladder sheet's and the working ladder's views, so a rung or a branch added to
     # `intensification_ladder.json` reaches the player with no client edit.
-    if snapshot.has("route_rungs") and SnapshotSections.changed(snapshot, "route_rungs"):
-        _hud_invoke("update_route_rungs", [snapshot["route_rungs"]])
-    # …and the two DEPOSIT branches' catalog beside it, the third per-world ladder declaration. It is
-    # what lets a working's ladder, its tile-card payoff row and its compose sheet all name a rung,
-    # price it and state what it buys off the sim's own record rather than a client table.
-    if snapshot.has("deposit_rungs") and SnapshotSections.changed(snapshot, "deposit_rungs"):
-        _hud_invoke("update_deposit_rungs", [snapshot["deposit_rungs"]])
+    if snapshot.has("ladder_rungs") and SnapshotSections.changed(snapshot, "ladder_rungs"):
+        _hud_invoke("update_ladder_rungs", [snapshot["ladder_rungs"]])
+    if snapshot.has("ladder_branches") and SnapshotSections.changed(snapshot, "ladder_branches"):
+        _hud_invoke("update_ladder_branches", [snapshot["ladder_branches"]])
     if snapshot.has("intensification_knowledge") and SnapshotSections.changed(snapshot, "intensification_knowledge"):
         _hud_invoke("update_intensification", [snapshot["intensification_knowledge"]])
     # …and what the player's people is learning by CONTACT, read against that same progress row.
@@ -1097,6 +1107,9 @@ func _apply_snapshot(snapshot: Dictionary) -> void:
     # per-tile lookup for the tile card; the HUD needs it because the Work tab's GROUNDWORK section asks
     # a whole-list question — *which workings does this band hold a row on* — which no per-hex index
     # answers.
+    # …and the improvements standing on tile-kind ladder branches (issue #175), the deposits' twin.
+    if snapshot.has("tile_improvements") and SnapshotSections.changed(snapshot, "tile_improvements"):
+        _hud_invoke("update_tile_improvements", [snapshot["tile_improvements"]])
     if snapshot.has("deposits") and SnapshotSections.changed(snapshot, "deposits"):
         _hud_invoke("update_deposits", [snapshot["deposits"]])
     # The Telling (docs/plan_the_telling.md). The `has()` guard is LOAD-BEARING: a delta carries a
@@ -1797,62 +1810,56 @@ static func format_extend_pen(payload: Dictionary) -> Dictionary:
         "message": "Queue another ring on the pen at (%d, %d)." % [x, y],
     }
 
-## **THE SECOND AXIS's commands** (issue #442): `cultivate <faction> <x> <y>` / `sow <faction> <x> <y>`
-## / `corral <faction> <x> <y>` address a TILE, and `tame <faction> <herd_id>` addresses a HERD —
-## taming is the verb you reach for on a ROAMING herd, identified by who follows it rather than by
-## where it stands this turn, while a pen is a place. That split is the sim's, mirrored here.
+## **THE BUILD VERBS' COMMAND SHAPE IS READ OFF THE LADDER CATALOG** (issue #175). The verb's
+## `ladder_rungs` row names the `source_kind` of the branch it climbs, and the kind decides the shape:
+## `herd` names a HERD id (`build tame <f> <herd>`), `patch` names a TILE, `deposit` a tile AND a
+## MATERIAL (one hex can hold two workings), and `road` a tile AND the BAND that will keep it; `tile` a bare tile (its crew is its own site crew, so no band token)
+## (a road has no work row for its keeper to be read off, so who holds the tile is said out loud — and
+## that token is what the sim records as the keeper). A verb the catalog does not carry — a harness
+## that staged none, or a verb the sim has not yet published — is shaped by what the payload itself
+## carries (`_source_kind_of_payload`), never by a verb list in this file.
 ##
 ## Each sets ONLY the improvement, on whichever bands already work the source — which is why the
 ## compose sheet sends `assign_labor` FIRST: an improvement verb aimed at an unworked source is
 ## rejected outright.
-const IMPROVEMENT_HERD_TARGETED := ["tame"]
 
-## ⛔ **THE ROUTE BRANCH'S TWO VERBS NAME A BAND, AND THE REST DO NOT** (arc #532). `grade` and `pave`
-## are `cultivate`/`sow`'s grammar **plus a band token** —
-## `grade <faction> <band> <x> <y>` — because a patch's keeper is whoever is already foraging it while
-## **a road has no work row at all**, so who will keep the tile has to be said out loud. That token is
-## also what the sim records as the keeper: issuing the verb declares the job AND names who holds it,
-## which are the same act. Read off `SourceForecast.ROUTE_IMPROVEMENTS` rather than restated, so the
-## branch's verbs are spelled once.
-const IMPROVEMENT_BAND_TARGETED := SourceForecast.ROUTE_IMPROVEMENTS
-
-## The band a road verb names when the payload carries none. A road really has to be somebody's job,
-## so this is a REFUSAL rather than a default — see `format_improvement`.
+## The band a road/tile verb names when the payload carries none. A road really has to be somebody's
+## job, so this is a REFUSAL rather than a default — see `format_improvement`.
 const IMPROVEMENT_NO_BAND := -1
-
-## ⛔ **THE DEPOSIT BRANCHES' THREE VERBS NAME A TILE *AND* A MATERIAL** (issue #650), which is the one
-## way they differ from every other tile verb here — `fell <faction> <x> <y> <material>`, the material
-## riding `assign_labor extract`'s own trailing position so the two ways of addressing one working read
-## alike. **ONE HEX CAN HOLD TWO WORKINGS** (a wooded highland holds timber AND rock), so a line naming
-## only the tile names neither of them and would raise the wrong ladder.
-##
-## They name NO band, unlike `grade`/`pave`: a working is backed by a `LaborTarget::Extract` row, so its
-## keeper is already known and the sim resolves it through `queue_build_on_working_bands` — the
-## `cultivate`/`sow` precedent, not the road's.
-##
-## Read off `SourceForecast.DEPOSIT_IMPROVEMENTS` rather than restated, so the branch's verbs are
-## spelled once.
-const IMPROVEMENT_MATERIAL_TARGETED := SourceForecast.DEPOSIT_IMPROVEMENTS
 
 ## The material a deposit verb names when the payload carries none. A working's key is the
 ## `(tile, material)` PAIR, so this is a REFUSAL rather than a default — see `format_improvement`.
 const IMPROVEMENT_NO_MATERIAL := ""
 
+## The source kind a payload is shaped as when the catalog has no row for its verb: a herd id says
+## `herd`, a material says `deposit`, a band says `road`, and a bare tile is a `patch`.
+static func _source_kind_of_payload(payload: Dictionary) -> String:
+    if String(payload.get("herd_id", "")).strip_edges() != "":
+        return HudRouteVocab.SOURCE_KIND_HERD
+    if String(payload.get("material", IMPROVEMENT_NO_MATERIAL)).strip_edges() != IMPROVEMENT_NO_MATERIAL:
+        return HudRouteVocab.SOURCE_KIND_DEPOSIT
+    if int(payload.get("band_id", IMPROVEMENT_NO_BAND)) != IMPROVEMENT_NO_BAND:
+        return HudRouteVocab.SOURCE_KIND_ROAD
+    return HudRouteVocab.SOURCE_KIND_PATCH
+
 ## ⛔ **NONE OF THESE VERBS TAKES A WORKER COUNT, and a trailing one is a PARSE ERROR**
 ## (`docs/plan_standing_upkeep.md` §2.5). Each carried the build's own crew for one slice; they
 ## DECLARE now — the verb appends an entry to a build queue, and the hands stand on
 ## `assign_labor <faction> <band> builders <n>`.
-static func format_improvement(payload: Dictionary) -> Dictionary:
+static func format_improvement(payload: Dictionary, catalog: Array = []) -> Dictionary:
     var improvement := String(payload.get("improvement", "")).strip_edges().to_lower()
     if improvement == "":
         return {}
     var faction := int(payload.get("faction", HudConst.PLAYER_FACTION_ID))
-    if improvement in IMPROVEMENT_HERD_TARGETED:
+    var kind := HudRouteVocab.source_kind_of_verb(catalog, improvement)
+    if kind == "":
+        kind = _source_kind_of_payload(payload)
+    if kind == HudRouteVocab.SOURCE_KIND_HERD:
         var herd_id := String(payload.get("herd_id", "")).strip_edges()
         if herd_id == "":
             return {}
         return {
-            "line": "%s %d %s" % [improvement, faction, herd_id],
+            "line": "build %s %d %s" % [improvement, faction, herd_id],
             "message": "%s %s — queued for this band's builders." % [
                 improvement.capitalize(), herd_id],
         }
@@ -1860,7 +1867,7 @@ static func format_improvement(payload: Dictionary) -> Dictionary:
     var y := int(payload.get("y", -1))
     if x < 0 or y < 0:
         return {}
-    if improvement in IMPROVEMENT_BAND_TARGETED:
+    if kind == HudRouteVocab.SOURCE_KIND_ROAD:
         # **NO BAND, NO COMMAND.** The token is the keeper, and a road with nobody on the hook is not
         # a road the sim will accept — so an absent band is refused here rather than guessed at, the
         # way an absent herd id is one branch up.
@@ -1868,11 +1875,11 @@ static func format_improvement(payload: Dictionary) -> Dictionary:
         if band == IMPROVEMENT_NO_BAND:
             return {}
         return {
-            "line": "%s %d %d %d %d" % [improvement, faction, band, x, y],
+            "line": "build %s %d %d %d %d" % [improvement, faction, band, x, y],
             "message": "%s (%d, %d) — this band's road now, queued for its builders." % [
                 improvement.capitalize(), x, y],
         }
-    if improvement in IMPROVEMENT_MATERIAL_TARGETED:
+    if kind == HudRouteVocab.SOURCE_KIND_DEPOSIT:
         # ⛔ **NO MATERIAL, NO COMMAND.** The token is half the working's identity, so an absent one is
         # refused here rather than dropped — a three-token `fell` does not merely lose the material, it
         # is a shorter line the parser rejects outright, and guessing one would raise the wrong ladder
@@ -1882,12 +1889,12 @@ static func format_improvement(payload: Dictionary) -> Dictionary:
         if material == IMPROVEMENT_NO_MATERIAL:
             return {}
         return {
-            "line": "%s %d %d %d %s" % [improvement, faction, x, y, material],
+            "line": "build %s %d %d %d %s" % [improvement, faction, x, y, material],
             "message": "%s the %s at (%d, %d) — queued for this band's builders." % [
                 improvement.capitalize(), material, x, y],
         }
     return {
-        "line": "%s %d %d %d" % [improvement, faction, x, y],
+        "line": "build %s %d %d %d" % [improvement, faction, x, y],
         "message": "%s (%d, %d) — queued for this band's builders." % [
             improvement.capitalize(), x, y],
     }
@@ -2024,8 +2031,9 @@ static func site_address(payload: Dictionary, allow_road: bool = true) -> String
         return "%d %d %s" % [x, y, material]
     return "%d %d" % [x, y]
 
-## The token that leads a road build's address.
-const SITE_ADDRESS_ROAD_TOKEN := "road"
+## The token that leads a road build's address: the ladder's ROAD BRANCH id (`route` in
+## `intensification_ladder.json`), which the server resolves against the loaded ladder.
+const SITE_ADDRESS_ROAD_TOKEN := HudRouteVocab.ROAD_BRANCH
 
 ## **THE SAME SITE, AS THE FEED LINE NAMES IT** — `(x, y)` for a patch, `(x, y) <material>` for a
 ## working, `the road at (x, y)` for a road, the herd id for a herd. The address above is grammar; this
@@ -2509,7 +2517,8 @@ func _on_hud_extend_pen(payload: Dictionary) -> void:
 ## the outcome is known only here, and the payload carries `pending_entity` so the drop names that
 ## one entry. `format_improvement` never reads that key.
 func _on_hud_improvement(payload: Dictionary) -> void:
-    if not _send_formatted_command(format_improvement(payload)):
+    var catalog: Variant = _hud_invoke("ladder_rungs")
+    if not _send_formatted_command(format_improvement(payload, catalog if catalog is Array else [])):
         _hud_invoke("drop_pending_assign", [payload])
 
 ## WITHDRAW a declaration — the undo for the verb above, and its own handler because its own command
