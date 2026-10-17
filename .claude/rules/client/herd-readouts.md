@@ -293,8 +293,8 @@ paths:
     ```
     Fed:  100% — all pasture
     Fed:  100% — 88% pasture · 12% fodder
-    Fed:  ⚠ 47% — 40% pasture · 7% fodder · needs 11.3 more/turn
-    Fed:  ⚠ 40% — 40% pasture · no fodder · needs 12.0 /turn
+    Fed:  ⚠ 47% — 40% pasture · 7% fodder · short 11.3 feed/turn
+    Fed:  ⚠ 40% — 40% pasture · no fodder · short 12.0 feed/turn
     ```
 
     **THE ROW IS NAMED FOR WHAT IT MEASURES, NOT FOR ONE OF ITS TERMS.** It read `Fed by pasture` and
@@ -311,12 +311,26 @@ paths:
       is all it decides.
     - **`all pasture`** when the land covers the pen outright (`pen_pasture_fraction` at 1.0 within
       `PenStatus.FED_EPSILON`): no second term, and by construction no shortfall.
-    - **`needs N more/turn`** — `pen_fodder_shortfall`, the sim's own `max(0, hay gap − fodderDraw)`
+    - **`short N feed/turn`** — `pen_fodder_shortfall`, the sim's own `max(0, hay gap − fodderDraw)`
       where the gap is what the pen's fenced footprint leaves uncovered
       (`HerdTelemetryState.penFodderShortfall`, decoded in `native/src/dict/subsistence.rs` beside
       `pen_pasture_fraction`), shown only at or above `FODDER_FLOW_MIN`: **a fed pen owes nothing and
-      must not read `needs 0.0`**. The `more` is dropped on the `no fodder` state — there is no "more" than
-      nothing — so that pen reads `needs N /turn`.
+      must not read `short 0.0`**. It states what is MISSING, in both the `no fodder` and the part-fed
+      states (it read `needs N /turn` and `needs N more/turn`, which said what the pen wanted rather than
+      what it lacked).
+    - **The remedies ride the row's hover** (`DetailFormat.PEN_FEED_REMEDY_TOOLTIP`, set in the producer's
+      `row_tooltips` on `PenStatus.is_starving` only): sow a hay field so the keeper band has fodder to
+      feed out (the FODDER store, which needs Foddering - `graze.md` -> "FODDER is a STOCK"), or extend
+      the pen (a wider fence grazes more land: `pen_pasture_fraction` is the footprint's intake over the
+      herd's demand, and the footprint is `hex_range_tiles(corralled_at, pen_radius)`). The Work row's
+      hover carries the same constant.
+    - **The Work tab's herd row warns by the same test.** `BandPanelController._work_source_models` asks
+      `PenStatus.herd_is_starving` (the tile card's, the map badge's and the turn orb's one test) on a hunt
+      row: the row gets the `⚠` mark, the amber stripe, the attention flag, the remedy hover and, in the note
+      slot when the graver rung-loss note has not taken it, `Underfed — short N feed/turn`
+      (`DetailFormat.pen_underfed_note`; `Underfed — only N% fed` where no shortfall is published). Pinned by
+      `band_panel_preview._assert_work_row_warns_of_an_underfed_pen` (`band_panel_work_pen_underfed`,
+      `band_panel_work_pen_underfed_open`) with a fully-fed control.
     - **The ⚠ LEADS the value** on `PenStatus.is_starving` (the existing test — the map badge's and the
       turn orb's), and `pen_feed_value_hex` reads that prefix to put the row in DANGER ink. That is the
       tint the Corral row's retired `contains("starving")` case used to carry.

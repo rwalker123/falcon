@@ -2329,6 +2329,21 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
     // same settled lines the wire publishes: the pools' and site crews' off the allocation, the take
     // rows' off `row_gear`, which is what each row's `kitToe` is copied from. **A detached party
     // publishes none**: it is never resupplied, so nothing crafted now reaches it.
+    // **THE SECOND READING OF THE BAND'S TAKE ROWS** - the turn a hunting-by-need crew goes out. One
+    // computation, read by Make Next and by the kit ledger alike so their shortfalls cannot differ.
+    let hunt_turn_lines = match (expedition, allocation) {
+        (None, Some(alloc)) => hunt_turn_lines(
+            alloc,
+            idle_workers,
+            &donor_is_local,
+            donor_bench,
+            &claim_sources,
+            &kit,
+            kit_levers.config,
+            sending_pass.as_ref(),
+        ),
+        _ => None,
+    };
     let craft_suggestions = match (expedition, allocation) {
         (None, Some(alloc)) => {
             let take_rows = row_gear
@@ -2339,16 +2354,6 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
                         .iter()
                         .map(move |line| (row, line.item_id.as_str(), line.required, line.filled))
                 });
-            let hunt_turn_lines = hunt_turn_lines(
-                alloc,
-                idle_workers,
-                &donor_is_local,
-                donor_bench,
-                &claim_sources,
-                &kit,
-                kit_levers.config,
-                sending_pass.as_ref(),
-            );
             let mut suggestions = crate::craft_suggestions::band_suggestions(
                 alloc,
                 take_rows,
@@ -2368,49 +2373,12 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
             // next too, ranked with the build-queue shortages.
             crate::craft_suggestions::merge_build_material_suggestions(
                 &mut suggestions,
-                crate::craft_suggestions::build_material_suggestions(
+                crate::craft_suggestions::build_material_suggestions_in_world(
                     alloc,
                     &cohort.stores,
                     craft_inputs.recipes,
                     bench,
-                    &crate::craft_suggestions::BuildPileView {
-                        remaining: &|entry| {
-                            crate::systems::remaining_build_materials(
-                                entry,
-                                claim_sources.forage,
-                                claim_sources.herds,
-                                claim_sources.deposits,
-                                claim_sources.ladder,
-                            )
-                        },
-                        label: &|entry| {
-                            let job = match &entry.declared {
-                                crate::components::BuildJob::Climb(rung) => claim_sources
-                                    .ladder
-                                    .rung(*rung)
-                                    .verb
-                                    .as_deref()
-                                    .map(crate::crafting::title_from_id)
-                                    .unwrap_or_default(),
-                                crate::components::BuildJob::ExtendPen => "Extend pen".to_string(),
-                                crate::components::BuildJob::SetHerdOutput(_) => {
-                                    "Set herd output".to_string()
-                                }
-                            };
-                            let target = match &entry.source {
-                                crate::components::BuildSource::Herd(id) => claim_sources
-                                    .herds
-                                    .find(id)
-                                    .map(|herd| herd.species.clone())
-                                    .unwrap_or_default(),
-                                crate::components::BuildSource::Patch(tile) => {
-                                    format!("({}, {})", tile.x, tile.y)
-                                }
-                                _ => String::new(),
-                            };
-                            format!("{job} {target}").trim().to_string()
-                        },
-                    },
+                    &claim_sources,
                 ),
             );
             // **WHAT EACH SUGGESTION IS CALLED**, resolved here so a client never shows a raw id: an
@@ -2462,6 +2430,7 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
                 crate::craft_suggestions::band_kit_needs(
                     alloc,
                     &lines,
+                    hunt_turn_lines.as_deref(),
                     bench,
                     craft_inputs.recipes,
                     craft_inputs.equipment,

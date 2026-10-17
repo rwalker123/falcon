@@ -27,7 +27,8 @@ use crate::{
         HEAD_ORDER, MIN_ORDER_COUNT,
     },
     craft_suggestions::{
-        band_suggestions, take_row_gear, CraftSuggestion, ForecastInputs, SuggestionConfigs,
+        band_suggestions, build_material_suggestions_in_world, merge_build_material_suggestions,
+        take_row_gear, CraftSuggestion, ForecastInputs, SuggestionConfigs,
     },
     equipment_config::{EquipmentConfig, EquipmentConfigHandle},
     intensification::LadderConfigHandle,
@@ -76,9 +77,9 @@ impl FillConfigs {
 /// **THE RECIPE AN ITEM WOULD BE QUEUED WITH** — the offer the crafting ledger marks `suggested` on
 /// that item's row. The panel's Queue button queues exactly this one.
 fn suggested_offer<'a>(offers: &'a [CraftOfferState], item: &str) -> Option<&'a CraftOfferState> {
-    offers
-        .iter()
-        .find(|offer| offer.suggested && offer.output_item_id == item)
+    offers.iter().find(|offer| {
+        offer.suggested && (offer.output_item_id == item || offer.output_material_id == item)
+    })
 }
 
 /// **THE PURE PICK** — given the band's suggestions and offers, drop from `auto_skipped` every item
@@ -190,7 +191,7 @@ fn band_suggestions_and_offers(
     };
     let offers = band_craft_state(&cohort.stores, Some(bench), 0, &wear, &inputs).craft_offers;
     // The offers come first: the wear forecast reads the recipe each item's row marks `suggested`.
-    let suggestions = band_suggestions(
+    let mut suggestions = band_suggestions(
         allocation,
         take_rows,
         hunt_turn.as_deref(),
@@ -205,6 +206,18 @@ fn band_suggestions_and_offers(
             materials: &configs.materials,
         }),
     );
+    // **A queued build short of the GOODS it draws** (hurdles for a pen) is a suggestion like any
+    // other - the same wrapper the snapshot merges - so an empty auto bench works it down.
+    let build_materials = with_world_sources(world, cohort.faction, |sources| {
+        build_material_suggestions_in_world(
+            allocation,
+            &cohort.stores,
+            &configs.recipes,
+            Some(bench),
+            sources,
+        )
+    });
+    merge_build_material_suggestions(&mut suggestions, build_materials);
     Some((suggestions, offers))
 }
 
@@ -352,7 +365,7 @@ pub fn auto_craft_skip(world: &mut World, band: Entity) -> Result<String, AutoSk
     let item = configs
         .recipes
         .recipe(&head.recipe_id)
-        .and_then(|recipe| recipe.output_equipment_id())
+        .and_then(|recipe| recipe.row_key())
         .map(str::to_string)
         .unwrap_or_else(|| head.recipe_id.clone());
     let mut bench = world

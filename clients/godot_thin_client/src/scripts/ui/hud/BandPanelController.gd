@@ -7657,6 +7657,18 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
             # nothing home, and this one says the ground or the flock is being lost.
             note = HudWorkVocab.under_kept_note(kind, material_note, tools_short, tools_named)
             note_severity = HudWorkVocab.under_kept_note_severity(material_note)
+        # **A PEN THE SIM SAYS IS UNDERFED FLIES THE SAME WARNING THE MAP AND THE TURN ORB DO** —
+        # `PenStatus.herd_is_starving`, the one test the tile card's `Fed` row, the map's distress badge
+        # and the orb's `starving_pen` item all ask. The row said `Penned` and nothing else while all
+        # three warned. It takes the note slot only when the rung-loss note above has not (that is the
+        # graver one), and always the `⚠` and the hover.
+        var pen_underfed := kind == SourceForecast.LABOR_KIND_HUNT and PenStatus.herd_is_starving(rung_source)
+        if pen_underfed:
+            if not marks.contains(HudComposeVocab.OVERHUNT_FLAG):
+                marks += " " + HudComposeVocab.OVERHUNT_FLAG
+            if note == "":
+                note = DetailFormat.pen_underfed_note(rung_source)
+                note_severity = HudWorkVocab.NOTE_SEVERITY_WARN
         # **AND THE ROW FLIES A MARK OF ITS OWN FOR IT** — a KIT, never a second ⚠. The two hazards
         # have opposite remedies (the bench against the stepper), so one glyph for both would make a
         # player hover every marked row to learn which it is: the discovery problem this arc was
@@ -7938,6 +7950,7 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
                 # inspector card's KITS section, beside the picker that chose the kit.
                 kit_note,
                 under_kept_hint,
+                DetailFormat.PEN_FEED_REMEDY_TOOLTIP if pen_underfed else "",
                 ready_tooltip,
                 building_tooltip,
                 HudWorkVocab.WORK_ROW_OPEN_HINT]),
@@ -7952,7 +7965,7 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
             # band-level *"you are short N kits"* readout Ray declined: *"we don't need it if in the
             # work tab we show each row that is short of kits."*
             "attention": bool(yld.get("warn", false)) or note != "" or pending
-                or overstaffed != "" or kit_note != "",
+                or overstaffed != "" or kit_note != "" or pen_underfed,
         })
     return models
 

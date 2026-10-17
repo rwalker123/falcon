@@ -4225,16 +4225,17 @@ func _assert_the_kits_group_reads(panel: CraftingPanel) -> void:
 			% [_cost_of(panel, KIT_STALKING)],
 		_cost_of(panel, KIT_STALKING) == "1 stone · 2 wood · 3 fibre · 6 hide each")
 	var stalking_why := _by_meta(panel, HudCraftingVocab.KIT_REASON_META, KIT_STALKING) as Label
-	h._assert_hud("crafting/kits — …and its reason is the danger line for the first unqueued gap (%s)"
+	h._assert_hud("crafting/kits — …and its reason names the units short, red while one is not coming (%s)"
 			% [_text_of(stalking_why)],
-		_text_of(stalking_why) == "2 hunters without spears"
+		_text_of(stalking_why) == "Spears 2 short · Sled 5 short, 1 coming"
 			and stalking_why.get_theme_color("font_color") == HudStyle.DANGER)
 	# Harvesting: every gap is queued -> a dim line.
 	var harvesting_why := _by_meta(panel, HudCraftingVocab.KIT_REASON_META, KIT_HARVESTING) as Label
 	h._assert_hud("crafting/kits — a gap that is all queued reads dim, not danger (%s)"
 			% [_text_of(harvesting_why)],
-		_text_of(harvesting_why) == "Queued — 1 baskets"
-			and harvesting_why.get_theme_color("font_color") == HudStyle.INK_DIM)
+		_text_of(harvesting_why) == "Baskets 1 short, 1 coming"
+			and harvesting_why.get_theme_color("font_color") == HudStyle.INK_DIM
+			and _owned_of(panel, KIT_HARVESTING) == "4 of 5 equipped")
 	# Warrior: everyone has a club -> a faint reason, and NO row is ever dimmed.
 	var warrior_why := _by_meta(panel, HudCraftingVocab.KIT_REASON_META, KIT_WARRIOR) as Label
 	h._assert_hud("crafting/kits — a covered kit reads faint (%s)" % [_text_of(warrior_why)],
@@ -4246,16 +4247,18 @@ func _assert_the_kits_group_reads(panel: CraftingPanel) -> void:
 		is_equal_approx(_effective_alpha(_label_with_text(panel, "Warrior kit")), 1.0)
 			and is_equal_approx(_effective_alpha(_label_with_text(panel, "Ranging kit")), 1.0))
 	# Wayfinding: nobody has the gear -> the pill.
-	h._assert_hud("crafting/kits — an unequipped kit wears the None-equipped pill, with its gap line (%s)"
-			% [_owned_of(panel, KIT_WAYFINDING)],
-		_owned_of(panel, KIT_WAYFINDING) == "None equipped"
-			and _text_of(_by_meta(panel, HudCraftingVocab.KIT_REASON_META, KIT_WAYFINDING))
-				== "2 scouts without wayfinding gear")
+	h._assert_hud("crafting/kits — a kit nothing claims is quiet: Not used / Not in use, no `without` (%s / %s)"
+			% [_owned_of(panel, KIT_WAYFINDING),
+				_text_of(_by_meta(panel, HudCraftingVocab.KIT_REASON_META, KIT_WAYFINDING))],
+		_owned_of(panel, KIT_WAYFINDING) == "Not used"
+			and _text_of(_by_meta(panel, HudCraftingVocab.KIT_REASON_META, KIT_WAYFINDING)) == "Not in use"
+			and (_by_meta(panel, HudCraftingVocab.KIT_REASON_META, KIT_WAYFINDING) as Label).get_theme_color(
+				"font_color") == HudStyle.INK_FAINT)
 	# Ranging: nobody on the job -> Not used, and a faint No-<noun>-yet.
-	h._assert_hud("crafting/kits — a kit nobody's job uses reads Not used / No rangers yet (%s / %s)"
+	h._assert_hud("crafting/kits — …and so is one nobody's job uses (%s / %s)"
 			% [_owned_of(panel, KIT_RANGING), _text_of(_by_meta(panel, HudCraftingVocab.KIT_REASON_META, KIT_RANGING))],
 		_owned_of(panel, KIT_RANGING) == "Not used"
-			and _text_of(_by_meta(panel, HudCraftingVocab.KIT_REASON_META, KIT_RANGING)) == "No rangers yet")
+			and _text_of(_by_meta(panel, HudCraftingVocab.KIT_REASON_META, KIT_RANGING)) == "Not in use")
 
 func _assert_the_picker_opens_on_one_kit(panel: CraftingPanel) -> void:
 	var picker := _by_meta(panel, HudCraftingVocab.KIT_PICKER_META, KIT_STALKING)
@@ -4402,17 +4405,15 @@ func _kit_band() -> Dictionary:
 const HURDLING_KIT := "hurdling"
 const HURDLING_CROOKS_HELD := 8
 const HURDLING_BUILDERS := 6
-const HURDLING_CROOKS_SETTLED := 5
+const HURDLING_CROOKS_CLAIMED := 9
 
 func _settled_short_kit_state(base_band: Dictionary) -> void:
 	var band := base_band.duplicate(true)
 	var needs: Array = band["kit_needs"]
 	needs.append(_need(HURDLING_KIT, "Hurdling kit", ["builders", "husbandry"], HURDLING_BUILDERS, [
-		_need_item("crook", 1, HURDLING_CROOKS_HELD, 0, [
+		_need_item("crook", 1, HURDLING_CROOKS_HELD, 0, HURDLING_CROOKS_CLAIMED, 1, [
 			_need_recipe("crook", 1.0, [["bone", 1.0], ["fibre", 2.0]])])]))
 	band["kit_needs"] = needs
-	band["pool_toe"] = [{"pool": "builders", "item_id": "crook",
-		"required": float(HURDLING_BUILDERS), "filled": float(HURDLING_CROOKS_SETTLED)}]
 	h._hud.update_band_alerts([band])
 	h._hud.open_crafting_panel(band)
 	await h._settle()
@@ -4421,46 +4422,49 @@ func _settled_short_kit_state(base_band: Dictionary) -> void:
 		h._assert_hud("crafting/kits — the hurdling band's panel opens", false)
 		return
 	var owned := _owned_of(panel, HURDLING_KIT)
-	h._assert_hud("crafting/kits — a kit the settlement left 5 of 6 reads \"5 of 6\", not all equipped (%s)" % [owned],
-		owned.begins_with("%d of %d" % [HURDLING_CROOKS_SETTLED, HURDLING_BUILDERS]))
+	h._assert_hud("crafting/kits — a kit the claims outrun reads \"8 of 9\", the claim not the headcount (%s)" % [owned],
+		owned.begins_with("%d of %d" % [HURDLING_CROOKS_HELD, HURDLING_CROOKS_CLAIMED]))
 	var texts := _label_texts(panel)
 	var said := " | ".join(texts)
-	h._assert_hud("crafting/kits — …and the row says one worker is without crook (%s)" % [said],
-		said.contains("1 worker without crook") and not said.contains("All 6 workers equipped"))
+	h._assert_hud("crafting/kits — …and the row says one crook is short (%s)" % [said],
+		said.contains("Crook 1 short") and not said.contains("All 9 workers equipped"))
 	await h._save("crafting_kit_settled_short")
 
 func _kit_needs() -> Array:
 	return [
 		_need(KIT_STALKING, "Stalking kit", ["hunt"], KIT_HUNTERS, [
-			_need_item("spears", 1, KIT_SPEARS_HAVE, 0, [
+			_need_item("spears", 1, KIT_SPEARS_HAVE, 0, KIT_HUNTERS, KIT_HUNTERS - KIT_SPEARS_HAVE, [
 				_need_recipe(SPEARS_BONE_RECIPE, 1.0, [["bone", 1.0], ["fibre", 2.0], ["hide", 1.0]]),
 				_need_recipe(SPEARS_FLINT_RECIPE, 1.0, [["stone", 1.0], ["wood", 2.0], ["fibre", 1.0]])]),
-			_need_item("sled", 1, KIT_SLED_HAVE, KIT_SLED_QUEUED, [
+			_need_item("sled", 1, KIT_SLED_HAVE, KIT_SLED_QUEUED, KIT_HUNTERS, KIT_HUNTERS - KIT_SLED_HAVE, [
 				_need_recipe(SLED_HIDE_RECIPE, 1.0, [["hide", 6.0], ["fibre", 2.0]]),
 				_need_recipe(SLED_FRAMED_RECIPE, 1.0, [["hide", 3.0], ["wood", 2.0], ["fibre", 2.0]])])]),
 		_need(KIT_HARVESTING, "Harvesting kit", ["forage"], KIT_HARVESTERS, [
-			_need_item("baskets", 1, KIT_BASKETS_HAVE, KIT_BASKETS_QUEUED, [
+			_need_item("baskets", 1, KIT_BASKETS_HAVE, KIT_BASKETS_QUEUED, KIT_HARVESTERS, KIT_HARVESTERS - KIT_BASKETS_HAVE, [
 				_need_recipe(BASKETS_REED_RECIPE, 1.0, [["fibre", 5.0], ["hide", 1.0]]),
 				_need_recipe(BASKETS_WITHY_RECIPE, 1.0, [["wood", 3.0], ["fibre", 2.0]])])]),
 		_need(KIT_WARRIOR, "Warrior kit", ["warrior"], KIT_WARRIORS, [
-			_need_item("clubs", 1, KIT_CLUBS_HAVE, 0, [
+			_need_item("clubs", 1, KIT_CLUBS_HAVE, 0, KIT_WARRIORS, 0, [
 				_need_recipe("clubs", 1.0, [["bone", 2.0], ["hide", 1.0]])])]),
 		_need(KIT_WAYFINDING, "Wayfinding kit", ["scout"], KIT_SCOUTS, [
-			_need_item("wayfinding", 1, 0, 0, [
+			_need_item("wayfinding", 1, 0, 0, 0, 0, [
 				_need_recipe("wayfinding", 1.0, [["bone", 1.0], ["hide", 1.0], ["fibre", 1.0]])])]),
 		_need(KIT_RANGING, "Ranging kit", ["expedition"], 0, [
-			_need_item("spears", 1, KIT_SPEARS_HAVE, 0, [
+			_need_item("spears", 1, KIT_SPEARS_HAVE, 0, 0, 0, [
 				_need_recipe(SPEARS_FLINT_RECIPE, 1.0, [["stone", 1.0], ["wood", 2.0], ["fibre", 1.0]])]),
-			_need_item("baskets", 1, KIT_BASKETS_HAVE, KIT_BASKETS_QUEUED, [
+			_need_item("baskets", 1, KIT_BASKETS_HAVE, KIT_BASKETS_QUEUED, 0, 0, [
 				_need_recipe(BASKETS_REED_RECIPE, 1.0, [["fibre", 5.0], ["hide", 1.0]])])]),
 	]
 
 func _need(kit_id: String, display_name: String, jobs: Array, people: int, items: Array) -> Dictionary:
 	return {"kit_id": kit_id, "display_name": display_name, "jobs": jobs, "people": people, "items": items}
 
-func _need_item(item_id: String, workers_per_unit: int, have: int, queued: int, recipes: Array) -> Dictionary:
+## `claimed` / `short` are the sim's: units claimed by rows, pools, sites and queued builds on the kit,
+## and the whole units missing on those claims before the bench's queue is netted off.
+func _need_item(item_id: String, workers_per_unit: int, have: int, queued: int, claimed: float,
+		short: int, recipes: Array) -> Dictionary:
 	return {"item_id": item_id, "workers_per_unit": workers_per_unit, "have": have, "queued": queued,
-		"recipes": recipes}
+		"claimed": claimed, "short": short, "recipes": recipes}
 
 func _need_recipe(recipe_id: String, output_per_pass: float, inputs: Array) -> Dictionary:
 	var rows: Array = []

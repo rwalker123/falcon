@@ -4317,3 +4317,150 @@ fn the_jobs_behind_the_head_are_suggested_their_tools_off_the_encoded_frame() {
         "ONE suggestion whose count is the total over every consumer"
     );
 }
+
+/// **THE KIT LEDGER'S `claimed` / `short` ARE WHAT THE CLAIMS ON THE KIT ASKED FOR, off the encoded
+/// frame.** The queue behind the head asks for hoes; the band holds none. The tillage kit (which
+/// carries the hoes on the builders job) reads those claims, its `short` is exactly the count Make Next
+/// asks for before the bench's queue nets it, and a kit nothing claims through - the trapping kit -
+/// reads `claimed` 0 and `short` 0.
+#[test]
+fn the_kit_ledger_claims_and_shortfall_agree_with_make_next_off_the_encoded_frame() {
+    use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
+
+    let (mut app, band, _sources) = world_with_a_queue(THE_WHOLE_QUEUE, BUILDERS);
+    *app.world
+        .get_mut::<core_sim::BandEquipment>(band)
+        .expect("a spawned band carries an equipment ledger") = core_sim::BandEquipment::default();
+    resolve_a_turn(&mut app);
+
+    let (count, _) = published_suggestion(&app, band, SHARED_TOOL)
+        .expect("hoes are suggested to a band that holds none");
+    let snapshot = app
+        .world
+        .resource::<SnapshotHistory>()
+        .latest_entry()
+        .expect("a snapshot was captured")
+        .snapshot;
+    let bytes = sim_schema::encode_snapshot_flatbuffer(snapshot.as_ref());
+    let envelope = fb::root_as_envelope(bytes.as_ref()).expect("a valid envelope");
+    let cohort = envelope
+        .payload_as_snapshot()
+        .and_then(|snapshot| snapshot.population())
+        .and_then(|section| section.populations())
+        .expect("the population section")
+        .iter()
+        .find(|cohort| cohort.entity() == band.to_bits())
+        .expect("the band is on the wire");
+    let needs = cohort.kitNeeds().expect("the band publishes its kit needs");
+    let reading = |kit: &str, item: &str| {
+        needs
+            .iter()
+            .find(|need| need.kitId() == Some(kit))
+            .and_then(|need| need.items())
+            .and_then(|items| items.iter().find(|row| row.itemId() == Some(item)))
+            .map(|row| (row.claimed(), row.short()))
+    };
+    let (claimed, short) = reading("tillage", SHARED_TOOL).expect("the tillage kit carries hoes");
+    assert!(
+        claimed > 0.0,
+        "the queued jobs claim hoes on the tillage kit"
+    );
+    assert_eq!(
+        short, count,
+        "with nothing on the bench, the ledger's short is Make Next's whole count"
+    );
+    for kit in ["trapping", "paving", "big_game"] {
+        for need in needs.iter().filter(|need| need.kitId() == Some(kit)) {
+            for row in need.items().into_iter().flat_map(|items| items.iter()) {
+                assert_eq!(
+                    (row.claimed(), row.short()),
+                    (0.0, 0),
+                    "{kit} {:?} is nobody's claim",
+                    row.itemId()
+                );
+            }
+        }
+    }
+}
+
+/// **A fixture band at a 64% built pen ring, holding no goods, with an AUTO bench and an empty queue.**
+fn an_auto_bench_beside_a_pen_short_of_hurdles() -> (App, Entity) {
+    let (mut app, band, _herd, _source) = world_with_a_ring_at_the_head(BUILDERS);
+    {
+        let width = pen_ring_work_cost();
+        let mut registry = app.world.resource_mut::<core_sim::HerdRegistry>();
+        for herd in registry.herds.iter_mut() {
+            herd.pen_extend_progress = 0.64 * width;
+        }
+    }
+    app.world
+        .get_mut::<PopulationCohort>(band)
+        .expect("the fixture band")
+        .stores = LocalStore::new();
+    // Fully kitted, so no tool outranks the hurdles in Make Next (kit shortages rank first).
+    app.world
+        .entity_mut(band)
+        .insert(core_sim::BandEquipment::start_stocked_for(
+            &core_sim::EquipmentConfig::for_a_stocked_fixture(),
+            A_WHOLE_BAND_OF_GEAR,
+        ));
+    // The fixture band is hand-built and carries no bench of its own; give it an auto one.
+    app.world.entity_mut(band).insert(core_sim::BandBench {
+        auto: true,
+        ..Default::default()
+    });
+    resolve_a_pen_turn(&mut app);
+    (app, band)
+}
+
+/// **AUTO-CRAFT WORKS DOWN A BUILD-MATERIAL SUGGESTION LIKE ANY OTHER.** Reported live: Make Next said
+/// `Hurdles x6` for a Corral while the auto bench read "nothing to make" for three turns, because the
+/// fill matched a suggestion to its offer on the equipment id alone. An empty auto bench beside a pen
+/// short of hurdles now queues an auto hurdles order at the suggestion's count.
+#[test]
+fn an_empty_auto_bench_queues_the_hurdles_a_pen_build_is_short_of() {
+    let (mut app, band) = an_auto_bench_beside_a_pen_short_of_hurdles();
+    let (published_count, _) = published_suggestion(&app, band, "hurdles")
+        .expect("Make Next names the hurdles a pen build is short of");
+
+    assert!(
+        core_sim::auto_craft::auto_craft_fill(&mut app.world, band),
+        "the fill must find a usable suggestion"
+    );
+    let bench = app
+        .world
+        .get::<core_sim::BandBench>(band)
+        .expect("the bench");
+    assert_eq!(bench.orders.len(), 1, "one auto order");
+    let order = &bench.orders[0];
+    assert!(order.auto, "queued by auto-craft");
+    assert_eq!(order.recipe_id, "hurdles");
+    assert_eq!(
+        order.count, published_count,
+        "at the suggestion's own count"
+    );
+}
+
+/// **A build-material auto order can be skipped, and the skip is keyed by the material.**
+#[test]
+fn a_hurdles_auto_order_can_be_skipped_and_stays_skipped() {
+    let (mut app, band) = an_auto_bench_beside_a_pen_short_of_hurdles();
+    assert!(core_sim::auto_craft::auto_craft_fill(&mut app.world, band));
+    // The store holds no wood or hide, so the bench cannot work the order: it is waiting.
+    let skipped = core_sim::auto_craft::auto_craft_skip(&mut app.world, band)
+        .expect("a waiting auto head can be skipped");
+    assert_eq!(skipped, "hurdles");
+    let bench = app
+        .world
+        .get::<core_sim::BandBench>(band)
+        .expect("the bench");
+    assert!(bench.auto_skipped.contains("hurdles"));
+    assert!(
+        bench.orders.is_empty(),
+        "nothing else is suggested, so the skipped material is not re-queued: {:?}",
+        bench.orders
+    );
+}
+
+/// Enough fixture workers that every kit unit is stocked for everyone.
+const A_WHOLE_BAND_OF_GEAR: f32 = 200.0;

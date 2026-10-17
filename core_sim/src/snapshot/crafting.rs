@@ -750,6 +750,8 @@ pub(crate) fn kit_need_states(
                         workers_per_unit: item.workers_per_unit,
                         have: item.have,
                         queued: item.queued,
+                        claimed: item.claimed,
+                        short: item.short,
                         recipes,
                     }
                 })
@@ -960,7 +962,7 @@ pub(crate) fn craft_suggestion_states(
                             state.job = source.kind().to_string();
                             Some(source)
                         }
-                        SupplySource::Take { job, source } => {
+                        SupplySource::Take { job, source, .. } => {
                             state.kind = SUGGESTION_SOURCE_TAKE.to_string();
                             state.job = (*job).to_string();
                             source.as_ref()

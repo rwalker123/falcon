@@ -1037,7 +1037,7 @@ Growth or Morale.
 **`band_hay_and_pen` is the frame that carries a BAND and a PEN at once**, which the drawer cannot do
 on its own: a player band's detail moves into the Band/City dock when one is present, so the dock
 states the band's `Fodder` ledger while the tile drawer states the starving pen's own
-`Fed: ⚠ 47% — 40% pasture · 7% fodder · needs 11.3 more/turn` share of it — **one word across both**,
+`Fed: ⚠ 47% — 40% pasture · 7% fodder · short 11.3 feed/turn` share of it — **one word across both**,
 the pen row saying `fodder` as the band's store row always has. The dock is `SIDE_RIGHT` on purpose — a vertical dock is the TALL
 tier, which keeps the Fodder row STANDALONE rather than merging it onto Food, the SHORT tier's merge
 being `band_panel_preview`'s to hold. The chapter releases the panel and hands the reference band

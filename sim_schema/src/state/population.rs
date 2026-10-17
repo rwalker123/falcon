@@ -1878,6 +1878,10 @@ pub struct KitNeedItemState {
     pub queued: u32,
     /// One per recipe that outputs the item, book order.
     pub recipes: Vec<KitNeedRecipeState>,
+    /// Units the claims on this kit asked for (0 when no row chose it).
+    pub claimed: f32,
+    /// Whole units still missing on those claims, before the bench's queue nets them.
+    pub short: u32,
 }
 
 /// **One recipe that makes a kit item** — its output per pass and its per-pass inputs.

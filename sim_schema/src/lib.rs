@@ -104,6 +104,8 @@ mod tests {
                 workers_per_unit: 6,
                 have: 1,
                 queued: 2,
+                claimed: 3.0,
+                short: 3,
                 recipes: vec![KitNeedRecipeState {
                     recipe_id: "sled_framed".to_string(),
                     output_per_pass: 1.0,

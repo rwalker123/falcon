@@ -1371,6 +1371,8 @@ fn create_kit_needs<'a>(
                             have: item.have,
                             queued: item.queued,
                             recipes: Some(recipes),
+                            claimed: item.claimed,
+                            short: item.short,
                         },
                     )
                 })
@@ -2078,6 +2080,8 @@ fn decode_population(
                 workers_per_unit: item.workersPerUnit(),
                 have: item.have(),
                 queued: item.queued(),
+                claimed: item.claimed(),
+                short: item.short(),
                 recipes: map_rows(item.recipes(), |recipe| KitNeedRecipeState {
                     recipe_id: text(recipe.recipeId()),
                     output_per_pass: recipe.outputPerPass(),

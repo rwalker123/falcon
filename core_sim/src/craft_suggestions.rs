@@ -81,6 +81,9 @@ pub enum SupplySource {
     Take {
         job: &'static str,
         source: Option<BuildSource>,
+        /// The id of the kit the row CHOSE (its own pick, else its job's default) - what attributes
+        /// the row's lines to one kit when several share a job and an item (`sled`).
+        kit: String,
     },
     /// **A queued build behind the head**, by its place in the build queue (`1` is next) and its
     /// source. The head's own claim is [`SupplySource::Pool`] of the builders.
@@ -89,10 +92,11 @@ pub enum SupplySource {
 
 impl SupplySource {
     /// The take-row key for a labor row.
-    pub fn take_row(target: &LaborTarget) -> Self {
+    pub fn take_row(target: &LaborTarget, kit: &str) -> Self {
         SupplySource::Take {
             job: target.kind(),
             source: BuildSource::of(target),
+            kit: kit.to_string(),
         }
     }
 
@@ -228,7 +232,10 @@ pub fn band_tool_shortfall_lines<'a>(
         .filter_map(|(row, item, required, filled)| {
             let assignment = allocation.assignments.get(row)?;
             Some(ToolShortfallLine {
-                source: SupplySource::take_row(&assignment.target),
+                source: SupplySource::take_row(
+                    &assignment.target,
+                    assignment.kit_choice(equipment).id(),
+                ),
                 item: item.to_string(),
                 required,
                 filled,
@@ -268,8 +275,23 @@ impl SupplySource {
     }
 }
 
+impl SupplySource {
+    /// **WHETHER THIS CLAIM IS ON A KIT** - the attribution [`KitNeedItem::claimed`] and
+    /// [`KitNeedItem::short`] count by. A take row is on the kit it CHOSE; a pool and a site crew are
+    /// on a kit through their job (a site through its keeping job); a queued build is on the kit of
+    /// the builders' job that carries its item. The caller has already matched the line's item to the
+    /// kit's `uses`.
+    fn is_on_kit(&self, kit: &crate::equipment_config::KitDefinition) -> bool {
+        match self {
+            SupplySource::Take { kit: chosen, .. } => *chosen == kit.id,
+            SupplySource::BuildQueue { .. } => kit.jobs.contains(&KitJob::Builders),
+            other => other.serves_any(&kit.jobs),
+        }
+    }
+}
+
 /// **ONE ITEM OF A KIT, AS THE BAND STANDS ON IT** — a row of [`KitNeed::items`].
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct KitNeedItem {
     /// The `equipment.json` item id.
     pub item: String,
@@ -280,11 +302,18 @@ pub struct KitNeedItem {
     pub have: u32,
     /// Units the bench's queue already owes (and the finished ones parked for delivery).
     pub queued: u32,
+    /// Units the claims ON THIS KIT asked for: `Σ required` over the shortfall lines
+    /// [`SupplySource::is_on_kit`] attributes to it (a kit nobody's row chose claims `0`).
+    pub claimed: f32,
+    /// Whole units still missing on those lines BEFORE the bench's queue nets them - the figure
+    /// Make Next starts from ([`whole_shortfall`] over the same lines), so the ledger and the
+    /// suggestion cannot disagree. The reader nets `queued`.
+    pub short: u32,
 }
 
 /// **ONE KIT'S STANDING WITH THE BAND** — the facts the client's *Make a whole kit* picker is
 /// computed from. See [`band_kit_needs`].
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct KitNeed {
     pub kit_id: String,
     pub display_name: String,
@@ -298,6 +327,13 @@ pub struct KitNeed {
 /// whole number up to rounding; [`WHOLE_UNIT_TOLERANCE`] keeps `1.9999` from reading as one.
 fn whole_units(units: f32) -> u32 {
     (units.max(NOTHING_MISSING) + WHOLE_UNIT_TOLERANCE).floor() as u32
+}
+
+/// **A SUMMED MISSING-UNIT FIGURE AS THE WHOLE UNITS TO MAKE** - `ceil(missing - tolerance)`, floored
+/// at zero. The ONE formula under both Make Next's count (before the queue nets it) and the kit
+/// ledger's `short`.
+fn whole_shortfall(missing: f32) -> f32 {
+    (missing - WHOLE_UNIT_TOLERANCE).ceil().max(NOTHING_TO_MAKE)
 }
 
 /// **EVERY ORDERABLE KIT'S STANDING, from the lines the turn settled** — one [`KitNeed`] per roster
@@ -316,6 +352,7 @@ fn whole_units(units: f32) -> u32 {
 pub fn band_kit_needs(
     allocation: &LaborAllocation,
     lines: &[ToolShortfallLine],
+    hunt_turn: Option<&[ToolShortfallLine]>,
     bench: Option<&BandBench>,
     recipes: &RecipesConfig,
     equipment: &EquipmentConfig,
@@ -343,7 +380,30 @@ pub fn band_kit_needs(
                     let spare = wear
                         .live_units(item, equipment)
                         .saturating_sub(whole_units(to_anyone));
+                    // **Claimed and short, off the passes Make Next reads**: per pass the lines on
+                    // this kit for this item; the pass with the larger shortfall wins, ties to the
+                    // earlier (`suggestions_over`'s rule).
+                    let (claimed, missing) = std::iter::once(lines)
+                        .chain(hunt_turn)
+                        .map(|pass| {
+                            let on_kit = || {
+                                pass.iter()
+                                    .filter(|line| line.item == *item && line.source.is_on_kit(kit))
+                            };
+                            let claimed: f32 = on_kit().map(|line| line.required).sum();
+                            let missing: f32 = on_kit()
+                                .map(|line| (line.required - line.filled).max(NOTHING_MISSING))
+                                .sum();
+                            (claimed, missing)
+                        })
+                        .fold(None::<(f32, f32)>, |best, next| match best {
+                            Some(held) if held.1 >= next.1 => Some(held),
+                            _ => Some(next),
+                        })
+                        .unwrap_or((NOTHING_MISSING, NOTHING_MISSING));
                     KitNeedItem {
+                        claimed,
+                        short: whole_shortfall(missing) as u32,
                         item: item.clone(),
                         workers_per_unit: equipment
                             .item(item)
@@ -631,7 +691,7 @@ fn suggestions_from(
         .into_iter()
         .filter_map(|(item, sources)| {
             let missing: f32 = sources.iter().map(|line| line.missing_units).sum();
-            let whole_shortfall = (missing - WHOLE_UNIT_TOLERANCE).ceil().max(NOTHING_TO_MAKE);
+            let whole_shortfall = whole_shortfall(missing);
             let queued = queued_units(bench, recipes, item);
             let current = (whole_shortfall - queued).ceil().max(NOTHING_TO_MAKE);
             let forecast = upcoming.get(item);
@@ -856,6 +916,59 @@ pub fn build_material_suggestions(
             })
         })
         .collect()
+}
+
+/// **THE BUILD-MATERIAL SUGGESTIONS FOR A BAND, off the world's claim sources** - the one wrapper the
+/// snapshot and auto-craft both call, so the list the panel shows and the list auto-craft works down
+/// cannot differ. Supplies the view ([`BuildPileView`]) `build_material_suggestions` needs: each
+/// entry's remaining pile and the words naming the job.
+pub fn build_material_suggestions_in_world(
+    allocation: &LaborAllocation,
+    store: &crate::components::LocalStore,
+    recipes: &RecipesConfig,
+    bench: Option<&BandBench>,
+    sources: &crate::take_claims::ClaimSources<'_>,
+) -> Vec<CraftSuggestion> {
+    build_material_suggestions(
+        allocation,
+        store,
+        recipes,
+        bench,
+        &BuildPileView {
+            remaining: &|entry| {
+                crate::systems::remaining_build_materials(
+                    entry,
+                    sources.forage,
+                    sources.herds,
+                    sources.deposits,
+                    sources.ladder,
+                )
+            },
+            label: &|entry| {
+                let job = match &entry.declared {
+                    crate::components::BuildJob::Climb(rung) => sources
+                        .ladder
+                        .rung(*rung)
+                        .verb
+                        .as_deref()
+                        .map(crate::crafting::title_from_id)
+                        .unwrap_or_default(),
+                    crate::components::BuildJob::ExtendPen => "Extend pen".to_string(),
+                    crate::components::BuildJob::SetHerdOutput(_) => "Set herd output".to_string(),
+                };
+                let target = match &entry.source {
+                    BuildSource::Herd(id) => sources
+                        .herds
+                        .find(id)
+                        .map(|herd| herd.species.clone())
+                        .unwrap_or_default(),
+                    BuildSource::Patch(tile) => format!("({}, {})", tile.x, tile.y),
+                    _ => String::new(),
+                };
+                format!("{job} {target}").trim().to_string()
+            },
+        },
+    )
 }
 
 /// **WHAT THE BENCH'S QUEUE STILL OWES OF A MATERIAL** - `remaining × the recipe's output amount`,
@@ -1140,6 +1253,7 @@ mod tests {
         SupplySource::Take {
             job: "hunt",
             source: Some(BuildSource::Herd(fauna.to_string())),
+            kit: "big_game".to_string(),
         }
     }
 
@@ -1478,6 +1592,7 @@ mod tests {
                 tile,
                 material: "wood".to_string(),
             }),
+            kit: "woodcutting".to_string(),
         }
     }
 
@@ -1533,7 +1648,15 @@ mod tests {
             line(take("deer"), SLED, 1.0, 1.0),
             line(extract(PATCH), SLED, 1.0, 1.0),
         ];
-        let needs = band_kit_needs(&hunting_band(), &lines, None, &recipes, &equipment, &wear);
+        let needs = band_kit_needs(
+            &hunting_band(),
+            &lines,
+            None,
+            None,
+            &recipes,
+            &equipment,
+            &wear,
+        );
         let kit = stalking(&needs);
         assert_eq!(kit.people, HUNTERS, "the hunters are the kit's people");
         assert_eq!(
@@ -1570,12 +1693,28 @@ mod tests {
                 1.0,
             ),
         ];
-        let needs = band_kit_needs(&hunting_band(), &lines, None, &recipes, &equipment, &wear);
+        let needs = band_kit_needs(
+            &hunting_band(),
+            &lines,
+            None,
+            None,
+            &recipes,
+            &equipment,
+            &wear,
+        );
         // Three live sleds, all three spoken for (hunt, extract, the queued build's forecast).
         assert_eq!(item_of(stalking(&needs), SLED).have, 1);
 
         let spare = holding(&equipment, &[(SLED, 4)]);
-        let needs = band_kit_needs(&hunting_band(), &lines, None, &recipes, &equipment, &spare);
+        let needs = band_kit_needs(
+            &hunting_band(),
+            &lines,
+            None,
+            None,
+            &recipes,
+            &equipment,
+            &spare,
+        );
         assert_eq!(
             item_of(stalking(&needs), SLED).have,
             2,
@@ -1592,6 +1731,7 @@ mod tests {
         let needs = band_kit_needs(
             &hunting_band(),
             &[],
+            None,
             Some(&bench),
             &recipes,
             &equipment,

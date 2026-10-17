@@ -11184,7 +11184,7 @@ const ABSURD_QUEUE_TURN := 9000000000000000000
 ## head of its band's queue. `build_legs` is EMPTY because a ring lays none — there is no leg to
 ## climb, only more of the one the source is already on — and `build_destination_rung` is the pen
 ## rung it widens, which is what keeps the row titled `Corral …`.
-func _ring_herd_fixtures(pile: Array = []) -> Array:
+func _ring_herd_fixtures(pile: Array = [], extra: Dictionary = {}) -> Array:
 	var fixture := {
 		"id": RING_HERD_ID, "species": "Wild Fowl",
 		"x": RING_HERD_TILE.x, "y": RING_HERD_TILE.y,
@@ -11203,6 +11203,7 @@ func _ring_herd_fixtures(pile: Array = []) -> Array:
 	}
 	if not pile.is_empty():
 		fixture["corral_build_material_cost"] = pile
+	fixture.merge(extra, true)
 	return RUNG_FX.stamp_herds([fixture])
 
 ## The band KEEPING that pen, carrying the wire's own `extend_pen` job token on its row — the one
@@ -11290,6 +11291,50 @@ func _assert_queue_row_ring_quotes_its_own_meter() -> void:
 	_push_bands([_ring_band_fixture()])
 	await _settle()
 	await _assert_queue_head_says_what_the_shelf_lacks()
+	await _assert_work_row_warns_of_an_underfed_pen()
+
+## **THE WORK ROW WARNS OF AN UNDERFED PEN THE WAY THE MAP, THE ORB AND THE TILE CARD DO.** All three ask
+## `PenStatus.herd_is_starving`; the board row said `Penned` and nothing else. Live: a pen at 56% fed with
+## no fodder, short 6.4 feed/turn. The row gets the `⚠` mark, the amber stripe, the one-line note and the
+## remedies on its hover; a fully-fed pen (the control, this same fixture without the shortfall) gets none.
+const UNDERFED_FED := 0.56
+const UNDERFED_SHORTFALL := 6.4
+
+func _assert_work_row_warns_of_an_underfed_pen() -> void:
+	var starving := {"pen_fed_fraction": UNDERFED_FED, "pen_pasture_fraction": UNDERFED_FED,
+		"fodder_draw": 0.0, "pen_fodder_shortfall": UNDERFED_SHORTFALL}
+	_set_world_herds(_ring_herd_fixtures([], starving))
+	_push_bands([_ring_band_fixture()])
+	await _settle()
+	var model := _hunt_row_model()
+	_assert_band_panel("underfed pen — the Work row carries the note (\"%s\")" % str(model.get("note", "")),
+		String(model.get("note", "")) == DetailFormat.PEN_UNDERFED_NOTE_SHORT_FORMAT % SourceForecast.format_fodder(
+			UNDERFED_SHORTFALL))
+	_assert_band_panel("underfed pen — …the ⚠ mark and the attention flag",
+		String(model.get("marks", "")).contains(HudComposeVocab.OVERHUNT_FLAG) and bool(model.get("attention", false)))
+	_assert_band_panel("underfed pen — …and the remedies on the row's hover",
+		String(model.get("tooltip", "")).contains(DetailFormat.PEN_FEED_REMEDY_TOOLTIP))
+	await _save("band_panel_work_pen_underfed")
+	_hud._bandpanel._toggle_work_inspector(String(model.get("key", "")))
+	await _settle()
+	await _save("band_panel_work_pen_underfed_open")
+	_hud._bandpanel._toggle_work_inspector(String(model.get("key", "")))
+	_set_world_herds(_ring_herd_fixtures())
+	_push_bands([_ring_band_fixture()])
+	await _settle()
+	var fed := _hunt_row_model()
+	_assert_band_panel("underfed pen — a fully fed pen's row carries no pen warning (\"%s\")" % str(fed.get("note", "")),
+		not String(fed.get("note", "")).begins_with("Underfed")
+		and not String(fed.get("tooltip", "")).contains(DetailFormat.PEN_FEED_REMEDY_TOOLTIP))
+
+## The ring band's hunt row model, off the controller's own producer.
+func _hunt_row_model() -> Dictionary:
+	var band: Dictionary = _hud._band_labor.player_bands()[0] if not _hud._band_labor.player_bands().is_empty() else {}
+	for model_variant in _hud._bandpanel._work_source_models(band, 0):
+		var model: Dictionary = model_variant
+		if String(model.get("kind", "")) == SourceForecast.LABOR_KIND_HUNT:
+			return model
+	return {}
 
 ## **A HEAD THE SHELF CANNOT FEED SAYS SO, IN THE PLAYER'S WORDS.** Reported from play: a Pen climbing on
 ## a band holding no hurdles read only `builders short of crooks`, and nothing anywhere named the good the

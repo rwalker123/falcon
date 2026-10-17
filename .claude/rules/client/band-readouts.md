@@ -448,7 +448,7 @@ which is a property of the tier and not of the merge.
     `band_hay_covered` (4.0 owed against 6.0 grown, runway `∞`) /
     `band_hay_empty_store` (pens owing 6.0, no Fields, an EMPTY store — **the case the old gate
     hid**) / `band_hay_and_pen` (the band's ledger in the Band/City dock beside its pen's own
-    `Fed: ⚠ 47% — 40% pasture · 7% fodder · needs 11.3 more/turn` in the tile drawer, the two scales
+    `Fed: ⚠ 47% — 40% pasture · 7% fodder · short 11.3 feed/turn` in the tile drawer, the two scales
     of one fact in one frame) / **`band_fodder_dormant`** (a LIVE larder and a DORMANT one in ONE
     render — see below).
     **The five claims are made over FOUR line-sets in ONE block**, the fourth being a forager band,

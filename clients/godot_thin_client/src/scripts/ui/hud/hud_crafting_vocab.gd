@@ -990,6 +990,12 @@ const KIT_ITEM_ID_KEY := "item_id"
 const KIT_ITEM_WORKERS_PER_UNIT_KEY := "workers_per_unit"
 const KIT_ITEM_HAVE_KEY := "have"
 const KIT_ITEM_QUEUED_KEY := "queued"
+## Units actually claimed by rows, pools, sites and queued builds on this kit (a float), and the whole
+## units missing on those claims before the bench's queue is netted off (an int).
+const KIT_ITEM_CLAIMED_KEY := "claimed"
+const KIT_ITEM_SHORT_KEY := "short"
+## A claim under this is none (float noise in the sim's sums).
+const KIT_CLAIMED_MIN := 0.005
 const KIT_ITEM_RECIPES_KEY := "recipes"
 ## One recipe of a kit item: what a PASS yields and what a pass costs, the bench's material efficiency
 ## already applied — the terms the picker's shortage arithmetic is exact over.
@@ -1048,12 +1054,15 @@ const KIT_NOT_USED := "Not used"
 ## One kit at each item's suggested recipe — said once under the cost.
 const KIT_COST_EACH := "each"
 ## `<g> <noun|one> without <item>`, the first item with a gap nobody has queued.
-const KIT_REASON_WITHOUT_FORMAT := "%d %s without %s"
-const KIT_REASON_QUEUED_FORMAT := "Queued — %s"
-const KIT_REASON_QUEUED_PART_FORMAT := "%d %s"
-const KIT_REASON_QUEUED_SEPARATOR := " · "
+## The item's OWN name is a label (`Sled 5 short`), never a noun to be counted: display names are
+## mixed singular and plural (Sled, Crook, Baskets, Hoes) and no pluraliser is built.
+const KIT_REASON_SHORT_FORMAT := "%s %d short"
+## `, 3 coming` — the units the bench's queue already owes of a short item.
+const KIT_REASON_COMING_FORMAT := ", %d coming"
+const KIT_REASON_SHORT_SEPARATOR := " · "
 const KIT_REASON_ALL_FORMAT := "All %d %s equipped"
-const KIT_REASON_NONE_FORMAT := "No %s yet"
+## Nothing claims any item of the kit: it costs nobody anything yet, so it says so quietly.
+const KIT_REASON_NOT_IN_USE := "Not in use"
 
 # -- the picker
 const KIT_PICKER_HEADING_FORMAT := "Make how many %ss?"

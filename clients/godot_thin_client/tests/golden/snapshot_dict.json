@@ -6320,6 +6320,7 @@
           "display_name": "populations[0].kit_needs[0].display_name",
           "items": [
             {
+              "claimed": 84.040001,
               "have": 16,
               "item_id": "populations[0].kit_needs[0].items[0].item_id",
               "queued": 1,
@@ -6379,9 +6380,11 @@
                   "recipe_id": "populations[0].kit_needs[0].items[0].recipes[2].recipe_id"
                 }
               ],
+              "short": 98,
               "workers_per_unit": 68
             },
             {
+              "claimed": 82.389999,
               "have": 141,
               "item_id": "populations[0].kit_needs[0].items[1].item_id",
               "queued": 156,
@@ -6441,9 +6444,11 @@
                   "recipe_id": "populations[0].kit_needs[0].items[1].recipes[2].recipe_id"
                 }
               ],
+              "short": 77,
               "workers_per_unit": 33
             },
             {
+              "claimed": 51.110001,
               "have": 162,
               "item_id": "populations[0].kit_needs[0].items[2].item_id",
               "queued": 103,
@@ -6503,6 +6508,7 @@
                   "recipe_id": "populations[0].kit_needs[0].items[2].recipes[2].recipe_id"
                 }
               ],
+              "short": 176,
               "workers_per_unit": 42
             }
           ],
@@ -6517,6 +6523,7 @@
           "display_name": "populations[0].kit_needs[1].display_name",
           "items": [
             {
+              "claimed": 79.800003,
               "have": 55,
               "item_id": "populations[0].kit_needs[1].items[0].item_id",
               "queued": 2,
@@ -6576,9 +6583,11 @@
                   "recipe_id": "populations[0].kit_needs[1].items[0].recipes[2].recipe_id"
                 }
               ],
+              "short": 51,
               "workers_per_unit": 79
             },
             {
+              "claimed": 33.970001,
               "have": 26,
               "item_id": "populations[0].kit_needs[1].items[1].item_id",
               "queued": 15,
@@ -6638,9 +6647,11 @@
                   "recipe_id": "populations[0].kit_needs[1].items[1].recipes[2].recipe_id"
                 }
               ],
+              "short": 176,
               "workers_per_unit": 146
             },
             {
+              "claimed": 59.630001,
               "have": 29,
               "item_id": "populations[0].kit_needs[1].items[2].item_id",
               "queued": 60,
@@ -6700,6 +6711,7 @@
                   "recipe_id": "populations[0].kit_needs[1].items[2].recipes[2].recipe_id"
                 }
               ],
+              "short": 181,
               "workers_per_unit": 41
             }
           ],
@@ -6714,6 +6726,7 @@
           "display_name": "populations[0].kit_needs[2].display_name",
           "items": [
             {
+              "claimed": 80.720001,
               "have": 198,
               "item_id": "populations[0].kit_needs[2].items[0].item_id",
               "queued": 99,
@@ -6773,9 +6786,11 @@
                   "recipe_id": "populations[0].kit_needs[2].items[0].recipes[2].recipe_id"
                 }
               ],
+              "short": 108,
               "workers_per_unit": 158
             },
             {
+              "claimed": 64.0,
               "have": 107,
               "item_id": "populations[0].kit_needs[2].items[1].item_id",
               "queued": 14,
@@ -6835,9 +6850,11 @@
                   "recipe_id": "populations[0].kit_needs[2].items[1].recipes[2].recipe_id"
                 }
               ],
+              "short": 111,
               "workers_per_unit": 179
             },
             {
+              "claimed": 2.23,
               "have": 140,
               "item_id": "populations[0].kit_needs[2].items[2].item_id",
               "queued": 149,
@@ -6897,6 +6914,7 @@
                   "recipe_id": "populations[0].kit_needs[2].items[2].recipes[2].recipe_id"
                 }
               ],
+              "short": 94,
               "workers_per_unit": 16
             }
           ],
@@ -8478,6 +8496,7 @@
           "display_name": "populations[1].kit_needs[0].display_name",
           "items": [
             {
+              "claimed": 76.629997,
               "have": 113,
               "item_id": "populations[1].kit_needs[0].items[0].item_id",
               "queued": 56,
@@ -8537,9 +8556,11 @@
                   "recipe_id": "populations[1].kit_needs[0].items[0].recipes[2].recipe_id"
                 }
               ],
+              "short": 121,
               "workers_per_unit": 13
             },
             {
+              "claimed": 103.849998,
               "have": 188,
               "item_id": "populations[1].kit_needs[0].items[1].item_id",
               "queued": 197,
@@ -8599,9 +8620,11 @@
                   "recipe_id": "populations[1].kit_needs[0].items[1].recipes[2].recipe_id"
                 }
               ],
+              "short": 14,
               "workers_per_unit": 72
             },
             {
+              "claimed": 44.240002,
               "have": 59,
               "item_id": "populations[1].kit_needs[0].items[2].item_id",
               "queued": 94,
@@ -8661,6 +8684,7 @@
                   "recipe_id": "populations[1].kit_needs[0].items[2].recipes[2].recipe_id"
                 }
               ],
+              "short": 183,
               "workers_per_unit": 123
             }
           ],
@@ -8675,6 +8699,7 @@
           "display_name": "populations[1].kit_needs[1].display_name",
           "items": [
             {
+              "claimed": 58.77,
               "have": 82,
               "item_id": "populations[1].kit_needs[1].items[0].item_id",
               "queued": 183,
@@ -8734,9 +8759,11 @@
                   "recipe_id": "populations[1].kit_needs[1].items[0].recipes[2].recipe_id"
                 }
               ],
+              "short": 176,
               "workers_per_unit": 138
             },
             {
+              "claimed": 57.16,
               "have": 39,
               "item_id": "populations[1].kit_needs[1].items[1].item_id",
               "queued": 146,
@@ -8796,9 +8823,11 @@
                   "recipe_id": "populations[1].kit_needs[1].items[1].recipes[2].recipe_id"
                 }
               ],
+              "short": 11,
               "workers_per_unit": 47
             },
             {
+              "claimed": 93.82,
               "have": 128,
               "item_id": "populations[1].kit_needs[1].items[2].item_id",
               "queued": 129,
@@ -8858,6 +8887,7 @@
                   "recipe_id": "populations[1].kit_needs[1].items[2].recipes[2].recipe_id"
                 }
               ],
+              "short": 162,
               "workers_per_unit": 20
             }
           ],
@@ -8872,6 +8902,7 @@
           "display_name": "populations[1].kit_needs[2].display_name",
           "items": [
             {
+              "claimed": 95.889999,
               "have": 67,
               "item_id": "populations[1].kit_needs[2].items[0].item_id",
               "queued": 166,
@@ -8931,9 +8962,11 @@
                   "recipe_id": "populations[1].kit_needs[2].items[0].recipes[2].recipe_id"
                 }
               ],
+              "short": 103,
               "workers_per_unit": 91
             },
             {
+              "claimed": 78.010002,
               "have": 158,
               "item_id": "populations[1].kit_needs[2].items[1].item_id",
               "queued": 11,
@@ -8993,9 +9026,11 @@
                   "recipe_id": "populations[1].kit_needs[2].items[1].recipes[2].recipe_id"
                 }
               ],
+              "short": 116,
               "workers_per_unit": 86
             },
             {
+              "claimed": 77.540001,
               "have": 17,
               "item_id": "populations[1].kit_needs[2].items[2].item_id",
               "queued": 176,
@@ -9055,6 +9090,7 @@
                   "recipe_id": "populations[1].kit_needs[2].items[2].recipes[2].recipe_id"
                 }
               ],
+              "short": 161,
               "workers_per_unit": 53
             }
           ],
@@ -10597,6 +10633,7 @@
           "display_name": "populations[2].kit_needs[0].display_name",
           "items": [
             {
+              "claimed": 84.290001,
               "have": 66,
               "item_id": "populations[2].kit_needs[0].items[0].item_id",
               "queued": 15,
@@ -10656,9 +10693,11 @@
                   "recipe_id": "populations[2].kit_needs[0].items[0].recipes[2].recipe_id"
                 }
               ],
+              "short": 176,
               "workers_per_unit": 162
             },
             {
+              "claimed": 93.059998,
               "have": 39,
               "item_id": "populations[2].kit_needs[0].items[1].item_id",
               "queued": 146,
@@ -10718,9 +10757,11 @@
                   "recipe_id": "populations[2].kit_needs[0].items[1].recipes[2].recipe_id"
                 }
               ],
+              "short": 123,
               "workers_per_unit": 183
             },
             {
+              "claimed": 31.74,
               "have": 104,
               "item_id": "populations[2].kit_needs[0].items[2].item_id",
               "queued": 113,
@@ -10780,6 +10821,7 @@
                   "recipe_id": "populations[2].kit_needs[0].items[2].recipes[2].recipe_id"
                 }
               ],
+              "short": 98,
               "workers_per_unit": 172
             }
           ],
@@ -10794,6 +10836,7 @@
           "display_name": "populations[2].kit_needs[1].display_name",
           "items": [
             {
+              "claimed": 0.07,
               "have": 161,
               "item_id": "populations[2].kit_needs[1].items[0].item_id",
               "queued": 136,
@@ -10853,9 +10896,11 @@
                   "recipe_id": "populations[2].kit_needs[1].items[0].recipes[2].recipe_id"
                 }
               ],
+              "short": 25,
               "workers_per_unit": 45
             },
             {
+              "claimed": 70.870003,
               "have": 76,
               "item_id": "populations[2].kit_needs[1].items[1].item_id",
               "queued": 85,
@@ -10915,9 +10960,11 @@
                   "recipe_id": "populations[2].kit_needs[1].items[1].recipes[2].recipe_id"
                 }
               ],
+              "short": 94,
               "workers_per_unit": 16
             },
             {
+              "claimed": 10.02,
               "have": 11,
               "item_id": "populations[2].kit_needs[1].items[2].item_id",
               "queued": 22,
@@ -10977,6 +11024,7 @@
                   "recipe_id": "populations[2].kit_needs[1].items[2].recipes[2].recipe_id"
                 }
               ],
+              "short": 151,
               "workers_per_unit": 27
             }
           ],
@@ -10991,6 +11039,7 @@
           "display_name": "populations[2].kit_needs[2].display_name",
           "items": [
             {
+              "claimed": 99.300003,
               "have": 76,
               "item_id": "populations[2].kit_needs[2].items[0].item_id",
               "queued": 53,
@@ -11050,9 +11099,11 @@
                   "recipe_id": "populations[2].kit_needs[2].items[0].recipes[2].recipe_id"
                 }
               ],
+              "short": 46,
               "workers_per_unit": 32
             },
             {
+              "claimed": 43.459999,
               "have": 25,
               "item_id": "populations[2].kit_needs[2].items[1].item_id",
               "queued": 104,
@@ -11112,9 +11163,11 @@
                   "recipe_id": "populations[2].kit_needs[2].items[1].recipes[2].recipe_id"
                 }
               ],
+              "short": 33,
               "workers_per_unit": 149
             },
             {
+              "claimed": 17.209999,
               "have": 30,
               "item_id": "populations[2].kit_needs[2].items[2].item_id",
               "queued": 139,
@@ -11174,6 +11227,7 @@
                   "recipe_id": "populations[2].kit_needs[2].items[2].recipes[2].recipe_id"
                 }
               ],
+              "short": 60,
               "workers_per_unit": 118
             }
           ],

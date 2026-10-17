@@ -1619,6 +1619,13 @@ table KitNeedItem {
   queued:uint;
   // One entry per recipe that outputs the item, book order.
   recipes:[KitNeedRecipe];
+  // Units the claims ON THIS KIT asked for (sum of `required` over the shortfall lines attributed to
+  // the kit: take rows that chose it, pools/sites through their job, queued builds through the
+  // builders job). 0 when nobody's row chose the kit. Appended last.
+  claimed:float;
+  // Whole units still missing on those lines BEFORE the bench's queue nets them - the same figure
+  // Make Next starts its count from. The reader nets `queued`. Appended last.
+  short:uint;
 }
 
 table KitNeedRecipe {
