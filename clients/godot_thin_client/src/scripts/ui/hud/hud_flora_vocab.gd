@@ -296,11 +296,11 @@ const FLORA_CROP_NO_SOW_FORMAT := "%s cannot be sown — its seed is not yours t
 # and FLORA_CROP_STRONG_RATIO is the honest middle — worth doing, not worth celebrating.
 const FLORA_CROP_STRONG_RATIO := 1.5
 
-const FLORA_CROP_LOSS_TOOLTIP_FORMAT := "%s yields %.1f× what gathering this tile wild does — it loses to simply gathering here."
+const FLORA_CROP_LOSS_TOOLTIP_FORMAT := "%s: %.1f× wild gathering · ⚠ worse than gathering"
 
-const FLORA_CROP_MODEST_TOOLTIP_FORMAT := "%s yields %.1f× what gathering this tile wild does — worth committing to."
+const FLORA_CROP_MODEST_TOOLTIP_FORMAT := "%s: %.1f× wild gathering · worth it"
 
-const FLORA_CROP_STRONG_TOOLTIP_FORMAT := "%s yields %.1f× what gathering this tile wild does — strong ground for it."
+const FLORA_CROP_STRONG_TOOLTIP_FORMAT := "%s: %.1f× wild gathering · strong"
 
 # ---- THE ROW FACE: ONE PLANT, EVERY ACCOUNT IT PAYS (issue #419, arc #527) -----------------------
 # A crop row is BUILT, not picked from a menu of whole-row formats. It used to be three mutually
@@ -390,13 +390,13 @@ const FLORA_CROP_MATERIAL_CLAUSE_FORMAT := " · %.2f %s"
 # `%s` is the RUNG's own noun, because these payoffs are per-rung: a tended patch and a sown field pay
 # different amounts from different baskets, and a tooltip naming the wrong one is how the Cultivate
 # row came to quote a Field's figures. Fed by FLORA_CROP_RUNG_NOUNS.
-const FLORA_CROP_FODDER_TOOLTIP_FORMAT := "%s pays %.2f fodder/turn as %s — feed for penned animals, not food for people."
+const FLORA_CROP_FODDER_TOOLTIP_FORMAT := "%s: +%.2f fodder/turn · not food"
 
 # ONE LINE PER MATERIAL, for the same reason the face carries one clause per material. `%s` order is
 # crop, amount, material, rung noun. It says "for your crafters" rather than "for your stockpile"
 # because that is the concrete difference the arc bought: a material is worked at a bench into
 # something, where a trade good only ever sat in a pile nothing could read.
-const FLORA_CROP_MATERIAL_TOOLTIP_FORMAT := "%s pays %.2f %s/turn as %s — a material for your crafters, not food for people."
+const FLORA_CROP_MATERIAL_TOOLTIP_FORMAT := "%s: +%.2f %s/turn · not food"
 
 # The rung's noun for the tooltips above, keyed by the composing policy. A payoff quoted on the
 # Cultivate rung describes A TENDED PATCH; only the Sow rung describes a sown field.

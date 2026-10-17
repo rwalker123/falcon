@@ -789,7 +789,7 @@ What the card says, and it is **ONE chip** (`SelectionCardController._tile_chip_
   card at all, so a warning had nothing to be checked against.
 - **…and on killing ground it IS the warning**: `⚠ Polar · -10.0 °C` in `HudStyle.DANGER`, with the
   hover naming what the ground does to the people and the rate it does it at —
-  `1.8% increased mortality per turn due to severe cold`. Survivable ground keeps the same chip in
+  `⚠ Severe cold: +1.8% deaths/turn`. Survivable ground keeps the same chip in
   neutral `INK_DIM` with no hover.
 
 ### ⛔ THE WARNING WAS ITS OWN PILL FOR ONE ITERATION, AND FOUR PILLS IS TOO MANY

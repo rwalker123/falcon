@@ -1605,8 +1605,7 @@ const ROAD_LADDER_ABANDON_LABEL := "Stop keeping this road"
 ## …and what it actually does, on the control's own hover. **The rung STAYS** — the sim leaves the
 ## meter alone and the ground rots back down at the rung's own rate with nobody keeping it — which is
 ## the half a player must know before pressing, since it is not a demolition.
-const ROAD_LADDER_ABANDON_TOOLTIP := "Drops this band's keeping of the road and its place in the " \
-	+ "queue. The rung stays, and with nobody keeping it rots back down at its own rate."
+const ROAD_LADDER_ABANDON_TOOLTIP := "Stop keeping road · it will decay"
 
 ## > ⛔ RETIRED — `ROAD_LADDER_ABANDON_ALSO`, *"…and the foraging your people do on this hex goes down
 ## > with it"*. It was true while `abandon <f> <x> <y>` was the only road drop and named a PLACE; the

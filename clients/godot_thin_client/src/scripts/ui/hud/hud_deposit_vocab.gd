@@ -726,12 +726,11 @@ const CARD_TAKE_TIP_FORMAT := "Taking %s a turn · it renews %s a turn"
 ## every deposit on the map. It names the one thing that changes it — the crew stepper on this same
 ## block — because the stock row above has already said what is here and how much of it the free
 ## floor can reach.
-const CARD_UNOPENED_TIP := "Nobody is working this ground. Put cutters on it and it opens " \
-	+ "at this rung."
+const CARD_UNOPENED_TIP := "Unworked\nFix: assign cutters"
 
 ## …and the finite working's hover, which has no sustainable take to quote (rock's rate is zero, so
 ## the sustainable figure is `0` by arithmetic) and quotes the seam instead.
-const CARD_RUNWAY_TIP_FORMAT := "%s left within this rung's reach, at the take it is running at now."
+const CARD_RUNWAY_TIP_FORMAT := "%s left at current take"
 
 ## **THE CREW ROW'S HOVER** — a working's hands keep it first and cut with what is left
 ## (`docs/plan_site_crews.md`): there is no band-wide pool holding it any more, so the hover names no
@@ -1316,8 +1315,7 @@ const DEPOSIT_REVERTING_TIP_FORMAT := "Going back %s"
 
 ## …and the idle working's own line. A working is kept by its OWN crew, so a crew of zero keeps
 ## nothing: the ground slides back toward what it gives for free.
-const DEPOSIT_IDLE_TIP := "Nobody is cutting it, so nobody keeps it — it is sliding back toward " \
-	+ "what it gives for free."
+const DEPOSIT_IDLE_TIP := "⚠ Unworked: decaying\nFix: assign cutters"
 
 # ---- PUTTING A WORKING DOWN — the undo a HELD working had nowhere else (issue #650) ---------------
 #

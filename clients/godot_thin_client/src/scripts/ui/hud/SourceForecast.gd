@@ -1424,7 +1424,7 @@ const MAX_USEFUL_NOTE_GEAR_FORMAT := "max %d %s useful here — the rest have no
 # The CONFIRMED-row twin of MAX_USEFUL_NOTE_FORMAT: a worked source's `+` explaining why it is dead
 # (see `source_worker_cap_state`). Worded from the row's point of view ("fully staffed") rather than
 # the compose stepper's ("max N useful here"), because the player is looking at a running assignment.
-const MAX_USEFUL_CAPPED_TOOLTIP := "Fully staffed — this source can use at most %d %s; more would idle here."
+const MAX_USEFUL_CAPPED_TOOLTIP := "Full: %d %s max"
 # The OTHER binding cap: idle workers run out BELOW the usefulness ceiling, so the `+` caps at the band's
 # hands, not usefulness. The sentence names only the band's limit (the one arg: the crew pool) and is
 # shown ONLY once the composed crew is at it — the useful figure is deliberately not quoted: past the
@@ -5842,6 +5842,12 @@ static func expected_yield_account(forecast: Dictionary, workers: int, band: Dic
 ## The overstaffed hover line, one fact: the hands past the ceiling and the row's own crew noun
 ## (`⚠ Overstaffed: 5 of 6 herders add nothing`).
 const OVERSTAFF_HOVER_FORMAT := "⚠ Overstaffed: %d of %d %s add nothing"
+const OVERSTAFF_FIX_FORMAT := "   Fix: move %d elsewhere"
+
+## The overstaffed hover as its two lines: the hazard and the fix, one figure (the hands past the ceiling).
+static func overstaff_hover(moved: int, workers: int, crew_noun: String) -> String:
+    return OVERSTAFF_HOVER_FORMAT % [moved, workers, crew_noun] + TOOLTIP_LINE_SEPARATOR \
+        + OVERSTAFF_FIX_FORMAT % moved
 const OVERSTAFF_DEFAULT_NOUN := "workers"
 
 static func source_yield_readout(m: Dictionary, kind: String, overstaff_ceiling: int,
@@ -5958,7 +5964,7 @@ static func source_yield_readout(m: Dictionary, kind: String, overstaff_ceiling:
     var workers := int(m.get("workers", 0))
     if crew_is_wasted(workers, overstaff_ceiling):
         note = OVERSTAFF_NOTE_FORMAT % [overstaff_ceiling, workers]
-        var overstaff_line := OVERSTAFF_HOVER_FORMAT % [workers - overstaff_ceiling, workers, crew_noun]
+        var overstaff_line := overstaff_hover(workers - overstaff_ceiling, workers, crew_noun)
         tooltip = overstaff_line if tooltip == "" \
             else tooltip + TOOLTIP_LINE_SEPARATOR + overstaff_line
     # There is no understaffing ("wasted") note: a hunt or pen kill is kept WHOLE (landed in the larder

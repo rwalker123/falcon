@@ -5392,7 +5392,7 @@ spelled and never a raw count.
     `overdraws` field, at compose time, and the forecast is not a lumpy `actual`.) **Each source row also flags overstaffing** — a
     WARN-tinted `· only N of M working` note (`OVERSTAFF_NOTE_FORMAT`) when `workers > workers_needed`
     (and `workers_needed > 0`), i.e. the source's take was capped at its ceiling so the surplus workers
-    idled HERE and should be reassigned; the row's hover states it as one line, `⚠ Overstaffed: N of M <crew noun> add nothing`
+    idled HERE and should be reassigned; the row's hover states it as one line, `⚠ Overstaffed: N of M <crew noun> add nothing` over `Fix: move N elsewhere`
     (`OVERSTAFF_HOVER_FORMAT`, N the hands past the ceiling, the noun the row's own - herders on a managed
     hunt source, hunters on a wild one, harvesters on a patch - and the closed-form `⚠ overstaffed` fallback
     states its figure in the same words). This is

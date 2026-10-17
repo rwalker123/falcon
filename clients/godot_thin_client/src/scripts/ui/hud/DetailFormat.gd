@@ -606,7 +606,7 @@ const KIT_BREAKDOWN_ROW_FORMAT := "%s%s %s %s — %s"
 # **THE CLIFF, IN ONE SENTENCE.** Without it a player reads the conditions as a performance gradient
 # and paces their hunting against a number that does not move anything — which is the exact
 # misreading the flat-until-expiry model invites.
-const KIT_BREAKDOWN_CLIFF_NOTE := "A kit works at full strength until it runs out — the condition is how long you have, not how well it works. There is no way to make more yet."
+const KIT_BREAKDOWN_CLIFF_NOTE := "Full strength until worn out"
 
 const BREAKDOWN_CARET_OPEN := "▾"
 const BREAKDOWN_CARET_CLOSED := "▸"
@@ -1770,7 +1770,7 @@ static func standing_rung_face(src: Dictionary, prefix: String, kind: String) ->
 ## **THE UNQUEUED ROW'S OWN SENTENCE, on the hover of the row carrying a rung nobody is building.**
 ## `99% built · not queued` is short and the state needs three facts — what the state IS,
 ## that the banked work survives, and the one click that resumes it — so the words go where there is
-## room for them (`HudSelectionVocab.RUNG_UNQUEUED_TOOLTIP`, which names no CAUSE, and says there why).
+## room for them (`lapsed_hover_text`, which names no CAUSE).
 ##
 ## ⛔ **IT TAKES THE COMPOSED VALUE, NEVER THE SOURCE, so the verdict is reached exactly once.**
 ## `build_sentinel_value` already forked on the countdown, the meter and the queue position; a hover
@@ -1784,12 +1784,20 @@ static func standing_rung_face(src: Dictionary, prefix: String, kind: String) ->
 ## a job whose keeping is unpaid buys the player a second lapse.
 ##
 ## Silent on every value that is not lapsed, and silent for a caller passing no context.
-static func note_lapsed_hover(ctx: Context, row_key: String, value: String) -> void:
+static func note_lapsed_hover(ctx: Context, row_key: String, value: String,
+        progress: float = SourceForecast.BUILD_METER_UNSTARTED, rot: float = SourceForecast.NO_METER_ROT) -> void:
     if ctx == null or not value.contains(HudSelectionVocab.RUNG_UNQUEUED_PHRASE):
         return
-    ctx.row_tooltips[row_key] = HudSelectionVocab.RUNG_UNQUEUED_ROTTING_TOOLTIP \
-        if value.contains(HudSelectionVocab.RUNG_ROTTING_PHRASE) \
-        else HudSelectionVocab.RUNG_UNQUEUED_TOOLTIP
+    ctx.row_tooltips[row_key] = lapsed_hover_text(progress,
+        value.contains(HudSelectionVocab.RUNG_ROTTING_PHRASE), rot)
+
+## The unqueued rung's hover, two lines: `99% built · not queued` (plus ` · losing 0.5/turn` while the
+## meter is rotting and the source publishes its rot) over `Fix: re-queue from Work row`.
+static func lapsed_hover_text(progress: float, rotting: bool, rot: float) -> String:
+    var first := HudSelectionVocab.RUNG_UNQUEUED_TOOLTIP_FORMAT % HudFormat.progress_percent(progress)
+    if rotting and rot >= SourceForecast.MATERIAL_FLOW_MIN:
+        first += HudSelectionVocab.RUNG_UNQUEUED_ROTTING_CLAUSE_FORMAT % rot
+    return first + SourceForecast.TOOLTIP_LINE_SEPARATOR + HudSelectionVocab.RUNG_UNQUEUED_FIX_LINE
 
 ## **THE REMEDY, ON THE HOVER OF THE ROW THAT IS SLIPPING** — the whole of what replaced the `At risk:`
 ## row and its indented instruction. Registers `HudWorkVocab.under_kept_tooltip_for_source` against the
@@ -4000,7 +4008,8 @@ static func herd_summary_lines(herd_data: Dictionary, world_herds: Array,
                     true, CORRAL_PROGRESS_COMPLETE,
                     SourceForecast.BUILD_CREW_NONE, SourceForecast.IMPROVEMENT_NONE)
                 lines.append("%s: %s" % [row_key, built_enclosed_value])
-                note_lapsed_hover(ctx, row_key, built_enclosed_value)
+                note_lapsed_hover(ctx, row_key, built_enclosed_value, CORRAL_PROGRESS_COMPLETE,
+                    SourceForecast.meter_rot_per_turn(herd_data, herd_prefix))
                 note_under_kept_hover(ctx, row_key, herd_data, herd_prefix,
                     SourceForecast.SOURCE_KIND_HERD, verb)
                 var pen_radius := int(herd_data.get("pen_radius", 0))
@@ -4020,7 +4029,8 @@ static func herd_summary_lines(herd_data: Dictionary, world_herds: Array,
                     build_crew if not reached else SourceForecast.BUILD_CREW_NONE,
                     unstaffed_build if not reached else SourceForecast.IMPROVEMENT_NONE)
                 lines.append("%s: %s" % [row_key, rung_value])
-                note_lapsed_hover(ctx, row_key, rung_value)
+                note_lapsed_hover(ctx, row_key, rung_value, progress,
+                    SourceForecast.meter_rot_per_turn(herd_data, herd_prefix))
                 note_under_kept_hover(ctx, row_key, herd_data, herd_prefix,
                     SourceForecast.SOURCE_KIND_HERD, verb)
                 # …and, on a row with no REMEDY to state, what the ladder is buying. The remedy wins the

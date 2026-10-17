@@ -1402,7 +1402,7 @@ func _build_workforce_block(band: Dictionary) -> VBoxContainer:
     var block := HudWidgets.make_zone_block()
     block.add_child(HudWidgets.zone_head(HudWorkVocab.ZONE_HEADER_WORKFORCE, readout,
         null, HudStyle.SIGNAL if idle > 0 else HudStyle.INK_DIM,
-        HudWorkVocab.WORKFORCE_AWAY_TOOLTIP if away_workers > 0 else ""))
+        HudWorkVocab.WORKFORCE_AWAY_TOOLTIP_FORMAT % away_workers if away_workers > 0 else ""))
     if not segments.is_empty():
         block.add_child(HudWidgets.build_composition_bar(segments))
         block.add_child(HudWidgets.build_composition_key(segments))
@@ -2409,7 +2409,7 @@ func _build_work_head(band: Dictionary, models: Array, income: float,
         fodder_total.text = SourceForecast.PICKER_FODDER_PRODUCT_FORMAT % SourceForecast.format_signed(fodder_income)
         fodder_total.add_theme_font_size_override("font_size", HudWorkVocab.ZONE_HEAD_FONT_SIZE)
         fodder_total.add_theme_color_override("font_color", HudStyle.HEALTHY)
-        HudWidgets.set_label_tooltip(fodder_total, HudWorkVocab.WORK_FODDER_TOTAL_TOOLTIP)
+        HudWidgets.set_label_tooltip(fodder_total, HudWorkVocab.WORK_FODDER_TOTAL_TOOLTIP_FORMAT % SourceForecast.format_signed(fodder_income))
         head.add_child(fodder_total)
         head.move_child(fodder_total, head.get_child_count() - 2)
     # THE OUTPUT ITEM — a THIRD sibling, and it qualifies the two beside it rather than adding to
@@ -2424,7 +2424,7 @@ func _build_work_head(band: Dictionary, models: Array, income: float,
         output_item.text = HudWorkVocab.WORK_OUTPUT_FORMAT % int(round(output * 100.0))
         output_item.add_theme_font_size_override("font_size", HudWorkVocab.ZONE_HEAD_FONT_SIZE)
         output_item.add_theme_color_override("font_color", BandFoodStatus.color_for_output(output))
-        HudWidgets.set_label_tooltip(output_item, HudWorkVocab.WORK_OUTPUT_TOOLTIP)
+        HudWidgets.set_label_tooltip(output_item, HudWorkVocab.WORK_OUTPUT_TOOLTIP_FORMAT % int(round(output * 100.0)))
         head.add_child(output_item)
         head.move_child(output_item, head.get_child_count() - 2)
     return head
@@ -2444,7 +2444,7 @@ func _build_build_queue_head(band: Dictionary, builders: int, remaining: int) ->
     var head := HudWidgets.zone_head(
         String(HudWorkVocab.WORK_SECTION_TITLES[HudWorkVocab.WORK_SECTION_BUILD_QUEUE]),
         HudWorkVocab.BUILD_QUEUE_NO_BUILDERS_MARK if unfunded else "", null, HudStyle.WARN,
-        HudWorkVocab.BUILD_QUEUE_BUILDERS_TOOLTIP)
+        HudWorkVocab.BUILD_QUEUE_BUILDERS_TOOLTIP_FORMAT % builders)
     _make_queue_head_a_toggle(head, remaining)
     return head
 
@@ -7953,8 +7953,8 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
                 # **ONE LINE, ONE FACT, ON EITHER SPELLING OF THE CONDITION**: the closed-form clause
                 # (`⚠ overstaffed`, where the wire published no ceiling) states its figure on the hover
                 # in the same words the published one does — `⚠ Overstaffed: 2 of 3 herders add nothing`.
-                "" if overstaffed == "" else SourceForecast.OVERSTAFF_HOVER_FORMAT % [
-                    workers - useful, workers, row_crew_noun],
+                "" if overstaffed == "" else SourceForecast.overstaff_hover(
+                    workers - useful, workers, row_crew_noun),
                 # **THE KIT SHORTFALL RIDES THE HOVER for the same reason `overstaffed` does**: it
                 # raises the row's attention flag, and a row may not carry a mark whose sentence is
                 # nowhere on it. The board row has no prose line — the full pair is drawn in the

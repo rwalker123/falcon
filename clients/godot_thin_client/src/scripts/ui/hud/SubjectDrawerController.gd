@@ -716,7 +716,8 @@ func _tile_terrain_lines(tile_info: Dictionary,
         lines.append("%s: %s" % [row_key, value])
         # …and the LAPSED row's sentence, routed off the value the row just composed, registered before
         # the keeping hover below, which outranks it wherever a rung is both lapsed and under-kept.
-        DetailFormat.note_lapsed_hover(ctx, row_key, value)
+        DetailFormat.note_lapsed_hover(ctx, row_key, value, progress,
+            SourceForecast.meter_rot_per_turn(tile_info, prefix))
         # **THE REMEDY IS THE ROW'S HOVER**: `slipping` on the row, and one sentence naming the role that
         # pays behind it.
         DetailFormat.note_under_kept_hover(ctx, row_key, tile_info, prefix,

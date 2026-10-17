@@ -546,7 +546,7 @@ stretch, and widening it into that gap would put it over a live HUD column.
   turn is `-1`), and, when the band carries grievance, a second amber line `Drifting away — grievance
   0.42 / 1.00` — the warning beside the number it explains, the threshold being the sim's
   `independence_grievance_threshold` echo. Both lines carry one tooltip naming the lever (a visit by
-  another band or a returning scout restores contact) and the threshold. **No row for a LONE heart**
+  another band or a returning scout restores contact) and the threshold (`⚠ Cut off · breaks away at 0.60 grievance` over `Fix: visit with a band · scout home`). **No row for a LONE heart**
   (`heart_bond >= 1` and not cut off — nothing to watch) **and none for a band with no reading** (not
   cut off and a zero bond: an unjudged band or a party publishes `false / 0 / -1`, a foreign redacted
   row `false / 0 / 0`; a heart member always holds a live tie, so the gate keys on the bond, never on
@@ -618,7 +618,7 @@ stretch, and widening it into that gap would put it over a live HUD column.
   through `BandFoodStatus.color_for_output`, a `Color` accessor rather than a hex one because this
   head is built out of `Label`s rather than BBCode — and, since the head is now the multiplier's ONE
   surface, the only accessor there is (`hex_for_output` went with the vitals row that called it). Vocabulary (`WORK_OUTPUT_FORMAT` /
-  `WORK_OUTPUT_TOOLTIP`) is `HudWorkVocab`'s, like every other head item's.
+  `WORK_OUTPUT_TOOLTIP_FORMAT`, `⚠ Output 80% (low morale)` over `Fix: raise morale`) is `HudWorkVocab`'s, like every other head item's.
   **A ROW THE BAND HAS ONLY BUILDERS ON IS STILL A ROW.** The admission test read the TAKE crew alone,
   so a source with three hands raising its meter and nobody gathering was dropped from the board, from
   its chip counts and from the WORK tab's badge — the one place a player would look to see what those
@@ -1532,8 +1532,7 @@ from the player's `sedentarization` entry, which `FactionReadouts.update_sedenta
   inserted ahead of the value (a plain `Label` renders no BBCode).
 - **Below it** the row reads `0 — stand on your dead` in `INK_DIM`. It fits the zone without an ellipsis
   and says what to do next.
-- **Both forms carry the same hover**, `FACTION_SETTLING_BELIEF_TOOLTIP` (`Points to Settling from bands
-  camped where their dead lie.`), routed through `_stat_row`'s tip argument so it is set on both Labels
+- **Both forms carry the same hover**, `FACTION_SETTLING_BELIEF_TOOLTIP_FORMAT` (`Camped by their dead: +N`), routed through `_stat_row`'s tip argument so it is set on both Labels
   of the row (a bare `Label.tooltip_text` is a silent no-op) and hoverable across it.
 - **The stage row's hover itemizes the five inputs** (`FACTION_SETTLING_TOOLTIP_FORMAT`, built by
   `FactionRollup._settling_tooltip`): `Tamed herds and tended plants`, `Food to spare`, `Rich land`,
@@ -3872,8 +3871,7 @@ strip CLOSED                                                     strip OPEN
   text on its hover and on `BUILD_QUEUE_DETAIL_META` — because the line's height is reserved and the
   zone clips. A cause reads in the kit-short amber; a bare price in `INK_DIM`.
 - **The withdrawal rides the detail line**, right-aligned: `Remove from queue`, DANGER ink, tooltip
-  *"Take this job out of the build queue. The work already done on it is kept, and the source keeps
-  its crew — queue it again to carry on."* It is **150px** and does not fit beside the crop picker at
+  *"Unqueue · progress kept"*. It is **150px** and does not fit beside the crop picker at
   the tall LEFT dock (344px of strip content less key 30, picker 168 and three separations leaves
   134), so the detail label is the child that gives (**190px** of it left at that dock). The detail
   line has no key column.
@@ -5425,7 +5423,7 @@ applied one level up: a second total beside the first, shown only when non-zero.
 **FODDER IS THAT SIBLING** (issue #449), and it credits the band's `FODDER` store and never the larder,
 so folding it into the food figure would break the identity
 `larder_delta == income − consumption − raid_forfeit − food_spoiled − food_left_behind + received − sent`. The head reads `2 sources +0.20
-/turn +0.40 fodder` (`WORK_FODDER_TOTAL_TOOLTIP` making the beside-not-in point) and a chip covering
+/turn +0.40 fodder` (`WORK_FODDER_TOTAL_TOOLTIP_FORMAT`, `Fodder +0.40/turn` over `Feeds pens, not people`, making the beside-not-in point) and a chip covering
 only hay-bearing patches reads `🌿 1 · 0.40 fodder` — via `SourceForecast.magnitude_components`, the
 bare-magnitude twin of `yield_components` (a chip states levels, not deltas, so no `+`). A kind whose
 whole set pays fodder alone drops the food term rather than printing a `0.00` denying its sources

@@ -612,9 +612,9 @@ func _under_kept_hover(src: Dictionary,
 ## …and the LAPSED row's hover, read back the same way. It takes the COMPOSED VALUE rather than the
 ## source, because that is the producer's own seam: `build_sentinel_value` reaches the verdict once
 ## and the hover is routed off the word the row printed.
-func _lapsed_hover(value: String) -> String:
+func _lapsed_hover(value: String, progress: float = FERAL_FIELD_METER, rot: float = 0.0) -> String:
 	var ctx := DetailFormat.Context.new()
-	DetailFormat.note_lapsed_hover(ctx, HOVER_PROBE_ROW, value)
+	DetailFormat.note_lapsed_hover(ctx, HOVER_PROBE_ROW, value, progress, rot)
 	return String(ctx.row_tooltips.get(HOVER_PROBE_ROW, ""))
 
 ## **THE FIELD THAT COMPLETED AND WENT FERAL THE NEXT TURN — the measured shape, from the live export
@@ -1773,8 +1773,11 @@ func run(harness) -> void:
 		rotting_value == rotting_want
 			and DetailFormat.rung_value_hex(rotting_value, "") == HudStyle.DANGER_HEX)
 	h._assert_hud("…and its hover says it is losing work, where the stable one's does not",
-		_lapsed_hover(rotting_value) == HudSelectionVocab.RUNG_UNQUEUED_ROTTING_TOOLTIP
-			and _lapsed_hover(lapsed_value) == HudSelectionVocab.RUNG_UNQUEUED_TOOLTIP)
+		_lapsed_hover(rotting_value, FERAL_FIELD_METER, UNQUEUED_ROT_PER_TURN)
+				== DetailFormat.lapsed_hover_text(FERAL_FIELD_METER, true, UNQUEUED_ROT_PER_TURN)
+			and _lapsed_hover(lapsed_value) == DetailFormat.lapsed_hover_text(FERAL_FIELD_METER, false, 0.0)
+			and _lapsed_hover(rotting_value, FERAL_FIELD_METER, UNQUEUED_ROT_PER_TURN).contains("losing 0.5/turn")
+			and not _lapsed_hover(lapsed_value).contains("losing"))
 	# **AND THE NEGATIVE THAT NAMES THE DEFECT.** `⚠ Stalled 100%` is exactly what shipped, so both
 	# halves of it must be absent from this frame.
 	h._assert_hud("…and NOT *Stalled*, which names builders standing on it and a gate that refuses",
@@ -1795,7 +1798,8 @@ func run(harness) -> void:
 	# **THE HOVER CARRIES THE SENTENCE, the mark being two words on a ~245px card.** It has to say the
 	# work survived and where the click is, or the word names a loss without a remedy.
 	h._assert_hud("the lapsed row's hover states the part-built rung, the banked work and the re-queue",
-		_lapsed_hover(lapsed_value) == HudSelectionVocab.RUNG_UNQUEUED_TOOLTIP)
+		_lapsed_hover(lapsed_value) == DetailFormat.lapsed_hover_text(FERAL_FIELD_METER, false, 0.0)
+			and _lapsed_hover(lapsed_value).ends_with(HudSelectionVocab.RUNG_UNQUEUED_FIX_LINE))
 	# ⛔ **AND IT NAMES NO CAUSE, which is a claim about every row this hover is registered on.**
 	# `DetailFormat.note_lapsed_hover` mounts it on `HUSBANDRY_ROW` and `CORRAL_ROW` as well as the two
 	# plant rows, and it opened *"The ground went feral…"* — ground a HERD does not have. The three
@@ -1803,10 +1807,10 @@ func run(harness) -> void:
 	# where nothing went feral at all. The word `Lapsed` is right in all three; a cause would be a
 	# guess, so the sentence asserts none.
 	h._assert_hud("…and it blames no cause it cannot know — no ground, no feralness, on a hover herds share",
-		not HudSelectionVocab.RUNG_UNQUEUED_TOOLTIP.to_lower().contains("feral")
-			and not HudSelectionVocab.RUNG_UNQUEUED_TOOLTIP.to_lower().contains("ground")
-			and not HudSelectionVocab.RUNG_UNQUEUED_ROTTING_TOOLTIP.to_lower().contains("feral")
-			and not HudSelectionVocab.RUNG_UNQUEUED_ROTTING_TOOLTIP.to_lower().contains("ground"))
+		not DetailFormat.lapsed_hover_text(FERAL_FIELD_METER, false, 0.0).to_lower().contains("feral")
+			and not DetailFormat.lapsed_hover_text(FERAL_FIELD_METER, false, 0.0).to_lower().contains("ground")
+			and not DetailFormat.lapsed_hover_text(FERAL_FIELD_METER, true, UNQUEUED_ROT_PER_TURN).to_lower().contains("feral")
+			and not DetailFormat.lapsed_hover_text(FERAL_FIELD_METER, true, UNQUEUED_ROT_PER_TURN).to_lower().contains("ground"))
 	h._assert_hud("…and a row that is NOT lapsed registers no such hover",
 		_lapsed_hover(_rung_value_for_turns(SourceForecast.BUILD_TURNS_NO_ESTIMATE)) == "")
 

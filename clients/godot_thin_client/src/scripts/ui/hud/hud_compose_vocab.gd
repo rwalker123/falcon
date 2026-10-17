@@ -110,8 +110,8 @@ const FLOOR_CONTROL_LABEL := "Leave standing"
 # because it is what the player compares against the stepper beside it.
 const CREW_TARGET_CLEAR_LABEL := "clear it now"
 const CREW_TARGET_HOLD_LABEL := "hold it after"
-const CREW_TARGET_CLEAR_TOOLTIP := "Enough hands to take everything standing above the floor in a single turn."
-const CREW_TARGET_HOLD_TOOLTIP := "Enough hands to take exactly what grows back once it is sitting at the floor — any more go idle."
+const CREW_TARGET_CLEAR_TOOLTIP := "Clear: %d hands, all spare stock in 1 turn"
+const CREW_TARGET_HOLD_TOOLTIP := "Hold: %d hands, regrowth only"
 
 # **A TARGET NO CREW REACHES STILL SHOWS — DISABLED, WITH A ✕ WHERE THE COUNT GOES.** It used to
 # vanish, which reads as the sheet having nothing to say about clearing at all; the pill is the one
@@ -133,8 +133,8 @@ const CREW_TARGET_UNREACHABLE_FACE := "✕"
 # second reason — a source with no throughput to divide by, a patch in deep winter — and there is no
 # prey on a forage tile to break off and retreat. So the retreat rides a CONDITIONAL clause rather
 # than an assertion, and the flat-take half says only that more hands do not lift it.
-const CREW_TARGET_CLEAR_UNREACHABLE_TOOLTIP := "No crew this band can field clears it in one turn, and where prey breaks off and retreats no crew ever could, at any size."
-const CREW_TARGET_HOLD_UNREACHABLE_TOOLTIP := "No crew this band can field takes what grows back here — more hands do not lift the take past it."
+const CREW_TARGET_CLEAR_UNREACHABLE_TOOLTIP := "⚠ No crew clears it in 1 turn"
+const CREW_TARGET_HOLD_UNREACHABLE_TOOLTIP := "⚠ No crew takes the full regrowth"
 
 # ---- THE CREW ROW: ONE LINE, NOT A HEADING WITH A CONTROL PUSHED OFF THE OTHER EDGE -------------
 # The crew is ONE statement — *this many hands, and here are the two numbers worth matching* — so the
@@ -1650,7 +1650,7 @@ const KIT_PICKER_ICON_MAX_WIDTH := 16
 ## job this table has never heard of must still render a legible face rather than an empty one.
 const KIT_JOB_GLYPH_FALLBACK := "🎒"
 
-const KIT_PICKER_TOOLTIP := "What this crew carries. A kit decides what they can hurt and how much they can haul — the line beneath it is this band's own tier, after wear. A kit that could change nothing about this prey is greyed out and says why."
+const KIT_PICKER_TOOLTIP := "Crew kit: what they hurt and haul\nGrey = no use on this prey"
 
 ## **A KIT THAT CANNOT WORK ON THIS PREY IS GREYED AND STATES ITS REASON, on the entry's own face.**
 ## Greyed rather than hidden: *"a snare cannot hold a Red Deer"* is a fact about the world worth

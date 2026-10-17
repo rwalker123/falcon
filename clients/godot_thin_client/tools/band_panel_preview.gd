@@ -9976,17 +9976,17 @@ func _assert_discovery_tooltips(zone: Node) -> void:
 func _assert_settling_tooltips(zone: Node, tied: bool) -> void:
 	var belief := int(TOPBAR_SEDENTARIZATION_BELIEF_POINTS) if tied else 0
 	var expected := HudWorkVocab.FACTION_SETTLING_TOOLTIP_FORMAT % [
-		int(SEDENTARIZATION_DOMESTICATION_POINTS), int(SEDENTARIZATION_SURPLUS_POINTS),
+		int(round(TOPBAR_SEDENTARIZATION_SCORE)), int(SEDENTARIZATION_DOMESTICATION_POINTS), int(SEDENTARIZATION_SURPLUS_POINTS),
 		int(SEDENTARIZATION_LAND_POINTS), int(SEDENTARIZATION_POPULATION_POINTS), belief]
 	var stage_tip := _faction_row_tooltip(zone, HudWorkVocab.FACTION_SETTLING_STAGE_LABELS.get(
 		TOPBAR_SEDENTARIZATION_STAGE, ""))
 	_assert_band_panel("faction settling tooltip: the stage row lists every input (got '%s')" % stage_tip.replace("\n", " | "),
-		stage_tip == expected and stage_tip.contains("Rich land: +%d" % int(SEDENTARIZATION_LAND_POINTS))
-		and stage_tip.contains("From the dead: +%d" % belief))
+		stage_tip == expected and stage_tip.contains("Rich land +%d" % int(SEDENTARIZATION_LAND_POINTS))
+		and stage_tip.contains("Dead +%d" % belief))
 	var belief_tip := _faction_row_tooltip(zone, HudWorkVocab.FACTION_SETTLING_BELIEF_KEY)
 	_assert_band_panel("faction settling tooltip: the From the dead row carries its tip (%s form)" % (
 			"+N" if tied else "zero"),
-		belief_tip == HudWorkVocab.FACTION_SETTLING_BELIEF_TOOLTIP)
+		belief_tip == HudWorkVocab.FACTION_SETTLING_BELIEF_TOOLTIP_FORMAT % belief)
 
 ## The tooltip on the stat row keyed `key`: both of its Labels must carry the SAME non-empty text, so it
 ## is hoverable across the row rather than on one Label.
@@ -13116,7 +13116,7 @@ func _work_head_fodder_total() -> Label:
 	_collect_labels(_panel, labels)
 	for label_variant in labels:
 		var label: Label = label_variant
-		if label.tooltip_text == HudWorkVocab.WORK_FODDER_TOTAL_TOOLTIP:
+		if label.tooltip_text.begins_with("Fodder ") and label.tooltip_text.ends_with("Feeds pens, not people"):
 			return label
 	return null
 

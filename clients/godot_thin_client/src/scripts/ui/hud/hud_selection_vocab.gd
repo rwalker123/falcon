@@ -110,9 +110,9 @@ const CHIP_CLIMATE_LETHAL_PREFIX := "⚠ "
 # been under-warned in exactly the way this issue exists to fix. It matters more, not less, now that
 # the tuning prices ordinary cold ground in fractions of a percent: 0.4 % sounds like nothing until
 # it is 0.4 % EVERY TURN.
-const CHIP_SURVIVABILITY_TOOLTIP_COLD := "%s increased mortality per turn due to severe cold"
+const CHIP_SURVIVABILITY_TOOLTIP_COLD := "⚠ Severe cold: +%s deaths/turn"
 
-const CHIP_SURVIVABILITY_TOOLTIP_HEAT := "%s increased mortality per turn due to severe heat"
+const CHIP_SURVIVABILITY_TOOLTIP_HEAT := "⚠ Severe heat: +%s deaths/turn"
 
 # The mortality model is a FRACTION on the wire (0.0037 = 0.4 % of the tile's people, before the
 # sim's per-bracket weights — see `TileSurvivability`); `survivability_percent_text` is the one place
@@ -451,10 +451,11 @@ const RUNG_UNQUEUED_PHRASE := "not queued"
 # conjuncts (`build_turns` at the wire's `-1`, a meter above empty, no entry) with nothing having gone
 # wrong at all. The word `Lapsed` is right in every one of them; only a cause would be a guess, so the
 # sentence states what IS and what to do and asserts nothing about how it got here.
-const RUNG_UNQUEUED_TOOLTIP := "Part of this rung is built, but no band has the job queued, so nobody is building it. The work already banked stays — re-queue the job from the work row's build face to pick it back up."
+const RUNG_UNQUEUED_TOOLTIP_FORMAT := "%d%% built · not queued"
 
 # The rotting twin's hover: the same three facts, plus the one that earned the mark.
-const RUNG_UNQUEUED_ROTTING_TOOLTIP := "Part of this rung is built, but no band has the job queued, so nobody is building it — and it is losing some of that work every turn. Re-queue the job from the work row's build face to pick it back up."
+const RUNG_UNQUEUED_ROTTING_CLAUSE_FORMAT := " · losing %.1f/turn"
+const RUNG_UNQUEUED_FIX_LINE := "Fix: re-queue from Work row"
 
 # **NOT A HAZARD: THE SIM HAS NOT LOOKED AT THIS ENTRY YET**
 # (`SourceForecast.BUILD_TURNS_NOT_YET_ESTIMATED`, the wire's own `-5`,
