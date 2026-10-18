@@ -297,38 +297,18 @@ func faction_zone_parties() -> Array:
 	return _player_expeditions.filter(
 		func(exp: Variant) -> bool: return exp is Dictionary and not is_trade_party(exp))
 
-## **THE TRADE PARTY STANDING IN A CAMP ON A PENDING DEALING**, or `{}`. The decoded dealing carries the
-## party's two bands and no party id, so the join is the pair: an OFFER this people sent is the party of
-## its `sender_band` bound for `receiver_band`; a REPLY addressed to this people is the party of its
-## `receiver_band` (the original sender) bound for `sender_band`. Only a party standing in a camp
-## (`awaiting`) is matched, and two parties on one pair resolve to the first, so a dealing never claims
-## two parties and a party never answers for two dealings.
+## **THE TRADE PARTY STANDING IN A CAMP ON A PENDING DEALING**, or `{}`. The dealing names it:
+## `party_band` is the waiting party's band id, equal to that party's cohort `band_id`, and `0` when no
+## party carries the dealing. Two parties camped on one pair of bands therefore each answer for their own
+## dealing.
 func party_for_dealing(dealing: Dictionary) -> Dictionary:
-	var kind := String(dealing.get("kind", ""))
-	var home := HudConst.NO_BAND_ID
-	var destination := HudConst.NO_BAND_ID
-	if kind == HudDealingsVocab.KIND_OFFER \
-			and int(dealing.get("sender_faction", HudConst.NO_FACTION_ID)) == HudConst.PLAYER_FACTION_ID:
-		home = int(dealing.get("sender_band", HudConst.NO_BAND_ID))
-		destination = int(dealing.get("receiver_band", HudConst.NO_BAND_ID))
-	elif kind == HudDealingsVocab.KIND_REPLY \
-			and int(dealing.get("receiver_faction", HudConst.NO_FACTION_ID)) == HudConst.PLAYER_FACTION_ID:
-		home = int(dealing.get("receiver_band", HudConst.NO_BAND_ID))
-		destination = int(dealing.get("sender_band", HudConst.NO_BAND_ID))
-	else:
+	var party_band := int(dealing.get("party_band", HudConst.NO_BAND_ID))
+	if party_band == HudConst.NO_BAND_ID:
 		return {}
 	for exp_variant in _player_expeditions:
-		if not (exp_variant is Dictionary):
-			continue
-		var exp: Dictionary = exp_variant
-		if not is_trade_party(exp) \
-				or String(exp.get("expedition_phase", "")).strip_edges().to_lower() \
-					!= HudExpeditionVocab.EXPEDITION_PHASE_AWAITING \
-				or int(exp.get("expedition_destination_band", HudConst.NO_BAND_ID)) != destination:
-			continue
-		if int(player_band_by_entity(int(exp.get("home_band_entity", NO_HOME_BAND_ENTITY))).get(
-				"band_id", HudConst.NO_BAND_ID)) == home:
-			return exp
+		if exp_variant is Dictionary and is_trade_party(exp_variant) \
+				and int((exp_variant as Dictionary).get("band_id", HudConst.NO_BAND_ID)) == party_band:
+			return exp_variant
 	return {}
 
 ## Is this trade party shown by a dealing's row (so the Trade tab must not list it a second time)?

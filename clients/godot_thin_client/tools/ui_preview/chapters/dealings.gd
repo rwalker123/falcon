@@ -15,7 +15,7 @@ extends RefCounted
 ## and be spelled into a line the server's parser refuses.
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
-const EXPECTED_CHECKPOINTS := 234
+const EXPECTED_CHECKPOINTS := 235
 
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 const Q := preload("res://tools/ui_preview/node_query.gd")
@@ -96,6 +96,8 @@ const REPLY_RETURN_FLINT := 5.0
 ## stands in Brackwater's camp, so the pending offer we sent and the reply addressed to us (both between
 ## the home band and Brackwater) are its dealing rows; the other two shipments have none.
 const PARTY_WAITING := 7301
+## A SECOND shipment camped on the very same pair (Brackwater): the reply addressed to us is ITS dealing.
+const PARTY_WAITING_REPLY := 7306
 const PARTY_HEADING_OUT := 7302
 const PARTY_COMING_HOME := 7303
 const PARTY_ENVOY := 7304
@@ -278,7 +280,7 @@ func _road_states(panel: BandCityPanel) -> void:
 	h._assert_hud("road: …and the Parties badge counts 2, not the four shipments as well",
 		String(panel._tab_badges.get(BandCityPanel.ZONE_PARTIES, {}).get("text", "")) == "2")
 	h._assert_hud("road: …the band's own roster still has all five parties (the Workforce 'away' clause reads them)",
-		labor.band_parties(_home_band()).size() == 5 and labor.band_zone_parties(_home_band()).size() == 2)
+		labor.band_parties(_home_band()).size() == 6 and labor.band_zone_parties(_home_band()).size() == 2)
 	await h._save("dealings_parties_no_shipments")
 	panel.set_active_tab(BandCityPanel.ZONE_TRADE)
 	await h._settle()
@@ -337,6 +339,11 @@ func _road_states(panel: BandCityPanel) -> void:
 	var link := _party_link(offer_out, HudDealingsVocab.PARTY_LINK_JUMP)
 	if link != null:
 		link.emit_signal("pressed")
+	var reply_link := _party_link(reply_in, HudDealingsVocab.PARTY_LINK_JUMP)
+	if reply_link != null:
+		reply_link.emit_signal("pressed")
+	h._assert_hud("road: two parties camped on ONE pair each get their OWN links (offer -> x+1, reply -> x+2: %s)" % str(focused),
+		focused.has(Vector2i(HOME_TILE.x + 1, HOME_TILE.y)) and focused.has(Vector2i(HOME_TILE.x + 2, HOME_TILE.y)))
 	h._assert_hud("road: …pressing Jump to party focuses THAT party's tile, as the Parties row's did (%s)" % str(focused),
 		focused.has(Vector2i(HOME_TILE.x + 1, HOME_TILE.y)))
 	await h._save("dealings_road")
@@ -349,7 +356,7 @@ func _road_states(panel: BandCityPanel) -> void:
 	await h._settle()
 	h._assert_hud("road: a party whose dealing is gone is on the road as a row of its own, in the same scroll",
 		panel.find_child(TradeZoneController.TAB_SCROLL_NAME, true, false) == scroll
-			and _road_rows(panel.find_child(HudDealingsVocab.ROAD_BLOCK_NAME, true, false)).size() == 3
+			and _road_rows(panel.find_child(HudDealingsVocab.ROAD_BLOCK_NAME, true, false)).size() == 4
 			and _road_row(_road_rows(panel.find_child(HudDealingsVocab.ROAD_BLOCK_NAME, true, false)),
 				PARTY_WAITING) != null)
 	var waiting_row := _road_row(_road_rows(panel.find_child(HudDealingsVocab.ROAD_BLOCK_NAME, true, false)),
@@ -1474,6 +1481,8 @@ func _parties() -> Array:
 	return [
 		_party(PARTY_WAITING, "trade", "awaiting", BRACK_ENTITY, PARTY_SIZE, {
 			"expedition_cargo_fodder": 3.0}),
+		_party(PARTY_WAITING_REPLY, "trade", "awaiting", BRACK_ENTITY, PARTY_SIZE, {
+			"current_x": HOME_TILE.x + 2, "expedition_cargo_food": REPLY_CARGO_FOOD}),
 		_party(PARTY_HEADING_OUT, "trade", "outbound", MOOR_ENTITY, PARTY_SIZE, {
 			"expedition_cargo_food": ROAD_CARGO_FOOD, "expedition_cargo_fodder": 2.0}),
 		_party(PARTY_COMING_HOME, "trade", "returning", THORN_ENTITY, PARTY_SIZE, {
@@ -1488,6 +1497,7 @@ func _party(entity: int, mission: String, phase: String, destination_entity: int
 		extra: Dictionary) -> Dictionary:
 	var party := {
 		"id": "Party %d" % entity, "size": size, "entity": entity, "faction": 0,
+		"band_id": BandFx.FIXTURE_BAND_ID_OFFSET + entity,
 		"pos": [HOME_TILE.x + 1, HOME_TILE.y], "current_x": HOME_TILE.x + 1, "current_y": HOME_TILE.y,
 		"turns_of_food": 6.0, "stores": {"provisions": 5.0}, "is_expedition": true,
 		"home_band_entity": HOME_ENTITY, "expedition_mission": mission, "expedition_phase": phase,
@@ -1584,7 +1594,21 @@ func _history() -> Array:
 			HudDealingsVocab.OUTCOME_FAILED, _goods(4.0), _goods()),
 	]
 
+## Each dealing a camped party stands for names that party by its band id (`party_band`, the key the
+## client joins on); every other dealing carries 0.
 func _dealings() -> Array:
+	var rows := _dealings_unjoined()
+	for row in rows:
+		match int(row["id"]):
+			OFFER_OUT:
+				row["party_band"] = BandFx.FIXTURE_BAND_ID_OFFSET + PARTY_WAITING
+			REPLY_IN:
+				row["party_band"] = BandFx.FIXTURE_BAND_ID_OFFSET + PARTY_WAITING_REPLY
+			_:
+				row["party_band"] = 0
+	return rows
+
+func _dealings_unjoined() -> Array:
 	var hide := _batch("hide", OFFER_HIDE, [["tough", 0.45, "fair"], ["supple", 0.58, "good"]])
 	var flint := {"material_id": "flint", "amount": PROPOSAL_FLINT, "readings": [], "variety_name": ""}
 	return [

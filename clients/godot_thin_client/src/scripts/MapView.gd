@@ -3188,7 +3188,8 @@ func _rebuild_unit_markers(snapshot: Dictionary) -> void:
 				marker["dest_y"] = int(scout.get("target_y", -1))
 				marker["travel_task_kind"] = "scout"
 		if bool(marker.get("is_expedition", false)) \
-				and String(marker.get("expedition_phase", "")) == EXPEDITION_PHASE_AWAITING:
+				and String(marker.get("expedition_phase", "")) == EXPEDITION_PHASE_AWAITING \
+				and HudFormat.awaits_orders(marker):
 			_has_awaiting_expedition = true
 		units.append(marker)
 

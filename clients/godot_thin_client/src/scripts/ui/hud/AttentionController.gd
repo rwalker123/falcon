@@ -449,7 +449,9 @@ func _awaiting_orders_attention(expeditions: Array) -> Array:
         if not (exp_variant is Dictionary):
             continue
         var exp: Dictionary = exp_variant
-        if HudFormat.expedition_phase_key(exp) == HudExpeditionVocab.EXPEDITION_PHASE_AWAITING:
+        # A shipment or envoy parked in a camp waits on someone else's answer: nothing for the player
+        # to do, so it is no row (a reply addressed to us is already a row, through the dealing).
+        if HudFormat.awaits_orders(exp):
             awaiting.append(exp)
     var items: Array = []
     for i in awaiting.size():

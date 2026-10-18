@@ -536,7 +536,7 @@ answer` when several wait on that band), detail `<their people> · <band>`, `war
 (silence is the sim's refusal, and the orb's job is to say what walking away costs, not to hold the turn).
 It is **non-locating** and carries its band as `ATTENTION_PANEL_SUBJECT`; the kind is on
 `ATTENTION_KINDS_WITH_A_PANEL`, so it wears `Open ▸`. Capped at `ATTENTION_MAX_ROWS` (3) with an overflow
-row, like the awaiting-orders rows.
+row, like the awaiting-orders rows. **Those rows are scoped by `HudFormat.awaits_orders`**: a trade party or envoy parked in a camp waits on someone else's answer and raises none (a reply addressed to us is its own row, through the dealing).
 
 - **Its own half** (`TurnOrbController._dealing_attention`, `set_dealing_attention`, guarded like the
   knowledge and loadout halves): the `dealings` section moves on a command as often as on a turn, so the

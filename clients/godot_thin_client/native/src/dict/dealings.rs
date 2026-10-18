@@ -77,6 +77,8 @@ pub(crate) fn dealings_to_array(
         let _ = dict.insert("treaty", &treaty_terms_to_dict(dealing.treaty()));
         // "road" | "envoy" on a treaty proposal, "" on every other kind.
         let _ = dict.insert("carrier", dealing.carrier().unwrap_or_default());
+        // The waiting party's band id (== that party's cohort `band_id`), `0` when no party carries it.
+        let _ = dict.insert("party_band", dealing.partyBand() as i64);
         array.push(&dict.to_variant());
     }
     array

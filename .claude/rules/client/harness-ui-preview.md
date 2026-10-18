@@ -3913,8 +3913,8 @@ throwaway test, and all parse).
   party` focuses that party's tile. A dealings-only frame withdrawing the offer and reply moves the party
   onto a third road row in the SAME scroll, reading `Waiting on an answer`; restoring them takes it off
   again; with no trade party at all the section is not drawn. The chapter's `EXPECTED_CHECKPOINTS` was
-  re-measured. **Both parties sharing the Brackwater pair claim the one camped party** (the fixture's
-  offer and reply are between the same two bands), which is the documented first-awaiting-party rule.
+  re-measured. The offer and the reply are between the same two bands but each names its own
+  camped party by `party_band`, and a claim asserts each row's links reach its own party.
 - **THE DEALINGS TAB IS GONE; THE CHAPTER KEEPS ITS NAME.** What it walks is the merged Trade tab
   (`Waiting on an answer`, `This turn`, `History`, in one scroll) and the Peoples tab's treaty proposals.
   `dealings_tab` asserts the three sections in order, the one sanctioned scroll, no SHORT tier, the six

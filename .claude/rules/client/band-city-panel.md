@@ -7828,9 +7828,8 @@ Each sits under a small section head (`HudWidgets.zone_head`), in this order:
    (`Cancel` where the sim folds it back on the spot) at the line's right end. The links are the Parties
    row's own actions, handed in by `BandPanelController._dealing_actions`.
    **A party standing in a camp on a pending dealing is shown once, by that dealing's row**
-   (`party_for_dealing`: an offer we sent is the party of its `sender_band` bound for `receiver_band`; a
-   reply addressed to us the party of its `receiver_band` bound for `sender_band`; the dealing carries
-   no party id, so the pair is the join and the first awaiting party on it is the one), and the row
+   (`party_for_dealing`: the dealing's `party_band` is the party's cohort `band_id`, so two parties camped
+   on one pair each answer for their own dealing), and the row
    carries the same two links: at the right end of an outgoing row's second line, after `Take it` /
    `Walk home` on a reply. `refill_lists` rebuilds the section in place, since a frame that moves only
    the dealings moves a party between a dealing row and a road row.

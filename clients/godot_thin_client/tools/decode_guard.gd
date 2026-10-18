@@ -460,6 +460,7 @@ func _diplomacy_probe(frame: Dictionary) -> Dictionary:
 		"own_total": float(own[0].get("total", 0.0)) if not own.is_empty() else 0.0,
 		"treaty_formed": int(treaty_rows[0].get("formed_turn", -1)) if not treaty_rows.is_empty() else -1,
 		"has_cuts": goodwill.has("cuts"),
+		"dealing_has_party_band": (not dealings.is_empty()) and (dealings[0] as Dictionary).has("party_band"),
 	}
 
 
@@ -467,6 +468,8 @@ func _assert_diplomacy_witnesses(baseline: Dictionary, frame1: Dictionary, frame
 	var before := _diplomacy_probe(baseline)
 	var after_1 := _diplomacy_probe(frame1)
 	var after_2 := _diplomacy_probe(frame2)
+	if not bool(before["dealing_has_party_band"]):
+		_die("the decoded dealing rows carry no `party_band` key: the client joins a dealing to its party on it.")
 	if int(before["dealing_count"]) == 0 or int(before["treaty_formed"]) < 0 or not bool(before["has_cuts"]):
 		_die("the baseline carries no diplomacy rows (%s), so the delta witnesses below would compare against nothing." % str(before))
 		return false

@@ -247,6 +247,8 @@ is asserted alongside each — named on the frame that carries it, absent on the
 because the config pages gate on `SnapshotSections.changed()` for exactly this key, so an unnamed
 replacement is one they skip.
 
+**The decoded dealing rows must carry `party_band`** (the key the client joins a dealing to its camped party on; the probe fails the run when it is absent from the first row).
+
 **The DIPLOMACY sections are a third whole-section witness** (`_assert_diplomacy_witnesses`, issue #233):
 delta 1 REPLACES `dealings`, `trade_history`, `goodwill` (known, own and cuts) and `treaties` (with the
 standing links) with visibly different rows, and **one dealing and one trade record fewer** (the first
