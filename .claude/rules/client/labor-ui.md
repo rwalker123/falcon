@@ -5892,6 +5892,15 @@ spelled and never a raw count.
       offered here would only fail unreadably). This is the only gate reason on either ladder a player
       answers by **moving** rather than by working. ui_preview `forage_sow_too_dry` /
       `forage_sow_too_poor`.
+    - **`pen_taken` is the animal web's one site refusal**: a herd takes one Corral at a time, and while one
+      band's queue holds it the enclosed (pen) rung's quote carries `site_refusal = pen_taken` (the herd row
+      is per faction). `SOW_REFUSAL_REASONS` maps it to `Another band is already penning this herd` (the
+      map is plant-named and was kept, not renamed). `RungGates.seen_by_band(src, band)` blanks the refusal
+      for the band whose own `build_queue` holds a hunt entry for that herd — it sees its ordinary
+      queued/progress state — and leaves it for every other band, whose Pen row is locked on the sentence and
+      who is offered no Corral button. Applied where a band is in hand: `RungLadder.track`, the Work row's
+      ready offer and the compose sheet's offer. Pinned by
+      `band_panel_preview._assert_pen_taken_refusal_by_viewing_band`.
     - **The forecast states the deal.** `SourceForecast.forecast_inputs` maps an investment policy's ceiling to the
       DIP yield and additionally returns its `payoff`; `_forecast_yield_row` (now INVESTMENT-only) then
       reads **`Preparing: +0.24 /turn → then +1.20 /turn`** — the deal, not a single rate — both halves

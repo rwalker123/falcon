@@ -11293,6 +11293,7 @@ func _assert_queue_row_ring_quotes_its_own_meter() -> void:
 	await _assert_queue_head_says_what_the_shelf_lacks()
 	await _assert_blocked_pen_head_hover_and_detail()
 	await _assert_a_road_behind_a_blocked_pen_head_is_just_queued()
+	_assert_pen_taken_refusal_by_viewing_band()
 	await _assert_work_row_warns_of_an_underfed_pen()
 
 ## **RAY'S GAME: A PEN HEAD BLOCKED ON HURDLES AND SHORT OF A CROOK.** 65% built, 2.1 hurdles still to draw
@@ -11419,6 +11420,51 @@ func _assert_the_corral_entry_states_its_pen_site(pile: Array, band: Dictionary)
 	rows = _build_queue_rows()
 	_assert_band_panel("pen site — …nor does one with only one coordinate set",
 		not rows.is_empty() and not rows[0].tooltip_text.contains("Pen at"))
+
+## **A HERD TAKES ONE CORRAL AT A TIME, AND ONLY THE BANDS NOT HOLDING IT SEE THE REFUSAL.** The enclosed
+## rung's quote carries `site_refusal = pen_taken` while one band's queue holds the herd's Corral. A band
+## that does not hold it is told so, in words, and is offered no Corral button; the holding band sees none
+## of it and keeps its ordinary queued/progress state.
+func _assert_pen_taken_refusal_by_viewing_band() -> void:
+	var herds := _declare_herd_fixtures()
+	var herd: Dictionary = herds[0]
+	for quote_variant in herd.get("rung_quotes", []):
+		var quote: Dictionary = quote_variant
+		if String(quote.get(RungQuotes.KEY_VERB, "")) == SourceForecast.IMPROVEMENT_CORRAL:
+			quote[RungQuotes.KEY_SITE_REFUSAL] = RungQuotes.SITE_REFUSAL_PEN_TAKEN
+	var knowledge := {"herding": HudConst.KNOWLEDGE_COMPLETE, "penning": HudConst.KNOWLEDGE_COMPLETE}
+	var sentence := "Another band is already penning this herd"
+	var outsider := _declare_band_fixture()
+	var holder := _declare_band_fixture()
+	holder["build_queue"] = [_queue_hunt_entry(DECLARE_CORRAL_HERD)]
+	var seen_outsider := RungGates.seen_by_band(herd, outsider)
+	var seen_holder := RungGates.seen_by_band(herd, holder)
+	var outsider_gates := RungGates.source_gates(seen_outsider, "", knowledge)
+	var holder_gates := RungGates.source_gates(seen_holder, "", knowledge)
+	var outsider_reasons: Array = outsider_gates.get(SourceForecast.IMPROVEMENT_CORRAL, [])
+	_assert_band_panel("pen taken — a band NOT holding the Corral is told \"%s\" (%s)" % [sentence, str(outsider_reasons)],
+		outsider_reasons.has(sentence))
+	_assert_band_panel("pen taken — …and is offered no Corral button (the ready offer is empty)",
+		RungGates.next_rung_ready(SourceForecast.LABOR_KIND_HUNT, seen_outsider,
+			SourceForecast.IMPROVEMENT_NONE, knowledge).is_empty())
+	var outsider_row := _corral_track_row(seen_outsider, knowledge, outsider)
+	_assert_band_panel("pen taken — …its Pen row is LOCKED with that sentence on it (%s)" % str(outsider_row.get(RungLadder.ROW_REASONS_KEY, [])),
+		String(outsider_row.get(RungLadder.ROW_STATE_KEY, "")) == RungLadder.STATE_LOCKED
+			and (outsider_row.get(RungLadder.ROW_REASONS_KEY, []) as Array).has(sentence))
+	var holder_reasons: Array = holder_gates.get(SourceForecast.IMPROVEMENT_CORRAL, [])
+	_assert_band_panel("pen taken — the HOLDING band sees no refusal (%s)" % str(holder_reasons),
+		not holder_reasons.has(sentence))
+	var holder_row := _corral_track_row(herd, knowledge, holder)
+	_assert_band_panel("pen taken — …and its Pen row is not locked on it (%s)" % str(holder_row.get(RungLadder.ROW_REASONS_KEY, [])),
+		not (holder_row.get(RungLadder.ROW_REASONS_KEY, []) as Array).has(sentence))
+
+## The destination track's row for the Corral rung, as `RungLadder.track` composes it for `band`.
+func _corral_track_row(herd: Dictionary, knowledge: Dictionary, band: Dictionary) -> Dictionary:
+	for row in RungLadder.track(SourceForecast.LABOR_KIND_HUNT, herd, "", SourceForecast.IMPROVEMENT_NONE,
+			knowledge, band):
+		if String(row.get(RungLadder.ROW_IMPROVEMENT_KEY, "")) == SourceForecast.IMPROVEMENT_CORRAL:
+			return row
+	return {}
 
 ## **THE ENTRY BEHIND A BLOCKED HEAD IS NOT BLOCKED, AND SAYS NOTHING IS WRONG WITH IT.** Ray's game showed the
 ## blocked pen head as a plain date and the road waiting behind it as `⚠ Blocked 0%`. The sim mints

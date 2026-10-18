@@ -2274,7 +2274,8 @@ func _build_improvement_control(kind: String, source: Dictionary, prefix: String
         break
     # OFFERED — the ONE rung on offer, ordered by `RungGates` so the sheet, the work board and the map
     # can never disagree about which rung is next. Renders BENEATH a done label when there is one.
-    var offer := RungGates.next_rung_offered(kind, source, composed, _player_knowledge(), prefix)
+    var offer := RungGates.next_rung_offered(kind, RungGates.seen_by_band(source, band), composed,
+        _player_knowledge(), prefix)
     if offer.is_empty():
         return
     var rung := String(offer["policy"])

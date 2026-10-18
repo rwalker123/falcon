@@ -7605,7 +7605,8 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
         # `building_progress` off this model.
         building = RungGates.leg_in_progress(rung_source, building)
         var ready := {} if not building.is_empty() \
-            else RungGates.next_rung_ready(kind, rung_source, improvement, _player_knowledge())
+            else RungGates.next_rung_ready(kind, RungGates.seen_by_band(rung_source, band),
+                improvement, _player_knowledge())
         # The row's HARVEST mark is the floor's ZONE glyph — where this crew's floor sits relative to
         # the food peak. A continuous number cannot wear one glyph per value, and the zone is the whole
         # of what one mark can honestly say about it; the exact percent is in the row tooltip.

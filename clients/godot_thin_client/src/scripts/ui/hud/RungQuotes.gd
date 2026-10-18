@@ -62,6 +62,9 @@ const KEY_KNOWLEDGE_GAINS := "knowledge_gains"
 ## The server's verdict on a rung this viewer may not place a source on YET, because a lesson would
 ## open the ground. `""` means the viewer may place one now.
 const SITE_REFUSAL_NEEDS_LESSON := "needs_lesson"
+## A herd takes one Corral at a time: while ONE band holds it in its queue, the enclosed (pen) rung's
+## quote carries this refusal for everyone else.
+const SITE_REFUSAL_PEN_TAKEN := "pen_taken"
 const TRAIT_MANAGED := "managed"
 const TRAIT_DOMESTICATED := "domesticated"
 

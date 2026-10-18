@@ -195,6 +195,8 @@ const SITE_LESSON_TEACHER_FORMAT := "Learn %s — work a %s"
 const SOW_REFUSAL_TOO_POOR_AND_TOO_DRY := "too_poor_and_too_dry"
 
 const SOW_REFUSAL_REASONS := {
+    # The one animal-web key: a herd is penned by one band at a time (`RungQuotes.SITE_REFUSAL_PEN_TAKEN`).
+    "pen_taken": "Another band is already penning this herd",
     "not_gathering_site": "Nobody gathers this ground — your people cannot sow land they do not already work. Sow where they gather, or move a band to ground they can.",
     "too_poor": "This ground is too thin to take a crop — your people can carry seed, but not yet feed the soil. Look to the river valleys, until they learn to work poorer land.",
     "too_dry": "This ground is rich but too dry to farm — your people can carry seed, but not yet carry water to it. Sow beside fresh water, until they learn to bring it here.",

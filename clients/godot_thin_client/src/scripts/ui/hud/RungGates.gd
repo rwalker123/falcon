@@ -104,6 +104,36 @@ const RUNG_BELOW_REASON_FORMATS := {
 static func _required_rung_quote(src: Dictionary, prefix: String, quote: Dictionary) -> Dictionary:
     return RungQuotes.quote_of_rung(src, prefix, String(quote.get(RungQuotes.KEY_REQUIRES_RUNG, "")))
 
+## **THE HERD AS THE VIEWING BAND SEES IT.** The enclosed rung's `pen_taken` refusal means *another band
+## holds this herd's Corral*; the band whose own `build_queue` holds a hunt entry for the herd IS that band,
+## so for it the refusal is absent and it keeps its ordinary queued/progress state. Every other band (and a
+## caller with no band) sees the source untouched, refusal and all. Returns a copy only when it changes
+## something.
+static func seen_by_band(src: Dictionary, band: Dictionary) -> Dictionary:
+    if band.is_empty() or not _has_pen_taken(src):
+        return src
+    var herd_id := String(src.get("id", ""))
+    var holds := false
+    for entry_variant in band.get("build_queue", []):
+        if entry_variant is Dictionary \
+                and String((entry_variant as Dictionary).get("fauna_id", "")) == herd_id \
+                and herd_id != "":
+            holds = true
+    if not holds:
+        return src
+    var seen := src.duplicate(true)
+    for quote_variant in seen.get(RungQuotes.QUOTES_KEY, []):
+        if quote_variant is Dictionary and String((quote_variant as Dictionary).get(
+                RungQuotes.KEY_SITE_REFUSAL, "")) == RungQuotes.SITE_REFUSAL_PEN_TAKEN:
+            (quote_variant as Dictionary)[RungQuotes.KEY_SITE_REFUSAL] = ""
+    return seen
+
+static func _has_pen_taken(src: Dictionary) -> bool:
+    for quote in RungQuotes.quotes(src, ""):
+        if String(quote.get(RungQuotes.KEY_SITE_REFUSAL, "")) == RungQuotes.SITE_REFUSAL_PEN_TAKEN:
+            return true
+    return false
+
 ## The plant web's gates for a `patch_`-prefixed tile cross-ref -- `source_gates` at that prefix.
 static func forage_gates(tile_info: Dictionary, knowledge: Dictionary) -> Dictionary:
     return source_gates(tile_info, HudComposeVocab.FORAGE_FORECAST_PREFIX, knowledge)

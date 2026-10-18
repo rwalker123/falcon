@@ -160,6 +160,7 @@ const ROOT_RUNG_KEY := "root"
 ## caller with no band in hand states the price and not the shortfall, which is the honest half.
 static func track(kind: String, source: Dictionary, prefix: String, improvement: String,
         knowledge: Dictionary, band: Dictionary = {}, labels: Dictionary = {}) -> Array[Dictionary]:
+    source = RungGates.seen_by_band(source, band)
     var rows: Array[Dictionary] = []
     # **THE BRANCH IS THE SOURCE'S OWN QUOTES** (issue #175): the root (which has no quote) and then one
     # entry per rung above it, in climb order, so a fourth step the config adds is a row here with no edit.
