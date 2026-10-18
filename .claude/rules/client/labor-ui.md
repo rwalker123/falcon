@@ -8372,8 +8372,16 @@ The client holds no site rule. `RungQuotes.placement_admitted` reads the placing
 the quotes; `DetailFormat.tile_is_workable` (gathering site OR admitted) gates the land row, the card's
 forage block, the Assign button and the compose sheet.
 
-- **Refusals.** Empty opens the sheet; `needs_lesson` shows the catalog-derived teaching line on the card
-  (`Learn Worked Land — work a farm`, `DetailFormat.site_lesson_line`); any other refusal keeps its hint.
+- **Refusals.** Empty opens the sheet; any other refusal keeps its hint. `needs_lesson` shows the
+  `Farming` row (`DetailFormat.site_lesson_line`) **only when it is useful**: the placing quote's own gate
+  (`unlock_knowledge`, read off the catalog-stamped quote by `RungGates.knowledge_gate_unmet` against the
+  people's published knowledge) is met, so this people can raise the rung today and working it really
+  teaches the lesson. Before that there is no row (it would send a people that cannot farm anywhere to
+  farm). The value is `Not yet — work a farm to learn how` (`Not yet — learn Worked Land` where no teaching
+  rung is named) and its hover `Working a farm teaches Worked Land; then ground like this can be farmed.`
+  (`site_lesson_tooltip`, registered on the row through the card's `Context`); the lesson and rung names
+  come from the roster and catalog, no knowledge id is spelled in the client. The deciding fields are the
+  quote's `site_refusal`, its catalog `unlock_knowledge`, and `faction_tracks` progress for that id.
 - **A crop is the commit off the sites.** The server takes a forage crew on a non-gathering-site tile only
   with `species` set, and that command queues the farm build; a bare gather there is refused ("is not a
   gathering site ... name the crop to sow"). `DetailFormat.offsite_crop_verb` returns the placing verb

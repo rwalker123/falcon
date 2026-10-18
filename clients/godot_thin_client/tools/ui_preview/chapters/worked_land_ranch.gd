@@ -13,7 +13,7 @@ extends RefCounted
 ## catalog's tier row: a pen below it says how many rings reach it, a pen in it says what it does.
 
 ## The checkpoints this chapter owes the walk -- assertions made plus frames saved, as a FLOOR.
-const EXPECTED_CHECKPOINTS := 34
+const EXPECTED_CHECKPOINTS := 38
 
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 const ForageFx := preload("res://tools/ui_preview/fixtures_forage.gd")
@@ -45,7 +45,10 @@ const PEN_FOOTPRINT_AT_TIER := 19
 const SOW_BUTTON := "Sow farm"
 const RAISE_EYEBROW := "Raise a farm"
 const CREW_LINE := "The crew will raise a farm of Wild Tubers here."
-const LESSON_LINE := "Learn Worked Land — work a farm"
+const LESSON_LINE := "Not yet — work a farm to learn how"
+const LESSON_TIP := "Working a farm teaches Worked Land; then ground like this can be farmed."
+## Seed Selection short of complete: the Farm's own gate is unmet, so this people cannot raise one yet.
+const SEED_SELECTION_PARTIAL := 0.4
 const RANCH_BONUS_LINE := "each keeper minds 1.5× the head"
 const RANCH_ONE_RING_LINE := "1 more ring — 1.5× the head"
 
@@ -95,9 +98,9 @@ func _tended_patch_offers_farm() -> void:
 	h._assert_hud("...and dry ground is OFFERED gated with the server's reason, never silently absent",
 		String(dry_offer.get("policy", "")) == "sow" and not dry_offer.get("reasons", []).is_empty())
 
-func _knowledge(worked_land: float) -> void:
+func _knowledge(worked_land: float, seed_selection: float = KNOWN) -> void:
 	h._hud.update_intensification([{"faction": 0, "knowledges": {
-		"cultivation": KNOWN, "herding": KNOWN, "seed_selection": KNOWN, "penning": KNOWN,
+		"cultivation": KNOWN, "herding": KNOWN, "seed_selection": seed_selection, "penning": KNOWN,
 		"worked_land": worked_land, "selective_breeding": UNKNOWN}}])
 
 ## Fertile ground that is NOT a gathering site, answered by the server as `refusal` (`needs_lesson`
@@ -113,6 +116,20 @@ func _off_site_tile(refusal: String) -> Dictionary:
 	return RungFx.stamp_patch(tile, HudComposeVocab.FORAGE_FORECAST_PREFIX)
 
 func _off_site_states() -> void:
+	# (0) A people that CANNOT raise a farm yet (the Farm rung's own gate is unmet): the same refused
+	# ground carries NO Farming row -- the row would send them to farm when they cannot.
+	_knowledge(UNKNOWN, SEED_SELECTION_PARTIAL)
+	var early := _off_site_tile(RungQuotes.SITE_REFUSAL_NEEDS_LESSON)
+	h._hud._compose.reset_forage_source()
+	h._show_tile(early)
+	await h._settle()
+	await h._save("worked_land_cannot_farm_yet")
+	var early_ctx := DetailFormat.Context.new()
+	var early_lines: Array = h._hud._drawer._tile_terrain_lines(early, early_ctx)
+	h._assert_hud("a people that cannot raise a farm yet gets NO Farming row on lesson-gated ground",
+		_row_value(early_lines, HudFloraVocab.SITE_LESSON_ROW) == ""
+			and DetailFormat.site_lesson_line(early, {}, {"seed_selection": SEED_SELECTION_PARTIAL}) == "")
+	h._assert_hud("…and no hover is registered for the absent row", early_ctx.row_tooltips.is_empty())
 	# (a) WITHOUT the lesson: the server says `needs_lesson`.
 	_knowledge(UNKNOWN)
 	var needs := _off_site_tile(RungQuotes.SITE_REFUSAL_NEEDS_LESSON)
@@ -120,7 +137,8 @@ func _off_site_states() -> void:
 	h._show_tile(needs)
 	await h._settle()
 	await h._save("worked_land_needs_lesson")
-	var lines: Array = h._hud._drawer._tile_terrain_lines(needs)
+	var lesson_ctx := DetailFormat.Context.new()
+	var lines: Array = h._hud._drawer._tile_terrain_lines(needs, lesson_ctx)
 	h._assert_hud("off-site ground refused for want of a lesson is NOT workable",
 		not DetailFormat.tile_is_workable(needs))
 	h._assert_hud("…so no forage block and no compose sheet are offered on it",
@@ -128,9 +146,11 @@ func _off_site_states() -> void:
 			and not h._hud._drawercompose._forage_compose_available(needs))
 	h._assert_hud("…and the card names the lesson and what teaches it: `%s`" % LESSON_LINE,
 		_row_value(lines, HudFloraVocab.SITE_LESSON_ROW) == LESSON_LINE)
+	h._assert_hud("…and its hover names the lesson and the rung from the roster and catalog: `%s`" % LESSON_TIP,
+		String(lesson_ctx.row_tooltips.get(HudFloraVocab.SITE_LESSON_ROW, "")) == LESSON_TIP)
 	var thin := _off_site_tile("not_gathering_site")
 	h._assert_hud("a DIFFERENT refusal (not a gathering site) states no lesson line",
-		DetailFormat.site_lesson_line(thin, {}) == "" and not DetailFormat.tile_is_workable(thin))
+		DetailFormat.site_lesson_line(thin, {}, {"seed_selection": KNOWN}) == "" and not DetailFormat.tile_is_workable(thin))
 
 	# (b) WITH the lesson: the server's verdict for the same tile is now empty.
 	_knowledge(KNOWN)
@@ -158,7 +178,7 @@ func _off_site_states() -> void:
 	h._assert_hud("…and no separate Sow checkbox is offered (this order IS the sow)",
 		ForageFx.improvement_state(sheet, "sow") == "")
 	h._assert_hud("…with no lesson line, the lesson being learned",
-		DetailFormat.site_lesson_line(admitted, {}) == "")
+		DetailFormat.site_lesson_line(admitted, {}, {"seed_selection": KNOWN}) == "")
 	# Off the sites the server takes a crew only with a crop named, so the chips are the single-pick
 	# CROP row and the commit carries one; a bare gather is not on offer.
 	h._assert_hud("…the crop row is the single-pick `%s` (a crop must be named)" % HudFloraVocab.TAKE_ROW_LABEL_SINGLE,

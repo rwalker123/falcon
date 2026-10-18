@@ -189,8 +189,13 @@ const SOW_NEEDS_LESSON_FORMAT := "Off your gathering sites — learn %s to farm 
 
 # The tile card's teaching line for such ground, and its key. `Learn Worked Land — work a farm`.
 const SITE_LESSON_ROW := "Farming"
-const SITE_LESSON_FORMAT := "Learn %s"
-const SITE_LESSON_TEACHER_FORMAT := "Learn %s — work a %s"
+## The row's value: what to do, in plain words. `%s` is the rung that teaches the lesson (`farm`), off the
+## catalog; with no teaching rung named it states the lesson alone.
+const SITE_LESSON_FORMAT := "Not yet — work a %s to learn how"
+const SITE_LESSON_BARE_FORMAT := "Not yet — learn %s"
+## Its hover: the lesson's and the rung's names off the roster and the catalog.
+const SITE_LESSON_TOOLTIP_FORMAT := "Working a %s teaches %s; then ground like this can be farmed."
+const SITE_LESSON_TOOLTIP_BARE := "Then ground like this can be farmed."
 
 const SOW_REFUSAL_TOO_POOR_AND_TOO_DRY := "too_poor_and_too_dry"
 

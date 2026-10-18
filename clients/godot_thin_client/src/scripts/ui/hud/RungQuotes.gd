@@ -336,6 +336,15 @@ static func lesson_to_place(src: Dictionary, prefix: String = "") -> String:
 				return String((last as Dictionary).get("knowledge", ""))
 	return ""
 
+## The placing quote the server answered `needs_lesson` for (`{}` when none): the rung whose own gate
+## (`unlock_knowledge`) says whether this people could raise it today.
+static func lesson_placing_quote(src: Dictionary, prefix: String = "") -> Dictionary:
+	for quote in quotes(src, prefix):
+		if places_source(quote) \
+				and String(quote.get(KEY_SITE_REFUSAL, "")).strip_edges() == SITE_REFUSAL_NEEDS_LESSON:
+			return quote
+	return {}
+
 ## The rung that earns `knowledge_id`, by its catalog label (`Farm` for `worked_land`), `""` when the
 ## source's quotes name none. The `work a farm` of a teaching line.
 static func rung_teaching(src: Dictionary, prefix: String, knowledge_id: String) -> String:

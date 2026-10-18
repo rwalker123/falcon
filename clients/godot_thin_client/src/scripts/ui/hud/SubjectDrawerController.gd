@@ -644,10 +644,15 @@ func _tile_terrain_lines(tile_info: Dictionary,
     # the server's (`site_refusal == needs_lesson`); once the lesson is learned the same ground reads
     # as workable and this row gives way to the forage block above.
     if not workable:
-        var lesson_line := DetailFormat.site_lesson_line(tile_info,
-            _topbar.knowledge_labels() if _topbar != null else {})
+        var lesson_labels: Dictionary = _topbar.knowledge_labels() if _topbar != null else {}
+        var lesson_knowledge: Dictionary = _topbar.faction_tracks(HudConst.PLAYER_FACTION_ID) \
+            if _topbar != null else {}
+        var lesson_line := DetailFormat.site_lesson_line(tile_info, lesson_labels, lesson_knowledge)
         if lesson_line != "":
             lines.append("%s: %s" % [HudFloraVocab.SITE_LESSON_ROW, lesson_line])
+            if ctx != null:
+                ctx.row_tooltips[HudFloraVocab.SITE_LESSON_ROW] = DetailFormat.site_lesson_tooltip(
+                    tile_info, lesson_labels, lesson_knowledge)
     # THE COMMITTED CROP — what the band committed this patch to, recorded on the FIRST worked turn,
     # ~25 turns before the build lands. It is a different fact from the basket above: committing
     # REWEIGHTS the basket as the build completes (issue #433 — a Tended Patch lifts the favored share

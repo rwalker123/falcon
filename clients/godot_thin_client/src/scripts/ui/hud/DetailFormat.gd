@@ -1403,20 +1403,40 @@ static func offsite_crop_label(tile_info: Dictionary) -> String:
     return RungQuotes.name_of(RungQuotes.offsite_placing_quote(
         tile_info, HudComposeVocab.FORAGE_FORECAST_PREFIX)).to_lower()
 
-## **THE TEACHING LINE FOR GROUND A LESSON WOULD OPEN**, `""` unless the server answered `needs_lesson`
-## for a placing rung. `Learn Worked Land — work a farm`: the lesson's own name off the knowledge roster
-## (`labels`, `{knowledge_id: display_name}`), the rung that teaches it off the catalog. Two lines at
-## most on the card; with no teaching rung to name it states the lesson alone.
-static func site_lesson_line(tile_info: Dictionary, labels: Dictionary) -> String:
+## **THE `Farming` ROW'S VALUE, FOR GROUND A LESSON WOULD OPEN**, `""` unless it is USEFUL: the server
+## answered `needs_lesson` for a placing rung AND this people can already raise that rung today -- the
+## rung's own gate (the catalog's `unlock_knowledge` on the quote) is met in `knowledge`
+## (`{knowledge_id: progress}`), so working one would really teach the lesson. Before that the row is
+## absent: it would tell a people that cannot farm anywhere yet to go and farm. The lesson's own name is
+## off the roster (`labels`), the teaching rung off the catalog; with no teaching rung it names the lesson.
+static func site_lesson_line(tile_info: Dictionary, labels: Dictionary, knowledge: Dictionary) -> String:
+    var parts := _site_lesson_parts(tile_info, labels, knowledge)
+    if parts.is_empty():
+        return ""
+    if String(parts["teacher"]) == "":
+        return HudFloraVocab.SITE_LESSON_BARE_FORMAT % String(parts["lesson"])
+    return HudFloraVocab.SITE_LESSON_FORMAT % String(parts["teacher"])
+
+## The row's hover, `""` exactly where the row is absent.
+static func site_lesson_tooltip(tile_info: Dictionary, labels: Dictionary, knowledge: Dictionary) -> String:
+    var parts := _site_lesson_parts(tile_info, labels, knowledge)
+    if parts.is_empty():
+        return ""
+    if String(parts["teacher"]) == "":
+        return HudFloraVocab.SITE_LESSON_TOOLTIP_BARE
+    return HudFloraVocab.SITE_LESSON_TOOLTIP_FORMAT % [String(parts["teacher"]), String(parts["lesson"])]
+
+static func _site_lesson_parts(tile_info: Dictionary, labels: Dictionary, knowledge: Dictionary) -> Dictionary:
     var prefix: String = HudComposeVocab.FORAGE_FORECAST_PREFIX
     var lesson := RungQuotes.lesson_to_place(tile_info, prefix)
     if lesson == "":
-        return ""
-    var lesson_name := String(labels.get(lesson, lesson.capitalize()))
-    var teacher := RungQuotes.rung_teaching(tile_info, prefix, lesson).to_lower()
-    if teacher == "":
-        return HudFloraVocab.SITE_LESSON_FORMAT % lesson_name
-    return HudFloraVocab.SITE_LESSON_TEACHER_FORMAT % [lesson_name, teacher]
+        return {}
+    if RungGates.knowledge_gate_unmet(RungQuotes.lesson_placing_quote(tile_info, prefix), knowledge):
+        return {}
+    return {
+        "lesson": String(labels.get(lesson, lesson.capitalize())),
+        "teacher": RungQuotes.rung_teaching(tile_info, prefix, lesson).to_lower(),
+    }
 
 ## **THE ONE ANSWER TO "WHAT FORAGE CAPACITY DOES THIS CARD SHOW"** — the patch's live ceiling where
 ## the player can see it, the tile's own ground `K` where they only remember it. `0.0` where the
