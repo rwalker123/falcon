@@ -231,6 +231,9 @@ pub struct SimState {
     /// a treaty is a standing promise, so a restore that dropped it would quietly cancel it for
     /// both peoples.
     pub treaties: crate::treaties::Treaties,
+    /// **Every people's past trades, newest last** (`crate::trade_history`). State: the event feed keeps
+    /// twenty turns, so this is the only record of an older trade, and nothing rebuilds it.
+    pub trade_history: crate::trade_history::TradeHistory,
     /// Every faction's name. **The save wins**: minted once by worldgen, then carried, so a pool
     /// edit never renames a saved world's factions.
     pub faction_names: crate::faction_names::FactionNames,
@@ -494,6 +497,10 @@ pub fn capture_sim_state(world: &World) -> SimState {
             .get_resource::<crate::treaties::Treaties>()
             .cloned()
             .unwrap_or_default(),
+        trade_history: world
+            .get_resource::<crate::trade_history::TradeHistory>()
+            .cloned()
+            .unwrap_or_default(),
         faction_names: world
             .get_resource::<crate::faction_names::FactionNames>()
             .cloned()
@@ -722,6 +729,7 @@ pub fn restore_sim_state(world: &mut World, state: &SimState) {
     world.insert_resource(state.goodwill.clone());
     world.insert_resource(state.known_goodwill.clone());
     world.insert_resource(state.treaties.clone());
+    world.insert_resource(state.trade_history.clone());
     world.insert_resource(state.faction_names.clone());
     world.insert_resource(state.factions.clone());
     world.insert_resource(state.hearts.clone());

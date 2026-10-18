@@ -46,8 +46,8 @@ use crate::{
     carry::{carry_capacity, CarryConfig, CarryLoad},
     components::{
         available_workers, BandId, Expedition, ExpeditionMission, ExpeditionPhase, LaborAllocation,
-        PopulationCohort, ResidentBand, ShipmentTerms, Tile, TransferCause, TransferCounterparty,
-        TransferCrossing, TransferDirection,
+        PopulationCohort, ResidentBand, ShipmentTerms, StrangersOrder, Tile, TransferCause,
+        TransferCounterparty, TransferCrossing, TransferDirection,
     },
     connections::{ConnectionKey, ConnectionLedger, NO_TIE},
     materials_config::MaterialsConfigHandle,
@@ -57,6 +57,7 @@ use crate::{
         SimulationConfig, SimulationTick, TileRegistry,
     },
     scalar::{scalar_from_f32, scalar_zero, Scalar},
+    trade_history::{record_trade, TradeEnd, TradeFacts, TradeHistory},
     LocalStore, FODDER, FOOD,
 };
 
@@ -79,6 +80,12 @@ pub enum DealingKind {
     /// by a standing link or by an envoy ([`TreatyProposal`]). Accepting puts them in force for both
     /// peoples, replacing any treaty already standing.
     TreatyProposal,
+    /// **The receiver accepted an offer whose sender asked for something back, and named a return: the
+    /// sender takes it or walks home.** Addressed to the original sender, stated from the shipper's point
+    /// of view like a proposal (`agreement.give` the cargo, `agreement.ask` the named return); the party
+    /// stands in the receiver's camp until the sender answers, and nothing has moved. Not a standing-link
+    /// dealing: the party standing in the camp carries it.
+    Reply,
 }
 
 impl DealingKind {
@@ -89,6 +96,7 @@ impl DealingKind {
             DealingKind::Proposal => "proposal",
             DealingKind::Counter => "counter",
             DealingKind::TreatyProposal => "treaty_proposal",
+            DealingKind::Reply => "reply",
         }
     }
 
@@ -561,6 +569,124 @@ pub fn push_agreement_posted_events(
     );
 }
 
+/// **The two feed lines a reply being posted writes.** `ends` is the reply's own orientation: its
+/// sender is the band that named the return, its receiver the band whose party is waiting. The
+/// sender is told its answer went to the party; the addressee is told what it can take or walk home
+/// from.
+pub fn push_reply_posted_events(
+    log: &mut CommandEventLog,
+    tick: u64,
+    id: DealingId,
+    ends: &DealingEnds,
+    cargo: &GoodsLines,
+    named_return: &GoodsLines,
+) {
+    let cargo = manifest_phrase(&cargo.manifest());
+    let named_return = manifest_phrase(&named_return.manifest());
+    log.push(
+        CommandEventEntry::new(
+            tick,
+            CommandEventKind::Dealing,
+            ends.sender_faction,
+            format!(
+                "Your answer went to the party from {}: {named_return} for its {cargo}",
+                band_label(ends.receiver_band)
+            ),
+            Some(format!(
+                "status=posted dealing={} kind={} destination={}",
+                id.0,
+                DealingKind::Reply.as_str(),
+                ends.receiver_band.0
+            )),
+        )
+        .with_band(ends.sender_band),
+    );
+    log.push(
+        CommandEventEntry::new(
+            tick,
+            CommandEventKind::Dealing,
+            ends.receiver_faction,
+            format!(
+                "{} would give back {named_return} for your {cargo}: take it or walk home",
+                band_label(ends.sender_band)
+            ),
+            Some(format!(
+                "status=offered dealing={} kind={} from={} sender={} band={}",
+                id.0,
+                DealingKind::Reply.as_str(),
+                ends.sender_faction.0,
+                ends.sender_band.0,
+                ends.receiver_band.0
+            )),
+        )
+        .with_band(ends.receiver_band),
+    );
+}
+
+// ------------------------------------------------------------------------------------------------
+// The trade history seam
+// ------------------------------------------------------------------------------------------------
+
+/// `history.trade_history_len` — the installed config's, else the builtin's.
+pub fn trade_history_cap(config: Option<&crate::diplomacy_config::DiplomacyConfigHandle>) -> usize {
+    let len = match config {
+        Some(handle) => handle.get().history.trade_history_len,
+        None => {
+            crate::diplomacy_config::DiplomacyConfig::builtin()
+                .history
+                .trade_history_len
+        }
+    };
+    len as usize
+}
+
+/// **A dealing's trade, stated from the shipper's side** — `None` for a treaty proposal, which is not a
+/// trade. A dealing that names legs (a proposal, a counter, a reply) states them from its agreement;
+/// an offer states its cargo manifest and what was asked.
+pub fn trade_facts_of(dealing: &Dealing, turn: u64) -> Option<TradeFacts> {
+    if dealing.kind.is_treaty() {
+        return None;
+    }
+    Some(match &dealing.agreement {
+        Some(agreement) => TradeFacts {
+            turn,
+            dealing: Some(dealing.id),
+            shipper_faction: agreement.shipper_faction,
+            shipper_band: agreement.shipper_band,
+            other_faction: agreement.consignee_faction,
+            other_band: agreement.consignee_band,
+            sent: agreement.give.clone(),
+            back: agreement.ask.clone(),
+        },
+        None => TradeFacts {
+            turn,
+            dealing: Some(dealing.id),
+            shipper_faction: dealing.sender_faction,
+            shipper_band: dealing.sender_band,
+            other_faction: dealing.receiver_faction,
+            other_band: dealing.receiver_band,
+            sent: GoodsLines::from_store(&dealing.goods_sent),
+            back: GoodsLines::from_store(&dealing.goods_asked),
+        },
+    })
+}
+
+/// Write a finished trade into the history, if the world keeps one.
+pub fn record_trade_in_world(world: &mut World, facts: &TradeFacts, end: TradeEnd) {
+    let cap =
+        trade_history_cap(world.get_resource::<crate::diplomacy_config::DiplomacyConfigHandle>());
+    if let Some(mut history) = world.get_resource_mut::<TradeHistory>() {
+        record_trade(&mut history, cap, facts, end);
+    }
+}
+
+/// Write the end of `dealing` (a trade of any kind, as it stood) into the history.
+pub fn record_dealing_end(world: &mut World, dealing: &Dealing, turn: u64, end: TradeEnd) {
+    if let Some(facts) = trade_facts_of(dealing, turn) {
+        record_trade_in_world(world, &facts, end);
+    }
+}
+
 /// How a dealing ended.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Resolution {
@@ -580,6 +706,10 @@ pub enum Resolution {
     LinkBroken,
     /// **Accepted, and the shipper's party could not set out.** Nothing moved.
     LaunchFailed(String),
+    /// **The sender walked home from the return a reply named.**
+    Declined,
+    /// **The receiver no longer holds the return it named** (a reply taken too late). Nothing moved.
+    ReceiverShort,
 }
 
 /// Detail suffix naming the reason a resolution carries one.
@@ -587,6 +717,7 @@ fn reason_token(resolution: &Resolution) -> &'static str {
     match resolution {
         Resolution::LinkBroken => " reason=link_broken",
         Resolution::LaunchFailed(_) => " reason=launch_failed",
+        Resolution::ReceiverShort => " reason=receiver_short",
         _ => "",
     }
 }
@@ -642,6 +773,84 @@ pub fn push_resolution_events(
             None,
             format!(
                 "The offer from {} was withdrawn",
+                band_label(ends.sender_band)
+            ),
+        ),
+        // A reply is told in its own orientation: the sender is the band that named the return, the
+        // receiver the band whose party is waiting.
+        (DealingKind::Reply, Resolution::Accepted { returned }) => (
+            "accepted",
+            Some(format!(
+                "{} took your return of {}",
+                band_label(ends.receiver_band),
+                manifest_phrase(returned)
+            )),
+            format!(
+                "You took the return from {}: {} is coming home",
+                band_label(ends.sender_band),
+                manifest_phrase(returned)
+            ),
+        ),
+        (DealingKind::Reply, Resolution::Declined) => (
+            "declined",
+            Some(format!(
+                "{} declined your return — the shipment is going home with them",
+                band_label(ends.receiver_band)
+            )),
+            format!(
+                "You declined the return from {} — your party is coming home with its cargo",
+                band_label(ends.sender_band)
+            ),
+        ),
+        (DealingKind::Reply, Resolution::Expired) => (
+            "expired",
+            Some(format!(
+                "{} did not answer your return — the shipment is going home with them",
+                band_label(ends.receiver_band)
+            )),
+            format!(
+                "The return from {} lapsed unanswered — your party is coming home with its cargo",
+                band_label(ends.sender_band)
+            ),
+        ),
+        (DealingKind::Reply, Resolution::Withdrawn) => (
+            "withdrawn",
+            Some(format!(
+                "The shipment {} sent you was withdrawn",
+                band_label(ends.receiver_band)
+            )),
+            String::new(),
+        ),
+        (DealingKind::Reply, Resolution::ReceiverShort) => (
+            "failed",
+            Some(format!(
+                "You no longer hold the return you named for {} — the shipment is going home",
+                band_label(ends.receiver_band)
+            )),
+            format!(
+                "{} no longer holds the return it named — your party is coming home with its cargo",
+                band_label(ends.sender_band)
+            ),
+        ),
+        (_, Resolution::Declined) => (
+            "declined",
+            Some(format!(
+                "{} declined your {noun}",
+                band_label(ends.receiver_band)
+            )),
+            format!(
+                "You declined the {noun} from {}",
+                band_label(ends.sender_band)
+            ),
+        ),
+        (_, Resolution::ReceiverShort) => (
+            "failed",
+            Some(format!(
+                "{} no longer holds what it agreed for the {noun}",
+                band_label(ends.sender_band)
+            )),
+            format!(
+                "You no longer hold what you agreed for the {noun} from {}",
                 band_label(ends.sender_band)
             ),
         ),
@@ -732,6 +941,11 @@ pub fn push_resolution_events(
             .with_band(ends.sender_band),
         );
     }
+    // A reply's withdrawal is told to the band that named the return alone: the other end watched its
+    // own party leave.
+    if kind == DealingKind::Reply && *resolution == Resolution::Withdrawn {
+        return;
+    }
     log.push(
         CommandEventEntry::new(
             tick,
@@ -784,6 +998,8 @@ pub struct AnswerReport {
     pub launch: Option<Agreement>,
     /// The new dealing a counter posted.
     pub counter: Option<DealingId>,
+    /// The reply an accepted offer posted to its sender (nothing moved yet).
+    pub reply: Option<DealingId>,
     /// Why an accepted proposal could not go ahead (the shipper could not honour its leg). The
     /// dealing is closed and nothing moved.
     pub failed: Option<String>,
@@ -798,6 +1014,7 @@ impl AnswerReport {
             returned: Vec::new(),
             launch: None,
             counter: None,
+            reply: None,
             failed: None,
         }
     }
@@ -1299,6 +1516,9 @@ pub fn answer_dealing(
             id.0
         ));
     };
+    if dealing.kind == DealingKind::Reply {
+        return answer_reply(world, dealing, answer, tick);
+    }
     if dealing.kind.is_agreement() {
         return answer_agreement(world, dealing, answer, tick);
     }
@@ -1308,14 +1528,7 @@ pub fn answer_dealing(
     let ends = DealingEnds::of(&dealing);
 
     // --- the party is still standing in the camp -------------------------------------------
-    let party = dealing
-        .party
-        .and_then(|party| party_entity(world, party))
-        .filter(|&party| {
-            world
-                .get::<Expedition>(party)
-                .is_some_and(|expedition| expedition.phase == ExpeditionPhase::AwaitingOrders)
-        });
+    let party = standing_party(world, dealing.party);
     let Some(party) = party else {
         // Nothing to answer: withdraw it, so the receiver stops being asked.
         world.resource_mut::<PendingDealings>().remove(id);
@@ -1327,6 +1540,7 @@ pub fn answer_dealing(
             &ends,
             &Resolution::Withdrawn,
         );
+        record_dealing_end(world, &dealing, tick, TradeEnd::Withdrawn);
         return Err(format!(
             "{VERB}: the party that made offer {} has gone.",
             id.0
@@ -1356,6 +1570,7 @@ pub fn answer_dealing(
                 &ends,
                 &Resolution::Refused,
             );
+            record_dealing_end(world, &dealing, tick, TradeEnd::Refused);
             return Ok(AnswerReport::bare(id, dealing.kind, false));
         }
     };
@@ -1368,7 +1583,58 @@ pub fn answer_dealing(
         ));
     };
     let goods = GoodsLines::resolve(world, returned, VERB)?;
+    check_return_fits_party(world, party, &goods, id)?;
+    {
+        let Some(cohort) = world.get::<PopulationCohort>(receiver) else {
+            return Err(format!(
+                "{VERB}: band {} has no store to pay from.",
+                dealing.receiver_band.0
+            ));
+        };
+        goods.held_in(&cohort.stores, VERB)?;
+    }
 
+    // --- the sender asked for something back: it decides, so nothing moves yet --------------
+    if sender_has_a_say(world, party) {
+        return post_reply(world, &dealing, goods, tick);
+    }
+
+    // --- a gift: land the cargo, draw the return, turn the party home ----------------------
+    Ok(settle_accepted_offer(
+        world,
+        Settlement {
+            tick,
+            id,
+            kind: dealing.kind,
+            lines_ends: ends,
+            offer_ends: ends,
+            party,
+            party_band: dealing.party,
+            receiver,
+            goods: &goods,
+        },
+    ))
+}
+
+/// **The party of a dealing, if it is still standing in the camp** (`AwaitingOrders`).
+fn standing_party(world: &mut World, party: Option<BandId>) -> Option<Entity> {
+    party
+        .and_then(|party| party_entity(world, party))
+        .filter(|&party| {
+            world
+                .get::<Expedition>(party)
+                .is_some_and(|expedition| expedition.phase == ExpeditionPhase::AwaitingOrders)
+        })
+}
+
+/// **The named return fits what the party can carry home** (the one carry formula, at the sending
+/// people's pack).
+fn check_return_fits_party(
+    world: &World,
+    party: Entity,
+    goods: &GoodsLines,
+    id: DealingId,
+) -> Result<(), String> {
     let (party_workers, party_faction) = world
         .get::<PopulationCohort>(party)
         .map(|cohort| (available_workers(cohort.working), cohort.faction))
@@ -1381,28 +1647,117 @@ pub fn answer_dealing(
             "{VERB}: the party can carry {cap:.2} home; that return weighs {mass:.2}."
         ));
     }
-    {
-        let Some(cohort) = world.get::<PopulationCohort>(receiver) else {
-            return Err(format!(
-                "{VERB}: band {} has no store to pay from.",
-                dealing.receiver_band.0
-            ));
-        };
-        goods.held_in(&cohort.stores, VERB)?;
-    }
+    Ok(())
+}
 
-    // --- everything holds: land the cargo, draw the return, turn the party home ------------
-    let sender = TransferCounterparty {
-        band: dealing.sender_band,
-        faction: dealing.sender_faction,
+/// **Did the sender ask for something back?** A trade party whose terms are an offer, and a scout
+/// whose pack order is `offer`. A gift (a shipment to another people, a scout's `give`) is given
+/// away: the receiver's accept settles it whatever return it names. Decided from the party at answer
+/// time.
+fn sender_has_a_say(world: &World, party: Entity) -> bool {
+    world.get::<Expedition>(party).is_some_and(|expedition| {
+        match expedition.mission.shipment_terms() {
+            Some(terms) => *terms == ShipmentTerms::Offer,
+            None => expedition.scout_pack.order == StrangersOrder::Offer,
+        }
+    })
+}
+
+/// **The receiver accepted an offer whose sender asked for something back: post the reply.** The
+/// offer leaves the book and a [`DealingKind::Reply`] goes to the sender, stated from the shipper's
+/// point of view like a proposal (`give` the cargo, `ask` the named return). Nothing moves.
+fn post_reply(
+    world: &mut World,
+    offer: &Dealing,
+    return_goods: GoodsLines,
+    tick: u64,
+) -> Result<AnswerReport, String> {
+    let wait = offer_wait_turns(world);
+    let cargo = GoodsLines::from_store(&offer.goods_sent);
+    let reply = Dealing {
+        id: DealingId::default(),
+        kind: DealingKind::Reply,
+        sender_faction: offer.receiver_faction,
+        sender_band: offer.receiver_band,
+        receiver_faction: offer.sender_faction,
+        receiver_band: offer.sender_band,
+        party: offer.party,
+        party_workers: offer.party_workers,
+        goods_sent: offer.goods_sent.clone(),
+        goods_asked: LocalStore::new(),
+        agreement: Some(Agreement {
+            shipper_faction: offer.sender_faction,
+            shipper_band: offer.sender_band,
+            consignee_faction: offer.receiver_faction,
+            consignee_band: offer.receiver_band,
+            party_workers: offer.party_workers,
+            give: cargo.clone(),
+            ask: return_goods.clone(),
+        }),
+        treaty: None,
+        posted_turn: tick,
+        expires_turn: tick + u64::from(wait),
     };
-    let party_band = dealing.party;
+    let reply_ends = DealingEnds::of(&reply);
+    let mut pending = world.resource_mut::<PendingDealings>();
+    pending.remove(offer.id);
+    let new_id = pending.post(reply);
+    push_reply_posted_events(
+        &mut world.resource_mut::<CommandEventLog>(),
+        tick,
+        new_id,
+        &reply_ends,
+        &cargo,
+        &return_goods,
+    );
+    Ok(AnswerReport {
+        reply: Some(new_id),
+        ..AnswerReport::bare(offer.id, offer.kind, true)
+    })
+}
+
+/// What [`settle_accepted_offer`] needs. `lines_ends` is the orientation of the dealing being closed
+/// (its feed lines), `offer_ends` the cargo's own: its sender is the party's home band.
+struct Settlement<'a> {
+    tick: u64,
+    id: DealingId,
+    kind: DealingKind,
+    lines_ends: DealingEnds,
+    offer_ends: DealingEnds,
+    party: Entity,
+    party_band: Option<BandId>,
+    receiver: Entity,
+    goods: &'a GoodsLines,
+}
+
+/// **THE settlement of an accepted offer** — one routine for a gift the receiver accepted and a reply
+/// the sender took. The cargo lands in the receiving band (`ShipmentIn`), the named return is drawn
+/// from it into the party's cargo (`ExchangeOut`), the terms become `Returned` (a scout records the
+/// handover), the party turns `Returning`, goodwill is credited both ways, the dealing leaves the
+/// book, and the lines and the history record are written.
+fn settle_accepted_offer(world: &mut World, s: Settlement<'_>) -> AnswerReport {
+    let Settlement {
+        tick,
+        id,
+        kind,
+        lines_ends,
+        offer_ends,
+        party,
+        party_band,
+        receiver,
+        goods,
+    } = s;
+    let sender = TransferCounterparty {
+        band: offer_ends.sender_band,
+        faction: offer_ends.sender_faction,
+    };
     let mut cargo = std::mem::take(
         &mut world
             .get_mut::<Expedition>(party)
             .expect("the party was resolved above")
             .cargo,
     );
+    let cargo_lines = GoodsLines::from_store(&cargo);
     let carry = world
         .resource::<crate::expedition_config::ExpeditionConfigHandle>()
         .get()
@@ -1423,7 +1778,7 @@ pub fn answer_dealing(
             &mut host,
             allocation.as_deref_mut(),
             &mut cargo,
-            &goods,
+            goods,
             sender,
             party_band,
             &carry,
@@ -1435,13 +1790,14 @@ pub fn answer_dealing(
         credit_settlement_goodwill(
             &mut goodwill,
             per_load,
-            ends.receiver_faction,
-            ends.sender_faction,
+            offer_ends.receiver_faction,
+            offer_ends.sender_faction,
             settled.paid.is_empty(),
             settled.cargo_worth,
             return_worth,
         );
     }
+    let back_lines = GoodsLines::from_store(&settled.return_store);
     {
         let mut expedition = world
             .get_mut::<Expedition>(party)
@@ -1453,8 +1809,8 @@ pub fn answer_dealing(
         } else {
             expedition.scout_pack.returned = true;
             expedition.scout_pack.handover = Some(TransferCounterparty {
-                band: dealing.receiver_band,
-                faction: dealing.receiver_faction,
+                band: offer_ends.receiver_band,
+                faction: offer_ends.receiver_faction,
             });
         }
     }
@@ -1465,35 +1821,164 @@ pub fn answer_dealing(
         CommandEventEntry::new(
             tick,
             CommandEventKind::TradeDelivered,
-            ends.sender_faction,
+            offer_ends.sender_faction,
             format!(
                 "Trade party delivered {} to {}",
                 manifest_phrase(&settled.delivered),
-                band_label(ends.receiver_band)
+                band_label(offer_ends.receiver_band)
             ),
             Some(format!(
                 "status=delivered destination={} dealing={} expedition={}",
-                ends.receiver_band.0,
+                offer_ends.receiver_band.0,
                 id.0,
                 party.to_bits()
             )),
         )
-        .with_band(ends.sender_band),
+        .with_band(offer_ends.sender_band),
     );
     push_resolution_events(
         &mut world.resource_mut::<CommandEventLog>(),
         tick,
         id,
-        dealing.kind,
-        &ends,
+        kind,
+        &lines_ends,
         &Resolution::Accepted {
             returned: settled.paid.clone(),
         },
     );
-    Ok(AnswerReport {
+    let end = if settled.paid.is_empty() {
+        TradeEnd::Gift
+    } else {
+        TradeEnd::Exchanged
+    };
+    record_trade_in_world(
+        world,
+        &TradeFacts {
+            turn: tick,
+            dealing: Some(id),
+            shipper_faction: offer_ends.sender_faction,
+            shipper_band: offer_ends.sender_band,
+            other_faction: offer_ends.receiver_faction,
+            other_band: offer_ends.receiver_band,
+            sent: cargo_lines,
+            back: back_lines,
+        },
+        end,
+    );
+    AnswerReport {
         returned: settled.paid,
-        ..AnswerReport::bare(id, dealing.kind, true)
-    })
+        ..AnswerReport::bare(id, kind, true)
+    }
+}
+
+/// **Answer a reply** — the sender takes the return the receiver named, or walks home. Only
+/// `accept` (no return list) or `refuse`; a return is taken or declined, never countered.
+///
+/// Accepting re-runs the fail-closed checks: the party still standing in the camp (else the reply is
+/// withdrawn), the receiving band still there and still holding the return (else the exchange fails
+/// `receiver_short` and the party walks home with its cargo, nothing moved, no goodwill), and the
+/// return still fitting the party's carry.
+fn answer_reply(
+    world: &mut World,
+    reply: Dealing,
+    answer: &DealingAnswer,
+    tick: u64,
+) -> Result<AnswerReport, String> {
+    let id = reply.id;
+    let ends = DealingEnds::of(&reply);
+    let Some(agreement) = reply.agreement.clone() else {
+        world.resource_mut::<PendingDealings>().remove(id);
+        return Err(format!("{VERB}: reply {} carries no terms.", id.0));
+    };
+    let Some(party) = standing_party(world, reply.party) else {
+        world.resource_mut::<PendingDealings>().remove(id);
+        push_resolution_events(
+            &mut world.resource_mut::<CommandEventLog>(),
+            tick,
+            id,
+            reply.kind,
+            &ends,
+            &Resolution::Withdrawn,
+        );
+        record_dealing_end(world, &reply, tick, TradeEnd::Withdrawn);
+        return Err(format!(
+            "{VERB}: the party that made reply {} has gone.",
+            id.0
+        ));
+    };
+    match answer {
+        DealingAnswer::Counter { .. } | DealingAnswer::CounterTerms { .. } => Err(format!(
+            "{VERB}: a return is taken or declined; reply {} waits on accept or refuse.",
+            id.0
+        )),
+        DealingAnswer::Refuse => {
+            if let Some(mut expedition) = world.get_mut::<Expedition>(party) {
+                expedition.after_dealing();
+            }
+            world.resource_mut::<PendingDealings>().remove(id);
+            push_resolution_events(
+                &mut world.resource_mut::<CommandEventLog>(),
+                tick,
+                id,
+                reply.kind,
+                &ends,
+                &Resolution::Declined,
+            );
+            record_dealing_end(world, &reply, tick, TradeEnd::Declined);
+            Ok(AnswerReport::bare(id, reply.kind, false))
+        }
+        DealingAnswer::Accept { returned } => {
+            if !returned.is_empty() {
+                return Err(format!(
+                    "{VERB}: the return in reply {} is already named; take it as it stands, or \
+                     refuse.",
+                    id.0
+                ));
+            }
+            check_return_fits_party(world, party, &agreement.ask, id)?;
+            // The receiving band is the reply's own sender.
+            let holder = resident_band_entity(world, reply.sender_band);
+            let holds_it = holder
+                .and_then(|band| world.get::<PopulationCohort>(band))
+                .is_some_and(|cohort| agreement.ask.held_in(&cohort.stores, VERB).is_ok());
+            let Some(receiver) = holder.filter(|_| holds_it) else {
+                if let Some(mut expedition) = world.get_mut::<Expedition>(party) {
+                    expedition.after_dealing();
+                }
+                world.resource_mut::<PendingDealings>().remove(id);
+                push_resolution_events(
+                    &mut world.resource_mut::<CommandEventLog>(),
+                    tick,
+                    id,
+                    reply.kind,
+                    &ends,
+                    &Resolution::ReceiverShort,
+                );
+                record_dealing_end(world, &reply, tick, TradeEnd::Failed);
+                return Ok(AnswerReport::bare(id, reply.kind, false));
+            };
+            let offer_ends = DealingEnds {
+                sender_faction: agreement.shipper_faction,
+                sender_band: agreement.shipper_band,
+                receiver_faction: agreement.consignee_faction,
+                receiver_band: agreement.consignee_band,
+            };
+            Ok(settle_accepted_offer(
+                world,
+                Settlement {
+                    tick,
+                    id,
+                    kind: reply.kind,
+                    lines_ends: ends,
+                    offer_ends,
+                    party,
+                    party_band: reply.party,
+                    receiver,
+                    goods: &agreement.ask,
+                },
+            ))
+        }
+    }
 }
 
 /// **Answer a proposal or a counter.** The standing link between the two bands must still hold or
@@ -1522,6 +2007,7 @@ fn answer_agreement(
             &ends,
             &Resolution::LinkBroken,
         );
+        record_dealing_end(world, &dealing, tick, TradeEnd::Withdrawn);
         return Err(format!(
             "{VERB}: the road between band {} and band {} no longer holds — the {} was withdrawn.",
             agreement.shipper_band.0,
@@ -1548,6 +2034,7 @@ fn answer_agreement(
                 &ends,
                 &Resolution::Refused,
             );
+            record_dealing_end(world, &dealing, tick, TradeEnd::Refused);
             Ok(AnswerReport::bare(id, dealing.kind, false))
         }
         DealingAnswer::Counter { give, ask } => {
@@ -1647,6 +2134,7 @@ fn answer_agreement(
                         &ends,
                         &Resolution::LaunchFailed(reason.clone()),
                     );
+                    record_dealing_end(world, &dealing, tick, TradeEnd::Failed);
                     return Ok(AnswerReport {
                         failed: Some(reason),
                         ..AnswerReport::bare(id, dealing.kind, false)
@@ -1848,11 +2336,14 @@ pub fn advance_dealings(
     mut pending: ResMut<PendingDealings>,
     mut event_log: ResMut<CommandEventLog>,
     mut parties: Query<(&BandId, &mut Expedition)>,
+    mut history: Option<ResMut<TradeHistory>>,
+    config: Option<Res<crate::diplomacy_config::DiplomacyConfigHandle>>,
 ) {
     if pending.is_empty() {
         return;
     }
     let now = tick.0;
+    let history_cap = trade_history_cap(config.as_deref());
     let due: Vec<(DealingId, DealingKind, DealingEnds, Option<BandId>, bool)> = pending
         .iter()
         .map(|dealing| {
@@ -1932,8 +2423,18 @@ pub fn advance_dealings(
                 }
             }
         };
+        let facts = pending
+            .get(id)
+            .and_then(|dealing| trade_facts_of(dealing, now));
         pending.remove(id);
         push_resolution_events(&mut event_log, now, id, kind, &ends, &resolution);
+        if let (Some(history), Some(facts)) = (history.as_deref_mut(), facts) {
+            let end = match resolution {
+                Resolution::Withdrawn => TradeEnd::Withdrawn,
+                _ => TradeEnd::Expired,
+            };
+            record_trade(history, history_cap, &facts, end);
+        }
     }
 }
 

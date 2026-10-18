@@ -11,6 +11,10 @@
 //!   runway is under `food_runway_floor_turns`; never more than the party can carry home
 //!   (`party_workers × carry_per_worker`) nor more than the band holds. A return nothing can fill
 //!   is an empty one: the gift is still accepted.
+//!   **A shipment it does not want is refused outright**: when the cargo's worth to the AI, as a
+//!   share of the cargo's full load (the same sum with nothing held), is under `dealings.want_floor`
+//!   — it already holds plenty of what is offered — or the cargo is empty, the answer is a refusal
+//!   and no return is named. The return's pricing is untouched.
 //! - **A proposal or a counter** (the terms are written: what the shipper sends, what it asks back)
 //!   is accepted when `worth_received × (1 + goodwill_toward_sender) >= worth_given`, the worth to
 //!   the AI of each leg on its own holdings; otherwise refused. No AI counters yet. A leg the AI
@@ -331,6 +335,26 @@ impl Dealings {
     ) -> (DealingReply, String) {
         let cargo = Bundle::of_goods(&dealing.goods_sent);
         let cargo_worth = worth_of(&cargo, held, weights);
+        // **A shipment this people does not want is refused outright**: its worth to us, as a share
+        // of its full load (the same sum with nothing held), under `want_floor`. An empty cargo has
+        // no share to clear a floor with.
+        let cargo_load: f32 = cargo
+            .goods()
+            .iter()
+            .map(|good| weights.of_good(good) * cargo.amount(good))
+            .sum();
+        let share = if cargo_load > 0.0 {
+            cargo_worth / cargo_load
+        } else {
+            0.0
+        };
+        if self.levers.want_floor > 0.0 && (cargo_load <= 0.0 || share < self.levers.want_floor) {
+            let reason = format!(
+                "offer {}: cargo worth {:.3} of load {:.3} (share {:.3} < floor {:.3}): refuse",
+                dealing.id, cargo_worth, cargo_load, share, self.levers.want_floor,
+            );
+            return (DealingReply::Refuse, reason);
+        }
         let target = self.levers.return_fairness * cargo_worth;
         let cap = dealing.party_workers as f32 * band.carry_per_worker;
         let allow_food = band.turns_of_food >= self.levers.food_runway_floor_turns;
@@ -475,11 +499,14 @@ mod tests {
     const FODDER_WEIGHT: f32 = 0.5;
     const MATERIAL_WEIGHT: f32 = 1.0;
     const PER_WORKER_CARRY: f32 = 7.0;
+    /// The opening `dealings.want_floor`.
+    const WANT_FLOOR: f32 = 0.1;
 
     fn levers() -> DealingsLevers {
         DealingsLevers {
             return_fairness: 1.0,
             food_runway_floor_turns: 10.0,
+            want_floor: WANT_FLOOR,
             treaty_goodwill: 0.2,
         }
     }
@@ -687,12 +714,13 @@ mod tests {
     /// already holds ten times over counts for about a tenth.
     #[test]
     fn a_good_the_ai_already_holds_a_lot_of_is_worth_less() {
-        let band = ai_band(40.0, 0.0, &[("hide", 30.0)], 30.0);
+        // A holding that discounts the cargo but leaves its share of load clearly over the want floor.
+        let band = ai_band(40.0, 0.0, &[("hide", 20.0)], 30.0);
         let offer = an_offer(5, goods(0.0, 0.0, &[("hide", 3.0)]), 3);
         let proposals = propose(&view(band, vec![offer], 0.0));
         let items = returned(&proposals[0]);
-        // 1.0 * 3 / (3 + 30) of 3 load = 0.2727... of load.
-        let expected = 3.0 * 3.0 / 33.0;
+        // 1.0 * 3 / (3 + 20) of 3 load = 0.391... of load.
+        let expected = 3.0 * 3.0 / 23.0;
         assert!((load_of(items) - expected).abs() < 0.011, "{items:?}");
     }
 
@@ -933,5 +961,56 @@ mod tests {
         let proposals = propose(&view(band, vec![ours_sent, elsewhere, addressed], 0.0));
         assert_eq!(proposals.len(), 1);
         assert_eq!(proposals[0].intent, "dealings:answer:3");
+    }
+
+    /// **A shipment the AI does not want is refused outright**: 3 hide against 30 held is worth
+    /// `3 / 33` of its load, under the floor, so the answer is a refusal that says the share and the
+    /// floor — and no return is named.
+    #[test]
+    fn a_cargo_worth_less_than_the_want_floor_of_its_load_is_refused() {
+        let band = ai_band(40.0, 0.0, &[("hide", 30.0)], 30.0);
+        let offer = an_offer(5, goods(0.0, 0.0, &[("hide", 3.0)]), 3);
+        let proposals = propose(&view(band, vec![offer], 0.0));
+        assert_eq!(proposals.len(), 1);
+        assert_eq!(*reply_of(&proposals[0]), DealingReply::Refuse);
+        assert_eq!(
+            proposals[0].reason,
+            "offer 5: cargo worth 0.273 of load 3.000 (share 0.091 < floor 0.100): refuse"
+        );
+    }
+
+    /// An empty cargo has no share to clear the floor with: refused.
+    #[test]
+    fn an_empty_cargo_is_refused() {
+        let band = ai_band(40.0, 0.0, &[], 30.0);
+        let offer = an_offer(5, goods(0.0, 0.0, &[]), 3);
+        let proposals = propose(&view(band, vec![offer], 0.0));
+        assert_eq!(*reply_of(&proposals[0]), DealingReply::Refuse);
+    }
+
+    /// **A floor of 0 takes everything**, today's behaviour: the same cargo the floor refuses above
+    /// is accepted and priced as before.
+    #[test]
+    fn a_want_floor_of_zero_accepts_everything() {
+        let band = ai_band(40.0, 0.0, &[("hide", 30.0)], 30.0);
+        let offer = an_offer(5, goods(0.0, 0.0, &[("hide", 3.0)]), 3);
+        let view = view(band, vec![offer], 0.0);
+        let proposals = Dealings::new(
+            FACTION,
+            DealingsLevers {
+                want_floor: 0.0,
+                ..levers()
+            },
+        )
+        .propose(
+            &view,
+            &Plan::pass_through(0),
+            &SeatMemory::default(),
+            &GroundReadings::new(),
+        )
+        .proposals;
+        let items = returned(&proposals[0]);
+        let expected = 3.0 * 3.0 / 33.0;
+        assert!((load_of(items) - expected).abs() < 0.011, "{items:?}");
     }
 }

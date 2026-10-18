@@ -6,13 +6,15 @@
 //! food pack and the standing order **offer** (`send_expedition … strangers offer`): the scout walks
 //! to the rival's camp, sights the stranger, and posts a pending offer addressed to the rival's
 //! people. Nothing here answers it. The rival's `Dealings` specialist reads the offer off its own
-//! frame, accepts it and names a return from its surplus, and the party — recalled once the offer is
-//! answered — walks the return home.
+//! frame, accepts it and names a return from its surplus — which the sender then takes: the accept
+//! posts a **reply** to the human, who answers it — and the party, recalled once the exchange has
+//! settled, walks the return home.
 //!
 //! **What it asserts, and through whom.** Everything on the encoded frames the human seat is sent:
 //! the offer appears in the human's `dealings`, it is gone from them once answered, and the return
 //! **lands at the sender's home band as an `ExchangeIn` crossing** on the home band's own row, with
-//! the human people's live opinion of the rival (`own_goodwill`) lifted by what it received. The AI's
+//! the human people's live opinion of the rival (`own_goodwill`) lifted by what it received (credited
+//! when the human takes the reply). The AI's
 //! `decisions.jsonl` is read only to confirm the answer carried the worth numbers; it is not what the
 //! scenario stands on.
 //!
@@ -246,22 +248,60 @@ fn an_ai_people_answers_a_scouts_offer_and_the_return_lands_at_the_senders_home(
         )
     });
 
-    // Stage 2: the rival answers — the offer leaves the human's dealings.
-    let mut answered = false;
+    // Stage 2: the rival answers — the offer leaves the human's dealings and a REPLY addressed to the
+    // human people takes its place: the sender asked for something back, so the human decides.
+    let mut reply_id = None;
     let deadline = stage_ends(&view);
     while view.header.tick < deadline {
         let frame = human.next_frame();
         fold(&mut view, frame);
         ready_if_new(&mut human, &view);
-        if !view.dealings.iter().any(|dealing| dealing.id == dealing_id) {
-            answered = true;
+        if let Some(reply) = view.dealings.iter().find(|dealing| {
+            dealing.kind == "reply"
+                && dealing.sender_faction == RIVAL_SEAT
+                && dealing.receiver_faction == HUMAN_SEAT
+        }) {
+            reply_id = Some(reply.id);
+            break;
+        }
+    }
+    let reply_id = reply_id.unwrap_or_else(|| {
+        panic!(
+            "{}",
+            failure_context("the rival never answered the offer with a reply")
+        )
+    });
+    assert!(
+        !view.dealings.iter().any(|dealing| dealing.id == dealing_id),
+        "the answered offer left the book"
+    );
+
+    // The human takes the return the rival named; the exchange settles now.
+    human.write(
+        CommandPayload::AnswerDealing {
+            faction: HUMAN_SEAT,
+            dealing_id: reply_id,
+            reply: sim_runtime::DealingReply::Accept {
+                returned: Vec::new(),
+            },
+        },
+        "the human takes the rival's return",
+    );
+    let mut taken = false;
+    let deadline = stage_ends(&view);
+    while view.header.tick < deadline {
+        let frame = human.next_frame();
+        fold(&mut view, frame);
+        ready_if_new(&mut human, &view);
+        if !view.dealings.iter().any(|dealing| dealing.id == reply_id) {
+            taken = true;
             break;
         }
     }
     assert!(
-        answered,
+        taken,
         "{}",
-        failure_context("the rival never answered the offer")
+        failure_context("the reply never left the book after the human took it")
     );
 
     // The party carries the return; send it home.

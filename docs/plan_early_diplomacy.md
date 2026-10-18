@@ -49,8 +49,14 @@ resumes the scouting aim it had, carrying any return. **One pack, one handover**
 once used. The player learns what happened when the scouts come home, with the contact news.
 
 **Stage 2 — the blind party.** `send_trade_expedition` gains `offer` beside today's gift form. The
-receiver answers the pending offer by naming a return from its own holdings, or by refusing. The party
-waits up to `offer_wait_turns`, then walks home with the return or with its own cargo.
+receiver answers the pending offer by naming a return from its own holdings, or by refusing. **The
+sender then takes it or walks home**: when the receiver accepts an offer whose sender asked for
+something back (a trade party sent as `offer`, a scout's `offer`), nothing moves — a **reply** goes to
+the sender naming the return, and the sender accepts it (the exchange settles, goodwill is credited
+then) or declines it (the party walks home with its own cargo). Silence on the reply is a decline after
+`offer_wait_turns`. A gift (a shipment to another people, a scout's `give`) is given away, so the
+receiver's accept settles it at once whatever return it names. The party waits up to `offer_wait_turns`
+at each step, then walks home with the return or with its own cargo.
 
 **Stage 4 — haggling over a kept road.** When the trace between two bands is a **kept road on every
 tile** (rung `min_route_rung` (**2**) or above, upkeep paid — the condition §Q5 lights tiles `Seen`
@@ -70,7 +76,7 @@ walks home with its cargo. A failed exchange moves no goodwill.
 
 ### One pending item shape
 
-Every pending item — an offer, a proposal, a counter, a treaty proposal (§3) — is one record:
+Every pending item — an offer, a reply, a proposal, a counter, a treaty proposal (§3) — is one record:
 **addressed to a people, answered by a command, expiring on silence**. `PendingDealings` holds them,
 `SimState`, `BTreeMap` keyed by a monotonic id. `answer_dealing <faction> <id> accept|refuse|counter
 [goods…]` is the one answer verb, gated like every faction-bearing order (seat gate, membership).
@@ -81,6 +87,13 @@ Every pending item — an offer, a proposal, a counter, a treaty proposal (§3) 
 addressed to the viewer's people and the items the viewer's people sent. Each row: id, kind, sender
 people and band, receiver people and band, both goods lists, turns left. Another pair's dealings are
 theirs to know.
+
+**A trade history.** The event feed keeps 20 turns, so the sim keeps the trades: `TradeHistory`
+(`SimState`), per people a list of records — turn, own band, the other people and band, the dealing,
+an outcome (`exchanged`, `gift_given`, `gift_received`, `delivered`, `declined`, `refused`, `expired`,
+`withdrawn`, `failed`) and the goods that left and came in — newest last, capped at
+`history.trade_history_len` (opening **100**). One record per people per trade, from its own point of
+view. `TradeHistorySection` rides both envelopes, viewer-scoped to the viewer's people's records.
 
 ## 2. Goodwill
 

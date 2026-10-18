@@ -14082,6 +14082,20 @@ fn launch_agreed_party(
                 "the party could not set out".to_string(),
             ),
         );
+        core_sim::dealings::record_trade_in_world(
+            &mut app.world,
+            &core_sim::TradeFacts {
+                turn: tick,
+                dealing: Some(dealing),
+                shipper_faction: agreement.shipper_faction,
+                shipper_band: agreement.shipper_band,
+                other_faction: agreement.consignee_faction,
+                other_band: agreement.consignee_band,
+                sent: agreement.give.clone(),
+                back: agreement.ask.clone(),
+            },
+            core_sim::TradeEnd::Failed,
+        );
     }
 }
 

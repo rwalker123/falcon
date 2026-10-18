@@ -199,6 +199,22 @@ pub struct ExpeditionDealings<'w> {
     /// **Where a party's carried news lands** — alongside its other news (the comm flush, a landed
     /// station report).
     pub known_goodwill: Option<ResMut<'w, crate::goodwill::KnownGoodwill>>,
+    /// **Every people's past trades** — a trade that settles or fails on arrival is written here.
+    pub history: Option<ResMut<'w, crate::trade_history::TradeHistory>>,
+}
+
+impl ExpeditionDealings<'_> {
+    /// Write a finished trade into the history, if the world keeps one.
+    fn record(
+        &mut self,
+        facts: &crate::trade_history::TradeFacts,
+        end: crate::trade_history::TradeEnd,
+    ) {
+        let cap = crate::dealings::trade_history_cap(self.config.as_deref());
+        if let Some(history) = self.history.as_deref_mut() {
+            crate::trade_history::record_trade(history, cap, facts, end);
+        }
+    }
 }
 
 impl ExpeditionDealings<'_> {
@@ -399,6 +415,16 @@ fn settle_agreed_trade(
                 .held_in(&host.stores, "settle_exchange")
                 .is_ok()
         });
+    let mut facts = crate::trade_history::TradeFacts {
+        turn: arrival.current_turn,
+        dealing: Some(arrival.dealing),
+        shipper_faction: arrival.faction,
+        shipper_band: sender_band,
+        other_faction: arrival.receiver,
+        other_band: arrival.destination,
+        sent: crate::dealings::GoodsLines::from_store(&expedition.cargo),
+        back: arrival.agreed_return.clone(),
+    };
     if !receiver_holds_it {
         crate::dealings::push_exchange_events(
             event_log,
@@ -408,6 +434,7 @@ fn settle_agreed_trade(
             crate::dealings::ExchangeOutcome::ReceiverShort,
             arrival.entity.to_bits(),
         );
+        dealings.record(&facts, crate::trade_history::TradeEnd::Failed);
         expedition.phase = ExpeditionPhase::Returning;
         return;
     }
@@ -459,6 +486,8 @@ fn settle_agreed_trade(
         },
         arrival.entity.to_bits(),
     );
+    facts.back = crate::dealings::GoodsLines::from_store(&settled.return_store);
+    dealings.record(&facts, crate::trade_history::TradeEnd::Exchanged);
     expedition.cargo = settled.return_store;
     if let ExpeditionMission::Trade { terms, .. } = &mut expedition.mission {
         *terms = ShipmentTerms::Returned;
@@ -549,6 +578,16 @@ fn settle_treaty_bundles(
         receiver_band: arrival.destination,
     };
     let no_dealing = crate::dealings::DealingId::default();
+    let mut facts = crate::trade_history::TradeFacts {
+        turn: arrival.current_turn,
+        dealing: None,
+        shipper_faction: arrival.faction,
+        shipper_band: sender_band,
+        other_faction: arrival.receiver,
+        other_band: arrival.destination,
+        sent: matched.covered.clone(),
+        back: matched.returned.clone(),
+    };
     let receiver_holds_it = bands
         .get(arrival.host_entity)
         .ok()
@@ -567,6 +606,7 @@ fn settle_treaty_bundles(
             crate::dealings::ExchangeOutcome::ReceiverShort,
             arrival.entity.to_bits(),
         );
+        dealings.record(&facts, crate::trade_history::TradeEnd::Failed);
         pour(&mut covered, &mut expedition.unpaid_return);
         return true;
     }
@@ -617,6 +657,8 @@ fn settle_treaty_bundles(
         },
         arrival.entity.to_bits(),
     );
+    facts.back = crate::dealings::GoodsLines::from_store(&settled.return_store);
+    dealings.record(&facts, crate::trade_history::TradeEnd::Exchanged);
     let mut paid = settled.return_store;
     pour(&mut paid, &mut expedition.exchange_return);
     true
@@ -2476,6 +2518,8 @@ pub fn advance_expeditions(
                                 );
                             } else if receiver_faction.is_some() {
                                 let carried_materials = materials_carried(&expedition.cargo);
+                                let delivered_lines =
+                                    crate::dealings::GoodsLines::from_store(&expedition.cargo);
                                 // **The sender, named on the host's row** — the band that outfitted the
                                 // party, in the party's own faction (a party is its home band's people).
                                 let sender =
@@ -2491,6 +2535,23 @@ pub fn advance_expeditions(
                                         )
                                     },
                                 );
+                                if let (Some(_), Some(sender_band), Some(receiver)) =
+                                    (landed.as_ref(), home_band_id, receiver_faction)
+                                {
+                                    configs.dealings.record(
+                                        &crate::trade_history::TradeFacts {
+                                            turn: current_turn,
+                                            dealing: None,
+                                            shipper_faction: faction,
+                                            shipper_band: sender_band,
+                                            other_faction: receiver,
+                                            other_band: destination,
+                                            sent: delivered_lines,
+                                            back: crate::dealings::GoodsLines::default(),
+                                        },
+                                        crate::trade_history::TradeEnd::Gift,
+                                    );
+                                }
                                 if let Some(landed) = landed {
                                     let (moved, moved_fodder) = (landed.food, landed.fodder);
                                     event_log.push(CommandEventEntry::new(

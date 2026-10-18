@@ -936,7 +936,9 @@ excludes ground a visible foreign band stands on, which also keeps an AI band ou
 `docs/plan_early_diplomacy.md` §1, §4. **The seat answers every dealing addressed to its people, every
 turn it is still open**, with `answer_dealing` (`CommandPayload::AnswerDealing`). Silence refuses a
 dealing (`offer_wait_turns`, shipped 1), so an AI that did not answer would leave a human's party
-standing in its camp and then walking home with its cargo. It is the architecture's own answer to "a new
+standing in its camp and then walking home with its cargo. **The AI never sends an offer, so a
+`reply` (the sender's take-it-or-walk-home step) is never addressed to it**; `answer` returns `None` for
+a kind it does not know, so silence would be a decline. It is the architecture's own answer to "a new
 decision": a specialist proposing, the arbiter disposing — not a branch in the composite. **It is always
 on** (`UtilityBrain::build` pushes it after the optional two) and is not in `DISABLEABLE_SPECIALISTS`,
 which the ratchet's *never wins* gate walks: a bench with no dealings would fail it. `PassBrain` stays
@@ -962,7 +964,12 @@ the AI's own holdings, with the load of a unit of food `1.0` (`FOOD_LOAD_WEIGHT`
 numéraire) and the other two goods' from the echoes. Restating the arithmetic in `sim_ai` was the
 alternative; `core_sim::goodwill` and this specialist now call one function.
 
-- **An offer** (stage 1 or 2) is **accepted**, always, and the AI names a return: the target load is
+- **An offer** (stage 1 or 2) is **refused outright when the cargo is not wanted**: the cargo's worth to
+  the AI (`sim_runtime::worth` on its own holdings) as a share of the cargo's full load (the same sum
+  with nothing held) is under `dealings.want_floor`, or the cargo is empty (gift or offer — the wire
+  does not tell them apart, and one rule for unwanted goods is the intent). The reason carries the
+  share and the floor: `offer 5: cargo worth 0.012 of load 1.000 (share 0.012 < floor 0.100): refuse`.
+  Otherwise it is **accepted** and the AI names a return: the target load is
   `dealings.return_fairness × worth(cargo)`, the return filled from the goods its band holds the most
   **load** of first (surplus by load, not by count, so 30 hay at half weight loses to 20 bone), each good
   taken `min(held, load still owed ÷ weight, party carry still free ÷ weight)` and rounded **down** to a
@@ -1214,6 +1221,7 @@ and `rover` (expand). Each key has one consumer:
 | `land.pooling_weight` | the land reading | a candidate hex within `food.split_search_tiles` of a hex already chosen has its value multiplied by `1 + this`; `≥ 0`, default `0.25` |
 | `dealings.return_fairness` | `Dealings` | the share of an offer's worth to this people named back as a return load; shipped **1.0**; finite, `>= 0` |
 | `dealings.food_runway_floor_turns` | `Dealings` | a band under this runway names no food in a return; shipped **10**; finite, `>= 0` (distinct from `food.runway_floor_turns`, the alarm) |
+| `dealings.want_floor` | `Dealings` (an offer) | the share of a cargo's full load that its worth to this people must reach to be taken at all; under it (or an empty cargo) the offer is refused outright and no return is priced; shipped **0.1**; a fraction in `0..=1`, `0` takes everything |
 | `dealings.treaty_goodwill` | `Dealings` (a treaty proposal) | the goodwill needed toward a proposer to accept a treaty, on the `-1..=+1` scale; shipped **0.2**; the answer is accept at or above it, refuse below |
 
 | Difficulty key | Consumer | Effect |
@@ -1783,8 +1791,11 @@ observation on each, one `human:split_band` decision on the first whose line is 
 gift*: the built `sim_ai` (utility, `forager`, `hard`) plays seat 1 while the test plays the human
 seat 0 on a connection of its own, readying every new tick. The human sends a scout east with a food
 pack and `strangers offer`; the scout sights the rival's camp and posts a pending offer; **the test
-answers nothing**. It asserts, all off the frames the human seat is sent, that the offer reaches the
-human's `dealings`, leaves them once answered, and that after a `recall_expedition` the return lands
+answers nothing to the offer**. The AI accepts it, which posts a **reply** to the human (the sender
+asked for something back, so it decides), and the test takes it with `answer_dealing … accept`. It
+asserts, all off the frames the human seat is sent, that the offer reaches the human's `dealings`,
+that a `reply` addressed to the human replaces it, and that after the take and a `recall_expedition`
+the return lands
 at the sender's home band as an `ExchangeIn` crossing and the human people's `own_goodwill` row for
 the rival carries exchange credit. The AI's `decisions.jsonl` is read only for the accepted
 `dealings:answer:<id>` decision, in the grammar, whose `reason` carries `cargo worth`. Two things it

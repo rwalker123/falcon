@@ -41,6 +41,7 @@ use crate::state::subsistence::{
     LadderKnowledgeState, LadderRungState, MaterialDefState, MobilityState, RecipeDefState,
     SedentarizationState,
 };
+use crate::state::trade_history::TradeRecordState;
 use crate::state::treaties::{StandingLinkState, TreatyState};
 use ahash::RandomState;
 use serde::{Deserialize, Serialize};
@@ -338,6 +339,10 @@ pub struct WorldSnapshot {
     /// kept road joins end to end, what `propose_treaty` needs. Rides `TreatySection`.
     #[serde(default)]
     pub standing_links: Vec<StandingLinkState>,
+    /// **The viewer's people's trade history**, oldest first (`docs/plan_early_diplomacy.md` §1).
+    /// Another people's trades are theirs to know. Rides `TradeHistorySection`.
+    #[serde(default)]
+    pub trade_history: Vec<TradeRecordState>,
     /// **What other peoples are known to think of the viewer's**, as last reported
     /// (`docs/plan_early_diplomacy.md` §2). Ordered by the other people's id. Rides
     /// `GoodwillSection`.
@@ -534,6 +539,9 @@ pub struct WorldDelta {
     /// `None` = unchanged this frame, on `connections`' own rules.
     #[serde(default)]
     pub standing_links: Option<Vec<StandingLinkState>>,
+    /// `None` = unchanged this frame, on `connections`' own rules.
+    #[serde(default)]
+    pub trade_history: Option<Vec<TradeRecordState>>,
     /// `None` = unchanged this frame, on `connections`' own rules.
     #[serde(default)]
     pub goodwill: Option<Vec<GoodwillState>>,

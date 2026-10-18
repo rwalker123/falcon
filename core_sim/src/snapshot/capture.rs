@@ -68,6 +68,8 @@ pub struct SnapshotContext<'w> {
     /// The pending dealings — published filtered to the viewer's people (addressed to them or sent
     /// by them). `Option` for the reason the policies above are.
     pub pending_dealings: Option<Res<'w, crate::dealings::PendingDealings>>,
+    /// Every people's past trades — published as the viewer's own people's records only.
+    pub trade_history: Option<Res<'w, crate::trade_history::TradeHistory>>,
     /// What other peoples are known to think of each viewer — published as the viewer's own rows.
     pub known_goodwill: Option<Res<'w, crate::goodwill::KnownGoodwill>>,
     /// Every people's live opinion of every other — published as the viewer's OWN rows only (what
@@ -315,6 +317,7 @@ pub(crate) struct SeatPublishState {
     dealings: Whole<Vec<DealingState>>,
     treaties: Whole<Vec<TreatyState>>,
     standing_links: Whole<Vec<StandingLinkState>>,
+    trade_history: Whole<Vec<TradeRecordState>>,
     goodwill: Whole<Vec<GoodwillState>>,
     own_goodwill: Whole<Vec<GoodwillState>>,
     goodwill_cuts: Whole<GoodwillCutsState>,
@@ -694,6 +697,7 @@ struct CampaignParts {
     dealings: Option<Vec<DealingState>>,
     treaties: Option<Vec<TreatyState>>,
     standing_links: Option<Vec<StandingLinkState>>,
+    trade_history: Option<Vec<TradeRecordState>>,
     goodwill: Option<Vec<GoodwillState>>,
     own_goodwill: Option<Vec<GoodwillState>>,
     goodwill_cuts: Option<GoodwillCutsState>,
@@ -726,6 +730,7 @@ struct CampaignBaselines<'a> {
     dealings: &'a mut Whole<Vec<DealingState>>,
     treaties: &'a mut Whole<Vec<TreatyState>>,
     standing_links: &'a mut Whole<Vec<StandingLinkState>>,
+    trade_history: &'a mut Whole<Vec<TradeRecordState>>,
     goodwill: &'a mut Whole<Vec<GoodwillState>>,
     own_goodwill: &'a mut Whole<Vec<GoodwillState>>,
     goodwill_cuts: &'a mut Whole<GoodwillCutsState>,
@@ -777,6 +782,7 @@ fn diff_campaign(
         dealings: diff_whole(baseline.dealings, &snapshot.dealings, write),
         treaties: diff_whole(baseline.treaties, &snapshot.treaties, write),
         standing_links: diff_whole(baseline.standing_links, &snapshot.standing_links, write),
+        trade_history: diff_whole(baseline.trade_history, &snapshot.trade_history, write),
         goodwill: diff_whole(baseline.goodwill, &snapshot.goodwill, write),
         own_goodwill: diff_whole(baseline.own_goodwill, &snapshot.own_goodwill, write),
         goodwill_cuts: diff_whole(baseline.goodwill_cuts, &snapshot.goodwill_cuts, write),
@@ -1016,6 +1022,7 @@ impl SeatPublishState {
             dealings: Whole::default(),
             treaties: Whole::default(),
             standing_links: Whole::default(),
+            trade_history: Whole::default(),
             goodwill: Whole::default(),
             own_goodwill: Whole::default(),
             goodwill_cuts: Whole::default(),
@@ -1192,6 +1199,7 @@ impl SeatPublishState {
             dealings,
             treaties,
             standing_links,
+            trade_history,
             goodwill,
             own_goodwill,
             goodwill_cuts,
@@ -1320,6 +1328,7 @@ impl SeatPublishState {
                             dealings,
                             treaties,
                             standing_links,
+                            trade_history,
                             goodwill,
                             own_goodwill,
                             goodwill_cuts,
@@ -1437,6 +1446,7 @@ impl SeatPublishState {
             dealings: campaign_parts.dealings,
             treaties: campaign_parts.treaties,
             standing_links: campaign_parts.standing_links,
+            trade_history: campaign_parts.trade_history,
             goodwill: campaign_parts.goodwill,
             own_goodwill: campaign_parts.own_goodwill,
             goodwill_cuts: campaign_parts.goodwill_cuts,
@@ -1650,6 +1660,8 @@ impl SeatPublishState {
         self.treaties.reset(entry.snapshot.treaties.clone());
         self.standing_links
             .reset(entry.snapshot.standing_links.clone());
+        self.trade_history
+            .reset(entry.snapshot.trade_history.clone());
         self.goodwill.reset(entry.snapshot.goodwill.clone());
         self.own_goodwill.reset(entry.snapshot.own_goodwill.clone());
         self.goodwill_cuts
@@ -1894,6 +1906,7 @@ impl SeatPublishState {
             dealings: None,
             treaties: None,
             standing_links: None,
+            trade_history: None,
             goodwill: None,
             own_goodwill: None,
             goodwill_cuts: None,
@@ -2051,6 +2064,7 @@ impl SeatPublishState {
             dealings: None,
             treaties: None,
             standing_links: None,
+            trade_history: None,
             goodwill: None,
             own_goodwill: None,
             goodwill_cuts: None,
@@ -2192,6 +2206,7 @@ impl SeatPublishState {
             dealings: None,
             treaties: None,
             standing_links: None,
+            trade_history: None,
             goodwill: None,
             own_goodwill: None,
             goodwill_cuts: None,
@@ -2755,6 +2770,7 @@ pub fn capture_snapshot(
         border_policies,
         treaties,
         pending_dealings,
+        trade_history,
         known_goodwill,
         goodwill,
         diplomacy_config,
@@ -4060,6 +4076,12 @@ pub fn capture_snapshot(
                 )
             })
             .unwrap_or_default();
+        // **THE VIEWER'S PEOPLE'S TRADE HISTORY**, oldest first — another people's trades are theirs to
+        // know.
+        let trade_history_states = trade_history
+            .as_deref()
+            .map(|history| crate::snapshot::trade_history::trade_history_states(history, viewer))
+            .unwrap_or_default();
         // **THE TREATIES THE VIEWER'S PEOPLE IS PARTY TO**, and the standing links its bands hold
         // with other peoples' bands it knows (`docs/plan_early_diplomacy.md` §3). Another pair's
         // treaties are theirs to know.
@@ -4339,6 +4361,7 @@ pub fn capture_snapshot(
             dealings: dealing_states,
             treaties: treaty_states,
             standing_links: standing_link_states,
+            trade_history: trade_history_states,
             goodwill: goodwill_states,
             own_goodwill: own_goodwill_states,
             goodwill_cuts: goodwill_cuts_state,

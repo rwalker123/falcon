@@ -36,6 +36,9 @@ const MIN_OFFER_WAIT_TURNS: u32 = 1;
 
 /// The `order` of a floor whose rung the live ladder no longer carries: no road's rung reaches it.
 const NO_ROAD_CLEARS_FLOOR: u32 = u32::MAX;
+/// The lowest `history.trade_history_len` that keeps anything: at `0` every record would drop the
+/// moment it was written.
+const MIN_TRADE_HISTORY_LEN: u32 = 1;
 /// Goodwill runs `-1..=+1`; the word cuts are measured on that scale.
 const GOODWILL_FLOOR: f32 = -1.0;
 const GOODWILL_CEILING: f32 = 1.0;
@@ -49,6 +52,15 @@ pub struct DiplomacyConfig {
     pub offers: OffersConfig,
     pub goodwill: GoodwillConfig,
     pub roads: DiplomacyRoadsConfig,
+    pub history: HistoryConfig,
+}
+
+/// How much of the past the sim keeps (read by the trade history).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct HistoryConfig {
+    /// Past trades kept per people; the oldest drops when the cap is passed. At least 1.
+    pub trade_history_len: u32,
 }
 
 /// How long a pending dealing waits.
@@ -139,6 +151,12 @@ impl DiplomacyConfig {
             return Err(DiplomacyConfigError::Invalid {
                 field: "offers.offer_wait_turns".to_string(),
                 reason: format!("must be at least {MIN_OFFER_WAIT_TURNS}"),
+            });
+        }
+        if self.history.trade_history_len < MIN_TRADE_HISTORY_LEN {
+            return Err(DiplomacyConfigError::Invalid {
+                field: "history.trade_history_len".to_string(),
+                reason: format!("must be at least {MIN_TRADE_HISTORY_LEN}"),
             });
         }
         let builtin = LadderConfig::builtin();
@@ -318,6 +336,14 @@ mod tests {
         assert_eq!(config.goodwill.wary_below, -0.2);
         assert_eq!(config.goodwill.friendly_above, 0.2);
         assert_eq!(config.roads.foreign_road_share, 0.9);
+        assert_eq!(config.history.trade_history_len, 100);
+    }
+
+    #[test]
+    fn a_history_that_keeps_nothing_is_refused() {
+        let err = with(|v| v["history"]["trade_history_len"] = serde_json::json!(0))
+            .expect_err("a zero cap drops every record at once");
+        assert!(err.contains("history.trade_history_len"), "{err}");
     }
 
     #[test]

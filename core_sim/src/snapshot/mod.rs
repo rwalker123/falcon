@@ -40,7 +40,7 @@ use sim_runtime::{
     GRAZE_PHASE_COLLAPSING, GRAZE_PHASE_NONE, GRAZE_PHASE_STRESSED, GRAZE_PHASE_THRIVING,
 };
 
-use sim_runtime::{BorderOverrideState, StandingLinkState, TreatyState};
+use sim_runtime::{BorderOverrideState, StandingLinkState, TradeRecordState, TreatyState};
 
 use crate::{
     components::{
@@ -128,6 +128,7 @@ pub(crate) mod population;
 mod publish;
 mod routes;
 mod subsistence;
+mod trade_history;
 mod treaties;
 mod vision;
 
@@ -1180,6 +1181,7 @@ mod tests {
             dealings: Vec::new(),
             treaties: Vec::new(),
             standing_links: Vec::new(),
+            trade_history: Vec::new(),
             goodwill: Vec::new(),
             own_goodwill: Vec::new(),
             goodwill_cuts: Default::default(),
@@ -1273,6 +1275,7 @@ mod tests {
             dealings: Vec::new(),
             treaties: Vec::new(),
             standing_links: Vec::new(),
+            trade_history: Vec::new(),
             goodwill: Vec::new(),
             own_goodwill: Vec::new(),
             goodwill_cuts: Default::default(),
@@ -1361,6 +1364,7 @@ mod tests {
             dealings: Vec::new(),
             treaties: Vec::new(),
             standing_links: Vec::new(),
+            trade_history: Vec::new(),
             goodwill: Vec::new(),
             own_goodwill: Vec::new(),
             goodwill_cuts: Default::default(),

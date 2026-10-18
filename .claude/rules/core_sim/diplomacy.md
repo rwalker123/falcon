@@ -13,6 +13,10 @@ paths:
   - "core_sim/tests/stages.rs"
   - "sim_schema/src/state/goodwill.rs"
   - "sim_schema/src/codec/goodwill.rs"
+  - "core_sim/src/trade_history.rs"
+  - "core_sim/src/snapshot/trade_history.rs"
+  - "sim_schema/src/state/trade_history.rs"
+  - "sim_schema/src/codec/trade_history.rs"
   - "core_sim/src/treaties.rs"
   - "core_sim/src/snapshot/treaties.rs"
   - "core_sim/tests/treaties.rs"
@@ -47,6 +51,7 @@ per-people borders and the foreign-road reading ("Treaties" below).
 | | `goodwill.broken_treaty` | **0.5** | the drop a breach costs; a fraction in `0..=1` |
 | | `goodwill.wary_below` / `friendly_above` | **−0.2 / 0.2** | the word cuts; each within `−1..=1`, `wary_below <= friendly_above` |
 | | `roads.foreign_road_share` | **0.9** | a foreigner's share of a built road's payoff; a fraction in `0..=1` |
+| | `history.trade_history_len` | **100** | past trades kept per people (the oldest drops when the cap is passed); validated `>= 1` (at `0` every record would drop as it was written) |
 
 Loader `diplomacy_config.rs` on the shared boot seam (`config-loading.md`), env override
 `DIPLOMACY_CONFIG_PATH`, no hot-reload kind. **Every key is required and every table is closed**
@@ -56,7 +61,7 @@ panic rather than a number nobody chose. Readers: `offer_wait_turns` (offers), `
 `per_link`, `wary_below` and `friendly_above`, and — read by treaties — `per_term`, `broken_treaty`
 and `roads.foreign_road_share`. All opening values are playtest dials. **No AI lever is here**: an AI
 is a player process and cannot read sim config, so its dealing levers (`return_fairness`,
-`food_runway_floor_turns`, `treaty_goodwill`) live in `sim_ai/data/ai_profiles.json`.
+`food_runway_floor_turns`, `want_floor`, `treaty_goodwill`) live in `sim_ai/data/ai_profiles.json`.
 
 ## The pending item: `PendingDealings`
 
@@ -74,10 +79,12 @@ must answer), `party` (`Option<BandId>`, an offer's), `goods_sent`, `goods_asked
 representation (food by keeping class, hay, material batches with their readings) — so a list is
 never a summed value.
 
-- **`DealingKind` is a fieldless enum** (`Offer`, `Proposal`, `Counter`). The carrier-specific data
-  is a field on the record — the waiting party on an offer, the named legs (`Dealing::agreement`) on
-  a proposal or counter — so a later `TreatyProposal` adds a variant and leaves the record's shape
-  alone. The wire carries the kind as a token (`"offer"`, `"proposal"`, `"counter"`).
+- **`DealingKind` is a fieldless enum** (`Offer`, `Proposal`, `Counter`, `TreatyProposal`, `Reply`). The
+  carrier-specific data is a field on the record — the waiting party on an offer, the named legs
+  (`Dealing::agreement`) on a proposal, counter or reply — so a new kind adds a variant and leaves the
+  record's shape alone. The wire carries the kind as a token (`"offer"`, `"proposal"`, `"counter"`,
+  `"treaty_proposal"`, `"reply"`). `is_agreement()` is a proposal or a counter only: **a reply does not
+  need a standing link**, it is carried by the party standing in the camp.
 - **The goods stay on the party.** `goods_sent` is a manifest; the physical cargo is still
   `Expedition::cargo`, so a recall, a lost destination or a refusal needs no goods-moving code: the
   party turns `Returning` and the existing fold-back carries the cargo home as `ShipmentReturned`.
@@ -134,7 +141,8 @@ other word is `CommandParseError::UnsupportedAnswer` rather than an accept. The 
 `dealings::answer_dealing(world, faction, id, &answer)`, which the server handler wraps (a refusal is
 a `CommandEventKind::Dealing` failure line) and the tests call directly.
 
-**It resolves in the turn it is submitted**: posted at tick N, answered in the window of N+1, applied
+**An accepted offer whose sender asked for something back is not settled by the accept — the sender
+decides** (below, "The reply"). **It resolves in the turn it is submitted**: posted at tick N, answered in the window of N+1, applied
 at once. Only the receiver's people may answer; a dealing addressed to someone else reads as "not
 waiting on your people", the same message as no dealing at all.
 
@@ -146,13 +154,43 @@ people's pack — travois included) must fit the party's `carry_capacity`; and t
 hold every line (food, hay, and each material's total). Duplicate lines sum per good. A refusal of the
 answer leaves both bands, the party and the book exactly as they stood.
 
-Then, in order: the cargo lands in the receiving band (`land_cargo_at_band`, booked `ShipmentIn`);
-the named return is drawn from that band into the party's cargo (food by class, hay, each material
-batch at its own rating) and booked on the receiver as `ExchangeOut`; the mission's terms become
-`Returned`; the party turns `Returning`; the dealing leaves the book. An **empty return is allowed**.
-**Refuse** turns the party `Returning` with its own cargo. The ledger identity stays closed because
+Then, **for a gift** (a shipment to another people, an own-people shipment with the standing answer off, a
+scout's `give`), settle at once, whatever return the receiver names — the sender gave it away. The
+settlement is `dealings::settle_accepted_offer`, the one routine a taken reply also calls: the cargo
+lands in the receiving band (`land_cargo_at_band`, booked `ShipmentIn`); the named return is drawn from
+that band into the party's cargo (food by class, hay, each material batch at its own rating) and booked
+on the receiver as `ExchangeOut`; the mission's terms become `Returned` (a scout records the handover);
+the party turns `Returning`; goodwill is credited both ways; the dealing leaves the book; the
+`TradeDelivered` line, the `status=accepted` lines and the history records are written. An **empty
+return is allowed**. **Refuse** turns the party `Returning` with its own cargo. The ledger identity stays closed because
 every term has a booking on both ends: the receiver's `ExchangeOut` is its `transferSent`, and the
 fold-back books the cargo at home through `FoldBack::book_home`.
+
+### The reply — the sender takes the named return, or walks home
+
+**A trade party whose terms are `Offer`, and a scout whose pack order is `offer`, asked for something
+back** (`sender_has_a_say`, decided from the party at answer time). When the receiver accepts such an
+offer every fail-closed check above runs and then **nothing moves**: the offer leaves the book and a
+`DealingKind::Reply` is posted to the original sender — sender faction/band the original receiver's,
+receiver faction/band the original sender's, `party` and `party_workers` carried over,
+`agreement: Agreement { shipper: the party's home band, consignee: the original receiver band, give:
+the cargo, ask: the named return }` (stated from the shipper's point of view like a proposal, so the
+wire's `goodsSent` / `goodsAsked` / `shipperBand` carry it with no new field), `goods_sent` kept as the
+cargo manifest, `expires_turn = tick + offer_wait_turns`. The feed says it with `kind=reply`: the
+reply's addressee (the original sender) is told `"<receiver band> would give back <return> for your
+<cargo>: take it or walk home"` (`status=offered`), the receiver that its answer went to the party
+(`status=posted`). The original offer closes with no line of its own.
+
+`answer_dealing <f> <id> accept | refuse` on a reply — only its addressee. **Accept takes no return list**
+(a non-empty one is refused) and **`counter` is refused** ("a return is taken or declined"). The party
+must still be `AwaitingOrders` (else the reply is withdrawn, told to the band that named the return);
+the carry check is re-run; the receiving band must still be there and **still hold the return** —
+otherwise the exchange **fails** `status=failed reason=receiver_short`, told to both, nothing moves, no
+goodwill, the party walks home with its cargo (`ShipmentReturned`). Otherwise it settles through
+`settle_accepted_offer`, with goodwill credited **at that moment**. **Refuse** is `status=declined`: the
+party turns home with its own cargo, no goodwill, told to both. **Silence** expires it at
+`expires_turn` (`advance_dealings`, the offer's own arm: `status=expired`, the party walks home); a
+party that left the camp withdraws it.
 
 ### Two transfer causes, because the books need them
 
@@ -287,8 +325,12 @@ feed is per-faction on the wire (`BandChangedHands`' shape). `status=` carries t
 |---|---|---|
 | `posted` | the sender | `dealing= kind= destination=<band> expedition=` |
 | `offered` | the receiver | `dealing= kind= from=<faction> sender=<band> band=<band>` |
-| `accepted` / `refused` / `expired` | both | the same tokens, minus `expedition=` |
-| `withdrawn` | the receiver only | the same |
+| `accepted` / `refused` / `expired` / `declined` | both | the same tokens, minus `expedition=` (`declined`: a reply refused) |
+| `failed` | both | a reply taken after the receiver spent the return: `reason=receiver_short`; a stage-4 exchange that fell through |
+| `withdrawn` | the receiver only (a reply's: the band that named the return only) | the same |
+
+A reply's lines use its own orientation: the sender is the band that named the return. `kind=reply` rides
+every one of them.
 
 Band ids ride as tokens (and as `CommandEventEntry::band`) so a client swaps in its own label; the
 receiver's lines never carry the party's entity handle.
@@ -302,7 +344,8 @@ A row (`DealingState`): `id`, `kind`, `senderFaction`, `senderBand`, `receiverFa
 `receiverBand`, `goodsSent` and `goodsAsked` (`DealingGoodsState`: `food`, `fodder`, and
 `materials:[MaterialBatchState]` — the band store's row, readings and all), `turnsLeft`. The viewer's
 own standing answer is `FactionPolicyState.acceptOwnGifts` (appended; default on) beside
-`openBorders`. `TransferCrossingState.cause` gains `9` and `10`.
+`openBorders`. A reply is the same row with `kind: "reply"`: `goodsSent` the cargo, `goodsAsked` the
+named return (unrated material lines), `shipperBand` the party's home band, `partyWorkers` the party's. `TransferCrossingState.cause` gains `9` and `10`.
 
 ## Goodwill — one opinion per ordered pair, kept as its reasons
 
@@ -395,6 +438,42 @@ return the party can walk home (`partyWorkers × carryPerWorker`), which the ans
 size one; a proposal's and counter's `partyWorkers` is the shipper's, as before (`SAVE_FORMAT_VERSION`
 42 carries it).
 
+
+## The trade history — what the sim keeps of past trades
+
+`trade_history.rs`. `TradeHistory` (`SimState`, `SAVE_FORMAT_VERSION` 47) holds, per people
+(`FactionId`), a list of `TradeRecord`s, newest last, **capped per people at
+`history.trade_history_len`** (the oldest drops when the cap is passed). The event feed keeps 20 turns;
+this is how a player sees older trades.
+
+A `TradeRecord`: `turn`, `own_band`, `other_faction`, `other_band`, `dealing: Option<DealingId>`,
+`outcome` and `goods_out` / `goods_in` (`GoodsLines`). **One record per people per trade, from that
+people's point of view** — a trade between two peoples writes a record into each (the receiver's goods
+flipped), a same-people shipment writes one (`own_band` the sender's band, `other_band` the receiver's,
+`other_faction` its own). Outcome tokens: `exchanged` (goods both ways), `gift_given` / `gift_received`,
+`delivered` (a same-people shipment landing under the standing answer), `declined` (the sender walked
+home from a return), `refused`, `expired`, `withdrawn`, `failed`. For the last five `goods_out` is what
+this people was to give and `goods_in` what it was to get — the sender's record states the cargo offered
+and what was asked or named, the other end's the same deal flipped — so the row can say what the deal was.
+
+**ONE seam writes it**: `trade_history::record_trade(history, cap, &TradeFacts, TradeEnd)`, with the trade
+stated from the shipper's side (`TradeFacts`: shipper, other end, `sent`, `back`, dealing) and
+`TradeEnd` (`Exchanged`, `Gift`, `Declined`, `Refused`, `Expired`, `Withdrawn`, `Failed`) mapped to each
+people's own outcome. Its callers: an offer's / gift's / reply's every ending in `answer_dealing`,
+`answer_reply` and `advance_dealings` (`dealings::record_dealing_end`, from `trade_facts_of`); a
+same-people (or no-book) shipment landing in `advance_expeditions`; `settle_agreed_trade` and
+`settle_treaty_bundles` settling or failing on arrival; and a stage-4 proposal or counter refused,
+expired, link-broken (`withdrawn`) or failing at accept (`failed`, in `answer_agreement` and the server's
+`launch_agreed_party`). **A `countered` close writes nothing** (the trade goes on), and a treaty
+proposal writes nothing (not trade).
+
+**Wire**: `TradeHistorySection { records:[TradeRecordState] }` appended last on both `WorldSnapshot` and
+`WorldDelta` (`tradeHistory`), **viewer-scoped** to the viewer's people's records, diffed whole.
+`TradeRecordState`: `turn`, `ownBand`, `otherFaction`, `otherBand`, `dealingId` (`0` = none), `outcome`
+(the token), `goodsOut` and `goodsIn` (`DealingGoodsState`, material rows unrated — a stage-4 proposal's
+leg form). Decoded (`sim_schema`): `WorldSnapshot::trade_history` / `WorldDelta::trade_history`
+(`Vec<TradeRecordState>` / `Option<..>`), fields `turn`, `own_band`, `other_faction`, `other_band`,
+`dealing_id`, `outcome`, `goods_out`, `goods_in`.
 
 ## Treaties — road rights, open borders and agreed trade (slice 2, plan §3)
 
@@ -528,7 +607,11 @@ gains `treaty` (the proposal's full terms; empty on other kinds) and `carrier` (
 | `::only_the_receiving_people_may_answer`, `::a_dealing_whose_party_has_gone_is_withdrawn` | who may answer, and a vanished party |
 | `::a_pending_dealing_round_trips_a_checkpoint` | the book, the counter and the terms ride `SimState` |
 | `tests/goodwill.rs::the_frame_carries_the_viewers_own_live_opinion_and_nobody_elses` | `GoodwillSection.own` on the **encoded** envelope: the viewer's rows only, components and total, `reportedTurn` the current tick, a people with no entry publishes none, and it is not the carried-news list |
-| `tests/ai_dealings_scenario.rs` | a real `server` and a real `sim_ai` over the sockets: a human-side scout posts an offer to the AI's people, the AI answers it, and the return lands at the sender's home as `ExchangeIn` with the human people's `own_goodwill` credited — all read off the encoded frames the human seat is sent |
+| `tests/ai_dealings_scenario.rs` | a real `server` and a real `sim_ai` over the sockets: a human-side scout posts an offer to the AI's people, the AI accepts it (posting a reply to the human), the human takes the reply, and the return lands at the sender's home as `ExchangeIn` with the human people's `own_goodwill` credited when the reply is taken — all read off the encoded frames the human seat is sent |
+| `tests/dealings.rs::an_accepted_offer_posts_a_reply_to_the_sender_and_moves_nothing` | the reply's legs, addressee and feed lines on the **encoded** frame; the cargo still on the party, the receiver's store unchanged, no goodwill |
+| `::taking_the_reply_settles_the_exchange_and_writes_a_record_per_people`, `::declining_a_reply_sends_the_cargo_home`, `::silence_on_a_reply_expires_it`, `::a_reply_whose_party_has_gone_is_withdrawn`, `::the_receiver_spending_the_return_before_the_take_fails_it`, `::a_reply_takes_no_return_list_and_cannot_be_countered` | the reply's take (settles as an accepted offer always did, goodwill credited then), decline (`ShipmentReturned`, `status=declined`), silence, withdrawal, `receiver_short`, and the answer's refusals — each with its history records |
+| `::an_accepted_gift_still_settles_at_once` and `stages.rs::{an_accepted_gift_is_a_gift_…, an_offer_scout_comes_home_with_the_receivers_return}` | a gift (and a scout's `give`) settles on accept with no reply; a scout's `offer` gets one |
+| `::a_refusal_and_a_gift_write_their_records`, `::a_same_people_delivery_writes_one_record`, `::the_cap_drops_the_oldest_record`, `::the_trade_history_round_trips_a_checkpoint`; `stages.rs`, `treaties.rs` history assertions | the history: a record per people from its own side with the right goods and outcome, one for a same-people delivery, the cap, the viewer's people's records only on the encoded frame (absent from a third people's), the checkpoint, and the stage-4 / bundle outcomes |
 | `tests/goodwill.rs` | a gift credits receiver → giver only; an exchange credits both by what each received; refusal and lapse credit nothing; no self-pair entry; a post of ten follows `0.5 × (1 − 0.98^n)` turn by turn and settles near `0.5`; news reaches `KnownGoodwill` only with the returning party, stamped with the sighting turn; the frame carries the viewer's own rows and the cuts; checkpoint round trip |
 | `goodwill.rs` unit tests | worth (none held = full load, 10× held ≈ 1/11, per-good, empty = 0), clamp lands on the bound without rescaling components, fade is proportional on every component, a stale or equal report never overwrites a fresher one |
 | `tests/stages.rs` (stage 4) | a proposal over a kept road is posted at once, draws nothing, and is on the encoded frame of both peoples with the shipper named and unrated lines; no link (or a bare tile, an unpaid bill, a trail) refuses it and records nothing; a counter closes the original and goes back, accept means the last terms and the party size carries; an agreed party settles on arrival, goods both ways and goodwill both ways, the return home as `ExchangeIn`; a receiver short of the return fails the exchange with no goodwill and the cargo comes home; a link broken before the answer withdraws the dealing with `reason=link_broken`; the answer's own refusals leave the book as it stood; silence expires a proposal; the checkpoint round trip |
@@ -539,7 +622,7 @@ gains `treaty` (the proposal's full terms; empty on other kinds) and `carrier` (
 | `routes::foreign_road_tests`, `work_party::tests::a_foreign_road_shortens_the_walk…`, `resources::border_admission_tests` | the foreign-road rule tile by tile, a path's weakest tile for its own walker, a real caller (`resolve_walk`), and `admits`'s precedence table |
 | `bin/server.rs` `tests::{an_envoy_launches…, a_border_override_closing…, end_treaty_is…, a_treaty_proposed…}` | the handlers: the envoy's launch and refusals, an override closing to a partner breaks the treaty, `end_treaty`, `propose_treaty` and a treaty counter's reply path |
 | `sim_ai` `specialists::dealings::tests::a_treaty_proposal_is_accepted…` | the AI accepts a treaty at its goodwill threshold and refuses below it |
-| `tests/sim_state_coverage.rs` | `PendingDealings` is classified `SIM_STATE`; the config handle and metadata are `CONFIG` |
+| `tests/sim_state_coverage.rs` | `PendingDealings` and `TradeHistory` are classified `SIM_STATE`; the config handle and metadata are `CONFIG` |
 
 ## See also
 

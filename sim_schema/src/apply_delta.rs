@@ -148,6 +148,7 @@ impl WorldSnapshot {
             dealings,
             treaties,
             standing_links,
+            trade_history,
             goodwill,
             own_goodwill,
             goodwill_cuts,
@@ -295,6 +296,7 @@ impl WorldSnapshot {
         replace_if_some(&mut self.dealings, dealings);
         replace_if_some(&mut self.treaties, treaties);
         replace_if_some(&mut self.standing_links, standing_links);
+        replace_if_some(&mut self.trade_history, trade_history);
         replace_if_some(&mut self.goodwill, goodwill);
         replace_if_some(&mut self.own_goodwill, own_goodwill);
         replace_if_some(&mut self.goodwill_cuts, goodwill_cuts);
@@ -620,6 +622,7 @@ mod tests {
         delta.dealings = Some(Vec::new());
         delta.treaties = Some(Vec::new());
         delta.standing_links = Some(Vec::new());
+        delta.trade_history = Some(Vec::new());
         delta.goodwill = Some(Vec::new());
         delta.own_goodwill = Some(Vec::new());
         delta.goodwill_cuts = Some(Default::default());

@@ -369,6 +369,7 @@ pub mod knowledge {
                 dealings: Vec::new(),
                 treaties: Vec::new(),
                 standing_links: Vec::new(),
+                trade_history: Vec::new(),
                 goodwill: Vec::new(),
                 own_goodwill: Vec::new(),
                 goodwill_cuts: Default::default(),

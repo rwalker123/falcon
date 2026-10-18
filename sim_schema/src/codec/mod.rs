@@ -48,6 +48,7 @@ mod map;
 mod population;
 mod routes;
 mod subsistence;
+mod trade_history;
 mod treaties;
 mod vision;
 
@@ -98,6 +99,10 @@ use crate::codec::routes::{
 use crate::codec::subsistence::{
     decode_subsistence_section, decode_subsistence_section_delta, serialize_subsistence_section,
     serialize_subsistence_section_delta,
+};
+use crate::codec::trade_history::{
+    decode_trade_history_section, decode_trade_history_section_delta,
+    serialize_trade_history_section, serialize_trade_history_section_delta,
 };
 use crate::codec::treaties::{
     decode_treaties_section, decode_treaties_section_delta, serialize_treaties_section,
@@ -296,6 +301,10 @@ fn decode_snapshot_table(table: fb::WorldSnapshot<'_>) -> Result<WorldSnapshot, 
         &mut snapshot,
     );
     decode_treaties_section(required(table.treaties(), "TreatySection")?, &mut snapshot);
+    decode_trade_history_section(
+        required(table.tradeHistory(), "TradeHistorySection")?,
+        &mut snapshot,
+    );
     witness_snapshot_is_fully_decoded(&snapshot);
     Ok(snapshot)
 }
@@ -335,6 +344,10 @@ fn decode_delta_table(table: fb::WorldDelta<'_>) -> Result<WorldDelta, DecodeErr
     decode_dealings_section_delta(required(table.dealings(), "DealingsSection")?, &mut delta);
     decode_goodwill_section_delta(required(table.goodwill(), "GoodwillSection")?, &mut delta);
     decode_treaties_section_delta(required(table.treaties(), "TreatySection")?, &mut delta);
+    decode_trade_history_section_delta(
+        required(table.tradeHistory(), "TradeHistorySection")?,
+        &mut delta,
+    );
     witness_delta_is_fully_decoded(&delta);
     Ok(delta)
 }
@@ -453,6 +466,8 @@ fn witness_snapshot_is_fully_decoded(snapshot: &WorldSnapshot) {
         // `decode_treaties_section`
         treaties: _,
         standing_links: _,
+        // `decode_trade_history_section`
+        trade_history: _,
         // `decode_goodwill_section`
         goodwill: _,
         own_goodwill: _,
@@ -563,6 +578,8 @@ fn witness_delta_is_fully_decoded(delta: &WorldDelta) {
         // `decode_treaties_section_delta`
         treaties: _,
         standing_links: _,
+        // `decode_trade_history_section_delta`
+        trade_history: _,
         // `decode_goodwill_section_delta`
         goodwill: _,
         own_goodwill: _,
@@ -634,6 +651,7 @@ fn build_snapshot_flatbuffer<'a>(
     let dealings = serialize_dealings_section(builder, snapshot);
     let goodwill = serialize_goodwill_section(builder, snapshot);
     let treaties = serialize_treaties_section(builder, snapshot);
+    let trade_history = serialize_trade_history_section(builder, snapshot);
 
     let snapshot_table = fb::WorldSnapshot::create(
         builder,
@@ -654,6 +672,7 @@ fn build_snapshot_flatbuffer<'a>(
             dealings: Some(dealings),
             goodwill: Some(goodwill),
             treaties: Some(treaties),
+            tradeHistory: Some(trade_history),
         },
     );
 
@@ -716,6 +735,7 @@ fn build_delta_flatbuffer<'a>(
     let dealings = serialize_dealings_section_delta(builder, delta);
     let goodwill = serialize_goodwill_section_delta(builder, delta);
     let treaties = serialize_treaties_section_delta(builder, delta);
+    let trade_history = serialize_trade_history_section_delta(builder, delta);
 
     let delta_table = fb::WorldDelta::create(
         builder,
@@ -736,6 +756,7 @@ fn build_delta_flatbuffer<'a>(
             dealings: Some(dealings),
             goodwill: Some(goodwill),
             treaties: Some(treaties),
+            tradeHistory: Some(trade_history),
         },
     );
 
@@ -1246,6 +1267,7 @@ mod round_trip_tests {
             dealings: Some(world.dealings.clone()),
             treaties: Some(world.treaties.clone()),
             standing_links: Some(world.standing_links.clone()),
+            trade_history: Some(world.trade_history.clone()),
             goodwill: Some(world.goodwill.clone()),
             own_goodwill: Some(world.own_goodwill.clone()),
             goodwill_cuts: Some(world.goodwill_cuts.clone()),
@@ -1319,6 +1341,7 @@ mod round_trip_tests {
             dealings: Some(Vec::new()),
             treaties: Some(Vec::new()),
             standing_links: Some(Vec::new()),
+            trade_history: Some(Vec::new()),
             goodwill: Some(Vec::new()),
             own_goodwill: Some(Vec::new()),
             goodwill_cuts: Some(Default::default()),

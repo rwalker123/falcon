@@ -973,6 +973,23 @@ fn seed_snapshot() -> WorldSnapshot {
     });
     s.standing_links = rows();
 
+    // --- trade history ---------------------------------------------------
+    // The viewer's people's past trades; each row carries two goods lists with material batches, so
+    // both levels need elements or the decode guard never reaches the inner ones.
+    s.trade_history = rows();
+    for record in &mut s.trade_history {
+        for goods in [&mut record.goods_out, &mut record.goods_in] {
+            goods.materials = ["hide", "fibre"]
+                .iter()
+                .map(|material| MaterialBatchState {
+                    material_id: (*material).to_string(),
+                    readings: vec![CharacteristicReadingState::default(); 2],
+                    ..Default::default()
+                })
+                .collect();
+        }
+    }
+
     // --- goodwill --------------------------------------------------------
     // What other peoples are known to think of the viewer's; the cuts are a single table, saturated
     // with the rest.

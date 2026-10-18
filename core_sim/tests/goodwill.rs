@@ -239,6 +239,14 @@ fn food_line(amount: f32) -> TradeCargoItem {
     }
 }
 
+/// **The sender takes the reply an accepted offer posted** — the exchange settles (and goodwill is
+/// credited) when the sender takes the receiver's named return, not when the receiver names it.
+fn take_the_reply(scene: &mut Scene) {
+    let id = dealing_id(&scene.app);
+    answer_dealing(&mut scene.app.world, SENDER_PEOPLE, id, &accept(Vec::new()))
+        .expect("the sender takes the return");
+}
+
 fn carry() -> core_sim::CarryConfig {
     core_sim::ExpeditionConfig::builtin().carry.clone()
 }
@@ -277,6 +285,7 @@ fn a_gift_credits_the_receivers_opinion_of_the_giver_only() {
         &accept(Vec::new()),
     )
     .expect("a bare accept");
+    take_the_reply(&mut scene);
 
     let expected = per_load() * cargo_worth(&food_cargo(CARGO_FOOD), &held_before, &carry());
     let entry = goodwill(&scene.app, RECEIVER_PEOPLE, SENDER_PEOPLE);
@@ -323,6 +332,7 @@ fn an_exchange_credits_both_peoples_by_what_each_received() {
         &accept(vec![food_line(RETURN_FOOD)]),
     )
     .expect("the receiver holds the return");
+    take_the_reply(&mut scene);
 
     let to_receiver = per_load() * cargo_worth(&food_cargo(CARGO_FOOD), &receiver_held, &carry());
     let to_sender = per_load() * cargo_worth(&food_cargo(RETURN_FOOD), &home_held, &carry());
@@ -521,6 +531,7 @@ fn news_of_an_opinion_arrives_only_with_the_returning_party() {
         &accept(Vec::new()),
     )
     .expect("accepted");
+    take_the_reply(&mut scene);
     let credited_at = scene.app.world.resource::<core_sim::SimulationTick>().0;
     let credited = goodwill(&scene.app, RECEIVER_PEOPLE, SENDER_PEOPLE);
     assert!(

@@ -342,6 +342,16 @@ fn propose(
     )
 }
 
+/// The outcome tokens in `faction`'s trade history, oldest first.
+fn history_outcomes(app: &App, faction: FactionId) -> Vec<&'static str> {
+    app.world
+        .resource::<core_sim::TradeHistory>()
+        .of(faction)
+        .iter()
+        .map(|record| record.outcome.as_str())
+        .collect()
+}
+
 fn goodwill(app: &App, holder: FactionId, about: FactionId) -> core_sim::GoodwillEntry {
     app.world.resource::<Goodwill>().get(holder, about)
 }
@@ -751,6 +761,12 @@ fn a_counter_closes_the_original_and_goes_back_and_accept_means_the_last_terms()
         pending(&scene.app).is_empty(),
         "accepted: nothing left to answer"
     );
+    for people in [SENDER_PEOPLE, RECEIVER_PEOPLE] {
+        assert!(
+            history_outcomes(&scene.app, people).is_empty(),
+            "a countered close and an accepted launch write nothing: the trade settles on arrival"
+        );
+    }
 }
 
 /// **An accepted proposal's party settles at once on arrival — goods both ways, goodwill both ways.**
@@ -840,6 +856,20 @@ fn an_agreed_party_settles_on_arrival_and_the_return_comes_home() {
         "the hide came home as ExchangeIn: {came_home}"
     );
     assert!(band_hide(&scene.app, scene.sender) >= sender_hide + ASK_HIDE - EPSILON);
+    for people in [SENDER_PEOPLE, RECEIVER_PEOPLE] {
+        assert_eq!(
+            history_outcomes(&scene.app, people),
+            vec!["exchanged"],
+            "settling on arrival writes one record per people"
+        );
+    }
+    let record = &scene
+        .app
+        .world
+        .resource::<core_sim::TradeHistory>()
+        .of(SENDER_PEOPLE)[0];
+    assert!((record.goods_out.food.to_f32() - GIVE_FOOD).abs() < EPSILON);
+    assert!((record.goods_in.materials[0].1.to_f32() - ASK_HIDE).abs() < EPSILON);
 }
 
 /// **A receiver that no longer holds the agreed return fails the exchange**: nothing lands, nothing
@@ -887,6 +917,9 @@ fn a_receiver_short_of_the_return_fails_the_exchange_and_the_cargo_goes_home() {
     assert!(
         dealing_events(&scene.app, RECEIVER_PEOPLE, "failed")[0].contains("reason=receiver_short")
     );
+    for people in [SENDER_PEOPLE, RECEIVER_PEOPLE] {
+        assert_eq!(history_outcomes(&scene.app, people), vec!["failed"]);
+    }
     assert!(
         goodwill(&scene.app, RECEIVER_PEOPLE, SENDER_PEOPLE).exchanges == 0.0
             && goodwill(&scene.app, SENDER_PEOPLE, RECEIVER_PEOPLE).exchanges == 0.0
@@ -933,6 +966,7 @@ fn a_link_broken_before_the_answer_withdraws_the_proposal() {
         let told = dealing_events(&scene.app, people, "withdrawn");
         assert_eq!(told.len(), 1, "{people:?} is told");
         assert!(told[0].contains("reason=link_broken"), "{}", told[0]);
+        assert_eq!(history_outcomes(&scene.app, people), vec!["withdrawn"]);
     }
     // A refusal needs the road too: every answer on a proposal does.
     let mut scene = self::scene(LINK_SPAN);
@@ -1030,7 +1064,46 @@ fn silence_expires_a_proposal() {
     assert!(pending(&scene.app).is_empty(), "silence refused it");
     for people in [SENDER_PEOPLE, RECEIVER_PEOPLE] {
         assert_eq!(dealing_events(&scene.app, people, "expired").len(), 1);
+        assert_eq!(history_outcomes(&scene.app, people), vec!["expired"]);
     }
+}
+
+/// **A refused proposal is a record per people**, and the row says what the deal was: the shipper's
+/// give is the sender's `goods_out`, the ask its `goods_in`.
+#[test]
+fn a_refused_proposal_writes_a_record_per_people_stating_the_deal() {
+    let mut scene = scene(LINK_SPAN);
+    lay_road_between(&mut scene);
+    let id = propose(
+        &mut scene,
+        &[food_line(GIVE_FOOD)],
+        &[material_line("hide", ASK_HIDE)],
+    )
+    .expect("a proposal");
+    answer_dealing(
+        &mut scene.app.world,
+        RECEIVER_PEOPLE,
+        id,
+        &DealingAnswer::Refuse,
+    )
+    .expect("a refusal");
+    for people in [SENDER_PEOPLE, RECEIVER_PEOPLE] {
+        assert_eq!(history_outcomes(&scene.app, people), vec!["refused"]);
+    }
+    let history = scene.app.world.resource::<core_sim::TradeHistory>();
+    let sender = &history.of(SENDER_PEOPLE)[0];
+    assert_eq!(
+        (sender.own_band, sender.other_band),
+        (scene.sender_id, scene.receiver_id)
+    );
+    assert!((sender.goods_out.food.to_f32() - GIVE_FOOD).abs() < EPSILON);
+    assert!((sender.goods_in.materials[0].1.to_f32() - ASK_HIDE).abs() < EPSILON);
+    let receiver = &history.of(RECEIVER_PEOPLE)[0];
+    assert_eq!(
+        (receiver.own_band, receiver.other_band),
+        (scene.receiver_id, scene.sender_id)
+    );
+    assert!((receiver.goods_in.food.to_f32() - GIVE_FOOD).abs() < EPSILON);
 }
 
 /// **A pending proposal rides the checkpoint**, legs and all, and is answerable after a restore.
@@ -1200,6 +1273,10 @@ fn an_accepted_gift_is_a_gift_and_the_scout_goes_back_to_its_scouting() {
     )
     .expect("an empty return needs nothing");
     assert!(report.accepted);
+    assert!(
+        report.reply.is_none(),
+        "a `give` scout gave its pack away: no reply, it settles at once"
+    );
     assert!((band_food(&scene.app, scene.receiver) - (receiver_food + GIVE_FOOD)).abs() < EPSILON);
     assert!(
         goodwill(&scene.app, RECEIVER_PEOPLE, SENDER_PEOPLE).gifts > 0.0,
@@ -1253,7 +1330,7 @@ fn an_offer_scout_comes_home_with_the_receivers_return() {
     let id = only_dealing(&scene.app).id;
     let sender_hide = band_hide(&scene.app, scene.sender);
 
-    answer_dealing(
+    let report = answer_dealing(
         &mut scene.app.world,
         RECEIVER_PEOPLE,
         id,
@@ -1262,6 +1339,20 @@ fn an_offer_scout_comes_home_with_the_receivers_return() {
         },
     )
     .expect("the receiver holds the hide");
+    // A scout's `offer` asks for something back, so the sender decides: a reply is posted, nothing
+    // has moved and no goodwill was credited until the sender takes it.
+    let reply = report.reply.expect("an `offer` scout gets a reply");
+    assert_eq!(only_dealing(&scene.app).kind, core_sim::DealingKind::Reply);
+    assert!(goodwill(&scene.app, SENDER_PEOPLE, RECEIVER_PEOPLE).exchanges == 0.0);
+    answer_dealing(
+        &mut scene.app.world,
+        SENDER_PEOPLE,
+        reply,
+        &DealingAnswer::Accept {
+            returned: Vec::new(),
+        },
+    )
+    .expect("the sender takes the return");
     assert!(
         goodwill(&scene.app, SENDER_PEOPLE, RECEIVER_PEOPLE).exchanges > 0.0,
         "an exchange settled: the giver thinks better of the receiver too"

@@ -110,6 +110,7 @@ pub mod take_claims;
 pub mod telling;
 mod terrain;
 pub mod tile_improvement;
+pub mod trade_history;
 pub mod treaties;
 mod turn_pipeline_config;
 pub mod turn_profile;
@@ -347,6 +348,9 @@ pub use lineage::{
 pub use personalities::{
     load_personalities_from_env, PersonalitiesError, Personality, PersonalityCatalog,
     PersonalityCatalogHandle, PersonalityCatalogMetadata, BUILTIN_PERSONALITIES, PERSONALITY_SALT,
+};
+pub use trade_history::{
+    record_trade, TradeEnd, TradeFacts, TradeHistory, TradeOutcome, TradeRecord,
 };
 pub use treaties::{
     credit_treaty_goodwill, dissolve_extinct_peoples, end_treaty, match_bundles, Bundle,
@@ -976,6 +980,7 @@ pub fn build_headless_app() -> App {
         .insert_resource(dealings::PendingDealings::default())
         .insert_resource(goodwill::Goodwill::default())
         .insert_resource(treaties::Treaties::default())
+        .insert_resource(trade_history::TradeHistory::default())
         .insert_resource(goodwill::KnownGoodwill::default())
         .insert_resource(belief_handle)
         .insert_resource(belief_metadata)

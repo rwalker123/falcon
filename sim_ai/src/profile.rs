@@ -184,6 +184,11 @@ pub struct DealingsLevers {
     /// Consumed by `Dealings` on an **offer**: a band whose food runway is under this many turns
     /// names no food in its return, whatever else it names. `>= 0`.
     pub food_runway_floor_turns: f32,
+    /// Consumed by `Dealings` on an **offer**: the share of the cargo's full load that its worth to
+    /// this people must reach to be taken at all. A cargo whose `worth / load` is under it is a
+    /// shipment this people does not want (it already holds plenty of it) and is refused outright;
+    /// so is an empty one. `0` takes everything. A fraction in `0..=1`.
+    pub want_floor: f32,
     /// Consumed by the treaty answer (a later slice; nothing reads it yet): the goodwill this people
     /// needs toward a proposer to accept a treaty, on the `-1..=+1` goodwill scale.
     pub treaty_goodwill: f32,
@@ -436,6 +441,12 @@ impl AiProfiles {
                     "profile `{id}`: dealings.food_runway_floor_turns = {floor} is not a non-negative number of turns"
                 ));
             }
+            let want = profile.dealings.want_floor;
+            if !want.is_finite() || !(0.0..=1.0).contains(&want) {
+                return invalid(format!(
+                    "profile `{id}`: dealings.want_floor = {want} is not a fraction from 0 to 1"
+                ));
+            }
             let treaty = profile.dealings.treaty_goodwill;
             if !treaty.is_finite() || !(GOODWILL_MIN..=GOODWILL_MAX).contains(&treaty) {
                 return invalid(format!(
@@ -505,6 +516,8 @@ mod tests {
         for (key, value) in [
             ("return_fairness", -0.1),
             ("food_runway_floor_turns", -1.0),
+            ("want_floor", 1.5),
+            ("want_floor", -0.1),
             ("treaty_goodwill", 1.5),
         ] {
             let mut document: serde_json::Value = serde_json::from_str(BUILTIN_PROFILES).unwrap();

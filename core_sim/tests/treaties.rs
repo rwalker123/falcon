@@ -1232,6 +1232,20 @@ fn agreed_bundles_settle_whole_and_the_remainder_follows_the_shipments_terms() {
         goodwill(&scene.app, SENDER_PEOPLE, RECEIVER_PEOPLE).exchanges > 0.0,
         "and the sender to the receiver"
     );
+    // The covered part is a trade: one `exchanged` record per people, no dealing behind it. The
+    // remainder is still pending and has written nothing yet.
+    {
+        let history = scene.app.world.resource::<core_sim::TradeHistory>();
+        for people in [SENDER_PEOPLE, RECEIVER_PEOPLE] {
+            let records = history.of(people);
+            assert_eq!(records.len(), 1, "{people:?}: {records:?}");
+            assert_eq!(records[0].outcome.as_str(), "exchanged");
+            assert!(records[0].dealing.is_none());
+        }
+        let sender = &history.of(SENDER_PEOPLE)[0];
+        assert!((sender.goods_out.food.to_f32() - 8.0).abs() < EPSILON);
+        assert!((sender.goods_in.materials[0].1.to_f32() - 2.0).abs() < EPSILON);
+    }
 
     // Refusing the remainder sends the party home; the payment arrives as an exchange.
     answer(&mut scene, dealing.id, DealingAnswer::Refuse).expect("refuses the remainder");
@@ -1320,6 +1334,15 @@ fn a_receiver_short_of_the_bundles_return_fails_the_covered_part_with_no_goodwil
             goodwill(&scene.app, holder, about).exchanges.abs() < f32::EPSILON,
             "a failed exchange credits nothing"
         );
+    }
+    let history = scene.app.world.resource::<core_sim::TradeHistory>();
+    for people in [SENDER_PEOPLE, RECEIVER_PEOPLE] {
+        let outcomes: Vec<&str> = history
+            .of(people)
+            .iter()
+            .map(|record| record.outcome.as_str())
+            .collect();
+        assert_eq!(outcomes, vec!["failed"], "{people:?}");
     }
 }
 
