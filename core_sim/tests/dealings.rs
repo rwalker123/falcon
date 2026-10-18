@@ -1852,3 +1852,62 @@ fn the_trade_history_round_trips_a_checkpoint() {
         history
     );
 }
+
+/// **A dealing names its waiting party on the ENCODED frame**: an offer's and a reply's `partyBand` is
+/// the party's band id (the `bandId` of its cohort row); a proposal's is 0.
+#[test]
+fn a_dealing_publishes_the_band_id_of_its_waiting_party() {
+    use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
+    fn party_bands(app: &mut App, viewer: FactionId) -> Vec<(String, u64)> {
+        app.world.insert_resource(ViewerFaction(viewer));
+        recapture_snapshot_in_place(&mut app.world);
+        let snapshot = app
+            .world
+            .resource::<SnapshotHistory>()
+            .latest_entry()
+            .expect("a snapshot was captured")
+            .snapshot;
+        let bytes = sim_schema::encode_snapshot_flatbuffer(snapshot.as_ref());
+        let envelope = fb::root_as_envelope(bytes.as_ref()).expect("valid envelope");
+        let rows = envelope
+            .payload_as_snapshot()
+            .and_then(|s| s.dealings())
+            .and_then(|d| d.dealings())
+            .expect("dealings published");
+        rows.iter()
+            .map(|row| (row.kind().unwrap_or("").to_string(), row.partyBand()))
+            .collect()
+    }
+    let mut scene = scene(RECEIVER_PEOPLE);
+    let party = launch(&mut scene, ShipmentTerms::Offer, food_cargo(CARGO_FOOD));
+    run_turn(&mut scene.app);
+    let party_id = party.into_band_id(&scene.app).0;
+    assert_ne!(party_id, 0);
+    assert_eq!(
+        party_bands(&mut scene.app, SENDER_PEOPLE),
+        vec![("offer".to_string(), party_id)]
+    );
+    let id = only_dealing_id(&scene.app);
+    answer_dealing(
+        &mut scene.app.world,
+        RECEIVER_PEOPLE,
+        id,
+        &accept(vec![food_line(RETURN_FOOD)]),
+    )
+    .expect("held");
+    assert_eq!(
+        party_bands(&mut scene.app, SENDER_PEOPLE),
+        vec![("reply".to_string(), party_id)]
+    );
+    // A stage-4 proposal has no party.
+    let mut dealing = only_dealing(&scene.app);
+    dealing.kind = core_sim::DealingKind::Proposal;
+    dealing.party = None;
+    let mut book = scene.app.world.resource_mut::<PendingDealings>();
+    book.remove(dealing.id);
+    book.post(dealing);
+    assert_eq!(
+        party_bands(&mut scene.app, SENDER_PEOPLE),
+        vec![("proposal".to_string(), 0)]
+    );
+}

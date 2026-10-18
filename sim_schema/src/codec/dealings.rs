@@ -85,6 +85,7 @@ fn create_dealings<'a>(
                     partyWorkers: dealing.party_workers,
                     treaty: Some(treaty),
                     carrier: Some(carrier),
+                    partyBand: dealing.party_band,
                 },
             )
         })
@@ -172,5 +173,6 @@ fn decode_dealing(dealing: fb::DealingState<'_>) -> DealingState {
         party_workers: dealing.partyWorkers(),
         treaty: decode_terms(dealing.treaty()),
         carrier: text(dealing.carrier()),
+        party_band: dealing.partyBand(),
     }
 }

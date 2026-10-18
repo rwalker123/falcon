@@ -6500,6 +6500,9 @@ table DealingState {
   // proposal's legs do. Appended.
   treaty:TreatyTermsState;
   carrier:string;
+  // The waiting party's band id (the `bandId` its `PopulationCohortState` row carries) on an offer or a
+  // reply; 0 on a proposal, a counter and a road-carried treaty proposal. Appended.
+  partyBand:ulong;
 }
 
 table DealingsSection {

@@ -54,4 +54,7 @@ pub struct DealingState {
     /// **Who carries a treaty proposal**: `"road"` or `"envoy"`; empty on every other kind.
     #[serde(default)]
     pub carrier: String,
+    /// The waiting party's band id (an offer, a reply, an envoy's treaty proposal); `0` when none.
+    #[serde(default)]
+    pub party_band: u64,
 }

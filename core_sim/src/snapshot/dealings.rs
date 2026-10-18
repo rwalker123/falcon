@@ -63,6 +63,7 @@ fn dealing_state(dealing: &Dealing, now: u64, materials: &MaterialsConfig) -> De
             .as_ref()
             .map(|proposal| crate::snapshot::treaties::terms_state(&proposal.terms))
             .unwrap_or_default(),
+        party_band: dealing.party.map_or(0, |party| party.0),
         carrier: dealing
             .treaty
             .as_ref()

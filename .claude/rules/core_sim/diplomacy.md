@@ -345,7 +345,10 @@ A row (`DealingState`): `id`, `kind`, `senderFaction`, `senderBand`, `receiverFa
 `materials:[MaterialBatchState]` — the band store's row, readings and all), `turnsLeft`. The viewer's
 own standing answer is `FactionPolicyState.acceptOwnGifts` (appended; default on) beside
 `openBorders`. A reply is the same row with `kind: "reply"`: `goodsSent` the cargo, `goodsAsked` the
-named return (unrated material lines), `shipperBand` the party's home band, `partyWorkers` the party's. `TransferCrossingState.cause` gains `9` and `10`.
+named return (unrated material lines), `shipperBand` the party's home band, `partyWorkers` the party's.
+`partyBand` (appended; decoded `party_band`) is the waiting party's `BandId` — the `bandId` of its
+`PopulationCohortState` row — on an offer, a reply or an envoy's proposal, `0` on a proposal, a counter
+and a road-carried treaty proposal; the client joins a dealing to its party on it. `TransferCrossingState.cause` gains `9` and `10`.
 
 ## Goodwill — one opinion per ordered pair, kept as its reasons
 
