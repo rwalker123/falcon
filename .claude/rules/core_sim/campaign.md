@@ -2,6 +2,7 @@
 paths:
   - "core_sim/src/{demographics_config,generations,supply,supply_network_config}.rs"
   - "core_sim/src/{sedentarization,sedentarization_config,settlement_stage_config}.rs"
+  - "core_sim/src/{mobility,mobility_config}.rs"
   - "core_sim/src/{wellbeing_config,victory,provinces,start_profile}.rs"
   - "core_sim/src/metrics.rs"
   - "core_sim/src/data/victory_config.json"
@@ -10,8 +11,8 @@ paths:
   - "core_sim/tests/starting_loadout.rs"
   - "core_sim/src/systems/{population,trade,breeding_shed}.rs"
   - "core_sim/src/snapshot/population.rs"
-  - "core_sim/src/data/{demographics_config,supply_network_config,sedentarization_config}.json"
-  - "core_sim/tests/{supply_network,sedentarization,founding_lines,breeding_shed}.rs"
+  - "core_sim/src/data/{demographics_config,supply_network_config,sedentarization_config,mobility_config}.json"
+  - "core_sim/tests/{supply_network,sedentarization,founding_lines,breeding_shed,mobility_score,mobility_override_takes_effect}.rs"
   - "core_sim/src/lineage.rs"
   - "core_sim/src/spoilage.rs"
   - "core_sim/tests/storage_lesson.rs"
@@ -30,6 +31,7 @@ paths:
 | File | Purpose |
 |------|---------|
 | `src/data/sedentarization_config.json` | Sedentarization Score tuning: soft/hard prompt thresholds, EMA `smoothing`, input `weights` (domestication/surplus/resource_density/population/belief), and saturation `references` |
+| `src/data/mobility_config.json` | Mobility Score tuning (strict: required fields, unknown keys refused, no hand `Default`): EMA `smoothing` (**0.95**, in `[0, 1)`), input `weights` (`skills` **0.5**, `distance` **0.5**, finite and `>= 0`), and `references.hexes_per_turn` (**1.0**, `> 0`, equal to `labor_config.json` `band_move_tiles_per_turn` so a band walking every turn at full pace saturates). OPENING VALUES, playtest levers; stageable in the Workbench as the `mobility` kind, env override `MOBILITY_CONFIG_PATH` |
 | `src/data/demographics_config.json` | Demographic population tuning: `initial_distribution` (children/working/elders split), `consumption` (per-capita food draw + per-bracket factors), `startup` (`food_reserve_days` seeded into each band's larder + `well_fed_morale_bonus`), **`keeping`** (how food keeps, #706 — `classes`, each `{ id, shelf_life_turns }`: **`flesh` 4.0**, **`fresh_plant` 8.0**, **`dry` 60.0**; `startup_class` **`dry`**, the class the opening reserve is seeded into; `plant_fallback_class` **`fresh_plant`** / `kill_fallback_class` **`flesh`**, where a take's food lands when no species says. Validated at parse — unique ids, finite positive shelf lives, every named class present — and every fauna/flora species' `keeping` is reconciled against it at boot; see "Food spoils by keeping class" below), `births` (`birth_rate` + the `reserve` stock factor (`bonus`/`saturation_turns`) + the `trend` flow factor (`surplus_gain`/`surplus_saturation`/`deficit_penalty`/`deficit_saturation`); morale-independent), `maturation_rate`/`aging_rate`/`elder_mortality_rate`, `scarcity` (starvation + per-bracket vulnerability, deficit-capped), `lineage.founding_lines` (`L`, **8**, a `NonZeroU16` so `0` is a parse error — how many founding lines a starting band holds; see "Founding lines" below), `lineage.people_per_line` (`K`, **19**, a `NonZeroU16` — how many people one line carries before births stop; an isolated starting band ceilings at `L × K` = 152, pinned above the shipped `band_size` by `demographics_config::tests::the_shipped_starting_band_opens_below_its_breeding_ceiling`; see "The breeding ceiling" below), `lineage.free_breeding_at` (**500** PEOPLE, a `NonZeroU32` — the head-count at which a people breeds freely for good: a people is latched into `FreeBreedingPeoples`, and no population of it is capped again, in the pre-pass of the turn a breeding population opens at it or its own ceiling is at least it and its uncapped births carry it there (that turn's births are uncapped, so the head-count can pass it); before the latch the effective ceiling is `min(shared ceiling, free_breeding_at)`; pinned above the shipped `L × K` by `demographics_config::tests::the_shipped_lone_band_ceiling_sits_below_the_free_breeding_size`, so a lone band opens capped; see "The breeding ceiling" below), `lineage.shed_share` (**0.25**, an `f32` validated in `(0, 1]` at parse: the share of a breeding population's excess over its ceiling that leaves each turn, a PLAYTEST DIAL; see "Shedding above the ceiling" below), `cold` and `heat` (the two temperature tails — `onset_temp` / `mortality_scale` / `max_mortality` plus each tail's own `child_vulnerability` 1.25 / `working_vulnerability` 1.0 / `elder_vulnerability` 1.5, a different ordering from `scarcity`'s; see “The cold/heat death model is PUBLISHED” below for why the two tails differ in all three parameters and why both are calibrated ahead of the map's current range). **This file is the SOLE source of demographics tuning** (#350): `demographics_config.rs` has no hand-written `Default` impls — `DemographicsConfig::default()` parses the builtin JSON, and every field is required with `deny_unknown_fields`, so a missing or unknown key is a parse error rather than a silent fallback to a second set of numbers that can drift (it did: `per_capita_draw` was 0.03 in Rust against 0.16 here). Do not re-add `#[serde(default)]` — the root `Default` parses through serde, so a container-level default would make it recurse. **The loader is strict to match**, and that strictness is no longer demographics-specific: it now lives in the shared `config_load.rs` seam and applies to every boot config (see `.claude/rules/core_sim/config-loading.md`). Strictness without a loud loader would only move the silent substitution one layer out — the whole file instead of one key |
 | `src/data/start_profiles.json` | Campaign initialization. Per profile: `food_modules`, `victory_modes_enabled` (AI tuning is per seat and lives in `sim_ai/data/ai_profiles.json`, not here) and a required, ordered **`archetypes`** array — one entry per kind of people (shipped: `major`, `minor`; `factions.md` → "Start archetypes"). Each archetype carries `id`, `display_label`, `min_separation`, `default_count` and the per-people opening: `starting_units` (`kind`/`count`/`band_size` — major 30, minor 12), `starting_knowledge_tags`, `inventory` — plus the **required** `opening_loadout` block (the minor's is the major's with `kit_defaults` empty; the figures below are the major's): `pickable_materials` (`bone`, `fibre`, `hide`, `wood`, `stone` — the picker's list, in the order it is drawn), `material_defaults` (`bone 2` / `fibre 12` / `hide 6`) and **`kit_defaults`** (`big_game 5` / `trapping 5` / `gathering 7` — one kit per hand on the shipped 30-person band). Together they are the **opening band's** default outfit (load 47 against its ≈ 47 goods allowance), APPLIED after the world-build meal, not suggested; a splinter's default is `split_default_outfit`, not these. ⛔ **There is no budget in this file**: what a band may outfit is its CARRY less its larder (`.claude/rules/core_sim/band-carry.md`), and the retired `material_points` key is **refused at load**, not ignored (`start_profile::the_retired_material_points_key_is_refused`). `StartProfiles::validate_against_materials` rejects a pickable or default naming a material the roster does not carry, and `validate_against_equipment` rejects a `kit_defaults` key the equipment roster does not carry **or one whose `uses` is empty** — both run from `build_headless_app`. Defaults over the band's allowance are fitted at apply (`fit_to_carry`, materials cut before tools); the full rules are `starting-loadout.md` |
 | `src/data/supply_network_config.json` | Supply-network tuning: `reach_tiles` (connection radius, in **hex steps**), `throughput_per_turn` (max goods moved per node/turn), `friction` (fraction lost in transit), `min_transfer_fraction` (the dead-band, as a fraction of the node's own per-capita fair share of that commodity — see "The dead-band is RELATIVE, because one balancer serves food and a bone pile" below) |
@@ -1247,7 +1249,7 @@ transferSent` ledger identity.
 > no kept road, the same reading a connection's lesson takes. Every link is recorded from **both**
 > ends on `SupplyNetworkMembership` (`pooling_links_of`), so each band publishes its own direct links
 > — a chain is not a clique — as `PopulationCohortState.poolingLinks` (`{bandId, distanceTiles,
-> rungId}`, `rungId` the `RouteRungState.rungKey`, `""` for none). What a rung buys is on the rung
+> rungId}`, `rungId` the `LadderRungState.rungKey`, `""` for none). What a rung buys is on the rung
 > table and is not repeated per link.
 >
 > **`supplyNetworkSpanTiles` is the longest link in the band's component** — the same figure at every
@@ -1381,11 +1383,60 @@ lowers the stage silently). The score is exported per-faction in the snapshot
 (`SedentarizationState`, mirroring `factionInventory`) and shown as a HUD meter. Tunables live
 in `data/sedentarization_config.json` (`sedentarization_config.rs`).
 
+**The score is itemized on the wire.** `sedentarization_tick` computes each input's raw points
+once (`100 x weight x norm`, pre-EMA) and builds the raw score as their sum, so the published parts
+add up to it by construction. `SedentarizationEntry` keeps all five (`domestication_points`,
+`surplus_points`, `land_points` for the resource-density term, `population_points`,
+`belief_points`) and `SedentarizationState` publishes them as `domesticationPoints`,
+`surplusPoints`, `landPoints`, `populationPoints` and `beliefPoints` (each appended last, default
+`0`). On a faction's first reading the smoothed `score` is `(1 - smoothing) x` the sum of the five.
+The entry is checkpoint state (`SimState::sedentarization`, `SAVE_FORMAT_VERSION` 43). Pinned by
+`belief_culture::the_tethers_input_points_sum_to_the_raw_score_on_the_encoded_snapshot`.
+
 > **Reframed by the Settlement & Population Economy arc** (`docs/plan_settlement_population.md`):
 > settlements are *derived* from clustered populated tiles + tended improvements (there is no
 > discrete founding), and `SedentarizationScore` becomes an emergent readout of accumulated
 > *tether* rather than a gate. See that design doc for the population/labor/improvement model
 > this score ultimately feeds.
+
+### Mobility
+The roaming counterpart of the Sedentarization Score: a per-faction 0-100 readout of how roaming a
+people is. `mobility_tick` (`mobility.rs`, `TurnStage::Population`, the chain's last system, after
+`advance_band_movement`) computes a **`MobilityScore`** each turn from two normalized inputs, then
+**EMA-smooths** it exactly as sedentarization does (`smoothing` weighs the previous score; a
+faction's first reading starts from zero). There are no stages, thresholds or prompts.
+
+- **skills** = the mean over `roaming_skills::ROAMING_SKILLS` (herd lore, travois, drives) of
+  `clamp(ledger progress / ladder.knowledge.completion_threshold, 0, 1)` for the faction. Partial
+  progress counts; progress past the bar is capped at known.
+- **distance** = the population-weighted mean over the faction's resident bands of
+  `clamp(hexes stepped this turn / references.hexes_per_turn, 0, 1)`. A band that did not step while
+  following a herd counts as 0. The hexes are every one a resident band steps in
+  `advance_band_movement` while following a herd (`LaborAllocation::followed_herd`), whatever the
+  herd's roam state. Herd lore is stricter: the same step teaches it only when the herd is on a
+  `Migrate` leg (`roaming_skills::walks_beside_a_migration`). Distance is not gated that way
+  because a herd loiters 12-22 turns at each ground and the band still walks after it. They are recorded per `BandId` in `HerdFollowSteps`, which `mobility_tick` drains, so it is
+  empty at the end of every turn (derived, not checkpointed).
+
+`raw = 100 x (weights.skills x skills_norm + weights.distance x distance_norm)`; the two raw point
+components (`skills_points`, `distance_points`, pre-EMA) ride beside the score, as `belief_points`
+rides sedentarization's.
+
+**Distance is a rate, not a lifetime total.** A people that stops roaming stops earning it and the
+EMA lets the score fall - the mirror of sedentarization, which a people loses by moving. The high
+`smoothing` (0.95) is for the same reason: migration alternates long loiters with walking legs, and
+the score must remember the legs.
+
+**On the wire and in the checkpoint.** `SubsistenceSection.mobility:[MobilityState]` (`faction`,
+`score`, `skillsPoints`, `distancePoints`; appended last, whole-vector on snapshot and delta),
+**viewer-scoped** like `sedentarization` (the viewer's row only). `MobilityScore` is checkpoint state
+(`SimState::mobility`, `SAVE_FORMAT_VERSION` 42).
+
+Pinned by `tests/mobility_score.rs` (each claim beside a control: a band stepping after a followed
+herd earns distance whether the herd migrates or loiters, and only the migrating step teaches herd
+lore; a band standing in its herd and a band under a plain move order earn none; the published row
+against the resource and a rival's absent) and `tests/mobility_override_takes_effect.rs` (a staged `mobility` override reaches
+the new world's `MobilityConfigHandle`).
 
 ### Civilization Wellbeing (Morale → Discontent → Consequences)
 The three-layer spine **factors → morale → discontent → consequences** (Phase 1). Authoritative

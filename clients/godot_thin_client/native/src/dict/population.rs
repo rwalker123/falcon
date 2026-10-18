@@ -265,6 +265,21 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
         }
     }
     let _ = dict.insert("breeding_peoples", &breeding_peoples);
+    // Culture pressure (#820): each people pulling this band, strongest first (the sim sorts; the
+    // client never re-sorts). `turns_to_next` 0 means no clock is running.
+    let mut culture_pressures = VarArray::new();
+    if let Some(rows) = cohort.culturePressures() {
+        for pressure in rows.iter() {
+            let mut row = VarDictionary::new();
+            let _ = row.insert("faction", i64::from(pressure.faction()));
+            let _ = row.insert("pressure", f64::from(pressure.pressure()));
+            let _ = row.insert("phase", i64::from(pressure.phase()));
+            let _ = row.insert("close", pressure.close());
+            let _ = row.insert("turns_to_next", i64::from(pressure.turnsToNext()));
+            culture_pressures.push(&row.to_variant());
+        }
+    }
+    let _ = dict.insert("culture_pressures", &culture_pressures);
     // Hunting by need (#798): the idle hands the muster takes next turn.
     let _ = dict.insert("idle_mustered", i64::from(cohort.idleMustered()));
     // Hunting by need (#798): the meal a hunt is sized to, per keeping class. A compose sheet reads
@@ -973,6 +988,8 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
             // `""` on every row that is not `extract`, which is every other row kind: nothing else
             // names a material. Always inserted so the entry shape is stable.
             let _ = entry.insert("material", assignment.material().unwrap_or_default());
+            // A tile improvement's crew row: the tile-kind branch id (`""` on every other row).
+            let _ = entry.insert("branch", assignment.branch().unwrap_or_default());
             // **WHICH PLANTS THIS FORAGE CREW CARRIES HOME** (the selective gather) — the species
             // keys the crew is gathering, or an EMPTY array for *"take the whole basket"*, which is
             // the default and byte-identical to every assignment sent before this field existed.
@@ -1201,10 +1218,11 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
                 wire_entry.buildPriority().unwrap_or_default(),
             );
             // **THE SITE'S OWN ADDRESS HALVES** (`docs/plan_site_crews.md` §2.4) — `material` names
-            // a working (`""` for every other kind) and `road` a road build. The tile alone cannot
-            // say either: one hex can hold two workings, or a road and a patch.
+            // a working (`""` for every other kind) and `branch` the ladder branch of a road or
+            // tile build (`""` for every other kind). The tile alone cannot say either: one hex can
+            // hold two workings, or a road and a patch.
             let _ = entry.insert("material", wire_entry.material().unwrap_or_default());
-            let _ = entry.insert("road", wire_entry.road());
+            let _ = entry.insert("branch", wire_entry.branch().unwrap_or_default());
             build_queue.push(&entry.to_variant());
         }
     }
@@ -1573,6 +1591,9 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
             // AUTO-CRAFT QUEUED THIS ORDER (not the player) - the only kind `bench_auto_skip`
             // applies to.
             let _ = row.insert("auto", order.auto());
+            // THE KIT ORDER THIS ORDER IS A PART OF (`bench.kit_orders[].id`); `0` for a plain order.
+            // A kit order's parts are contiguous in this array.
+            let _ = row.insert("kit_order", i64::from(order.kitOrder()));
             bench_orders.push(&row.to_variant());
         }
     }
@@ -1594,6 +1615,22 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
         "lent_to_hunt",
         i64::from(cohort.bench().map_or(0, |b| b.lentToHunt())),
     );
+    // **THE LIVE WHOLE-KIT ORDERS** (#780), oldest first: `id` (what `bench_remove_kit` /
+    // `bench_raise_kit` address), `kit_id`, `kits` (how many kits were ordered) and `done` (items
+    // its FINISHED parts made; a part still queued reports its own `made`). Always inserted (empty
+    // when none) so the entry shape is stable.
+    let mut kit_orders = VarArray::new();
+    if let Some(list) = cohort.bench().and_then(|b| b.kitOrders()) {
+        for kit in list.iter() {
+            let mut row = VarDictionary::new();
+            let _ = row.insert("id", i64::from(kit.id()));
+            let _ = row.insert("kit_id", kit.kitId().unwrap_or(""));
+            let _ = row.insert("kits", i64::from(kit.kits()));
+            let _ = row.insert("done", i64::from(kit.done()));
+            kit_orders.push(&row.to_variant());
+        }
+    }
+    let _ = bench_dict.insert("kit_orders", &kit_orders);
     let _ = dict.insert("bench", &bench_dict);
 
     // **WHAT TO MAKE NEXT, RANKED SIM-SIDE BY WHO IS GOING WITHOUT** (§7 → "Suggestions"). In rank
@@ -1615,6 +1652,10 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
             let _ = row.insert("upcoming_count", suggestion.upcomingCount() as i64);
             let _ = row.insert("expires_in_turns", suggestion.expiresInTurns() as f64);
             let _ = row.insert("lead_turns", suggestion.leadTurns() as i64);
+            // What to CALL it ("Hurdles") and, for a build-material suggestion, why ("for Corral
+            // Wild Boar"); `reason` is `""` for a kit suggestion, whose reason is its workers.
+            let _ = row.insert("display_name", suggestion.displayName().unwrap_or(""));
+            let _ = row.insert("reason", suggestion.reason().unwrap_or(""));
             let mut sources = VarArray::new();
             if let Some(list) = suggestion.sources() {
                 for source in list.iter() {
@@ -1645,6 +1686,64 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
         }
     }
     let _ = dict.insert("craft_suggestions", &craft_suggestions);
+
+    // **WHOLE-KIT ORDERS** (#780): one row per orderable kit (config order). `jobs` are job tokens,
+    // `people` the head count on them. Each item: `workers_per_unit`, `have` (units serving THIS
+    // kit's jobs plus spare units; another job's units never count), `queued` (units the bench owes)
+    // and `recipes` — one per recipe making it: `outputPerPass` and its `inputs` PER PASS with the
+    // bench's material efficiency applied, so the picker's shortage arithmetic is exact over these
+    // terms and `materials_free` below.
+    let mut kit_needs = VarArray::new();
+    if let Some(list) = cohort.kitNeeds() {
+        for need in list.iter() {
+            let mut row = VarDictionary::new();
+            let _ = row.insert("kit_id", need.kitId().unwrap_or(""));
+            let _ = row.insert("display_name", need.displayName().unwrap_or(""));
+            let jobs = need
+                .jobs()
+                .map(crate::dict::strings_to_variant_array)
+                .unwrap_or_default();
+            let _ = row.insert("jobs", &jobs);
+            let _ = row.insert("people", i64::from(need.people()));
+            let mut items = VarArray::new();
+            if let Some(item_list) = need.items() {
+                for item in item_list.iter() {
+                    let mut entry = VarDictionary::new();
+                    let _ = entry.insert("item_id", item.itemId().unwrap_or(""));
+                    let _ = entry.insert("workers_per_unit", i64::from(item.workersPerUnit()));
+                    let _ = entry.insert("have", i64::from(item.have()));
+                    let _ = entry.insert("queued", i64::from(item.queued()));
+                    // `claimed` units the claims on THIS kit asked for; `short` whole units missing on
+                    // them before `queued` nets them (Make Next's own pre-netting count).
+                    let _ = entry.insert("claimed", f64::from(item.claimed()));
+                    let _ = entry.insert("short", i64::from(item.short()));
+                    let mut recipes = VarArray::new();
+                    if let Some(recipe_list) = item.recipes() {
+                        for recipe in recipe_list.iter() {
+                            let mut recipe_row = VarDictionary::new();
+                            let _ = recipe_row.insert("recipe_id", recipe.recipeId().unwrap_or(""));
+                            let _ = recipe_row
+                                .insert("output_per_pass", f64::from(recipe.outputPerPass()));
+                            let _ = recipe_row
+                                .insert("inputs", &material_amounts_to_array(recipe.inputs()));
+                            recipes.push(&recipe_row.to_variant());
+                        }
+                    }
+                    let _ = entry.insert("recipes", &recipes);
+                    items.push(&entry.to_variant());
+                }
+            }
+            let _ = row.insert("items", &items);
+            kit_needs.push(&row.to_variant());
+        }
+    }
+    let _ = dict.insert("kit_needs", &kit_needs);
+    // The stock left after every queued order's claims, one `{material_id, amount}` per material the
+    // band holds or any recipe reads - what a picker's summed recipe inputs are compared with.
+    let _ = dict.insert(
+        "materials_free",
+        &material_amounts_to_array(cohort.materialsFree()),
+    );
 
     // **ONE ROW PER RECIPE, ALWAYS**, and `reason` + `severity` are the contract rather than
     // `available`: "Not needed yet" is a SHRUG and "Short 4.9 bone" is a PROBLEM, and a client
@@ -1690,6 +1789,9 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
             // The Make/Queue button's gate: every craft the recipe needs is known. Materials and
             // tools do not gate it — `available` is "a pass can run now".
             let _ = row.insert("queueable", offer.queueable());
+            // The material id a stock recipe makes (`hurdles`), `""` for equipment - the join key
+            // onto a craft suggestion whose `item_id` names a material.
+            let _ = row.insert("output_material_id", offer.outputMaterialId().unwrap_or(""));
             craft_offers.push(&row.to_variant());
         }
     }
@@ -2102,6 +2204,23 @@ fn drawn_inputs_to_array(
             let mut row = VarDictionary::new();
             let _ = row.insert("material_id", input.materialId().unwrap_or(""));
             let _ = row.insert("amount", input.amount() as f64);
+            array.push(&row.to_variant());
+        }
+    }
+    array
+}
+
+/// **AN AMOUNT OF EACH OF SEVERAL MATERIALS** — `{material_id, amount}` rows, the shape a kit
+/// recipe's per-pass `inputs` and the band's `materials_free` share.
+fn material_amounts_to_array(
+    amounts: Option<Vector<'_, ForwardsUOffset<fb::MaterialAmount<'_>>>>,
+) -> VarArray {
+    let mut array = VarArray::new();
+    if let Some(list) = amounts {
+        for amount in list.iter() {
+            let mut row = VarDictionary::new();
+            let _ = row.insert("material_id", amount.materialId().unwrap_or(""));
+            let _ = row.insert("amount", f64::from(amount.amount()));
             array.push(&row.to_variant());
         }
     }

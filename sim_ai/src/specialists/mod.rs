@@ -110,11 +110,13 @@ impl Cost {
                     target_y.unwrap_or_default(),
                     fauna_id.as_deref().unwrap_or_default(),
                 )),
-                CommandPayload::Cultivate {
-                    target_x, target_y, ..
-                }
-                | CommandPayload::Sow {
-                    target_x, target_y, ..
+                // A `build` on a bare tile declares on the patch the band forages there.
+                CommandPayload::BuildRung {
+                    target_x: Some(target_x),
+                    target_y: Some(target_y),
+                    band_id: None,
+                    material: None,
+                    ..
                 } => rows.push(row_key(
                     band_id,
                     food::ROLE_FORAGE,
@@ -239,10 +241,15 @@ mod tests {
             labor("hunt", None, None, Some("herd_1")),
             labor("builders", None, None, None),
             labor("forage", Some(4), Some(2), None),
-            CommandPayload::Cultivate {
+            CommandPayload::BuildRung {
                 faction_id: 1,
-                target_x: 6,
-                target_y: 1,
+                band_id: None,
+                verb: "cultivate".to_owned(),
+                target_x: Some(6),
+                target_y: Some(1),
+                herd_id: None,
+                material: None,
+                branch: None,
             },
             CommandPayload::MoveBand {
                 faction_id: 1,

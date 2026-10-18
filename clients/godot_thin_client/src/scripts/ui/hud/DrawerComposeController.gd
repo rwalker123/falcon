@@ -1712,7 +1712,7 @@ func _wordless_take_model(notes: Array[String]) -> Dictionary:
 func _mount_take_chips(target: VBoxContainer, basket: Array[Dictionary],
         selection: PackedStringArray, single_pick: bool,
         crop_is_default: bool, crop_rung: String, rebuild: Callable,
-        ground_committed: String, rung_percent: int) -> void:
+        ground_committed: String, rung_percent: int, offsite_label: String = "") -> void:
     if basket.is_empty():
         return
     var committed := ground_committed if ground_committed != "" else _compose.forage_species()
@@ -1743,6 +1743,10 @@ func _mount_take_chips(target: VBoxContainer, basket: Array[Dictionary],
     # nothing draws in. `""` is the whole of the forage answer now (`_take_consequence_note`).
     var consequence := _take_consequence_note(single_pick, crop_is_default, crop_rung, committed,
         basket, ground_committed != "", rung_percent)
+    # Off the sites the crop IS picked (the default is a pick), and this order raises the farm of it.
+    if offsite_label != "" and ground_committed == "" and committed != "":
+        consequence = HudFloraVocab.OFFSITE_CREW_LINE_FORMAT % [offsite_label,
+            _take_display_name(committed, basket)]
     if consequence != "":
         block.add_child(HudWidgets.alloc_hint_label(consequence))
     # **THE IDLE WARNING IS NOT WRITTEN HERE, AND NOT BECAUSE IT WAS DROPPED.** It is the crew
@@ -2259,8 +2263,7 @@ func _build_improvement_control(kind: String, source: Dictionary, prefix: String
     # DONE — the highest rung this source has actually built, as a state label. Highest first, for the
     # reason the work board's rung mark tests highest first: a Field is ALSO cultivated and a penned
     # herd is ALSO fully tamed, so testing the lower rung first would collapse the distinction.
-    var ladder: Array = SourceForecast.FORAGE_IMPROVEMENTS if kind == SourceForecast.LABOR_KIND_FORAGE \
-        else SourceForecast.HUNT_IMPROVEMENTS
+    var ladder: Array = SourceForecast.improvement_ladder(source, prefix)
     for i in range(ladder.size() - 1, -1, -1):
         var rung := String(ladder[i])
         if not SourceForecast.improvement_is_done(source, prefix, rung):
@@ -2271,7 +2274,8 @@ func _build_improvement_control(kind: String, source: Dictionary, prefix: String
         break
     # OFFERED — the ONE rung on offer, ordered by `RungGates` so the sheet, the work board and the map
     # can never disagree about which rung is next. Renders BENEATH a done label when there is one.
-    var offer := RungGates.next_rung_offered(kind, source, composed, _player_knowledge(), prefix)
+    var offer := RungGates.next_rung_offered(kind, RungGates.seen_by_band(source, band), composed,
+        _player_knowledge(), prefix)
     if offer.is_empty():
         return
     var rung := String(offer["policy"])
@@ -2337,7 +2341,8 @@ func _build_improvement_control(kind: String, source: Dictionary, prefix: String
     # the same `track < KNOWLEDGE_COMPLETE` test the gate builders make, asked structurally rather
     # than by matching the reason's words; the builders append the knowledge reason FIRST on both
     # webs, so `size() == 1` under an unmet gate is exactly "the knowledge reason, alone".
-    if reasons.size() == 1 and RungGates.knowledge_gate_unmet(rung, _player_knowledge()):
+    if reasons.size() == 1 and RungGates.knowledge_gate_unmet(
+            RungQuotes.quote_of_verb(source, prefix, rung), _player_knowledge()):
         return
     if not reasons.is_empty():
         target.add_child(HudWidgets.build_improvement_control(rung,
@@ -2505,8 +2510,7 @@ func _mount_declared_control(source: Dictionary, prefix: String, source_kind: St
 ## and it is the only rung the note's own words can be said of ("Too depleted to PEN"): a plant rung
 ## paying zero is a different sentence, and this note must not start speaking it.
 func _pen_rung_pays_nothing(deal: Dictionary, band: Dictionary) -> bool:
-    if deal.is_empty() \
-            or String(deal["improvement"]) != SourceForecast.IMPROVEMENT_CORRAL:
+    if deal.is_empty() or not bool(deal.get("enclosing", false)):
         return false
     var output := float(band.get("output_multiplier", SourceForecast.OUTPUT_FULL))
     return float(deal["payoff"]) * output < SourceForecast.FOOD_FLOW_MIN
@@ -2545,7 +2549,7 @@ func _improvement_running_tooltip(improvement: String) -> String:
 func _improvement_done_face(source: Dictionary, prefix: String, rung: String,
         band: Dictionary) -> String:
     var glyph := FoodIcons.for_policy(rung)
-    var noun := String(HudComposeVocab.IMPROVEMENT_DONE_LABELS.get(rung, rung.capitalize()))
+    var noun := DetailFormat.improvement_done_noun(rung, source, prefix)
     return HudComposeVocab.IMPROVEMENT_DONE_FORMAT % [glyph, noun]
 
 ## **THE RUNG THE READOUT'S DEAL BLOCK QUOTES** — the composed verb while a build is in flight, else
@@ -3195,7 +3199,7 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
     chart_model = SourceForecast.floor_chart_model(_hunt_priced_herd(herd, band),
         SourceForecast.SOURCE_KIND_HERD,
         HudComposeVocab.BARE_FORECAST_PREFIX, _compose.hunt_floor(), _compose.hunt_count(), crew_label.to_lower(), lesson_known,
-        crew_take)
+        crew_take, SourceForecast.WHOLE_CREW_TAKES, _player_knowledge())
     if bool(chart_model.get("known", false)):
         # **THE DRAG'S REFILL, PUBLISHED RATHER THAN INLINE.** A forecast answer landing mid-drag has
         # to reach these hosts too — it is the whole point of asking during the drag — and the seam's
@@ -3212,7 +3216,7 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
                 _hunt_priced_herd(_live_herd(herd_id, herd), band),
                 SourceForecast.SOURCE_KIND_HERD,
                 HudComposeVocab.BARE_FORECAST_PREFIX, floor, _compose.hunt_count(), crew_label.to_lower(), lesson_known,
-                _hunt_live_crew_take),
+                _hunt_live_crew_take, SourceForecast.WHOLE_CREW_TAKES, _player_knowledge()),
                 _compose.hunt_count())
         target.add_child(HudWidgets.build_floor_chart(chart_model,
             func(floor: float, committed: bool) -> void:
@@ -3318,7 +3322,7 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
     # helper — a sub-gate party kills nothing at any headcount and still takes casualties, which reads
     # as a bug unexplained, and it is the honesty line a `none` kit depends on.
     if SourceForecast.is_fought(engage_rate,
-            bool(herd.get(SourceForecast.SOURCE_CORRALLED_KEY, false))):
+            RungQuotes.is_enclosed(herd)):
         var quarry := _herd_label_for_id(herd_id)
         # **IT IS ASKED AT THE SELECTED KIT'S EFFECTIVE ATTACK, NOT THE BAND'S DEFAULT-KIT TIER.** The
         # picker one row up decides what these hunters carry, so a gate quoting the band's default kit
@@ -3658,16 +3662,13 @@ func _forage_floor_takes(tile_info: Dictionary, band: Dictionary) -> Dictionary:
 ## `can_sow` = "can this plant ever climb this rung"). `share` answers the other question — whether a
 ## legal crop is a WISE one here — and it must never disable anything.
 func _flora_entry_allows(entry: Dictionary, policy: String) -> bool:
-    if policy == HudConst.LABOR_POLICY_SOW:
-        return bool(entry.get("can_sow", false))
-    return bool(entry.get("can_cultivate", false))
+    return RungQuotes.entry_can_climb(entry, policy)
 
 ## What committing this entry under `policy` pays relative to gathering it wild. `FLORA_CROP_RATIO_NONE`
 ## on a rung the species cannot climb — the sentinel, never printed as a number.
 func _flora_entry_ratio(entry: Dictionary, policy: String) -> float:
-    if policy == HudConst.LABOR_POLICY_SOW:
-        return float(entry.get("sow_yield_ratio", SourceForecast.FLORA_CROP_RATIO_NONE))
-    return float(entry.get("cultivate_yield_ratio", SourceForecast.FLORA_CROP_RATIO_NONE))
+    return float(RungQuotes.entry_quote(entry, policy).get(RungQuotes.KEY_YIELD_RATIO,
+        SourceForecast.FLORA_CROP_RATIO_NONE))
 
 ## The FODDER (hay) this entry would pay per turn under `policy` — >0 marks a crop whose vector feeds
 ## animals. `FLORA_CROP_RATIO_NONE` (0) where the vector pays no fodder or the plant cannot climb this
@@ -3677,9 +3678,8 @@ func _flora_entry_ratio(entry: Dictionary, policy: String) -> float:
 ## unconditionally — a *Field* payoff — so the Cultivate row stated what a sown field would pay, on a
 ## rung that pays a drawn-down MSY skim off a merely-weeded basket. The sim ships both rungs' figures.
 func _flora_entry_fodder_payoff(entry: Dictionary, policy: String) -> float:
-    if policy == HudConst.LABOR_POLICY_SOW:
-        return float(entry.get("sow_fodder_payoff", SourceForecast.FLORA_CROP_RATIO_NONE))
-    return float(entry.get("cultivate_fodder_payoff", SourceForecast.FLORA_CROP_RATIO_NONE))
+    return float(RungQuotes.entry_quote(entry, policy).get(RungQuotes.KEY_FODDER_PAYOFF,
+        SourceForecast.FLORA_CROP_RATIO_NONE))
 
 ## **WHAT THIS CROP PAYS PER TURN, PER MATERIAL, under `policy`** (arc #527) — the replacement for the
 ## retired trade scalar, and deliberately NOT a restoration of it: `[{material_id, amount}]`, one row
@@ -3694,9 +3694,8 @@ func _flora_entry_fodder_payoff(entry: Dictionary, policy: String) -> float:
 ## **EMPTY IS "THIS PLANT PAYS NO MATERIAL", WHICH IS A REAL ANSWER** — the caller renders no clause,
 ## never a `0.00`, which would read as a cash crop that pays badly.
 func _flora_entry_material_payoff(entry: Dictionary, policy: String) -> Array:
-    if policy == HudConst.LABOR_POLICY_SOW:
-        return entry.get("sow_material_payoff", []) as Array
-    return entry.get("cultivate_material_payoff", []) as Array
+    return SourceForecast.material_payoff_rows(
+        RungQuotes.entry_quote(entry, policy).get(RungQuotes.KEY_MATERIAL_PAYOFF, []))
 
 ## The rung noun the payoff tooltips name — "a tended patch" under Cultivate, "a sown field" under Sow.
 ## These payoffs are per-rung, so a tooltip that named the wrong rung would restate the very bug the
@@ -3736,9 +3735,7 @@ func _flora_row_face(crop_name: String, percent: int, ratio: float, fodder: floa
 ## the same units and output-multiplier convention as the forecast `payoff` it replaces. 0 (never
 ## substituted) on a rung the species cannot climb.
 func _flora_entry_payoff(entry: Dictionary, policy: String) -> float:
-    if policy == HudConst.LABOR_POLICY_SOW:
-        return float(entry.get("sow_payoff", 0.0))
-    return float(entry.get("cultivate_payoff", 0.0))
+    return float(RungQuotes.entry_quote(entry, policy).get(RungQuotes.KEY_FOOD_PAYOFF, 0.0))
 
 ## The "then <X>" terms for a plant rung, with the patch's species-BLIND payoff replaced by the
 ## SELECTED crop's own. Without this the deal's payoff term quotes one number no matter which crop is
@@ -3823,7 +3820,7 @@ func _crop_payoff_terms(tile_info: Dictionary, entries: Array[Dictionary], speci
 ## nothing and accepting the default behave identically. Returns "" (send nothing, still valid) for a
 ## non-committing rung, an already-committed patch, or a basket with no legal plant.
 func _resolve_crop_selection(entries: Array[Dictionary], policy: String, committed: bool, picked: String) -> String:
-    if committed or not (policy in SourceForecast.FORAGE_IMPROVEMENTS):
+    if committed or policy == SourceForecast.IMPROVEMENT_NONE:
         return ""
     var default_species := ""
     for entry in entries:
@@ -3988,8 +3985,11 @@ func _build_forage_assign_controls(tile_info: Dictionary, target: VBoxContainer)
     # one sheet. Note it takes `tile_info`, NOT `composed_improvement`: a build in flight keeps the
     # wild noun (see that function).
     var crew_label := HudFormat.plant_crew_label(tile_info, HudComposeVocab.FORAGE_FORECAST_PREFIX)
+    # **OFF THE GATHERING SITES THE CROP IS THE COMMIT**: the server takes a forage crew there only with a
+    # crop named, so the chips are single-pick against the placing rung and the button carries it.
+    var offsite_verb := "" if is_committed else DetailFormat.offsite_crop_verb(tile_info)
     var crop_rung := composed_improvement if composed_improvement != SourceForecast.IMPROVEMENT_NONE \
-        else String(RungGates.next_rung_offered(SourceForecast.LABOR_KIND_FORAGE, tile_info,
+        else offsite_verb if offsite_verb != "" else String(RungGates.next_rung_offered(SourceForecast.LABOR_KIND_FORAGE, tile_info,
             composed_improvement, _player_knowledge(),
             HudComposeVocab.FORAGE_FORECAST_PREFIX).get("policy", ""))
     _compose.resolve_forage_species(func(current: String) -> String:
@@ -4097,7 +4097,8 @@ func _build_forage_assign_controls(tile_info: Dictionary, target: VBoxContainer)
         _forage_priced_patch(take_tile, band),
         SourceForecast.SOURCE_KIND_FORAGE, HudComposeVocab.FORAGE_FORECAST_PREFIX,
         _compose.forage_floor(), _compose.forage_count(),
-        crew_label.to_lower(), lesson_known, [], _kept_take_crew(kept, _compose.forage_count())),
+        crew_label.to_lower(), lesson_known, [], _kept_take_crew(kept, _compose.forage_count()),
+        _player_knowledge()),
         kept)
     if bool(chart_model.get("known", false)):
         # The plant twin of the hunt sheet's published refill, and it exists for the narrower half of
@@ -4115,7 +4116,8 @@ func _build_forage_assign_controls(tile_info: Dictionary, target: VBoxContainer)
                     _live_tile_info(subject_key, tile_info), take_state), band),
                 SourceForecast.SOURCE_KIND_FORAGE,
                 HudComposeVocab.FORAGE_FORECAST_PREFIX, floor, _compose.forage_count(), crew_label.to_lower(),
-                lesson_known, [], _kept_take_crew(kept, _compose.forage_count())), kept),
+                lesson_known, [], _kept_take_crew(kept, _compose.forage_count()),
+                _player_knowledge()), kept),
                 _compose.forage_count())
         target.add_child(HudWidgets.build_floor_chart(chart_model,
             func(floor: float, committed: bool) -> void:
@@ -4180,14 +4182,15 @@ func _build_forage_assign_controls(tile_info: Dictionary, target: VBoxContainer)
     #
     # It mounts BELOW the kit row and ABOVE the improvement control, so the sheet reads
     # band → floor → crew → kit → what we carry home → what we are building → the terms.
-    var single_pick := composed_improvement != SourceForecast.IMPROVEMENT_NONE
+    var single_pick := composed_improvement != SourceForecast.IMPROVEMENT_NONE or offsite_verb != ""
     _mount_take_chips(target, basket, take_selection, single_pick,
         crop_is_default, crop_rung,
         func() -> void:
             _build_forage_assign_controls(_live_tile_info(subject_key, tile_info), target),
         committed_species if is_committed else "",
         HudFormat.progress_percent(SourceForecast.improvement_progress(tile_info,
-            HudComposeVocab.FORAGE_FORECAST_PREFIX, crop_rung)))
+            HudComposeVocab.FORAGE_FORECAST_PREFIX, crop_rung)),
+        DetailFormat.offsite_crop_label(tile_info) if offsite_verb != "" else "")
     # **THE WORK PARTY, PAST THE APRON** — the hunt sheet's section on the plant web, asked with the
     # take selection the chips above just stated (empty = the whole basket), so narrowing the take
     # re-prices what arrives home. It is AFTER the chips because the take is part of its question.
@@ -4212,7 +4215,7 @@ func _build_forage_assign_controls(tile_info: Dictionary, target: VBoxContainer)
     # beneath it are read first and the terms they buy immediately after. Nothing is offered on an
     # UNASSIGN: what abandoning costs is already on the card in the rung's own hint ("It must stay
     # staffed or it goes feral"), so a second warning here would state one fact twice.
-    if not is_unassign:
+    if not is_unassign and offsite_verb == "":
         # **THE CROP PICKER IS NOT HERE ANY MORE** (`docs/plan_standing_upkeep.md` §4.7a ③). It rode
         # beneath the box on the reasoning that which crop the rung commits to is part of the same
         # decision — and the decision left this sheet, so the crop went with it to the job's own BUILD
@@ -4298,9 +4301,15 @@ func _build_forage_assign_controls(tile_info: Dictionary, target: VBoxContainer)
     # `Tend` for tenders — keyed off the ONE resolved label, exactly as the hunt web's noop hint is.
     assign_btn.set_meta(HudWidgets.COMPOSE_COMMIT_META, true)
     assign_btn.text = HudComposeVocab.UNASSIGN_BUTTON if is_unassign \
+        else HudFloraVocab.OFFSITE_COMMIT_FORMAT % [offsite_verb.capitalize(),
+            DetailFormat.offsite_crop_label(tile_info)] if offsite_verb != "" \
         else String(HudComposeVocab.PLANT_ASSIGN_BUTTONS.get(crew_label, ""))
     HudStyle.apply_button(assign_btn, "primary")
-    assign_btn.disabled = is_noop
+    # Off the sites a crew with no crop to name is a refused command, so the button waits for one.
+    var needs_crop := offsite_verb != "" and _compose.forage_species() == ""
+    assign_btn.disabled = is_noop or needs_crop
+    if needs_crop and not is_noop:
+        assign_btn.tooltip_text = HudFloraVocab.OFFSITE_NEEDS_CROP_HINT
     # A greyed commit says why on its own hover too — the noop hint, whichever note the sheet printed.
     if is_noop:
         assign_btn.tooltip_text = String(HudComposeVocab.PLANT_NOOP_HINTS.get(crew_label, ""))
@@ -4617,7 +4626,7 @@ func _compose_anchor_rect() -> Rect2:
 ## the button can never open an empty sheet. (A workable patch is live state — redacted on a
 ## remembered hex like its occupants — and there must be a player band to staff it.)
 func _forage_compose_available(tile_info: Dictionary) -> bool:
-    return DetailFormat.tile_is_gathering_site(tile_info) \
+    return DetailFormat.tile_is_workable(tile_info) \
         and not _resolve_assign_band().is_empty() \
         and not _selectioncard.tile_contents_unseen(tile_info)
 
@@ -4700,9 +4709,13 @@ func open_forage_compose(tile_info: Dictionary) -> void:
         subject = HudFormat.food_module_label(String(tile_info.get("food_module", "")))
     # The eyebrow names the crew the sheet is about to staff, through the SAME resolver the stepper
     # inside it uses — `ASSIGN FORAGERS` on wild ground, `ASSIGN TENDERS` on a Tended Patch or a Field.
+    var offsite_label := "" if String(tile_info.get("patch_committed_species", "")).strip_edges() != "" \
+        else DetailFormat.offsite_crop_label(tile_info)
+    var eyebrow := HudFloraVocab.OFFSITE_SHEET_EYEBROW_FORMAT % offsite_label if offsite_label != "" \
+        else HudComposeVocab.COMPOSE_SHEET_EYEBROW_FORMAT % HudFormat.plant_crew_label(
+            tile_info, HudComposeVocab.FORAGE_FORECAST_PREFIX).to_lower()
     var content := _compose_sheet.open(
-        HudComposeVocab.COMPOSE_SHEET_EYEBROW_FORMAT % HudFormat.plant_crew_label(
-            tile_info, HudComposeVocab.FORAGE_FORECAST_PREFIX).to_lower(),
+        eyebrow,
         subject, _compose.subject(), _compose_anchor_rect())
     _build_forage_assign_controls(tile_info, content)
     refresh_drawer_actions()
@@ -4771,7 +4784,7 @@ func _hunt_curve_herd_terms(herd_id: String) -> String:
     var herd := _live_herd(herd_id, _band_labor.find_world_herd(herd_id))
     return ":%s:%f:%f:follow=%s" % [
         String(herd.get(SourceForecast.FORECAST_CURRENT_RUNG_KEY, "")),
-        float(herd.get("domestication", 0.0)), float(herd.get("biomass", 0.0)),
+        RungQuotes.domestication_progress(herd), float(herd.get("biomass", 0.0)),
         str(_hunt_curve_follows(herd_id))]
 
 ## **HUNTING BY NEED ASKS A DIFFERENT QUESTION** (#798): ticked on a migratory herd, the curve is priced
@@ -5128,7 +5141,7 @@ func _clear_forage_drawer() -> void:
 func build_herd_drawer_actions(herd: Dictionary) -> void:
     if _herd_assign_controls == null:
         return
-    var corralled := bool(herd.get("corralled", false))
+    var corralled := RungQuotes.is_enclosed(herd)
     var available := _herd_compose_available(herd)
     # A penned herd always offers Extend-pen, even if it is no longer huntable — so the container
     # stays visible for a pen OR a composable herd.
@@ -6465,7 +6478,7 @@ func _standing_summary_model(assignment: Dictionary, kind: String, noun: String,
     var m := assignment.duplicate()
     m["has_yield"] = assignment.has("actual_yield")
     var readout := SourceForecast.source_yield_readout(m, kind,
-        _overstaff_note_ceiling(assignment, kind))
+        _overstaff_note_ceiling(assignment, kind), noun.to_lower())
     var floor := float(assignment.get("floor", SourceForecast.DEFAULT_HARVEST_FLOOR))
     var mark := HudDepositVocab.floor_mark(working, floor) \
         if kind == HudConst.LABOR_KIND_EXTRACT \

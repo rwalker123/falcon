@@ -76,6 +76,10 @@ const GATE_REASON_WILD_FODDER_FORMAT := "Hay stays in the field: " + FODDERING_N
 # `Tame` VERB (glyph %s), not "Sustain-hunt this Thriving herd": since slice 3a, Sustain tames
 # nothing. That correction is the single most load-bearing copy fix in this slice — the old sentence
 # is the exact hidden rule the arc exists to kill.
+## The catalog-driven forms a rung with no hand-written sentence reads through (issue #175): the craft
+## by its knowledge id, and the rung beneath by its catalog name.
+const GATE_REASON_KNOWLEDGE_FALLBACK_FORMAT := "Your people know %s %d%% — %s keep working this source to learn it"
+const GATE_REASON_RUNG_BELOW_FALLBACK_FORMAT := "The %s is %d%% raised — %s finish it first"
 const GATE_REASON_HERD_DOMESTICATED_FORMAT := "This herd is %d%% tamed — %s Tame it to finish"
 
 # **THE TWO REFUSALS THAT NAME NO REMEDY, because there is not one** — the destination picker's, and
@@ -92,6 +96,12 @@ const GATE_REASON_SPECIES_NEVER_TAMED := "This animal will never be tamed — no
 
 const GATE_REASON_SPECIES_NEVER_PENNED := "This animal will never be penned — no craft and no work changes that."
 
+## The outright-bar sentence per shipped verb, and the catalog-driven form for any other rung (issue #175).
+const GATE_REASON_NEVER_BY_RUNG := {
+    "tame": GATE_REASON_SPECIES_NEVER_TAMED,
+    "corral": GATE_REASON_SPECIES_NEVER_PENNED,
+}
+const GATE_REASON_SPECIES_NEVER_FALLBACK_FORMAT := "This animal will never reach a %s — no craft and no work changes that."
 const GATE_REASON_CROP_CANNOT_CLIMB_FORMAT := "Nothing growing here can be taken to a %s."
 
 # …and the one a DESTINATION earns from a rung BELOW it. A climb lays every leg between where the
@@ -171,9 +181,22 @@ const SOW_REFUSAL_NOT_GATHERING_SITE := "not_gathering_site"
 
 const SOW_REFUSAL_TOO_DRY := "too_dry"
 
+# The server's verdict for ground a LESSON would open: a placing rung whose `site_relaxations` name a
+# lesson this people has not learned. It reads like the other refusals but names the lesson, which the
+# gate layer composes from the quote's own relaxation rather than from this table.
+const SOW_REFUSAL_NEEDS_LESSON := "needs_lesson"
+const SOW_NEEDS_LESSON_FORMAT := "Off your gathering sites — learn %s to farm ground like this."
+
+# The tile card's teaching line for such ground, and its key. `Learn Worked Land — work a farm`.
+const SITE_LESSON_ROW := "Farming"
+const SITE_LESSON_FORMAT := "Learn %s"
+const SITE_LESSON_TEACHER_FORMAT := "Learn %s — work a %s"
+
 const SOW_REFUSAL_TOO_POOR_AND_TOO_DRY := "too_poor_and_too_dry"
 
 const SOW_REFUSAL_REASONS := {
+    # The one animal-web key: a herd is penned by one band at a time (`RungQuotes.SITE_REFUSAL_PEN_TAKEN`).
+    "pen_taken": "Another band is already penning this herd",
     "not_gathering_site": "Nobody gathers this ground — your people cannot sow land they do not already work. Sow where they gather, or move a band to ground they can.",
     "too_poor": "This ground is too thin to take a crop — your people can carry seed, but not yet feed the soil. Look to the river valleys, until they learn to work poorer land.",
     "too_dry": "This ground is rich but too dry to farm — your people can carry seed, but not yet carry water to it. Sow beside fresh water, until they learn to bring it here.",
@@ -204,7 +227,7 @@ const SOW_REFUSAL_FALLBACK := "This ground will not take seed — your people ca
 # may stand on ground that was never tended. "Sowing N%" follows the pen's "Building N%" / the fence's
 # "Fencing N%" build-verb convention; the completed badge is a Field — deliberately a different WORD
 # and a different glyph from "🌾 Tended Patch", because rung 3 is a different thing, not a bigger number.
-const FIELD_ROW := "Field"
+const FIELD_ROW := "Farm"
 
 # One plant's row within the basket — `Wild Grain 45%`. Shared with the crop picker, which prints its
 # own rows with it too (beside the `· N.N×` payoff term the picker adds).
@@ -275,11 +298,11 @@ const FLORA_CROP_NO_SOW_FORMAT := "%s cannot be sown — its seed is not yours t
 # and FLORA_CROP_STRONG_RATIO is the honest middle — worth doing, not worth celebrating.
 const FLORA_CROP_STRONG_RATIO := 1.5
 
-const FLORA_CROP_LOSS_TOOLTIP_FORMAT := "%s yields %.1f× what gathering this tile wild does — it loses to simply gathering here."
+const FLORA_CROP_LOSS_TOOLTIP_FORMAT := "%s: %.1f× wild gathering · ⚠ worse than gathering"
 
-const FLORA_CROP_MODEST_TOOLTIP_FORMAT := "%s yields %.1f× what gathering this tile wild does — worth committing to."
+const FLORA_CROP_MODEST_TOOLTIP_FORMAT := "%s: %.1f× wild gathering · worth it"
 
-const FLORA_CROP_STRONG_TOOLTIP_FORMAT := "%s yields %.1f× what gathering this tile wild does — strong ground for it."
+const FLORA_CROP_STRONG_TOOLTIP_FORMAT := "%s: %.1f× wild gathering · strong"
 
 # ---- THE ROW FACE: ONE PLANT, EVERY ACCOUNT IT PAYS (issue #419, arc #527) -----------------------
 # A crop row is BUILT, not picked from a menu of whole-row formats. It used to be three mutually
@@ -369,13 +392,13 @@ const FLORA_CROP_MATERIAL_CLAUSE_FORMAT := " · %.2f %s"
 # `%s` is the RUNG's own noun, because these payoffs are per-rung: a tended patch and a sown field pay
 # different amounts from different baskets, and a tooltip naming the wrong one is how the Cultivate
 # row came to quote a Field's figures. Fed by FLORA_CROP_RUNG_NOUNS.
-const FLORA_CROP_FODDER_TOOLTIP_FORMAT := "%s pays %.2f fodder/turn as %s — feed for penned animals, not food for people."
+const FLORA_CROP_FODDER_TOOLTIP_FORMAT := "%s: +%.2f fodder/turn · not food"
 
 # ONE LINE PER MATERIAL, for the same reason the face carries one clause per material. `%s` order is
 # crop, amount, material, rung noun. It says "for your crafters" rather than "for your stockpile"
 # because that is the concrete difference the arc bought: a material is worked at a bench into
 # something, where a trade good only ever sat in a pile nothing could read.
-const FLORA_CROP_MATERIAL_TOOLTIP_FORMAT := "%s pays %.2f %s/turn as %s — a material for your crafters, not food for people."
+const FLORA_CROP_MATERIAL_TOOLTIP_FORMAT := "%s: +%.2f %s/turn · not food"
 
 # The rung's noun for the tooltips above, keyed by the composing policy. A payoff quoted on the
 # Cultivate rung describes A TENDED PATCH; only the Sow rung describes a sown field.
@@ -655,3 +678,13 @@ const TAKE_UNQUOTED_NOTE := "This selection is not priced yet — no take is quo
 # `compositionMaterialPerBiomass` publishes it per plant, and the sheet composes it per MATERIAL ID
 # through the same weighted mean the two scalars take, so *tick cotton, see how much fibre* — the
 # case the whole feature was argued on — is answered with a real number.
+
+## Hover on the commit button off the gathering sites when no crop can be named: the server takes a
+## crew there only for a crop it can raise a farm of.
+## Off the gathering sites THIS order starts the farm: the sheet's header, its commit and the one line
+## under the crop chips. `%s` is the placing rung's lowercased name (`farm`) / the picked crop's name.
+const OFFSITE_SHEET_EYEBROW_FORMAT := "Raise a %s"
+const OFFSITE_COMMIT_FORMAT := "%s %s"
+const OFFSITE_CREW_LINE_FORMAT := "The crew will raise a %s of %s here."
+const OFFSITE_NEEDS_CROP_HINT := "Pick a crop to sow - a crew works ground like this only to raise a farm."
+

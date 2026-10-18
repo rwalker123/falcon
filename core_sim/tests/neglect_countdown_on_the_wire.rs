@@ -18,10 +18,11 @@
 
 use bevy::app::App;
 use bevy::ecs::system::RunSystemOnce;
+use core_sim::shipped;
 
 use core_sim::{
     advance_husbandry, build_test_app, recapture_snapshot_in_place, FaunaConfigHandle,
-    HerdRegistry, LadderConfigHandle, RungKey, SnapshotHistory,
+    HerdRegistry, LadderConfigHandle, SnapshotHistory,
 };
 
 /// **The species the fixture reshapes its herd into** — a roster row that will actually tame
@@ -94,7 +95,7 @@ fn shed_grace(app: &App) -> u32 {
     app.world
         .resource::<LadderConfigHandle>()
         .get()
-        .rung(RungKey::AnimalPastoral)
+        .rung(shipped::animal_pastoral())
         .upkeep_grace_turns()
 }
 

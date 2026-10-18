@@ -15,6 +15,7 @@
 //!
 //! The harness mirrors `supply_network.rs`, which owns the pooling half of this fixture shape.
 
+use core_sim::shipped;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use bevy::app::App;
@@ -31,7 +32,7 @@ use core_sim::{
     EquipmentConfigHandle, FactionId, FactionInventory, GenerationId, GenerationRegistry,
     LaborAllocation, LaborConfigHandle, LaborTarget, LadderConfig, LadderConfigHandle, LocalStore,
     MapPresets, MapPresetsHandle, MoraleCause, PopulationCohort, ResidentBand, Road, RoadKeeper,
-    RoadRegistry, RouteTrafficLog, RungKey, Scalar, Sighting, SimulationConfig, SimulationTick,
+    RoadRegistry, RouteTrafficLog, RungId, Scalar, Sighting, SimulationConfig, SimulationTick,
     SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle, StartLocation, StartProfileKnowledgeTags,
     StartProfileKnowledgeTagsHandle, SupplyNetworkConfigHandle, SupplyNetworkMembership, Tile,
     TileRegistry, FOOD, FULL_TIE, NEAR_ENOUGH_TO_KEEP, NO_UPKEEP_DEMAND, PAVING_DISCOVERY_ID,
@@ -88,6 +89,8 @@ fn spawn_world() -> App {
         .insert_resource(SupplyNetworkMembership::default());
     app.world.insert_resource(ConnectionLedger::default());
     app.world.insert_resource(RoadRegistry::default());
+    app.world
+        .insert_resource(core_sim::TileImprovementRegistry::default());
     app.world.insert_resource(RouteTrafficLog::default());
     app.world.insert_resource(LadderConfigHandle::default());
     // The keeping pass resolves the road keepers' kit off the roster. The shipped
@@ -348,7 +351,7 @@ fn break_one_tile_back_to_a_path(app: &mut App, tile: UVec2) {
     road.set_position(A_TOUCH_OF_WEAR, &ladder);
     assert_eq!(
         road.held_rung(),
-        RungKey::RoutePath,
+        shipped::route_path(),
         "precondition: the broken tile holds the branch's floor and nothing more"
     );
 }
@@ -365,7 +368,7 @@ fn progress(app: &App, discovery: u32) -> f32 {
 /// than restated — a retune of `intensification_ladder.json` must move these fixtures with it.
 fn dirt_road_top(ladder: &LadderConfig) -> f32 {
     let (base, width) =
-        core_sim::road_rung_span(RungKey::RouteDirtRoad, ladder, NEAR_ENOUGH_TO_KEEP);
+        core_sim::road_rung_span(shipped::route_dirt_road(), ladder, NEAR_ENOUGH_TO_KEEP);
     base + width
 }
 
@@ -494,7 +497,7 @@ fn two_camps_that_pool_wear_a_trail_between_them_with_nobody_ordering_it() {
         let road = road_at(&app, *tile);
         assert_eq!(
             road.held_rung(),
-            RungKey::RouteTrail,
+            shipped::route_trail(),
             "every tile of the run is worn to a trail, {tile:?} included — a road is a TILE \
              improvement, so a journey wears the ground it crosses rather than one path object"
         );
@@ -528,7 +531,7 @@ fn traffic_climbs_to_the_top_of_the_free_floor_and_stops_there() {
         let road = road_at(&app, *tile);
         assert_eq!(
             road.held_rung(),
-            RungKey::RouteTrail,
+            shipped::route_trail(),
             "the liveness half: traffic really does reach the trail on {tile:?}"
         );
         assert!(
@@ -565,7 +568,7 @@ fn a_trail_costs_nothing_and_has_no_keeper_and_a_dirt_road_owes() {
     let worn = road_at(&app, trail);
     assert_eq!(
         worn.held_rung(),
-        RungKey::RouteTrail,
+        shipped::route_trail(),
         "precondition: the trail is fully worn, which is the hardest case for the claim"
     );
     assert_eq!(
@@ -857,7 +860,7 @@ fn a_road_far_from_its_keeper_costs_more_to_hold_than_the_same_road_beside_it() 
             let ladder = LadderConfig::builtin();
             let ceiling = core_sim::traffic_ceiling(&ladder);
             let (base, width) =
-                core_sim::road_rung_span(RungKey::RouteDirtRoad, &ladder, remoteness);
+                core_sim::road_rung_span(shipped::route_dirt_road(), &ladder, remoteness);
             let mut roads = app.world.resource_mut::<RoadRegistry>();
             let road = roads.road_or_trail(tile, &ladder);
             road.set_position(ceiling, &ladder);
@@ -873,7 +876,7 @@ fn a_road_far_from_its_keeper_costs_more_to_hold_than_the_same_road_beside_it() 
         }
         assert_eq!(
             road_at(&app, tile).held_rung(),
-            RungKey::RouteDirtRoad,
+            shipped::route_dirt_road(),
             "precondition: both roads are whole dirt roads, priced at their own remoteness"
         );
         staff_roadwork(&mut app, band, 0);
@@ -897,7 +900,7 @@ fn a_road_far_from_its_keeper_costs_more_to_hold_than_the_same_road_beside_it() 
 fn a_road_with_a_keeper_holds_and_the_same_road_without_one_loses_its_rung() {
     let ladder = LadderConfig::builtin();
     let grace = ladder
-        .rung(RungKey::RouteDirtRoad)
+        .rung(shipped::route_dirt_road())
         .upkeep
         .as_ref()
         .expect("a dirt road is kept")
@@ -943,7 +946,7 @@ fn a_road_with_a_keeper_holds_and_the_same_road_without_one_loses_its_rung() {
 fn half_a_roads_bill_funded_loses_half_the_rungs_rate() {
     let ladder = LadderConfig::builtin();
     let grace = ladder
-        .rung(RungKey::RouteDirtRoad)
+        .rung(shipped::route_dirt_road())
         .upkeep
         .as_ref()
         .expect("a dirt road is kept")
@@ -995,7 +998,7 @@ fn half_a_roads_bill_funded_loses_half_the_rungs_rate() {
 fn a_road_inside_its_grace_has_not_moved_and_one_past_it_has() {
     let ladder = LadderConfig::builtin();
     let grace = ladder
-        .rung(RungKey::RouteDirtRoad)
+        .rung(shipped::route_dirt_road())
         .upkeep
         .as_ref()
         .expect("a dirt road is kept")
@@ -1042,14 +1045,14 @@ fn a_keeperless_road_decays_and_is_finally_pruned() {
     );
     assert_eq!(
         road_at(&app, tile).held_rung(),
-        RungKey::RouteDirtRoad,
+        shipped::route_dirt_road(),
         "precondition: and it stands at a rung somebody has to pay for"
     );
 
     // Long enough to bleed the whole dirt road AND the trail beneath it away.
     let ladder = LadderConfig::builtin();
     let bleed = ladder
-        .rung(RungKey::RouteDirtRoad)
+        .rung(shipped::route_dirt_road())
         .upkeep
         .as_ref()
         .expect("a dirt road is kept")
@@ -1076,7 +1079,7 @@ fn a_keeperless_road_decays_and_is_finally_pruned() {
 fn the_at_risk_rung_is_the_newest_rung_carrying_work() {
     let ladder = LadderConfig::builtin();
     let (base, width) =
-        core_sim::road_rung_span(RungKey::RouteDirtRoad, &ladder, NEAR_ENOUGH_TO_KEEP);
+        core_sim::road_rung_span(shipped::route_dirt_road(), &ladder, NEAR_ENOUGH_TO_KEEP);
 
     let mut app = spawn_world();
     let tile = UVec2::new(CAMP_A.0 + 1, CAMP_A.1);
@@ -1088,12 +1091,12 @@ fn the_at_risk_rung_is_the_newest_rung_carrying_work() {
     }
     assert_eq!(
         road_at(&app, tile).held_rung(),
-        RungKey::RouteDirtRoad,
+        shipped::route_dirt_road(),
         "a road exactly at the top of the dirt road HOLDS it"
     );
     assert_eq!(
         road_at_risk_rung(&road_at(&app, tile).standing()),
-        RungKey::RouteDirtRoad,
+        shipped::route_dirt_road(),
         "and nothing is banked above it, so the dirt road is what is at risk — not the paved road's \
          empty meter"
     );
@@ -1107,7 +1110,7 @@ fn the_at_risk_rung_is_the_newest_rung_carrying_work() {
     }
     assert_eq!(
         road_at_risk_rung(&road_at(&app, tile).standing()),
-        RungKey::RoutePavedRoad,
+        shipped::route_paved_road(),
         "one unit into the paving, the paved road is the rung at risk"
     );
 }
@@ -1291,7 +1294,7 @@ fn a_wholly_trailed_run_holds_a_link_open_beyond_the_free_reach() {
             seat_a_trail_along(&mut app, &run);
             for tile in &run {
                 let road = road_at(&app, *tile);
-                assert_eq!(road.held_rung(), RungKey::RouteTrail);
+                assert_eq!(road.held_rung(), shipped::route_trail());
                 assert_eq!(road.keeper, None, "and nobody keeps a trail");
             }
         }
@@ -1503,7 +1506,7 @@ fn the_grade_gate_opens_once_the_connection_has_taught_roadbuilding() {
     let ladder = LadderConfig::builtin();
     let threshold = ladder.knowledge.completion_threshold;
     let gate = ladder
-        .rung(RungKey::RouteDirtRoad)
+        .rung(shipped::route_dirt_road())
         .unlock_discovery_id()
         .expect("`grade` is gated on a lesson");
 
@@ -1552,7 +1555,7 @@ fn a_pooling_link_names_the_weakest_rung_on_its_run() {
     /// Inside `reach_tiles` (3), so the link forms whatever the roads are.
     const INSIDE_THE_FREE_REACH: u32 = 2;
 
-    let rung_of_the_link = |road: Option<bool>| -> Option<RungKey> {
+    let rung_of_the_link = |road: Option<bool>| -> Option<RungId> {
         let mut app = spawn_world();
         let (a, b) = two_camps_apart(&mut app, INSIDE_THE_FREE_REACH);
         let run = tiles_between(&app, a, b);
@@ -1590,12 +1593,12 @@ fn a_pooling_link_names_the_weakest_rung_on_its_run() {
     );
     assert_eq!(
         rung_of_the_link(Some(false)),
-        Some(RungKey::RouteTrail),
+        Some(shipped::route_trail()),
         "a wholly trailed run is held on the trail"
     );
     assert_eq!(
         rung_of_the_link(Some(true)),
-        Some(RungKey::RoutePath),
+        Some(shipped::route_path()),
         "one path tile in the run and the run is a path — the weakest tile, never the best"
     );
 }

@@ -52,6 +52,11 @@ pub struct CultureSeverityConfig {
     /// The Syncretic<->Purist value a band must EXCEED for a held schism to split it off as its
     /// own people (#702). A band at or below it is accepting and never splits.
     split_min_purist: f32,
+    /// A people's weight of tradition (`docs/plan_minor_peoples.md` §Culture strength).
+    strength: CultureStrengthSettings,
+    /// How hard one people's culture weighs on another's band, and when it joins
+    /// (`docs/plan_minor_peoples.md` §Pressure).
+    joining: CultureJoiningSettings,
 }
 
 /// The contact-drift lever block (`culture.contact_drift`).
@@ -77,6 +82,164 @@ impl Default for ContactDriftSettings {
     }
 }
 
+/// The culture-strength lever block (`culture.strength`): `base + Σ weight_i × (input_i /
+/// reference_i)`, the sedentarization score's weighted-sum shape.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct CultureStrengthSettings {
+    /// What a people with no belief, no ties and no discoveries weighs; keeps a ratio between two
+    /// fresh peoples defined. Finite and `> 0`.
+    base: f32,
+    /// Each input's weight in the sum. Finite and `>= 0`.
+    #[serde(default = "default_strength_weights")]
+    weights: CultureStrengthInputs,
+    /// Each input's reference: the amount that counts as one full unit. Finite and `> 0`.
+    #[serde(default = "default_strength_references")]
+    references: CultureStrengthInputs,
+}
+
+/// One value per culture-strength input (used for both the weights and the references).
+#[derive(Debug, Clone, Copy, Deserialize)]
+pub struct CultureStrengthInputs {
+    /// Belief held at the anchors of the people's bands, each anchor once.
+    belief: f32,
+    /// Distinct foreign bands live-tied to the people's bands.
+    ties: f32,
+    /// Wondrous sites the people has discovered.
+    discoveries: f32,
+}
+
+impl CultureStrengthInputs {
+    pub fn belief(&self) -> f32 {
+        self.belief
+    }
+
+    pub fn ties(&self) -> f32 {
+        self.ties
+    }
+
+    pub fn discoveries(&self) -> f32 {
+        self.discoveries
+    }
+}
+
+impl CultureStrengthSettings {
+    pub fn base(&self) -> f32 {
+        self.base
+    }
+
+    pub fn weights(&self) -> &CultureStrengthInputs {
+        &self.weights
+    }
+
+    pub fn references(&self) -> &CultureStrengthInputs {
+        &self.references
+    }
+}
+
+const DEFAULT_STRENGTH_BASE: f32 = 1.0;
+const DEFAULT_STRENGTH_WEIGHT_BELIEF: f32 = 1.0;
+const DEFAULT_STRENGTH_WEIGHT_TIES: f32 = 0.5;
+const DEFAULT_STRENGTH_WEIGHT_DISCOVERIES: f32 = 0.5;
+/// Dead-equivalents of belief that count as one full unit of tradition.
+const DEFAULT_STRENGTH_REFERENCE_BELIEF: f32 = 20.0;
+/// Foreign bands in touch that count as one full unit.
+const DEFAULT_STRENGTH_REFERENCE_TIES: f32 = 4.0;
+/// Discovered wondrous sites that count as one full unit.
+const DEFAULT_STRENGTH_REFERENCE_DISCOVERIES: f32 = 2.0;
+
+fn default_strength_weights() -> CultureStrengthInputs {
+    CultureStrengthInputs {
+        belief: DEFAULT_STRENGTH_WEIGHT_BELIEF,
+        ties: DEFAULT_STRENGTH_WEIGHT_TIES,
+        discoveries: DEFAULT_STRENGTH_WEIGHT_DISCOVERIES,
+    }
+}
+
+fn default_strength_references() -> CultureStrengthInputs {
+    CultureStrengthInputs {
+        belief: DEFAULT_STRENGTH_REFERENCE_BELIEF,
+        ties: DEFAULT_STRENGTH_REFERENCE_TIES,
+        discoveries: DEFAULT_STRENGTH_REFERENCE_DISCOVERIES,
+    }
+}
+
+impl Default for CultureStrengthSettings {
+    fn default() -> Self {
+        Self {
+            base: DEFAULT_STRENGTH_BASE,
+            weights: default_strength_weights(),
+            references: default_strength_references(),
+        }
+    }
+}
+
+/// The joining lever block (`culture.joining`): the pressure formula's size exponent, the three
+/// phase thresholds, how close a band's culture must be, and how long a condition must hold.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct CultureJoiningSettings {
+    /// Exponent on `people_B / people_A`. `0` ignores size; `>= 0`.
+    size_exponent: f32,
+    /// Pressure at which a band is told it is being pulled.
+    pulled: f32,
+    /// Pressure at which a close band asks to join.
+    asked: f32,
+    /// Pressure at which a close band joins without its owner's say.
+    forced: f32,
+    /// The widest per-axis gap between the band's culture and the other people's average that
+    /// still counts as close. `>= 0`.
+    max_culture_distance: f32,
+    /// Turns the asked / forced condition must hold. `>= 1`.
+    turns: u16,
+}
+
+impl CultureJoiningSettings {
+    pub fn size_exponent(&self) -> f32 {
+        self.size_exponent
+    }
+
+    pub fn pulled(&self) -> f32 {
+        self.pulled
+    }
+
+    pub fn asked(&self) -> f32 {
+        self.asked
+    }
+
+    pub fn forced(&self) -> f32 {
+        self.forced
+    }
+
+    pub fn max_culture_distance(&self) -> f32 {
+        self.max_culture_distance
+    }
+
+    pub fn turns(&self) -> u16 {
+        self.turns
+    }
+}
+
+const DEFAULT_JOINING_SIZE_EXPONENT: f32 = 0.5;
+const DEFAULT_JOINING_PULLED: f32 = 1.5;
+const DEFAULT_JOINING_ASKED: f32 = 2.0;
+const DEFAULT_JOINING_FORCED: f32 = 4.0;
+const DEFAULT_JOINING_MAX_CULTURE_DISTANCE: f32 = 0.3;
+const DEFAULT_JOINING_TURNS: u16 = 10;
+
+impl Default for CultureJoiningSettings {
+    fn default() -> Self {
+        Self {
+            size_exponent: DEFAULT_JOINING_SIZE_EXPONENT,
+            pulled: DEFAULT_JOINING_PULLED,
+            asked: DEFAULT_JOINING_ASKED,
+            forced: DEFAULT_JOINING_FORCED,
+            max_culture_distance: DEFAULT_JOINING_MAX_CULTURE_DISTANCE,
+            turns: DEFAULT_JOINING_TURNS,
+        }
+    }
+}
+
 /// First guess: half the gap in ~50 turns at a full tie between equal, neutral bands.
 const DEFAULT_CONTACT_DRIFT_RATE: f32 = 0.014;
 
@@ -90,6 +253,14 @@ impl CultureSeverityConfig {
 
     pub fn split_min_purist(&self) -> f32 {
         self.split_min_purist
+    }
+
+    pub fn strength(&self) -> &CultureStrengthSettings {
+        &self.strength
+    }
+
+    pub fn joining(&self) -> &CultureJoiningSettings {
+        &self.joining
     }
 
     /// Reject levers the contact-drift and split rules cannot read.
@@ -106,8 +277,69 @@ impl CultureSeverityConfig {
                 self.split_min_purist
             ));
         }
+        self.validate_strength()?;
+        self.validate_joining()
+    }
+
+    fn validate_strength(&self) -> Result<(), String> {
+        let strength = &self.strength;
+        let positive = |name: &str, value: f32| {
+            if value.is_finite() && value > 0.0 {
+                Ok(())
+            } else {
+                Err(format!(
+                    "culture.strength.{name} must be finite and > 0, got {value}"
+                ))
+            }
+        };
+        positive("base", strength.base)?;
+        positive("references.belief", strength.references.belief)?;
+        positive("references.ties", strength.references.ties)?;
+        positive("references.discoveries", strength.references.discoveries)?;
+        let non_negative = |name: &str, value: f32| {
+            if value.is_finite() && value >= 0.0 {
+                Ok(())
+            } else {
+                Err(format!(
+                    "culture.strength.{name} must be finite and >= 0, got {value}"
+                ))
+            }
+        };
+        non_negative("weights.belief", strength.weights.belief)?;
+        non_negative("weights.ties", strength.weights.ties)?;
+        non_negative("weights.discoveries", strength.weights.discoveries)
+    }
+
+    fn validate_joining(&self) -> Result<(), String> {
+        let joining = &self.joining;
+        let (pulled, asked, forced) = (joining.pulled, joining.asked, joining.forced);
+        if !(pulled.is_finite() && asked.is_finite() && forced.is_finite())
+            || pulled <= 0.0
+            || pulled > asked
+            || asked > forced
+        {
+            return Err(format!(
+                "culture.joining needs 0 < pulled <= asked <= forced, got {pulled} / {asked} / {forced}"
+            ));
+        }
+        if !joining.max_culture_distance.is_finite() || joining.max_culture_distance < 0.0 {
+            return Err(format!(
+                "culture.joining.max_culture_distance must be finite and >= 0, got {}",
+                joining.max_culture_distance
+            ));
+        }
+        if joining.turns < 1 {
+            return Err("culture.joining.turns must be >= 1".to_string());
+        }
+        if !joining.size_exponent.is_finite() || joining.size_exponent < 0.0 {
+            return Err(format!(
+                "culture.joining.size_exponent must be finite and >= 0, got {}",
+                joining.size_exponent
+            ));
+        }
         Ok(())
     }
+
     pub fn trust_axis(&self) -> usize {
         self.trust_axis
     }
@@ -157,6 +389,8 @@ impl Default for CultureSeverityConfig {
             },
             contact_drift: ContactDriftSettings::default(),
             split_min_purist: DEFAULT_SPLIT_MIN_PURIST,
+            strength: CultureStrengthSettings::default(),
+            joining: CultureJoiningSettings::default(),
         }
     }
 }
@@ -440,5 +674,50 @@ impl CultureCorruptionConfigHandle {
         let shared = Arc::new(parsed);
         self.0 = Arc::clone(&shared);
         Ok(shared)
+    }
+}
+
+#[cfg(test)]
+mod joining_tests {
+    use super::*;
+
+    fn with_culture(block: &str) -> Result<CultureCorruptionConfig, serde_json::Error> {
+        CultureCorruptionConfig::from_json_str(&format!(r#"{{ "culture": {block} }}"#))
+    }
+
+    #[test]
+    fn the_shipped_json_equals_the_defaults() {
+        let shipped = CultureCorruptionConfig::from_json_str(BUILTIN_CULTURE_CORRUPTION_CONFIG)
+            .expect("the shipped config parses");
+        let default = CultureSeverityConfig::default();
+        let (s, d) = (shipped.culture().strength(), default.strength());
+        assert_eq!(s.base(), d.base());
+        assert_eq!(s.weights().ties(), d.weights().ties());
+        assert_eq!(s.references().belief(), d.references().belief());
+        let (j, k) = (shipped.culture().joining(), default.joining());
+        assert_eq!(
+            (j.pulled(), j.asked(), j.forced(), j.turns()),
+            (k.pulled(), k.asked(), k.forced(), k.turns())
+        );
+        assert_eq!(j.max_culture_distance(), k.max_culture_distance());
+        assert_eq!(j.size_exponent(), k.size_exponent());
+    }
+
+    #[test]
+    fn the_levers_the_pressure_rule_cannot_read_are_refused() {
+        for bad in [
+            r#"{ "strength": { "base": 0.0 } }"#,
+            r#"{ "strength": { "references": { "belief": 0.0, "ties": 4.0, "discoveries": 2.0 } } }"#,
+            r#"{ "strength": { "weights": { "belief": -1.0, "ties": 0.5, "discoveries": 0.5 } } }"#,
+            r#"{ "joining": { "pulled": 0.0 } }"#,
+            r#"{ "joining": { "pulled": 3.0 } }"#,
+            r#"{ "joining": { "asked": 5.0 } }"#,
+            r#"{ "joining": { "max_culture_distance": -0.1 } }"#,
+            r#"{ "joining": { "turns": 0 } }"#,
+            r#"{ "joining": { "size_exponent": -1.0 } }"#,
+        ] {
+            assert!(with_culture(bad).is_err(), "{bad} should be refused");
+        }
+        assert!(with_culture(r#"{ "joining": { "size_exponent": 0.0 } }"#).is_ok());
     }
 }

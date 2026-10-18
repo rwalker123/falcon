@@ -248,7 +248,7 @@ static func investment_pair_boar_herd() -> Dictionary:
 ## has retired.
 static func fully_tamed_herd_fixture() -> Dictionary:
 	var fixture := taming_herd_fixture()
-	fixture["domestication"] = SourceForecast.DOMESTICATION_COMPLETE
+	fixture["domestication"] = RungFx.DOMESTICATION_COMPLETE
 	price_animal_build(fixture)
 	set_managed_herders(fixture, TAMED_HERD_CREW)
 	return RungFx.stamp_herd(fixture)

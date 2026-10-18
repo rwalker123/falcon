@@ -20,13 +20,14 @@
 
 use bevy::app::App;
 use bevy::math::UVec2;
+use core_sim::shipped;
 
 use core_sim::TakeSelection;
 use core_sim::{
     build_test_app, recapture_snapshot_in_place, scalar_from_f32, scalar_one, scalar_zero,
-    BuildJob, BuildQueueEntry, BuildSource, FactionId, GenerationId, Improvement, LaborAllocation,
+    BuildJob, BuildQueueEntry, BuildSource, FactionId, GenerationId, LaborAllocation,
     LaborAssignment, LaborTarget, LocalStore, MoraleCause, PopulationCohort, ResidentBand,
-    SnapshotHistory, SourcePriority, StartingUnit, TileRegistry, UpkeepFundMode,
+    SnapshotHistory, SourcePriority, StartingUnit, TileRegistry, UpkeepFundMode, VerbId,
     DEFAULT_ESCAPEMENT_FLOOR,
 };
 
@@ -41,7 +42,9 @@ const KEEP_CREW: u32 = 2;
 /// **What the fixture band has queued on its one source** — the verb whose token the row must
 /// publish. `Sow` rather than `Cultivate` so the assertion cannot pass on a capture that hard-codes
 /// the first plant rung.
-const DECLARED: Improvement = Improvement::Sow;
+fn declared() -> VerbId {
+    shipped::sow()
+}
 
 /// The tile the fixture band works and lives on — **a tile the world actually carries a patch on**,
 /// resolved at run time rather than named as a literal, because the `improvement` token is derived
@@ -163,7 +166,7 @@ fn world_with_a_keeping_band() -> (App, UVec2) {
             // The declaration the source row's `improvement` token is derived from.
             build_queue: vec![BuildQueueEntry {
                 source: BuildSource::Patch(source),
-                declared: BuildJob::Rung(DECLARED),
+                declared: BuildJob::Climb(core_sim::shipped::rung_of_verb(declared())),
                 priority: core_sim::SourcePriority::default(),
             }],
             upkeep_fund_mode: UpkeepFundMode::Priority,
@@ -243,7 +246,7 @@ fn a_source_row_states_its_take_crew_and_the_job_queued_on_it() {
     assert_eq!(take, TAKE_CREW, "the take crew arrives as itself");
     assert_eq!(
         job,
-        DECLARED.as_str(),
+        declared().as_str(),
         "…beside the RESOLVED job the band has queued here — the client does no arithmetic for it"
     );
 }
@@ -473,7 +476,7 @@ fn two_workings_and_a_road_on_one_tile_publish_distinguishable_entries() {
         ] {
             allocation.build_queue.push(BuildQueueEntry {
                 source: site,
-                declared: BuildJob::Rung(Improvement::Fell),
+                declared: BuildJob::Climb(shipped::forestry_felling()),
                 priority: SourcePriority::default(),
             });
         }
@@ -496,7 +499,7 @@ fn two_workings_and_a_road_on_one_tile_publish_distinguishable_entries() {
                 entry.targetX(),
                 entry.targetY(),
                 entry.material().unwrap_or_default().to_string(),
-                entry.road(),
+                entry.branch().is_some_and(|branch| !branch.is_empty()),
             )
         })
         .collect();

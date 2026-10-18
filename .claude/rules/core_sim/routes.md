@@ -150,16 +150,16 @@ top of `FREE_FLOOR_TOP_RUNG` — and no further**, capped in `advance_roads`.
 `!= path`. Its one consumer, `Road::grants_sight`, reasons from *"paying the upkeep IS the
 presence"*, so a free trail must light nothing however worn it is. `FREE_FLOOR_TOP_RUNG` and
 `FIRST_BUILT_RUNG` are pinned adjacent by `the_free_floor_and_the_first_built_rung_are_adjacent`,
-because `RungKey::above` is not `const`.
+because walking the ladder is not `const`.
 
-### ⛔ `RungBranch::is_crew_built` IS DELETED, AND ITS REPLACEMENT IS FINER
+### ⛔ `is_crew_built` IS DELETED, AND ITS REPLACEMENT IS FINER
 
 It answered *"does a band's `builders` pool raise this branch's rungs"* — `false` for `Route` alone.
 With `grade` and `pave` on the builders' pool the branch is **no longer uniformly crew-free**, so a
 branch-level answer is the wrong grain and would be wrong for half the rungs it covered.
 
 ***"Does this rung declare a `verb`"*** is the same question at the grain that can answer it, and
-every former caller was asking about a **rung**: `RungDef::verb` / `RungKey::builder_verb`. The
+every former caller was asking about a **rung**: `RungDef::verb`. The
 `debug_assert` inside `BuildersGear::on` went with it, and the branch gained a real (deliberately
 empty) gear reading — see "The build" below.
 
@@ -600,7 +600,7 @@ are the dials, and **13e tunes them** — the pass adds no lever of its own.
 
 ## The build — `grade` and `pave` are TILE commands on the builders' pool
 
-`grade <faction> <band> <x> <y>` → `route:dirt_road`. `pave <faction> <band> <x> <y>` →
+`build grade <faction> <band> <x> <y>` → `route:dirt_road`. `build pave <faction> <band> <x> <y>` →
 `route:paved_road`. `cultivate`/`sow`'s grammar **plus a band token**, and that token is the one
 structural difference: a patch's keeper is whoever is already foraging it, and **a road has no take
 row at all**, so who will keep the tile has to be said out loud.
@@ -859,9 +859,9 @@ whose output scales with people standing there, so a work row with a stepper is 
 **The pool was never the problem — the automatic billing was.** With the free floor free and `grade`
 the only way onto a paid rung, every road a band pays for is one it chose by typing a command. So
 `Roadwork` covers **the roads that band is the keeper of**, and the per-road choice is exercised
-with `abandon <faction> road <x> <y>`, which puts down the road alone (keeper and queue entry) and
+with `abandon <faction> route <x> <y>`, which puts down the road alone (keeper and queue entry) and
 leaves a patch on the same tile standing; a bare-tile `abandon <faction> <x> <y>` puts down both.
-`unqueue <faction> road <x> <y>` withdraws a queued `grade` / `pave` and leaves the keeper, and
+`unqueue <faction> route <x> <y>` withdraws a queued `grade` / `pave` and leaves the keeper, and
 `build_priority` / `build_order` reach the queued road build by the same address
 (`docs/plan_site_crews.md` §2.4). It is the **one band-level keeping pool left**: the food webs' and the deposits'
 keeping moved onto each site's own crew (`docs/plan_site_crews.md`), because a patch, a herd and a
@@ -1012,12 +1012,12 @@ you seen that tile"*. It **fails closed** on an absent faction map.
 | Field | What it is |
 |---|---|
 | `tileX` / `tileY` | **the row's identity**, and what replaced the retired `RouteId` — with one record per tile there is nothing left for a separate id to name |
-| `rung` | the rung it **holds**, `RungKey::wire_key`. **This string is the bool**; a rung is never inferred from the float beside it |
+| `rung` | the rung it **holds**, `RungId::wire_key`. **This string is the bool**; a rung is never inferred from the float beside it |
 | `buildFraction` | the meter on the rung being **raised**, through `routes::road_build_fraction` → `intensification::rung_work_done` / `build_fraction` |
 | `hasKeeper` / `keeperBandId` | **whose job this tile is.** Read the bool first — `0` is a real `BandId`. `false` across the whole free floor, which is the commonest road in the game |
 | `keeperRemoteness` | what distance did to the price, as a multiple — the only way a client can explain a bill larger than the rung says |
 | `upkeepDemand` / `upkeepSupplied` / `upkeepShortfall` / `upkeepWorkersNeeded` | the standing bill in **work**, all four off the **stamped** `road_keeping_basis` |
-| `upkeepMaterialDemand` / `upkeepMaterialSupplied` | the standing bill in **goods**, off the stamped material basis, on the same `demand − supplied == shortfall` rule. ⛔ **This is the pair that separates *short of stone* from *short of keepers*** — a surface reading only the work pair tells the player to staff `roadwork` for an empty shelf. The noun is `RouteRungState.buildMaterialId`. They do **not** add: the decay rides the worse fraction, never the sum |
+| `upkeepMaterialDemand` / `upkeepMaterialSupplied` | the standing bill in **goods**, off the stamped material basis, on the same `demand − supplied == shortfall` rule. ⛔ **This is the pair that separates *short of stone* from *short of keepers*** — a surface reading only the work pair tells the player to staff `roadwork` for an empty shelf. The noun is `LadderRungState.buildMaterialId`. They do **not** add: the decay rides the worse fraction, never the sum |
 | `hasNeglectGrace` / `neglectGraceRemaining` | the **countdown**, through `routes::road_neglect_grace_remaining` at the at-risk rung |
 | `grantsSight` | the resolved *"is this road lighting its tile"* |
 | `frictionMultiplier` / `holdsLinkToTiles` | what the rung is buying, off the tile's stamped `payoff()` — the first a MEAN along a journey, the second the journey's MINIMUM |
@@ -1039,13 +1039,15 @@ you seen that tile"*. It **fails closed** on an absent faction map.
 - **`grantsSight` is the resolved answer**, because a client cannot re-derive *"is the bill met"*: that
   is a comparison against the stamped basis with the sim's own `KEEPING_EPSILON`.
 
-## The rung CATALOG — `RouteRungState`, once per world and carrying no tile
+## The rung CATALOG — `LadderRungState`, once per world and carrying no tile
 
 `RouteState` answers *where does this tile stand and what is that worth*. It says nothing about the
 rungs **above** it, so no readout could state what a paved road would cost or what it would buy until
 the tile already held one — which is exactly what a ladder of rungs nobody has built yet has to say.
-`SubsistenceSection.routeRungs` is that ladder: **one row per rung of `intensification_ladder.json`'s
-route branch, in climb order**.
+`SubsistenceSection.ladderRungs` is that ladder: **one row per rung of `intensification_ladder.json`,
+grouped by branch and in climb order within it** - the route branch's rows are the ones with
+`sourceKind: "road"`. (It replaced the route-only `routeRungs` and the deposit-only `depositRungs`
+tables; `ladderBranches` beside it carries each branch's area, kind and heading.)
 
 **It rides the SECTION, beside `ladderKnowledge`, and not the tile row.** These are properties of the
 **branch**, identical for every road in the world; on `RouteState` they would repeat the same four
@@ -1055,14 +1057,14 @@ carrying no faction and no tile — and both are per-world constants, diffed who
 ⛔ **EVERY FIELD BUT ONE IS DERIVED FROM THE RUNG'S OWN RECORD; NOTHING IS RESTATED.** That is the whole point
 of publishing it at all: a rung added to the config appears in the client's ladder with **no client
 edit and no schema edit**, the same promise `ladderKnowledge` makes for the knowledge screen.
-`routes::route_rungs_in_climb_order` walks `ladder.rungs` — **not `RungKey::ALL`** — so a rung the
+`routes::route_rungs_in_climb_order` walks `ladder.rungs` — so a rung the
 coded climb has never heard of is in the catalog, and `RungDef::wire_key` /
 `RungDef::requires_rung_wire_key` answer the key off the **record** for the same reason
-(`RungKey::wire_key` answers for the rungs a *system* names; the two agree by construction).
+(the same `RungId::wire_key` the rung publishes).
 
 | Field | Reading |
 |---|---|
-| `rungKey` / `order` | the record's `branch:id` and its own climb order — **the row order IS that order**, bottom rung first. `rungKey` is the same spelling `RouteState.rung` carries, so a tile joins to its row here |
+| `rungKey` / `branch` / `order` | the record's `branch:id`, the branch it sits on and its own climb order — **the row order IS that order**, bottom rung first. `rungKey` is the same spelling `RouteState.rung` carries, so a tile joins to its row here |
 | `displayName` | the id read as a player reads it, through the ladder's own `knowledge_title_from_id` — one capitalization rule for underscored ladder ids, not two |
 | `verb` | the rung's own, `""` where it declares none. **An empty verb is the free floor**: a path and a trail are formed by use, so there is no command to draw a button for |
 | `unlockKnowledge` | the gate, joining to `LadderKnowledgeState.knowledgeId` for the faction's own progress; `""` where the rung waits on nothing |
@@ -1114,12 +1116,15 @@ runs on — *paying the upkeep IS the presence*, which is why the floor lights n
 is. The per-tile field stays the **resolved** answer, because a rung that grants sight still goes
 dark while its bill is unmet.
 
-**Route branch only, deliberately.** The table is `RouteRungState` rather than a generic
-`LadderRungState` because a generic table filled for one branch is a promise the code does not keep;
-the plant and animal branches publishing the same is their own change.
+**Every branch, one table.** The road, deposit, plant and animal rungs share one row shape; the payoff
+blocks a rung does not declare read the wire's neutral value (`frictionMultiplier` 1,
+`holdsLinkToTiles` 0, `regrowthMultiplier` 1, the take fields 0), so a plant rung never claims to be a
+road that helps a haul. A row also carries the rung's `label` / `labelFallback`, its `sourceKind` and
+its `traits`.
 
-`snapshot::subsistence::snapshot_route_rungs` is the one producer, called beside
-`snapshot_ladder_knowledge` in the capture. `core_sim/tests/route_wire.rs` pins it on the **encoded
+`snapshot::subsistence::snapshot_ladder_rungs` / `snapshot_ladder_branches` are the producers, called
+beside `snapshot_ladder_knowledge` in the capture. `core_sim/tests/ladder_catalog_wire.rs` pins the
+whole table against the config; `core_sim/tests/route_wire.rs` pins the road rows on the **encoded
 envelope**: one row per rung the config declares, in the coded climb's order, every value read back
 off that rung's record — plus the shape a ladder renders differently, the floor requiring nothing and
 the free floor naming no verb, owing nothing and lighting nothing, and every gate on the branch

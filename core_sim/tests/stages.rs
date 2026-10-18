@@ -27,10 +27,10 @@ use core_sim::{
     trace_path, Agreement, BandId, BandTravel, CommandEventKind, CommandEventLog, ConnectionLedger,
     DealingAnswer, DealingId, DealingKind, DiplomacyConfig, Expedition, ExpeditionMission,
     ExpeditionPhase, FactionId, GoodsLines, Goodwill, KnownGoodwill, LaborAllocation, LadderConfig,
-    LocalStore, PendingDealings, PopulationCohort, ResidentBand, RoadRegistry, RungKey, Scalar,
-    ScoutPack, SettleConfig, ShipmentTerms, SimulationConfig, SimulationTick, SnapshotHistory,
-    StartingUnit, StrangersOrder, Tile, TileRegistry, TransferCause, TransferDirection,
-    ViewerFaction, VisibilityConfig, VisibilityConfigHandle, FOOD, NEAR_ENOUGH_TO_KEEP,
+    LocalStore, PendingDealings, PopulationCohort, ResidentBand, RoadRegistry, Scalar, ScoutPack,
+    SettleConfig, ShipmentTerms, SimulationConfig, SimulationTick, SnapshotHistory, StartingUnit,
+    StrangersOrder, Tile, TileRegistry, TransferCause, TransferDirection, ViewerFaction,
+    VisibilityConfig, VisibilityConfigHandle, FOOD, NEAR_ENOUGH_TO_KEEP,
 };
 use sim_runtime::{TradeCargoItem, FOOD_CARGO_KEY};
 
@@ -185,8 +185,11 @@ fn scene(span: u32) -> Scene {
 
 /// The dirt road rung's top, read from the ladder rather than restated.
 fn dirt_road_top(ladder: &LadderConfig) -> f32 {
-    let (base, width) =
-        core_sim::road_rung_span(RungKey::RouteDirtRoad, ladder, NEAR_ENOUGH_TO_KEEP);
+    let (base, width) = core_sim::road_rung_span(
+        core_sim::shipped::route_dirt_road(),
+        ladder,
+        NEAR_ENOUGH_TO_KEEP,
+    );
     base + width
 }
 

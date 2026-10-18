@@ -29,19 +29,19 @@ use core_sim::sim_state::{restore_sim_state, Replaying};
 use core_sim::turn_profile;
 use core_sim::{
     apply_port_base, available_workers, carry_runtime_owned_fields, carry_world_identity,
-    floor_is_valid, forage_source_yield_preview, herd_build_verb, hunt_source_yield_preview, knows,
-    load_simulation_config_for_new_world, output_multiplier, patch_build_verb, patch_composition,
+    floor_is_valid, forage_source_yield_preview, herd_build_rung, hunt_source_yield_preview, knows,
+    load_simulation_config_for_new_world, output_multiplier, patch_build_rung, patch_composition,
     resolve_active_profile, resolve_committed_species, resolve_take_selection, rung_site_refusal,
     species_stands_in, tile_flora_composition, tile_is_fresh_watered, ActiveStartProfile,
     BandBench, BandEquipment, BandTravel, BandWorkforce, BeatCatalogHandle, BeatConfigHandle,
     BeatLedger, BenchQueueError, BuildJob, BuildSource, CampaignLabel, CombatConfigHandle,
     CreaturesConfigHandle, Expedition, ExpeditionConfigHandle, ExpeditionMission, ExpeditionPhase,
     ExtractionConfigHandle, FloraConfigHandle, FoodMix, FoodModuleTag, ForkAnswerError,
-    HuntingParty, KitChoice, KitJob, LaborAllocation, LaborTarget, LadderConfigHandle, LocalStore,
-    MaterialDraw, RecipesConfigHandle, ResidentBand, RungKey, SiteRefusal, SourcePriority,
-    SpeciesRefusal, StartProfile, StartProfileOverrides, TakeSelection, TransferCause,
-    TransferCrossing, TransferDirection, UpkeepFundMode, WellbeingConfigHandle,
-    DEFAULT_ESCAPEMENT_FLOOR, MIN_ORDER_COUNT, NO_FORAGE_SEASON,
+    HuntingParty, KitChoice, KitJob, LaborAllocation, LaborTarget, LadderConfig,
+    LadderConfigHandle, LocalStore, MaterialDraw, RecipesConfigHandle, ResidentBand, RungId,
+    SiteRefusal, SourceKind, SourcePriority, SpeciesRefusal, StartProfile, StartProfileOverrides,
+    TakeSelection, TransferCause, TransferCrossing, TransferDirection, UpkeepFundMode,
+    WellbeingConfigHandle, DEFAULT_ESCAPEMENT_FLOOR, MIN_ORDER_COUNT, NO_FORAGE_SEASON,
 };
 use core_sim::{
     build_headless_app, clear_config_overrides, denial_forecast, expedition_returned_event,
@@ -56,14 +56,15 @@ use core_sim::{
     EspionageMissionId, EspionageMissionKind, EspionageMissionState, EspionageMissionTemplate,
     EspionageRoster, FactionBorderPolicies, FactionId, FactionOrders, FactionRegistry,
     FactionSecurityPolicies, FaunaConfigHandle, FoodSiteRegistry, ForageRegistry, FrameSink,
-    HerdRegistry, Improvement, LaborConfigHandle, MapPresetsHandle, PendingCrisisSpawns,
-    PopulationCohort, QueueMissionError, QueueMissionParams, Scalar, SecurityPolicy, Settlement,
-    SimulationConfig, SimulationConfigMetadata, SimulationTick, SnapshotAudiences, SnapshotHistory,
+    HerdRegistry, LaborConfigHandle, MapPresetsHandle, PendingCrisisSpawns, PopulationCohort,
+    QueueMissionError, QueueMissionParams, Scalar, SecurityPolicy, Settlement, SimulationConfig,
+    SimulationConfigMetadata, SimulationTick, SnapshotAudiences, SnapshotHistory,
     SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle, SnapshotOverlaysConfigMetadata,
     StartLocation, StartProfileLookup, StartProfilesHandle, StartingUnit, SubmitError,
     SubmitOutcome, Tile, TileRegistry, TownCenter, TurnPipelineConfig, TurnPipelineConfigHandle,
     TurnPipelineConfigMetadata, TurnQueue, WorldEpoch, FODDER, FOOD, POST_RECALLED,
 };
+use core_sim::{BranchId, VerbId};
 use core_sim::{
     ConnectionId, ConnectionIdAllocator, SeatRegistry, SeatTurnGate, SeatTurnLimits, TurnWait,
 };
@@ -1245,14 +1246,20 @@ fn release_seat_and_settle(
 }
 
 /// **HOW THE QUEUE VERBS NAME A SOURCE** — a tile, a herd id, a working (`material` on the tile
-/// pair) or a road (`road` on the tile pair) (`docs/plan_standing_upkeep.md` §2.5,
-/// `docs/plan_site_crews.md` §2.4). Every queue verb reads it: `abandon`, `unqueue`, `build_order`,
-/// `work_priority` and `build_priority`.
+/// pair) or a branch's own per-tile source (`branch` on the tile pair — the road branch's road)
+/// (`docs/plan_standing_upkeep.md` §2.5, `docs/plan_site_crews.md` §2.4). Every queue verb reads it:
+/// `abandon`, `unqueue`, `build_order`, `work_priority` and `build_priority`.
 ///
 /// One type rather than per-verb copies of the same optional fields, because the queue verbs address
 /// a source identically and a per-verb spelling is how one of them comes to accept a shape the
 /// others reject. It resolves to a [`LaborTarget`] once, in [`BuildSourceRef::target`], and to a
 /// queue key once, in [`BuildSourceRef::build_source`].
+///
+/// **`branch` is a ladder branch id and is resolved against the ladder, never matched by name**: it
+/// names a road when the branch's source kind is [`SourceKind::Road`] ([`Self::is_road`]), and a
+/// branch the ladder does not know — or one whose source is not kept per tile — is refused by name
+/// ([`Self::branch_refusal`]) rather than read as the tile's patch, which would be a destructive
+/// verb quietly landing on the wrong source.
 #[derive(Debug, Clone, Default)]
 struct BuildSourceRef {
     target_x: Option<u32>,
@@ -1260,18 +1267,58 @@ struct BuildSourceRef {
     herd_id: Option<String>,
     /// With the tile pair, the deposit a **working** is keyed by — one hex can hold two.
     material: Option<String>,
-    /// With the tile pair, the tile's **road** rather than its patch.
-    road: bool,
+    /// With the tile pair, the ladder branch whose own source on the tile is named, rather than the
+    /// tile's patch.
+    branch: Option<String>,
 }
 
 impl BuildSourceRef {
+    /// **Does this name the tile's road?** — the named branch is the ladder's road-kind branch.
+    fn is_road(&self, ladder: &LadderConfig) -> bool {
+        self.branch.as_deref().is_some_and(|branch| {
+            ladder.source_kind(BranchId::new(branch)) == Some(SourceKind::Road)
+        })
+    }
+
+    /// **Does this name a tile improvement?** - the named branch is a tile-kind branch of the ladder.
+    fn is_tile_improvement(&self, ladder: &LadderConfig) -> bool {
+        self.branch.as_deref().is_some_and(|branch| {
+            ladder.source_kind(BranchId::new(branch)) == Some(SourceKind::Tile)
+        })
+    }
+
+    /// **Why this source's `branch` cannot be read**, or `None` when it names a road or names none.
+    /// An unknown id and a branch whose source is not per-tile are both refused by name.
+    fn branch_refusal(&self, ladder: &LadderConfig) -> Option<String> {
+        let branch = self.branch.as_deref()?;
+        match ladder.source_kind(BranchId::new(branch)) {
+            Some(SourceKind::Road | SourceKind::Tile) => None,
+            Some(_) => Some(format!(
+                "'{branch}' is a branch whose source is worked by a crew, not kept per tile - \
+                 name it by its tile, herd or `<x> <y> <material>`."
+            )),
+            None => Some(format!(
+                "'{branch}' is not a branch this ladder knows. {SITE_SOURCE_GRAMMAR}."
+            )),
+        }
+    }
+
     /// The labor target this names, or `None` when the wire carried neither shape — **and for a
     /// road**, which has no labor row ([`BuildSource::Road`]). A herd id wins a malformed
     /// both-shapes message only because the tile pair is tested first and requires both halves —
     /// the text grammar cannot produce one at all.
-    fn target(&self) -> Option<LaborTarget> {
-        if self.road {
+    fn target(&self, ladder: &LadderConfig) -> Option<LaborTarget> {
+        if self.is_road(ladder) {
             return None;
+        }
+        if self.is_tile_improvement(ladder) {
+            return match (self.target_x, self.target_y, self.branch.as_deref()) {
+                (Some(x), Some(y), Some(branch)) => Some(LaborTarget::Tile {
+                    tile: UVec2::new(x, y),
+                    branch: BranchId::new(branch),
+                }),
+                _ => None,
+            };
         }
         match (self.target_x, self.target_y, self.herd_id.as_ref()) {
             (Some(x), Some(y), _) => Some(match &self.material {
@@ -1293,18 +1340,26 @@ impl BuildSourceRef {
 
     /// **The build-queue key this names** — a road's own [`BuildSource::Road`], else the queue key
     /// of the labor row it names ([`BuildSource::of`]).
-    fn build_source(&self) -> Option<BuildSource> {
-        match (self.road, self.target_x, self.target_y) {
+    fn build_source(&self, ladder: &LadderConfig) -> Option<BuildSource> {
+        match (self.is_road(ladder), self.target_x, self.target_y) {
             (true, Some(x), Some(y)) => Some(BuildSource::Road(UVec2::new(x, y))),
             (true, _, _) => None,
-            (false, _, _) => self.target().as_ref().and_then(BuildSource::of),
+            (false, _, _) => self.target(ladder).as_ref().and_then(BuildSource::of),
         }
     }
 
     /// What the feed line calls it.
-    fn label(&self) -> String {
+    fn label(&self, ladder: &LadderConfig) -> String {
         match (self.target_x, self.target_y, self.herd_id.as_ref()) {
-            (Some(x), Some(y), _) if self.road => format!("the road at ({x}, {y})"),
+            (Some(x), Some(y), _) if self.is_road(ladder) => {
+                format!("the road at ({x}, {y})")
+            }
+            (Some(x), Some(y), _) if self.is_tile_improvement(ladder) => {
+                format!(
+                    "the {} improvement at ({x}, {y})",
+                    self.branch.as_deref().unwrap_or_default()
+                )
+            }
             (Some(x), Some(y), _) => match &self.material {
                 Some(material) => format!("the {material} at ({x}, {y})"),
                 None => format!("({x}, {y})"),
@@ -1315,10 +1370,42 @@ impl BuildSourceRef {
     }
 }
 
+/// **Read the ladder for a queue verb, refusing a source whose `branch` it cannot read.** The
+/// refusal is a typed feed line on the `CancelOrder` channel, the queue family's own.
+fn source_ladder(
+    app: &mut bevy::prelude::App,
+    faction: FactionId,
+    source: &BuildSourceRef,
+) -> Option<Arc<LadderConfig>> {
+    let ladder = app.world.resource::<LadderConfigHandle>().get();
+    if let Some(reason) = source.branch_refusal(&ladder) {
+        emit_command_failure(app, CommandEventKind::CancelOrder, faction, reason);
+        return None;
+    }
+    Some(ladder)
+}
+
+/// **What a `build` line asked for** — the verb as the player typed it, and whichever source fields
+/// the wire carried. The server reads the source kind off the ladder (the verb's rung's branch), so
+/// nothing here says what the verb is.
+#[derive(Debug, Clone, Default)]
+struct BuildRungRequest {
+    /// The keeper band, for a source kind with no work row (a road).
+    band_id: Option<u64>,
+    verb: String,
+    target_x: Option<u32>,
+    target_y: Option<u32>,
+    herd_id: Option<String>,
+    material: Option<String>,
+    /// The ladder branch, when the verb alone does not name it.
+    branch: Option<String>,
+}
+
 /// **What a queue verb says when it was handed no source** — one sentence for every verb that reads
 /// a [`BuildSourceRef`], so the grammar it names cannot drift between them.
 const SITE_SOURCE_GRAMMAR: &str = "two numbers name a tile, one token names a herd, \
-     `<x> <y> <material>` names a working and `road <x> <y>` names a road";
+     `<x> <y> <material>` names a working and `<branch> <x> <y>` (`route <x> <y>`) names a road \
+     or a tile improvement";
 
 #[derive(Debug, Clone)]
 enum Command {
@@ -1522,9 +1609,12 @@ enum Command {
         target_x: u32,
         target_y: u32,
     },
-    Tame {
+    /// **THE ONE BUILD VERB** (issue #175) — `build <verb> ...`, every rung of the ladder. The verb is
+    /// resolved against the loaded ladder and its branch's source kind decides which source fields
+    /// the line must carry ([`handle_build_rung`]).
+    BuildRung {
         faction: FactionId,
-        herd_id: String,
+        request: BuildRungRequest,
     },
     /// The Telling: answer a pending narrative fork with one of its authored choices.
     AnswerFork {
@@ -1532,66 +1622,7 @@ enum Command {
         beat_id: String,
         choice_id: String,
     },
-    Cultivate {
-        faction: FactionId,
-        target_x: u32,
-        target_y: u32,
-    },
-    Sow {
-        faction: FactionId,
-        target_x: u32,
-        target_y: u32,
-    },
-    Corral {
-        faction: FactionId,
-        target_x: u32,
-        target_y: u32,
-    },
-    /// **The route branch's two TILE verbs**, one variant apiece so the dispatch names the rung it
-    /// raises rather than carrying an `Improvement` a caller could get wrong.
-    Grade {
-        faction: FactionId,
-        band_id: u64,
-        target_x: u32,
-        target_y: u32,
-    },
-    Pave {
-        faction: FactionId,
-        band_id: u64,
-        target_x: u32,
-        target_y: u32,
-    },
-    /// **The two deposit branches' three TILE verbs**, one variant apiece for
-    /// [`Command::Grade`]'s reason — the dispatch names the rung it raises rather than carrying an
-    /// [`Improvement`] a caller could get wrong.
-    ///
-    /// ⛔ **EACH NAMES A TILE *AND* A MATERIAL, and no band.** A working's key is
-    /// `(tile, material)` because one hex can hold two, and its **keeper is whoever already works
-    /// it** — a working belongs to a camp exactly as a patch does, which is the one place the arc
-    /// deliberately does not copy the route branch. So this is `cultivate`'s shape with a material
-    /// token, not `grade`'s with a band one.
-    Fell {
-        faction: FactionId,
-        target_x: u32,
-        target_y: u32,
-        material: String,
-    },
-    /// [`Command::Fell`]'s twin one rung up the forestry branch, on the same terms.
-    Coppice {
-        faction: FactionId,
-        target_x: u32,
-        target_y: u32,
-        material: String,
-    },
-    /// The extraction branch's rung-2 verb, declared on [`Command::Fell`]'s terms. Its ground can refuse
-    /// it (`min_deposit_capacity`), as `coppice`'s can.
-    Quarry {
-        faction: FactionId,
-        target_x: u32,
-        target_y: u32,
-        material: String,
-    },
-    /// **PUT A WORKING DOWN** — [`Command::Abandon`]'s deposit twin, on the three verbs' own
+    /// **PUT A WORKING DOWN** — [`Command::Abandon`]'s deposit twin, on the deposit verbs' own
     /// grammar: it drops the `extract` row and its queue entry on every band of the faction working
     /// `(tile, material)`, and leaves the working's meter to slide back at the rung's own rate.
     ///
@@ -1699,6 +1730,21 @@ enum Command {
         recipe_id: String,
         count: u32,
         workers: u32,
+    },
+    /// Queue a whole kit as ONE grouped order. See `handle_bench_enqueue_kit`.
+    BenchEnqueueKit {
+        faction: FactionId,
+        band_id: Option<u64>,
+        kit_id: String,
+        kits: u32,
+        recipes: Vec<String>,
+    },
+    /// Remove or raise a whole kit order. See `handle_bench_kit_edit`.
+    BenchKitEdit {
+        faction: FactionId,
+        band_id: Option<u64>,
+        kit_order: u32,
+        edit: BenchKitEdit,
     },
     /// Set, remove or raise one order on a band's bench queue. See `handle_bench_queue_edit`.
     BenchQueueEdit {
@@ -3461,7 +3507,7 @@ fn seed_source_yield(
     app: &mut bevy::prelude::App,
     band: Entity,
     target: &LaborTarget,
-    improvement: Option<Improvement>,
+    improvement: Option<RungId>,
     workers: u32,
 ) {
     // Unassigned (`workers == 0`): `set_assignment` already dropped the source's row with its
@@ -3945,6 +3991,7 @@ fn seed_source_yield(
                 material,
                 &ground,
                 &extraction,
+                &ladder,
             ) else {
                 return;
             };
@@ -3999,7 +4046,7 @@ fn seed_source_yield(
                         pricing.deposit_gear_per_worker(
                             &equipment_cfg,
                             &band_wear,
-                            held_rung.branch(),
+                            held_rung.branch,
                             &held_key,
                         ),
                         *floor,
@@ -4089,8 +4136,10 @@ fn seed_source_yield(
                 ..core_sim::SourceYield::ZERO
             }
         }
-        // A band-wide role produces no per-source yield, so there is no row to seed.
-        LaborTarget::Scout
+        // A band-wide role produces no per-source yield, so there is no row to seed - and neither
+        // does a tile improvement's crew, which keeps a standing and takes nothing.
+        LaborTarget::Tile { .. }
+        | LaborTarget::Scout
         | LaborTarget::Warrior
         | LaborTarget::Roadwork
         | LaborTarget::Builders => return,
@@ -4261,8 +4310,64 @@ fn validate_labor_policy(
             // compose sheet off-site — which meant the sim accepted a command no player could send,
             // the card advertised a stand nobody could work, and the rule lived nowhere the sim
             // could see it (issue #464).
-            if let Some(refusal) = plant_rung_site_refusal(app, RungKey::PlantWild, *tile) {
-                return Err(site_refusal_message(refusal, *tile, "gather"));
+            let ladder = app.world.resource::<LadderConfigHandle>().get();
+            let root = ladder.kind_root(SourceKind::Patch).rung_id();
+            if let Some(refusal) = plant_rung_site_refusal(app, faction, root, *tile) {
+                // **GROUND A SOW COULD PLACE A SOURCE ON IS GROUND A CREW MAY BE SENT TO.** A sow is
+                // queued on a tile a crew already works, so a tile that is not a gathering site but
+                // that a higher placing rung admits for THIS faction (the Worked Land relaxation)
+                // would otherwise have no way to receive its first crew. The tile is judged by the
+                // highest placing rung: admitted, the crew is accepted; refused for want of a lesson,
+                // the refusal names it; otherwise the root's ordinary refusal stands.
+                let placing = ladder
+                    .rungs_of(ladder.branch_of_kind(SourceKind::Patch))
+                    .into_iter()
+                    .rev()
+                    .find(|rung| rung.places_source);
+                let placing_refusal = placing.map(|rung| {
+                    (
+                        rung,
+                        plant_rung_site_refusal(app, faction, rung.rung_id(), *tile),
+                    )
+                });
+                match placing_refusal {
+                    Some((rung, None)) => {
+                        // **THE FARM'S OWN LESSON STILL GATES IT**: an off-site crew declares the
+                        // sow with it, so it is judged by the same `unlock_knowledge` refusal every
+                        // build verb is (`validate_patch_build`).
+                        if let Some(refusal) = knowledge_refusal(app, faction, &ladder, rung) {
+                            return Err(refusal);
+                        }
+                        // **WORKED LAND OPENS FARMING, NOT GATHERING.** Off a gathering site the
+                        // crew is a FARMING crew: it is accepted only where the patch already holds
+                        // the placing rung or is being raised to it, or when it names the crop it is
+                        // here to sow (`handle_assign_labor` then declares the sow with the crew, so
+                        // the crew is a builder from its first turn). A bare gather is refused.
+                        let farmed = app
+                            .world
+                            .resource::<ForageRegistry>()
+                            .patch(*tile)
+                            .is_some_and(|patch| {
+                                let standing = patch.standing();
+                                standing.holds_at_or_above(rung)
+                                    || standing.raising == Some(rung.rung_id())
+                            });
+                        if !farmed && species.is_none() {
+                            return Err(format!(
+                                "({}, {}) is not a gathering site. Worked Land lets you farm there, \
+                                 not gather: name the crop to {} and the crew will raise a farm.",
+                                tile.x,
+                                tile.y,
+                                rung.verb.as_deref().unwrap_or("sow")
+                            ));
+                        }
+                    }
+                    Some((rung, Some(SiteRefusal::NeedsLesson))) => {
+                        let verb = rung.verb.as_deref().unwrap_or("gather");
+                        return Err(needs_lesson_message(&ladder, rung, *tile, verb));
+                    }
+                    _ => return Err(site_refusal_message(refusal, *tile, "gather")),
+                }
             }
             // **Judge the crop the player NAMED, and only then.** Absent means "pick the tile's
             // dominant legal plant for me", which cannot be wrong and — crucially — must not drag
@@ -4287,7 +4392,12 @@ fn validate_labor_policy(
             let Some(named) = species.as_deref() else {
                 return Ok(());
             };
-            validate_species_selection(app, *tile, Some(named), RungKey::PlantTended)
+            validate_species_selection(
+                app,
+                *tile,
+                Some(named),
+                ladder.managed_patch_rung().rung_id(),
+            )
         }
         // **IS THERE ANYTHING HERE TO WORK?** — the deposit branches' one stance rule, and it is
         // `absence is the answer` enforced at the command: a terrain carrying no row in
@@ -4321,6 +4431,9 @@ fn validate_labor_policy(
             }
             Ok(())
         }
+        // **A tile improvement's crew has no stance to validate** - no floor, species or herd. What
+        // `assign_labor` checks for it (a tile-kind branch, not another people's) is its own arm.
+        LaborTarget::Tile { .. } => Ok(()),
         LaborTarget::Scout
         | LaborTarget::Warrior
         | LaborTarget::Roadwork
@@ -4328,57 +4441,66 @@ fn validate_labor_policy(
     }
 }
 
-/// Validate an **[`Improvement`]** against the source it names — the gate half of the second axis,
+/// Validate an **build verb** against the source it names — the gate half of the second axis,
 /// and the home of every check `validate_labor_policy` used to carry for a build verb.
 ///
 /// 1. **The web must match the source kind.** `Cultivate`/`Sow` are plant-only, `Tame`/`Corral`
-///    animal-only ([`Improvement::valid_for_forage`] / [`Improvement::valid_for_hunt`]). Rejected
+///    animal-only (the branch's declared source kind). Rejected
 ///    outright rather than silently coerced.
 /// 2. **Gates — one knowledge per rung-transition** (§4.3). Each verb resolves its gate off its OWN
 ///    rung record, never a hard-coded id: `Cultivate` needs **Cultivation** + a **Thriving** patch
 ///    (not already tended, not someone else's); `Sow` needs **Seed Selection** + ground the
-///    `plant:field` rung's `site_requirement` accepts; `Tame` needs **Herding**; and `Corral` needs
+///    `plant:farm` rung's `site_requirement` accepts; `Tame` needs **Herding**; and `Corral` needs
 ///    **Penning** — *not* Herding, which gates `tame` alone — plus an owned, **domesticated**,
 ///    not-yet-penned herd of a `pen`-ceiling species. Each is unchanged by the axis split.
 fn validate_improvement(
     app: &bevy::prelude::App,
     faction: FactionId,
     target: &LaborTarget,
-    improvement: Improvement,
+    improvement: VerbId,
 ) -> Result<(), String> {
+    let ladder = app.world.resource::<LadderConfigHandle>().get();
+    let Some(rung) = ladder.rung_for_verb(improvement) else {
+        return Err(format!(
+            "'{}' is not a build verb this ladder knows.",
+            improvement.as_str()
+        ));
+    };
+    // **The kind the verb builds on is the BRANCH's declaration**, read off the ladder - never a
+    // per-verb match. A verb aimed at the wrong kind of source is refused outright rather than
+    // coerced.
+    let verb_kind = ladder.source_kind(rung.branch);
+    let wrong_kind = |here: &str| {
+        Err(format!(
+            "'{}' is not something you build on {here} - it applies to {}.",
+            improvement.as_str(),
+            verb_kind.map_or("something else", source_kind_noun)
+        ))
+    };
     match target {
         LaborTarget::Forage { tile, species, .. } => {
-            if !improvement.valid_for_forage() {
-                return Err(format!(
-                    "'{}' is not something you build on the land — it applies to herds.",
-                    improvement.as_str()
-                ));
+            if verb_kind != Some(SourceKind::Patch) {
+                return wrong_kind("the land");
             }
-            match improvement {
-                Improvement::Sow => validate_sow(app, faction, *tile, species.as_deref()),
-                _ => validate_cultivate(app, faction, *tile, species.as_deref()),
-            }
+            validate_patch_build(app, faction, *tile, species.as_deref(), rung)
         }
         LaborTarget::Hunt { fauna_id, .. } => {
-            if !improvement.valid_for_hunt() {
-                return Err(format!(
-                    "'{}' is not something you build on a herd — it applies to forage patches.",
-                    improvement.as_str()
-                ));
+            if verb_kind != Some(SourceKind::Herd) {
+                return wrong_kind("a herd");
             }
-            match improvement {
-                Improvement::Tame => validate_tame(app, faction, fauna_id),
-                _ => validate_corral(app, faction, fauna_id),
-            }
+            validate_herd_build(app, faction, fauna_id, rung)
         }
         LaborTarget::Extract { tile, material, .. } => {
-            if !improvement.valid_for_extract() {
-                return Err(format!(
-                    "'{}' is not something you build on a deposit — it applies to the food webs.",
-                    improvement.as_str()
-                ));
+            if verb_kind != Some(SourceKind::Deposit) {
+                return wrong_kind("a deposit");
             }
             validate_deposit_verb(app, faction, *tile, material, improvement)
+        }
+        LaborTarget::Tile { tile, branch } => {
+            if verb_kind != Some(SourceKind::Tile) {
+                return wrong_kind("a tile improvement");
+            }
+            validate_tile_verb(app, faction, *tile, *branch, rung)
         }
         LaborTarget::Scout
         | LaborTarget::Warrior
@@ -4387,6 +4509,83 @@ fn validate_improvement(
             "There is nothing to {} on a standing role.",
             improvement.as_str()
         )),
+    }
+}
+
+/// How a player-facing sentence names a source kind's rungs' ground.
+fn source_kind_noun(kind: SourceKind) -> &'static str {
+    match kind {
+        SourceKind::Patch => "forage patches",
+        SourceKind::Herd => "herds",
+        SourceKind::Road => "roads",
+        SourceKind::Deposit => "deposits",
+        SourceKind::Tile => "tiles",
+    }
+}
+
+/// **"Your people have not learned X yet"** — the knowledge gate, off the rung record's own
+/// `unlock_knowledge`, judged by the ladder's own `knows` so the command and the turn compare one
+/// threshold. `None` when the rung is ungated or the knowledge is known.
+fn knowledge_refusal(
+    app: &bevy::prelude::App,
+    faction: FactionId,
+    ladder: &core_sim::LadderConfig,
+    rung: &core_sim::RungDef,
+) -> Option<String> {
+    let id = rung.unlock_discovery_id()?;
+    let known = knows(
+        app.world.resource::<DiscoveryProgressLedger>(),
+        faction,
+        id,
+        ladder.knowledge.completion_threshold,
+    );
+    (!known).then(|| {
+        let name = rung.unlock_knowledge.as_deref().unwrap_or_default();
+        let title = core_sim::knowledge_title_from_id(name);
+        // **How it is learned is the ladder's own fact**: the rung that `earns_knowledge` this name
+        // teaches it, so the sentence names that rung's `label` rather than a per-verb tail.
+        let teacher = ladder
+            .branches_in_config_order()
+            .into_iter()
+            .flat_map(|branch| ladder.rungs_of(branch))
+            .find(|candidate| candidate.earns_knowledge.as_deref() == Some(name));
+        match teacher {
+            Some(teacher) => format!(
+                "Your people have not learned {title} yet. Sustain-work the {} to learn it.",
+                teacher.label.to_lowercase()
+            ),
+            None => format!("Your people have not learned {title} yet."),
+        }
+    })
+}
+
+/// **The next step up from `rung`** as a sentence tail - the verb that raises the rung above it, or
+/// that there is nothing higher. What an "already built" refusal tells the player to do next.
+fn next_step_tail(ladder: &core_sim::LadderConfig, rung: &core_sim::RungDef) -> String {
+    match ladder
+        .above_rung(rung)
+        .and_then(|above| above.verb.as_deref().map(|verb| (above, verb)))
+    {
+        Some((above, verb)) => format!(
+            "`build {verb}` takes it up to {}.",
+            above.label.to_lowercase()
+        ),
+        None => "there is nothing higher to raise it to.".to_string(),
+    }
+}
+
+/// **The rung to raise first** - the verb of the rung beneath `rung` on its branch, when it has one.
+fn rung_below_tail(ladder: &core_sim::LadderConfig, rung: &core_sim::RungDef) -> String {
+    let below = ladder
+        .rungs_of(rung.branch)
+        .into_iter()
+        .rfind(|candidate| candidate.order < rung.order);
+    match below.and_then(|below| below.verb.as_deref().map(|verb| (below, verb))) {
+        Some((below, verb)) => format!(
+            "raise the {} first (`build {verb}`).",
+            below.label.to_lowercase()
+        ),
+        None => "raise that first.".to_string(),
     }
 }
 
@@ -4408,7 +4607,8 @@ fn validate_improvement(
 /// always has the real tiles — remains the authority.
 fn plant_rung_site_refusal(
     app: &bevy::prelude::App,
-    rung_key: RungKey,
+    faction: FactionId,
+    rung_key: RungId,
     tile: UVec2,
 ) -> Option<SiteRefusal> {
     let registry = app.world.get_resource::<TileRegistry>()?;
@@ -4438,6 +4638,16 @@ fn plant_rung_site_refusal(
         // **A plant rung asks nothing of a deposit** — every rung off the two deposit branches
         // leaves `min_deposit_capacity` at this neutral, so the term cannot refuse one.
         core_sim::NO_DEPOSIT_FLOOR,
+        // **The acting faction's lessons**: a rung's `site_relaxations` loosen its site rule for a
+        // people that holds the lesson, and every gate reads the same answer.
+        &|name| {
+            core_sim::knows_lesson(
+                app.world.resource::<DiscoveryProgressLedger>(),
+                faction,
+                name,
+                ladder.knowledge.completion_threshold,
+            )
+        },
     )
 }
 
@@ -4461,7 +4671,7 @@ fn validate_deposit_verb(
     faction: FactionId,
     tile: UVec2,
     material: &str,
-    improvement: Improvement,
+    improvement: VerbId,
 ) -> Result<(), String> {
     let extraction = app.world.resource::<ExtractionConfigHandle>().get();
     let Some(deposit) = extraction.deposit(material) else {
@@ -4469,15 +4679,19 @@ fn validate_deposit_verb(
             "'{material}' is not something that comes out of the ground."
         ));
     };
-    let destination = RungKey::built_by(improvement);
-    if destination.branch() != deposit.branch {
+    let ladder = app.world.resource::<LadderConfigHandle>().get();
+    let Some(rung) = ladder.rung_for_verb(improvement) else {
+        return Err(format!(
+            "'{}' is not a build verb this ladder knows.",
+            improvement.as_str()
+        ));
+    };
+    if rung.branch != deposit.branch {
         return Err(format!(
             "'{}' is not how you work {material} — that is the other ladder.",
             improvement.as_str()
         ));
     }
-    let ladder = app.world.resource::<LadderConfigHandle>().get();
-    let rung = ladder.rung(destination);
     let labor = app.world.resource::<LaborConfigHandle>().get();
     let registry = app.world.resource::<TileRegistry>();
     let Some(ground) = registry
@@ -4495,24 +4709,14 @@ fn validate_deposit_verb(
         true,
         true,
         core_sim::extraction::tile_deposit_capacity(&extraction, material, ground),
+        // A deposit rung declares no `site_relaxations`, so no lesson changes its rule.
+        &|_| false,
     ) {
         return Err(site_refusal_message(refusal, tile, improvement.as_str()));
     }
-    // **Through the ladder's own `knows`**, so the command's gate and the turn's are one
-    // comparison against one threshold.
-    let knows_rung = rung.unlock_discovery_id().is_none_or(|id| {
-        core_sim::knows(
-            app.world.resource::<DiscoveryProgressLedger>(),
-            faction,
-            id,
-            ladder.knowledge.completion_threshold,
-        )
-    });
-    if !knows_rung {
-        return Err(format!(
-            "Your people have not learned how to {} yet. Work the ground below it to learn.",
-            improvement.as_str()
-        ));
+    // The ladder's own `knows`, so the command's gate and the turn's are one comparison.
+    if let Some(refusal) = knowledge_refusal(app, faction, &ladder, rung) {
+        return Err(refusal);
     }
     Ok(())
 }
@@ -4550,241 +4754,51 @@ fn site_refusal_message(refusal: SiteRefusal, tile: UVec2, verb: &str) -> String
              Your people can carry seed, but not yet water or feed the land.",
             tile.x, tile.y
         ),
+        SiteRefusal::NeedsLesson => format!(
+            "Your people have not learned how to {} ground beyond the sites they already gather, \
+             at ({}, {}) - a lesson they have not learned would open it.",
+            verb, tile.x, tile.y
+        ),
+        SiteRefusal::PenTaken => PEN_TAKEN_HINT.to_string(),
     }
 }
 
-/// The **`Cultivate`** verb's gates — the plant rung-2 twin of [`validate_tame`], split out of the
-/// old inline chain when the improvement became its own axis.
-fn validate_cultivate(
-    app: &bevy::prelude::App,
-    faction: FactionId,
+/// **THE REFUSAL FOR GROUND A LESSON WOULD OPEN, naming the lesson and where it is learned** - the
+/// [`SiteRefusal::NeedsLesson`] answer with its particulars filled from the rung's own
+/// `site_relaxations` and the rung that `earns_knowledge` it, so the sentence says what to do next.
+fn needs_lesson_message(
+    ladder: &core_sim::LadderConfig,
+    rung: &core_sim::RungDef,
     tile: UVec2,
-    species: Option<&str>,
-) -> Result<(), String> {
-    // The rung's own gate, resolved off the ladder — the `validate_tame` pattern: the record
-    // says which knowledge opens `cultivate`, and the ladder says when a knowledge is known.
-    let (knowledge_threshold, tended_unlock) = {
-        let ladder = app.world.resource::<LadderConfigHandle>().get();
-        (
-            ladder.knowledge.completion_threshold,
-            ladder.rung(RungKey::PlantTended).unlock_discovery_id(),
-        )
+    verb: &str,
+) -> String {
+    let Some(lesson) = rung
+        .site_relaxations
+        .last()
+        .map(|relaxation| relaxation.knowledge.as_str())
+    else {
+        return site_refusal_message(SiteRefusal::NeedsLesson, tile, verb);
     };
-    let knows_cultivation = tended_unlock.is_none_or(|knowledge| {
-        knows(
-            app.world.resource::<DiscoveryProgressLedger>(),
-            faction,
-            knowledge,
-            knowledge_threshold,
-        )
-    });
-    if !knows_cultivation {
-        return Err("Your people have not learned Cultivation yet. Sustain-forage thriving patches to learn it.".to_string());
-    }
-    // **Rung 2 asks exactly what rung 1 asks** — Cultivate improves the output of ground you already
-    // gather, so it can only stand on a gathering site. Resolved through the same seam rather than
-    // leaning on "the Forage assignment must already have passed", because an improvement can be
-    // named on the same command that first staffs the tile.
-    if let Some(refusal) = plant_rung_site_refusal(app, RungKey::PlantTended, tile) {
-        return Err(site_refusal_message(refusal, tile, "tend"));
-    }
-    let Some(patch) = app.world.resource::<ForageRegistry>().patch(tile) else {
-        return Err(format!("No forage patch at ({}, {}).", tile.x, tile.y));
-    };
-    // **THE REFUSAL IS THE METER'S FULLNESS, NOT THE ACHIEVED RUNG** — the same question
-    // `forage::patch_rung_already_built` and `forage::patch_build_verb` ask, so the command and the
-    // queue can never disagree about whether there is work left on this ground.
-    //
-    // **A tended patch eroded below its cost is a REPAIR, and this used to forbid it.**
-    // `is_cultivated()` used to compare against the *retention bar*, which sat well below the cost,
-    // so a patch at 99% answered *"already cultivated"* — while completion had already retired its
-    // queue entry, and `build_workers` aims the pool only at a head that declares. The three
-    // composed into a rung that could never be repaired: no entry, no builders, and no command that
-    // could make one (`docs/plan_standing_upkeep.md` §2.4).
-    //
-    // **THE GAP IS GONE RATHER THAN BRIDGED** (§2.8): the retention bar is deleted, so *achieved*
-    // and *its meter is full* are one fact and there is no band between them for a patch to be
-    // stranded in. The predicate is `is_cultivated()` again — which now means exactly what the
-    // retired `cultivation_meter_full()` meant — and a rung that dips is simply not achieved, so
-    // re-queueing it is an ordinary build rather than a repair the command had to be taught to allow.
-    if patch.is_cultivated() {
-        return Err(format!(
-            "The patch at ({}, {}) is already cultivated — forage it to tend it.",
+    let title = core_sim::knowledge_title_from_id(lesson);
+    let teacher = ladder
+        .branches_in_config_order()
+        .into_iter()
+        .flat_map(|branch| ladder.rungs_of(branch))
+        .find(|candidate| candidate.earns_knowledge.as_deref() == Some(lesson));
+    match teacher {
+        Some(teacher) => format!(
+            "({}, {}) is not ground your people already gather. Learn {title} to {verb} beyond \
+             the gathering sites - work a {} to learn it.",
+            tile.x,
+            tile.y,
+            teacher.label.to_lowercase()
+        ),
+        None => format!(
+            "({}, {}) is not ground your people already gather. Learn {title} to {verb} beyond \
+             the gathering sites.",
             tile.x, tile.y
-        ));
+        ),
     }
-    // **There is no health gate here** (`docs/plan_harvest_floor.md` §3.2). `Cultivate` used to
-    // demand `EcologyPhase::Thriving`, as a **start** gate with an exemption for a build already
-    // underway (`ForagePatch::cultivation_underway`) — a whole start-vs-continue ruling that existed
-    // to make the mid-build lapse survivable. The harvest floor replaced the cliff with a rate: a
-    // crew pulling hard on the ground they are clearing builds *slowly*
-    // (`intensification::learn_multiplier`), never *not at all*. With nothing left to lapse, the
-    // exemption has nothing to exempt and the gate has nothing to gate.
-    if patch.owner.is_some_and(|owner| owner != faction) {
-        return Err(format!(
-            "Another people are cultivating the patch at ({}, {}).",
-            tile.x, tile.y
-        ));
-    }
-    // **Which plant would this commit the ground to?** (Flora Roster S1.) The last gate, because it
-    // is the most specific: the land and the knowledge decide whether the verb is available at all,
-    // and this decides whether the *selection* is one this ground can grow.
-    validate_species_selection(app, tile, species, RungKey::PlantTended)
-}
-
-/// The **`Corral`** verb's gates — the animal rung-3 twin of [`validate_sow`].
-///
-/// **The §4.3 gate reshuffle**: rung 3 is gated on **Penning**, the knowledge rung 2 teaches — not on
-/// Herding, which now gates `tame` alone. Read off the rung record (the [`validate_tame`] pattern)
-/// rather than a hard-coded id, so the gate cannot drift from the ladder the labor arm accrues
-/// against.
-fn validate_corral(
-    app: &bevy::prelude::App,
-    faction: FactionId,
-    fauna_id: &str,
-) -> Result<(), String> {
-    let (knowledge_threshold, pen_unlock) = {
-        let ladder = app.world.resource::<LadderConfigHandle>().get();
-        (
-            ladder.knowledge.completion_threshold,
-            ladder.rung(RungKey::AnimalPen).unlock_discovery_id(),
-        )
-    };
-    let knows_penning = pen_unlock.is_none_or(|knowledge| {
-        knows(
-            app.world.resource::<DiscoveryProgressLedger>(),
-            faction,
-            knowledge,
-            knowledge_threshold,
-        )
-    });
-    if !knows_penning {
-        return Err(
-            "Your people have not learned Penning yet. Tame and keep herds to learn it."
-                .to_string(),
-        );
-    }
-    let Some(herd) = app.world.resource::<HerdRegistry>().find(fauna_id) else {
-        return Err(format!("No herd '{}' to corral.", fauna_id));
-    };
-    // Grazing 2d-δ: only a `Pen`-ceiling species may be penned (nomadic herders don't fence).
-    if !herd.can_pen() {
-        return Err(format!("{} cannot be penned.", herd.species));
-    }
-    // **The meter's fullness, not the fence flag** — [`validate_cultivate`]'s rule on the animal
-    // web, so this refusal asks exactly what `fauna::herd_rung_already_built` asks. The two agree on
-    // every herd the sim can reach today (`corral_at` sets the meter to its own cost, and nothing
-    // bleeds it), so this is the *shape* being made uniform rather than a behaviour change: it is
-    // what keeps a pen meter that ever learns to erode repairable by the same one-line rule the
-    // plant web already needed.
-    if herd.corral_meter_full() {
-        return Err(format!("{} is already corralled.", fauna_id));
-    }
-    if !herd.is_domesticated() {
-        return Err(format!(
-            "{} is not domesticated. Tame it before building a pen.",
-            fauna_id
-        ));
-    }
-    if herd.owner != Some(faction) {
-        return Err(format!("You do not own {}.", fauna_id));
-    }
-    Ok(())
-}
-
-/// The **`Sow`** policy's gates — the plant **rung-3** verb (`docs/plan_intensification_ladder.md`
-/// §2), split out for `validate_tame`'s reason: the Forage arm now validates two investment rungs.
-///
-/// Each rejection is distinct, and the order is deliberate:
-/// 1. **The tile exists.** A coordinate off the map names no ground at all.
-/// 2. **The LAND will take seed** — the rung's own `site_requirement` (`RungSiteRequirement`), read
-///    off the ladder record and judged by the *rung*, not restated here: the ground must be a
-///    **gathering site** *and* **near fresh water**. Rung 3 knows how to move seed but not how to
-///    carry water, and it does not yet work unfamiliar ground — so it sows the watered ground its
-///    people already gather. The failures are **distinct** and phrased distinctly through the shared
-///    [`site_refusal_message`]. Checked *before* knowledge, because it is a property of the *place*,
-///    not of the player (the `validate_tame` rule: the animal's own nature outranks who is hunting it).
-/// 3. **Seed Selection** — the rung's own `unlock_knowledge`, read off the ladder rather than
-///    hard-coded, naming both the knowledge and how it is learned.
-/// 4. **Not already a Field** — this rung is already climbed; work it, don't re-sow it.
-/// 5. **Not another faction's ground** — mirrors the Cultivate arm's "another people are cultivating
-///    it".
-///
-/// **There is deliberately no health gate**: freshly sown ground starts at the reseed floor, i.e.
-/// Collapsing, so requiring Thriving would forbid exactly the case this rung exists for.
-///
-/// **`Sow` USED TO NEED NO SITE AT ALL, AND THAT WAS THE REVERSAL THIS ARC MADE.** §2 read "where the
-/// two webs legitimately differ: `Corral` needs a herd you already tamed, `Sow` needs nothing" —
-/// seed travels, so any qualifying ground was a legal, indeed the interesting, target. What that
-/// missed is that a player could never *reach* such ground: gathering itself is site-bound, so the
-/// only tiles a band works are gathering sites, and a rung that could leap off them existed on paper
-/// only. Moving "seed travels" up to **rung 4 (Farm)** is what gives that rung its identity — it is
-/// the first rung to drop `requires_gathering_site` — and leaves rung 3 as what it always played as:
-/// *commit one of the plants you already gather here to a single crop*.
-fn validate_sow(
-    app: &bevy::prelude::App,
-    faction: FactionId,
-    tile: UVec2,
-    species: Option<&str>,
-) -> Result<(), String> {
-    // `get_resource`, not `resource`: a world that has never been generated carries no
-    // `TileRegistry`, and this arm is reachable from an ungated `assign_labor` before `new_game`.
-    // A map-less world has no tile to name as missing either, so it falls through to the same
-    // permissive stance `plant_rung_site_refusal` and `validate_species_selection` take.
-    if let Some(registry) = app.world.get_resource::<TileRegistry>() {
-        if registry.index(tile.x, tile.y).is_none() {
-            return Err(format!("There is no tile at ({}, {}).", tile.x, tile.y));
-        }
-    }
-    let (knowledge_threshold, field_unlock) = {
-        let ladder = app.world.resource::<LadderConfigHandle>().get();
-        (
-            ladder.knowledge.completion_threshold,
-            ladder.rung(RungKey::PlantField).unlock_discovery_id(),
-        )
-    };
-    // The land's own answer, phrased through the shared message table so a tile the gather gate
-    // already refused does not get a second, differently-worded "no" from this verb.
-    if let Some(refusal) = plant_rung_site_refusal(app, RungKey::PlantField, tile) {
-        return Err(site_refusal_message(refusal, tile, "sow"));
-    }
-    let knows_seed_selection = field_unlock.is_none_or(|knowledge| {
-        knows(
-            app.world.resource::<DiscoveryProgressLedger>(),
-            faction,
-            knowledge,
-            knowledge_threshold,
-        )
-    });
-    if !knows_seed_selection {
-        return Err(
-            "Your people have not learned Seed Selection yet. Work tended patches to learn \
-                    it."
-            .to_string(),
-        );
-    }
-    // A tile with no patch at all is a LEGAL target — the create-from-nothing case. Only an existing
-    // patch can be in a state that refuses the seed.
-    if let Some(patch) = app.world.resource::<ForageRegistry>().patch(tile) {
-        // [`validate_cultivate`]'s rule one rung up, and the same history: `is_field()` used to read
-        // a *retention bar* below the cost, so a Field eroded to 99% refused the very `sow` that
-        // would repair it. The bar is deleted (§2.8), so the achieved rung and a full meter are one
-        // fact and this asks it once.
-        if patch.is_field() {
-            return Err(format!(
-                "The field at ({}, {}) is already sown — forage it to work it.",
-                tile.x, tile.y
-            ));
-        }
-        if patch.owner.is_some_and(|owner| owner != faction) {
-            return Err(format!(
-                "Another people are working the ground at ({}, {}).",
-                tile.x, tile.y
-            ));
-        }
-    }
-    // **Which crop?** — the species half of "will this ground take seed", after the land half above.
-    validate_species_selection(app, tile, species, RungKey::PlantField)
 }
 
 /// **THE TAKE SELECTION THIS COMMAND WILL STORE, and the names the ground has taken off it** — the
@@ -4886,6 +4900,152 @@ fn resolve_take_for_ground(
     })
 }
 
+/// **THE RUNG THAT PLACES A SOURCE ON `tile` WHEN THE GATHERING RULE REFUSES IT** - `Some` only for
+/// ground the root rung's site rule refuses for this faction and the highest placing rung (the
+/// Farm, through its Worked Land relaxation) admits: off-site farming ground.
+fn off_site_placing_rung(
+    app: &bevy::prelude::App,
+    faction: FactionId,
+    tile: UVec2,
+) -> Option<RungId> {
+    let ladder = app.world.resource::<LadderConfigHandle>().get();
+    let root = ladder.kind_root(SourceKind::Patch).rung_id();
+    plant_rung_site_refusal(app, faction, root, tile)?;
+    let placing = ladder
+        .rungs_of(ladder.branch_of_kind(SourceKind::Patch))
+        .into_iter()
+        .rev()
+        .find(|rung| rung.places_source)?;
+    plant_rung_site_refusal(app, faction, placing.rung_id(), tile)
+        .is_none()
+        .then(|| placing.rung_id())
+}
+
+/// **MAY THIS FACTION RAISE `rung` ON THE PATCH AT `tile`?** - every patch-kind verb's gates,
+/// composed from the rung's own properties and in one order, so the two old per-verb validators
+/// (`cultivate`, `sow`) are one function and a patch branch added by config is gated for free. The
+/// terms, in order: the tile exists, the land admits the rung (`site_requirement`), the knowledge
+/// (`unlock_knowledge`), a patch is there unless the rung `places_source`, the rung is not already
+/// held, `requires_ownership` (not another people's), and `requires_crop` (the selection is one
+/// this ground can grow).
+///
+/// The land is judged before the knowledge because it is a property of the *place*, not of the
+/// player (the order `sow` has always had).
+fn validate_patch_build(
+    app: &bevy::prelude::App,
+    faction: FactionId,
+    tile: UVec2,
+    species: Option<&str>,
+    rung: &core_sim::RungDef,
+) -> Result<(), String> {
+    // `get_resource`, not `resource`: a world that has never been generated carries no
+    // `TileRegistry`, and this is reachable from an ungated `assign_labor` before `new_game`.
+    if let Some(registry) = app.world.get_resource::<TileRegistry>() {
+        if registry.index(tile.x, tile.y).is_none() {
+            return Err(format!("There is no tile at ({}, {}).", tile.x, tile.y));
+        }
+    }
+    let ladder = app.world.resource::<LadderConfigHandle>().get();
+    let verb = rung.verb.as_deref().unwrap_or_default();
+    let key = rung.rung_id();
+    if let Some(refusal) = plant_rung_site_refusal(app, faction, key, tile) {
+        return Err(match refusal {
+            SiteRefusal::NeedsLesson => needs_lesson_message(&ladder, rung, tile, verb),
+            other => site_refusal_message(other, tile, verb),
+        });
+    }
+    if let Some(refusal) = knowledge_refusal(app, faction, &ladder, rung) {
+        return Err(refusal);
+    }
+    let registry = app.world.resource::<ForageRegistry>();
+    let patch = registry.patch(tile);
+    if patch.is_none() && !rung.places_source {
+        return Err(format!("No forage patch at ({}, {}).", tile.x, tile.y));
+    }
+    if let Some(patch) = patch {
+        // **The meter's fullness is the achieved rung** (one position, no retention bar), so
+        // re-queueing an eroded rung is an ordinary build and a full one is refused.
+        if patch.standing().holds_at_or_above(rung) {
+            return Err(format!(
+                "The {} at ({}, {}) is already built - {}",
+                rung.label.to_lowercase(),
+                tile.x,
+                tile.y,
+                next_step_tail(&ladder, rung)
+            ));
+        }
+        if rung.requires_ownership && patch.owner.is_some_and(|owner| owner != faction) {
+            return Err(format!(
+                "Another people hold the patch at ({}, {}).",
+                tile.x, tile.y
+            ));
+        }
+    }
+    if rung.requires_crop {
+        return validate_species_selection(app, tile, species, key);
+    }
+    Ok(())
+}
+
+/// **MAY THIS FACTION RAISE `rung` ON THE HERD `fauna_id`?** - every herd-kind verb's gates,
+/// composed from the rung's own properties: the knowledge, the herd exists, the species'
+/// `ceiling_required`, not already held, `requires_held_rung_below`, `requires_ownership`.
+///
+/// The species' ceiling is checked *before* ownership because it is a property of the *animal*, not
+/// of who is hunting it. There is deliberately no health gate: a herd's phase swings as it is
+/// hunted, and the labor arm handles a lapsed phase gracefully.
+fn validate_herd_build(
+    app: &bevy::prelude::App,
+    faction: FactionId,
+    fauna_id: &str,
+    rung: &core_sim::RungDef,
+) -> Result<(), String> {
+    let ladder = app.world.resource::<LadderConfigHandle>().get();
+    if let Some(refusal) = knowledge_refusal(app, faction, &ladder, rung) {
+        return Err(refusal);
+    }
+    let Some(herd) = app.world.resource::<HerdRegistry>().find(fauna_id) else {
+        return Err(format!("No herd '{fauna_id}' to build on."));
+    };
+    if let Some(required) = rung.ceiling_required {
+        if !ladder.ceiling_reaches(herd.husbandry_ceiling, required) {
+            return Err(format!(
+                "{} cannot be taken to {} - its kind goes no further than {}.",
+                herd.species,
+                rung.label.to_lowercase(),
+                ladder.ceiling_wire_id(herd.husbandry_ceiling, SourceKind::Herd)
+            ));
+        }
+    }
+    let standing = herd.standing();
+    if standing.holds_at_or_above(rung) {
+        return Err(format!(
+            "{fauna_id} is already built - it stands as a {}; {}",
+            rung.label.to_lowercase(),
+            next_step_tail(&ladder, rung)
+        ));
+    }
+    if rung.requires_held_rung_below {
+        let below_order = u32::from(standing.held_order) + 1;
+        if below_order < rung.order {
+            return Err(format!(
+                "{fauna_id} has not reached the rung beneath {} yet - {}",
+                rung.label.to_lowercase(),
+                rung_below_tail(&ladder, rung)
+            ));
+        }
+        // **A rung that needs the one below held ALSO needs it to be ours** - a herd nobody has
+        // tamed has no owner to build a pen for.
+        if herd.owner != Some(faction) {
+            return Err(format!("You do not own {fauna_id}."));
+        }
+    }
+    if rung.requires_ownership && herd.owner.is_some_and(|owner| owner != faction) {
+        return Err(format!("Another people hold {fauna_id}."));
+    }
+    Ok(())
+}
+
 /// **May a `Cultivate`/`Sow` on this tile commit to this plant?** — the species-side gate
 /// (`docs/plan_flora_roster.md` §4.3), phrased for the player.
 ///
@@ -4897,7 +5057,7 @@ fn validate_species_selection(
     app: &bevy::prelude::App,
     tile: UVec2,
     species: Option<&str>,
-    rung: RungKey,
+    rung: RungId,
 ) -> Result<(), String> {
     // **No map, nothing to judge.** A world that has not been generated yet (the idle boot, and the
     // command-unit harnesses) carries no `TileRegistry` at all, so there is no basket to read; the
@@ -4916,11 +5076,13 @@ fn validate_species_selection(
     let flora = app.world.resource::<FloraConfigHandle>().get();
     let map_seed = app.world.resource::<SimulationConfig>().map_seed;
     let composition = tile_flora_composition(&flora, &labor.forage, ground, map_seed);
-    let verb = match rung {
-        RungKey::PlantField => "sown",
-        _ => "tended",
+    let ladder = app.world.resource::<LadderConfigHandle>().get();
+    let verb = if ladder.rung(rung).trait_set().has(core_sim::RungTrait::Sown) {
+        "sown"
+    } else {
+        "tended"
     };
-    match resolve_committed_species(species, &composition, &flora, rung) {
+    match resolve_committed_species(species, &composition, &flora, &ladder, rung) {
         Ok(_) => Ok(()),
         Err(SpeciesRefusal::Unknown) => Err(format!(
             "Your people know no plant called '{}'.",
@@ -4948,77 +5110,6 @@ fn validate_species_selection(
             tile.x, tile.y
         )),
     }
-}
-
-/// The **`Tame`** policy's gates — the animal rung-2 twin of the `Cultivate` arm above, in the same
-/// order and with the same shape. Split out because the Hunt arm now validates two investment rungs
-/// and one inline `if` chain for both would read as a maze.
-///
-/// Each rejection is distinct, and the order is deliberate:
-/// 1. **Herding** — the rung's own `unlock_knowledge`, read off the ladder rather than hard-coded, so
-///    a config edit to the gate can't leave a stale check here. (§4.3 will move rung 3 to `penning`;
-///    this arm keeps naming its own rung's knowledge whatever that becomes.)
-/// 2. **The herd exists.**
-/// 3. **The species' `husbandry_ceiling` allows domestication** (Grazing 2d-δ) — checked *before*
-///    ownership, because it is a property of the *animal*, not of who is hunting it (the rule the
-///    retired `domesticate` handler established).
-/// 4. **Not already domesticated** — this rung is already climbed; `corral` is the next verb. This
-///    one already reads the **meter** (`Herd::is_domesticated` *is* `progress >= cost`; the
-///    pastoral rung has no separate retention bar), so it needed nothing when the plant verbs' gates
-///    were moved off the retention bar — and `fauna::herd_rung_already_built` asks the same
-///    expression, which is why a `Tame` was never caught in the repair deadlock.
-/// 5. **Not another faction's** — mirrors the plant side's "another people are cultivating it".
-///
-/// Deliberately **not** gated on the herd being Thriving, unlike the patch: a herd's phase swings as
-/// it is hunted, and the labor arm already handles a lapsed phase gracefully (accrual pauses, the
-/// meter holds, work resumes on recovery). Rejecting the *policy* for a transient dip would be a
-/// worse experience than letting the player commit and wait.
-fn validate_tame(
-    app: &bevy::prelude::App,
-    faction: FactionId,
-    fauna_id: &str,
-) -> Result<(), String> {
-    let (knowledge_threshold, pastoral_unlock) = {
-        let ladder = app.world.resource::<LadderConfigHandle>().get();
-        (
-            ladder.knowledge.completion_threshold,
-            ladder.rung(RungKey::AnimalPastoral).unlock_discovery_id(),
-        )
-    };
-    let knows_unlock = pastoral_unlock.is_none_or(|knowledge| {
-        knows(
-            app.world.resource::<DiscoveryProgressLedger>(),
-            faction,
-            knowledge,
-            knowledge_threshold,
-        )
-    });
-    if !knows_unlock {
-        return Err(
-            "Your people have not learned Herding yet. Sustain-hunt thriving herds to learn it."
-                .to_string(),
-        );
-    }
-    let Some(herd) = app.world.resource::<HerdRegistry>().find(fauna_id) else {
-        return Err(format!("No herd '{}' to tame.", fauna_id));
-    };
-    // Grazing 2d-δ: a `Wild`-ceiling species can never be tamed — a property of the animal.
-    if !herd.can_domesticate() {
-        return Err(format!(
-            "{} is wild game — hunt-only, it cannot be tamed.",
-            herd.species
-        ));
-    }
-    if herd.is_domesticated() {
-        return Err(format!(
-            "{} is already domesticated — corral it to pen it.",
-            fauna_id
-        ));
-    }
-    if herd.owner.is_some_and(|owner| owner != faction) {
-        return Err(format!("Another people are taming {}.", fauna_id));
-    }
-    Ok(())
 }
 
 /// Set the worker count for one labor target on a band (idempotent; `0` unassigns; clamps to the
@@ -5129,8 +5220,12 @@ fn working_as_it_stands(
         return None;
     }
     let branch = core_sim::extraction::deposit_branch(&extraction, material)?;
+    let ladder = app.world.resource::<LadderConfigHandle>().get();
     Some(core_sim::extraction::DepositSource::opening(
-        tile, material, capacity, branch,
+        tile,
+        material,
+        capacity,
+        core_sim::RungStanding::unstarted_on(&ladder, branch),
     ))
 }
 
@@ -5323,6 +5418,38 @@ fn handle_assign_labor(
                 return;
             }
         },
+        // **A TILE IMPROVEMENT'S CREW** - the deposit row's twin for a source that yields nothing.
+        // It names a TILE AND A BRANCH (one tile can carry improvements of several tile branches);
+        // the branch rides the `species` token, as a deposit's material does. The crew keeps the
+        // improvement first, and distance is nothing special: a far crew is a work party.
+        "tile" => match (target_x, target_y, species.as_deref().map(str::trim)) {
+            (Some(x), Some(y), Some(branch)) if !branch.is_empty() => {
+                let ladder = app.world.resource::<LadderConfigHandle>().get();
+                let branch = BranchId::new(branch);
+                if !core_sim::is_tile_branch(&ladder, branch) {
+                    emit_command_failure(
+                        app,
+                        CommandEventKind::CancelOrder,
+                        faction,
+                        format!("'{branch}' is not a tile improvement branch this ladder knows."),
+                    );
+                    return;
+                }
+                LaborTarget::Tile {
+                    tile: UVec2::new(x, y),
+                    branch,
+                }
+            }
+            _ => {
+                emit_command_failure(
+                    app,
+                    CommandEventKind::CancelOrder,
+                    faction,
+                    "assign_labor tile requires <branch> <x> <y>.".to_string(),
+                );
+                return;
+            }
+        },
         other => {
             emit_command_failure(
                 app,
@@ -5347,6 +5474,8 @@ fn handle_assign_labor(
         // generic one, as the warriors do.
         LaborTarget::Builders => CommandEventKind::CancelOrder,
         LaborTarget::Extract { .. } => CommandEventKind::Extraction,
+        // A tile improvement has no web's channel; it reports on the generic one, as the pools do.
+        LaborTarget::Tile { .. } => CommandEventKind::CancelOrder,
     };
 
     // Stance validation. Unassigning (`workers == 0`) is always allowed — a player must be able to
@@ -5421,11 +5550,17 @@ fn handle_assign_labor(
     // *"what does this command STORE"*, not *"which kit is the absent one"*: that helper returns a
     // resolved `KitChoice` for the raid path too.
     let unstaffing = workers == 0 && !target.is_need_row();
-    let staffing_a_standing_pool = matches!(target, LaborTarget::Builders | LaborTarget::Roadwork);
+    let staffing_a_standing_pool = matches!(
+        target,
+        LaborTarget::Builders | LaborTarget::Roadwork | LaborTarget::Tile { .. }
+    );
     if staffing_a_standing_pool && kit_id.is_some() {
         let refusal = match target {
             LaborTarget::Builders => {
                 "a pool names no kit — the builders' tools follow from the rung they are raising"
+            }
+            LaborTarget::Tile { .. } => {
+                "a tile crew names no kit — its keeping tools follow from the rung the improvement stands on"
             }
             _ => "a pool names no kit — the road keepers' tools follow from the rung each road stands on",
         }
@@ -5476,12 +5611,58 @@ fn handle_assign_labor(
             .world
             .resource::<core_sim::extraction::DepositRegistry>();
         let ladder = app.world.resource::<LadderConfigHandle>().get();
-        core_sim::source_has_a_meter_at_risk(&target, forage_registry, herds, deposits, &ladder)
+        let tile_improvements = app.world.resource::<core_sim::TileImprovementRegistry>();
+        core_sim::source_has_a_meter_at_risk(
+            &target,
+            forage_registry,
+            herds,
+            deposits,
+            tile_improvements,
+            &ladder,
+        )
     };
 
+    // **THE FIRST CREW PLACES THE IMPROVEMENT** at its branch's floor, so the row, the wire and a
+    // `build` all see ground something stands on. Another people's improvement is refused.
+    if let (true, LaborTarget::Tile { tile, branch }) = (workers > 0, &target) {
+        let ladder = app.world.resource::<LadderConfigHandle>().get();
+        let theirs = app
+            .world
+            .resource::<core_sim::TileImprovementRegistry>()
+            .get(*tile, *branch)
+            .is_some_and(|improvement| improvement.faction != faction);
+        if theirs {
+            emit_command_failure(
+                app,
+                event_kind,
+                faction,
+                format!(
+                    "The improvement at ({}, {}) belongs to another people.",
+                    tile.x, tile.y
+                ),
+            );
+            return;
+        }
+        app.world
+            .resource_mut::<core_sim::TileImprovementRegistry>()
+            .place(*tile, *branch, faction, &ladder);
+    }
+
     let kind_label = target.kind();
+    // **AN OFF-SITE CREW IS A SOWING CREW**: the root rung's rule refuses the ground and the placing
+    // rung admits it, so the crew exists to raise the farm - the sow is declared with it.
+    let off_site_sow = match &target {
+        LaborTarget::Forage { tile, .. } if workers > 0 => {
+            off_site_placing_rung(app, faction, *tile)
+        }
+        _ => None,
+    };
+    let prior_staffing;
     let (applied, assigned_total, dropped_row) = {
         let mut allocation = band_allocation_mut(app, band.entity);
+        // The row's staffing BEFORE this order: `set_assignment`'s headroom counts these hands as
+        // free (it replaces them), so the clamp note must net them back out.
+        prior_staffing = allocation.workers_on(&target);
         let applied = allocation.set_assignment(target.clone(), workers, available, crew_kit);
         // **ONE HERD AT A TIME** — migration mode on this hunt row turns it off on the band's others.
         if let LaborTarget::Hunt {
@@ -5514,11 +5695,28 @@ fn handle_assign_labor(
     if let Some(row) = dropped_row.as_ref() {
         core_sim::bring_the_dropped_party_home(&mut app.world, band.entity, row);
     }
+    if let (Some(rung), true) = (off_site_sow, applied > 0) {
+        let ladder = app.world.resource::<LadderConfigHandle>().get();
+        let farmed = match &target {
+            LaborTarget::Forage { tile, .. } => app
+                .world
+                .resource::<ForageRegistry>()
+                .patch(*tile)
+                .is_some_and(|patch| patch.standing().holds_at_or_above(ladder.rung(rung))),
+            _ => false,
+        };
+        if !farmed {
+            let mut allocation = band_allocation_mut(app, band.entity);
+            if let Some(source) = BuildSource::of(&target) {
+                allocation.enqueue_build(source, BuildJob::Climb(rung));
+            }
+        }
+    }
     // The seed must price the dip of whatever this band has **queued** here, rather than the
     // undipped stance — a build in flight is the queue's, not the row's. Read after the allocation
     // borrow is released, because resolving the declaration against the ground needs both webs'
     // registries.
-    let improvement = build_verb_on_source_at(app, band.entity, &target);
+    let improvement = build_rung_on_source_at(app, band.entity, &target);
     // Show the source's expected yield immediately (workers added/removed OR stance changed — every
     // shape of this command that moves the number): without the seed the row reads `+0.00` until the
     // player advances a turn.
@@ -5559,7 +5757,15 @@ fn handle_assign_labor(
     }
     // A need row takes no standing hands, so there is nothing to clamp: the count sent is ignored.
     let clamp_note = if applied < workers && !target.is_need_row() {
-        format!(" (clamped from {} — only {} idle)", workers, available)
+        // **`applied` IS THE HEADROOM when clamped**: the hands free for THIS source after the bench,
+        // the walkers and every other row — but it includes the hands already on this row, which
+        // were not idle. The idle count is the growth over the row's prior staffing.
+        let free = applied.saturating_sub(prior_staffing);
+        if free == 0 {
+            format!(" (clamped from {} — no idle hands)", workers)
+        } else {
+            format!(" (clamped from {} — only {} idle)", workers, free)
+        }
     } else {
         String::new()
     };
@@ -7913,81 +8119,6 @@ fn handle_cancel_order(
     );
 }
 
-/// **Set the `Tame` policy** on the herd `herd_id` for the band(s) already hunting it — the animal
-/// rung-2 verb, and the exact twin of `handle_cultivate`. This is the command form of what the
-/// client's improvement checkbox does; it **tames nothing outright**.
-///
-/// It **replaces the retired `domesticate` early-claim**, which snapped `domestication_progress` to
-/// `1.0` once past a `claim_threshold`. That claim existed to *skip the investment*, which is the
-/// entire decision — the same reason the plant side removed its own claim first. Taming now costs a
-/// real yield dip (the `animal:pastoral` rung's `yield_fraction_while_building × the herd's Sustain
-/// (MSY) ceiling`) and takes `work_cost / the crew's output` turns of sustained work.
-///
-/// Targets a **herd id** (as `domesticate` did) rather than a tile: taming is the verb you reach for
-/// on a *roaming* wild herd, which is identified by who is following it, not by where it stands this
-/// turn. (`corral`, by contrast, keys off a tile — a pen is a place.)
-///
-/// Gates (via the shared `validate_labor_policy`): the faction must know **Herding**, the species'
-/// `husbandry_ceiling` must allow domestication, and the herd must not already be domesticated or
-/// another faction's — plus the rejection when **no band is hunting it**.
-fn handle_tame(app: &mut bevy::prelude::App, faction: FactionId, herd_id: String) {
-    // The source, named by the herd id. Its *stance* is irrelevant here: `same_source` matches on the
-    // id alone, and this command sets only the improvement — whatever stance each band holds is left
-    // exactly as the player set it (issue #442).
-    let target = LaborTarget::Hunt {
-        fauna_id: herd_id.clone(),
-        floor: SOURCE_NAMED_NOT_ASSIGNED,
-        move_with_herd: false,
-    };
-    if let Err(reason) = validate_improvement(app, faction, &target, Improvement::Tame) {
-        warn!(
-            target: "shadow_scale::command",
-            command = "tame",
-            faction = %faction.0,
-            herd = %herd_id,
-            reason = %reason,
-            "command.tame.rejected"
-        );
-        emit_command_failure(app, CommandEventKind::Tame, faction, reason);
-        return;
-    }
-    let switched =
-        queue_build_on_working_bands(app, faction, &target, BuildJob::Rung(Improvement::Tame));
-    if switched == 0 {
-        emit_command_failure(
-            app,
-            CommandEventKind::Tame,
-            faction,
-            format!(
-                "No band is hunting {} — assign herders to it first, then tame it.",
-                herd_id
-            ),
-        );
-        return;
-    }
-
-    let tick = app.world.resource::<SimulationTick>().0;
-    info!(
-        target: "shadow_scale::command",
-        command = "tame",
-        faction = %faction.0,
-        herd = %herd_id,
-        bands = switched,
-        "command.tame.taming"
-    );
-    push_command_event(
-        app,
-        tick,
-        CommandEventKind::Tame,
-        faction,
-        format!("Taming {}", herd_id),
-        Some(format!(
-            "status=taming action=tame herd={} bands={}",
-            herd_id, switched
-        )),
-    );
-}
-
 /// **Answer a pending narrative fork** (The Telling's fork tier).
 ///
 /// The choice's writes land in the `BeatLedger` — declared stance offsets and consequence flags —
@@ -8097,7 +8228,7 @@ fn validate_forage_improvement_for_crews(
     app: &mut bevy::prelude::App,
     faction: FactionId,
     tile: UVec2,
-    improvement: Improvement,
+    improvement: VerbId,
 ) -> Result<(), String> {
     // The crop list is collected first (a `World::query` needs unique access), so the validation
     // below sees the same immutable world every other gate does.
@@ -8145,24 +8276,6 @@ fn crops_named_on_forage_source(
         crops.push(None);
     }
     crops
-}
-
-/// **THE RUNG DIRECTLY BENEATH `rung` ON ITS OWN BRANCH** — the inverse walk of [`RungKey::above`],
-/// which the ladder does not carry because nothing else has needed it.
-///
-/// It is what the two road verbs' *"not yet a trail / not yet a dirt road"* refusal asks, and it is
-/// derived from the coded climb rather than named per verb so a re-ordered branch cannot leave the
-/// refusal asking for the wrong rung. `None` at the root of a branch, which is the honest answer:
-/// nothing stands beneath a path.
-fn rung_beneath(rung: RungKey) -> Option<RungKey> {
-    let mut cursor = rung.branch().root_rung();
-    loop {
-        let next = cursor.above()?;
-        if next == rung {
-            return Some(cursor);
-        }
-        cursor = next;
-    }
 }
 
 /// **A band by its durable id, and the tile it is standing on** — the pair the road verbs need, so
@@ -8227,11 +8340,18 @@ fn handle_road_verb(
     faction: FactionId,
     band_id: u64,
     tile: UVec2,
-    improvement: Improvement,
+    improvement: VerbId,
 ) {
     let verb = improvement.as_str();
-    let destination = RungKey::built_by(improvement);
-    let required = rung_beneath(destination)
+    let ladder = app.world.resource::<LadderConfigHandle>().get();
+    let Some(destination) = ladder
+        .rung_for_verb(improvement)
+        .map(core_sim::RungDef::rung_id)
+    else {
+        return;
+    };
+    let required = ladder
+        .below_id(destination)
         .expect("every built route rung stands on the rung below it — the floor is two rungs down");
 
     let refusal = road_verb_refusal(app, faction, band_id, tile, improvement, required);
@@ -8283,7 +8403,7 @@ fn handle_road_verb(
     // beside it, because a road pays into no take.
     {
         let mut allocation = band_allocation_mut(app, entity);
-        allocation.enqueue_build(BuildSource::Road(tile), BuildJob::Rung(improvement));
+        allocation.enqueue_build(BuildSource::Road(tile), BuildJob::Climb(destination));
     }
 
     let tick = app.world.resource::<SimulationTick>().0;
@@ -8314,6 +8434,58 @@ fn handle_road_verb(
     );
 }
 
+/// **MAY THIS RUNG BE RAISED ON THIS TILE?** - the tile kind's arm of [`validate_improvement`].
+///
+/// Three terms, asked in order: the knowledge the rung gates on; that the improvement is not another
+/// people's; and that the rung is the next one up - the improvement stands on the rung beneath, or
+/// (where nothing stands yet) the verb's rung is the branch's first built one, so the crew's first
+/// build places it from the floor. The queue entry itself needs a crew on the tile
+/// ([`queue_build_on_working_bands`]), exactly as a deposit's does.
+fn validate_tile_verb(
+    app: &bevy::prelude::App,
+    faction: FactionId,
+    tile: UVec2,
+    branch: BranchId,
+    rung: &core_sim::RungDef,
+) -> Result<(), String> {
+    let ladder = app.world.resource::<LadderConfigHandle>().get();
+    if let Some(refusal) = knowledge_refusal(app, faction, &ladder, rung) {
+        return Err(refusal);
+    }
+    let destination = rung.rung_id();
+    let required = ladder
+        .below_id(destination)
+        .expect("a rung a verb raises stands on the rung beneath it");
+    let label = rung.label.to_lowercase();
+    let improvements = app.world.resource::<core_sim::TileImprovementRegistry>();
+    match improvements.get(tile, branch) {
+        Some(improvement) if improvement.faction != faction => Err(format!(
+            "The {} at ({}, {}) belongs to another people.",
+            ladder.rung(improvement.held_rung()).label.to_lowercase(),
+            tile.x,
+            tile.y
+        )),
+        Some(improvement) if ladder.at_or_above(improvement.held_rung(), destination) => Err(
+            format!("The {label} at ({}, {}) is already built.", tile.x, tile.y),
+        ),
+        Some(improvement) if !ladder.at_or_above(improvement.held_rung(), required) => {
+            Err(format!(
+                "It is only a {} - it must be a {} before you can raise it to a {label}.",
+                ladder.rung(improvement.held_rung()).label.to_lowercase(),
+                ladder.rung(required).label.to_lowercase(),
+            ))
+        }
+        Some(_) => Ok(()),
+        None if ladder.root_of(branch).map(core_sim::RungDef::rung_id) == Some(required) => Ok(()),
+        None => Err(format!(
+            "Nothing stands at ({}, {}) yet - raise the {} first.",
+            tile.x,
+            tile.y,
+            ladder.rung(required).label.to_lowercase()
+        )),
+    }
+}
+
 /// **Every refusal `grade` / `pave` can produce, in the order they are asked.** Split out so the
 /// command and its tests read one list — the `validate_cultivate` convention one branch over.
 fn road_verb_refusal(
@@ -8321,8 +8493,8 @@ fn road_verb_refusal(
     faction: FactionId,
     band_id: u64,
     tile: UVec2,
-    improvement: Improvement,
-    required: core_sim::RungKey,
+    improvement: VerbId,
+    required: core_sim::RungId,
 ) -> Result<(), String> {
     let band = BandId(band_id);
     let holds_band = {
@@ -8336,27 +8508,18 @@ fn road_verb_refusal(
             "Band {band_id} is not one of your people, so it cannot take on a road."
         ));
     }
-    let destination = RungKey::built_by(improvement);
-    let (threshold, knowledge) = {
-        let ladder = app.world.resource::<LadderConfigHandle>().get();
-        (
-            ladder.knowledge.completion_threshold,
-            ladder.rung(destination).unlock_discovery_id(),
-        )
-    };
-    let knows_rung = knowledge.is_none_or(|discovery_id| {
-        knows(
-            app.world.resource::<DiscoveryProgressLedger>(),
-            faction,
-            discovery_id,
-            threshold,
-        )
-    });
-    if !knows_rung {
+    let ladder = app.world.resource::<LadderConfigHandle>().get();
+    let Some(destination) = ladder
+        .rung_for_verb(improvement)
+        .map(core_sim::RungDef::rung_id)
+    else {
         return Err(format!(
-            "Your people have not learned how to {} a road yet.",
+            "'{}' is not a build verb this ladder knows.",
             improvement.as_str()
         ));
+    };
+    if let Some(refusal) = knowledge_refusal(app, faction, &ladder, ladder.rung(destination)) {
+        return Err(refusal);
     }
     let roads = app.world.resource::<core_sim::RoadRegistry>();
     let Some(road) = roads.road(tile) else {
@@ -8367,13 +8530,13 @@ fn road_verb_refusal(
             improvement.as_str()
         ));
     };
-    if !road.held_rung().is_at_or_above(required) {
+    if !ladder.at_or_above(road.held_rung(), required) {
         return Err(format!(
             "The road at ({}, {}) is only a {} — it must be a {} before you can {} it.",
             tile.x,
             tile.y,
-            road.held_rung().id().replace('_', " "),
-            required.id().replace('_', " "),
+            road.held_rung().id_str().replace('_', " "),
+            required.id_str().replace('_', " "),
             improvement.as_str()
         ));
     }
@@ -8389,12 +8552,12 @@ fn road_verb_refusal(
         }
         // **Already there, and it is YOURS** — nothing left to raise. A road nobody keeps falls
         // through instead, which is how adoption works.
-        Some(_) if road.held_rung().is_at_or_above(destination) => {
+        Some(_) if ladder.at_or_above(road.held_rung(), destination) => {
             return Err(format!(
                 "The road at ({}, {}) is already a {}.",
                 tile.x,
                 tile.y,
-                road.held_rung().id().replace('_', " ")
+                road.held_rung().id_str().replace('_', " ")
             ));
         }
         _ => {}
@@ -8439,7 +8602,7 @@ fn handle_deposit_verb(
     faction: FactionId,
     tile: UVec2,
     material: &str,
-    improvement: Improvement,
+    improvement: VerbId,
 ) {
     let verb = improvement.as_str();
     let target = LaborTarget::Extract {
@@ -8464,7 +8627,17 @@ fn handle_deposit_verb(
         emit_command_failure(app, CommandEventKind::Extraction, faction, reason);
         return;
     }
-    let declared = queue_build_on_working_bands(app, faction, &target, BuildJob::Rung(improvement));
+    let declared_rung = app
+        .world
+        .resource::<LadderConfigHandle>()
+        .get()
+        .rung_for_verb(improvement)
+        .map(core_sim::RungDef::rung_id);
+    let Some(declared_rung) = declared_rung else {
+        return;
+    };
+    let declared =
+        queue_build_on_working_bands(app, faction, &target, BuildJob::Climb(declared_rung));
     if declared == 0 {
         emit_command_failure(
             app,
@@ -8601,259 +8774,314 @@ fn handle_abandon_working(
     );
 }
 
-/// **Set the Cultivate improvement** on the forage patch at `tile` for the band(s) already working it
-/// (Intensification — "Cultivate & Corral as explicit policies"). This is the command form of what
-/// the client's policy picker does; it does **not** claim or complete anything.
+/// **DECLARE A BUILD — the one handler behind `build <verb> ...`** (issue #175). The verb is resolved
+/// against the loaded ladder; **the rung's branch declares the source kind**, and the kind — never
+/// the verb's name — decides what the line must carry:
 ///
-/// The old early-claim (snap `cultivation_progress` to `1.0` once past a `claim_threshold`) is
-/// **gone**: it would let the player skip the investment, which is the entire decision. Cultivating
-/// now costs a real yield dip — while preparing, the patch pays only
-/// `cultivation.cultivating_yield_fraction × its Sustain (MSY) ceiling` — and takes
-/// `work_cost / the crew's output` turns of sustained work.
+/// | the verb's source kind | the line names | a band |
+/// | --- | --- | --- |
+/// | patch | a tile | refused: the keepers are the bands already foraging it |
+/// | herd | a herd id, or the tile it stands on (a pen is a place) | refused, for the same reason |
+/// | deposit | a tile **and** a material (one hex holds two workings) | refused, for the same reason |
+/// | road | a tile | **required**: a road has no work row, so the keeper is said out loud |
 ///
-/// Gates (via the shared `validate_labor_policy`): the faction must know **Cultivation**, and the
-/// patch must be **Thriving**, not already cultivated, and not another faction's.
-fn handle_cultivate(app: &mut bevy::prelude::App, faction: FactionId, tile: UVec2) {
-    // The source, named by the tile. Its stance is the band's, not the command's: this sets only the
-    // improvement, and `same_source` matches on the tile alone. The **crop** is the band's too, and
-    // is therefore what the gate has to judge — see `crops_named_on_forage_source`.
-    if let Err(reason) =
-        validate_forage_improvement_for_crews(app, faction, tile, Improvement::Cultivate)
-    {
-        warn!(
-            target: "shadow_scale::command",
-            command = "cultivate",
-            faction = %faction.0,
-            x = tile.x,
-            y = tile.y,
-            reason = %reason,
-            "command.cultivate.rejected"
-        );
-        emit_command_failure(app, CommandEventKind::Cultivate, faction, reason);
-        return;
-    }
-    let switched = queue_build_on_working_bands(
-        app,
-        faction,
-        &forage_source(tile),
-        BuildJob::Rung(Improvement::Cultivate),
-    );
-    if switched == 0 {
-        emit_command_failure(
+/// Nothing is built outright: the declaration is appended to the build queue of every band working
+/// the source and raised by the `builders` pool at its head — the old early-claim that snapped a
+/// meter to done is gone because it let the player skip the investment, which is the whole decision.
+/// The gates are [`validate_improvement`]'s (knowledge, ownership, species, ground), composed from the
+/// rung's own properties. Every refusal and the declaration itself ride the **rung's** `feed_channel`.
+fn handle_build_rung(app: &mut bevy::prelude::App, faction: FactionId, request: BuildRungRequest) {
+    let ladder = app.world.resource::<LadderConfigHandle>().get();
+    let verb = request.verb.trim().to_ascii_lowercase();
+    let Some(rung) = ladder.rung_for_verb(VerbId::new(&verb)) else {
+        let known: Vec<&str> = ladder
+            .branches_in_config_order()
+            .into_iter()
+            .flat_map(|branch| ladder.rungs_of(branch))
+            .filter_map(|rung| rung.verb.as_deref())
+            .collect();
+        reject_build(
             app,
-            CommandEventKind::Cultivate,
             faction,
+            CommandEventKind::CancelOrder,
+            &verb,
             format!(
-                "No band is foraging ({}, {}). Assign foragers to the patch first, then cultivate it.",
-                tile.x, tile.y
+                "There is no build verb '{verb}'. This ladder's verbs are: {}.",
+                known.join(", ")
+            ),
+        );
+        return;
+    };
+    let channel = rung
+        .feed_channel_kind()
+        .expect("validate requires a feed channel on every built rung");
+    if let Some(named) = request.branch.as_deref() {
+        if BranchId::new(named) != rung.branch {
+            reject_build(
+                app,
+                faction,
+                channel,
+                &verb,
+                format!(
+                    "'{verb}' belongs to the {} branch, not '{named}'.",
+                    rung.branch.as_str()
+                ),
+            );
+            return;
+        }
+    }
+    let Some(improvement) = rung.verb_id() else {
+        reject_build(
+            app,
+            faction,
+            channel,
+            &verb,
+            format!("The simulation has no builder for '{verb}' yet."),
+        );
+        return;
+    };
+    let kind = ladder.source_kind(rung.branch);
+    let tile = request
+        .target_x
+        .zip(request.target_y)
+        .map(|(x, y)| UVec2::new(x, y));
+    if request.band_id.is_some() && kind != Some(SourceKind::Road) {
+        reject_build(
+            app,
+            faction,
+            channel,
+            &verb,
+            format!(
+                "'{verb}' names no band: its keepers are the bands already working the source."
             ),
         );
         return;
     }
-
-    let tick = app.world.resource::<SimulationTick>().0;
-    info!(
-        target: "shadow_scale::command",
-        command = "cultivate",
-        faction = %faction.0,
-        x = tile.x,
-        y = tile.y,
-        bands = switched,
-        "command.cultivate.preparing"
-    );
-    push_command_event(
-        app,
-        tick,
-        CommandEventKind::Cultivate,
-        faction,
-        format!(
-            "Preparing patch at ({}, {}) for cultivation",
-            tile.x, tile.y
-        ),
-        Some(format!(
-            "status=preparing action=cultivate x={} y={} bands={}",
-            tile.x, tile.y, switched
-        )),
-    );
-}
-
-/// **Set the `Sow` policy** on the tile at `tile` for the band(s) already foraging it — the plant
-/// **rung-3** verb, and the exact twin of `handle_cultivate` one rung up. It is the command form of
-/// what the client's improvement checkbox does; it **sows nothing outright**.
-///
-/// What makes it the interesting verb: `Sow` **places** a food source where the wild put none — a
-/// crew commits the ground they already gather to a single crop instead of taking what the stand
-/// offers. The seed itself goes into the ground in the labor arm, on the first turn a crew actually
-/// works the tile under this policy — so `assign_labor … sow` and this command place a Field on
-/// exactly the same terms.
-///
-/// **`Sow` used to place a source on ground carrying no forage site at all, and this arc reversed
-/// that** — see [`validate_sow`] for the autopsy. Rung 3 is now bound to the ground its people
-/// already work: the `plant:field` rung's `site_requirement` demands a **gathering site** that is
-/// also **near fresh water**, because rung 3 knows how to move seed but not how to carry water, and
-/// does not yet work unfamiliar ground. "Seed travels" moved up to **rung 4 (Farm)**, the first rung
-/// to drop `requires_gathering_site`.
-///
-/// **And the ground is scarce, which is the point**: watered gathering sites are a small slice of the
-/// sites a people hold, so *which* tile a band can farm is a real decision, and a band may have to
-/// **move** to farm at all — that is the sedentarization pull.
-///
-/// Gates (via the shared `validate_labor_policy` → `validate_sow`): the tile must be ground the
-/// people already gather ("Nobody gathers at (x, y)…") and be fresh-watered, the faction must know
-/// **Seed Selection**, and the tile must not already be a Field or another people's — plus the
-/// rejection when **no band is foraging** it.
-fn handle_sow(app: &mut bevy::prelude::App, faction: FactionId, tile: UVec2) {
-    // As in `handle_cultivate`: the command sets the *improvement* and leaves the crew's stance and
-    // crop alone — which is exactly why the crop it must gate on is the crew's, judged at **this**
-    // verb's rung. A `tended`-ceiling crop is legal to cultivate and illegal to sow, so this is the
-    // only place that distinction can be drawn.
-    if let Err(reason) = validate_forage_improvement_for_crews(app, faction, tile, Improvement::Sow)
-    {
-        warn!(
-            target: "shadow_scale::command",
-            command = "sow",
-            faction = %faction.0,
-            x = tile.x,
-            y = tile.y,
-            reason = %reason,
-            "command.sow.rejected"
-        );
-        emit_command_failure(app, CommandEventKind::Sow, faction, reason);
-        return;
-    }
-    let switched = queue_build_on_working_bands(
-        app,
-        faction,
-        &forage_source(tile),
-        BuildJob::Rung(Improvement::Sow),
-    );
-    if switched == 0 {
-        emit_command_failure(
-            app,
-            CommandEventKind::Sow,
-            faction,
-            format!(
-                "No band is foraging ({}, {}). Assign foragers to the ground first, then sow it.",
-                tile.x, tile.y
-            ),
-        );
-        return;
-    }
-
-    let tick = app.world.resource::<SimulationTick>().0;
-    info!(
-        target: "shadow_scale::command",
-        command = "sow",
-        faction = %faction.0,
-        x = tile.x,
-        y = tile.y,
-        bands = switched,
-        "command.sow.sowing"
-    );
-    push_command_event(
-        app,
-        tick,
-        CommandEventKind::Sow,
-        faction,
-        format!("Sowing a field at ({}, {})", tile.x, tile.y),
-        Some(format!(
-            "status=sowing action=sow x={} y={} bands={}",
-            tile.x, tile.y, switched
-        )),
-    );
-}
-
-/// **Set the Corral improvement** on the domesticated herd standing at `tile` for the band(s) already
-/// hunting it — the animal mirror of `handle_cultivate`, and the command form of the client's policy
-/// picker. While the pen is built the keeper takes only
-/// `husbandry.corralling_yield_fraction × the herd's Sustain (MSY) ceiling`; at
-/// `corral_progress == 1.0` the herd is penned (`Herd::corral_at`), stops roaming, and pays the
-/// higher place-local corral yield. There is no early claim.
-///
-/// Gates (via the shared `validate_labor_policy`): the faction must know **Herding** and own the
-/// **domesticated**, not-yet-penned herd.
-fn handle_corral(app: &mut bevy::prelude::App, faction: FactionId, tile: UVec2) {
-    let Some(fauna_id) = app
-        .world
-        .resource::<HerdRegistry>()
-        .herds
-        .iter()
-        .find(|herd| herd.position() == tile)
-        .map(|herd| herd.id.clone())
-    else {
-        warn!(
-            target: "shadow_scale::command",
-            command = "corral",
-            faction = %faction.0,
-            x = tile.x,
-            y = tile.y,
-            "command.corral.rejected=unknown_herd"
-        );
-        emit_command_failure(
-            app,
-            CommandEventKind::Corral,
-            faction,
-            format!("No herd at ({}, {}) to corral.", tile.x, tile.y),
-        );
-        return;
+    let target = match kind {
+        Some(SourceKind::Patch) => match (tile, &request.herd_id, &request.material) {
+            (Some(tile), None, None) => forage_source(tile),
+            _ => {
+                reject_build(
+                    app,
+                    faction,
+                    channel,
+                    &verb,
+                    format!("'{verb}' names a tile: `build {verb} <faction> <x> <y>`."),
+                );
+                return;
+            }
+        },
+        Some(SourceKind::Herd) => {
+            let herd_id = match (&request.herd_id, tile) {
+                (Some(herd_id), None) => Some(herd_id.clone()),
+                (None, Some(tile)) => app
+                    .world
+                    .resource::<HerdRegistry>()
+                    .herds
+                    .iter()
+                    .find(|herd| herd.position() == tile)
+                    .map(|herd| herd.id.clone()),
+                _ => None,
+            };
+            let Some(fauna_id) = herd_id else {
+                reject_build(
+                    app,
+                    faction,
+                    channel,
+                    &verb,
+                    format!(
+                        "'{verb}' names a herd, or the tile one stands on: \
+                         `build {verb} <faction> <herd_id>` or `<x> <y>`."
+                    ),
+                );
+                return;
+            };
+            LaborTarget::Hunt {
+                fauna_id,
+                floor: SOURCE_NAMED_NOT_ASSIGNED,
+                move_with_herd: false,
+            }
+        }
+        Some(SourceKind::Deposit) => {
+            let (Some(tile), Some(material)) = (tile, request.material.as_deref()) else {
+                reject_build(
+                    app,
+                    faction,
+                    channel,
+                    &verb,
+                    format!(
+                        "'{verb}' names a tile AND a material, because one hex can hold two \
+                         workings: `build {verb} <faction> <x> <y> <material>`."
+                    ),
+                );
+                return;
+            };
+            handle_deposit_verb(app, faction, tile, material, improvement);
+            return;
+        }
+        Some(SourceKind::Road) => {
+            let (Some(band_id), Some(tile)) = (request.band_id, tile) else {
+                reject_build(
+                    app,
+                    faction,
+                    channel,
+                    &verb,
+                    format!(
+                        "'{verb}' names the band that will keep the tile, because a road has no \
+                         work row to read a keeper off: `build {verb} <faction> <band> <x> <y>`."
+                    ),
+                );
+                return;
+            };
+            handle_road_verb(app, faction, band_id, tile, improvement);
+            return;
+        }
+        Some(SourceKind::Tile) => match tile {
+            Some(tile) => LaborTarget::Tile {
+                tile,
+                branch: rung.branch,
+            },
+            None => {
+                reject_build(
+                    app,
+                    faction,
+                    channel,
+                    &verb,
+                    format!("'{verb}' names a tile: `build {verb} <faction> <x> <y>`."),
+                );
+                return;
+            }
+        },
+        None => {
+            reject_build(
+                app,
+                faction,
+                channel,
+                &verb,
+                format!("'{verb}' is not a verb this server can place on a source yet."),
+            );
+            return;
+        }
     };
 
-    let target = LaborTarget::Hunt {
-        fauna_id: fauna_id.clone(),
-        floor: SOURCE_NAMED_NOT_ASSIGNED,
-        move_with_herd: false,
+    let gate = match &target {
+        LaborTarget::Forage { tile, .. } => {
+            validate_forage_improvement_for_crews(app, faction, *tile, improvement)
+        }
+        _ => validate_improvement(app, faction, &target, improvement),
     };
-    if let Err(reason) = validate_improvement(app, faction, &target, Improvement::Corral) {
-        warn!(
-            target: "shadow_scale::command",
-            command = "corral",
-            faction = %faction.0,
-            herd = %fauna_id,
-            reason = %reason,
-            "command.corral.rejected"
-        );
-        emit_command_failure(app, CommandEventKind::Corral, faction, reason);
+    if let Err(reason) = gate {
+        reject_build(app, faction, channel, &verb, reason);
         return;
     }
+    let label = BuildSource::of(&target).map_or_else(
+        || verb.clone(),
+        |source| match source {
+            BuildSource::Patch(tile) => format!("({}, {})", tile.x, tile.y),
+            BuildSource::Herd(id) => id,
+            BuildSource::Road(tile)
+            | BuildSource::Deposit { tile, .. }
+            | BuildSource::Tile { tile, .. } => {
+                format!("({}, {})", tile.x, tile.y)
+            }
+        },
+    );
     let switched =
-        queue_build_on_working_bands(app, faction, &target, BuildJob::Rung(Improvement::Corral));
+        queue_build_on_working_bands(app, faction, &target, BuildJob::Climb(rung.rung_id()));
     if switched == 0 {
-        emit_command_failure(
-            app,
-            CommandEventKind::Corral,
-            faction,
-            format!(
-                "No band is hunting {}. Assign herders to it first, then corral it.",
-                fauna_id
-            ),
-        );
+        let pen_taken = BuildSource::of(&target).is_some_and(|source| {
+            is_pen_climb(app, &source, BuildJob::Climb(rung.rung_id()))
+                && pen_queuer(app, &source).is_some()
+        });
+        let refusal = if pen_taken {
+            PEN_TAKEN_HINT.to_string()
+        } else {
+            format!("No band of yours works {label}. Assign a crew to it first, then {verb} it.")
+        };
+        reject_build(app, faction, channel, &verb, refusal);
         return;
     }
 
     let tick = app.world.resource::<SimulationTick>().0;
     info!(
         target: "shadow_scale::command",
-        command = "corral",
+        command = %verb,
         faction = %faction.0,
-        herd = %fauna_id,
-        x = tile.x,
-        y = tile.y,
+        source = %label,
         bands = switched,
-        "command.corral.building"
+        "command.build.declared"
     );
     push_command_event(
         app,
         tick,
-        CommandEventKind::Corral,
+        channel,
         faction,
-        format!(
-            "Building a corral for {} at ({}, {})",
-            fauna_id, tile.x, tile.y
-        ),
+        format!("Declared {verb} at {label}"),
         Some(format!(
-            "status=building action=corral herd={} x={} y={} bands={}",
-            fauna_id, tile.x, tile.y, switched
+            "status=declared action={verb} source={label} bands={switched}"
         )),
+    );
+}
+
+/// **Refuse a `build` line** — a warning in the log and a failure line on the verb's own feed
+/// channel, so a refusal reads in the same place the declaration would have.
+fn reject_build(
+    app: &mut bevy::prelude::App,
+    faction: FactionId,
+    channel: CommandEventKind,
+    verb: &str,
+    reason: String,
+) {
+    warn!(
+        target: "shadow_scale::command",
+        command = %verb,
+        faction = %faction.0,
+        reason = %reason,
+        "command.build.rejected"
+    );
+    emit_command_failure(app, channel, faction, reason);
+}
+
+/// A `build` line for a patch, for the tests that drive the handler directly.
+#[cfg(test)]
+fn handle_build_tile(app: &mut bevy::prelude::App, faction: FactionId, verb: &str, tile: UVec2) {
+    handle_build_rung(
+        app,
+        faction,
+        BuildRungRequest {
+            verb: verb.to_string(),
+            target_x: Some(tile.x),
+            target_y: Some(tile.y),
+            ..BuildRungRequest::default()
+        },
+    );
+}
+
+#[cfg(test)]
+fn handle_cultivate(app: &mut bevy::prelude::App, faction: FactionId, tile: UVec2) {
+    handle_build_tile(app, faction, core_sim::shipped::cultivate().as_str(), tile);
+}
+
+#[cfg(test)]
+fn handle_sow(app: &mut bevy::prelude::App, faction: FactionId, tile: UVec2) {
+    handle_build_tile(app, faction, core_sim::shipped::sow().as_str(), tile);
+}
+
+#[cfg(test)]
+fn handle_corral(app: &mut bevy::prelude::App, faction: FactionId, tile: UVec2) {
+    handle_build_tile(app, faction, core_sim::shipped::corral().as_str(), tile);
+}
+
+#[cfg(test)]
+fn handle_tame(app: &mut bevy::prelude::App, faction: FactionId, herd_id: String) {
+    handle_build_rung(
+        app,
+        faction,
+        BuildRungRequest {
+            verb: core_sim::shipped::tame().as_str().to_string(),
+            herd_id: Some(herd_id),
+            ..BuildRungRequest::default()
+        },
     );
 }
 
@@ -9167,6 +9395,243 @@ fn bench_queue_refusal(verb: &str, band_label: &str, order: u32, error: BenchQue
         BenchQueueError::AlreadyAtHead => {
             format!("{verb}: order {order} is already being made — it cannot move up.")
         }
+        BenchQueueError::KitPartCannotMove => format!(
+            "{verb}: order {order} is part of a kit order — raise the whole kit with \
+             bench_raise_kit."
+        ),
+        BenchQueueError::NoSuchKitOrder { id } => {
+            format!("{verb}: {band_label} has no kit order {id} on its bench queue.")
+        }
+        BenchQueueError::EmptyKitOrder => format!(
+            "{verb}: a kit order needs at least one part with a count of {MIN_ORDER_COUNT} or \
+             more."
+        ),
+    }
+}
+
+/// **The two whole-kit edits** — remove and raise a kit order (issue #780).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BenchKitEdit {
+    /// `bench_remove_kit … kit_order <id>`.
+    Remove,
+    /// `bench_raise_kit … kit_order <id>`.
+    Raise,
+}
+
+impl BenchKitEdit {
+    fn verb(self) -> &'static str {
+        match self {
+            BenchKitEdit::Remove => "bench_remove_kit",
+            BenchKitEdit::Raise => "bench_raise_kit",
+        }
+    }
+}
+
+/// **Order a whole kit** — `bench_enqueue_kit <faction> <band> kit <id> kits <n> recipe <id> [...]`
+/// (issue #780, `.claude/rules/core_sim/crafting.md` → "Kit orders").
+///
+/// **`kits` is a count of kits the player chose, and the sim never nets it down.** One kit is one
+/// unit of each item the kit `uses`, so each part's count is `kits`; who already holds a kit, or
+/// lacks one, is information the ledger shows and plays no part in what is queued.
+///
+/// **Fails closed and whole**: the kit must exist and carry something (the shipped `none` carries
+/// nothing and is not orderable), `kits` must be at least [`MIN_ORDER_COUNT`], every recipe passes
+/// [`bench_recipe_refusal`] exactly as `bench_enqueue` would, every recipe's output item must be
+/// one the kit `uses`, no two recipes may make the same item, and every item of the kit must have a
+/// recipe. The crew is untouched.
+fn handle_bench_enqueue_kit(
+    app: &mut bevy::prelude::App,
+    faction: FactionId,
+    band_id: Option<u64>,
+    kit_id: &str,
+    kits: u32,
+    recipe_ids: &[String],
+) {
+    const VERB: &str = "bench_enqueue_kit";
+    let event_kind = CommandEventKind::Craft;
+    let equipment = app.world.resource::<EquipmentConfigHandle>().get();
+    let Some(kit) = equipment
+        .kits()
+        .iter()
+        .find(|kit| kit.id == kit_id && !kit.uses.is_empty())
+    else {
+        emit_command_failure(
+            app,
+            event_kind,
+            faction,
+            format!("{VERB}: '{kit_id}' is not a kit that can be ordered."),
+        );
+        return;
+    };
+    if kits < MIN_ORDER_COUNT {
+        emit_command_failure(
+            app,
+            event_kind,
+            faction,
+            format!(
+                "{VERB}: an order of the {} needs at least {MIN_ORDER_COUNT} kit.",
+                kit.display_name
+            ),
+        );
+        return;
+    }
+    let mut row_keys: Vec<Option<String>> = Vec::with_capacity(recipe_ids.len());
+    let mut items_covered: Vec<String> = Vec::with_capacity(recipe_ids.len());
+    for recipe_id in recipe_ids {
+        let Some(display_name) = bench_recipe_refusal(app, faction, recipe_id, VERB) else {
+            return;
+        };
+        let recipes = app.world.resource::<RecipesConfigHandle>().get();
+        let recipe = recipes
+            .recipe(recipe_id)
+            .expect("bench_recipe_refusal found the recipe");
+        let output = recipe
+            .output_equipment_id()
+            .filter(|item| kit.uses.iter().any(|used| used == item));
+        let Some(item) = output else {
+            emit_command_failure(
+                app,
+                event_kind,
+                faction,
+                format!(
+                    "{VERB}: {display_name} makes nothing the {} uses.",
+                    kit.display_name
+                ),
+            );
+            return;
+        };
+        if items_covered.iter().any(|covered| covered == item) {
+            emit_command_failure(
+                app,
+                event_kind,
+                faction,
+                format!("{VERB}: two recipes make the same item ({display_name})."),
+            );
+            return;
+        }
+        items_covered.push(item.to_string());
+        row_keys.push(recipe.row_key().map(str::to_string));
+    }
+    if let Some(missing) = kit
+        .uses
+        .iter()
+        .find(|used| !items_covered.iter().any(|covered| covered == *used))
+    {
+        emit_command_failure(
+            app,
+            event_kind,
+            faction,
+            format!(
+                "{VERB}: the {} needs a recipe for its {missing}.",
+                kit.display_name
+            ),
+        );
+        return;
+    }
+    let Some(band) = select_starting_band(app, faction, band_id, VERB, event_kind) else {
+        return;
+    };
+    let queue: Vec<(String, u32)> = recipe_ids
+        .iter()
+        .map(|recipe_id| (recipe_id.clone(), kits))
+        .collect();
+    let id = {
+        let mut bench = band_bench_mut(app, band.entity);
+        let id = bench
+            .enqueue_kit(kit_id, kits, queue)
+            .expect("the kit count was checked to be at least one");
+        for (recipe_id, row) in recipe_ids.iter().zip(&row_keys) {
+            if let Some(row) = row.as_deref() {
+                bench.record_started(row, recipe_id);
+            }
+        }
+        id
+    };
+    let tick = app.world.resource::<SimulationTick>().0;
+    push_band_event(
+        app,
+        tick,
+        event_kind,
+        faction,
+        band.id,
+        format!(
+            "{} queued {kits} {} as one order",
+            band.label, kit.display_name
+        ),
+        Some(format!(
+            "status=applied action={VERB} kit={kit_id} kit_order={id} kits={kits} parts={}",
+            recipe_ids.len()
+        )),
+    );
+}
+
+/// **Remove or raise a whole kit order** — `bench_remove_kit` / `bench_raise_kit … kit_order <id>`.
+/// Removal loses drawn piles exactly as [`handle_bench_queue_edit`]'s `Remove` does.
+fn handle_bench_kit_edit(
+    app: &mut bevy::prelude::App,
+    faction: FactionId,
+    band_id: Option<u64>,
+    kit_order: u32,
+    edit: BenchKitEdit,
+) {
+    let event_kind = CommandEventKind::Craft;
+    let verb = edit.verb();
+    let Some(band) = select_starting_band(app, faction, band_id, verb, event_kind) else {
+        return;
+    };
+    let outcome = {
+        let mut bench = band_bench_mut(app, band.entity);
+        let kit_id = bench
+            .kit_orders
+            .iter()
+            .find(|kit| kit.id == kit_order)
+            .map(|kit| kit.kit_id.clone())
+            .unwrap_or_default();
+        match edit {
+            BenchKitEdit::Remove => bench.remove_kit(kit_order).map(|removed| {
+                let spent = removed.iter().filter(|part| part.drawn.is_some()).count();
+                (
+                    format!("{} took the {kit_id} kit order off the bench", band.label),
+                    format!(
+                        "status=applied action={verb} kit_order={kit_order} kit={kit_id} \
+                         parts={} piles_spent={spent}",
+                        removed.len()
+                    ),
+                )
+            }),
+            BenchKitEdit::Raise => bench.raise_kit(kit_order).map(|()| {
+                (
+                    format!(
+                        "{}: the {kit_id} kit order moved up the bench queue",
+                        band.label
+                    ),
+                    format!("status=applied action={verb} kit_order={kit_order} kit={kit_id}"),
+                )
+            }),
+        }
+    };
+    match outcome {
+        Ok((sentence, detail)) => {
+            if edit == BenchKitEdit::Remove {
+                core_sim::auto_craft::auto_craft_fill(&mut app.world, band.entity);
+            }
+            let tick = app.world.resource::<SimulationTick>().0;
+            push_band_event(
+                app,
+                tick,
+                event_kind,
+                faction,
+                band.id,
+                sentence,
+                Some(detail),
+            );
+        }
+        Err(error) => emit_command_failure(
+            app,
+            event_kind,
+            faction,
+            bench_queue_refusal(verb, &band.label, kit_order, error),
+        ),
     }
 }
 
@@ -9491,8 +9956,8 @@ fn handle_bench_crew(
 }
 
 // **RETIRED with `abandon_improvement`**: `describe_source` and `improvement_event_kind`, its two
-// helpers. Every other command names its own source inline, and the labor system keeps its own copy
-// of the verb→channel map (`systems::labor::improvement_feed_channel`) for the events it pushes.
+// helpers. Every other command names its own source inline, and the verb→channel map is the rung's
+// own `feed_channel`.
 
 /// Grazing 2d-β — the `ExtendPen` command. Put an owned, **built** pen at `tile` into the "extending"
 /// state so its keeper band works off the next fenced ring (`pen_radius += 1` at completion, ~25 turns
@@ -9545,7 +10010,7 @@ fn handle_extend_pen(app: &mut bevy::prelude::App, faction: FactionId, tile: UVe
             let ladder = app.world.resource::<LadderConfigHandle>().get();
             (
                 ladder.knowledge.completion_threshold,
-                ladder.rung(RungKey::AnimalPen).unlock_discovery_id(),
+                ladder.enclosed_herd_rung().unlock_discovery_id(),
             )
         };
         let knows_penning = pen_unlock.is_none_or(|knowledge| {
@@ -9564,7 +10029,7 @@ fn handle_extend_pen(app: &mut bevy::prelude::App, faction: FactionId, tile: UVe
         (
             herd.owner == Some(faction),
             knows_penning,
-            herd.can_pen(),
+            herd.can_pen(&app.world.resource::<LadderConfigHandle>().get()),
             herd.species.clone(),
             herd.pen_radius >= pen_radius_max,
             herd.pen_extending,
@@ -9889,17 +10354,48 @@ const WHOLE_HERD_COMMITTED: f32 = 1.0;
 /// **One bit per source, never a number.** It is disposal rather than a smaller share; the
 /// per-source *funding* lever stays deleted.
 fn handle_abandon(app: &mut bevy::prelude::App, faction: FactionId, source: BuildSourceRef) {
-    let label = source.label();
+    let Some(ladder) = source_ladder(app, faction, &source) else {
+        return;
+    };
+    let label = source.label(&ladder);
     if let (Some(x), Some(y), Some(material), false) = (
         source.target_x,
         source.target_y,
         source.material.as_deref(),
-        source.road,
+        source.is_road(&ladder),
     ) {
         handle_abandon_working(app, faction, UVec2::new(x, y), material);
         return;
     }
-    if source.road {
+    if let (true, Some(target)) = (source.is_tile_improvement(&ladder), source.target(&ladder)) {
+        let bands = bands_working_source(app, faction, &target);
+        if bands.is_empty() {
+            emit_command_failure(
+                app,
+                CommandEventKind::CancelOrder,
+                faction,
+                format!("No band of yours holds {label}, so there is nothing to put down."),
+            );
+            return;
+        }
+        for band in &bands {
+            core_sim::drop_holding_and_cancel_ring(&mut app.world, *band, &target);
+        }
+        let tick = app.world.resource::<SimulationTick>().0;
+        push_command_event(
+            app,
+            tick,
+            CommandEventKind::CancelOrder,
+            faction,
+            format!("Put down {label} - unkept, it goes back to the wild after its grace"),
+            Some(format!(
+                "status=applied action=abandon source={label} bands={} roads=0",
+                bands.len()
+            )),
+        );
+        return;
+    }
+    if source.is_road(&ladder) {
         let roads_put_down = release_roads_at(app, faction, &source);
         if roads_put_down == 0 {
             emit_command_failure(
@@ -9923,7 +10419,7 @@ fn handle_abandon(app: &mut bevy::prelude::App, faction: FactionId, source: Buil
         );
         return;
     }
-    let Some(target) = source.target() else {
+    let Some(target) = source.target(&ladder) else {
         emit_command_failure(
             app,
             CommandEventKind::CancelOrder,
@@ -10029,8 +10525,11 @@ fn release_roads_at(
 /// the band. A declaration carries no crew at all now, so this is the only undo — and
 /// [`handle_abandon`] is how a source with work already banked on it is put down.
 fn handle_unqueue(app: &mut bevy::prelude::App, faction: FactionId, source: BuildSourceRef) {
-    let label = source.label();
-    let Some(build_source) = source.build_source() else {
+    let Some(ladder) = source_ladder(app, faction, &source) else {
+        return;
+    };
+    let label = source.label(&ladder);
+    let Some(build_source) = source.build_source(&ladder) else {
         emit_command_failure(
             app,
             CommandEventKind::CancelOrder,
@@ -10089,8 +10588,11 @@ fn handle_build_order(
     source: BuildSourceRef,
     position: u32,
 ) {
-    let label = source.label();
-    let Some(build_source) = source.build_source() else {
+    let Some(ladder) = source_ladder(app, faction, &source) else {
+        return;
+    };
+    let label = source.label(&ladder);
+    let Some(build_source) = source.build_source(&ladder) else {
         emit_command_failure(
             app,
             CommandEventKind::CancelOrder,
@@ -10159,8 +10661,11 @@ fn handle_build_priority(
     source: BuildSourceRef,
     level: String,
 ) {
-    let label = source.label();
-    let Some(build_source) = source.build_source() else {
+    let Some(ladder) = source_ladder(app, faction, &source) else {
+        return;
+    };
+    let label = source.label(&ladder);
+    let Some(build_source) = source.build_source(&ladder) else {
         emit_command_failure(
             app,
             CommandEventKind::CancelOrder,
@@ -10268,11 +10773,14 @@ fn handle_work_priority(
     source: BuildSourceRef,
     level: String,
 ) {
-    let label = source.label();
+    let Some(ladder) = source_ladder(app, faction, &source) else {
+        return;
+    };
+    let label = source.label(&ladder);
     // ⛔ **A ROAD HAS NO CREW, SO NO ROW TO RANK** (`docs/plan_site_crews.md` §2.4): its only mark
     // is the Build mark on a queued road build. Refused by name rather than read as the tile's patch,
     // which is the one outcome that would look like it worked.
-    if source.road {
+    if source.is_road(&ladder) {
         emit_command_failure(
             app,
             CommandEventKind::CancelOrder,
@@ -10284,7 +10792,7 @@ fn handle_work_priority(
         );
         return;
     }
-    let Some(target) = source.target() else {
+    let Some(target) = source.target(&ladder) else {
         emit_command_failure(
             app,
             CommandEventKind::CancelOrder,
@@ -10441,18 +10949,128 @@ fn queue_build_on_working_bands(
                 .map(|assignment| (entity, assignment.workers, assignment.target.clone()))
         })
         .collect();
+    let bands = if is_pen_climb(app, &source, declared) {
+        bands_that_may_queue_the_pen(app, &source, bands)
+    } else {
+        bands
+    };
     for (entity, workers, band_target) in &bands {
         {
             let mut allocation = band_allocation_mut(app, *entity);
             allocation.enqueue_build(source.clone(), declared);
         }
+        // **A queued Corral picks its pen's tile now** - the best-grazing land within this band's
+        // work range, so the quotes price the tile the pen will really stand on.
+        if let (BuildSource::Herd(id), BuildJob::Climb(rung)) = (&source, declared) {
+            let ladder = app.world.resource::<LadderConfigHandle>().get();
+            if ladder
+                .rung(rung)
+                .trait_set()
+                .has(core_sim::RungTrait::Enclosed)
+            {
+                choose_the_pen_site(app, *entity, id);
+            }
+        }
         // Queueing a build does not change the take at all, but the source's dip does depend on
         // what is being raised on it, so re-seed the telemetry from the new forecast — the same
         // reason `handle_assign_labor` seeds after a stance edit.
-        let improvement = build_verb_on_source_at(app, *entity, band_target);
+        let improvement = build_rung_on_source_at(app, *entity, band_target);
         seed_source_yield(app, *entity, band_target, improvement, *workers);
     }
     bands.len()
+}
+
+/// **IS `job` ON `source` A CORRAL?** - a climb onto an `enclosed` rung of a herd. The pen is the one
+/// build a herd can hold in one place only, so it is the one the queue admits a single band for.
+fn is_pen_climb(app: &bevy::prelude::App, source: &BuildSource, job: BuildJob) -> bool {
+    let (BuildSource::Herd(_), BuildJob::Climb(rung)) = (source, job) else {
+        return false;
+    };
+    app.world
+        .resource::<LadderConfigHandle>()
+        .get()
+        .rung(rung)
+        .trait_set()
+        .has(core_sim::RungTrait::Enclosed)
+}
+
+/// **THE BAND, OF ANY FACTION, THAT HOLDS THIS HERD'S CORRAL IN ITS QUEUE** - `None` when no band
+/// has one queued.
+fn pen_queuer(app: &mut bevy::prelude::App, source: &BuildSource) -> Option<Entity> {
+    let ladder = app.world.resource::<LadderConfigHandle>().get();
+    app.world
+        .query::<(Entity, &LaborAllocation)>()
+        .iter(&app.world)
+        .find(|(_, allocation)| {
+            allocation
+                .build_queue_entry(source)
+                .and_then(|entry| entry.declared.climb())
+                .is_some_and(|rung| {
+                    ladder
+                        .rung(rung)
+                        .trait_set()
+                        .has(core_sim::RungTrait::Enclosed)
+                })
+        })
+        .map(|(entity, _)| entity)
+}
+
+/// **A HERD CAN BE PENNED IN ONE PLACE ONLY**, so the Corral is queued on exactly one band: the one
+/// that already holds it (a re-issue replaces its entry in place), else the lowest `BandId` of the
+/// bands working the herd. Another band's hold - of any faction - leaves none, and the caller
+/// refuses with [`PEN_TAKEN_HINT`].
+fn bands_that_may_queue_the_pen(
+    app: &mut bevy::prelude::App,
+    source: &BuildSource,
+    mut bands: Vec<(Entity, u32, LaborTarget)>,
+) -> Vec<(Entity, u32, LaborTarget)> {
+    match pen_queuer(app, source) {
+        Some(holder) => bands.retain(|(entity, ..)| *entity == holder),
+        None => {
+            bands.sort_by_key(|(entity, ..)| app.world.get::<BandId>(*entity).copied());
+            bands.truncate(PEN_QUEUERS_PER_HERD);
+        }
+    }
+    bands
+}
+
+/// The hint a refused second Corral carries.
+const PEN_TAKEN_HINT: &str = "Another band is already penning this herd";
+
+/// How many bands may hold one herd's Corral in their queues at once - a herd cannot be in two
+/// places.
+const PEN_QUEUERS_PER_HERD: usize = 1;
+
+/// **STAMP THE TILE A QUEUED CORRAL'S PEN WILL STAND ON** - `fauna::pen_site_in_world` for the herd
+/// as the keeping band at `band` sees it, written to the herd's `pen_site`.
+fn choose_the_pen_site(app: &mut bevy::prelude::App, band: Entity, herd_id: &str) {
+    let Some(band_tile) = app
+        .world
+        .get::<PopulationCohort>(band)
+        .and_then(|cohort| app.world.get::<core_sim::Tile>(cohort.current_tile))
+        .map(|tile| tile.position)
+    else {
+        return;
+    };
+    let Some(herd) = app
+        .world
+        .resource::<HerdRegistry>()
+        .find(herd_id)
+        .filter(|herd| !herd.is_corralled())
+        .cloned()
+    else {
+        return;
+    };
+    let site = core_sim::pen_site_in_world(&app.world, &herd, band_tile);
+    if let Some(herd) = app
+        .world
+        .resource_mut::<HerdRegistry>()
+        .herds
+        .iter_mut()
+        .find(|herd| herd.id == herd_id)
+    {
+        herd.pen_site = site;
+    }
 }
 
 /// **WHAT ONE BAND IS ACTUALLY RAISING ON A SOURCE** — its queue entry's declaration resolved
@@ -10461,49 +11079,49 @@ fn queue_build_on_working_bands(
 ///
 /// `None` for a source this band has not queued, for a ring (which raises no rung and pays no dip),
 /// and for an entry whose ground has moved on — a **dead** entry.
-fn build_verb_on_source(
+fn build_rung_on_source(
     allocation: &LaborAllocation,
     target: &LaborTarget,
     app: &bevy::prelude::App,
-) -> Option<Improvement> {
+) -> Option<RungId> {
     let source = BuildSource::of(target)?;
-    let declared = match allocation.build_queue_entry(&source)?.declared {
-        BuildJob::Rung(improvement) => improvement,
-        // Neither "work on a rung already held" kind raises a rung or pays a dip.
-        BuildJob::ExtendPen | BuildJob::SetHerdOutput(_) => return None,
-    };
+    // Neither "work on a rung already held" kind raises a rung or pays a dip.
+    let declared = allocation.build_queue_entry(&source)?.declared.climb()?;
+    let ladder = app.world.resource::<LadderConfigHandle>().get();
     match source {
         BuildSource::Patch(tile) => app
             .world
             .resource::<ForageRegistry>()
             .patch(tile)
-            .and_then(|patch| patch_build_verb(patch, Some(declared))),
+            .and_then(|patch| patch_build_rung(patch, &ladder, Some(declared))),
         BuildSource::Herd(id) => app
             .world
             .resource::<HerdRegistry>()
             .find(&id)
-            .and_then(|herd| herd_build_verb(herd, Some(declared))),
+            .and_then(|herd| herd_build_rung(herd, &ladder, Some(declared))),
         // **A working's declaration answers for itself**, exactly as a road's does and for its
         // reason: `fell`, `coppice` and `quarry` are the only things that ever raise one, so there
         // is no second, meter-derived declaration for a stale entry to override.
         BuildSource::Deposit { .. } => Some(declared),
         // **A road's declaration answers for itself**, with no meter-derived twin behind it: `grade`
         // and `pave` are the only things that ever raise a road, so there is no second statement for
-        // the ground to override. Unreachable through this path in any case — the source comes from a
+        // the ground to override. Unreachable through this path in any case - the source comes from a
         // *labor target*, and no target names a road.
         BuildSource::Road(_) => Some(declared),
+        // A tile improvement's declaration answers for itself, the road's reason exactly.
+        BuildSource::Tile { .. } => Some(declared),
     }
 }
 
-/// [`build_verb_on_source`] for a band named by entity — the shape the queueing loop needs, where
+/// [`build_rung_on_source`] for a band named by entity — the shape the queueing loop needs, where
 /// the allocation borrow has already been released.
-fn build_verb_on_source_at(
+fn build_rung_on_source_at(
     app: &bevy::prelude::App,
     band: Entity,
     target: &LaborTarget,
-) -> Option<Improvement> {
+) -> Option<RungId> {
     let allocation = app.world.get::<LaborAllocation>(band)?.clone();
-    build_verb_on_source(&allocation, target, app)
+    build_rung_on_source(&allocation, target, app)
 }
 
 fn handle_reload_simulation_config(app: &mut bevy::prelude::App, path: Option<String>) {
@@ -11310,94 +11928,26 @@ fn command_from_payload(
             beat_id,
             choice_id,
         }),
-        ProtoCommandPayload::Tame {
+        ProtoCommandPayload::BuildRung {
             faction_id,
+            band_id,
+            verb,
+            target_x,
+            target_y,
             herd_id,
-        } => Some(Command::Tame {
-            faction: FactionId(faction_id),
-            herd_id,
-        }),
-        ProtoCommandPayload::Cultivate {
-            faction_id,
-            target_x,
-            target_y,
-        } => Some(Command::Cultivate {
-            faction: FactionId(faction_id),
-            target_x,
-            target_y,
-        }),
-        ProtoCommandPayload::Sow {
-            faction_id,
-            target_x,
-            target_y,
-        } => Some(Command::Sow {
-            faction: FactionId(faction_id),
-            target_x,
-            target_y,
-        }),
-        ProtoCommandPayload::Corral {
-            faction_id,
-            target_x,
-            target_y,
-        } => Some(Command::Corral {
-            faction: FactionId(faction_id),
-            target_x,
-            target_y,
-        }),
-        ProtoCommandPayload::Grade {
-            faction_id,
-            band_id,
-            target_x,
-            target_y,
-        } => Some(Command::Grade {
-            faction: FactionId(faction_id),
-            band_id,
-            target_x,
-            target_y,
-        }),
-        ProtoCommandPayload::Pave {
-            faction_id,
-            band_id,
-            target_x,
-            target_y,
-        } => Some(Command::Pave {
-            faction: FactionId(faction_id),
-            band_id,
-            target_x,
-            target_y,
-        }),
-        ProtoCommandPayload::Fell {
-            faction_id,
-            target_x,
-            target_y,
             material,
-        } => Some(Command::Fell {
+            branch,
+        } => Some(Command::BuildRung {
             faction: FactionId(faction_id),
-            target_x,
-            target_y,
-            material,
-        }),
-        ProtoCommandPayload::Coppice {
-            faction_id,
-            target_x,
-            target_y,
-            material,
-        } => Some(Command::Coppice {
-            faction: FactionId(faction_id),
-            target_x,
-            target_y,
-            material,
-        }),
-        ProtoCommandPayload::Quarry {
-            faction_id,
-            target_x,
-            target_y,
-            material,
-        } => Some(Command::Quarry {
-            faction: FactionId(faction_id),
-            target_x,
-            target_y,
-            material,
+            request: BuildRungRequest {
+                band_id,
+                verb,
+                target_x,
+                target_y,
+                herd_id,
+                material,
+                branch,
+            },
         }),
         ProtoCommandPayload::AbandonWorking {
             faction_id,
@@ -11416,7 +11966,7 @@ fn command_from_payload(
             target_y,
             herd_id,
             material,
-            road,
+            branch,
         } => Some(Command::Abandon {
             faction: FactionId(faction_id),
             source: BuildSourceRef {
@@ -11424,7 +11974,7 @@ fn command_from_payload(
                 target_y,
                 herd_id,
                 material,
-                road,
+                branch,
             },
         }),
         ProtoCommandPayload::Unqueue {
@@ -11433,7 +11983,7 @@ fn command_from_payload(
             target_y,
             herd_id,
             material,
-            road,
+            branch,
         } => Some(Command::Unqueue {
             faction: FactionId(faction_id),
             source: BuildSourceRef {
@@ -11441,7 +11991,7 @@ fn command_from_payload(
                 target_y,
                 herd_id,
                 material,
-                road,
+                branch,
             },
         }),
         ProtoCommandPayload::BuildOrder {
@@ -11452,7 +12002,7 @@ fn command_from_payload(
             herd_id,
             position,
             material,
-            road,
+            branch,
         } => Some(Command::BuildOrder {
             faction: FactionId(faction_id),
             band_id,
@@ -11461,7 +12011,7 @@ fn command_from_payload(
                 target_y,
                 herd_id,
                 material,
-                road,
+                branch,
             },
             position,
         }),
@@ -11473,7 +12023,7 @@ fn command_from_payload(
             herd_id,
             level,
             material,
-            road,
+            branch,
         } => Some(Command::WorkPriority {
             faction: FactionId(faction_id),
             band_id,
@@ -11482,7 +12032,7 @@ fn command_from_payload(
                 target_y,
                 herd_id,
                 material,
-                road,
+                branch,
             },
             level,
         }),
@@ -11494,7 +12044,7 @@ fn command_from_payload(
             herd_id,
             level,
             material,
-            road,
+            branch,
         } => Some(Command::BuildPriority {
             faction: FactionId(faction_id),
             band_id,
@@ -11503,7 +12053,7 @@ fn command_from_payload(
                 target_y,
                 herd_id,
                 material,
-                road,
+                branch,
             },
             level,
         }),
@@ -11571,6 +12121,39 @@ fn command_from_payload(
             recipe_id,
             count,
             workers,
+        }),
+        ProtoCommandPayload::BenchEnqueueKit {
+            faction_id,
+            band_id,
+            kit_id,
+            kits,
+            recipes,
+        } => Some(Command::BenchEnqueueKit {
+            faction: FactionId(faction_id),
+            band_id: Some(band_id),
+            kit_id,
+            kits,
+            recipes,
+        }),
+        ProtoCommandPayload::BenchRemoveKit {
+            faction_id,
+            band_id,
+            kit_order,
+        } => Some(Command::BenchKitEdit {
+            faction: FactionId(faction_id),
+            band_id: Some(band_id),
+            kit_order,
+            edit: BenchKitEdit::Remove,
+        }),
+        ProtoCommandPayload::BenchRaiseKit {
+            faction_id,
+            band_id,
+            kit_order,
+        } => Some(Command::BenchKitEdit {
+            faction: FactionId(faction_id),
+            band_id: Some(band_id),
+            kit_order,
+            edit: BenchKitEdit::Raise,
         }),
         ProtoCommandPayload::BenchOrderCount {
             faction_id,
@@ -12119,6 +12702,7 @@ fn command_kind_display(kind: CommandEventKind) -> &'static str {
         CommandEventKind::StartingLoadout => "Outfit",
         CommandEventKind::BandBrokeAway => "Band broke away",
         CommandEventKind::LostTouch => "Lost touch",
+        CommandEventKind::CulturePull => "Culture pull",
         CommandEventKind::Dealing => "Dealing",
         CommandEventKind::Treaty => "Treaty",
     }
@@ -12371,16 +12955,8 @@ fn commanding_faction(command: &Command) -> Option<(FactionId, &'static str)> {
         Command::SendTradeExpedition { faction, .. } => Some((*faction, "send_trade_expedition")),
         Command::StationExpedition { faction, .. } => Some((*faction, "station_expedition")),
         Command::FoundSettlement { faction, .. } => Some((*faction, "found_settlement")),
-        Command::Tame { faction, .. } => Some((*faction, "tame")),
         Command::AnswerFork { faction, .. } => Some((*faction, "answer_fork")),
-        Command::Cultivate { faction, .. } => Some((*faction, "cultivate")),
-        Command::Sow { faction, .. } => Some((*faction, "sow")),
-        Command::Corral { faction, .. } => Some((*faction, "corral")),
-        Command::Grade { faction, .. } => Some((*faction, "grade")),
-        Command::Pave { faction, .. } => Some((*faction, "pave")),
-        Command::Fell { faction, .. } => Some((*faction, "fell")),
-        Command::Coppice { faction, .. } => Some((*faction, "coppice")),
-        Command::Quarry { faction, .. } => Some((*faction, "quarry")),
+        Command::BuildRung { faction, .. } => Some((*faction, "build")),
         Command::AbandonWorking { faction, .. } => Some((*faction, "abandon_working")),
         Command::Abandon { faction, .. } => Some((*faction, "abandon")),
         Command::Unqueue { faction, .. } => Some((*faction, "unqueue")),
@@ -12395,6 +12971,8 @@ fn commanding_faction(command: &Command) -> Option<(FactionId, &'static str)> {
         Command::SetHerdOutput { faction, .. } => Some((*faction, "set_herd_output")),
         Command::BenchEnqueue { faction, .. } => Some((*faction, "bench_enqueue")),
         Command::BenchQueueEdit { faction, edit, .. } => Some((*faction, edit.verb())),
+        Command::BenchEnqueueKit { faction, .. } => Some((*faction, "bench_enqueue_kit")),
+        Command::BenchKitEdit { faction, edit, .. } => Some((*faction, edit.verb())),
         Command::BenchCrew { faction, .. } => Some((*faction, "bench_crew")),
         Command::CancelOrder { faction, .. } => Some((*faction, "cancel_order")),
         Command::SetStartingLoadout { faction, .. } => Some((*faction, "set_starting_loadout")),
@@ -12824,8 +13402,8 @@ fn apply_command(app: &mut bevy::prelude::App, command: Command) {
         } => {
             handle_found_settlement(app, faction, target_x, target_y);
         }
-        Command::Tame { faction, herd_id } => {
-            handle_tame(app, faction, herd_id);
+        Command::BuildRung { faction, request } => {
+            handle_build_rung(app, faction, request);
         }
         Command::AnswerFork {
             faction,
@@ -12834,103 +13412,12 @@ fn apply_command(app: &mut bevy::prelude::App, command: Command) {
         } => {
             handle_answer_fork(app, faction, beat_id, choice_id);
         }
-        Command::Cultivate {
-            faction,
-            target_x,
-            target_y,
-        } => {
-            handle_cultivate(app, faction, UVec2::new(target_x, target_y));
-        }
-        Command::Sow {
-            faction,
-            target_x,
-            target_y,
-        } => {
-            handle_sow(app, faction, UVec2::new(target_x, target_y));
-        }
-        Command::Corral {
-            faction,
-            target_x,
-            target_y,
-        } => {
-            handle_corral(app, faction, UVec2::new(target_x, target_y));
-        }
         Command::UpkeepMode {
             faction,
             band_id,
             mode,
         } => {
             handle_upkeep_mode(app, faction, band_id, mode);
-        }
-        Command::Grade {
-            faction,
-            band_id,
-            target_x,
-            target_y,
-        } => {
-            handle_road_verb(
-                app,
-                faction,
-                band_id,
-                UVec2::new(target_x, target_y),
-                Improvement::Grade,
-            );
-        }
-        Command::Pave {
-            faction,
-            band_id,
-            target_x,
-            target_y,
-        } => {
-            handle_road_verb(
-                app,
-                faction,
-                band_id,
-                UVec2::new(target_x, target_y),
-                Improvement::Pave,
-            );
-        }
-        Command::Fell {
-            faction,
-            target_x,
-            target_y,
-            material,
-        } => {
-            handle_deposit_verb(
-                app,
-                faction,
-                UVec2::new(target_x, target_y),
-                &material,
-                Improvement::Fell,
-            );
-        }
-        Command::Coppice {
-            faction,
-            target_x,
-            target_y,
-            material,
-        } => {
-            handle_deposit_verb(
-                app,
-                faction,
-                UVec2::new(target_x, target_y),
-                &material,
-                Improvement::Coppice,
-            );
-        }
-        Command::Quarry {
-            faction,
-            target_x,
-            target_y,
-            material,
-        } => {
-            handle_deposit_verb(
-                app,
-                faction,
-                UVec2::new(target_x, target_y),
-                &material,
-                Improvement::Quarry,
-            );
         }
         Command::AbandonWorking {
             faction,
@@ -13000,6 +13487,23 @@ fn apply_command(app: &mut bevy::prelude::App, command: Command) {
             edit,
         } => {
             handle_bench_queue_edit(app, faction, band_id, order, edit);
+        }
+        Command::BenchEnqueueKit {
+            faction,
+            band_id,
+            kit_id,
+            kits,
+            recipes,
+        } => {
+            handle_bench_enqueue_kit(app, faction, band_id, &kit_id, kits, &recipes);
+        }
+        Command::BenchKitEdit {
+            faction,
+            band_id,
+            kit_order,
+            edit,
+        } => {
+            handle_bench_kit_edit(app, faction, band_id, kit_order, edit);
         }
         Command::BenchCrew {
             faction,
@@ -14071,6 +14575,7 @@ fn handle_rollback(
 
 #[cfg(test)]
 mod tests {
+    use core_sim::shipped;
     use core_sim::NO_CREW_ON_THIS_ACTIVITY;
 
     /// ⛔ **`RUST_LOG` MUST NOT BE ABLE TO DISABLE THE RIVALS.** The launcher supervises `sim_ai`
@@ -14152,7 +14657,7 @@ mod tests {
     fn seed_thriving_patch(app: &mut bevy::prelude::App, coord: UVec2) {
         seed_gathering_site(app, coord);
         let mut registry = app.world.resource_mut::<ForageRegistry>();
-        let patch = ForagePatch::new(coord, 100.0);
+        let patch = ForagePatch::new(coord, 100.0, shipped::root_standing(shipped::plant()));
         assert_eq!(patch.ecology_phase, EcologyPhase::Thriving);
         registry.patches.insert(coord, patch);
     }
@@ -15166,7 +15671,7 @@ mod tests {
         let tile = UVec2::new(3, 4);
 
         assert!(
-            plant_rung_site_refusal(&app, RungKey::PlantWild, tile).is_none(),
+            plant_rung_site_refusal(&app, FactionId(0), shipped::plant_wild(), tile).is_none(),
             "no tiles means no ground to refuse"
         );
         assert!(
@@ -15186,7 +15691,17 @@ mod tests {
         // `Sow` still answers from its *knowledge* gate — that one needs no tiles — but it must
         // reach that gate rather than panicking, and must not invent a verdict about ground that
         // does not exist.
-        let sow = validate_sow(&app, faction, tile, None);
+        let sow = validate_improvement(
+            &app,
+            faction,
+            &LaborTarget::Forage {
+                tile,
+                floor: DEFAULT_ESCAPEMENT_FLOOR,
+                species: None,
+                take_species: TakeSelection::EVERYTHING,
+            },
+            shipped::sow(),
+        );
         assert!(
             sow.as_ref()
                 .err()
@@ -15784,16 +16299,17 @@ mod tests {
     ///
     /// It reads the *declaration*, not the derived rung: what a rejected command must not have done
     /// is change the player's stated intent.
-    fn band_improvement(app: &bevy::prelude::App, band: Entity) -> Option<Improvement> {
+    fn band_improvement(app: &bevy::prelude::App, band: Entity) -> Option<VerbId> {
         let allocation = app
             .world
             .get::<LaborAllocation>(band)
             .expect("band has an allocation");
         let source = BuildSource::of(&allocation.assignments[0].target)?;
-        match allocation.build_queue_entry(&source)?.declared {
-            BuildJob::Rung(improvement) => Some(improvement),
-            BuildJob::ExtendPen | BuildJob::SetHerdOutput(_) => None,
-        }
+        allocation
+            .build_queue_entry(&source)?
+            .declared
+            .climb()
+            .and_then(|rung| core_sim::shipped::ladder().rung(rung).verb_id())
     }
 
     /// The **floor** the band's single assignment currently carries.
@@ -15844,6 +16360,11 @@ mod tests {
         assert!(
             cultivate_rejected_for_unknown(&app),
             "cultivate must emit a NotKnown failure when Cultivation is unknown"
+        );
+        // The refusal says what to do next: the rung that teaches the knowledge, by its own label.
+        assert!(
+            cultivate_failure_detail_contains(&app, "Sustain-work the wild ground to learn it"),
+            "the unlearned-knowledge refusal names the rung that teaches it"
         );
         assert_eq!(
             band_improvement(&app, band),
@@ -15897,7 +16418,7 @@ mod tests {
 
         assert_eq!(
             band_improvement(&app, band),
-            Some(Improvement::Cultivate),
+            Some(shipped::cultivate()),
             "the verb's whole effect is the declaration"
         );
         assert_eq!(
@@ -16135,6 +16656,112 @@ mod tests {
         );
     }
 
+    /// **THE ORCHARD OVERLAY** - the test-only tile branch merged onto the builtin ladder, the
+    /// fixture `core_sim/tests/tile_improvement.rs` drives, so the command path is proved on a branch
+    /// the server has never heard of.
+    fn ladder_with_the_orchard() -> LadderConfig {
+        let mut ladder: serde_json::Value =
+            serde_json::from_str(core_sim::BUILTIN_INTENSIFICATION_LADDER)
+                .expect("the builtin ladder parses as json");
+        let overlay: serde_json::Value = serde_json::from_str(include_str!(
+            "../../tests/fixtures/orchard_tile_branch.json"
+        ))
+        .expect("the fixture parses as json");
+        for (id, branch) in overlay["branches"].as_object().expect("branches") {
+            ladder["branches"][id] = branch.clone();
+        }
+        ladder["rungs"]
+            .as_array_mut()
+            .expect("rungs is an array")
+            .extend(overlay["rungs"].as_array().expect("overlay rungs").clone());
+        LadderConfig::from_json_str(&ladder.to_string()).expect("the overlay loads")
+    }
+
+    /// **A TILE IMPROVEMENT IS CREWED AND BUILT LIKE A DEPOSIT** - `assign_labor ... tile <branch>
+    /// <x> <y> <workers>` puts a crew on it (placing it), a `kit` token on that row is refused, and
+    /// `build <verb> <faction> <x> <y>` (no band) climbs it only once a crew is on it.
+    #[test]
+    fn assign_labor_tile_crews_an_improvement_and_a_build_needs_that_crew() {
+        const CREW: u32 = 2;
+        let mut app = build_test_app();
+        app.world
+            .insert_resource(LadderConfigHandle::new(Arc::new(ladder_with_the_orchard())));
+        app.update();
+        let faction = FactionId(0);
+        let band = starting_band_id(&mut app, faction);
+        let (_, tile) =
+            band_entity_and_tile(&mut app, faction, BandId(band)).expect("the band stands");
+        let orchard = core_sim::BranchId::new("orchard");
+        let crew_on = |app: &mut bevy::prelude::App| -> u32 {
+            app.world
+                .query::<&LaborAllocation>()
+                .iter(&app.world)
+                .flat_map(|allocation| allocation.assignments.iter())
+                .filter(
+                    |row| matches!(&row.target, LaborTarget::Tile { tile: at, .. } if *at == tile),
+                )
+                .map(|row| row.workers)
+                .sum()
+        };
+        let queued = |app: &mut bevy::prelude::App| -> usize {
+            app.world
+                .query::<&LaborAllocation>()
+                .iter(&app.world)
+                .map(|allocation| allocation.build_queue.len())
+                .sum()
+        };
+        let assign = |app: &mut bevy::prelude::App, workers: u32, kit: Option<String>| {
+            handle_assign_labor(
+                app,
+                faction,
+                Some(band),
+                "tile".to_string(),
+                workers,
+                Some(tile.x),
+                Some(tile.y),
+                None,
+                Some("orchard".to_string()),
+                None,
+                kit,
+                Vec::new(),
+                false,
+            );
+        };
+        let graft = || BuildRungRequest {
+            verb: "graft".to_string(),
+            target_x: Some(tile.x),
+            target_y: Some(tile.y),
+            ..BuildRungRequest::default()
+        };
+
+        handle_build_rung(&mut app, faction, graft());
+        assert_eq!(
+            queued(&mut app),
+            0,
+            "no crew works the tile, so nothing is queued"
+        );
+
+        assign(&mut app, CREW, Some("none".to_string()));
+        assert_eq!(crew_on(&mut app), 0, "a tile crew names no kit");
+
+        assign(&mut app, CREW, None);
+        assert_eq!(crew_on(&mut app), CREW, "the crew is on the improvement");
+        assert!(
+            app.world
+                .resource::<core_sim::TileImprovementRegistry>()
+                .get(tile, orchard)
+                .is_some(),
+            "the first crew places it"
+        );
+
+        handle_build_rung(&mut app, faction, graft());
+        assert_eq!(
+            queued(&mut app),
+            1,
+            "with a crew on it the climb is declared"
+        );
+    }
+
     /// **The road-keeping pool is staffed like any other band-wide role**, and **the three retired
     /// keeping pools are refused** (`docs/plan_site_crews.md` §4): a patch, herd or working is kept
     /// by its own crew, so `agriculture`, `husbandry` and `quarrywork` name nothing to staff and the
@@ -16278,6 +16905,7 @@ mod tests {
                 FODDER_PER_BIOMASS,
                 REGROWTH_RATE,
                 BODY_MASS,
+                core_sim::shipped::root_standing(core_sim::shipped::animal()),
             ));
     }
 
@@ -16612,7 +17240,7 @@ mod tests {
         );
         assert_eq!(
             band_improvement(&app, band),
-            Some(Improvement::Cultivate),
+            Some(shipped::cultivate()),
             "the crew starts clearing unhealthy ground — the floor prices the pressure, not a gate"
         );
     }
@@ -16642,7 +17270,7 @@ mod tests {
 
         assert_eq!(
             band_improvement(&app, band),
-            Some(Improvement::Cultivate),
+            Some(shipped::cultivate()),
             "cultivate checks the improvement box on the working band"
         );
         assert_eq!(
@@ -16674,7 +17302,7 @@ mod tests {
 
         assert!(cultivate_failure_detail_contains(
             &app,
-            "No band is foraging"
+            "No band of yours works"
         ));
     }
 
@@ -16694,7 +17322,7 @@ mod tests {
     /// **Where a rung's span ends**, read off the shipped ladder so a retune moves the fixture with
     /// the game rather than leaving a literal behind. The retention bar that used to ride beside it
     /// is deleted (`docs/plan_standing_upkeep.md` §2.8) — a rung is achieved exactly here.
-    fn rung_top(app: &bevy::prelude::App, key: RungKey) -> f32 {
+    fn rung_top(app: &bevy::prelude::App, key: RungId) -> f32 {
         let ladder = app.world.resource::<LadderConfigHandle>().get();
         let (base, width) = core_sim::plant_rung_span(key, &ladder);
         base + width
@@ -16712,7 +17340,7 @@ mod tests {
     /// full* back into one fact. What the §4.7 fix bought survives: `cultivate` is accepted here,
     /// because the position is below the rung's top and there is genuinely work to do.
     fn erode_a_tended_patch(app: &mut bevy::prelude::App, coord: UVec2, faction: FactionId) {
-        let top = rung_top(app, RungKey::PlantTended);
+        let top = rung_top(app, shipped::plant_tended());
         let ladder = app.world.resource::<LadderConfigHandle>().get();
         let mut registry = app.world.resource_mut::<ForageRegistry>();
         let patch = registry
@@ -16751,12 +17379,12 @@ mod tests {
         handle_cultivate(&mut app, faction, coord);
 
         assert!(
-            !cultivate_failure_detail_contains(&app, "already cultivated"),
+            !cultivate_failure_detail_contains(&app, "already built"),
             "a tended patch eroded below its cost is a repair, not a finished job"
         );
         assert_eq!(
             band_improvement(&app, band),
-            Some(Improvement::Cultivate),
+            Some(shipped::cultivate()),
             "and re-queueing it is what puts the builders back on it — the entry IS the declaration"
         );
         // **The old pair here — "and the ground stays TENDED throughout" — is GONE with the
@@ -16790,7 +17418,7 @@ mod tests {
             },
         );
         {
-            let top = rung_top(&full, RungKey::PlantTended);
+            let top = rung_top(&full, shipped::plant_tended());
             let ladder = full.world.resource::<LadderConfigHandle>().get();
             let mut registry = full.world.resource_mut::<ForageRegistry>();
             let patch = registry.patch_mut(coord).unwrap();
@@ -16801,7 +17429,11 @@ mod tests {
         handle_cultivate(&mut full, faction, coord);
 
         assert!(
-            cultivate_failure_detail_contains(&full, "already cultivated"),
+            cultivate_failure_detail_contains(&full, "`build sow` takes it up to farm"),
+            "an already-built refusal names the verb that raises the next rung"
+        );
+        assert!(
+            cultivate_failure_detail_contains(&full, "already built"),
             "a FULL meter has nothing left to build and must still be refused"
         );
     }
@@ -16825,7 +17457,7 @@ mod tests {
                 take_species: TakeSelection::EVERYTHING,
             },
         );
-        let top = rung_top(&app, RungKey::PlantField);
+        let top = rung_top(&app, shipped::plant_farm());
         {
             let ladder = app.world.resource::<LadderConfigHandle>().get();
             let mut registry = app.world.resource_mut::<ForageRegistry>();
@@ -16841,10 +17473,10 @@ mod tests {
         handle_sow(&mut app, faction, coord);
 
         assert!(
-            !sow_failure_detail_contains(&app, "already sown"),
+            !sow_failure_detail_contains(&app, "already built"),
             "a Field eroded below its cost is a repair"
         );
-        assert_eq!(band_improvement(&app, band), Some(Improvement::Sow));
+        assert_eq!(band_improvement(&app, band), Some(shipped::sow()));
 
         let mut full = build_world_app();
         let coord = find_sowable_tile(&full);
@@ -16870,7 +17502,7 @@ mod tests {
         handle_sow(&mut full, faction, coord);
 
         assert!(
-            sow_failure_detail_contains(&full, "already sown"),
+            sow_failure_detail_contains(&full, "already built"),
             "a FULL Field meter is still refused"
         );
     }
@@ -16916,10 +17548,10 @@ mod tests {
         }
 
         handle_corral(&mut app, faction, coord);
-        assert!(corral_failure_detail_contains(&app, "already corralled"));
+        assert!(corral_failure_detail_contains(&app, "already built"));
 
         handle_tame(&mut app, faction, id);
-        assert!(tame_failure_detail_contains(&app, "already domesticated"));
+        assert!(tame_failure_detail_contains(&app, "already built"));
     }
 
     // --- A build is never refused for the state of the ground under it -------------------------
@@ -16979,7 +17611,7 @@ mod tests {
                 species: None,
                 take_species: TakeSelection::EVERYTHING,
             },
-            Improvement::Cultivate,
+            shipped::cultivate(),
         );
         assert!(
             verdict.is_ok(),
@@ -17007,7 +17639,7 @@ mod tests {
                 .expect("the band works the patch");
             let source = BuildSource::of(&allocation.assignments[0].target)
                 .expect("the fixture row names a source");
-            assert!(allocation.enqueue_build(source, BuildJob::Rung(Improvement::Cultivate)));
+            assert!(allocation.enqueue_build(source, BuildJob::Climb(shipped::plant_tended())));
         }
         const EASED_OFF_WORKERS: u32 = BAND_WORKERS - 1;
         handle_assign_labor(
@@ -17040,7 +17672,7 @@ mod tests {
         );
         assert_eq!(
             band_improvement(&app, band),
-            Some(Improvement::Cultivate),
+            Some(shipped::cultivate()),
             "the build survives a crew change — a stance-side edit never re-asserts the verb, and \
              never drops it"
         );
@@ -17083,7 +17715,7 @@ mod tests {
             patch.owner = Some(rival);
         }
         grant_cultivation(&mut thriving, faction);
-        let verdict = validate_improvement(&thriving, faction, &patch, Improvement::Cultivate);
+        let verdict = validate_improvement(&thriving, faction, &patch, shipped::cultivate());
         assert!(
             verdict
                 .as_ref()
@@ -17096,7 +17728,7 @@ mod tests {
         seed_thriving_patch(&mut stressed, coord);
         seed_paused_build(&mut stressed, coord, Some(rival));
         grant_cultivation(&mut stressed, faction);
-        let verdict = validate_improvement(&stressed, faction, &patch, Improvement::Cultivate);
+        let verdict = validate_improvement(&stressed, faction, &patch, shipped::cultivate());
         assert!(
             verdict
                 .as_ref()
@@ -17688,7 +18320,8 @@ mod tests {
             .species
             .iter()
             .find(|(key, def)| {
-                def.cultivation_ceiling.allows_cultivate()
+                core_sim::shipped::ladder()
+                    .ceiling_reaches(def.cultivation_ceiling, core_sim::shipped::plant_tended())
                     && !here.iter().any(|share| &&share.species == key)
             })
             .map(|(key, _)| key.clone())
@@ -18469,7 +19102,7 @@ mod tests {
     }
 
     /// **The land's own verdict on every tile**, resolved through the *real* seam the sim uses
-    /// (`rung_site_refusal` + `tile_is_fresh_watered` against the `plant:field` rung's own
+    /// (`rung_site_refusal` + `tile_is_fresh_watered` against the `plant:farm` rung's own
     /// `site_requirement`) — never a restatement of the rule. `None` = the ground will take seed.
     fn site_verdict(app: &bevy::prelude::App, coord: UVec2) -> Option<Option<SiteRefusal>> {
         let entity = app
@@ -18496,12 +19129,13 @@ mod tests {
         });
         let ladder = app.world.resource::<LadderConfigHandle>().get();
         Some(rung_site_refusal(
-            ladder.rung(RungKey::PlantField),
+            ladder.rung(shipped::plant_farm()),
             ground,
             &labor.forage,
             app.world.resource::<FoodSiteRegistry>().is_site(coord),
             fresh_water,
             core_sim::NO_DEPOSIT_FLOOR,
+            &|_| false,
         ))
     }
 
@@ -18567,8 +19201,33 @@ mod tests {
     /// **Ground the ladder will take seed on** — rich *and* watered. On the pinned map this is the
     /// river-valley set (~46 tiles of 4160), which is the scarcity the rung is made of.
     fn find_sowable_tile(app: &bevy::prelude::App) -> UVec2 {
-        find_tile(app, |verdict, _| verdict.is_none())
-            .expect("the pinned map must carry sowable river-valley ground")
+        find_site_tile(app, true).expect("the pinned map must carry sowable river-valley ground")
+    }
+
+    /// The first tile the Farm's own rule admits (a gathering site), WATERED or DRY as asked, in the
+    /// same totally ordered sweep `find_tile` uses.
+    fn find_site_tile(app: &bevy::prelude::App, watered: bool) -> Option<UVec2> {
+        let (width, height) = {
+            let registry = app.world.resource::<TileRegistry>();
+            (registry.width, registry.height)
+        };
+        for y in 0..height {
+            for x in 0..width {
+                let coord = UVec2::new(x, y);
+                if site_verdict(app, coord) != Some(None) {
+                    continue;
+                }
+                let has_patch = app
+                    .world
+                    .resource::<ForageRegistry>()
+                    .patch(coord)
+                    .is_some();
+                if has_patch && water_only_verdict(app, coord).is_none() == watered {
+                    return Some(coord);
+                }
+            }
+        }
+        None
     }
 
     /// Ground the land refuses, in the *specific* way named — the two failures are different problems
@@ -18604,7 +19263,7 @@ mod tests {
             "the refusal must name the knowledge that gates sowing"
         );
         assert!(
-            sow_failure_detail_contains(&app, "tended patches"),
+            sow_failure_detail_contains(&app, "learn"),
             "...and say how it is learned"
         );
         assert_eq!(
@@ -18612,6 +19271,107 @@ mod tests {
             0.5,
             "a rejected sow must not touch the band's floor"
         );
+    }
+
+    /// **A TENDED PATCH IS REFUSED THE FARM WITHOUT SEED SELECTION, AND ACCEPTED WITH IT** - the
+    /// rung's `unlock_knowledge` is enforced by the server at `validate_patch_build`, not only
+    /// hidden by the client. The queue entry exists only in the accepted half.
+    #[test]
+    fn a_tended_patch_is_refused_the_farm_without_seed_selection_and_accepted_with_it() {
+        let mut app = build_world_app();
+        let faction = FactionId(0);
+        let coord = find_sowable_tile(&app);
+        {
+            let ladder = app.world.resource::<LadderConfigHandle>().get();
+            let mut registry = app.world.resource_mut::<ForageRegistry>();
+            let capacity = registry.patch(coord).map_or(100.0, |p| p.carrying_capacity);
+            let mut patch = core_sim::ForagePatch::new(
+                coord,
+                capacity,
+                core_sim::shipped::root_standing(core_sim::shipped::plant()),
+            );
+            patch.complete_cultivation(faction, &ladder);
+            registry.patches.insert(coord, patch);
+        }
+        spawn_working_band(
+            &mut app,
+            faction,
+            LaborTarget::Forage {
+                tile: coord,
+                floor: 0.5,
+                species: None,
+                take_species: TakeSelection::EVERYTHING,
+            },
+        );
+        let queued = |app: &mut bevy::prelude::App| {
+            app.world
+                .query::<&LaborAllocation>()
+                .iter(&app.world)
+                .any(|allocation| {
+                    allocation
+                        .build_queue_position(&BuildSource::Patch(coord))
+                        .is_some()
+                })
+        };
+
+        handle_sow(&mut app, faction, coord);
+        assert!(sow_failure_detail_contains(&app, "Seed Selection"));
+        assert!(!queued(&mut app), "a refused climb queues nothing");
+
+        grant_seed_selection(&mut app, faction);
+        handle_sow(&mut app, faction, coord);
+        assert!(queued(&mut app), "with the lesson the Farm is declared");
+    }
+
+    /// **THE OFF-SITE CREW PATH IS GATED BY THE SAME LESSON**: Worked Land opens the ground, but a
+    /// crew naming a crop declares the Farm, so a people without Seed Selection is refused by name.
+    #[test]
+    fn an_off_site_crew_is_refused_without_seed_selection() {
+        let mut app = build_world_app();
+        let faction = FactionId(0);
+        let coord = find_refused_tile(&app, SiteRefusal::NeedsLesson);
+        app.world
+            .resource_mut::<DiscoveryProgressLedger>()
+            .add_progress(
+                faction,
+                core_sim::WORKED_LAND_DISCOVERY_ID,
+                scalar_from_f32(1.0),
+            );
+        let band = starting_band_id(&mut app, faction);
+        let crop = a_species_growing_at(&app, coord);
+        let assign = |app: &mut bevy::prelude::App| {
+            handle_assign_labor(
+                app,
+                faction,
+                Some(band),
+                "forage".to_string(),
+                2,
+                Some(coord.x),
+                Some(coord.y),
+                None,
+                Some(crop.clone()),
+                None,
+                None,
+                Vec::new(),
+                false,
+            );
+        };
+        let crew_on = |app: &mut bevy::prelude::App| -> u32 {
+            app.world
+                .query::<&LaborAllocation>()
+                .iter(&app.world)
+                .flat_map(|allocation| allocation.assignments.iter())
+                .filter(
+                    |row| matches!(&row.target, LaborTarget::Forage { tile, .. } if *tile == coord),
+                )
+                .map(|row| row.workers)
+                .sum()
+        };
+        assign(&mut app);
+        assert_eq!(crew_on(&mut app), 0, "no Seed Selection, no farming crew");
+        grant_seed_selection(&mut app, faction);
+        assign(&mut app);
+        assert_eq!(crew_on(&mut app), 2);
     }
 
     /// **Sow stands on ground the people already work.** Rung 3 knows how to move seed, not how to
@@ -18652,13 +19412,107 @@ mod tests {
         );
     }
 
-    /// **The water rule, and it is not redundant.** Ground rich enough to farm but **dry** is refused:
-    /// rung 3 can carry seed, not water. This is what pulls the first fields into the river valleys.
+    /// **Worked Land opens ground a gathering site does not - at the COMMAND, not only the wire.**
+    /// Fertile, watered ground that is not a gathering site is refused to a people that has not
+    /// learned Worked Land, and the refusal names the lesson and where it is learned; the same
+    /// people may not even send a crew there. Once the lesson is held the crew is accepted and the
+    /// `sow` clears the site gate (it then waits on the usual knowledge, which is granted too).
     #[test]
-    fn sow_rejected_on_ground_that_is_too_dry() {
+    fn worked_land_opens_off_site_ground_to_a_crew_and_a_sow() {
         let mut app = build_world_app();
         let faction = FactionId(0);
-        let coord = find_refused_tile(&app, SiteRefusal::TooDry);
+        let coord = find_refused_tile(&app, SiteRefusal::NeedsLesson);
+        grant_seed_selection(&mut app, faction);
+        let band = starting_band_id(&mut app, faction);
+        let crew_on = |app: &mut bevy::prelude::App| -> u32 {
+            app.world
+                .query::<&LaborAllocation>()
+                .iter(&app.world)
+                .flat_map(|allocation| allocation.assignments.iter())
+                .filter(
+                    |row| matches!(&row.target, LaborTarget::Forage { tile, .. } if *tile == coord),
+                )
+                .map(|row| row.workers)
+                .sum()
+        };
+        let assign = |app: &mut bevy::prelude::App, crop: Option<String>| {
+            handle_assign_labor(
+                app,
+                faction,
+                Some(band),
+                "forage".to_string(),
+                2,
+                Some(coord.x),
+                Some(coord.y),
+                None,
+                crop,
+                None,
+                None,
+                Vec::new(),
+                false,
+            );
+        };
+
+        // Without the lesson: no crew, and the refusal says what to learn.
+        assign(&mut app, None);
+        assert_eq!(
+            crew_on(&mut app),
+            0,
+            "no crew goes to ground the lesson opens"
+        );
+        let refused = app.world.resource::<CommandEventLog>().iter().any(|entry| {
+            entry
+                .detail
+                .as_deref()
+                .is_some_and(|detail| detail.contains("Worked Land"))
+        });
+        assert!(refused, "the refusal names the lesson");
+
+        // With it: the crew is accepted.
+        app.world
+            .resource_mut::<DiscoveryProgressLedger>()
+            .add_progress(
+                faction,
+                core_sim::WORKED_LAND_DISCOVERY_ID,
+                scalar_from_f32(1.0),
+            );
+        // **WORKED LAND OPENS FARMING, NOT GATHERING**: a bare gather on the off-site wild ground
+        // is still refused, lesson or no lesson.
+        assign(&mut app, None);
+        assert_eq!(
+            crew_on(&mut app),
+            0,
+            "a crew may not gather wild off-site ground just because Worked Land is known"
+        );
+        // Naming the crop to sow makes it a farming crew: accepted, and the sow is declared with it.
+        let crop = a_species_growing_at(&app, coord);
+        assign(&mut app, Some(crop));
+        assert_eq!(
+            crew_on(&mut app),
+            2,
+            "a crew that names its crop is sent to raise a farm"
+        );
+        let queued = app
+            .world
+            .query::<&LaborAllocation>()
+            .iter(&app.world)
+            .any(|allocation| {
+                allocation
+                    .build_queue_position(&BuildSource::Patch(coord))
+                    .is_some()
+            });
+        assert!(queued, "the farm build is queued with the crew");
+    }
+
+    /// **A DRY GATHERING SITE TAKES THE FARM.** Sites are already the rich ground, so the Farm's own
+    /// rule asks no water of them; water is asked only of the new ground Worked Land opens. With Seed
+    /// Selection the sow is declared on a dry site, and nothing blames the water.
+    #[test]
+    fn a_dry_gathering_site_takes_the_farm() {
+        let mut app = build_world_app();
+        let faction = FactionId(0);
+        let coord = find_site_tile(&app, false)
+            .expect("the pinned map must carry a dry gathering site bearing a patch");
         grant_seed_selection(&mut app, faction);
         spawn_working_band(
             &mut app,
@@ -18674,25 +19528,8 @@ mod tests {
         handle_sow(&mut app, faction, coord);
 
         assert!(
-            sow_failure_detail_contains(&app, "too dry to take a crop"),
-            "dry ground must be refused, and the message must name the fault"
-        );
-        assert!(
-            !sow_failure_detail_contains(&app, "too thin"),
-            "...and must NOT blame the soil on rich ground"
-        );
-        assert!(
-            app.world
-                .resource::<ForageRegistry>()
-                .patch(coord)
-                .is_none()
-                || !app
-                    .world
-                    .resource::<ForageRegistry>()
-                    .patch(coord)
-                    .unwrap()
-                    .is_field(),
-            "a refused sow must not build a field"
+            !sow_failure_detail_contains(&app, "too dry"),
+            "a dry gathering site is not refused for water"
         );
     }
 
@@ -18761,7 +19598,9 @@ mod tests {
         for y in 0..height {
             for x in 0..width {
                 let coord = UVec2::new(x, y);
-                if plant_rung_site_refusal(app, RungKey::PlantField, coord).is_some() {
+                if plant_rung_site_refusal(app, FactionId(0), shipped::plant_farm(), coord)
+                    .is_some()
+                {
                     continue;
                 }
                 let Some(ground) = app
@@ -18773,7 +19612,14 @@ mod tests {
                     continue;
                 };
                 let composition = tile_flora_composition(&flora, &labor.forage, ground, map_seed);
-                if default_species_for_rung(&composition, &flora, RungKey::PlantField).is_none() {
+                if default_species_for_rung(
+                    &composition,
+                    &flora,
+                    shipped::ladder(),
+                    shipped::plant_farm(),
+                )
+                .is_none()
+                {
                     return Some(coord);
                 }
             }
@@ -18869,7 +19715,7 @@ mod tests {
 
         handle_sow(&mut app, faction, coord);
 
-        assert!(sow_failure_detail_contains(&app, "already sown"));
+        assert!(sow_failure_detail_contains(&app, "already built"));
     }
 
     /// The ownership gate, mirroring Cultivate's: you cannot sow ground another people are working.
@@ -18915,7 +19761,7 @@ mod tests {
 
         handle_sow(&mut app, faction, coord);
 
-        assert!(sow_failure_detail_contains(&app, "No band is foraging"));
+        assert!(sow_failure_detail_contains(&app, "No band of yours works"));
     }
 
     /// **The happy path.** On ground the land accepts — rich *and* watered, the river-valley set —
@@ -18946,7 +19792,7 @@ mod tests {
 
         assert_eq!(
             band_improvement(&app, band),
-            Some(Improvement::Sow),
+            Some(shipped::sow()),
             "sow checks the improvement box on the working band"
         );
         assert!(
@@ -18971,7 +19817,6 @@ mod tests {
                 SiteRefusal::NotGatheringSite.as_str(),
                 Some("Nobody gathers at"),
             ),
-            (SiteRefusal::TooDry.as_str(), Some("too dry to take a crop")),
         ] {
             let mut app = build_world_app();
             let faction = FactionId(0);
@@ -18987,7 +19832,7 @@ mod tests {
                     })
                     .expect("the pinned map must carry a patch off every gathering site")
                 }
-                Some(_) => find_refused_tile(&app, SiteRefusal::TooDry),
+                Some(_) => unreachable!("only the two cases above are staged"),
             };
             grant_seed_selection(&mut app, faction);
             spawn_working_band(
@@ -19017,7 +19862,8 @@ mod tests {
                     "every food-bearing tile carries a patch, so the wire must describe this one",
                 );
             assert_eq!(
-                patch.sow_site_refusal, expected_wire,
+                patch.quote("plant:farm").site_refusal,
+                expected_wire,
                 "the wire's verdict at {coord:?}"
             );
 
@@ -19064,7 +19910,7 @@ mod tests {
             // position (`docs/plan_standing_upkeep.md` §2.8).
             let ladder = core_sim::LadderConfig::builtin();
             let (field_base, field_width) =
-                core_sim::plant_rung_span(core_sim::RungKey::PlantField, &ladder);
+                core_sim::plant_rung_span(shipped::plant_farm(), &ladder);
             // Half-way up the Field's own span, on top of a completed tended rung.
             patch.owner = Some(FactionId(0));
             patch.set_ladder_position(field_base + field_width * HALF_SOWN, &ladder);
@@ -19085,25 +19931,30 @@ mod tests {
         // BOTH plant meters ship, independently — the two-meter split the client needs. **Each is
         // still a 0..1 FRACTION**, divided at capture against that patch's own job, even though the
         // meter behind it now stores absolute work units.
-        assert!((patch.cultivation_progress - 1.0).abs() < 1e-6);
-        assert!(patch.is_cultivated);
-        assert!((patch.field_progress - HALF_SOWN).abs() < 1e-6);
-        assert!(!patch.is_field, "a half-sown field is not a Field");
+        assert!((patch.quote("plant:tended").progress - 1.0).abs() < 1e-6);
+        assert!(patch.quote("plant:tended").reached);
+        assert!((patch.quote("plant:farm").progress - HALF_SOWN).abs() < 1e-6);
+        assert!(
+            !patch.quote("plant:farm").reached,
+            "a half-sown field is not a Field"
+        );
 
         // **And the WORK pair beside it** — the absolute meter and the job's live price, which is
         // what lets the UI say "18 of 50 work" and quote a rung before the player commits. The cost
         // is the LADDER's, not the patch's stamped one: an unstarted rung must still have a price.
         let cultivate_cost = core_sim::LadderConfig::builtin()
-            .rung(RungKey::PlantTended)
+            .rung(shipped::plant_tended())
             .build_cost(core_sim::RUNG_COST_UNSCALED)
             .expect("the tended rung builds");
-        assert!((patch.cultivation_work_cost - cultivate_cost).abs() < 1e-6);
+        assert!((patch.quote("plant:tended").work_cost - cultivate_cost).abs() < 1e-6);
         assert!(
-            (patch.field_work_done - patch.field_work_cost * HALF_SOWN).abs() < 1e-3,
+            (patch.quote("plant:farm").work_done - patch.quote("plant:farm").work_cost * HALF_SOWN)
+                .abs()
+                < 1e-3,
             "the Field's work-done readout is the position clamped into the Field's own span"
         );
         assert!(
-            patch.field_work_cost > 0.0,
+            patch.quote("plant:farm").work_cost > 0.0,
             "a rung nobody has started still quotes its price"
         );
         assert_eq!(
@@ -19116,7 +19967,7 @@ mod tests {
         // (`docs/plan_standing_upkeep.md` §2). The `sow_build_fraction` this block used to compose a
         // "preparing" row from is retired with the dip: a crew building takes nothing, so there is
         // no factor left to publish and the client reads the zero from the model.
-        assert!(patch.tended_yield > 0.0);
+        assert!(patch.quote("plant:tended").food_yield > 0.0);
         let sustain_ceiling =
             (patch.biomass - core_sim::MSY_BIOMASS_FRACTION * patch.carrying_capacity).max(0.0)
                 * patch.provisions_per_biomass;
@@ -19125,7 +19976,7 @@ mod tests {
             "the fixture patch must stand above the food peak, or its rows describe an empty patch"
         );
         // **The trio describes ONE rung and ONE turn.** This fixture patch carries a part-prepared
-        // Sow, so the rung at risk is `plant:field` — and it owes the **same** maintenance rate a
+        // Sow, so the rung at risk is `plant:farm` — and it owes the **same** maintenance rate a
         // finished Field owes, because the rate never lapses; only who supplies it moves
         // (`docs/plan_standing_upkeep.md` §2.4). Nobody is building it and nobody is keeping it, so
         // the whole of that is unmet and the shortfall is the bleed `advance_cultivation` will
@@ -19158,9 +20009,11 @@ mod tests {
             "fixture: sowable ground presents land to tend, or every upkeep figure below is zero"
         );
         let tended_demand = ladder
-            .rung(RungKey::PlantTended)
+            .rung(shipped::plant_tended())
             .upkeep_demand(tender_loads);
-        let field_demand = ladder.rung(RungKey::PlantField).upkeep_demand(tender_loads);
+        let field_demand = ladder
+            .rung(shipped::plant_farm())
+            .upkeep_demand(tender_loads);
         assert!(
             field_demand > tended_demand && tended_demand > 0.0,
             "the ladder's demands climb, or this block asserts nothing about interpolation"
@@ -19196,10 +20049,10 @@ mod tests {
         // (`docs/plan_harvest_floor.md` §1). The payoff comparison that still means something is
         // rate-against-rate, below.
         assert!(
-            patch.field_yield > patch.tended_yield,
+            patch.quote("plant:farm").food_yield > patch.quote("plant:tended").food_yield,
             "the Field out-yields the patch it replaces — that IS the reason to sow: {} vs {}",
-            patch.field_yield,
-            patch.tended_yield
+            patch.quote("plant:farm").food_yield,
+            patch.quote("plant:tended").food_yield
         );
     }
 
@@ -19249,6 +20102,7 @@ mod tests {
             0.0,
             0.05,
             CORRAL_TEST_BODY_MASS,
+            shipped::root_standing(shipped::animal()),
         );
         if let Some(faction) = owner {
             herd.tame_outright(faction, &core_sim::LadderConfig::builtin());
@@ -19331,7 +20185,7 @@ mod tests {
         handle_corral(&mut app, faction, coord);
 
         assert!(
-            corral_failure_detail_contains(&app, "not domesticated"),
+            corral_failure_detail_contains(&app, "rung beneath"),
             "corral must reject a wild herd as NotDomesticated"
         );
         assert!(!herd_is_corralled(&app, &id));
@@ -19380,12 +20234,243 @@ mod tests {
 
         assert_eq!(
             band_improvement(&app, band),
-            Some(Improvement::Corral),
+            Some(shipped::corral()),
             "corral checks the improvement box on the working band"
         );
         assert!(
             !herd_is_corralled(&app, &id),
             "there is no early claim — the pen must still be built"
+        );
+    }
+
+    /// ⛔ **THE `corral` COMMAND PICKS THE PEN'S TILE WHEN IT QUEUES, FROM THE KEEPING BAND'S RANGE.**
+    ///
+    /// The herd and its band stand on poor ground; a rich tile lies two steps away (inside the
+    /// band's work range) and a richer one five steps away (outside it). Queueing the Corral stamps
+    /// the in-range rich tile on the herd, and neither the herd's own tile nor the far one.
+    #[test]
+    fn corral_stamps_the_best_grazing_tile_in_the_bands_range() {
+        const GRID_SIDE: u32 = 12;
+        const BAND_AT: UVec2 = UVec2::new(6, 6);
+        const RICH_AT: UVec2 = UVec2::new(8, 6);
+        const FAR_RICH_AT: UVec2 = UVec2::new(11, 6);
+        const POOR: f32 = 20.0;
+        const RICH: f32 = 400.0;
+        const FAR_RICH: f32 = 4_000.0;
+        let mut app = build_test_app();
+        let faction = FactionId(0);
+        seed_grid_with_baskets(&mut app, GRID_SIDE);
+        let id = seed_herd(&mut app, BAND_AT, Some(faction));
+        {
+            // A real species with a real appetite: a herd that eats nothing has no graze reading, so
+            // every tile would score the same constant and the choice would be the nearest one.
+            let fauna = app.world.resource::<core_sim::FaunaConfigHandle>().get();
+            let appetite = fauna
+                .species_by_display("Wild Boar")
+                .expect("the shipped roster carries the species")
+                .fodder_per_biomass;
+            let mut registry = app.world.resource_mut::<HerdRegistry>();
+            let herd = registry
+                .herds
+                .iter_mut()
+                .find(|herd| herd.id == id)
+                .expect("the seeded herd");
+            herd.species = "Wild Boar".to_string();
+            herd.fodder_per_biomass = appetite;
+        }
+        grant_penning(&mut app, faction);
+        let band = spawn_working_band(
+            &mut app,
+            faction,
+            LaborTarget::Hunt {
+                fauna_id: id.clone(),
+                floor: 0.5,
+                move_with_herd: false,
+            },
+        );
+        let band_tile = app
+            .world
+            .resource::<TileRegistry>()
+            .index(BAND_AT.x, BAND_AT.y)
+            .expect("the band's tile");
+        app.world
+            .get_mut::<PopulationCohort>(band)
+            .expect("the band")
+            .current_tile = band_tile;
+        {
+            let mut graze = app.world.resource_mut::<core_sim::GrazeRegistry>();
+            for y in 0..GRID_SIDE {
+                for x in 0..GRID_SIDE {
+                    let tile = UVec2::new(x, y);
+                    let capacity = match tile {
+                        RICH_AT => RICH,
+                        FAR_RICH_AT => FAR_RICH,
+                        _ => POOR,
+                    };
+                    graze
+                        .patches
+                        .insert(tile, core_sim::GrazePatch::new(tile, capacity));
+                }
+            }
+        }
+
+        handle_corral(&mut app, faction, BAND_AT);
+
+        let stamped = app
+            .world
+            .resource::<HerdRegistry>()
+            .find(&id)
+            .and_then(|herd| herd.pen_site);
+        assert_eq!(
+            band_improvement(&app, band),
+            Some(shipped::corral()),
+            "fixture: the Corral was queued"
+        );
+        assert_eq!(
+            stamped,
+            Some(RICH_AT),
+            "queueing the Corral stamps the best-grazing tile within the band's work range"
+        );
+    }
+
+    /// **A band of `faction` on a real tile, hunting `herd_id`, with a durable id** - the fixture the
+    /// one-pen-per-herd tests share.
+    fn a_band_hunting_on(
+        app: &mut bevy::prelude::App,
+        faction: FactionId,
+        herd_id: &str,
+        at: UVec2,
+        band_id: u64,
+    ) -> Entity {
+        let band = spawn_working_band(
+            app,
+            faction,
+            LaborTarget::Hunt {
+                fauna_id: herd_id.to_string(),
+                floor: 0.5,
+                move_with_herd: false,
+            },
+        );
+        let tile = app
+            .world
+            .resource::<TileRegistry>()
+            .index(at.x, at.y)
+            .expect("the band's tile");
+        app.world
+            .get_mut::<PopulationCohort>(band)
+            .expect("the band")
+            .current_tile = tile;
+        app.world.entity_mut(band).insert(core_sim::BandId(band_id));
+        band
+    }
+
+    /// The bands (of any faction) holding this herd's Corral in their queues.
+    fn bands_queueing_the_corral(app: &mut bevy::prelude::App, id: &str) -> Vec<Entity> {
+        let source = BuildSource::Herd(id.to_string());
+        app.world
+            .query::<(Entity, &LaborAllocation)>()
+            .iter(&app.world)
+            .filter(|(_, allocation)| allocation.build_queue_entry(&source).is_some())
+            .map(|(entity, _)| entity)
+            .collect()
+    }
+
+    const ONE_PEN_GRID_SIDE: u32 = 12;
+    const ONE_PEN_HERD_AT: UVec2 = UVec2::new(6, 6);
+
+    fn a_herd_to_pen(app: &mut bevy::prelude::App, faction: FactionId) -> String {
+        seed_grid_with_baskets(app, ONE_PEN_GRID_SIDE);
+        let id = seed_herd(app, ONE_PEN_HERD_AT, Some(faction));
+        grant_penning(app, faction);
+        id
+    }
+
+    /// ⛔ **A HERD CAN'T BE IN TWO PLACES AT ONCE**: a Corral issued for a herd two bands of the same
+    /// people work is queued on exactly one of them - the lowest `BandId` - and the pen site is that
+    /// band's. Re-issuing it keeps the holder.
+    #[test]
+    fn a_corral_is_queued_on_one_band_of_the_two_that_work_the_herd() {
+        let mut app = build_test_app();
+        let faction = FactionId(0);
+        let id = a_herd_to_pen(&mut app, faction);
+        let later = a_band_hunting_on(&mut app, faction, &id, ONE_PEN_HERD_AT, 9);
+        let first = a_band_hunting_on(&mut app, faction, &id, ONE_PEN_HERD_AT, 4);
+
+        handle_corral(&mut app, faction, ONE_PEN_HERD_AT);
+        assert_eq!(
+            bands_queueing_the_corral(&mut app, &id),
+            vec![first],
+            "one command queues the pen on ONE band, the lowest BandId"
+        );
+        assert!(
+            app.world
+                .get::<LaborAllocation>(later)
+                .expect("the other band")
+                .build_queue
+                .is_empty(),
+            "the other band's queue is untouched"
+        );
+
+        handle_corral(&mut app, faction, ONE_PEN_HERD_AT);
+        assert_eq!(
+            bands_queueing_the_corral(&mut app, &id),
+            vec![first],
+            "re-issuing replaces the holder's entry in place; it does not add a second queuer"
+        );
+    }
+
+    /// ⛔ **A SECOND BAND IS REFUSED, WITH THE HINT, AND STAMPS NOTHING** - and once the holder
+    /// unqueues, the herd can be penned again.
+    #[test]
+    fn a_corral_another_band_already_holds_is_refused_until_it_unqueues() {
+        let mut app = build_test_app();
+        let ours = FactionId(0);
+        let theirs = FactionId(1);
+        let id = a_herd_to_pen(&mut app, ours);
+        let holder = a_band_hunting_on(&mut app, theirs, &id, ONE_PEN_HERD_AT, 1);
+        let asker = a_band_hunting_on(&mut app, ours, &id, ONE_PEN_HERD_AT, 2);
+        let corral = shipped::animal_pen();
+        band_allocation_mut(&mut app, holder)
+            .enqueue_build(BuildSource::Herd(id.clone()), BuildJob::Climb(corral));
+
+        handle_corral(&mut app, ours, ONE_PEN_HERD_AT);
+
+        assert!(
+            corral_failure_detail_contains(&app, "Another band is already penning this herd"),
+            "the refusal carries the hint"
+        );
+        assert!(
+            app.world
+                .get::<LaborAllocation>(asker)
+                .expect("the asking band")
+                .build_queue
+                .is_empty(),
+            "nothing was queued on the asking band"
+        );
+        assert_eq!(
+            bands_queueing_the_corral(&mut app, &id),
+            vec![holder],
+            "the holder keeps the only entry"
+        );
+        assert_eq!(
+            app.world
+                .resource::<HerdRegistry>()
+                .find(&id)
+                .and_then(|herd| herd.pen_site),
+            None,
+            "a refused Corral stamps no site"
+        );
+
+        assert!(core_sim::unqueue_build_and_cancel_ring(
+            &mut app.world,
+            holder,
+            &BuildSource::Herd(id.clone()),
+        ));
+        handle_corral(&mut app, ours, ONE_PEN_HERD_AT);
+        assert_eq!(
+            bands_queueing_the_corral(&mut app, &id),
+            vec![asker],
+            "with the holder gone, the asking band can queue the pen"
         );
     }
 
@@ -19400,7 +20485,10 @@ mod tests {
 
         handle_corral(&mut app, faction, coord);
 
-        assert!(corral_failure_detail_contains(&app, "No band is hunting"));
+        assert!(corral_failure_detail_contains(
+            &app,
+            "No band of yours works"
+        ));
     }
 
     // --- Tame (the intensification ladder's animal rung-2 verb) ----------------------------------
@@ -19461,7 +20549,7 @@ mod tests {
 
         assert_eq!(
             band_improvement(&app, band),
-            Some(Improvement::Tame),
+            Some(shipped::tame()),
             "tame checks the improvement box on the working band"
         );
         assert!(
@@ -19494,7 +20582,7 @@ mod tests {
 
         handle_tame(&mut app, faction, id.clone());
 
-        assert!(tame_failure_detail_contains(&app, "already domesticated"));
+        assert!(tame_failure_detail_contains(&app, "already built"));
     }
 
     /// You cannot tame a herd another people are already taming.
@@ -19531,10 +20619,7 @@ mod tests {
 
         handle_tame(&mut app, intruder, id.clone());
 
-        assert!(tame_failure_detail_contains(
-            &app,
-            "Another people are taming"
-        ));
+        assert!(tame_failure_detail_contains(&app, "Another people hold"));
     }
 
     /// `tame` is a policy switch, so it needs someone to switch: staff the herd first.
@@ -19547,7 +20632,7 @@ mod tests {
 
         handle_tame(&mut app, faction, id.clone());
 
-        assert!(tame_failure_detail_contains(&app, "No band is hunting"));
+        assert!(tame_failure_detail_contains(&app, "No band of yours works"));
     }
 
     /// An unknown herd id is rejected by name.
@@ -19716,7 +20801,7 @@ mod tests {
     // --- Husbandry ceiling gates (Grazing 2d-δ) -------------------------------------------------------
 
     /// Set a seeded herd's husbandry ceiling (`wild` | `pastoral` | `pen`) for the gate tests.
-    fn set_ceiling(app: &mut bevy::prelude::App, id: &str, ceiling: core_sim::HusbandryCeiling) {
+    fn set_ceiling(app: &mut bevy::prelude::App, id: &str, ceiling: Option<core_sim::RungId>) {
         app.world
             .resource_mut::<HerdRegistry>()
             .herds
@@ -19738,7 +20823,7 @@ mod tests {
         let faction = FactionId(0);
         // Owner `None` so `seed_herd` doesn't auto-domesticate it (the ceiling check is what matters).
         let id = seed_herd(&mut app, UVec2::new(1, 1), None);
-        set_ceiling(&mut app, &id, core_sim::HusbandryCeiling::Wild);
+        set_ceiling(&mut app, &id, Some(shipped::animal_wild()));
         grant_herding(&mut app, faction);
         spawn_working_band(
             &mut app,
@@ -19752,7 +20837,7 @@ mod tests {
 
         handle_tame(&mut app, faction, id.clone());
 
-        assert!(tame_failure_detail_contains(&app, "wild game"));
+        assert!(tame_failure_detail_contains(&app, "cannot be taken"));
         assert!(
             !app.world
                 .resource::<HerdRegistry>()
@@ -19777,8 +20862,8 @@ mod tests {
     #[test]
     fn corral_rejects_a_non_pennable_species() {
         for ceiling in [
-            core_sim::HusbandryCeiling::Wild,
-            core_sim::HusbandryCeiling::Pastoral,
+            Some(shipped::animal_wild()),
+            Some(shipped::animal_pastoral()),
         ] {
             let mut app = build_test_app();
             let faction = FactionId(0);
@@ -19799,7 +20884,7 @@ mod tests {
             handle_corral(&mut app, faction, coord);
 
             assert!(
-                corral_failure_detail_contains(&app, "cannot be penned"),
+                corral_failure_detail_contains(&app, "cannot be taken"),
                 "{ceiling:?} must be refused by corral"
             );
             assert!(!herd_is_corralled(&app, &id));
@@ -19851,7 +20936,7 @@ mod tests {
         );
         assert_eq!(
             band_queue_job(&app, band, BuildSource::Herd(id.clone())),
-            Some(BuildJob::SetHerdOutput(RungKey::AnimalPen)),
+            Some(BuildJob::SetHerdOutput(shipped::animal_pen())),
             "a commitment waits in the same queue, carrying the rung it was priced against"
         );
         assert_eq!(
@@ -19996,7 +21081,7 @@ mod tests {
         let faction = FactionId(0);
         let coord = UVec2::new(1, 1);
         let id = seed_penned_herd(&mut app, coord, Some(faction));
-        set_ceiling(&mut app, &id, core_sim::HusbandryCeiling::Pastoral);
+        set_ceiling(&mut app, &id, Some(shipped::animal_pastoral()));
         grant_penning(&mut app, faction);
         spawn_working_band(
             &mut app,
@@ -20464,7 +21549,7 @@ mod tests {
         };
         assert!(validate_labor_policy(&app, faction, &target).is_ok());
         assert!(
-            validate_improvement(&app, faction, &target, Improvement::Cultivate).is_ok(),
+            validate_improvement(&app, faction, &target, shipped::cultivate()).is_ok(),
             "no gate may refuse a build because of the stance held beside it (§2.1)"
         );
 
@@ -20472,7 +21557,7 @@ mod tests {
 
         assert_eq!(
             band_improvement(&app, band),
-            Some(Improvement::Cultivate),
+            Some(shipped::cultivate()),
             "the build starts under a Deplete stance — it is sayable"
         );
         assert_eq!(
@@ -20506,7 +21591,7 @@ mod tests {
                 species: None,
                 take_species: TakeSelection::EVERYTHING,
             },
-            Improvement::Corral,
+            shipped::corral(),
         );
         assert!(
             corral_on_forage
@@ -20523,7 +21608,7 @@ mod tests {
                 floor: 0.5,
                 move_with_herd: false,
             },
-            Improvement::Cultivate,
+            shipped::cultivate(),
         );
         assert!(
             cultivate_on_hunt
@@ -20614,7 +21699,7 @@ mod tests {
     ) {
         seed_gathering_site(app, coord);
         let cap = forage_carrying_capacity(app);
-        let mut patch = ForagePatch::new(coord, cap);
+        let mut patch = ForagePatch::new(coord, cap, shipped::root_standing(shipped::plant()));
         patch.biomass = biomass;
         patch.ecology_phase = phase;
         app.world
@@ -21164,7 +22249,7 @@ mod tests {
                 .clone();
             let mut registry = app.world.resource_mut::<ForageRegistry>();
             let patch = registry.patch_mut(coord).expect("the scene's patch");
-            let (base, width) = core_sim::patch_rung_span(patch, RungKey::PlantField, &ladder);
+            let (base, width) = core_sim::patch_rung_span(patch, shipped::plant_farm(), &ladder);
             patch.set_ladder_position(base + width * fraction, &ladder);
             patch.owner = Some(faction);
             // **A Field is always committed to its crop** — the reported patch was; this tile's basket
@@ -21376,7 +22461,10 @@ mod tests {
     /// Rebuild `HerdTelemetry` off the authoritative registry — the capture reads the display list,
     /// so a fixture that edits a `Herd` must republish it or the wire describes the old herd.
     fn refresh_herd_telemetry(app: &mut bevy::prelude::App) {
-        let entries = app.world.resource::<HerdRegistry>().snapshot_entries();
+        let entries = app
+            .world
+            .resource::<HerdRegistry>()
+            .snapshot_entries(shipped::ladder());
         app.world.resource_mut::<core_sim::HerdTelemetry>().entries = entries;
     }
 
@@ -21807,6 +22895,7 @@ mod tests {
             SHORTFALL_HERD_GRAZE_DRAW,
             regrowth_rate,
             body_mass,
+            shipped::root_standing(shipped::animal()),
         );
         herd.husbandry_ceiling = husbandry_ceiling;
         app.world.resource_mut::<HerdRegistry>().herds.push(herd);
@@ -22795,6 +23884,208 @@ mod tests {
         );
     }
 
+    /// One band's hands as the ENCODED envelope states them: `(working_age, idle, bench crew, Σ rows,
+    /// homeward)`. The client derives its own "n idle of m" from exactly these.
+    fn published_hands(app: &mut bevy::prelude::App, band: Entity) -> (u32, u32, u32, u32, u32) {
+        use core_sim::{recapture_snapshot_in_place, SnapshotHistory};
+        use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
+
+        recapture_snapshot_in_place(&mut app.world);
+        let snapshot = app
+            .world
+            .resource::<SnapshotHistory>()
+            .latest_entry()
+            .expect("a snapshot was captured")
+            .snapshot;
+        let bytes = sim_schema::encode_snapshot_flatbuffer(snapshot.as_ref());
+        let envelope = fb::root_as_envelope(&bytes).expect("the snapshot encodes");
+        let cohort = envelope
+            .payload_as_snapshot()
+            .expect("the envelope carries a snapshot")
+            .population()
+            .and_then(|section| section.populations())
+            .expect("the population section carries the cohort list")
+            .iter()
+            .find(|cohort| cohort.entity() == band.to_bits())
+            .expect("the band is on the wire");
+        let rows: u32 = cohort
+            .laborAssignments()
+            .map(|rows| rows.iter().map(|row| row.workers()).sum())
+            .unwrap_or(0);
+        (
+            cohort.workingAge(),
+            cohort.idleWorkers(),
+            cohort.bench().map(|bench| bench.workers()).unwrap_or(0),
+            rows,
+            cohort.homewardWorkers(),
+        )
+    }
+
+    /// Hands the scout row takes in the idle-bench fixture below: any count that leaves hands free.
+    const IDLE_BENCH_SCOUTS: u32 = 2;
+
+    /// **An IDLE bench still publishes its crew.** The crew stays at the bench once the queue
+    /// empties and `BandWorkforce` nets it out of `idle`, so a row that dropped `workers` made the
+    /// client's `working_age - rows - bench` read those hands as free ("2 idle of 10" beside a
+    /// published idle of 0). The invariant: bench + idle + rows + homeward = working age.
+    #[test]
+    fn an_idle_bench_publishes_its_crew_and_the_hands_add_up() {
+        let mut app = build_test_app();
+        app.update();
+        let faction = FactionId(0);
+        let band = first_resident_band(&mut app);
+        handle_assign_labor(
+            &mut app,
+            faction,
+            None,
+            "scout".to_string(),
+            IDLE_BENCH_SCOUTS,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Vec::new(),
+            false,
+        );
+
+        // Control: no crew at an idle bench publishes 0 and the hands already add up.
+        let (age, idle, bench, rows, homeward) = published_hands(&mut app, band);
+        assert_eq!(rows, IDLE_BENCH_SCOUTS, "the fixture's rows must be live");
+        assert_eq!(bench, NOBODY_AT_THE_BENCH);
+        assert_eq!(bench + idle + rows + homeward, age);
+
+        // Crew the bench, then empty the queue: the crew stays at an idle bench.
+        handle_bench_enqueue(
+            &mut app,
+            faction,
+            None,
+            BENCH_IDLE_RECIPE,
+            BENCH_TEST_ORDER,
+            BENCH_IDLE_CREW,
+        );
+        handle_bench_queue_edit(&mut app, faction, None, HEAD, BenchQueueEdit::Remove);
+        assert!(
+            the_bench(&app, band).orders.is_empty(),
+            "the queue must be empty for the bench to be idle"
+        );
+        assert_eq!(bench_crew(&app, band), BENCH_IDLE_CREW);
+
+        let (age_after, idle_after, bench_after, rows_after, homeward_after) =
+            published_hands(&mut app, band);
+        assert_eq!(
+            bench_after, BENCH_IDLE_CREW,
+            "an idle bench must publish the crew standing at it"
+        );
+        assert_eq!(idle_after, idle - BENCH_IDLE_CREW);
+        assert_eq!(
+            bench_after + idle_after + rows_after + homeward_after,
+            age_after,
+            "published bench + idle + rows + homeward must equal working age"
+        );
+    }
+
+    /// **The clamp note states the hands free for THIS source**, not the pool before the other rows.
+    #[test]
+    fn the_clamp_note_names_the_hands_actually_free() {
+        let mut app = build_test_app();
+        app.update();
+        let faction = FactionId(0);
+        let band = first_resident_band(&mut app);
+        let (_, idle_before, ..) = published_hands(&mut app, band);
+        assert!(idle_before > IDLE_BENCH_SCOUTS);
+
+        // Take every hand but IDLE_BENCH_SCOUTS, then ask a second role for more than is left.
+        handle_assign_labor(
+            &mut app,
+            faction,
+            None,
+            "warrior".to_string(),
+            idle_before - IDLE_BENCH_SCOUTS,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Vec::new(),
+            false,
+        );
+        handle_assign_labor(
+            &mut app,
+            faction,
+            None,
+            "scout".to_string(),
+            IDLE_BENCH_SCOUTS + 1,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Vec::new(),
+            false,
+        );
+        let expected = format!(
+            "(clamped from {} \u{2014} only {} idle)",
+            IDLE_BENCH_SCOUTS + 1,
+            IDLE_BENCH_SCOUTS
+        );
+        let logged = app
+            .world
+            .resource::<CommandEventLog>()
+            .iter()
+            .any(|entry| entry.label.contains(&expected));
+        assert!(
+            logged,
+            "the clamp note must name the {IDLE_BENCH_SCOUTS} hands free, not the pool"
+        );
+    }
+
+    /// **Hands already on the row are not idle**: a staffed row asked for more names only the growth.
+    #[test]
+    fn the_clamp_note_excludes_the_hands_already_on_the_row() {
+        const ALREADY_ON_ROW: u32 = 4;
+        const ASKED: u32 = 1000;
+        let mut app = build_test_app();
+        app.update();
+        let faction = FactionId(0);
+        let band = first_resident_band(&mut app);
+        let assign = |app: &mut bevy::prelude::App, role: &str, n: u32| {
+            handle_assign_labor(
+                app,
+                faction,
+                None,
+                role.to_string(),
+                n,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Vec::new(),
+                false,
+            );
+        };
+        assign(&mut app, "scout", ALREADY_ON_ROW);
+        let (_, idle, ..) = published_hands(&mut app, band);
+        assert!(idle > IDLE_BENCH_SCOUTS);
+        assign(&mut app, "warrior", idle - IDLE_BENCH_SCOUTS);
+        assign(&mut app, "scout", ASKED);
+        let expected = format!("(clamped from {ASKED} \u{2014} only {IDLE_BENCH_SCOUTS} idle)");
+        let logged = app
+            .world
+            .resource::<CommandEventLog>()
+            .iter()
+            .any(|entry| entry.label.contains(&expected));
+        assert!(
+            logged,
+            "the note must name only the {IDLE_BENCH_SCOUTS} idle hands"
+        );
+    }
+
     /// A **second** ungated recipe, so a second order is a real change of recipe rather than a
     /// re-queue of the same one.
     const BENCH_SWAP_RECIPE: &str = "baskets";
@@ -23240,6 +24531,94 @@ mod tests {
         );
     }
 
+    fn ids(list: &[&str]) -> Vec<String> {
+        list.iter().map(|id| id.to_string()).collect()
+    }
+
+    /// **A WHOLE-KIT ORDER QUEUES `kits` OF EVERY ITEM AS ONE GROUP, AND REFUSES WHOLE** (#780). The
+    /// sim computes each part's count (one unit per kit per item), never nets it against who holds a
+    /// kit, and records each part's recipe choice. A recipe making nothing the kit uses, two recipes
+    /// for one item, an item with no recipe, a zero count, the empty kit and an unknown kit each
+    /// queue NOTHING - paired with the accepted order so a handler that refuses everything passes
+    /// neither half.
+    #[test]
+    fn a_kit_order_queues_every_item_as_one_group_and_refuses_whole() {
+        const STALKING: &str = "big_game";
+        const NOT_THE_KITS_ITEM: &str = "baskets";
+        const KITS: u32 = 3;
+        let mut app = build_test_app();
+        app.update();
+        let faction = FactionId(0);
+        let band = first_resident_band(&mut app);
+
+        for (kit, kits, recipes, needle) in [
+            (
+                STALKING,
+                KITS,
+                ids(&[BENCH_IDLE_RECIPE, NOT_THE_KITS_ITEM]),
+                "makes nothing the",
+            ),
+            (
+                STALKING,
+                KITS,
+                ids(&[BENCH_IDLE_RECIPE, BENCH_IDLE_RECIPE]),
+                "same item",
+            ),
+            (
+                STALKING,
+                KITS,
+                ids(&[BENCH_IDLE_RECIPE]),
+                "needs a recipe for",
+            ),
+            (STALKING, 0, ids(&[BENCH_IDLE_RECIPE, "spears"]), "at least"),
+            ("none", KITS, ids(&[BENCH_IDLE_RECIPE]), "not a kit"),
+            ("no_such_kit", KITS, ids(&[BENCH_IDLE_RECIPE]), "not a kit"),
+        ] {
+            handle_bench_enqueue_kit(&mut app, faction, None, kit, kits, &recipes);
+            assert!(
+                the_bench(&app, band).orders.is_empty(),
+                "a refused kit order queues nothing ({needle})"
+            );
+            assert!(craft_event_mentions(&app, needle), "{needle}");
+        }
+
+        handle_bench_enqueue_kit(
+            &mut app,
+            faction,
+            None,
+            STALKING,
+            KITS,
+            &ids(&[BENCH_IDLE_RECIPE, "spears"]),
+        );
+        let bench = the_bench(&app, band);
+        assert_eq!(
+            bench
+                .orders
+                .iter()
+                .map(|order| (order.recipe_id.as_str(), order.count, order.kit_order))
+                .collect::<Vec<_>>(),
+            vec![(BENCH_IDLE_RECIPE, KITS, 1), ("spears", KITS, 1)],
+            "one unit per kit of every item, under one kit order"
+        );
+        assert_eq!(bench.kit_orders.len(), 1);
+        assert_eq!(bench.kit_orders[0].kits, KITS);
+        assert_eq!(
+            bench.last_started_for("spears"),
+            Some("spears"),
+            "each part records the recipe the band chose for its item"
+        );
+        assert_eq!(bench.workers, 0, "the crew is untouched");
+
+        handle_bench_kit_edit(&mut app, faction, None, 1, BenchKitEdit::Raise);
+        assert!(
+            craft_event_mentions(&app, "already being made"),
+            "the kit order is already at the head"
+        );
+        handle_bench_kit_edit(&mut app, faction, None, 1, BenchKitEdit::Remove);
+        let bench = the_bench(&app, band);
+        assert!(bench.orders.is_empty() && bench.kit_orders.is_empty());
+    }
+
     /// **QUEUEING AN ORDER RECORDS WHICH OF THE ITEM'S RECIPES THE BAND CHOSE — and emptying the
     /// queue does not forget it.**
     ///
@@ -23641,7 +25020,7 @@ mod tests {
         };
         let ladder = core_sim::LadderConfig::builtin();
         let (base, width) = core_sim::road_rung_span(
-            core_sim::RungKey::RouteDirtRoad,
+            core_sim::shipped::route_dirt_road(),
             &ladder,
             core_sim::NEAR_ENOUGH_TO_KEEP,
         );
@@ -25879,13 +27258,16 @@ mod tests {
                 .get_mut::<LaborAllocation>(band)
                 .expect("the fixture band carries an allocation");
             assert!(
-                allocation.enqueue_build(working_build.clone(), BuildJob::Rung(Improvement::Fell)),
+                allocation.enqueue_build(
+                    working_build.clone(),
+                    BuildJob::Climb(shipped::forestry_felling())
+                ),
                 "fixture: the band works this deposit, so a declaration on it is accepted"
             );
             assert!(
                 allocation.enqueue_build(
                     BuildSource::Road(road_tile),
-                    BuildJob::Rung(Improvement::Grade)
+                    BuildJob::Climb(shipped::route_dirt_road())
                 ),
                 "fixture: a road entry is enrolled on its keeper's word"
             );
@@ -25899,7 +27281,7 @@ mod tests {
         let road = BuildSourceRef {
             target_x: Some(road_tile.x),
             target_y: Some(road_tile.y),
-            road: true,
+            branch: Some("route".to_string()),
             ..BuildSourceRef::default()
         };
         let allocation = |app: &bevy::prelude::App| {
@@ -26052,14 +27434,14 @@ mod tests {
                     tile: working_tile,
                     material: material.to_string(),
                 },
-                BuildJob::Rung(Improvement::Fell)
+                BuildJob::Climb(shipped::forestry_felling())
             ),
             "fixture: the band works this deposit, so a declaration on it is accepted"
         );
         assert!(
             allocation.enqueue_build(
                 BuildSource::Road(road_tile),
-                BuildJob::Rung(Improvement::Grade)
+                BuildJob::Climb(shipped::route_dirt_road())
             ),
             "fixture: a road entry is enrolled on its keeper's word"
         );
@@ -26088,7 +27470,7 @@ mod tests {
         let road_at = |tile: UVec2| BuildSourceRef {
             target_x: Some(tile.x),
             target_y: Some(tile.y),
-            road: true,
+            branch: Some("route".to_string()),
             ..BuildSourceRef::default()
         };
         let allocation = |app: &bevy::prelude::App, band: Entity| {
@@ -26194,7 +27576,7 @@ mod tests {
 
     /// Seat a road on `coord` at the top of `rung`, with nobody keeping it — the ground a `grade`
     /// or a `pave` is issued against.
-    fn seat_unkept_road(app: &mut bevy::prelude::App, coord: UVec2, rung: core_sim::RungKey) {
+    fn seat_unkept_road(app: &mut bevy::prelude::App, coord: UVec2, rung: core_sim::RungId) {
         let ladder = core_sim::LadderConfig::builtin();
         let (base, width) = core_sim::road_rung_span(rung, &ladder, core_sim::NEAR_ENOUGH_TO_KEEP);
         let mut roads = app.world.resource_mut::<core_sim::RoadRegistry>();
@@ -26257,13 +27639,13 @@ mod tests {
         const COORD: UVec2 = UVec2::new(1, 1);
 
         let (mut ignorant, faction, band) = road_world(COORD);
-        seat_unkept_road(&mut ignorant, COORD, core_sim::RungKey::RouteTrail);
+        seat_unkept_road(&mut ignorant, COORD, shipped::route_trail());
         handle_road_verb(
             &mut ignorant,
             faction,
             ROAD_BAND_ID,
             COORD,
-            Improvement::Grade,
+            shipped::grade(),
         );
         assert!(
             road_failure_detail_contains(&ignorant, "not learned"),
@@ -26277,15 +27659,9 @@ mod tests {
         assert!(queued_road_tiles(&ignorant, band).is_empty());
 
         let (mut taught, faction, band) = road_world(COORD);
-        seat_unkept_road(&mut taught, COORD, core_sim::RungKey::RouteTrail);
+        seat_unkept_road(&mut taught, COORD, shipped::route_trail());
         grant_roadbuilding(&mut taught, faction);
-        handle_road_verb(
-            &mut taught,
-            faction,
-            ROAD_BAND_ID,
-            COORD,
-            Improvement::Grade,
-        );
+        handle_road_verb(&mut taught, faction, ROAD_BAND_ID, COORD, shipped::grade());
         assert_eq!(
             keeper_of(&taught, COORD),
             Some(BandId(ROAD_BAND_ID)),
@@ -26307,7 +27683,7 @@ mod tests {
         // Bare ground: there is no road at all.
         let (mut bare, faction, _) = road_world(COORD);
         grant_roadbuilding(&mut bare, faction);
-        handle_road_verb(&mut bare, faction, ROAD_BAND_ID, COORD, Improvement::Grade);
+        handle_road_verb(&mut bare, faction, ROAD_BAND_ID, COORD, shipped::grade());
         assert!(
             road_failure_detail_contains(&bare, "There is no road"),
             "bare ground is told there is nothing there to grade"
@@ -26315,10 +27691,10 @@ mod tests {
 
         // A trail: `pave` cannot skip the dirt road.
         let (mut trail, faction, _) = road_world(COORD);
-        seat_unkept_road(&mut trail, COORD, core_sim::RungKey::RouteTrail);
+        seat_unkept_road(&mut trail, COORD, shipped::route_trail());
         grant_roadbuilding(&mut trail, faction);
         grant_paving(&mut trail, faction);
-        handle_road_verb(&mut trail, faction, ROAD_BAND_ID, COORD, Improvement::Pave);
+        handle_road_verb(&mut trail, faction, ROAD_BAND_ID, COORD, shipped::pave());
         assert!(
             road_failure_detail_contains(&trail, "must be a dirt road"),
             "a trail is told which rung is missing — not merely that the command failed"
@@ -26331,9 +27707,9 @@ mod tests {
 
         // The liveness half: the same tile at a dirt road accepts the same `pave`.
         let (mut ready, faction, _) = road_world(COORD);
-        seat_unkept_road(&mut ready, COORD, core_sim::RungKey::RouteDirtRoad);
+        seat_unkept_road(&mut ready, COORD, shipped::route_dirt_road());
         grant_paving(&mut ready, faction);
-        handle_road_verb(&mut ready, faction, ROAD_BAND_ID, COORD, Improvement::Pave);
+        handle_road_verb(&mut ready, faction, ROAD_BAND_ID, COORD, shipped::pave());
         assert_eq!(
             keeper_of(&ready, COORD),
             Some(BandId(ROAD_BAND_ID)),
@@ -26350,9 +27726,9 @@ mod tests {
         const OTHER_BAND_ID: u64 = 9_812;
 
         let (mut app, faction, _) = road_world(COORD);
-        seat_unkept_road(&mut app, COORD, core_sim::RungKey::RouteTrail);
+        seat_unkept_road(&mut app, COORD, shipped::route_trail());
         grant_roadbuilding(&mut app, faction);
-        handle_road_verb(&mut app, faction, ROAD_BAND_ID, COORD, Improvement::Grade);
+        handle_road_verb(&mut app, faction, ROAD_BAND_ID, COORD, shipped::grade());
         assert_eq!(keeper_of(&app, COORD), Some(BandId(ROAD_BAND_ID)));
 
         // A second band of the same people, standing on the same ground.
@@ -26364,7 +27740,7 @@ mod tests {
         let other = spawn_idle_band(&mut app, faction, tile);
         app.world.entity_mut(other).insert(BandId(OTHER_BAND_ID));
 
-        handle_road_verb(&mut app, faction, OTHER_BAND_ID, COORD, Improvement::Grade);
+        handle_road_verb(&mut app, faction, OTHER_BAND_ID, COORD, shipped::grade());
         assert!(
             road_failure_detail_contains(&app, "already keeps the road"),
             "the second band is refused BY NAME — a road tile has exactly one keeper"
@@ -26394,7 +27770,7 @@ mod tests {
         const COORD: UVec2 = UVec2::new(1, 1);
 
         let (mut app, faction, _band) = road_world(COORD);
-        seat_unkept_road(&mut app, COORD, core_sim::RungKey::RouteTrail);
+        seat_unkept_road(&mut app, COORD, shipped::route_trail());
         let stranger = FactionId(1);
         grant_roadbuilding(&mut app, faction);
         grant_roadbuilding(&mut app, stranger);
@@ -26408,7 +27784,7 @@ mod tests {
             "another faction naming the same id resolves nothing"
         );
 
-        handle_road_verb(&mut app, stranger, ROAD_BAND_ID, COORD, Improvement::Grade);
+        handle_road_verb(&mut app, stranger, ROAD_BAND_ID, COORD, shipped::grade());
         assert!(
             road_failure_detail_contains(&app, "is not one of your people"),
             "and the refusal a player reads is unchanged"
@@ -26435,7 +27811,7 @@ mod tests {
         const COORD: UVec2 = UVec2::new(1, 1);
 
         let (mut app, faction, _band) = road_world(COORD);
-        seat_unkept_road(&mut app, COORD, core_sim::RungKey::RouteTrail);
+        seat_unkept_road(&mut app, COORD, shipped::route_trail());
         // The stranger is knowledgeable and addresses a real band, so membership is the ONLY thing
         // standing between it and the handler.
         let stranger = FactionId(7);
@@ -26446,11 +27822,15 @@ mod tests {
             "the fixture world is the shipped single-faction one"
         );
 
-        let grade = |faction: FactionId| Command::Grade {
+        let grade = |faction: FactionId| Command::BuildRung {
             faction,
-            band_id: ROAD_BAND_ID,
-            target_x: COORD.x,
-            target_y: COORD.y,
+            request: BuildRungRequest {
+                band_id: Some(ROAD_BAND_ID),
+                verb: shipped::grade().as_str().to_string(),
+                target_x: Some(COORD.x),
+                target_y: Some(COORD.y),
+                ..BuildRungRequest::default()
+            },
         };
 
         apply_command(&mut app, grade(stranger));
@@ -26489,10 +27869,10 @@ mod tests {
 
         let (mut app, faction, band) = road_world(COORD);
         // A whole dirt road that nobody keeps — what a band walking away from the game leaves.
-        seat_unkept_road(&mut app, COORD, core_sim::RungKey::RouteDirtRoad);
+        seat_unkept_road(&mut app, COORD, shipped::route_dirt_road());
         grant_roadbuilding(&mut app, faction);
 
-        handle_road_verb(&mut app, faction, ROAD_BAND_ID, COORD, Improvement::Grade);
+        handle_road_verb(&mut app, faction, ROAD_BAND_ID, COORD, shipped::grade());
         assert_eq!(
             keeper_of(&app, COORD),
             Some(BandId(ROAD_BAND_ID)),
@@ -26500,7 +27880,7 @@ mod tests {
         );
 
         // And now that it IS ours and already at that rung, the same command is refused.
-        handle_road_verb(&mut app, faction, ROAD_BAND_ID, COORD, Improvement::Grade);
+        handle_road_verb(&mut app, faction, ROAD_BAND_ID, COORD, shipped::grade());
         assert!(
             road_failure_detail_contains(&app, "already a dirt road"),
             "a rung this band already holds has nothing left to raise"
@@ -26520,9 +27900,9 @@ mod tests {
         const COORD: UVec2 = UVec2::new(1, 1);
 
         let (mut app, faction, band) = road_world(COORD);
-        seat_unkept_road(&mut app, COORD, core_sim::RungKey::RouteTrail);
+        seat_unkept_road(&mut app, COORD, shipped::route_trail());
         grant_roadbuilding(&mut app, faction);
-        handle_road_verb(&mut app, faction, ROAD_BAND_ID, COORD, Improvement::Grade);
+        handle_road_verb(&mut app, faction, ROAD_BAND_ID, COORD, shipped::grade());
         assert_eq!(keeper_of(&app, COORD), Some(BandId(ROAD_BAND_ID)));
 
         handle_abandon(&mut app, faction, patch_source(COORD));
@@ -26551,9 +27931,9 @@ mod tests {
         const COORD: UVec2 = UVec2::new(1, 1);
 
         let (mut app, faction, band) = road_world(COORD);
-        seat_unkept_road(&mut app, COORD, core_sim::RungKey::RouteTrail);
+        seat_unkept_road(&mut app, COORD, shipped::route_trail());
         grant_roadbuilding(&mut app, faction);
-        handle_road_verb(&mut app, faction, ROAD_BAND_ID, COORD, Improvement::Grade);
+        handle_road_verb(&mut app, faction, ROAD_BAND_ID, COORD, shipped::grade());
         let before = app
             .world
             .resource::<core_sim::RoadRegistry>()
@@ -26781,7 +28161,7 @@ mod tests {
         let ladder = app.world.resource::<LadderConfigHandle>().get();
         // **The FREE FLOOR's rate**, because nobody has raised this working: `forestry:deadfall`.
         let per_worker = core_sim::extraction::deposit_payoff(
-            &core_sim::RungStanding::unstarted(core_sim::RungBranch::Forestry),
+            &shipped::root_standing(shipped::forestry()),
             &ladder,
         )
         .yield_per_worker_turn;
@@ -26812,14 +28192,14 @@ mod tests {
             WORKING,
             "wood",
             capacity,
-            core_sim::RungBranch::Forestry,
+            shipped::root_standing(shipped::forestry()),
         );
         let (base, width) =
-            core_sim::extraction::deposit_rung_span(core_sim::RungKey::ForestryFelling, &ladder);
-        working.set_ladder_position(base + width, &ladder, core_sim::RungBranch::Forestry);
+            core_sim::extraction::deposit_rung_span(shipped::forestry_felling(), &ladder);
+        working.set_ladder_position(base + width, &ladder, shipped::forestry());
         assert_eq!(
             working.rung(),
-            core_sim::RungKey::ForestryFelling,
+            shipped::forestry_felling(),
             "fixture: the working must hold the felling rung the axe serves"
         );
         let bare_rate =
@@ -27934,7 +29314,7 @@ mod tests {
     fn declared_workings(
         app: &bevy::prelude::App,
         band: Entity,
-    ) -> Vec<(UVec2, String, Option<Improvement>)> {
+    ) -> Vec<(UVec2, String, Option<VerbId>)> {
         app.world
             .get::<LaborAllocation>(band)
             .expect("the band has an allocation")
@@ -27944,10 +29324,10 @@ mod tests {
                 BuildSource::Deposit { tile, material } => Some((
                     *tile,
                     material.clone(),
-                    match entry.declared {
-                        BuildJob::Rung(improvement) => Some(improvement),
-                        _ => None,
-                    },
+                    entry
+                        .declared
+                        .climb()
+                        .and_then(|rung| core_sim::shipped::ladder().rung(rung).verb_id()),
                 )),
                 _ => None,
             })
@@ -27994,31 +29374,32 @@ mod tests {
     }
 
     /// **The canonical line a player types to declare `improvement`.** Exhaustive on purpose: a new
-    /// [`Improvement`] fails to compile here until somebody states the command that raises it, which
+    /// a build verb fails to compile here until somebody states the command that raises it, which
     /// is exactly what `fell`, `coppice` and `quarry` went without for a whole arc.
-    fn command_line_declaring(improvement: Improvement) -> String {
+    fn command_line_declaring(improvement: VerbId) -> String {
         match improvement {
-            Improvement::Cultivate => "cultivate 0 1 1".to_string(),
-            Improvement::Sow => "sow 0 1 1".to_string(),
-            Improvement::Tame => "tame 0 herd_a".to_string(),
-            Improvement::Corral => "corral 0 1 1".to_string(),
-            Improvement::Grade => format!("grade 0 {ROAD_BAND_ID} 1 1"),
-            Improvement::Pave => format!("pave 0 {ROAD_BAND_ID} 1 1"),
-            Improvement::Fell => "fell 0 1 1 wood".to_string(),
-            Improvement::Coppice => "coppice 0 1 1 wood".to_string(),
-            Improvement::Quarry => "quarry 0 1 1 stone".to_string(),
+            matched_ if matched_ == shipped::cultivate() => "build cultivate 0 1 1".to_string(),
+            matched_ if matched_ == shipped::sow() => "build sow 0 1 1".to_string(),
+            matched_ if matched_ == shipped::tame() => "build tame 0 herd_a".to_string(),
+            matched_ if matched_ == shipped::corral() => "build corral 0 1 1".to_string(),
+            matched_ if matched_ == shipped::grade() => format!("build grade 0 {ROAD_BAND_ID} 1 1"),
+            matched_ if matched_ == shipped::pave() => format!("build pave 0 {ROAD_BAND_ID} 1 1"),
+            matched_ if matched_ == shipped::fell() => "build fell 0 1 1 wood".to_string(),
+            matched_ if matched_ == shipped::coppice() => "build coppice 0 1 1 wood".to_string(),
+            matched_ if matched_ == shipped::quarry() => "build quarry 0 1 1 stone".to_string(),
+            other => panic!("no canonical command line is stated for the verb `{other:?}`"),
         }
     }
 
     /// ⛔ **EVERY BUILD VERB IS SENDABLE — the guard that would have caught this arc's hole.**
     ///
-    /// `fell`, `coppice` and `quarry` shipped as [`Improvement`] variants with a `RungKey` apiece and
+    /// `fell`, `coppice` and `quarry` shipped as a build verb variants with a `RungId` apiece and
     /// a validation arm written for them, and **no command of any kind**: no grammar in
     /// `sim_runtime::command_text`, no proto message, no [`Command`] variant, no dispatch arm.
     /// Nothing failed to compile, because a verb nobody sends is a verb nothing calls — the client's
     /// ladder was built and pressing it could send nothing.
     ///
-    /// So the claim is made once, over [`Improvement::ALL`], and it is made **end to end**: the line
+    /// So the claim is made once, over every verb the ladder carries, and it is made **end to end**: the line
     /// parses, survives the proto round trip, and comes out the far side as the `Command` whose own
     /// [`commanding_faction`] label is the verb's name. Comparing against `as_str` rather than a
     /// hand-written expectation is what stops a `fell` line that decoded into `Command::Coppice`
@@ -28026,7 +29407,11 @@ mod tests {
     #[test]
     fn every_build_verb_has_a_command_line() {
         let (reply_tx, _reply_rx) = unbounded();
-        for improvement in Improvement::ALL {
+        for improvement in shipped::ladder()
+            .rungs
+            .iter()
+            .filter_map(|rung| rung.verb_id())
+        {
             let line = command_line_declaring(improvement);
             let payload =
                 sim_runtime::command_text::parse_command_line(&line).unwrap_or_else(|err| {
@@ -28054,10 +29439,10 @@ mod tests {
                     improvement.as_str()
                 )
             });
-            assert_eq!(
-                commanding_faction(&command).map(|(_, label)| label),
-                Some(improvement.as_str()),
-                "`{line}` must arrive as the verb it names",
+            assert!(
+                matches!(&command, Command::BuildRung { request, .. }
+                    if request.verb == improvement.as_str()),
+                "`{line}` must arrive as a `build` carrying the verb it names"
             );
         }
     }
@@ -28075,28 +29460,28 @@ mod tests {
                 "wood",
                 TWO_DEPOSIT_TERRAIN,
                 core_sim::extraction::WOODCRAFT_DISCOVERY_ID,
-                Improvement::Fell,
+                shipped::fell(),
             ),
             (
                 "coppice",
                 "wood",
                 TWO_DEPOSIT_TERRAIN,
                 core_sim::extraction::CONSERVATIONISM_DISCOVERY_ID,
-                Improvement::Coppice,
+                shipped::coppice(),
             ),
             (
                 "quarry",
                 "stone",
                 TWO_DEPOSIT_TERRAIN,
                 core_sim::extraction::QUARRYING_DISCOVERY_ID,
-                Improvement::Quarry,
+                shipped::quarry(),
             ),
         ] {
             let (mut app, faction, band) = deposit_world(terrain, material);
             grant_deposit_knowledge(&mut app, faction, discovery);
             send_command_line(
                 &mut app,
-                &format!("{verb} 0 {} {} {material}", WORKING.x, WORKING.y),
+                &format!("build {verb} 0 {} {} {material}", WORKING.x, WORKING.y),
             );
             assert_eq!(
                 declared_workings(&app, band),
@@ -28137,11 +29522,11 @@ mod tests {
         );
         send_command_line(
             &mut app,
-            &format!("fell 0 {} {} wood", WORKING.x, WORKING.y),
+            &format!("build fell 0 {} {} wood", WORKING.x, WORKING.y),
         );
         send_command_line(
             &mut app,
-            &format!("quarry 0 {} {} stone", WORKING.x, WORKING.y),
+            &format!("build quarry 0 {} {} stone", WORKING.x, WORKING.y),
         );
 
         let rows = |app: &bevy::prelude::App| -> Vec<String> {
@@ -28174,7 +29559,7 @@ mod tests {
         );
         assert_eq!(
             declared_workings(&app, band),
-            vec![(WORKING, "stone".to_string(), Some(Improvement::Quarry))],
+            vec![(WORKING, "stone".to_string(), Some(shipped::quarry()))],
             "and the timber's queue entry goes with its row, because an entry needs a row"
         );
     }
@@ -28233,24 +29618,24 @@ mod tests {
 
         send_command_line(
             &mut app,
-            &format!("fell 0 {} {} wood", WORKING.x, WORKING.y),
+            &format!("build fell 0 {} {} wood", WORKING.x, WORKING.y),
         );
         assert_eq!(
             declared_workings(&app, band),
-            vec![(WORKING, "wood".to_string(), Some(Improvement::Fell))],
+            vec![(WORKING, "wood".to_string(), Some(shipped::fell()))],
             "the timber is raised and the rock on the same hex is untouched"
         );
 
         // …and the rock takes its own verb on the same tile, so the two workings are genuinely two.
         send_command_line(
             &mut app,
-            &format!("quarry 0 {} {} stone", WORKING.x, WORKING.y),
+            &format!("build quarry 0 {} {} stone", WORKING.x, WORKING.y),
         );
         assert_eq!(
             declared_workings(&app, band),
             vec![
-                (WORKING, "wood".to_string(), Some(Improvement::Fell)),
-                (WORKING, "stone".to_string(), Some(Improvement::Quarry)),
+                (WORKING, "wood".to_string(), Some(shipped::fell())),
+                (WORKING, "stone".to_string(), Some(shipped::quarry())),
             ],
             "one hex carries two declarations at once, each on its own working"
         );
@@ -28263,7 +29648,7 @@ mod tests {
     /// as the refusal: without it the test would pass against a verb that never worked at all.
     #[test]
     fn a_deposit_verb_is_refused_until_its_lesson_is_learned() {
-        let line = format!("fell 0 {} {} wood", WORKING.x, WORKING.y);
+        let line = format!("build fell 0 {} {} wood", WORKING.x, WORKING.y);
 
         let (mut ignorant, _faction, band) = deposit_world(TWO_DEPOSIT_TERRAIN, "wood");
         send_command_line(&mut ignorant, &line);
@@ -28287,7 +29672,7 @@ mod tests {
         send_command_line(&mut taught, &line);
         assert_eq!(
             declared_workings(&taught, band),
-            vec![(WORKING, "wood".to_string(), Some(Improvement::Fell))],
+            vec![(WORKING, "wood".to_string(), Some(shipped::fell()))],
             "with the lesson learned the same line declares the working"
         );
     }
@@ -28301,7 +29686,7 @@ mod tests {
     /// two halves run against the identical line, so the refusal is the ground and nothing else.
     #[test]
     fn a_quarry_is_refused_on_a_scatter_and_accepted_on_a_body_of_rock() {
-        let line = format!("quarry 0 {} {} stone", WORKING.x, WORKING.y);
+        let line = format!("build quarry 0 {} {} stone", WORKING.x, WORKING.y);
 
         let (mut scatter, faction, band) = deposit_world(SCATTER_TERRAIN, "stone");
         grant_deposit_knowledge(
@@ -28329,7 +29714,7 @@ mod tests {
         send_command_line(&mut rock, &line);
         assert_eq!(
             declared_workings(&rock, band),
-            vec![(WORKING, "stone".to_string(), Some(Improvement::Quarry))],
+            vec![(WORKING, "stone".to_string(), Some(shipped::quarry()))],
             "the same line on a real body of rock is accepted, so the refusal above is the site \
              rule and not a fixture that could never have worked"
         );
@@ -28358,7 +29743,7 @@ mod tests {
         );
         send_command_line(
             &mut app,
-            &format!("fell 0 {} {} amber", WORKING.x, WORKING.y),
+            &format!("build fell 0 {} {} amber", WORKING.x, WORKING.y),
         );
         assert!(
             extraction_failure_contains(&app, "not something that comes out of the ground"),
@@ -28376,7 +29761,7 @@ mod tests {
         );
         send_command_line(
             &mut app,
-            &format!("quarry 0 {} {} wood", WORKING.x, WORKING.y),
+            &format!("build quarry 0 {} {} wood", WORKING.x, WORKING.y),
         );
         assert!(
             extraction_failure_contains(&app, "that is the other ladder"),
@@ -28409,7 +29794,7 @@ mod tests {
         );
         send_command_line(
             &mut bare,
-            &format!("fell 0 {} {} wood", WORKING.x, WORKING.y),
+            &format!("build fell 0 {} {} wood", WORKING.x, WORKING.y),
         );
         assert!(
             extraction_failure_contains(&bare, "No band is working the wood"),
@@ -28551,7 +29936,7 @@ mod tests {
         const COORD: UVec2 = UVec2::new(1, 1);
 
         let (mut app, faction, _band) = road_world(COORD);
-        seat_unkept_road(&mut app, COORD, core_sim::RungKey::RouteTrail);
+        seat_unkept_road(&mut app, COORD, shipped::route_trail());
         grant_roadbuilding(&mut app, faction);
         let mut log = Some(CommandLog::new(&app));
 
@@ -28566,11 +29951,15 @@ mod tests {
             .claim(HOME, HOME_CLIENT, &TWO_SEAT_ROSTER)
             .expect("and the home client takes its own");
 
-        let grade = || Command::Grade {
+        let grade = || Command::BuildRung {
             faction,
-            band_id: ROAD_BAND_ID,
-            target_x: COORD.x,
-            target_y: COORD.y,
+            request: BuildRungRequest {
+                band_id: Some(ROAD_BAND_ID),
+                verb: shipped::grade().as_str().to_string(),
+                target_x: Some(COORD.x),
+                target_y: Some(COORD.y),
+                ..BuildRungRequest::default()
+            },
         };
 
         for stranger in [RIVAL_CLIENT, UNSEATED_CLIENT] {
@@ -29623,7 +31012,7 @@ mod tests {
                     .world
                     .resource::<LadderConfigHandle>()
                     .get()
-                    .with_upkeep_scaled(RungKey::ForestryFelling, scale);
+                    .with_upkeep_scaled(shipped::forestry_felling(), scale);
                 app.world
                     .resource_mut::<LadderConfigHandle>()
                     .replace(std::sync::Arc::new(dearer));
@@ -29669,7 +31058,7 @@ mod tests {
             WORKING,
             "wood",
             capacity,
-            core_sim::RungBranch::Forestry,
+            shipped::root_standing(shipped::forestry()),
         );
         working.stock = capacity * PLAYED_DEADFALL_STOCK;
         app.world

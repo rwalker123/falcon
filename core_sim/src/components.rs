@@ -1,7 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::cmp::min;
 use std::collections::{BTreeMap, BTreeSet};
-use std::str::FromStr;
 
 use bevy::{math::UVec2, prelude::*};
 use sim_runtime::{
@@ -9,10 +8,13 @@ use sim_runtime::{
     TerrainType,
 };
 
+use crate::ladder_ids::BranchId;
+pub use crate::ladder_ids::VerbId;
 use crate::{
     generations::GenerationId,
     grid_utils::{HEX_CORNER_COUNT, HEX_DIRECTION_COUNT},
-    intensification::{RungKey, NO_CREW_ON_THIS_ACTIVITY},
+    intensification::NO_CREW_ON_THIS_ACTIVITY,
+    ladder_ids::RungId,
     mapgen::MountainType,
     orders::FactionId,
     power::PowerNodeId,
@@ -663,6 +665,16 @@ impl FoodMix {
     }
 }
 
+/// **THE LEAST A MATERIAL BATCH MAY BE LEFT HOLDING AFTER A DEBIT** (units). A store is fixed-point
+/// micro-units, so a debit rounded through `f32` can leave one micro-unit (`0.000001`) behind, and the
+/// supply network's pooling then parks that residue on a band; the build settlement read it as
+/// "the store can pay a sliver", coverage became `1e-6 / wanted` and a head build published a date
+/// millions of turns out instead of "no hurdles". A debit that leaves a batch under this is taken
+/// whole, and `systems::labor::settle_scarce_material_store` treats a holding or a payment under it
+/// as nothing. Ten micro-units: above the rounding residue, far below any real yield (the smallest
+/// authored per-turn material rate is `0.0000455`, and a deposit is never swept).
+pub const MATERIAL_DUST_UNITS: f32 = 0.00001;
+
 /// A location-local store of goods held by a band (and, later, a populated tile or storage pit).
 /// Keyed by commodity so the supply network can balance *any* good; a `BTreeMap` keeps iteration
 /// deterministic for balancing and snapshotting. Quantities are fixed-point (`Scalar`) so small
@@ -882,6 +894,13 @@ impl LocalStore {
             .flat_map(|batches| batches.iter())
     }
 
+    /// **A batch a debit leaves under [`MATERIAL_DUST_UNITS`] is gone** - see the constant. Applied
+    /// to the batch a take just drew from and to nothing else, so a deposit that is still
+    /// accumulating toward a whole unit is never swept.
+    fn is_dust(amount: Scalar) -> bool {
+        amount <= scalar_zero() || amount < scalar_from_f32(MATERIAL_DUST_UNITS)
+    }
+
     /// **How much of `material` the store holds in total** — the sum over its batches, which is the
     /// shortfall readout's number. Never stored beside the batches: a cached total is a second
     /// statement of one fact.
@@ -979,7 +998,7 @@ impl LocalStore {
                 amount: taken,
                 characteristics: batch.characteristics.clone(),
             });
-            if batch.amount <= scalar_zero() {
+            if Self::is_dust(batch.amount) {
                 batches.remove(&key);
             }
         }
@@ -1065,7 +1084,7 @@ impl LocalStore {
                 amount: taken,
                 characteristics: batch.characteristics.clone(),
             });
-            if batch.amount <= scalar_zero() {
+            if Self::is_dust(batch.amount) {
                 batches.remove(&key);
             }
         }
@@ -1091,7 +1110,7 @@ impl LocalStore {
         };
         let taken = min(amount.max(scalar_zero()), batch.amount);
         batch.amount -= taken;
-        if batch.amount <= scalar_zero() {
+        if Self::is_dust(batch.amount) {
             batches.remove(band);
         }
         if batches.is_empty() {
@@ -3189,6 +3208,21 @@ pub enum LaborTarget {
         /// simply has no effect, so it is accepted uniformly and applied conditionally.
         floor: f32,
     },
+    /// **KEEP AN IMPROVEMENT ON A TILE-KIND BRANCH** - the tile kind's crew row
+    /// (`core_sim/src/tile_improvement.rs`), modelled on [`Self::Extract`] and **paying nothing**:
+    /// a tile improvement has no yield, so the crew's whole job is to keep the site.
+    ///
+    /// **The crew is the keeper.** The hands on this row keep the improvement first
+    /// (`keep_hands = min(crew, bill / keep_rate)`, the same site-keeping claims a working's crew
+    /// makes), through the keeping tools the improvement's rung derives. Hands beyond the bill do no
+    /// work: a build is raised by the band's `builders` pool, exactly as it is on a working, and a
+    /// take has nothing to take. **A far crew is a work party, as a far working's is** - the row
+    /// posts one past `band_work_range` like every other source row.
+    ///
+    /// Stored as `(tile, branch)`, the registry's own key: one tile can carry an improvement of
+    /// several tile branches, and working one is not working another. It names no floor - there is
+    /// no stock to leave standing.
+    Tile { tile: UVec2, branch: BranchId },
 }
 
 /// The stable role key a **Forage** row publishes, and the one a plant-web build queue entry names
@@ -3207,6 +3241,10 @@ pub const ROADWORK_ROLE_KEY: &str = "roadwork";
 /// the same reason there is one row kind: what a crew is doing is *taking a material out of the
 /// ground*, and which of the two skills that is, is the deposit's.
 pub const EXTRACT_ROLE_KEY: &str = "extract";
+/// The **Tile** twin of [`EXTRACT_ROLE_KEY`] - the crew row on a tile-kind improvement, and the row a
+/// tile build-queue entry names its source with. One key for every tile-kind branch, for the reason
+/// there is one row kind: which branch it is, is the improvement's.
+pub const TILE_ROLE_KEY: &str = "tile";
 
 impl LaborTarget {
     /// The stable role key (also the snapshot `kind` string and the `activity` summary).
@@ -3219,6 +3257,7 @@ impl LaborTarget {
             LaborTarget::Roadwork => ROADWORK_ROLE_KEY,
             LaborTarget::Builders => "builders",
             LaborTarget::Extract { .. } => EXTRACT_ROLE_KEY,
+            LaborTarget::Tile { .. } => TILE_ROLE_KEY,
         }
     }
 
@@ -3245,6 +3284,11 @@ impl LaborTarget {
             // *do* ship (`earthmoving`, `stone_dressing`) declare `build_work`, which lands on the
             // builders' pool that RAISES a working rather than on the crew that takes from it.
             LaborTarget::Extract { .. } => crate::equipment_config::KitJob::Extraction,
+            // **A tile crew takes nothing, so it has no take kit to choose**: its keeping tools
+            // follow from the improvement's rung (`EquipmentConfig::pool_toe`), exactly as a
+            // pool's do, and the command refuses a `kit` token on the row. `roadwork` is the job
+            // whose default kit is the empty `none`, which is what a row that carries nothing wants.
+            LaborTarget::Tile { .. } => crate::equipment_config::KitJob::Roadwork,
         }
     }
 
@@ -3275,6 +3319,17 @@ impl LaborTarget {
                     tile: b,
                     material: right,
                     ..
+                },
+            ) => a == b && left == right,
+            // **Keyed by tile AND branch**, the registry's own key.
+            (
+                LaborTarget::Tile {
+                    tile: a,
+                    branch: left,
+                },
+                LaborTarget::Tile {
+                    tile: b,
+                    branch: right,
                 },
             ) => a == b && left == right,
             _ => false,
@@ -3313,7 +3368,9 @@ impl LaborTarget {
             // *stop cutting here*, never *this band has nothing here*, and the row has to survive it
             // or the working loses its place in the build queue — and a row held at zero is a site
             // with no crew, so nothing keeps it.
-            | LaborTarget::Extract { .. } => true,
+            | LaborTarget::Extract { .. }
+            // **A tile improvement is ground the band holds**, a working's reading exactly.
+            | LaborTarget::Tile { .. } => true,
             LaborTarget::Scout
             | LaborTarget::Warrior
             | LaborTarget::Roadwork
@@ -3339,6 +3396,7 @@ impl LaborTarget {
             LaborTarget::Forage { .. }
             | LaborTarget::Hunt { .. }
             | LaborTarget::Extract { .. }
+            | LaborTarget::Tile { .. }
             | LaborTarget::Scout
             | LaborTarget::Warrior => false,
         }
@@ -5180,6 +5238,34 @@ pub struct BenchOrder {
     /// (`bench_auto_skip` is valid only on an auto head) and is otherwise an ordinary order: it can
     /// be counted, raised or removed like any other.
     pub auto: bool,
+    /// **THE KIT ORDER THIS ORDER IS A PART OF** ([`KitOrder::id`]); [`NOT_A_KIT_PART`] (`0`) for a
+    /// plain order. The parts of one kit order stay contiguous on the queue
+    /// ([`BandBench::enqueue_kit`]); every queue editor that moves or removes orders keeps that, and
+    /// drops the [`KitOrder`] once nothing carries its id.
+    pub kit_order: u32,
+}
+
+/// **THE `kit_order` OF AN ORDER THAT BELONGS TO NO KIT ORDER.** Kit order ids start at `1`.
+pub const NOT_A_KIT_PART: u32 = 0;
+
+/// **ONE WHOLE-KIT ORDER** — what the player asked for with *Make* on a kit row: a **count of
+/// kits**, one unit of each item of the kit per kit, queued together as one group (issue #780). The
+/// count is the player's number and is never netted against who already has a kit. It owns no queue state itself — the parts
+/// are ordinary [`BenchOrder`]s tagged with [`Self::id`] — it holds the facts the grouped box
+/// shows: which kit, for how many kits, and how many items its finished parts made.
+///
+/// **Persisted** with the bench (`BandRecord::bench`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct KitOrder {
+    /// This kit order's id, from [`BandBench::next_kit_order`]; never [`NOT_A_KIT_PART`].
+    pub id: u32,
+    /// The `equipment.json` kit id the order outfits.
+    pub kit_id: String,
+    /// How many kits the player ordered (one unit of each item of the kit per kit).
+    pub kits: u32,
+    /// Items the order's **finished** parts made. A part still on the queue reports its own
+    /// [`BenchOrder::made`]; a removed part's items are not counted here.
+    pub done: u32,
 }
 
 /// **THE SMALLEST COUNT AN ORDER MAY CARRY** — one item. An order of zero is not an order.
@@ -5195,6 +5281,9 @@ const ONE_ITEM_MADE: u32 = 1;
 /// **ONE PLACE UP THE QUEUE** — what [`BandBench::raise_order`] moves an order by.
 const ONE_PLACE: usize = 1;
 
+/// **ONE KIT ORDER** — what [`BandBench::enqueue_kit`] adds to the issue counter.
+const ONE_KIT_ORDER: u32 = 1;
+
 /// **AN ORDER THAT HAS MADE NOTHING YET** — the `made` a fresh order starts at.
 const NOTHING_MADE: u32 = 0;
 
@@ -5208,6 +5297,7 @@ impl BenchOrder {
             progress: scalar_zero(),
             drawn: None,
             auto: false,
+            kit_order: NOT_A_KIT_PART,
         }
     }
 
@@ -5235,6 +5325,13 @@ pub enum BenchQueueError {
     CountAtOrBelowMade { made: u32 },
     /// The order is already at the head and cannot move up.
     AlreadyAtHead,
+    /// A single part of a kit order cannot be raised on its own — the kit's parts stay together;
+    /// the whole kit is raised with [`BandBench::raise_kit`].
+    KitPartCannotMove,
+    /// No kit order has that id.
+    NoSuchKitOrder { id: u32 },
+    /// A kit order with no part to queue (every count was zero, or none were given).
+    EmptyKitOrder,
 }
 
 /// **A band's crafting bench — ONE BENCH, ONE QUEUE, worked one order at a time.**
@@ -5336,6 +5433,13 @@ pub struct BandBench {
     /// save format is unchanged.
     #[serde(skip)]
     pub lent_to_hunt: u32,
+    /// **THE LIVE KIT ORDERS** ([`KitOrder`]), oldest first. An entry exists exactly while some
+    /// order on [`Self::orders`] carries its id: the one helper that drops them
+    /// ([`Self::prune_kit_orders`]) runs from every path that removes an order. **Persisted.**
+    pub kit_orders: Vec<KitOrder>,
+    /// **HOW MANY KIT ORDERS THIS BENCH HAS EVER ISSUED** — the next id is this plus one, so ids
+    /// start at `1` and are never reused. **Persisted.**
+    pub next_kit_order: u32,
 }
 
 impl BandBench {
@@ -5423,11 +5527,104 @@ impl BandBench {
                 len: self.orders.len(),
             });
         }
-        Ok(self.orders.remove(index))
+        let removed = self.orders.remove(index);
+        self.prune_kit_orders();
+        Ok(removed)
+    }
+
+    /// **Queue a whole kit as ONE GROUPED ORDER** (issue #780): every `(recipe_id, count)` part is
+    /// appended contiguously at the back, tagged with a fresh kit-order id, and a [`KitOrder`] is
+    /// recorded. Parts with a zero count are omitted; none left is [`BenchQueueError::EmptyKitOrder`].
+    /// Returns the new kit order's id. The crew is untouched.
+    pub fn enqueue_kit(
+        &mut self,
+        kit_id: &str,
+        kits: u32,
+        parts: Vec<(String, u32)>,
+    ) -> Result<u32, BenchQueueError> {
+        let parts: Vec<(String, u32)> = parts
+            .into_iter()
+            .filter(|(_, count)| *count >= MIN_ORDER_COUNT)
+            .collect();
+        if parts.is_empty() {
+            return Err(BenchQueueError::EmptyKitOrder);
+        }
+        self.next_kit_order = self.next_kit_order.saturating_add(ONE_KIT_ORDER);
+        let id = self.next_kit_order;
+        for (recipe_id, count) in parts {
+            let mut order = BenchOrder::new(&recipe_id, count);
+            order.kit_order = id;
+            self.orders.push(order);
+        }
+        self.kit_orders.push(KitOrder {
+            id,
+            kit_id: kit_id.to_string(),
+            kits,
+            done: NOTHING_MADE,
+        });
+        Ok(id)
+    }
+
+    /// **Drop every [`KitOrder`] no order carries any more** (finished or removed). The one helper
+    /// every order-removing path calls.
+    fn prune_kit_orders(&mut self) {
+        let orders = &self.orders;
+        self.kit_orders
+            .retain(|kit| orders.iter().any(|order| order.kit_order == kit.id));
+    }
+
+    /// The queue indices `[start, end)` of the contiguous block of the kit order `id`, if any part
+    /// is queued.
+    fn kit_block(&self, id: u32) -> Option<(usize, usize)> {
+        let start = self.orders.iter().position(|order| order.kit_order == id)?;
+        let len = self.orders[start..]
+            .iter()
+            .take_while(|order| order.kit_order == id)
+            .count();
+        Some((start, start + len))
+    }
+
+    /// The queue indices `[start, end)` of the **unit** holding the order at `index`: its whole kit
+    /// block when it is a kit part, else just itself.
+    fn unit_at(&self, index: usize) -> (usize, usize) {
+        match self.orders[index].kit_order {
+            NOT_A_KIT_PART => (index, index + ONE_PLACE),
+            id => self.kit_block(id).unwrap_or((index, index + ONE_PLACE)),
+        }
+    }
+
+    /// **Remove every part of a kit order** — each part is lost exactly as a single
+    /// [`Self::remove_order`] loses it (drawn piles forfeited; items already made stay in the
+    /// store). Returns the removed orders.
+    pub fn remove_kit(&mut self, id: u32) -> Result<Vec<BenchOrder>, BenchQueueError> {
+        let (start, end) = self
+            .kit_block(id)
+            .ok_or(BenchQueueError::NoSuchKitOrder { id })?;
+        let removed: Vec<BenchOrder> = self.orders.drain(start..end).collect();
+        self.prune_kit_orders();
+        Ok(removed)
+    }
+
+    /// **Move a whole kit order above the unit directly ahead of it** — a single order or another
+    /// whole kit block. Refused at the head of the queue.
+    pub fn raise_kit(&mut self, id: u32) -> Result<(), BenchQueueError> {
+        let (start, end) = self
+            .kit_block(id)
+            .ok_or(BenchQueueError::NoSuchKitOrder { id })?;
+        if start == HEAD_ORDER {
+            return Err(BenchQueueError::AlreadyAtHead);
+        }
+        let (above_start, _) = self.unit_at(start - ONE_PLACE);
+        self.orders[above_start..end].rotate_left(start - above_start);
+        Ok(())
     }
 
     /// **Move one order up one place.** Raising the second order makes it the head; the order it
     /// displaces keeps its progress and its pile ([`BenchOrder`]) and resumes when it is worked again.
+    ///
+    /// **A plain order whose predecessor is a kit part jumps over that whole kit block** (the block
+    /// stays contiguous). **A kit part itself is refused** ([`BenchQueueError::KitPartCannotMove`]);
+    /// [`Self::raise_kit`] raises the whole kit.
     pub fn raise_order(&mut self, index: usize) -> Result<(), BenchQueueError> {
         if index >= self.orders.len() {
             return Err(BenchQueueError::NoSuchOrder {
@@ -5437,7 +5634,11 @@ impl BandBench {
         if index == HEAD_ORDER {
             return Err(BenchQueueError::AlreadyAtHead);
         }
-        self.orders.swap(index, index - ONE_PLACE);
+        if self.orders[index].kit_order != NOT_A_KIT_PART {
+            return Err(BenchQueueError::KitPartCannotMove);
+        }
+        let (above_start, _) = self.unit_at(index - ONE_PLACE);
+        self.orders[above_start..=index].rotate_right(ONE_PLACE);
         Ok(())
     }
 
@@ -5456,7 +5657,15 @@ impl BandBench {
         order.progress = scalar_zero();
         order.drawn = None;
         if order.is_done() {
-            self.orders.remove(index);
+            let finished = self.orders.remove(index);
+            if let Some(kit) = self
+                .kit_orders
+                .iter_mut()
+                .find(|kit| finished.kit_order != NOT_A_KIT_PART && kit.id == finished.kit_order)
+            {
+                kit.done = kit.done.saturating_add(finished.made);
+            }
+            self.prune_kit_orders();
             return true;
         }
         false
@@ -6128,6 +6337,11 @@ pub enum BuildSource {
     /// The material is part of the key for [`LaborTarget::Extract`]'s reason — one tile can hold two
     /// deposits, and a `fell` queued on the timber is not a `quarry` queued on the rock beneath it.
     Deposit { tile: UVec2, material: String },
+    /// **AN IMPROVEMENT ON ONE TILE OF A TILE-KIND BRANCH** - `(tile, branch)`, the key of
+    /// [`crate::tile_improvement::TileImprovementRegistry`]. **Backed by a labor row**, a working's
+    /// reading ([`LaborTarget::Tile`]): the band's `builders` pool raises it and the crew on the row
+    /// keeps it, so the entry is pruned exactly as a deposit's is - no row, no holding.
+    Tile { tile: UVec2, branch: BranchId },
 }
 
 /// **THE ROAD-MEMBERSHIP ANSWER A CALLER WITH NO VIEW OF THE ROADS GIVES** — *"leave road entries
@@ -6154,6 +6368,10 @@ impl BuildSource {
                 tile: *tile,
                 material: material.clone(),
             }),
+            LaborTarget::Tile { tile, branch } => Some(BuildSource::Tile {
+                tile: *tile,
+                branch: *branch,
+            }),
             LaborTarget::Scout
             | LaborTarget::Warrior
             | LaborTarget::Roadwork
@@ -6175,6 +6393,9 @@ impl BuildSource {
             // **The take row's own key**, unlike a road's: a working has a row, so a client joins
             // its queued `fell` or `quarry` to the crew that is actually standing on it.
             BuildSource::Deposit { .. } => EXTRACT_ROLE_KEY,
+            // **The crew row's own key**, a working's reading: a tile improvement has a row, so a
+            // client joins its queued build to the crew that is standing on it.
+            BuildSource::Tile { .. } => TILE_ROLE_KEY,
         }
     }
 
@@ -6191,6 +6412,13 @@ impl BuildSource {
                     ..
                 },
             ) => tile == other && material == worked,
+            (
+                BuildSource::Tile { tile, branch },
+                LaborTarget::Tile {
+                    tile: other,
+                    branch: worked,
+                },
+            ) => tile == other && branch == worked,
             // **A road names no row.** `LaborTarget::Roadwork` is band-wide and covers every road
             // the band keeps, so it names no one of them — the same answer `Agriculture` gives a
             // patch.
@@ -6202,10 +6430,11 @@ impl BuildSource {
 /// **WHAT AN ENTRY SAYS IT IS RAISING.**
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum BuildJob {
-    /// One of the four rung verbs. It is the **declaration**, and it answers only while the meter it
+    /// A rung verb, stored as **the rung it raises** (a config identity), not as the verb's name.
+    /// It is the **declaration**, and it answers only while the meter it
     /// names is at zero: `forage::patch_build_verb` / `fauna::herd_build_verb` derive the live rung
     /// from the meters otherwise, exactly as they already did.
-    Rung(Improvement),
+    Climb(RungId),
     /// **The pen ring** — `extend_pen`. It is fencing work on the `animal:pen` rung, but the pen is
     /// already built, so there is no meter for a verb to name and the derived rung cannot say it.
     /// A queue kind states it instead, which is what the ring lost when it stopped naming a crew.
@@ -6222,10 +6451,19 @@ pub enum BuildJob {
     /// job (`husbandry.output_recommit_work_fraction × that rung's build.work_cost`). Stamped by the
     /// command off the herd's standing at the moment it was ordered, which is the same reading the
     /// handler validated against.
-    SetHerdOutput(RungKey),
+    SetHerdOutput(RungId),
 }
 
 impl BuildJob {
+    /// **THE RUNG THIS ENTRY RAISES**, when it raises one - `None` for a ring and for a commitment,
+    /// which work on a rung the source already holds.
+    pub fn climb(self) -> Option<RungId> {
+        match self {
+            BuildJob::Climb(rung) => Some(rung),
+            BuildJob::ExtendPen | BuildJob::SetHerdOutput(_) => None,
+        }
+    }
+
     /// **WHERE THE PLAYER SAID THE LAND SHOULD END UP** — the rung this entry climbs *to*, which is
     /// not the same thing as the rung it is raising this turn.
     ///
@@ -6240,18 +6478,24 @@ impl BuildJob {
     /// # ⛔ IT IS DERIVED, NOT STORED, AND THAT IS DELIBERATE
     ///
     /// A destination stored beside `declared` would be a **second authority for one fact**: the map
-    /// from verb to rung is total and exhaustive ([`crate::intensification::RungKey::built_by`]), so
+    /// from verb to rung is total and exhaustive (`LadderConfig::rung_for_verb`), so
     /// the two could only ever agree or drift, and this arc has already shipped three defects of
     /// exactly that shape. If a future order ever names a rung its verb does not determine — *"take
     /// it to rung 4"* with one verb serving several — this becomes a field, and the one call site
     /// that reads it is here.
-    pub fn destination(self) -> RungKey {
+    pub fn destination(self, ladder: &crate::intensification::LadderConfig) -> RungId {
         match self {
-            BuildJob::Rung(improvement) => RungKey::built_by(improvement),
+            BuildJob::Climb(rung) => rung,
             // A ring is fencing work on a pen that already stands, so its destination is the rung it
-            // widens: there is no leg to climb, only more of the one the source is already on.
-            BuildJob::ExtendPen => RungKey::AnimalPen,
-            // A commitment climbs nothing either — it re-sorts a herd on the rung it already holds,
+            // widens (the herd ladder's `enclosed` rung): there is no leg to climb, only more of the
+            // one the source is already on.
+            BuildJob::ExtendPen => ladder
+                .first_rung_with(
+                    crate::intensification::SourceKind::Herd,
+                    crate::intensification::RungTrait::Enclosed,
+                )
+                .rung_id(),
+            // A commitment climbs nothing either - it re-sorts a herd on the rung it already holds,
             // which is the rung the order stamped.
             BuildJob::SetHerdOutput(rung) => rung,
         }
@@ -7330,7 +7574,11 @@ impl LaborAllocation {
             // is `docs/plan_extraction.md` §6's one deliberate departure from the route branch: a
             // road is free to leave and so belongs to no camp, but *a quarry you walk away from is a
             // quarry you lost*, and that is what puts a working on the move-or-stay decision.
-            BuildSource::Patch(_) | BuildSource::Herd(_) | BuildSource::Deposit { .. } => self
+            // **A tile improvement is held by its crew's row**, a working's reading.
+            BuildSource::Patch(_)
+            | BuildSource::Herd(_)
+            | BuildSource::Deposit { .. }
+            | BuildSource::Tile { .. } => self
                 .assignments
                 .iter()
                 .any(|assignment| source.names(&assignment.target)),
@@ -8036,112 +8284,6 @@ pub fn take_overdraws(floor: f32, crew_biomass_per_turn: f32, peak_regrowth_in_b
     floor_overdraws(floor) && crew_biomass_per_turn > peak_regrowth_in_band.max(0.0)
 }
 
-/// **WHAT IS BEING RAISED ON A SOURCE** — *what am I building here?* — the axis that is independent
-/// of the take crew's pressure (issue #442, `docs/plan_investment_rung_toggle.md` §2).
-///
-/// These are the intensification ladder's **rung-transition verbs**. **A verb DECLARES; it does not
-/// staff** (`docs/plan_standing_upkeep.md` §2.5): issuing one appends a
-/// [`BuildQueueEntry`] to the band's [`LaborAllocation::build_queue`], and the hands are the
-/// band-level [`LaborTarget::Builders`] pool, whose **whole** output goes on the head of that queue.
-/// Those work units bank into the source's build meter (`ForagePatch::cultivation_progress` /
-/// `field_progress`, `Herd::domestication_progress` / `corral_progress`), and at the job's own cost
-/// the source becomes a **tended patch / Field / pastoral herd / penned herd**, pays the full managed
-/// yield, and its entry **leaves the queue**.
-///
-/// **THE BUILDERS OWE NOTHING TOWARD THE RUNG'S STANDING UPKEEP** (§4.6a). The band's *keeping* pool
-/// (`agriculture` / `husbandry`) owes that rate for every meter carrying work, at any fullness — so
-/// the meter takes the pool's whole output, and the only term that can eat a build is the **rot**,
-/// what the keeping failed to cover ([`crate::intensification::RungDef::meter_rot`]).
-///
-/// **THERE IS NO YIELD DIP, and its retirement is what makes the verb legible** (§2.2). A rung's
-/// `yield_fraction_while_building` used to scale what the crew carried, on the reasoning *"they are
-/// preparing the ground, not gathering"* — true of a **shared** crew and of nothing else. With the
-/// gatherers on the source and the builders on the band, what a build costs is simply the people who
-/// are clearing instead, so the gatherers beside it carry exactly what they always did and the price
-/// is the same statement at every staffing. Under the dip it was not: a crew big enough to saturate
-/// the source's standing stock paid *nothing*, because the ceiling bound it either way.
-///
-/// **At most one is ever in flight, and it is always the source's next rung** — the rungs are
-/// strictly ordered, so you cannot Sow ground you have not tended and a tended patch has nothing left
-/// to cultivate.
-///
-/// **Each is kind-specific** (validated at `assign_labor` and at each verb's own command):
-/// `Cultivate`/`Sow` are plant-only, `Tame`/`Corral` animal-only — see [`Improvement::valid_for_forage`]
-/// / [`Improvement::valid_for_hunt`].
-///
-/// **Any floor is LEGAL beside any of these** (§2.1), and **the floor is not a term in the build at
-/// all**: `build_accrual` takes no floor, because the builders are not the people pulling on the
-/// source — see `.claude/rules/core_sim/intensification.md` → "THE FLOOR CAME OFF THE BUILD RATE".
-/// What a deep floor still costs a build is indirect and real: the rung's own gate reads the
-/// **escapement room** the take leaves (`systems::labor::crew_is_working_the_source`), so a crew
-/// stripping the ground it is improving can close that gate. **The `Thriving` gate is gone**
-/// (`docs/plan_harvest_floor.md` §3.2) — it stopped accrual outright, which under a continuous dial
-/// would have made a whole stretch of the dial silently inert, with no lapse state left to explain
-/// it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum Improvement {
-    /// **Plant-only.** Prepare the patch into a tended crop (plant rung 2).
-    Cultivate,
-    /// **Plant-only.** Sow a **Field** — the plant rung-3 verb, the twin of `Corral`
-    /// (`docs/plan_intensification_ladder.md` §2). It **places** a food source: it builds a Field
-    /// *even where no patch existed*, because seed travels — the one asymmetry with the animal
-    /// branch, where `Corral` needs a herd you already tamed.
-    ///
-    /// **But only on ground the land itself will farm, and that is SCARCE.** Rung 3 knows how to move
-    /// seed, not how to *fertilize*, so the ground must already do the fertilizing: the
-    /// `plant:field` rung's **`site_requirement`** demands **very fertile** ground
-    /// (`min_forage_capacity` 195 — the river-deposit class: delta / floodplain / alluvial plain) that
-    /// is **near fresh water** (`requires_fresh_water` — a river along one of its sides, fresh-water
-    /// ground, or a lake/channel next door; a salt coast does **not** count). Merely bearing *some*
-    /// food is nowhere near enough. Making thin or dry ground farmable is rung 4 (Worked Land), a
-    /// later arc — which will be a **looser copy of that same record**.
-    ///
-    /// The rule lives on the rung, never here: `forage::rung_site_refusal` is the one seam the `sow`
-    /// command, the labor arm and the wire all resolve through.
-    Sow,
-    /// **Animal-only.** Tame a wild herd into pastoral livestock — the animal rung-2 verb. A Sustain
-    /// hunt tames nothing: it only *teaches* the faction Herding.
-    Tame,
-    /// **Animal-only.** Build the pen for a domesticated herd (animal rung 3).
-    Corral,
-    /// **Route-only.** Grade a roadbed on **one tile** — the route rung-3 verb, and the act that
-    /// makes that tile's road the ordering band's job (`docs/plan_standing_upkeep.md` §4.13b).
-    ///
-    /// **A TILE COMMAND, in `cultivate`/`sow`'s own grammar** — `grade <faction> <band> <x> <y>` —
-    /// because a road is a per-tile improvement. It is the same act `cultivate` performs on a patch:
-    /// it declares the job **and** names the keeper, and **one tile has exactly one keeper**, which
-    /// is what makes *"several bands each pay a share"* unrepresentable rather than merely
-    /// discouraged.
-    ///
-    /// **Re-issuing it on a road nobody keeps is ADOPTION**, and deliberately not a second verb.
-    Grade,
-    /// **Route-only.** Pave a graded tile — the route rung-4 verb, and [`Improvement::Grade`]'s twin
-    /// one rung up. It names a keeper on the same terms.
-    Pave,
-    /// **Forestry-only.** Open a felling working on a wood — the forestry rung-2 verb
-    /// (`docs/plan_extraction.md` §4a).
-    ///
-    /// It is what turns gathering deadfall into cutting standing timber, and therefore the rung at
-    /// which **over-cutting becomes possible**: the take is finally fast enough to outpace what the
-    /// wood puts back. The rung below it is free and needs no verb.
-    Fell,
-    /// **Forestry-only.** Bring a wood under management — the forestry rung-3 verb, and
-    /// conservationism expressed mechanically: it raises the deposit's own regrowth
-    /// ([`crate::intensification::RungExtractionPayoff::regrowth_multiplier`]) and never its
-    /// capacity. **You do not get more per turn by cutting harder; you get more per turn for ever by
-    /// managing the wood.**
-    Coppice,
-    /// **Extraction-only.** Open a cut working face — the extraction rung-2 verb
-    /// (`docs/plan_extraction.md` §4b).
-    ///
-    /// **What it buys is REACH, not rate**: a finite deposit has no regrowth to raise, so the rung
-    /// lowers the floor `(1 − recovery) × capacity` instead — the fauna escapement floor upside
-    /// down. And its ground can refuse it, as [`Self::Coppice`]'s can: the tile's
-    /// stone must clear the rung's `min_deposit_capacity`, which is what makes *you cannot quarry
-    /// just anywhere* true with no second mechanism.
-    Quarry,
-}
-
 /// **A floor of `0` — "leave nothing standing."** Named because a bare `0.0` at a comparison site
 /// reads as an absent value rather than as the deliberate instruction it is.
 pub const STRIP_IT_BARE: f32 = 0.0;
@@ -8149,143 +8291,7 @@ pub const STRIP_IT_BARE: f32 = 0.0;
 /// **No improvement in flight** — what a pure harvest passes for the improvement axis. Named because
 /// the take/ceiling seams take it positionally in long argument lists, where a bare `None` says
 /// nothing about which of the two axes it is answering.
-pub const NO_IMPROVEMENT_UNDERWAY: Option<Improvement> = None;
-
-impl Improvement {
-    /// **EVERY BUILD VERB THE GAME HAS**, in `RungKey::ALL`'s idiom and for its reason: a sweep
-    /// that must cover all of them needs something to iterate, and a hand-listed set of names in
-    /// the sweep's own file is a second authority that goes stale the day a verb lands.
-    ///
-    /// ⛔ **IT IS WHAT `every_build_verb_has_a_command_line` WALKS** (issue #650). `fell`, `coppice`
-    /// and `quarry` shipped as variants here, with a [`crate::intensification::RungKey`] apiece and
-    /// a validation arm written for them, and **no command of any kind** — no grammar, no proto
-    /// message, no dispatch. Nothing failed to compile, because a verb nobody sends is a verb
-    /// nothing calls; the feature was simply unreachable. Adding a variant now breaks that test's
-    /// exhaustive match until someone states the line a player types to declare it.
-    pub const ALL: [Improvement; 9] = [
-        Improvement::Cultivate,
-        Improvement::Sow,
-        Improvement::Tame,
-        Improvement::Corral,
-        Improvement::Grade,
-        Improvement::Pave,
-        Improvement::Fell,
-        Improvement::Coppice,
-        Improvement::Quarry,
-    ];
-
-    /// Stable wire/config key — the `as_str` convention every wire enum here uses, and the value
-    /// `LaborAssignmentState.improvement` carries (`""` for [`None`]).
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Improvement::Cultivate => "cultivate",
-            Improvement::Sow => "sow",
-            Improvement::Tame => "tame",
-            Improvement::Corral => "corral",
-            Improvement::Grade => "grade",
-            Improvement::Pave => "pave",
-            Improvement::Fell => "fell",
-            Improvement::Coppice => "coppice",
-            Improvement::Quarry => "quarry",
-        }
-    }
-
-    /// The improvements a **Forage** assignment accepts — the plant branch's two rung-transition
-    /// verbs. Exhaustive rather than a `!matches!` complement so a new verb must **fail to compile**
-    /// here until someone states which web it belongs to; the old hand-written complements defaulted
-    /// a new verb to legal on *both* kinds.
-    pub fn valid_for_forage(self) -> bool {
-        match self {
-            Improvement::Cultivate | Improvement::Sow => true,
-            Improvement::Tame
-            | Improvement::Corral
-            | Improvement::Grade
-            | Improvement::Pave
-            | Improvement::Fell
-            | Improvement::Coppice
-            | Improvement::Quarry => false,
-        }
-    }
-
-    /// The improvements a **Hunt** assignment accepts — the animal branch's two rung-transition
-    /// verbs. The exact twin of [`Improvement::valid_for_forage`], and exhaustive for the same reason.
-    ///
-    /// Note this is the **band's** axis. An *expedition* has no improvement slot **at all** — every
-    /// rung-transition is place-bound work a resident band does, and no `ExpeditionMission` variant
-    /// can name a build verb.
-    pub fn valid_for_hunt(self) -> bool {
-        match self {
-            Improvement::Tame | Improvement::Corral => true,
-            Improvement::Cultivate
-            | Improvement::Sow
-            | Improvement::Grade
-            | Improvement::Pave
-            | Improvement::Fell
-            | Improvement::Coppice
-            | Improvement::Quarry => false,
-        }
-    }
-
-    /// The improvements an **Extract** assignment accepts — the two deposit branches' three
-    /// rung-transition verbs, and the third of the exhaustive trio
-    /// ([`Improvement::valid_for_forage`], [`Improvement::valid_for_hunt`]).
-    ///
-    /// ⛔ **IT EXISTS BECAUSE A DEPOSIT HAS A ROW AND A ROAD DOES NOT**, which is exactly the
-    /// distinction the retired `valid_for_route` gravestone above draws. `grade` and `pave` are
-    /// their own tile commands and reach their handler as literals, so a predicate over them could
-    /// only compare a constant with itself; `fell`, `coppice` and `quarry` are typed **at a
-    /// [`LaborTarget::Extract`] row** in `assign_labor`'s own grammar, exactly as `cultivate` is typed
-    /// at a Forage row — so this one guards a verb the player aimed at the wrong kind of source, and
-    /// it has the callers its siblings have.
-    ///
-    /// **Both branches answer through one predicate**, because one row kind works both: an Extract row
-    /// names a tile and a material, and which ladder that is, is the deposit's
-    /// (`extraction_config::DepositDef::branch`) rather than the row's.
-    pub fn valid_for_extract(self) -> bool {
-        match self {
-            Improvement::Fell | Improvement::Coppice | Improvement::Quarry => true,
-            Improvement::Cultivate
-            | Improvement::Sow
-            | Improvement::Tame
-            | Improvement::Corral
-            | Improvement::Grade
-            | Improvement::Pave => false,
-        }
-    }
-
-    // **RETIRED: `valid_for_route`** — *"may this tile be sent there"*, the intended third of the
-    // exhaustive trio above. **It never had a caller.** Its two siblings guard a verb the player
-    // TYPED against the row it was aimed at (`assign_labor` parses an improvement and must refuse a
-    // `tame` on a patch), and a road has no such row: `grade` and `pave` are their own commands, and
-    // `handle_road_verb` / `road_verb_refusal` receive the `Improvement` as a **literal** from the
-    // dispatch that already knows which verb was typed. So the predicate could only ever compare a
-    // constant with itself — and, being `pub` on a public type, the dead-code lint stayed silent
-    // while the exhaustive-match guard it was added for protected nothing. `RungKey::built_by` is
-    // the real trio-mate: it is exhaustive over the verbs and every route rung goes through it.
-}
-
-impl FromStr for Improvement {
-    type Err = ();
-
-    /// Parse a verb from its wire/config key. **An empty string is an error, not a default** — unlike
-    /// the assignment's floor, which defaults to the food peak because every assignment has *some*
-    /// pressure. An absent improvement is `None`, and the caller says so; there is no "default
-    /// improvement".
-    fn from_str(value: &str) -> Result<Self, Self::Err> {
-        match value.trim().to_ascii_lowercase().as_str() {
-            "cultivate" => Ok(Improvement::Cultivate),
-            "sow" => Ok(Improvement::Sow),
-            "tame" => Ok(Improvement::Tame),
-            "corral" => Ok(Improvement::Corral),
-            "grade" => Ok(Improvement::Grade),
-            "pave" => Ok(Improvement::Pave),
-            "fell" => Ok(Improvement::Fell),
-            "coppice" => Ok(Improvement::Coppice),
-            "quarry" => Ok(Improvement::Quarry),
-            _ => Err(()),
-        }
-    }
-}
+pub const NO_IMPROVEMENT_UNDERWAY: Option<VerbId> = None;
 
 impl Default for PowerNode {
     fn default() -> Self {
@@ -8464,6 +8470,7 @@ mod food_mix_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ladder_ids::shipped;
 
     /// **A COMMITMENT PRUNES THE SELECTION AND NAMES THE NEW CROP** — the repair that keeps a crew
     /// from asking for plants its own `Cultivate`/`Sow` displaced, which is a zero selected share
@@ -8759,7 +8766,7 @@ mod tests {
     fn queued_on(tile: bevy::math::UVec2) -> BuildQueueEntry {
         BuildQueueEntry {
             source: BuildSource::Patch(tile),
-            declared: BuildJob::Rung(Improvement::Cultivate),
+            declared: BuildJob::Climb(shipped::plant_tended()),
             priority: SourcePriority::default(),
         }
     }
@@ -9980,38 +9987,22 @@ mod tests {
     // `set_assignment`'s own headroom test is the whole enforcement now, and
     // `a_maintenance_role_is_an_ordinary_row_the_pool_counts` above pins it for a role.
 
-    /// **Kind-exclusivity, pinned.** Every [`Improvement`] is place-bound work on ONE food web
-    /// (`Cultivate`/`Sow` prepare ground; `Tame`/`Corral` work a herd) — never both, and never
-    /// neither. Both predicates are exhaustive matches, so a new verb fails to compile until someone
-    /// states its web; this catches a verb whose two arms *agree*.
+    /// **Kind-exclusivity, pinned.** Every verb the ladder defines builds on a source kind, and the
+    /// kind is the *branch's* declaration read from the ladder - never a per-verb match.
     #[test]
-    fn every_improvement_is_legal_on_exactly_one_food_web() {
-        for improvement in [
-            Improvement::Cultivate,
-            Improvement::Sow,
-            Improvement::Tame,
-            Improvement::Corral,
-        ] {
-            assert_ne!(
-                improvement.valid_for_forage(),
-                improvement.valid_for_hunt(),
-                "{improvement:?} is a rung-transition verb — it must be legal on exactly ONE kind"
+    fn every_verb_is_legal_on_exactly_one_source_kind() {
+        let ladder = crate::intensification::LadderConfig::builtin();
+        let verbs: Vec<VerbId> = ladder
+            .rungs
+            .iter()
+            .filter_map(crate::intensification::RungDef::verb_id)
+            .collect();
+        assert!(!verbs.is_empty(), "the shipped ladder defines build verbs");
+        for verb in verbs {
+            assert!(
+                ladder.verb_source_kind(verb).is_some(),
+                "{verb} is a rung-transition verb - the ladder must say what it builds on"
             );
-            // The wire key round-trips, so a snapshot's `improvement` string rebuilds the same verb.
-            assert_eq!(
-                improvement.as_str().parse::<Improvement>(),
-                Ok(improvement),
-                "{improvement:?}'s wire key must parse back to it"
-            );
-        }
-        // An absent improvement is `None`, never a defaulted verb: unlike the floor, which has a
-        // default (the food peak), there is no "default improvement".
-        assert_eq!("".parse::<Improvement>(), Err(()));
-        // **A retired stance token is not a build verb either.** The four names the harvest floor
-        // replaced are refused at the command boundary (`sim_runtime`'s `reject_retired_stance`);
-        // this pins that a stale client's token cannot fall through into the OTHER axis instead.
-        for retired in ["sustain", "surplus", "deplete", "eradicate"] {
-            assert_eq!(retired.parse::<Improvement>(), Err(()));
         }
     }
 
@@ -10087,14 +10078,14 @@ mod tests {
         let source = BuildSource::Patch(tile);
         let mut allocation = LaborAllocation::default();
         allocation.set_assignment(sustain.clone(), 4, 10, None);
-        assert!(allocation.enqueue_build(source.clone(), BuildJob::Rung(Improvement::Cultivate)));
+        assert!(allocation.enqueue_build(source.clone(), BuildJob::Climb(shipped::plant_tended())));
 
         // Re-staffing the same source: the declaration survives, and so does its place in the line.
         allocation.set_assignment(sustain.clone(), 2, 10, None);
         assert_eq!(allocation.assignments[0].workers, 2);
         assert_eq!(
             allocation.build_queue_entry(&source).map(|e| e.declared),
-            Some(BuildJob::Rung(Improvement::Cultivate)),
+            Some(BuildJob::Climb(shipped::plant_tended())),
             "changing the crew must not abandon the build"
         );
 
@@ -10122,7 +10113,7 @@ mod tests {
         );
 
         // **RE-ISSUING A VERB KEEPS THE ENTRY'S PLACE**, and `unqueue` is the undo.
-        assert!(allocation.enqueue_build(source.clone(), BuildJob::Rung(Improvement::Sow)));
+        assert!(allocation.enqueue_build(source.clone(), BuildJob::Climb(shipped::plant_farm())));
         assert_eq!(allocation.build_queue_position(&source), Some(0));
         assert!(allocation.unqueue_build(&source));
         assert_eq!(allocation.build_queue_position(&source), None);
@@ -10804,5 +10795,196 @@ mod tests {
             "the plan went with the flag"
         );
         assert_eq!(board.followed_herd(), None);
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // Whole-kit orders (#780): the grouped bench orders and their contiguity invariant.
+    // ---------------------------------------------------------------------------------------
+
+    const KIT: &str = "big_game";
+    const KIT_COUNT: u32 = 6;
+
+    fn parts(list: &[(&str, u32)]) -> Vec<(String, u32)> {
+        list.iter().map(|(id, n)| (id.to_string(), *n)).collect()
+    }
+
+    /// The queue as `recipe[#kit_order]` words, head first.
+    fn queue_shape(bench: &BandBench) -> Vec<String> {
+        bench
+            .orders
+            .iter()
+            .map(|order| match order.kit_order {
+                NOT_A_KIT_PART => order.recipe_id.clone(),
+                id => format!("{}#{id}", order.recipe_id),
+            })
+            .collect()
+    }
+
+    /// **A kit order's parts are appended contiguously at the back, tagged, and recorded once;**
+    /// a zero-count part is omitted and an empty list is an error.
+    #[test]
+    fn enqueue_kit_appends_the_parts_together_and_records_the_kit_order() {
+        let mut bench = BandBench::default();
+        bench.enqueue("plain", 1);
+        let id = bench
+            .enqueue_kit(
+                KIT,
+                KIT_COUNT,
+                parts(&[("spears", 2), ("skipped", 0), ("sled", 1)]),
+            )
+            .expect("a kit order with parts queues");
+        assert_eq!(id, 1, "ids start at 1");
+        assert_eq!(queue_shape(&bench), ["plain", "spears#1", "sled#1"]);
+        assert_eq!(
+            bench.kit_orders,
+            vec![KitOrder {
+                id: 1,
+                kit_id: KIT.to_string(),
+                kits: KIT_COUNT,
+                done: 0
+            }]
+        );
+        assert_eq!(
+            bench.enqueue_kit(KIT, KIT_COUNT, parts(&[("sled", 0)])),
+            Err(BenchQueueError::EmptyKitOrder),
+            "nothing but zero counts is an empty order"
+        );
+        assert_eq!(
+            bench.enqueue_kit(KIT, KIT_COUNT, Vec::new()),
+            Err(BenchQueueError::EmptyKitOrder)
+        );
+        assert_eq!(bench.kit_orders.len(), 1, "a refused order records nothing");
+        let second = bench
+            .enqueue_kit(KIT, KIT_COUNT, parts(&[("sled", 1)]))
+            .unwrap();
+        assert_eq!(second, 2, "ids are never reused");
+    }
+
+    /// **A plain order raised over a kit block jumps the whole block;** a part cannot be raised on
+    /// its own.
+    #[test]
+    fn raising_a_plain_order_jumps_the_whole_kit_block_and_a_part_is_refused() {
+        let mut bench = BandBench::default();
+        bench
+            .enqueue_kit(KIT, KIT_COUNT, parts(&[("spears", 2), ("sled", 1)]))
+            .unwrap();
+        bench.enqueue("plain", 1);
+        assert_eq!(queue_shape(&bench), ["spears#1", "sled#1", "plain"]);
+        bench.raise_order(2).expect("the plain order raises");
+        assert_eq!(
+            queue_shape(&bench),
+            ["plain", "spears#1", "sled#1"],
+            "it jumped the block, which stayed contiguous"
+        );
+        assert_eq!(
+            bench.raise_order(2),
+            Err(BenchQueueError::KitPartCannotMove),
+            "a part cannot be raised alone"
+        );
+        assert_eq!(
+            bench.raise_order(1),
+            Err(BenchQueueError::KitPartCannotMove)
+        );
+        assert_eq!(queue_shape(&bench), ["plain", "spears#1", "sled#1"]);
+    }
+
+    /// **`raise_kit` moves the whole block over the single order or the whole kit block above it,**
+    /// and is refused at the head.
+    #[test]
+    fn raise_kit_moves_the_block_above_a_single_order_or_another_kit() {
+        let mut bench = BandBench::default();
+        bench.enqueue("plain", 1);
+        bench
+            .enqueue_kit(KIT, KIT_COUNT, parts(&[("spears", 2), ("sled", 1)]))
+            .unwrap();
+        bench
+            .enqueue_kit("trapping", KIT_COUNT, parts(&[("traps", 3)]))
+            .unwrap();
+        assert_eq!(
+            queue_shape(&bench),
+            ["plain", "spears#1", "sled#1", "traps#2"]
+        );
+        bench.raise_kit(2).unwrap();
+        assert_eq!(
+            queue_shape(&bench),
+            ["plain", "traps#2", "spears#1", "sled#1"],
+            "the second kit jumped the first kit's whole block"
+        );
+        bench.raise_kit(1).unwrap();
+        assert_eq!(
+            queue_shape(&bench),
+            ["plain", "spears#1", "sled#1", "traps#2"]
+        );
+        bench.raise_kit(1).unwrap();
+        assert_eq!(
+            queue_shape(&bench),
+            ["spears#1", "sled#1", "plain", "traps#2"],
+            "the kit jumped the single order"
+        );
+        assert_eq!(bench.raise_kit(1), Err(BenchQueueError::AlreadyAtHead));
+        assert_eq!(
+            bench.raise_kit(9),
+            Err(BenchQueueError::NoSuchKitOrder { id: 9 })
+        );
+    }
+
+    /// **`remove_kit` takes every part and drops the kit order;** a drawn pile is lost exactly as a
+    /// single removal loses it, and the other orders are untouched.
+    #[test]
+    fn remove_kit_takes_every_part_and_drops_the_record() {
+        let mut bench = BandBench::default();
+        bench.enqueue("plain", 1);
+        bench
+            .enqueue_kit(KIT, KIT_COUNT, parts(&[("spears", 2), ("sled", 1)]))
+            .unwrap();
+        bench.orders[1].drawn = Some(DrawnInputs {
+            reading: None,
+            grade: None,
+            withdrawn: Vec::new(),
+        });
+        let removed = bench.remove_kit(1).expect("the kit order is on the queue");
+        assert_eq!(removed.len(), 2);
+        assert!(removed[0].drawn.is_some(), "the drawn pile went with it");
+        assert_eq!(queue_shape(&bench), ["plain"]);
+        assert!(bench.kit_orders.is_empty());
+        assert_eq!(
+            bench.remove_kit(1),
+            Err(BenchQueueError::NoSuchKitOrder { id: 1 })
+        );
+    }
+
+    /// **A finished part adds its `made` to the kit order's `done`; the kit order is dropped the
+    /// moment no part carries its id** — finishing the last part, or removing the last part singly.
+    #[test]
+    fn done_accumulates_as_parts_finish_and_the_kit_order_drops_with_its_last_part() {
+        let mut bench = BandBench::default();
+        bench
+            .enqueue_kit(KIT, KIT_COUNT, parts(&[("spears", 2), ("sled", 1)]))
+            .unwrap();
+        assert!(!bench.complete_item(0), "one of two spears");
+        assert_eq!(
+            bench.kit_orders[0].done, 0,
+            "an unfinished part reports its own made"
+        );
+        assert!(bench.complete_item(0), "the spears part is done and leaves");
+        assert_eq!(
+            bench.kit_orders[0].done, 2,
+            "the finished part's made is banked"
+        );
+        assert_eq!(queue_shape(&bench), ["sled#1"]);
+        assert!(bench.complete_item(0));
+        assert!(
+            bench.kit_orders.is_empty(),
+            "the last part finished: the kit order is gone"
+        );
+
+        // Removing the parts one by one (the well's x) drops the record with the last one.
+        bench
+            .enqueue_kit(KIT, KIT_COUNT, parts(&[("spears", 2), ("sled", 1)]))
+            .unwrap();
+        bench.remove_order(0).unwrap();
+        assert_eq!(bench.kit_orders.len(), 1, "one part still carries the id");
+        bench.remove_order(0).unwrap();
+        assert!(bench.kit_orders.is_empty());
     }
 }

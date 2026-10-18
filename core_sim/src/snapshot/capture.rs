@@ -81,6 +81,7 @@ pub struct SnapshotContext<'w> {
     pub victory: Res<'w, VictoryState>,
     pub faction_inventory: Res<'w, FactionInventory>,
     pub sedentarization: Res<'w, SedentarizationScore>,
+    pub mobility: Res<'w, crate::mobility::MobilityScore>,
     pub discovered_sites: Res<'w, DiscoveredSites>,
     pub sites_config: Res<'w, SitesConfigHandle>,
     pub food_sites: Res<'w, FoodSiteRegistry>,
@@ -100,6 +101,9 @@ pub struct SnapshotContext<'w> {
     /// Every road in the world. Published filtered to the roads the viewer has explored; the
     /// checkpoint carries the ledger itself.
     pub roads: Res<'w, crate::routes::RoadRegistry>,
+    /// Every improvement on a tile-kind branch. Published filtered to the tiles the viewer has
+    /// explored; the checkpoint carries the registry itself.
+    pub tile_improvements: Res<'w, crate::tile_improvement::TileImprovementRegistry>,
     /// Every live working on a deposit. Published filtered to the workings the viewer has explored;
     /// the checkpoint carries the registry itself. **Sparse and lazy** — a working exists only from
     /// the turn a band first put a crew on it.
@@ -164,6 +168,12 @@ pub struct SnapshotContext<'w> {
     /// cohort row. `Option` so a hand-rolled capture world that never installed it publishes no
     /// reading.
     pub hearts: Option<Res<'w, crate::systems::HeartLedger>>,
+    /// Every band's standing under another people's culture pull (`systems::culture_pressure`),
+    /// published on its cohort row. `Option` for `hearts`' reason.
+    pub culture_pressure: Option<Res<'w, crate::systems::CulturePressureLedger>>,
+    /// The culture levers: the joining clock's length, which the `turnsToNext` readout counts down.
+    pub culture_config:
+        Option<Res<'w, crate::culture_corruption_config::CultureCorruptionConfigHandle>>,
     pub pipeline_config: Res<'w, TurnPipelineConfigHandle>,
     /// How to write the capture result: record a new ring entry (turn path) or refresh the latest
     /// broadcast in place (post-command re-capture). Bundled here to keep `capture_snapshot` within
@@ -308,6 +318,7 @@ pub(crate) struct SeatPublishState {
     goodwill: Whole<Vec<GoodwillState>>,
     own_goodwill: Whole<Vec<GoodwillState>>,
     goodwill_cuts: Whole<GoodwillCutsState>,
+    tile_improvements: Whole<Vec<TileImprovementState>>,
     demographics: Whole<Vec<SchemaPopulationDemographicsState>>,
     forage_patches: Whole<Vec<ForagePatchState>>,
     /// The live workings, diffed as a whole vector exactly like [`Self::forage_patches`].
@@ -371,10 +382,12 @@ pub(crate) struct SeatPublishState {
     craft_knowledge: Whole<Vec<CraftKnowledgeState>>,
     /// The route branch's rung catalog — a per-world constant, diffed out on every frame after the
     /// first exactly as the ladder's knowledge roster is.
-    route_rungs: Whole<Vec<RouteRungState>>,
+    ladder_rungs: Whole<Vec<LadderRungState>>,
     /// The two deposit branches' rung catalog — the same kind of per-world constant, on the same
     /// seam.
-    deposit_rungs: Whole<Vec<DepositRungState>>,
+    ladder_branches: Whole<Vec<LadderBranchState>>,
+    /// The mobility score, per faction (#800) - `sedentarization`'s roaming counterpart.
+    mobility: Whole<Vec<SchemaMobilityState>>,
     history: VecDeque<StoredSnapshot>,
 }
 
@@ -684,6 +697,7 @@ struct CampaignParts {
     goodwill: Option<Vec<GoodwillState>>,
     own_goodwill: Option<Vec<GoodwillState>>,
     goodwill_cuts: Option<GoodwillCutsState>,
+    tile_improvements: Option<Vec<TileImprovementState>>,
     demographics: Option<Vec<SchemaPopulationDemographicsState>>,
     intensification_knowledge: Option<Vec<IntensificationKnowledgeState>>,
     ladder_knowledge: Option<Vec<LadderKnowledgeState>>,
@@ -715,6 +729,7 @@ struct CampaignBaselines<'a> {
     goodwill: &'a mut Whole<Vec<GoodwillState>>,
     own_goodwill: &'a mut Whole<Vec<GoodwillState>>,
     goodwill_cuts: &'a mut Whole<GoodwillCutsState>,
+    tile_improvements: &'a mut Whole<Vec<TileImprovementState>>,
     demographics: &'a mut Whole<Vec<SchemaPopulationDemographicsState>>,
     intensification_knowledge: &'a mut Whole<Vec<IntensificationKnowledgeState>>,
     ladder_knowledge: &'a mut Whole<Vec<LadderKnowledgeState>>,
@@ -765,6 +780,11 @@ fn diff_campaign(
         goodwill: diff_whole(baseline.goodwill, &snapshot.goodwill, write),
         own_goodwill: diff_whole(baseline.own_goodwill, &snapshot.own_goodwill, write),
         goodwill_cuts: diff_whole(baseline.goodwill_cuts, &snapshot.goodwill_cuts, write),
+        tile_improvements: diff_whole(
+            baseline.tile_improvements,
+            &snapshot.tile_improvements,
+            write,
+        ),
         demographics: diff_whole(baseline.demographics, &snapshot.demographics, write),
         intensification_knowledge: diff_whole(
             baseline.intensification_knowledge,
@@ -798,8 +818,9 @@ struct SubsistenceParts {
     characteristic_bands: Option<Vec<CharacteristicBandState>>,
     recipes: Option<Vec<RecipeDefState>>,
     craft_knowledge: Option<Vec<CraftKnowledgeState>>,
-    route_rungs: Option<Vec<RouteRungState>>,
-    deposit_rungs: Option<Vec<DepositRungState>>,
+    ladder_rungs: Option<Vec<LadderRungState>>,
+    ladder_branches: Option<Vec<LadderBranchState>>,
+    mobility: Option<Vec<SchemaMobilityState>>,
 }
 
 /// Fauna and flora: the herd roster, the forage patches, and the food-module map.
@@ -821,8 +842,9 @@ fn diff_subsistence(
     characteristic_bands: &mut Whole<Vec<CharacteristicBandState>>,
     recipes: &mut Whole<Vec<RecipeDefState>>,
     craft_knowledge: &mut Whole<Vec<CraftKnowledgeState>>,
-    route_rungs: &mut Whole<Vec<RouteRungState>>,
-    deposit_rungs: &mut Whole<Vec<DepositRungState>>,
+    ladder_rungs: &mut Whole<Vec<LadderRungState>>,
+    ladder_branches: &mut Whole<Vec<LadderBranchState>>,
+    mobility: &mut Whole<Vec<SchemaMobilityState>>,
     snapshot: &WorldSnapshot,
     write: Baseline,
 ) -> SubsistenceParts {
@@ -871,8 +893,9 @@ fn diff_subsistence(
         ),
         recipes: diff_whole(recipes, &snapshot.recipes, write),
         craft_knowledge: diff_whole(craft_knowledge, &snapshot.craft_knowledge, write),
-        route_rungs: diff_whole(route_rungs, &snapshot.route_rungs, write),
-        deposit_rungs: diff_whole(deposit_rungs, &snapshot.deposit_rungs, write),
+        ladder_rungs: diff_whole(ladder_rungs, &snapshot.ladder_rungs, write),
+        ladder_branches: diff_whole(ladder_branches, &snapshot.ladder_branches, write),
+        mobility: diff_whole(mobility, &snapshot.mobility, write),
     }
 }
 
@@ -996,6 +1019,7 @@ impl SeatPublishState {
             goodwill: Whole::default(),
             own_goodwill: Whole::default(),
             goodwill_cuts: Whole::default(),
+            tile_improvements: Whole::default(),
             demographics: Whole::default(),
             forage_patches: Whole::default(),
             deposits: Whole::default(),
@@ -1020,8 +1044,9 @@ impl SeatPublishState {
             characteristic_bands: Whole::default(),
             recipes: Whole::default(),
             craft_knowledge: Whole::default(),
-            route_rungs: Whole::default(),
-            deposit_rungs: Whole::default(),
+            ladder_rungs: Whole::default(),
+            ladder_branches: Whole::default(),
+            mobility: Whole::default(),
             default_hunt_kit_id: Whole::default(),
             default_forage_kit_id: Whole::default(),
             default_scout_kit_id: Whole::default(),
@@ -1170,6 +1195,7 @@ impl SeatPublishState {
             goodwill,
             own_goodwill,
             goodwill_cuts,
+            tile_improvements,
             demographics,
             intensification_knowledge,
             ladder_knowledge,
@@ -1184,8 +1210,9 @@ impl SeatPublishState {
             characteristic_bands,
             recipes,
             craft_knowledge,
-            route_rungs,
-            deposit_rungs,
+            ladder_rungs,
+            ladder_branches,
+            mobility,
             default_hunt_kit_id,
             default_forage_kit_id,
             default_scout_kit_id,
@@ -1296,6 +1323,7 @@ impl SeatPublishState {
                             goodwill,
                             own_goodwill,
                             goodwill_cuts,
+                            tile_improvements,
                             demographics,
                             intensification_knowledge,
                             ladder_knowledge,
@@ -1324,8 +1352,9 @@ impl SeatPublishState {
                         characteristic_bands,
                         recipes,
                         craft_knowledge,
-                        route_rungs,
-                        deposit_rungs,
+                        ladder_rungs,
+                        ladder_branches,
+                        mobility,
                         captured,
                         write,
                     )
@@ -1411,6 +1440,7 @@ impl SeatPublishState {
             goodwill: campaign_parts.goodwill,
             own_goodwill: campaign_parts.own_goodwill,
             goodwill_cuts: campaign_parts.goodwill_cuts,
+            tile_improvements: campaign_parts.tile_improvements,
             demographics: campaign_parts.demographics,
             intensification_knowledge: campaign_parts.intensification_knowledge,
             ladder_knowledge: campaign_parts.ladder_knowledge,
@@ -1425,8 +1455,9 @@ impl SeatPublishState {
             characteristic_bands: subsistence_parts.characteristic_bands,
             recipes: subsistence_parts.recipes,
             craft_knowledge: subsistence_parts.craft_knowledge,
-            route_rungs: subsistence_parts.route_rungs,
-            deposit_rungs: subsistence_parts.deposit_rungs,
+            ladder_rungs: subsistence_parts.ladder_rungs,
+            ladder_branches: subsistence_parts.ladder_branches,
+            mobility: subsistence_parts.mobility,
             default_hunt_kit_id: subsistence_parts.default_hunt_kit_id,
             default_forage_kit_id: subsistence_parts.default_forage_kit_id,
             default_scout_kit_id: subsistence_parts.default_scout_kit_id,
@@ -1623,6 +1654,8 @@ impl SeatPublishState {
         self.own_goodwill.reset(entry.snapshot.own_goodwill.clone());
         self.goodwill_cuts
             .reset(entry.snapshot.goodwill_cuts.clone());
+        self.tile_improvements
+            .reset(entry.snapshot.tile_improvements.clone());
         self.demographics.reset(entry.snapshot.demographics.clone());
         self.forage_patches
             .reset(entry.snapshot.forage_patches.clone());
@@ -1666,9 +1699,10 @@ impl SeatPublishState {
         self.recipes.reset(entry.snapshot.recipes.clone());
         self.craft_knowledge
             .reset(entry.snapshot.craft_knowledge.clone());
-        self.route_rungs.reset(entry.snapshot.route_rungs.clone());
-        self.deposit_rungs
-            .reset(entry.snapshot.deposit_rungs.clone());
+        self.ladder_rungs.reset(entry.snapshot.ladder_rungs.clone());
+        self.ladder_branches
+            .reset(entry.snapshot.ladder_branches.clone());
+        self.mobility.reset(entry.snapshot.mobility.clone());
         self.default_hunt_kit_id
             .reset(entry.snapshot.default_hunt_kit_id.clone());
         self.default_forage_kit_id
@@ -1841,8 +1875,9 @@ impl SeatPublishState {
             characteristic_bands: None,
             recipes: None,
             craft_knowledge: None,
-            route_rungs: None,
-            deposit_rungs: None,
+            ladder_rungs: None,
+            ladder_branches: None,
+            mobility: None,
             default_hunt_kit_id: None,
             default_forage_kit_id: None,
             default_scout_kit_id: None,
@@ -1862,6 +1897,7 @@ impl SeatPublishState {
             goodwill: None,
             own_goodwill: None,
             goodwill_cuts: None,
+            tile_improvements: None,
             demographics: None,
             forage_patches: None,
             deposits: None,
@@ -1996,8 +2032,9 @@ impl SeatPublishState {
             characteristic_bands: None,
             recipes: None,
             craft_knowledge: None,
-            route_rungs: None,
-            deposit_rungs: None,
+            ladder_rungs: None,
+            ladder_branches: None,
+            mobility: None,
             default_hunt_kit_id: None,
             default_forage_kit_id: None,
             default_scout_kit_id: None,
@@ -2017,6 +2054,7 @@ impl SeatPublishState {
             goodwill: None,
             own_goodwill: None,
             goodwill_cuts: None,
+            tile_improvements: None,
             demographics: None,
             forage_patches: None,
             deposits: None,
@@ -2135,8 +2173,9 @@ impl SeatPublishState {
             characteristic_bands: None,
             recipes: None,
             craft_knowledge: None,
-            route_rungs: None,
-            deposit_rungs: None,
+            ladder_rungs: None,
+            ladder_branches: None,
+            mobility: None,
             default_hunt_kit_id: None,
             default_forage_kit_id: None,
             default_scout_kit_id: None,
@@ -2156,6 +2195,7 @@ impl SeatPublishState {
             goodwill: None,
             own_goodwill: None,
             goodwill_cuts: None,
+            tile_improvements: None,
             demographics: None,
             forage_patches: None,
             deposits: None,
@@ -2722,6 +2762,7 @@ pub fn capture_snapshot(
         victory,
         faction_inventory,
         sedentarization,
+        mobility,
         discovered_sites,
         sites_config,
         food_sites,
@@ -2732,6 +2773,7 @@ pub fn capture_snapshot(
         knowledge_tags,
         knowledge_contact,
         roads,
+        tile_improvements,
         deposits,
         extraction,
         tile_registry,
@@ -2754,10 +2796,19 @@ pub fn capture_snapshot(
         supply_membership,
         supply_network,
         hearts,
+        culture_pressure,
+        culture_config,
         pipeline_config,
         capture_mode,
     } = ctx;
     let overlays_config = overlays.get();
+    // The joining clock's length (`culture.joining.turns`), for each cohort's `turnsToNext`. A
+    // hand-rolled capture world with no handle reads the builtin.
+    let culture_levers = culture_config.map_or_else(
+        crate::culture_corruption_config::CultureCorruptionConfigHandle::load_builtin,
+        |handle| handle.clone(),
+    );
+    let joining_levers = culture_levers.config().culture().joining().clone();
 
     let population_cfg = pipeline_config.config().population();
     // Same place-based morale config the sim uses, so `habitability` matches the applied drain.
@@ -2783,7 +2834,7 @@ pub fn capture_snapshot(
     // Forage arm of `advance_labor_allocation` folds into `forage_take`'s worker cap. The forage
     // patch forecast (below) needs it to report a per-worker yield that matches what the sim pays.
     let mut seasonal_weights: HashMap<UVec2, f32> = HashMap::new();
-    // Per-tile terrain tags, grid-indexed — what the fresh-water half of the `plant:field` rung's
+    // Per-tile terrain tags, grid-indexed — what the fresh-water half of the `plant:farm` rung's
     // site rule reads about a tile's NEIGHBOURS (`forage::tile_is_fresh_watered`). Collected in this
     // pass so the patch sweep below reads a finished grid rather than walking the world again.
     let mut tile_tags = TerrainTagGrid::new(config.grid_size);
@@ -2827,7 +2878,7 @@ pub fn capture_snapshot(
     // than a wrapping block so the (long) composition closure below keeps its indentation.
     //
     // **Why the ground under each patch will not take seed** (`sow_site_refusals`) — the
-    // `plant:field` rung's own `site_requirement`, resolved through the SAME
+    // `plant:farm` rung's own `site_requirement`, resolved through the SAME
     // `RungSiteRequirement::refusal` seam the `sow` command (`validate_sow`) and the labor arm's
     // placement gate use, so the wire, the rejection and the sim can never disagree about which
     // ground is farmable. Only refusals are stored: a coord absent from the map is ground that takes
@@ -2847,10 +2898,48 @@ pub fn capture_snapshot(
     // tile it is looking at, and a patch is on every food-bearing tile there is (see
     // core_sim/CLAUDE.md → the Field).
     let patches_scope = crate::turn_profile::scope("snapshot.build.patches");
-    let field_rung = ladder_config.rung(RungKey::PlantField);
+    // **Every plant rung that gates on the ground** - the ones whose `site_requirement` can refuse a
+    // tile. Found by asking the ladder, never by naming a rung, so a fourth step with a requirement
+    // of its own is refused on the wire the moment it is configured.
+    let site_gated_rungs: Vec<&crate::intensification::RungDef> = ladder_config
+        .rungs_of(ladder_config.branch_of_kind(crate::intensification::SourceKind::Patch))
+        .into_iter()
+        .filter(|rung| rung.site_requirement.is_some())
+        .collect();
     let grid = config.grid_size;
     let wrap_horizontal = config.map_topology.wrap_horizontal;
-    let mut sow_site_refusals: HashMap<UVec2, SiteRefusal> = HashMap::new();
+    // **A refusal is a fact about a TILE AND A PEOPLE**: a rung's `site_relaxations` loosen its site
+    // rule for a faction that holds the lesson, so the wire's refusal differs between viewers. The
+    // sweep therefore runs once per DISTINCT set of held site lessons among the audiences (almost
+    // always one), and each viewer's pass reads the set it holds.
+    let held_site_lessons = |faction: FactionId| -> Vec<&str> {
+        ladder_config
+            .rungs
+            .iter()
+            .flat_map(|rung| rung.site_relaxations.iter())
+            .map(|relaxation| relaxation.knowledge.as_str())
+            .filter(|name| {
+                crate::intensification::knows_lesson(
+                    &discovery_progress,
+                    faction,
+                    name,
+                    ladder_config.knowledge.completion_threshold,
+                )
+            })
+            .collect()
+    };
+    let mut lesson_sets: Vec<Vec<&str>> = audiences
+        .capture_list(viewer_faction.0)
+        .into_iter()
+        .map(held_site_lessons)
+        .collect();
+    lesson_sets.sort();
+    lesson_sets.dedup();
+    let mut rung_site_refusals: HashMap<Vec<&str>, HashMap<(UVec2, RungId), SiteRefusal>> =
+        lesson_sets
+            .iter()
+            .map(|set| (set.clone(), HashMap::new()))
+            .collect();
     // **The size of the land under each patch** — the tile's own forage `K`, through the one
     // `forage::tile_forage_capacity` seam. Every plant upkeep figure the patch row publishes is
     // quoted per **tender-load** of it (`forage::patch_tender_loads`), the plant twin of a herd's
@@ -2872,17 +2961,23 @@ pub fn capture_snapshot(
         let fresh_water = tile_is_fresh_watered(tile, grid.x, grid.y, wrap_horizontal, |coord| {
             tile_tags.get(coord)
         });
-        if let Some(refusal) = rung_site_refusal(
-            field_rung,
-            tile,
-            &labor_config.forage,
-            food_sites.is_site(tile.position),
-            fresh_water,
-            // **A plant rung asks nothing of a deposit**, so the term cannot refuse it: every rung
-            // off the two deposit branches leaves `min_deposit_capacity` at this neutral.
-            crate::intensification::NO_DEPOSIT_FLOOR,
-        ) {
-            sow_site_refusals.insert(tile.position, refusal);
+        for (lessons, refusals) in &mut rung_site_refusals {
+            for rung in &site_gated_rungs {
+                if let Some(refusal) = rung_site_refusal(
+                    rung,
+                    tile,
+                    &labor_config.forage,
+                    food_sites.is_site(tile.position),
+                    fresh_water,
+                    // **A plant rung asks nothing of a deposit**, so the term cannot refuse it:
+                    // every rung off the two deposit branches leaves `min_deposit_capacity` at this
+                    // neutral.
+                    crate::intensification::NO_DEPOSIT_FLOOR,
+                    &|name| lessons.contains(&name),
+                ) {
+                    refusals.insert((tile.position, rung.rung_id()), refusal);
+                }
+            }
         }
         flora_sweep.quotes(tile);
     }
@@ -3348,6 +3443,16 @@ pub fn capture_snapshot(
                         heart: band_id.and_then(|band| {
                             hearts.as_deref().and_then(|ledger| ledger.reading(*band))
                         }),
+                        culture_pressures: band_id
+                            .zip(culture_pressure.as_deref())
+                            .map(|(band, ledger)| {
+                                crate::snapshot::population::culture_pressure_rows(
+                                    ledger,
+                                    *band,
+                                    &joining_levers,
+                                )
+                            })
+                            .unwrap_or_default(),
                         // **This band's faction decides which crafts are known**, so the memo is keyed
                         // per faction and resolved lazily — one entry per faction that owns a band,
                         // not one per band.
@@ -3804,6 +3909,21 @@ pub fn capture_snapshot(
                 .filter(|(_, cohort, ..)| cohort.faction == viewer)
                 .filter_map(|(_, _, allocation, ..)| allocation),
         );
+        // **Every faction's camps** (the tiles its resident bands stand on) - what a pastoral herd's
+        // `K` is struck over, the same list `advance_herds` steers `drift_to_owner` by.
+        let mut owner_camps: std::collections::BTreeMap<FactionId, Vec<UVec2>> =
+            std::collections::BTreeMap::new();
+        for (entity, cohort, ..) in populations.iter() {
+            if !resident_bands.contains(entity) {
+                continue;
+            }
+            if let Some(position) = tile_positions.get(&cohort.current_tile.to_bits()) {
+                owner_camps
+                    .entry(cohort.faction)
+                    .or_default()
+                    .push(*position);
+            }
+        }
         let herd_states = herd_snapshot_entries(HerdSnapshotInputs {
             current_turn: tick.0,
             telemetry: &herds,
@@ -3822,6 +3942,7 @@ pub fn capture_snapshot(
             // **The graze layer the destination-capacity quote is struck over** — the same registry the
             // live `K` is summed from, so the two are one seam at two standings.
             graze: &graze_registry,
+            owner_camps: &owner_camps,
             visibility: &visibility_ledger,
             viewer,
             herd_lore_known: crate::intensification::knows(
@@ -3948,9 +4069,9 @@ pub fn capture_snapshot(
                 || {
                     crate::diplomacy_config::DiplomacyConfig::builtin()
                         .offers
-                        .standing_link_floor()
+                        .standing_link_floor(&ladder_config)
                 },
-                |handle| handle.get().offers.standing_link_floor(),
+                |handle| handle.get().offers.standing_link_floor(&ladder_config),
             );
             let bands: Vec<(BandId, FactionId, UVec2)> = populations
                 .iter()
@@ -3995,6 +4116,17 @@ pub fn capture_snapshot(
                 .map(|handle| handle.get())
                 .unwrap_or_else(crate::diplomacy_config::DiplomacyConfig::builtin),
         );
+        // **THE TILE IMPROVEMENTS THE VIEWER HAS EXPLORED** - the road list's gate, for the road's
+        // reason: an improvement is in the ground and does not wander off. The builder's scratch is
+        // withheld unless one of the viewer's own bands has it queued.
+        let tile_improvement_states = crate::snapshot::routes::tile_improvement_states(
+            &tile_improvements,
+            &visibility_ledger,
+            viewer,
+            config.fog_enabled,
+            &ladder_config,
+            &build_kit_ids,
+        );
         // **THE DEPOSITS THE VIEWER HAS EXPLORED** — the road list's `Discovered` gate, because a
         // quarry does not wander off either, over the deposit-bearing ground sweep 1 picked out. See
         // `snapshot::deposits::deposit_states`: a row is about the LAND, so it stands whether or not
@@ -4027,7 +4159,9 @@ pub fn capture_snapshot(
             &flora_config,
             &ladder_config,
             &seasonal_weights,
-            &sow_site_refusals,
+            rung_site_refusals
+                .get(&held_site_lessons(viewer))
+                .expect("every audience's lesson set was swept"),
             &tile_capacities,
             &flora_quotes,
             &build_kit_ids,
@@ -4045,12 +4179,12 @@ pub fn capture_snapshot(
         // **THE SUBJECT AREAS' DISPLAY ORDER** — beside the roster and on the same per-world seam,
         // published rather than inferred from the rows (see `snapshot_ladder_areas`).
         let ladder_areas_state = snapshot_ladder_areas(&ladder_config);
-        // **THE ROUTE BRANCH'S RUNG CATALOG** — what a road may become, beside what there is to learn.
-        // A per-world constant like the roster above, so it diffs out after the first frame.
-        let route_rung_state = snapshot_route_rungs(&ladder_config);
-        // **THE TWO DEPOSIT BRANCHES' RUNG CATALOG** — what a wood or a rock body may become, on the
-        // same per-world seam as the route catalog above, so it likewise diffs out after the first frame.
-        let deposit_rung_state = snapshot_deposit_rungs(&ladder_config);
+        // **THE LADDER'S RUNG CATALOG AND ITS BRANCHES** - what any source may become, beside what
+        // there is to learn. Per-world constants like the roster above, so they diff out after the
+        // first frame.
+        let ladder_rung_state = snapshot_ladder_rungs(&ladder_config);
+        let ladder_branch_state = snapshot_ladder_branches(&ladder_config);
+        let mobility_state = snapshot_mobility(&mobility, viewer);
         let command_events_state = command_events_to_state(&command_events, viewer);
         // The Telling's client-facing fork tier + stance readout (BTree-backed, so already ordered).
         let pending_forks_state = snapshot_pending_forks(&beat_ledger, viewer);
@@ -4208,14 +4342,16 @@ pub fn capture_snapshot(
             goodwill: goodwill_states,
             own_goodwill: own_goodwill_states,
             goodwill_cuts: goodwill_cuts_state,
+            tile_improvements: tile_improvement_states.clone(),
             demographics: demographics_state.clone(),
             forage_patches: forage_patches_state.clone(),
             deposits: deposit_states.clone(),
             intensification_knowledge: intensification_knowledge_state.clone(),
             ladder_knowledge: ladder_knowledge_state.clone(),
             ladder_areas: ladder_areas_state.clone(),
-            route_rungs: route_rung_state.clone(),
-            deposit_rungs: deposit_rung_state.clone(),
+            ladder_rungs: ladder_rung_state.clone(),
+            ladder_branches: ladder_branch_state.clone(),
+            mobility: mobility_state.clone(),
             command_events: command_events_state.clone(),
             command_events_retention_turns: command_events.retention_turns() as u32,
             lineage_constants: lineage_constants_state,

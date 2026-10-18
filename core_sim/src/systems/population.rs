@@ -3418,6 +3418,7 @@ mod wellbeing_tests {
         world.insert_resource(crate::resources::TradeTelemetry::default());
         world.init_resource::<bevy::ecs::event::Events<crate::systems::TradeDiffusionEvent>>();
         world.insert_resource(crate::routes::RoadRegistry::default());
+        world.insert_resource(crate::tile_improvement::TileImprovementRegistry::default());
         world.insert_resource(crate::resources::BandNameAllocator::default());
         world.insert_resource(crate::band_names::BandNameCatalogHandle::default());
         world.insert_resource(crate::forage::ForageRegistry::default());

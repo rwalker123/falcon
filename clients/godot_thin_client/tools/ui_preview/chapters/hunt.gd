@@ -1434,7 +1434,7 @@ func run(harness) -> void:
 	# figure, which is the shape of a passing-but-blind equality; here only the published destination
 	# produces the rendered number.
 	var destination_herd := ForageFx.floorify(HerdFx.taming_herd_fixture())
-	destination_herd[SourceForecast.FORECAST_BUILD_DESTINATION_KEY] = SourceForecast.RUNG_KEY_PEN
+	destination_herd[SourceForecast.FORECAST_BUILD_DESTINATION_KEY] = RungFx.KEY_PEN
 	destination_herd[SourceForecast.FORECAST_BUILD_DESTINATION_CAPACITY_KEY] = \
 		FLOOR_FLAG_DESTINATION_CAPACITY
 	flag_probe.set_model(SourceForecast.floor_chart_model(destination_herd,
@@ -1484,7 +1484,7 @@ func run(harness) -> void:
 	# destination and prices it at the sentinel, which leaves the capacity's own `< 0` as the only
 	# thing that can hold the clause back.
 	var unpriced_herd := ForageFx.floorify(HerdFx.taming_herd_fixture())
-	unpriced_herd[SourceForecast.FORECAST_BUILD_DESTINATION_KEY] = SourceForecast.RUNG_KEY_PEN
+	unpriced_herd[SourceForecast.FORECAST_BUILD_DESTINATION_KEY] = RungFx.KEY_PEN
 	flag_probe.set_model(SourceForecast.floor_chart_model(unpriced_herd,
 		SourceForecast.SOURCE_KIND_HERD, HudComposeVocab.BARE_FORECAST_PREFIX,
 		SourceForecast.FLOOR_FOOD_PEAK, strip_crew, "hunters", LESSON_NOT_YET_LEARNED))

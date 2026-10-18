@@ -151,9 +151,9 @@ and the page declares THREE zones. What moved here, and why each is not a loss o
   constraint of the shell**: the narrow shell parents ONLY the active tab's zone, so a zone read from
   another tab has never been laid out and every one of its rows measures zero — the keyless-row scan
   would report every row keyless.
-- **`_assert_faction_knowledge_tier` → `_assert_faction_band_zone_tier`**, the same pair on the same
-  reasoning: the wide dock must DROP Discoveries and KEEP Settling, and the second half is what stops
-  it passing on a zone that rendered nothing.
+- **`_assert_faction_band_zone_scrolls`**: on the wide dock the zone's Discoveries, Settling, Mobility
+  and Open Borders are all PRESENT inside the sanctioned scroll and the stack overflows its viewport,
+  which is what stops the presence claims passing on a box that needs no scroll.
 - **`_assert_faction_zone_layout` asserts THREE hosts by EQUALITY**, which is also what asserts the
   absence of a `Zone_knowledge` host — a deleted tab leaving a live column behind it.
 - **`FACTION_SHELL_MIN_WIDTH` is two gaps between three columns**, and the equality claim beside the
@@ -168,9 +168,9 @@ for. The other four are the faction page itself — the band zone gaining two bl
 column, the tab strip losing a tab — and `band_panel_collapsed`, where the RAIL grew a glyph and the
 strip widened 5px through the documented `COLLAPSED_SIZE`-is-a-FLOOR mechanism.
 
-**`FACTION_BAND_FULL_MIN_HEIGHT` was set from `_report_zone_content_extent`, not guessed** — see
-`knowledge-panel.md` for the numbers and for what the guess got wrong in both directions. That printed
-extent is what a re-measure reads; this page has now been at the edge of its box three times.
+**The faction band zone's extent is read from `_report_zone_content_extent`**: the full block (589px)
+against the box it scrolls in, and `_assert_faction_band_zone_scrolls` asserts every block present
+inside the sanctioned scroll on the bottom dock.
 
 **A clean run is 221 frames / 1663 `PASS` / 553 `assert OK`, exit 0 — RE-MEASURED, and this line is
 the harness's ONLY tally.**
@@ -854,8 +854,7 @@ for the same reason and they are recorded in its row. A follow-up pass in the sa
 page's rows to the `band` zone's VITALS size on Ray's eye (see `band-city-panel.md` → "THE TYPE
 SCALE IS THE PAGE'S OWN VITALS ROWS", which retires the head→row-step rule this file's own
 type-scale note used to record) and gave SETTLING a real head with its reading on a row — which put
-the knowledge zone 36px over its 300px box and bought it a HEIGHT TIER. That added four `PASS`es
-(157 → 161): the SETTLING head/row split became two claims where the folded readout was one, the row
+the knowledge zone 36px over its 300px box. That added `PASS`es (157 → 161): the SETTLING head/row split became two claims where the folded readout was one, the row
 size gained its live comparison against the vitals label, and the tier gained its two-sided pair.
 
 **The tab-strip claim is a REPLACEMENT, not an addition** — the old one asserted `set_tab_label` had
@@ -2537,7 +2536,7 @@ harness that can take it**: the track is opened from the roster ROW's declaring 
 `ui_preview`'s `workings` chapter — a frame shows one, and the branch has four.
 
 ⛔ **THE STATE PUSHES A DEPOSIT RUNG CATALOG, AND WITHOUT ONE IT IS EVIDENCE OF NOTHING.** Every
-value cell names its rung out of `SubsistenceSection.depositRungs`, so a roster with no catalog
+value cell names its rung out of `SubsistenceSection.ladderRungs`, so a roster with no catalog
 behind it draws `forestry:felling` in each one; and the row's mark is built from
 `RungLadder.has_track` over its rows, so with no catalog the mark does not draw at all and **every
 claim about it passes vacuously**. It is cleared with the deposits in

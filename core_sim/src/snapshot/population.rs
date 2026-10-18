@@ -214,6 +214,13 @@ pub(crate) fn labor_assignment_to_state(
             // `DepositState::rung_floor_fraction` rides the working's row beside it.
             state.floor = *floor;
         }
+        // **A TILE IMPROVEMENT'S CREW ROW** - the tile and the branch are the key that joins it to
+        // its `TileImprovementState`. No floor, species or material: it takes nothing.
+        LaborTarget::Tile { tile, branch } => {
+            state.target_x = tile.x;
+            state.target_y = tile.y;
+            state.branch = branch.as_str().to_string();
+        }
         // The seven band-wide roles carry no source and no floor: their whole content is the head
         // count already on the row.
         LaborTarget::Scout
@@ -1111,6 +1118,10 @@ pub(crate) struct PopulationStateInputs<'a> {
     /// checkpointed [`crate::systems::HeartLedger`]. `None` for a band no turn has judged (a fresh
     /// world, or a detached party, which is never a member), which publishes as in touch.
     pub(crate) heart: Option<&'a crate::systems::HeartReading>,
+    /// **The peoples pulling this band** (#820), already sorted for the wire, off the checkpointed
+    /// [`crate::systems::CulturePressureLedger`]. Empty for a detached party and for a world no
+    /// turn has judged.
+    pub(crate) culture_pressures: Vec<sim_schema::CulturePressureState>,
 }
 
 /// The two webs' registries, for resolving a queue entry's **live** rung. No ladder: both
@@ -1217,20 +1228,21 @@ fn resolved_build_job(
         (crate::components::BuildJob::SetHerdOutput(_), _) => {
             crate::systems::labor::SET_HERD_OUTPUT_ACTION.to_string()
         }
-        (
-            crate::components::BuildJob::Rung(declared),
-            crate::components::BuildSource::Patch(tile),
-        ) => sources
-            .forage
-            .patch(*tile)
-            .and_then(|patch| crate::forage::patch_build_verb(patch, Some(*declared)))
-            .map(|improvement| improvement.as_str().to_string())
-            .unwrap_or_default(),
-        (crate::components::BuildJob::Rung(declared), crate::components::BuildSource::Herd(id)) => {
+        (crate::components::BuildJob::Climb(rung), crate::components::BuildSource::Patch(tile)) => {
+            sources
+                .forage
+                .patch(*tile)
+                .and_then(|patch| {
+                    crate::forage::patch_build_verb(patch, sources.ladder, Some(*rung))
+                })
+                .map(|improvement| improvement.as_str().to_string())
+                .unwrap_or_default()
+        }
+        (crate::components::BuildJob::Climb(rung), crate::components::BuildSource::Herd(id)) => {
             sources
                 .herds
                 .find(id)
-                .and_then(|herd| crate::fauna::herd_build_verb(herd, Some(*declared)))
+                .and_then(|herd| crate::fauna::herd_build_verb(herd, sources.ladder, Some(*rung)))
                 .map(|improvement| improvement.as_str().to_string())
                 .unwrap_or_default()
         }
@@ -1239,17 +1251,26 @@ fn resolved_build_job(
         // carrying work declares for itself and a stale entry must not override it. A road has no
         // second declaration to reconcile: `grade` / `pave` are the only things that ever raise one,
         // and the entry's own `declared` is that statement.
-        (crate::components::BuildJob::Rung(declared), crate::components::BuildSource::Road(_)) => {
-            declared.as_str().to_string()
-        }
+        (
+            crate::components::BuildJob::Climb(rung),
+            crate::components::BuildSource::Road(_) | crate::components::BuildSource::Tile { .. },
+        ) => sources
+            .ladder
+            .rung_by_id(*rung)
+            .and_then(|record| record.verb.clone())
+            .unwrap_or_default(),
         // **A deposit answers as a road does, and for the road's exact reason.** `fell`, `coppice`
         // and `quarry` are the only things that ever raise a working, so the entry's own `declared`
         // is the whole statement — there is no second, meter-derived declaration on a deposit for a
         // stale entry to override.
         (
-            crate::components::BuildJob::Rung(declared),
+            crate::components::BuildJob::Climb(rung),
             crate::components::BuildSource::Deposit { .. },
-        ) => declared.as_str().to_string(),
+        ) => sources
+            .ladder
+            .rung_by_id(*rung)
+            .and_then(|record| record.verb.clone())
+            .unwrap_or_default(),
     }
 }
 
@@ -1434,6 +1455,7 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         build_sources,
         loadout_window,
         heart,
+        culture_pressures,
     } = inputs;
     let homeward: &[crate::work_party::HomewardWalk] =
         allocation.map_or(&[], |allocation| allocation.homeward.as_slice());
@@ -2307,6 +2329,21 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
     // same settled lines the wire publishes: the pools' and site crews' off the allocation, the take
     // rows' off `row_gear`, which is what each row's `kitToe` is copied from. **A detached party
     // publishes none**: it is never resupplied, so nothing crafted now reaches it.
+    // **THE SECOND READING OF THE BAND'S TAKE ROWS** - the turn a hunting-by-need crew goes out. One
+    // computation, read by Make Next and by the kit ledger alike so their shortfalls cannot differ.
+    let hunt_turn_lines = match (expedition, allocation) {
+        (None, Some(alloc)) => hunt_turn_lines(
+            alloc,
+            idle_workers,
+            &donor_is_local,
+            donor_bench,
+            &claim_sources,
+            &kit,
+            kit_levers.config,
+            sending_pass.as_ref(),
+        ),
+        _ => None,
+    };
     let craft_suggestions = match (expedition, allocation) {
         (None, Some(alloc)) => {
             let take_rows = row_gear
@@ -2317,33 +2354,45 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
                         .iter()
                         .map(move |line| (row, line.item_id.as_str(), line.required, line.filled))
                 });
-            let hunt_turn_lines = hunt_turn_lines(
+            let mut suggestions = crate::craft_suggestions::band_suggestions(
                 alloc,
-                idle_workers,
-                &donor_is_local,
-                donor_bench,
-                &claim_sources,
+                take_rows,
+                hunt_turn_lines.as_deref(),
+                bench,
+                crate::craft_suggestions::SuggestionConfigs {
+                    recipes: craft_inputs.recipes,
+                    equipment: craft_inputs.equipment,
+                },
                 &kit,
-                kit_levers.config,
-                sending_pass.as_ref(),
+                Some(crate::craft_suggestions::ForecastInputs {
+                    offers: &craft_offers,
+                    materials: craft_inputs.materials,
+                }),
             );
-            let mut states = crate::snapshot::crafting::craft_suggestion_states(
-                crate::craft_suggestions::band_suggestions(
+            // **A QUEUED BUILD SHORT OF THE GOODS IT DRAWS** (hurdles for a pen) is something to make
+            // next too, ranked with the build-queue shortages.
+            crate::craft_suggestions::merge_build_material_suggestions(
+                &mut suggestions,
+                crate::craft_suggestions::build_material_suggestions_in_world(
                     alloc,
-                    take_rows,
-                    hunt_turn_lines.as_deref(),
+                    &cohort.stores,
+                    craft_inputs.recipes,
                     bench,
-                    crate::craft_suggestions::SuggestionConfigs {
-                        recipes: craft_inputs.recipes,
-                        equipment: craft_inputs.equipment,
-                    },
-                    &kit,
-                    Some(crate::craft_suggestions::ForecastInputs {
-                        offers: &craft_offers,
-                        materials: craft_inputs.materials,
-                    }),
+                    &claim_sources,
                 ),
             );
+            // **WHAT EACH SUGGESTION IS CALLED**, resolved here so a client never shows a raw id: an
+            // item's own name, else the material's title.
+            for suggestion in &mut suggestions {
+                suggestion.display_name = match craft_inputs.equipment.item(&suggestion.item) {
+                    Some(_) => craft_inputs
+                        .equipment
+                        .item_display_name(&suggestion.item)
+                        .to_string(),
+                    None => crate::crafting::title_from_id(&suggestion.item),
+                };
+            }
+            let mut states = crate::snapshot::crafting::craft_suggestion_states(suggestions);
             // **What the whole count needs that the stock cannot cover**, off the same forecast the
             // bench's orders publish — a suggestion lands at the queue's end.
             crate::snapshot::crafting::suggestion_shortfalls(
@@ -2358,6 +2407,43 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         }
         _ => Vec::new(),
     };
+    // **WHOLE-KIT ORDERS** (#780) - what the crafting panel's picker is computed from. The kit needs
+    // read the same settled lines the suggestions do (a detached party is not resupplied, so it
+    // publishes none); the free materials are the stock after the whole queue's claims.
+    let kit_needs = match (expedition, allocation) {
+        (None, Some(alloc)) => {
+            let take_rows = row_gear
+                .iter()
+                .enumerate()
+                .flat_map(|(row, (_, _, kit_toe))| {
+                    kit_toe
+                        .iter()
+                        .map(move |line| (row, line.item_id.as_str(), line.required, line.filled))
+                });
+            let lines = crate::craft_suggestions::band_tool_shortfall_lines(
+                alloc,
+                take_rows,
+                craft_inputs.equipment,
+                &kit,
+            );
+            crate::snapshot::crafting::kit_need_states(
+                crate::craft_suggestions::band_kit_needs(
+                    alloc,
+                    &lines,
+                    hunt_turn_lines.as_deref(),
+                    bench,
+                    craft_inputs.recipes,
+                    craft_inputs.equipment,
+                    &kit,
+                ),
+                &kit,
+                craft_inputs,
+            )
+        }
+        _ => Vec::new(),
+    };
+    let materials_free =
+        crate::snapshot::crafting::materials_free(&queue_forecast, &cohort.stores, craft_inputs);
     PopulationCohortState {
         entity: entity.to_bits(),
         band_id: band_id.map(|id| id.0).unwrap_or_default(),
@@ -2517,6 +2603,8 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         craft_offers,
         equipment_batches,
         craft_suggestions,
+        kit_needs,
+        materials_free,
         // The two derived halves of the published triple; `working_age` above is the third.
         children_count: age_brackets.children,
         elders_count: age_brackets.elders,
@@ -2579,7 +2667,7 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
                 alloc
                     .build_queue
                     .iter()
-                    .map(build_queue_entry_to_state)
+                    .map(|entry| build_queue_entry_to_state(entry, hunt_crew_levers.ladder))
                     .collect()
             })
             .unwrap_or_default(),
@@ -2816,6 +2904,7 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
             .and_then(|reading| reading.last_contact_turn)
             .map_or(sim_schema::state::NO_HEART_CONTACT, |turn| turn as i64),
         independence_grievance_threshold: wellbeing.independence.grievance_threshold,
+        culture_pressures,
         culture_traits,
         culture_ancestor_pull,
         culture_drift_source_band: culture_drift.map_or(0, |pull| pull.source),
@@ -2895,6 +2984,7 @@ fn material_payoffs(ledger: &BTreeMap<String, f32>) -> Vec<sim_runtime::Material
 /// **which site** it is — tile, herd, working material or road — in the command grammar's terms.
 fn build_queue_entry_to_state(
     entry: &crate::components::BuildQueueEntry,
+    ladder: &crate::intensification::LadderConfig,
 ) -> SchemaBuildQueueEntryState {
     let source = &entry.source;
     let mut state = SchemaBuildQueueEntryState {
@@ -2918,12 +3008,23 @@ fn build_queue_entry_to_state(
         BuildSource::Road(tile) => {
             state.target_x = tile.x;
             state.target_y = tile.y;
-            state.road = true;
+            // The road's own branch, off the ladder - a per-tile entry names its branch so a
+            // second per-tile branch has somewhere to say which it is.
+            state.branch = ladder
+                .branch_of_kind(crate::intensification::SourceKind::Road)
+                .as_str()
+                .to_string();
         }
         BuildSource::Deposit { tile, material } => {
             state.target_x = tile.x;
             state.target_y = tile.y;
             material.clone_into(&mut state.material);
+        }
+        // A tile improvement names its own branch, exactly as a road does.
+        BuildSource::Tile { tile, branch } => {
+            state.target_x = tile.x;
+            state.target_y = tile.y;
+            state.branch = branch.as_str().to_string();
         }
     }
     state
@@ -3232,6 +3333,7 @@ static EMPTY_PARENT_STORE: std::sync::OnceLock<LocalStore> = std::sync::OnceLock
 mod tests {
     use super::*;
     use crate::expedition_config::ExpeditionConfig;
+    use crate::ladder_ids::shipped;
 
     // Test-only since the restore path that shared them was deleted.
     use crate::components::{
@@ -3364,6 +3466,7 @@ mod tests {
             // No world, so no outfitting window either.
             loadout_window: None,
             heart: None,
+            culture_pressures: Vec::new(),
             cohort,
             allocation,
             expedition,
@@ -3845,8 +3948,8 @@ mod tests {
                         // A road carries no take row at all — its keeper is on the road, not on a
                         // labor target — so a fixture that queued one would be describing a band
                         // this helper cannot build.
-                        BuildSource::Road(_) => unreachable!(
-                            "a road has no labor row, so it cannot be a source in this fixture"
+                        BuildSource::Road(_) | BuildSource::Tile { .. } => unreachable!(
+                            "a road or a tile improvement has no labor row, so it cannot be a source in this fixture"
                         ),
                         BuildSource::Deposit { tile, material } => LaborTarget::Extract {
                             tile: *tile,
@@ -3863,9 +3966,7 @@ mod tests {
                 .iter()
                 .map(|source| crate::components::BuildQueueEntry {
                     source: source.clone(),
-                    declared: crate::components::BuildJob::Rung(
-                        crate::components::Improvement::Cultivate,
-                    ),
+                    declared: crate::components::BuildJob::Climb(shipped::plant_tended()),
                     priority: SourcePriority::default(),
                 })
                 .collect(),
@@ -3989,5 +4090,82 @@ mod tests {
     fn a_band_with_no_allocation_publishes_an_empty_queue() {
         let cohort = cohort(TEST_LARDER);
         assert!(captured(&cohort, None, None).build_queue.is_empty());
+    }
+}
+
+/// **One band's culture-pressure rows for the wire** (#820): every people pulling it, pressure
+/// descending, faction ascending as the tie-break. `turnsToNext` is the clock toward the next
+/// phase (see [`crate::systems::CulturePressureReading::turns_to_next`]).
+pub(crate) fn culture_pressure_rows(
+    ledger: &crate::systems::CulturePressureLedger,
+    band: BandId,
+    joining: &crate::culture_corruption_config::CultureJoiningSettings,
+) -> Vec<sim_schema::CulturePressureState> {
+    let mut rows: Vec<sim_schema::CulturePressureState> = ledger
+        .for_band(band)
+        .map(|(people, reading)| sim_schema::CulturePressureState {
+            faction: people.0,
+            pressure: reading.pressure,
+            phase: reading.phase.wire_code(),
+            close: reading.close,
+            turns_to_next: reading.turns_to_next(joining),
+        })
+        .collect();
+    rows.sort_by(|a, b| {
+        b.pressure
+            .total_cmp(&a.pressure)
+            .then(a.faction.cmp(&b.faction))
+    });
+    rows
+}
+
+#[cfg(test)]
+mod culture_pressure_rows_tests {
+    use super::*;
+    use crate::{
+        culture_corruption_config::CultureCorruptionConfigHandle,
+        systems::{CulturePressureLedger, CulturePressureReading, JoiningPhase},
+    };
+
+    fn reading(pressure: f32, phase: JoiningPhase, asked: u16) -> CulturePressureReading {
+        CulturePressureReading {
+            owner: FactionId(0),
+            pressure,
+            phase,
+            close: true,
+            asked_turns: asked,
+            forced_turns: 0,
+        }
+    }
+
+    #[test]
+    fn rows_sort_by_pressure_descending_then_faction_ascending() {
+        let band = BandId(7);
+        let mut ledger = CulturePressureLedger::default();
+        ledger
+            .pairs
+            .insert((band, FactionId(3)), reading(2.5, JoiningPhase::Asked, 10));
+        ledger
+            .pairs
+            .insert((band, FactionId(1)), reading(1.8, JoiningPhase::Pulled, 4));
+        ledger
+            .pairs
+            .insert((band, FactionId(2)), reading(2.5, JoiningPhase::Asked, 10));
+        // Another band's row is never published on this one.
+        ledger.pairs.insert(
+            (BandId(8), FactionId(1)),
+            reading(9.0, JoiningPhase::Forced, 10),
+        );
+        let config = CultureCorruptionConfigHandle::load_builtin().get();
+        let joining = config.culture().joining();
+
+        let rows = culture_pressure_rows(&ledger, band, joining);
+        let order: Vec<u32> = rows.iter().map(|row| row.faction).collect();
+        assert_eq!(order, vec![2, 3, 1]);
+        // Pulled with 4 asked turns held: turns - 4 left on the asked clock.
+        assert_eq!(rows[2].turns_to_next, joining.turns() - 4);
+        // Asked with no forced clock running: nothing counting down.
+        assert_eq!(rows[0].turns_to_next, 0);
+        assert_eq!(rows[0].phase, 2);
     }
 }

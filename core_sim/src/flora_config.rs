@@ -2,7 +2,7 @@
 //!
 //! Loaded from `data/flora_config.json`. Where fauna names the animals you herd, this names the
 //! plants you gather: each row carries a display name, a [`FloraRole`] display tag, a
-//! [`CultivationCeiling`] (how far up the plant ladder it climbs), a per-biome **affinity weight**
+//! `cultivation_ceiling` (how far up the plant ladder it climbs), a per-biome **affinity weight**
 //! table, a [`YieldVector`] and a per-species regrowth rate. Mirrors the `fauna_config.rs` loader
 //! pattern (baked-in builtin + optional file/env override, `validate()` inside `from_json_str`).
 //!
@@ -34,6 +34,7 @@ use thiserror::Error;
 use crate::config_load::{load_config_from_env, ConfigLoadError};
 use crate::hashing::splitmix64;
 use crate::labor_config::{ForageLaborConfig, NO_FORAGE_CAPACITY};
+use crate::ladder_ids::RungId;
 
 pub const BUILTIN_FLORA_CONFIG: &str = include_str!("data/flora_config.json");
 
@@ -72,61 +73,6 @@ impl FloraRole {
             "cash" => FloraRole::Cash,
             _ => FloraRole::Staple,
         }
-    }
-}
-
-/// **How far up the cultivation ladder a species can climb** — the exact twin of
-/// [`crate::fauna_config::HusbandryCeiling`] (`docs/plan_flora_roster.md` §2). The ladder is a
-/// *sequence* (wild → tended → field), so a species' reach is a single ceiling rather than two
-/// independent flags, which makes the incoherent "sowable but not tendable" state unrepresentable
-/// (no `validate()` combination guard needed). `Wild` is a gather-forever stand — an oak's mast is a
-/// wild harvest and you do not sow an oak forest on a five-turn horizon. **Default `Field`**
-/// (the full ladder), mirroring `HusbandryCeiling::Pen`, so an untagged/future species keeps the
-/// pre-ceiling behaviour.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Default)]
-#[serde(rename_all = "snake_case")]
-pub enum CultivationCeiling {
-    /// Gather-only. `Cultivate` and `Sow` both refuse.
-    Wild,
-    /// Reaches the tended rung but never the Field (`Sow` refuses).
-    Tended,
-    /// The full ladder — the default.
-    #[default]
-    Field,
-}
-
-impl CultivationCeiling {
-    /// Stable string key (also the wire `cultivationCeiling` field).
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            CultivationCeiling::Wild => "wild",
-            CultivationCeiling::Tended => "tended",
-            CultivationCeiling::Field => "field",
-        }
-    }
-
-    /// Parse the stable string key back (inverse of `as_str`; the rollback restore path). Unknown or
-    /// empty strings resolve to the `Default` (`Field`), preserving the full ladder.
-    pub fn from_key(key: &str) -> Self {
-        match key {
-            "wild" => CultivationCeiling::Wild,
-            "tended" => CultivationCeiling::Tended,
-            _ => CultivationCeiling::Field,
-        }
-    }
-
-    /// Can this species be **cultivated** (the tended rung)? True for `Tended` and `Field`.
-    ///
-    /// The twin of `HusbandryCeiling::allows_domestication`. **Unused in F1** — `Cultivate` starts
-    /// gating on it in F2, exactly as `HusbandryCeiling` shipped its accessors ahead of its gates.
-    pub fn allows_cultivate(&self) -> bool {
-        !matches!(self, CultivationCeiling::Wild)
-    }
-
-    /// Can this species be **sown** (the Field rung)? True only for `Field`. The twin of
-    /// `HusbandryCeiling::allows_pen`. **Unused in F1** — see [`Self::allows_cultivate`].
-    pub fn allows_sow(&self) -> bool {
-        matches!(self, CultivationCeiling::Field)
     }
 }
 
@@ -214,13 +160,16 @@ pub struct FloraDef {
     /// **Display tag only** — see [`FloraRole`]. Never branched on in the sim.
     #[serde(default)]
     pub role: FloraRole,
-    /// How far up the plant ladder this species climbs — see [`CultivationCeiling`].
+    /// **How far up the plant ladder this species climbs** - the plant-branch rung it can be taken
+    /// to and no further (`"plant:wild"` is gather-only forever, `"plant:tended"` tends but never
+    /// sows). **Omitted = the whole ladder.** A rung id, so a fourth plant rung needs no new
+    /// variant; `FloraConfig::validate_against_ladder` checks it names a rung of the patch branch.
     #[serde(default)]
-    pub cultivation_ceiling: CultivationCeiling,
+    pub cultivation_ceiling: Option<RungId>,
     /// **Does this species stand in the soil a crew tending or sowing this tile is actually
     /// working?** `true` for everything rooted in ground — the default, and every row but three.
     ///
-    /// **It answers a different question from [`CultivationCeiling`], which is why it is its own
+    /// **It answers a different question from `cultivation_ceiling`, which is why it is its own
     /// field.** The ceiling says *how far up the ladder you can take this plant*; this says *whether
     /// working the ground can take the plant away*. Ten shipped rows are `Wild`, and they split
     /// cleanly on this second question: you genuinely can clear oak mast, pine nut, mesquite,
@@ -653,21 +602,6 @@ impl FloraConfig {
                 });
             }
 
-            // **A CREW CANNOT FAVOR WHAT IT CANNOT CLEAR.** Committing a patch to a species means
-            // weeding the rest of the basket toward it (rung 2) or sowing over the clearable
-            // remainder (rung 3) — both of which presuppose the crop itself stands in the ground
-            // being worked. A row that is cultivable *and* stands outside the worked ground is
-            // therefore incoherent rather than merely odd, and it would surface as a favored share
-            // that can never be raised. The shipped roster satisfies this by construction (all
-            // three protected rows are `wild`, which cannot be committed to at all), so this is a
-            // load-time rejection rather than a runtime branch nothing exercises.
-            if !def.stands_in_worked_ground && def.cultivation_ceiling.allows_cultivate() {
-                return Err(FloraConfigError::CultivableOutsideWorkedGround {
-                    species: key.clone(),
-                    ceiling: def.cultivation_ceiling,
-                });
-            }
-
             // At `r = 0` the stand's MSY is zero forever: every rung that reads this ecology pays
             // nothing and the species is a dead resource (the `validate_ecology` argument).
             if !def.regrowth_rate.is_finite() || def.regrowth_rate <= 0.0 {
@@ -689,6 +623,66 @@ impl FloraConfig {
         }
 
         Ok(())
+    }
+
+    /// **EVERY SPECIES' `cultivation_ceiling` NAMES A RUNG OF THE PLANT LADDER**, and **a crew cannot
+    /// favor what it cannot clear** - reconciled at boot against the loaded ladder.
+    ///
+    /// Committing a patch to a species means weeding the rest of the basket toward it (the first
+    /// `managed` rung) or sowing over the clearable remainder (the `sown` one) - both presuppose the
+    /// crop itself stands in the ground being worked. A row whose ceiling reaches the first managed
+    /// rung *and* stands outside the worked ground is therefore incoherent rather than merely odd:
+    /// it would surface as a favored share that can never be raised. The shipped roster satisfies it
+    /// by construction (the three protected rows are `plant:wild`).
+    pub fn validate_against_ladder(
+        &self,
+        ladder: &crate::intensification::LadderConfig,
+    ) -> Result<(), FloraConfigError> {
+        let managed = ladder
+            .first_rung_with(
+                crate::intensification::SourceKind::Patch,
+                crate::intensification::RungTrait::Managed,
+            )
+            .rung_id();
+        for (key, def) in &self.species {
+            let Some(ceiling) = def.cultivation_ceiling else {
+                if !def.stands_in_worked_ground {
+                    return Err(FloraConfigError::CultivableOutsideWorkedGround {
+                        species: key.clone(),
+                    });
+                }
+                continue;
+            };
+            let on_patch_branch = ladder.rung_by_id(ceiling).is_some_and(|rung| {
+                ladder.source_kind(rung.branch) == Some(crate::intensification::SourceKind::Patch)
+            });
+            if !on_patch_branch {
+                return Err(FloraConfigError::UnknownCeiling {
+                    species: key.clone(),
+                    ceiling,
+                });
+            }
+            if !def.stands_in_worked_ground && ladder.at_or_above(ceiling, managed) {
+                return Err(FloraConfigError::CultivableOutsideWorkedGround {
+                    species: key.clone(),
+                });
+            }
+        }
+        Ok(())
+    }
+
+    /// **Can a crew take this species to `rung`?** - the species' ceiling reaches it (an omitted
+    /// ceiling is the whole ladder).
+    pub fn can_reach(
+        &self,
+        species: &str,
+        ladder: &crate::intensification::LadderConfig,
+        rung: RungId,
+    ) -> bool {
+        self.species.get(species).is_some_and(|def| {
+            def.cultivation_ceiling
+                .is_none_or(|ceiling| ladder.at_or_above(ceiling, rung))
+        })
     }
 
     /// **The cross-web invariants** — the roster read against the human food web's own table
@@ -953,14 +947,16 @@ pub enum FloraConfigError {
     )]
     InvalidRealizedSpeciesRange { min: usize, max: usize },
     #[error(
-        "invalid flora config: species `{species}` does not stand in the worked ground yet carries \
-         cultivation_ceiling `{}` — a crew cannot favor a crop it cannot clear the ground for",
-        ceiling.as_str()
+        "invalid flora config: species `{species}` does not stand in the worked ground yet its \
+         cultivation_ceiling lets a crew tend it - a crew cannot favor a crop it cannot clear the \
+         ground for"
     )]
-    CultivableOutsideWorkedGround {
-        species: String,
-        ceiling: CultivationCeiling,
-    },
+    CultivableOutsideWorkedGround { species: String },
+    #[error(
+        "invalid flora config: species `{species}` carries cultivation_ceiling `{ceiling}`, which \
+         is not a rung of the plant ladder"
+    )]
+    UnknownCeiling { species: String, ceiling: RungId },
 }
 
 impl ConfigLoadError for FloraConfigError {
@@ -1069,6 +1065,7 @@ pub fn load_flora_config_from_env(
 mod tests {
     use super::*;
     use crate::labor_config::LaborConfig;
+    use crate::ladder_ids::shipped;
 
     /// The shipped human food web, as the roster must be read against it.
     fn builtin_forage_capacities() -> HashMap<TerrainType, f32> {
@@ -1121,7 +1118,7 @@ mod tests {
         "plural": "probes",
         "adjective": "probe",
         "role": "staple",
-        "cultivation_ceiling": "tended",
+        "cultivation_ceiling": "plant:tended",
         "host_biomes": { "AlluvialPlain": 1.0 },
         "yield": { "provisions_per_biomass": 0.05, "fodder_per_biomass": 0.0 },
         "regrowth_rate": 0.25
@@ -1152,11 +1149,11 @@ mod tests {
         // The ceilings are declared, not defaulted.
         assert_eq!(
             config.species["oak_mast"].cultivation_ceiling,
-            CultivationCeiling::Wild
+            Some(shipped::plant_wild())
         );
         assert_eq!(
             config.species["wild_emmer"].cultivation_ceiling,
-            CultivationCeiling::Field
+            Some(shipped::plant_farm())
         );
         config
             .validate_against_forage(&builtin_forage_capacities())
@@ -1177,15 +1174,14 @@ mod tests {
     #[test]
     fn validate_rejects_a_favored_species_that_stands_outside_the_worked_ground() {
         let body = VALID_BODY.replace(
-            "\"cultivation_ceiling\": \"tended\"",
-            "\"cultivation_ceiling\": \"tended\", \"stands_in_worked_ground\": false",
+            "\"cultivation_ceiling\": \"plant:tended\"",
+            "\"cultivation_ceiling\": \"plant:tended\", \"stands_in_worked_ground\": false",
         );
+        let config = FloraConfig::from_json_str(&one_species_json(&body))
+            .expect("the row parses - whether the ladder lets it be favored is the boot check's");
         assert!(matches!(
-            FloraConfig::from_json_str(&one_species_json(&body)),
-            Err(FloraConfigError::CultivableOutsideWorkedGround {
-                ceiling: CultivationCeiling::Tended,
-                ..
-            })
+            config.validate_against_ladder(shipped::ladder()),
+            Err(FloraConfigError::CultivableOutsideWorkedGround { .. })
         ));
     }
 
@@ -1194,11 +1190,14 @@ mod tests {
     #[test]
     fn a_wild_ceiling_species_may_stand_outside_the_worked_ground() {
         let body = VALID_BODY.replace(
-            "\"cultivation_ceiling\": \"tended\"",
-            "\"cultivation_ceiling\": \"wild\", \"stands_in_worked_ground\": false",
+            "\"cultivation_ceiling\": \"plant:tended\"",
+            "\"cultivation_ceiling\": \"plant:wild\", \"stands_in_worked_ground\": false",
         );
         let config = FloraConfig::from_json_str(&one_species_json(&body))
             .expect("a gather-only species outside the worked ground is a coherent row");
+        config
+            .validate_against_ladder(shipped::ladder())
+            .expect("and the ladder agrees it is coherent");
         assert!(!config.stands_in_worked_ground("probe"));
     }
 
@@ -1232,7 +1231,7 @@ mod tests {
         ] {
             assert_eq!(
                 config.species[key].cultivation_ceiling,
-                CultivationCeiling::Wild,
+                Some(shipped::plant_wild()),
                 "{key} is the gather-only case the ceiling and the flag disagree about"
             );
             assert!(

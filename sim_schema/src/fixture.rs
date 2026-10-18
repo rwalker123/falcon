@@ -60,8 +60,8 @@ use crate::state::map::*;
 use crate::state::population::*;
 use crate::state::subsistence::{
     CharacteristicBandState, CraftKnowledgeState, FloraShareInfo, LadderKnowledgeProgress,
-    LadderKnowledgeState, MaterialDefState, RecipeDefState, RecipeInputState, RecipeOutputState,
-    SpeciesMaterialRates,
+    LadderKnowledgeState, LadderRungState, MaterialDefState, RecipeDefState, RecipeInputState,
+    RecipeOutputState, RungQuoteState, RungShareQuoteState, SpeciesMaterialRates,
 };
 use crate::world::WorldSnapshot;
 use std::error::Error;
@@ -173,6 +173,19 @@ pub fn saturated_snapshot() -> Result<WorldSnapshot, Box<dyn Error>> {
 
 fn rows<T: Default + Clone>() -> Vec<T> {
     vec![T::default(); ROWS]
+}
+
+/// **A source's rung quotes, every nested repeated field seeded** - the three material vectors on each
+/// row need elements of their own for the decode guard to exercise the inner level.
+fn rung_quotes() -> Vec<RungQuoteState> {
+    (0..ROWS)
+        .map(|_| RungQuoteState {
+            build_material_cost: rows(),
+            upkeep_material_demand: rows(),
+            material_payoff: rows(),
+            ..Default::default()
+        })
+        .collect()
 }
 
 fn rows_of<T: Clone>(blank: T) -> Vec<T> {
@@ -492,8 +505,25 @@ fn seed_snapshot() -> WorldSnapshot {
             }),
             // The skipped item ids — a repeated string field, seeded so the guard decodes one.
             auto_skipped: vec!["spears".to_string(), "hoes".to_string()],
+            // The live whole-kit orders (#780) — a repeated field, seeded for the same reason.
+            kit_orders: rows_of(BenchKitOrderState::default()),
             ..Default::default()
         };
+        // **WHOLE-KIT ORDERS** (#780): a kit has items, an item has recipes, a recipe has inputs — a
+        // repeated field four levels deep, so every level needs elements or the guard never decodes
+        // the inner ones. The free stock is a flat list.
+        cohort.kit_needs = rows_of(KitNeedState {
+            jobs: vec!["hunt".to_string(), "forage".to_string()],
+            items: rows_of(KitNeedItemState {
+                recipes: rows_of(KitNeedRecipeState {
+                    inputs: rows_of(MaterialAmountState::default()),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+            ..Default::default()
+        });
+        cohort.materials_free = rows_of(MaterialAmountState::default());
         // **WHAT TO MAKE NEXT** — a repeated field whose rows carry a repeated field of their own
         // (the per-consumer lines), so both levels need elements or the guard never decodes one.
         cohort.craft_suggestions = ["hoes", "spears"]
@@ -648,6 +678,7 @@ fn seed_snapshot() -> WorldSnapshot {
         cohort.breeding_peoples = rows();
         cohort.hunt_meals = rows();
         cohort.envoy_terms = seeded_terms();
+        cohort.culture_pressures = rows();
         cohort.pending_reveal_x = vec![0u32; ROWS];
         cohort.pending_reveal_y = vec![0u32; ROWS];
         cohort.belief_reach_x = vec![0u32; ROWS];
@@ -719,9 +750,6 @@ fn seed_snapshot() -> WorldSnapshot {
         // the same reason the curve above is.
         herd.material_per_biomass = rows();
         herd.per_worker_material = rows();
-        // …and the two investment rungs' material payoffs.
-        herd.corral_material = rows();
-        herd.pastoral_material = rows();
         // …and the MATERIAL half of the ladder's price: the pile the next rung eats, the rate this
         // one costs to hold, and what the store paid toward it.
         herd.build_material_cost = rows();
@@ -736,18 +764,13 @@ fn seed_snapshot() -> WorldSnapshot {
                 ..Default::default()
             })
             .collect();
-        // …and the per-rung PRE-COMMIT quote pair, which is a different question from the stamped
-        // bill above and therefore a different pair of nested repeated fields.
-        herd.tame_upkeep_material_demand = rows();
-        herd.corral_upkeep_material_demand = rows();
-        // …and the ring's own pile, which is the BUILD twin of that pair: `build_material_cost`
-        // above prices the rung *above* a source, and a ring is only ever offered on a herd already
-        // at the top of its branch.
-        herd.corral_build_material_cost = rows();
         // The animal twin of `ForagePatchState.build_legs` — one leg on this web today, and seeded
         // for the same reason: a repeated field the fixture leaves empty is a field the decode guard
         // cannot exercise.
         herd.build_legs = rows();
+        // **EVERY RUNG'S QUOTE** - a repeated field of rows that each carry three more repeated
+        // fields, so both levels are seeded or the decode guard never reaches the inner ones.
+        herd.rung_quotes = rung_quotes();
     }
     s.food_modules = rows();
     // **The kit roster**, and each entry's `jobs` / `item_ids` — repeated fields inside a repeated
@@ -798,11 +821,16 @@ fn seed_snapshot() -> WorldSnapshot {
         patch.build_destination_capacity = seeded_on(row).then(f32::default);
         let mut composition = rows::<FloraShareInfo>();
         for share in &mut composition {
-            // The crop picker's PER-MATERIAL cash quote (arc #527) — a nested repeated field, so it
-            // is seeded for the same reason `regrowth_samples` is: an empty one is a field the
-            // decode guard cannot exercise.
-            share.sow_material_payoff = rows();
-            share.cultivate_material_payoff = rows();
+            // The crop picker's PER-RUNG quotes, each carrying its own PER-MATERIAL cash quote
+            // (arc #527) - a nested repeated field inside a repeated field, seeded at both levels
+            // for the reason `regrowth_samples` is: an empty one is a field the decode guard cannot
+            // exercise.
+            share.rung_quotes = (0..ROWS)
+                .map(|_| RungShareQuoteState {
+                    material_payoff: rows(),
+                    ..Default::default()
+                })
+                .collect();
         }
         // **How much of each plant is standing** (the selective gather) — index-aligned with the
         // basket above, so it is seeded to the SAME length rather than to `ROWS`: a fixture whose
@@ -839,9 +867,6 @@ fn seed_snapshot() -> WorldSnapshot {
                 ..Default::default()
             })
             .collect();
-        // …and the per-rung PRE-COMMIT quote pair — see the herd twin.
-        patch.cultivation_upkeep_material_demand = rows();
-        patch.field_upkeep_material_demand = rows();
         // The TILE's per-rung vector (#426) — the plant twin of `hunt_policy_ceilings` above, and
         // seeded for the same reason: a repeated field the fixture leaves empty is a field the decode
         // guard cannot exercise, which is how four appended fields reached the client as zeros.
@@ -850,6 +875,8 @@ fn seed_snapshot() -> WorldSnapshot {
         // curve above is. A `sow` on untended ground is a two-leg climb, which is what the fixture
         // stands for here.
         patch.build_legs = rows();
+        // …and every rung's quote - see the herd twin.
+        patch.rung_quotes = rung_quotes();
     }
     // **THE LADDER'S KNOWLEDGE ROSTER** (what there is to learn) and the per-faction PROGRESS list
     // beside it. Both are seeded with real ids rather than defaulted rows, because the roster's
@@ -892,14 +919,24 @@ fn seed_snapshot() -> WorldSnapshot {
             .collect();
     }
 
-    // **THE ROUTE BRANCH'S RUNG CATALOG** — what a road may become, once per world. Seeded for the
+    // **THE LADDER'S RUNG CATALOG** - what any source may become, once per world. Seeded for the
     // reason every repeated field here is: an empty vector is a field the decode guard cannot
-    // exercise, which is how an appended field reaches the client as nothing at all.
-    s.route_rungs = rows();
+    // exercise, which is how an appended field reaches the client as nothing at all. The row's own
+    // `traits` list is seeded too (one blank name, which saturation turns into its path), since a
+    // nested empty array is just as unexercised.
+    s.ladder_rungs = rows_of(LadderRungState {
+        traits: vec![String::new()],
+        site_relaxations: rows(),
+        size_tiers: rows(),
+        knowledge_gains: rows(),
+        ..Default::default()
+    });
 
-    // **THE TWO DEPOSIT BRANCHES' RUNG CATALOG** — what a wood or a rock body may become,
-    // once per world, beside the route catalog above and seeded for the same reason.
-    s.deposit_rungs = rows();
+    // **THE LADDER'S BRANCHES** - the grouping the catalog above is drawn under, once per world.
+    s.ladder_branches = rows();
+
+    // **THE MOBILITY SCORE** — seeded so the round trip proves the table both ways.
+    s.mobility = rows();
 
     // --- connections -----------------------------------------------------
     // The contact primitive's own section (arc #527). Seeded for the reason every repeated
@@ -914,6 +951,12 @@ fn seed_snapshot() -> WorldSnapshot {
     // halves went with the path object — a road is a per-tile improvement, so the row carries its
     // own `tile_x`/`tile_y` scalars and nothing to walk.
     s.routes = rows();
+    // A tile improvement's own `build_legs` is a nested repeated field, so it is seeded too.
+    s.tile_improvements = rows_of(crate::state::routes::TileImprovementState {
+        build_legs: vec![crate::state::subsistence::BuildLegState::default()],
+        upkeep_toe: vec![crate::state::population::KitToeLineState::default()],
+        ..Default::default()
+    });
 
     // --- dealings --------------------------------------------------------
     // The pending offers between peoples (`docs/plan_early_diplomacy.md` §1). Each row carries two

@@ -34,6 +34,14 @@ mod tests {
     use super::*;
     use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
 
+    /// One rung's quote, keyed the way the wire keys it (`branch:id`), every number defaulted.
+    fn quote(rung_key: &str) -> RungQuoteState {
+        RungQuoteState {
+            rung_key: rung_key.to_string(),
+            ..RungQuoteState::default()
+        }
+    }
+
     /// **The bench's auto-craft state rides the wire** (`BenchState.auto` / `autoSkipped`,
     /// `BenchOrder.auto`). Encode, decode, compare the decoded rows - an appended field that never
     /// reached the codec passes an in-process assertion and fails this one.
@@ -78,6 +86,75 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![true, false],
             "each order's own tag, not one value for the queue"
+        );
+    }
+
+    /// **Whole-kit orders ride the wire** (#780): `BenchOrder.kitOrder`, `BenchState.kitOrders`,
+    /// `PopulationCohortState.kitNeeds` (four levels deep) and `materialsFree`. Decoded rows are
+    /// compared, so a field that never reached the codec fails here.
+    #[test]
+    fn whole_kit_orders_and_kit_needs_ride_the_wire() {
+        let kit_need = KitNeedState {
+            kit_id: "big_game".to_string(),
+            display_name: "Stalking kit".to_string(),
+            jobs: vec!["hunt".to_string()],
+            people: 6,
+            items: vec![KitNeedItemState {
+                item_id: "sled".to_string(),
+                workers_per_unit: 6,
+                have: 1,
+                queued: 2,
+                claimed: 3.0,
+                short: 3,
+                recipes: vec![KitNeedRecipeState {
+                    recipe_id: "sled_framed".to_string(),
+                    output_per_pass: 1.0,
+                    inputs: vec![MaterialAmountState {
+                        material_id: "hide".to_string(),
+                        amount: 2.4,
+                    }],
+                }],
+            }],
+        };
+        let snapshot = WorldSnapshot {
+            populations: vec![PopulationCohortState {
+                entity: 7,
+                bench: BenchState {
+                    orders: vec![BenchOrderState {
+                        recipe_id: "sled".to_string(),
+                        count: 1,
+                        kit_order: 3,
+                        ..Default::default()
+                    }],
+                    kit_orders: vec![BenchKitOrderState {
+                        id: 3,
+                        kit_id: "big_game".to_string(),
+                        kits: 6,
+                        done: 2,
+                    }],
+                    ..Default::default()
+                },
+                kit_needs: vec![kit_need.clone()],
+                materials_free: vec![MaterialAmountState {
+                    material_id: "wood".to_string(),
+                    amount: 4.5,
+                }],
+                ..Default::default()
+            }],
+            ..WorldSnapshot::default()
+        };
+        let bytes = encode_snapshot_flatbuffer(&snapshot);
+        let decoded = decode_snapshot_flatbuffer(&bytes).expect("the snapshot decodes");
+        let cohort = &decoded.populations[0];
+        assert_eq!(cohort.bench.orders[0].kit_order, 3);
+        assert_eq!(
+            cohort.bench.kit_orders,
+            snapshot.populations[0].bench.kit_orders
+        );
+        assert_eq!(cohort.kit_needs, vec![kit_need]);
+        assert_eq!(
+            cohort.materials_free,
+            snapshot.populations[0].materials_free
         );
     }
 
@@ -364,11 +441,11 @@ mod tests {
     }
 
     /// **The pen-as-a-managed-population fields survive the wire.** `penFedFraction` (`< 1` =
-    /// starving) rides beside the **gross** `corralYield` on `HerdTelemetryState`. Encode → decode
+    /// starving) rides beside the **gross** pen-rung food yield in the herd's rung quotes. Encode → decode
     /// with the generated reader, so a field that silently failed to serialize cannot pass.
     ///
     /// **`penUpkeep` is retired** (off the wire): it was the FOOD the pen demanded per
-    /// turn, drawn as a negative row against `corralYield`. A pen eats grass and hay, so there is no
+    /// turn, drawn as a negative row against the pen's food yield. A pen eats grass and hay, so there is no
     /// food-unit running cost to draw and the fed fraction carries the whole of the feeding story.
     #[test]
     fn herd_fed_fraction_round_trips_on_the_wire() {
@@ -379,9 +456,17 @@ mod tests {
         let snapshot = snapshot_with_herd(HerdTelemetryState {
             id: "herd_pen".to_string(),
             species: "Red Deer".to_string(),
-            corralled: true,
-            corral_yield: CORRAL_YIELD,
-            pastoral_yield: PASTORAL_YIELD,
+            rung_quotes: vec![
+                RungQuoteState {
+                    reached: true,
+                    food_yield: CORRAL_YIELD,
+                    ..quote("animal:pen")
+                },
+                RungQuoteState {
+                    food_yield: PASTORAL_YIELD,
+                    ..quote("animal:pastoral")
+                },
+            ],
             pen_fed_fraction: FED,
             ..Default::default()
         });
@@ -396,9 +481,12 @@ mod tests {
             .herds()
             .expect("herds present")
             .get(0);
-        assert!(herd.corralled());
-        assert!((herd.corralYield() - CORRAL_YIELD).abs() < 1e-6);
-        assert!((herd.pastoralYield() - PASTORAL_YIELD).abs() < 1e-6);
+        let quotes = herd.rungQuotes().expect("the rung quotes");
+        assert_eq!(quotes.get(0).rungKey(), Some("animal:pen"));
+        assert!(quotes.get(0).reached());
+        assert!((quotes.get(0).foodYield() - CORRAL_YIELD).abs() < 1e-6);
+        assert!(!quotes.get(1).reached());
+        assert!((quotes.get(1).foodYield() - PASTORAL_YIELD).abs() < 1e-6);
         assert!((herd.penFedFraction() - FED).abs() < 1e-6);
     }
 
@@ -723,7 +811,6 @@ mod tests {
                 },
                 HerdTelemetryState {
                     id: "herd_pen".to_string(),
-                    corralled: true,
                     engage_rate: NO_ENGAGEMENT_STAGE,
                     ..Default::default()
                 },
@@ -1153,14 +1240,24 @@ mod tests {
                 composition: vec![
                     FloraShareInfo {
                         species: "cotton".to_string(),
-                        sow_material_payoff: vec![MaterialPayoff {
-                            material_id: "fibre".to_string(),
-                            amount: SOW_FIBRE,
-                        }],
-                        cultivate_material_payoff: vec![MaterialPayoff {
-                            material_id: "fibre".to_string(),
-                            amount: CULTIVATE_FIBRE,
-                        }],
+                        rung_quotes: vec![
+                            RungShareQuoteState {
+                                rung_key: "plant:tended".to_string(),
+                                material_payoff: vec![MaterialPayoff {
+                                    material_id: "fibre".to_string(),
+                                    amount: CULTIVATE_FIBRE,
+                                }],
+                                ..RungShareQuoteState::default()
+                            },
+                            RungShareQuoteState {
+                                rung_key: "plant:farm".to_string(),
+                                material_payoff: vec![MaterialPayoff {
+                                    material_id: "fibre".to_string(),
+                                    amount: SOW_FIBRE,
+                                }],
+                                ..RungShareQuoteState::default()
+                            },
+                        ],
                         ..FloraShareInfo::default()
                     },
                     // A grain Field beside it: no material at all, and it must stay that way.
@@ -1189,11 +1286,11 @@ mod tests {
             .expect("the patch's composition");
 
         let cotton = composition.get(0);
-        let sow = cotton
-            .sowMaterialPayoff()
+        let sow = codec::wire_share_rung_quote(cotton.rungQuotes(), "plant:farm")
+            .and_then(|quote| quote.materialPayoff())
             .expect("the Sow quote survives the codec");
-        let cultivate = cotton
-            .cultivateMaterialPayoff()
+        let cultivate = codec::wire_share_rung_quote(cotton.rungQuotes(), "plant:tended")
+            .and_then(|quote| quote.materialPayoff())
             .expect("the Cultivate quote survives the codec");
         assert_eq!((sow.len(), cultivate.len()), (1, 1));
         assert_eq!(sow.get(0).materialId(), Some("fibre"));
@@ -1207,7 +1304,9 @@ mod tests {
 
         let grain = composition.get(1);
         assert!(
-            grain.sowMaterialPayoff().is_none_or(|rows| rows.is_empty()),
+            codec::wire_share_rung_quote(grain.rungQuotes(), "plant:farm")
+                .and_then(|quote| quote.materialPayoff())
+                .is_none_or(|rows| rows.is_empty()),
             "a food crop quotes NO ROW — never a zero-valued one"
         );
     }
@@ -1434,18 +1533,34 @@ mod tests {
 
         let snapshot = WorldSnapshot {
             herds: vec![HerdTelemetryState {
-                tame_work_done: TAME_DONE,
-                tame_work_cost: TAME_COST,
-                corral_work_done: CORRAL_DONE,
-                corral_work_cost: CORRAL_COST,
+                rung_quotes: vec![
+                    RungQuoteState {
+                        work_done: TAME_DONE,
+                        work_cost: TAME_COST,
+                        ..quote("animal:pastoral")
+                    },
+                    RungQuoteState {
+                        work_done: CORRAL_DONE,
+                        work_cost: CORRAL_COST,
+                        ..quote("animal:pen")
+                    },
+                ],
                 build_turns_remaining: HERD_TURNS,
                 ..HerdTelemetryState::default()
             }],
             forage_patches: vec![ForagePatchState {
-                cultivation_work_done: CULTIVATION_DONE,
-                cultivation_work_cost: CULTIVATION_COST,
-                field_work_done: FIELD_DONE,
-                field_work_cost: FIELD_COST,
+                rung_quotes: vec![
+                    RungQuoteState {
+                        work_done: CULTIVATION_DONE,
+                        work_cost: CULTIVATION_COST,
+                        ..quote("plant:tended")
+                    },
+                    RungQuoteState {
+                        work_done: FIELD_DONE,
+                        work_cost: FIELD_COST,
+                        ..quote("plant:farm")
+                    },
+                ],
                 build_turns_remaining: NO_BUILD_TURNS_ESTIMATE,
                 ..ForagePatchState::default()
             }],
@@ -1461,29 +1576,31 @@ mod tests {
             .expect("a subsistence section");
 
         let herd = subsistence.herds().expect("the herds").get(0);
-        assert_eq!(herd.tameWorkDone(), TAME_DONE);
+        let herd_quotes = herd.rungQuotes().expect("the herd's rung quotes");
+        assert_eq!(herd_quotes.get(0).workDone(), TAME_DONE);
         assert_eq!(
-            herd.tameWorkCost(),
+            herd_quotes.get(0).workCost(),
             TAME_COST,
             "a Tame's price carries the species' own cost multiplier"
         );
-        assert_eq!(herd.corralWorkDone(), CORRAL_DONE);
-        assert_eq!(herd.corralWorkCost(), CORRAL_COST);
+        assert_eq!(herd_quotes.get(1).workDone(), CORRAL_DONE);
+        assert_eq!(herd_quotes.get(1).workCost(), CORRAL_COST);
         assert_eq!(herd.buildTurnsRemaining(), HERD_TURNS);
 
         let patch = subsistence
             .foragePatches()
             .expect("the forage patches")
             .get(0);
-        assert_eq!(patch.cultivationWorkDone(), CULTIVATION_DONE);
-        assert_eq!(patch.cultivationWorkCost(), CULTIVATION_COST);
+        let patch_quotes = patch.rungQuotes().expect("the patch's rung quotes");
+        assert_eq!(patch_quotes.get(0).workDone(), CULTIVATION_DONE);
+        assert_eq!(patch_quotes.get(0).workCost(), CULTIVATION_COST);
         assert_eq!(
-            patch.fieldWorkDone(),
+            patch_quotes.get(1).workDone(),
             FIELD_DONE,
             "an unstarted rung banks nothing…"
         );
         assert_eq!(
-            patch.fieldWorkCost(),
+            patch_quotes.get(1).workCost(),
             FIELD_COST,
             "…and still quotes its price, so the sheet can offer it"
         );
@@ -1510,7 +1627,10 @@ mod tests {
 
         let snapshot = WorldSnapshot {
             herds: vec![HerdTelemetryState {
-                tame_work_cost: HERD_WORK_COST,
+                rung_quotes: vec![RungQuoteState {
+                    work_cost: HERD_WORK_COST,
+                    ..quote("animal:pastoral")
+                }],
                 build_work_from_gear: HERD_GEAR_WORK,
                 ..HerdTelemetryState::default()
             }],
@@ -1529,7 +1649,10 @@ mod tests {
         let herd = subsistence.herds().expect("the herds").get(0);
         assert_eq!(herd.buildWorkFromGear(), HERD_GEAR_WORK);
         assert_eq!(
-            herd.tameWorkCost(),
+            herd.rungQuotes()
+                .expect("the rung quotes")
+                .get(0)
+                .workCost(),
             HERD_WORK_COST,
             "the price stays the RAW job — the gear's share is quoted beside it, never folded in"
         );
@@ -1603,7 +1726,7 @@ mod tests {
             patch.upkeepDemand(),
             0.0,
             "a patch nothing has described bills nothing — an honest 0, always meaningful and \
-             never a sentinel (the `corralYield` rule)"
+             never a sentinel (the always-meaningful rule)"
         );
         assert_eq!(patch.upkeepSupplied(), 0.0);
         assert_eq!(patch.upkeepShortfall(), 0.0);
@@ -1633,13 +1756,29 @@ mod tests {
 
         let snapshot = WorldSnapshot {
             herds: vec![HerdTelemetryState {
-                tame_upkeep_demand: TAME_RATE,
-                corral_upkeep_demand: CORRAL_RATE,
+                rung_quotes: vec![
+                    RungQuoteState {
+                        upkeep_demand: TAME_RATE,
+                        ..quote("animal:pastoral")
+                    },
+                    RungQuoteState {
+                        upkeep_demand: CORRAL_RATE,
+                        ..quote("animal:pen")
+                    },
+                ],
                 ..HerdTelemetryState::default()
             }],
             forage_patches: vec![ForagePatchState {
-                cultivation_upkeep_demand: CULTIVATION_RATE,
-                field_upkeep_demand: FIELD_RATE,
+                rung_quotes: vec![
+                    RungQuoteState {
+                        upkeep_demand: CULTIVATION_RATE,
+                        ..quote("plant:tended")
+                    },
+                    RungQuoteState {
+                        upkeep_demand: FIELD_RATE,
+                        ..quote("plant:farm")
+                    },
+                ],
                 ..ForagePatchState::default()
             }],
             ..WorldSnapshot::default()
@@ -1654,8 +1793,9 @@ mod tests {
             .expect("a subsistence section");
 
         let herd = subsistence.herds().expect("the herds").get(0);
-        assert_eq!(herd.tameUpkeepDemand(), TAME_RATE);
-        assert_eq!(herd.corralUpkeepDemand(), CORRAL_RATE);
+        let herd_quotes = herd.rungQuotes().expect("the herd's rung quotes");
+        assert_eq!(herd_quotes.get(0).upkeepDemand(), TAME_RATE);
+        assert_eq!(herd_quotes.get(1).upkeepDemand(), CORRAL_RATE);
         assert_eq!(
             herd.upkeepDemand(),
             0.0,
@@ -1666,8 +1806,9 @@ mod tests {
             .foragePatches()
             .expect("the forage patches")
             .get(0);
-        assert_eq!(patch.cultivationUpkeepDemand(), CULTIVATION_RATE);
-        assert_eq!(patch.fieldUpkeepDemand(), FIELD_RATE);
+        let patch_quotes = patch.rungQuotes().expect("the patch's rung quotes");
+        assert_eq!(patch_quotes.get(0).upkeepDemand(), CULTIVATION_RATE);
+        assert_eq!(patch_quotes.get(1).upkeepDemand(), FIELD_RATE);
         assert_eq!(
             patch.upkeepDemand(),
             0.0,
@@ -1689,12 +1830,18 @@ mod tests {
 
         let snapshot = WorldSnapshot {
             herds: vec![HerdTelemetryState {
-                corral_upkeep_demand: A_DEMAND,
+                rung_quotes: vec![RungQuoteState {
+                    upkeep_demand: A_DEMAND,
+                    ..quote("animal:pen")
+                }],
                 meter_rot_per_turn: HERD_ROT,
                 ..HerdTelemetryState::default()
             }],
             forage_patches: vec![ForagePatchState {
-                field_upkeep_demand: A_DEMAND,
+                rung_quotes: vec![RungQuoteState {
+                    upkeep_demand: A_DEMAND,
+                    ..quote("plant:farm")
+                }],
                 meter_rot_per_turn: PATCH_ROT,
                 ..ForagePatchState::default()
             }],
@@ -1712,7 +1859,10 @@ mod tests {
         let herd = subsistence.herds().expect("the herds").get(0);
         assert_eq!(herd.meterRotPerTurn(), HERD_ROT);
         assert_eq!(
-            herd.corralUpkeepDemand(),
+            herd.rungQuotes()
+                .expect("the rung quotes")
+                .get(0)
+                .upkeepDemand(),
             A_DEMAND,
             "the rate and the rot are different questions and different slots"
         );
@@ -1722,7 +1872,14 @@ mod tests {
             .expect("the forage patches")
             .get(0);
         assert_eq!(patch.meterRotPerTurn(), PATCH_ROT);
-        assert_eq!(patch.fieldUpkeepDemand(), A_DEMAND);
+        assert_eq!(
+            patch
+                .rungQuotes()
+                .expect("the rung quotes")
+                .get(0)
+                .upkeepDemand(),
+            A_DEMAND
+        );
     }
 
     /// **THE KIT'S PER-WORKER BUILD CONTRIBUTION SURVIVES THE WIRE, and the retired multiplier's

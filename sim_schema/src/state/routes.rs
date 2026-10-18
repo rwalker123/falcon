@@ -17,7 +17,7 @@ pub struct RouteState {
     /// separate id to name.
     pub tile_x: u32,
     pub tile_y: u32,
-    /// The rung this road **holds**, as `"<branch>:<id>"` (`RungKey::wire_key`). **This string is
+    /// The rung this road **holds**, as `"<branch>:<id>"` (`RungId::wire_key`). **This string is
     /// the bool** — a rung is never to be inferred from [`Self::build_fraction`], which is a
     /// different rung's meter.
     pub rung: String,
@@ -97,7 +97,7 @@ pub struct RouteState {
     ///
     /// The demand is what the accrual would draw *at full coverage*, spread over the rung's whole
     /// span, so a turn's share of `route:paved_road`'s twenty stone is small.
-    /// [`crate::state::RouteRungState::build_material_cost`] is the whole pile.
+    /// [`crate::state::LadderRungState::build_material_cost`] is the whole pile.
     ///
     /// ⛔ **A SHORT STORE STALLS THE BUILD PROPORTIONALLY AND NEVER REFUSES IT.** The covered
     /// fraction scales **both** the work banked and the stone drawn, and the uncovered remainder is
@@ -148,6 +148,70 @@ pub struct RouteState {
 /// The serde default of [`RouteState::build_turns_remaining`] — the *no estimate* sentinel, so a
 /// road decoded from a document that predates the field reads *"the sim has no number"* rather than
 /// the `0` a derived default would give, which renders as a finished build.
+/// **ONE IMPROVEMENT ON ONE TILE OF A TILE-KIND BRANCH** - a row of
+/// [`crate::WorldSnapshot::tile_improvements`], the road's shape for a thing that is not a road.
+/// See `snapshot.fbs`'s `TileImprovementState` for each field's contract.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct TileImprovementState {
+    pub tile_x: u32,
+    pub tile_y: u32,
+    /// The tile-kind branch id; with the tile it is the row key.
+    pub branch: String,
+    /// The rung held, `<branch>:<id>`.
+    pub current_rung: String,
+    /// The rung the head build is raising it to, `""` where nothing is queued.
+    pub build_destination_rung: String,
+    /// The legs still to lay, in climb order.
+    pub build_legs: Vec<crate::state::subsistence::BuildLegState>,
+    /// The head build's countdown (`NO_BUILD_TURNS_ESTIMATE` where there is none).
+    #[serde(default = "no_build_turns_estimate")]
+    pub build_turns_remaining: i32,
+    /// Why the head build is stuck, `""` when it is not.
+    pub build_blocked_reason: String,
+    pub upkeep_demand: f32,
+    pub upkeep_supplied: f32,
+    pub upkeep_shortfall: f32,
+    pub neglect_turns: u32,
+    pub has_neglect_grace: bool,
+    pub neglect_grace_remaining: u32,
+    /// Whole hands the stamped bill calls for at the bare rate.
+    pub upkeep_workers_needed: u32,
+    /// How many of the crews' hands the keeping took this turn.
+    pub upkeep_hands: f32,
+    /// Whether the viewer's keeping crew's tool claim was filled less than in full.
+    pub upkeep_tools_short: bool,
+    /// The viewer's keeping tools, one line per item the crews claimed.
+    pub upkeep_toe: Vec<crate::state::population::KitToeLineState>,
+    /// Whether one of the viewer's own bands has a build queued on this improvement.
+    pub is_queued: bool,
+}
+
+impl Default for TileImprovementState {
+    fn default() -> Self {
+        Self {
+            tile_x: 0,
+            tile_y: 0,
+            branch: String::new(),
+            current_rung: String::new(),
+            build_destination_rung: String::new(),
+            build_legs: Vec::new(),
+            build_turns_remaining: no_build_turns_estimate(),
+            build_blocked_reason: String::new(),
+            upkeep_demand: 0.0,
+            upkeep_supplied: 0.0,
+            upkeep_shortfall: 0.0,
+            neglect_turns: 0,
+            has_neglect_grace: false,
+            neglect_grace_remaining: 0,
+            upkeep_workers_needed: 0,
+            upkeep_hands: 0.0,
+            upkeep_tools_short: false,
+            upkeep_toe: Vec::new(),
+            is_queued: false,
+        }
+    }
+}
+
 fn no_build_turns_estimate() -> i32 {
     crate::NO_BUILD_TURNS_ESTIMATE
 }

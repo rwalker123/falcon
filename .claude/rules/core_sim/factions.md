@@ -10,6 +10,9 @@ paths:
   - "core_sim/src/personalities.rs"
   - "core_sim/src/data/personalities.json"
   - "core_sim/src/culture.rs"
+  - "core_sim/src/culture_corruption_config.rs"
+  - "core_sim/src/systems/culture_pressure.rs"
+  - "core_sim/tests/culture_pressure.rs"
   - "core_sim/src/metrics.rs"
   - "core_sim/src/victory.rs"
   - "sim_runtime/proto/command.proto"
@@ -943,6 +946,88 @@ breach, `diplomacy.md` → "Treaties").
 
 A people's own bands never ask it: moving between your own camps is not crossing a border.
 
+## Culture strength and pressure — one people's weight on one band of another (#820)
+
+Design of record: `docs/plan_minor_peoples.md` §"Peaceful absorption". Engine:
+`core_sim/src/systems/culture_pressure.rs` (`advance_culture_pressure`, `CulturePressureLedger`).
+**This slice is read-only**: it measures, publishes and tells the owner; no band changes hands.
+
+`advance_culture_pressure` runs in the Population chain directly after `advance_culture_splits`, so
+every band's people is final for the turn. It reads the contact ties as the previous Visibility
+stage left them.
+
+### Strength, per people
+
+`strength = base + Σ weight_i × (input_i / reference_i)` (`culture.strength` in
+`culture_corruption_config.json`: base **1.0**, weights belief **1.0** / ties **0.5** / discoveries
+**0.5**, references **20** / **4** / **2**; `base` and every reference `> 0`, weights `>= 0`). Inputs
+are **not clamped** — belief never decays, so an old rooted people keeps growing heavier. Computed
+for every people with at least one resident band.
+
+- **Belief** — the sum of `BeliefRegistry::get` over the **distinct** `belief_anchor` tiles of the
+  people's resident bands. Three bands anchored on one cemetery count it once.
+- **Ties** — the number of **distinct foreign bands** (a resident band of any other people) with a
+  live tie (`ConnectionLedger` strength above `NO_TIE`, either direction) to **any** of the people's
+  resident bands. Faction comes from each endpoint's `PopulationCohort.faction`; the edge carries no
+  faction (`connections.md`). A foreign band reached through four edges counts once.
+- **Discoveries** — `DiscoveredSites::for_faction(f).len()`.
+
+### Pressure, per (band of A, people B)
+
+`pressure = (strength_B / strength_A) × (people_B / people_A) ^ size_exponent` (`culture.joining`:
+`size_exponent` **0.5**). Only a pair where the band holds a live tie to a resident band of B, and B
+is not the band's own people, gets a reading. A band with no such tie has no pressure from B. Equal
+sizes ±1 person with triple the strength read ≈ 2.9 (`3 × sqrt(12/13) = 2.88`).
+
+**Both sizes are whole-people head-counts**: every `PopulationCohort` of the faction, resident bands
+and detached expedition parties alike, summed fresh in the system. `metrics.population_by_faction`
+is not used — it is one turn stale by the time this stage runs.
+
+**"Close"** is `max_axis_gap(band culture, faction_trait_average(B's resident bands, weighted by
+cohort.size)) <= joining.max_culture_distance` (**0.3**). `culture::max_axis_gap` is the same
+per-axis max-|Δ| `CultureLayer::evaluate_divergence` computes, extracted so divergence and joining
+share one metric (it returns a `Scalar`, the type the layers hold). A band with no culture layer is
+not close.
+
+### Phases and the two clocks
+
+| Phase | Needs |
+|---|---|
+| Pulled | `pressure >= joining.pulled` (**1.5**) |
+| Asked | `asked_turns >= joining.turns` (**10**) |
+| Forced | `forced_turns >= joining.turns` |
+
+`asked_turns` increments each turn `pressure >= joining.asked` (**2.0**) **and** close, and resets to
+`0` the turn that fails; `forced_turns` is the same at `joining.forced` (**4.0**). Phase is Forced if
+the forced clock has run, else Asked if the asked clock has, else Pulled at `pressure >= pulled`.
+`joining` validates `0 < pulled <= asked <= forced`, `turns >= 1`, `max_culture_distance >= 0`,
+`size_exponent >= 0`.
+
+**Only pairs at Pulled or above are stored** (`CulturePressureLedger::pairs`, keyed
+`(BandId, FactionId)`). Below `pulled` the asked condition cannot hold, so no clock is lost by
+dropping the entry; a pair that falls out is removed and its clock restarts. Each entry records the
+band's owner when it was read: an entry whose owner is no longer the band's restarts, and a band
+whose own people is the pulling one has no pair. The ledger is rebuilt whole each turn, so a dead
+band leaves no row.
+
+### The event and the wire
+
+`CommandEventKind::CulturePull` (`"culture_pull"`) fires **once, on entry** into Pulled-or-above from
+no entry — the `LostTouch` on-transition precedent (`independence.md`). It does not fire while the
+pull stands and does not fire on Pulled→Asked or Asked→Forced. Filed under the band's owner; detail
+`band=<id> faction=<pulling people's id>`.
+
+`PopulationCohortState.culturePressures:[CulturePressureState]` (`faction`, `pressure`, `phase`
+0 none / 1 pulled / 2 asked / 3 forced, `close`, `turnsToNext`) is published from the ledger at
+capture, sorted by pressure descending then faction ascending. `turnsToNext` is the turns left on the
+clock toward the next phase: `turns − asked_turns` in Pulled with the asked clock running,
+`turns − forced_turns` in Asked with the forced clock running, else `0`. **Owner-only**: it is not on
+`redacted_population_state`'s allow-list, so a foreign viewer's row is empty by construction
+(`core_sim/tests/culture_pressure.rs` pins it with fog off, where the redacted row exists).
+
+The ledger is checkpoint state (`SimState::culture_pressure`, `SAVE_FORMAT_VERSION` 45): the clocks
+run across turns and the capture publishes the rows before a restored world has run a turn.
+
 ## What a foreign band publishes — THREE TIERS, by what the viewer can see
 
 A snapshot is **one viewer's view**. Herds are fog-filtered, connections are filtered on the
@@ -1044,6 +1129,7 @@ apply only where the row describes something that can be *seen*.
 | `connections` | `snapshot/connections.rs` | **Viewer** — edges whose *observer* band is the viewer's |
 | `factionInventory` | `snapshot/economy.rs` | **Viewer** |
 | `sedentarization` | `snapshot/subsistence.rs` | **Viewer** |
+| `mobility` | `snapshot/subsistence.rs` | **Viewer** - the roaming counterpart of `sedentarization`, a bare number with no visible tier |
 | `intensificationKnowledge` | `snapshot/subsistence.rs` | **Viewer** |
 | `craftKnowledge` | `snapshot/crafting.rs` | **Viewer** |
 | `discoveryProgress` | `snapshot/knowledge.rs` | **Viewer** |
@@ -1056,7 +1142,7 @@ apply only where the row describes something that can be *seen*.
 | `commandEvents` | `snapshot/campaign.rs` | **Viewer** |
 | `pendingForks` / `stanceAxes` / `voiceMedium` | `snapshot/campaign.rs` | **Viewer** |
 | `openingLoadout` | `snapshot/campaign.rs` | **Viewer** — already took `viewer_faction` for its known-crafts list |
-| `tiles`, the rasters, `foodModules`, `climateBands`, the catalogues (`kits`, `materials`, `recipes`, `ladderKnowledge`, `routeRungs`, `campaignProfiles`) | various | **World** — terrain and per-world constants, carrying no faction. The client fogs the map from `visibilityRaster` |
+| `tiles`, the rasters, `foodModules`, `climateBands`, the catalogues (`kits`, `materials`, `recipes`, `ladderKnowledge`, `ladderRungs`, `ladderBranches`, `campaignProfiles`) | various | **World** — terrain and per-world constants, carrying no faction. The client fogs the map from `visibilityRaster` |
 | `victory.modes[].progress` | `snapshot/campaign.rs` | **Viewer** — progress is one people's, so the frame carries the viewer's mode rows and nobody else's (`VictoryState::modes_for`) |
 | `victory.winner` | `snapshot/campaign.rs` | **World** — a winner is public by definition, and it names the faction that actually achieved it |
 | `factionPolicies` | `snapshot/campaign.rs` | **Viewer** — your own Open Borders row and standing answer to a gift from your own people only |
@@ -1136,8 +1222,8 @@ rides, and its ecology half (biomass, phase, standing crop) is world-visible lik
 describes. What is *not* a fact about the tile is the improvement standing on it. **Two different
 rules divide that row, and conflating them is what produced both of its leaks.**
 
-**① The improvement follows the ground.** `owner`, `isCultivated` / `cultivationProgress`, `isField`
-/ `fieldProgress` and everything derived from the patch's rung are a fact about a *people*, and
+**① The improvement follows the ground.** `owner`, `rungQuotes[plant:tended].reached` / `rungQuotes[plant:tended].progress`, `rungQuotes[plant:farm].reached`
+/ `rungQuotes[plant:farm].progress` and everything derived from the patch's rung are a fact about a *people*, and
 before the sweep every client got them for every patch on the map — a live readout of exactly which
 ground a rival was farming. They are legible where the viewer's own hand built them, and where a
 rival's are on ground the viewer has **explored** — `is_discovered`, not `is_visible`, on
@@ -1163,7 +1249,7 @@ model.
 >
 > It shipped as a **deny-list of five names** — the two flags, the two meters and `owner` — and the
 > row beside those five confirmed exactly what they denied. `carryingCapacity` is the tile's `K`
-> **times the Field rung's interpolated capacity gain**, `tendedYield` / `fieldYield` are
+> **times the Field rung's interpolated capacity gain**, `rungQuotes[plant:tended].foodYield` / `rungQuotes[plant:farm].foodYield` are
 > `rung_payoff` read off the patch's rung, `provisionsPerBiomass` is the *committed* conversion, and
 > `composition` / `committedSpecies` are the weeded basket. **So `carryingCapacity != tileCapacity`
 > was an exact test for "this rival tile carries a standing improvement", published on the row that
@@ -1278,6 +1364,8 @@ The control arm is not optional: it is what distinguishes *"the second faction g
 | `src/data/expedition_config.json` | `defection.party_pull_threshold` | **0.3** | **The pull a detached party must accrue before it joins another people** (see "A detached party goes whole"). At rock-bottom home morale (rate `max_rate` 0.15) it is 2 turns in sight; at morale 0.2 (rate 0.03), 10. Too low and a party defects the turn it glimpses a camp; too high and it never sits near one long enough. `0` is legal (defect on the first qualifying turn); validated finite and `>= 0` at parse. Every other defection number is the trickle's own `wellbeing_config.json` → `migration.*` — one rule, one set of dials. Ships in the Workbench as an `expedition` row |
 | `src/data/start_profiles.json` | `archetypes[*].min_separation` | **20** (`major`), **8** (`minor`) tiles | How far apart worldgen tries to put one of this archetype's starts from every start already placed — 20 is a quarter of the shipped map's width, far enough that two majors do not open sharing one food shed; 8 lets a minor people fill a gap between majors. Euclidean, compared squared. A **target**: on a map with no land pair that far apart, worldgen relaxes (per archetype) and warns rather than failing to place a faction. Validated `> 0` at parse (`StartProfilesError::ZeroArchetypeSeparation`), because zero would let two peoples open on the same hex. (Retired from `simulation_config.json`'s `faction_start_min_separation`) |
 | `src/data/personalities.json` | `personalities[*]` (`id`, `culture_lean`, `weight`) | six entries, weight **1.0** each | The cultural lean a starting faction is born with — see "Personalities" below. `PERSONALITIES_PATH` overrides the file. Validated: at least one entry, unique ids, every `culture_lean` key a known culture axis key, weight finite and `> 0` |
+| `src/data/culture_corruption_config.json` | `culture.strength` (`base` **1.0**; `weights` belief **1.0** / ties **0.5** / discoveries **0.5**; `references` **20.0** / **4.0** / **2.0**) | as listed | A people's weight of tradition, `base + Σ weight × input / reference` — see "Culture strength and pressure". `base` and every reference finite and `> 0`, weights finite and `>= 0` (`CultureCorruptionConfig::from_json_str`). PLAYTEST DIALS |
+| `src/data/culture_corruption_config.json` | `culture.joining` (`size_exponent` **0.5**, `pulled` **1.5**, `asked` **2.0**, `forced` **4.0**, `max_culture_distance` **0.3**, `turns` **10**) | as listed | The pressure formula's size exponent, the three phase thresholds, how close a band's culture must be, and how many turns the asked / forced conditions must hold. Validated `0 < pulled <= asked <= forced`, `turns >= 1`, `max_culture_distance >= 0`, `size_exponent >= 0`. PLAYTEST DIALS |
 
 ## Saves win over profile edits
 

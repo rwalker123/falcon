@@ -36,6 +36,7 @@ use bevy::ecs::system::RunSystemOnce;
 use bevy::math::UVec2;
 use bevy::prelude::Entity;
 use bevy::MinimalPlugins;
+use core_sim::shipped;
 
 use core_sim::{
     advance_labor_allocation, scalar_from_f32, scalar_one, scalar_zero, spawn_initial_graze,
@@ -128,6 +129,8 @@ fn base_world() -> App {
     // is the shipped turn-1 state — no traffic has worn anything in yet — so this harness's
     // keeping numbers are the roadless reading they have always been.
     app.world.insert_resource(core_sim::RoadRegistry::default());
+    app.world
+        .insert_resource(core_sim::TileImprovementRegistry::default());
     app.world.insert_resource(WellbeingConfigHandle::default());
     app.world
         .insert_resource(core_sim::CombatConfigHandle::default());
@@ -198,6 +201,7 @@ fn seat_pens(app: &mut App, tile: UVec2, pens: &[(&str, f32)]) {
             FODDER_RATE,
             WILD_R,
             PEN_BODY_MASS,
+            shipped::root_standing(shipped::animal()),
         );
         herd.tame_outright(FactionId(0), &core_sim::LadderConfig::builtin());
         assert!(

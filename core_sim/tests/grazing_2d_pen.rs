@@ -20,6 +20,7 @@ use bevy::ecs::system::RunSystemOnce;
 use bevy::math::UVec2;
 use bevy::prelude::Entity;
 use bevy::MinimalPlugins;
+use core_sim::shipped;
 
 use core_sim::grid_utils::hex_range_tiles;
 use core_sim::{
@@ -96,6 +97,8 @@ fn base_world() -> App {
     // is the shipped turn-1 state — no traffic has worn anything in yet — so this harness's
     // keeping numbers are the roadless reading they have always been.
     app.world.insert_resource(core_sim::RoadRegistry::default());
+    app.world
+        .insert_resource(core_sim::TileImprovementRegistry::default());
     app.world.insert_resource(WellbeingConfigHandle::default());
     app.world
         .insert_resource(core_sim::CombatConfigHandle::default());
@@ -172,6 +175,7 @@ fn seat_pen(
         fodder,
         r,
         body_mass,
+        shipped::root_standing(shipped::animal()),
     );
     herd.tame_outright(FactionId(0), &core_sim::LadderConfig::builtin());
     assert!(
@@ -657,7 +661,7 @@ fn extend_pen_accrues_a_ring_flips_the_radius_raises_k_and_caps_at_max() {
     const RING_TURNS: u32 = 28;
     let ring_turns_expected = core_sim::build_turns_remaining(
         core_sim::LadderConfig::builtin()
-            .rung(core_sim::RungKey::AnimalPen)
+            .rung(shipped::animal_pen())
             .build_cost(core_sim::RUNG_COST_UNSCALED)
             .expect("the pen rung builds"),
         core_sim::RUNG_UNSTARTED,
@@ -804,7 +808,8 @@ fn the_husbandry_density_ladder_scales_carrying_capacity_per_species() {
             100.0, // spawn cap (overwritten by the ecological recompute)
             0.10,  // fodder_per_biomass — same for every probe, so the base is shared
             0.20,  // wild r
-            20.0,  // body_mass
+            20.0,  // body_mass,
+            shipped::root_standing(shipped::animal()),
         );
         match rung {
             Rung::Wild => {}
@@ -846,6 +851,23 @@ fn the_husbandry_density_ladder_scales_carrying_capacity_per_species() {
     {
         let mut graze = app.world.resource_mut::<GrazeRegistry>();
         graze.patches.retain(|&t, _| t == tile);
+    }
+    // A pastoral herd is held at its owner's camp and its `K` is struck over that camp's footprint,
+    // so the owner's bands stand on the probe tile: the one footprint is then shared by all three
+    // rungs and the ratio still isolates the density gain.
+    {
+        let probe_tile = {
+            let registry = app.world.resource::<TileRegistry>();
+            registry
+                .index(tile.x, tile.y)
+                .expect("the probe tile is on the map")
+        };
+        let mut bands = app
+            .world
+            .query_filtered::<&mut PopulationCohort, bevy::prelude::With<core_sim::ResidentBand>>();
+        for mut cohort in bands.iter_mut(&mut app.world) {
+            cohort.current_tile = probe_tile;
+        }
     }
 
     // --- Crag Goats: the prime grazer domesticate, dials 2.0 / 3.6073. ---
@@ -912,4 +934,84 @@ fn keep_the_penned_herds(app: &mut App) {
             herd.upkeep_supplied = bill;
         }
     }
+}
+
+/// **KEEPING A RANCH TEACHES SELECTIVE BREEDING; KEEPING A SMALL PEN DOES NOT.** Two otherwise
+/// identical pens, one at the ranch tier's ring count and one a ring short of it, are kept for the
+/// same turns: the ranch's keeper earns the tier's lesson and the small pen's earns none of it.
+#[test]
+fn keeping_a_ranch_teaches_selective_breeding_and_a_small_pen_does_not() {
+    const TURNS_KEPT: u32 = 12;
+    let ranch_rings = core_sim::LadderConfig::builtin()
+        .rung(shipped::animal_pen())
+        .size_tiers
+        .first()
+        .expect("the shipped pen declares the ranch tier")
+        .min_rings;
+    let learned_after_keeping = |rings: u32| {
+        let mut app = base_world();
+        let (tile, _) = richest_pasture(&app);
+        let id = seat_pen(
+            &mut app,
+            tile,
+            rings,
+            0.10,
+            0.35,
+            300.0,
+            150.0,
+            PEN_BODY_MASS,
+        );
+        let keeper = spawn_keeper(&mut app, &id, tile);
+        for _ in 0..TURNS_KEPT {
+            run_pen_turn(&mut app, keeper);
+        }
+        app.world
+            .resource::<DiscoveryProgressLedger>()
+            .get_progress(FactionId(0), core_sim::SELECTIVE_BREEDING_DISCOVERY_ID)
+            .to_f32()
+    };
+    let ranch = learned_after_keeping(ranch_rings);
+    let small = learned_after_keeping(ranch_rings - 1);
+    assert!(
+        ranch > 0.0,
+        "keeping a ranch earns Selective breeding (got {ranch})"
+    );
+    assert_eq!(
+        small, 0.0,
+        "keeping a pen a ring short of a ranch earns none of it"
+    );
+}
+
+/// **KNOWING SELECTIVE BREEDING STAMPS EVERY PENNED HERD OF THE KNOWING PEOPLE, SMALL PENS INCLUDED**,
+/// and a people that has not learned it stamps nothing.
+#[test]
+fn knowing_selective_breeding_stamps_the_regrowth_gain_on_a_small_pen() {
+    let ladder = core_sim::LadderConfig::builtin();
+    let gain = ladder
+        .rung(shipped::animal_pen())
+        .knowledge_gains
+        .first()
+        .expect("the shipped pen declares the gain")
+        .regrowth_gain;
+    let mut app = base_world();
+    let (tile, _) = richest_pasture(&app);
+    let id = seat_pen(&mut app, tile, 0, 0.10, 0.35, 300.0, 150.0, PEN_BODY_MASS);
+    app.world.run_system_once(core_sim::stamp_breeding_gains);
+    let stamped = |app: &App| {
+        app.world
+            .resource::<HerdRegistry>()
+            .find(&id)
+            .unwrap()
+            .breeding_gain
+    };
+    assert_eq!(stamped(&app), 1.0, "an unlearned lesson lifts nothing");
+    app.world
+        .resource_mut::<DiscoveryProgressLedger>()
+        .add_progress(
+            FactionId(0),
+            core_sim::SELECTIVE_BREEDING_DISCOVERY_ID,
+            scalar_one(),
+        );
+    app.world.run_system_once(core_sim::stamp_breeding_gains);
+    assert_eq!(stamped(&app), gain);
 }

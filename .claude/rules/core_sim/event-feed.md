@@ -395,7 +395,7 @@ names what a falling position crossed, and `intensification::announce_rung_decay
   its top, so no slip line either. Pinned by
   `forage_field::a_part_built_field_rotting_to_empty_is_not_announced_lost`.
 - **Spans are read BEFORE the decay** — a plant patch's Field price lapses with its meter.
-- **Every value is one word**; the prose (`RungKey::feed_name` / `feed_fallback`) lives in the label.
+- **Every value is one word**; the prose (the rung's `label` / `label_fallback`) lives in the label.
 - **`band=` links the line to the Work row** — for each people told, its band with a row on the
   site carrying the largest crew, ties to the lowest `BandId` (`intensification::site_band_for`); a
   road's keeping band. Absent where no band of that people has a row on the site. Pinned by

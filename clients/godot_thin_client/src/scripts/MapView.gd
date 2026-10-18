@@ -479,7 +479,7 @@ const FOW_EXPLORED_THRESHOLD := 0.3  # Above this a tile is at least Discovered
 # for the sake of a symmetry the sim does not have.
 const FOW_DISCOVERED_HIDDEN_KEYS := [
 	"food_module", "food_module_label", "food_module_weight", "food_kind",
-	"patch_cultivation_progress", "patch_is_cultivated", "patch_has_owner", "patch_owner",
+	"patch_rung_quotes", "patch_has_owner", "patch_owner",
 	"patch_ecology_phase", "patch_biomass",
 	# THE PATCH'S CEILING, redacted because the FIELD RUNG IS IN IT — see this list's header. Its
 	# fog-safe twin `patch_tile_capacity` is deliberately NOT here: that one is terrain.
@@ -492,20 +492,16 @@ const FOW_DISCOVERED_HIDDEN_KEYS := [
 	# render — one rule for the whole patch payload, as with the dips and the crews below.
 	"patch_collapse_fraction", "patch_stressed_fraction",
 	"patch_per_worker_biomass", "patch_regrowth_samples",
-	"patch_per_worker_yield", "patch_tended_yield",
+	"patch_per_worker_yield",
 	# Plant rung 3 (the Field + Sow) — redacted exactly as their rung-2 twins above are: the two
 	# build meters are live patch state, and the Sow forecast pair is quoted at the patch's CURRENT
 	# biomass. `patch_sow_site_refusal` rides with them: it describes the GROUND (fertility + water,
 	# which a remembered tile would arguably still know), but it is only ever read to gate the Sow
 	# affordance — and that affordance is already withheld on a hex the player cannot see, so
 	# redacting it keeps ONE rule for the whole patch payload rather than a lone exception.
-	"patch_field_progress", "patch_is_field",
-	"patch_field_yield", "patch_sow_site_refusal",
 	# The two build meters' WORK absolutes and the source's turn/gear pair (`plan_unit_costed_work.md`
 	# §8) travel with the fractions they decompose: they are live build state, and a remembered tile
 	# knows a build's price no better than it knows its progress.
-	"patch_cultivation_work_done", "patch_cultivation_work_cost",
-	"patch_field_work_done", "patch_field_work_cost",
 	"patch_build_turns_remaining", "patch_build_work_from_gear",
 	# WHERE THIS PATCH SITS IN THE WINNING BAND'S BUILD QUEUE (§4.6b). It rides the same winner as the
 	# pair above and is redacted with them: a queue position is live state about a band's declared
@@ -522,7 +518,7 @@ const FOW_DISCOVERED_HIDDEN_KEYS := [
 	# ground has been taken no better than it knows how far along the job is.
 	"patch_build_destination_rung", "patch_build_legs",
 	# …and WHERE THE PATCH ITSELF STANDS on that ladder. It is redacted for the same reason
-	# `patch_carrying_capacity` above is: `plant:tended` / `plant:field` state exactly the rung
+	# `patch_carrying_capacity` above is: `plant:tended` / `plant:farm` state exactly the rung
 	# `patch_is_cultivated` and `patch_is_field` are struck out two entries up to hide, so leaving it
 	# out would hand a merely-remembered hex the redaction's own answer in one token. It travels with
 	# the destination rather than with the ground readings because it IS the ladder, not the terrain
@@ -552,7 +548,6 @@ const FOW_DISCOVERED_HIDDEN_KEYS := [
 	# whole patch payload follows: they are per-biomass rates read only to compose a forecast at the
 	# patch's CURRENT stock, which a hex the player cannot see does not render.
 	"patch_material_per_biomass", "patch_per_worker_material",
-	"patch_tended_fodder", "patch_field_fodder",
 	# THE STANDING UPKEEP (`docs/plan_standing_upkeep.md` §2) — what holding this patch's rung demands
 	# every turn, what its keepers paid, what went unmet, and the hands that would meet it. Live patch
 	# state, redacted under the one rule the whole patch payload follows.
@@ -1002,6 +997,11 @@ var road_tile_lookup: Dictionary = {}
 ## registry is sparse and lazy, so an untouched map fills none of this; what a tile HOLDS is a pure
 ## function of its terrain and is not on this table.
 var deposit_tile_lookup: Dictionary = {}
+
+## The ladder catalog (`ladder_rungs`), retained whole: a deposit row names the rung it holds by key and
+## the catalog is what says what that rung's verb and label are. Patches and herds carry their own
+## stamped quotes and do not need it.
+var ladder_rung_catalog: Array = []
 # Forage patches (cultivation/tended state, decoded from ForagePatchState), keyed by
 # Vector2i(x, y); read by `_tile_info_at` for the Tile-card cultivation/tended readout.
 var forage_patch_lookup: Dictionary = {}
@@ -1629,6 +1629,9 @@ func display_snapshot(snapshot: Dictionary) -> Dictionary:
 	# They were also nested inside `if food_variant is Array`, which the file's own comment called
 	# an accidental coupling; gating them separately forces the untangle, because a block must never
 	# be gated on a key it does not read.
+	var catalog_variant: Variant = snapshot.get("ladder_rungs", [])
+	if catalog_variant is Array and not (catalog_variant as Array).is_empty():
+		ladder_rung_catalog = catalog_variant
 	if SnapshotSections.changed(snapshot, SECTION_FOOD_MODULES):
 		var t_sites_food: int = profile.begin(PROFILE_SITES_FOOD)
 		_ingest_food_modules(snapshot)
@@ -2573,6 +2576,7 @@ func set_labor_pending(pending: Dictionary) -> void:
 ## Not cleared, deliberately: `active_overlay_key`, the terrain highlight id
 ## and the texture/grid toggles are VIEW preferences (or keyed on stable terrain ids), not world data.
 func reset_world_state() -> void:
+	ladder_rung_catalog = []
 	# PUSHED IN from the HUD and keyed by tracks the new world reuses — the third shape
 	# `.claude/rules/core_sim/world-handoff.md` names as needing a clear. A new world knows nothing,
 	# and stale knowledge here would mark its wild sources as ready to climb.
@@ -3552,8 +3556,12 @@ func _tile_info_at(col: int, row: int) -> Dictionary:
 		# `RungGates.forage_gates_from_patch` and re-learned by every reader. `SourceForecast`'s
 		# improvement helpers spell a key as `prefix + name` uniformly, so the exception would have
 		# meant a done-test that silently answered "not built" on a tended patch.
-		info["patch_cultivation_progress"] = float(patch.get("cultivation_progress", 0.0))
-		info["patch_is_cultivated"] = bool(patch.get("is_cultivated", false))
+		# **EVERY RUNG'S QUOTE, ONE KEY** (issue #175): the patch's `rung_quotes` (reached, progress, work,
+		# yields, upkeep, site refusal -- one per rung above the plant root, already stamped with the
+		# catalog's verb / order / traits at ingest) replaces the per-step fields this cross-ref used to
+		# copy one by one. It is redacted on a remembered hex as a whole (`FOW_DISCOVERED_HIDDEN_KEYS`),
+		# `reached` being the standing the fog hides.
+		info["patch_rung_quotes"] = patch.get("rung_quotes", [])
 		info["patch_has_owner"] = bool(patch.get("has_owner", false))
 		info["patch_owner"] = int(patch.get("owner", 0))
 		info["patch_ecology_phase"] = String(patch.get("ecology_phase", ""))
@@ -3587,18 +3595,6 @@ func _tile_info_at(col: int, row: int) -> Dictionary:
 		# output_multiplier 1.0). Read by Hud._build_forage_assign_controls to show the live
 		# "Expected yield" row and to cap the forager stepper at the patch's max-useful workers.
 		info["patch_per_worker_yield"] = float(patch.get("per_worker_yield", 0.0))
-		# The Cultivate investment rung: the dip yield while the patch is being prepared, and the
-		# tended yield it pays afterwards. Hud._build_forage_assign_controls turns the pair into the
-		# pre-commit "Preparing: +X → then +Y" forecast.
-		info["patch_tended_yield"] = float(patch.get("tended_yield", 0.0))
-		# Plant RUNG 3 — the Field + the Sow verb (the twin of the herd's Corral block). The patch
-		# carries TWO independent build meters: `cultivation_progress` (rung 2, above) and
-		# `field_progress` here. Hud._tile_terrain_lines renders the meters; the Sow forecast pair
-		# drives `_build_forage_assign_controls`' "Preparing: +X → then +Y", exactly as the Cultivate
-		# pair does one rung down.
-		info["patch_field_progress"] = float(patch.get("field_progress", 0.0))
-		info["patch_is_field"] = bool(patch.get("is_field", false))
-		info["patch_field_yield"] = float(patch.get("field_yield", 0.0))
 		# THE BUILD, PRICED IN WORK (docs/plan_unit_costed_work.md §8) — the two plant rungs' absolutes
 		# beside the fractions above, plus the ONE turn estimate and gear saving the source carries (at
 		# most one improvement is ever in flight on one patch). `work_done / work_cost` IS the
@@ -3606,10 +3602,6 @@ func _tile_info_at(col: int, row: int) -> Dictionary:
 		# SIZE of the job, which a fraction structurally cannot. The COST rides even on a patch nobody
 		# is building: it is the resolved price of that job here, which is what lets the sheet quote a
 		# rung before the player commits.
-		info["patch_cultivation_work_done"] = float(patch.get("cultivation_work_done", 0.0))
-		info["patch_cultivation_work_cost"] = float(patch.get("cultivation_work_cost", 0.0))
-		info["patch_field_work_done"] = float(patch.get("field_work_done", 0.0))
-		info["patch_field_work_cost"] = float(patch.get("field_work_cost", 0.0))
 		# **THE NEGATIVES MUST SURVIVE THE COPY AS THEMSELVES** — `-1` no estimate, `-2` the meter
 		# holds, `-3` the meter rots, `-4` the queue is blocked on it, `-5` it is queued and the sim has
 		# not looked yet. A `0` default here would hand every unworked patch a "this build lands next
@@ -3663,7 +3655,6 @@ func _tile_info_at(col: int, row: int) -> Dictionary:
 			"build_work_per_worker_turn", SourceForecast.BUILD_WORK_NONE))
 		# WHY this ground will not take seed ("" = it will). The client cannot re-derive this — it has
 		# neither the per-biome capacity table nor the hydrology — so the sim ships the reason itself.
-		info["patch_sow_site_refusal"] = String(patch.get("sow_site_refusal", ""))
 		# THE TILE'S PER-BIOMASS YIELD VECTOR (docs/plan_harvest_floor.md §5) — what ONE UNIT of this
 		# patch's standing crop is worth in each account, at the patch's own basket-averaged rates.
 		# **This is the patch's whole ceiling representation now**: with `patch_biomass` and
@@ -3691,8 +3682,6 @@ func _tile_info_at(col: int, row: int) -> Dictionary:
 		# The two investment rungs' FODDER payoff twins, each quoted at ITS OWN rung (#433). Their
 		# `*_trade` siblings went with arc #527's yield axis; a cash crop's payoff is now a per-material
 		# vector on the COMPOSITION entry, which travels whole in `patch_composition`.
-		info["patch_tended_fodder"] = float(patch.get("tended_fodder", 0.0))
-		info["patch_field_fodder"] = float(patch.get("field_fodder", 0.0))
 		# THE STANDING UPKEEP (`docs/plan_standing_upkeep.md` §2) — the four numbers that say what this
 		# patch costs to HOLD: the rung's per-turn demand, what the keepers supplied out of this turn's
 		# budget, what went unmet (**the sim's own field — never `demand − supplied` here**, since the
@@ -3746,8 +3735,6 @@ func _tile_info_at(col: int, row: int) -> Dictionary:
 		# §2.4 — the keeping pool owes the rate at every fullness, so a build crew nets the ROT
 		# instead), so redacting it could no longer cost the estimate its term. The surviving reason
 		# stands on its own, and the field is a PRICE on the offered face rather than a term.
-		info["patch_cultivation_upkeep_demand"] = float(patch.get("cultivation_upkeep_demand", 0.0))
-		info["patch_field_upkeep_demand"] = float(patch.get("field_upkeep_demand", 0.0))
 		# **THE MATERIAL TWIN OF THAT PER-RUNG PAIR** — what each plant rung would cost in GOODS to
 		# hold, for a rung nobody has started. `SourceForecast.build_upkeep_material_demand` reads them
 		# through the same improvement→key table its work twin uses, and `RungLadder._hold_price_asides`
@@ -3763,10 +3750,6 @@ func _tile_info_at(col: int, row: int) -> Dictionary:
 		# across the two lists would be worse than either whole answer: `RungLadder._price_terms`
 		# composes ONE clause from the work rate and the goods, so a redacted material half would have
 		# a remembered hex quoting a PARTIAL price as if it were the whole one.
-		info["patch_cultivation_upkeep_material_demand"] = patch.get(
-			"cultivation_upkeep_material_demand", [])
-		info["patch_field_upkeep_material_demand"] = patch.get(
-			"field_upkeep_material_demand", [])
 		# **WHAT THE AT-RISK METER IS LOSING PER TURN** — the term the compose sheet's closed form
 		# nets. Unlike the pair above it IS live patch state: it exists only because this band's keeping
 		# pool came up short past the rung's grace, so it is redacted with the shortfall it is derived

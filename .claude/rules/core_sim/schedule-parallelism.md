@@ -64,13 +64,20 @@ list would be the same total order written longhand:
 | `Knowledge` | fully serial *in effect* | the one free system must precede the rest anyway, so its freedom is already implied |
 | `Finalize` | fully serial | `CorruptionLedgers` |
 | `Snapshot` | fully serial | `SimulationTick` → `SimulationMetrics` |
-| `Population` | 7-chain + 1 free | every pair conflicts on `PopulationCohort`; `publish_trade_telemetry` is pure telemetry |
+| `Population` | **20-chain + 3 ordered by edges** | every pair conflicts on `PopulationCohort`; `publish_trade_telemetry` is pure telemetry; `advance_culture_pressure` and `bill_and_stock_roads` declare their own edges |
 | `Visibility` | 5-chain + 1 free | everything funnels through `VisibilityLedger`; `prune_sweep_tracker` touches only `VisibilitySweepTracker` |
 | `GreatDiscovery` | 6-chain + 1 free | `apply_capability_effects` writes `CapabilityFlags`, which nothing else in the stage reads |
 | `Logistics` | **7-chain + 5 free** | the fauna backbone shares `HerdRegistry`; the flora/pasture half is disjoint |
 
 `Logistics` is the only stage with real intra-stage width: 12 systems, critical path 7. The
 flora/pasture systems (`ForageRegistry`/`GrazeRegistry`) run alongside the fauna run.
+
+**The `Population` chain is full.** Bevy 0.13 implements `IntoSystemConfigs` for tuples of at most
+20 elements, and the chain holds 20, so a 21st entry does not compile (the error is `E0599`, "the
+method `chain` exists for tuple … but its trait bounds were not satisfied"). A new system in this
+stage declares its edges, as `advance_culture_pressure` does — it runs `.after(advance_culture_splits)`,
+the last system that changes a band's people, and `.before(sedentarization_tick)`, with which it
+shares `CommandEventLog`.
 
 **The 11-set `configure_sets(...).chain()` across stages is deliberate and stays.** `turn_profile`'s
 stage markers pin themselves between neighbouring stage sets (`.after(X).before(Y)`) so

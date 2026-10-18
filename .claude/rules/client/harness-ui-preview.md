@@ -1037,7 +1037,7 @@ Growth or Morale.
 **`band_hay_and_pen` is the frame that carries a BAND and a PEN at once**, which the drawer cannot do
 on its own: a player band's detail moves into the Band/City dock when one is present, so the dock
 states the band's `Fodder` ledger while the tile drawer states the starving pen's own
-`Fed: ⚠ 47% — 40% pasture · 7% fodder · needs 11.3 more/turn` share of it — **one word across both**,
+`Fed: ⚠ 47% — 40% pasture · 7% fodder · short 11.3 feed/turn` share of it — **one word across both**,
 the pen row saying `fodder` as the band's store row always has. The dock is `SIDE_RIGHT` on purpose — a vertical dock is the TALL
 tier, which keeps the Fodder row STANDALONE rather than merging it onto Food, the SHORT tier's merge
 being `band_panel_preview`'s to hold. The chapter releases the panel and hands the reference band
@@ -1530,7 +1530,7 @@ is `labor-ui.md`'s; what belongs here is the fixture arithmetic, which moved in 
   subtracted 2.0 is unchanged and its IDENTITY is not** — the counts (10 at four hands, `∞` at one)
   are the same numbers about a different mechanism, which the fixture's own doc says out loud.
 - **The rot the fixture states is above what any shipped plant rung can bleed** (`plant:tended` 0.5,
-  `plant:field` 0.75, and the animal web zero by construction), so neither `∞` is reachable at a
+  `plant:farm` 0.75, and the animal web zero by construction), so neither `∞` is reachable at a
   staffed build crew on shipped config. The client must still render both, so the state is staged;
   whether it is reachable in play is the sim's question.
 - **`HerdFx.ANIMAL_METER_ROT` is a CONSTANT, not a parameter** — no animal rung declares a
@@ -2763,7 +2763,7 @@ JOB_HUNT)` — the BYTE-IDENTICAL expression the wild pair uses, `tier_hint` hav
 parameter when issue #543 deleted `EquipmentStat::PenCarry` — while the corralled twins they were
 named for were built and handed nowhere. A block whose stated purpose was *"the fence moves NOTHING"*
 would therefore have stayed green under exactly the regression it named: a source parameter re-added
-to `tier_hint`, or a `QUARRY_CORRALLED_KEY` read off the band dict.
+to `tier_hint`, or an `enclosed` read off anything but the quote.
 
 **FOR THE HINT, THE INVARIANT IS NOW STRUCTURAL RATHER THAN TESTED**, and that is the trade this
 records: restoring a real penned reading requires `tier_hint` to take a source again, which is the
@@ -3283,9 +3283,9 @@ that said nothing about the code under test. `BandFx.band_fixture()` is pushed t
 `ComposeState.deposit_count()` rather than assumed — a deal asserted at a count the sheet refused is
 a claim about a number nothing on screen shows.
 
-⛔ **IT PUSHES ITS OWN RUNG CATALOG, THROUGH THE REAL INGEST** (`Hud.update_deposit_rungs`). Every
+⛔ **IT PUSHES ITS OWN RUNG CATALOG, THROUGH THE REAL INGEST** (`Hud.update_deposit_rungs`, the deposit view of `update_ladder_rungs`). Every
 rung NAME, PRICE, PAYOFF and GATE on all three surfaces is read out of
-`SubsistenceSection.depositRungs`, so a chapter that staged no catalog would assert against raw wire
+`SubsistenceSection.ladderRungs`, so a chapter that staged no catalog would assert against raw wire
 keys and against a ladder with no rows on it.
 
 ⛔ **AND THE LADDER IS ASSERTED OVER ITS PRODUCER, WITH NO FRAME OF ITS OWN.** The track is opened
@@ -3838,10 +3838,62 @@ Appended LAST in `CHAPTERS`, so no existing frame moves; it hands the reference 
 - The dock block injects a real `EventDockPanel`, ingests the sim's own label shapes, and asserts the
   host swap, the Notable rung on the three involuntary endings and the Routine receipt on a recall.
 
+## `chapters/fourth_rung.gd` -- a step the shipped ladder lacks (issue #175)
+
+Appended LAST in `CHAPTERS`, so no earlier frame moves. Four frames (`fourth_rung_terrace_offered`,
+`fourth_rung_terrace_part_built`, `fourth_rung_terrace_locked`, `fourth_rung_stud_offered`) and twelve claims
+(`EXPECTED_CHECKPOINTS` 16, RE-MEASURED by a run). It pushes `RungFx.ladder_rungs(true)`, the
+fixture catalog with `plant:terrace` (verb `terrace`, above the Farm) and `animal:stud` (verb `stud`,
+above the Pen), then stands a Farm and a Pen beneath them. Nothing in `src/` names either step, so
+every claim is evidence the generic `rung_quotes` path works: the `terrace` control is OFFERED beside a
+DONE `sow`, it is named by the catalog's label, the source's ladder is `cultivate, sow, farm, terrace`, a
+part-built Terrace draws its own tile-card row while an unstarted one draws none, and with the step's
+knowledge unlearned no live control is offered (the sheet's teaching line names the catalog's
+`unlock_knowledge`). The `stud` control is offered over a penned herd, which is `enclosed` by the
+catalog's trait.
+
+The fixture catalog states the five gate bools per rung from `intensification_ladder.json`, and gives
+`terrace` and `stud` `requires_held_rung_below`. A patch holding only Tended is asserted NOT offered
+Farm, and `RungGates.source_gates` is asserted to carry a gate for it. The unknown verbs wear
+`FoodIcons.GENERIC_POLICY` (a plain mark) rather than no glyph.
+
+The fixtures author the extra steps through `RungFx`'s `extra_step` keys (`terrace_*` on a patch,
+`stud_*` on a herd, `can_terrace` on a composition entry). The chapter hands the shipped catalog back.
+
+## `fixtures_rung.gd` authors the old flat keys and stamps the generic quotes
+
+Fixtures keep stating the two shipped webs with their authoring keys (`is_cultivated`, `domestication`,
+`corral_yield`, `can_sow`, ...). Those keys are read ONLY in `fixtures_rung.gd`, where
+`stamp_patch` / `stamp_herd` turn them into `rung_quotes`, `current_rung` and each composition entry's
+quotes, self-enriching them from the fixture catalog. Nothing in `src/` reads them.
+
+- **`ForageFx.floorify`, `band_panel_preview._floorify` and `map_preview._display_snapshot` stamp for
+  you** (`stamp_source` / `stamp_snapshot`), so a fixture that reaches the HUD arrives with quotes.
+- **A fixture mutated AFTER it was handed over must be re-stamped**: the quotes were derived from the
+  flat keys at stamp time. A claim that failed with *the control reads running where it should read
+  offered* was this, every time.
+- **A bare herd dict must say it is a herd** (`species`, `husbandry_ceiling` or `body_mass`), or
+  `stamp_source` classes it a patch and it has no verbs.
+- **A row that authors `rung_quotes` and no flat key is left alone**, which is how a fixture stages a
+  rung the shipped ladder lacks.
+
+## `chapters/worked_land_ranch.gd` -- off-site Farm and the Ranch (issue #175)
+
+Appended LAST in `CHAPTERS`. Four frames (`worked_land_needs_lesson`, `worked_land_sow_offered`,
+`pen_below_ranch`, `pen_is_a_ranch`) and `EXPECTED_CHECKPOINTS` 28. The same off-site tile is staged twice,
+differing only in the server's `site_refusal` (`needs_lesson` / `""`) and the lesson: the first offers no
+work and names the lesson, the second opens the sheet headed `Raise a farm`, on the single-pick `Crop` row, with a `Sow farm`
+commit that emits a forage assign carrying a crop and no Sow checkbox. A gathering site is the control (no crop forced). The pen pair is one herd
+at one ring short of the Ranch tier and at it; the knowledge notes and the `status=tier` feed phrase are
+asserted PNG-less.
+
+The fixture catalog mirrors `core_sim/src/data/intensification_ladder.json` (Farm, Pen with `size_tiers`).
+The generic-step proof sits one step beyond it: `plant:terrace` (verb `terrace`) and `animal:stud` (verb
+`stud`) in `fourth_rung.gd`; the `farm` / `ranch` names that section used to stage are now shipped steps.
 
 ## `chapters/dealings.gd` — early diplomacy's client half (issue #233, slice C1)
 
-**Appended LAST in `CHAPTERS`**, after `station`, so no existing frame moves; it frees its panel, restores
+**Appended LAST in `CHAPTERS`**, after `worked_land_ranch`, so no existing frame moves; it frees its panel, restores
 the world (`reset_world_state`, `FactionNames.reset`) and hands the reference band back. `EXPECTED_CHECKPOINTS`
 is the floor in the chapter. Every fixture is shaped as `dict/dealings.rs` writes it, and **every command
 is asserted by EQUALITY through the real `Main` builder**: a payload can be perfectly good and be spelled

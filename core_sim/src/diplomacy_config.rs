@@ -14,11 +14,16 @@
 use std::{
     fs, io,
     path::{Path, PathBuf},
+    str::FromStr,
     sync::Arc,
 };
 
 use crate::config_load::{load_config_from_env, ConfigLoadError};
-use crate::{intensification::RungKey, routes::FIRST_BUILT_RUNG};
+use crate::{
+    intensification::LadderConfig,
+    ladder_ids::RungId,
+    routes::{first_built_rung, LinkFloor},
+};
 use bevy::prelude::Resource;
 use serde::Deserialize;
 use thiserror::Error;
@@ -28,6 +33,9 @@ pub const BUILTIN_DIPLOMACY_CONFIG: &str = include_str!("data/diplomacy_config.j
 /// The lowest `offers.offer_wait_turns` that means anything: an offer that expired the turn it was
 /// posted would be refused before its receiver could answer.
 const MIN_OFFER_WAIT_TURNS: u32 = 1;
+
+/// The `order` of a floor whose rung the live ladder no longer carries: no road's rung reaches it.
+const NO_ROAD_CLEARS_FLOOR: u32 = u32::MAX;
 /// Goodwill runs `-1..=+1`; the word cuts are measured on that scale.
 const GOODWILL_FLOOR: f32 = -1.0;
 const GOODWILL_CEILING: f32 = 1.0;
@@ -56,10 +64,21 @@ pub struct OffersConfig {
 }
 
 impl OffersConfig {
-    /// The rung `standing_link_min_rung` names. Validation guarantees it resolves.
-    pub fn standing_link_floor(&self) -> RungKey {
-        RungKey::from_wire_key(&self.standing_link_min_rung)
-            .expect("validated: standing_link_min_rung names a route rung")
+    /// The rung `standing_link_min_rung` names, resolved against `ladder` (`LinkFloor`).
+    pub fn standing_link_floor(&self, ladder: &LadderConfig) -> LinkFloor {
+        let resolved = RungId::from_str(&self.standing_link_min_rung)
+            .ok()
+            .and_then(|rung| ladder.rung_by_id(rung).map(|def| (rung, def.order)));
+        match resolved {
+            Some((rung, order)) => LinkFloor { rung, order },
+            // A hot-reloaded ladder can drop the rung the (boot-validated) key names: no road
+            // clears the floor then, rather than a panic.
+            None => LinkFloor {
+                rung: RungId::from_str(&self.standing_link_min_rung)
+                    .unwrap_or_else(|_| first_built_rung(ladder).rung_id()),
+                order: NO_ROAD_CLEARS_FLOOR,
+            },
+        }
     }
 }
 
@@ -122,14 +141,16 @@ impl DiplomacyConfig {
                 reason: format!("must be at least {MIN_OFFER_WAIT_TURNS}"),
             });
         }
-        match RungKey::from_wire_key(&self.offers.standing_link_min_rung) {
-            Some(rung) if rung.is_at_or_above(FIRST_BUILT_RUNG) => {}
+        let builtin = LadderConfig::builtin();
+        let first_built = first_built_rung(&builtin).rung_id();
+        match RungId::from_str(&self.offers.standing_link_min_rung) {
+            Ok(rung) if builtin.at_or_above(rung, first_built) => {}
             _ => {
                 return Err(DiplomacyConfigError::Invalid {
                     field: "offers.standing_link_min_rung".to_string(),
                     reason: format!(
                         "must name a built route rung (a wire key at or above {}; was {:?})",
-                        FIRST_BUILT_RUNG.wire_key(),
+                        first_built.wire_key(),
                         self.offers.standing_link_min_rung
                     ),
                 });
@@ -287,7 +308,11 @@ mod tests {
     fn the_builtin_parses_with_the_spec_opening_values() {
         let config = DiplomacyConfig::builtin();
         assert_eq!(config.offers.offer_wait_turns, 1);
-        assert_eq!(config.offers.standing_link_floor(), FIRST_BUILT_RUNG);
+        let ladder = LadderConfig::builtin();
+        assert_eq!(
+            config.offers.standing_link_floor(&ladder).rung,
+            first_built_rung(&ladder).rung_id()
+        );
         assert_eq!(config.goodwill.fade_per_turn, 0.02);
         assert_eq!(config.goodwill.broken_treaty, 0.5);
         assert_eq!(config.goodwill.wary_below, -0.2);
@@ -322,7 +347,13 @@ mod tests {
         let paved =
             with(|v| v["offers"]["standing_link_min_rung"] = serde_json::json!("route:paved_road"))
                 .expect("a higher built rung is a legal floor");
-        assert_eq!(paved.offers.standing_link_floor(), RungKey::RoutePavedRoad);
+        assert_eq!(
+            paved
+                .offers
+                .standing_link_floor(&LadderConfig::builtin())
+                .rung,
+            crate::ladder_ids::shipped::route_paved_road()
+        );
     }
 
     #[test]

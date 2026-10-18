@@ -23,7 +23,7 @@ use core_sim::{
     BandId, BandIdAllocator, BandTravel, Bundle, CommandEventKind, CommandEventLog, DealingAnswer,
     DealingId, DealingKind, EnvoyOutcome, Expedition, ExpeditionMission, ExpeditionPhase,
     FactionId, GoodsLines, Goodwill, LaborAllocation, LadderConfig, LocalStore, PendingDealings,
-    PopulationCohort, ResidentBand, RoadRegistry, RungKey, Scalar, SettleConfig, ShipmentTerms,
+    PopulationCohort, ResidentBand, RoadRegistry, Scalar, SettleConfig, ShipmentTerms,
     SimulationConfig, SimulationTick, SnapshotHistory, StartingUnit, Tile, TileRegistry, Treaties,
     TreatyCarrier, TreatyTerms, ViewerFaction, FOOD, NEAR_ENOUGH_TO_KEEP,
 };
@@ -192,8 +192,11 @@ fn lay_road_between(scene: &mut Scene) -> Vec<UVec2> {
         scene.app.world.resource::<RoadRegistry>(),
     );
     let ladder = LadderConfig::builtin();
-    let (base, span) =
-        core_sim::road_rung_span(RungKey::RouteDirtRoad, &ladder, NEAR_ENOUGH_TO_KEEP);
+    let (base, span) = core_sim::road_rung_span(
+        core_sim::shipped::route_dirt_road(),
+        &ladder,
+        NEAR_ENOUGH_TO_KEEP,
+    );
     let mut roads = scene.app.world.resource_mut::<RoadRegistry>();
     for tile in &path {
         roads

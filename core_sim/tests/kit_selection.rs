@@ -14,6 +14,7 @@
 use bevy::app::App;
 use bevy::ecs::system::RunSystemOnce;
 use bevy::math::UVec2;
+use core_sim::shipped;
 
 use core_sim::TakeSelection;
 use core_sim::{
@@ -122,7 +123,10 @@ fn pin_herd_of(app: &mut App, species: &str, id: &str) -> String {
         herd.husbandry_ceiling = husbandry_ceiling;
         herd.fodder_per_biomass = 0.0;
     }
-    let entries = app.world.resource::<HerdRegistry>().snapshot_entries();
+    let entries = app
+        .world
+        .resource::<HerdRegistry>()
+        .snapshot_entries(shipped::ladder());
     app.world.resource_mut::<HerdTelemetry>().entries = entries;
     id.to_string()
 }
@@ -196,7 +200,10 @@ fn pin_herd(app: &mut App) -> (String, UVec2) {
     // from under a two-arm comparison.
     herd.fodder_per_biomass = 0.0;
     let pos = herd.position();
-    let entries = app.world.resource::<HerdRegistry>().snapshot_entries();
+    let entries = app
+        .world
+        .resource::<HerdRegistry>()
+        .snapshot_entries(shipped::ladder());
     app.world.resource_mut::<HerdTelemetry>().entries = entries;
     (PINNED_HERD_ID.to_string(), pos)
 }
@@ -1193,7 +1200,10 @@ fn a_corralled_herd_defaults_to_the_pen_kit_and_a_wild_one_of_the_same_species_d
     }
     // The capture reads the DISPLAY list, so the pen has to be republished or the wire still
     // describes the herd as it stood before it was fenced.
-    let entries = app.world.resource::<HerdRegistry>().snapshot_entries();
+    let entries = app
+        .world
+        .resource::<HerdRegistry>()
+        .snapshot_entries(shipped::ladder());
     app.world.resource_mut::<HerdTelemetry>().entries = entries;
     recapture_snapshot_in_place(&mut app.world);
 
@@ -2260,8 +2270,8 @@ fn the_published_roster_names_which_rung_each_road_kit_serves() {
             .collect()
     };
 
-    let grade = core_sim::RungKey::RouteDirtRoad.wire_key();
-    let pave = core_sim::RungKey::RoutePavedRoad.wire_key();
+    let grade = shipped::route_dirt_road().wire_key();
+    let pave = shipped::route_paved_road().wire_key();
     assert_eq!(
         serving("route", &grade),
         vec!["roadbuilding".to_string()],
@@ -2340,7 +2350,10 @@ fn pin_second_herd(app: &mut App, at: UVec2, id: &str) -> String {
         herd.regrowth_rate = 0.10;
         herd.fodder_per_biomass = 0.0;
     }
-    let entries = app.world.resource::<HerdRegistry>().snapshot_entries();
+    let entries = app
+        .world
+        .resource::<HerdRegistry>()
+        .snapshot_entries(shipped::ladder());
     app.world.resource_mut::<HerdTelemetry>().entries = entries;
     id.to_string()
 }

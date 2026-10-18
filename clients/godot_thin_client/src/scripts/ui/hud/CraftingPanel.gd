@@ -103,6 +103,14 @@ signal bench_priority_requested(level: String)
 signal bench_auto_requested(on: bool)
 ## The Skip link under a waiting auto order was pressed - `bench_auto_skip <faction> <band>`.
 signal bench_auto_skip_requested
+## A kit picker's Start was pressed — `bench_enqueue_kit <faction> <band> kit <id> kits <n> recipe <id> …`
+## (#780). A kit order is a COUNT OF KITS: `recipe_ids` is one recipe per kit item, and the sim makes every
+## item `kits` times over.
+signal kit_enqueue_requested(kit_id: String, kits: int, recipe_ids: Array)
+## A kit order's box ✕ — `bench_remove_kit <faction> <band> kit_order <id>`.
+signal kit_remove_requested(kit_order: int)
+## A kit order's box ↑ — `bench_raise_kit <faction> <band> kit_order <id>`.
+signal kit_raise_requested(kit_order: int)
 
 # ---- the render payload's keys (this panel's contract with its controller) ----------------------
 const PAYLOAD_BAND := "band"
@@ -196,6 +204,16 @@ var _picker_in_suggestions: bool = false
 ## well keeps its `bool` because it has no second expansion to be exclusive WITH, which was always the
 ## real reason.
 var _priority_open: bool = false
+
+## **THE KIT PICKER'S VIEW STATE (#780)** — which kit's picker is open (`NO_ROW` = none), how many kits
+## the order is for (the player's own number, opening at one kit) and the recipe chosen per item. Exactly the standing of `_picker_row` / `_picker_choice`: it survives the
+## per-snapshot rebuild, is checked against every payload, and closes with the card.
+var _kit_picker: String = NO_ROW
+var _kit_count: int = HudCraftingVocab.KIT_COUNT_MIN
+var _kit_recipes: Dictionary = {}
+## The kit orders whose box is unfolded, by kit order id. A fold is a preference of the moment, so it
+## closes with the card like the pickers do.
+var _kit_unfolded: Dictionary = {}
 
 func _ready() -> void:
 	super()
@@ -325,6 +343,8 @@ func dismiss() -> void:
 	_priority_open = false
 	# …and so are an item's popup and its picker: both are transient readings of one ledger.
 	_reset_picker()
+	_reset_kit_picker()
+	_kit_unfolded.clear()
 	_close_recipes_popup()
 	if _scroll != null:
 		_scroll.scroll_vertical = 0
@@ -631,11 +651,28 @@ func _build_bench(payload: Dictionary) -> void:
 		blocked = String(bench.get(HudCraftingVocab.BENCH_BLOCKED_REASON_KEY, ""))
 		blocked_severity = String(bench.get(HudCraftingVocab.BENCH_BLOCKED_SEVERITY_KEY, ""))
 	var well_index := _worked_index(bench)
-	if recipe_id != "" and _order_is_auto(bench_orders, well_index):
+	# **`· for <Kit>` WHEN THE WORKED ORDER IS A PART OF A KIT ORDER** (#780) — the well says what the work
+	# is for, so a player looking at one sled sees it is the Stalking kit's.
+	var for_kit := ""
+	var well_kit_order := _kit_order_of(bench_orders, well_index) if recipe_id != "" \
+		else HudCraftingVocab.NO_KIT_ORDER
+	if well_kit_order != HudCraftingVocab.NO_KIT_ORDER:
+		for_kit = HudCraftingVocab.BENCH_FOR_KIT_FORMAT % _kit_order_name(
+			_kit_order_in(bench, well_kit_order), band)
+	var well_is_auto := recipe_id != "" and _order_is_auto(bench_orders, well_index)
+	if well_is_auto or for_kit != "":
 		var title_row := HBoxContainer.new()
 		title_row.add_theme_constant_override("separation", HudCraftingVocab.AUTO_TAG_SEPARATION)
 		title_row.add_child(title)
-		title_row.add_child(_build_auto_tag(HudCraftingVocab.AUTO_TAG_WELL_INDEX))
+		if for_kit != "":
+			var suffix := Label.new()
+			suffix.text = for_kit
+			suffix.add_theme_font_size_override("font_size", HudCraftingVocab.BENCH_SUB_FONT_SIZE)
+			suffix.add_theme_color_override("font_color", HudStyle.SIGNAL)
+			suffix.set_meta(HudCraftingVocab.BENCH_FOR_KIT_META, well_kit_order)
+			title_row.add_child(suffix)
+		if well_is_auto:
+			title_row.add_child(_build_auto_tag(HudCraftingVocab.AUTO_TAG_WELL_INDEX))
 		words.add_child(title_row)
 	else:
 		words.add_child(title)
@@ -793,7 +830,7 @@ func _build_bench(payload: Dictionary) -> void:
 	section.add_child(well)
 	# **THE REST OF THE QUEUE, under the well that IS its worked order.** A bench with one order — or
 	# none — draws nothing here.
-	if orders.size() > 1:
+	if orders.size() > 1 or _has_kit_part(orders):
 		section.add_child(_build_queue(orders, bench, payload))
 	_main.add_child(section)
 
@@ -1082,6 +1119,10 @@ func _build_ledger(payload: Dictionary) -> void:
 	table.add_child(_build_column_heads())
 	table.add_child(_rule(HudStyle.LINE))
 
+	# **KITS LEAD THE LEDGER** (#780): the whole-kit order is the first thing a player reaches for, and
+	# Gear below it stays the per-item view.
+	_add_kits_section(table, band, payload)
+
 	for section in _ledger_sections(band, payload):
 		var head_name := String(section["head"])
 		table.add_child(_build_group_head(head_name))
@@ -1165,8 +1206,10 @@ func _row_key_of(offer: Dictionary, payload: Dictionary) -> String:
 	if item_id != "":
 		return item_id
 	var recipe_id := String(offer.get(HudCraftingVocab.OFFER_RECIPE_ID_KEY, ""))
-	var material_id := String(_stock_output(_recipe_of(recipe_id, payload)).get(
-		HudCraftingVocab.RECIPE_OUTPUT_MATERIAL_ID_KEY, ""))
+	var material_id := String(offer.get(HudCraftingVocab.OFFER_OUTPUT_MATERIAL_ID_KEY, ""))
+	if material_id == "":
+		material_id = String(_stock_output(_recipe_of(recipe_id, payload)).get(
+			HudCraftingVocab.RECIPE_OUTPUT_MATERIAL_ID_KEY, ""))
 	if material_id != "":
 		return HudCraftingVocab.LEDGER_MATERIAL_ROW_KEY_FORMAT % material_id
 	return HudCraftingVocab.LEDGER_STOCK_ROW_KEY_FORMAT % recipe_id
@@ -1175,8 +1218,16 @@ func _row_key_of(offer: Dictionary, payload: Dictionary) -> String:
 func _row_in(payload: Dictionary, key: String) -> Dictionary:
 	if key == NO_ROW:
 		return {}
-	for row in _ledger_rows(payload.get(PAYLOAD_BAND, {}), payload):
+	var rows := _ledger_rows(payload.get(PAYLOAD_BAND, {}), payload)
+	for row in rows:
 		if String(row["key"]) == key:
+			return row
+	# **A CRAFT SUGGESTION NAMES A MATERIAL BY ITS BARE ID** (`hurdles`) while its ledger row is keyed
+	# `material:hurdles`, so the join found nothing: the Queue button was dead, the name fell back to the
+	# raw id and the reason read as kit wording. An item's own row always wins above.
+	var material_key := HudCraftingVocab.LEDGER_MATERIAL_ROW_KEY_FORMAT % key
+	for row in rows:
+		if String(row["key"]) == material_key:
 			return row
 	return {}
 
@@ -1230,6 +1281,9 @@ func _reconcile_recipe_view(payload: Dictionary) -> void:
 				_picker_count = int(suggestion.get(HudCraftingVocab.SUGGESTION_COUNT_KEY, _picker_count))
 			if not _choice_is_available(row, _picker_choice):
 				_picker_choice = _default_choice(row)
+	# A kit picker for a kit the sim no longer publishes has nothing left to order.
+	if _kit_picker != NO_ROW and _kit_need_in(payload.get(PAYLOAD_BAND, {}), _kit_picker).is_empty():
+		_reset_kit_picker()
 	if _popup_row != NO_ROW:
 		var popped := _row_in(payload, _popup_row)
 		if popped.is_empty() or (popped["offers"] as Array).size() < 2:
@@ -1938,6 +1992,7 @@ func _open_picker(key: String, count: int, in_suggestions: bool) -> void:
 	_picker_count = count
 	_picker_in_suggestions = in_suggestions
 	_picker_choice = _default_choice(_row_in(_payload, key))
+	_reset_kit_picker()
 	_close_recipes_popup()
 
 ## No picker open. One place, so the four members cannot be cleared out of step.
@@ -2080,6 +2135,870 @@ func _start_chosen_recipe() -> void:
 	if not _payload.is_empty():
 		render(_payload)
 
+# ---- a whole kit as ONE bench order (issue #780) -----------------------------------------------------
+
+## **THE PICKER'S ARITHMETIC IS EXACT ARITHMETIC OVER PUBLISHED TERMS** — the estimate precedent
+## (`crafting-panel.md`): `have`, `queued`, `workers_per_unit`, each recipe's `output_per_pass` and its
+## per-pass `inputs` (the bench's material efficiency already applied) and the band's `materials_free`
+## are all the sim's, and nothing here is a guess. The order the picker sends carries the COUNTS it
+## showed, so what the player ordered is what he saw.
+
+## The band's orderable kits, config order, ignoring anything that is not a row.
+func _kit_needs_of(band: Dictionary) -> Array:
+	var needs: Array = []
+	for need_variant in band.get(HudCraftingVocab.BAND_KIT_NEEDS_KEY, []):
+		if need_variant is Dictionary:
+			needs.append(need_variant)
+	return needs
+
+func _kit_need_in(band: Dictionary, kit_id: String) -> Dictionary:
+	for need in _kit_needs_of(band):
+		if String((need as Dictionary).get(HudCraftingVocab.KIT_NEED_KIT_ID_KEY, "")) == kit_id:
+			return need
+	return {}
+
+## The kit's own words: the sim's `display_name`, or the id of a kit the catalogue never named.
+func _kit_name(need: Dictionary, fallback_id: String = "") -> String:
+	var named := String(need.get(HudCraftingVocab.KIT_NEED_DISPLAY_NAME_KEY, ""))
+	if named != "":
+		return named
+	return String(need.get(HudCraftingVocab.KIT_NEED_KIT_ID_KEY, fallback_id))
+
+## **THE JOB NOUNS, ONE TABLE** (`HudCraftingVocab.KIT_JOB_WORDS`): a kit on one job speaks that job's
+## plural / singular / where, a kit on several speaks `workers`. The plural of `hunt`, `forage` and
+## `builders` is the work vocabulary's own crew noun, never a second spelling of it.
+func _kit_job_words(need: Dictionary) -> Dictionary:
+	var jobs: Array = need.get(HudCraftingVocab.KIT_NEED_JOBS_KEY, [])
+	if jobs.size() != 1:
+		return HudCraftingVocab.KIT_MULTI_JOB_WORDS
+	var job := String(jobs[0])
+	var words: Dictionary = HudCraftingVocab.KIT_JOB_WORDS.get(job, HudCraftingVocab.KIT_MULTI_JOB_WORDS)
+	var reused := _job_crew_noun(job)
+	if reused == "":
+		return words
+	var merged := words.duplicate()
+	merged[HudCraftingVocab.KIT_JOB_NOUN_KEY] = reused.to_lower()
+	return merged
+
+## How many people one unit of the item serves; never below one.
+func _kit_workers_per_unit(item: Dictionary) -> int:
+	return maxi(int(item.get(HudCraftingVocab.KIT_ITEM_WORKERS_PER_UNIT_KEY, 1)), 1)
+
+## **WHAT A KIT ITEM IS CLAIMED FOR, IN PEOPLE, AND HOW MANY OF THOSE ARE EQUIPPED** (`claimed` is the
+## sim's: units actually claimed by rows, pools, sites and queued builds on this kit). The headcount on
+## the kit's jobs is NOT the need — a job counts everyone on it against every kit it could use, which
+## read `6 hunters without traps` while no row used traps. Need is `ceil(claimed) × workers_per_unit`,
+## equipped is what is held against it. `{}` for an item nothing claims.
+func _kit_item_claim(item: Dictionary) -> Dictionary:
+	var claimed := float(item.get(HudCraftingVocab.KIT_ITEM_CLAIMED_KEY, 0.0))
+	if claimed < HudCraftingVocab.KIT_CLAIMED_MIN:
+		return {}
+	var per_unit := _kit_workers_per_unit(item)
+	var need := ceili(claimed - HudCraftingVocab.KIT_CLAIMED_MIN) * per_unit
+	var held := int(item.get(HudCraftingVocab.KIT_ITEM_HAVE_KEY, 0)) * per_unit
+	return {"need": need, "equipped": mini(held, need)}
+
+## The ledger rows by row key (an equipment item's key IS its item id).
+func _rows_by_key(band: Dictionary, payload: Dictionary) -> Dictionary:
+	var by_key := {}
+	for row in _ledger_rows(band, payload):
+		by_key[String(row["key"])] = row
+	return by_key
+
+## `materials_free` as `{material_id: amount}` — what the queue's claims leave over.
+func _materials_free_of(band: Dictionary) -> Dictionary:
+	var free := {}
+	for entry_variant in band.get(HudCraftingVocab.BAND_MATERIALS_FREE_KEY, []):
+		if entry_variant is Dictionary:
+			var entry: Dictionary = entry_variant
+			free[String(entry.get(HudCraftingVocab.MATERIAL_AMOUNT_MATERIAL_ID_KEY, ""))] = float(
+				entry.get(HudCraftingVocab.MATERIAL_AMOUNT_AMOUNT_KEY, 0.0))
+	return free
+
+## A recipe's inputs as `[[material_id, amount], …]`, one pair per material in first-seen order.
+func _kit_input_pairs(inputs: Variant) -> Array:
+	var pairs: Array = []
+	var slot := {}
+	if not (inputs is Array):
+		return pairs
+	for input_variant in inputs:
+		if not (input_variant is Dictionary):
+			continue
+		var input: Dictionary = input_variant
+		var material := String(input.get(HudCraftingVocab.MATERIAL_AMOUNT_MATERIAL_ID_KEY, ""))
+		var amount := float(input.get(HudCraftingVocab.MATERIAL_AMOUNT_AMOUNT_KEY, 0.0))
+		if slot.has(material):
+			(pairs[int(slot[material])] as Array)[1] = float((pairs[int(slot[material])] as Array)[1]) + amount
+		else:
+			slot[material] = pairs.size()
+			pairs.append([material, amount])
+	return pairs
+
+## The recipes of a kit item the player may QUEUE — `queueable` on the item's `craftOffers`, the server's
+## own enqueue test — as `[{recipe_id, label, output_per_pass, inputs}]`, kit-need order.
+func _kit_item_choices(item: Dictionary, row: Dictionary) -> Array:
+	var offers_by_recipe := {}
+	for offer_variant in row.get("offers", []):
+		if offer_variant is Dictionary:
+			offers_by_recipe[String((offer_variant as Dictionary).get(
+				HudCraftingVocab.OFFER_RECIPE_ID_KEY, ""))] = offer_variant
+	var choices: Array = []
+	for recipe_variant in item.get(HudCraftingVocab.KIT_ITEM_RECIPES_KEY, []):
+		if not (recipe_variant is Dictionary):
+			continue
+		var recipe: Dictionary = recipe_variant
+		var recipe_id := String(recipe.get(HudCraftingVocab.KIT_RECIPE_ID_KEY, ""))
+		var offer: Dictionary = offers_by_recipe.get(recipe_id, {})
+		if offer.is_empty() or not bool(offer.get(HudCraftingVocab.OFFER_QUEUEABLE_KEY, false)):
+			continue
+		choices.append({
+			"recipe_id": recipe_id,
+			"label": String(offer.get(HudCraftingVocab.OFFER_RECIPE_LABEL_KEY, "")),
+			"output_per_pass": float(recipe.get(HudCraftingVocab.KIT_RECIPE_OUTPUT_PER_PASS_KEY, 0.0)),
+			"inputs": _kit_input_pairs(recipe.get(HudCraftingVocab.KIT_RECIPE_INPUTS_KEY, [])),
+		})
+	return choices
+
+## **THE RECIPE AN ITEM IS MADE WITH**: the player's pick while it is still queueable, else the offer the
+## sim marked `suggested`, else the first queueable one.
+func _kit_chosen_recipe(item_id: String, choices: Array, row: Dictionary) -> String:
+	var picked := String(_kit_recipes.get(item_id, ""))
+	var suggested := String((row.get("offer", {}) as Dictionary).get(HudCraftingVocab.OFFER_RECIPE_ID_KEY, ""))
+	for wanted in [picked, suggested]:
+		if wanted == "":
+			continue
+		for choice in choices:
+			if String((choice as Dictionary)["recipe_id"]) == wanted:
+				return wanted
+	return String((choices[0] as Dictionary)["recipe_id"]) if not choices.is_empty() else ""
+
+## **THE PICKER'S WHOLE ANSWER FOR ONE KIT AT ONE COUNT OF KITS** — a kit order is a COUNT OF KITS, so every
+## item is made `kits` times over and nothing about what the band already holds or has queued nets it
+## down. Per item the units the band owns (the Gear cell's own reading), the recipe it is made with, and
+## for the kit the items × kits the order queues and the materials the picked recipes' passes overdraw
+## (`passes = ceil(kits / output_per_pass)`, `need[m] = Σ passes × amount` against `materials_free`).
+## **NEED NEVER CAPS THE ORDER OR DISABLES START**: the one thing that does is an item with no queueable
+## recipe, which the sim refuses. Pure over the payload, so the rendered picker and its Start agree.
+func _kit_plan(need: Dictionary, rows: Dictionary, free: Dictionary, kits: int,
+		owned_by_item: Dictionary) -> Dictionary:
+	var items: Array = []
+	var recipe_ids: Array = []
+	var startable := true
+	var needed := {}
+	var material_order: Array = []
+	for item_variant in need.get(HudCraftingVocab.KIT_NEED_ITEMS_KEY, []):
+		if not (item_variant is Dictionary):
+			continue
+		var item: Dictionary = item_variant
+		var item_id := String(item.get(HudCraftingVocab.KIT_ITEM_ID_KEY, ""))
+		var row: Dictionary = rows.get(item_id, {})
+		var choices := _kit_item_choices(item, row)
+		var chosen := ""
+		var reason := ""
+		var severity := ""
+		if choices.is_empty():
+			startable = false
+			var offer: Dictionary = row.get("offer", {})
+			reason = String(offer.get(HudCraftingVocab.OFFER_REASON_KEY, ""))
+			severity = String(offer.get(HudCraftingVocab.OFFER_SEVERITY_KEY, ""))
+		else:
+			chosen = _kit_chosen_recipe(item_id, choices, row)
+			recipe_ids.append(chosen)
+			for choice in choices:
+				if String((choice as Dictionary)["recipe_id"]) != chosen:
+					continue
+				var yielded := float((choice as Dictionary)["output_per_pass"])
+				if yielded <= 0.0:
+					yielded = HudCraftingVocab.KIT_DEFAULT_OUTPUT_PER_PASS
+				var passes := ceili(float(kits) / yielded)
+				for pair in (choice as Dictionary)["inputs"]:
+					var material := String((pair as Array)[0])
+					if not needed.has(material):
+						needed[material] = 0.0
+						material_order.append(material)
+					needed[material] = float(needed[material]) + float(passes) * float((pair as Array)[1])
+		var owned := 0
+		for batch_variant in owned_by_item.get(item_id, []):
+			if batch_variant is Dictionary:
+				owned += int((batch_variant as Dictionary).get(HudCraftingVocab.EQUIPMENT_COUNT_KEY, 0))
+		items.append({
+			"item_id": item_id,
+			"name": _suggestion_item_name(item_id, row),
+			"owned": owned,
+			"choices": choices,
+			"chosen": chosen,
+			"reason": reason,
+			"severity": severity,
+		})
+	var short: Array = []
+	for material in material_order:
+		var shortage := float(needed[material]) - float(free.get(material, 0.0))
+		if shortage > HudCraftingVocab.KIT_SHORT_EPSILON:
+			short.append([String(material), shortage])
+	return {"items": items, "recipe_ids": recipe_ids, "short": short, "kits": kits,
+		"queued_items": items.size() * kits, "startable": startable}
+
+## Open a kit's picker (at one kit) or close it when it is the open one.
+func _toggle_kit_picker(kit_id: String) -> void:
+	if _kit_picker == kit_id:
+		_reset_kit_picker()
+	else:
+		_reset_picker()
+		_close_recipes_popup()
+		_kit_picker = kit_id
+		_kit_recipes = {}
+		_kit_count = HudCraftingVocab.KIT_COUNT_MIN
+	if not _payload.is_empty():
+		render(_payload)
+
+func _reset_kit_picker() -> void:
+	_kit_picker = NO_ROW
+	_kit_count = HudCraftingVocab.KIT_COUNT_MIN
+	_kit_recipes = {}
+
+func _step_kit_count(delta: int) -> void:
+	_kit_count = maxi(_kit_count + delta, HudCraftingVocab.KIT_COUNT_MIN)
+	if not _payload.is_empty():
+		render(_payload)
+
+func _pick_kit_recipe(item_id: String, recipe_id: String) -> void:
+	_kit_recipes[item_id] = recipe_id
+	if not _payload.is_empty():
+		render(_payload)
+
+func _cancel_kit_picker() -> void:
+	_reset_kit_picker()
+	if not _payload.is_empty():
+		render(_payload)
+
+## **START SENDS ONE ORDER FOR THE WHOLE KIT**: the count of kits and one recipe per item.
+func _start_kit_order(kit_id: String, kits: int, recipe_ids: Array) -> void:
+	_reset_kit_picker()
+	if not recipe_ids.is_empty():
+		kit_enqueue_requested.emit(kit_id, kits, recipe_ids)
+	if not _payload.is_empty():
+		render(_payload)
+
+## The KITS group: a head, then one row per kit in config order, the open kit's picker directly under it.
+func _add_kits_section(table: VBoxContainer, band: Dictionary, payload: Dictionary) -> void:
+	var needs := _kit_needs_of(band)
+	if needs.is_empty():
+		return
+	table.add_child(_build_group_head(HudCraftingVocab.KITS_HEAD))
+	table.add_child(_rule(HudStyle.LINE))
+	if _is_folded(HudCraftingVocab.KITS_HEAD):
+		return
+	var rows := _rows_by_key(band, payload)
+	var free := _materials_free_of(band)
+	var owned_by_item := _equipment_by_item(band)
+	for need in needs:
+		table.add_child(_build_kit_row(need, rows))
+		if String((need as Dictionary).get(HudCraftingVocab.KIT_NEED_KIT_ID_KEY, "")) == _kit_picker:
+			table.add_child(_build_kit_picker(need, rows, free, owned_by_item))
+		table.add_child(_rule(HudStyle.LINE_SOFT))
+
+## **ONE KIT, ONE ROW** — its name and the items it needs, what is equipped, one kit's rebuild cost and
+## the one thing the player should do about it.
+func _build_kit_row(need: Dictionary, rows: Dictionary) -> Control:
+	var kit_id := String(need.get(HudCraftingVocab.KIT_NEED_KIT_ID_KEY, ""))
+	var words := _kit_job_words(need)
+	var noun := String(words[HudCraftingVocab.KIT_JOB_NOUN_KEY])
+	var items: Array = need.get(HudCraftingVocab.KIT_NEED_ITEMS_KEY, [])
+
+	# **THE OWNED CELL READS THE WEAKEST CLAIMED ITEM**: a hunter with spears and no sled is not equipped
+	# for the kit, but only for what rows actually claim — `Y` is that claim rounded up, never the
+	# headcount. An item nothing claims takes no part in it.
+	var names: Array[String] = []
+	var in_use := false
+	var need_total := 0
+	var equipped := 0
+	var worst_deficit := -1
+	var short_parts: Array[String] = []
+	var any_uncovered := false
+	for item_variant in items:
+		var item: Dictionary = item_variant
+		var item_id := String(item.get(HudCraftingVocab.KIT_ITEM_ID_KEY, ""))
+		var item_name := _suggestion_item_name(item_id, rows.get(item_id, {}))
+		names.append(item_name)
+		var claim := _kit_item_claim(item)
+		if claim.is_empty():
+			continue
+		in_use = true
+		var claim_need := int(claim["need"])
+		var claim_equipped := int(claim["equipped"])
+		var deficit := claim_need - claim_equipped
+		if deficit > worst_deficit or (deficit == worst_deficit and claim_need > need_total):
+			worst_deficit = deficit
+			need_total = claim_need
+			equipped = claim_equipped
+		var short := int(item.get(HudCraftingVocab.KIT_ITEM_SHORT_KEY, 0))
+		if short > 0:
+			var queued := int(item.get(HudCraftingVocab.KIT_ITEM_QUEUED_KEY, 0))
+			var part := HudCraftingVocab.KIT_REASON_SHORT_FORMAT % [item_name, short]
+			if queued > 0:
+				part += HudCraftingVocab.KIT_REASON_COMING_FORMAT % queued
+			short_parts.append(part)
+			if queued < short:
+				any_uncovered = true
+
+	# **THREE STATES, AND ONLY THE SECOND IS A PROBLEM.** Nothing claims any item of the kit: quiet `Not
+	# in use`, no `N without`. Something claimed and short: the missing units by item, red while any is
+	# not on the bench's queue and dim once every gap is coming. Claimed and covered: `All N equipped`.
+	var reason := ""
+	var reason_ink := HudStyle.INK_FAINT
+	if not in_use:
+		reason = HudCraftingVocab.KIT_REASON_NOT_IN_USE
+	elif not short_parts.is_empty():
+		reason = HudCraftingVocab.KIT_REASON_SHORT_SEPARATOR.join(short_parts)
+		reason_ink = HudStyle.DANGER if any_uncovered else HudStyle.INK_DIM
+	else:
+		reason = HudCraftingVocab.KIT_REASON_ALL_FORMAT % [need_total, noun]
+
+	# --- the item cell
+	var item_cell := VBoxContainer.new()
+	item_cell.add_theme_constant_override("separation", 0)
+	var name_label := Label.new()
+	name_label.text = _kit_name(need)
+	name_label.add_theme_font_size_override("font_size", HudCraftingVocab.ITEM_NAME_FONT_SIZE)
+	name_label.add_theme_color_override("font_color", HudStyle.INK)
+	item_cell.add_child(name_label)
+	var role_label := Label.new()
+	role_label.text = HudCraftingVocab.KIT_ROLE_FORMAT % [
+		HudCraftingVocab.KIT_ROLE_ITEM_SEPARATOR.join(names), noun]
+	role_label.add_theme_font_size_override("font_size", HudCraftingVocab.ITEM_ROLE_FONT_SIZE)
+	role_label.add_theme_color_override("font_color", HudStyle.INK_FAINT)
+	item_cell.add_child(role_label)
+
+	# --- the owned cell: `e of P` and a chip, or the pill that says nobody has it
+	var owned := HBoxContainer.new()
+	owned.add_theme_constant_override("separation", HudCraftingVocab.ROW_SEPARATION)
+	owned.set_meta(HudCraftingVocab.KIT_OWNED_META, kit_id)
+	if equipped > 0:
+		var count_label := Label.new()
+		count_label.text = HudCraftingVocab.KIT_OWNED_FORMAT % [equipped, need_total]
+		count_label.add_theme_font_size_override("font_size", HudCraftingVocab.OWNED_COUNT_FONT_SIZE)
+		count_label.add_theme_color_override("font_color", HudStyle.INK)
+		owned.add_child(count_label)
+		owned.add_child(_chip(HudCraftingVocab.KIT_OWNED_CHIP, HudCraftingVocab.OWNED_GRADE_MID_COLOR,
+			HudCraftingVocab.OWNED_CHIP_FONT_SIZE))
+	elif in_use:
+		owned.add_child(_chip(HudCraftingVocab.KIT_NONE_EQUIPPED, HudStyle.DANGER,
+			HudCraftingVocab.OWNED_CHIP_FONT_SIZE))
+	else:
+		owned.add_child(_chip(HudCraftingVocab.KIT_NOT_USED, HudStyle.INK_FAINT,
+			HudCraftingVocab.OWNED_CHIP_FONT_SIZE))
+
+	# --- the cost cell: ONE kit, each item at its suggested recipe
+	var cost := VBoxContainer.new()
+	cost.add_theme_constant_override("separation", 0)
+	cost.set_meta(HudCraftingVocab.KIT_COST_META, kit_id)
+	cost.add_child(_cost_flow(_kit_rebuild_pairs(need, rows), HudCraftingVocab.COST_FONT_SIZE))
+	var each := Label.new()
+	each.text = HudCraftingVocab.KIT_COST_EACH
+	each.add_theme_font_size_override("font_size", HudCraftingVocab.KIT_EACH_FONT_SIZE)
+	each.add_theme_color_override("font_color", HudStyle.INK_FAINT)
+	cost.add_child(each)
+
+	# --- the action cell: Make, and the reason beneath it
+	var action := VBoxContainer.new()
+	action.alignment = BoxContainer.ALIGNMENT_BEGIN
+	action.add_theme_constant_override("separation", HudCraftingVocab.ROW_SEPARATION)
+	var make := Button.new()
+	make.text = HudCraftingVocab.KIT_PICKER_OPEN_LABEL if kit_id == _kit_picker else HudCraftingVocab.MAKE_LABEL
+	make.focus_mode = Control.FOCUS_NONE
+	make.add_theme_font_size_override("font_size", HudCraftingVocab.ACTION_FONT_SIZE)
+	HudStyle.apply_button(make, "primary")
+	make.set_meta(HudCraftingVocab.KIT_MAKE_BUTTON_META, kit_id)
+	make.pressed.connect(func() -> void: _toggle_kit_picker(kit_id))
+	action.add_child(make)
+	var why := Label.new()
+	why.text = reason
+	why.add_theme_font_size_override("font_size", HudCraftingVocab.REASON_FONT_SIZE)
+	why.add_theme_color_override("font_color", reason_ink)
+	why.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	why.custom_minimum_size = Vector2(HudCraftingVocab.COLUMN_ACTION_WIDTH, 0.0)
+	why.set_meta(HudCraftingVocab.KIT_REASON_META, kit_id)
+	action.add_child(why)
+
+	# **THE DIM FALLS ON THE ROW'S INFORMATION, NEVER ITS CONTROLS** — the shrug's own rule: a faded Make
+	# reads as a disabled one.
+
+	var row := _ledger_row_container()
+	row.set_meta(HudCraftingVocab.KIT_ROW_META, kit_id)
+	row.add_child(_column_cell(item_cell, 0.0, true))
+	row.add_child(_column_cell(owned, HudCraftingVocab.COLUMN_OWNED_WIDTH, false))
+	row.add_child(_column_cell(cost, HudCraftingVocab.COLUMN_COST_WIDTH, false))
+	row.add_child(_column_cell(action, HudCraftingVocab.COLUMN_ACTION_WIDTH, false))
+	return row
+
+## **ONE KIT'S REBUILD COST** — each item at the recipe the sim suggests for it, the per-pass inputs
+## summed by material. An item with no recipe row contributes nothing.
+func _kit_rebuild_pairs(need: Dictionary, rows: Dictionary) -> Array:
+	var combined: Array = []
+	for item_variant in need.get(HudCraftingVocab.KIT_NEED_ITEMS_KEY, []):
+		var item: Dictionary = item_variant
+		var recipes: Array = item.get(HudCraftingVocab.KIT_ITEM_RECIPES_KEY, [])
+		if recipes.is_empty():
+			continue
+		var row: Dictionary = rows.get(String(item.get(HudCraftingVocab.KIT_ITEM_ID_KEY, "")), {})
+		var suggested := String((row.get("offer", {}) as Dictionary).get(HudCraftingVocab.OFFER_RECIPE_ID_KEY, ""))
+		var recipe: Dictionary = recipes[0]
+		for candidate in recipes:
+			if String((candidate as Dictionary).get(HudCraftingVocab.KIT_RECIPE_ID_KEY, "")) == suggested:
+				recipe = candidate
+				break
+		combined.append_array(recipe.get(HudCraftingVocab.KIT_RECIPE_INPUTS_KEY, []))
+	return _kit_input_pairs(combined)
+
+## `4 hide · 2 fibre` — the cost cell's own clauses over `[[material, amount], …]`.
+##
+## **`wrap` is whether the clauses may break across lines**: the ledger's cost cell is a narrow column and
+## wraps like every cost cell, while the picker's radio keeps one recipe's cost on one line so the line
+## reads as a unit beside its radio.
+func _cost_flow(pairs: Array, font_size: int, wrap: bool = true) -> Container:
+	var flow: Container = HFlowContainer.new() if wrap else HBoxContainer.new()
+	for i in range(pairs.size()):
+		var clause := Label.new()
+		clause.text = HudCraftingVocab.COST_CLAUSE_FORMAT % [
+			_amount_text(float((pairs[i] as Array)[1])), String((pairs[i] as Array)[0])]
+		if i < pairs.size() - 1:
+			clause.text += HudCraftingVocab.COST_SEPARATOR
+		clause.add_theme_font_size_override("font_size", font_size)
+		clause.add_theme_color_override("font_color", HudStyle.INK_DIM)
+		flow.add_child(clause)
+	return flow
+
+## **THE KIT PICKER**, under its row: `Make how many <Kit>s?` with a `− N +` stepper (default 1, never
+## below 1), then per item what the band owns, how many this order makes (N) and the recipe it would use.
+func _build_kit_picker(need: Dictionary, rows: Dictionary, free: Dictionary,
+		owned_by_item: Dictionary) -> Control:
+	var kit_id := String(need.get(HudCraftingVocab.KIT_NEED_KIT_ID_KEY, ""))
+	var kits := _kit_count
+	var plan := _kit_plan(need, rows, free, kits, owned_by_item)
+
+	var host := MarginContainer.new()
+	host.add_theme_constant_override("margin_bottom", HudCraftingVocab.PICKER_MARGIN_BOTTOM)
+	host.set_meta(HudCraftingVocab.KIT_PICKER_META, kit_id)
+	var box := PanelContainer.new()
+	var style := HudStyle.readout_stylebox()
+	style.border_color = HudStyle.SIGNAL_DEEP
+	style.set_border_width_all(HudCraftingVocab.PICKER_BORDER_WIDTH)
+	style.content_margin_left = HudCraftingVocab.PICKER_PADDING_H
+	style.content_margin_right = HudCraftingVocab.PICKER_PADDING_H
+	style.content_margin_top = HudCraftingVocab.PICKER_PADDING_V
+	style.content_margin_bottom = HudCraftingVocab.PICKER_PADDING_V
+	box.add_theme_stylebox_override("panel", style)
+	host.add_child(box)
+	var column := VBoxContainer.new()
+	column.add_theme_constant_override("separation", HudCraftingVocab.PICKER_LINE_SEPARATION)
+	box.add_child(column)
+
+	# --- the question and its stepper
+	var head := HBoxContainer.new()
+	head.add_theme_constant_override("separation", HudCraftingVocab.COLUMN_SEPARATION)
+	head.add_child(_popup_text(HudCraftingVocab.KIT_PICKER_HEADING_FORMAT % _kit_name(need, kit_id),
+		HudStyle.INK, HudCraftingVocab.PICKER_HEADING_FONT_SIZE))
+	var minus := _crew_button(HudCraftingVocab.KIT_PICKER_COUNT_DECREMENT)
+	minus.disabled = kits <= HudCraftingVocab.KIT_COUNT_MIN
+	minus.set_meta(HudCraftingVocab.KIT_PICKER_MINUS_META, kit_id)
+	minus.pressed.connect(func() -> void: _step_kit_count(-1))
+	head.add_child(minus)
+	var face := _popup_text(str(kits), HudStyle.INK, HudCraftingVocab.CREW_COUNT_FONT_SIZE)
+	face.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	face.set_meta(HudCraftingVocab.KIT_PICKER_FACE_META, kits)
+	head.add_child(face)
+	var plus := _crew_button(HudCraftingVocab.KIT_PICKER_COUNT_INCREMENT)
+	plus.set_meta(HudCraftingVocab.KIT_PICKER_PLUS_META, kit_id)
+	plus.pressed.connect(func() -> void: _step_kit_count(1))
+	head.add_child(plus)
+	column.add_child(head)
+
+	# --- the table: ITEM · OWNED · MAKE · RECIPE
+	var grid := GridContainer.new()
+	grid.columns = 4
+	grid.add_theme_constant_override("h_separation", HudCraftingVocab.KIT_PICKER_GRID_H_SEPARATION)
+	grid.add_theme_constant_override("v_separation", HudCraftingVocab.KIT_PICKER_GRID_V_SEPARATION)
+	var column_heads := [HudCraftingVocab.KIT_PICKER_COLUMN_ITEM, HudCraftingVocab.KIT_PICKER_COLUMN_OWNED,
+		HudCraftingVocab.KIT_PICKER_COLUMN_MAKE, HudCraftingVocab.KIT_PICKER_COLUMN_RECIPE]
+	var column_widths := [HudCraftingVocab.KIT_PICKER_ITEM_WIDTH, HudCraftingVocab.KIT_PICKER_OWNED_WIDTH,
+		HudCraftingVocab.KIT_PICKER_MAKE_WIDTH, 0.0]
+	for i in range(column_heads.size()):
+		var column_head := _popup_text(String(column_heads[i]).to_upper(), HudStyle.INK_FAINT,
+			HudCraftingVocab.COLUMN_HEAD_FONT_SIZE)
+		column_head.custom_minimum_size = Vector2(float(column_widths[i]), 0.0)
+		grid.add_child(column_head)
+	for item_variant in plan["items"]:
+		var entry: Dictionary = item_variant
+		var item_id := String(entry["item_id"])
+		var item_label := _popup_text(String(entry["name"]), HudStyle.INK, HudCraftingVocab.KIT_PICKER_CELL_FONT_SIZE)
+		item_label.custom_minimum_size = Vector2(HudCraftingVocab.KIT_PICKER_ITEM_WIDTH, 0.0)
+		grid.add_child(item_label)
+		var owned_label := _popup_text(HudCraftingVocab.OWNED_COUNT_FORMAT % int(entry["owned"]),
+			HudStyle.INK_DIM, HudCraftingVocab.KIT_PICKER_CELL_FONT_SIZE)
+		owned_label.set_meta(HudCraftingVocab.KIT_PICKER_OWNED_META, item_id)
+		grid.add_child(owned_label)
+		var make_label := _popup_text(str(kits), HudStyle.INK, HudCraftingVocab.KIT_PICKER_CELL_FONT_SIZE)
+		make_label.set_meta(HudCraftingVocab.KIT_PICKER_MAKE_META, item_id)
+		grid.add_child(make_label)
+		grid.add_child(_build_kit_recipe_cell(entry))
+	column.add_child(grid)
+
+	# --- the footer: what Start would do, and the two buttons
+	column.add_child(_rule(HudStyle.LINE_SOFT))
+	var footer := HBoxContainer.new()
+	footer.add_theme_constant_override("separation", HudCraftingVocab.COLUMN_SEPARATION)
+	var message := _popup_text("", HudStyle.INK_DIM, HudCraftingVocab.PICKER_NOTE_FONT_SIZE)
+	message.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	message.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	var short: Array = plan["short"]
+	if not short.is_empty():
+		var parts: Array[String] = []
+		for pair in short:
+			parts.append(HudCraftingVocab.KIT_PICKER_SHORT_PART_FORMAT % [
+				String.num(float((pair as Array)[1]), HudCraftingVocab.SHORTFALL_DECIMALS), String((pair as Array)[0])])
+		message.add_theme_color_override("font_color", HudStyle.DANGER)
+		message.text = HudCraftingVocab.KIT_PICKER_SHORT_FORMAT % [
+			HudCraftingVocab.KIT_PICKER_SHORT_SEPARATOR.join(parts), kits]
+	else:
+		var queued_items := int(plan["queued_items"])
+		message.text = (HudCraftingVocab.KIT_PICKER_QUEUES_ONE_FORMAT if queued_items == 1
+			else HudCraftingVocab.KIT_PICKER_QUEUES_FORMAT) % queued_items
+	message.set_meta(HudCraftingVocab.KIT_PICKER_MESSAGE_META, kit_id)
+	footer.add_child(message)
+	var cancel := Button.new()
+	cancel.text = HudCraftingVocab.PICKER_CANCEL
+	cancel.focus_mode = Control.FOCUS_NONE
+	cancel.add_theme_font_size_override("font_size", HudCraftingVocab.ACTION_FONT_SIZE)
+	HudStyle.apply_button(cancel, "ghost")
+	cancel.set_meta(HudCraftingVocab.KIT_PICKER_CANCEL_META, kit_id)
+	cancel.pressed.connect(func() -> void: _cancel_kit_picker())
+	footer.add_child(cancel)
+	var start := Button.new()
+	start.text = HudCraftingVocab.PICKER_START
+	start.focus_mode = Control.FOCUS_NONE
+	start.add_theme_font_size_override("font_size", HudCraftingVocab.ACTION_FONT_SIZE)
+	HudStyle.apply_button(start, "primary")
+	# The ONLY disable: an item with no queueable recipe, which the sim refuses outright. A shortage never.
+	start.disabled = not bool(plan["startable"])
+	start.set_meta(HudCraftingVocab.KIT_PICKER_START_META, kit_id)
+	var recipe_ids: Array = plan["recipe_ids"]
+	start.pressed.connect(func() -> void: _start_kit_order(kit_id, kits, recipe_ids))
+	footer.add_child(start)
+	column.add_child(footer)
+	return host
+
+## **THE RECIPE CELL OF ONE ITEM'S ROW**: nothing when the item adds nothing to the order; the sim's own
+## refusal, in its severity's ink, when nothing can be queued; the bare cost of the one recipe there is;
+## otherwise one radio per queueable recipe with its cost beside it.
+func _build_kit_recipe_cell(entry: Dictionary) -> Control:
+	var item_id := String(entry["item_id"])
+	var cell := HFlowContainer.new()
+	cell.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	cell.add_theme_constant_override("h_separation", HudCraftingVocab.KIT_PICKER_RADIO_SEPARATION)
+	cell.set_meta(HudCraftingVocab.KIT_PICKER_RECIPE_CELL_META, item_id)
+	var choices: Array = entry["choices"]
+	if choices.is_empty():
+		var reason := String(entry["reason"])
+		if reason != "":
+			var why := _popup_text(reason, HudCraftingVocab.REASON_COLORS.get(String(entry["severity"]),
+				HudCraftingVocab.REASON_COLOR_QUIET), HudCraftingVocab.KIT_PICKER_COST_FONT_SIZE)
+			cell.add_child(why)
+		return cell
+	if choices.size() == 1:
+		cell.add_child(_cost_flow((choices[0] as Dictionary)["inputs"],
+			HudCraftingVocab.KIT_PICKER_COST_FONT_SIZE, false))
+		return cell
+	var group := ButtonGroup.new()
+	for choice_variant in choices:
+		var choice: Dictionary = choice_variant
+		var recipe_id := String(choice["recipe_id"])
+		var option := HBoxContainer.new()
+		option.add_theme_constant_override("separation", HudCraftingVocab.ROW_SEPARATION)
+		var radio := CheckBox.new()
+		radio.text = String(choice["label"])
+		radio.button_group = group
+		radio.focus_mode = Control.FOCUS_NONE
+		radio.add_theme_font_size_override("font_size", HudCraftingVocab.KIT_PICKER_COST_FONT_SIZE)
+		HudStyle.apply_radio(radio)
+		# Set BEFORE the handler is connected, so restating the choice on a rebuild is not a pick.
+		radio.button_pressed = recipe_id == String(entry["chosen"])
+		radio.set_meta(HudCraftingVocab.KIT_PICKER_RADIO_META, recipe_id)
+		radio.toggled.connect(func(on: bool) -> void:
+			if on and recipe_id != String(entry["chosen"]):
+				_pick_kit_recipe(item_id, recipe_id))
+		option.add_child(radio)
+		option.add_child(_cost_flow(choice["inputs"], HudCraftingVocab.KIT_PICKER_COST_FONT_SIZE, false))
+		cell.add_child(option)
+	return cell
+
+## Whether any order on the bench is a part of a kit order.
+func _has_kit_part(orders: Array) -> bool:
+	for order_variant in orders:
+		if order_variant is Dictionary and int((order_variant as Dictionary).get(
+				HudCraftingVocab.ORDER_KIT_ORDER_KEY, HudCraftingVocab.NO_KIT_ORDER)) != HudCraftingVocab.NO_KIT_ORDER:
+			return true
+	return false
+
+func _kit_order_in(bench: Dictionary, kit_order: int) -> Dictionary:
+	for record_variant in bench.get(HudCraftingVocab.BENCH_KIT_ORDERS_KEY, []):
+		if record_variant is Dictionary and int((record_variant as Dictionary).get(
+				HudCraftingVocab.KIT_ORDER_ID_KEY, HudCraftingVocab.NO_KIT_ORDER)) == kit_order:
+			return record_variant
+	return {}
+
+## The kit order the order at `index` belongs to, or `NO_KIT_ORDER`.
+func _kit_order_of(orders: Array, index: int) -> int:
+	if index < 0 or index >= orders.size() or not (orders[index] is Dictionary):
+		return HudCraftingVocab.NO_KIT_ORDER
+	return int((orders[index] as Dictionary).get(HudCraftingVocab.ORDER_KIT_ORDER_KEY, HudCraftingVocab.NO_KIT_ORDER))
+
+## The name a kit order goes by: its kit's `display_name`, else the kit id the sim recorded.
+func _kit_order_name(record: Dictionary, band: Dictionary) -> String:
+	var kit_id := String(record.get(HudCraftingVocab.KIT_ORDER_KIT_ID_KEY, ""))
+	return _kit_name(_kit_need_in(band, kit_id), kit_id)
+
+## **A PART'S STATUS WORD** — WAITING when the bench is skipping it, WORKING when it is the worked order,
+## PAUSED when it holds a cut pile it is not working, else QUEUED. `[text, ink, tooltip]`.
+func _kit_part_status(order: Dictionary, index: int, worked: int) -> Array:
+	if String(order.get(HudCraftingVocab.ORDER_BLOCKED_REASON_KEY, "")) != "":
+		return [HudCraftingVocab.ORDER_STATUS_WAITING, HudStyle.DANGER, ""]
+	if index == worked:
+		return [HudCraftingVocab.ORDER_STATUS_WORKING, HudStyle.HEALTHY, ""]
+	if bool(order.get(HudCraftingVocab.ORDER_DRAWN_KEY, false)):
+		return [HudCraftingVocab.ORDER_STATUS_PAUSED, HudStyle.WARN, HudCraftingVocab.ORDER_STATUS_PAUSED_TOOLTIP]
+	return [HudCraftingVocab.ORDER_STATUS_QUEUED, HudStyle.INK_DIM, ""]
+
+## An invisible, dead stand-in for a control a row does not carry, so the columns line up down the queue
+## (the head row's ↑ idiom).
+func _hidden_queue_button(glyph: String) -> Button:
+	var button := _queue_button(glyph, "")
+	button.disabled = true
+	button.modulate = Color(1.0, 1.0, 1.0, 0.0)
+	button.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	return button
+
+func _kit_slot(width: float) -> Control:
+	var slot := Control.new()
+	slot.custom_minimum_size = Vector2(width, 0.0)
+	slot.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	return slot
+
+## **ONE KIT ORDER, ONE BOX** — a status word, `Kit · N noun`, a progress bar and `m of t made`, the parts
+## summed on a sub-line while folded, and the whole kit's ↑ and ✕. Unfolded, each part is a row of its own
+## with a `− made/count +` and nothing else: a part is raised and removed by the kit, not by itself.
+func _build_kit_order_box(kit_order: int, orders: Array, bench: Dictionary, payload: Dictionary) -> Control:
+	var band: Dictionary = payload.get(PAYLOAD_BAND, {})
+	var record := _kit_order_in(bench, kit_order)
+	var worked := _worked_index(bench)
+	var made := int(record.get(HudCraftingVocab.KIT_ORDER_DONE_KEY, 0))
+	var pending := 0
+	var working := false
+	var all_waiting := true
+	var part_indices: Array[int] = []
+	var summary: Array[String] = []
+	for index in range(orders.size()):
+		if _kit_order_of(orders, index) != kit_order:
+			continue
+		var order: Dictionary = orders[index]
+		var count := int(order.get(HudCraftingVocab.ORDER_COUNT_KEY, 0))
+		var part_made := int(order.get(HudCraftingVocab.ORDER_MADE_KEY, 0))
+		part_indices.append(index)
+		made += part_made
+		pending += maxi(count - part_made, 0)
+		var blocked := String(order.get(HudCraftingVocab.ORDER_BLOCKED_REASON_KEY, "")) != ""
+		if index == worked and not blocked:
+			working = true
+		if not blocked:
+			all_waiting = false
+		var recipe := _recipe_of(String(order.get(HudCraftingVocab.ORDER_RECIPE_ID_KEY, "")), payload)
+		var item_name := String(recipe.get(HudCraftingVocab.RECIPE_DISPLAY_NAME_KEY, ""))
+		if item_name == "":
+			item_name = String(order.get(HudCraftingVocab.ORDER_RECIPE_ID_KEY, ""))
+		summary.append(HudCraftingVocab.KIT_ORDER_PART_FORMAT % [item_name, part_made, count])
+	var total := made + pending
+
+	var status_text := HudCraftingVocab.ORDER_STATUS_QUEUED
+	var status_ink := HudStyle.INK_DIM
+	if working:
+		status_text = HudCraftingVocab.ORDER_STATUS_WORKING
+		status_ink = HudStyle.HEALTHY
+	elif all_waiting and not part_indices.is_empty():
+		status_text = HudCraftingVocab.ORDER_STATUS_WAITING
+		status_ink = HudStyle.DANGER
+
+	var host := MarginContainer.new()
+	host.add_theme_constant_override("margin_top", HudCraftingVocab.KIT_ORDER_BOX_MARGIN_V)
+	host.add_theme_constant_override("margin_bottom", HudCraftingVocab.KIT_ORDER_BOX_MARGIN_V)
+	host.set_meta(HudCraftingVocab.KIT_ORDER_BOX_META, kit_order)
+	var box := PanelContainer.new()
+	var style := StyleBoxFlat.new()
+	style.bg_color = HudStyle.PANEL_SOLID
+	style.border_color = HudStyle.LINE_SOFT
+	style.set_border_width_all(HudCraftingVocab.KIT_ORDER_BOX_BORDER_WIDTH)
+	style.set_corner_radius_all(HudCraftingVocab.KIT_ORDER_BOX_CORNER_RADIUS)
+	style.content_margin_left = HudCraftingVocab.KIT_ORDER_BOX_PADDING_H
+	style.content_margin_right = HudCraftingVocab.KIT_ORDER_BOX_PADDING_H
+	style.content_margin_top = HudCraftingVocab.KIT_ORDER_BOX_PADDING_V
+	style.content_margin_bottom = HudCraftingVocab.KIT_ORDER_BOX_PADDING_V
+	box.add_theme_stylebox_override("panel", style)
+	host.add_child(box)
+	var inner := VBoxContainer.new()
+	inner.add_theme_constant_override("separation", 0)
+	box.add_child(inner)
+
+	var unfolded := bool(_kit_unfolded.get(kit_order, false))
+	var header := HBoxContainer.new()
+	header.add_theme_constant_override("separation", HudCraftingVocab.QUEUE_ROW_SEPARATION)
+	var status := Label.new()
+	status.text = status_text.to_upper()
+	status.custom_minimum_size = Vector2(HudCraftingVocab.ORDER_STATUS_WIDTH, 0.0)
+	status.add_theme_font_size_override("font_size", HudCraftingVocab.ORDER_STATUS_FONT_SIZE)
+	status.add_theme_color_override("font_color", status_ink)
+	status.set_meta(HudCraftingVocab.KIT_ORDER_STATUS_META, kit_order)
+	header.add_child(status)
+
+	var words := VBoxContainer.new()
+	words.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	words.add_theme_constant_override("separation", 0)
+	var line := HBoxContainer.new()
+	line.add_theme_constant_override("separation", HudCraftingVocab.ROW_SEPARATION)
+	var fold := Button.new()
+	fold.text = HudCraftingVocab.GROUP_HEAD_CARET_OPEN if unfolded else HudCraftingVocab.GROUP_HEAD_CARET_FOLDED
+	fold.flat = true
+	fold.focus_mode = Control.FOCUS_NONE
+	fold.tooltip_text = HudCraftingVocab.KIT_ORDER_FOLD_TOOLTIP
+	fold.add_theme_stylebox_override("normal", HudStyle.empty_stylebox())
+	fold.add_theme_stylebox_override("hover", HudStyle.empty_stylebox())
+	fold.add_theme_stylebox_override("pressed", HudStyle.empty_stylebox())
+	fold.add_theme_stylebox_override("focus", HudStyle.empty_stylebox())
+	fold.add_theme_font_size_override("font_size", HudCraftingVocab.QUEUE_ROW_FONT_SIZE)
+	fold.add_theme_color_override("font_color", HudStyle.INK_DIM)
+	fold.add_theme_color_override("font_hover_color", HudStyle.INK)
+	fold.set_meta(HudCraftingVocab.KIT_ORDER_FOLD_META, kit_order)
+	fold.pressed.connect(func() -> void: _toggle_kit_order_fold(kit_order))
+	line.add_child(fold)
+	var title := Label.new()
+	title.text = HudCraftingVocab.KIT_ORDER_TITLE_FORMAT % [_kit_order_name(record, band),
+		int(record.get(HudCraftingVocab.KIT_ORDER_KITS_KEY, 0))]
+	title.add_theme_font_size_override("font_size", HudCraftingVocab.QUEUE_ROW_FONT_SIZE)
+	title.add_theme_color_override("font_color", HudStyle.INK)
+	title.set_meta(HudCraftingVocab.KIT_ORDER_TITLE_META, kit_order)
+	line.add_child(title)
+	var bar := _bar(float(made) / float(total) if total > 0 else 0.0, HudStyle.HEALTHY,
+		HudCraftingVocab.KIT_ORDER_BAR_HEIGHT)
+	bar.custom_minimum_size = Vector2(HudCraftingVocab.KIT_ORDER_BAR_WIDTH, HudCraftingVocab.KIT_ORDER_BAR_HEIGHT)
+	bar.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+	bar.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	line.add_child(bar)
+	var progress := Label.new()
+	progress.text = HudCraftingVocab.KIT_ORDER_PROGRESS_FORMAT % [made, total]
+	progress.add_theme_font_size_override("font_size", HudCraftingVocab.ORDER_REASON_FONT_SIZE)
+	progress.add_theme_color_override("font_color", HudStyle.INK_DIM)
+	progress.set_meta(HudCraftingVocab.KIT_ORDER_PROGRESS_META, kit_order)
+	line.add_child(progress)
+	words.add_child(line)
+	if not unfolded:
+		var sub := _forecast_label(HudCraftingVocab.KIT_ORDER_PART_SEPARATOR.join(summary),
+			HudCraftingVocab.ORDER_REASON_FONT_SIZE)
+		sub.set_meta(HudCraftingVocab.KIT_ORDER_SUMMARY_META, kit_order)
+		words.add_child(sub)
+	header.add_child(words)
+
+	# The count stepper's three columns stay empty so the ↑ and ✕ line up with every other row's.
+	header.add_child(_kit_slot(HudCraftingVocab.QUEUE_BUTTON_SIZE))
+	header.add_child(_kit_slot(HudCraftingVocab.ORDER_COUNT_WIDTH))
+	header.add_child(_kit_slot(HudCraftingVocab.QUEUE_BUTTON_SIZE))
+	var first_index: int = part_indices[0] if not part_indices.is_empty() else 0
+	if first_index == HudCraftingVocab.ORDER_HEAD_INDEX:
+		# At the head the kit has nowhere to go up to (the server refuses it): a dead, invisible stand-in.
+		header.add_child(_hidden_queue_button(HudCraftingVocab.ORDER_RAISE_GLYPH))
+	else:
+		var raise := _queue_button(HudCraftingVocab.ORDER_RAISE_GLYPH, HudCraftingVocab.KIT_ORDER_RAISE_TOOLTIP)
+		raise.set_meta(HudCraftingVocab.KIT_ORDER_RAISE_META, kit_order)
+		raise.pressed.connect(func() -> void: kit_raise_requested.emit(kit_order))
+		header.add_child(raise)
+	var remove := _queue_button(HudCraftingVocab.ORDER_REMOVE_GLYPH, HudCraftingVocab.KIT_ORDER_REMOVE_TOOLTIP)
+	remove.set_meta(HudCraftingVocab.KIT_ORDER_REMOVE_META, kit_order)
+	remove.pressed.connect(func() -> void: kit_remove_requested.emit(kit_order))
+	header.add_child(remove)
+	inner.add_child(header)
+
+	if unfolded:
+		for index in part_indices:
+			inner.add_child(_rule(HudStyle.LINE_SOFT))
+			inner.add_child(_build_kit_part_row(index, orders[index], worked, payload))
+	return host
+
+func _toggle_kit_order_fold(kit_order: int) -> void:
+	_kit_unfolded[kit_order] = not bool(_kit_unfolded.get(kit_order, false))
+	if not _payload.is_empty():
+		render(_payload)
+
+## **ONE PART OF A KIT ORDER** — its name and status word, its reason or forecast beneath, and a
+## `− made/count +` that addresses the part by its own order index. No ↑ and no ✕: the kit moves and goes
+## as one, and the well's ✕ still takes the worked part off on its own.
+func _build_kit_part_row(index: int, order: Dictionary, worked: int, payload: Dictionary) -> Control:
+	var count := int(order.get(HudCraftingVocab.ORDER_COUNT_KEY, 0))
+	var made := int(order.get(HudCraftingVocab.ORDER_MADE_KEY, 0))
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", HudCraftingVocab.QUEUE_ROW_SEPARATION)
+	row.set_meta(HudCraftingVocab.KIT_ORDER_PART_META, index)
+	row.add_child(_kit_slot(HudCraftingVocab.KIT_ORDER_PART_INDENT))
+
+	var words := VBoxContainer.new()
+	words.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	words.add_theme_constant_override("separation", 0)
+	var name_row := HBoxContainer.new()
+	name_row.add_theme_constant_override("separation", HudCraftingVocab.KIT_ORDER_PART_STATUS_MARGIN)
+	var name_label := Label.new()
+	name_label.text = _order_name(order, payload)
+	name_label.add_theme_font_size_override("font_size", HudCraftingVocab.QUEUE_ROW_FONT_SIZE)
+	name_label.add_theme_color_override("font_color", HudStyle.INK_DIM)
+	name_row.add_child(name_label)
+	var state := _kit_part_status(order, index, worked)
+	var status := Label.new()
+	status.text = String(state[0]).to_upper()
+	status.add_theme_font_size_override("font_size", HudCraftingVocab.ORDER_STATUS_FONT_SIZE)
+	status.add_theme_color_override("font_color", state[1])
+	status.set_meta(HudCraftingVocab.KIT_ORDER_PART_STATUS_META, index)
+	if String(state[2]) != "":
+		HudWidgets.set_label_tooltip(status, String(state[2]))
+	name_row.add_child(status)
+	words.add_child(name_row)
+	var blocked := String(order.get(HudCraftingVocab.ORDER_BLOCKED_REASON_KEY, ""))
+	if blocked != "":
+		var reason := Label.new()
+		reason.text = blocked
+		reason.add_theme_font_size_override("font_size", HudCraftingVocab.ORDER_REASON_FONT_SIZE)
+		reason.add_theme_color_override("font_color", HudStyle.INK_FAINT)
+		reason.set_meta(HudCraftingVocab.ORDER_REASON_META, index)
+		words.add_child(reason)
+	else:
+		var forecast := _shortfall_text(order.get(HudCraftingVocab.ORDER_SHORT_TO_FINISH_KEY, []))
+		if forecast != "":
+			var forecast_label := _forecast_label(forecast, HudCraftingVocab.ORDER_REASON_FONT_SIZE)
+			forecast_label.set_meta(HudCraftingVocab.ORDER_SHORT_TO_FINISH_META, index)
+			words.add_child(forecast_label)
+	row.add_child(words)
+
+	var minus := _queue_button(HudCraftingVocab.ORDER_COUNT_DECREMENT, "")
+	_wire_count_decrement(minus, index, count, made)
+	row.add_child(minus)
+	var face := Label.new()
+	face.text = HudCraftingVocab.ORDER_MADE_OF_COUNT_FORMAT % [made, count]
+	face.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	face.custom_minimum_size = Vector2(HudCraftingVocab.ORDER_COUNT_WIDTH, 0.0)
+	face.add_theme_font_size_override("font_size", HudCraftingVocab.QUEUE_ROW_FONT_SIZE)
+	face.add_theme_color_override("font_color", HudStyle.INK)
+	HudWidgets.set_label_tooltip(face, HudCraftingVocab.ORDER_COUNT_TOOLTIP)
+	row.add_child(face)
+	var plus := _queue_button(HudCraftingVocab.ORDER_COUNT_INCREMENT, "")
+	_wire_count_increment(plus, index, count)
+	row.add_child(plus)
+	row.add_child(_hidden_queue_button(HudCraftingVocab.ORDER_RAISE_GLYPH))
+	row.add_child(_hidden_queue_button(HudCraftingVocab.ORDER_REMOVE_GLYPH))
+	return row
+
 # ---- suggestions: what to make next, ranked by who is going without ---------
 
 ## **THE SIM'S LIST, IN THE SIM'S ORDER** (`docs/plan_crafting_and_materials.md` §7 → "Suggestions"),
@@ -2142,7 +3061,8 @@ func _build_suggestion_row(suggestion: Dictionary, payload: Dictionary) -> Contr
 	var ledger_row := _row_in(payload, item_id)
 	var row := _ledger_row_container()
 	row.set_meta(HudCraftingVocab.SUGGESTION_META, item_id)
-	row.tooltip_text = _coming_up_tooltip(suggestion) if coming_up_only else _suggestion_tooltip(suggestion)
+	row.tooltip_text = _coming_up_tooltip(suggestion) if coming_up_only \
+		else _suggestion_tooltip(suggestion, _is_material_row(ledger_row))
 	row.mouse_filter = Control.MOUSE_FILTER_PASS
 	if coming_up_only:
 		row.set_meta(HudCraftingVocab.SUGGESTION_COMING_UP_META, item_id)
@@ -2254,6 +3174,9 @@ func _suggestion_item_name(item_id: String, ledger_row: Dictionary) -> String:
 ## because a builder's gear always adds work, so the work clause would hide which build it is for. Both
 ## numbers are the sim's, rendered as they arrive.
 func _suggestion_consequence(suggestion: Dictionary, payload: Dictionary = {}) -> String:
+	var ledger_row := _row_in(payload, String(suggestion.get(HudCraftingVocab.SUGGESTION_ITEM_ID_KEY, "")))
+	if _is_material_row(ledger_row):
+		return _material_suggestion_consequence(suggestion, payload, ledger_row)
 	var queued := _earliest_build_queue_source(suggestion)
 	if not queued.is_empty():
 		var builders := float(queued.get(HudCraftingVocab.SOURCE_WORKERS_WITHOUT_KEY, 0.0))
@@ -2267,6 +3190,26 @@ func _suggestion_consequence(suggestion: Dictionary, payload: Dictionary = {}) -
 	return HudCraftingVocab.SUGGESTION_WITHOUT_FORMAT % [
 		_amount_text(float(suggestion.get(HudCraftingVocab.SUGGESTION_WORKERS_WITHOUT_KEY, 0.0))),
 		_suggestion_crew_noun(suggestion)]
+
+## Is this ledger row a material the bench makes (a `stock` recipe), not a piece of equipment?
+func _is_material_row(row: Dictionary) -> bool:
+	return not row.is_empty() and String(row.get("group", "")) == HudCraftingVocab.GROUP_STOCK
+
+## **A MATERIAL SUGGESTION'S REASON IS GOODS, NEVER PEOPLE**: the units the queued builds still lack
+## (the sources' `missing_units`, summed), named by the material's own title and the build it holds up
+## (`2 more Hurdles, for Corral Wild Boar`; the head job has no queue row, so `the top job`). The kit
+## wording (`N builders without`) states a crew and a material has none.
+func _material_suggestion_consequence(suggestion: Dictionary, payload: Dictionary,
+		ledger_row: Dictionary) -> String:
+	var missing := 0.0
+	for source_variant in suggestion.get(HudCraftingVocab.SUGGESTION_SOURCES_KEY, []):
+		if source_variant is Dictionary:
+			missing += float((source_variant as Dictionary).get(HudCraftingVocab.SOURCE_MISSING_UNITS_KEY, 0.0))
+	var queued := _earliest_build_queue_source(suggestion)
+	var subject := HudCraftingVocab.SUGGESTION_MATERIAL_TOP_JOB if queued.is_empty() \
+		else _build_queue_label(queued, payload)
+	return HudCraftingVocab.SUGGESTION_MATERIAL_FORMAT % [_amount_text(missing),
+		_suggestion_item_name("", ledger_row), subject]
 
 ## **THE EARLIEST QUEUED-BUILD SOURCE, WHEN NOTHING ELSE IS SHORT** - `{}` unless the suggestion carries a
 ## `build_queue` line and every other line is the builders' own (the head job). Any take, site or other
@@ -2326,14 +3269,14 @@ static func _job_crew_noun(job: String) -> String:
 
 ## **THE SOURCES, ONE LINE EACH, ON THE ROW'S HOVER** — who is short, where, by how many units, how
 ## many people that leaves without, and the work a turn where the shortage costs work.
-func _suggestion_tooltip(suggestion: Dictionary) -> String:
+func _suggestion_tooltip(suggestion: Dictionary, is_material: bool = false) -> String:
 	var lines: Array[String] = []
 	for source_variant in suggestion.get(HudCraftingVocab.SUGGESTION_SOURCES_KEY, []):
 		if source_variant is Dictionary:
-			lines.append(_suggestion_source_line(source_variant))
+			lines.append(_suggestion_source_line(source_variant, is_material))
 	return HudCraftingVocab.SUGGESTION_TOOLTIP_SEPARATOR.join(lines)
 
-func _suggestion_source_line(source: Dictionary) -> String:
+func _suggestion_source_line(source: Dictionary, is_material: bool = false) -> String:
 	var job := String(source.get(HudCraftingVocab.SOURCE_JOB_KEY, ""))
 	var who := _job_crew_noun(job)
 	if who == "":
@@ -2351,6 +3294,9 @@ func _suggestion_source_line(source: Dictionary) -> String:
 		who = HudCraftingVocab.SUGGESTION_SOURCE_MATERIAL_FORMAT % [who, material]
 	if kind == HudCraftingVocab.SOURCE_KIND_SITE:
 		who = HudCraftingVocab.SUGGESTION_SOURCE_KEEPING_FORMAT % who
+	if is_material:
+		return HudCraftingVocab.SUGGESTION_MATERIAL_SOURCE_FORMAT % [who,
+			_amount_text(float(source.get(HudCraftingVocab.SOURCE_MISSING_UNITS_KEY, 0.0)))]
 	var line := HudCraftingVocab.SUGGESTION_SOURCE_FORMAT % [who,
 		_amount_text(float(source.get(HudCraftingVocab.SOURCE_MISSING_UNITS_KEY, 0.0))),
 		_amount_text(float(source.get(HudCraftingVocab.SOURCE_WORKERS_WITHOUT_KEY, 0.0)))]
@@ -2403,8 +3349,19 @@ func _build_queue(orders: Array, bench: Dictionary, payload: Dictionary) -> Cont
 	var column := VBoxContainer.new()
 	column.add_theme_constant_override("separation", 0)
 	var worked := _worked_index(bench)
+	var boxed := {}
 	for index in range(orders.size()):
-		if index != worked and orders[index] is Dictionary:
+		if not (orders[index] is Dictionary):
+			continue
+		# **A KIT ORDER'S PARTS ARE ONE BOX, drawn where its first part sits** — and the worked part is in
+		# it too, whatever the well also says: the box is the kit's whole progress, so it cannot lose the
+		# part that is moving.
+		var kit_order := _kit_order_of(orders, index)
+		if kit_order != HudCraftingVocab.NO_KIT_ORDER:
+			if not boxed.has(kit_order):
+				boxed[kit_order] = true
+				column.add_child(_build_kit_order_box(kit_order, orders, bench, payload))
+		elif index != worked:
 			column.add_child(_build_queue_row(index, orders[index], bench, payload))
 	return column
 

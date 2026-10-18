@@ -1,6 +1,7 @@
 mod common;
 
 use bevy::math::UVec2;
+use core_sim::shipped;
 use core_sim::sim_state::{capture_sim_state, restore_sim_state};
 use core_sim::{build_test_app, FactionId, HerdRegistry};
 
@@ -36,7 +37,7 @@ fn herd_registry_biomass_and_position_rewind_on_rollback() {
             herd.current_pos,
             herd.route.clone(),
             herd.rung_work_done(
-                core_sim::RungKey::AnimalPastoral,
+                shipped::animal_pastoral(),
                 &core_sim::LadderConfig::builtin(),
             ),
             herd.owner,
@@ -77,7 +78,7 @@ fn herd_registry_biomass_and_position_rewind_on_rollback() {
     assert_eq!(herd.route, route0, "route must rewind");
     assert_eq!(
         herd.rung_work_done(
-            core_sim::RungKey::AnimalPastoral,
+            shipped::animal_pastoral(),
             &core_sim::LadderConfig::builtin()
         ),
         progress0

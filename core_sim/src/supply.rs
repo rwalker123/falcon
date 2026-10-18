@@ -153,7 +153,7 @@ pub struct PoolingLink {
     /// **The rung holding the run** — the weakest tile of the path between the camps
     /// ([`crate::routes::path_lesson_rung`]), `None` where any tile on it has no kept road, which is
     /// every link held by the free reach over open ground.
-    pub rung: Option<crate::intensification::RungKey>,
+    pub rung: Option<crate::intensification::RungId>,
 }
 
 /// **What one pooling link is worth, read once off the tiles between its camps** — the distance, the
@@ -162,7 +162,7 @@ pub struct PoolingLink {
 struct LinkReading {
     ends: (usize, usize),
     distance_tiles: u32,
-    rung: Option<crate::intensification::RungKey>,
+    rung: Option<crate::intensification::RungId>,
     friction_multiplier: f32,
 }
 

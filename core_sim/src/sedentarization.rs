@@ -73,6 +73,19 @@ pub struct SedentarizationEntry {
     /// EMA that smooths `score`; `0` when no band stands on belief. Published as
     /// `SedentarizationState.beliefPoints`.
     pub belief_points: f32,
+    /// The domestication input's raw points this turn (`100 × weights.domestication × dom_norm`),
+    /// pre-EMA. Published as `SedentarizationState.domesticationPoints`.
+    pub domestication_points: f32,
+    /// The surplus input's raw points this turn (`100 × weights.surplus × sur_norm`), pre-EMA.
+    /// Published as `SedentarizationState.surplusPoints`.
+    pub surplus_points: f32,
+    /// The resource-density (land) input's raw points this turn
+    /// (`100 × weights.resource_density × density`), pre-EMA. Published as
+    /// `SedentarizationState.landPoints`.
+    pub land_points: f32,
+    /// The population input's raw points this turn (`100 × weights.population × pop_norm`),
+    /// pre-EMA. Published as `SedentarizationState.populationPoints`.
+    pub population_points: f32,
 }
 
 /// Per-faction sedentarization scores (mirrors `FactionInventory`'s per-faction map shape).
@@ -189,15 +202,22 @@ pub fn sedentarization_tick(
             belief_weighted.get(&faction).copied().unwrap_or(0.0) / pop as f32
         };
 
-        let raw = RAW_SCALE
-            * (w.domestication * dom_norm
-                + w.surplus * sur_norm
-                + w.resource_density * resource_density
-                + w.population * pop_norm
-                + w.belief * belief_norm);
+        // Each input's raw points, computed once: the raw score is their sum, so the published
+        // parts add up to it exactly.
+        let domestication_points = RAW_SCALE * w.domestication * dom_norm;
+        let surplus_points = RAW_SCALE * w.surplus * sur_norm;
+        let land_points = RAW_SCALE * w.resource_density * resource_density;
+        let population_points = RAW_SCALE * w.population * pop_norm;
+        let belief_points = RAW_SCALE * w.belief * belief_norm;
+        let raw =
+            domestication_points + surplus_points + land_points + population_points + belief_points;
 
         let entry = score.entries.entry(faction).or_default();
-        entry.belief_points = RAW_SCALE * w.belief * belief_norm;
+        entry.domestication_points = domestication_points;
+        entry.surplus_points = surplus_points;
+        entry.land_points = land_points;
+        entry.population_points = population_points;
+        entry.belief_points = belief_points;
         // EMA smoothing (victory_tick pattern) so the pressure builds gradually.
         entry.score = (smoothing * entry.score + (1.0 - smoothing) * raw).clamp(0.0, 100.0);
 

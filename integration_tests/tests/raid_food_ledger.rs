@@ -18,6 +18,7 @@
 //! band with a wolf on its camp — so `raidForfeit` is genuinely non-zero.
 
 use bevy::prelude::Entity;
+use core_sim::shipped;
 use core_sim::TakeSelection;
 use core_sim::{
     available_workers, build_test_app, run_turn, scalar_from_f32, CommandEventKind,
@@ -98,6 +99,7 @@ fn the_food_ledger_reconciles_with_a_predator_raid() {
             0.0,
             0.15,
             30.0,
+            shipped::root_standing(shipped::animal()),
         ));
 
     // Seed a full larder so the forfeit is payable in full (never capped).

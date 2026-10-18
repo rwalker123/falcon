@@ -20,12 +20,13 @@
 use bevy::app::App;
 use bevy::math::UVec2;
 use bevy::prelude::{Entity, With};
+use core_sim::shipped;
 
 use core_sim::{
     build_test_app, BandId, ConnectionKey, ConnectionLedger, ConnectionsConfig, FactionId,
     LaborAllocation, LaborTarget, LadderConfig, PopulationCohort, ResidentBand, Road, RoadKeeper,
-    RoadRegistry, RungKey, Sighting, SimulationConfig, StartingUnit, Tile, TileRegistry,
-    VisibilityLedger, VisibilityState, NEAR_ENOUGH_TO_KEEP, PER_WORKER_OUTPUT,
+    RoadRegistry, Sighting, SimulationConfig, StartingUnit, Tile, TileRegistry, VisibilityLedger,
+    VisibilityState, NEAR_ENOUGH_TO_KEEP, PER_WORKER_OUTPUT,
 };
 
 /// A pinned earthlike world, so the terrain under every road below is the same one every run.
@@ -78,7 +79,7 @@ fn tile_east_of(app: &App, head: UVec2, steps: u32) -> UVec2 {
 /// than restated — a retune of `intensification_ladder.json` must move these fixtures with it.
 fn dirt_road_top(ladder: &LadderConfig) -> f32 {
     let (base, width) =
-        core_sim::road_rung_span(RungKey::RouteDirtRoad, ladder, NEAR_ENOUGH_TO_KEEP);
+        core_sim::road_rung_span(shipped::route_dirt_road(), ladder, NEAR_ENOUGH_TO_KEEP);
     base + width
 }
 
@@ -259,7 +260,7 @@ fn a_kept_road_lights_its_tile_and_the_same_road_in_shortfall_goes_dark_before_i
 
     assert_eq!(
         road_at(&short, far).held_rung(),
-        RungKey::RouteDirtRoad,
+        shipped::route_dirt_road(),
         "the road has NOT decayed yet — it goes dark first"
     );
     assert!(
@@ -296,7 +297,7 @@ fn the_free_floor_lights_nothing_and_owes_nothing_however_worn_it_is() {
 
     assert_eq!(
         road_at(&app, trail).held_rung(),
-        RungKey::RouteTrail,
+        shipped::route_trail(),
         "precondition: the trail really is fully worn"
     );
     assert_eq!(

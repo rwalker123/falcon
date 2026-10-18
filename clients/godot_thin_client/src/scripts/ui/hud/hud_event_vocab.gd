@@ -217,6 +217,11 @@ const RUNG_BY_KIND := {
 	# `band_broke_away`, detail `band=`. Notable: nothing is lost yet, a visit restores contact, and
 	# the band panel's Bond readout carries the rest of the story.
 	"lost_touch": RUNG_NOTABLE,
+	# **ANOTHER PEOPLE'S CULTURE BEGINNING TO PULL ONE OF THE VIEWER'S BANDS** (#820, detail
+	# `band=<id> faction=<pulling people id>`). Notable: nothing is lost, joining does not exist yet,
+	# and the band's Beliefs row carries the standing reading. Both ids are named on screen
+	# (`BAND_ID_TOKEN_LABELS`, `PEOPLE_ID_TOKEN_KEYS`).
+	"culture_pull": RUNG_NOTABLE,
 	# **A MATERIAL THE STANDING BILLS EAT FASTER THAN IT ARRIVES** (`docs/plan_standing_upkeep.md`
 	# §4.9 item 12). Alert, and it NAMES THE BAND — this line is what replaced the faction `Gear`
 	# row's `⚠ 1 band` → *which band* drill-down, and a faction-level warning that says something is
@@ -672,7 +677,7 @@ const SIM_DESTINATION_LABEL_FORMAT := "band %d"
 ## `systems::population::faction_label`, output `Faction N` — byte-identical or the swap silently no-ops). `from=` / `to=`
 ## on `migrated`, `band_changed_hands` and `party_defected` are FACTION ids; `EventDockPanel` swaps the
 ## sim's `Faction <id>` for the faction's published name (`FactionMark.faction_name`).
-const PEOPLE_ID_TOKEN_KEYS: Array[String] = ["from", "to", "with", "breaker"]
+const PEOPLE_ID_TOKEN_KEYS: Array[String] = ["from", "to", "with", "breaker", "faction"]
 const SIM_FACTION_LABEL_FORMAT := "Faction %d"
 
 const BAND_ID_TOKEN_LABELS := {
@@ -736,6 +741,8 @@ const DETAIL_KEY_HIDDEN := {
 	"breaker": true,
 	"carrier": true,
 	"reported": true,
+	# `culture_pull`'s `faction=` is the pulling people, named in the label the same way as `from=`/`to=`.
+	"faction": true,
 }
 
 ## **KEYS HIDDEN ONLY ON LINES CARRYING ONE `status=` TOKEN** — the rung-decay pair
@@ -749,6 +756,9 @@ const DETAIL_KEY_HIDDEN_BY_STATUS := {
 	"status=ended": {"reason": true},
 	"status=slipping": {"rung": true, "progress": true, "x": true, "y": true, "reason": true},
 	"status=feral": {"rung": true, "progress": true, "x": true, "y": true, "reason": true},
+	# A pen reaching a size tier (`status=tier action=extend_pen tier=ranch herd=... radius=2`): the tier
+	# and the ring count read as the line's detail, and the three machine tokens stay out of it.
+	"status=tier": {"status": true, "action": true, "herd": true},
 }
 
 ## **WHOLE `key=value` FRAGMENTS THE LABEL ALREADY SAYS, hidden by exact match** (issue #702). Not

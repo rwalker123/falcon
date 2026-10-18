@@ -1784,6 +1784,13 @@ pub enum CommandEventKind {
     ///
     /// **Appended last**, after [`Self::BandBrokeAway`].
     LostTouch,
+    /// **Another people's culture began pulling one of the owner's bands** — the pair entered
+    /// phase Pulled or above from no entry (`systems::culture_pressure`). Edge-gated: fired on
+    /// entry only, never while the pull stands and never on a later phase change. Filed under the
+    /// band's owner; detail `band=<id> faction=<pulling people's id>`.
+    ///
+    /// **Appended last**, after [`Self::LostTouch`].
+    CulturePull,
     /// **A pending dealing's life** (`crate::dealings`, `docs/plan_early_diplomacy.md` §1): an offer
     /// arriving, and its being accepted, refused, expired or withdrawn. One kind for the whole life,
     /// [`Self::Road`]'s reading — the player is looking at *one dealing* — with the stage in the
@@ -1794,7 +1801,7 @@ pub enum CommandEventKind {
     /// `sender=<band>` and `from=<faction>`, and both carry `dealing=<id>`. Band ids ride as tokens so
     /// a client swaps in its own label.
     ///
-    /// **Appended last**, after [`Self::LostTouch`], so no shipped variant's bincode index moved.
+    /// **Appended last**, after [`Self::CulturePull`], so no shipped variant's bincode index moved.
     Dealing,
     /// **A treaty's life** (`crate::treaties`): put in force, amended, ended (a breach) or lapsed
     /// when a people is no more. Pushed once per people, [`Self::Dealing`]'s shape; the detail's
@@ -1848,6 +1855,7 @@ impl CommandEventKind {
             CommandEventKind::StartingLoadout => "starting_loadout",
             CommandEventKind::BandBrokeAway => "band_broke_away",
             CommandEventKind::LostTouch => "lost_touch",
+            CommandEventKind::CulturePull => "culture_pull",
             CommandEventKind::Dealing => "dealing",
             CommandEventKind::Treaty => "treaty",
         }

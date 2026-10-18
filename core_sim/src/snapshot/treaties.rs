@@ -2,7 +2,7 @@ use super::*;
 
 use crate::{
     connections::ConnectionLedger,
-    intensification::RungKey,
+    routes::LinkFloor,
     routes::{standing_link, RoadRegistry},
     treaties::{Treaties, TreatyTerms},
 };
@@ -51,7 +51,7 @@ pub(crate) fn standing_link_states(
     roads: &RoadRegistry,
     connections: &ConnectionLedger,
     geometry: (u32, u32, bool),
-    floor: RungKey,
+    floor: LinkFloor,
 ) -> Vec<StandingLinkState> {
     let (width, height, wrap) = geometry;
     let mut rows = Vec::new();

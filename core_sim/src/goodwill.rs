@@ -27,6 +27,7 @@ use crate::{
         Tile,
     },
     diplomacy_config::DiplomacyConfigHandle,
+    intensification::{LadderConfig, LadderConfigHandle},
     orders::FactionId,
     resources::{SimulationConfig, SimulationTick, TileRegistry},
     routes::RoadRegistry,
@@ -331,6 +332,7 @@ pub fn credit_stationed_goodwill(
 pub fn credit_link_goodwill(
     tick: Res<SimulationTick>,
     config: Res<DiplomacyConfigHandle>,
+    ladder: Option<Res<LadderConfigHandle>>,
     roads: Res<RoadRegistry>,
     tile_registry: Res<TileRegistry>,
     sim_config: Res<SimulationConfig>,
@@ -340,7 +342,10 @@ pub fn credit_link_goodwill(
     mut known: ResMut<KnownGoodwill>,
 ) {
     let config = config.get();
-    let floor = config.offers.standing_link_floor();
+    let floor = match ladder.as_deref() {
+        Some(handle) => config.offers.standing_link_floor(&handle.0),
+        None => config.offers.standing_link_floor(&LadderConfig::builtin()),
+    };
     // Only a band standing on a qualifying road can end a standing link, so filter to those first:
     // a world with no roads walks no pair at all.
     let mut on_a_road: Vec<(BandId, FactionId, UVec2)> = bands
@@ -349,7 +354,7 @@ pub fn credit_link_goodwill(
             let position = tiles.get(cohort.current_tile).ok()?.position;
             roads
                 .road(position)
-                .is_some_and(|road| road.keeping_is_met() && road.held_rung().is_at_or_above(floor))
+                .is_some_and(|road| road.keeping_is_met() && floor.admits(road))
                 .then_some((*id, cohort.faction, position))
         })
         .collect();

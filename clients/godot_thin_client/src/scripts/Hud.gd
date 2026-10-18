@@ -204,6 +204,15 @@ signal bench_auto_requested(payload: Dictionary)
 ## Emitted when the Skip link under a waiting auto order is pressed. Payload keys: { faction, band_id }.
 ## Main formats `bench_auto_skip <faction> <band>`. RELAYED from `CraftingPanelController`.
 signal bench_auto_skip_requested(payload: Dictionary)
+## Emitted when a kit picker's Start is pressed (#780). Payload keys: { faction, band_id, kit_id, kits,
+## recipe_ids }. Main formats `bench_enqueue_kit <faction> <band> kit <id> kits <n> recipe <id> ...`. RELAYED from `CraftingPanelController`.
+signal bench_enqueue_kit_requested(payload: Dictionary)
+## Emitted when a kit order's box ✕ is pressed. Payload keys: { faction, band_id, kit_order }. Main formats
+## `bench_remove_kit <faction> <band> kit_order <id>`. RELAYED from `CraftingPanelController`.
+signal bench_remove_kit_requested(payload: Dictionary)
+## Emitted when a kit order's box ↑ is pressed. Payload keys: { faction, band_id, kit_order }. Main formats
+## `bench_raise_kit <faction> <band> kit_order <id>`. RELAYED from `CraftingPanelController`.
+signal bench_raise_kit_requested(payload: Dictionary)
 ## Emitted on EVERY stepper press on the OPENING LOADOUT picker (issue #629) — the card holds no
 ## draft and defers no order. Payload keys:
 ## { faction, band_id, kits: [{id, count}], materials: [{id, units}], revert_kits, revert_materials }.
@@ -850,6 +859,12 @@ func _ready() -> void:
         func(payload: Dictionary) -> void: bench_auto_requested.emit(payload))
     _crafting.bench_auto_skip_requested.connect(
         func(payload: Dictionary) -> void: bench_auto_skip_requested.emit(payload))
+    _crafting.bench_enqueue_kit_requested.connect(
+        func(payload: Dictionary) -> void: bench_enqueue_kit_requested.emit(payload))
+    _crafting.bench_remove_kit_requested.connect(
+        func(payload: Dictionary) -> void: bench_remove_kit_requested.emit(payload))
+    _crafting.bench_raise_kit_requested.connect(
+        func(payload: Dictionary) -> void: bench_raise_kit_requested.emit(payload))
     _bandpanel.crafting_requested.connect(
         func(band: Dictionary) -> void: _crafting.toggle_for(band))
     # The knowledge screen, on the same room and the same launch idiom. It takes `_topbar` as well,
@@ -1086,6 +1101,13 @@ func update_overlay(turn: int, metrics: Dictionary) -> void:
 func update_sedentarization(sedentarization_variant: Variant) -> void:
     _topbar.update_sedentarization(sedentarization_variant)
 
+## The mobility score (issue #800). A thin delegator for `update_sedentarization`'s reason, plus a
+## faction-page re-render: the key can arrive on a frame that moves no band.
+func update_mobility(mobility_variant: Variant) -> void:
+    _topbar.update_mobility(mobility_variant)
+    if _bandpanel != null and _bandpanel.is_faction_page():
+        _bandpanel.rerender()
+
 ## **THE PLAYER FACTION'S POLICY ROW** (`faction_policies`, issue #512) — Open Borders. A thin
 ## delegator because `Main` reaches it BY NAME through `_hud_invoke`.
 ##
@@ -1124,7 +1146,21 @@ func update_ladder_areas(areas_variant: Variant) -> void:
     _topbar.update_ladder_areas(areas_variant)
     _refresh_knowledge_readouts()
 
-## **THE ROUTE BRANCH'S RUNG CATALOG** (arc #532 slice 13) — what the road ladder HOLDS, per world.
+## **THE UNIFIED LADDER CATALOG** (issue #175) -- every branch's rungs, `Main`'s one entry point; the
+## store splits it into the road and deposit views below. A thin delegator for `update_ladder_knowledge`'s
+## reason: `Main` reaches it BY NAME through `_hud_invoke`. Pushes no re-render, for the views' reason.
+func update_ladder_rungs(catalog_variant: Variant) -> void:
+    _topbar.update_ladder_rungs(catalog_variant)
+
+## The whole ladder catalog as ingested, for `Main.format_improvement`'s command shaping.
+func ladder_rungs() -> Array:
+    return _topbar.ladder_rungs()
+
+## …and the branch declarations (`{branch, area, source_kind, label}`) beside it.
+func update_ladder_branches(branches_variant: Variant) -> void:
+    _topbar.update_ladder_branches(branches_variant)
+
+## **THE ROUTE BRANCH'S RUNG CATALOG** (arc #532 slice 13) -- now the road view of `update_ladder_rungs`, still callable directly by a harness — what the road ladder HOLDS, per world.
 ## A thin delegator for `update_ladder_knowledge`'s reason: `Main` reaches it BY NAME through
 ## `_hud_invoke`, whose `has_method` probe fails silently.
 ##
@@ -1154,6 +1190,9 @@ func update_road_network(roads_variant: Variant) -> void:
 ## `update_road_network`, and it exists for one reader: the WORKINGS ROSTER (the Work tab's GROUNDWORK
 ## rows), which names WHICH workings this band holds — each kept by its own crew. `Main` reaches this BY NAME through
 ## `_hud_invoke`, so it stays a thin `HudLayer` delegator.
+func update_tile_improvements(rows_variant: Variant) -> void:
+    _band_labor.set_tile_improvements(rows_variant)
+
 func update_deposits(deposits_variant: Variant) -> void:
     _band_labor.set_deposits(deposits_variant)
 

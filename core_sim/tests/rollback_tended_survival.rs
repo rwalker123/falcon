@@ -20,6 +20,7 @@
 //! by `restore_sim_state`, then advanced exactly one turn — not a hand-built rollback state.
 
 use bevy::math::UVec2;
+use core_sim::shipped;
 
 use core_sim::sim_state::{capture_sim_state, restore_sim_state};
 use core_sim::TakeSelection;
@@ -113,7 +114,7 @@ fn a_snapshot_round_trip_keeps_a_worked_field_and_pen() {
         let index = herds
             .herds
             .iter()
-            .position(|h| h.id.starts_with("game_") && h.can_pen())
+            .position(|h| h.id.starts_with("game_") && h.can_pen(shipped::ladder()))
             .expect(
                 "the harness map must seed at least one pennable herd — this fixture stands up a \
                  real, completed pen",
@@ -245,7 +246,7 @@ fn a_snapshot_round_trip_keeps_a_worked_field_and_pen() {
         patch.ladder_position(),
         core_sim::patch_rung_work_done(
             &patch,
-            core_sim::RungKey::PlantField,
+            shipped::plant_farm(),
             &core_sim::LadderConfig::builtin(),
         )
     );
@@ -256,10 +257,7 @@ fn a_snapshot_round_trip_keeps_a_worked_field_and_pen() {
          corral_progress = {}",
         herd.corralled_at,
         herd.pen_radius,
-        herd.rung_work_done(
-            core_sim::RungKey::AnimalPen,
-            &core_sim::LadderConfig::builtin()
-        )
+        herd.rung_work_done(shipped::animal_pen(), &core_sim::LadderConfig::builtin())
     );
     assert_eq!(
         herd.pen_radius, 1,
@@ -269,9 +267,6 @@ fn a_snapshot_round_trip_keeps_a_worked_field_and_pen() {
         herd.corral_meter_full() && herd.is_domesticated(),
         "…and so was the ladder position both rungs stand on (position = {}, pen work done = {})",
         herd.ladder_position(),
-        herd.rung_work_done(
-            core_sim::RungKey::AnimalPen,
-            &core_sim::LadderConfig::builtin()
-        )
+        herd.rung_work_done(shipped::animal_pen(), &core_sim::LadderConfig::builtin())
     );
 }

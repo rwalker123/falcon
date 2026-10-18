@@ -27,9 +27,7 @@ use glam::UVec2;
 
 use crate::combat::CombatStats;
 use crate::combat_config::CombatConfig;
-use crate::components::{
-    BandEquipment, BuildJob, BuildSource, Improvement, LaborAllocation, LaborTarget, Tile,
-};
+use crate::components::{BandEquipment, BuildSource, LaborAllocation, LaborTarget, Tile};
 use crate::equipment_config::{EquipmentConfig, KitChoice, Quarry, NO_CLAIMING_HANDS};
 use crate::extraction::{DepositRegistry, DepositSource};
 use crate::extraction_config::ExtractionConfig;
@@ -39,6 +37,7 @@ use crate::flora_config::FloraConfig;
 use crate::forage::{ForagePatch, ForageRegistry};
 use crate::intensification::LadderConfig;
 use crate::labor_config::LaborConfig;
+use crate::ladder_ids::RungId;
 use crate::materials_config::MaterialsConfig;
 
 /// **A ROLE'S WHOLE CREW CARRIES ITS KIT** — a scout's or a warrior's gear is used by every hand
@@ -108,6 +107,7 @@ impl ClaimSources<'_> {
             material,
             &ground,
             self.extraction,
+            self.ladder,
         )?;
         if self.start == ProjectionStart::BeforeRegrowth {
             crate::extraction::renew_deposit(&mut working, &ground, self.extraction, self.ladder);
@@ -315,12 +315,9 @@ pub fn useful_take_hands(
 
 /// **THE RUNG THE BAND'S QUEUE ENTRY ON `target` DECLARES** — what the keeping seams resolve the
 /// verb against, `None` for no entry or a job that raises no rung.
-pub fn declared_on(allocation: &LaborAllocation, target: &LaborTarget) -> Option<Improvement> {
+pub fn declared_on(allocation: &LaborAllocation, target: &LaborTarget) -> Option<RungId> {
     let source = BuildSource::of(target)?;
-    match allocation.build_queue_entry(&source)?.declared {
-        BuildJob::Rung(improvement) => Some(improvement),
-        BuildJob::ExtendPen | BuildJob::SetHerdOutput(_) => None,
-    }
+    allocation.build_queue_entry(&source)?.declared.climb()
 }
 
 /// **THE HANDS A CREW OF `crew` ON `target` WOULD SPEND KEEPING IT** — each web's prospective
@@ -329,7 +326,7 @@ pub fn declared_on(allocation: &LaborAllocation, target: &LaborTarget) -> Option
 pub fn planned_keep_hands(
     sources: &ClaimSources<'_>,
     band_kit: &BandEquipment,
-    declared: Option<Improvement>,
+    declared: Option<RungId>,
     target: &LaborTarget,
     crew: u32,
 ) -> f32 {
@@ -421,7 +418,7 @@ impl CrewClaim {
 pub fn take_kit_claim(
     sources: &ClaimSources<'_>,
     band_kit: &BandEquipment,
-    declared: Option<Improvement>,
+    declared: Option<RungId>,
     target: &LaborTarget,
     kit: &KitChoice,
     crew: u32,

@@ -293,8 +293,8 @@ paths:
     ```
     Fed:  100% — all pasture
     Fed:  100% — 88% pasture · 12% fodder
-    Fed:  ⚠ 47% — 40% pasture · 7% fodder · needs 11.3 more/turn
-    Fed:  ⚠ 40% — 40% pasture · no fodder · needs 12.0 /turn
+    Fed:  ⚠ 47% — 40% pasture · 7% fodder · short 11.3 feed/turn
+    Fed:  ⚠ 40% — 40% pasture · no fodder · short 12.0 feed/turn
     ```
 
     **THE ROW IS NAMED FOR WHAT IT MEASURES, NOT FOR ONE OF ITS TERMS.** It read `Fed by pasture` and
@@ -311,12 +311,28 @@ paths:
       is all it decides.
     - **`all pasture`** when the land covers the pen outright (`pen_pasture_fraction` at 1.0 within
       `PenStatus.FED_EPSILON`): no second term, and by construction no shortfall.
-    - **`needs N more/turn`** — `pen_fodder_shortfall`, the sim's own `max(0, hay gap − fodderDraw)`
+    - **`short N feed/turn`** — `pen_fodder_shortfall`, the sim's own `max(0, hay gap − fodderDraw)`
       where the gap is what the pen's fenced footprint leaves uncovered
       (`HerdTelemetryState.penFodderShortfall`, decoded in `native/src/dict/subsistence.rs` beside
       `pen_pasture_fraction`), shown only at or above `FODDER_FLOW_MIN`: **a fed pen owes nothing and
-      must not read `needs 0.0`**. The `more` is dropped on the `no fodder` state — there is no "more" than
-      nothing — so that pen reads `needs N /turn`.
+      must not read `short 0.0`**. It states what is MISSING, in both the `no fodder` and the part-fed
+      states (it read `needs N /turn` and `needs N more/turn`, which said what the pen wanted rather than
+      what it lacked).
+    - **The `Fed` row's hover is two lines** (`DetailFormat.pen_fed_row_hover`, set in the producer's
+      `row_tooltips` on `PenStatus.is_starving` only): `Short 6.6 feed/turn` (`Only N% fed` where no
+      shortfall is published) over `Fix: hay field (Foddering) · extend pen`. The fixes are the ones the sim
+      supports: a hay field fills the keeper band's FODDER store (which needs Foddering - `graze.md` ->
+      "FODDER is a STOCK"), and a wider fence grazes more land (`pen_pasture_fraction` is the footprint's
+      intake over the herd's demand, and the footprint is `hex_range_tiles(corralled_at, pen_radius)`).
+      The Work row's hover states the same two facts (`pen_underfed_hover`): `⚠ Underfed: short 6.6
+      feed/turn` and the Fix line indented under it.
+    - **The Work tab's herd row warns by the same test.** `BandPanelController._work_source_models` asks
+      `PenStatus.herd_is_starving` (the tile card's, the map badge's and the turn orb's one test) on a hunt
+      row: the row gets the `⚠` mark, the amber stripe, the attention flag, the remedy hover and, in the note
+      slot when the graver rung-loss note has not taken it, `Underfed — short N feed/turn`
+      (`DetailFormat.pen_underfed_note`; `Underfed — only N% fed` where no shortfall is published). Pinned by
+      `band_panel_preview._assert_work_row_warns_of_an_underfed_pen` (`band_panel_work_pen_underfed`,
+      `band_panel_work_pen_underfed_open`) with a fully-fed control.
     - **The ⚠ LEADS the value** on `PenStatus.is_starving` (the existing test — the map badge's and the
       turn orb's), and `pen_feed_value_hex` reads that prefix to put the row in DANGER ink. That is the
       tint the Corral row's retired `contains("starving")` case used to carry.
@@ -402,3 +418,13 @@ paths:
 `FaunaPanel` appends `Next grounds: (x, y)` under `Next waypoint` when the herd row's
 `next_ground_x/y` are `>= 0`, and nothing otherwise (the sim sends `-1` until the viewer knows Herd
 Lore, and always for non-migratory herds). The map draws the same tile (`map-markers.md`).
+
+## A big pen is a Ranch (issue #175)
+
+When the herd carries `size_tier`, the pen's Corral row is named by that tier's catalog label
+(`Ranch 100%`) and a `Ranch:` row states the bonus from the pen rung's `size_tiers`
+(`each keeper minds 1.5× the head`). A built pen below the first tier shows a quiet rings-to-go line,
+`1 more ring — 1.5× the head` (`min_rings` less `pen_radius`). `DetailFormat.pen_tier_lines` is empty for an
+un-penned herd and for a catalog stating no tiers; no tier is named in code. The Corral feed line
+`status=tier action=extend_pen tier=ranch herd=... radius=...` reads `Ranch · Radius 2`
+(`DETAIL_KEY_HIDDEN_BY_STATUS["status=tier"]`).

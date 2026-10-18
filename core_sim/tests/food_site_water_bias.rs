@@ -5,7 +5,7 @@
 //! offers no Forage button — and `sow` requires a band **already foraging** the tile. So the ~130
 //! markers (`site_land_fraction` 0.08 of land; it was a flat ~90 before that lever landed), not the
 //! ~2,000 food-bearing hexes, are the real denominator for "can I climb the plant ladder here", and
-//! `plant:field`'s site rule wants fresh water.
+//! `plant:farm`'s site rule wants fresh water.
 //!
 //! Curation could not see water: it runs inside `spawn_initial_world`, *before* `generate_hydrology`,
 //! so at selection time there are no rivers, deltas or floodplains. Its quality sort
@@ -20,10 +20,11 @@
 
 use bevy::app::App;
 use bevy::math::UVec2;
+use core_sim::shipped;
 
 use core_sim::{
     classify_food_module, tile_forage_capacity, tile_is_fresh_watered, FoodSiteRegistry,
-    FoodSiteWaterBiasReport, LaborConfigHandle, LadderConfigHandle, RungKey, SimulationConfig,
+    FoodSiteWaterBiasReport, LaborConfigHandle, LadderConfigHandle, SimulationConfig,
     SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle, Tile, TileRegistry,
 };
 
@@ -82,7 +83,7 @@ fn generated_world(seed: u64, weight: Option<f32>) -> App {
     app
 }
 
-/// Is this tile on or beside fresh water, judged through the **same** seam the `plant:field` site rule
+/// Is this tile on or beside fresh water, judged through the **same** seam the `plant:farm` site rule
 /// gates on — never a restatement of the rule.
 fn is_fresh_watered(app: &App, pos: UVec2) -> bool {
     let (width, height) = {
@@ -111,7 +112,7 @@ fn is_fresh_watered(app: &App, pos: UVec2) -> bool {
     })
 }
 
-/// **Will `plant:field` take seed on this GROUND?** — resolved against the rung's own
+/// **Will `plant:farm` take seed on this GROUND?** — resolved against the rung's own
 /// `site_requirement` so a retune of its dials moves this fixture with the game.
 ///
 /// **The gathering-site term is deliberately answered `true` here, and that is not a shortcut.**
@@ -132,12 +133,13 @@ fn is_sowable(app: &App, pos: UVec2) -> bool {
     let labor = app.world.resource::<LaborConfigHandle>().get();
     let ladder = app.world.resource::<LadderConfigHandle>().get();
     core_sim::rung_site_refusal(
-        ladder.rung(RungKey::PlantField),
+        ladder.rung(shipped::plant_farm()),
         tile,
         &labor.forage,
         true,
         is_fresh_watered(app, pos),
         core_sim::NO_DEPOSIT_FLOOR,
+        &|_| false,
     )
     .is_none()
 }

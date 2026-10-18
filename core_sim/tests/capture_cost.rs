@@ -18,6 +18,7 @@
 //! release figures (`turn-profiling.md`), so the ratio between phases is the signal and the absolute
 //! value is not.
 
+use core_sim::shipped;
 use std::time::Duration;
 
 use core_sim::{build_test_app, run_turn, turn_profile, HerdRegistry, SimulationConfig};
@@ -67,7 +68,7 @@ fn measure_snapshot_capture() {
     let herds = app.world.resource::<HerdRegistry>();
     let total_herds = herds.entries().len();
     let huntable = herds
-        .snapshot_entries()
+        .snapshot_entries(shipped::ladder())
         .iter()
         .filter(|entry| entry.huntable)
         .count();

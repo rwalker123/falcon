@@ -90,6 +90,12 @@ it renders an empty detail phrase and no `Work tab` link: the party is out of co
 says only that it is gone. The gained row (`A party of N from Faction F joined Band Y`, `band=
 count= from= side=gained`) takes the ordinary `band=` join and the `from=` people join below.
 
+**`culture_pull` is NOTABLE** (#820, detail `band=<id> faction=<pulling people id>`, filed under the band's
+owner): another people's culture beginning to pull one of the viewer's bands. Nothing is lost and the
+standing reading is on the band's Beliefs lines. The label's `Faction <id>` span is swapped for the
+published people name through `PEOPLE_ID_TOKEN_KEYS` (which now includes `faction`), and `faction` joins
+`DETAIL_KEY_HIDDEN` so the detail column stays empty.
+
 **`band_broke_away` is ALERT on both sides, and `lost_touch` is NOTABLE** (issue #284,
 `docs/plan_band_fission.md` §Independence). A break-away is a cut-off group of bands becoming its own
 people: irreversible, not player-initiated, and two rows (`side=lost|gained`, detail `band= from= to=`)

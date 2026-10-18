@@ -32,7 +32,7 @@ const CROSSING_AMOUNT := "amount"
 ## `counterparty_band_id` / `party_id` when the crossing names none.
 const NO_BAND := 0
 
-## One pooling link's fields. `rung_id` is `RouteRungState.rungKey` (`"route:trail"`), `""` for open
+## One pooling link's fields. `rung_id` is `LadderRungState.rungKey` (`"route:trail"`), `""` for open
 ## ground — some tile on the run has no kept road.
 const LINK_BAND_ID := "band_id"
 const LINK_DISTANCE := "distance_tiles"

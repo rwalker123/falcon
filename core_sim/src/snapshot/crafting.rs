@@ -26,9 +26,10 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use sim_runtime::{
-    BenchOrderState, BenchState, CharacteristicBandState, CharacteristicReadingState,
-    CraftKnowledgeState, CraftOfferState, CraftSuggestionSourceState, CraftSuggestionState,
-    DrawnInputState, EquipmentBatchState, MaterialBatchState, MaterialDefState,
+    BenchKitOrderState, BenchOrderState, BenchState, CharacteristicBandState,
+    CharacteristicReadingState, CraftKnowledgeState, CraftOfferState, CraftSuggestionSourceState,
+    CraftSuggestionState, DrawnInputState, EquipmentBatchState, KitNeedItemState,
+    KitNeedRecipeState, KitNeedState, MaterialAmountState, MaterialBatchState, MaterialDefState,
     MaterialShortfallState, RecipeDefState, RecipeInputState, RecipeOutputState,
     SourcePriorityState, OWNED_AT_TIER_UNATTRIBUTED,
 };
@@ -48,7 +49,7 @@ use crate::{
     orders::FactionId,
     recipes_config::{RecipeDef, RecipesConfig},
     resources::DiscoveryProgressLedger,
-    scalar::scalar_from_f32,
+    scalar::{scalar_from_f32, scalar_zero},
     systems::{bench_tiers, preview_grade, rate_per_turn, BenchTiers},
 };
 
@@ -219,7 +220,7 @@ pub(crate) struct BandCraftInputs<'a> {
     /// [`Self::plans`] and become a second reading of the bench.
     pub(crate) recipes: &'a RecipesConfig,
     /// **The reference job an equipment life gauge is quoted against**, in work units — the ladder's
-    /// [`crate::intensification::REFERENCE_BUILD_RUNG`] `work_cost`, resolved once per capture. See
+    /// [`crate::intensification::LadderConfig::reference_build_rung`] `work_cost`, resolved once per capture. See
     /// [`quantum_units_per_noun`] for why a build's wear cannot be counted in its own units.
     pub(crate) reference_build_cost: f32,
     /// **The equipped values that live OUTSIDE `equipment.json`**, for the `makes` line of an item
@@ -486,14 +487,21 @@ fn bench_state(
     // stalled one alike, like the rank above it. The skipped set iterates sorted (`BTreeSet`).
     let auto = bench.auto;
     let auto_skipped: Vec<String> = bench.auto_skipped.iter().cloned().collect();
+    let kit_orders = published_kit_orders(bench);
     let Some((worked, head)) =
         described.and_then(|index| bench.orders.get(index).map(|order| (index, order)))
     else {
+        // **THE CREW STANDS AT AN IDLE BENCH TOO** (`crafting.md` → "The crew stays with the bench"),
+        // and `BandWorkforce` nets it out of `idle`; a row that dropped it would make the client's
+        // `working_age - rows - bench` read those hands as free. No `blocked_reason`: an idle bench
+        // has no job to be blocked.
         return BenchState {
+            workers: bench.workers,
             priority: published_priority,
             orders,
             auto,
             auto_skipped,
+            kit_orders,
             ..BenchState::default()
         };
     };
@@ -513,6 +521,7 @@ fn bench_state(
             worked,
             auto,
             auto_skipped,
+            kit_orders,
             ..BenchState::default()
         };
     };
@@ -607,6 +616,7 @@ fn bench_state(
         worked,
         auto,
         auto_skipped,
+        kit_orders,
     }
 }
 
@@ -656,7 +666,138 @@ fn bench_orders(
                     .map(|rows| shortfall_states(rows))
                     .unwrap_or_default(),
                 auto: order.auto,
+                kit_order: order.kit_order,
             }
+        })
+        .collect()
+}
+
+/// **EVERY ORDERABLE KIT'S STANDING ON THE WIRE** (#780) — the sim-side [`crate::craft_suggestions::KitNeed`]
+/// plus, per item, **one entry per recipe that outputs it** (book order): the output per pass and each
+/// input's amount **per pass with the bench's material efficiency already applied**
+/// ([`crate::systems::required`], the call the bench draws with), so the picker's shortage arithmetic
+/// — `ceil(make / outputPerPass)` passes × `amount` against [`materials_free`] — is exact over the
+/// published terms and the client derives no tool join.
+pub(crate) fn kit_need_states(
+    needs: Vec<crate::craft_suggestions::KitNeed>,
+    wear: &BandEquipment,
+    inputs: &BandCraftInputs<'_>,
+) -> Vec<KitNeedState> {
+    let mut efficiency_by_material: BTreeMap<&str, f32> = BTreeMap::new();
+    needs
+        .into_iter()
+        .map(|need| KitNeedState {
+            kit_id: need.kit_id,
+            display_name: need.display_name,
+            jobs: need
+                .jobs
+                .iter()
+                .map(|job| job.as_str().to_string())
+                .collect(),
+            people: need.people,
+            items: need
+                .items
+                .into_iter()
+                .map(|item| {
+                    let recipes = inputs
+                        .plans
+                        .iter()
+                        .filter(|plan| plan.output_item == Some(item.item.as_str()))
+                        .map(|plan| {
+                            let efficiency = plan.bench_material.map_or(
+                                NO_BENCH_TIERS.material_efficiency,
+                                |material| {
+                                    *efficiency_by_material.entry(material).or_insert_with(|| {
+                                        bench_tiers(
+                                            material,
+                                            inputs.materials,
+                                            inputs.equipment,
+                                            wear,
+                                        )
+                                        .material_efficiency
+                                    })
+                                },
+                            );
+                            let mut amounts: Vec<MaterialAmountState> = Vec::new();
+                            for input in &plan.recipe.inputs {
+                                let amount =
+                                    crate::systems::required(input.amount, efficiency).to_f32();
+                                match amounts
+                                    .iter_mut()
+                                    .find(|row| row.material_id == input.material)
+                                {
+                                    Some(row) => row.amount += amount,
+                                    None => amounts.push(MaterialAmountState {
+                                        material_id: input.material.clone(),
+                                        amount,
+                                    }),
+                                }
+                            }
+                            KitNeedRecipeState {
+                                recipe_id: plan.id.to_string(),
+                                output_per_pass: plan
+                                    .recipe
+                                    .outputs
+                                    .iter()
+                                    .filter(|output| {
+                                        output.equipment_id() == Some(item.item.as_str())
+                                    })
+                                    .map(|output| output.amount)
+                                    .sum(),
+                                inputs: amounts,
+                            }
+                        })
+                        .collect();
+                    KitNeedItemState {
+                        item_id: item.item,
+                        workers_per_unit: item.workers_per_unit,
+                        have: item.have,
+                        queued: item.queued,
+                        claimed: item.claimed,
+                        short: item.short,
+                        recipes,
+                    }
+                })
+                .collect(),
+        })
+        .collect()
+}
+
+/// **THE STOCK LEFT AFTER EVERY QUEUED ORDER'S CLAIMS** (#780) — [`crate::systems::QueueForecast::left_of`],
+/// the term [`suggestion_shortfalls`] strikes a suggestion against — one row per material the band
+/// holds or any recipe reads, in the materials table's order.
+pub(crate) fn materials_free(
+    forecast: &crate::systems::QueueForecast,
+    store: &LocalStore,
+    inputs: &BandCraftInputs<'_>,
+) -> Vec<MaterialAmountState> {
+    let read_by_a_recipe: BTreeSet<&str> = inputs
+        .recipes
+        .recipes()
+        .flat_map(|(_, recipe)| recipe.inputs.iter().map(|input| input.material.as_str()))
+        .collect();
+    inputs
+        .materials
+        .materials()
+        .filter(|(id, _)| read_by_a_recipe.contains(id) || store.material_total(id) > scalar_zero())
+        .map(|(id, _)| MaterialAmountState {
+            material_id: id.to_string(),
+            amount: forecast.left_of(store, id).to_f32(),
+        })
+        .collect()
+}
+
+/// **THE LIVE WHOLE-KIT ORDERS ON THE WIRE** (#780), oldest first — published on an idle bench and
+/// a stalled one alike, because the grouped box is a statement about the queue, not about the job.
+fn published_kit_orders(bench: &BandBench) -> Vec<BenchKitOrderState> {
+    bench
+        .kit_orders
+        .iter()
+        .map(|kit| BenchKitOrderState {
+            id: kit.id,
+            kit_id: kit.kit_id.clone(),
+            kits: kit.kits,
+            done: kit.done,
         })
         .collect()
 }
@@ -688,7 +829,11 @@ pub(crate) fn suggestion_shortfalls(
     for suggestion in suggestions {
         let Some(recipe) = offers
             .iter()
-            .find(|offer| offer.suggested && offer.output_item_id == suggestion.item_id)
+            .find(|offer| {
+                offer.suggested
+                    && (offer.output_item_id == suggestion.item_id
+                        || offer.output_material_id == suggestion.item_id)
+            })
             .and_then(|offer| inputs.recipes.recipe(&offer.recipe_id))
         else {
             continue;
@@ -797,6 +942,8 @@ pub(crate) fn craft_suggestion_states(
             upcoming_count: suggestion.upcoming_count,
             expires_in_turns: suggestion.expires_in_turns,
             lead_turns: suggestion.lead_turns,
+            display_name: suggestion.display_name,
+            reason: suggestion.reason,
             sources: suggestion
                 .sources
                 .into_iter()
@@ -818,7 +965,7 @@ pub(crate) fn craft_suggestion_states(
                             state.job = source.kind().to_string();
                             Some(source)
                         }
-                        SupplySource::Take { job, source } => {
+                        SupplySource::Take { job, source, .. } => {
                             state.kind = SUGGESTION_SOURCE_TAKE.to_string();
                             state.job = (*job).to_string();
                             source.as_ref()
@@ -831,7 +978,9 @@ pub(crate) fn craft_suggestion_states(
                         }
                     };
                     match target {
-                        Some(BuildSource::Patch(tile)) | Some(BuildSource::Road(tile)) => {
+                        Some(BuildSource::Patch(tile))
+                        | Some(BuildSource::Road(tile))
+                        | Some(BuildSource::Tile { tile, .. }) => {
                             state.target_x = tile.x;
                             state.target_y = tile.y;
                         }
@@ -954,6 +1103,13 @@ fn craft_offer(
         display_name: plan.row_name.clone(),
         group: plan.group.to_string(),
         output_item_id: plan.output_item.unwrap_or_default().to_string(),
+        // The stock material a recipe with no equipment output makes - the join key a build-material
+        // suggestion ("Hurdles") reads its recipe through.
+        output_material_id: if plan.output_item.is_some() {
+            String::new()
+        } else {
+            plan.recipe.row_key().unwrap_or_default().to_string()
+        },
         available,
         reason,
         severity: severity.to_string(),
@@ -1251,7 +1407,7 @@ fn invitation(
 /// became one when improvements were priced in work (`docs/plan_unit_costed_work.md` §6.3): its unit
 /// is a **work unit** — one worker-turn at the food peak — while a player holding a hoe thinks in
 /// *builds*. So it is quoted against the **reference job**
-/// ([`crate::intensification::REFERENCE_BUILD_RUNG`], the `plant:tended` rung's own `work_cost`) and
+/// ([`crate::intensification::LadderConfig::reference_build_rung`], the `plant:tended` rung's own `work_cost`) and
 /// its noun reads *"gardens' worth"*.
 ///
 /// **The reference is the LADDER's, resolved here rather than carried as a literal**, so a retune of

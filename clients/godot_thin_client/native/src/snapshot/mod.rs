@@ -21,7 +21,7 @@ use crate::dict::culture::{
     sentiment_to_dict,
 };
 use crate::dict::dealings::{dealings_to_array, goodwill_to_dict, treaties_to_dict};
-use crate::dict::deposits::{deposit_rungs_to_array, deposits_to_array};
+use crate::dict::deposits::deposits_to_array;
 use crate::dict::economy::faction_inventory_to_array;
 use crate::dict::fixed64_to_f32;
 use crate::dict::governance::{
@@ -35,12 +35,13 @@ use crate::dict::knowledge::{
 };
 use crate::dict::map::{terrain_label_from_id, tiles_to_array, TERRAIN_TAG_LABELS};
 use crate::dict::population::{demographics_to_array, generations_to_array, populations_to_array};
-use crate::dict::routes::{route_rungs_to_array, routes_to_array};
+use crate::dict::routes::routes_to_array;
 use crate::dict::subsistence::{
     characteristic_bands_to_array, craft_knowledge_to_array, food_modules_to_array,
     forage_patches_to_array, herds_to_array, intensification_knowledge_to_array, kits_to_array,
-    ladder_areas_to_array, ladder_knowledge_to_array, materials_to_array, recipes_to_array,
-    sedentarization_to_array,
+    ladder_areas_to_array, ladder_branches_to_array, ladder_knowledge_to_array,
+    ladder_rungs_to_array, materials_to_array, mobility_to_array, recipes_to_array,
+    sedentarization_to_array, tile_improvements_to_array,
 };
 use crate::snapshot::cache::RasterCache;
 use crate::snapshot::delta::CrisisAnnotationRecord;
@@ -1424,6 +1425,10 @@ pub(crate) fn snapshot_to_dict(
         );
     }
 
+    if let Some(mobility) = snapshot.subsistence().and_then(|s| s.mobility()) {
+        let _ = dict.insert("mobility", &mobility_to_array(mobility));
+    }
+
     if let Some(forage_patches) = snapshot.subsistence().and_then(|s| s.foragePatches()) {
         let _ = dict.insert("forage_patches", &forage_patches_to_array(forage_patches));
     }
@@ -1526,16 +1531,12 @@ pub(crate) fn snapshot_to_dict(
 
     // ...and the ROUTE branch's rung catalog beside it: the same kind of thing, a per-world
     // DECLARATION of what the ladder holds, carrying no faction and no tile.
-    if let Some(catalog) = snapshot.subsistence().and_then(|s| s.routeRungs()) {
-        let _ = dict.insert("route_rungs", &route_rungs_to_array(catalog));
+    if let Some(catalog) = snapshot.subsistence().and_then(|s| s.ladderRungs()) {
+        let _ = dict.insert("ladder_rungs", &ladder_rungs_to_array(catalog));
     }
 
-    // ...and the two DEPOSIT branches' catalog, which is the same kind of thing again: one vector
-    // carrying `forestry` and `extraction`, per world, with no faction and no tile on it. Its live
-    // half is `deposits` above -- this is what a working could BECOME, including on ground nobody
-    // has opened.
-    if let Some(catalog) = snapshot.subsistence().and_then(|s| s.depositRungs()) {
-        let _ = dict.insert("deposit_rungs", &deposit_rungs_to_array(catalog));
+    if let Some(branches) = snapshot.subsistence().and_then(|s| s.ladderBranches()) {
+        let _ = dict.insert("ladder_branches", &ladder_branches_to_array(branches));
     }
 
     if let Some(demographics) = snapshot.population().and_then(|s| s.demographics()) {
@@ -1649,6 +1650,12 @@ pub(crate) fn snapshot_to_dict(
     }
     if let Some(treaties) = snapshot.treaties() {
         let _ = dict.insert("treaties", &treaties_to_dict(treaties));
+    }
+
+    // ...and the improvements on TILE-kind branches, the same section and the same whole-section
+    // replace.
+    if let Some(rows) = snapshot.routes().and_then(|s| s.tileImprovements()) {
+        let _ = dict.insert("tile_improvements", &tile_improvements_to_array(rows));
     }
 
     if let Some(tiles_fb) = snapshot.map().and_then(|s| s.tiles()) {

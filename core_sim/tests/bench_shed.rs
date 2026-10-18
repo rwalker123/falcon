@@ -130,6 +130,8 @@ fn world_with_a_band_at_the_bench(bench_priority: SourcePriority) -> (App, Entit
                 auto: false,
                 auto_skipped: Default::default(),
                 lent_to_hunt: 0,
+                kit_orders: Vec::new(),
+                next_kit_order: 0,
             },
         ))
         .id();

@@ -602,7 +602,7 @@ computed against the forage patch's 205.
   > **⛔ THE FORAGE HALF OF THIS STOPPED BEING TRUE, AND `patch_carrying_capacity` IS NOW REDACTED.**
   > The invariant this rested on read *"no rung below 4 raises `K` and none lowers it"*. The
   > **lowers** half still holds (issue #433). The **raises** half does not: since the Field's model
-  > was rebuilt, `plant:field` multiplies the tile's `K` by `field_capacity_gain` (2.53), interpolated
+  > was rebuilt, `plant:farm` multiplies the tile's `K` by `field_capacity_gain` (2.53), interpolated
   > on the patch's ladder position. So the wire's `carryingCapacity` is **live state carrying the
   > rung** — a Discovered hex was publishing a capacity `2.53×` its biome's base while
   > `patch_is_field` and `patch_field_progress` were redacted beside it, handing over a reading finer
@@ -712,3 +712,11 @@ guard and ship a card with no `Foraging` row at all, which every other assertion
 **It is still not enough on its own** — the fixture behind it stands below rung 3, where the ground
 and the ceiling are the same number, so it cannot see which one was picked. That is what
 `_assert_fog_field_capacity_is_the_ground` is for.
+
+## The Farm row, Worked Land and the teaching line (issue #175)
+
+The field rung is named **Farm** (`plant:farm`) everywhere. On ground that is not a gathering site the
+card's forage block and Assign control show only where the server's quote admits (`tile_is_workable`);
+where it answers `needs_lesson` the card carries one `Farming` row, `Learn Worked Land — work a farm`
+(two lines at most), built from the knowledge roster's name and the catalog's teaching rung. Barren tiles
+carry no patch quotes and `RungFx.stamp_source` conjures none for them.

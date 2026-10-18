@@ -117,7 +117,7 @@ static func seed_forage_rows(tile: Dictionary) -> Dictionary:
 	# `<rung>BuildFraction` and nothing composes one. The keys are dropped here rather than at every
 	# fixture, so a fixture that still states one is simply ignored instead of seeding a dict key no
 	# reader would ever look at.
-	for rung in SourceForecast.FORAGE_IMPROVEMENTS:
+	for rung in ["cultivate", "sow"]:
 		tile.erase("patch_ceiling_%s" % rung)
 	for policy in LEGACY_STANCE_FLOORS:
 		tile.erase("patch_ceiling_%s" % policy)
@@ -140,7 +140,7 @@ static func seed_forage_rows(tile: Dictionary) -> Dictionary:
 ## build estimate — so it is the ladder's number, restated nowhere else.
 const PLANT_TENDED_UPKEEP_PER_TURN := 2.0
 
-## The Field's own, one rung up (`plant:field`, **4.0**/`flat`) — a standing crop wants four hands
+## The Field's own, one rung up (`plant:farm`, **4.0**/`flat`) — a standing crop wants four hands
 ## where tended ground wants two, which is the ladder's whole claim about a higher rung. It carried
 ## the rung's `meter_decay` (0.75) for the reason the rate above carried its own.
 const PLANT_FIELD_UPKEEP_PER_TURN := 4.0

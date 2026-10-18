@@ -95,6 +95,14 @@ var _route_rungs: Array = []
 ## the branch its MATERIAL belongs to, and `order` is a climb order only WITHIN one branch. A reader
 ## groups before it walks.
 var _deposit_rungs: Array = []
+## ⛔ **THE WHOLE LADDER CATALOG as the wire sent it** (`SubsistenceSection.ladderRungs`, issue #175) --
+## every rung of every branch, plant / animal / road / deposit / tile alike, each row carrying its
+## `branch` and `source_kind`. `_route_rungs` and `_deposit_rungs` above are the FILTERED VIEWS of it
+## the road and deposit surfaces already read; a branch whose kind no surface reads yet (a tile
+## branch) is retained here and drawn by nothing, which is a real answer rather than a dropped row.
+var _ladder_rungs: Array = []
+## The branch declarations beside it: `{branch, area, source_kind, label}` in config order.
+var _ladder_branches: Array = []
 ## **WHAT EACH DISCOVERY LETS THE FACTION'S HANDS DO — one sentence per ladder track, and this table
 ## OUTLIVED THE ANNOUNCEMENT IT WAS WRITTEN FOR.**
 ##
@@ -145,6 +153,11 @@ var _intensification_knowledge: Dictionary = {}
 ## faction is being reported. Stored as the raw entry / raw array, so what a reader gets is what the
 ## snapshot said.
 var _sedentarization: Dictionary = {}
+## The player faction's MOBILITY entry (`{score, skills_points, distance_points}`, issue #800) — the
+## roaming counterpart to `_sedentarization`. Unlike that table, a DELTA omits the `mobility` key when it
+## is unchanged, and `Main` only calls `update_mobility` when the key is present, so the last value
+## persists across such deltas; a world change clears it.
+var _mobility: Dictionary = {}
 var _discovered_sites: Array = []
 ## The player faction's own POLICY row (`{faction, open_borders}`) from the campaign section's
 ## `faction_policies` (issue #512). Retained for the faction page's Open Borders toggle, which reads
@@ -187,9 +200,13 @@ func reset_world_state() -> void:
 	# never restates it, and a ladder opened before the new world's own catalog lands would draw the
 	# previous game's rungs.
 	_deposit_rungs.clear()
+	# …and the unified catalog both of them are views of, for the same reason.
+	_ladder_rungs.clear()
+	_ladder_branches.clear()
 	update_intensification([])
 	update_discoveries([])
 	update_sedentarization([])
+	update_mobility([])
 	update_faction_policies([])
 
 ## INGEST the player faction's Sedentarization entry. **It renders nothing** — this was a compact
@@ -205,6 +222,17 @@ func update_sedentarization(sedentarization_variant: Variant) -> void:
 		for entry in sedentarization_variant:
 			if entry is Dictionary and int(entry.get("faction", -1)) == HudConst.PLAYER_FACTION_ID:
 				_sedentarization = entry
+				break
+
+## INGEST the player faction's Mobility entry (issue #800). Renders nothing — the faction page's band
+## zone draws the Settling block's `Mobility` row off `faction_mobility()`. Same player-faction filter as
+## `update_sedentarization`, and for the same one-place reason.
+func update_mobility(mobility_variant: Variant) -> void:
+	_mobility = {}
+	if mobility_variant is Array:
+		for entry in mobility_variant:
+			if entry is Dictionary and int(entry.get("faction", -1)) == HudConst.PLAYER_FACTION_ID:
+				_mobility = entry
 				break
 
 ## INGEST the player faction's POLICY row (Open Borders, issue #512). **It renders nothing** — the
@@ -362,7 +390,48 @@ func knowledge_labels() -> Dictionary:
 		labels[id] = String(entry.get("display_name", ""))
 	return labels
 
-## ⛔ **INGEST THE ROUTE RUNG CATALOG** — the `route_rungs` section, retained whole.
+## The `source_kind` a ladder row carries for the road branch and for the deposit branches.
+const LADDER_SOURCE_KIND_ROAD := "road"
+const LADDER_SOURCE_KIND_DEPOSIT := "deposit"
+const LADDER_SOURCE_KIND_KEY := "source_kind"
+
+## ⛔ **INGEST THE UNIFIED LADDER CATALOG** -- the `ladder_rungs` section (issue #175), retained whole,
+## then SPLIT BY SOURCE KIND into the road and deposit views the surfaces read. Per WORLD, and a
+## non-Array leaves the last value standing, this HUD's catalogue-setter convention.
+##
+## **A ROW OF AN UNKNOWN KIND IS KEPT, NOT DROPPED**: it lands in `ladder_rungs()` and in neither
+## view, so a branch added to the config reaches the wire, the dict and this store with no client edit
+## and simply has no surface yet.
+func update_ladder_rungs(catalog_variant: Variant) -> void:
+	if not (catalog_variant is Array):
+		return
+	_ladder_rungs = catalog_variant
+	update_route_rungs(ladder_rungs_of_kind(LADDER_SOURCE_KIND_ROAD))
+	update_deposit_rungs(ladder_rungs_of_kind(LADDER_SOURCE_KIND_DEPOSIT))
+
+## The whole catalog as the wire sent it, BY REFERENCE.
+func ladder_rungs() -> Array:
+	return _ladder_rungs
+
+## The catalog rows whose branch climbs one kind of source (`"patch"` | `"herd"` | `"road"` |
+## `"deposit"` | `"tile"`), in the catalog's own order.
+func ladder_rungs_of_kind(source_kind: String) -> Array:
+	var rows: Array = []
+	for row in _ladder_rungs:
+		if row is Dictionary and String((row as Dictionary).get(LADDER_SOURCE_KIND_KEY, "")) == source_kind:
+			rows.append(row)
+	return rows
+
+## Ingest the branch declarations (`ladder_branches`), retained whole; non-Array leaves the last value.
+func update_ladder_branches(branches_variant: Variant) -> void:
+	if not (branches_variant is Array):
+		return
+	_ladder_branches = branches_variant
+
+func ladder_branches() -> Array:
+	return _ladder_branches
+
+## ⛔ **INGEST THE ROUTE RUNG CATALOG** — the road view of `ladder_rungs`, retained whole.
 ##
 ## **PER WORLD, NOT PER FACTION, and that is why it is a section of its own** — exactly
 ## `ladder_knowledge`'s shape and for its reason: it declares what the route branch HOLDS, which is
@@ -422,6 +491,11 @@ func faction_tracks(faction: int) -> Dictionary:
 ## different answer available to it. The caller decides what an unsettled faction reads as.
 func faction_sedentarization() -> Dictionary:
 	return _sedentarization
+
+## The PLAYER faction's mobility entry (`{score, skills_points, distance_points}`) as the snapshot sent
+## it, or `{}` when it has sent none. Returned BY REFERENCE; every reader is read-only.
+func faction_mobility() -> Dictionary:
+	return _mobility
 
 ## The PLAYER faction's policy row (`{faction, open_borders}`) as the snapshot sent it, or `{}` when it
 ## has sent none — in which case the faction page renders no toggle rather than guessing a default.

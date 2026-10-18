@@ -4,18 +4,19 @@ use crate::codec::{
     decode_scalars, decode_strings, map_rows, map_rows_if_present, text, FbBuilder,
 };
 use crate::state::subsistence::{
-    BuildLegState, CharacteristicBandState, CraftKnowledgeState, DepositRungState, DepositState,
-    FloraShareInfo, FoodModuleState, ForagePatchState, HerdTelemetryState,
-    IntensificationKnowledgeState, KitOptionState, LadderKnowledgeProgress, LadderKnowledgeState,
-    MaterialDefState, MaterialPayoff, RecipeDefState, RecipeInputState, RecipeOutputState,
-    RouteRungState, SedentarizationState, SpeciesMaterialRates,
+    BuildLegState, CharacteristicBandState, CraftKnowledgeState, DepositState, FloraShareInfo,
+    FoodModuleState, ForagePatchState, HerdTelemetryState, IntensificationKnowledgeState,
+    KitOptionState, KnowledgeGainState, LadderBranchState, LadderKnowledgeProgress,
+    LadderKnowledgeState, LadderRungState, MaterialDefState, MaterialPayoff, MobilityState,
+    RecipeDefState, RecipeInputState, RecipeOutputState, RungQuoteState, RungShareQuoteState,
+    SedentarizationState, SiteRelaxationState, SiteRuleState, SizeTierState, SpeciesMaterialRates,
 };
 use crate::world::{WorldDelta, WorldSnapshot};
 use flatbuffers::{ForwardsUOffset, WIPOffset};
 
 /// **A SITE'S KEEPING-TOOL LINES** — absent rather than empty where the keeping claimed no tool,
 /// the `kitToe` convention.
-fn create_upkeep_toe<'a>(
+pub(crate) fn create_upkeep_toe<'a>(
     builder: &mut FbBuilder<'a>,
     lines: &[crate::state::population::KitToeLineState],
 ) -> Option<WIPOffset<flatbuffers::Vector<'a, ForwardsUOffset<fb::KitToeLine<'a>>>>> {
@@ -40,7 +41,7 @@ fn create_upkeep_toe<'a>(
 }
 
 /// The decode twin of [`create_upkeep_toe`].
-fn decode_upkeep_toe(
+pub(crate) fn decode_upkeep_toe(
     lines: Option<flatbuffers::Vector<'_, ForwardsUOffset<fb::KitToeLine<'_>>>>,
 ) -> Vec<crate::state::population::KitToeLineState> {
     map_rows(lines, |line| crate::state::population::KitToeLineState {
@@ -77,9 +78,10 @@ pub(crate) fn serialize_subsistence_section<'a>(
     let characteristic_bands = create_characteristic_bands(builder, &snapshot.characteristic_bands);
     let recipes = create_recipes(builder, &snapshot.recipes);
     let craft_knowledge = create_craft_knowledge(builder, &snapshot.craft_knowledge);
-    let route_rungs = create_route_rungs(builder, &snapshot.route_rungs);
-    let deposit_rungs = create_deposit_rungs(builder, &snapshot.deposit_rungs);
+    let ladder_rungs = create_ladder_rungs(builder, &snapshot.ladder_rungs);
+    let ladder_branches = create_ladder_branches(builder, &snapshot.ladder_branches);
     let deposits = create_deposits(builder, &snapshot.deposits);
+    let mobility = create_mobility(builder, &snapshot.mobility);
     fb::SubsistenceSection::create(
         builder,
         &fb::SubsistenceSectionArgs {
@@ -103,10 +105,11 @@ pub(crate) fn serialize_subsistence_section<'a>(
             characteristicBands: Some(characteristic_bands),
             recipes: Some(recipes),
             craftKnowledge: Some(craft_knowledge),
-            routeRungs: Some(route_rungs),
+            ladderRungs: Some(ladder_rungs),
             deposits: Some(deposits),
-            depositRungs: Some(deposit_rungs),
+            ladderBranches: Some(ladder_branches),
             ladderAreas: Some(ladder_areas),
+            mobility: Some(mobility),
         },
     )
 }
@@ -191,18 +194,22 @@ pub(crate) fn serialize_subsistence_section_delta<'a>(
         .craft_knowledge
         .as_ref()
         .map(|entries| create_craft_knowledge(builder, entries));
-    let route_rungs = delta
-        .route_rungs
+    let ladder_rungs = delta
+        .ladder_rungs
         .as_ref()
-        .map(|entries| create_route_rungs(builder, entries));
-    let deposit_rungs = delta
-        .deposit_rungs
+        .map(|entries| create_ladder_rungs(builder, entries));
+    let ladder_branches = delta
+        .ladder_branches
         .as_ref()
-        .map(|entries| create_deposit_rungs(builder, entries));
+        .map(|entries| create_ladder_branches(builder, entries));
     let deposits = delta
         .deposits
         .as_ref()
         .map(|entries| create_deposits(builder, entries));
+    let mobility = delta
+        .mobility
+        .as_ref()
+        .map(|entries| create_mobility(builder, entries));
     fb::SubsistenceSection::create(
         builder,
         &fb::SubsistenceSectionArgs {
@@ -224,10 +231,11 @@ pub(crate) fn serialize_subsistence_section_delta<'a>(
             characteristicBands: characteristic_bands,
             recipes,
             craftKnowledge: craft_knowledge,
-            routeRungs: route_rungs,
+            ladderRungs: ladder_rungs,
             deposits,
-            depositRungs: deposit_rungs,
+            ladderBranches: ladder_branches,
             ladderAreas: ladder_areas,
+            mobility,
         },
     )
 }
@@ -454,10 +462,35 @@ fn create_sedentarization<'a>(
                 score: state.score,
                 stage: Some(stage),
                 beliefPoints: state.belief_points,
+                domesticationPoints: state.domestication_points,
+                surplusPoints: state.surplus_points,
+                landPoints: state.land_points,
+                populationPoints: state.population_points,
             },
         );
         entries.push(entry);
     }
+    builder.create_vector(&entries)
+}
+
+fn create_mobility<'a>(
+    builder: &mut FbBuilder<'a>,
+    states: &[MobilityState],
+) -> WIPOffset<flatbuffers::Vector<'a, ForwardsUOffset<fb::MobilityState<'a>>>> {
+    let entries: Vec<_> = states
+        .iter()
+        .map(|state| {
+            fb::MobilityState::create(
+                builder,
+                &fb::MobilityStateArgs {
+                    faction: state.faction,
+                    score: state.score,
+                    skillsPoints: state.skills_points,
+                    distancePoints: state.distance_points,
+                },
+            )
+        })
+        .collect();
     builder.create_vector(&entries)
 }
 
@@ -470,8 +503,6 @@ fn create_herds<'a>(
         // **Built before the parent table opens**, the ordinary FlatBuffers rule.
         let material_per_biomass = create_material_payoffs(builder, &herd.material_per_biomass);
         let per_worker_material = create_material_payoffs(builder, &herd.per_worker_material);
-        let corral_material = create_material_payoffs(builder, &herd.corral_material);
-        let pastoral_material = create_material_payoffs(builder, &herd.pastoral_material);
         let id = builder.create_string(herd.id.as_str());
         let label = builder.create_string(herd.label.as_str());
         let species = builder.create_string(herd.species.as_str());
@@ -529,13 +560,9 @@ fn create_herds<'a>(
         let upkeep_material_demand = create_material_payoffs(builder, &herd.upkeep_material_demand);
         let upkeep_material_supplied =
             create_material_payoffs(builder, &herd.upkeep_material_supplied);
-        let tame_upkeep_material_demand =
-            create_material_payoffs(builder, &herd.tame_upkeep_material_demand);
-        let corral_upkeep_material_demand =
-            create_material_payoffs(builder, &herd.corral_upkeep_material_demand);
-        let corral_build_material_cost =
-            create_material_payoffs(builder, &herd.corral_build_material_cost);
         let upkeep_toe = create_upkeep_toe(builder, &herd.upkeep_toe);
+        let rung_quotes = create_rung_quotes(builder, &herd.rung_quotes);
+        let size_tier = builder.create_string(herd.size_tier.as_str());
         let predator_eaten_by = builder.create_string(&herd.predator_eaten_by);
         let keeping = builder.create_string(&herd.keeping);
         let entry = fb::HerdTelemetryState::create(
@@ -553,11 +580,7 @@ fn create_herds<'a>(
                 sizeClass: Some(size_class),
                 huntable: herd.huntable,
                 ecologyPhase: Some(ecology_phase),
-                domestication: herd.domestication,
-                corralled: herd.corralled,
-                corralProgress: herd.corral_progress,
                 perWorkerYield: herd.per_worker_yield,
-                corralYield: herd.corral_yield,
                 penFedFraction: herd.pen_fed_fraction,
                 // Appended after every earlier-shipped field (append-only wire discipline).
                 // RETIRED: the four stance rows cannot express a continuous dial. The client
@@ -581,8 +604,6 @@ fn create_herds<'a>(
                 // Herd staffing — appended last (append-only wire).
                 herdersNeeded: herd.herders_needed,
                 herdedFraction: herd.herded_fraction,
-                // The Tame rung's payoff — appended last (append-only wire).
-                pastoralYield: herd.pastoral_yield,
                 // Hay this pen drew last turn (F3) — appended last (append-only wire).
                 fodderDraw: herd.fodder_draw,
                 // **How much more fodder the pen still needs** — appended last (append-only wire).
@@ -628,23 +649,12 @@ fn create_herds<'a>(
                 // EMPTY vector is "no row", never "zero".
                 materialPerBiomass: Some(material_per_biomass),
                 perWorkerMaterial: Some(per_worker_material),
-                // The two investment rungs' material payoffs — appended last (append-only wire).
-                corralMaterial: Some(corral_material),
-                pastoralMaterial: Some(pastoral_material),
-                // **The build, priced in WORK** — appended last (append-only wire,
-                // docs/plan_unit_costed_work.md §8). The `domestication`/`corralProgress` fractions
-                // above are exactly `workDone / workCost`; these two are what let the UI say
-                // "18 of 50 work", and `workCost` is quoted whether or not a build is in flight.
-                tameWorkDone: herd.tame_work_done,
-                tameWorkCost: herd.tame_work_cost,
-                corralWorkDone: herd.corral_work_done,
-                corralWorkCost: herd.corral_work_cost,
                 buildTurnsRemaining: herd.build_turns_remaining,
                 buildWorkFromGear: herd.build_work_from_gear,
                 buildWorkPerWorkerTurn: herd.build_work_per_worker_turn,
                 // **The standing upkeep** — appended last (append-only wire,
                 // docs/plan_standing_upkeep.md §2). All three terms ship, so the client subtracts
-                // nothing; `upkeepDemand` follows `corralYield`'s always-meaningful rule.
+                // nothing; `upkeepDemand` follows `rungQuotes[animal:pen].foodYield`'s always-meaningful rule.
                 upkeepDemand: herd.upkeep_demand,
                 upkeepSupplied: herd.upkeep_supplied,
                 upkeepShortfall: herd.upkeep_shortfall,
@@ -652,12 +662,6 @@ fn create_herds<'a>(
                 upkeepWorkersAtCompletion: herd.upkeep_workers_at_completion,
                 upkeepNextWorkerTurn: herd.upkeep_next_worker_turn,
                 upkeepToe: upkeep_toe,
-                // **The PRE-COMMIT rate** — appended last (append-only wire). `upkeepDemand` above
-                // is what the KEEPING rung bills today; these are what each rung would cost to
-                // hold, so a sheet quoting a Tame on an unstarted herd nets a rate rather than
-                // subtracting zero. Read beside the `*WorkCost` of the same rung.
-                tameUpkeepDemand: herd.tame_upkeep_demand,
-                corralUpkeepDemand: herd.corral_upkeep_demand,
                 meterRotPerTurn: herd.meter_rot_per_turn,
                 // Where this herd sits in the winning band's queue — read as one set with
                 // `buildTurnsRemaining` and `buildWorkFromGear`, which is what makes a chained date
@@ -667,6 +671,10 @@ fn create_herds<'a>(
                 buildBlockedReason: Some(build_blocked_reason),
                 buildDestinationRung: Some(build_destination_rung),
                 buildLegs: build_legs,
+                rungQuotes: Some(rung_quotes),
+                sizeTier: Some(size_tier),
+                penSiteX: herd.pen_site_x,
+                penSiteY: herd.pen_site_y,
                 // **WHERE THAT DESTINATION WILL LEAVE THIS HERD'S `K`** — appended last
                 // (append-only wire). `None` is *"no band has queued it"*, which crosses as the
                 // [`crate::NO_BUILD_DESTINATION_CAPACITY`] sentinel rather than as `0`: a capacity
@@ -689,11 +697,6 @@ fn create_herds<'a>(
                 buildMaterialCost: Some(build_material_cost),
                 upkeepMaterialDemand: Some(upkeep_material_demand),
                 upkeepMaterialSupplied: Some(upkeep_material_supplied),
-                // **THE PRE-COMMIT MATERIAL QUOTE, PER RUNG** — see the plant twin. The `corral` one
-                // is the number the `⌃` track's aside needs on a PASTORAL herd, whose own rung
-                // declares no material at all.
-                tameUpkeepMaterialDemand: Some(tame_upkeep_material_demand),
-                corralUpkeepMaterialDemand: Some(corral_upkeep_material_demand),
                 // **WHAT THE HERD'S OWN CREW SPENT KEEPING IT** (`docs/plan_site_crews.md` §2.2).
                 upkeepHands: herd.upkeep_hands,
                 upkeepToolsShort: herd.upkeep_tools_short,
@@ -702,10 +705,6 @@ fn create_herds<'a>(
                 nextGroundX: herd.next_ground_x,
                 nextGroundY: herd.next_ground_y,
                 predatorEaten: herd.predator_eaten,
-                // **WHAT A PEN RING SWALLOWS TO RAISE** — appended last (append-only wire), and
-                // the material twin of `corralWorkCost`. It carries what `buildMaterialCost` above
-                // cannot on a CORRALLED herd, where the rung above the pen is none.
-                corralBuildMaterialCost: Some(corral_build_material_cost),
             },
         );
         entries.push(entry);
@@ -723,7 +722,6 @@ fn create_forage_patches<'a>(
         let material_per_biomass = create_material_payoffs(builder, &patch.material_per_biomass);
         let per_worker_material = create_material_payoffs(builder, &patch.per_worker_material);
         let ecology_phase = builder.create_string(patch.ecology_phase.as_str());
-        let sow_site_refusal = builder.create_string(patch.sow_site_refusal.as_str());
         // Always written, `""` included — see the herd twin.
         let build_blocked_reason = builder.create_string(patch.build_blocked_reason.as_str());
         // **THE DESTINATION AND THE LEGS** — always written for the string (`""` is *"not queued"*,
@@ -733,6 +731,7 @@ fn create_forage_patches<'a>(
         let build_destination_rung = builder.create_string(patch.build_destination_rung.as_str());
         // **WHERE THE PATCH IS**, beside where it is going — see the herd twin.
         let current_rung = builder.create_string(patch.current_rung.as_str());
+        let rung_quotes = create_rung_quotes(builder, &patch.rung_quotes);
         let build_legs = if patch.build_legs.is_empty() {
             None
         } else {
@@ -810,29 +809,18 @@ fn create_forage_patches<'a>(
             create_material_payoffs(builder, &patch.upkeep_material_demand);
         let upkeep_material_supplied =
             create_material_payoffs(builder, &patch.upkeep_material_supplied);
-        let cultivation_upkeep_material_demand =
-            create_material_payoffs(builder, &patch.cultivation_upkeep_material_demand);
-        let field_upkeep_material_demand =
-            create_material_payoffs(builder, &patch.field_upkeep_material_demand);
         let upkeep_toe = create_upkeep_toe(builder, &patch.upkeep_toe);
         let entry = fb::ForagePatchState::create(
             builder,
             &fb::ForagePatchStateArgs {
                 x: patch.x,
                 y: patch.y,
-                cultivationProgress: patch.cultivation_progress,
-                isCultivated: patch.is_cultivated,
                 hasOwner: patch.owner.is_some(),
                 owner: patch.owner.unwrap_or(0),
                 biomass: patch.biomass,
                 carryingCapacity: patch.carrying_capacity,
                 ecologyPhase: Some(ecology_phase),
                 perWorkerYield: patch.per_worker_yield,
-                tendedYield: patch.tended_yield,
-                fieldProgress: patch.field_progress,
-                isField: patch.is_field,
-                fieldYield: patch.field_yield,
-                sowSiteRefusal: Some(sow_site_refusal),
                 composition: Some(composition),
                 // The committed crop — appended last (append-only wire).
                 committedSpecies: Some(committed_species),
@@ -841,8 +829,6 @@ fn create_forage_patches<'a>(
                 // RETIRED: see the herd twin above.
                 provisionsPerBiomass: patch.provisions_per_biomass,
                 fodderPerBiomass: patch.fodder_per_biomass,
-                tendedFodder: patch.tended_fodder,
-                fieldFodder: patch.field_fodder,
                 // The neglect grace — appended last.
                 hasNeglectGrace: patch.has_neglect_grace,
                 neglectGraceRemaining: patch.neglect_grace_remaining,
@@ -860,18 +846,12 @@ fn create_forage_patches<'a>(
                 // the material story. An EMPTY vector is "no row", never "zero".
                 materialPerBiomass: Some(material_per_biomass),
                 perWorkerMaterial: Some(per_worker_material),
-                // **The build, priced in WORK** — appended last (append-only wire,
-                // docs/plan_unit_costed_work.md §8). The plant twin of the herd's pairs.
-                cultivationWorkDone: patch.cultivation_work_done,
-                cultivationWorkCost: patch.cultivation_work_cost,
-                fieldWorkDone: patch.field_work_done,
-                fieldWorkCost: patch.field_work_cost,
                 buildTurnsRemaining: patch.build_turns_remaining,
                 buildWorkFromGear: patch.build_work_from_gear,
                 buildWorkPerWorkerTurn: patch.build_work_per_worker_turn,
                 // **The standing upkeep** — appended last (append-only wire,
                 // docs/plan_standing_upkeep.md §2). All three terms ship, so the client subtracts
-                // nothing; `upkeepDemand` follows `corralYield`'s always-meaningful rule.
+                // nothing; `upkeepDemand` follows `rungQuotes[animal:pen].foodYield`'s always-meaningful rule.
                 upkeepDemand: patch.upkeep_demand,
                 upkeepSupplied: patch.upkeep_supplied,
                 upkeepShortfall: patch.upkeep_shortfall,
@@ -879,18 +859,13 @@ fn create_forage_patches<'a>(
                 upkeepWorkersAtCompletion: patch.upkeep_workers_at_completion,
                 upkeepNextWorkerTurn: patch.upkeep_next_worker_turn,
                 upkeepToe: upkeep_toe,
-                // **The PRE-COMMIT rate** — appended last (append-only wire), the plant twin of the
-                // herd's pair: `upkeepDemand` above is what the AT-RISK rung bills today, and these
-                // are what each rung would cost to hold, so a sheet quoting a Cultivate on a wild
-                // patch nets a rate rather than subtracting zero.
-                cultivationUpkeepDemand: patch.cultivation_upkeep_demand,
-                fieldUpkeepDemand: patch.field_upkeep_demand,
                 meterRotPerTurn: patch.meter_rot_per_turn,
                 // The plant twin — see the herd row above.
                 buildQueuePosition: patch.build_queue_position,
                 buildBlockedReason: Some(build_blocked_reason),
                 buildDestinationRung: Some(build_destination_rung),
                 buildLegs: build_legs,
+                rungQuotes: Some(rung_quotes),
                 // **How much of each plant is standing** — appended last (append-only wire),
                 // index-aligned with `composition`.
                 compositionStandingBiomass: composition_standing_biomass,
@@ -916,11 +891,6 @@ fn create_forage_patches<'a>(
                 buildMaterialCost: Some(build_material_cost),
                 upkeepMaterialDemand: Some(upkeep_material_demand),
                 upkeepMaterialSupplied: Some(upkeep_material_supplied),
-                // **THE PRE-COMMIT MATERIAL QUOTE, PER RUNG** — the rung's own rate at this source's
-                // scale, NOT the stamped bill beside it. The two disagree mid-climb, and that is the
-                // point: one says what you were billed, the other what this rung costs.
-                cultivationUpkeepMaterialDemand: Some(cultivation_upkeep_material_demand),
-                fieldUpkeepMaterialDemand: Some(field_upkeep_material_demand),
                 // **WHAT THE PATCH'S OWN CREW SPENT KEEPING IT** (`docs/plan_site_crews.md` §2.1).
                 upkeepHands: patch.upkeep_hands,
                 upkeepToolsShort: patch.upkeep_tools_short,
@@ -933,6 +903,47 @@ fn create_forage_patches<'a>(
 
 /// The per-tile flora composition (`ForagePatchState.composition`). Emitted in the order the sim
 /// hands it over — already deterministic (share DESC, then species key ASC).
+/// **A PLANT'S QUOTE AT EVERY RUNG**, children built before the row opens.
+fn create_rung_share_quotes<'a>(
+    builder: &mut FbBuilder<'a>,
+    quotes: &[RungShareQuoteState],
+) -> WIPOffset<flatbuffers::Vector<'a, ForwardsUOffset<fb::RungShareQuoteState<'a>>>> {
+    let mut entries = Vec::with_capacity(quotes.len());
+    for quote in quotes {
+        let rung_key = builder.create_string(quote.rung_key.as_str());
+        let material_payoff = create_material_payoffs(builder, &quote.material_payoff);
+        let entry = fb::RungShareQuoteState::create(
+            builder,
+            &fb::RungShareQuoteStateArgs {
+                rungKey: Some(rung_key),
+                canClimb: quote.can_climb,
+                foodPayoff: quote.food_payoff,
+                yieldRatio: quote.yield_ratio,
+                fodderPayoff: quote.fodder_payoff,
+                materialPayoff: Some(material_payoff),
+                workCost: quote.work_cost,
+            },
+        );
+        entries.push(entry);
+    }
+    builder.create_vector(&entries)
+}
+
+/// The decode twin of [`create_rung_share_quotes`].
+fn decode_rung_share_quotes(
+    quotes: Option<flatbuffers::Vector<'_, ForwardsUOffset<fb::RungShareQuoteState<'_>>>>,
+) -> Vec<RungShareQuoteState> {
+    map_rows(quotes, |quote| RungShareQuoteState {
+        rung_key: text(quote.rungKey()),
+        can_climb: quote.canClimb(),
+        food_payoff: quote.foodPayoff(),
+        yield_ratio: quote.yieldRatio(),
+        fodder_payoff: quote.fodderPayoff(),
+        material_payoff: decode_material_payoffs(quote.materialPayoff()),
+        work_cost: quote.workCost(),
+    })
+}
+
 fn create_flora_shares<'a>(
     builder: &mut FbBuilder<'a>,
     shares: &[FloraShareInfo],
@@ -944,41 +955,17 @@ fn create_flora_shares<'a>(
         let role = builder.create_string(share.role.as_str());
         // **Built before the parent table opens**, the ordinary FlatBuffers rule: a nested vector
         // cannot be written while `FloraShareInfo` is under construction.
-        let sow_materials = create_material_payoffs(builder, &share.sow_material_payoff);
-        let cultivate_materials =
-            create_material_payoffs(builder, &share.cultivate_material_payoff);
+        let rung_quotes = create_rung_share_quotes(builder, &share.rung_quotes);
         let entry = fb::FloraShareInfo::create(
             builder,
             &fb::FloraShareInfoArgs {
                 species: Some(species),
                 displayName: Some(display_name),
                 share: share.share,
-                // Which rungs this plant can climb — appended last (append-only wire).
-                canCultivate: share.can_cultivate,
-                canSow: share.can_sow,
-                // Is committing this tile to this plant worth it — appended last (append-only wire).
-                cultivateYieldRatio: share.cultivate_yield_ratio,
-                sowYieldRatio: share.sow_yield_ratio,
-                // What it would actually pay — appended last (append-only wire).
-                cultivatePayoff: share.cultivate_payoff,
-                sowPayoff: share.sow_payoff,
-                // The fodder a hay Field would pay — appended last (append-only wire, F3).
-                sowFodderPayoff: share.sow_fodder_payoff,
-                // The same two accounts at the TENDED rung — appended last (append-only wire, #419).
-                cultivateFodderPayoff: share.cultivate_fodder_payoff,
                 // What the plant is FOR — a display tag off the roster, appended last (append-only
                 // wire). `""` is "unstated", never "staple".
                 role: Some(role),
-                // **What a cash crop would pay, per material** — appended last (append-only wire,
-                // arc #527), replacing the retired `sowTradePayoff`/`cultivateTradePayoff`. An EMPTY
-                // vector is "no row", never "zero": a food crop yields no material and must render
-                // nothing at all.
-                sowMaterialPayoff: Some(sow_materials),
-                cultivateMaterialPayoff: Some(cultivate_materials),
-                // **What sowing THIS crop would cost in work** — appended last (append-only wire,
-                // §4.15). `0` is "no figure" (the plant cannot climb to a Field here), never a free
-                // Sow.
-                sowWorkCost: share.sow_work_cost,
+                rungQuotes: Some(rung_quotes),
             },
         );
         entries.push(entry);
@@ -988,6 +975,62 @@ fn create_flora_shares<'a>(
 
 /// One rung's per-material quote, as a wire vector. Empty in, empty out — the "no row" reading the
 /// field's own contract rests on, so an absent quote never becomes a zero-valued one.
+/// **A SOURCE'S RUNG QUOTES** - one `RungQuoteState` row per rung of its branch, children built
+/// before the row opens (the ordinary FlatBuffers rule).
+fn create_rung_quotes<'a>(
+    builder: &mut FbBuilder<'a>,
+    quotes: &[RungQuoteState],
+) -> WIPOffset<flatbuffers::Vector<'a, ForwardsUOffset<fb::RungQuoteState<'a>>>> {
+    let mut entries = Vec::with_capacity(quotes.len());
+    for quote in quotes {
+        let rung_key = builder.create_string(quote.rung_key.as_str());
+        let build_material_cost = create_material_payoffs(builder, &quote.build_material_cost);
+        let upkeep_material_demand =
+            create_material_payoffs(builder, &quote.upkeep_material_demand);
+        let material_payoff = create_material_payoffs(builder, &quote.material_payoff);
+        let site_refusal = builder.create_string(quote.site_refusal.as_str());
+        let entry = fb::RungQuoteState::create(
+            builder,
+            &fb::RungQuoteStateArgs {
+                rungKey: Some(rung_key),
+                reached: quote.reached,
+                progress: quote.progress,
+                workDone: quote.work_done,
+                workCost: quote.work_cost,
+                buildMaterialCost: Some(build_material_cost),
+                upkeepDemand: quote.upkeep_demand,
+                upkeepMaterialDemand: Some(upkeep_material_demand),
+                foodYield: quote.food_yield,
+                fodder: quote.fodder,
+                materialPayoff: Some(material_payoff),
+                siteRefusal: Some(site_refusal),
+            },
+        );
+        entries.push(entry);
+    }
+    builder.create_vector(&entries)
+}
+
+/// The decode twin of [`create_rung_quotes`].
+fn decode_rung_quotes(
+    quotes: Option<flatbuffers::Vector<'_, ForwardsUOffset<fb::RungQuoteState<'_>>>>,
+) -> Vec<RungQuoteState> {
+    map_rows(quotes, |quote| RungQuoteState {
+        rung_key: text(quote.rungKey()),
+        reached: quote.reached(),
+        progress: quote.progress(),
+        work_done: quote.workDone(),
+        work_cost: quote.workCost(),
+        build_material_cost: decode_material_payoffs(quote.buildMaterialCost()),
+        upkeep_demand: quote.upkeepDemand(),
+        upkeep_material_demand: decode_material_payoffs(quote.upkeepMaterialDemand()),
+        food_yield: quote.foodYield(),
+        fodder: quote.fodder(),
+        material_payoff: decode_material_payoffs(quote.materialPayoff()),
+        site_refusal: text(quote.siteRefusal()),
+    })
+}
+
 pub(crate) fn create_material_payoffs<'a>(
     builder: &mut FbBuilder<'a>,
     payoffs: &[MaterialPayoff],
@@ -1080,88 +1123,170 @@ fn create_ladder_areas<'a>(
     builder.create_vector(&entries)
 }
 
-/// **THE ROUTE BRANCH'S RUNG CATALOG** — every rung the route branch declares, in climb order and
-/// once per world. A per-world constant, written whole on a snapshot and only when it moved on a
-/// delta, exactly like the roster above.
-fn create_route_rungs<'a>(
+/// **THE LADDER'S RUNG CATALOG** - every rung of every branch, grouped by branch and in climb order
+/// within it, once per world. A per-world constant, written whole on a snapshot and only when it
+/// moved on a delta, exactly like the roster above.
+fn create_site_rule<'a>(
     builder: &mut FbBuilder<'a>,
-    states: &[RouteRungState],
-) -> WIPOffset<flatbuffers::Vector<'a, ForwardsUOffset<fb::RouteRungState<'a>>>> {
+    rule: &SiteRuleState,
+) -> WIPOffset<fb::SiteRuleState<'a>> {
+    fb::SiteRuleState::create(
+        builder,
+        &fb::SiteRuleStateArgs {
+            requiresGatheringSite: rule.requires_gathering_site,
+            minForageCapacity: rule.min_forage_capacity,
+            requiresFreshWater: rule.requires_fresh_water,
+        },
+    )
+}
+
+fn decode_site_rule(rule: fb::SiteRuleState<'_>) -> SiteRuleState {
+    SiteRuleState {
+        requires_gathering_site: rule.requiresGatheringSite(),
+        min_forage_capacity: rule.minForageCapacity(),
+        requires_fresh_water: rule.requiresFreshWater(),
+    }
+}
+
+fn create_ladder_rungs<'a>(
+    builder: &mut FbBuilder<'a>,
+    states: &[LadderRungState],
+) -> WIPOffset<flatbuffers::Vector<'a, ForwardsUOffset<fb::LadderRungState<'a>>>> {
     let mut entries = Vec::with_capacity(states.len());
     for state in states {
         let rung_key = builder.create_string(&state.rung_key);
+        // Which ladder the row is on - the field a reader groups the one vector by.
+        let branch = builder.create_string(&state.branch);
         let display_name = builder.create_string(&state.display_name);
+        let label = builder.create_string(&state.label);
+        let label_fallback = builder.create_string(&state.label_fallback);
         let verb = builder.create_string(&state.verb);
+        let source_kind = builder.create_string(&state.source_kind);
+        let trait_offsets: Vec<_> = state
+            .traits
+            .iter()
+            .map(|name| builder.create_string(name))
+            .collect();
+        let traits = builder.create_vector(&trait_offsets);
         let unlock_knowledge = builder.create_string(&state.unlock_knowledge);
-        let requires_rung = builder.create_string(&state.requires_rung);
         let earns_knowledge = builder.create_string(&state.earns_knowledge);
-        // The noun the pile beside it is counted in — `""` for a rung that eats nothing.
+        let requires_rung = builder.create_string(&state.requires_rung);
+        // The noun the pile beside it is counted in - `""` for a rung that eats nothing.
         let build_material_id = builder.create_string(&state.build_material_id);
-        entries.push(fb::RouteRungState::create(
+        let site_rule = create_site_rule(builder, &state.site_rule);
+        let relaxation_rows: Vec<_> = state
+            .site_relaxations
+            .iter()
+            .map(|relaxation| {
+                let knowledge = builder.create_string(&relaxation.knowledge);
+                let rule = create_site_rule(builder, &relaxation.rule);
+                fb::SiteRelaxationState::create(
+                    builder,
+                    &fb::SiteRelaxationStateArgs {
+                        knowledge: Some(knowledge),
+                        rule: Some(rule),
+                    },
+                )
+            })
+            .collect();
+        let site_relaxations = builder.create_vector(&relaxation_rows);
+        let tier_rows: Vec<_> = state
+            .size_tiers
+            .iter()
+            .map(|tier| {
+                let id = builder.create_string(&tier.id);
+                let label = builder.create_string(&tier.label);
+                let label_fallback = builder.create_string(&tier.label_fallback);
+                let earns_knowledge = builder.create_string(&tier.earns_knowledge);
+                fb::SizeTierState::create(
+                    builder,
+                    &fb::SizeTierStateArgs {
+                        id: Some(id),
+                        label: Some(label),
+                        labelFallback: Some(label_fallback),
+                        minRings: tier.min_rings,
+                        keeperRatioGain: tier.keeper_ratio_gain,
+                        earnsKnowledge: Some(earns_knowledge),
+                    },
+                )
+            })
+            .collect();
+        let size_tiers = builder.create_vector(&tier_rows);
+        let gain_rows: Vec<_> = state
+            .knowledge_gains
+            .iter()
+            .map(|gain| {
+                let knowledge = builder.create_string(&gain.knowledge);
+                fb::KnowledgeGainState::create(
+                    builder,
+                    &fb::KnowledgeGainStateArgs {
+                        knowledge: Some(knowledge),
+                        regrowthGain: gain.regrowth_gain,
+                    },
+                )
+            })
+            .collect();
+        let knowledge_gains = builder.create_vector(&gain_rows);
+        entries.push(fb::LadderRungState::create(
             builder,
-            &fb::RouteRungStateArgs {
+            &fb::LadderRungStateArgs {
                 rungKey: Some(rung_key),
+                branch: Some(branch),
                 order: state.order,
                 displayName: Some(display_name),
+                label: Some(label),
+                labelFallback: Some(label_fallback),
                 verb: Some(verb),
+                sourceKind: Some(source_kind),
+                traits: Some(traits),
                 unlockKnowledge: Some(unlock_knowledge),
+                earnsKnowledge: Some(earns_knowledge),
                 requiresRung: Some(requires_rung),
                 workCost: state.work_cost,
                 upkeepWorkPerTurn: state.upkeep_work_per_turn,
+                buildMaterialCost: state.build_material_cost,
+                buildMaterialId: Some(build_material_id),
+                buildWorkPerWorkerTurn: state.build_work_per_worker_turn,
                 frictionMultiplier: state.friction_multiplier,
                 holdsLinkToTiles: state.holds_link_to_tiles,
                 grantsSight: state.grants_sight,
-                earnsKnowledge: Some(earns_knowledge),
-                buildWorkPerWorkerTurn: state.build_work_per_worker_turn,
-                buildMaterialCost: state.build_material_cost,
-                buildMaterialId: Some(build_material_id),
+                yieldPerWorkerTurn: state.yield_per_worker_turn,
+                recoveryFraction: state.recovery_fraction,
+                regrowthMultiplier: state.regrowth_multiplier,
+                minDepositCapacity: state.min_deposit_capacity,
+                requiresHeldRungBelow: state.requires_held_rung_below,
+                requiresCrop: state.requires_crop,
+                requiresWorkRoom: state.requires_work_room,
+                requiresOwnership: state.requires_ownership,
+                placesSource: state.places_source,
+                siteRule: Some(site_rule),
+                siteRelaxations: Some(site_relaxations),
+                sizeTiers: Some(size_tiers),
+                knowledgeGains: Some(knowledge_gains),
             },
         ));
     }
     builder.create_vector(&entries)
 }
 
-/// **THE TWO DEPOSIT BRANCHES' RUNG CATALOG** — every rung the forestry and extraction branches
-/// declare, grouped by branch and in climb order within it, once per world. A per-world constant,
-/// written whole on a snapshot and only when it moved on a delta, exactly like the route catalog
-/// above.
-fn create_deposit_rungs<'a>(
+/// **THE LADDER'S BRANCHES** - the grouping the rung catalog above is drawn under, once per world.
+fn create_ladder_branches<'a>(
     builder: &mut FbBuilder<'a>,
-    states: &[DepositRungState],
-) -> WIPOffset<flatbuffers::Vector<'a, ForwardsUOffset<fb::DepositRungState<'a>>>> {
+    states: &[LadderBranchState],
+) -> WIPOffset<flatbuffers::Vector<'a, ForwardsUOffset<fb::LadderBranchState<'a>>>> {
     let mut entries = Vec::with_capacity(states.len());
     for state in states {
-        let rung_key = builder.create_string(&state.rung_key);
-        // Which ladder the row is on — one vector carries both branches, so this is what a reader
-        // groups by.
         let branch = builder.create_string(&state.branch);
-        let display_name = builder.create_string(&state.display_name);
-        let verb = builder.create_string(&state.verb);
-        let unlock_knowledge = builder.create_string(&state.unlock_knowledge);
-        let requires_rung = builder.create_string(&state.requires_rung);
-        let earns_knowledge = builder.create_string(&state.earns_knowledge);
-        // The noun the pile beside it is counted in — `""` for a rung that eats nothing.
-        let build_material_id = builder.create_string(&state.build_material_id);
-        entries.push(fb::DepositRungState::create(
+        let area = builder.create_string(&state.area);
+        let source_kind = builder.create_string(&state.source_kind);
+        let label = builder.create_string(&state.label);
+        entries.push(fb::LadderBranchState::create(
             builder,
-            &fb::DepositRungStateArgs {
-                rungKey: Some(rung_key),
+            &fb::LadderBranchStateArgs {
                 branch: Some(branch),
-                order: state.order,
-                displayName: Some(display_name),
-                verb: Some(verb),
-                unlockKnowledge: Some(unlock_knowledge),
-                requiresRung: Some(requires_rung),
-                earnsKnowledge: Some(earns_knowledge),
-                workCost: state.work_cost,
-                upkeepWorkPerTurn: state.upkeep_work_per_turn,
-                buildMaterialCost: state.build_material_cost,
-                buildMaterialId: Some(build_material_id),
-                buildWorkPerWorkerTurn: state.build_work_per_worker_turn,
-                yieldPerWorkerTurn: state.yield_per_worker_turn,
-                recoveryFraction: state.recovery_fraction,
-                regrowthMultiplier: state.regrowth_multiplier,
-                minDepositCapacity: state.min_deposit_capacity,
+                area: Some(area),
+                sourceKind: Some(source_kind),
+                label: Some(label),
             },
         ));
     }
@@ -1311,27 +1436,13 @@ fn decode_deposit(deposit: fb::DepositState<'_>) -> DepositState {
     }
 }
 
-/// The inverse of [`create_deposit_rungs`] — the two deposit branches' rung catalog, once per
-/// world. Exhaustive for [`decode_deposit`]'s reason.
-fn decode_deposit_rung(rung: fb::DepositRungState<'_>) -> DepositRungState {
-    DepositRungState {
-        rung_key: text(rung.rungKey()),
-        branch: text(rung.branch()),
-        order: rung.order(),
-        display_name: text(rung.displayName()),
-        verb: text(rung.verb()),
-        unlock_knowledge: text(rung.unlockKnowledge()),
-        requires_rung: text(rung.requiresRung()),
-        earns_knowledge: text(rung.earnsKnowledge()),
-        work_cost: rung.workCost(),
-        upkeep_work_per_turn: rung.upkeepWorkPerTurn(),
-        build_material_cost: rung.buildMaterialCost(),
-        build_material_id: text(rung.buildMaterialId()),
-        build_work_per_worker_turn: rung.buildWorkPerWorkerTurn(),
-        yield_per_worker_turn: rung.yieldPerWorkerTurn(),
-        recovery_fraction: rung.recoveryFraction(),
-        regrowth_multiplier: rung.regrowthMultiplier(),
-        min_deposit_capacity: rung.minDepositCapacity(),
+/// The inverse of [`create_ladder_branches`] - the ladder's branches, once per world.
+fn decode_ladder_branch(branch: fb::LadderBranchState<'_>) -> LadderBranchState {
+    LadderBranchState {
+        branch: text(branch.branch()),
+        area: text(branch.area()),
+        source_kind: text(branch.sourceKind()),
+        label: text(branch.label()),
     }
 }
 
@@ -1368,9 +1479,10 @@ pub(crate) fn decode_subsistence_section(
         map_rows(section.characteristicBands(), decode_characteristic_band);
     snapshot.recipes = map_rows(section.recipes(), decode_recipe);
     snapshot.craft_knowledge = map_rows(section.craftKnowledge(), decode_craft_knowledge);
-    snapshot.route_rungs = map_rows(section.routeRungs(), decode_route_rung);
+    snapshot.ladder_rungs = map_rows(section.ladderRungs(), decode_ladder_rung);
     snapshot.deposits = map_rows(section.deposits(), decode_deposit);
-    snapshot.deposit_rungs = map_rows(section.depositRungs(), decode_deposit_rung);
+    snapshot.ladder_branches = map_rows(section.ladderBranches(), decode_ladder_branch);
+    snapshot.mobility = map_rows(section.mobility(), decode_mobility);
 }
 
 pub(crate) fn decode_subsistence_section_delta(
@@ -1403,9 +1515,10 @@ pub(crate) fn decode_subsistence_section_delta(
         map_rows_if_present(section.characteristicBands(), decode_characteristic_band);
     delta.recipes = map_rows_if_present(section.recipes(), decode_recipe);
     delta.craft_knowledge = map_rows_if_present(section.craftKnowledge(), decode_craft_knowledge);
-    delta.route_rungs = map_rows_if_present(section.routeRungs(), decode_route_rung);
+    delta.ladder_rungs = map_rows_if_present(section.ladderRungs(), decode_ladder_rung);
     delta.deposits = map_rows_if_present(section.deposits(), decode_deposit);
-    delta.deposit_rungs = map_rows_if_present(section.depositRungs(), decode_deposit_rung);
+    delta.ladder_branches = map_rows_if_present(section.ladderBranches(), decode_ladder_branch);
+    delta.mobility = map_rows_if_present(section.mobility(), decode_mobility);
 }
 
 fn decode_material(state: fb::MaterialDefState<'_>) -> MaterialDefState {
@@ -1482,12 +1595,25 @@ fn decode_kit(state: fb::KitOption<'_>) -> KitOptionState {
     }
 }
 
+fn decode_mobility(state: fb::MobilityState<'_>) -> MobilityState {
+    MobilityState {
+        faction: state.faction(),
+        score: state.score(),
+        skills_points: state.skillsPoints(),
+        distance_points: state.distancePoints(),
+    }
+}
+
 fn decode_sedentarization(state: fb::SedentarizationState<'_>) -> SedentarizationState {
     SedentarizationState {
         faction: state.faction(),
         score: state.score(),
         stage: text(state.stage()),
         belief_points: state.beliefPoints(),
+        domestication_points: state.domesticationPoints(),
+        surplus_points: state.surplusPoints(),
+        land_points: state.landPoints(),
+        population_points: state.populationPoints(),
     }
 }
 
@@ -1521,11 +1647,7 @@ fn decode_herd(herd: fb::HerdTelemetryState<'_>) -> HerdTelemetryState {
         size_class: text(herd.sizeClass()),
         huntable: herd.huntable(),
         ecology_phase: text(herd.ecologyPhase()),
-        domestication: herd.domestication(),
-        corralled: herd.corralled(),
-        corral_progress: herd.corralProgress(),
         per_worker_yield: herd.perWorkerYield(),
-        corral_yield: herd.corralYield(),
         pen_fed_fraction: herd.penFedFraction(),
         carrying_capacity: herd.carryingCapacity(),
         graze_range_radius: herd.grazeRangeRadius(),
@@ -1538,7 +1660,6 @@ fn decode_herd(herd: fb::HerdTelemetryState<'_>) -> HerdTelemetryState {
         food_per_animal: herd.foodPerAnimal(),
         herders_needed: herd.herdersNeeded(),
         herded_fraction: herd.herdedFraction(),
-        pastoral_yield: herd.pastoralYield(),
         fodder_draw: herd.fodderDraw(),
         pen_fodder_shortfall: herd.penFodderShortfall(),
         attack: herd.attack(),
@@ -1569,22 +1690,18 @@ fn decode_herd(herd: fb::HerdTelemetryState<'_>) -> HerdTelemetryState {
         default_kit_id: text(herd.defaultKitId()),
         material_per_biomass: decode_material_payoffs(herd.materialPerBiomass()),
         per_worker_material: decode_material_payoffs(herd.perWorkerMaterial()),
-        corral_material: decode_material_payoffs(herd.corralMaterial()),
-        pastoral_material: decode_material_payoffs(herd.pastoralMaterial()),
-        tame_work_done: herd.tameWorkDone(),
-        tame_work_cost: herd.tameWorkCost(),
-        corral_work_done: herd.corralWorkDone(),
-        corral_work_cost: herd.corralWorkCost(),
         build_turns_remaining: herd.buildTurnsRemaining(),
         build_work_from_gear: herd.buildWorkFromGear(),
         build_work_per_worker_turn: herd.buildWorkPerWorkerTurn(),
-        tame_upkeep_demand: herd.tameUpkeepDemand(),
-        corral_upkeep_demand: herd.corralUpkeepDemand(),
         meter_rot_per_turn: herd.meterRotPerTurn(),
         build_queue_position: herd.buildQueuePosition(),
         build_blocked_reason: text(herd.buildBlockedReason()),
         build_destination_rung: text(herd.buildDestinationRung()),
         build_legs: decode_build_legs(herd.buildLegs()),
+        rung_quotes: decode_rung_quotes(herd.rungQuotes()),
+        size_tier: text(herd.sizeTier()),
+        pen_site_x: herd.penSiteX(),
+        pen_site_y: herd.penSiteY(),
         build_destination_capacity: decode_build_destination_capacity(
             herd.buildDestinationCapacity(),
         ),
@@ -1597,9 +1714,6 @@ fn decode_herd(herd: fb::HerdTelemetryState<'_>) -> HerdTelemetryState {
         build_material_cost: decode_material_payoffs(herd.buildMaterialCost()),
         upkeep_material_demand: decode_material_payoffs(herd.upkeepMaterialDemand()),
         upkeep_material_supplied: decode_material_payoffs(herd.upkeepMaterialSupplied()),
-        tame_upkeep_material_demand: decode_material_payoffs(herd.tameUpkeepMaterialDemand()),
-        corral_upkeep_material_demand: decode_material_payoffs(herd.corralUpkeepMaterialDemand()),
-        corral_build_material_cost: decode_material_payoffs(herd.corralBuildMaterialCost()),
         upkeep_hands: herd.upkeepHands(),
         upkeep_tools_short: herd.upkeepToolsShort(),
         predator_eaten_by: text(herd.predatorEatenBy()),
@@ -1614,19 +1728,12 @@ fn decode_forage_patch(patch: fb::ForagePatchState<'_>) -> ForagePatchState {
     ForagePatchState {
         x: patch.x(),
         y: patch.y(),
-        cultivation_progress: patch.cultivationProgress(),
-        is_cultivated: patch.isCultivated(),
         // The pair `hasOwner`/`owner` is how the serializer spells `Option`.
         owner: patch.hasOwner().then(|| patch.owner()),
         biomass: patch.biomass(),
         carrying_capacity: patch.carryingCapacity(),
         ecology_phase: text(patch.ecologyPhase()),
         per_worker_yield: patch.perWorkerYield(),
-        tended_yield: patch.tendedYield(),
-        field_progress: patch.fieldProgress(),
-        is_field: patch.isField(),
-        field_yield: patch.fieldYield(),
-        sow_site_refusal: text(patch.sowSiteRefusal()),
         composition: decode_flora_shares(patch.composition()).into(),
         composition_standing_biomass: decode_scalars(patch.compositionStandingBiomass()),
         composition_provisions_per_biomass: decode_scalars(patch.compositionProvisionsPerBiomass()),
@@ -1639,8 +1746,6 @@ fn decode_forage_patch(patch: fb::ForagePatchState<'_>) -> ForagePatchState {
         ),
         committed_species: text(patch.committedSpecies()),
         committed_display_name: text(patch.committedDisplayName()),
-        tended_fodder: patch.tendedFodder(),
-        field_fodder: patch.fieldFodder(),
         upkeep_demand: patch.upkeepDemand(),
         upkeep_supplied: patch.upkeepSupplied(),
         upkeep_shortfall: patch.upkeepShortfall(),
@@ -1658,20 +1763,15 @@ fn decode_forage_patch(patch: fb::ForagePatchState<'_>) -> ForagePatchState {
         stressed_fraction: patch.stressedFraction(),
         material_per_biomass: decode_material_payoffs(patch.materialPerBiomass()),
         per_worker_material: decode_material_payoffs(patch.perWorkerMaterial()),
-        cultivation_work_done: patch.cultivationWorkDone(),
-        cultivation_work_cost: patch.cultivationWorkCost(),
-        field_work_done: patch.fieldWorkDone(),
-        field_work_cost: patch.fieldWorkCost(),
         build_turns_remaining: patch.buildTurnsRemaining(),
         build_work_from_gear: patch.buildWorkFromGear(),
         build_work_per_worker_turn: patch.buildWorkPerWorkerTurn(),
-        cultivation_upkeep_demand: patch.cultivationUpkeepDemand(),
-        field_upkeep_demand: patch.fieldUpkeepDemand(),
         meter_rot_per_turn: patch.meterRotPerTurn(),
         build_queue_position: patch.buildQueuePosition(),
         build_blocked_reason: text(patch.buildBlockedReason()),
         build_destination_rung: text(patch.buildDestinationRung()),
         build_legs: decode_build_legs(patch.buildLegs()),
+        rung_quotes: decode_rung_quotes(patch.rungQuotes()),
         tile_capacity: patch.tileCapacity(),
         build_destination_capacity: decode_build_destination_capacity(
             patch.buildDestinationCapacity(),
@@ -1680,10 +1780,6 @@ fn decode_forage_patch(patch: fb::ForagePatchState<'_>) -> ForagePatchState {
         build_material_cost: decode_material_payoffs(patch.buildMaterialCost()),
         upkeep_material_demand: decode_material_payoffs(patch.upkeepMaterialDemand()),
         upkeep_material_supplied: decode_material_payoffs(patch.upkeepMaterialSupplied()),
-        cultivation_upkeep_material_demand: decode_material_payoffs(
-            patch.cultivationUpkeepMaterialDemand(),
-        ),
-        field_upkeep_material_demand: decode_material_payoffs(patch.fieldUpkeepMaterialDemand()),
         upkeep_hands: patch.upkeepHands(),
         upkeep_tools_short: patch.upkeepToolsShort(),
     }
@@ -1697,18 +1793,8 @@ fn decode_flora_shares(
         species: text(share.species()),
         display_name: text(share.displayName()),
         share: share.share(),
-        can_cultivate: share.canCultivate(),
-        can_sow: share.canSow(),
-        cultivate_yield_ratio: share.cultivateYieldRatio(),
-        sow_yield_ratio: share.sowYieldRatio(),
-        cultivate_payoff: share.cultivatePayoff(),
-        sow_payoff: share.sowPayoff(),
-        sow_fodder_payoff: share.sowFodderPayoff(),
-        cultivate_fodder_payoff: share.cultivateFodderPayoff(),
         role: text(share.role()),
-        sow_material_payoff: decode_material_payoffs(share.sowMaterialPayoff()),
-        cultivate_material_payoff: decode_material_payoffs(share.cultivateMaterialPayoff()),
-        sow_work_cost: share.sowWorkCost(),
+        rung_quotes: decode_rung_share_quotes(share.rungQuotes()),
     })
 }
 
@@ -1745,23 +1831,59 @@ fn decode_ladder_knowledge(state: fb::LadderKnowledgeState<'_>) -> LadderKnowled
     }
 }
 
-fn decode_route_rung(state: fb::RouteRungState<'_>) -> RouteRungState {
-    RouteRungState {
+/// The inverse of [`create_ladder_rungs`] - the ladder's rung catalog, once per world. Exhaustive
+/// for [`decode_deposit`]'s reason: a field appended to the struct breaks this build.
+fn decode_ladder_rung(state: fb::LadderRungState<'_>) -> LadderRungState {
+    LadderRungState {
         rung_key: text(state.rungKey()),
+        branch: text(state.branch()),
         order: state.order(),
         display_name: text(state.displayName()),
+        label: text(state.label()),
+        label_fallback: text(state.labelFallback()),
         verb: text(state.verb()),
+        source_kind: text(state.sourceKind()),
+        traits: state
+            .traits()
+            .map(|names| names.iter().map(str::to_string).collect())
+            .unwrap_or_default(),
         unlock_knowledge: text(state.unlockKnowledge()),
+        earns_knowledge: text(state.earnsKnowledge()),
         requires_rung: text(state.requiresRung()),
         work_cost: state.workCost(),
         upkeep_work_per_turn: state.upkeepWorkPerTurn(),
+        build_material_cost: state.buildMaterialCost(),
+        build_material_id: text(state.buildMaterialId()),
+        build_work_per_worker_turn: state.buildWorkPerWorkerTurn(),
         friction_multiplier: state.frictionMultiplier(),
         holds_link_to_tiles: state.holdsLinkToTiles(),
         grants_sight: state.grantsSight(),
-        earns_knowledge: text(state.earnsKnowledge()),
-        build_work_per_worker_turn: state.buildWorkPerWorkerTurn(),
-        build_material_cost: state.buildMaterialCost(),
-        build_material_id: text(state.buildMaterialId()),
+        yield_per_worker_turn: state.yieldPerWorkerTurn(),
+        recovery_fraction: state.recoveryFraction(),
+        regrowth_multiplier: state.regrowthMultiplier(),
+        min_deposit_capacity: state.minDepositCapacity(),
+        requires_held_rung_below: state.requiresHeldRungBelow(),
+        requires_crop: state.requiresCrop(),
+        requires_work_room: state.requiresWorkRoom(),
+        requires_ownership: state.requiresOwnership(),
+        places_source: state.placesSource(),
+        site_rule: state.siteRule().map(decode_site_rule).unwrap_or_default(),
+        size_tiers: map_rows(state.sizeTiers(), |tier| SizeTierState {
+            id: text(tier.id()),
+            label: text(tier.label()),
+            label_fallback: text(tier.labelFallback()),
+            min_rings: tier.minRings(),
+            keeper_ratio_gain: tier.keeperRatioGain(),
+            earns_knowledge: text(tier.earnsKnowledge()),
+        }),
+        knowledge_gains: map_rows(state.knowledgeGains(), |gain| KnowledgeGainState {
+            knowledge: text(gain.knowledge()),
+            regrowth_gain: gain.regrowthGain(),
+        }),
+        site_relaxations: map_rows(state.siteRelaxations(), |relaxation| SiteRelaxationState {
+            knowledge: text(relaxation.knowledge()),
+            rule: relaxation.rule().map(decode_site_rule).unwrap_or_default(),
+        }),
     }
 }
 

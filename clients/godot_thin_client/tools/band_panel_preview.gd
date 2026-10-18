@@ -524,6 +524,10 @@ const FACTION_TAB_LABELS: Array[String] = ["Faction", "Work", "Parties"]
 ## (It was seeded for the top bar's own Sedentarization meter; that meter is retired with the
 ## top-right block, and the seed stays because the faction page now renders off the same cache.)
 const TOPBAR_SEDENTARIZATION_SCORE := 62.0
+## The mobility fixture (issue #800): the smoothed score and the two pre-smoothing inputs.
+const MOBILITY_SCORE := 38.0
+const MOBILITY_SKILLS_POINTS := 22.0
+const MOBILITY_DISTANCE_POINTS := 31.0
 ## The Beliefs fixtures (issue #701), in `CultureTraitAxis` order. The expected strings are LITERALS.
 const BELIEFS_AXIS_COUNT := 15
 const BELIEFS_AXIS_TRADITIONALIST_REVISIONIST := 3
@@ -542,6 +546,12 @@ const TOPBAR_SEDENTARIZATION_STAGE := "soft"
 ## How many of that score's points the band standing on its dead supplies (the SETTLING block's
 ## `From the dead` row). Seeded non-zero so every faction frame measures the block with the mark in.
 const TOPBAR_SEDENTARIZATION_BELIEF_POINTS := 24.0
+## The other four raw settle-score inputs, distinct and nonzero so the stage row's tooltip can be told
+## apart value by value.
+const SEDENTARIZATION_DOMESTICATION_POINTS := 11.0
+const SEDENTARIZATION_SURPLUS_POINTS := 7.0
+const SEDENTARIZATION_LAND_POINTS := 13.0
+const SEDENTARIZATION_POPULATION_POINTS := 5.0
 ## Slack allowed between a stat-row key's laid-out width and the width its own font measures for its
 ## own string (`_faction_keyless_rows`). It absorbs the sub-pixel disagreement between the container's
 ## rounded layout and the text server's float measurement, and nothing wider: a CLIPPED key comes back
@@ -744,6 +754,7 @@ func _floorify(src: Dictionary, prefix: String = "") -> Dictionary:
 		return src
 	_floorify_ceilings(src, prefix)
 	_seed_growth_terms(src, prefix)
+	RUNG_FX.stamp_source(src, prefix)
 	return src
 
 ## Is this dict a HERD? A herd carries `species`; a forage patch carries `committed_species` and never
@@ -1007,7 +1018,13 @@ func _ready() -> void:
 	# Seed the top bar so the HUD reflow reads against real content.
 	_hud.update_sedentarization([{"faction": 0,
 		"score": TOPBAR_SEDENTARIZATION_SCORE, "stage": TOPBAR_SEDENTARIZATION_STAGE,
-		"belief_points": TOPBAR_SEDENTARIZATION_BELIEF_POINTS}])
+		"belief_points": TOPBAR_SEDENTARIZATION_BELIEF_POINTS,
+		"domestication_points": SEDENTARIZATION_DOMESTICATION_POINTS,
+		"surplus_points": SEDENTARIZATION_SURPLUS_POINTS, "land_points": SEDENTARIZATION_LAND_POINTS,
+		"population_points": SEDENTARIZATION_POPULATION_POINTS}])
+	# The mobility row beside it (issue #800): the viewer's own row, the shape the native decoder emits.
+	_hud.update_mobility([{"faction": 0, "score": MOBILITY_SCORE,
+		"skills_points": MOBILITY_SKILLS_POINTS, "distance_points": MOBILITY_DISTANCE_POINTS}])
 
 	# Slice 3: inject the panel into the HUD and push a player band through the real snapshot
 	# path (update_band_alerts → _refresh_panel_band), so the FULL band detail relocates into the
@@ -1161,6 +1178,7 @@ func _ready() -> void:
 	# puts a one-column horizontal dock at COMPACT, which does not merge — so docking T/B no longer
 	# reaches the tier these two claims are about. `SHORT_TIER_PROBE_HEIGHT` restores the pre-raise
 	# 300px box through the clamp, so the frame is the geometry it always was.
+	FactionNames.update([{"faction": 12, "name": "Reedwalkers"}])
 	_push_bands([_vitals_worst_case_band_fixture()])
 	await _pin_canvas(Vector2i(PREVIEW_SIZE.x, SHORT_TIER_PROBE_HEIGHT))
 	_panel.set_dock(SIDE_TOP)
@@ -1727,7 +1745,7 @@ func _ready() -> void:
 	_assert_zones_within_bounds()
 	_assert_zone_content_fits()
 
-	# …and the SAME ground mid-climb, with a TWO-LEG entry queued to `plant:field`: the destination
+	# …and the SAME ground mid-climb, with a TWO-LEG entry queued to `plant:farm`: the destination
 	# picker opened from the RUNNING build slot, and the queue row opened into its own legs.
 	_hud.update_intensification([_standing_knowledge_row()])
 	_set_forage_patches(_track_climbing_patch_fixtures())
@@ -2390,13 +2408,11 @@ func _ready() -> void:
 	_assert_zone_content_fits()
 	_report_zone_content_extent("band_panel_faction_wide")
 	_assert_faction_zone_layout()
-	# **THE BAND ZONE'S HEIGHT TIER, asserted here as the NEGATIVE half of a pair.** This dock's zone
-	# is ~300px and cannot hold every block at the page's row size, so DISCOVERIES must be gone —
-	# while `band_panel_faction`'s 1057px side dock, which asserts it PRESENT, is the positive. Either
-	# claim alone is satisfied by a gate stuck in one position, and `content-fits` cannot see it in
-	# either direction: a dropped block leaves a box that fits trivially, and a clipped one still
-	# reports a rect inside its host.
-	_assert_faction_band_zone_tier()
+	# **THE BAND ZONE SCROLLS RATHER THAN DROPS.** This dock's zone is ~300px and cannot show every
+	# block at the page's row size, so DISCOVERIES and the Mobility row must still be PRESENT — inside
+	# the sanctioned band-zone scroll — which `content-fits` cannot see in either direction: a dropped
+	# block leaves a box that fits trivially.
+	_assert_faction_band_zone_scrolls()
 	await _assert_faction_shell_threshold()
 
 	# The ROUTING claims, none of which a PNG can carry — and the last of them leaves the panel back on
@@ -2553,6 +2569,7 @@ func _ready() -> void:
 	# The Work tab's sections, its site crews and its two priority marks (`docs/plan_site_crews.md`).
 	await _render_work_sections_states()
 	await _render_work_sections_all_five()
+	await _render_tile_crew_state()
 
 	await _render_work_party_states()
 
@@ -4487,7 +4504,7 @@ const MATERIAL_SHORT_GRACE := 3
 ## CARRYING WORK**, and this penned herd's is its Tame — its corral meter is full and banked. Written
 ## down rather than asked of that router, because the claim here is that the countdown SURVIVED the
 ## good-shortfall arm; WHICH rung it names has its own assertions elsewhere in this harness.
-const MATERIAL_SHORT_AT_RISK_RUNG := SourceForecast.IMPROVEMENT_TAME
+const MATERIAL_SHORT_AT_RISK_RUNG := SourceForecast.IMPROVEMENT_CORRAL
 ## ⛔ **THE RETIRED TAIL, AS A NEEDLE** (`docs/plan_standing_upkeep.md` §4.9 item 12c). The sentence
 ## read `… a turn this pen eats.`, filled from a `MATERIAL_SHORT_NOUN_HERD`/`_PATCH` pair — feed and
 ## upkeep under one verb, on a surface whose `Fed:` row sits two lines above it. Spelled here rather
@@ -8242,8 +8259,7 @@ func _assert_scroll_only_where_sanctioned() -> void:
 			% [int(counts[HudWorkVocab.PARTIES_LIST_NAME]), strays.size()],
 			int(counts[HudWorkVocab.PARTIES_LIST_NAME]) == 1)
 	var band_zone: Variant = _panel._zones.get(BandCityPanel.ZONE_BAND)
-	if band_zone is Node and _panel.is_ancestor_of(band_zone as Node) \
-			and not _hud._bandpanel._panel_is_faction:
+	if band_zone is Node and _panel.is_ancestor_of(band_zone as Node):
 		_assert_band_panel("…and the band zone scrolls its block stack, so no tier can delete a block instead (%d sanctioned)"
 			% int(counts[HudWorkVocab.BAND_ZONE_SCROLL_NAME]),
 			int(counts[HudWorkVocab.BAND_ZONE_SCROLL_NAME]) == 1)
@@ -8705,6 +8721,13 @@ func _find_vitals_label(node: Node) -> RichTextLabel:
 			return found
 	return null
 
+## The summed width of the panel's zone hosts: what a content row that refuses to clip widens.
+func _zone_hosts_width() -> float:
+	var total := 0.0
+	for host_variant in _find_zone_hosts(_panel):
+		total += (host_variant as Control).size.x
+	return total
+
 func _assert_zones_within_bounds() -> void:
 	var failures: Array[String] = []
 	for host_variant in _find_zone_hosts(_panel):
@@ -8856,14 +8879,14 @@ func _faction_knowledge_fixture() -> Dictionary:
 ## both places and pass a test that only counted rows.
 func _faction_discoveries_fixture() -> Dictionary:
 	return {"faction": 0, "sites": [
-		{"site_id": "great_peak", "display_name": "Great Peak", "x": 61, "y": 12, "glyph": "⛰"},
-		{"site_id": "great_peak", "display_name": "Great Peak", "x": 44, "y": 30, "glyph": "⛰"},
-		{"site_id": "sky_arch", "display_name": "Sky Arch", "x": 70, "y": 22, "glyph": "⛰"},
-		{"site_id": "salt_spring", "display_name": "Salt Spring", "x": 66, "y": 26, "glyph": "💧"},
-		{"site_id": "bone_field", "display_name": "Bone Field", "x": 58, "y": 33, "glyph": "🦴"},
-		{"site_id": "sky_lake", "display_name": "Sky Lake", "x": 52, "y": 19, "glyph": "💧"},
-		{"site_id": "black_glass", "display_name": "Black Glass", "x": 48, "y": 41, "glyph": "◈"},
-		{"site_id": "singing_cave", "display_name": "Singing Cave", "x": 63, "y": 37, "glyph": "◈"},
+		{"site_id": "great_peak", "display_name": "Great Peak", "category": "landmark", "x": 61, "y": 12, "glyph": "⛰"},
+		{"site_id": "great_peak", "display_name": "Great Peak", "category": "landmark", "x": 44, "y": 30, "glyph": "⛰"},
+		{"site_id": "sky_arch", "display_name": "Sky Arch", "category": "landmark", "x": 70, "y": 22, "glyph": "⛰"},
+		{"site_id": "salt_spring", "display_name": "Salt Spring", "category": "settle_site", "x": 66, "y": 26, "glyph": "💧"},
+		{"site_id": "bone_field", "display_name": "Bone Field", "category": "landmark", "x": 58, "y": 33, "glyph": "🦴"},
+		{"site_id": "sky_lake", "display_name": "Sky Lake", "category": "settle_site", "x": 52, "y": 19, "glyph": "💧"},
+		{"site_id": "black_glass", "display_name": "Black Glass", "category": "oddity", "x": 48, "y": 41, "glyph": "◈"},
+		{"site_id": "singing_cave", "display_name": "Singing Cave", "category": "oddity", "x": 63, "y": 37, "glyph": "◈"},
 	]}
 
 ## THE FACTION PAGE's roster — TWO resident bands and one detached party.
@@ -9365,8 +9388,16 @@ func _assert_faction_fodder_dormant() -> void:
 	# paragraph about hay popped out from under a cursor resting on Growth, Morale or Food. Asserted
 	# on the label the block IS, since that is the only place such a sentence could land.
 	var label := _first_rich_text(band_zone)
-	_assert_band_panel("faction dormant: the dim row registers no hover — no hay reaches the block",
+	_assert_band_panel("faction dormant: no hay sentence sits on the block itself, only on the row",
 		label != null and _mentions_none_of(label.tooltip_text, RETIRED_FODDER_HOVER_WORDS))
+	var hovers: Dictionary = label.get_meta(DetailFormat.ROW_HOVERS_META, {}) if label != null else {}
+	_assert_band_panel("faction dormant: the Fodder row carries its row-scoped hover, worn as a hover run",
+		String(hovers.get(HudDisclosureVocab.DETAIL_ROW_FODDER, "")) == DetailFormat.FODDER_DORMANT_HOVER_FACTION
+		and vitals.contains("[url=" + HudDisclosureVocab.ROW_HOVER_META_PREFIX + HudDisclosureVocab.DETAIL_ROW_FODDER))
+	var band_ctx := DetailFormat.Context.new()
+	_hud._banddetail.unit_summary_lines(_fodderless_faction_roster()[0], "", band_ctx)
+	_assert_band_panel("band dormant: the Fodder row carries the band wording",
+		String(band_ctx.row_tooltips.get(HudDisclosureVocab.DETAIL_ROW_FODDER, "")) == DetailFormat.FODDER_DORMANT_HOVER_BAND)
 
 	# **AND KNOWING THE CRAFT DOES NOT MAKE AN ECONOMY.** Learn Foddering and the page is still
 	# dormant — nobody keeps a pen — which is the half that catches a page reading the knowledge track
@@ -9793,22 +9824,41 @@ func _assert_faction_band_zone_blocks() -> void:
 	_assert_band_panel("faction band zone: every stat row renders its key (%d keyless)" % keyless,
 		keyless == 0)
 
-## THE BAND ZONE'S HEIGHT TIER, on the height-capped horizontal dock: DISCOVERIES is dropped and the
-## blocks that survive are still there. **The second half is what stops this passing on a zone that
-## rendered nothing at all**, which is the failure a gate is most likely to produce.
-func _assert_faction_band_zone_tier() -> void:
+## THE FACTION BAND ZONE ON THE HEIGHT-CAPPED HORIZONTAL DOCK: every block is PRESENT and sits inside
+## the sanctioned band-zone scroll, which overflows its box (so a bar shows) — nothing is dropped.
+## **The overflow claim is what stops this passing on a box tall enough to need no scroll**, where
+## presence proves nothing about reachability.
+func _assert_faction_band_zone_scrolls() -> void:
 	var zone: Node = _panel._zones.get(BandCityPanel.ZONE_BAND)
 	if zone == null:
-		_assert_band_panel("faction band tier: the zone exists in the wide shell", false)
+		_assert_band_panel("faction band zone: the zone exists in the wide shell", false)
 		return
-	_assert_band_panel("faction band tier: a ~300px box DROPS the DISCOVERIES block",
-		not _has_label_containing(zone, HudWorkVocab.FACTION_HEADER_DISCOVERIES.to_upper()))
-	_assert_band_panel("faction band tier: …and KEEPS Settling",
-		_has_label_containing(zone, HudWorkVocab.FACTION_HEADER_SETTLING.to_upper()))
-	# …and the Open Borders toggle, which sits ABOVE the tier's cut: it is the one thing on the page
-	# the player can DO, and that is what the capped tier exists to keep.
-	_assert_band_panel("faction band tier: …and KEEPS the Open Borders toggle",
+	var scroll: ScrollContainer = null
+	var found: Array[Node] = []
+	_collect_scroll_containers(zone, found)
+	for node in found:
+		if String(node.name) == HudWorkVocab.BAND_ZONE_SCROLL_NAME:
+			scroll = node as ScrollContainer
+	_assert_band_panel("faction band zone: the page's band zone sits inside the sanctioned scroll",
+		scroll != null)
+	if scroll == null:
+		return
+	_assert_band_panel("faction band zone: a ~300px box KEEPS the DISCOVERIES block, inside the scroll",
+		_has_label_containing(scroll, HudWorkVocab.FACTION_HEADER_DISCOVERIES.to_upper()))
+	_assert_band_panel("faction band zone: …and the Settling block",
+		_has_label_containing(scroll, HudWorkVocab.FACTION_HEADER_SETTLING.to_upper()))
+	var mobility := _faction_stat_value(scroll, HudWorkVocab.FACTION_MOBILITY_KEY)
+	_assert_band_panel("faction band zone: …and the Mobility row, reading %d/100 (got '%s')" % [
+			int(MOBILITY_SCORE), mobility],
+		mobility.ends_with("%d/%d" % [int(MOBILITY_SCORE), HudWorkVocab.FACTION_MOBILITY_SCALE]))
+	_assert_band_panel("faction band zone: …and the Open Borders toggle",
 		_find_meta_control(zone, FactionRollup.OPEN_BORDERS_TOGGLE_META) != null)
+	var stack: Control = scroll.get_child(0) as Control
+	var needed := stack.get_combined_minimum_size().y if stack != null else 0.0
+	print("band_panel_preview: faction band zone scroll — stack %.0fpx in a %.0fpx viewport" % [
+		needed, scroll.size.y])
+	_assert_band_panel("faction band zone: the stack overflows the box, so the scrollbar is what reaches it",
+		needed > scroll.size.y)
 
 ## THE FACTION PAGE'S OPEN BORDERS TOGGLE (issue #512). Four claims, each a thing a PNG cannot carry:
 ##   • the toggle is up and CHECKED, because the snapshot said open;
@@ -9866,15 +9916,24 @@ func _assert_faction_settling_belief() -> void:
 	if zone == null:
 		_assert_band_panel("faction settling belief: the zone exists", false)
 		return
+	var mobility := _faction_stat_value(zone, HudWorkVocab.FACTION_MOBILITY_KEY)
+	_assert_band_panel("faction mobility: the row reads %d/100 (got '%s')" % [
+			int(MOBILITY_SCORE), mobility],
+		mobility.ends_with("%d/%d" % [int(MOBILITY_SCORE), HudWorkVocab.FACTION_MOBILITY_SCALE]))
 	var tied := _faction_stat_value(zone, HudWorkVocab.FACTION_SETTLING_BELIEF_KEY)
 	_assert_band_panel("faction settling belief: a band on its dead reads +%d (got '%s')" % [
 			int(TOPBAR_SEDENTARIZATION_BELIEF_POINTS), tied],
 		tied.ends_with("+%d" % int(TOPBAR_SEDENTARIZATION_BELIEF_POINTS)))
 	_assert_band_panel("faction settling belief: ...behind the ancestors mark",
 		_has_label_containing(zone, BandOverlayRenderer.ANCESTORS_GLYPH))
+	_assert_settling_tooltips(zone, true)
+	_assert_discovery_tooltips(zone)
 	_hud.update_sedentarization([{"faction": HudConst.PLAYER_FACTION_ID,
 		"score": TOPBAR_SEDENTARIZATION_SCORE, "stage": TOPBAR_SEDENTARIZATION_STAGE,
-		"belief_points": 0.0}])
+		"belief_points": 0.0,
+		"domestication_points": SEDENTARIZATION_DOMESTICATION_POINTS,
+		"surplus_points": SEDENTARIZATION_SURPLUS_POINTS, "land_points": SEDENTARIZATION_LAND_POINTS,
+		"population_points": SEDENTARIZATION_POPULATION_POINTS}])
 	_hud.update_faction_policies([_faction_policy_fixture(true)])
 	await _settle()
 	await _save("band_panel_faction_settling_untied")
@@ -9883,6 +9942,7 @@ func _assert_faction_settling_belief() -> void:
 	_assert_band_panel("faction settling belief: no band on its dead reads '%s' (got '%s')" % [
 			HudWorkVocab.FACTION_SETTLING_BELIEF_NONE, untied],
 		untied == HudWorkVocab.FACTION_SETTLING_BELIEF_NONE)
+	_assert_settling_tooltips(zone, false)
 	_assert_band_panel("faction settling belief: ...and carries no ancestors mark",
 		zone != null and not _has_label_containing(zone, BandOverlayRenderer.ANCESTORS_GLYPH))
 	# The long sentence must not widen the zone: the Settling meter beside it still renders whole.
@@ -9891,9 +9951,60 @@ func _assert_faction_settling_belief() -> void:
 	_assert_zone_content_width_fits()
 	_hud.update_sedentarization([{"faction": HudConst.PLAYER_FACTION_ID,
 		"score": TOPBAR_SEDENTARIZATION_SCORE, "stage": TOPBAR_SEDENTARIZATION_STAGE,
-		"belief_points": TOPBAR_SEDENTARIZATION_BELIEF_POINTS}])
+		"belief_points": TOPBAR_SEDENTARIZATION_BELIEF_POINTS,
+		"domestication_points": SEDENTARIZATION_DOMESTICATION_POINTS,
+		"surplus_points": SEDENTARIZATION_SURPLUS_POINTS, "land_points": SEDENTARIZATION_LAND_POINTS,
+		"population_points": SEDENTARIZATION_POPULATION_POINTS}])
 	_hud.update_faction_policies([_faction_policy_fixture(true)])
 	await _settle()
+
+## The Settling block's two tooltips. The stage row's lists every fixture input (and the `From the dead`
+## value, which is the belief fixture while a band stands on its dead and 0 when none does); the
+## `From the dead` row carries its own in both forms. Read off the row's Labels, which hold the tip.
+func _assert_discovery_tooltips(zone: Node) -> void:
+	var peak := _faction_row_tooltip(zone, "Great Peak")
+	_assert_band_panel("faction discoveries: a two-instance row's hover names its category and both coordinates (got '%s')" % peak.replace("\n", " | "),
+		peak == "%s\n%s" % [HudWorkVocab.FACTION_DISCOVERY_CATEGORY_LINES["landmark"],
+			"Found at (61, 12) · Found at (44, 30)"])
+	var spring := _faction_row_tooltip(zone, "Salt Spring")
+	_assert_band_panel("faction discoveries: a settle site names its own category line (got '%s')" % spring.replace("\n", " | "),
+		spring == "%s\nFound at (66, 26)" % HudWorkVocab.FACTION_DISCOVERY_CATEGORY_LINES["settle_site"])
+	var cave := _faction_row_tooltip(zone, "Black Glass")
+	_assert_band_panel("faction discoveries: an unknown category has no category line (got '%s')" % cave,
+		cave == "Found at (48, 41)")
+
+func _assert_settling_tooltips(zone: Node, tied: bool) -> void:
+	var belief := int(TOPBAR_SEDENTARIZATION_BELIEF_POINTS) if tied else 0
+	var expected := HudWorkVocab.FACTION_SETTLING_TOOLTIP_FORMAT % [
+		int(round(TOPBAR_SEDENTARIZATION_SCORE)), int(SEDENTARIZATION_DOMESTICATION_POINTS), int(SEDENTARIZATION_SURPLUS_POINTS),
+		int(SEDENTARIZATION_LAND_POINTS), int(SEDENTARIZATION_POPULATION_POINTS), belief]
+	var stage_tip := _faction_row_tooltip(zone, HudWorkVocab.FACTION_SETTLING_STAGE_LABELS.get(
+		TOPBAR_SEDENTARIZATION_STAGE, ""))
+	_assert_band_panel("faction settling tooltip: the stage row lists every input (got '%s')" % stage_tip.replace("\n", " | "),
+		stage_tip == expected and stage_tip.contains("Rich land +%d" % int(SEDENTARIZATION_LAND_POINTS))
+		and stage_tip.contains("Dead +%d" % belief))
+	var belief_tip := _faction_row_tooltip(zone, HudWorkVocab.FACTION_SETTLING_BELIEF_KEY)
+	_assert_band_panel("faction settling tooltip: the From the dead row carries its tip (%s form)" % (
+			"+N" if tied else "zero"),
+		belief_tip == HudWorkVocab.FACTION_SETTLING_BELIEF_TOOLTIP_FORMAT % belief)
+
+## The tooltip on the stat row keyed `key`: both of its Labels must carry the SAME non-empty text, so it
+## is hoverable across the row rather than on one Label.
+func _faction_row_tooltip(node: Node, key: String) -> String:
+	if node is HBoxContainer:
+		var labels: Array = []
+		for child in node.get_children():
+			if child is Label:
+				labels.append(child)
+		if labels.size() >= 2 and (labels[0] as Label).text == key:
+			var first := (labels[0] as Label).tooltip_text
+			var last := (labels[labels.size() - 1] as Label).tooltip_text
+			return first if first == last else "MISMATCH %s / %s" % [first, last]
+	for child in node.get_children():
+		var found := _faction_row_tooltip(child, key)
+		if found != "":
+			return found
+	return ""
 
 ## The player faction's `faction_policies` row, the shape the native decoder hands GDScript.
 func _faction_policy_fixture(open: bool) -> Dictionary:
@@ -10593,7 +10704,7 @@ func _assert_rung_crop_step() -> void:
 		% [HudWorkVocab.RUNG_CROP_TITLE_GROW, live_title],
 		live_title == HudWorkVocab.RUNG_CROP_TITLE_GROW)
 	var tend_step := RungLadder.build_crop_step([], func(_s: String) -> void: pass,
-		func() -> void: pass, SourceForecast.IMPROVEMENT_CULTIVATE)
+		func() -> void: pass, false)
 	var tend_title := _title_of_crop_step(tend_step)
 	tend_step.queue_free()
 	_assert_band_panel("crop — …while a CULTIVATE's is titled `%s` (got `%s`)"
@@ -10627,7 +10738,7 @@ func _want_work_clause(work_cost: float) -> String:
 		% DetailFormat.format_work_units(work_cost)).trim_prefix(
 			HudFloraVocab.FLORA_CROP_CLAUSE_LEAD)
 
-## **THE SAME GROUND MID-CLIMB, WITH A TWO-LEG ENTRY QUEUED TO `plant:field`.** It is the shape the
+## **THE SAME GROUND MID-CLIMB, WITH A TWO-LEG ENTRY QUEUED TO `plant:farm`.** It is the shape the
 ## whole arc is about: one position, one queue row, and a destination two rungs above where the patch
 ## stands. `build_legs` is the WIRE's — the client re-derives neither the owing nor the dates — and
 ## the first leg is the one in flight, the list being published first-incomplete first.
@@ -10646,12 +10757,12 @@ func _track_climbing_patch_fixtures(work_done: float = TRACK_TENDED_WORK_DONE) -
 		"field_work_done": 0.0,
 		"build_queue_position": 0,
 		"build_turns_remaining": TRACK_FIELD_LEG_TURNS,
-		"build_destination_rung": SourceForecast.RUNG_KEY_FIELD,
+		"build_destination_rung": RUNG_FX.KEY_FARM,
 		"build_legs": [
-			{"rung": SourceForecast.RUNG_KEY_TENDED,
+			{"rung": RUNG_FX.KEY_TENDED,
 				"work_remaining": TRACK_TENDED_WORK_COST - work_done,
 				"turns_remaining": TRACK_TENDED_LEG_TURNS},
-			{"rung": SourceForecast.RUNG_KEY_FIELD,
+			{"rung": RUNG_FX.KEY_FARM,
 				"work_remaining": TRACK_FIELD_WORK_COST,
 				"turns_remaining": TRACK_FIELD_LEG_TURNS},
 		],
@@ -10681,9 +10792,9 @@ func _track_single_leg_patch_fixtures() -> Array:
 		"field_progress": TRACK_SINGLE_LEG_FIELD_WORK_DONE / TRACK_FIELD_WORK_COST,
 		"build_queue_position": 0,
 		"build_turns_remaining": TRACK_FIELD_LEG_TURNS,
-		"build_destination_rung": SourceForecast.RUNG_KEY_FIELD,
+		"build_destination_rung": RUNG_FX.KEY_FARM,
 		"build_legs": [
-			{"rung": SourceForecast.RUNG_KEY_FIELD,
+			{"rung": RUNG_FX.KEY_FARM,
 				"work_remaining": TRACK_FIELD_WORK_COST - TRACK_SINGLE_LEG_FIELD_WORK_DONE,
 				"turns_remaining": TRACK_FIELD_LEG_TURNS},
 		],
@@ -10718,11 +10829,11 @@ func _track_climbing_herd_fixtures() -> Array:
 		"corralled": false, "corral_progress": 0.0,
 		"build_queue_position": 0,
 		"build_turns_remaining": TRACK_PEN_LEG_TURNS,
-		"build_destination_rung": SourceForecast.RUNG_KEY_PEN,
+		"build_destination_rung": RUNG_FX.KEY_PEN,
 		"build_legs": [
-			{"rung": SourceForecast.RUNG_KEY_PASTORAL, "work_remaining": 32.5,
+			{"rung": RUNG_FX.KEY_PASTORAL, "work_remaining": 32.5,
 				"turns_remaining": TRACK_PASTORAL_LEG_TURNS},
-			{"rung": SourceForecast.RUNG_KEY_PEN, "work_remaining": 75.0,
+			{"rung": RUNG_FX.KEY_PEN, "work_remaining": 75.0,
 				"turns_remaining": TRACK_PEN_LEG_TURNS},
 		],
 	}])
@@ -10787,7 +10898,7 @@ func _assert_rung_track_at_rest() -> void:
 		return
 	var states := _rung_track_states()
 	_assert_band_panel("track — the card draws the WHOLE plant branch, locked rung included (%s)"
-		% str(states.keys()), states.size() == SourceForecast.RUNG_BRANCH_PLANT.size())
+		% str(states.keys()), states.size() == 3)
 	# **THE SET IS THE CLAIM.** A card that marked everything `open` passes any single one of these.
 	_assert_band_panel("track — the wild floor reads as where the patch IS (%s)"
 		% String(states.get(SourceForecast.IMPROVEMENT_NONE, "")),
@@ -10919,7 +11030,7 @@ func _assert_rung_track_climbing() -> void:
 ## testify about the model and not about the control the press lands on. It builds the track detached
 ## and frees it, so it costs the walk no frame and cannot move a later one.
 func _assert_rung_track_names_every_offer() -> void:
-	var rows := RungLadder.track(SourceForecast.LABOR_KIND_HUNT, {},
+	var rows := RungLadder.track(SourceForecast.LABOR_KIND_HUNT, RUNG_FX.stamp_herd({}),
 		HudComposeVocab.BARE_FORECAST_PREFIX, SourceForecast.IMPROVEMENT_NONE,
 		_standing_knowledge_tracks())
 	# **THE PRECONDITIONS ARE THE VACUITY GUARD.** "No selectable row is blank" passes for free on a
@@ -11066,17 +11177,20 @@ const RING_WORK_DONE := 30.0
 
 const RING_PERCENT := 75
 
+## A turn so large the queue row's date text runs far past any column (`turn 2101264` was a live one).
+const ABSURD_QUEUE_TURN := 9000000000000000000
+
 ## A BUILT pen with a ring in flight: fully tamed, `Corralled 100%`, and an `extend_pen` entry at the
 ## head of its band's queue. `build_legs` is EMPTY because a ring lays none — there is no leg to
 ## climb, only more of the one the source is already on — and `build_destination_rung` is the pen
 ## rung it widens, which is what keeps the row titled `Corral …`.
-func _ring_herd_fixtures() -> Array:
-	return RUNG_FX.stamp_herds([{
+func _ring_herd_fixtures(pile: Array = [], extra: Dictionary = {}) -> Array:
+	var fixture := {
 		"id": RING_HERD_ID, "species": "Wild Fowl",
 		"x": RING_HERD_TILE.x, "y": RING_HERD_TILE.y,
 		"population": 60, "ecology_phase": "thriving",
 		"husbandry_ceiling": SourceForecast.HUSBANDRY_CEILING_PEN,
-		"domestication": SourceForecast.DOMESTICATION_COMPLETE,
+		"domestication": RUNG_FX.DOMESTICATION_COMPLETE,
 		"corralled": true, "corral_progress": 1.0,
 		"pen_radius": 1, "pen_footprint_tiles": 7,
 		"pen_extending": true,
@@ -11084,9 +11198,13 @@ func _ring_herd_fixtures() -> Array:
 		"pen_extend_cost": RING_WORK_COST,
 		"build_queue_position": SourceForecast.BUILD_QUEUE_HEAD,
 		"build_turns_remaining": RING_TURNS,
-		"build_destination_rung": SourceForecast.RUNG_KEY_PEN,
+		"build_destination_rung": RUNG_FX.KEY_PEN,
 		"build_legs": [],
-	}])
+	}
+	if not pile.is_empty():
+		fixture["corral_build_material_cost"] = pile
+	fixture.merge(extra, true)
+	return RUNG_FX.stamp_herds([fixture])
 
 ## The band KEEPING that pen, carrying the wire's own `extend_pen` job token on its row — the one
 ## thing that tells a ring entry from a rung entry, and the reason no new wire field is needed.
@@ -11143,6 +11261,392 @@ func _assert_queue_row_ring_quotes_its_own_meter() -> void:
 	await _save("band_panel_queue_ring")
 	_assert_zones_within_bounds()
 	_assert_zone_content_fits()
+	# 4. **NO DATE THE WIRE CAN SPELL WIDENS THE PANEL.** A queue row's date label carried no clip, so its
+	#    text was its minimum width and a corrupt countdown (`turn 2101264`) pushed the whole panel wider
+	#    and cut it off. The same row is re-drawn at an absurd turn: the panel keeps its width, the date
+	#    column stays at or under its cap, and the full text is on the row's tooltip.
+	var width_before := _zone_hosts_width()
+	var prior_turn: int = _hud._band_labor.current_turn()
+	_hud._band_labor.set_turn(ABSURD_QUEUE_TURN)
+	_push_bands([_ring_band_fixture()])
+	await _settle()
+	var long_rows := _build_queue_rows()
+	var long_date := _find_meta_control(long_rows[0], HudWorkVocab.BUILD_QUEUE_DATE_META) if not long_rows.is_empty() else null
+	var long_text := "" if long_date == null else String(long_date.get_meta(HudWorkVocab.BUILD_QUEUE_DATE_META))
+	await _save("band_panel_queue_long_date")
+	var long_natural := 0.0 if long_date == null else long_date.get_theme_default_font().get_string_size(
+		long_text, HORIZONTAL_ALIGNMENT_LEFT, -1, HudWorkVocab.ALLOC_SECTION_FONT_SIZE).x
+	_assert_band_panel("long date — the text really outruns the cap (\"%s\", %.0f > %.0f)"
+			% [long_text, long_natural, HudWorkVocab.BUILD_QUEUE_DATE_MAX_WIDTH],
+		long_natural > HudWorkVocab.BUILD_QUEUE_DATE_MAX_WIDTH)
+	_assert_band_panel("long date — the panel keeps its width (%.0f -> %.0f)" % [width_before, _zone_hosts_width()],
+		is_equal_approx(_zone_hosts_width(), width_before))
+	_assert_band_panel("long date — the date column is held at its cap (%.0f <= %.0f)"
+			% [long_date.size.x if long_date != null else -1.0, HudWorkVocab.BUILD_QUEUE_DATE_MAX_WIDTH],
+		long_date != null and long_date.size.x <= HudWorkVocab.BUILD_QUEUE_DATE_MAX_WIDTH + 0.5)
+	_assert_band_panel("long date — the full text is on the row's tooltip",
+		not long_rows.is_empty() and (long_rows[0] as Control).tooltip_text.contains(long_text))
+	_assert_zones_within_bounds()
+	_hud._band_labor.set_turn(prior_turn)
+	_push_bands([_ring_band_fixture()])
+	await _settle()
+	await _assert_queue_head_says_what_the_shelf_lacks()
+	await _assert_blocked_pen_head_hover_and_detail()
+	await _assert_a_road_behind_a_blocked_pen_head_is_just_queued()
+	_assert_pen_taken_refusal_by_viewing_band()
+	await _assert_work_row_warns_of_an_underfed_pen()
+
+## **RAY'S GAME: A PEN HEAD BLOCKED ON HURDLES AND SHORT OF A CROOK.** 65% built, 2.1 hurdles still to draw
+## and none held, one builder without a crook. The row states `⚠ Need 2.1 hurdles` IN THE DATE'S PLACE (no
+## `turn …` at all), the hover is one fact a line — headline, `Need 2.1 hurdles`, `Short 1 crook`, the
+## cost — with no explanation and no open hint, and the clicked detail shows the same facts WHOLE: every
+## line wrapped inside the strip, none clipped, beside a `✕` reading `Remove from queue`.
+const BLOCKED_PEN_WORK_DONE := 26.0
+const BLOCKED_PEN_CROOK_REQUIRED := 6.0
+const BLOCKED_PEN_CROOK_FILLED := 5.0
+
+func _assert_blocked_pen_head_hover_and_detail() -> void:
+	var pile := [{"material_id": PEN_MATERIAL, "amount": PEN_BUILD_PILE}]
+	_set_world_herds(_ring_herd_fixtures(pile, {"pen_extend_progress": BLOCKED_PEN_WORK_DONE}))
+	var band := _ring_band_fixture()
+	band["material_store"] = []
+	band[HudBandLaborState.POOL_TOE_KEY] = [_pool_toe_row(HudConst.LABOR_KIND_BUILDERS, "crook",
+		BLOCKED_PEN_CROOK_REQUIRED, BLOCKED_PEN_CROOK_FILLED)]
+	_push_bands([band])
+	await _settle()
+	var rows := _build_queue_rows()
+	if rows.is_empty():
+		_fail("blocked pen — the queue draws no row")
+		return
+	var model := {}
+	for model_variant in _hud._bandpanel._build_queue_models(_hud._band_labor.panel_band(),
+			_hud._bandpanel._work_source_models(_hud._band_labor.panel_band(), 0)):
+		if _hud._bandpanel._build_queue_row_rank(model_variant) == SourceForecast.BUILD_QUEUE_HEAD:
+			model = model_variant
+	var short := {DetailFormat.MATERIAL_SHORT_ID_KEY: PEN_MATERIAL,
+		DetailFormat.MATERIAL_SHORT_HELD_KEY: 0.0,
+		DetailFormat.MATERIAL_SHORT_MISSING_KEY: PEN_BUILD_PILE * (1.0 - BLOCKED_PEN_WORK_DONE / RING_WORK_COST)}
+	var clause_label := _find_meta_control(rows[0], HudWorkVocab.BUILD_QUEUE_DATE_META) as Label
+	var clause := DetailFormat.build_material_short_text(short)
+	_assert_band_panel("blocked pen — the row's date slot reads \"%s\" and no date (got \"%s\")" % [
+			clause, "" if clause_label == null else clause_label.text],
+		clause_label != null and clause_label.text == clause and clause == "⚠ Blocked · need 2.1 hurdles"
+			and not clause_label.text.contains("turn"))
+	_assert_band_panel("blocked pen — …and the clause draws whole (not trimmed, %.0f of %.0f px)" % [
+			0.0 if clause_label == null else clause_label.size.x,
+			0.0 if clause_label == null else clause_label.get_minimum_size().x],
+		clause_label != null and clause_label.get_line_count() == 1
+			and clause_label.size.x + 0.5 >= clause_label.get_minimum_size().x)
+	var wanted: Array[String] = [
+		HudWorkVocab.BUILD_QUEUE_HEADLINE_FORMAT % [_hud._bandpanel._build_queue_job_face(model),
+			HudWorkVocab.BUILD_QUEUE_BLOCKED_PROGRESS_FORMAT % _hud._bandpanel._queue_row_percent(model)],
+		DetailFormat.build_material_need_line(short),
+		HudWorkVocab.BUILD_QUEUE_KIT_SHORT_LINE_FORMAT % [1, "crook"]]
+	var cost: String = _hud._bandpanel._queue_entry_cost_line(model)
+	if cost != "":
+		wanted.append(cost)
+	var hover: Array = rows[0].tooltip_text.split("\n")
+	_assert_band_panel("blocked pen — the hover is one fact a line: %s (got %s)" % [str(wanted), str(hover)],
+		hover == wanted and wanted[1] == "Need 2.1 hurdles" and wanted[2] == "Short 1 crook"
+			and not rows[0].tooltip_text.contains("Click") and not rows[0].tooltip_text.contains("builders are"))
+	await _save("band_panel_queue_blocked_pen_head")
+	_assert_zones_within_bounds()
+	# THE CLICKED DETAIL: the same facts, whole.
+	_hud._bandpanel._toggle_queue_settings(String(model.get("key", "")))
+	await _settle()
+	await _save("band_panel_queue_blocked_pen_detail")
+	var strip := _find_meta_control(_panel, HudWorkVocab.BUILD_QUEUE_SETTINGS_META)
+	var detail := _queue_strip_detail()
+	_assert_band_panel("blocked pen — the open detail states the same facts (%s)" % detail.replace("\n", " | "),
+		detail.split("\n") == PackedStringArray(wanted))
+	var clipped := false
+	var labels: Array = []
+	if strip != null:
+		_collect_labels(strip, labels)
+	for label_variant in labels:
+		var label: Label = label_variant
+		if label.get_line_count() > label.get_visible_line_count() \
+				or label.get_global_rect().end.y > strip.get_global_rect().end.y + 0.5 \
+				or label.get_global_rect().end.x > strip.get_global_rect().end.x + 0.5:
+			clipped = true
+	_assert_band_panel("blocked pen — …and no line of it is clipped or past the strip (%d labels)" % labels.size(),
+		strip != null and not clipped and labels.size() >= wanted.size())
+	var withdraw: Button = null
+	if strip != null:
+		withdraw = _find_meta_control(strip, HudWorkVocab.BUILD_QUEUE_UNQUEUE_META) as Button
+	_assert_band_panel("blocked pen — the withdrawal is a `✕` whose tooltip reads \"Remove from queue\"",
+		withdraw != null and withdraw.text == "✕" and withdraw.tooltip_text == "Remove from queue")
+	_assert_zone_content_fits()
+	_hud._bandpanel._queue_open_key = ""
+	await _assert_the_corral_entry_states_its_pen_site(pile, band)
+	_push_bands([_ring_band_fixture()])
+	await _settle()
+
+## **A QUEUED CORRAL SAYS WHERE IT WILL PEN THE HERD** — `Pen at (7, 9)` right after the headline, in the
+## hover and the open detail alike (they share `_queue_entry_facts`); a herd publishing -1 on either
+## coordinate gets no such line.
+const PEN_SITE := Vector2i(7, 9)
+
+func _assert_the_corral_entry_states_its_pen_site(pile: Array, band: Dictionary) -> void:
+	var line := HudWorkVocab.BUILD_QUEUE_PEN_SITE_FORMAT % [PEN_SITE.x, PEN_SITE.y]
+	_set_world_herds(_ring_herd_fixtures(pile, {"pen_extend_progress": BLOCKED_PEN_WORK_DONE,
+		"pen_site_x": PEN_SITE.x, "pen_site_y": PEN_SITE.y}))
+	_push_bands([band])
+	await _settle()
+	var rows := _build_queue_rows()
+	var hover: Array = [] if rows.is_empty() else rows[0].tooltip_text.split("\n")
+	_assert_band_panel("pen site — the Corral entry's hover has \"%s\" right after the headline (%s)"
+			% [line, str(hover)],
+		hover.size() >= 2 and hover[1] == line)
+	_hud._bandpanel._toggle_queue_settings(String(_hud._bandpanel._build_queue_models(
+		_hud._band_labor.panel_band(), _hud._bandpanel._work_source_models(
+			_hud._band_labor.panel_band(), 0))[0].get("key", "")))
+	await _settle()
+	var detail: Array = _queue_strip_detail().split("\n")
+	_assert_band_panel("pen site — …and so does the open detail (%s)" % str(detail),
+		detail.size() >= 2 and detail[1] == line)
+	_hud._bandpanel._queue_open_key = ""
+	_set_world_herds(_ring_herd_fixtures(pile, {"pen_extend_progress": BLOCKED_PEN_WORK_DONE,
+		"pen_site_x": -1, "pen_site_y": -1}))
+	_push_bands([band])
+	await _settle()
+	rows = _build_queue_rows()
+	_assert_band_panel("pen site — a herd with no pen site (-1) states no `Pen at` line",
+		not rows.is_empty() and not rows[0].tooltip_text.contains("Pen at"))
+	_set_world_herds(_ring_herd_fixtures(pile, {"pen_extend_progress": BLOCKED_PEN_WORK_DONE,
+		"pen_site_x": PEN_SITE.x, "pen_site_y": -1}))
+	_push_bands([band])
+	await _settle()
+	rows = _build_queue_rows()
+	_assert_band_panel("pen site — …nor does one with only one coordinate set",
+		not rows.is_empty() and not rows[0].tooltip_text.contains("Pen at"))
+
+## **A HERD TAKES ONE CORRAL AT A TIME, AND ONLY THE BANDS NOT HOLDING IT SEE THE REFUSAL.** The enclosed
+## rung's quote carries `site_refusal = pen_taken` while one band's queue holds the herd's Corral. A band
+## that does not hold it is told so, in words, and is offered no Corral button; the holding band sees none
+## of it and keeps its ordinary queued/progress state.
+func _assert_pen_taken_refusal_by_viewing_band() -> void:
+	var herds := _declare_herd_fixtures()
+	var herd: Dictionary = herds[0]
+	for quote_variant in herd.get("rung_quotes", []):
+		var quote: Dictionary = quote_variant
+		if String(quote.get(RungQuotes.KEY_VERB, "")) == SourceForecast.IMPROVEMENT_CORRAL:
+			quote[RungQuotes.KEY_SITE_REFUSAL] = RungQuotes.SITE_REFUSAL_PEN_TAKEN
+	var knowledge := {"herding": HudConst.KNOWLEDGE_COMPLETE, "penning": HudConst.KNOWLEDGE_COMPLETE}
+	var sentence := "Another band is already penning this herd"
+	var outsider := _declare_band_fixture()
+	var holder := _band_holding_the_herd_job(SourceForecast.IMPROVEMENT_CORRAL)
+	# A band whose queue holds a DIFFERENT job on the same herd (a herd-output commitment) while the
+	# holder has the Corral: it shares the herd id and must still be refused.
+	var committer := _band_holding_the_herd_job("set_output")
+	var seen_outsider := RungGates.seen_by_band(herd, outsider)
+	var seen_holder := RungGates.seen_by_band(herd, holder)
+	var outsider_gates := RungGates.source_gates(seen_outsider, "", knowledge)
+	var holder_gates := RungGates.source_gates(seen_holder, "", knowledge)
+	var outsider_reasons: Array = outsider_gates.get(SourceForecast.IMPROVEMENT_CORRAL, [])
+	_assert_band_panel("pen taken — a band NOT holding the Corral is told \"%s\" (%s)" % [sentence, str(outsider_reasons)],
+		outsider_reasons.has(sentence))
+	_assert_band_panel("pen taken — …and is offered no Corral button (the ready offer is empty)",
+		RungGates.next_rung_ready(SourceForecast.LABOR_KIND_HUNT, seen_outsider,
+			SourceForecast.IMPROVEMENT_NONE, knowledge).is_empty())
+	var outsider_row := _corral_track_row(seen_outsider, knowledge, outsider)
+	_assert_band_panel("pen taken — …its Pen row is LOCKED with that sentence on it (%s)" % str(outsider_row.get(RungLadder.ROW_REASONS_KEY, [])),
+		String(outsider_row.get(RungLadder.ROW_STATE_KEY, "")) == RungLadder.STATE_LOCKED
+			and (outsider_row.get(RungLadder.ROW_REASONS_KEY, []) as Array).has(sentence))
+	var holder_reasons: Array = holder_gates.get(SourceForecast.IMPROVEMENT_CORRAL, [])
+	_assert_band_panel("pen taken — the HOLDING band sees no refusal (%s)" % str(holder_reasons),
+		not holder_reasons.has(sentence))
+	var committer_reasons: Array = RungGates.source_gates(RungGates.seen_by_band(herd, committer), "",
+		knowledge).get(SourceForecast.IMPROVEMENT_CORRAL, [])
+	_assert_band_panel("pen taken — a band holding a DIFFERENT job on the herd (output commitment) is still refused (%s)"
+			% str(committer_reasons),
+		committer_reasons.has(sentence))
+	var committer_seen := RungGates.seen_by_band(herd, committer)
+	_assert_band_panel("pen taken — …and gets no Corral button",
+		RungGates.next_rung_ready(SourceForecast.LABOR_KIND_HUNT, committer_seen,
+			SourceForecast.IMPROVEMENT_NONE, knowledge).is_empty()
+			and String(_corral_track_row(herd, knowledge, committer).get(RungLadder.ROW_STATE_KEY, ""))
+				== RungLadder.STATE_LOCKED)
+	var holder_row := _corral_track_row(herd, knowledge, holder)
+	_assert_band_panel("pen taken — …and its Pen row is not locked on it (%s)" % str(holder_row.get(RungLadder.ROW_REASONS_KEY, [])),
+		not (holder_row.get(RungLadder.ROW_REASONS_KEY, []) as Array).has(sentence))
+
+## The declare band with its hunt row on the herd carrying `improvement` — the field the sim derives from
+## the band's own build queue, naming the job it holds on that source.
+func _band_holding_the_herd_job(improvement: String) -> Dictionary:
+	var band := _declare_band_fixture()
+	for row_variant in band["labor_assignments"]:
+		var row: Dictionary = row_variant
+		if String(row.get("fauna_id", "")) == DECLARE_CORRAL_HERD:
+			row["improvement"] = improvement
+	return band
+
+## The destination track's row for the Corral rung, as `RungLadder.track` composes it for `band`.
+func _corral_track_row(herd: Dictionary, knowledge: Dictionary, band: Dictionary) -> Dictionary:
+	for row in RungLadder.track(SourceForecast.LABOR_KIND_HUNT, herd, "", SourceForecast.IMPROVEMENT_NONE,
+			knowledge, band):
+		if String(row.get(RungLadder.ROW_IMPROVEMENT_KEY, "")) == SourceForecast.IMPROVEMENT_CORRAL:
+			return row
+	return {}
+
+## **THE ENTRY BEHIND A BLOCKED HEAD IS NOT BLOCKED, AND SAYS NOTHING IS WRONG WITH IT.** Ray's game showed the
+## blocked pen head as a plain date and the road waiting behind it as `⚠ Blocked 0%`. The sim mints
+## `-4` for the head alone and carries it down the queue, so a `-4` at any rank past the head is inherited:
+## the road reads the plain `Queued 0%` in the dim ink, no mark, its hover `<face> — Queued 0%` and its
+## cost; the head reads `⚠ Blocked · need 2.1 hurdles` in red, its hover headline `… — Blocked 65%`, and the
+## `◆ Short 1 crook` clause stays the kit-short amber (it only slows the job).
+func _assert_a_road_behind_a_blocked_pen_head_is_just_queued() -> void:
+	_hud.update_route_rungs(_road_queue_catalog())
+	var road := _road_queue_row()
+	road["build_turns_remaining"] = SourceForecast.BUILD_TURNS_QUEUE_BLOCKED
+	_hud.update_road_network([road])
+	var pile := [{"material_id": PEN_MATERIAL, "amount": PEN_BUILD_PILE}]
+	_set_world_herds(_ring_herd_fixtures(pile, {"pen_extend_progress": BLOCKED_PEN_WORK_DONE}))
+	var band := _ring_band_fixture()
+	band["build_queue"] = [_queue_hunt_entry(RING_HERD_ID), _queue_road_entry(ROAD_QUEUE_TILE)]
+	band["material_store"] = []
+	band[HudBandLaborState.POOL_TOE_KEY] = [_pool_toe_row(HudConst.LABOR_KIND_BUILDERS, "crook",
+		BLOCKED_PEN_CROOK_REQUIRED, BLOCKED_PEN_CROOK_FILLED)]
+	_push_bands([band])
+	await _settle()
+	var rows := _build_queue_rows()
+	if rows.size() < 2:
+		_fail("road behind blocked head — the queue draws %d rows, wanted 2" % rows.size())
+		return
+	var models: Array = _hud._bandpanel._build_queue_models(_hud._band_labor.panel_band(),
+		_hud._bandpanel._work_source_models(_hud._band_labor.panel_band(), 0))
+	var road_model := {}
+	for model_variant in models:
+		if _hud._bandpanel._build_queue_row_rank(model_variant) == SourceForecast.BUILD_QUEUE_HEAD + 1:
+			road_model = model_variant
+	var percent: int = _hud._bandpanel._queue_row_percent(road_model)
+	var queued := HudSelectionVocab.RUNG_QUEUED_FORMAT % percent
+	var head_date := _find_meta_control(rows[0], HudWorkVocab.BUILD_QUEUE_DATE_META) as Label
+	var road_date := _find_meta_control(rows[1], HudWorkVocab.BUILD_QUEUE_DATE_META) as Label
+	_assert_band_panel("road behind blocked head — the HEAD reads \"⚠ Blocked · need 2.1 hurdles\" in red (got \"%s\")"
+			% ("" if head_date == null else head_date.text),
+		head_date != null and head_date.text == "⚠ Blocked · need 2.1 hurdles"
+			and head_date.get_theme_color(FONT_COLOR_THEME_KEY).is_equal_approx(HudStyle.DANGER))
+	_assert_band_panel("road behind blocked head — …the ROAD reads \"%s\" in the dim ink, with no mark (got \"%s\")"
+			% [queued, "" if road_date == null else road_date.text],
+		road_date != null and road_date.text == queued
+			and not road_date.text.contains(HudSelectionVocab.RUNG_HAZARD_GLYPH)
+			and road_date.get_theme_color(FONT_COLOR_THEME_KEY).is_equal_approx(HudStyle.INK_DIM))
+	var road_want: Array[String] = [HudWorkVocab.BUILD_QUEUE_HEADLINE_FORMAT % [
+		_hud._bandpanel._build_queue_job_face(road_model), queued]]
+	var road_cost: String = _hud._bandpanel._queue_entry_cost_line(road_model)
+	if road_cost != "":
+		road_want.append(road_cost)
+	var road_hover: Array = rows[1].tooltip_text.split("\n")
+	_assert_band_panel("road behind blocked head — …and its hover is %s (got %s)" % [str(road_want), str(road_hover)],
+		road_hover == road_want and not rows[1].tooltip_text.contains("Blocked")
+			and not rows[1].tooltip_text.contains("Waiting") and not rows[1].tooltip_text.contains("Behind"))
+	var head_hover: Array = rows[0].tooltip_text.split("\n")
+	_assert_band_panel("road behind blocked head — …the head's hover opens \"… — Blocked 65%\" then its needs (got %s)"
+			% str(head_hover),
+		head_hover.size() >= 3 and String(head_hover[0]).ends_with("— Blocked 65%")
+			and head_hover[1] == "Need 2.1 hurdles" and head_hover[2] == "Short 1 crook")
+	var kit_lines := _queue_tools_lines()
+	_assert_band_panel("road behind blocked head — …and the head's `◆ Short 1 crook` stays the kit-short amber",
+		kit_lines.size() == 1 and (kit_lines[0] as Label).text.ends_with("Short 1 crook")
+			and (kit_lines[0] as Label).get_theme_color(FONT_COLOR_THEME_KEY).is_equal_approx(
+				HudWorkVocab.note_color(HudWorkVocab.KIT_SHORT_SEVERITY)))
+	await _save("band_panel_queue_road_behind_blocked_pen")
+	_assert_zones_within_bounds()
+	_hud.update_road_network([])
+	_push_bands([_ring_band_fixture()])
+	await _settle()
+
+## **THE WORK ROW WARNS OF AN UNDERFED PEN THE WAY THE MAP, THE ORB AND THE TILE CARD DO.** All three ask
+## `PenStatus.herd_is_starving`; the board row said `Penned` and nothing else. Live: a pen at 56% fed with
+## no fodder, short 6.4 feed/turn. The row gets the `⚠` mark, the amber stripe, the one-line note and the
+## remedies on its hover; a fully-fed pen (the control, this same fixture without the shortfall) gets none.
+const UNDERFED_FED := 0.56
+const UNDERFED_SHORTFALL := 6.4
+
+func _assert_work_row_warns_of_an_underfed_pen() -> void:
+	var starving := {"pen_fed_fraction": UNDERFED_FED, "pen_pasture_fraction": UNDERFED_FED,
+		"fodder_draw": 0.0, "pen_fodder_shortfall": UNDERFED_SHORTFALL}
+	_set_world_herds(_ring_herd_fixtures([], starving))
+	_push_bands([_ring_band_fixture()])
+	await _settle()
+	var model := _hunt_row_model()
+	_assert_band_panel("underfed pen — the Work row carries the note (\"%s\")" % str(model.get("note", "")),
+		String(model.get("note", "")) == DetailFormat.PEN_UNDERFED_NOTE_SHORT_FORMAT % SourceForecast.format_fodder(
+			UNDERFED_SHORTFALL))
+	_assert_band_panel("underfed pen — …the ⚠ mark and the attention flag",
+		String(model.get("marks", "")).contains(HudComposeVocab.OVERHUNT_FLAG) and bool(model.get("attention", false)))
+	var hover_lines: Array = String(model.get("tooltip", "")).split(SourceForecast.TOOLTIP_LINE_SEPARATOR)
+	_assert_band_panel("underfed pen — …the hover is one fact a line, hazard then Fix, closing on the open hint (%s)"
+			% str(hover_lines),
+		String(model.get("tooltip", "")).contains(DetailFormat.pen_underfed_hover(
+			_hud._band_labor.find_world_herd(RING_HERD_ID)))
+		and String(hover_lines[hover_lines.size() - 1]) == HudWorkVocab.WORK_ROW_OPEN_HINT
+		and String(hover_lines[0]).begins_with("+")
+		and String(hover_lines[1]).begins_with("⚠ Overstaffed: ") and String(hover_lines[1]).ends_with(" add nothing"))
+	await _save("band_panel_work_pen_underfed")
+	_hud._bandpanel._toggle_work_inspector(String(model.get("key", "")))
+	await _settle()
+	await _save("band_panel_work_pen_underfed_open")
+	_hud._bandpanel._toggle_work_inspector(String(model.get("key", "")))
+	_set_world_herds(_ring_herd_fixtures())
+	_push_bands([_ring_band_fixture()])
+	await _settle()
+	var fed := _hunt_row_model()
+	_assert_band_panel("underfed pen — a fully fed pen's row carries no pen warning (\"%s\")" % str(fed.get("note", "")),
+		not String(fed.get("note", "")).begins_with("Underfed")
+		and not String(fed.get("tooltip", "")).contains(DetailFormat.PEN_FEED_FIX_LINE))
+
+## The ring band's hunt row model, off the controller's own producer.
+func _hunt_row_model() -> Dictionary:
+	var band: Dictionary = _hud._band_labor.player_bands()[0] if not _hud._band_labor.player_bands().is_empty() else {}
+	for model_variant in _hud._bandpanel._work_source_models(band, 0):
+		var model: Dictionary = model_variant
+		if String(model.get("kind", "")) == SourceForecast.LABOR_KIND_HUNT:
+			return model
+	return {}
+
+## **A HEAD THE SHELF CANNOT FEED SAYS SO, IN THE PLAYER'S WORDS.** Reported from play: a Pen climbing on
+## a band holding no hurdles read only `builders short of crooks`, and nothing anywhere named the good the
+## build was actually stalled on. The ring is the head here, weighed at its own meter (30 of 40 work, so a
+## quarter of the 6-hurdle pile is still to draw = 1.5). Three shelves: none, some, enough.
+func _assert_queue_head_says_what_the_shelf_lacks() -> void:
+	var pile := [{"material_id": PEN_MATERIAL, "amount": PEN_BUILD_PILE}]
+	var left := PEN_BUILD_PILE * (1.0 - RING_WORK_DONE / RING_WORK_COST)
+	_set_world_herds(_ring_herd_fixtures(pile))
+	for shelf in [0.0, 1.0, PEN_BUILD_PILE]:
+		var band := _ring_band_fixture()
+		band["material_store"] = [] if shelf == 0.0 else [{"material_id": PEN_MATERIAL, "amount": shelf}]
+		_push_bands([band])
+		await _settle()
+		var rows := _build_queue_rows()
+		var clause := _find_meta_control(rows[0], HudWorkVocab.BUILD_QUEUE_MATERIAL_LINE_META) as Label \
+			if not rows.is_empty() else null
+		var drawn := "" if clause == null else String(clause.get_meta(HudWorkVocab.BUILD_QUEUE_MATERIAL_LINE_META))
+		if shelf >= PEN_BUILD_PILE:
+			_assert_band_panel("hurdles — a shelf that covers the pile draws no clause (got \"%s\")" % drawn,
+				clause == null)
+			continue
+		var short := {
+			DetailFormat.MATERIAL_SHORT_ID_KEY: PEN_MATERIAL,
+			DetailFormat.MATERIAL_SHORT_HELD_KEY: shelf,
+			DetailFormat.MATERIAL_SHORT_MISSING_KEY: left - shelf}
+		var wanted := DetailFormat.build_material_short_text(short)
+		_assert_band_panel("hurdles — a shelf of %.1f draws \"%s\" (got \"%s\")" % [shelf, wanted, drawn],
+			drawn == wanted and wanted != "")
+		_assert_band_panel("hurdles — the clause is in the missing-good ink",
+			clause != null and clause.get_theme_color(FONT_COLOR_THEME_KEY).is_equal_approx(HudStyle.DANGER))
+		await _save("band_panel_queue_no_hurdles" if shelf == 0.0 else "band_panel_queue_short_hurdles")
+		_assert_zones_within_bounds()
+	# The producer on the shape the live wire sent: a 6-hurdle pen at 64.98%, nothing on the shelf.
+	var live := DetailFormat.build_material_shortfall(
+		[{"material_id": PEN_MATERIAL, "amount": PEN_BUILD_PILE}] as Array[Dictionary], {}, 0.64981526)
+	_assert_band_panel("hurdles — the live pen (6 hurdles, 65%%, none held) misses %.2f" % float(
+		live.get(DetailFormat.MATERIAL_SHORT_MISSING_KEY, -1.0)),
+		is_equal_approx(float(live.get(DetailFormat.MATERIAL_SHORT_MISSING_KEY, -1.0)),
+			PEN_BUILD_PILE * (1.0 - 0.64981526)))
+	_push_bands([_ring_band_fixture()])
+	await _settle()
 
 ## **THE FOUR CLAIMS, ON BOTH WORK-TAB READOUTS AT ONCE** — the queue row's title, its date column,
 ## and the source row's rung chip, every one composed through the SHIPPED format so a claim pins the
@@ -11426,12 +11930,12 @@ func _pen_price_herd_fixtures() -> Array:
 		var herd: Dictionary = herd_variant
 		if String(herd.get("id", "")) != DECLARE_CORRAL_HERD:
 			continue
-		herd["build_material_cost"] = [
+		herd["corral_build_material_cost"] = [
 			{"material_id": PEN_MATERIAL, "amount": PEN_BUILD_PILE}]
 		herd["corral_upkeep_material_demand"] = [
 			{"material_id": PEN_MATERIAL, "amount": PEN_HOLD_RATE}]
 		herd["corral_upkeep_demand"] = PEN_HOLD_WORK
-	return herds
+	return RUNG_FX.stamp_herds(herds)
 
 ## **THE RING CARD'S SUBJECT — the same Aurochs, STOOD ON the pen it was being offered.** Derived from
 ## the track's own fixture so only the position differs; `RUNG_FX.stamp_herds` re-reads `corralled` and
@@ -11897,10 +12401,9 @@ func _assert_ready_mark_declares() -> void:
 		lines.append(String(MAIN_SCRIPT.format_improvement(seen[0] as Dictionary).get("line", "")))
 	lines.sort()
 	var want: Array[String] = [
-		"corral %d %d %d" % [HudConst.PLAYER_FACTION_ID,
-			DECLARE_CORRAL_TILE.x, DECLARE_CORRAL_TILE.y],
-		"sow %d %d %d" % [HudConst.PLAYER_FACTION_ID, DECLARE_PATCH.x, DECLARE_PATCH.y],
-		"tame %d %s" % [HudConst.PLAYER_FACTION_ID, DECLARE_TAME_HERD],
+		"build corral %d %s" % [HudConst.PLAYER_FACTION_ID, DECLARE_CORRAL_HERD],
+		"build sow %d %d %d" % [HudConst.PLAYER_FACTION_ID, DECLARE_PATCH.x, DECLARE_PATCH.y],
+		"build tame %d %s" % [HudConst.PLAYER_FACTION_ID, DECLARE_TAME_HERD],
 	]
 	want.sort()
 	_assert_band_panel("declare — the three ⌃ presses transmit %s (got %s)" % [str(want), str(lines)],
@@ -12877,7 +13380,7 @@ func _work_head_fodder_total() -> Label:
 	_collect_labels(_panel, labels)
 	for label_variant in labels:
 		var label: Label = label_variant
-		if label.tooltip_text == HudWorkVocab.WORK_FODDER_TOTAL_TOOLTIP:
+		if label.tooltip_text.begins_with("Fodder ") and label.tooltip_text.ends_with("Feeds pens, not people"):
 			return label
 	return null
 
@@ -14980,7 +15483,7 @@ func _assert_a_crew_bigger_than_its_source_is_flagged() -> void:
 	# the flag would have no sentence anywhere on the row explaining it.
 	_assert_band_panel("wasted crew — …and its hover names the state in the shared word (`%s`)"
 			% HudDepositVocab.OVERSTAFFED_WORD,
-		String(wasted.get("tooltip", "")).contains(HudDepositVocab.OVERSTAFFED_WORD))
+		String(wasted.get("tooltip", "")).to_lower().contains(HudDepositVocab.OVERSTAFFED_WORD))
 	# ⛔ **THE HALF THE STRICTNESS EXISTS FOR.** A fully staffed source is the GOOD state, and flagging
 	# it would mark every correctly-crewed source on every board in the game.
 	_assert_band_panel(("wasted crew — …while the FULLY STAFFED row is calm, its `+` dead and its "
@@ -15836,6 +16339,23 @@ func _assert_beliefs_compact_clause() -> void:
 	_assert_band_panel("beliefs compact: ...and the Beliefs hover names who is pulling",
 		String(drift_ctx.row_tooltips.get(HudDisclosureVocab.DETAIL_ROW_BELIEFS, "")).contains(
 			HudDisclosureVocab.BELIEFS_DRIFT_UNKNOWN_BAND))
+	# CULTURE PRESSURE (#820) in the SHORT tier: phase 2/3 wear an amber clause on the Morale line; 0/1 add none.
+	FactionNames.update([{"faction": 11, "name": "Ashfolk"}, {"faction": 12, "name": "Reedwalkers"}])
+	var pressed := _vitals_worst_case_band_fixture()
+	pressed["culture_pressures"] = [
+		{"faction": 12, "pressure": 3.1, "phase": 3, "close": true, "turns_to_next": 0},
+		{"faction": 11, "pressure": 1.8, "phase": 2, "close": true, "turns_to_next": 4}]
+	var pressed_joined := "\n".join(_hud._banddetail.unit_summary_lines(
+		pressed, "", DetailFormat.Context.new(), true))
+	var forced_clause := "[color=#%s]%s %s[/color]" % [HudStyle.WARN_HEX, HudSelectionVocab.RUNG_HAZARD_GLYPH,
+		HudDisclosureVocab.CULTURE_PRESSURE_COMPACT_FORCED_FORMAT % "Reedwalkers"]
+	_assert_band_panel("culture pressure compact: the strongest phase>=2 row wears one amber clause",
+		pressed_joined.contains(forced_clause) and not pressed_joined.contains("Ashfolk"))
+	pressed["culture_pressures"] = [{"faction": 11, "pressure": 1.8, "phase": 1, "close": true, "turns_to_next": 4}]
+	_assert_band_panel("culture pressure compact: phase 1 adds nothing",
+		not "\n".join(_hud._banddetail.unit_summary_lines(
+			pressed, "", DetailFormat.Context.new(), true)).contains("Ashfolk"))
+	FactionNames.reset()
 	_assert_band_panel("beliefs compact: a band with NO pull adds nothing to the line",
 		not untied_joined.contains(BandOverlayRenderer.ANCESTORS_GLYPH)
 		and pulled_joined.contains(BandOverlayRenderer.ANCESTORS_GLYPH)
@@ -15853,6 +16373,8 @@ func _vitals_worst_case_band_fixture() -> Dictionary:
 	var band := _arrivals_band_fixture()
 	band["entity"] = 922
 	band["id"] = "Band 11"
+	# Phase 2 pressure so the SHORT-tier frame shows the amber culture-pressure clause (#820).
+	band["culture_pressures"] = [{"faction": 12, "pressure": 2.4, "phase": 2, "close": true, "turns_to_next": 6}]
 	band["turns_of_food"] = WORST_CASE_TURNS_OF_FOOD
 	band["stores"] = {"provisions": WORST_CASE_PROVISIONS}
 	band["fodder_store"] = WORST_CASE_FODDER_STORE
@@ -16352,11 +16874,11 @@ func _builders_kit_patch(queue_position: int) -> Dictionary:
 
 ## …and its animal twin, the herd this band's hunt row names.
 func _builders_kit_herd(queue_position: int) -> Dictionary:
-	return {
+	return RUNG_FX.stamp_herd({
 		"id": BUILDERS_KIT_HERD,
 		"x": BUILDERS_KIT_HERD_TILE.x, "y": BUILDERS_KIT_HERD_TILE.y,
 		"build_queue_position": queue_position,
-	}
+	})
 
 ## **THE HEAD STATES THE POOL AND THE KIT ITS HEAD ENTRY IMPLIES.**
 ##
@@ -16790,14 +17312,12 @@ func _render_queue_head_tools_short_state() -> void:
 	_assert_zones_within_bounds()
 	_assert_zone_content_fits()
 	_assert_queue_head_tools_mark("the tall LEFT dock")
+	# Without the roster's names the line falls back to the wire's own item id, on the head's hover only.
 	for row in _build_queue_rows():
-		var is_head := int(row.get_meta(HudWorkVocab.BUILD_QUEUE_ROW_META)) \
-			== SourceForecast.BUILD_QUEUE_HEAD
-		var says := row.tooltip_text.contains(HudWorkVocab.BUILD_QUEUE_HEAD_TOOLS_SHORT_TOOLTIP)
-		_assert_band_panel("head tools — rank %d's hover %s the tool sentence"
-				% [int(row.get_meta(HudWorkVocab.BUILD_QUEUE_ROW_META)),
-					"states" if is_head else "does NOT state"],
-			says == is_head)
+		var is_head := int(row.get_meta(HudWorkVocab.BUILD_QUEUE_ROW_META)) == SourceForecast.BUILD_QUEUE_HEAD
+		_assert_band_panel("head tools — rank %d's hover %s a `Short N <item>` line before the roster arrives"
+				% [int(row.get_meta(HudWorkVocab.BUILD_QUEUE_ROW_META)), "has" if is_head else "has no"],
+			row.tooltip_text.contains("Short 1 %s" % POOL_TOE_BUILDERS_ITEM) == is_head)
 	var builders := _pool_card_answers(HudWorkVocab.ROLE_NAME_BUILDERS)
 	_assert_band_panel("head tools — …and the Builders card names the top job: \"%s\" (got \"%s\")"
 			% [HudWorkVocab.POOL_TOOLS_SHORT_BUILDERS_LINE, builders.get("gear", "")],
@@ -16813,20 +17333,23 @@ func _render_queue_head_tools_short_state() -> void:
 		String(named.get("gear", "")) == named_want)
 	# …and the QUEUE HEAD names the same tool, on its amber second line and its hover.
 	var hoes := POOL_TOE_BUILDERS_ITEM_NAME.to_lower()
-	var head_line_want := HudWorkVocab.BUILD_QUEUE_ROW_TOOLS_SHORT_FORMAT % [HudWorkVocab.KIT_SHORT_MARK,
-		HudWorkVocab.BUILD_QUEUE_ROW_TOOLS_SHORT_NAMED_FORMAT % hoes]
+	var head_line_want := _queue_tools_clause()
 	var head_lines := _queue_tools_lines()
 	var head_line := "" if head_lines.is_empty() else (head_lines[0] as Label).text
 	_assert_band_panel("head tools — …and the queue HEAD's second line names it: \"%s\" (got \"%s\")"
 			% [head_line_want, head_line],
 		head_line == head_line_want)
-	var head_tip_want := HudWorkVocab.BUILD_QUEUE_HEAD_TOOLS_SHORT_NAMED_TOOLTIP % [hoes, hoes]
+	var head_tip_want := HudWorkVocab.BUILD_QUEUE_KIT_SHORT_LINE_FORMAT % [1, hoes]
 	var head_tip := ""
+	var others_name_it := false
 	for row in _build_queue_rows():
 		if int(row.get_meta(HudWorkVocab.BUILD_QUEUE_ROW_META)) == SourceForecast.BUILD_QUEUE_HEAD:
 			head_tip = row.tooltip_text
-	_assert_band_panel("head tools — …and its hover: \"%s\"" % head_tip_want,
-		head_tip.contains(head_tip_want))
+		elif row.tooltip_text.contains(head_tip_want):
+			others_name_it = true
+	_assert_band_panel("head tools — …and its hover has the line \"%s\", which no other entry's does"
+			% head_tip_want,
+		head_tip.split("\n").has(head_tip_want) and not others_name_it)
 	await _save("band_panel_queue_head_tools_named")
 	_hud.update_equipment_config(JSON.stringify({}))
 	_hud._bandpanel.rerender()
@@ -16847,14 +17370,15 @@ func _render_queue_head_tools_short_state() -> void:
 		_queue_tools_lines().is_empty() and head_open != null
 			and absf(head_open.size.y - HudWorkVocab.BUILD_QUEUE_ROW_HEIGHT) <= QUEUE_FACE_WIDTH_TOLERANCE
 			and is_equal_approx(head_open.custom_minimum_size.y, HudWorkVocab.BUILD_QUEUE_ROW_HEIGHT))
-	_assert_band_panel("head tools — …and the strip's detail line LEADS with \"%s\" (\"%s\")"
-			% [_queue_tools_clause(), detail],
-		detail.begins_with(_queue_tools_clause()))
-	var open_detail := _find_meta_control(_panel, HudWorkVocab.BUILD_QUEUE_DETAIL_META) as Label
+	var kit_line := HudWorkVocab.BUILD_QUEUE_KIT_SHORT_LINE_FORMAT % [1, POOL_TOE_BUILDERS_ITEM_NAME.to_lower()]
+	_assert_band_panel("head tools — …and the strip states the same kit line \"%s\" (\"%s\")"
+			% [kit_line, detail.replace("\n", " | ")],
+		detail.split("\n").has(kit_line))
+	var kit_label := _strip_fact_label(kit_line)
 	_assert_band_panel("head tools — …in the kit-short amber (%s)"
-			% [Color.TRANSPARENT if open_detail == null
-				else open_detail.get_theme_color(FONT_COLOR_THEME_KEY)],
-		open_detail != null and open_detail.get_theme_color(FONT_COLOR_THEME_KEY).is_equal_approx(
+			% [Color.TRANSPARENT if kit_label == null
+				else kit_label.get_theme_color(FONT_COLOR_THEME_KEY)],
+		kit_label != null and kit_label.get_theme_color(FONT_COLOR_THEME_KEY).is_equal_approx(
 			HudWorkVocab.note_color(HudWorkVocab.KIT_SHORT_SEVERITY)))
 	# THE TAME ROW'S STRIP — it opened to a bare `✕` before; now a detail line and a labelled button.
 	_hud._bandpanel._toggle_queue_settings(_queue_entry_key(true))
@@ -16866,19 +17390,21 @@ func _render_queue_head_tools_short_state() -> void:
 	print("band_panel_preview: head tools — the Tame strip's detail line reads \"%s\"" % tame_detail)
 	# BY EQUALITY against the fixture's own price, composed through the producer the row's hover
 	# uses — so the claim is that the line states THIS job's price, not that some text rendered.
-	var tame_price := DetailFormat.build_price_clause(QUEUE_TAME_WORK_COST,
-		SourceForecast.BUILD_TURNS_NO_ESTIMATE, QUEUE_TAME_UPKEEP, SourceForecast.SOURCE_KIND_HERD)
+	var tame_price := HudWorkVocab.BUILD_QUEUE_COST_FORMAT % DetailFormat.format_work_units(
+		QUEUE_TAME_WORK_COST) + HudWorkVocab.BUILD_QUEUE_UPKEEP_CLAUSE_FORMAT % DetailFormat.format_work_units(
+		QUEUE_TAME_UPKEEP)
 	_assert_band_panel("head tools — the TAME row opens on its price, not a bare control — \"%s\" (want \"%s\")"
 			% [tame_detail, tame_price],
-		tame_strip != null and tame_price != "" and tame_detail == tame_price)
+		tame_strip != null and tame_price != "" and tame_detail.split("\n").has(tame_price))
 	# …and with a NON-head strip open, the head's own strip is closed, so the head wears its line again.
 	_assert_queue_head_tools_mark("a non-head strip open")
 	if tame_strip != null:
-		_assert_band_panel("head tools — …and a crop-less strip is ONE control line — %.0f reserved (want %.0f), %.0f drawn"
-				% [tame_strip.custom_minimum_size.y, HudWorkVocab.BUILD_QUEUE_SETTINGS_HEIGHT,
-					tame_strip.size.y],
-			is_equal_approx(tame_strip.custom_minimum_size.y,
-				HudWorkVocab.BUILD_QUEUE_SETTINGS_HEIGHT)
+		# One control line (headline + `✕`) plus one line per further fact — the Tame entry's cost line.
+		var tame_reserved := HudWorkVocab.build_queue_settings_height(true, 0, false,
+			_tame_fact_lines())
+		_assert_band_panel("head tools — …and a crop-less strip is the control line plus one line per further fact — %.0f reserved (want %.0f), %.0f drawn"
+				% [tame_strip.custom_minimum_size.y, tame_reserved, tame_strip.size.y],
+			is_equal_approx(tame_strip.custom_minimum_size.y, tame_reserved)
 				and absf(tame_strip.size.y - tame_strip.custom_minimum_size.y)
 					<= QUEUE_FACE_WIDTH_TOLERANCE)
 		await _assert_labelled_withdrawal_by_real_input(tame_strip)
@@ -16913,7 +17439,7 @@ func _render_queue_head_tools_short_state() -> void:
 	_assert_band_panel("head tools — …and the FILLED head's open strip does not state it (\"%s\")"
 			% _queue_strip_detail(),
 		_find_meta_control(_panel, HudWorkVocab.BUILD_QUEUE_SETTINGS_META) != null
-			and not _queue_strip_detail().contains(HudWorkVocab.BUILD_QUEUE_ROW_TOOLS_SHORT_TEXT))
+			and not _queue_strip_detail().contains("Short "))
 	_hud._bandpanel._queue_open_key = ""
 	# THE PENDING ROW IS NEVER THE HEAD — even stamped at rank 0 the helper refuses it, and at its
 	# real `NOT_IN_ANY_BUILD_QUEUE` rank too; and a queue LED by a pending entry charges no second line.
@@ -16945,7 +17471,7 @@ func _render_queue_head_tools_short_state() -> void:
 ## The detail line's leading clause on the tool-short head's open strip.
 func _queue_tools_clause() -> String:
 	return HudWorkVocab.BUILD_QUEUE_ROW_TOOLS_SHORT_FORMAT % [HudWorkVocab.KIT_SHORT_MARK,
-		HudWorkVocab.BUILD_QUEUE_ROW_TOOLS_SHORT_TEXT]
+		HudWorkVocab.BUILD_QUEUE_KIT_SHORT_LINE_FORMAT % [1, POOL_TOE_BUILDERS_ITEM.to_lower()]]
 
 ## The drawn `◆` second lines, wherever they are.
 func _queue_tools_lines() -> Array[Control]:
@@ -16972,8 +17498,7 @@ func _assert_queue_head_tools_mark(where: String) -> void:
 		_fail("head mark — %s: no head row / mark line to measure" % where)
 		return
 	var mark := lines[0] as Label
-	var want_text := HudWorkVocab.BUILD_QUEUE_ROW_TOOLS_SHORT_FORMAT % [HudWorkVocab.KIT_SHORT_MARK,
-		HudWorkVocab.BUILD_QUEUE_ROW_TOOLS_SHORT_TEXT]
+	var want_text := _queue_tools_clause()
 	_assert_band_panel("head mark — %s: …it reads \"%s\" (got \"%s\")" % [where, want_text, mark.text],
 		mark.text == want_text)
 	_assert_band_panel("head mark — %s: …in the kit-short amber (%s)"
@@ -17015,6 +17540,39 @@ func _assert_queue_head_tools_mark(where: String) -> void:
 	_assert_band_panel("head mark — %s: …and the marker column still holds `%s` (\"%s\")"
 			% [where, HudWorkVocab.BUILD_QUEUE_HEAD_MARKER, marker.text],
 		marker.text == HudWorkVocab.BUILD_QUEUE_HEAD_MARKER)
+
+## The extra fact lines an open strip needs, off the controller's own content answer for ITS entry.
+func _strip_fact_lines(strip: Control) -> int:
+	var band := _hud._band_labor.panel_band()
+	var key := String(strip.get_meta(HudWorkVocab.BUILD_QUEUE_SETTINGS_META))
+	for model_variant in _hud._bandpanel._build_queue_models(band,
+			_hud._bandpanel._work_source_models(band, 0)):
+		var model: Dictionary = model_variant
+		if String(model.get("key", "")) == key:
+			return int(_hud._bandpanel._queue_settings_content(band, model)["fact_lines"])
+	return 0
+
+## The extra fact lines the open (Tame) strip needs, off the controller's own content answer.
+func _tame_fact_lines() -> int:
+	var band := _hud._band_labor.panel_band()
+	for model_variant in _hud._bandpanel._build_queue_models(band,
+			_hud._bandpanel._work_source_models(band, 0)):
+		var model: Dictionary = model_variant
+		if String(model.get("key", "")) == _queue_entry_key(true):
+			return int(_hud._bandpanel._queue_settings_content(band, model)["fact_lines"])
+	return 0
+
+## The Label in the open strip whose text is exactly `text` (one fact each), `null` for none.
+func _strip_fact_label(text: String) -> Label:
+	var strip := _find_meta_control(_panel, HudWorkVocab.BUILD_QUEUE_SETTINGS_META)
+	if strip == null:
+		return null
+	var labels: Array = []
+	_collect_labels(strip, labels)
+	for label_variant in labels:
+		if (label_variant as Label).text == text:
+			return label_variant
+	return null
 
 ## The open strip's detail line, off its handle — the FULL text, not the ellipsised face.
 func _queue_strip_detail() -> String:
@@ -17136,7 +17694,7 @@ func _assert_queue_settings_strip(where: String) -> void:
 	# strip; a crop strip reserving more than that is a strip the zone was never told could draw.
 	_assert_band_panel("%s …leading with the job's DETAIL line" % where,
 		_find_meta_control(strip, HudWorkVocab.BUILD_QUEUE_DETAIL_META) != null)
-	var ceiling := HudWorkVocab.build_queue_settings_height(true, 0, true)
+	var ceiling := HudWorkVocab.build_queue_settings_height(true, 0, true, _strip_fact_lines(strip))
 	_assert_band_panel("%s …and its %.0fpx is within a crop strip's %.0f"
 			% [where, reserved, ceiling],
 		reserved <= ceiling + QUEUE_FACE_WIDTH_TOLERANCE)
@@ -17815,12 +18373,12 @@ func _road_queue_row() -> Dictionary:
 		"build_turns_remaining": SourceForecast.BUILD_TURNS_NOT_YET_ESTIMATED,
 	}
 
-## …and the queue entry the sim publishes for it: `kind: "roadwork"`, `road: true`, the road's TILE.
+## …and the queue entry the sim publishes for it: `kind: "roadwork"`, `branch: "route"`, the road's TILE.
 ## `BuildSource::kind()` is the same token the band-wide roadwork ROLE uses, which is exactly why
 ## `HudBandLaborState.pending_key` gates its road arm on a real tile.
 static func _queue_road_entry(tile: Vector2i) -> Dictionary:
 	return {"kind": HudConst.LABOR_KIND_ROADWORK,
-		"target_x": tile.x, "target_y": tile.y, "fauna_id": "", "road": true}
+		"target_x": tile.x, "target_y": tile.y, "fauna_id": "", "branch": HudRouteVocab.ROAD_BRANCH}
 
 ## The band whose queue is `[Tame <herd>, grade <road>]` — Ray's own shape, with the road behind the
 ## Tame that is taking every builder.
@@ -17930,7 +18488,7 @@ func _assert_a_queued_road_draws_its_row() -> void:
 		_hud.unqueue_requested.disconnect(sink)
 		var line := "" if seen.is_empty() 			else String(MAIN_SCRIPT.format_unqueue(seen[0] as Dictionary).get("line", ""))
 		# ⛔ **THE ROAD FORM** (`docs/plan_site_crews.md` §2.4) — the bare tile is the PATCH on that hex.
-		var wanted_line := "unqueue %d road %d %d" % [HudConst.PLAYER_FACTION_ID,
+		var wanted_line := "unqueue %d route %d %d" % [HudConst.PLAYER_FACTION_ID,
 			ROAD_QUEUE_TILE.x, ROAD_QUEUE_TILE.y]
 		print("band_panel_preview: queued road withdrawal -> %s" % line)
 		_assert_band_panel("…and pressing it sends `%s` — the ROAD form, and never `abandon` (got \"%s\")"
@@ -18369,7 +18927,7 @@ func _assert_the_roadwork_roster_names_its_roads() -> void:
 		_hud.abandon_requested.disconnect(sink)
 		var line := "" if seen.is_empty() \
 			else String(MAIN_SCRIPT.format_abandon(seen[0] as Dictionary).get("line", ""))
-		var wanted_line := "abandon %d road %d %d" % [HudConst.PLAYER_FACTION_ID,
+		var wanted_line := "abandon %d route %d %d" % [HudConst.PLAYER_FACTION_ID,
 			ROSTER_NEAR_TILE.x, ROSTER_NEAR_TILE.y]
 		print("band_panel_preview: roadwork inspector put-down -> %s" % line)
 		_assert_band_panel("…and pressing it sends `%s` for that row's OWN tile (got \"%s\")"
@@ -18528,7 +19086,7 @@ func _assert_the_pick_names_the_working() -> void:
 	# ⛔ **THE MATERIAL IS `stone`, WHICH IS THE WHOLE ASSERTION.** The mark was found by the rock's own
 	# `(tile, material)` handle and the near hex's OTHER working is wood, so a declaration that lost
 	# the material — or took the row's neighbour's — reads as a different line here.
-	var wanted := "%s %d %d %d %s" % [WORKINGS_QUARRY_VERB, HudConst.PLAYER_FACTION_ID,
+	var wanted := "build %s %d %d %d %s" % [WORKINGS_QUARRY_VERB, HudConst.PLAYER_FACTION_ID,
 		ROSTER_NEAR_TILE.x, ROSTER_NEAR_TILE.y, WORKINGS_STONE]
 	print("band_panel_preview: workings ladder pick -> %s" % line)
 	_assert_band_panel("…and picking it sends `%s`, naming that row's TILE and its MATERIAL (got \"%s\")"
@@ -19052,7 +19610,7 @@ const UNOPENED_NO_TAKE := 0.0
 ## gap the quarry rung above it buys, and never a restatement of the stock.
 const UNOPENED_STONE_REACHABLE := 450.0
 
-## **THE TWO DEPOSIT BRANCHES' RUNG CATALOG** (issue #650) — `SubsistenceSection.depositRungs`, per
+## **THE TWO DEPOSIT BRANCHES' RUNG CATALOG** (issue #650) — `SubsistenceSection.ladderRungs`, per
 ## world. ⛔ **THE ROSTER READS IT FOR EVERY RUNG NAME IT PRINTS**, so a state that pushed no catalog
 ## would draw `forestry:felling` in each value cell: a raw wire key is the honest answer for a rung the
 ## catalog does not carry, and a whole roster of them is a fixture that never sent one.
@@ -19785,7 +20343,7 @@ func _assert_a_working_and_a_road_carry_their_marks() -> void:
 			"target_y": ROSTER_NEAR_TILE.y, "fauna_id": "", "material": WORKINGS_STONE,
 			"build_priority": MARKS_WORKING_BUILD_LEVEL},
 		{"kind": HudConst.LABOR_KIND_ROADWORK, "target_x": ROSTER_NEAR_TILE.x,
-			"target_y": ROSTER_NEAR_TILE.y, "fauna_id": "", "road": true,
+			"target_y": ROSTER_NEAR_TILE.y, "fauna_id": "", "branch": HudRouteVocab.ROAD_BRANCH,
 			"build_priority": MARKS_ROAD_BUILD_LEVEL},
 	]
 	_push_bands([band])
@@ -19840,7 +20398,7 @@ func _assert_a_working_and_a_road_carry_their_marks() -> void:
 		if road_build != null:
 			var line := await _pressed_line(road_build, "build_priority_requested",
 				MAIN_SCRIPT.format_build_priority)
-			var wanted := "build_priority %d %d road %d %d " % [faction, band_id, ROSTER_NEAR_TILE.x,
+			var wanted := "build_priority %d %d route %d %d " % [faction, band_id, ROSTER_NEAR_TILE.x,
 				ROSTER_NEAR_TILE.y]
 			_assert_band_panel("…whose press names the ROAD (got \"%s\")" % line,
 				line.begins_with(wanted))
@@ -21476,20 +22034,24 @@ func _work_section_head(key: StringName) -> Control:
 			return head
 	return null
 
-## Every entry carries the blocked sentinel, not just the head — the sim's own behaviour, and a block
-## that showed it on the head alone would report a stuck queue as a moving one.
+## The sim carries the head's blocked sentinel down the whole queue, but only the HEAD is blocked: it
+## reads the `⚠ Blocked` face and every entry behind it reads the plain `Queued N%` in the dim ink — a
+## row with nothing to fix must not wear the mark the head's problem earned.
 func _assert_build_queue_all_blocked() -> void:
-	var blocked := 0
 	var seen: Array[String] = []
 	var needle := HudSelectionVocab.RUNG_BLOCKED_FORMAT % [HudSelectionVocab.RUNG_HAZARD_GLYPH, 0]
+	var queued := HudSelectionVocab.RUNG_QUEUED_FORMAT % 0
+	var behind_ok := true
 	for row in _build_queue_rows():
 		var date := _find_meta_control(row, HudWorkVocab.BUILD_QUEUE_DATE_META)
 		var value := "" if date == null else String(date.get_meta(HudWorkVocab.BUILD_QUEUE_DATE_META))
 		seen.append(value)
-		if value == needle:
-			blocked += 1
-	_assert_band_panel("a blocked HEAD blocks the whole queue — all 3 entries read \"%s\" (%s)"
-			% [needle, str(seen)], blocked == 3)
+		if int(row.get_meta(HudWorkVocab.BUILD_QUEUE_ROW_META)) > SourceForecast.BUILD_QUEUE_HEAD:
+			behind_ok = behind_ok and value == queued and (date as Label).get_theme_color(
+				FONT_COLOR_THEME_KEY).is_equal_approx(HudStyle.INK_DIM)
+	_assert_band_panel("a blocked HEAD reads \"%s\" and the 2 entries behind it read \"%s\" (%s)"
+			% [needle, queued, str(seen)],
+		seen.size() == 3 and seen[0] == needle and behind_ok)
 
 ## **WHY THE BUILDERS ARE HELD, ON THE QUEUE'S OWN SURFACE** (`docs/plan_standing_upkeep.md` §4.6b).
 ## The date column can only say `⚠ Blocked N%`, which is the STATE; the cause is a sentence, and a
@@ -21511,21 +22073,21 @@ func _assert_build_queue_states_the_cause() -> void:
 		QUEUE_PATCH_BIOMASS, int(ceil(QUEUE_PATCH_FLOOR * QUEUE_PATCH_CAPACITY)),
 		int(round(QUEUE_PATCH_FLOOR * 100.0))]
 	var wanted_herd := String(HudSelectionVocab.BUILD_BLOCKED_REASONS[QUEUE_BLOCKED_HERD_REASON])
-	var plant_rows := 0
-	var herd_rows := 0
+	# Only the HEAD is blocked on its own cause, so only the head's hover states one; the entries behind
+	# it are merely queued and carry the cost line alone.
+	var head_text := ""
+	var behind_causes := 0
 	for row in _build_queue_rows():
 		var tooltip := String(row.tooltip_text)
-		if tooltip.contains(wanted_plant):
-			plant_rows += 1
-		if tooltip.contains(wanted_herd):
-			herd_rows += 1
-	_assert_band_panel("a blocked entry's hover states the ESCAPEMENT cause — \"%s\" (%d rows)"
-			% [wanted_plant, plant_rows], plant_rows > 0)
-	# …and the SECOND key, which is what stops a table that answers one sentence for every cause.
-	_assert_band_panel("…and the herd entry blocked on KNOWLEDGE states its own cause instead — \"%s\""
-			% wanted_herd, herd_rows > 0)
-	_assert_band_panel("…and the two causes are DIFFERENT sentences on different rows",
-		wanted_plant != wanted_herd and plant_rows + herd_rows == _build_queue_rows().size())
+		if int(row.get_meta(HudWorkVocab.BUILD_QUEUE_ROW_META)) == SourceForecast.BUILD_QUEUE_HEAD:
+			head_text = tooltip
+		elif tooltip.contains(wanted_plant) or tooltip.contains(wanted_herd):
+			behind_causes += 1
+	_assert_band_panel("the blocked HEAD's hover states its own cause — \"%s\" or \"%s\""
+			% [wanted_plant, wanted_herd],
+		head_text.contains(wanted_plant) or head_text.contains(wanted_herd))
+	_assert_band_panel("…and no entry behind it repeats the head's cause (%d do)" % behind_causes,
+		behind_causes == 0 and wanted_plant != wanted_herd)
 
 ## **THE PAIRED NEGATIVE, and it is the half a producer that always emitted a line would fail.** A
 ## queue that is moving states no cause at all — not a fallback, not an empty indented line — so the
@@ -25550,6 +26112,112 @@ func _site_row_icon_x(site: Control) -> float:
 ## ⛔ **ALL FIVE SECTIONS AT ONCE** — the sections band holding roads it keeps (so ROADWORK draws, with
 ## its `Road crew` row) and workings (so GROUNDWORK draws): the one frame where every section, both pool
 ## rows and a groundwork row can be read against each other.
+## **A TILE CREW ROW RENDERS FROM THE CATALOG ALONE** (issue #175). No tile branch ships, so this stages a
+## fixture catalog -- an `orchard` branch with a `grafted` rung -- and two `tile` labor rows: one the
+## catalog knows (named `Orchard`, standing on `Grafted`) and one on a branch it has never heard of with
+## no `tile_improvements` row at all (humanised, `Wild`). Neither may blank or crash the board, and the
+## crew counts must reach the Workforce partition so a tile hand is not lost from the bar.
+const TILE_FX_BRANCH := "orchard"
+const TILE_FX_BRANCH_LABEL := "Orchard"
+const TILE_FX_RUNG := "orchard:grafted"
+const TILE_FX_RUNG_LABEL := "Grafted"
+const TILE_FX_UNKNOWN_BRANCH := "salt_pan"
+const TILE_FX_UNKNOWN_NAME := "Salt pan"
+const TILE_FX_WORKERS := 2
+const TILE_FX_ROOT_LABEL := "Bare ground"
+const TILE_FX_BARE_WORKERS := 3
+const TILE_FX_UNKNOWN_WORKERS := 1
+
+func _tile_crew_catalog() -> Array:
+	return [
+		{"rung_key": "orchard:bare", "branch": TILE_FX_BRANCH, "order": 0, "verb": "",
+			"label": TILE_FX_ROOT_LABEL, "source_kind": "tile"},
+		{"rung_key": TILE_FX_RUNG, "branch": TILE_FX_BRANCH, "order": 1, "verb": "graft",
+			"label": TILE_FX_RUNG_LABEL, "source_kind": "tile"},
+	]
+
+func _tile_crew_row_texts(key: String) -> Array:
+	var row := _find_meta_control_valued(_panel, String(HudWorkVocab.TILE_ROW_META), key)
+	var texts: Array = []
+	if row == null:
+		return texts
+	var labels: Array = []
+	_collect_labels(row, labels)
+	for label in labels:
+		texts.append((label as Label).text)
+	return texts
+
+## Whether any label on the row starts with `prefix` -- the name is not the row's first label (an icon
+## slot leads it), so the claim is asked of the set.
+func _tile_texts_lead_with(texts: Array, prefix: String) -> bool:
+	for text in texts:
+		if String(text).begins_with(prefix):
+			return true
+	return false
+
+func _render_tile_crew_state() -> void:
+	_panel.set_dock(SIDE_LEFT)
+	_panel.set_active_tab(&"work")
+	_hud.update_ladder_branches([
+		{"branch": TILE_FX_BRANCH, "area": "food", "source_kind": "tile",
+			"label": TILE_FX_BRANCH_LABEL}])
+	_hud.update_ladder_rungs(_tile_crew_catalog())
+	_hud.update_tile_improvements([{
+		"tile_x": ROSTER_NEAR_TILE.x, "tile_y": ROSTER_NEAR_TILE.y, "branch": TILE_FX_BRANCH,
+		"current_rung": TILE_FX_RUNG, "upkeep_demand": 1.0, "upkeep_supplied": 1.0,
+		"upkeep_workers_needed": 1, "upkeep_hands": 1.0, "upkeep_tools_short": false,
+		"upkeep_toe": [], "is_queued": false, "build_turns_remaining": -1,
+		"build_legs": [], "build_blocked_reason": "",
+	}])
+	_set_world_herds(_herd_fixtures())
+	_set_forage_patches(_sections_patches(false))
+	var band := _sections_band_fixture()
+	var rows: Array = band["labor_assignments"]
+	rows.append({"kind": HudConst.LABOR_KIND_TILE, "workers": TILE_FX_WORKERS,
+		"target_x": ROSTER_NEAR_TILE.x, "target_y": ROSTER_NEAR_TILE.y, "fauna_id": "",
+		"branch": TILE_FX_BRANCH})
+	rows.append({"kind": HudConst.LABOR_KIND_TILE, "workers": TILE_FX_BARE_WORKERS,
+		"target_x": ROSTER_MID_TILE.x, "target_y": ROSTER_MID_TILE.y, "fauna_id": "",
+		"branch": TILE_FX_BRANCH})
+	rows.append({"kind": HudConst.LABOR_KIND_TILE, "workers": TILE_FX_UNKNOWN_WORKERS,
+		"target_x": ROSTER_FAR_TILE.x, "target_y": ROSTER_FAR_TILE.y, "fauna_id": "",
+		"branch": TILE_FX_UNKNOWN_BRANCH})
+	_push_bands([band])
+	_hud._bandpanel.rerender()
+	await _settle()
+	await _save("band_panel_work_tile_crews")
+	_assert_zones_within_bounds()
+	_assert_zone_content_fits()
+	var known := _tile_crew_row_texts("%d,%d:%s" % [ROSTER_NEAR_TILE.x, ROSTER_NEAR_TILE.y,
+		TILE_FX_BRANCH])
+	_assert_band_panel("tile crew — a catalogued branch's row is drawn, named `%s` off the catalog (got %s)"
+			% [TILE_FX_BRANCH_LABEL, str(known)],
+		_tile_texts_lead_with(known, TILE_FX_BRANCH_LABEL))
+	_assert_band_panel("tile crew — …standing on the catalog's own word for its rung, `%s` (got %s)"
+			% [TILE_FX_RUNG_LABEL, str(known)],
+		known.has(HudWorkVocab.site_crew_line(TILE_FX_RUNG_LABEL)))
+	_assert_band_panel("tile crew — …and states its crew of %d" % TILE_FX_WORKERS,
+		known.has(str(TILE_FX_WORKERS)))
+	var unknown := _tile_crew_row_texts("%d,%d:%s" % [ROSTER_FAR_TILE.x, ROSTER_FAR_TILE.y,
+		TILE_FX_UNKNOWN_BRANCH])
+	_assert_band_panel("tile crew — a branch the catalog does not carry still draws, humanised as `%s` (got %s)"
+			% [TILE_FX_UNKNOWN_NAME, str(unknown)],
+		_tile_texts_lead_with(unknown, TILE_FX_UNKNOWN_NAME))
+	_assert_band_panel("tile crew — …on an em dash, never `Wild`, where the catalog has no such branch (got %s)"
+			% str(unknown),
+		unknown.has(HudWorkVocab.site_crew_line(HudRouteVocab.TILE_BRANCH_UNKNOWN_RUNG))
+			and not unknown.has(HudWorkVocab.site_crew_line(HudWorkVocab.SITE_CREW_RUNG_WILD)))
+	var bare := _tile_crew_row_texts("%d,%d:%s" % [ROSTER_MID_TILE.x, ROSTER_MID_TILE.y,
+		TILE_FX_BRANCH])
+	_assert_band_panel("tile crew — an orchard crew with no improvement yet stands on the branch's ROOT rung `%s`, not `Wild` (got %s)"
+			% [TILE_FX_ROOT_LABEL, str(bare)],
+		bare.has(HudWorkVocab.site_crew_line(TILE_FX_ROOT_LABEL))
+			and not bare.has(HudWorkVocab.site_crew_line(HudWorkVocab.SITE_CREW_RUNG_WILD)))
+	_hud.update_ladder_rungs([])
+	_hud.update_ladder_branches([])
+	_hud.update_tile_improvements([])
+	_restore_workings_roster_fixture()
+
 func _render_work_sections_all_five() -> void:
 	_panel.set_dock(SIDE_LEFT)
 	_panel.set_active_tab(&"work")

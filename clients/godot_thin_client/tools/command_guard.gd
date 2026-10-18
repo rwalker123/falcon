@@ -108,6 +108,8 @@ const FACTION := 0
 const BAND_X := 40
 const BAND_Y := 20
 ## Where `move_band` / `send_expedition` are told to go — inside the grid, away from the band.
+## The crop an off-site farm's assign names.
+const OFFSITE_CROP := "wild_emmer"
 const TARGET_X := 44
 const TARGET_Y := 23
 
@@ -265,6 +267,7 @@ func _ready() -> void:
 	await _drive_road_abandon()
 	await _drive_set_starting_loadout()
 	await _drive_bench_queue()
+	await _drive_bench_kit_orders()
 	await _drive_diplomacy()
 
 	_assert_every_command_emitted()
@@ -315,6 +318,48 @@ func _drive_bench_queue() -> void:
 	for retired in ["format_set_bench", "format_clear_bench"]:
 		if _main_has_static(retired):
 			_fail("the retired `%s` builder still exists on Main" % retired)
+
+## **A WHOLE KIT AS ONE BENCH ORDER (#780)** — the picker's Start, then the two edits that move or drop
+## the kit order as one, each naming the band positionally like every bench verb. Driven from the crafting
+## PANEL's own signals through the real controller and `HudLayer` relay. The order carries TWO parts so
+## the line the real parser reads is the multi-part shape the picker sends, and the kit order the edits
+## name is not 0 (an unset id and a dropped field both look like it).
+func _drive_bench_kit_orders() -> void:
+	var band: Dictionary = _hud._band_labor.panel_band()
+	_hud.open_crafting_panel(band)
+	await _settle()
+	var crafting: CraftingPanel = _hud.crafting_panel().panel()
+	if crafting == null:
+		_fail("bench kit orders: the crafting panel did not open on the fixture band")
+		return
+	crafting.kit_enqueue_requested.emit(BENCH_KIT_ID, BENCH_KIT_COUNT,
+		[BENCH_KIT_SPEARS_RECIPE, BENCH_KIT_SLED_RECIPE])
+	crafting.kit_remove_requested.emit(BENCH_KIT_ORDER_ID)
+	crafting.kit_raise_requested.emit(BENCH_KIT_ORDER_ID)
+	await _settle()
+	_hud.close_crafting_panel()
+	var faction := HudConst.PLAYER_FACTION_ID
+	if not MAIN_SCRIPT.format_bench_enqueue_kit({"faction": faction, "band_id": BAND_ID,
+			"kit_id": BENCH_KIT_ID, "kits": BENCH_KIT_COUNT, "recipe_ids": []}).is_empty():
+		_fail("bench_enqueue_kit: a line was built for a kit order with NO recipes")
+	if not MAIN_SCRIPT.format_bench_enqueue_kit({"faction": faction, "band_id": BAND_ID,
+			"kit_id": BENCH_KIT_ID, "kits": 0,
+			"recipe_ids": [BENCH_KIT_SPEARS_RECIPE]}).is_empty():
+		_fail("bench_enqueue_kit: a line was built for ZERO kits")
+	if not MAIN_SCRIPT.format_bench_remove_kit({"faction": faction, "band_id": BAND_ID,
+			"kit_order": 0}).is_empty():
+		_fail("bench_remove_kit: a line was built for kit order 0, which is no kit order")
+	if not MAIN_SCRIPT.format_bench_raise_kit({"faction": faction, "band_id": BAND_ID,
+			"kit_order": 0}).is_empty():
+		_fail("bench_raise_kit: a line was built for kit order 0, which is no kit order")
+
+## The kit the order is for, how many kits, and the one recipe per kit item.
+const BENCH_KIT_ID := "big_game"
+const BENCH_KIT_COUNT := 3
+const BENCH_KIT_SPEARS_RECIPE := "spears"
+const BENCH_KIT_SLED_RECIPE := "sled"
+## The kit order the edits name — never 0, the id of "not a kit order".
+const BENCH_KIT_ORDER_ID := 1
 
 ## A recipe id for the bench drive. The guard parses the line and checks its BAND; the recipe is any
 ## token the grammar accepts.
@@ -537,6 +582,14 @@ func _drive_assign_labor_kits() -> void:
 	await _settle()
 	_hud._emit_assign_labor(band, SourceForecast.LABOR_KIND_FORAGE, PARTY_WORKERS,
 		TARGET_X, TARGET_Y, "", SourceForecast.DEFAULT_HARVEST_FLOOR, "",
+		SourceForecast.IMPROVEMENT_NONE, BandFx.KIT_ID_NONE)
+	await _settle()
+	# **THE OFF-SITE FARM'S ASSIGN — a forage line that NAMES A CROP** (issue #175). On ground that is not
+	# a gathering site the server takes a forage crew only with `species` set, and that same command queues
+	# the farm build; a bare gather there is refused. The crop rides `forage <x> <y> <floor> <species>
+	# <workers>`, so this puts the species positional in front of the real parser.
+	_hud._emit_assign_labor(band, SourceForecast.LABOR_KIND_FORAGE, PARTY_WORKERS,
+		TARGET_X, TARGET_Y, "", SourceForecast.DEFAULT_HARVEST_FLOOR, OFFSITE_CROP,
 		SourceForecast.IMPROVEMENT_NONE, BandFx.KIT_ID_NONE)
 	await _settle()
 	# **THE FOURTH GRAMMAR — the deposit branches' take row** (arc #583).
@@ -958,6 +1011,12 @@ func _connect_recorders() -> void:
 		_record("bench_remove", p, MAIN_SCRIPT.format_bench_remove(p)))
 	_hud.bench_raise_requested.connect(func(p: Dictionary) -> void:
 		_record("bench_raise", p, MAIN_SCRIPT.format_bench_raise(p)))
+	_hud.bench_enqueue_kit_requested.connect(func(p: Dictionary) -> void:
+		_record("bench_enqueue_kit", p, MAIN_SCRIPT.format_bench_enqueue_kit(p)))
+	_hud.bench_remove_kit_requested.connect(func(p: Dictionary) -> void:
+		_record("bench_remove_kit", p, MAIN_SCRIPT.format_bench_remove_kit(p)))
+	_hud.bench_raise_kit_requested.connect(func(p: Dictionary) -> void:
+		_record("bench_raise_kit", p, MAIN_SCRIPT.format_bench_raise_kit(p)))
 	# **THE SHIPMENT RECORDS ITS PILES BESIDE ITS LINE.** They are the only thing the emitted amounts
 	# mean anything against, and they are stated in the sim's own TICKS so the comparison is exact —
 	# see the header. The cargo ids are the sender's own store keys, which is what the parser rebuilds.
@@ -996,8 +1055,22 @@ func _connect_recorders() -> void:
 ## Driven straight through `Main.format_improvement`, the pure static the compose sheet's press
 ## reaches: there is no road control on the shipped HUD yet, so a click path would be a fiction and
 ## the builder is the whole of the client's side of this verb.
+## The ladder catalog the guard stands up for `format_improvement`: one verb-bearing row per shipped
+## road / deposit verb carrying its branch's `source_kind`, which is what the builder shapes the
+## command by (issue #175). The verb lists are HARNESS DATA here, not client routing.
+const ROAD_VERBS := ["grade", "pave"]
+const DEPOSIT_VERBS := ["fell", "coppice", "quarry"]
+
+func _ladder_catalog() -> Array:
+	var rows: Array = []
+	for verb in ROAD_VERBS:
+		rows.append({"verb": verb, "source_kind": HudRouteVocab.SOURCE_KIND_ROAD})
+	for verb in DEPOSIT_VERBS:
+		rows.append({"verb": verb, "source_kind": HudRouteVocab.SOURCE_KIND_DEPOSIT})
+	return rows
+
 func _drive_road_verbs() -> void:
-	for improvement in SourceForecast.ROUTE_IMPROVEMENTS:
+	for improvement in ROAD_VERBS:
 		var payload := {
 			"improvement": improvement,
 			"faction": HudConst.PLAYER_FACTION_ID,
@@ -1005,7 +1078,7 @@ func _drive_road_verbs() -> void:
 			"x": TARGET_X,
 			"y": TARGET_Y,
 		}
-		_record(String(improvement), payload, MAIN_SCRIPT.format_improvement(payload))
+		_record(String(improvement), payload, MAIN_SCRIPT.format_improvement(payload, _ladder_catalog()))
 	# **AND A ROAD VERB WITH NO BAND BUILDS NOTHING**, which is a refusal rather than a default: the
 	# token IS the keeper, and guessing one would commit somebody else's people to a standing bill.
 	# Asserted here rather than left to the parser, because a line missing its band token parses as
@@ -1016,7 +1089,7 @@ func _drive_road_verbs() -> void:
 		"x": TARGET_X,
 		"y": TARGET_Y,
 	}
-	if not MAIN_SCRIPT.format_improvement(bandless).is_empty():
+	if not MAIN_SCRIPT.format_improvement(bandless, _ladder_catalog()).is_empty():
 		_fail("grade: a road verb with no band built a line — the keeper token is not optional")
 
 ## ⛔ **THE DEPOSIT BRANCHES' THREE TILE VERBS — the only tile commands that NAME A MATERIAL** (issue
@@ -1040,7 +1113,7 @@ func _drive_road_verbs() -> void:
 ## builder is the whole of the client's grammar for them. The Rust half classifies all three
 ## `PlaceAddressed`, so what it asserts is the PARSE.
 func _drive_deposit_verbs() -> void:
-	for improvement in SourceForecast.DEPOSIT_IMPROVEMENTS:
+	for improvement in DEPOSIT_VERBS:
 		var payload := {
 			"improvement": improvement,
 			"faction": HudConst.PLAYER_FACTION_ID,
@@ -1048,7 +1121,7 @@ func _drive_deposit_verbs() -> void:
 			"y": TARGET_Y,
 			"material": DEPOSIT_MATERIAL,
 		}
-		_record(String(improvement), payload, MAIN_SCRIPT.format_improvement(payload))
+		_record(String(improvement), payload, MAIN_SCRIPT.format_improvement(payload, _ladder_catalog()))
 	# **AND A DEPOSIT VERB WITH NO MATERIAL BUILDS NOTHING**, which is a refusal rather than a default:
 	# the material is half the working's identity and guessing one would order a rung on the other
 	# working of the same hex. Asserted here rather than left to the parser for the road verbs' own
@@ -1059,7 +1132,7 @@ func _drive_deposit_verbs() -> void:
 		"x": TARGET_X,
 		"y": TARGET_Y,
 	}
-	if not MAIN_SCRIPT.format_improvement(materialless).is_empty():
+	if not MAIN_SCRIPT.format_improvement(materialless, _ladder_catalog()).is_empty():
 		_fail("fell: a deposit verb with no material built a line — the material token is not optional")
 
 ## ⛔ **`abandon_working <faction> <x> <y> <material>` — PUTTING ONE WORKING DOWN, AND IT IS NOT
@@ -1228,7 +1301,7 @@ const ASSIGN_LABOR_UNKNOWN_ROLE := "stonemason"
 ## a tile, a material AND an optional floor, where every role in that list takes a bare worker count. It is
 ## driven here for the reason the whole sweep exists: a grammar the server's dispatch takes and
 ## `sim_runtime::command_text` does not is refused INSIDE the client, with nothing failing anywhere.
-const ASSIGN_LABOR_GRAMMAR_DRIVES := 8
+const ASSIGN_LABOR_GRAMMAR_DRIVES := 9
 
 ## …and the BARE `builders` line beside its tailed one — the exact line the pool's `+` emits — plus the
 ## FAR HERD's commit (`_drive_far_herd_assign_labor`), the hunt line a sheet past the apron sends.
@@ -1236,7 +1309,7 @@ const ASSIGN_LABOR_BARE_DRIVES := 2
 
 ## What `EXPECTED_KINDS` must say for `assign_labor`. Spelled here because a `const` initializer
 ## cannot call `Array.size()`, and re-derived at runtime so the two cannot drift.
-const ASSIGN_LABOR_EXPECTED := 14
+const ASSIGN_LABOR_EXPECTED := 15
 
 ## **THE LIST ABOVE IS THE WHOLE OF WHAT THE CLIENT CAN SAY, ASSERTED RATHER THAN TRUSTED.**
 ##
@@ -1386,6 +1459,11 @@ const EXPECTED_KINDS := {
 	"bench_order_count": 1,
 	"bench_remove": 1,
 	"bench_raise": 1,
+	# ONE EACH — a whole kit ordered as ONE bench order (two parts, the line the picker's Start sends),
+	# then the two edits that move or drop it as one. See `_drive_bench_kit_orders`.
+	"bench_enqueue_kit": 1,
+	"bench_remove_kit": 1,
+	"bench_raise_kit": 1,
 }
 
 func _assert_every_command_emitted() -> void:

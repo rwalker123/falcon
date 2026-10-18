@@ -25,6 +25,7 @@ fn equipped_haul_rate() -> f32 {
 use bevy::app::App;
 use bevy::ecs::system::RunSystemOnce;
 use bevy::math::UVec2;
+use core_sim::shipped;
 
 use core_sim::{
     advance_expeditions, advance_herds, advance_tick, build_test_app, denial_forecast,
@@ -224,7 +225,10 @@ fn pin_raid_herd_of(app: &mut App, species: &str, quarry: RaidQuarry) -> (String
     // **The display telemetry is DERIVED from the registry** — `advance_herds` rebuilds it at the end
     // of every turn — so a fixture that edits the registry and then captures a snapshot without
     // driving a turn has to rebuild it, or the wire carries the herd as the map generated it.
-    let entries = app.world.resource::<HerdRegistry>().snapshot_entries();
+    let entries = app
+        .world
+        .resource::<HerdRegistry>()
+        .snapshot_entries(shipped::ladder());
     app.world.resource_mut::<HerdTelemetry>().entries = entries;
     (PINNED_HERD_ID.to_string(), pos)
 }

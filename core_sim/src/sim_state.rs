@@ -74,6 +74,7 @@ use crate::{
     great_discovery::{GreatDiscoveryLedger, GreatDiscoveryReadiness, GreatDiscoveryTelemetry},
     influencers::{InfluencerImpacts, InfluentialRoster, InfluentialRosterCheckpoint},
     knowledge_ledger::{KnowledgeLedger, KnowledgeLedgerCheckpoint},
+    mobility::MobilityScore,
     resources::{
         BandIdAllocator, BandNameAllocator, CapabilityFlags, CommandEventLog, CorruptionLedgers,
         CorruptionTelemetry, DiscoveryProgressLedger, FactionBorderPolicies, FactionInventory,
@@ -85,6 +86,7 @@ use crate::{
     starting_loadout::StartingLoadout,
     supply::{BandSupplyMembership, SupplyNetworkMembership},
     telling::BeatLedger,
+    tile_improvement::TileImprovementRegistry,
     victory::VictoryState,
     visibility::{VisibilityLedger, VisibilitySweepTracker},
 };
@@ -197,6 +199,9 @@ pub struct SimState {
     /// `RouteTrafficLog` twin is genuinely derived — written and drained inside one stage — and is
     /// deliberately not here, which is `ContactsThisTurn`'s arrangement exactly.
     pub roads: RoadRegistry,
+    /// Every improvement standing on a tile-kind branch, with its keeper and its position. **State,
+    /// not derived**, for the road's reason: it is in the ground, and nothing can rebuild it.
+    pub tile_improvements: TileImprovementRegistry,
     pub corruption: CorruptionLedgers,
     pub corruption_telemetry: CorruptionTelemetry,
     pub counter_intel: CounterIntelBudgets,
@@ -239,6 +244,11 @@ pub struct SimState {
     /// derived**: the lost-touch line is an edge read off the previous turn's reading, and the
     /// capture publishes the readings before a restored world has run a turn.
     pub hearts: crate::systems::HeartLedger,
+    /// Every people's culture strength and every band's standing under another people's pull
+    /// (`systems::culture_pressure`, #820). **State, not derived**: the asked / forced clocks run
+    /// across turns, the `culture_pull` line is an edge read off the previous turn's entry, and the
+    /// capture publishes the rows before a restored world has run a turn.
+    pub culture_pressure: crate::systems::CulturePressureLedger,
     /// The peoples whose breeding the head-count freed for good (`lineage::FreeBreedingPeoples`,
     /// issue #691). **State, not derived**: the latch outlives the population that earned it, so
     /// nothing in a restored world can rebuild it.
@@ -271,6 +281,9 @@ pub struct SimState {
     pub pending_crisis_seeds: PendingCrisisSeeds,
     pub pending_crisis_spawns: PendingCrisisSpawns,
     pub sedentarization: SedentarizationScore,
+    /// The mobility score (#800) - `SedentarizationScore`'s roaming counterpart. State: the EMA
+    /// remembers the legs walked, which nothing can recompute.
+    pub mobility: MobilityScore,
     /// The opening outfitting window. **State, not derived**: nothing rebuilds it — the budget is a
     /// fact about the band that spawned, and `open` is a fact about whether a turn has run — so a
     /// checkpoint that dropped it would restore a turn-one world the player could no longer outfit,
@@ -453,6 +466,7 @@ pub fn capture_sim_state(world: &World) -> SimState {
         command_events: world.resource::<CommandEventLog>().clone(),
         connections: world.resource::<ConnectionLedger>().clone(),
         roads: world.resource::<RoadRegistry>().clone(),
+        tile_improvements: world.resource::<TileImprovementRegistry>().clone(),
         corruption: world.resource::<CorruptionLedgers>().clone(),
         corruption_telemetry: world.resource::<CorruptionTelemetry>().clone(),
         counter_intel: world.resource::<CounterIntelBudgets>().clone(),
@@ -489,6 +503,10 @@ pub fn capture_sim_state(world: &World) -> SimState {
             .get_resource::<crate::systems::HeartLedger>()
             .cloned()
             .unwrap_or_default(),
+        culture_pressure: world
+            .get_resource::<crate::systems::CulturePressureLedger>()
+            .cloned()
+            .unwrap_or_default(),
         free_breeding: world
             .get_resource::<crate::lineage::FreeBreedingPeoples>()
             .cloned()
@@ -505,6 +523,7 @@ pub fn capture_sim_state(world: &World) -> SimState {
         pending_crisis_seeds: world.resource::<PendingCrisisSeeds>().clone(),
         pending_crisis_spawns: world.resource::<PendingCrisisSpawns>().clone(),
         sedentarization: world.resource::<SedentarizationScore>().clone(),
+        mobility: world.resource::<MobilityScore>().clone(),
         starting_loadout: world.resource::<StartingLoadout>().clone(),
         sentiment_bias: world.resource::<SentimentAxisBias>().clone(),
         trade_telemetry: world.resource::<TradeTelemetry>().clone(),
@@ -681,6 +700,13 @@ pub fn restore_sim_state(world: &mut World, state: &SimState) {
     world.insert_resource(state.command_events.clone());
     world.insert_resource(state.connections.clone());
     world.insert_resource(state.roads.clone());
+    world
+        .resource_mut::<crate::routes::RoadRegistry>()
+        .clear_build_scratch();
+    world.insert_resource(state.tile_improvements.clone());
+    world
+        .resource_mut::<crate::tile_improvement::TileImprovementRegistry>()
+        .clear_build_scratch();
     world.insert_resource(state.corruption.clone());
     world.insert_resource(state.corruption_telemetry.clone());
     world.insert_resource(state.counter_intel.clone());
@@ -699,6 +725,7 @@ pub fn restore_sim_state(world: &mut World, state: &SimState) {
     world.insert_resource(state.faction_names.clone());
     world.insert_resource(state.factions.clone());
     world.insert_resource(state.hearts.clone());
+    world.insert_resource(state.culture_pressure.clone());
     world.insert_resource(state.free_breeding.clone());
     world.insert_resource(state.deposits.clone());
     world.insert_resource(state.forage.clone());
@@ -708,10 +735,20 @@ pub fn restore_sim_state(world: &mut World, state: &SimState) {
     world.insert_resource(state.great_discovery_readiness.clone());
     world.insert_resource(state.great_discovery_telemetry.clone());
     world.insert_resource(state.herds.clone());
+    // **The per-turn build scratch is not state a restore may republish** - see
+    // `HerdRegistry::clear_build_scratch`. Cleared on every source registry, load and rollback alike.
+    world.resource_mut::<HerdRegistry>().clear_build_scratch();
+    world
+        .resource_mut::<crate::forage::ForageRegistry>()
+        .clear_build_scratch();
+    world
+        .resource_mut::<crate::extraction::DepositRegistry>()
+        .clear_build_scratch();
     world.insert_resource(state.influencer_impacts.clone());
     world.insert_resource(state.pending_crisis_seeds.clone());
     world.insert_resource(state.pending_crisis_spawns.clone());
     world.insert_resource(state.sedentarization.clone());
+    world.insert_resource(state.mobility.clone());
     world.insert_resource(state.starting_loadout.clone());
     world.insert_resource(state.sentiment_bias.clone());
     world.insert_resource(state.trade_telemetry.clone());

@@ -1579,3 +1579,107 @@ fn belief_points_are_on_the_encoded_snapshot() {
     assert!((published_belief_points(&mut half) - full * HALF_STRENGTH).abs() < GAP_TOLERANCE);
     assert_eq!(published_belief_points(&mut beside), 0.0);
 }
+
+/// One published `SedentarizationState` row's score and five input points.
+struct PublishedTether {
+    score: f32,
+    domestication: f32,
+    surplus: f32,
+    land: f32,
+    population: f32,
+    belief: f32,
+}
+
+/// The HOME faction's published sedentarization row, off the encoded envelope.
+fn published_tether(app: &mut App) -> PublishedTether {
+    let bytes = publish(app);
+    let envelope = fb::root_as_envelope(bytes.as_ref()).expect("a valid envelope");
+    let row = envelope
+        .payload_as_snapshot()
+        .expect("a snapshot payload")
+        .subsistence()
+        .and_then(|section| section.sedentarization())
+        .expect("the sedentarization rows are published")
+        .iter()
+        .find(|row| row.faction() == HOME.0)
+        .expect("the viewer's row");
+    PublishedTether {
+        score: row.score(),
+        domestication: row.domesticationPoints(),
+        surplus: row.surplusPoints(),
+        land: row.landPoints(),
+        population: row.populationPoints(),
+        belief: row.beliefPoints(),
+    }
+}
+
+/// Cultivated patches owned by HOME (the plant half of the domestication input).
+const CULTIVATED_PATCHES: u32 = 3;
+/// Biomass capacity of a fixture patch.
+const FIXTURE_PATCH_CAPACITY: f32 = 120.0;
+/// A tile row far from any fixture band, where the fixture patches sit.
+const FIXTURE_PATCH_ROW: u32 = 900;
+
+/// **The five published input points add up to the raw score, and each lands in its own field**:
+/// on the first tick the smoothed score is `(1 - smoothing) x raw`, so it equals
+/// `(1 - smoothing) x Σ points`. A faction with cultivated patches publishes
+/// `domesticationPoints > 0`; the control without them publishes `0` there while its other inputs
+/// are live and identical.
+#[test]
+fn the_tethers_input_points_sum_to_the_raw_score_on_the_encoded_snapshot() {
+    let reference = core_sim::SedentarizationConfig::builtin().references.belief;
+    let mut control_app = tether_world(Stage::OnStandingTile, reference);
+    // A first reading starts from zero: drop whatever the fixture's earlier turns accumulated.
+    control_app
+        .world
+        .insert_resource(SedentarizationScore::default());
+    control_app.world.run_system_once(sedentarization_tick);
+    let mut tamed_app = one_faction_world();
+    tamed_app.world.insert_resource(BeliefRegistry::default());
+    {
+        let mut registry = tamed_app.world.resource_mut::<core_sim::ForageRegistry>();
+        for i in 0..CULTIVATED_PATCHES {
+            let mut patch = core_sim::ForagePatch::new(
+                UVec2::new(i, FIXTURE_PATCH_ROW),
+                FIXTURE_PATCH_CAPACITY,
+                core_sim::shipped::root_standing(core_sim::shipped::plant()),
+            );
+            patch.complete_cultivation(HOME, &core_sim::LadderConfig::builtin());
+            registry.patches.insert(patch.tile, patch);
+        }
+    }
+    tamed_app
+        .world
+        .insert_resource(SedentarizationScore::default());
+    tamed_app.world.run_system_once(sedentarization_tick);
+
+    let smoothing = tether_config(&control_app).smoothing;
+    let control = published_tether(&mut control_app);
+    let sum = control.domestication
+        + control.surplus
+        + control.land
+        + control.population
+        + control.belief;
+    assert!(
+        (control.score - (1.0 - smoothing) * sum).abs() < GAP_TOLERANCE,
+        "score {} vs (1 - smoothing) x sum of points {}",
+        control.score,
+        (1.0 - smoothing) * sum
+    );
+    assert_eq!(control.domestication, 0.0, "control: nothing domesticated");
+    assert!(control.belief > 0.0, "liveness: belief is live");
+    assert!(control.land > 0.0, "liveness: land is live");
+    assert!(control.population > 0.0, "liveness: population is live");
+
+    let tamed = published_tether(&mut tamed_app);
+    assert!(
+        tamed.domestication > 0.0,
+        "cultivated patches publish domestication points"
+    );
+    let tamed_sum =
+        tamed.domestication + tamed.surplus + tamed.land + tamed.population + tamed.belief;
+    assert!((tamed.score - (1.0 - smoothing) * tamed_sum).abs() < GAP_TOLERANCE);
+    assert!((tamed.land - control.land).abs() < GAP_TOLERANCE);
+    assert!((tamed.population - control.population).abs() < GAP_TOLERANCE);
+    assert!((tamed.surplus - control.surplus).abs() < GAP_TOLERANCE);
+}

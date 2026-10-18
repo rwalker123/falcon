@@ -533,6 +533,29 @@ after it.
   measured against the HUD's already-inset `LayoutRoot` and scrolls its ledger internally when the
   room is short.
 
+### Ordering a whole kit
+
+A kit is the set of items a job needs (`equipment.json` `kits`), so the ledger carries a **KITS** group
+above Gear: one row per kit, and **Make** on it opens a picker for **how many kits to build**. One kit
+is one unit of each item the kit uses; the number is the player's, and it is **never netted against
+who already has a kit and never refused** — *"We shouldn't prevent a kit from being built. The number
+should be the number of new kits to build, it shouldn't matter how many hunters are not kitted."* The
+ledger row still shows who is equipped and who is without as information. The picker offers a recipe
+per item with its cost, and says whether the recipes' total inputs exceed the band's free materials.
+**Start** sends one command — the kit, the count and one recipe per item — and the sim queues that
+many of every item. The queue shows the result as one grouped box (status, kit and count, progress, a
+collapsed per-item line that unfolds into part rows with their own steppers; the group has one raise
+and one remove).
+
+- A kit order is a set of ordinary orders kept **contiguous**; raising or removing the group acts on
+  every part, and an item already made stays in the store.
+- **`have` counts only the units that serve the kit's own jobs, plus spare units** — a sled held by a
+  woodcutter does not equip a hunter. A queued build's forecast never counts as a unit held.
+- The picker's shortage is arithmetic over published terms (per-pass inputs with the bench's material
+  efficiency applied, and the stock left after the queue's claims), so the sheet and the bench cannot
+  disagree. As-built: `.claude/rules/core_sim/crafting.md` → "Kit orders"; the panel:
+  `.claude/rules/client/crafting-panel.md`.
+
 ### Deferred
 
 Where a batch came from and what it earns per turn belongs in a **popover off the material row**, the

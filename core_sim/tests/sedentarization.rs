@@ -5,6 +5,7 @@
 use bevy::app::App;
 use bevy::ecs::system::RunSystemOnce;
 use bevy::MinimalPlugins;
+use core_sim::shipped;
 
 use core_sim::{
     scalar_one, scalar_zero, sedentarization_tick, spawn_initial_herds, spawn_initial_world,
@@ -51,6 +52,9 @@ fn spawn_world() -> App {
     app.world.insert_resource(HerdTelemetry::default());
     app.world.insert_resource(HerdDensityMap::default());
     app.world.insert_resource(FaunaConfigHandle::default());
+    app.world.insert_resource(core_sim::LadderConfigHandle::new(
+        core_sim::LadderConfig::builtin(),
+    ));
     app.world.insert_resource(CommandEventLog::default());
     app.world.insert_resource(SedentarizationScore::default());
     app.world
@@ -127,7 +131,7 @@ fn domesticate(app: &mut App, faction: FactionId, count: usize) {
     let tameable = registry
         .herds
         .iter_mut()
-        .filter(|herd| herd.can_domesticate())
+        .filter(|herd| herd.can_domesticate(shipped::ladder()))
         .take(count);
     let mut tamed = 0;
     for herd in tameable {
@@ -145,7 +149,11 @@ fn domesticate(app: &mut App, faction: FactionId, count: usize) {
 fn cultivate_patches(app: &mut App, faction: FactionId, count: u32) {
     let mut registry = app.world.resource_mut::<ForageRegistry>();
     for i in 0..count {
-        let mut patch = ForagePatch::new(bevy::math::UVec2::new(i, 900), 120.0);
+        let mut patch = ForagePatch::new(
+            bevy::math::UVec2::new(i, 900),
+            120.0,
+            shipped::root_standing(shipped::plant()),
+        );
         patch.set_ladder_position(1.0, &core_sim::LadderConfig::builtin());
         patch.owner = Some(faction);
         registry.patches.insert(patch.tile, patch);

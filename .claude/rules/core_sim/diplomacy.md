@@ -62,7 +62,7 @@ is a player process and cannot read sim config, so its dealing levers (`return_f
 
 `dealings.rs`. One record for everything that waits on a people's answer: **addressed to a people,
 answered by a command, expiring on silence.** The book is `SimState` — `BTreeMap<DealingId, Dealing>`
-plus the monotonic id counter, checkpointed and restored whole (`SAVE_FORMAT_VERSION` 42). A restore
+plus the monotonic id counter, checkpointed and restored whole (`SAVE_FORMAT_VERSION` 47). A restore
 that dropped the book would strand a party in a camp with nobody waiting on it; one that dropped the
 counter would re-issue an id a client still holds. Ids start at `1`, so `0` on the wire means "no
 dealing", and a removed id is never handed out again.
@@ -95,7 +95,7 @@ words together or either twice is refused). It rides `SendTradeExpeditionCommand
 **The standing answer** is each people's "accept gifts from my own people", on by default, held as
 `FactionBorderPolicies::accept_own_gifts` beside the Open Borders row (so it is seeded from the roster,
 checkpointed, and re-seeded on a runtime break-away with no resource of its own). Command
-`set_accept_own_gifts <faction> <on|off>` (proto **85**), gated like `set_open_borders` through
+`set_accept_own_gifts <faction> <on|off>` (proto **89**), gated like `set_open_borders` through
 `commanding_faction`.
 
 `standing_answer_covers(terms, sender, receiver, policies)` is the **one** statement of what the
@@ -127,7 +127,7 @@ arrival and by an accepted offer so the two cannot book a delivery differently.
 ## The answer verb
 
 `answer_dealing <faction> <id> accept [food <a>] [fodder <a>] [material <id> <a>]… | refuse`
-(proto **86**, `AnswerDealingCommand`; the return list is `TradeCargoItem`s, the shipment's own cargo
+(proto **90**, `AnswerDealingCommand`; the return list is `TradeCargoItem`s, the shipment's own cargo
 words). Seat-gated and membership-checked like every faction-bearing order. `counter give […] ask […]`
 answers a proposal or a counter ("The exchange stages" below); an offer cannot be countered, and any
 other word is `CommandParseError::UnsupportedAnswer` rather than an accept. The resolution is the library function
@@ -185,7 +185,7 @@ reads as met (the shipped rule), which is why a fixture that never runs a turn c
 
 ### Stage 4: `propose_trade`, and the counter
 
-`propose_trade <faction> <band> <party_workers> <dest_band> give […] ask […]` (proto **87**,
+`propose_trade <faction> <band> <party_workers> <dest_band> give […] ask […]` (proto **91**,
 `ProposeTradeCommand`; the lists are `TradeCargoItem`s). `dealings::propose_trade` records a
 `DealingKind::Proposal` **the turn it is made**, addressed to the destination's people, and fails
 closed before recording anything: the band is the proposer's resident band with the workers; the
@@ -512,7 +512,7 @@ band and another people's band the viewer holds a live tie with that a kept road
 (`routes::standing_link`; `StandingLinkState { viewerBand, otherBand, otherFaction }`). `DealingState`
 gains `treaty` (the proposal's full terms; empty on other kinds) and `carrier` (`"road"` / `"envoy"`),
 `PopulationCohortState` gains `envoyTerms` (an envoy party's errand), and `FactionPolicyState` gains
-`borderOverrides`. `SAVE_FORMAT_VERSION` 42 carries `Treaties`, the overrides, `Dealing::treaty`,
+`borderOverrides`. `SAVE_FORMAT_VERSION` 47 carries `Treaties`, the overrides, `Dealing::treaty`,
 `ShipmentTerms::Envoy` and `Expedition::exchange_return`.
 
 ## Tests

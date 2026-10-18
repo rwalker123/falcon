@@ -974,18 +974,22 @@ struct LinkWorld {
     width: u32,
     height: u32,
     wrap: bool,
-    floor: crate::intensification::RungKey,
+    floor: crate::routes::LinkFloor,
 }
 
 fn link_world(world: &World) -> Option<LinkWorld> {
     let tiles = world.get_resource::<TileRegistry>()?;
     let config = world.get_resource::<SimulationConfig>()?;
     world.get_resource::<crate::routes::RoadRegistry>()?;
+    let ladder = match world.get_resource::<crate::intensification::LadderConfigHandle>() {
+        Some(handle) => handle.get(),
+        None => crate::intensification::LadderConfig::builtin(),
+    };
     let floor = match world.get_resource::<crate::diplomacy_config::DiplomacyConfigHandle>() {
-        Some(handle) => handle.get().offers.standing_link_floor(),
+        Some(handle) => handle.get().offers.standing_link_floor(&ladder),
         None => crate::diplomacy_config::DiplomacyConfig::builtin()
             .offers
-            .standing_link_floor(),
+            .standing_link_floor(&ladder),
     };
     Some(LinkWorld {
         width: tiles.width,

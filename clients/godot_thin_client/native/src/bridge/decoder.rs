@@ -16,7 +16,7 @@ use crate::dict::culture::{
     sentiment_to_dict,
 };
 use crate::dict::dealings::{dealings_to_array, goodwill_delta_dict, treaties_delta_dict};
-use crate::dict::deposits::{deposit_rungs_to_array, deposits_to_array};
+use crate::dict::deposits::deposits_to_array;
 use crate::dict::economy::faction_inventory_to_array;
 use crate::dict::governance::{
     corruption_to_dict, crisis_overlay_to_dict, crisis_telemetry_to_dict, power_metrics_to_dict,
@@ -29,12 +29,13 @@ use crate::dict::knowledge::{
 };
 use crate::dict::map::tiles_to_array;
 use crate::dict::population::{demographics_to_array, generations_to_array, populations_to_array};
-use crate::dict::routes::{route_rungs_to_array, routes_to_array};
+use crate::dict::routes::routes_to_array;
 use crate::dict::subsistence::{
     characteristic_bands_to_array, craft_knowledge_to_array, food_modules_to_array,
     forage_patches_to_array, herds_to_array, intensification_knowledge_to_array, kits_to_array,
-    ladder_areas_to_array, ladder_knowledge_to_array, materials_to_array, recipes_to_array,
-    sedentarization_to_array,
+    ladder_areas_to_array, ladder_branches_to_array, ladder_knowledge_to_array,
+    ladder_rungs_to_array, materials_to_array, mobility_to_array, recipes_to_array,
+    sedentarization_to_array, tile_improvements_to_array,
 };
 use crate::dict::{
     u16_vector_to_packed_int32, u32_vector_to_packed_int32, u64_vector_to_packed_int64,
@@ -684,6 +685,10 @@ fn decode_delta_against(
         );
     }
 
+    if let Some(mobility) = delta.subsistence().and_then(|s| s.mobility()) {
+        frame.insert_changed("mobility", &mobility_to_array(mobility));
+    }
+
     if let Some(forage_patches) = delta.subsistence().and_then(|s| s.foragePatches()) {
         frame.insert_changed("forage_patches", &forage_patches_to_array(forage_patches));
     }
@@ -792,15 +797,12 @@ fn decode_delta_against(
     // ...and the ROUTE branch's rung catalog on the DELTA path too. A per-world constant read only
     // on the full path republishes the BASELINE's value for the life of the world -- the staleness
     // the `food_modules` / `faction_inventory` pair recorded, one section over.
-    if let Some(catalog) = delta.subsistence().and_then(|s| s.routeRungs()) {
-        frame.insert_changed("route_rungs", &route_rungs_to_array(catalog));
+    if let Some(catalog) = delta.subsistence().and_then(|s| s.ladderRungs()) {
+        frame.insert_changed("ladder_rungs", &ladder_rungs_to_array(catalog));
     }
 
-    // ...and the DEPOSIT branches' catalog on the delta path with it, for the identical reason: a
-    // per-world constant read only on the full path republishes the BASELINE's value for the life of
-    // the world.
-    if let Some(catalog) = delta.subsistence().and_then(|s| s.depositRungs()) {
-        frame.insert_changed("deposit_rungs", &deposit_rungs_to_array(catalog));
+    if let Some(branches) = delta.subsistence().and_then(|s| s.ladderBranches()) {
+        frame.insert_changed("ladder_branches", &ladder_branches_to_array(branches));
     }
 
     if let Some(demographics) = delta.population().and_then(|s| s.demographics()) {
@@ -896,6 +898,11 @@ fn decode_delta_against(
         if let Some(merged) = treaties_delta_dict(held, treaties) {
             frame.insert_changed("treaties", &merged);
         }
+    }
+
+    // ...and the improvements on TILE-kind branches, a whole-section replace on the same terms.
+    if let Some(rows) = delta.routes().and_then(|s| s.tileImprovements()) {
+        frame.insert_changed("tile_improvements", &tile_improvements_to_array(rows));
     }
 
     // NOT a keyed diff — a whole-section replace, so present (even EMPTY) means "this is the roster

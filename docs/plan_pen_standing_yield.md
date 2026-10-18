@@ -142,7 +142,7 @@ ratio, so a rung retune carries it.
 | the rates, per species | `core_sim/src/data/fauna_config.json` |
 | `pastoral_standing_fraction`, `output_recommit_work_fraction` | `HusbandryConfig` + `fauna_config.json` |
 | `Herd::standing_output_fraction` | `core_sim/src/components.rs` |
-| `BuildJob::SetHerdOutput` → `RungKey` | `core_sim/src/components.rs` |
+| `BuildJob::SetHerdOutput` → `RungId` | `core_sim/src/components.rs` |
 | the take split and the payout | `core_sim/src/systems/labor.rs` (the pen/pastoral herd arm) |
 | material crediting | reuse `materials_config::credit_material_yield` — **the one seam**, unchanged |
 | command + proto plumbing | `core_sim/src/bin/server.rs` (follow `ExtendPen` end to end) |

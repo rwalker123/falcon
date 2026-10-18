@@ -307,6 +307,7 @@ func model() -> Dictionary:
 	var bands := _band_labor.player_bands() if _band_labor != null else []
 	return {
 		KnowledgeRoster.MODEL_LADDER_ROSTER: _topbar.ladder_knowledge() if _topbar != null else [],
+		KnowledgeRoster.MODEL_LADDER_RUNGS: _topbar.ladder_rungs() if _topbar != null else [],
 		KnowledgeRoster.MODEL_TRACKS: _topbar.faction_tracks(HudConst.PLAYER_FACTION_ID) \
 			if _topbar != null else {},
 		KnowledgeRoster.MODEL_CRAFT_KNOWLEDGE: _player_craft_knowledge(),
@@ -468,6 +469,7 @@ func _diff_model() -> Dictionary:
 		# walked without it would see no ladder nodes at all — and `_seen_keys` would never learn
 		# them, which is a diff that can never report a ladder discovery.
 		KnowledgeRoster.MODEL_LADDER_ROSTER: _topbar.ladder_knowledge() if _topbar != null else [],
+		KnowledgeRoster.MODEL_LADDER_RUNGS: _topbar.ladder_rungs() if _topbar != null else [],
 		KnowledgeRoster.MODEL_TRACKS: _topbar.faction_tracks(HudConst.PLAYER_FACTION_ID) \
 			if _topbar != null else {},
 		KnowledgeRoster.MODEL_CRAFT_KNOWLEDGE: _player_craft_knowledge(),

@@ -25,6 +25,11 @@ caravan's state and per-turn rule, the walk, the forecast, the pricing) plus the
 in `forecast_query.rs`. **A deposit (wood, stone) posts a party by exactly the rule a patch does** —
 see "The deposit web: the cargo is the material".
 
+**A tile improvement's crew (`LaborTarget::Tile`, `intensification.md` -> "The tile kind") is the
+fourth row kind and posts a party by the same rule**: `party_source_position` names its tile, a far
+crew is a party, and the party carries no cargo (the row takes nothing; it only keeps). Nothing forks
+for it.
+
 ## Config files
 
 | File | Purpose |
@@ -468,7 +473,7 @@ the patch once the rung in flight is finished — the next rung up where nothing
 **that rung's keeping netted** (`forecast_query::patch_once_raised`: the meter seated at the rung's
 top on a clone, `K` re-struck at the rung's gain, the bill re-struck at the finished rung). `0` at the
 top of the branch. It is the compose sheet's *once sown / once tended* figure.
-`ForagePatchState.fieldYield` / `tendedYield` are **not** that figure and must not stand in for it:
+`rungQuotes[plant:farm].foodYield` / `rungQuotes[plant:tended].foodYield` are **not** that figure and must not stand in for it:
 they are the rung's crew-blind payoff (`forage::rung_payoff`), so a crew too small to keep a Field
 read `12.48` beside a sheet whose own keeping left it nothing. Pinned beside the next-turn quote by
 `server::tests::a_lapsed_fields_quote_is_what_the_turn_pays_and_once_sown_nets_the_fields_keeping`.

@@ -553,3 +553,7 @@ any `World` exists) and the **resource is a snapshot of it taken when the app is
 is what keeps a staged override honest: staging one moves the registry — the tuning the *next*
 `new_game` boots on — and leaves the running world's resource describing what it is actually
 simulating.
+
+## A restore clears every source's per-turn build scratch
+
+`restore_sim_state` (a save load and a rollback alike) clears the transient build estimate on all five source registries (`HerdRegistry`, `ForageRegistry`, `DepositRegistry`, `RoadRegistry`, `TileImprovementRegistry`, each `clear_build_scratch`). The checkpoint carries the registries whole, scratch included, and nothing recomputes it before the first frame, so without the clear a loaded world republished the last turn's countdown (a pre-fix `2101109` outlived the fix). The first frame after a restore reads "not yet estimated" (`-5`); the next turn restamps it. Pinned by `build_queue::a_load_clears_a_corral_heads_stale_date_and_the_next_turn_blocks_it`.

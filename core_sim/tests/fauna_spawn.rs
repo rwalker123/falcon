@@ -1,13 +1,14 @@
 use bevy::app::App;
 use bevy::ecs::system::RunSystemOnce;
 use bevy::MinimalPlugins;
+use core_sim::shipped;
 
 use core_sim::{
     spawn_initial_herds, spawn_initial_world, CultureManager, DiscoveryProgressLedger,
     FactionInventory, FaunaConfig, FaunaConfigHandle, GenerationRegistry, HerdDensityMap,
-    HerdRegistry, HerdTelemetry, HusbandryCeiling, MapPresets, MapPresetsHandle, SimulationConfig,
-    SimulationTick, SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle, StartLocation,
-    StartProfileKnowledgeTags, StartProfileKnowledgeTagsHandle,
+    HerdRegistry, HerdTelemetry, MapPresets, MapPresetsHandle, SimulationConfig, SimulationTick,
+    SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle, StartLocation, StartProfileKnowledgeTags,
+    StartProfileKnowledgeTagsHandle,
 };
 
 /// Stand up a land-rich earthlike map on `seed` and spawn the initial herds; return the app.
@@ -46,6 +47,9 @@ fn spawn_world_with_herds(seed: u64) -> App {
     app.world.insert_resource(HerdTelemetry::default());
     app.world.insert_resource(HerdDensityMap::default());
     app.world.insert_resource(FaunaConfigHandle::default());
+    app.world.insert_resource(core_sim::LadderConfigHandle::new(
+        core_sim::LadderConfig::builtin(),
+    ));
     app.world.run_system_once(spawn_initial_herds);
     app
 }
@@ -115,7 +119,7 @@ fn pennable_grazers_are_wired_to_real_biomes_and_spawn() {
 
     // --- Config wiring: both host on live module keys, and both are `pen`-ceiling (pennable). ---
     let aurochs = &fauna.species["aurochs"];
-    assert_eq!(aurochs.husbandry_ceiling, HusbandryCeiling::Pen);
+    assert_eq!(aurochs.husbandry_ceiling, Some(shipped::animal_pen()));
     for key in ["savanna_grassland", "temperate_forest", "mixed_woodland"] {
         assert!(aurochs.hosts_biome(key), "aurochs must host {key}");
         // A live key with a positive abundance density (or the species never spawns).
@@ -130,7 +134,7 @@ fn pennable_grazers_are_wired_to_real_biomes_and_spawn() {
             .any(|(k, _)| k.as_str() == "aurochs"));
     }
     let crag_goat = &fauna.species["crag_goat"];
-    assert_eq!(crag_goat.husbandry_ceiling, HusbandryCeiling::Pen);
+    assert_eq!(crag_goat.husbandry_ceiling, Some(shipped::animal_pen()));
     for key in ["montane_highland", "semi_arid_scrub"] {
         assert!(crag_goat.hosts_biome(key), "crag_goat must host {key}");
         assert!(
@@ -179,7 +183,8 @@ fn pennable_grazers_are_wired_to_real_biomes_and_spawn() {
         .find(|h| h.species == "Wild Aurochs")
         .unwrap();
     assert!(
-        aurochs_herd.can_pen() && aurochs_herd.husbandry_ceiling == HusbandryCeiling::Pen,
+        aurochs_herd.can_pen(shipped::ladder())
+            && aurochs_herd.husbandry_ceiling == Some(shipped::animal_pen()),
         "a spawned aurochs is pennable"
     );
 }

@@ -173,6 +173,7 @@ func _learned_rows(rows: Array) -> Array:
 ## screen has no ladder nodes at all — so no track could ever be reported learned.
 func _teach(turn: int, tracks: Dictionary) -> void:
 	h._hud.update_ladder_knowledge(KnowledgeFx.ladder_roster())
+	h._hud.update_ladder_rungs(KnowledgeFx.ladder_rungs())
 	h._hud.update_overlay(turn, {})
 	h._hud.update_intensification([KnowledgeFx.progress_row(HudConst.PLAYER_FACTION_ID, tracks)])
 	await h._settle()
