@@ -2526,12 +2526,12 @@ static func build_material_shortfall(pile: Array[Dictionary], store: Dictionary,
             worst = short
     return worst
 
-## The queue row's clause for a shortfall, `""` for none: `⚠ Need 2.1 hurdles` — the shortfall at one
-## decimal-trimmed precision and the material's own name. Short enough to always fit its slot.
+## The queue row's clause for a shortfall, `""` for none: `⚠ Blocked · need 2.1 hurdles` — the shortfall
+## at one decimal-trimmed precision and the material's name.
 static func build_material_short_text(short: Dictionary) -> String:
     if short.is_empty():
         return ""
-    return HudWorkVocab.BUILD_QUEUE_MATERIAL_FORMAT % [HudSelectionVocab.RUNG_HAZARD_GLYPH,
+    return HudWorkVocab.BUILD_QUEUE_BLOCKED_NEED_FORMAT % [HudSelectionVocab.RUNG_HAZARD_GLYPH,
         _material_missing_text(short), material_noun(String(short[MATERIAL_SHORT_ID_KEY]))]
 
 ## …and the same fact as a hover / detail line: `Need 2.1 hurdles`.

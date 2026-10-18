@@ -4980,7 +4980,15 @@ func _build_build_queue_row(band: Dictionary, model: Dictionary, is_head: bool,
     var material_shorts := _queue_row_material_shorts(model)
     var material_clause := DetailFormat.build_material_short_text(
         _worst_material_short(material_shorts)) if not material_shorts.is_empty() else ""
-    var shown := material_clause if material_clause != "" else value
+    # **AN ENTRY BEHIND A BLOCKED HEAD IS WAITING, NOT BLOCKED.** The sim carries the head's `-4` down the
+    # whole queue (`publish_build_chain` hands the same answer to every entry below it, and only the head
+    # is ever blocked on its own), so a `-4` at any rank past the head is inherited and the player has
+    # nothing to fix on it: the plain `Queued 0%`, dim, no mark.
+    var waiting_clause := ""
+    if _queue_row_is_waiting_behind_block(model):
+        waiting_clause = HudSelectionVocab.RUNG_QUEUED_FORMAT % _queue_row_percent(model)
+    var shown := material_clause if material_clause != "" \
+        else (waiting_clause if waiting_clause != "" else value)
     # **THE DATE LEADS LINE TWO, UNDER THE FACE** — a site row's shape (line one identity and controls,
     # line two state). It used to be a fixed 168px column on line one, and with the face moved onto the
     # site rows' TITLE column (`BUILD_QUEUE_MARKER_WIDTH`) that column left the face too little width to
@@ -4991,7 +4999,8 @@ func _build_build_queue_row(band: Dictionary, model: Dictionary, is_head: bool,
         date.set_meta(HudWorkVocab.BUILD_QUEUE_MATERIAL_LINE_META, material_clause)
     date.text = shown
     date.add_theme_color_override("font_color", HudStyle.DANGER if material_clause != "" \
-        else (HudStyle.WARN if pending else DetailFormat.rung_value_color(value)))
+        else (HudStyle.INK_DIM if waiting_clause != "" \
+        else (HudStyle.WARN if pending else DetailFormat.rung_value_color(value))))
     date.add_theme_font_size_override("font_size", HudWorkVocab.ALLOC_SECTION_FONT_SIZE)
     date.mouse_filter = Control.MOUSE_FILTER_IGNORE
     # **A LABEL'S TEXT IS ITS MINIMUM WIDTH unless it clips**, and this one states whatever the wire's date
@@ -5003,7 +5012,8 @@ func _build_build_queue_row(band: Dictionary, model: Dictionary, is_head: bool,
     var date_natural := date_font.get_string_size(shown, HORIZONTAL_ALIGNMENT_LEFT, -1,
         HudWorkVocab.ALLOC_SECTION_FONT_SIZE).x
     # The clause is a short, bounded string of our own and is never trimmed; a date is the wire's.
-    date.custom_minimum_size.x = date_natural if material_clause != "" \
+    date.custom_minimum_size.x = minf(date_natural, HudWorkVocab.BUILD_QUEUE_CLAUSE_MAX_WIDTH) \
+        if material_clause != "" or waiting_clause != "" \
         else minf(date_natural, HudWorkVocab.BUILD_QUEUE_DATE_MAX_WIDTH)
     second.add_child(date)
     second.move_child(date, QUEUE_SECOND_LINE_DATE_INDEX)
@@ -5039,6 +5049,14 @@ func _queue_row_value(model: Dictionary, builders: int) -> String:
         int(model.get("build_turns", SourceForecast.BUILD_TURNS_NO_ESTIMATE)), builders,
         _queue_row_percent(model), _band_labor.current_turn(), _build_queue_row_rank(model),
         String(model.get("building_policy", "")))
+
+## Is this entry stuck only because the HEAD is? A `-4` past the head is inherited — `publish_build_chain`
+## mints `Blocked` for the head alone and carries it down — so rank alone tells inherited from own.
+func _queue_row_is_waiting_behind_block(model: Dictionary) -> bool:
+    return not _build_queue_row_is_pending(model) \
+        and _build_queue_row_rank(model) > SourceForecast.BUILD_QUEUE_HEAD \
+        and int(model.get("build_turns", SourceForecast.BUILD_TURNS_NO_ESTIMATE)) \
+            == SourceForecast.BUILD_TURNS_QUEUE_BLOCKED
 
 func _queue_row_percent(model: Dictionary) -> int:
     var is_ring := String(model.get("improvement", "")) == SourceForecast.BUILD_JOB_EXTEND_PEN
@@ -5079,12 +5097,14 @@ func _queue_entry_facts(band: Dictionary, model: Dictionary, builders: int) -> A
     if pending:
         headline = HudFormat.status_tooltip_line(HudWorkVocab.BUILD_QUEUE_PENDING_STATUS)
     elif not shorts.is_empty():
-        headline = DetailFormat.build_progress_value(_queue_row_percent(model),
-            String(model.get("building_policy", "")))
+        headline = HudWorkVocab.BUILD_QUEUE_BLOCKED_PROGRESS_FORMAT % _queue_row_percent(model)
+    elif _queue_row_is_waiting_behind_block(model):
+        headline = HudSelectionVocab.RUNG_QUEUED_FORMAT % _queue_row_percent(model)
     else:
         headline = _queue_row_value(model, builders)
     facts.append({"text": HudWorkVocab.BUILD_QUEUE_HEADLINE_FORMAT % [_build_queue_job_face(model), headline],
         "ink": HudStyle.INK})
+    var waiting := _queue_row_is_waiting_behind_block(model)
     for short_variant in shorts:
         facts.append({"text": DetailFormat.build_material_need_line(short_variant as Dictionary),
             "ink": HudStyle.DANGER})
@@ -5095,7 +5115,7 @@ func _queue_entry_facts(band: Dictionary, model: Dictionary, builders: int) -> A
                 _item_display_names):
             facts.append({"text": line,
                 "ink": HudWorkVocab.note_color(HudWorkVocab.KIT_SHORT_SEVERITY)})
-    if shorts.is_empty():
+    if shorts.is_empty() and not waiting:
         for cause in model.get("build_blocked_lines", []) as Array:
             if String(cause) != "":
                 facts.append({"text": String(cause), "ink": HudStyle.WARN})

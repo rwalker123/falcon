@@ -11292,6 +11292,7 @@ func _assert_queue_row_ring_quotes_its_own_meter() -> void:
 	await _settle()
 	await _assert_queue_head_says_what_the_shelf_lacks()
 	await _assert_blocked_pen_head_hover_and_detail()
+	await _assert_a_road_behind_a_blocked_pen_head_is_just_queued()
 	await _assert_work_row_warns_of_an_underfed_pen()
 
 ## **RAY'S GAME: A PEN HEAD BLOCKED ON HURDLES AND SHORT OF A CROOK.** 65% built, 2.1 hurdles still to draw
@@ -11328,7 +11329,7 @@ func _assert_blocked_pen_head_hover_and_detail() -> void:
 	var clause := DetailFormat.build_material_short_text(short)
 	_assert_band_panel("blocked pen — the row's date slot reads \"%s\" and no date (got \"%s\")" % [
 			clause, "" if clause_label == null else clause_label.text],
-		clause_label != null and clause_label.text == clause and clause == "⚠ Need 2.1 hurdles"
+		clause_label != null and clause_label.text == clause and clause == "⚠ Blocked · need 2.1 hurdles"
 			and not clause_label.text.contains("turn"))
 	_assert_band_panel("blocked pen — …and the clause draws whole (not trimmed, %.0f of %.0f px)" % [
 			0.0 if clause_label == null else clause_label.size.x,
@@ -11337,8 +11338,7 @@ func _assert_blocked_pen_head_hover_and_detail() -> void:
 			and clause_label.size.x + 0.5 >= clause_label.get_minimum_size().x)
 	var wanted: Array[String] = [
 		HudWorkVocab.BUILD_QUEUE_HEADLINE_FORMAT % [_hud._bandpanel._build_queue_job_face(model),
-			DetailFormat.build_progress_value(_hud._bandpanel._queue_row_percent(model),
-				String(model.get("building_policy", "")))],
+			HudWorkVocab.BUILD_QUEUE_BLOCKED_PROGRESS_FORMAT % _hud._bandpanel._queue_row_percent(model)],
 		DetailFormat.build_material_need_line(short),
 		HudWorkVocab.BUILD_QUEUE_KIT_SHORT_LINE_FORMAT % [1, "crook"]]
 	var cost: String = _hud._bandpanel._queue_entry_cost_line(model)
@@ -11377,6 +11377,74 @@ func _assert_blocked_pen_head_hover_and_detail() -> void:
 		withdraw != null and withdraw.text == "✕" and withdraw.tooltip_text == "Remove from queue")
 	_assert_zone_content_fits()
 	_hud._bandpanel._queue_open_key = ""
+	_push_bands([_ring_band_fixture()])
+	await _settle()
+
+## **THE ENTRY BEHIND A BLOCKED HEAD IS NOT BLOCKED, AND SAYS NOTHING IS WRONG WITH IT.** Ray's game showed the
+## blocked pen head as a plain date and the road waiting behind it as `⚠ Blocked 0%`. The sim mints
+## `-4` for the head alone and carries it down the queue, so a `-4` at any rank past the head is inherited:
+## the road reads the plain `Queued 0%` in the dim ink, no mark, its hover `<face> — Queued 0%` and its
+## cost; the head reads `⚠ Blocked · need 2.1 hurdles` in red, its hover headline `… — Blocked 65%`, and the
+## `◆ Short 1 crook` clause stays the kit-short amber (it only slows the job).
+func _assert_a_road_behind_a_blocked_pen_head_is_just_queued() -> void:
+	_hud.update_route_rungs(_road_queue_catalog())
+	var road := _road_queue_row()
+	road["build_turns_remaining"] = SourceForecast.BUILD_TURNS_QUEUE_BLOCKED
+	_hud.update_road_network([road])
+	var pile := [{"material_id": PEN_MATERIAL, "amount": PEN_BUILD_PILE}]
+	_set_world_herds(_ring_herd_fixtures(pile, {"pen_extend_progress": BLOCKED_PEN_WORK_DONE}))
+	var band := _ring_band_fixture()
+	band["build_queue"] = [_queue_hunt_entry(RING_HERD_ID), _queue_road_entry(ROAD_QUEUE_TILE)]
+	band["material_store"] = []
+	band[HudBandLaborState.POOL_TOE_KEY] = [_pool_toe_row(HudConst.LABOR_KIND_BUILDERS, "crook",
+		BLOCKED_PEN_CROOK_REQUIRED, BLOCKED_PEN_CROOK_FILLED)]
+	_push_bands([band])
+	await _settle()
+	var rows := _build_queue_rows()
+	if rows.size() < 2:
+		_fail("road behind blocked head — the queue draws %d rows, wanted 2" % rows.size())
+		return
+	var models: Array = _hud._bandpanel._build_queue_models(_hud._band_labor.panel_band(),
+		_hud._bandpanel._work_source_models(_hud._band_labor.panel_band(), 0))
+	var road_model := {}
+	for model_variant in models:
+		if _hud._bandpanel._build_queue_row_rank(model_variant) == SourceForecast.BUILD_QUEUE_HEAD + 1:
+			road_model = model_variant
+	var percent: int = _hud._bandpanel._queue_row_percent(road_model)
+	var queued := HudSelectionVocab.RUNG_QUEUED_FORMAT % percent
+	var head_date := _find_meta_control(rows[0], HudWorkVocab.BUILD_QUEUE_DATE_META) as Label
+	var road_date := _find_meta_control(rows[1], HudWorkVocab.BUILD_QUEUE_DATE_META) as Label
+	_assert_band_panel("road behind blocked head — the HEAD reads \"⚠ Blocked · need 2.1 hurdles\" in red (got \"%s\")"
+			% ("" if head_date == null else head_date.text),
+		head_date != null and head_date.text == "⚠ Blocked · need 2.1 hurdles"
+			and head_date.get_theme_color(FONT_COLOR_THEME_KEY).is_equal_approx(HudStyle.DANGER))
+	_assert_band_panel("road behind blocked head — …the ROAD reads \"%s\" in the dim ink, with no mark (got \"%s\")"
+			% [queued, "" if road_date == null else road_date.text],
+		road_date != null and road_date.text == queued
+			and not road_date.text.contains(HudSelectionVocab.RUNG_HAZARD_GLYPH)
+			and road_date.get_theme_color(FONT_COLOR_THEME_KEY).is_equal_approx(HudStyle.INK_DIM))
+	var road_want: Array[String] = [HudWorkVocab.BUILD_QUEUE_HEADLINE_FORMAT % [
+		_hud._bandpanel._build_queue_job_face(road_model), queued]]
+	var road_cost: String = _hud._bandpanel._queue_entry_cost_line(road_model)
+	if road_cost != "":
+		road_want.append(road_cost)
+	var road_hover: Array = rows[1].tooltip_text.split("\n")
+	_assert_band_panel("road behind blocked head — …and its hover is %s (got %s)" % [str(road_want), str(road_hover)],
+		road_hover == road_want and not rows[1].tooltip_text.contains("Blocked")
+			and not rows[1].tooltip_text.contains("Waiting") and not rows[1].tooltip_text.contains("Behind"))
+	var head_hover: Array = rows[0].tooltip_text.split("\n")
+	_assert_band_panel("road behind blocked head — …the head's hover opens \"… — Blocked 65%\" then its needs (got %s)"
+			% str(head_hover),
+		head_hover.size() >= 3 and String(head_hover[0]).ends_with("— Blocked 65%")
+			and head_hover[1] == "Need 2.1 hurdles" and head_hover[2] == "Short 1 crook")
+	var kit_lines := _queue_tools_lines()
+	_assert_band_panel("road behind blocked head — …and the head's `◆ Short 1 crook` stays the kit-short amber",
+		kit_lines.size() == 1 and (kit_lines[0] as Label).text.ends_with("Short 1 crook")
+			and (kit_lines[0] as Label).get_theme_color(FONT_COLOR_THEME_KEY).is_equal_approx(
+				HudWorkVocab.note_color(HudWorkVocab.KIT_SHORT_SEVERITY)))
+	await _save("band_panel_queue_road_behind_blocked_pen")
+	_assert_zones_within_bounds()
+	_hud.update_road_network([])
 	_push_bands([_ring_band_fixture()])
 	await _settle()
 
@@ -21857,20 +21925,24 @@ func _work_section_head(key: StringName) -> Control:
 			return head
 	return null
 
-## Every entry carries the blocked sentinel, not just the head — the sim's own behaviour, and a block
-## that showed it on the head alone would report a stuck queue as a moving one.
+## The sim carries the head's blocked sentinel down the whole queue, but only the HEAD is blocked: it
+## reads the `⚠ Blocked` face and every entry behind it reads the plain `Queued N%` in the dim ink — a
+## row with nothing to fix must not wear the mark the head's problem earned.
 func _assert_build_queue_all_blocked() -> void:
-	var blocked := 0
 	var seen: Array[String] = []
 	var needle := HudSelectionVocab.RUNG_BLOCKED_FORMAT % [HudSelectionVocab.RUNG_HAZARD_GLYPH, 0]
+	var queued := HudSelectionVocab.RUNG_QUEUED_FORMAT % 0
+	var behind_ok := true
 	for row in _build_queue_rows():
 		var date := _find_meta_control(row, HudWorkVocab.BUILD_QUEUE_DATE_META)
 		var value := "" if date == null else String(date.get_meta(HudWorkVocab.BUILD_QUEUE_DATE_META))
 		seen.append(value)
-		if value == needle:
-			blocked += 1
-	_assert_band_panel("a blocked HEAD blocks the whole queue — all 3 entries read \"%s\" (%s)"
-			% [needle, str(seen)], blocked == 3)
+		if int(row.get_meta(HudWorkVocab.BUILD_QUEUE_ROW_META)) > SourceForecast.BUILD_QUEUE_HEAD:
+			behind_ok = behind_ok and value == queued and (date as Label).get_theme_color(
+				FONT_COLOR_THEME_KEY).is_equal_approx(HudStyle.INK_DIM)
+	_assert_band_panel("a blocked HEAD reads \"%s\" and the 2 entries behind it read \"%s\" (%s)"
+			% [needle, queued, str(seen)],
+		seen.size() == 3 and seen[0] == needle and behind_ok)
 
 ## **WHY THE BUILDERS ARE HELD, ON THE QUEUE'S OWN SURFACE** (`docs/plan_standing_upkeep.md` §4.6b).
 ## The date column can only say `⚠ Blocked N%`, which is the STATE; the cause is a sentence, and a
@@ -21892,21 +21964,21 @@ func _assert_build_queue_states_the_cause() -> void:
 		QUEUE_PATCH_BIOMASS, int(ceil(QUEUE_PATCH_FLOOR * QUEUE_PATCH_CAPACITY)),
 		int(round(QUEUE_PATCH_FLOOR * 100.0))]
 	var wanted_herd := String(HudSelectionVocab.BUILD_BLOCKED_REASONS[QUEUE_BLOCKED_HERD_REASON])
-	var plant_rows := 0
-	var herd_rows := 0
+	# Only the HEAD is blocked on its own cause, so only the head's hover states one; the entries behind
+	# it are merely queued and carry the cost line alone.
+	var head_text := ""
+	var behind_causes := 0
 	for row in _build_queue_rows():
 		var tooltip := String(row.tooltip_text)
-		if tooltip.contains(wanted_plant):
-			plant_rows += 1
-		if tooltip.contains(wanted_herd):
-			herd_rows += 1
-	_assert_band_panel("a blocked entry's hover states the ESCAPEMENT cause — \"%s\" (%d rows)"
-			% [wanted_plant, plant_rows], plant_rows > 0)
-	# …and the SECOND key, which is what stops a table that answers one sentence for every cause.
-	_assert_band_panel("…and the herd entry blocked on KNOWLEDGE states its own cause instead — \"%s\""
-			% wanted_herd, herd_rows > 0)
-	_assert_band_panel("…and the two causes are DIFFERENT sentences on different rows",
-		wanted_plant != wanted_herd and plant_rows + herd_rows == _build_queue_rows().size())
+		if int(row.get_meta(HudWorkVocab.BUILD_QUEUE_ROW_META)) == SourceForecast.BUILD_QUEUE_HEAD:
+			head_text = tooltip
+		elif tooltip.contains(wanted_plant) or tooltip.contains(wanted_herd):
+			behind_causes += 1
+	_assert_band_panel("the blocked HEAD's hover states its own cause — \"%s\" or \"%s\""
+			% [wanted_plant, wanted_herd],
+		head_text.contains(wanted_plant) or head_text.contains(wanted_herd))
+	_assert_band_panel("…and no entry behind it repeats the head's cause (%d do)" % behind_causes,
+		behind_causes == 0 and wanted_plant != wanted_herd)
 
 ## **THE PAIRED NEGATIVE, and it is the half a producer that always emitted a line would fail.** A
 ## queue that is moving states no cause at all — not a fallback, not an empty indented line — so the

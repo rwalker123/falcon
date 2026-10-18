@@ -3603,24 +3603,38 @@ proportion) and a frame the cause has not reached both read as a plain date. The
 compares two things the wire already states: the rung's pile (`SourceForecast.build_material_cost`, or
 `corral_build_material_cost` for a pen ring) against the band's `material_store`, at what is still to be
 drawn, `pile × (1 − meter)` (`DetailFormat.build_material_shortfalls`, one entry per missing good, never
-a sum). The date slot then reads `⚠ Need 2.1 hurdles` (`HudWorkVocab.BUILD_QUEUE_MATERIAL_FORMAT`: the
-shortfall of the good the shelf is shortest of, the material's name through `DetailFormat.material_noun` (the crafting rail's own `capitalize()` humaniser, lower-cased: `stone_dressing` reads `stone dressing`), `HudStyle.DANGER`) and **no date
-at all** — a date counted off a stalled build is a number nobody can act on. The clause is never trimmed
-(its slot takes its natural width), and the builders' `◆` clause keeps its own place beside `Build:
-Normal`. Head only: entries behind the head claim nothing. A road's or a working's pile is not read here
+a sum). The date slot then reads `⚠ Blocked · need 2.1 hurdles` (`HudWorkVocab.BUILD_QUEUE_BLOCKED_NEED_FORMAT`)
+all in `HudStyle.DANGER`, and **no date at all** — a date counted off a stalled build is a number nobody
+can act on. The amount is the shortfall of the good the shelf is shortest of, and the noun goes through
+`DetailFormat.material_noun`, the crafting rail's own `capitalize()` humaniser lower-cased
+(`stone_dressing` reads `stone dressing`). The clause's slot takes its natural width up to
+`BUILD_QUEUE_CLAUSE_MAX_WIDTH`. The builders' `◆ Short 1 crook` clause (the hover's `Short N <item>` facts
+joined with ` · `) keeps its own place beside `Build: Normal` in the kit-short amber, since it only slows
+the job. Head only: entries behind the head claim nothing. A road's or a working's pile is not read here
 (a road's shortfall is the sim's own `buildMaterialDemand` / `buildMaterialSupplied` pair).
+
+**An entry behind a blocked head is just queued.** `publish_build_chain` mints `Blocked` for the HEAD
+alone and carries the same answer (and the head's reason) down every entry below it, so a `-4` at any rank
+past the head is inherited — the wire cannot, and need not, tell it apart by reason. Such a row reads the
+plain `Queued 0%` (`HudSelectionVocab.RUNG_QUEUED_FORMAT`) in `HudStyle.INK_DIM`, no mark: the player has
+nothing to fix on it. Its hover is `<face> — Queued 0%` then the cost line, and it repeats none of the
+head's causes (`_queue_row_is_waiting_behind_block`).
 
 **Every queue entry's hover, and its open strip, are one list of facts, one per line**
 (`BandPanelController._queue_entry_facts`; no explanation, no open hint):
-1. the headline, `<face> — <verb-ing> 64%` with `· turn N` only on a real date (a head blocked on goods, or
-   carrying any sentinel, states none; a pending entry says its pending words);
+1. the headline, `<face> — <verb-ing> 64%` with `· turn N` only on a real date. A head blocked on goods
+   reads `<face> — Blocked 64%`; an entry behind a blocked head `<face> — Queued 0%`; a pending entry says
+   its pending words;
 2. one `Need N <material>` per missing good (head only);
 3. one `Short N <item>` per short builders' tool (head only; N the builders without it, `required −
-   filled` rounded up; the item the roster's lower-cased name, or its wire id until the roster arrives);
-4. the causes the sim named (not the materials one, which the need lines state);
+   filled` rounded up; the item the roster's lower-cased name, or its humanised wire id until the roster
+   arrives);
+4. the causes the sim named (not on an entry waiting behind the head, and not the materials one, which the
+   need lines state);
 5. `Costs 75 work · upkeep 2.8/turn` (the upkeep clause only where the rung bills one).
 Pinned by `band_panel_preview._assert_blocked_pen_head_hover_and_detail` (`band_panel_queue_blocked_pen_head`,
-`band_panel_queue_blocked_pen_detail`) on a pen head 65% built, 2.1 hurdles short and one crook short.
+`band_panel_queue_blocked_pen_detail`) on a pen head 65% built, 2.1 hurdles short and one crook short, and by
+`_assert_a_road_behind_a_blocked_pen_head_is_just_queued` (`band_panel_queue_road_behind_blocked_pen`).
 
 ### A ROW EXPANDS INTO THE JOB'S SETTINGS### A ROW EXPANDS INTO THE JOB'S SETTINGS, AND THE ROW ITSELF TAKES NO SIXTH COLUMN (§4.7a ③)
 

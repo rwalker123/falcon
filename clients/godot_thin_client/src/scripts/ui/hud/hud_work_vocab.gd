@@ -3648,7 +3648,15 @@ const BUILD_QUEUE_DATE_MAX_WIDTH := 120.0
 ## naming the good: `⚠ No hurdles — needs 2.1 more` while the shelf holds none of it, `⚠ Short of
 ## hurdles — needs 1.1 more` while it holds some. It takes the slot the builders' `◆` clause uses and
 ## wins it, because a build with no hurdles banks nothing whatever the tools are.
-const BUILD_QUEUE_MATERIAL_FORMAT := "%s Need %s %s"
+## **A HEAD BLOCKED ON GOODS** reads `⚠ Blocked · need 1.1 hurdles` in `HudStyle.DANGER`, in the date's place
+## and with no date; its hover headline is `<face> — Blocked 64%`.
+const BUILD_QUEUE_BLOCKED_NEED_FORMAT := "%s Blocked · need %s %s"
+const BUILD_QUEUE_BLOCKED_PROGRESS_FORMAT := "Blocked %d%%"
+## **AN ENTRY BEHIND A BLOCKED HEAD** is not itself broken and has nothing to fix, so it reads the plain
+## `Queued 0%` (`HudSelectionVocab.RUNG_QUEUED_FORMAT`) in `HudStyle.INK_DIM`, no mark; its hover headline
+## is `<face> — Queued 0%`, then the cost line.
+## The widest the blocked clause may ask for: its own text up to this, trimmed beyond.
+const BUILD_QUEUE_CLAUSE_MAX_WIDTH := 240.0
 ## …and the same fact as a hover / detail line, without the mark: one per missing material.
 const BUILD_QUEUE_MATERIAL_LINE_FORMAT := "Need %s %s"
 ## **THE KIT LINE**: `Short 1 crook` — the builders without the item.
