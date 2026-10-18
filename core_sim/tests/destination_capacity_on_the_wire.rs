@@ -1124,3 +1124,332 @@ fn a_zero_destination_capacity_is_not_the_no_destination_reading() {
         "a herd in nobody's queue has no destination to quote"
     );
 }
+
+// ---------------------------------------------------------------------------------------------
+// WHERE THE PEN GOES: the best-grazing tile in the keeping band's range, not where the herd stands
+// ---------------------------------------------------------------------------------------------
+//
+// A Corral picks its site when it is queued (`fauna::choose_pen_site`, stamped as `Herd::pen_site`),
+// scored through the one `K` seam over a one-tile footprint. These arms drive the real build to its
+// end and read the encoded buffer, because the claims are about where a pen lands and what a client
+// is told about it.
+
+/// The graze capacity of ground nobody would pick.
+const POOR_GRAZE: f32 = 20.0;
+/// The best ground in the keeping band's range.
+const RICH_GRAZE: f32 = 400.0;
+/// The next best, for the arm that takes the best away.
+const SECOND_GRAZE: f32 = 300.0;
+/// Richer than all of it, but beyond the band's reach.
+const OUT_OF_RANGE_GRAZE: f32 = 4_000.0;
+/// How far from the herd the pasture fixture lays its poor ground, so every candidate and the
+/// out-of-range tile are all inside it.
+const PASTURE_RADIUS: u32 = 6;
+/// Hex distance of the best tile from the band (and the herd).
+const RICH_DISTANCE: u32 = 2;
+/// Hex distance of the second best.
+const SECOND_DISTANCE: u32 = 1;
+
+/// The pasture laid out around a herd.
+struct Pasture {
+    herd_tile: UVec2,
+    rich: UVec2,
+    second: UVec2,
+    out_of_range: UVec2,
+}
+
+fn land_tiles_around(app: &mut App, center: UVec2, radius: u32) -> Vec<UVec2> {
+    let (width, height) = {
+        let tiles = app.world.resource::<TileRegistry>();
+        (tiles.width, tiles.height)
+    };
+    let wrap = app
+        .world
+        .resource::<core_sim::SimulationConfig>()
+        .map_topology
+        .wrap_horizontal;
+    let mut land: Vec<UVec2> =
+        core_sim::grid_utils::hex_range_tiles(center, radius, width, height, wrap)
+            .into_iter()
+            .filter(|position| {
+                let entity = app
+                    .world
+                    .resource::<TileRegistry>()
+                    .index(position.x, position.y);
+                entity
+                    .and_then(|entity| app.world.get::<core_sim::Tile>(entity))
+                    .is_some_and(|tile| {
+                        !tile.terrain_tags.contains(sim_runtime::TerrainTags::WATER)
+                    })
+            })
+            .collect();
+    land.sort_by_key(|tile| (tile.y, tile.x));
+    land
+}
+
+fn hex_steps(app: &App, a: UVec2, b: UVec2) -> u32 {
+    let width = app.world.resource::<TileRegistry>().width;
+    let wrap = app
+        .world
+        .resource::<core_sim::SimulationConfig>()
+        .map_topology
+        .wrap_horizontal;
+    core_sim::grid_utils::hex_distance_wrapped(a, b, width, wrap)
+}
+
+/// **Lay the pasture out around the herd**: every land tile near it poor, one tile at
+/// [`RICH_DISTANCE`] rich, one at [`SECOND_DISTANCE`] second best, and one beyond the band's work
+/// range richest of all. The herd's own tile stays poor.
+fn lay_out_the_pasture(app: &mut App, id: &str) -> Pasture {
+    let herd_tile = app
+        .world
+        .resource::<HerdRegistry>()
+        .find(id)
+        .expect("the fixture herd")
+        .current_pos;
+    let work_range = app
+        .world
+        .resource::<core_sim::LaborConfigHandle>()
+        .get()
+        .band_work_range;
+    assert!(
+        work_range >= RICH_DISTANCE && SECOND_DISTANCE < RICH_DISTANCE,
+        "fixture: the rich tile must be inside the band's work range"
+    );
+    let around = land_tiles_around(app, herd_tile, PASTURE_RADIUS);
+    let pick = |app: &App, distance: u32, not: &[UVec2]| -> UVec2 {
+        around
+            .iter()
+            .copied()
+            .find(|tile| hex_steps(app, herd_tile, *tile) == distance && !not.contains(tile))
+            .unwrap_or_else(|| panic!("fixture: no land tile {distance} steps from the herd"))
+    };
+    let rich = pick(app, RICH_DISTANCE, &[]);
+    let second = pick(app, SECOND_DISTANCE, &[rich]);
+    let out_of_range = pick(app, work_range + RICH_DISTANCE, &[rich, second]);
+    let mut graze = app.world.resource_mut::<GrazeRegistry>();
+    for tile in &around {
+        graze
+            .patches
+            .insert(*tile, core_sim::GrazePatch::new(*tile, POOR_GRAZE));
+    }
+    for (tile, capacity) in [
+        (rich, RICH_GRAZE),
+        (second, SECOND_GRAZE),
+        (out_of_range, OUT_OF_RANGE_GRAZE),
+    ] {
+        graze
+            .patches
+            .insert(tile, core_sim::GrazePatch::new(tile, capacity));
+    }
+    Pasture {
+        herd_tile,
+        rich,
+        second,
+        out_of_range,
+    }
+}
+
+fn corralled_at(app: &App, id: &str) -> Option<UVec2> {
+    app.world
+        .resource::<HerdRegistry>()
+        .find(id)
+        .and_then(|herd| herd.corralled_at)
+}
+
+fn published_pen_site(app: &App, id: &str) -> (i32, i32) {
+    published_herd_field(app, id, |herd| (herd.penSiteX(), herd.penSiteY()))
+}
+
+/// One fixture turn with everything kept fed, so the arms measure the site and not a famine.
+fn run_a_kept_turn(app: &mut App, kept: &[&str]) {
+    refill_the_range(app);
+    for id in kept {
+        seat_the_keeping(app, id);
+    }
+    keep_the_band_alive(app);
+    run_turn(app);
+    recapture_snapshot_in_place(&mut app.world);
+}
+
+/// Run the fixture's Corral until the pen is up.
+fn run_the_corral_to_completion(app: &mut App, id: &str, kept: &[&str]) {
+    let mut turns = 0;
+    while corralled_at(app, id).is_none() {
+        run_a_kept_turn(app, kept);
+        turns += 1;
+        assert!(
+            turns < BUILD_HORIZON,
+            "fixture: the staffed Corral must land inside {BUILD_HORIZON} turns"
+        );
+    }
+}
+
+/// ⛔ **A NEW PEN GOES ON THE BEST-GRAZING TILE IN THE BAND'S RANGE, NOT WHERE THE HERD STANDS.**
+///
+/// The herd stands on poor ground with a rich tile two steps away and a richer one beyond the band's
+/// reach. The pen must land on the rich in-range tile; the encoded row announces that tile while the
+/// Corral runs and reads `-1` once the pen is up, and the herd's published position is the pen.
+#[test]
+fn a_new_pen_goes_on_the_best_grazing_tile_in_range() {
+    let (mut app, id) = world_with_a_corral_in_flight();
+    let pasture = lay_out_the_pasture(&mut app, &id);
+    assert_ne!(
+        pasture.rich, pasture.herd_tile,
+        "fixture: the pen must have to move"
+    );
+
+    let mut announced: Option<(i32, i32)> = None;
+    let mut turns = 0;
+    while corralled_at(&app, &id).is_none() {
+        run_a_kept_turn(&mut app, &[id.as_str()]);
+        turns += 1;
+        assert!(turns < BUILD_HORIZON, "fixture: the Corral must land");
+        if corralled_at(&app, &id).is_none() {
+            announced = Some(published_pen_site(&app, &id));
+        }
+    }
+
+    assert_eq!(
+        corralled_at(&app, &id),
+        Some(pasture.rich),
+        "the pen goes on the best-grazing tile within the band's work range"
+    );
+    assert_ne!(corralled_at(&app, &id), Some(pasture.herd_tile));
+    assert_ne!(
+        corralled_at(&app, &id),
+        Some(pasture.out_of_range),
+        "a tile beyond the band's work range is never chosen, however rich"
+    );
+    assert_eq!(
+        announced,
+        Some((pasture.rich.x as i32, pasture.rich.y as i32)),
+        "LIVENESS: while the Corral ran, the encoded row announced the tile the pen will go on"
+    );
+    assert_eq!(
+        published_pen_site(&app, &id),
+        (-1, -1),
+        "a pen that is up has no site left to announce"
+    );
+    let (x, y) = published_herd_field(&app, &id, |herd| (herd.x(), herd.y()));
+    assert_eq!(
+        (x, y),
+        (pasture.rich.x, pasture.rich.y),
+        "the penned herd's published position is the pen"
+    );
+}
+
+/// ⛔ **A TILE THAT ALREADY HOLDS ANOTHER HERD'S PEN IS SKIPPED.**
+///
+/// The best tile is taken by a pen already standing, so the Corral takes the next best.
+#[test]
+fn a_tile_already_holding_a_pen_is_skipped() {
+    let (mut app, id) = world_with_a_corral_in_flight();
+    let pasture = lay_out_the_pasture(&mut app, &id);
+
+    let other_id = "game_the_pen_already_there".to_string();
+    {
+        let mut registry = app.world.resource_mut::<HerdRegistry>();
+        let mut other = registry.find(&id).expect("the fixture herd").clone();
+        other.id = other_id.clone();
+        other.label = other_id.clone();
+        other.route = vec![pasture.rich];
+        other.current_pos = pasture.rich;
+        assert!(other.corral_at(pasture.rich, &core_sim::LadderConfig::builtin()));
+        registry.herds.push(other);
+    }
+
+    run_the_corral_to_completion(&mut app, &id, &[id.as_str(), other_id.as_str()]);
+    assert_eq!(
+        corralled_at(&app, &other_id),
+        Some(pasture.rich),
+        "fixture: the first pen is still standing"
+    );
+    assert_eq!(
+        corralled_at(&app, &id),
+        Some(pasture.second),
+        "the best tile is taken, so the pen goes on the next best one in range"
+    );
+}
+
+/// ⛔ **THE QUOTE BEFORE THE PEN IS THE CAPACITY AFTER IT**, with the pen moved off the herd's own
+/// tile - so a quote struck over the tile the herd stands on would be a different number.
+#[test]
+fn the_quote_names_the_capacity_of_the_tile_the_pen_lands_on() {
+    let (mut app, id) = world_with_a_corral_in_flight();
+    let pasture = lay_out_the_pasture(&mut app, &id);
+    run_a_kept_turn(&mut app, &[id.as_str()]);
+    let (live, advertised) = published_herd_capacities(&app, &id);
+    assert_ne!(
+        advertised, NO_BUILD_DESTINATION_CAPACITY,
+        "fixture: the Corral is queued"
+    );
+    assert!(live > 0.0, "fixture: the range holds the herd");
+
+    run_the_corral_to_completion(&mut app, &id, &[id.as_str()]);
+    assert_eq!(corralled_at(&app, &id), Some(pasture.rich));
+    run_a_kept_turn(&mut app, &[id.as_str()]);
+    let delivered = herd_live_capacity(&app, &id);
+    assert!(
+        (delivered - advertised).abs() < SAME_NUMBER,
+        "the capacity quoted for the queued pen ({advertised}) is what the pen on the best tile \
+         delivers ({delivered})"
+    );
+}
+
+/// ⛔ **THE SITE GOES WITH THE ENTRY.** An unqueued Corral takes its chosen site with it; the encoded
+/// row says so.
+#[test]
+fn unqueueing_the_corral_clears_the_site() {
+    let (mut app, id) = world_with_a_corral_in_flight();
+    let pasture = lay_out_the_pasture(&mut app, &id);
+    let band = {
+        let mut query = app
+            .world
+            .query_filtered::<(bevy::prelude::Entity, &LaborAllocation), bevy::prelude::With<ResidentBand>>();
+        query
+            .iter(&app.world)
+            .find(|(_, allocation)| !allocation.build_queue.is_empty())
+            .map(|(entity, _)| entity)
+            .expect("the fixture band holds the queued Corral")
+    };
+    let chosen = {
+        let herd = app
+            .world
+            .resource::<HerdRegistry>()
+            .find(&id)
+            .expect("the fixture herd")
+            .clone();
+        core_sim::pen_site_in_world(&app.world, &herd, pasture.herd_tile)
+    };
+    assert_eq!(
+        chosen,
+        Some(pasture.rich),
+        "the chooser picks the best in-range tile"
+    );
+    app.world
+        .resource_mut::<HerdRegistry>()
+        .herds
+        .iter_mut()
+        .find(|herd| herd.id == id)
+        .expect("the fixture herd")
+        .pen_site = chosen;
+    recapture_snapshot_in_place(&mut app.world);
+    assert_eq!(
+        published_pen_site(&app, &id),
+        (pasture.rich.x as i32, pasture.rich.y as i32),
+        "LIVENESS: the stamped site reaches the wire"
+    );
+
+    assert!(core_sim::unqueue_build_and_cancel_ring(
+        &mut app.world,
+        band,
+        &core_sim::BuildSource::Herd(id.clone()),
+    ));
+    recapture_snapshot_in_place(&mut app.world);
+    assert_eq!(
+        published_pen_site(&app, &id),
+        (-1, -1),
+        "a Corral that left the queue announces no site"
+    );
+}

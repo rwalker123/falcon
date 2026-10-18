@@ -5546,6 +5546,11 @@ pub fn advance_labor_allocation(
     // stock this pass takes from.
     mut deposits: ResMut<crate::extraction::DepositRegistry>,
     mut cohorts: Query<LaborBandParts>,
+    // **The pasture** - read for one purpose: choosing the tile a completing Corral's pen stands on
+    // when none was chosen at queue time ([`crate::fauna::choose_pen_site`]).
+    // `Option`: a hand-built test world seeds no pasture, and reads as an empty layer (every tile
+    // scores alike, so the site falls to distance).
+    graze: Option<Res<crate::graze::GrazeRegistry>>,
     // **Belief on a place** — a resident band's hunt dead are credited to the tile it stands on
     // ([`settle_hunt_band_side`]).
     mut belief: ResMut<BeliefRegistry>,
@@ -5678,6 +5683,31 @@ pub fn advance_labor_allocation(
     // **WHERE A ROW'S CARGO GOES HOME TO** ([`CargoHome`]) — the one resolver every settlement in this
     // pass reads, so a deposit's party lands its material in the store and a food party its food in
     // the larder, whichever exit ends the posting.
+    // **THE PEN-SITE CHOOSER'S SCENE, AND THE TILES PENS ALREADY HOLD** - a Corral that completes pens
+    // its herd on the tile chosen when it was queued (re-picked here when none was or another pen has
+    // since taken it), never where the herd happens to stand.
+    let is_land = |position: UVec2| {
+        tile_registry
+            .index(position.x, position.y)
+            .and_then(|entity| tiles.get(entity).ok())
+            .is_some_and(|tile| !tile.terrain_tags.contains(sim_runtime::TerrainTags::WATER))
+    };
+    let no_pasture = crate::graze::GrazeRegistry::default();
+    let pen_scene = crate::fauna::PenSiteScene {
+        graze: graze.as_deref().unwrap_or(&no_pasture),
+        fauna: &fauna,
+        ladder: &ladder,
+        is_land: &is_land,
+        width: grid_width,
+        height: grid_height,
+        wrap: wrap_horizontal,
+        work_range: labor.band_work_range,
+    };
+    let mut pen_holders: Vec<(String, UVec2)> = registry
+        .herds
+        .iter()
+        .filter_map(|herd| herd.corralled_at.map(|tile| (herd.id.clone(), tile)))
+        .collect();
     let cargo_home_of = |target: &LaborTarget| {
         CargoHome::of(
             target,
@@ -9104,10 +9134,34 @@ pub fn advance_labor_allocation(
                         // **The gear is charged off the METER'S DELTA**, never the offered amount:
                         // the owner-lock lives in the herd's own accrual, so a keeper the herd
                         // refuses spends nothing structurally rather than by this site re-checking.
-                        let pen_tile = herd.position();
+                        let pen_tile = if rung
+                            .trait_set()
+                            .has(crate::intensification::RungTrait::Enclosed)
+                        {
+                            let taken: Vec<UVec2> = pen_holders
+                                .iter()
+                                .filter(|(id, _)| *id != herd.id)
+                                .map(|(_, tile)| *tile)
+                                .collect();
+                            let site = herd
+                                .pen_site
+                                .filter(|site| crate::fauna::pen_site_is_free(*site, &taken))
+                                .or_else(|| {
+                                    crate::fauna::choose_pen_site(
+                                        herd, band_pos, &taken, &pen_scene,
+                                    )
+                                });
+                            herd.pen_site = site;
+                            site.unwrap_or_else(|| herd.position())
+                        } else {
+                            herd.position()
+                        };
                         let progress_before = herd.ladder_position();
                         let completed_rung = accrual > 0.0
                             && herd.accrue_rung(faction, accrual, rung, &fauna, &ladder, pen_tile);
+                        if completed_rung && herd.corralled_at.is_some() {
+                            pen_holders.push((herd.id.clone(), pen_tile));
+                        }
                         // Recorded for the band's chain pass, which dates it at its place in the
                         // queue. **Only for a source that carries an entry** - see
                         // `entry_declares_a_rung`.

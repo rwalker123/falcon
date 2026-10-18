@@ -2900,6 +2900,8 @@
       "pen_footprint_tiles": 167,
       "pen_pasture_fraction": 58.049999,
       "pen_radius": 8,
+      "pen_site_x": 14,
+      "pen_site_y": 3,
       "per_worker_biomass": 8.51,
       "per_worker_material": [
         {
@@ -3231,6 +3233,8 @@
       "pen_footprint_tiles": 24,
       "pen_pasture_fraction": 6.67,
       "pen_radius": 109,
+      "pen_site_x": 139,
+      "pen_site_y": 150,
       "per_worker_biomass": 22.99,
       "per_worker_material": [
         {
@@ -3562,6 +3566,8 @@
       "pen_footprint_tiles": 93,
       "pen_pasture_fraction": 62.049999,
       "pen_radius": 190,
+      "pen_site_x": 156,
+      "pen_site_y": 145,
       "per_worker_biomass": 72.160004,
       "per_worker_material": [
         {

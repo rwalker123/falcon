@@ -652,6 +652,10 @@ pub(crate) fn herds_to_array(
         let _ = dict.insert("rung_quotes", &rung_quotes_to_array(herd.rungQuotes()));
         // The size tier this herd's fence has reached ("ranch"), "" when it is in none.
         let _ = dict.insert("size_tier", herd.sizeTier().unwrap_or_default());
+        // The tile the queued Corral will pen this herd on (`fauna::choose_pen_site`); -1 on both
+        // axes when no Corral is queued. The client marks it and never computes it.
+        let _ = dict.insert("pen_site_x", herd.penSiteX() as i64);
+        let _ = dict.insert("pen_site_y", herd.penSiteY() as i64);
         array.push(&dict.to_variant());
     }
     array

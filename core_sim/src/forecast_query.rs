@@ -283,6 +283,19 @@ struct MusterScene {
     bench: Option<crate::components::MusterBench>,
 }
 
+/// The tile the band `band_id` of `faction` stands on, or `None` for an unknown band.
+fn band_tile_of(world: &mut World, faction: FactionId, band_id: u64) -> Option<bevy::math::UVec2> {
+    let wanted = BandId(band_id);
+    let mut query = world.query::<(&BandId, &PopulationCohort)>();
+    let tile = query
+        .iter(world)
+        .find(|(id, cohort)| **id == wanted && cohort.faction == faction)
+        .map(|(_, cohort)| cohort.current_tile)?;
+    world
+        .get::<crate::components::Tile>(tile)
+        .map(|tile| tile.position)
+}
+
 /// The scene for `band_id`, or `None` for a band with no allocation (nothing to lend).
 fn muster_scene(world: &mut World, faction: FactionId, band_id: u64) -> Option<MusterScene> {
     let wanted = BandId(band_id);
@@ -616,6 +629,7 @@ fn answer_hunt_crew_take(world: &mut World, ask: &HuntCrewTakeQuery) -> QueryRep
         Ok(resolved) => resolved,
         Err(failure) => return failure,
     };
+    let band_tile = band_tile_of(world, FactionId(ask.faction_id), ask.band_id);
     // **A `follow` ASK PRICES THE CREW A NEED ROW WOULD MUSTER** - over the gear the musterable pool
     // would carry (`hunt_by_need::MusterPricing`), the pricing the turn, the capture and the craft
     // pass use, so the sheet's "Sends N" is what the row then sends.
@@ -738,7 +752,10 @@ fn answer_hunt_crew_take(world: &mut World, ask: &HuntCrewTakeQuery) -> QueryRep
     let ladder = world
         .resource::<crate::intensification::LadderConfigHandle>()
         .get();
-    let raised = herd_once_raised(&herd, &ladder, FactionId(ask.faction_id));
+    let pen_site = herd
+        .pen_site
+        .or_else(|| crate::fauna::pen_site_in_world(world, &herd, band_tile?));
+    let raised = herd_once_raised(&herd, &ladder, FactionId(ask.faction_id), pen_site);
     let raised_keeping = raised.as_ref().and_then(|raised| {
         crate::fauna::herd_crew_keeping_next_turn(raised, &fauna, &ladder, None)
     });
@@ -1074,6 +1091,7 @@ fn herd_once_raised(
     herd: &crate::fauna::Herd,
     ladder: &crate::intensification::LadderConfig,
     faction: FactionId,
+    pen_site: Option<bevy::math::UVec2>,
 ) -> Option<crate::fauna::Herd> {
     use crate::intensification::RungTrait;
     let standing = herd.standing();
@@ -1088,7 +1106,9 @@ fn herd_once_raised(
     // species' ceiling allows taming.
     let traits = ladder.rung(rung).trait_set();
     if traits.has(RungTrait::Enclosed) {
-        let tile = raised.current_pos;
+        // The pen goes where the chooser puts it (the site stamped at queue time, else the one the
+        // asking band's range would pick), never where the herd stands.
+        let tile = pen_site.unwrap_or(raised.current_pos);
         raised.corral_at(tile, ladder).then_some(raised)
     } else if traits.has(RungTrait::Domesticated) && raised.can_domesticate(ladder) {
         let (base, width) = raised.rung_span(rung, ladder);

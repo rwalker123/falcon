@@ -3813,6 +3813,24 @@ pub fn capture_snapshot(
                     .push(*position);
             }
         }
+        // **The ground a queued Corral's pen site is chosen over** - the roam's land test read off the
+        // tile sweep's own tag grid, the graze layer the live `K` is summed from, and the band work
+        // range every other job's apron is measured by.
+        let pen_land_test = |position: UVec2| {
+            tile_tags
+                .get(position)
+                .is_some_and(|tags| !tags.contains(sim_runtime::TerrainTags::WATER))
+        };
+        let pen_scene = crate::fauna::PenSiteScene {
+            graze: &graze_registry,
+            fauna: &fauna_config,
+            ladder: &ladder_config,
+            is_land: &pen_land_test,
+            width: tile_registry.width,
+            height: tile_registry.height,
+            wrap: config.map_topology.wrap_horizontal,
+            work_range: labor_config.band_work_range,
+        };
         let herd_states = herd_snapshot_entries(HerdSnapshotInputs {
             current_turn: tick.0,
             telemetry: &herds,
@@ -3832,6 +3850,7 @@ pub fn capture_snapshot(
             // live `K` is summed from, so the two are one seam at two standings.
             graze: &graze_registry,
             owner_camps: &owner_camps,
+            pen_scene: Some(&pen_scene),
             visibility: &visibility_ledger,
             viewer,
             herd_lore_known: crate::intensification::knows(

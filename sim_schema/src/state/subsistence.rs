@@ -886,6 +886,19 @@ pub struct HerdTelemetryState {
     pub rung_quotes: Vec<RungQuoteState>,
     /// The id of the size tier this herd's fence has reached (`ranch`), empty when it is in none.
     pub size_tier: String,
+    /// **The tile this herd's queued Corral will pen it on** (`fauna::choose_pen_site`): the
+    /// best-grazing land within the keeping band's work range. `-1` on both axes when no Corral is
+    /// queued. Appended last.
+    #[serde(default = "no_pen_site")]
+    pub pen_site_x: i32,
+    /// See [`Self::pen_site_x`].
+    #[serde(default = "no_pen_site")]
+    pub pen_site_y: i32,
+}
+
+/// The `-1` "no Corral queued" sentinel of the pen-site pair.
+fn no_pen_site() -> i32 {
+    -1
 }
 
 /// The `-1` "no ground to show" sentinel of the next-seasonal-ground pair — the same convention
@@ -994,6 +1007,8 @@ impl Default for HerdTelemetryState {
             predator_eaten: 0.0,
             size_tier: String::new(),
             rung_quotes: Vec::new(),
+            pen_site_x: no_pen_site(),
+            pen_site_y: no_pen_site(),
         }
     }
 }

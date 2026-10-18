@@ -407,6 +407,13 @@ pub struct Herd {
     /// the wire count) so β only has to grow it. Authoritative sim state — rewound by rollback with the cloned
     /// registry.
     pub pen_radius: u32,
+    /// **WHERE THE PEN WILL GO** - the tile [`choose_pen_site`] picked when a Corral was queued: the
+    /// best-grazing land within the keeping band's work range, not wherever the herd happens to
+    /// stand. Set at queue time, read by every projection of the pen's footprint
+    /// ([`herd_footprint_at`]), consumed by [`Self::corral_at`] (which pens the herd there and clears
+    /// it) and cleared when the Corral leaves the queue ([`cancel_dropped_rings`]). `None` = no
+    /// Corral queued. Authoritative sim state, rewound by rollback with the cloned registry.
+    pub pen_site: Option<UVec2>,
     /// **THE REGROWTH MULTIPLIER THE OWNER'S LESSONS GIVE THIS HERD'S MANAGED `r`** - the product of
     /// every `knowledge_gains` entry (on the rungs the herd holds) whose lesson the owning people
     /// holds, `1.0` for a herd nobody owns or whose owner knows none. Stamped at the head of each Logistics
@@ -891,6 +898,7 @@ impl Herd {
             owner: None,
             corralled_at: None,
             pen_radius: 0,
+            pen_site: None,
             breeding_gain: NO_BREEDING_GAIN,
             pen_extend_progress: RUNG_UNSTARTED,
             pen_extend_cost: RUNG_UNSTARTED,
@@ -1305,6 +1313,7 @@ impl Herd {
             return false;
         }
         self.corralled_at = Some(tile);
+        self.pen_site = None;
         self.current_pos = tile;
         self.next_pos = None;
         // **The pen is finished, so the position stands at the top of the branch.** A fixture that
@@ -3221,15 +3230,18 @@ fn herd_footprint(herd: &Herd, def: Option<&SpeciesDef>) -> (UVec2, u32) {
 /// [`herd_footprint`] asked about a fencing the herd may not have yet — the **destination** reading's
 /// half of the footprint question ([`herd_destination_capacity`]).
 ///
-/// A herd climbing toward a pen has no `corralled_at` yet, and `corral_at` anchors the pen **where
-/// the herd is standing** when the Corral lands, so *"here, at `pen_radius`"* is the projection —
-/// the same "today's position, tomorrow's rung" rule every other destination term follows. It
+/// A herd climbing toward a pen has no `corralled_at` yet, and `corral_at` anchors the pen on the
+/// site [`choose_pen_site`] stamped as `Herd::pen_site` when the Corral was queued, so *"the pen
+/// site, at `pen_radius`"* is the projection (the herd's own tile only when no site is chosen). It
 /// matters because a pen's footprint is a fraction of a roam range: quoting a Corral's `K` over the
 /// range the herd walks today would overstate it by the whole ratio between them, which
 /// `pen_density` only partly gives back.
 fn herd_footprint_at(herd: &Herd, def: Option<&SpeciesDef>, penned: bool) -> (UVec2, u32) {
     match (penned, herd.corralled_at) {
-        (true, pen) => (pen.unwrap_or(herd.current_pos), herd.pen_radius),
+        (true, pen) => (
+            pen.or(herd.pen_site).unwrap_or(herd.current_pos),
+            herd.pen_radius,
+        ),
         (false, _) => (herd.current_pos, herd.graze_range_radius(def)),
     }
 }
@@ -3268,6 +3280,179 @@ fn herd_wander_points(
         return vec![(herd.current_pos, radius)];
     }
     herd.route.iter().map(|anchor| (*anchor, radius)).collect()
+}
+
+/// **EVERYTHING THE PEN-SITE CHOOSER READS BESIDE THE HERD** - the ground and the configs, handed in
+/// by whichever system or command asks, so there is one chooser and no caller restates it.
+pub struct PenSiteScene<'a> {
+    pub graze: &'a GrazeRegistry,
+    pub fauna: &'a FaunaConfig,
+    pub ladder: &'a LadderConfig,
+    /// Whether a tile is land (the roam's own predicate, `is_land_tile`).
+    pub is_land: &'a dyn Fn(UVec2) -> bool,
+    pub width: u32,
+    pub height: u32,
+    pub wrap: bool,
+    /// The keeping band's `band_work_range` - the radius candidate tiles are drawn from.
+    pub work_range: u32,
+}
+
+/// **THE TILE A NEW PEN GOES ON** - the best-grazing tile within `scene.work_range` of the keeping
+/// band at `band_tile`, not wherever the herd stands.
+///
+/// Candidates are the land tiles of `hex_range_tiles(band_tile, work_range)` that the roam could stand
+/// on ([`acceptable_steps`]' rule: land, and - once a graze layer is seeded - not barren) and that no
+/// other herd's pen holds. `taken` lists those tiles (every other herd's `corralled_at`).
+///
+/// **Scored through the ONE K seam** - [`ecological_carrying_capacity`] at the pen standing, over the
+/// single-tile footprint `hex_range_tiles(site, pen_radius)`, on a clone with the tile as its
+/// `pen_site` - so the score is exactly the `K` the herd is handed once it is penned there. The order
+/// is total: score descending, then hex distance to the band, then `y`, then `x`.
+pub fn choose_pen_site(
+    herd: &Herd,
+    band_tile: UVec2,
+    taken: &[UVec2],
+    scene: &PenSiteScene<'_>,
+) -> Option<UVec2> {
+    let def = scene.fauna.species_by_display(&herd.species);
+    let pen = herd_rung_with(scene.ladder, RungTrait::Enclosed);
+    let graze_aware = !scene.graze.is_empty();
+    let mut probe = herd.clone();
+    probe.corralled_at = None;
+    scene_candidates(band_tile, scene)
+        .into_iter()
+        .filter(|tile| !taken.contains(tile))
+        .filter(|tile| (scene.is_land)(*tile))
+        .filter(|tile| !graze_aware || tile_graze_capacity(scene.graze, *tile) > NO_GRAZE_CAPACITY)
+        .map(|tile| {
+            probe.pen_site = Some(tile);
+            let at = CapacityStanding::arrived_at(scene.ladder, pen, &probe);
+            let score = ecological_carrying_capacity(
+                &probe,
+                def,
+                scene.graze,
+                &[],
+                scene.fauna,
+                scene.width,
+                scene.height,
+                scene.wrap,
+                at,
+                &[],
+            )
+            .unwrap_or(0.0);
+            let distance = hex_distance_wrapped(band_tile, tile, scene.width, scene.wrap);
+            (tile, score, distance)
+        })
+        .min_by(|a, b| {
+            b.1.partial_cmp(&a.1)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then(a.2.cmp(&b.2))
+                .then(a.0.y.cmp(&b.0.y))
+                .then(a.0.x.cmp(&b.0.x))
+        })
+        .map(|(tile, _, _)| tile)
+}
+
+fn scene_candidates(band_tile: UVec2, scene: &PenSiteScene<'_>) -> Vec<UVec2> {
+    hex_range_tiles(
+        band_tile,
+        scene.work_range,
+        scene.width,
+        scene.height,
+        scene.wrap,
+    )
+}
+
+/// **A SITE STILL GOOD AT COMPLETION** - no other herd has penned on it since it was chosen.
+pub fn pen_site_is_free(site: UVec2, taken: &[UVec2]) -> bool {
+    !taken.contains(&site)
+}
+
+/// **EVERY TILE SOME OTHER HERD'S PEN HOLDS** - the `taken` list [`choose_pen_site`] takes.
+pub fn penned_tiles_except(herds: &[Herd], id: &str) -> Vec<UVec2> {
+    herds
+        .iter()
+        .filter(|herd| herd.id != id)
+        .filter_map(|herd| herd.corralled_at)
+        .collect()
+}
+
+/// **THE HERD AS ITS QUEUED CORRAL WILL FIND IT** - `herd` itself when it carries a chosen
+/// `pen_site`, is already penned, or is not climbing toward a pen; otherwise a clone with the site
+/// the chooser would pick for the nearest of `camps` (the keeping band's tile). It is how a
+/// projection that runs before - or without - the queue-time stamp ([`herd_destination_capacity`]
+/// on a build queued by a path that does not stamp) still quotes the tile the pen will stand on
+/// rather than the tile the herd stands on.
+pub fn herd_at_projected_pen_site<'a>(
+    herd: &'a Herd,
+    herds: &[Herd],
+    camps: &[UVec2],
+    scene: Option<&PenSiteScene<'_>>,
+) -> std::borrow::Cow<'a, Herd> {
+    let Some(scene) = scene else {
+        return std::borrow::Cow::Borrowed(herd);
+    };
+    let climbing_to_a_pen = herd.build_destination.is_some_and(|destination| {
+        scene
+            .ladder
+            .rung(destination)
+            .trait_set()
+            .has(RungTrait::Enclosed)
+    });
+    if herd.pen_site.is_some() || herd.corralled_at.is_some() || !climbing_to_a_pen {
+        return std::borrow::Cow::Borrowed(herd);
+    }
+    let Some(band_tile) = nearest_camp(herd.current_pos, camps, scene.width, scene.wrap) else {
+        return std::borrow::Cow::Borrowed(herd);
+    };
+    let mut projected = herd.clone();
+    projected.pen_site = choose_pen_site(
+        herd,
+        band_tile,
+        &penned_tiles_except(herds, &herd.id),
+        scene,
+    );
+    std::borrow::Cow::Owned(projected)
+}
+
+/// **THE SITE THE CHOOSER PICKS FOR `herd` KEPT BY THE BAND AT `band_tile`, READ OFF THE WORLD** - the
+/// one entry every caller outside the work pass goes through (the queue-time stamp in `bin/server.rs`
+/// and the compose sheet's *once corralled* quote), so the scene is assembled in one place: the graze
+/// layer, the configs, the roam's land test and the band's `band_work_range`. `None` when nothing
+/// within range is open ground.
+pub fn pen_site_in_world(world: &World, herd: &Herd, band_tile: UVec2) -> Option<UVec2> {
+    let fauna = world.resource::<FaunaConfigHandle>().get();
+    let ladder = world.resource::<LadderConfigHandle>().get();
+    let work_range = world
+        .resource::<crate::labor_config::LaborConfigHandle>()
+        .get()
+        .band_work_range;
+    let tiles = world.resource::<TileRegistry>();
+    let is_land = |position: UVec2| {
+        tiles
+            .index(position.x, position.y)
+            .and_then(|entity| world.get::<Tile>(entity))
+            .is_some_and(|tile| !tile.terrain_tags.contains(TerrainTags::WATER))
+    };
+    let taken = penned_tiles_except(&world.resource::<HerdRegistry>().herds, &herd.id);
+    choose_pen_site(
+        herd,
+        band_tile,
+        &taken,
+        &PenSiteScene {
+            graze: world.resource::<GrazeRegistry>(),
+            fauna: &fauna,
+            ladder: &ladder,
+            is_land: &is_land,
+            width: tiles.width,
+            height: tiles.height,
+            wrap: world
+                .resource::<SimulationConfig>()
+                .map_topology
+                .wrap_horizontal,
+            work_range,
+        },
+    )
 }
 
 /// **The camp a `drift_to_owner` herd drifts to** — the nearest of its owner's camps from `from` by
@@ -5153,7 +5338,8 @@ pub fn cancel_dropped_rings(
             // herd would sit "recommitting" for ever with nothing funding it. The live fraction is
             // untouched; only the order is dropped.
             crate::components::BuildJob::SetHerdOutput(_) => herd.cancel_output_recommit(),
-            crate::components::BuildJob::Climb(_) => {}
+            // **A Corral leaving the queue takes its chosen site with it**; a re-queue picks afresh.
+            crate::components::BuildJob::Climb(_) => herd.pen_site = None,
         }
     }
 }

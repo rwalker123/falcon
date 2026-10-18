@@ -1536,7 +1536,7 @@ units**, complete at its stored `corral_cost`; the pen under construction), `cor
   decay *gradually*). That "progress is kept" applies to a **mid-build** lapse only — a **completed
   pen whose herd escapes loses its progress outright** (reset to `0.0`; see *Escapes-if-untended*
   below). Accrued **after** the take, so the turn pays exactly what the forecast promised. At the job's
-  cost `Herd::corral_at` pens it (sets `corralled_at`, stops roaming, grants the one-turn tended grace),
+  cost `Herd::corral_at` pens it **on its chosen pen site** (see "WHERE THE PEN GOES" below; sets `corralled_at`, moves the herd there, stops roaming, grants the one-turn tended grace),
   pushes a `CommandEventKind::Corral` feed line, and **clears the assignment's `improvement`** — the
   keeper crew stays on the herd, under the stance it chose, rather than fencing a pen that is already
   up. Extending a pen is command-driven (`herd.pen_extending`), not improvement-driven, so the clear
@@ -1598,6 +1598,40 @@ units**, complete at its stored `corral_cost`; the pen under construction), `cor
 > `build_queue::a_ring_publishes_the_cost_its_progress_completes_at`, which asserts on the encoded
 > snapshot — an arm reading `Herd::pen_extend_cost` in process would pass even with the capture
 > never writing the field.
+> #### WHERE THE PEN GOES — the best-grazing tile in the keeping band's range, not where the herd stands
+>
+> A new pen is not built around the flock wherever it happens to be grazing; it goes on the best
+> ground the band can reach. `fauna::choose_pen_site` picks the tile and `Herd::pen_site:
+> Option<UVec2>` carries it (checkpointed with the registry; the wire is `HerdTelemetryState.penSiteX`
+> / `penSiteY`, `-1` on both when no Corral is queued).
+>
+> - **Chosen when the Corral is queued** — `queue_build_on_working_bands` stamps it (`build corral`,
+>   the `animal:pen` rung of `build_rung`); an `extend_pen` ring never does, a ring widens a pen that
+>   already has its tile. A work pass that finds a Corral completing with no site (or with the site
+>   taken since) picks again from the completing band's tile through the same function.
+> - **Candidates**: land tiles of `hex_range_tiles(band tile, labor.band_work_range)` — the same apron
+>   every other job is measured by — that the roam could stand on (`is_land`, and once a graze layer is
+>   seeded, not barren) and that no *other* herd's `corralled_at` holds.
+> - **Scored through the one `K` seam**, never a second formula: `ecological_carrying_capacity` at the
+>   pen standing over the one-tile footprint (`hex_range_tiles(site, pen_radius)`), so the score is the
+>   `K` the herd is handed once it is penned there. Ties break by hex distance to the band ascending,
+>   then `y`, then `x`.
+> - **Every projection reads the site**: `herd_footprint_at` (used by `herd_destination_capacity`, the
+>   wire's `buildDestinationCapacity`) takes `pen_site` before `current_pos`. A build no stamp reached
+>   is projected at the site the chooser would pick for the nearest camp of the owner
+>   (`herd_at_projected_pen_site`, fed by the capture), and the compose sheet's *once corralled* herd
+>   (`forecast_query::herd_once_raised`) is seated at the stamped site, else the asking band's pick.
+> - **It leaves with the entry**: `Herd::corral_at` consumes it, and `cancel_dropped_rings` clears it
+>   on all three exits an entry leaves a queue by (unqueue, abandon, lapse). A second band's entry for
+>   the same herd does not keep it alive; the next accrual picks again.
+> - **A herd that eats nothing has no graze reading**: its `K` is the fallback constant on every tile,
+>   so every candidate ties and the choice falls to distance. A real herd's `fodder_per_biomass` is
+>   cached at spawn, so only a hand-built fixture meets this.
+> - Pinned on the encoded wire by `destination_capacity_on_the_wire.rs`
+>   (`a_new_pen_goes_on_the_best_grazing_tile_in_range`, `a_tile_already_holding_a_pen_is_skipped`,
+>   `the_quote_names_the_capacity_of_the_tile_the_pen_lands_on`, `unqueueing_the_corral_clears_the_site`)
+>   and, for the queue-time stamp, by `server::tests::corral_stamps_the_best_grazing_tile_in_the_bands_range`.
+
 - **`corral` command (repurposed)** — `build corral <faction> <x> <y>` (`handle_build_rung`; the
   retired `CorralCommand`'s proto field 38 is `reserved`, `CommandEventKind::Corral` is the rung's
   `feed_channel`) **queues the
@@ -1822,7 +1856,7 @@ left on the entry, and why:
 | field | source | why |
 |---|---|---|
 | `id` · `label` · `species` · `sizeClass` · `huntable` | entry | identity and shape; nothing writes them after spawn |
-| `x` / `y` | entry | **kept as a pair with the fog gate**, which decided this row's visibility against `entry.position` — publishing a different tile beside it would describe a herd whose presence was judged somewhere else. They cannot differ in any case: the only Population-stage writer of `current_pos` is `Herd::corral_at`, and the tile it is handed is `herd.position()`, the hex the herd already stands on |
+| `x` / `y` | entry, except the viewer's own herd | **kept as a pair with the fog gate**, which decided this row's visibility against `entry.position` — publishing a different tile beside it would describe a herd whose presence was judged somewhere else. The one Population-stage writer of `current_pos` is `Herd::corral_at`, which moves a herd onto its pen site (the best-grazing tile in range, not the hex it stood on), so the turn a pen goes up the entry is a turn behind; an **owned** herd passes the gate wherever it stands, so the viewer's own row reads the live position and the marker follows the pen the same turn |
 | everything else | **live `Herd`** | see below |
 
 - **The build meters** — `domestication`, `corralled`, `rungQuotes[animal:pen].progress` — through

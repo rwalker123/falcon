@@ -514,6 +514,10 @@ pub(crate) struct HerdSnapshotInputs<'a> {
     /// tamed reads the camps of the faction building it: the herd's owner, else the viewer (the
     /// builder state on a herd row is the viewer's own).
     pub(crate) owner_camps: &'a std::collections::BTreeMap<FactionId, Vec<UVec2>>,
+    /// **The ground a queued Corral's pen site is chosen over** - what
+    /// [`crate::fauna::herd_at_projected_pen_site`] needs to project a build that no queue-time stamp
+    /// reached. `None` in a fixture with no map.
+    pub(crate) pen_scene: Option<&'a crate::fauna::PenSiteScene<'a>>,
     /// The same ledger `visibility_raster_from_ledger` renders the client's fog from, read for the
     /// same faction — so a herd can never be drawn on a tile the raster paints black.
     pub(crate) visibility: &'a crate::visibility::VisibilityLedger,
@@ -608,6 +612,7 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
         wrap_horizontal,
         graze,
         owner_camps,
+        pen_scene,
         parties,
         penned_parties,
         fallback_party,
@@ -748,15 +753,21 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
                 id: entry.id.clone(),
                 label: entry.label.clone(),
                 species: entry.species.clone(),
-                // **`x`/`y` stay on the display entry, as a PAIR with the fog gate above.** The gate
-                // decided this row's visibility against `entry.position`, so publishing a different
-                // tile beside it would describe a herd whose presence was judged somewhere else. They
-                // cannot disagree in any case: the only Population-stage writer of `current_pos` is
-                // `Herd::corral_at`, and the pen tile it is handed is `herd.position()` — the hex the
-                // herd already stands on. Ordinary movement happens in `advance_herds`, before the
-                // entry is written.
-                x: entry.position.x,
-                y: entry.position.y,
+                // **`x`/`y` stay on the display entry, as a PAIR with the fog gate above - except for
+                // the viewer's OWN herd.** The gate decided this row's visibility against
+                // `entry.position`, so publishing a different tile beside it would describe a herd
+                // whose presence was judged somewhere else. The one Population-stage writer of
+                // `current_pos` is `Herd::corral_at`, which moves a herd onto the pen site it was
+                // handed (the best-grazing tile in range, not the hex it stood on), so the turn a pen
+                // goes up the entry is a turn behind. An owned herd passes the gate whatever tile it
+                // stands on, so its row reads the live position and the marker follows the pen the
+                // same turn; a rival's herd keeps the entry's tile, which is the one the gate judged.
+                x: herd
+                    .filter(|herd| herd.owner == Some(viewer))
+                    .map_or(entry.position.x, |herd| herd.current_pos.x),
+                y: herd
+                    .filter(|herd| herd.owner == Some(viewer))
+                    .map_or(entry.position.y, |herd| herd.current_pos.y),
                 // **THE STOCK COMES OFF THE LIVE HERD.** Two writers land after the last telemetry
                 // write: `advance_husbandry`'s shed/starve shrink (later in Logistics) and the hunt
                 // take in `advance_labor_allocation` (Population). This is not cosmetic — the client
@@ -1159,6 +1170,14 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
                     .and_then(|herd| crate::fauna::herd_size_tier(herd, ladder))
                     .map(|tier| tier.id.clone())
                     .unwrap_or_default(),
+                // **WHERE THE QUEUED CORRAL WILL PEN THIS HERD** - the stamped `Herd::pen_site`, `-1`
+                // on both axes when none is queued.
+                pen_site_x: herd
+                    .and_then(|herd| herd.pen_site)
+                    .map_or(NO_PEN_SITE, |site| site.x as i32),
+                pen_site_y: herd
+                    .and_then(|herd| herd.pen_site)
+                    .map_or(NO_PEN_SITE, |site| site.y as i32),
                 // **EVERY RUNG'S QUOTE** - one row per rung of the herd branch above the root, built
                 // by iterating the ladder; see [`herd_rung_quotes`].
                 rung_quotes: herd_rung_quotes(&HerdQuoteInputs {
@@ -1207,8 +1226,19 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
                 // seam that writes the live `carrying_capacity` above, evaluated at the destination
                 // standing — never a second expression that happens to agree today.
                 build_destination_capacity: herd.and_then(|herd| {
-                    crate::fauna::herd_destination_capacity(
+                    let camps = owner_camps
+                        .get(&herd.owner.unwrap_or(viewer))
+                        .map_or(&[][..], Vec::as_slice);
+                    // **THE PEN IS QUOTED WHERE IT WILL STAND** - the stamped site, else the one the
+                    // chooser would pick for the nearest camp.
+                    let herd = crate::fauna::herd_at_projected_pen_site(
                         herd,
+                        &registry.herds,
+                        camps,
+                        pen_scene,
+                    );
+                    crate::fauna::herd_destination_capacity(
+                        &herd,
                         species_def,
                         graze,
                         &prey_index,
@@ -1217,9 +1247,7 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
                         width,
                         height,
                         wrap_horizontal,
-                        owner_camps
-                            .get(&herd.owner.unwrap_or(viewer))
-                            .map_or(&[][..], Vec::as_slice),
+                        camps,
                     )
                 }),
                 // **The countdown, with "queued but never estimated" told apart from "no answer"** —
@@ -1405,6 +1433,9 @@ struct HerdQuoteInputs<'a> {
     ladder: &'a LadderConfig,
     forecast: &'a crate::fauna::SourceYieldForecast,
 }
+
+/// The wire's `-1` for "no Corral queued" on `HerdTelemetryState.penSiteX` / `penSiteY`.
+const NO_PEN_SITE: i32 = -1;
 
 /// **EVERY RUNG OF THE HERD BRANCH, QUOTED ON THIS HERD** - the animal twin of
 /// [`patch_rung_quotes`], and the one producer of what the retired `domestication*` / `tame*` /

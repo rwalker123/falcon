@@ -242,7 +242,7 @@ oscillates or crashes if built carelessly.
   > | herd | points |
   > |---|---|
   > | wild graze-wander / migratory | every anchor of `Herd::route` (cluster waypoints, or loiter anchors), each at the roam radius |
-  > | fenced (`corralled_at`, or `arrived_at` the pen rung) | its one pen anchor (`corralled_at`, else `current_pos`) at `pen_radius` — the mean over one point is that point, so extending the fence still raises `K` |
+  > | fenced (`corralled_at`, or `arrived_at` the pen rung) | its one pen anchor (`corralled_at`, else the queued Corral's chosen `pen_site` — the best-grazing tile in the keeping band's range, `husbandry.md` → "WHERE THE PEN GOES" — else `current_pos`) at `pen_radius` — the mean over one point is that point, so extending the fence still raises `K` |
   > | tamed but unfenced (pastoral rung, `drift_to_owner`) | the one camp it drifts to: the owner's nearest `ResidentBand` camp (`nearest_camp`, the hex distance the drift steers by, ties by `(y, x)`) at the roam radius; `current_pos` when the owner has no bands (where `drift_to_owner` falls back to plain roam) |
   > | empty route | `current_pos` |
   >

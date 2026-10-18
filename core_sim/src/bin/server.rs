@@ -10897,6 +10897,18 @@ fn queue_build_on_working_bands(
             let mut allocation = band_allocation_mut(app, *entity);
             allocation.enqueue_build(source.clone(), declared);
         }
+        // **A queued Corral picks its pen's tile now** - the best-grazing land within this band's
+        // work range, so the quotes price the tile the pen will really stand on.
+        if let (BuildSource::Herd(id), BuildJob::Climb(rung)) = (&source, declared) {
+            let ladder = app.world.resource::<LadderConfigHandle>().get();
+            if ladder
+                .rung(rung)
+                .trait_set()
+                .has(core_sim::RungTrait::Enclosed)
+            {
+                choose_the_pen_site(app, *entity, id);
+            }
+        }
         // Queueing a build does not change the take at all, but the source's dip does depend on
         // what is being raised on it, so re-seed the telemetry from the new forecast — the same
         // reason `handle_assign_labor` seeds after a stance edit.
@@ -10904,6 +10916,38 @@ fn queue_build_on_working_bands(
         seed_source_yield(app, *entity, band_target, improvement, *workers);
     }
     bands.len()
+}
+
+/// **STAMP THE TILE A QUEUED CORRAL'S PEN WILL STAND ON** - `fauna::pen_site_in_world` for the herd
+/// as the keeping band at `band` sees it, written to the herd's `pen_site`.
+fn choose_the_pen_site(app: &mut bevy::prelude::App, band: Entity, herd_id: &str) {
+    let Some(band_tile) = app
+        .world
+        .get::<PopulationCohort>(band)
+        .and_then(|cohort| app.world.get::<core_sim::Tile>(cohort.current_tile))
+        .map(|tile| tile.position)
+    else {
+        return;
+    };
+    let Some(herd) = app
+        .world
+        .resource::<HerdRegistry>()
+        .find(herd_id)
+        .filter(|herd| !herd.is_corralled())
+        .cloned()
+    else {
+        return;
+    };
+    let site = core_sim::pen_site_in_world(&app.world, &herd, band_tile);
+    if let Some(herd) = app
+        .world
+        .resource_mut::<HerdRegistry>()
+        .herds
+        .iter_mut()
+        .find(|herd| herd.id == herd_id)
+    {
+        herd.pen_site = site;
+    }
 }
 
 /// **WHAT ONE BAND IS ACTUALLY RAISING ON A SOURCE** — its queue entry's declaration resolved
@@ -19527,6 +19571,96 @@ mod tests {
         assert!(
             !herd_is_corralled(&app, &id),
             "there is no early claim — the pen must still be built"
+        );
+    }
+
+    /// ⛔ **THE `corral` COMMAND PICKS THE PEN'S TILE WHEN IT QUEUES, FROM THE KEEPING BAND'S RANGE.**
+    ///
+    /// The herd and its band stand on poor ground; a rich tile lies two steps away (inside the
+    /// band's work range) and a richer one five steps away (outside it). Queueing the Corral stamps
+    /// the in-range rich tile on the herd, and neither the herd's own tile nor the far one.
+    #[test]
+    fn corral_stamps_the_best_grazing_tile_in_the_bands_range() {
+        const GRID_SIDE: u32 = 12;
+        const BAND_AT: UVec2 = UVec2::new(6, 6);
+        const RICH_AT: UVec2 = UVec2::new(8, 6);
+        const FAR_RICH_AT: UVec2 = UVec2::new(11, 6);
+        const POOR: f32 = 20.0;
+        const RICH: f32 = 400.0;
+        const FAR_RICH: f32 = 4_000.0;
+        let mut app = build_test_app();
+        let faction = FactionId(0);
+        seed_grid_with_baskets(&mut app, GRID_SIDE);
+        let id = seed_herd(&mut app, BAND_AT, Some(faction));
+        {
+            // A real species with a real appetite: a herd that eats nothing has no graze reading, so
+            // every tile would score the same constant and the choice would be the nearest one.
+            let fauna = app.world.resource::<core_sim::FaunaConfigHandle>().get();
+            let appetite = fauna
+                .species_by_display("Wild Boar")
+                .expect("the shipped roster carries the species")
+                .fodder_per_biomass;
+            let mut registry = app.world.resource_mut::<HerdRegistry>();
+            let herd = registry
+                .herds
+                .iter_mut()
+                .find(|herd| herd.id == id)
+                .expect("the seeded herd");
+            herd.species = "Wild Boar".to_string();
+            herd.fodder_per_biomass = appetite;
+        }
+        grant_penning(&mut app, faction);
+        let band = spawn_working_band(
+            &mut app,
+            faction,
+            LaborTarget::Hunt {
+                fauna_id: id.clone(),
+                floor: 0.5,
+                move_with_herd: false,
+            },
+        );
+        let band_tile = app
+            .world
+            .resource::<TileRegistry>()
+            .index(BAND_AT.x, BAND_AT.y)
+            .expect("the band's tile");
+        app.world
+            .get_mut::<PopulationCohort>(band)
+            .expect("the band")
+            .current_tile = band_tile;
+        {
+            let mut graze = app.world.resource_mut::<core_sim::GrazeRegistry>();
+            for y in 0..GRID_SIDE {
+                for x in 0..GRID_SIDE {
+                    let tile = UVec2::new(x, y);
+                    let capacity = match tile {
+                        RICH_AT => RICH,
+                        FAR_RICH_AT => FAR_RICH,
+                        _ => POOR,
+                    };
+                    graze
+                        .patches
+                        .insert(tile, core_sim::GrazePatch::new(tile, capacity));
+                }
+            }
+        }
+
+        handle_corral(&mut app, faction, BAND_AT);
+
+        let stamped = app
+            .world
+            .resource::<HerdRegistry>()
+            .find(&id)
+            .and_then(|herd| herd.pen_site);
+        assert_eq!(
+            band_improvement(&app, band),
+            Some(shipped::corral()),
+            "fixture: the Corral was queued"
+        );
+        assert_eq!(
+            stamped,
+            Some(RICH_AT),
+            "queueing the Corral stamps the best-grazing tile within the band's work range"
         );
     }
 

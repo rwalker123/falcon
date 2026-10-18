@@ -4436,6 +4436,14 @@ table HerdTelemetryState {
   // The id of the size tier this herd's fence has reached (LadderRungState.sizeTiers; "ranch" on a
   // pen extended far enough), "" when it is in none. Derived from penRadius every capture.
   sizeTier:string;
+  // --- WHERE THE PEN WILL GO (appended last) -------------------------------------------------
+  // The tile the sim chose for this herd's queued Corral: the best-grazing land within the keeping
+  // band's work range (`fauna::choose_pen_site`), stamped when the Corral is queued and cleared the
+  // moment the pen is raised or the entry leaves the queue. -1 on both axes when no Corral is queued
+  // (a penned herd's tile is `x`/`y`). Fog-filtered with the row; a client marks the tile and does
+  // not compute it.
+  penSiteX:int = -1;
+  penSiteY:int = -1;
 }
 
 table CommandEventState {
