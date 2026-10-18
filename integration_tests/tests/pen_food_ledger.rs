@@ -25,6 +25,7 @@
 //! its natural shape.
 
 use bevy::prelude::Entity;
+use core_sim::shipped;
 use core_sim::{
     build_test_app, run_turn, scalar_from_f32, scalar_one, DiscoveryProgressLedger, FactionId,
     GrazeRegistry, HerdRegistry, LaborAllocation, LaborAssignment, LaborTarget, PopulationCohort,
@@ -86,7 +87,7 @@ fn run_one_turn_with_a_pen(larder: f32, hay: f32, floor: f32) -> (f32, f32, f32,
         let herd = registry
             .herds
             .iter_mut()
-            .filter(|herd| herd.can_pen())
+            .filter(|herd| herd.can_pen(shipped::ladder()))
             // Biggest first — the largest feed demand, so the identity has the most to reconcile.
             // Tie-broken by position then id (the `graze::richest_patch` precedent): `herds` is an
             // ordered `Vec` and `SEED` is pinned, so this is not seed-dependent — but a `max_by` that

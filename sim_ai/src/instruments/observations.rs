@@ -455,8 +455,8 @@ impl Observation {
                         biomass: herd.biomass,
                         per_worker_yield: herd.per_worker_yield,
                         huntable: herd.huntable,
-                        corralled: herd.corralled,
-                        corral_progress: herd.corral_progress,
+                        corralled: herd.quote(crate::rungs::ANIMAL_PEN).reached,
+                        corral_progress: herd.quote(crate::rungs::ANIMAL_PEN).progress,
                         build: herd_build(herd),
                         upkeep: herd_upkeep(herd),
                     });
@@ -476,10 +476,13 @@ impl Observation {
                     rated_per_worker_yield: patch
                         .map(|patch| patch_per_worker_yield(memory, nearest_band, patch)),
                     owner: patch.and_then(|patch| patch.owner),
-                    cultivated: patch.is_some_and(|patch| patch.is_cultivated),
-                    field: patch.is_some_and(|patch| patch.is_field),
-                    cultivation_progress: patch.map(|patch| patch.cultivation_progress),
-                    field_progress: patch.map(|patch| patch.field_progress),
+                    cultivated: patch
+                        .is_some_and(|patch| patch.quote(crate::rungs::PLANT_TENDED).reached),
+                    field: patch.is_some_and(|patch| patch.quote(crate::rungs::PLANT_FARM).reached),
+                    cultivation_progress: patch
+                        .map(|patch| patch.quote(crate::rungs::PLANT_TENDED).progress),
+                    field_progress: patch
+                        .map(|patch| patch.quote(crate::rungs::PLANT_FARM).progress),
                     build: patch.and_then(patch_build),
                     upkeep: patch.and_then(patch_upkeep),
                     herd,
@@ -531,10 +534,10 @@ impl Observation {
                 idle_workers: row.idle_workers,
                 patches_owned: row.patches_owned,
                 patches_cultivated: owned_patches(view, faction)
-                    .filter(|patch| patch.is_cultivated)
+                    .filter(|patch| patch.quote(crate::rungs::PLANT_TENDED).reached)
                     .count(),
                 patches_field: owned_patches(view, faction)
-                    .filter(|patch| patch.is_field)
+                    .filter(|patch| patch.quote(crate::rungs::PLANT_FARM).reached)
                     .count(),
             },
             bands,
@@ -756,7 +759,7 @@ mod tests {
             .find(|patch| patch.x == 4 && patch.y == 2)
         {
             patch.owner = Some(FACTION);
-            patch.cultivation_progress = 0.25;
+            patch.quote_mut(crate::rungs::PLANT_TENDED).progress = 0.25;
             patch.build_destination_rung = "tended".into();
             patch.build_turns_remaining = 3;
             patch.upkeep_demand = 1.5;

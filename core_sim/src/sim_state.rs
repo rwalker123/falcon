@@ -86,6 +86,7 @@ use crate::{
     starting_loadout::StartingLoadout,
     supply::{BandSupplyMembership, SupplyNetworkMembership},
     telling::BeatLedger,
+    tile_improvement::TileImprovementRegistry,
     victory::VictoryState,
     visibility::{VisibilityLedger, VisibilitySweepTracker},
 };
@@ -198,6 +199,9 @@ pub struct SimState {
     /// `RouteTrafficLog` twin is genuinely derived — written and drained inside one stage — and is
     /// deliberately not here, which is `ContactsThisTurn`'s arrangement exactly.
     pub roads: RoadRegistry,
+    /// Every improvement standing on a tile-kind branch, with its keeper and its position. **State,
+    /// not derived**, for the road's reason: it is in the ground, and nothing can rebuild it.
+    pub tile_improvements: TileImprovementRegistry,
     pub corruption: CorruptionLedgers,
     pub corruption_telemetry: CorruptionTelemetry,
     pub counter_intel: CounterIntelBudgets,
@@ -446,6 +450,7 @@ pub fn capture_sim_state(world: &World) -> SimState {
         command_events: world.resource::<CommandEventLog>().clone(),
         connections: world.resource::<ConnectionLedger>().clone(),
         roads: world.resource::<RoadRegistry>().clone(),
+        tile_improvements: world.resource::<TileImprovementRegistry>().clone(),
         corruption: world.resource::<CorruptionLedgers>().clone(),
         corruption_telemetry: world.resource::<CorruptionTelemetry>().clone(),
         counter_intel: world.resource::<CounterIntelBudgets>().clone(),
@@ -663,6 +668,13 @@ pub fn restore_sim_state(world: &mut World, state: &SimState) {
     world.insert_resource(state.command_events.clone());
     world.insert_resource(state.connections.clone());
     world.insert_resource(state.roads.clone());
+    world
+        .resource_mut::<crate::routes::RoadRegistry>()
+        .clear_build_scratch();
+    world.insert_resource(state.tile_improvements.clone());
+    world
+        .resource_mut::<crate::tile_improvement::TileImprovementRegistry>()
+        .clear_build_scratch();
     world.insert_resource(state.corruption.clone());
     world.insert_resource(state.corruption_telemetry.clone());
     world.insert_resource(state.counter_intel.clone());
@@ -687,6 +699,15 @@ pub fn restore_sim_state(world: &mut World, state: &SimState) {
     world.insert_resource(state.great_discovery_readiness.clone());
     world.insert_resource(state.great_discovery_telemetry.clone());
     world.insert_resource(state.herds.clone());
+    // **The per-turn build scratch is not state a restore may republish** - see
+    // `HerdRegistry::clear_build_scratch`. Cleared on every source registry, load and rollback alike.
+    world.resource_mut::<HerdRegistry>().clear_build_scratch();
+    world
+        .resource_mut::<crate::forage::ForageRegistry>()
+        .clear_build_scratch();
+    world
+        .resource_mut::<crate::extraction::DepositRegistry>()
+        .clear_build_scratch();
     world.insert_resource(state.influencer_impacts.clone());
     world.insert_resource(state.pending_crisis_seeds.clone());
     world.insert_resource(state.pending_crisis_spawns.clone());

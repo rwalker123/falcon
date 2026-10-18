@@ -139,6 +139,30 @@ const DELTA_PAYLOAD_NAME: &str = "delta";
 
 pub(crate) type FbBuilder<'a> = FlatBufferBuilder<'a, DefaultAllocator>;
 
+/// **ONE RUNG'S QUOTE OFF A SOURCE'S WIRE ROW**, by its `branch:id` key - what a reader of a patch or
+/// herd table asks of `rungQuotes()` instead of a field named after a step. `None` where the source
+/// says nothing about that rung.
+pub fn wire_rung_quote<'a>(
+    quotes: Option<flatbuffers::Vector<'a, flatbuffers::ForwardsUOffset<fb::RungQuoteState<'a>>>>,
+    rung_key: &str,
+) -> Option<fb::RungQuoteState<'a>> {
+    quotes?
+        .iter()
+        .find(|quote| quote.rungKey() == Some(rung_key))
+}
+
+/// **ONE PLANT'S QUOTE AT ONE RUNG OFF A `FloraShareInfo` WIRE ROW**, by the rung's `branch:id` key.
+pub fn wire_share_rung_quote<'a>(
+    quotes: Option<
+        flatbuffers::Vector<'a, flatbuffers::ForwardsUOffset<fb::RungShareQuoteState<'a>>>,
+    >,
+    rung_key: &str,
+) -> Option<fb::RungShareQuoteState<'a>> {
+    quotes?
+        .iter()
+        .find(|quote| quote.rungKey() == Some(rung_key))
+}
+
 pub fn encode_snapshot_flatbuffer(snapshot: &WorldSnapshot) -> Vec<u8> {
     let mut builder = FlatBufferBuilder::new();
     let offset = build_snapshot_flatbuffer(&mut builder, snapshot);
@@ -341,9 +365,9 @@ fn witness_snapshot_is_fully_decoded(snapshot: &WorldSnapshot) {
         ladder_areas: _,
         materials: _,
         recipes: _,
-        route_rungs: _,
+        ladder_rungs: _,
         deposits: _,
-        deposit_rungs: _,
+        ladder_branches: _,
         mobility: _,
         sedentarization: _,
         // `decode_knowledge_section`
@@ -392,6 +416,7 @@ fn witness_snapshot_is_fully_decoded(snapshot: &WorldSnapshot) {
         connections: _,
         // `decode_routes_section`
         routes: _,
+        tile_improvements: _,
     } = snapshot;
 }
 
@@ -437,9 +462,9 @@ fn witness_delta_is_fully_decoded(delta: &WorldDelta) {
         ladder_areas: _,
         materials: _,
         recipes: _,
-        route_rungs: _,
+        ladder_rungs: _,
         deposits: _,
-        deposit_rungs: _,
+        ladder_branches: _,
         mobility: _,
         sedentarization: _,
         // `decode_knowledge_section_delta`
@@ -492,6 +517,7 @@ fn witness_delta_is_fully_decoded(delta: &WorldDelta) {
         connections: _,
         // `decode_routes_section_delta`
         routes: _,
+        tile_improvements: _,
     } = delta;
 }
 
@@ -1124,9 +1150,9 @@ mod round_trip_tests {
             characteristic_bands: Some(world.characteristic_bands.clone()),
             recipes: Some(world.recipes.clone()),
             craft_knowledge: Some(world.craft_knowledge.clone()),
-            route_rungs: Some(world.route_rungs.clone()),
+            ladder_rungs: Some(world.ladder_rungs.clone()),
             deposits: Some(world.deposits.clone()),
-            deposit_rungs: Some(world.deposit_rungs.clone()),
+            ladder_branches: Some(world.ladder_branches.clone()),
             mobility: Some(world.mobility.clone()),
             moisture_raster: Some(world.moisture_raster.clone()),
             elevation_overlay: Some(world.elevation_overlay.clone()),
@@ -1154,6 +1180,7 @@ mod round_trip_tests {
             discovery_progress: world.discovery_progress.clone(),
             connections: Some(world.connections.clone()),
             routes: Some(world.routes.clone()),
+            tile_improvements: Some(world.tile_improvements.clone()),
             contact_lessons: Some(world.contact_lessons.clone()),
         }
     }
@@ -1203,7 +1230,7 @@ mod round_trip_tests {
             characteristic_bands: Some(Vec::new()),
             recipes: Some(Vec::new()),
             craft_knowledge: Some(Vec::new()),
-            route_rungs: Some(Vec::new()),
+            ladder_rungs: Some(Vec::new()),
             moisture_raster: Some(Default::default()),
             elevation_overlay: Some(Default::default()),
             climate_bands: Some(Default::default()),
@@ -1220,6 +1247,7 @@ mod round_trip_tests {
             culture_tensions: Some(Vec::new()),
             connections: Some(Vec::new()),
             routes: Some(Vec::new()),
+            tile_improvements: Some(Vec::new()),
             contact_lessons: Some(Vec::new()),
             ..Default::default()
         }

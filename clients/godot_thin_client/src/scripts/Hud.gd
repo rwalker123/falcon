@@ -1131,7 +1131,21 @@ func update_ladder_areas(areas_variant: Variant) -> void:
     _topbar.update_ladder_areas(areas_variant)
     _refresh_knowledge_readouts()
 
-## **THE ROUTE BRANCH'S RUNG CATALOG** (arc #532 slice 13) — what the road ladder HOLDS, per world.
+## **THE UNIFIED LADDER CATALOG** (issue #175) -- every branch's rungs, `Main`'s one entry point; the
+## store splits it into the road and deposit views below. A thin delegator for `update_ladder_knowledge`'s
+## reason: `Main` reaches it BY NAME through `_hud_invoke`. Pushes no re-render, for the views' reason.
+func update_ladder_rungs(catalog_variant: Variant) -> void:
+    _topbar.update_ladder_rungs(catalog_variant)
+
+## The whole ladder catalog as ingested, for `Main.format_improvement`'s command shaping.
+func ladder_rungs() -> Array:
+    return _topbar.ladder_rungs()
+
+## …and the branch declarations (`{branch, area, source_kind, label}`) beside it.
+func update_ladder_branches(branches_variant: Variant) -> void:
+    _topbar.update_ladder_branches(branches_variant)
+
+## **THE ROUTE BRANCH'S RUNG CATALOG** (arc #532 slice 13) -- now the road view of `update_ladder_rungs`, still callable directly by a harness — what the road ladder HOLDS, per world.
 ## A thin delegator for `update_ladder_knowledge`'s reason: `Main` reaches it BY NAME through
 ## `_hud_invoke`, whose `has_method` probe fails silently.
 ##
@@ -1161,6 +1175,9 @@ func update_road_network(roads_variant: Variant) -> void:
 ## `update_road_network`, and it exists for one reader: the WORKINGS ROSTER (the Work tab's GROUNDWORK
 ## rows), which names WHICH workings this band holds — each kept by its own crew. `Main` reaches this BY NAME through
 ## `_hud_invoke`, so it stays a thin `HudLayer` delegator.
+func update_tile_improvements(rows_variant: Variant) -> void:
+    _band_labor.set_tile_improvements(rows_variant)
+
 func update_deposits(deposits_variant: Variant) -> void:
     _band_labor.set_deposits(deposits_variant)
 

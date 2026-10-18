@@ -108,6 +108,8 @@ const FACTION := 0
 const BAND_X := 40
 const BAND_Y := 20
 ## Where `move_band` / `send_expedition` are told to go — inside the grid, away from the band.
+## The crop an off-site farm's assign names.
+const OFFSITE_CROP := "wild_emmer"
 const TARGET_X := 44
 const TARGET_Y := 23
 
@@ -581,6 +583,14 @@ func _drive_assign_labor_kits() -> void:
 		TARGET_X, TARGET_Y, "", SourceForecast.DEFAULT_HARVEST_FLOOR, "",
 		SourceForecast.IMPROVEMENT_NONE, BandFx.KIT_ID_NONE)
 	await _settle()
+	# **THE OFF-SITE FARM'S ASSIGN — a forage line that NAMES A CROP** (issue #175). On ground that is not
+	# a gathering site the server takes a forage crew only with `species` set, and that same command queues
+	# the farm build; a bare gather there is refused. The crop rides `forage <x> <y> <floor> <species>
+	# <workers>`, so this puts the species positional in front of the real parser.
+	_hud._emit_assign_labor(band, SourceForecast.LABOR_KIND_FORAGE, PARTY_WORKERS,
+		TARGET_X, TARGET_Y, "", SourceForecast.DEFAULT_HARVEST_FLOOR, OFFSITE_CROP,
+		SourceForecast.IMPROVEMENT_NONE, BandFx.KIT_ID_NONE)
+	await _settle()
 	# **THE FOURTH GRAMMAR — the deposit branches' take row** (arc #583).
 	# `assign_labor <f> <b> extract <x> <y> <material> [floor] <n>`, where the MATERIAL rides the
 	# `species` token and is not optional: one tile can hold two workings, so a line naming only the
@@ -1037,8 +1047,22 @@ func _connect_recorders() -> void:
 ## Driven straight through `Main.format_improvement`, the pure static the compose sheet's press
 ## reaches: there is no road control on the shipped HUD yet, so a click path would be a fiction and
 ## the builder is the whole of the client's side of this verb.
+## The ladder catalog the guard stands up for `format_improvement`: one verb-bearing row per shipped
+## road / deposit verb carrying its branch's `source_kind`, which is what the builder shapes the
+## command by (issue #175). The verb lists are HARNESS DATA here, not client routing.
+const ROAD_VERBS := ["grade", "pave"]
+const DEPOSIT_VERBS := ["fell", "coppice", "quarry"]
+
+func _ladder_catalog() -> Array:
+	var rows: Array = []
+	for verb in ROAD_VERBS:
+		rows.append({"verb": verb, "source_kind": HudRouteVocab.SOURCE_KIND_ROAD})
+	for verb in DEPOSIT_VERBS:
+		rows.append({"verb": verb, "source_kind": HudRouteVocab.SOURCE_KIND_DEPOSIT})
+	return rows
+
 func _drive_road_verbs() -> void:
-	for improvement in SourceForecast.ROUTE_IMPROVEMENTS:
+	for improvement in ROAD_VERBS:
 		var payload := {
 			"improvement": improvement,
 			"faction": HudConst.PLAYER_FACTION_ID,
@@ -1046,7 +1070,7 @@ func _drive_road_verbs() -> void:
 			"x": TARGET_X,
 			"y": TARGET_Y,
 		}
-		_record(String(improvement), payload, MAIN_SCRIPT.format_improvement(payload))
+		_record(String(improvement), payload, MAIN_SCRIPT.format_improvement(payload, _ladder_catalog()))
 	# **AND A ROAD VERB WITH NO BAND BUILDS NOTHING**, which is a refusal rather than a default: the
 	# token IS the keeper, and guessing one would commit somebody else's people to a standing bill.
 	# Asserted here rather than left to the parser, because a line missing its band token parses as
@@ -1057,7 +1081,7 @@ func _drive_road_verbs() -> void:
 		"x": TARGET_X,
 		"y": TARGET_Y,
 	}
-	if not MAIN_SCRIPT.format_improvement(bandless).is_empty():
+	if not MAIN_SCRIPT.format_improvement(bandless, _ladder_catalog()).is_empty():
 		_fail("grade: a road verb with no band built a line — the keeper token is not optional")
 
 ## ⛔ **THE DEPOSIT BRANCHES' THREE TILE VERBS — the only tile commands that NAME A MATERIAL** (issue
@@ -1081,7 +1105,7 @@ func _drive_road_verbs() -> void:
 ## builder is the whole of the client's grammar for them. The Rust half classifies all three
 ## `PlaceAddressed`, so what it asserts is the PARSE.
 func _drive_deposit_verbs() -> void:
-	for improvement in SourceForecast.DEPOSIT_IMPROVEMENTS:
+	for improvement in DEPOSIT_VERBS:
 		var payload := {
 			"improvement": improvement,
 			"faction": HudConst.PLAYER_FACTION_ID,
@@ -1089,7 +1113,7 @@ func _drive_deposit_verbs() -> void:
 			"y": TARGET_Y,
 			"material": DEPOSIT_MATERIAL,
 		}
-		_record(String(improvement), payload, MAIN_SCRIPT.format_improvement(payload))
+		_record(String(improvement), payload, MAIN_SCRIPT.format_improvement(payload, _ladder_catalog()))
 	# **AND A DEPOSIT VERB WITH NO MATERIAL BUILDS NOTHING**, which is a refusal rather than a default:
 	# the material is half the working's identity and guessing one would order a rung on the other
 	# working of the same hex. Asserted here rather than left to the parser for the road verbs' own
@@ -1100,7 +1124,7 @@ func _drive_deposit_verbs() -> void:
 		"x": TARGET_X,
 		"y": TARGET_Y,
 	}
-	if not MAIN_SCRIPT.format_improvement(materialless).is_empty():
+	if not MAIN_SCRIPT.format_improvement(materialless, _ladder_catalog()).is_empty():
 		_fail("fell: a deposit verb with no material built a line — the material token is not optional")
 
 ## ⛔ **`abandon_working <faction> <x> <y> <material>` — PUTTING ONE WORKING DOWN, AND IT IS NOT
@@ -1266,7 +1290,7 @@ const ASSIGN_LABOR_UNKNOWN_ROLE := "stonemason"
 ## a tile, a material AND an optional floor, where every role in that list takes a bare worker count. It is
 ## driven here for the reason the whole sweep exists: a grammar the server's dispatch takes and
 ## `sim_runtime::command_text` does not is refused INSIDE the client, with nothing failing anywhere.
-const ASSIGN_LABOR_GRAMMAR_DRIVES := 8
+const ASSIGN_LABOR_GRAMMAR_DRIVES := 9
 
 ## …and the BARE `builders` line beside its tailed one — the exact line the pool's `+` emits — plus the
 ## FAR HERD's commit (`_drive_far_herd_assign_labor`), the hunt line a sheet past the apron sends.
@@ -1274,7 +1298,7 @@ const ASSIGN_LABOR_BARE_DRIVES := 2
 
 ## What `EXPECTED_KINDS` must say for `assign_labor`. Spelled here because a `const` initializer
 ## cannot call `Array.size()`, and re-derived at runtime so the two cannot drift.
-const ASSIGN_LABOR_EXPECTED := 14
+const ASSIGN_LABOR_EXPECTED := 15
 
 ## **THE LIST ABOVE IS THE WHOLE OF WHAT THE CLIENT CAN SAY, ASSERTED RATHER THAN TRUSTED.**
 ##

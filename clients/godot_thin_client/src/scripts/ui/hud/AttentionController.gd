@@ -532,11 +532,7 @@ func _under_kept_rung_attention() -> Array:
             continue
         # The HIGHEST built rung names the row, because that is the one the plant web unwinds first —
         # the same newest-first order the wire's own countdown describes.
-        var rung := ""
-        if bool(patch.get("is_field", false)):
-            rung = SourceForecast.IMPROVEMENT_SOW
-        elif bool(patch.get("is_cultivated", false)):
-            rung = SourceForecast.IMPROVEMENT_CULTIVATE
+        var rung := RungQuotes.held_verb(patch)
         if rung == "":
             continue
         # THE ONE UNDER-KEPT TEST — the source's published `upkeepShortfall` against its published
@@ -579,7 +575,7 @@ func _under_kept_rung_attention() -> Array:
             "kind": HudAttentionVocab.ATTENTION_KIND_UNDER_KEPT_RUNG,
             "severity": HudAttentionVocab.ATTENTION_SEVERITY_WARN,
             "label": HudAttentionVocab.ATTENTION_UNDER_KEPT_LABEL_FORMAT % [
-                String(HudComposeVocab.IMPROVEMENT_DONE_LABELS.get(String(c["rung"]), "")),
+                DetailFormat.improvement_done_noun(String(c["rung"])),
                 int(c["x"]), int(c["y"])],
             "detail": _under_kept_detail(
                 float(c["shortfall"]), String(c["clause"])),
@@ -675,7 +671,7 @@ func _under_kept_rung_at(x: int, y: int) -> bool:
     if patch.is_empty() or not bool(patch.get("has_owner", false)) \
             or int(patch.get("owner", -1)) != HudConst.PLAYER_FACTION_ID:
         return false
-    if not (bool(patch.get("is_cultivated", false)) or bool(patch.get("is_field", false))):
+    if not SourceForecast.source_is_improved(patch, ""):
         return false
     return SourceForecast.is_under_kept(patch, HudComposeVocab.BARE_FORECAST_PREFIX)
 

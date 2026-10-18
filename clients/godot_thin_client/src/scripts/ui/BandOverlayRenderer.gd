@@ -170,6 +170,19 @@ const BADGE_UNSTAFFED_FORMAT := "%s⚠ "
 # OPPORTUNITY must never be amber; an unstaffed commitment is not an opportunity — it is the trouble
 # channel's own subject, and it wears the `HudStyle.WARN` the overdraw and under-herded marks do.
 const BADGE_BORDER_WIDTH := 1.2
+
+## **THE HELD-STEP MARK** -- a small disc on the marker's ring, upper-left, wearing the glyph of the step the
+## source HOLDS (Tended, Farm, a tamed herd, a Pen, a Ranch, a deposit's raised rung). The ring's other
+## occupants are the crew plate below, the build arc ON the ring from twelve o'clock clockwise, and the
+## herd's danger dot at upper-right; upper-left is the one clear arc of it, which is why the disc sits there.
+const HELD_MARK_ANGLE := -PI * 0.75
+const HELD_MARK_RADIUS_FACTOR := 0.11       # of hex radius
+const HELD_MARK_FONT_FACTOR := 0.15         # of hex radius
+const HELD_MARK_FONT_MIN := 8
+const HELD_MARK_BG := Color(0.04, 0.05, 0.07, 0.94)
+const HELD_MARK_BORDER_WIDTH := 1.0
+const HELD_MARK_GLYPH_KEY := "held_glyph"
+const HELD_MARK_LABEL_KEY := "held_label"
 # THE SELECTED BAND'S LINK TO A SOURCE IT WORKS — a thin line from its token to the source's own
 # marker (the source can sit well outside the work-range ring: a far source is worked by a work
 # party, and a working is joined to whichever band opened it). ONE alpha and ONE width for every kind, applied to
@@ -612,7 +625,9 @@ func draw_worked_source_marks(radius: float, origin: Vector2) -> void:
 		_queue_source_badge(wcenter, key,
 			HudConst.LABOR_KIND_EXTRACT, {}, SourceForecast.IMPROVEMENT_NONE,
 			int(crew[key]), radius, origin, EXTRACT_WORKED_COLOR,
-			bool(working.get("selected", false)))
+			bool(working.get("selected", false)), 0,
+			held_working_mark(_working_row(wtile, String(working.get("material", ""))),
+				_view.ladder_rung_catalog))
 		_draw_worked_mark(wcenter, key, EXTRACT_WORKED_COLOR,
 			bool(working.get("selected", false)), radius)
 		_note_if_hidden(key, wtile, HudConst.LABOR_KIND_EXTRACT, {},
@@ -684,7 +699,7 @@ func _label_anchor(hex_center: Vector2, key: String, radius: float) -> Vector2:
 ## web, sweep says how far, and a second colour lookup would be free to disagree with the ring itself.
 func _queue_source_badge(hex_center: Vector2, key: String, kind: String, source: Dictionary,
 		improvement: String, crew: int, radius: float, origin: Vector2,
-		ring_color: Color, selected: bool, builders: int = 0) -> void:
+		ring_color: Color, selected: bool, builders: int = 0, held: Dictionary = {}) -> void:
 	var slot := _view.secondary_slot_of(key)
 	# BUILDING TAKES PRECEDENCE, and the two are mutually exclusive anyway: `next_rung_ready` excludes
 	# the verb already in flight, and `rung_in_progress` answers only for that verb.
@@ -735,6 +750,8 @@ func _queue_source_badge(hex_center: Vector2, key: String, kind: String, source:
 		"ready_glyph": String(ready.get("glyph", "")),
 		"building_glyph": String(building.get("glyph", "")),
 		"building_progress": progress,
+		HELD_MARK_GLYPH_KEY: String((held if not held.is_empty() else held_step_mark(source)).get("glyph", "")),
+		HELD_MARK_LABEL_KEY: String((held if not held.is_empty() else held_step_mark(source)).get("label", "")),
 		"stalled": stalled,
 		# **THE TILE CARD'S OWN STRING, COMPOSED HERE AND NOWHERE ELSE** — `≈11 turns (60%)`, or
 		# whichever sentinel the wire spells (blocked / holding / rotting / queued / no estimate).
@@ -1361,7 +1378,7 @@ func draw_herd_range_highlights(radius: float, origin: Vector2) -> void:
 	var herd := _view._herd_by_id(_view.selected_herd_id)
 	if herd.is_empty():
 		return
-	if bool(herd.get("corralled", false)):
+	if RungQuotes.is_enclosed(herd):
 		return
 	var x := int(herd.get("x", -1))
 	var y := int(herd.get("y", -1))
@@ -1408,7 +1425,7 @@ func draw_pen_footprint_highlight(radius: float, origin: Vector2) -> void:
 	var herd := _view._herd_by_id(_view.selected_herd_id)
 	if herd.is_empty():
 		return
-	if not bool(herd.get("corralled", false)):
+	if not RungQuotes.is_enclosed(herd):
 		return
 	var x := int(herd.get("x", -1))
 	var y := int(herd.get("y", -1))
@@ -1813,6 +1830,71 @@ func flush_yield_labels() -> void:
 		_draw_build_arc(badge)
 	for badge in _deferred_source_badges:
 		_draw_source_badge(badge)
+	for badge in _deferred_source_badges:
+		_draw_held_mark(badge)
+
+## **THE STEP A SOURCE HOLDS, as `{glyph, label}`** -- `{}` on wild or root ground. Read off the source's own
+## stamped `rung_quotes` through `RungQuotes`, never from a rung name here: the glyph is the held rung's
+## VERB glyph (`FoodIcons.for_policy`, which falls back to the generic mark for a verb it does not know, so
+## a step the config adds is drawn with no edit), and a Pen at a size tier wears the tier's mark
+## (`HudSelectionVocab.HELD_TIER_MARKS`, falling back to the rung's own). The label is the catalog's.
+## Public so a probe can ask what a marker carries -- a draw call renders into a canvas.
+static func held_step_mark(source: Dictionary) -> Dictionary:
+	var quote := RungQuotes.held(source, "")
+	if quote.is_empty():
+		return {}
+	var glyph := FoodIcons.for_policy(RungQuotes.verb_of(quote))
+	var label := RungQuotes.name_of(quote)
+	var tier := RungQuotes.current_size_tier(source, "")
+	if not tier.is_empty():
+		glyph = String(HudSelectionVocab.HELD_TIER_MARKS.get(String(tier.get("id", "")), glyph))
+		label = String(tier.get("label", label))
+	return {"glyph": glyph, "label": label}
+
+## The same answer for a DEPOSIT working, which names the rung it holds by key (`rung`) and carries no quotes:
+## the catalog says what that rung's verb and label are. A branch's FIRST rung is its free floor and gets no
+## mark, exactly as wild ground gets none.
+static func held_working_mark(deposit: Dictionary, catalog: Array) -> Dictionary:
+	var held_key := HudDepositVocab.rung_of(deposit)
+	if held_key == "":
+		return {}
+	var held_row: Dictionary = {}
+	var lowest := 1 << 30
+	for row_variant in catalog:
+		if not (row_variant is Dictionary):
+			continue
+		var row: Dictionary = row_variant
+		if String(row.get("rung_key", "")) == held_key:
+			held_row = row
+		if String(row.get("branch", "")) == HudDepositVocab.branch_of(deposit):
+			lowest = mini(lowest, int(row.get("order", lowest)))
+	if held_row.is_empty() or int(held_row.get("order", 0)) <= lowest:
+		return {}
+	var label := String(held_row.get("label", "")).strip_edges()
+	if label == "":
+		label = String(held_row.get("label_fallback", ""))
+	return {"glyph": FoodIcons.for_policy(String(held_row.get("verb", ""))), "label": label}
+
+## One source's held-step disc, in the badge flush after the plate. Drawn only where the marker drew.
+func _draw_held_mark(entry: Dictionary) -> void:
+	if int(entry.get("slot", -1)) < 0:
+		return
+	var glyph := String(entry.get(HELD_MARK_GLYPH_KEY, ""))
+	if glyph == "":
+		return
+	var font: Font = ThemeDB.fallback_font
+	if font == null:
+		return
+	var radius := float(entry.get("radius", 0.0))
+	var ring_color: Color = entry.get("ring_color", HudStyle.SIGNAL)
+	var disc_radius := radius * HELD_MARK_RADIUS_FACTOR
+	var anchor: Vector2 = entry["center"] + Vector2.from_angle(HELD_MARK_ANGLE) * radius * WORKED_RING_FACTOR
+	_view.draw_circle(anchor, disc_radius, HELD_MARK_BG)
+	_view.draw_arc(anchor, disc_radius, 0.0, TAU, WORKED_RING_SEGMENTS, ring_color, HELD_MARK_BORDER_WIDTH)
+	var font_size := maxi(HELD_MARK_FONT_MIN, int(radius * HELD_MARK_FONT_FACTOR))
+	var run: Vector2 = font.get_string_size(glyph, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size)
+	_view.draw_string(font, anchor + Vector2(-run.x * 0.5, run.y * 0.5 - font.get_descent(font_size)),
+		glyph, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size, HudStyle.INK)
 
 ## THE ONE-SLOT CHOICE, on its own so it can be asserted: which of the accounts this label states, and
 ## how it is spelled. Split out of the retired on-tile pill because a draw call renders to a canvas and a

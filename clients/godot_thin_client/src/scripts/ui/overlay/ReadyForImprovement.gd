@@ -313,8 +313,7 @@ static func _is_candidate(kind: String, source: Dictionary, is_worked: bool) -> 
 		return false
 	if is_worked:
 		return true
-	return SourceForecast.rung_above_branch_floor(
-		String(source.get(SourceForecast.FORECAST_CURRENT_RUNG_KEY, "")))
+	return SourceForecast.source_is_improved(source, "")
 
 
 ## **IS THIS SOMEBODY ELSE'S?** — the only ownership question worth asking, and it is spelled as a

@@ -257,7 +257,7 @@ const ROAD_UPKEEP_WORKER_PLURAL := "workers"
 
 ## …and the STONE clause — the amount and the SIM'S OWN NOUN.
 ##
-## ⛔ **THE WORD IS `RouteRungState.buildMaterialId` FOR THE RUNG THE TILE HOLDS, threaded in by the
+## ⛔ **THE WORD IS `LadderRungState.buildMaterialId` FOR THE RUNG THE TILE HOLDS, threaded in by the
 ## caller.** Never `stone` spelled here: *the route branch eats stone* is a fact about
 ## `intensification_ladder.json`, and a second authority for it goes stale in silence the day a rung
 ## is retuned. `ROAD_MATERIAL_NO_ID` in means NO clause out — a gap this client cannot name is one it
@@ -447,7 +447,7 @@ const ROAD_MATERIAL_NONE := 0.0
 ## `route:paved_road` does, and the honest rendering is NO clause rather than a `0` or a bare number.
 ##
 ## ⛔ **AN EMPTY ID IS *NOTHING TO EAT*, NEVER *A PILE WE CANNOT NAME*.** The wire named the material
-## for one slice and did not (`RouteRungState.buildMaterialId` was appended after the row shipped
+## for one slice and did not (`LadderRungState.buildMaterialId` was appended after the row shipped
 ## reading `+ 20 to raise it` — *twenty of what?*), and the nameless-pile reading died with that gap.
 ## Re-adding a fall-back noun here would be the client transcribing a config constant — *the route
 ## branch eats stone* is a fact about `intensification_ladder.json`, and a second authority for it
@@ -621,10 +621,147 @@ static func is_at_risk(road: Dictionary) -> bool:
 
 # ---- COMPOSERS -------------------------------------------------------------------------------
 
-## One rung's player-facing name; the raw wire key for a rung this client has never heard of, which
-## is the honest answer rather than a blank.
+## One rung's player-facing name. **The shipped four keep their hand-written word**; any other rung
+## reads as its key's id humanised (`tile:bog_drain` -> `Bog drain`) -- never the raw wire key and
+## never a blank, so a rung the config gained renders without a GDScript edit.
 static func rung_label(rung: String) -> String:
-	return String(RUNG_LABELS.get(rung, rung))
+	if RUNG_LABELS.has(rung):
+		return String(RUNG_LABELS[rung])
+	return humanize_rung_key(rung)
+
+## `<branch>:<id>` -> `Id with spaces`. A key with no colon humanises whole; `""` stays `""`.
+static func humanize_rung_key(rung_key: String) -> String:
+	var id := rung_key.get_slice(RUNG_KEY_SEPARATOR, 1) if rung_key.contains(RUNG_KEY_SEPARATOR) \
+		else rung_key
+	return _sentence_case(id.replace(RUNG_ID_WORD_JOINER, " ").strip_edges())
+
+static func _sentence_case(text: String) -> String:
+	if text == "":
+		return ""
+	return text.left(1).to_upper() + text.substr(1)
+
+## The wire's `<branch>:<id>` separator and the id's word joiner, named because `humanize_rung_key`
+## is the one place that takes a key apart.
+const RUNG_KEY_SEPARATOR := ":"
+const RUNG_ID_WORD_JOINER := "_"
+
+# ---- CATALOG-DRIVEN FALLBACK PROSE (issue #175) ---------------------------------------------------
+#
+# ⛔ **THE SHIPPED VERBS KEEP THEIR HAND-WRITTEN SENTENCES; ANY OTHER RUNG USES THESE.** A branch added
+# to `intensification_ladder.json` publishes a `label` per rung, and these three formats are what
+# make it render ("Build bog drain", "Raising bog drain", "once bog drain") with no GDScript edit.
+# A row carrying no `label` falls through to its `display_name`, then to the humanised key, so the
+# sentence is never blank.
+const BUILD_FALLBACK_FORMAT := "Build %s"
+const RAISING_FALLBACK_FORMAT := "Raising %s"
+const DEAL_FALLBACK_FORMAT := "once %s"
+const RUNG_CATALOG_LABEL := "label"
+
+## The rung's catalog word, lower-cased for mid-sentence use: `label`, else `display_name`, else the
+## humanised key.
+static func catalog_label(entry: Dictionary) -> String:
+	return catalog_name(entry).to_lower()
+
+## The same word with its case kept (`Grafted`): `label`, else `display_name`, else the humanised key.
+static func catalog_name(entry: Dictionary) -> String:
+	var label := String(entry.get(RUNG_CATALOG_LABEL, "")).strip_edges()
+	if label == "":
+		label = String(entry.get(RUNG_CATALOG_DISPLAY_NAME, "")).strip_edges()
+	if label == "":
+		label = humanize_rung_key(catalog_rung_key(entry))
+	return label
+
+## One branch's player-facing name off the `ladder_branches` declarations, the humanised id where the
+## catalog carries none -- never blank, so a branch added to the config names itself with no edit.
+static func branch_name(branches: Array, branch: String) -> String:
+	for row in branches:
+		if row is Dictionary and String((row as Dictionary).get("branch", "")) == branch:
+			var label := String((row as Dictionary).get("label", "")).strip_edges()
+			if label != "":
+				return label
+	return _sentence_case(branch.replace(RUNG_ID_WORD_JOINER, " ").strip_edges())
+
+## What a tile row with no improvement stands on: the branch's ROOT rung (lowest `order` among the
+## catalog rows of that branch), named as the catalog names it. `TILE_BRANCH_UNKNOWN_RUNG` where the
+## catalog carries no rung of the branch at all -- never a word from another branch's vocabulary.
+const TILE_BRANCH_UNKNOWN_RUNG := "—"
+
+static func branch_root_name(catalog: Array, branch: String) -> String:
+	var root: Dictionary = {}
+	for row in catalog:
+		if not (row is Dictionary) or String((row as Dictionary).get("branch", "")) != branch:
+			continue
+		if root.is_empty() or catalog_order(row as Dictionary) < catalog_order(root):
+			root = row
+	return catalog_name(root) if not root.is_empty() else TILE_BRANCH_UNKNOWN_RUNG
+
+## One rung's player-facing name off the catalog by its `rung_key`, the humanised key where it has none.
+static func rung_name_in(catalog: Array, rung_key: String) -> String:
+	var row := _row_of_rung_key(catalog, rung_key)
+	return catalog_name(row) if not row.is_empty() else humanize_rung_key(rung_key)
+
+static func build_fallback_text(entry: Dictionary) -> String:
+	return BUILD_FALLBACK_FORMAT % catalog_label(entry)
+
+static func raising_fallback_text(entry: Dictionary) -> String:
+	return RAISING_FALLBACK_FORMAT % catalog_label(entry)
+
+static func deal_fallback_text(entry: Dictionary) -> String:
+	return DEAL_FALLBACK_FORMAT % catalog_label(entry)
+
+# ---- A VERB'S SOURCE KIND, OFF THE CATALOG (issue #175) -------------------------------------------
+
+## The five `source_kind`s the wire publishes, spelled once.
+const SOURCE_KIND_PATCH := "patch"
+const SOURCE_KIND_HERD := "herd"
+const SOURCE_KIND_ROAD := "road"
+const SOURCE_KIND_DEPOSIT := "deposit"
+const SOURCE_KIND_TILE := "tile"
+const RUNG_CATALOG_SOURCE_KIND := "source_kind"
+
+## The `source_kind` of the branch a build VERB climbs, read off the `ladder_rungs` row carrying that
+## verb. `""` when the catalog has no such row (none staged, or an unpublished verb) -- the caller's
+## cue to fall back to what its own payload carries, never to a verb list.
+static func source_kind_of_verb(catalog: Array, verb: String) -> String:
+	if verb == "":
+		return ""
+	for row in catalog:
+		if row is Dictionary and catalog_verb(row as Dictionary) == verb:
+			return String((row as Dictionary).get(RUNG_CATALOG_SOURCE_KIND, "")).strip_edges()
+	return ""
+
+## Whether `standing` is at or above `target` ON THE CATALOG'S OWN ORDER: both rungs must be rows of
+## one branch and `standing`'s `order` at least `target`'s. `false` for an empty key, a rung the
+## catalog does not carry, or two different branches -- the same asymmetric answer
+## `SourceForecast.rung_at_or_above` gives, but read off the config rather than a client rung list.
+static func catalog_rung_at_or_above(catalog: Array, standing: String, target: String) -> bool:
+	var standing_row := _row_of_rung_key(catalog, standing.strip_edges())
+	var target_row := _row_of_rung_key(catalog, target.strip_edges())
+	if standing_row.is_empty() or target_row.is_empty():
+		return false
+	if String(standing_row.get("branch", "")) != String(target_row.get("branch", "")):
+		return false
+	return catalog_order(standing_row) >= catalog_order(target_row)
+
+static func _row_of_rung_key(catalog: Array, rung_key: String) -> Dictionary:
+	if rung_key == "":
+		return {}
+	for row in catalog:
+		if row is Dictionary and catalog_rung_key(row as Dictionary) == rung_key:
+			return row
+	return {}
+
+# ---- THE BUILD QUEUE ENTRY'S BRANCH (`BuildQueueEntryState.branch`) -------------------------------
+
+## The road branch's id in `intensification_ladder.json`, the token a road's queue address leads with.
+const ROAD_BRANCH := "route"
+const QUEUE_ENTRY_BRANCH_KEY := "branch"
+
+## Whether one wire build-queue entry is a ROAD build. `branch` replaced the retired `road` bool: a
+## road entry carries the road branch's id, a tile-kind entry carries its own branch (a different id,
+## so this answers false and the entry takes the generic path), and every other entry carries `""`.
+static func queue_entry_is_road(entry: Dictionary) -> bool:
+	return String(entry.get(QUEUE_ENTRY_BRANCH_KEY, "")) == ROAD_BRANCH
 
 ## The rung traffic is wearing in ABOVE the one held — `""` at the top of the branch and for a rung
 ## `RUNG_ORDER` does not know. Callers state the meter without a destination in that case rather than
@@ -837,7 +974,7 @@ static func upkeep_short_clauses(road: Dictionary,
 ## readings of one rate rather than two derivations.
 ##
 ## ⛔ **THE RATE IS THE BRANCH'S, PUBLISHED, AND THE CALLER RESOLVES IT.** It is
-## `RouteRungState.buildWorkPerWorkerTurn` off the rung catalog
+## `LadderRungState.buildWorkPerWorkerTurn` off the rung catalog
 ## (`branch_build_work_per_worker_turn`), threaded in exactly as `keeper_label` is and for the
 ## identical reason: this leaf holds no catalog and joining road→catalog here would give it one.
 ## `SourceForecast.BUILD_CREW_NONE` where no rate has arrived — a state, not a failure, and the row
@@ -1011,7 +1148,7 @@ static func upkeep_value_hex(value: String) -> String:
 # (the same news, one row earlier), and a kept road reads plain ink, remoteness included — distance
 # is a price, not an alarm, which is why it went to the hover rather than to a tint.
 
-# ---- THE ROUTE RUNG CATALOG (`SubsistenceSection.routeRungs`) ----------------------------------
+# ---- THE ROUTE RUNG CATALOG (`SubsistenceSection.ladderRungs`) ----------------------------------
 #
 # ⛔ **THE UNIT THE PLAYER PRESSES IS THE LADDER, NOT THE VERB, AND THIS CATALOG IS WHAT MAKES THAT
 # FREE.** One row per rung of the route branch, published ONCE PER SNAPSHOT beside `ladderKnowledge`
@@ -1438,7 +1575,7 @@ const ROAD_LADDER_NO_BUILDERS_ASIDE := "nobody on builders — staff the pool an
 ## (`buildMaterialSupplied / buildMaterialDemand`), struck against every other claim on the store at
 ## the sim's own priority — so pairing it with a stock would read as one calculation and be another.
 ##
-## **The noun is no longer what stops the sharing** (`RouteRungState.buildMaterialId` names it now);
+## **The noun is no longer what stops the sharing** (`LadderRungState.buildMaterialId` names it now);
 ## the ARITHMETIC is. This sentence therefore states the shortfall and the reach and quotes no stock
 ## — and the FRACTION still comes through the shared `RungLadder._stall_fraction_word` ladder, which
 ## is the half that could drift.
@@ -1468,8 +1605,7 @@ const ROAD_LADDER_ABANDON_LABEL := "Stop keeping this road"
 ## …and what it actually does, on the control's own hover. **The rung STAYS** — the sim leaves the
 ## meter alone and the ground rots back down at the rung's own rate with nobody keeping it — which is
 ## the half a player must know before pressing, since it is not a demolition.
-const ROAD_LADDER_ABANDON_TOOLTIP := "Drops this band's keeping of the road and its place in the " \
-	+ "queue. The rung stays, and with nobody keeping it rots back down at its own rate."
+const ROAD_LADDER_ABANDON_TOOLTIP := "Stop keeping road · it will decay"
 
 ## > ⛔ RETIRED — `ROAD_LADDER_ABANDON_ALSO`, *"…and the foraging your people do on this hex goes down
 ## > with it"*. It was true while `abandon <f> <x> <y>` was the only road drop and named a PLACE; the

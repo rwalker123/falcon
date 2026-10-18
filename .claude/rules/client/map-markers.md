@@ -464,3 +464,27 @@ stays above 0 so old news still shows faintly — the ghost leaves only when the
 `ConnectionsRoster.remembered_hover_line` (`HudConnectionsVocab.REMEMBERED_HOVER_FORMAT`, name via
 `subject_label`): `Goosefen — last seen turn 21, may have moved`. Not clickable. Frame:
 `map_remembered_bands.png` (`harness-map-probes.md`).
+
+## The step a source holds is on its marker (issue #175)
+
+A worked-source marker wears a small disc on its ring, **upper-left**, carrying the glyph of the step the
+source HOLDS: a Tended patch, a Farm, a tamed herd, a Pen, a Ranch, a deposit's raised rung. Wild or
+root ground wears none. The ring's other occupants are the crew plate below (`⚒N`, with the `⌃` can-climb
+mark and the under-way rung's glyph), the build arc on the ring itself from twelve o'clock, and a herd's danger
+dot at upper-right, which is why upper-left is where the disc goes.
+
+- **It is read from data.** `BandOverlayRenderer.held_step_mark(source)` takes the highest reached quote
+  (`RungQuotes.held`) and answers its verb's glyph (`FoodIcons.for_policy`, which falls back to the generic
+  mark for a verb the table does not know) and its catalog label; a Pen at a size tier answers the tier's mark
+  from `HudSelectionVocab.HELD_TIER_MARKS` (falling back to the rung's own) and the tier's label. A deposit
+  working carries a rung key instead of quotes, so `held_working_mark` resolves it through `MapView.ladder_rung_catalog`
+  and gives its branch's first rung no mark. A step the config adds is drawn with no client edit.
+- **It rides the badge entry** (`held_glyph`, `held_label`), queued by `_queue_source_badge` and drawn in
+  `flush_yield_labels` after the plate, so it exists only where the marker drew. A remembered hex draws no
+  worked marker and therefore no mark; its rung is already redacted.
+- **The map marker has no hover of its own** (a hover is the tile's, which already names the held step), so
+  the label is carried on the entry for any surface that wants it.
+- **Harness.** `map_preview` frames `map_held_tended_building_farm` (a Tended patch with a live Farm build:
+  mark and arc together), `map_held_farm`, `map_held_pen`, `map_held_ranch`, and `_close` twins at the zoom the player
+  works at, with assertions off the queued entries.
+

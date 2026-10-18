@@ -68,13 +68,21 @@ fn tended_and_wild_rate(
 ) -> (f32, f32) {
     let coord = UVec2::ZERO;
     let capacity = 1.0; // rates are per unit biomass; the capacity is irrelevant to them.
-    let mut tended = core_sim::ForagePatch::new(coord, capacity);
+    let mut tended = core_sim::ForagePatch::new(
+        coord,
+        capacity,
+        core_sim::shipped::root_standing(core_sim::shipped::plant()),
+    );
     // The rung is FINISHED here — a bare `1.0` no longer completes anything now that a job has a
     // size (`docs/plan_unit_costed_work.md`), so this runs the real accrual. The faction cannot
     // matter: a rate is a pure function of ground and config.
     tended.complete_cultivation(core_sim::FactionId(0), &core_sim::LadderConfig::builtin());
     tended.species = Some(species.to_string());
-    let wild = core_sim::ForagePatch::new(coord, capacity);
+    let wild = core_sim::ForagePatch::new(
+        coord,
+        capacity,
+        core_sim::shipped::root_standing(core_sim::shipped::plant()),
+    );
     (
         core_sim::patch_provisions_per_biomass(&tended, composition, flora, &labor.forage),
         core_sim::patch_provisions_per_biomass(&wild, composition, flora, &labor.forage),
@@ -299,7 +307,9 @@ fn the_gathered_wild_things_never_beat_the_basket_average() {
     let forage = labor().forage;
 
     for (key, def) in &flora.species {
-        if def.cultivation_ceiling.allows_cultivate() {
+        if core_sim::shipped::ladder()
+            .ceiling_reaches(def.cultivation_ceiling, core_sim::shipped::plant_tended())
+        {
             continue;
         }
         assert!(
@@ -333,7 +343,9 @@ fn every_climbing_species_pays_on_its_best_country_and_pays_less_on_its_worst() 
     let labor = labor();
 
     for (key, def) in &flora.species {
-        if !def.cultivation_ceiling.allows_cultivate() {
+        if !core_sim::shipped::ladder()
+            .ceiling_reaches(def.cultivation_ceiling, core_sim::shipped::plant_tended())
+        {
             continue;
         }
         // A **fodder crop** (F3) or a **cash crop** (F4) climbs the ladder too, but its payoff is in
@@ -410,7 +422,8 @@ fn the_fodder_crop_pays_a_positive_fodder_yield() {
         "`{key}` must pay a positive fodder rate — it is what a pen draws"
     );
     assert!(
-        def.cultivation_ceiling.allows_sow(),
+        core_sim::shipped::ladder()
+            .ceiling_reaches(def.cultivation_ceiling, core_sim::shipped::plant_farm()),
         "`{key}` is a Field crop (you Sow hay) — it must reach the field rung"
     );
     // It competes with grain for scarce sowable tiles: every biome it hosts must also host at least
@@ -456,7 +469,8 @@ fn the_cash_crops_pay_a_positive_material_yield_and_contest_sowable_ground() {
              a cash Field credits"
         );
         assert!(
-            def.cultivation_ceiling.allows_sow(),
+            core_sim::shipped::ladder()
+                .ceiling_reaches(def.cultivation_ceiling, core_sim::shipped::plant_farm()),
             "`{key}` is a Field crop (you Sow it) — it must reach the field rung"
         );
         // It must contest a sowable staple's ground: at least one biome it hosts also hosts a staple
@@ -465,7 +479,10 @@ fn the_cash_crops_pay_a_positive_material_yield_and_contest_sowable_ground() {
             flora.composition(*terrain).iter().any(|share| {
                 let staple = &flora.species[&share.species];
                 staple.yield_.provisions_per_biomass > 0.0
-                    && staple.cultivation_ceiling.allows_sow()
+                    && core_sim::shipped::ladder().ceiling_reaches(
+                        staple.cultivation_ceiling,
+                        core_sim::shipped::plant_farm(),
+                    )
             })
         });
         assert!(

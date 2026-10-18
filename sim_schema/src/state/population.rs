@@ -501,6 +501,10 @@ pub struct LaborAssignmentState {
     /// The food they carry, gross of the walk's rot. Appended last.
     #[serde(default)]
     pub rejoining_food: f32,
+    /// The tile-kind branch id on a `tile` row, `""` on every other (`snapshot.fbs`'s
+    /// `LaborAssignment.branch`).
+    #[serde(default)]
+    pub branch: String,
 }
 
 /// **ONE LINE OF ONE TAKE ROW'S TABLE OF EQUIPMENT** — a row of [`LaborAssignmentState::kit_toe`].
@@ -1874,6 +1878,10 @@ pub struct KitNeedItemState {
     pub queued: u32,
     /// One per recipe that outputs the item, book order.
     pub recipes: Vec<KitNeedRecipeState>,
+    /// Units the claims on this kit asked for (0 when no row chose it).
+    pub claimed: f32,
+    /// Whole units still missing on those claims, before the bench's queue nets them.
+    pub short: u32,
 }
 
 /// **One recipe that makes a kit item** — its output per pass and its per-pass inputs.
@@ -2100,10 +2108,11 @@ pub struct BuildQueueEntryState {
     /// `<x> <y> <material>` (`docs/plan_site_crews.md` §2.4).
     #[serde(default)]
     pub material: String,
-    /// **`true` on a road's entry** — the command grammar's `road <x> <y>`, since a road's tile may
-    /// also carry a patch.
+    /// **The ladder branch of a per-tile entry** (a road's `"route"`, a tile improvement's own
+    /// branch id) - the command grammar's `branch=<id>`, since such a tile may also carry a patch.
+    /// Empty on a patch, herd or working entry.
     #[serde(default)]
-    pub road: bool,
+    pub branch: String,
 }
 
 /// **One run of a band's hunt workers holding the same gear** — a row of
@@ -2339,6 +2348,13 @@ pub struct CraftSuggestionState {
     pub expires_in_turns: f32,
     /// The bench's lead time for one more unit, in whole turns (`>= 1`); `0` with no forecast.
     pub lead_turns: u32,
+    /// What the suggestion is called - an item's name or a material's title; never the raw id.
+    #[serde(default)]
+    pub display_name: String,
+    /// Why, when it is not a kit going without: `for Corral Wild Boar` on a build-material
+    /// suggestion; empty for a kit suggestion.
+    #[serde(default)]
+    pub reason: String,
 }
 
 /// **One consumer going without a suggested item** — a row of [`CraftSuggestionState::sources`].
@@ -2451,6 +2467,9 @@ pub struct CraftOfferState {
     /// **May this recipe be queued** — every craft it requires is known; the Make button's gate.
     /// Materials and tools do not gate it (`available` is "a pass can run now").
     pub queueable: bool,
+    /// The material id a stock recipe makes (`hurdles`), empty for an equipment recipe - the join
+    /// key onto a craft suggestion that names a material.
+    pub output_material_id: String,
 }
 
 /// **What [`CraftOfferState::owned_at_tier`] publishes when a per-recipe count would be invented** —
@@ -2477,6 +2496,7 @@ impl Default for CraftOfferState {
             suggested: false,
             owned_at_tier: OWNED_AT_TIER_UNATTRIBUTED,
             queueable: false,
+            output_material_id: String::new(),
         }
     }
 }

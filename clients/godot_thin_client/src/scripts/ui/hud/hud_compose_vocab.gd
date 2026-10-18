@@ -110,8 +110,8 @@ const FLOOR_CONTROL_LABEL := "Leave standing"
 # because it is what the player compares against the stepper beside it.
 const CREW_TARGET_CLEAR_LABEL := "clear it now"
 const CREW_TARGET_HOLD_LABEL := "hold it after"
-const CREW_TARGET_CLEAR_TOOLTIP := "Enough hands to take everything standing above the floor in a single turn."
-const CREW_TARGET_HOLD_TOOLTIP := "Enough hands to take exactly what grows back once it is sitting at the floor — any more go idle."
+const CREW_TARGET_CLEAR_TOOLTIP := "Clear: %d hands, all spare stock in 1 turn"
+const CREW_TARGET_HOLD_TOOLTIP := "Hold: %d hands, regrowth only"
 
 # **A TARGET NO CREW REACHES STILL SHOWS — DISABLED, WITH A ✕ WHERE THE COUNT GOES.** It used to
 # vanish, which reads as the sheet having nothing to say about clearing at all; the pill is the one
@@ -133,8 +133,8 @@ const CREW_TARGET_UNREACHABLE_FACE := "✕"
 # second reason — a source with no throughput to divide by, a patch in deep winter — and there is no
 # prey on a forage tile to break off and retreat. So the retreat rides a CONDITIONAL clause rather
 # than an assertion, and the flat-take half says only that more hands do not lift it.
-const CREW_TARGET_CLEAR_UNREACHABLE_TOOLTIP := "No crew this band can field clears it in one turn, and where prey breaks off and retreats no crew ever could, at any size."
-const CREW_TARGET_HOLD_UNREACHABLE_TOOLTIP := "No crew this band can field takes what grows back here — more hands do not lift the take past it."
+const CREW_TARGET_CLEAR_UNREACHABLE_TOOLTIP := "⚠ No crew clears it in 1 turn"
+const CREW_TARGET_HOLD_UNREACHABLE_TOOLTIP := "⚠ No crew takes the full regrowth"
 
 # ---- THE CREW ROW: ONE LINE, NOT A HEADING WITH A CONTROL PUSHED OFF THE OTHER EDGE -------------
 # The crew is ONE statement — *this many hands, and here are the two numbers worth matching* — so the
@@ -335,7 +335,7 @@ const IMPROVEMENT_HINTS := {
     # standing stand to take a fraction of), and it out-yields a tended patch ~2×. The "goes feral"
     # warning is one rule for the whole plant web — an abandoned patch bleeds BOTH meters, so a
     # neglected Field reverts to WILD, not to a free tended patch.
-    "sow": "Sow — plant a Field on this ground: almost no food while the crop grows, then twice a tended patch's yield. It must stay staffed or it goes feral all the way back to wild.",
+    "sow": "Sow — plant a Farm on this ground: almost no food while the crop grows, then twice a tended patch's yield. It must stay staffed or it goes feral all the way back to wild.",
     # Tame is animal RUNG 2 — the verb that replaced the hidden Sustain side effect. Its payoff is
     # NOT "free food": 3b retired the passive rung, so the honest promise is yield PER WORKER (~1.5×
     # off the same crew) plus proximity (the herd drifts to the band instead of being chased).
@@ -399,7 +399,7 @@ const POLICY_PAYOFF_FULL_FORMAT := "builds toward %s/turn"
 # "Cultivate" reads as an act on this patch rather than as a rung name floating in a list.
 const IMPROVEMENT_OFFER_LABELS := {
     "cultivate": "Cultivate this patch",
-    "sow": "Sow a field here",
+    "sow": "Sow a farm here",
     "tame": "Tame this herd",
     "corral": "Pen this herd",
 }
@@ -456,7 +456,7 @@ static func improvement_running_label(verb: String) -> String:
 # sheet, in the Band panel and on the map.
 const IMPROVEMENT_DONE_LABELS := {
     "cultivate": "Tended Patch",
-    "sow": "Field",
+    "sow": "Farm",
     "tame": "Pastoral",
     "corral": "Penned",
 }
@@ -1650,7 +1650,7 @@ const KIT_PICKER_ICON_MAX_WIDTH := 16
 ## job this table has never heard of must still render a legible face rather than an empty one.
 const KIT_JOB_GLYPH_FALLBACK := "🎒"
 
-const KIT_PICKER_TOOLTIP := "What this crew carries. A kit decides what they can hurt and how much they can haul — the line beneath it is this band's own tier, after wear. A kit that could change nothing about this prey is greyed out and says why."
+const KIT_PICKER_TOOLTIP := "Crew kit: what they hurt and haul\nGrey = no use on this prey"
 
 ## **A KIT THAT CANNOT WORK ON THIS PREY IS GREYED AND STATES ITS REASON, on the entry's own face.**
 ## Greyed rather than hidden: *"a snare cannot hold a Red Deer"* is a fact about the world worth

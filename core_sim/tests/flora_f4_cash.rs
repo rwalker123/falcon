@@ -16,6 +16,7 @@ use bevy::app::App;
 use bevy::ecs::system::RunSystemOnce;
 use bevy::math::UVec2;
 use bevy::MinimalPlugins;
+use core_sim::shipped;
 
 use core_sim::TakeSelection;
 use core_sim::{
@@ -26,7 +27,7 @@ use core_sim::{
     ForageRegistry, GenerationId, GenerationRegistry, HerdDensityMap, HerdRegistry, HerdTelemetry,
     LaborAllocation, LaborAssignment, LaborConfig, LaborConfigHandle, LaborTarget,
     LadderConfigHandle, LocalStore, MapPresets, MapPresetsHandle, MaterialPayoff, MoraleCause,
-    PopulationCohort, RungKey, SimulationConfig, SimulationTick, SnapshotOverlaysConfig,
+    PopulationCohort, SimulationConfig, SimulationTick, SnapshotOverlaysConfig,
     SnapshotOverlaysConfigHandle, SourcePriority, StartLocation, StartProfileKnowledgeTags,
     StartProfileKnowledgeTagsHandle, StartingUnit, Tile, TileRegistry, WellbeingConfigHandle,
     BUILTIN_LABOR_CONFIG, FODDER, FOOD,
@@ -91,7 +92,8 @@ fn the_yield_vector_routes_by_account_with_no_role_branch() {
             &flora,
             forage,
             QUOTE_MULTIPLIER,
-            RungKey::PlantField,
+            shipped::ladder(),
+            shipped::plant_farm(),
         );
         let fodder = commit_fodder_payoff(
             tile,
@@ -101,7 +103,8 @@ fn the_yield_vector_routes_by_account_with_no_role_branch() {
             &flora,
             forage,
             QUOTE_MULTIPLIER,
-            RungKey::PlantField,
+            shipped::ladder(),
+            shipped::plant_farm(),
         );
         // **The material account has no per-turn QUOTE**, and that is a fact about the account
         // rather than a gap in this test: a material is a batch carrying a characteristic vector, so
@@ -215,6 +218,8 @@ fn spawn_world() -> App {
     // is the shipped turn-1 state — no traffic has worn anything in yet — so this harness's
     // keeping numbers are the roadless reading they have always been.
     app.world.insert_resource(core_sim::RoadRegistry::default());
+    app.world
+        .insert_resource(core_sim::TileImprovementRegistry::default());
     app.world.insert_resource(WellbeingConfigHandle::default());
     app.world
         .insert_resource(core_sim::CombatConfigHandle::default());
@@ -562,7 +567,8 @@ fn the_picker_material_quote_is_the_material_the_sim_credits() {
         &flora,
         &labor.forage,
         QUOTE_MULTIPLIER,
-        RungKey::PlantField,
+        shipped::ladder(),
+        shipped::plant_farm(),
     );
     assert_eq!(
         quoted.len(),
@@ -619,19 +625,20 @@ fn a_field_of_a_food_crop_quotes_an_empty_material_payoff_not_a_zero() {
             &flora,
             forage,
             QUOTE_MULTIPLIER,
+            shipped::ladder(),
             rung,
         )
     };
 
     // A grain FIELD is one plant, and that plant is made of nothing anyone builds with.
-    let grain_field = quote("wild_emmer", RungKey::PlantField);
+    let grain_field = quote("wild_emmer", shipped::plant_farm());
     assert!(
         grain_field.is_empty(),
         "a grain Field names no material, so it must quote NO ROW rather than a zero: {grain_field:?}"
     );
     // …while the cash crop on the same ground at the same rung does quote one, or the assertion
     // above would pass against a seam that never returns anything.
-    let cotton_field = quote("cotton", RungKey::PlantField);
+    let cotton_field = quote("cotton", shipped::plant_farm());
     assert_eq!(
         cotton_field.len(),
         1,
@@ -641,7 +648,7 @@ fn a_field_of_a_food_crop_quotes_an_empty_material_payoff_not_a_zero() {
 
     // **A TENDED grain still quotes its neighbours' materials**, because weeding does not evict
     // them — and every row it does quote is strictly positive, never a published zero.
-    let grain_tended = quote("wild_emmer", RungKey::PlantTended);
+    let grain_tended = quote("wild_emmer", shipped::plant_tended());
     assert!(
         grain_tended.iter().all(|row| row.amount > 0.0),
         "a quoted row is a row that pays: {grain_tended:?}"
@@ -667,6 +674,7 @@ fn quote_absent_species(flora: &FloraConfig, tile: UVec2, capacity: f32) -> Vec<
         flora,
         &labor().forage,
         QUOTE_MULTIPLIER,
-        RungKey::PlantField,
+        shipped::ladder(),
+        shipped::plant_farm(),
     )
 }

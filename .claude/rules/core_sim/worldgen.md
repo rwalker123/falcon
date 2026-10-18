@@ -100,7 +100,7 @@ Implements the procedural map pipeline producing terrain, coasts, rivers/lakes, 
 (`DrawerComposeController.gd`), so a hex without a marker offers **no Forage button**; and `sow`
 requires a band *already foraging* the tile. So the **markers** (130–134 on a Standard map since this
 arc; a flat 90 before it), not the ~2,000 food-bearing hexes, are the real denominator for "can I
-climb the plant ladder here" — and `plant:field`'s site rule demands fresh water.
+climb the plant ladder here" — and `plant:farm`'s site rule demands fresh water.
 
 Curation could not see water. It runs inside `spawn_initial_world`, **before `generate_hydrology`**:
 at selection time the map has lakes but no rivers, no deltas, no floodplains and no `river_edges`.
@@ -121,7 +121,7 @@ the list.
 
 - **Site quality = `tile_forage_capacity(tile) + fresh_water_site_weight × (tile is fresh-watered)`**,
   read through the *same* `tile_forage_capacity` / `tile_is_fresh_watered` seams the patch seeding and
-  the `plant:field` gate use, never a private table. Expressed in **capacity units** so the two terms
+  the `plant:farm` gate use, never a private table. Expressed in **capacity units** so the two terms
   are directly comparable: a watered tile outranks a dry one carrying up to `weight` more forage, and
   richer watered ground still outranks poorer watered ground.
 - **A candidate must BOTH classify to a module AND bear food — the two gates are not redundant.**
@@ -596,7 +596,7 @@ precipitation-weighted elevation surface, decomposed into main stems and tributa
   >
   > **A related correction:** the claim that the arc took sowable tiles "46 → 0" was a **test-harness
   > defect, not a worldgen result**. `core_sim/tests/forage_field.rs` never ran `generate_hydrology`,
-  > so its map had no rivers, no `RiverDelta`, and no `river_edges` — and `plant:field`'s site rule
+  > so its map had no rivers, no `RiverDelta`, and no `river_edges` — and `plant:farm`'s site rule
   > requires fresh water, which on that map nothing could satisfy. The harness now runs hydrology and
   > pins its own grid; see the test split below.
   >

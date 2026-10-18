@@ -57,17 +57,40 @@ class_name KnowledgeRoster
 ## doing its job — nobody is working it — and it is the same blindness every other herd-scoped
 ## producer in this HUD has.
 
-## The improvement verb each knowledge track gates, taken from `RungGates.RUNG_KNOWLEDGE_TRACKS`
-## INVERTED rather than restated. That table is what the compose sheet gates on, so reading it
-## backwards is what makes "using it" here and "allowed" there the same question — a second table
-## would be a second answer, and the one that drifted would be this one, since nothing else reads it.
+## The improvement verb each knowledge track gates, read off the LADDER CATALOG (issue #175): the
+## first verb-bearing `ladder_rungs` row whose `unlock_knowledge` is `track`. The catalog is what the
+## sim gates the rung on, so "using it" here and "allowed" there are one answer by construction, and a
+## branch added to the config reaches this screen with no client table to extend.
 ##
-## `IMPROVEMENT_NONE` for a track that gates no verb.
-static func unlock_for_track(track: String) -> String:
-	for improvement in RungGates.RUNG_KNOWLEDGE_TRACKS:
-		if String(RungGates.RUNG_KNOWLEDGE_TRACKS[improvement]) == track:
-			return String(improvement)
-	return SourceForecast.IMPROVEMENT_NONE
+## `IMPROVEMENT_NONE` for a track no verb-bearing rung waits on.
+static func unlock_for_track(track: String, catalog: Array) -> String:
+	var row := _rung_row_unlocked_by(track, catalog)
+	return String(HudRouteVocab.catalog_verb(row)) if not row.is_empty() \
+		else SourceForecast.IMPROVEMENT_NONE
+
+static func _rung_row_unlocked_by(track: String, catalog: Array) -> Dictionary:
+	for row_variant in catalog:
+		if not (row_variant is Dictionary):
+			continue
+		var row: Dictionary = row_variant
+		if HudRouteVocab.catalog_unlock_knowledge(row) == track \
+				and HudRouteVocab.catalog_verb(row) != HudRouteVocab.RUNG_CATALOG_NONE:
+			return row
+	return {}
+
+## The catalog row carrying one verb, `{}` when none does.
+static func _rung_row_of_verb(verb: String, catalog: Array) -> Dictionary:
+	for row_variant in catalog:
+		if row_variant is Dictionary and HudRouteVocab.catalog_verb(row_variant as Dictionary) == verb:
+			return row_variant
+	return {}
+
+## Whether a verb's source kind is one this screen can COUNT in-use sources for: a patch, a herd or a
+## road. Deposit and tile kinds have no pool in the model, so a knowledge gating only those reads as
+## untestable rather than as *nothing is using it*.
+static func _kind_is_countable(kind: String) -> bool:
+	return kind == HudRouteVocab.SOURCE_KIND_PATCH or kind == HudRouteVocab.SOURCE_KIND_HERD \
+		or kind == HudRouteVocab.SOURCE_KIND_ROAD
 
 ## **THE WHOLE ROSTER: every domain that has nodes, each holding its nodes in order.**
 ##
@@ -124,11 +147,6 @@ static func build_domains(model: Dictionary) -> Array[Dictionary]:
 			if bool((row_variant as Dictionary).get(HudKnowledgeVocab.ROSTER_IS_STEP, false)):
 				has_step = true
 				break
-		# A knowledge in a step-less branch is STANDALONE: it works on its own, so the panel must not
-		# tag it "gates nothing" (that tag is for a capability hanging off a ladder, like foddering).
-		if not has_step:
-			for node in nodes:
-				node[HudKnowledgeVocab.NODE_STANDALONE] = true
 		domains.append({
 			HudKnowledgeVocab.DOMAIN_KEY: branch,
 			HudKnowledgeVocab.DOMAIN_LABEL: HudKnowledgeVocab.domain_label(branch),
@@ -353,6 +371,9 @@ const TALLY_UNSPENT := "unspent"
 ## domain rows, their order and each node's place along them are read off it, so the panel needs no
 ## track list of its own.
 const MODEL_LADDER_ROSTER := "ladder_roster"
+## **THE LADDER CATALOG** (`FactionReadouts.ladder_rungs`, issue #175) -- what says which verb a
+## knowledge unlocks and which kind of source that verb is raised on.
+const MODEL_LADDER_RUNGS := "ladder_rungs"
 ## `{track: 0..1}` — the player faction's intensification row, `FactionReadouts.faction_tracks`.
 const MODEL_TRACKS := "tracks"
 ## The player faction's craft rows, already filtered to `PLAYER_FACTION_ID` by whoever ingests them.
@@ -401,20 +422,19 @@ static func _ladder_node(entry: Dictionary, domain: StringName, model: Dictionar
 	# with no progress row at all still has a full screen to look at.
 	var progress := clampf(float(tracks.get(track, 0.0)), 0.0, 1.0)
 	var state := _state_for(progress, progress >= HudConst.KNOWLEDGE_COMPLETE)
-	var unlocks := unlock_for_track(track)
+	var catalog: Array = model.get(MODEL_LADDER_RUNGS, [])
+	var unlocks := unlock_for_track(track, catalog)
 	# ⛔ **STEP OR CAPABILITY IS THE CONFIG'S ANSWER, and `unspent` follows it.** A knowledge no rung
 	# waits on has nothing to stand on it, so *"nothing is using it"* would be a sentence about
 	# nothing. The client used to declare that set; the roster derives it from the ladder.
 	#
-	# ⛔ **`testable` IS TWO QUESTIONS, AND THE SECOND IS THE CLIENT'S.** `is_step` is the config's,
-	# but `unlocks` comes from inverting `RungGates.RUNG_KNOWLEDGE_TRACKS` — a table in this client —
-	# so a branch that IS a step and is missing from it reads `testable = false`, and the chip then
-	# says *"gates nothing"* about a knowledge that gates something (`HudKnowledgeVocab`'s
-	# `CAPABILITY_CAPSULE`). Every synthetic branch in `knowledge_panel_stress` lands there, which is
-	# what makes the blind spot visible rather than theoretical. A new ladder branch needs its verbs
-	# in that table, exactly as `grade` / `pave` did.
+	# `testable` is two questions, and the second is the client's: `is_step` is the config's, but
+	# `unlocks` comes from inverting `RungGates.RUNG_KNOWLEDGE_TRACKS`. It drives the unspent mark only
+	# (no chip says a knowledge "gates nothing" -- the reading says what a lesson does). A new ladder
+	# branch needs its verbs in that table, exactly as `grade` / `pave` did.
 	var is_step := bool(entry.get(HudKnowledgeVocab.ROSTER_IS_STEP, false))
-	var testable := is_step and unlocks != SourceForecast.IMPROVEMENT_NONE
+	var testable := is_step and unlocks != SourceForecast.IMPROVEMENT_NONE \
+		and _kind_is_countable(HudRouteVocab.source_kind_of_verb(catalog, unlocks))
 	var in_use := ladder_in_use_count(unlocks, model) if testable else 0
 	# The player-facing name is the SIM's (`display_name`), so no client surface authors a second
 	# spelling of a discovery. The raw id is the honest fallback for a row that carried none.
@@ -437,11 +457,38 @@ static func _ladder_node(entry: Dictionary, domain: StringName, model: Dictionar
 		# unlock announcement it was written for (retired, §5); this pane is its reader now. **It is
 		# COPY, not structure**: a knowledge with no note draws with nothing to say rather than not
 		# drawing, which is what keeps the roster wire-driven.
-		HudKnowledgeVocab.NODE_NOTE: String(FactionReadouts.KNOWLEDGE_UNLOCK_NOTES.get(track, "")),
+		HudKnowledgeVocab.NODE_NOTE: String(FactionReadouts.KNOWLEDGE_UNLOCK_NOTES.get(track,
+			catalog_lesson_note(track, catalog))),
 		HudKnowledgeVocab.NODE_PRACTISE: String(HudKnowledgeVocab.PRACTISE_NOTES.get(track, "")),
 		HudKnowledgeVocab.NODE_NEW: _is_new(track, state, model),
 		HudKnowledgeVocab.NODE_CONTACT_LESSON: contact_lesson_for(track, state, model),
 	}
+
+## **WHAT A LESSON DOES, READ FROM THE CATALOG** when the hand-written table above has no sentence for
+## it: a lesson named in a rung's `site_relaxations` opens ground for that rung's verb beyond the sites
+## it asked for (Worked Land), and one named in its `knowledge_gains` lifts the herds it holds (Selective
+## breeding). `""` for a lesson the catalog states no effect for -- the panel then has nothing to say,
+## which is the wire-driven roster's own rule. No lesson is named here.
+static func catalog_lesson_note(track: String, catalog: Array) -> String:
+	for entry_variant in catalog:
+		if not (entry_variant is Dictionary):
+			continue
+		var entry: Dictionary = entry_variant
+		for relaxation in entry.get("site_relaxations", []):
+			if relaxation is Dictionary and String((relaxation as Dictionary).get("knowledge", "")) == track:
+				return HudKnowledgeVocab.LESSON_NOTE_SITE_FORMAT % _rung_noun(entry)
+		for gain in entry.get("knowledge_gains", []):
+			if gain is Dictionary and String((gain as Dictionary).get("knowledge", "")) == track:
+				return HudKnowledgeVocab.LESSON_NOTE_REGROWTH_FORMAT % [
+					_rung_noun(entry),
+					DetailFormat.format_trimmed(float((gain as Dictionary).get("regrowth_gain", 1.0)),
+						HudKnowledgeVocab.LESSON_NOTE_GAIN_DECIMALS)]
+	return ""
+
+## A catalog rung's own name, lowercased, for a sentence's middle (`farm`, `pen`).
+static func _rung_noun(entry: Dictionary) -> String:
+	var label := String(entry.get("label", "")).strip_edges()
+	return (label if label != "" else String(entry.get("label_fallback", ""))).to_lower()
 
 static func _craft_node(row: Dictionary, model: Dictionary) -> Dictionary:
 	var craft_id := String(row.get(HudCraftingVocab.CRAFT_KNOWLEDGE_CRAFT_ID_KEY, ""))
@@ -536,12 +583,15 @@ static func _state_for(progress: float, known: bool) -> String:
 static func ladder_in_use_count(improvement: String, model: Dictionary) -> int:
 	if improvement == SourceForecast.IMPROVEMENT_NONE:
 		return 0
-	if SourceForecast.ROUTE_IMPROVEMENTS.has(improvement):
-		return _roads_standing_on(improvement, model)
+	var catalog: Array = model.get(MODEL_LADDER_RUNGS, [])
+	var row := _rung_row_of_verb(improvement, catalog)
+	var kind := String(row.get(HudRouteVocab.RUNG_CATALOG_SOURCE_KIND, ""))
+	if kind == HudRouteVocab.SOURCE_KIND_ROAD:
+		return _roads_standing_on(HudRouteVocab.catalog_rung_key(row), model, catalog)
 	var pool: Array = []
-	if SourceForecast.FORAGE_IMPROVEMENTS.has(improvement):
+	if kind == HudRouteVocab.SOURCE_KIND_PATCH:
 		pool = model.get(MODEL_PATCHES, [])
-	elif SourceForecast.HUNT_IMPROVEMENTS.has(improvement):
+	elif kind == HudRouteVocab.SOURCE_KIND_HERD:
 		pool = model.get(MODEL_HERDS, [])
 	var found := 0
 	for source_variant in pool:
@@ -552,21 +602,21 @@ static func ladder_in_use_count(improvement: String, model: Dictionary) -> int:
 			found += 1
 	return found
 
-## **HOW MANY OF THE FACTION'S OWN ROAD TILES STAND ON THE RUNG `improvement` BUILDS.**
+## **HOW MANY OF THE FACTION'S OWN ROAD TILES STAND ON THE RUNG `target` (a catalog `rung_key`).**
 ##
 ## The caller has already filtered the pool to roads this faction's bands KEEP — that is where
 ## ownership lives on this web — so the only question left here is the rung, asked at-or-ABOVE for the
 ## reason every other web asks it that way: a paved road is standing above a dirt road, and a faction
 ## with a paved road is certainly using its Roadbuilding.
-static func _roads_standing_on(improvement: String, model: Dictionary) -> int:
-	var target := String(SourceForecast.IMPROVEMENT_RUNG_KEYS.get(improvement, ""))
+static func _roads_standing_on(target: String, model: Dictionary, catalog: Array) -> int:
 	if target == "":
 		return 0
 	var found := 0
 	for road_variant in model.get(MODEL_ROADS, []):
 		if not (road_variant is Dictionary):
 			continue
-		if SourceForecast.rung_at_or_above(HudRouteVocab.rung_of(road_variant as Dictionary), target):
+		if HudRouteVocab.catalog_rung_at_or_above(catalog,
+				HudRouteVocab.rung_of(road_variant as Dictionary), target):
 			found += 1
 	return found
 

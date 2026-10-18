@@ -30,7 +30,7 @@ paths:
     LETHAL-TEMPERATURE WARNING** (issue #614): it carries the BAND AND THE TEMPERATURE and reads
     `Boreal · 2.0 °C` in neutral INK_DIM on survivable ground, `⚠ Polar · -10.0 °C` in
     `HudStyle.DANGER` when `TileSurvivability` says the sim is killing there, with
-    `1.8% increased mortality per turn due to severe cold` on its hover — one clause, naming what
+    `⚠ Severe cold: +1.8% deaths/turn` on its hover — one clause, naming what
     happens to the people. **It was two chips for one iteration and four pills is too many**; the band
     name and the death rate are two readings of the SAME number and that number was already on this
     face, so the ⚠ and the tint moved onto it and the `survivability` slot is gone (`band-readouts.md`
@@ -752,11 +752,11 @@ word on saying so.
 > mark** for that reason — the neutral would be the reassuring reading of a loss already taken.
 >
 > **THE HOVER IS WHERE THE REMEDY LIVES**, the mark being two words on a ~245px card:
-> `RUNG_UNQUEUED_TOOLTIP` states that the rung is part-built with nobody on it, that the banked work
-> survives, and that re-queuing from the work row's build face picks it back up;
-> `RUNG_UNQUEUED_ROTTING_TOOLTIP` adds that it is losing work every turn. Both are routed off the
-> value the row already composed (`DetailFormat.note_lapsed_hover`, keyed on `RUNG_UNQUEUED_PHRASE`),
-> not re-derived — one verdict, one producer.
+> `DetailFormat.lapsed_hover_text` is two lines: `99% built · not queued` (plus ` · losing 0.5/turn`
+> while the meter is rotting and the source publishes `meter_rot_per_turn`) over `Fix: re-queue from Work
+> row`. It is routed off the value the row already composed (`DetailFormat.note_lapsed_hover`, keyed on
+> `RUNG_UNQUEUED_PHRASE`, taking the meter and the rot from the caller), not re-derived — one verdict, one
+> producer.
 >
 > ⛔ **IT NAMES NO CAUSE, and it opened with one for a release.** *"The ground went feral and lost
 > this rung"* is a PLANT-web sentence on a hover `note_lapsed_hover` also registers on `HUSBANDRY_ROW`

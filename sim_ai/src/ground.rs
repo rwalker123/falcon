@@ -823,7 +823,11 @@ fn patch_site(memory: &SeatMemory, band: &PopulationCohortState, patch: &ForageP
     // not the patch row's own `tended_yield` / `field_yield`, which are species-blind and read
     // the crop already committed (nothing, at the start).
     let tended_food = Food::climb_payoff(patch, Climb::Tended).map_or(0.0, |(_, payoff)| payoff);
-    let field_food = if patch.sow_site_refusal.is_empty() {
+    let field_food = if patch
+        .quote(crate::rungs::PLANT_FARM)
+        .site_refusal
+        .is_empty()
+    {
         Food::climb_payoff(patch, Climb::Field).map_or(0.0, |(_, payoff)| payoff)
     } else {
         0.0
@@ -831,7 +835,7 @@ fn patch_site(memory: &SeatMemory, band: &PopulationCohortState, patch: &ForageP
     let per_turn = patch.build_work_per_worker_turn;
     let hoed = per_turn + HOE_BUILD_WORK_PER_WORKER;
     let tended_keepers_hoed = if tended_food > 0.0 {
-        crew_for(patch.cultivation_upkeep_demand, hoed)
+        crew_for(patch.quote(crate::rungs::PLANT_TENDED).upkeep_demand, hoed)
     } else {
         0
     };
@@ -844,13 +848,21 @@ fn patch_site(memory: &SeatMemory, band: &PopulationCohortState, patch: &ForageP
         sustained_hands: sustained_hands(patch, rate),
         tended_food,
         tended_hands: crew_for(tended_food, rate)
-            + crew_for(patch.cultivation_upkeep_demand, per_turn),
+            + crew_for(
+                patch.quote(crate::rungs::PLANT_TENDED).upkeep_demand,
+                per_turn,
+            ),
         tended_hands_hoed: crew_for(tended_food, rate)
-            + crew_for(patch.cultivation_upkeep_demand, hoed),
+            + crew_for(patch.quote(crate::rungs::PLANT_TENDED).upkeep_demand, hoed),
         tended_keepers_hoed,
         field_food,
-        field_hands: crew_for(field_food, rate) + crew_for(patch.field_upkeep_demand, per_turn),
-        field_hands_hoed: crew_for(field_food, rate) + crew_for(patch.field_upkeep_demand, hoed),
+        field_hands: crew_for(field_food, rate)
+            + crew_for(
+                patch.quote(crate::rungs::PLANT_FARM).upkeep_demand,
+                per_turn,
+            ),
+        field_hands_hoed: crew_for(field_food, rate)
+            + crew_for(patch.quote(crate::rungs::PLANT_FARM).upkeep_demand, hoed),
         kit_needed: None,
         kit_units_held: None,
         unforecast: false,

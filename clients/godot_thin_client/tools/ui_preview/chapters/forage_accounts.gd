@@ -1059,9 +1059,9 @@ func _assert_readout_names_both_rates() -> void:
 		is_equal_approx(float(forage["rate"]), READOUT_REALIZED_RATE))
 	# (2) EQUALITY, never `contains`: half the claim is the LABELLING, and a containment test on either
 	# number passes on a line that quotes it anonymously.
-	var forage_tooltip := SourceForecast.YIELD_TOOLTIP_RATES_FORMAT % [
-		SourceForecast.format_signed(READOUT_REALIZED_RATE),
-		SourceForecast.format_signed(READOUT_ACTUAL_RATE)] + SourceForecast.YIELD_TOOLTIP_RENEWABLE
+	var forage_tooltip := SourceForecast.YIELD_TOOLTIP_RATE_FORMAT % SourceForecast.format_signed(
+		READOUT_REALIZED_RATE) + SourceForecast.YIELD_TOOLTIP_RENEWABLE \
+		+ SourceForecast.YIELD_TOOLTIP_THIS_TURN_FORMAT % SourceForecast.format_signed(READOUT_ACTUAL_RATE)
 	h._assert_hud("…and its hover names BOTH quantities — \"%s\"" % String(forage["tooltip"]),
 		String(forage["tooltip"]) == forage_tooltip)
 	# (3) THE OTHER BRANCH, because the renewable one appends nothing after the pair and an overdrawing
@@ -1070,11 +1070,11 @@ func _assert_readout_names_both_rates() -> void:
 	var hunt := SourceForecast.source_yield_readout(
 		_spread_rate_assignment(SourceForecast.LABOR_KIND_HUNT, true),
 		SourceForecast.LABOR_KIND_HUNT, SourceForecast.MAX_USEFUL_UNBOUNDED)
-	var hunt_tooltip := SourceForecast.YIELD_TOOLTIP_RATES_FORMAT % [
-		SourceForecast.format_signed(READOUT_REALIZED_RATE),
-		SourceForecast.format_signed(READOUT_ACTUAL_RATE)] \
-		+ " · Sustainable %s" % SourceForecast.format_yield(READOUT_SUSTAINABLE_RATE) \
-		+ SourceForecast.YIELD_TOOLTIP_OVERDRAW
+	var hunt_tooltip := SourceForecast.YIELD_TOOLTIP_RATE_FORMAT % SourceForecast.format_signed(
+		READOUT_REALIZED_RATE) \
+		+ SourceForecast.YIELD_TOOLTIP_SUSTAINABLE_FORMAT % SourceForecast.format_signed(READOUT_SUSTAINABLE_RATE) \
+		+ SourceForecast.YIELD_TOOLTIP_OVERDRAW \
+		+ SourceForecast.YIELD_TOOLTIP_THIS_TURN_FORMAT % SourceForecast.format_signed(READOUT_ACTUAL_RATE)
 	h._assert_hud("an overdrawing hunt row names the same pair ahead of its own clauses — \"%s\""
 			% String(hunt["tooltip"]),
 		String(hunt["tooltip"]) == hunt_tooltip)
@@ -1471,7 +1471,7 @@ func run(harness) -> void:
 	await _assert_plant_crew_noun("plant_crew_tended", TileFx.tended_tile_fixture(),
 		HudComposeVocab.HARVEST_CREW_LABEL)
 	# **BOTH UPPER RUNGS, NOT ONE.** A Tended Patch stands on `plant:tended` and a Field sown from wild
-	# ground on `plant:field` — two different rungs, and they were the two the retired fork reached
+	# ground on `plant:farm` — two different rungs, and they were the two the retired fork reached
 	# through one at-or-above test (`_wild_sown_field_tile_fixture` is the Field that was never
 	# cultivated). They are kept because they are still the two rungs a re-introduced fork would split.
 	await _assert_plant_crew_noun("plant_crew_field", _wild_sown_field_tile_fixture(),
@@ -1869,8 +1869,7 @@ func run(harness) -> void:
 	await h._save("forage_lesson_known")
 	h._assert_hud("a lesson still being earned IS named, so the pair is not vacuous",
 		teaching_learning.contains(Readout.TEACHING_LESSON_NEEDLE)
-			and teaching_learning.contains(String(SourceForecast.RUNG_LESSONS[
-				SourceForecast.SOURCE_KIND_FORAGE][SourceForecast.IMPROVEMENT_NONE])))
+			and teaching_learning.contains("cultivation"))
 	# NO LINE AT ALL rather than an empty one: with no build in flight there is no second half to keep.
 	h._assert_hud("…and the same patch teaches nothing once the faction knows it — no line, not a blank",
 		Readout.teaching_line(h._hud._drawercompose._compose_sheet) == "")
@@ -2532,8 +2531,7 @@ func run(harness) -> void:
 	h._assert_hud("…it states the lesson it is earning, at the floor's own multiplier (%s)"
 			% at_floor_teaching,
 		at_floor_teaching.contains(SourceForecast.TEACHING_RATE_FORMAT % [
-			SourceForecast.RUNG_LESSONS[SourceForecast.SOURCE_KIND_FORAGE][
-				SourceForecast.IMPROVEMENT_NONE],
+			"cultivation",
 			SourceForecast.learn_multiplier(SourceForecast.FLOOR_FOOD_PEAK)]))
 
 	# **THE HALF THAT KEEPS ZERO REACHABLE.** The same patch drawn far enough below its floor that one

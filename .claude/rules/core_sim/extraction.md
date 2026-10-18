@@ -58,7 +58,7 @@ makes an unopened deposit reachable from the client at all. See "The wire" below
 
 ## The two branches, and why they are two
 
-`RungBranch` gains **`Forestry`** and **`Extraction`**, and `ALL_BRANCHES` grows to five — the
+The ladder gains the **`forestry`** and **`extraction`** branches (five in all) — the
 constant exists precisely so every sweep breaks at compile time rather than silently skipping a
 ladder.
 
@@ -591,7 +591,7 @@ would make which one a builder carries an alphabetical accident.
 
 ## The working belongs to a CAMP, like a patch — not to nobody, like a road
 
-This is the one place the arc deliberately does **not** copy `RungBranch::Route`. A road follows no
+This is the one place the arc deliberately does **not** copy the `route` branch. A road follows no
 one and is free to leave, which is why it belongs to no camp. So `BuildSource::Deposit` *is* backed
 by a labor row (`LaborTarget::Extract`), and `holds_build_source` resolves it through that row like a
 patch's.
@@ -612,7 +612,8 @@ wild stand and its row goes.
 
 ## The three verbs — `fell`, `coppice`, `quarry`
 
-`fell <faction> <x> <y> <material>`, and the same shape for the other two. Each **declares**: an
+`build fell <faction> <x> <y> <material>`, and the same shape for the other two (`build coppice`,
+`build quarry`; one `build` verb carries every rung since #175). Each **declares**: an
 entry on the build queue of every band of the faction that already has an `extract` row on
 `(tile, material)`, raised by that band's `builders` pool at the head of the queue — so none of them
 names workers, exactly as no rung verb has since `plan_standing_upkeep.md` §2.5.
@@ -644,16 +645,16 @@ a `fell`. What refuses it is `validate_labor_policy`'s `Extract` arm at the mome
 assigned — absence in `by_terrain` *is* the answer — so a tile holding no wood has nobody on its wood
 for the verb to declare for, and the verb's own rejection names the crew.
 
-> ### ⛔ THE VERBS SHIPPED AS `Improvement` VARIANTS WITH NO COMMAND AT ALL, FOR A WHOLE ARC
+> ### ⛔ THE VERBS SHIPPED AS CODED VARIANTS WITH NO COMMAND AT ALL, FOR A WHOLE ARC
 >
-> `Improvement::Fell` / `Coppice` / `Quarry`, a `RungKey` apiece, `RungKey::built_by` mapping them,
+> The `fell` / `coppice` / `quarry` verbs, a coded key apiece, a mapping from key to builder,
 > `valid_for_extract` guarding them and `validate_deposit_verb` gating them — and **no grammar, no
 > proto message, no `Command` variant and no dispatch arm** (issue #650). Nothing failed to compile,
 > because a verb nobody sends is a verb nothing calls; the client's rung ladder was built and pressing
 > it could send nothing. A player could cultivate a patch, sow a field, grade a road and pave one, and
 > could not build a quarry by any means.
 >
-> The guard is `server::tests::every_build_verb_has_a_command_line`, which walks **`Improvement::ALL`**
+> The guard is `server::tests::every_build_verb_has_a_command_line`, which walks **every verb the ladder config carries**
 > — a new variant fails its exhaustive match until somebody states the line that declares it — and
 > drives each line through the *encoded* envelope: the grammar, the proto round trip and
 > `command_from_payload` are three separate crates that each compile perfectly without the next, so a
@@ -898,7 +899,7 @@ branch.
 | File | Purpose |
 |---|---|
 | `src/data/extraction.json` | **THE DEPOSITS** (`extraction_config.rs`, env override **`EXTRACTION_CONFIG_PATH`**). `seed_fraction` **0.02** — what a deposit regrows from when it has been taken to nothing, evaluated *inside* the growth term so a rate of zero seeds nothing. Then one `deposits` row per material: its `branch`, and a `by_terrain` table of `{ capacity, regrowth_rate, characteristics }`. **A terrain absent from `by_terrain` holds none of that material** — absence is the answer, so there is no `enabled` flag and no parked `0.0` row, and every water terrain is absent from both tables deliberately. `DepositDef` and `DepositTerrain` are **`deny_unknown_fields`**, so the file's prose lives at file level in `_comment_*` keys, `materials.json`'s discipline. **Stone is two populations in one table**: rock bodies in the low thousands at rate `0.0` (alpine 4200, karst 3000, basalt 2600 … rolling hills 900) and loose-stone scatters in the tens at a small positive rate (periglacial 70 … mangrove 5). **Wood regrows on every row** — mixed woodland 600 at 0.03, boreal taiga 450 at 0.015, marsh withy 90 at 0.055 — because a forest that is worked out is not a forest. **The wood table stops at 50 and the floor is a design line, not a tuning one** (issue #650): eight rows under it were **deleted** rather than tuned down — canyon badlands and tundra 15, periglacial steppe 20, prairie steppe 25, crater fields 30, high plateau and semi-arid scrub 40, sinkhole field 45 — because a wood a bare-handed crew works out in a few dozen turns costs the player a decision and pays them nothing. **Absence is the config's own mechanism**, so no code carries a threshold; the terrains simply hold no timber, and each of the eight keeps its stone row, so **nothing is left holding neither material** (the only rows absent from both tables are the six water terrains and `Glacier`, deliberately). **⛔ THE STONE TABLE'S SMALL ROWS ARE THE OPPOSITE CASE AND WERE LEFT ALONE** — the low-capacity **positive-rate** scatters are *loose stone the ground keeps turning up*, which is what makes knapping flint available nearly anywhere, and a scatter that regrows is never worked out the way a 15-unit copse is. **The characteristic ratings are LIVE on both materials since issue #736**, and the shape they were authored for is the shape their readers wanted: wood's `hardness` / `pliancy` are read by the two road tools (`earthmoving` / `stone_dressing`), and stone's `hardness` / `workability` by the three knapped kit recipes — `spears_flint` and `clubs_flint` want a hard stone for a point that holds, `hoes_flint` a workable one for a blade that flakes predictably. So a deposit's ratings now decide what grade the things made out of it come out at, which is what *"genuinely opposed, no best deposit"* was written in advance of rather than instead of. They are still **playtest dials** — nothing about a rating was retuned when its reader landed. **`capacity_per_keeper`** is the divisor that turns a tile's capacity into the keeper-loads the rungs quote their `work_per_turn` per — wood **600** (`MixedWoodland`'s own capacity, so a felling working on closed woodland is exactly one load) and stone **3000** (`KarstHighland`'s — limestone, the classic quarry stone, and the middle of the rock bodies, so rolling hills reads 0.3 and an alpine mountain 1.4). Every number is a **playtest dial** |
-| `src/data/intensification_ladder.json` | The five new rung records and the `extraction_payoff` block on each — see `intensification.md` for the ladder engine. `knowledge.lesson_costs` gains `woodcraft` / `conservationism` / `quarrying` at 20 apiece. **The three BUILT rungs each declare an `upkeep`** (`scaled_by: source_load`): `forestry:felling` **1.0** work a turn per keeper-load, rot **0.6**, grace **3**; `forestry:coppice` **2.0** / **1.5** / **2**; `extraction:quarry` **1.5** / **2.5** / **4**. The rates read as *keepers on the reference ground*, because `capacity_per_keeper` is anchored there — a felling working on closed mixed woodland is exactly one keeper, against the plant web's 2.0 for a tended patch on *its* reference tile. Each `meter_decay` is the pacing-neutral inversion of the plant web's rule of thumb (a wholly unmaintained rung lapses over ~100 bleeding turns), so it tracks each rung's own `work_cost`. The graces say how forgiving each rung is of a crew re-tasked for a season: a quarry face is the most forgiving at 4 because the rock does the holding, and a **coppice** the least at 2 because a managed wood is the most perishable thing on either branch — the same direction `plant:field` runs in against `plant:tended`. **The two free floors declare none.** |
+| `src/data/intensification_ladder.json` | The five new rung records and the `extraction_payoff` block on each — see `intensification.md` for the ladder engine. `knowledge.lesson_costs` gains `woodcraft` / `conservationism` / `quarrying` at 20 apiece. **The three BUILT rungs each declare an `upkeep`** (`scaled_by: source_load`): `forestry:felling` **1.0** work a turn per keeper-load, rot **0.6**, grace **3**; `forestry:coppice` **2.0** / **1.5** / **2**; `extraction:quarry` **1.5** / **2.5** / **4**. The rates read as *keepers on the reference ground*, because `capacity_per_keeper` is anchored there — a felling working on closed mixed woodland is exactly one keeper, against the plant web's 2.0 for a tended patch on *its* reference tile. Each `meter_decay` is the pacing-neutral inversion of the plant web's rule of thumb (a wholly unmaintained rung lapses over ~100 bleeding turns), so it tracks each rung's own `work_cost`. The graces say how forgiving each rung is of a crew re-tasked for a season: a quarry face is the most forgiving at 4 because the rock does the holding, and a **coppice** the least at 2 because a managed wood is the most perishable thing on either branch — the same direction `plant:farm` runs in against `plant:tended`. **The two free floors declare none.** |
 | `src/data/equipment.json` | three `extract` kits, **`sledding`** (`sled`), **`woodcutting`** (`sled` + `axe`) and **`stonework`** (`sled` + `wedges`) (#663); the `sled`'s plain tier declares `deposit_take` **0.3** on `forestry:deadfall` and **0.4** on `extraction:gathering` and wears `deposit_taken` **1.0**; `default_kits.extract` and `default_kits.quarrywork` are both `"none"` — a working's offered kits are derived per branch (`working_offered_kits`) and its default per held rung (`working_default_kit`); the `none` kit's `jobs` carries both; `stone_dressing`'s `plain` tier (its only one) carries its second `build_work` effect on `extraction:quarry`; the `axe` (`flint`, 70 durability) declares `deposit_take` **1.0** on `forestry:felling` and `forestry:coppice` plus `build_work` **0.5** on `forestry`, wearing `deposit_taken` **1.0** / `build_progress` **0.16** / `upkeep_work` **0.16**; the `wedges` (`flint`, 70) declare `deposit_take` **1.0** on `extraction:quarry`, wearing `deposit_taken` **1.0** |
 | `src/data/recipes.json` | `axe` — knapping, work 6, stone 1 (`reads: hardness`) + wood 2 + fibre 1 → `axe` at `flint`; `wedges` — knapping, work 6, stone 2 (`reads: hardness`) + wood 1 → `wedges` at `flint` |
 
@@ -1124,15 +1125,16 @@ index answering both rather than two that could disagree.
 
 ### The rung catalog — what a wood or a rock body MAY become, once per world
 
-`SubsistenceSection.depositRungs` is a `DepositRungState` per rung of the **forestry** and
+`SubsistenceSection.ladderRungs` carries a `LadderRungState` per rung of the **forestry** and
 **extraction** branches, grouped by branch and climbing within it, built by
-`snapshot::subsistence::snapshot_deposit_rungs` off `extraction::deposit_rungs_in_climb_order`. It is
-a per-world constant on `routeRungs`' own seam — a `Whole<…>` baseline, diffed whole like `kits`, and
+`snapshot::subsistence::snapshot_ladder_rungs` (the deposit rows are those with `sourceKind:
+"deposit"`; `extraction::deposit_rungs_in_climb_order` is the sim-side walk). It is
+a per-world constant on the ladder catalog's own seam — a `Whole<…>` baseline, diffed whole like `kits`, and
 re-sent only on a world rebuild.
 
 **`DepositState` says where a working stands; the catalog says what stands above it.** Without it no
 readout could state what a quarry costs, what it reaches, or why the ground refuses one until a
-working already sat on that rung — which is the same gap `routeRungs` was added to close for roads.
+working already sat on that rung — which is the same gap the road rows of the catalog were added to close.
 
 ⛔ **IT FOLLOWS THE ROUTE PRECEDENT AND NOT THE PLANT ONE, AND THE DIFFERENCE IS WHO OWNS THE LIST.**
 The plant and animal ladders are drawn from **hardcoded client-side rung arrays**, a second authority
@@ -1145,9 +1147,9 @@ own config comment reserves the minerals arc's `mine` above the quarry, on this 
 `wire::a_rung_added_to_the_config_is_published_with_no_code_change` appends a fourth forestry rung to
 the shipped config's JSON, swaps the `LadderConfigHandle`, and asserts the row appears.
 
-**`branch` on every row is the one field `RouteRungState` has no need of.** One vector carries both
+**`branch` on every row is what groups the one vector.** One vector carries both
 ladders because they share the payoff block, so a reader groups by it;
-`extraction::DEPOSIT_BRANCHES` fixes the order the groups come in, which a set-walk could not.
+`LadderConfig::branches_in_config_order` fixes the order the groups come in, which a set-walk could not.
 
 ⛔ **`recoveryFraction` IS PUBLISHED AND MUST NEVER BE DERIVED FROM `reachable / capacity`.**
 `deposit_reachable` clamps to the **stock**, so that ratio stops being the rung's recovery the moment

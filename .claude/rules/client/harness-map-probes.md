@@ -1499,3 +1499,16 @@ viewer has a `stationed` party with (no ghost) and one a party is only `outbound
 Asserts the mean |dL| against the tie-less frame grades by age (fresh > middle > oldest > 0), the
 suppression pair, the latest-sighting / `news_age` resolution, the tile-info rows and the hover sentence.
 `ui_preview/chapters/station.gd` renders the HUD tooltip for the same shape (`remembered_band_hover.png`).
+
+## `map_worked_wire_quotes` -- the patches as the wire shapes them (issue #175)
+
+Every other worked-source state hands MapView a row `fixtures_rung.gd` has already stamped, so a reader of
+a retired key, or a catalog join that never ran, passes them all. This state strips each patch's quotes to
+what the decoder emits (`rung_key` and its per-quote numbers), delivers the catalog as `ladder_rungs`, and
+joins them with `RungQuotes.enrich_sources` exactly as `Main` does before `display_snapshot`. It asserts the
+mid-Cultivate patch's badge carries the build glyph and its meter, a tended patch holds `cultivate`, a Farm
+holds `sow`, and wild ground holds nothing. The same chain was replayed once against a recorded live
+session's decoded frames (every frame, fog on and off, selected and not) and wore the build glyph and the
+meter on the building patch throughout; a held rung draws no badge glyph by design (`badge_rung` states a
+rung under way or on offer, never one already held).
+

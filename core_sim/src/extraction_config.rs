@@ -48,7 +48,7 @@ use thiserror::Error;
 
 use crate::{
     config_load::{load_config_from_env, ConfigLoadError},
-    intensification::RungBranch,
+    ladder_ids::BranchId,
     materials_config::MaterialsConfig,
 };
 
@@ -113,14 +113,15 @@ pub struct DepositTerrain {
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DepositDef {
-    /// **THE LADDER THAT WORKS THIS DEPOSIT** — [`RungBranch::Forestry`] for wood,
-    /// [`RungBranch::Extraction`] for stone and, later, for every metal.
+    /// **THE LADDER THAT WORKS THIS DEPOSIT** — `forestry` for wood, `extraction` for stone and,
+    /// later, for every metal.
     ///
     /// It is stated per **material** rather than derived, because that is the seam the minerals arc
-    /// rides: copper is a new deposit row naming `extraction`, not a new branch. Validated to be one
-    /// of the two extraction branches — a deposit worked by the plant or animal ladder is a
-    /// food-web source, which has its own config.
-    pub branch: RungBranch,
+    /// rides: copper is a new deposit row naming `extraction`, not a new branch. Validated at boot
+    /// to be a branch the ladder declares `source: deposit`
+    /// ([`crate::intensification::LadderConfig::validate_against_extraction`]) — a deposit worked
+    /// by the plant or animal ladder is a food-web source, which has its own config.
+    pub branch: BranchId,
     /// **HOW MUCH OF THIS DEPOSIT ONE KEEPER LOOKS AFTER** — the divisor that turns a tile's own
     /// capacity into the **keeper-loads** both branches' rungs quote their `upkeep.work_per_turn`
     /// per (`extraction::deposit_keeper_loads`, `UpkeepScale::SourceLoad`).
@@ -211,7 +212,11 @@ impl ExtractionConfig {
 
     /// **EVERY MATERIAL THIS BRANCH WORKS**, in id order. `forestry` answers `wood` and `extraction`
     /// answers `stone` today; the minerals arc adds rows here and nothing else.
-    pub fn materials_on(&self, branch: RungBranch) -> impl Iterator<Item = (&str, &DepositDef)> {
+    pub fn materials_on(
+        &self,
+        branch: impl Into<BranchId>,
+    ) -> impl Iterator<Item = (&str, &DepositDef)> {
+        let branch = branch.into();
         self.deposits().filter(move |(_, def)| def.branch == branch)
     }
 
@@ -239,17 +244,6 @@ impl ExtractionConfig {
             });
         }
         for (material, def) in self.deposits() {
-            if !matches!(def.branch, RungBranch::Forestry | RungBranch::Extraction) {
-                return Err(ExtractionConfigError::Invalid {
-                    field: format!("deposits.{material}.branch"),
-                    constraint: "be worked by one of the two extraction ladders (`forestry` or \
-                                 `extraction`) — a deposit on a food web's branch would be a source \
-                                 that pays no food standing on a ladder whose every rung is about \
-                                 food"
-                        .to_string(),
-                    value: def.branch.as_str().to_string(),
-                });
-            }
             if !def.capacity_per_keeper.is_finite() || def.capacity_per_keeper <= NO_DEPOSIT {
                 return Err(ExtractionConfigError::Invalid {
                     field: format!("deposits.{material}.capacity_per_keeper"),
@@ -479,6 +473,7 @@ pub fn load_extraction_config_from_env() -> (Arc<ExtractionConfig>, ExtractionCo
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ladder_ids::shipped;
 
     /// The two shipped deposits — the materials this arc gives a producer.
     const WOOD: &str = "wood";
@@ -509,7 +504,7 @@ mod tests {
         let wood = config
             .deposit(WOOD)
             .expect("the shipped table carries wood");
-        assert_eq!(wood.branch, RungBranch::Forestry);
+        assert_eq!(wood.branch, shipped::forestry());
         for (terrain, ground) in &wood.by_terrain {
             assert!(
                 ground.regrowth_rate > NEVER_RENEWS,
@@ -519,7 +514,7 @@ mod tests {
         let stone = config
             .deposit(STONE)
             .expect("the shipped table carries stone");
-        assert_eq!(stone.branch, RungBranch::Extraction);
+        assert_eq!(stone.branch, shipped::extraction());
         // **The two populations in one table.** The rock bodies never renew and the scatters all do,
         // and the two do not overlap in size. **That the ladder's threshold falls in the gap** is a
         // separate claim and is asserted separately, against both files at once, by

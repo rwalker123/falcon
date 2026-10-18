@@ -571,6 +571,41 @@ func set_deposits(deposits_variant: Variant) -> void:
 func deposits() -> Array:
 	return _deposits
 
+## **THE IMPROVEMENTS ON TILE-KIND BRANCHES**, as `RouteSection.tileImprovements` sent them (issue
+## #175), one row per `(tile, branch)`. Held whole for `_deposits`' reason; empty until a tile branch
+## ships, which every reader reads as *no tile improvement*.
+var _tile_improvements: Array = []
+
+func set_tile_improvements(rows_variant: Variant) -> void:
+	if not (rows_variant is Array):
+		return
+	_tile_improvements = rows_variant
+	changed.emit(&"tile_improvements")
+
+func tile_improvements() -> Array:
+	return _tile_improvements
+
+## The `tile_improvements` row at `(x, y)` on `branch`, `{}` where the frame carries none -- a crew on
+## ground nothing stands on yet.
+func tile_improvement_at(x: int, y: int, branch: String) -> Dictionary:
+	for row_variant in _tile_improvements:
+		if not (row_variant is Dictionary):
+			continue
+		var row: Dictionary = row_variant
+		if int(row.get("tile_x", -1)) == x and int(row.get("tile_y", -1)) == y \
+				and String(row.get("branch", "")) == branch:
+			return row
+	return {}
+
+## This band's `tile` labor rows (the wire's `kind == "tile"`), in wire order.
+func tile_assignments_of(band: Dictionary) -> Array:
+	var rows: Array = []
+	for entry in labor_assignments_of(band):
+		if entry is Dictionary \
+				and String((entry as Dictionary).get("kind", "")).to_lower() == HudConst.LABOR_KIND_TILE:
+			rows.append(entry)
+	return rows
+
 ## The `deposits` row at `(x, y)` holding `material`, `{}` where the frame carries none — the working
 ## a deposit command is ABOUT, which is what `KitRoster.default_kit_for` reads the working's own
 ## default kit off. Keyed by the pair: one hex can hold wood and stone both.
@@ -613,7 +648,7 @@ func road_queue_tiles() -> Dictionary:
 			if not (entry_variant is Dictionary):
 				continue
 			var entry: Dictionary = entry_variant
-			if not bool(entry.get("road", false)):
+			if not HudRouteVocab.queue_entry_is_road(entry):
 				continue
 			var x := int(entry.get("target_x", -1))
 			var y := int(entry.get("target_y", -1))
@@ -667,6 +702,10 @@ func pending_key(kind: String, x: int, y: int, herd_id: String, material: String
 			return "hunt:%s" % herd_id
 		HudConst.LABOR_KIND_EXTRACT:
 			return "extract:%d,%d:%s" % [x, y, material]
+		HudConst.LABOR_KIND_TILE:
+			# A tile improvement keys per `(tile, branch)`; the BRANCH rides the `material` slot, the
+			# one free string a per-source key has.
+			return "tile:%d,%d:%s" % [x, y, material]
 		HudConst.LABOR_KIND_ROADWORK:
 			# A road BUILD keys per tile; the band-wide roadwork ROLE falls through to the bare kind.
 			if x >= 0 and y >= 0:
@@ -706,13 +745,13 @@ func build_queue_keys(band: Dictionary) -> Array:
 	return keys
 
 ## **ONE WIRE QUEUE ENTRY'S KEY**, in `pending_key`'s shape, off the entry's OWN site halves
-## (`BuildQueueEntryState.material` / `.road`, `docs/plan_site_crews.md` §2.4): a working's key names
+## (`BuildQueueEntryState.material` / `.branch`, `docs/plan_site_crews.md` §2.4): a working's key names
 ## its material and a road's is the roadwork key, because one hex can hold two workings, or a road and
 ## a patch, and the tile alone cannot say which.
 func queue_entry_key(entry: Dictionary) -> String:
 	var x := int(entry.get("target_x", -1))
 	var y := int(entry.get("target_y", -1))
-	if bool(entry.get("road", false)):
+	if HudRouteVocab.queue_entry_is_road(entry):
 		return pending_key(HudConst.LABOR_KIND_ROADWORK, x, y, "")
 	return pending_key(String(entry.get("kind", "")).strip_edges().to_lower(), x, y,
 		String(entry.get("fauna_id", "")), String(entry.get("material", "")))
@@ -1008,7 +1047,9 @@ func effective_worker_map(band: Dictionary) -> Dictionary:
 		# confirmed row here, so a Wood crew and a Stone crew on ONE tile stay two rows. Empty on
 		# every other kind, which `pending_key` ignores.
 		var key := pending_key(kind, int(a.get("target_x", -1)), int(a.get("target_y", -1)),
-			String(a.get("fauna_id", "")), String(a.get("material", "")))
+			String(a.get("fauna_id", "")),
+			String(a.get("branch", "")) if kind == HudConst.LABOR_KIND_TILE \
+				else String(a.get("material", "")))
 		merged[key] = {
 			# **ONE CREW PER ROW AGAIN** (`docs/plan_standing_upkeep.md` §2.5). A row carried a second
 			# `improvement_workers` allocation for one slice; the builders are a band-level POOL now, so
@@ -1846,16 +1887,23 @@ func floor_for_extract(band: Dictionary, x: int, y: int, material: String) -> fl
 ## `IMPROVEMENT_NONE` when it builds nothing. Validated against the animal ladder so a mis-spelled or
 ## cross-web value reads as "building nothing" rather than driving a control the source cannot offer.
 func improvement_for_hunt(band: Dictionary, herd_id: String) -> String:
-	return _validated_improvement(hunt_assignment_of(band, herd_id), SourceForecast.HUNT_IMPROVEMENTS)
+	return _validated_improvement(hunt_assignment_of(band, herd_id), find_world_herd(herd_id))
 
 ## The plant twin: what the band's existing forage on (x,y) is building.
 func improvement_for_forage(band: Dictionary, x: int, y: int) -> String:
-	return _validated_improvement(
-		forage_assignment_of(band, x, y), SourceForecast.FORAGE_IMPROVEMENTS)
+	return _validated_improvement(forage_assignment_of(band, x, y),
+		forage_patch_lookup().get(Vector2i(x, y), {}))
 
-func _validated_improvement(assignment: Dictionary, web: Array) -> String:
+## A verb counts as a build only when the SOURCE's own ladder (its `rung_quotes`, stamped from the
+## catalog) offers it -- so a mis-spelled or cross-web value
+## reads as "building nothing", and a verb the config adds is accepted with no list to extend.
+func _validated_improvement(assignment: Dictionary, source: Dictionary) -> String:
 	var improvement := String(assignment.get("improvement", "")).strip_edges().to_lower()
-	return improvement if improvement in web else SourceForecast.IMPROVEMENT_NONE
+	# A source the snapshot does not carry (yet) has no ladder to check against, so the assignment's
+	# verb -- which the sim validated when it stored it -- stands rather than reading as "nothing".
+	if source.is_empty():
+		return improvement
+	return improvement if improvement in RungQuotes.verbs(source) else SourceForecast.IMPROVEMENT_NONE
 
 ## **RETIRED — `build_workers_for_forage` / `_hunt`, the per-source BUILD crew**
 ## (`docs/plan_standing_upkeep.md` §2.5). `LaborAssignment.improvementWorkers` is off the wire: a verb

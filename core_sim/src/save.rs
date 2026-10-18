@@ -140,7 +140,8 @@ pub const SAVE_MAGIC: [u8; 8] = *b"SHDWSAV\x01";
 /// | 43 | The sedentarization score itemized: `SedentarizationEntry` gained `domestication_points`, `surplus_points`, `land_points` and `population_points` beside `belief_points` (each input's raw pre-EMA points), which the wire publishes as `SedentarizationState.domesticationPoints` / `surplusPoints` / `landPoints` / `populationPoints`. A version-42 blob has none |
 /// | 44 | Whole-kit orders (#780): `BenchOrder` gained `kit_order` (the kit order a part belongs to, `0` = none) and `BandBench` gained `kit_orders` (each live kit order's id, kit, kit count and made-so-far) and `next_kit_order` (the id counter). They ride `BandRecord::bench`, so a version-43 blob does not decode |
 /// | 45 | Culture pressure (#820): `SimState` gained `culture_pressure` (`CulturePressureLedger`, every people's culture strength and every band's standing under another people's pull, with the asked / forced clocks). `CommandEventKind` gained `CulturePull`, appended. A version-44 blob has neither |
-pub const SAVE_FORMAT_VERSION: u32 = 45;
+/// | 46 | The ladder's identities are config strings (#175): `RungStanding` (stamped on every `ForagePatch`, `Herd`, `Road` and `DepositSource`) holds `held` / `raising` as `RungId` (serialised as the `branch:id` wire key, not an enum variant) and gained `held_order`, `traits` and `raising_traits`; `BuildJob::Rung(Improvement)` became `BuildJob::Climb(RungId)`; the plant branch's third rung is renamed `plant:field` -> `plant:farm`; `SimState` carries `tile_improvements`, `LaborTarget::Tile` joins the labor rows and `BuildSource::Tile` the queue's sources; a `Herd` carries `breeding_gain` (the regrowth multiplier its owner's Selective breeding lesson gives it). A version-45 blob names its rungs as enum variants, so it does not decode |
+pub const SAVE_FORMAT_VERSION: u32 = 46;
 
 /// gzip level for the payload document.
 ///

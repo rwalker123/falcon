@@ -10,9 +10,10 @@
 //! envelope**'s `poolToe`, the line a client draws the pool card from.
 
 use bevy::prelude::{App, Entity, UVec2, With};
+use core_sim::shipped;
 use core_sim::{
     build_test_app, BandBench, BandEquipment, BandId, LaborAllocation, LaborTarget, LadderConfig,
-    MaterialsConfigHandle, PopulationCohort, ResidentBand, RoadKeeper, RoadRegistry, RungKey,
+    MaterialsConfigHandle, PopulationCohort, ResidentBand, RoadKeeper, RoadRegistry,
     SourcePriority, Tile, TileRegistry, UpkeepFundMode, ViewerFaction,
 };
 use std::collections::BTreeMap;
@@ -222,7 +223,7 @@ fn first_band(app: &mut App) -> (Entity, BandId, UVec2) {
 /// span is read at its own remoteness — see `pool_toe.rs`'s `seat_road` for why.
 fn seat_dirt_road(app: &mut App, tile: UVec2, keeper: BandId) {
     let ladder = LadderConfig::builtin();
-    let (base, width) = core_sim::road_rung_span(RungKey::RouteDirtRoad, &ladder, A_LONG_HAUL);
+    let (base, width) = core_sim::road_rung_span(shipped::route_dirt_road(), &ladder, A_LONG_HAUL);
     let faction = app.world.resource::<ViewerFaction>().0;
     let mut roads = app.world.resource_mut::<RoadRegistry>();
     let road = roads.road_or_trail(tile, &ladder);
@@ -235,7 +236,7 @@ fn seat_dirt_road(app: &mut App, tile: UVec2, keeper: BandId) {
         &ladder,
     );
     road.set_position(base + width, &ladder);
-    assert_eq!(road.held_rung(), RungKey::RouteDirtRoad);
+    assert_eq!(road.held_rung(), shipped::route_dirt_road());
     assert!(
         road.keeper.is_some(),
         "fixture: the road is this band's job"

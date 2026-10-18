@@ -148,8 +148,8 @@ LISTS ARE RETIRED" below. **Plus the investment rung**:
 > - **A ceiling row can exceed `sustainable`.** The first harvest of an untouched source is its
 >   accumulated stock, so `actual > sustainable` under *every* stance including Sustain. `sustainable`
 >   stays on the row as the long-run MSY reference; the ⚠ is `components::take_overdraws`.
-> - **A ceiling row cannot be compared with a rung PAYOFF** (`tendedYield`, `fieldYield`,
->   `pastoralYield`, `corralYield`). Those are long-run rates and carry `r`; a stance ceiling is
+> - **A ceiling row cannot be compared with a rung PAYOFF** (`rungQuotes[plant:tended].foodYield`, `rungQuotes[plant:farm].foodYield`,
+>   `rungQuotes[animal:pastoral].foodYield`, `rungQuotes[animal:pen].foodYield`). Those are long-run rates and carry `r`; a stance ceiling is
 >   `r`-free (`B − floor·K` is `K/2` on every rung at `B = K`). "Preparing +X → then +Y" is therefore
 >   a stock beside a rate today, which the client's ladder redesign (`docs/plan_harvest_floor.md` §7,
 >   slice 4) resolves.
@@ -308,14 +308,14 @@ LISTS ARE RETIRED" below. **Plus the investment rung**:
 > A **corralled herd** has `stock_cap: None` — it is never drawn down by the compose sheet's own
 > reading. **A sown FIELD is not one**: the plant web's managed harvest is retired and a Field is
 > drawn down like any other stand. *"This rung is not offerable here"* used to be said by publishing a
-> dip of `0`; with the fractions retired it is said by the rung's own state (`isField` / `corralled`)
+> dip of `0`; with the fractions retired it is said by the rung's own state (`rungQuotes[plant:farm].reached` / `corralled`)
 > and by `buildTurnsRemaining`'s `NO_BUILD_TURNS_ESTIMATE`, which is what the top of a ladder answers.
 
-`ForagePatchState.tendedYield` and, on a herd, `corralYield` are what the source will pay **once the
+`rungQuotes[plant:tended].foodYield` and, on a herd, `rungQuotes[animal:pen].foodYield` are what the source will pay **once the
 improvement completes**, so the client can show **"now X → then Y"** *before* the player commits the
 hands. (Sim-side the payoff is `SourceYieldForecast::managed_yield` — the two
 rung-3 verbs are kind-exclusive, so one field serves both.)
-**The `Tame` rung has its own payoff twin: `HerdTelemetryState.pastoralYield`** (sim
+**The `Tame` rung has its own payoff twin: `rungQuotes[animal:pastoral].foodYield`** (sim
 `SourceYieldForecast::pastoral_yield`) — what a Sustain hunt pays **once the herd is tamed**, so the
 client can render Tame's `→ +Y` rather than only the wild hunt beside it, which hides that taming
 out-yields wild hunting. `0` on a source that never
@@ -324,8 +324,8 @@ offers Tame (a forage patch, or a herd already penned/forage-tended).
 **`pastoralTrade` / `corralTrade` were the trade halves of the very same
 `SourceYieldForecast::pastoral_yield` / `managed_yield` vectors, and are off the wire since arc
 #527** — with the axis gone, an inedible species' investment rungs quote `0`, exactly as its
-extractive ones do. **Both `pastoralYield` and the
-un-penned `corralYield` projection (`managed_yield`) are the SUSTAINED MSY on the improved ecology** —
+extractive ones do. **Both `rungQuotes[animal:pastoral].foodYield` and the
+un-penned `rungQuotes[animal:pen].foodYield` projection (`managed_yield`) are the SUSTAINED MSY on the improved ecology** —
 `HuntYield::apply(sustainable_yield(biomass_before_regrowth, carrying_capacity, &{pastoral,pen}_ecology_for(..)))`,
 the long-run rate — **NOT** the one-turn constant-escapement take. Because MSY is `r`-dependent while
 escapement (`max(0, B − floor·K)`) is `r`-independent, the sustained form is the axis on which the
@@ -1525,12 +1525,12 @@ the one value that would look like it worked.
 **The site source grammar** (every queue verb: `abandon`, `unqueue`, `build_order`,
 `work_priority`, `build_priority` — `command_text::parse_site_source`) is the tile-or-herd grammar
 plus two shapes a tile alone cannot name: `<x> <y> <material>` is a **working** (one hex can hold
-two deposits; the material sits where `fell` carries it) and `road <x> <y>` is a **road** (a tile can
-carry a road and a patch, so the road is said out loud and leads). They ride `material` / `road` on
-each proto message (fields **7** / **8** on the band-scoped three, **5** / **6** on `abandon` /
-`unqueue`). The bare tile still names the patch. What each verb does with the two new shapes:
+two deposits; the material sits where `fell` carries it) and `<branch> <x> <y>` (`route 4 9`) is a
+**road** (a tile can carry a road and a patch, so the branch is said out loud and leads). They ride
+`material` / `branch` on each proto message (fields **7** / **9** on the band-scoped three, **5** /
+**7** on `abandon` / `unqueue`; the old `road` bool's field is reserved). The bare tile still names the patch. What each verb does with the two new shapes:
 
-| verb | `<x> <y> <material>` | `road <x> <y>` |
+| verb | `<x> <y> <material>` | `route <x> <y>` |
 |---|---|---|
 | `work_priority` | the extract row's Priority | **refused by name** — a road has no crew |
 | `build_priority` / `build_order` | the queued working build | the queued road build |

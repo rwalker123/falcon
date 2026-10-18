@@ -119,7 +119,10 @@ pub(crate) fn deposit_states<'a>(
                             tile.position,
                             material,
                             capacity,
-                            deposit.branch,
+                            crate::intensification::RungStanding::unstarted_on(
+                                ladder,
+                                deposit.branch,
+                            ),
                         );
                         &unopened
                     }
@@ -217,7 +220,7 @@ fn deposit_row(
                 at.set_ladder_position(
                     position,
                     ladder,
-                    pace.map_or(source.standing().held.branch(), |pace| pace.rung.branch()),
+                    pace.map_or(source.standing().held.branch, |pace| pace.rung.branch),
                 );
                 deposit_keeping_basis(&at, measure, ladder)
             },
@@ -234,7 +237,7 @@ fn deposit_row(
         material: source.material.clone(),
         // **The ladder this deposit is worked by** — the deposit's own, read back off the rung the
         // working stands on, never off the row that named it.
-        branch: source.rung().branch().as_str().to_string(),
+        branch: source.rung().branch.as_str().to_string(),
         stock: source.stock,
         capacity,
         // **What the CREWS ON IT can get at**, which is never simply the stock: a rung that cannot

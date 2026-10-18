@@ -21,6 +21,7 @@
 //! herd — exactly the four calls `systems::labor`'s wild hunt arm makes.
 
 use bevy::math::UVec2;
+use core_sim::shipped;
 use core_sim::{
     hunt_take, project_arrivals_hunt, project_realized_hunt, regrow_biomass, retreat_seed,
     FaunaConfig, Herd, HuntDraw, HuntingParty, ProjectionStart, SizeClass,
@@ -87,6 +88,7 @@ fn drive(species: &str, capacity: f32, hunters: u32, carry: f32) -> Readings {
         def.fodder_per_biomass,
         def.regrowth_rate.expect("a wild species carries its own r"),
         def.body_mass,
+        shipped::root_standing(shipped::animal()),
     );
     let party = HuntingParty::builtin_equipped();
     let hunt_yield = fauna.hunt_yield_for(&herd.species);

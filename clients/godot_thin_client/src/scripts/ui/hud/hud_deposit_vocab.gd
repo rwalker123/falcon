@@ -70,7 +70,7 @@ const RUNG_KEY_QUARRY := "extraction:quarry"
 
 # ⛔ **RETIRED — `RUNG_ORDER_FORESTRY`, `RUNG_ORDER_EXTRACTION` AND `RUNG_LABELS`** (issue #650). They
 # were the client's own reading vocabulary for branches the wire published no catalog for, and the
-# wire publishes one now: `SubsistenceSection.depositRungs`, one row per rung of BOTH branches,
+# wire publishes one now: `SubsistenceSection.ladderRungs`, one row per rung of BOTH branches,
 # carrying the climb order, the sim's own `display_name`, the price, the payoff and every gate. Every
 # surface reads it through the `catalog_*` / `ladder_*` accessors below, so **a rung added to
 # `intensification_ladder.json` appears with no client edit** — the property the route branch's own
@@ -726,12 +726,11 @@ const CARD_TAKE_TIP_FORMAT := "Taking %s a turn · it renews %s a turn"
 ## every deposit on the map. It names the one thing that changes it — the crew stepper on this same
 ## block — because the stock row above has already said what is here and how much of it the free
 ## floor can reach.
-const CARD_UNOPENED_TIP := "Nobody is working this ground. Put cutters on it and it opens " \
-	+ "at this rung."
+const CARD_UNOPENED_TIP := "Unworked\nFix: assign cutters"
 
 ## …and the finite working's hover, which has no sustainable take to quote (rock's rate is zero, so
 ## the sustainable figure is `0` by arithmetic) and quotes the seam instead.
-const CARD_RUNWAY_TIP_FORMAT := "%s left within this rung's reach, at the take it is running at now."
+const CARD_RUNWAY_TIP_FORMAT := "%s left at current take"
 
 ## **THE CREW ROW'S HOVER** — a working's hands keep it first and cut with what is left
 ## (`docs/plan_site_crews.md`): there is no band-wide pool holding it any more, so the hover names no
@@ -815,7 +814,7 @@ static func build_value(deposit: Dictionary, crew: int) -> String:
 		queue_position_of(deposit))
 
 # ==================================================================================================
-#  THE RUNG CATALOG — `SubsistenceSection.depositRungs`, one row per rung of BOTH branches
+#  THE RUNG CATALOG — `SubsistenceSection.ladderRungs`, one row per rung of BOTH branches
 # ==================================================================================================
 #
 # ⛔ **EVERY LABEL, PRICE, PAYOFF AND GATE ON THIS BRANCH COMES OFF THE WIRE** (issue #650), exactly as
@@ -1316,8 +1315,7 @@ const DEPOSIT_REVERTING_TIP_FORMAT := "Going back %s"
 
 ## …and the idle working's own line. A working is kept by its OWN crew, so a crew of zero keeps
 ## nothing: the ground slides back toward what it gives for free.
-const DEPOSIT_IDLE_TIP := "Nobody is cutting it, so nobody keeps it — it is sliding back toward " \
-	+ "what it gives for free."
+const DEPOSIT_IDLE_TIP := "⚠ Unworked: decaying\nFix: assign cutters"
 
 # ---- PUTTING A WORKING DOWN — the undo a HELD working had nowhere else (issue #650) ---------------
 #
@@ -1484,6 +1482,10 @@ const DEPOSIT_DEAL_LABEL_FORMAT := "once %sed"
 const DEPOSIT_DEAL_LABEL_SILENT_E_FORMAT := "once %sd"
 const DEPOSIT_DEAL_LABEL_Y_FORMAT := "once %sied"
 
+## The verbs whose hand-written participle rules above are vouched for; any other falls back to
+## `once <catalog label>`.
+const DEPOSIT_DEAL_SHIPPED_VERBS := ["fell", "coppice", "quarry"]
+
 ## The two endings those rules fork on, named because each IS the rule.
 const DEPOSIT_DEAL_SILENT_E := "e"
 const DEPOSIT_DEAL_CONSONANT_Y := "y"
@@ -1499,6 +1501,10 @@ static func deal_label(entry: Dictionary) -> String:
 	var verb := catalog_verb(entry)
 	if verb == RUNG_CATALOG_NONE:
 		return ""
+	# A verb outside the shipped three reads off the catalog's own label rather than a guessed
+	# participle (issue #175).
+	if not DEPOSIT_DEAL_SHIPPED_VERBS.has(verb):
+		return HudRouteVocab.deal_fallback_text(entry)
 	if verb.ends_with(DEPOSIT_DEAL_SILENT_E):
 		return DEPOSIT_DEAL_LABEL_SILENT_E_FORMAT % verb
 	if verb.ends_with(DEPOSIT_DEAL_CONSONANT_Y):

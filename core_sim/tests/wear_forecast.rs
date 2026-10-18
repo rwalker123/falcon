@@ -598,6 +598,7 @@ fn auto_craft_reaches_a_coming_up_item_only_when_nothing_above_it_is_usable() {
 
     // CONTROL: a usable shortage above it is queued instead, and the hoes wait.
     two_hoes_wearing_out(&mut app, band);
+    bank_everything(&mut app, band);
     consumers(&mut app, band, &[(HOES, 2.0, 2.0), (BASKETS, 2.0, 0.0)]);
     {
         let mut bench = app.world.get_mut::<BandBench>(band).expect("bench");
@@ -625,8 +626,13 @@ fn auto_craft_reaches_a_coming_up_item_only_when_nothing_above_it_is_usable() {
 fn a_skipped_coming_up_item_is_forgotten_when_it_is_no_longer_coming_up() {
     let (mut app, band) = world();
     two_hoes_wearing_out(&mut app, band);
-    // No bone banked: the hoes order waits, and the player passes it over.
-    set_auto_craft(&mut app.world, band, true);
+    // No bone banked: an auto hoes order (queued while there was bone) waits, and the player passes
+    // it over. Auto-craft itself never queues an order that is short of an input.
+    {
+        let mut bench = app.world.get_mut::<BandBench>(band).expect("bench");
+        bench.auto = true;
+        bench.enqueue_auto("hoes", 1);
+    }
     auto_craft_skip(&mut app.world, band).expect("the waiting hoes order is skipped");
     assert!(app
         .world

@@ -29,10 +29,11 @@
 //! (`abundance.max_total_game`), so any single seed may legitimately read zero.
 
 use bevy::math::UVec2;
+use core_sim::shipped;
 
 use core_sim::{
-    build_test_app, classify_food_module, FaunaConfig, FoodModule, HerdRegistry, HusbandryCeiling,
-    ShoreRequirement, SimulationConfig, Tile, TileRegistry, BUILTIN_FAUNA_CONFIG,
+    build_test_app, classify_food_module, FaunaConfig, FoodModule, HerdRegistry, ShoreRequirement,
+    SimulationConfig, Tile, TileRegistry, BUILTIN_FAUNA_CONFIG,
 };
 use sim_runtime::TerrainTags;
 
@@ -202,7 +203,7 @@ fn the_wet_and_cold_rows_declare_reachable_hosts() {
         .expect("the roster defines snow_hare");
     assert_eq!(
         hare.husbandry_ceiling,
-        HusbandryCeiling::Pen,
+        Some(shipped::animal_pen()),
         "the snow hare is what makes the pen rung reachable from a boreal start"
     );
     assert!(
@@ -218,7 +219,7 @@ fn the_wet_and_cold_rows_declare_reachable_hosts() {
         fauna
             .species
             .values()
-            .filter(|s| s.husbandry_ceiling == HusbandryCeiling::Pen)
+            .filter(|s| s.husbandry_ceiling == Some(shipped::animal_pen()))
             .any(|s| s.hosts_biome("boreal_arctic")),
         "boreal_arctic must offer at least one pen-capable species"
     );

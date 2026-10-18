@@ -21,7 +21,7 @@ animals in §4.11). `domestication_progress` / `domestication_cost` and `corral_
 `corral_cost` — **four fields, two unconnected meters** — are gone. Prose below that names them is
 describing the retired shape; the seam it points at is `Herd::rung_work_done`, the position read into
 a rung's own span **through the herd's standing**, which is what the wire's `domestication` and
-`corralProgress` meters are still published from (**the raw meter fraction** — `partial_credit`
+`rungQuotes[animal:pen].progress` meters are still published from (**the raw meter fraction** — `partial_credit`
 governs what a half-built pen is *worth*, never what its progress bar reads).
 
 **A rung the standing HOLDS reads FULL, and on `animal:pen` that is load-bearing rather than
@@ -176,7 +176,7 @@ domestication *reduce* capacity). **Playtest dials.**
 > here.** It generalised the pen's harvest rule to a floor the stance names (`Surplus 0.30·K`,
 > `Deplete 0.15·K`, `Eradicate 0`), so every rung on both webs is now the shape this callout already
 > described. What the arc **did** change is which comparisons are meaningful: a stance ceiling is a
-> stock and a rung payoff (`pastoralYield`, `corralYield`) is a long-run rate, so the two cannot be
+> stock and a rung payoff (`rungQuotes[animal:pastoral].foodYield`, `rungQuotes[animal:pen].foodYield`) is a long-run rate, so the two cannot be
 > ordered against each other at a single turn — the ladder lives on the payoff axis, and the 600-turn
 > average is where it is measured (`the_husbandry_ladder_is_a_per_species_growth_rate_ladder`, and the
 > plan's own `stance_probe` property tests).
@@ -367,7 +367,7 @@ domestication *reduce* capacity). **Playtest dials.**
   handling gain all read `is_corralled()` — a **stored fact set at completion** — so `animal:pen`
   keeps `partial_credit: on_completion`. **Half a fence is not half a pen**: the animals are still
   roaming and nothing about them has changed. A half-sown Field genuinely has half a crop in the
-  ground, which is why `plant:field` is `continuous`; the two are different facts, not an
+  ground, which is why `plant:farm` is `continuous`; the two are different facts, not an
   inconsistency.
 - **AND SO DOES THE BILL** (`docs/plan_standing_upkeep.md` §2.8). The retired `herd_keeping_meter`
   billed the **pen** rung's upkeep from the first fencing work banked, while every benefit above waited
@@ -663,8 +663,8 @@ is here.
   `pen_extending` gate instead. Deciding both questions there is what made widening a pen materially
   free while raising one cost six panels.
 - **AND THE WIRE STATES THAT PILE ON THE ONE ROW A RING IS OFFERED FROM** —
-  `HerdTelemetryState.corralBuildMaterialCost`, the material twin of `corralWorkCost` and the build
-  twin of `corralUpkeepMaterialDemand`. It exists because `buildMaterialCost` beside it prices the
+  `rungQuotes[animal:pen].buildMaterialCost`, the material twin of `rungQuotes[animal:pen].workCost` and the build
+  twin of `rungQuotes[animal:pen].upkeepMaterialDemand`. It exists because `buildMaterialCost` beside it prices the
   rung **directly above** where a herd stands, and a ring is only ever offered on a herd already
   standing on `animal:pen` — the **top of its branch**, where that field is deliberately empty
   (*"the honest reading rather than a repeat of the pen's own"*). So a ring price card could state
@@ -678,7 +678,7 @@ is here.
   pins the published pile against what a **completed ring actually takes off the band's shelf**.
   ⛔ **THERE IS NO `tameBuildMaterialCost`**: the tame rung has no repeatable increment, and
   `buildMaterialCost` already carries the tame pile on the only row that can climb to it — a wild
-  herd. The asymmetry against the `tameUpkeepMaterialDemand`/`corralUpkeepMaterialDemand` pair is
+  herd. The asymmetry against the `rungQuotes[animal:pastoral].upkeepMaterialDemand`/`rungQuotes[animal:pen].upkeepMaterialDemand` pair is
   that that pair prices two rungs a source can **stand on**, where this prices the one job a source
   can **repeat**.
 - **THE SHORTFALL SHEDS ANIMALS, and no new penalty was added.** `uncontained_overage` reads
@@ -950,7 +950,7 @@ aurochs measures **7.02**; exactly 7.000 is not reachable, because a take quanti
 bodies lands on a lattice.
 
 **`pastoral_density` is untouched**, so the pastoral rung does not move: `pen_density` is read only at
-`RungKey::AnimalPen` (`rung_density_gain`). Verified — every wild and pastoral row is byte-identical
+the `enclosed` rung (`rung_density_gain`). Verified — every wild and pastoral row is byte-identical
 across the retune.
 
 ### What each pen is actually limited by, at five keepers
@@ -1238,7 +1238,7 @@ crosses whole units by itself.
 `set_herd_output <faction> <herd_id> <fraction>` (`SetHerdOutputCommand`, `handle_set_herd_output`) is
 modelled on `extend_pen` end to end, with one shape difference: **it names the HERD, not a tile**,
 because `steppe_runner` and `marsh_grazer` carry `husbandry_ceiling: "pastoral"`, can never be penned,
-and have no pen anchor to point at. It queues `BuildJob::SetHerdOutput(RungKey)` — the second entry
+and have no pen anchor to point at. It queues `BuildJob::SetHerdOutput(RungId)` — the second entry
 kind that names no rung verb — and the new fraction lands when the meter completes
 (`Herd::accrue_output_recommit`, resolved by `systems::labor`'s `advance_output_recommit` **after**
 the take, mirroring the ring).
@@ -1390,9 +1390,9 @@ gated, **paid** verb, so both food webs read the same:
 | rung 2 verb | `Cultivate` → tended patch | **`Tame`** → pastoral herd |
 | rung 3 verb | *(`Sow` — a later slice)* | `Corral` → pen |
 
-- **`Improvement::Tame`** (wire key `"tame"`) — **animal-only** (`Improvement::valid_for_hunt`; a
+- **The `tame` verb** (wire key `"tame"`) — **animal-only** (the hunt build validator; a
   Forage assignment carrying it is rejected at its command, exactly as `Corral` is). Since issue #442
-  it is an `Improvement`, not a pressure setting: it rides `LaborAssignment.improvement` **beside**
+  it is a build verb, not a pressure setting: it rides `LaborAssignment.improvement` **beside**
   whatever floor the crew holds, so a herd being tamed is still being hunted at that floor. It emits no
   `huntTripEstimates` row, because an expedition's mission carries a **floor** and therefore
   cannot name it at all.
@@ -1435,8 +1435,8 @@ gated, **paid** verb, so both food webs read the same:
   is still cleared each turn so it can't go stale, but its consumer (the retired decay-sparing) is gone.
   `taming_cost_multiplier` now prices only the `Tame` *job*, never a decay. **Distinct from an ordinary
   hunt at any other floor**: a plain hunt *harvests* a herd; only `Tame` raises the taming meter.
-- **`tame <faction_id> <herd_id>` command** (`handle_tame`; `TameCommand` proto field **40**, its
-  `workers` field `reserved`, `CommandEventKind::Tame`) — **queues the `Tame`** on the bands already
+- **`build tame <faction_id> <herd_id>` command** (`handle_build_rung`; the retired `TameCommand`'s
+  proto field **40** is `reserved`, `CommandEventKind::Tame` is the rung's `feed_channel`) — **queues the `Tame`** on the bands already
   hunting the herd,
   the command form of the client's checkbox (issue #442: the floor beside it is left alone). It **tames nothing outright**. It targets a **herd id**
   (not a tile like `corral`): taming is the verb you reach for on a *roaming* herd, identified by who
@@ -1523,7 +1523,7 @@ units**, complete at its stored `corral_cost`; the pen under construction), `cor
   both webs now gate rung 2 on the knowledge rung 1 teaches, and rung 3 on the knowledge rung 2
   teaches. One knowledge per transition. See "The knowledge pattern".
 - **The `Corral` improvement — the investment.** In `advance_labor_allocation`'s **Hunt** arm, a herd
-  worked with `Improvement::Corral` (animal-only) in flight costs **the fencing crew the command
+  worked with the `corral` verb (animal-only) in flight costs **the fencing crew the command
   named** — hands not hunting (`docs/plan_standing_upkeep.md` §2.2; the rung's
   `yield_fraction_while_building` is retired, and the keepers beside the build take what they always
   took). `corral_progress` accrues that crew's own output in work units against the rung's
@@ -1536,7 +1536,7 @@ units**, complete at its stored `corral_cost`; the pen under construction), `cor
   decay *gradually*). That "progress is kept" applies to a **mid-build** lapse only — a **completed
   pen whose herd escapes loses its progress outright** (reset to `0.0`; see *Escapes-if-untended*
   below). Accrued **after** the take, so the turn pays exactly what the forecast promised. At the job's
-  cost `Herd::corral_at` pens it (sets `corralled_at`, stops roaming, grants the one-turn tended grace),
+  cost `Herd::corral_at` pens it **on its chosen pen site** (see "WHERE THE PEN GOES" below; sets `corralled_at`, moves the herd there, stops roaming, grants the one-turn tended grace),
   pushes a `CommandEventKind::Corral` feed line, and **clears the assignment's `improvement`** — the
   keeper crew stays on the herd, under the stance it chose, rather than fencing a pen that is already
   up. Extending a pen is command-driven (`herd.pen_extending`), not improvement-driven, so the clear
@@ -1591,15 +1591,74 @@ units**, complete at its stored `corral_cost`; the pen under construction), `cor
 > badge is their quotient with the zero denominator guarded — `0 / 0` is *"no ring"*, not *"0%"*.
 > The one field on its own is an unscaled work count that a percentage readout renders as nonsense
 > (a 69-unit ring read as *"Fencing 6900%"*), which is what a schema comment still describing a
-> normalized fraction cost. It is the same meter/pile pair `tameWorkDone`/`tameWorkCost` and
-> `corralWorkDone`/`corralWorkCost` already publish, with one difference: those costs are **resolved
+> normalized fraction cost. It is the same meter/pile pair `rungQuotes[animal:pastoral].workDone`/`rungQuotes[animal:pastoral].workCost` and
+> `rungQuotes[animal:pen].workDone`/`rungQuotes[animal:pen].workCost` already publish, with one difference: those costs are **resolved
 > at capture** so a compose sheet can price an uncommitted build, while this one is the herd's
 > **stamped** cost. Guarded by
 > `build_queue::a_ring_publishes_the_cost_its_progress_completes_at`, which asserts on the encoded
 > snapshot — an arm reading `Herd::pen_extend_cost` in process would pass even with the capture
 > never writing the field.
-- **`corral` command (repurposed)** — `corral <faction> <x> <y>` (`handle_corral`; `CorralCommand`
-  proto field 38 with its `workers` field `reserved`, `CommandEventKind::Corral`) **queues the
+> #### WHERE THE PEN GOES — the best-grazing tile in the keeping band's range, not where the herd stands
+>
+> A new pen is not built around the flock wherever it happens to be grazing; it goes on the best
+> ground the band can reach. `fauna::choose_pen_site` picks the tile and `Herd::pen_site:
+> Option<UVec2>` carries it (checkpointed with the registry; the wire is `HerdTelemetryState.penSiteX`
+> / `penSiteY`, `-1` on both when no Corral is queued, **and `-1` on both for every viewer whose own
+> band has not queued the Corral** - builder state follows the builder, so a rival never reads where
+> a pen is going; the authoritative `Herd::pen_site` is untouched).
+>
+> - **Chosen when the Corral is queued** — `queue_build_on_working_bands` stamps it (`build corral`,
+>   the `animal:pen` rung of `build_rung`); an `extend_pen` ring never does, a ring widens a pen that
+>   already has its tile. A work pass that finds a Corral completing with no site (or with the site
+>   taken since) picks again from the completing band's tile through the same function.
+> - **Candidates**: land tiles of `hex_range_tiles(band tile, labor.band_work_range)` — the same apron
+>   every other job is measured by — that the roam could stand on (`is_land`, and once a graze layer is
+>   seeded, not barren) and that is not **taken**. Taken is every *other* herd's whole claim
+>   (`fauna::pen_tiles_claimed_by`): its standing pen's full footprint
+>   (`hex_range_tiles(corralled_at, pen_radius)`, so a Ranch's outer rings count, not just its centre)
+>   plus its stamped `pen_site`. `fauna::taken_pen_tiles` is the one list, read by the queue-time
+>   stamp (`pen_site_in_world`) and by the completion re-pick in `systems/labor.rs` alike.
+> - **Scored through the one `K` seam**, never a second formula: `ecological_carrying_capacity` at the
+>   pen standing over the one-tile footprint (`hex_range_tiles(site, pen_radius)`), so the score is the
+>   `K` the herd is handed once it is penned there. Ties break by hex distance to the band ascending,
+>   then `y`, then `x`.
+> - **ONE BAND HOLDS A HERD'S CORRAL** - a herd is penned in one place, so the queue admits one
+>   queuer per herd across all bands and factions. A `build corral` reaches the band that already
+>   holds the entry (a re-issue replaces it in place), else the lowest `BandId` of the bands working
+>   the herd; the other bands are not queued. When another band - of any people - holds it and none of
+>   the asking people's working bands is that holder, the command is refused with *"Another band is
+>   already penning this herd"* and stamps nothing. The pen site is therefore the one holder's.
+>   Another people never queues a pen on a herd the owner holds - `animal:pen` requires the rung below
+>   held *and* owned (`validate_herd_build`) - so in play the hint is met when the holder is the
+>   owner's band whose row sits at zero hands (a holding keeps its entry), not among the bands the
+>   command can reach.
+> - **The quote says it before the click**: while one of the viewer's bands has the Corral queued the
+>   herd's `animal:pen` rung quote publishes `siteRefusal = "pen_taken"` (`SiteRefusal::PenTaken`), to
+>   every band of that people. The holder's own band is the one exception, and the wire does not name
+>   it: the row is per viewer-faction, so a client lifts the refusal for the band whose
+>   `buildQueue` names the herd. Other rungs on the herd keep their quotes, and a rival's queue is
+>   never published (the build scratch follows the builder).
+> - **Every projection reads the site**: `herd_footprint_at` (used by `herd_destination_capacity`,
+>   the wire's `buildDestinationCapacity`) takes `pen_site` before `current_pos`, and the compose
+>   sheet's *once corralled* herd (`forecast_query::herd_once_raised`) is seated at the stamped site,
+>   else the asking band's pick.
+> - **It leaves with the entry**: `Herd::corral_at` consumes it, and `cancel_dropped_rings` clears it
+>   when the entry leaves the queue (unqueue, abandon, lapse). If the stamped site has been taken by
+>   another herd's pen by the time the Corral completes, the completion picks again from the
+>   completing band's tile through the same function - the one fallback.
+> - **A herd that eats nothing has no graze reading**: its `K` is the fallback constant on every tile,
+>   so every candidate ties and the choice falls to distance. A real herd's `fodder_per_biomass` is
+>   cached at spawn, so only a hand-built fixture meets this.
+> - Pinned on the encoded wire by `destination_capacity_on_the_wire.rs`
+>   (`a_new_pen_goes_on_the_best_grazing_tile_in_range`, `a_tile_already_holding_a_pen_is_skipped`,
+>   `a_tile_inside_a_ranchs_fence_is_never_chosen`, `two_herds_queued_in_one_range_get_different_sites`,
+>   `a_rivals_queued_pen_site_is_withheld_from_the_viewer`,
+>   `the_quote_names_the_capacity_of_the_tile_the_pen_lands_on`, `unqueueing_the_corral_clears_the_site`)
+>   and, for the queue-time stamp, by `server::tests::corral_stamps_the_best_grazing_tile_in_the_bands_range`.
+
+- **`corral` command (repurposed)** — `build corral <faction> <x> <y>` (`handle_build_rung`; the
+  retired `CorralCommand`'s proto field 38 is `reserved`, `CommandEventKind::Corral` is the rung's
+  `feed_channel`) **queues the
   `Corral`** on the band(s) already hunting the herd standing on that tile — the command form of the
   client's checkbox. Since issue #442 it touches the improvement slot **only**: the band's
   stance and crew are untouched by construction. It **pens nothing outright**. Rejections: no herd there / faction
@@ -1746,14 +1805,14 @@ units**, complete at its stored `corral_cost`; the pen under construction), `cor
   `WorldSnapshot` and `WorldDelta` (`snapshot.fbs`, `sim_schema`, `snapshot.rs`
   `herd_snapshot_entries`): `HerdTelemetryState.corralled:bool` (= `Herd::is_corralled()`) and
   **`corralProgress:float`** (0..1, the pen-building meter — the animal twin of
-  `ForagePatchState.cultivationProgress`), plus **`penFedFraction:float`** — per-herd, for the herd
+  `rungQuotes[plant:tended].progress`), plus **`penFedFraction:float`** — per-herd, for the herd
   drawer and the starving warning.
   - **`penUpkeep` is RETIRED** (off the wire). It was the **food** this pen demanded, or
     would demand once built, at the herd's current biomass (`pen.upkeep_per_biomass × biomass`) — a
     projection for an unpenned herd, the live demand for a penned one, computed on the same biomass
-    basis as `corralYield` so the two were a matched pair the client **subtracted** on the pre-commit
+    basis as `rungQuotes[animal:pen].foodYield` so the two were a matched pair the client **subtracted** on the pre-commit
     `Corral` row. **A pen has no food-unit running cost now**, so there is nothing to subtract and
-    `corralYield` is the whole answer. `corralYield` keeps the always-meaningful discipline
+    `rungQuotes[animal:pen].foodYield` is the whole answer. `rungQuotes[animal:pen].foodYield` keeps the always-meaningful discipline
     `penUpkeep` used to state: at or below `K/2` the projected yield is honestly `0` (escapement — the
     pen pays nothing until the herd rebuilds), never `0`-because-unpenned.
     > **`buildTurnsRemaining` is the same rule applied to TIME.** It publishes the turns a running
@@ -1784,7 +1843,7 @@ units**, complete at its stored `corral_cost`; the pen under construction), `cor
       that row. Both die with the larder feed. `fodderDraw` itself survives, in its own grass units,
       which is where it always belonged.
 
-  Plus the forecast pair `huntPolicyCeilings`' **corral** row / `corralYield` (see
+  Plus the forecast pair `huntPolicyCeilings`' **corral** row / `rungQuotes[animal:pen].foodYield` (see
   "Pre-commit Yield Forecast"). See "Intensification display snapshot" under Cultivation for the
   plant-side + faction-knowledge fields.
 - **Follow-up (final Phase-1 slice):** the **client _rendering_ for both ladders** — cultivation +
@@ -1821,10 +1880,10 @@ left on the entry, and why:
 | field | source | why |
 |---|---|---|
 | `id` · `label` · `species` · `sizeClass` · `huntable` | entry | identity and shape; nothing writes them after spawn |
-| `x` / `y` | entry | **kept as a pair with the fog gate**, which decided this row's visibility against `entry.position` — publishing a different tile beside it would describe a herd whose presence was judged somewhere else. They cannot differ in any case: the only Population-stage writer of `current_pos` is `Herd::corral_at`, and the tile it is handed is `herd.position()`, the hex the herd already stands on |
+| `x` / `y` | entry, except the viewer's own herd | **kept as a pair with the fog gate**, which decided this row's visibility against `entry.position` — publishing a different tile beside it would describe a herd whose presence was judged somewhere else. The one Population-stage writer of `current_pos` is `Herd::corral_at`, which moves a herd onto its pen site (the best-grazing tile in range, not the hex it stood on), so the turn a pen goes up the entry is a turn behind; an **owned** herd passes the gate wherever it stands, so the viewer's own row reads the live position and the marker follows the pen the same turn |
 | everything else | **live `Herd`** | see below |
 
-- **The build meters** — `domestication`, `corralled`, `corralProgress` — through
+- **The build meters** — `domestication`, `corralled`, `rungQuotes[animal:pen].progress` — through
   `intensification::build_fraction`, because the build engine accrues in `advance_labor_allocation`
   at Population.
 - **`biomass`**, because `advance_husbandry`'s shed/starve shrink and the Population hunt take both
@@ -1847,8 +1906,8 @@ left on the entry, and why:
   pen had just ended and the map drew a migration arrow on an animal that cannot move. (`routeLength`
   is live for uniformity only; a herd's route is built at spawn and never rewritten.)
 
-**The lag became a contradiction when the work pair joined it in the same sentence.** `tameWorkDone`
-/ `tameWorkCost` are live, so a completed Tame published as *"Domesticating 50 / 50 work (99%)"* —
+**The lag became a contradiction when the work pair joined it in the same sentence.** `rungQuotes[animal:pastoral].workDone`
+/ `rungQuotes[animal:pastoral].workCost` are live, so a completed Tame published as *"Domesticating 50 / 50 work (99%)"* —
 one row, one meter, two frames — and read Domesticated the turn after, with nothing in the sim having
 reverted.
 
@@ -1904,3 +1963,11 @@ deleted.
 
 ---
 
+
+## The Ranch - a size tier of the Pen
+
+A pen whose fence has been extended to the size tier's `min_rings` is a Ranch (`fauna::herd_size_tier`; config
+and rationale in `intensification.md` -> "Size tiers and knowledge gains"). Its bonus is fewer keepers per
+animal: the herd's keeper load is divided by `keeper_ratio_gain` in every WORK-term site, while the hurdles
+(material) term keeps the raw load. Keeping a Ranch earns Selective breeding, which multiplies the managed
+regrowth rate of every penned herd of the knowing people (`Herd::breeding_gain`).

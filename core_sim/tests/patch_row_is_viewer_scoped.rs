@@ -26,14 +26,14 @@
 //! is the thing that leaks.
 
 use bevy::prelude::*;
+use core_sim::shipped;
 
 mod faction_support;
 
 use core_sim::{
     patch_carrying_capacity, publish_baseline_snapshot, run_turn, BuildJob, BuildQueueEntry,
-    BuildSource, BuildTurns, ForagePatch, ForageRegistry, Improvement, LaborAllocation,
-    LaborConfigHandle, LadderConfigHandle, PopulationCohort, RungKey, SnapshotHistory,
-    VisibilityLedger,
+    BuildSource, BuildTurns, ForagePatch, ForageRegistry, LaborAllocation, LaborConfigHandle,
+    LadderConfigHandle, PopulationCohort, SnapshotHistory, VisibilityLedger,
 };
 use faction_support::{world_with, HOME, ONE_RIVAL, RIVAL};
 use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
@@ -72,13 +72,38 @@ fn fingerprint(row: &fb::ForagePatchState<'_>) -> PatchFingerprint {
     vec![
         ("hasOwner", format!("{}", row.hasOwner())),
         ("owner", format!("{}", row.owner())),
-        ("isCultivated", format!("{}", row.isCultivated())),
+        (
+            "isCultivated",
+            format!(
+                "{}",
+                sim_schema::wire_rung_quote(row.rungQuotes(), "plant:tended")
+                    .is_some_and(|quote| quote.reached())
+            ),
+        ),
         (
             "cultivationProgress",
-            format!("{}", row.cultivationProgress()),
+            format!(
+                "{}",
+                sim_schema::wire_rung_quote(row.rungQuotes(), "plant:tended")
+                    .map_or(0.0, |quote| quote.progress())
+            ),
         ),
-        ("isField", format!("{}", row.isField())),
-        ("fieldProgress", format!("{}", row.fieldProgress())),
+        (
+            "isField",
+            format!(
+                "{}",
+                sim_schema::wire_rung_quote(row.rungQuotes(), "plant:farm")
+                    .is_some_and(|quote| quote.reached())
+            ),
+        ),
+        (
+            "fieldProgress",
+            format!(
+                "{}",
+                sim_schema::wire_rung_quote(row.rungQuotes(), "plant:farm")
+                    .map_or(0.0, |quote| quote.progress())
+            ),
+        ),
         ("carryingCapacity", format!("{}", row.carryingCapacity())),
         ("tileCapacity", format!("{}", row.tileCapacity())),
         ("biomass", format!("{}", row.biomass())),
@@ -89,10 +114,38 @@ fn fingerprint(row: &fb::ForagePatchState<'_>) -> PatchFingerprint {
         ),
         ("fodderPerBiomass", format!("{}", row.fodderPerBiomass())),
         ("perWorkerYield", format!("{}", row.perWorkerYield())),
-        ("tendedYield", format!("{}", row.tendedYield())),
-        ("fieldYield", format!("{}", row.fieldYield())),
-        ("tendedFodder", format!("{}", row.tendedFodder())),
-        ("fieldFodder", format!("{}", row.fieldFodder())),
+        (
+            "tendedYield",
+            format!(
+                "{}",
+                sim_schema::wire_rung_quote(row.rungQuotes(), "plant:tended")
+                    .map_or(0.0, |quote| quote.foodYield())
+            ),
+        ),
+        (
+            "fieldYield",
+            format!(
+                "{}",
+                sim_schema::wire_rung_quote(row.rungQuotes(), "plant:farm")
+                    .map_or(0.0, |quote| quote.foodYield())
+            ),
+        ),
+        (
+            "tendedFodder",
+            format!(
+                "{}",
+                sim_schema::wire_rung_quote(row.rungQuotes(), "plant:tended")
+                    .map_or(0.0, |quote| quote.fodder())
+            ),
+        ),
+        (
+            "fieldFodder",
+            format!(
+                "{}",
+                sim_schema::wire_rung_quote(row.rungQuotes(), "plant:farm")
+                    .map_or(0.0, |quote| quote.fodder())
+            ),
+        ),
         (
             "committedSpecies",
             row.committedSpecies().unwrap_or("").to_string(),
@@ -104,14 +157,36 @@ fn fingerprint(row: &fb::ForagePatchState<'_>) -> PatchFingerprint {
         ("currentRung", row.currentRung().unwrap_or("").to_string()),
         (
             "cultivationWorkDone",
-            format!("{}", row.cultivationWorkDone()),
+            format!(
+                "{}",
+                sim_schema::wire_rung_quote(row.rungQuotes(), "plant:tended")
+                    .map_or(0.0, |quote| quote.workDone())
+            ),
         ),
-        ("fieldWorkDone", format!("{}", row.fieldWorkDone())),
+        (
+            "fieldWorkDone",
+            format!(
+                "{}",
+                sim_schema::wire_rung_quote(row.rungQuotes(), "plant:farm")
+                    .map_or(0.0, |quote| quote.workDone())
+            ),
+        ),
         (
             "cultivationWorkCost",
-            format!("{}", row.cultivationWorkCost()),
+            format!(
+                "{}",
+                sim_schema::wire_rung_quote(row.rungQuotes(), "plant:tended")
+                    .map_or(0.0, |quote| quote.workCost())
+            ),
         ),
-        ("fieldWorkCost", format!("{}", row.fieldWorkCost())),
+        (
+            "fieldWorkCost",
+            format!(
+                "{}",
+                sim_schema::wire_rung_quote(row.rungQuotes(), "plant:farm")
+                    .map_or(0.0, |quote| quote.workCost())
+            ),
+        ),
         ("upkeepDemand", format!("{}", row.upkeepDemand())),
         (
             "upkeepWorkersNeeded",
@@ -217,7 +292,10 @@ fn sowable_species_by_tile(app: &App) -> std::collections::HashMap<(u32, u32), S
             .composition()
             .into_iter()
             .flatten()
-            .find(|entry| entry.canSow())
+            .find(|entry| {
+                sim_schema::wire_share_rung_quote(entry.rungQuotes(), "plant:farm")
+                    .is_some_and(|quote| quote.canClimb())
+            })
             .and_then(|entry| entry.species())
         {
             out.insert((row.x(), row.y()), species.to_string());
@@ -242,7 +320,7 @@ fn raise_to_a_field(
 ) {
     let tile_capacity = patch.carrying_capacity;
     // `(base, width)` — the rung is complete at the TOP of its span, which is their sum.
-    let (base, width) = core_sim::plant_rung_span(RungKey::PlantField, ladder);
+    let (base, width) = core_sim::plant_rung_span(shipped::plant_farm(), ladder);
     patch.set_ladder_position(base + width, ladder);
     patch.owner = Some(faction);
     patch.species = Some(species.to_string());
@@ -352,7 +430,7 @@ fn a_world_where_both_peoples_farm() -> (App, StagedTiles) {
             for tile in tiles {
                 allocation.build_queue.push(BuildQueueEntry {
                     source: BuildSource::Patch(*tile),
-                    declared: BuildJob::Rung(Improvement::Sow),
+                    declared: BuildJob::Climb(shipped::plant_farm()),
                     priority: core_sim::SourcePriority::default(),
                 });
             }

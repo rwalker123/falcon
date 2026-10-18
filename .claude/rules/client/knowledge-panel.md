@@ -83,14 +83,15 @@ runs out of units is REMOVED, so a worn-out item and one never made both read `r
 
 ### `unspent_testable` IS TWO QUESTIONS, AND THE CONFIG ANSWERS THE FIRST
 
-`unspent_testable` is `is_step` **and** a verb resolved by inverting `RungGates.RUNG_KNOWLEDGE_TRACKS`
+`unspent_testable` is `is_step` **and** a verb resolved off the catalog (`KnowledgeRoster.unlock_for_track`,
+the inverse of each rung's `unlock_knowledge`; `RungGates.RUNG_KNOWLEDGE_TRACKS` is retired)
 — that table is what the compose sheet gates on, so reading it backwards is what makes "using it" here
 and "allowed" there the same question.
 
 **The two halves catch different faults.** `is_step` comes off the LADDER and is what distinguishes
 `foddering` — a capability no rung waits on — from a step. The verb lookup is the client's own table,
 and a route rung missing from it would read as a knowledge unlocking nothing at all; that is why
-`grade` / `pave` are in `RUNG_KNOWLEDGE_TRACKS` beside the four food-web verbs.
+`grade` / `pave` are catalog rungs beside the four food-web verbs.
 
 ### Which sources count as the faction's — THREE webs, three answers, and the wire forces each
 
@@ -112,7 +113,7 @@ the tile card (those are per-hex questions; this one is a whole-list question).
 
 **A route verb's rung is read through a DIFFERENT FIELD NAME, and that is the one asymmetry.** A patch
 and a herd publish their standing as `current_rung`; a road publishes its as `rung`. So
-`_roads_standing_on` makes `improvement_is_done`'s own comparison — `rung_at_or_above(standing, the
+`_roads_standing_on` makes `improvement_is_done`'s own comparison — `HudRouteVocab.catalog_rung_at_or_above(standing, the
 rung this verb builds)` — rather than a second rule, which keeps *"is anything using this"* one
 question on three webs.
 
@@ -417,22 +418,10 @@ property of the domain descriptor, not a branch in the renderer.** It is the col
 rotated ninety degrees, and only the ladder's connector carries `RAIL_META`, so *"a ladder draws its
 rail and the craft fan draws none"* stays a claim about the TREE rather than about a pixel.
 
-**A knowledge that gates nothing wears a capsule** reading `gates nothing` — `foddering` today. It
-hangs off the end of its ladder and the capsule is what stops it reading as one more step. Drawn from
-`NODE_UNSPENT_TESTABLE`, which is the config's own `is_step` crossed with the verb lookup, never a
-client list of exceptions. **That puts the verb lookup's own blind spot on the FACE**: a ladder branch
-absent from `RungGates.RUNG_KNOWLEDGE_TRACKS` reads `unspent_testable = false`, so every one of its
-knowledges wears the capsule — the same fault this file already records under *`unspent_testable` is
-two questions*, now visible without a click rather than only in the reading's `Where, now` line.
-
-⛔ **AND THE SHIPPED SCREEN HAS THREE OF THOSE TODAY** — `woodcraft`, `conservationism` and
-`quarrying` all read `gates nothing` while the config says each one gates a rung. That table is
-keyed on a VERB, and the two deposit branches declare no verb at all: their gates are keyed on the
-RUNG instead (`RungGates`' deposit section says so at the point of the split), so there is nothing
-for the inversion to find. The `unused` filter cannot count them either — a knowledge that gates
-nothing cannot be unspent. Closing it is not one table entry: the controller resolves patches, herds
-and roads, and a deposit has no fourth scan behind it, so *"is anything using Quarrying"* has no
-answer to read yet.
+**A chip carries no "gates nothing" tag.** What a lesson does is the reading's job (`NODE_NOTE`, and the
+`Where, now` line on click); a tag on the face said less, and was wrong for any knowledge the verb lookup
+could not resolve (the deposit branches' Woodcraft, Conservationism and Quarrying). `NODE_UNSPENT_TESTABLE`
+survives for one purpose: it decides whether the unspent mark can be asked of a node at all.
 
 ## A NODE CHIP IS A `PanelContainer` WITH `gui_input`, NEVER A `Button`
 
@@ -881,10 +870,16 @@ non-vacuous legs still passing.
   `FactionReadouts.KNOWLEDGE_UNLOCK_NOTES` (*See where a migrating herd goes next.* / *Each worker
   carries more on the move.* / *Hunters take more from a big herd.*) and the learning lines in
   `HudKnowledgeVocab.PRACTISE_NOTES`.
-- **The chips do NOT wear the `gates nothing` capsule**: each skill changes play by itself. The
-  roster marks every node of a step-less branch `standalone` (`NODE_STANDALONE`, set in
-  `build_domains` from the same no-step test that picks the fan), and the capsule is skipped for it.
-  `foddering` (non-step, but in a branch that has steps) and the rung knowledges keep the capsule.
+- **A step-less branch draws a fan and no rail**, each skill changing play by itself; the roster
+  derives that from the same no-step test that picks the fan.
 
 Harness: `fixtures_knowledge.gd` carries the three rows; `knowledge_panel.gd` asserts `reach` gathers
 `roam` as a fan of three and saves `knowledge_panel_roam`.
+
+## Worked Land and Selective breeding (issue #175)
+
+Both lessons are roster rows. Where the hand-written `KNOWLEDGE_UNLOCK_NOTES` has no sentence the node
+note comes from the catalog: a lesson in a rung's `site_relaxations` reads "Your people can now sow a farm
+on well-watered ground beyond the places they gather", one in `knowledge_gains` reads "Herds in a ranch
+regrow 1.25× faster" (`KnowledgeRoster.catalog_lesson_note`); a lesson the catalog states no effect for gets
+no note.

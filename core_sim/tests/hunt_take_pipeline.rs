@@ -15,6 +15,7 @@
 //! arithmetic (`hunt_fight.rs`), the retreat's distribution (`hunt_wariness.rs`), and the crew curve's
 //! two transports (`hunt_useful_crew_on_the_wire.rs`), which owns the published-row half of step 1.
 
+use core_sim::shipped;
 use core_sim::{
     animals_engaged, hunt_take, hunt_take_bound, quantise_animal_take, EngagementStop, FaunaConfig,
     Herd, HuntDraw, HuntTakeBound, HuntingParty, SizeClass,
@@ -68,6 +69,7 @@ fn herd_of(fauna: &FaunaConfig, species: &str, stock: f32) -> Herd {
         def.fodder_per_biomass,
         def.regrowth_rate.unwrap_or(0.1),
         def.body_mass,
+        shipped::root_standing(shipped::animal()),
     )
 }
 

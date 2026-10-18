@@ -546,7 +546,7 @@ stretch, and widening it into that gap would put it over a live HUD column.
   turn is `-1`), and, when the band carries grievance, a second amber line `Drifting away — grievance
   0.42 / 1.00` — the warning beside the number it explains, the threshold being the sim's
   `independence_grievance_threshold` echo. Both lines carry one tooltip naming the lever (a visit by
-  another band or a returning scout restores contact) and the threshold. **No row for a LONE heart**
+  another band or a returning scout restores contact) and the threshold (`⚠ Cut off · breaks away at 0.60 grievance` over `Fix: visit with a band · scout home`). **No row for a LONE heart**
   (`heart_bond >= 1` and not cut off — nothing to watch) **and none for a band with no reading** (not
   cut off and a zero bond: an unjudged band or a party publishes `false / 0 / -1`, a foreign redacted
   row `false / 0 / 0`; a heart member always holds a live tie, so the gate keys on the bond, never on
@@ -618,7 +618,7 @@ stretch, and widening it into that gap would put it over a live HUD column.
   through `BandFoodStatus.color_for_output`, a `Color` accessor rather than a hex one because this
   head is built out of `Label`s rather than BBCode — and, since the head is now the multiplier's ONE
   surface, the only accessor there is (`hex_for_output` went with the vitals row that called it). Vocabulary (`WORK_OUTPUT_FORMAT` /
-  `WORK_OUTPUT_TOOLTIP`) is `HudWorkVocab`'s, like every other head item's.
+  `WORK_OUTPUT_TOOLTIP_FORMAT`, `⚠ Output 80% (low morale)` over `Fix: raise morale`) is `HudWorkVocab`'s, like every other head item's.
   **A ROW THE BAND HAS ONLY BUILDERS ON IS STILL A ROW.** The admission test read the TAKE crew alone,
   so a source with three hands raising its meter and nobody gathering was dropped from the board, from
   its chip counts and from the WORK tab's badge — the one place a player would look to see what those
@@ -1532,8 +1532,7 @@ from the player's `sedentarization` entry, which `FactionReadouts.update_sedenta
   inserted ahead of the value (a plain `Label` renders no BBCode).
 - **Below it** the row reads `0 — stand on your dead` in `INK_DIM`. It fits the zone without an ellipsis
   and says what to do next.
-- **Both forms carry the same hover**, `FACTION_SETTLING_BELIEF_TOOLTIP` (`Points to Settling from bands
-  camped where their dead lie.`), routed through `_stat_row`'s tip argument so it is set on both Labels
+- **Both forms carry the same hover**, `FACTION_SETTLING_BELIEF_TOOLTIP_FORMAT` (`Camped by their dead: +N`), routed through `_stat_row`'s tip argument so it is set on both Labels
   of the row (a bare `Label.tooltip_text` is a silent no-op) and hoverable across it.
 - **The stage row's hover itemizes the five inputs** (`FACTION_SETTLING_TOOLTIP_FORMAT`, built by
   `FactionRollup._settling_tooltip`): `Tamed herds and tended plants`, `Food to spare`, `Rich land`,
@@ -2474,7 +2473,7 @@ Tended Patch
   line nor the accounts line is ever cut to seat them; `site_row_height` / `EXTRACT_ROW_HEIGHT` charge
   it. The retired `High priority ·` accounts prefix is what `Priority` replaced.
 - **Every build-queue row is two lines** (`BUILD_QUEUE_ROW_HEIGHT`): the second states the entry's own
-  mark READ-ONLY, `Build: Normal` (blank on a pending entry), then `· ◆ builders short of tools` on
+  mark READ-ONLY, `Build: Normal` (blank on a pending entry), then `· ◆ Short 1 crook` (the hover's `Short N <item>` facts, joined with ` · `) on
   the tool-short head while its strip is closed.
 
 ### EVERY SITE VERB SPELLS ITS SOURCE ONE WAY — `Main.site_address`
@@ -3444,7 +3443,7 @@ BUILD QUEUE                          3 builders · Tillage kit
   the row keeps its crew and its kit, and re-declaring is one tick of the compose control — so it is
   the parties zone's cancel-versus-recall rule read one surface over. It wears that zone's steady,
   full-opacity `DANGER` treatment for the same reason: a destructive control reads as one. It lives in
-  the row's settings strip and reads `Remove from queue` — see ④ and ⑤ below.
+  the row's settings strip and is a `✕` with the tooltip `Remove from queue` — see ④ and ⑤ below.
 - **IT EMITS THE CONTROLLER'S OWN `unqueue_requested`, RELAYED by `HudLayer`**, with a payload
   identical key-for-key to `DrawerComposeController`'s — so `Main.format_unqueue` serves both
   surfaces and there is no second command builder.
@@ -3589,7 +3588,58 @@ percentage in one string. The fixture's pair (30 of 40 work → 75%) deliberatel
 drawer's (42 of 70 → 60%), so a row quoting the wrong ring fails on the number rather than coinciding
 with it.
 
-### A ROW EXPANDS INTO THE JOB'S SETTINGS, AND THE ROW ITSELF TAKES NO SIXTH COLUMN (§4.7a ③)
+**A queue row's second line cannot widen the panel.** A Label with no clip reports its full text width
+as its minimum, so the date label (`BUILD_QUEUE_DATE_META`) once carried a corrupt `turn 2101264`
+countdown into the zone's width and cut the panel off. It now trims with an ellipsis, its minimum width
+is the text's own up to `HudWorkVocab.BUILD_QUEUE_DATE_MAX_WIDTH` (120px), and the full text is on the
+row's tooltip. The `◆ Short N <item>` label beside it is `build_status_part(..., elide=true)`
+with `SIZE_EXPAND_FILL`, so it takes the line's remainder and trims. `band_panel_preview` re-draws the
+ring row at `ABSURD_QUEUE_TURN` (`band_panel_queue_long_date`) and asserts the summed zone-host width
+is unchanged, the date column is at its cap, and the tooltip holds the full text.
+
+**A queue head the shelf cannot feed says so in the date's place.** The sim's `materials` cause rides
+`-4` and fires only on a shelf covering nothing, so a partly-stocked shelf (which stalls the build in
+proportion) and a frame the cause has not reached both read as a plain date. The head row therefore
+compares two things the wire already states: the rung's pile (`SourceForecast.build_material_cost`, or
+`corral_build_material_cost` for a pen ring) against the band's `material_store`, at what is still to be
+drawn, `pile × (1 − meter)` (`DetailFormat.build_material_shortfalls`, one entry per missing good, never
+a sum). The date slot then reads `⚠ Blocked · need 2.1 hurdles` (`HudWorkVocab.BUILD_QUEUE_BLOCKED_NEED_FORMAT`)
+all in `HudStyle.DANGER`, and **no date at all** — a date counted off a stalled build is a number nobody
+can act on. The amount is the shortfall of the good the shelf is shortest of, and the noun goes through
+`DetailFormat.material_noun`, the crafting rail's own `capitalize()` humaniser lower-cased
+(`stone_dressing` reads `stone dressing`). The clause's slot takes its natural width up to
+`BUILD_QUEUE_CLAUSE_MAX_WIDTH`. The builders' `◆ Short 1 crook` clause (the hover's `Short N <item>` facts
+joined with ` · `) keeps its own place beside `Build: Normal` in the kit-short amber, since it only slows
+the job. Head only: entries behind the head claim nothing. A road's or a working's pile is not read here
+(a road's shortfall is the sim's own `buildMaterialDemand` / `buildMaterialSupplied` pair).
+
+**An entry behind a blocked head is just queued.** `publish_build_chain` mints `Blocked` for the HEAD
+alone and carries the same answer (and the head's reason) down every entry below it, so a `-4` at any rank
+past the head is inherited — the wire cannot, and need not, tell it apart by reason. Such a row reads the
+plain `Queued 0%` (`HudSelectionVocab.RUNG_QUEUED_FORMAT`) in `HudStyle.INK_DIM`, no mark: the player has
+nothing to fix on it. Its hover is `<face> — Queued 0%` then the cost line, and it repeats none of the
+head's causes (`_queue_row_is_waiting_behind_block`).
+
+**Every queue entry's hover, and its open strip, are one list of facts, one per line**
+(`BandPanelController._queue_entry_facts`; no explanation, no open hint):
+1. the headline, `<face> — <verb-ing> 64%` with `· turn N` only on a real date. A head blocked on goods
+   reads `<face> — Blocked 64%`; an entry behind a blocked head `<face> — Queued 0%`; a pending entry says
+   its pending words;
+1b. for a Corral entry (a herd source whose destination rung is an enclosed one), `Pen at (7, 9)`
+   (`BUILD_QUEUE_PEN_SITE_FORMAT`) off the herd's `pen_site_x` / `pen_site_y` — the tile the queued Corral
+   will pen it on — right after the headline; absent when either coordinate is -1;
+2. one `Need N <material>` per missing good (head only);
+3. one `Short N <item>` per short builders' tool (head only; N the builders without it, `required −
+   filled` rounded up; the item the roster's lower-cased name, or its humanised wire id until the roster
+   arrives);
+4. the causes the sim named (not on an entry waiting behind the head, and not the materials one, which the
+   need lines state);
+5. `Costs 75 work · upkeep 2.8/turn` (the upkeep clause only where the rung bills one).
+Pinned by `band_panel_preview._assert_blocked_pen_head_hover_and_detail` (`band_panel_queue_blocked_pen_head`,
+`band_panel_queue_blocked_pen_detail`) on a pen head 65% built, 2.1 hurdles short and one crook short, and by
+`_assert_a_road_behind_a_blocked_pen_head_is_just_queued` (`band_panel_queue_road_behind_blocked_pen`).
+
+### A ROW EXPANDS INTO THE JOB'S SETTINGS### A ROW EXPANDS INTO THE JOB'S SETTINGS, AND THE ROW ITSELF TAKES NO SIXTH COLUMN (§4.7a ③)
 
 The crop moved off the compose sheet — *"the CROP TO TEND shouldn't be a selection here as the user can't
 do the cultivate here"* — and its first home was a sixth column on this row. **At the narrow shell's
@@ -3826,7 +3876,7 @@ withdrawal set lives in the same per-band record (beside `assign` / `move`) so i
   signal synchronously) and `Main._on_hud_unqueue` hands the payload back to `drop_pending_unqueue`
   when the send does not go, exactly as `_on_hud_assign_labor` does.
 
-#### ⑤ THE STRIP OPENS ON THE JOB'S DETAIL LINE, AND THE WITHDRAWAL READS `Remove from queue`
+#### ⑤ THE STRIP OPENS ON THE ENTRY'S FACTS, AND THE WITHDRAWAL IS A `✕` (tooltip `Remove from queue`)
 
 Reported from play: expanding a Tame or Corral row showed a bare red `✕` and nothing else, which read
 as *close this strip* or as *cancel and lose the progress* — neither of which it does. Two changes,
@@ -3841,23 +3891,18 @@ strip CLOSED                                                     strip OPEN
                                                                 └──────────────────────────────────────────────┘
 ```
 
-- **EVERY OPEN STRIP LEADS WITH ONE DETAIL LINE** (`_build_queue_detail_line`,
-  `HudWorkVocab.build_queue_detail_line`) — causes first, then the price, joined with ` · `: the
-  model's `build_blocked_lines` (the source card's own producer) and `DetailFormat.build_price_clause`
-  through `_queue_entry_price`, the same composition the row's hover quotes. **Nothing is
-  re-derived**. The label ELIDES and never wraps — `HudWidgets.build_status_part`'s elide form, the full
-  text on its hover and on `BUILD_QUEUE_DETAIL_META` — because the line's height is reserved and the
-  zone clips. A cause reads in the kit-short amber; a bare price in `INK_DIM`.
-- **The withdrawal rides the detail line**, right-aligned: `Remove from queue`, DANGER ink, tooltip
-  *"Take this job out of the build queue. The work already done on it is kept, and the source keeps
-  its crew — queue it again to carry on."* It is **150px** and does not fit beside the crop picker at
-  the tall LEFT dock (344px of strip content less key 30, picker 168 and three separations leaves
-  134), so the detail label is the child that gives (**190px** of it left at that dock). The detail
-  line has no key column.
-- **ON THE TOOL-SHORT HEAD, THE DETAIL LINE LEADS WITH `◆ builders short of tools`** (amber), before
-  the price. The head row drops its own `◆` second line while its strip is open, so this is the fact's
-  only statement in that state — one sentence visible in either state, never both. No other strip, and
-  no strip while the builders' TOE is filled, carries the clause.
+- **EVERY OPEN STRIP SHOWS THE ENTRY'S FACTS, WRAPPED, NEVER CLIPPED** — the same list the row's hover
+  is (`_queue_entry_facts`, above), the headline on the control line beside the `✕` and every further fact
+  a line of its own (`BUILD_QUEUE_FACT_LINE_HEIGHT`). Each is its own `autowrap` label in its own ink
+  (headline `INK`, missing goods `DANGER`, short tools the kit-short amber, causes `WARN`, the cost
+  `INK_DIM`); `BUILD_QUEUE_DETAIL_META` rides the headline label and carries every fact newline-joined.
+  The strip's height is reserved from the same facts: `_queue_settings_content`'s `fact_lines` (one line per
+  further fact, plus one per wrap at `BUILD_QUEUE_FACT_WRAP_WIDTH`) feeds `build_queue_settings_height` and
+  `build_queue_block_height`, so reserved equals drawn. It was one ellipsised readout, which cut the cause
+  and the price off at the shell's width and carried no missing material.
+- **The withdrawal is a `✕`** (`BUILD_QUEUE_UNQUEUE_LABEL`, DANGER ink) with the tooltip `Remove from queue`
+  (`BUILD_QUEUE_UNQUEUE_TOOLTIP`), right-aligned on the headline's control line. It was a 150px labelled
+  button that squeezed the detail label.
 - **What each entry kind opened to before it**, for the record: a Tame/Corral (`legs 0`, no crop) —
   the `✕` alone; a plant entry — the crop picker with the `✕` beside it (plus `CLIMB` and its leg lines
   on a multi-leg climb); a road — `CLIMB`, its one leg line, and the `✕` on a line of its own.
@@ -5402,7 +5447,7 @@ applied one level up: a second total beside the first, shown only when non-zero.
 **FODDER IS THAT SIBLING** (issue #449), and it credits the band's `FODDER` store and never the larder,
 so folding it into the food figure would break the identity
 `larder_delta == income − consumption − raid_forfeit − food_spoiled − food_left_behind + received − sent`. The head reads `2 sources +0.20
-/turn +0.40 fodder` (`WORK_FODDER_TOTAL_TOOLTIP` making the beside-not-in point) and a chip covering
+/turn +0.40 fodder` (`WORK_FODDER_TOTAL_TOOLTIP_FORMAT`, `Fodder +0.40/turn` over `Feeds pens, not people`, making the beside-not-in point) and a chip covering
 only hay-bearing patches reads `🌿 1 · 0.40 fodder` — via `SourceForecast.magnitude_components`, the
 bare-magnitude twin of `yield_components` (a chip states levels, not deltas, so no `+`). A kind whose
 whole set pays fodder alone drops the food term rather than printing a `0.00` denying its sources
@@ -6075,7 +6120,7 @@ a wild-ceiling Roe Deer offers nothing — the CONTRAST is the point), `band_pan
 ### …AND THE `⌃` OPENS A LADDER TRACK, BECAUSE AN ENTRY NAMES A DESTINATION (§2.8)
 
 The sim stores **one position per source** in cumulative work units — `plant:tended` runs `0 → 50` and
-`plant:field` `50 → 125` — and a queue entry names a **destination rung** rather than a single rung.
+`plant:farm` `50 → 125` — and a queue entry names a **destination rung** rather than a single rung.
 An entry climbs every rung between where the source stands and that destination and stays at the head
 until it ARRIVES, so `sow` declared on untended ground is a TWO-LEG climb that costs the whole branch.
 
@@ -6170,7 +6215,7 @@ when that leg finished. The legs are the row's EXPANSION:
 LOCKED rung, visible with its reason, beside the open one) · `band_panel_rung_track_banked` (the same
 ground one rung up on a faction that knows both crafts — the BANKED rung, and the claim that exactly
 ONE row on the card quotes a price) · `band_panel_rung_track_climbing` (a two-leg entry queued to
-`plant:field`, opened from the RUNNING slot — the path, the target, and both wire figures by
+`plant:farm`, opened from the RUNNING slot — the path, the target, and both wire figures by
 EQUALITY) · `band_panel_queue_legs` (the queue row opened into its climb). The four are judged as a
 SET: a card that marked every rung `open` passes any one of the state claims alone.
 
@@ -6250,7 +6295,7 @@ WHAT TO GROW                      ← on a SOW; a Cultivate reads WHAT TO TEND
 
 ### …AND THE FIELD ROW STATES ITS PRICE AND NO REASON (§4.15)
 
-`plant:field`'s build cost is scaled by the chosen crop's share of the tile — sowing a crop that
+`plant:farm`'s build cost is scaled by the chosen crop's share of the tile — sowing a crop that
 already holds most of the ground is mostly tidying, sowing one that holds a tenth means replacing the
 tile — so two Sows are quoted at wildly different work. The declaration path's own Field row states
 that price:
@@ -7860,7 +7905,7 @@ is gone after a re-render** — its good now nets even, the tier flipped FULL↔
 the list closes rather than re-anchoring elsewhere (`trade_tab_list_anchor_gone`).
 
 The camps list: this band first, its direct links (rung as icon + word, link distance, rung facts off
-the published `route_rungs` table), then the relay camps — `via <first hop>` on the shortest chain
+the published road slice of `ladder_rungs`), then the relay camps — `via <first hop>` on the shortest chain
 (BFS over every member's own `pooling_links`, ties on the hop's link distance then name) and the
 plain hex distance. Scoped to a good: each camp's net of it off its own pooled crossings, this band
 first, movers by `|net|`, then the even ones, and a `lost in transit — friction` row that is

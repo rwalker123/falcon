@@ -988,6 +988,8 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
             // `""` on every row that is not `extract`, which is every other row kind: nothing else
             // names a material. Always inserted so the entry shape is stable.
             let _ = entry.insert("material", assignment.material().unwrap_or_default());
+            // A tile improvement's crew row: the tile-kind branch id (`""` on every other row).
+            let _ = entry.insert("branch", assignment.branch().unwrap_or_default());
             // **WHICH PLANTS THIS FORAGE CREW CARRIES HOME** (the selective gather) — the species
             // keys the crew is gathering, or an EMPTY array for *"take the whole basket"*, which is
             // the default and byte-identical to every assignment sent before this field existed.
@@ -1216,10 +1218,11 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
                 wire_entry.buildPriority().unwrap_or_default(),
             );
             // **THE SITE'S OWN ADDRESS HALVES** (`docs/plan_site_crews.md` §2.4) — `material` names
-            // a working (`""` for every other kind) and `road` a road build. The tile alone cannot
-            // say either: one hex can hold two workings, or a road and a patch.
+            // a working (`""` for every other kind) and `branch` the ladder branch of a road or
+            // tile build (`""` for every other kind). The tile alone cannot say either: one hex can
+            // hold two workings, or a road and a patch.
             let _ = entry.insert("material", wire_entry.material().unwrap_or_default());
-            let _ = entry.insert("road", wire_entry.road());
+            let _ = entry.insert("branch", wire_entry.branch().unwrap_or_default());
             build_queue.push(&entry.to_variant());
         }
     }
@@ -1663,6 +1666,10 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
             let _ = row.insert("upcoming_count", suggestion.upcomingCount() as i64);
             let _ = row.insert("expires_in_turns", suggestion.expiresInTurns() as f64);
             let _ = row.insert("lead_turns", suggestion.leadTurns() as i64);
+            // What to CALL it ("Hurdles") and, for a build-material suggestion, why ("for Corral
+            // Wild Boar"); `reason` is `""` for a kit suggestion, whose reason is its workers.
+            let _ = row.insert("display_name", suggestion.displayName().unwrap_or(""));
+            let _ = row.insert("reason", suggestion.reason().unwrap_or(""));
             let mut sources = VarArray::new();
             if let Some(list) = suggestion.sources() {
                 for source in list.iter() {
@@ -1720,6 +1727,10 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
                     let _ = entry.insert("workers_per_unit", i64::from(item.workersPerUnit()));
                     let _ = entry.insert("have", i64::from(item.have()));
                     let _ = entry.insert("queued", i64::from(item.queued()));
+                    // `claimed` units the claims on THIS kit asked for; `short` whole units missing on
+                    // them before `queued` nets them (Make Next's own pre-netting count).
+                    let _ = entry.insert("claimed", f64::from(item.claimed()));
+                    let _ = entry.insert("short", i64::from(item.short()));
                     let mut recipes = VarArray::new();
                     if let Some(recipe_list) = item.recipes() {
                         for recipe in recipe_list.iter() {
@@ -1792,6 +1803,9 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
             // The Make/Queue button's gate: every craft the recipe needs is known. Materials and
             // tools do not gate it — `available` is "a pass can run now".
             let _ = row.insert("queueable", offer.queueable());
+            // The material id a stock recipe makes (`hurdles`), `""` for equipment - the join key
+            // onto a craft suggestion whose `item_id` names a material.
+            let _ = row.insert("output_material_id", offer.outputMaterialId().unwrap_or(""));
             craft_offers.push(&row.to_variant());
         }
     }

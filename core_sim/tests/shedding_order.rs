@@ -16,6 +16,7 @@ use bevy::app::App;
 use bevy::ecs::system::RunSystemOnce;
 use bevy::math::UVec2;
 use bevy::prelude::Entity;
+use core_sim::shipped;
 
 use core_sim::{
     advance_labor_allocation, build_test_app, recapture_snapshot_in_place, scalar_from_f32,
@@ -462,7 +463,7 @@ fn a_band_keeping_a_tended_patch(hoes: u32) -> (App, UVec2, UVec2) {
     {
         let ladder = core_sim::LadderConfig::builtin();
         let cost = ladder
-            .rung(core_sim::RungKey::PlantTended)
+            .rung(shipped::plant_tended())
             .build_cost(core_sim::RUNG_COST_UNSCALED)
             .expect("the tended rung builds");
         let mut registry = app.world.resource_mut::<ForageRegistry>();

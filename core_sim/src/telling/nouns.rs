@@ -422,6 +422,7 @@ pub fn render(template: &str, nouns: &BTreeMap<String, Noun>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ladder_ids::shipped;
 
     fn nouns() -> BTreeMap<String, Noun> {
         BTreeMap::from([
@@ -525,6 +526,7 @@ mod tests {
             def.fodder_per_biomass,
             def.regrowth_rate.unwrap_or_default(),
             def.body_mass,
+            shipped::root_standing(shipped::animal()),
         );
         herd.husbandry_ceiling = def.husbandry_ceiling;
         herd.taming_cost_multiplier = fauna.taming_cost_multiplier_for(species);

@@ -72,6 +72,7 @@ use crate::combat::CombatStats;
 use crate::config_load::{load_config_from_env, ConfigLoadError};
 use crate::extraction::NO_DEPOSIT_GEAR;
 use crate::intensification::NO_BUILD_GEAR;
+use crate::ladder_ids::{BranchId, RungId};
 
 pub const BUILTIN_EQUIPMENT_CONFIG: &str = include_str!("data/equipment.json");
 
@@ -407,7 +408,7 @@ impl EffectTier {
 /// what keeps *flat until expiry, then a step down* structurally true rather than a rule a future
 /// author has to remember — there is no representation for "a bit worse as it wears".
 /// **NOT `Copy`, because [`Self::rung`] is a `String`** — the rung bound is authored as a
-/// [`crate::intensification::RungKey::wire_key`] so the roster, the wire and every validation
+/// `RungId::wire_key` so the roster, the wire and every validation
 /// message spell a rung one way. Every reader takes it by reference; the one place a value is wanted
 /// clones.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -455,13 +456,13 @@ pub struct EquipmentEffect {
     /// which is `config-loading.md`'s "looks live but isn't" in its most reassuring direction, so
     /// `validate` refuses to load it — see [`EquipmentConfig::validate_build_branch`].
     #[serde(default)]
-    pub branch: Option<crate::intensification::RungBranch>,
+    pub branch: Option<BranchId>,
     /// **WHICH RUNG OF THAT BRANCH THIS EFFECT SERVES** — [`Self::branch`]'s bound one notch finer,
     /// allowed only on the [`EquipmentStat::is_rung_scoped`] stats and spelled as a
-    /// [`crate::intensification::RungKey::wire_key`] (`"route:paved_road"`).
+    /// `RungId::wire_key` (`"route:paved_road"`).
     ///
     /// **ABSENT MEANS EVERY RUNG ON THE BRANCH**, which is what keeps `hoes` and the crook
-    /// byte-identical: a plant tool that names no rung serves `plant:tended` and `plant:field`
+    /// byte-identical: a plant tool that names no rung serves `plant:tended` and `plant:farm`
     /// alike, exactly as it did when the branch was the only bound there was.
     ///
     /// **It exists because one branch's rungs can want DIFFERENT TOOLS.** The route ladder is the
@@ -516,11 +517,7 @@ impl EquipmentEffect {
     ///
     /// The declaration query that must see every tool whatever it is bound to is
     /// [`EquipmentConfig::build_work_declared`], and it deliberately does not come through here.
-    pub fn serves_build(
-        &self,
-        branch: crate::intensification::RungBranch,
-        rung: Option<&str>,
-    ) -> bool {
+    pub fn serves_build(&self, branch: BranchId, rung: Option<&str>) -> bool {
         self.branch.is_none_or(|declared| declared == branch)
             && match (self.rung.as_deref(), rung) {
                 (None, _) => true,
@@ -970,7 +967,7 @@ impl ItemDefinition {
     /// which is precisely the turn it needs to be asking for one.
     pub fn build_work_serving<'a>(
         &'a self,
-        branch: crate::intensification::RungBranch,
+        branch: BranchId,
         rung: Option<&'a str>,
     ) -> impl Iterator<Item = f32> + 'a {
         self.effects
@@ -984,11 +981,7 @@ impl ItemDefinition {
 
     /// **Is this item one of the tools this build wants?** — [`Self::build_work_serving`] as a
     /// predicate.
-    pub fn declares_build_work_serving(
-        &self,
-        branch: crate::intensification::RungBranch,
-        rung: Option<&str>,
-    ) -> bool {
+    pub fn declares_build_work_serving(&self, branch: BranchId, rung: Option<&str>) -> bool {
         self.build_work_serving(branch, rung).next().is_some()
     }
 
@@ -1002,11 +995,7 @@ impl ItemDefinition {
     /// ⛔ **`None` is "anywhere on the branch", not [`EquipmentEffect::serves_build`]'s
     /// "unqualified caller"** — that predicate refuses a rung-bound tool where no rung was named,
     /// which is right for pricing a take and wrong for asking which kit a branch's workings want.
-    pub fn declares_deposit_take_on(
-        &self,
-        branch: crate::intensification::RungBranch,
-        rung: Option<&str>,
-    ) -> bool {
+    pub fn declares_deposit_take_on(&self, branch: BranchId, rung: Option<&str>) -> bool {
         self.effects
             .iter()
             .chain(self.tiers.iter().flat_map(|tier| tier.effects.iter()))
@@ -2080,9 +2069,9 @@ impl KitChoice {
         &self,
         wear: &crate::components::BandEquipment,
         config: &EquipmentConfig,
-        branch: crate::intensification::RungBranch,
+        branch: BranchId,
         rung: Option<&str>,
-    ) -> Option<(f32, crate::intensification::RungBranch)> {
+    ) -> Option<(f32, BranchId)> {
         self.best_scoped(EquipmentStat::BuildWork, wear, config, branch, rung)
             .map(|worth| (worth, branch))
     }
@@ -2095,7 +2084,7 @@ impl KitChoice {
         stat: EquipmentStat,
         wear: &crate::components::BandEquipment,
         config: &EquipmentConfig,
-        branch: crate::intensification::RungBranch,
+        branch: BranchId,
         rung: Option<&str>,
     ) -> Option<f32> {
         self.live_items(wear, config)
@@ -2359,11 +2348,7 @@ impl EquipmentConfig {
     /// **The `rung` narrows it one notch further, and the per-rung default costs nothing**: each rung
     /// has exactly one serving kit, so the same file-order scan that answers for a web answers for a
     /// rung on it. There is no `rung → kit` table, exactly as there is no `branch → kit` one.
-    pub fn build_kit_for_branch(
-        &self,
-        branch: crate::intensification::RungBranch,
-        rung: Option<&str>,
-    ) -> Option<KitChoice> {
+    pub fn build_kit_for_branch(&self, branch: BranchId, rung: Option<&str>) -> Option<KitChoice> {
         self.work_kit_for(KitJob::Builders, branch, rung)
     }
 
@@ -2387,11 +2372,7 @@ impl EquipmentConfig {
     /// answer, not an error — it is every rung on the shipped ladder that declares no tool.
     ///
     /// Roster order, which is `items`' own `BTreeMap` order and therefore stable.
-    pub fn pool_toe(
-        &self,
-        branch: crate::intensification::RungBranch,
-        rung: Option<&str>,
-    ) -> PoolToe {
+    pub fn pool_toe(&self, branch: BranchId, rung: Option<&str>) -> PoolToe {
         let tools: Vec<PoolTool> = self
             .items
             .iter()
@@ -2417,17 +2398,11 @@ impl EquipmentConfig {
     /// **It is the branch tag doing the same job it already does for builds**
     /// (`docs/plan_standing_upkeep.md` §4.8): a `build_work` effect names the web it serves, and
     /// that is the only gate either account needs.
-    pub fn keeping_job(branch: crate::intensification::RungBranch) -> KitJob {
-        match branch {
-            crate::intensification::RungBranch::Plant => KitJob::Agriculture,
-            crate::intensification::RungBranch::Animal => KitJob::Husbandry,
-            crate::intensification::RungBranch::Route => KitJob::Roadwork,
-            // **Both deposit branches keep through one role**, exactly as they take through one:
-            // holding a working is holding a working, and the roster carries no gear that would tell
-            // a woodward's hands from a quarryman's.
-            crate::intensification::RungBranch::Forestry
-            | crate::intensification::RungBranch::Extraction => KitJob::Quarrywork,
-        }
+    pub fn keeping_job(ladder: &crate::intensification::LadderConfig, branch: BranchId) -> KitJob {
+        ladder
+            .branch_def(branch)
+            .unwrap_or_else(|| panic!("branch '{}' is not declared by the ladder", branch.as_str()))
+            .keeping_job
     }
 
     /// **THE KEEPING KIT THIS FOOD WEB'S SITES WANT** — [`Self::build_kit_for_branch`]'s twin one
@@ -2445,10 +2420,11 @@ impl EquipmentConfig {
     /// not climbing toward anything, so there is no destination for the bound to be read against.
     pub fn keeping_kit_for_branch(
         &self,
-        branch: crate::intensification::RungBranch,
+        ladder: &crate::intensification::LadderConfig,
+        branch: BranchId,
         rung: Option<&str>,
     ) -> Option<KitChoice> {
-        self.work_kit_for(Self::keeping_job(branch), branch, rung)
+        self.work_kit_for(Self::keeping_job(ladder, branch), branch, rung)
     }
 
     /// **THE KIT THE ROSTER KEEPS A SITE OF THIS WEB WITH** — the roster's answer for `branch`
@@ -2457,22 +2433,18 @@ impl EquipmentConfig {
     /// band-wide (`docs/plan_pool_toe.md` §4), which retired the `upkeep_kit` command.
     pub fn keeping_kit_for(
         &self,
-        branch: crate::intensification::RungBranch,
+        ladder: &crate::intensification::LadderConfig,
+        branch: BranchId,
         rung: Option<&str>,
     ) -> KitChoice {
-        self.keeping_kit_for_branch(branch, rung)
-            .unwrap_or_else(|| self.default_kit(Self::keeping_job(branch)))
+        self.keeping_kit_for_branch(ladder, branch, rung)
+            .unwrap_or_else(|| self.default_kit(Self::keeping_job(ladder, branch)))
     }
 
     /// **The roster lookup both derivations are**: the earliest entry, in file order, offering `job`
     /// and declaring a `build_work` that serves `branch` — and, where the caller names one, that
     /// `rung` — at the **fresh** tier.
-    fn work_kit_for(
-        &self,
-        job: KitJob,
-        branch: crate::intensification::RungBranch,
-        rung: Option<&str>,
-    ) -> Option<KitChoice> {
+    fn work_kit_for(&self, job: KitJob, branch: BranchId, rung: Option<&str>) -> Option<KitChoice> {
         let fresh = crate::components::BandEquipment::start_stocked(self);
         self.kits_for_job(job)
             .find(|kit| self.build_work_per_worker(kit, &fresh, branch, rung) > NO_BUILD_GEAR)
@@ -2494,7 +2466,7 @@ impl EquipmentConfig {
         &self,
         kit: &KitChoice,
         wear: &crate::components::BandEquipment,
-        branch: crate::intensification::RungBranch,
+        branch: BranchId,
         rung: Option<&str>,
     ) -> KitChoice {
         self.scoped_gear_kit(EquipmentStat::BuildWork, kit, wear, branch, rung)
@@ -2509,7 +2481,7 @@ impl EquipmentConfig {
         stat: EquipmentStat,
         kit: &KitChoice,
         wear: &crate::components::BandEquipment,
-        branch: crate::intensification::RungBranch,
+        branch: BranchId,
         rung: Option<&str>,
     ) -> KitChoice {
         let serving: Vec<Arc<str>> = kit
@@ -2534,7 +2506,7 @@ impl EquipmentConfig {
     /// it. So a wood offers `sledding` and `woodcutting`, and a stone working `sledding` and
     /// `stonework`. An itemless kit (`none`) declares nothing and is not a take kit; the picker
     /// offers it beside these as the job's own fall-back.
-    pub fn deposit_kits_for(&self, branch: crate::intensification::RungBranch) -> Vec<KitChoice> {
+    pub fn deposit_kits_for(&self, branch: BranchId) -> Vec<KitChoice> {
         self.kits_for_job(KitJob::Extraction)
             .filter(|kit| {
                 kit.uses().next().is_some()
@@ -2562,11 +2534,7 @@ impl EquipmentConfig {
     /// **`None` unless exactly one kit holds the tightest fit**, so the caller falls back to
     /// `default_kits.extract`: a tie is a roster the derivation cannot pick between without an
     /// alphabetical accident, and no candidate is a rung with no take tool at all.
-    pub fn deposit_kit_for(
-        &self,
-        branch: crate::intensification::RungBranch,
-        rung: &str,
-    ) -> Option<KitChoice> {
+    pub fn deposit_kit_for(&self, branch: BranchId, rung: &str) -> Option<KitChoice> {
         let serves = |item: &str| {
             self.item(item)
                 .is_some_and(|def| def.declares_deposit_take_on(branch, Some(rung)))
@@ -2588,11 +2556,7 @@ impl EquipmentConfig {
 
     /// [`Self::deposit_kit_for`], falling back to `default_kits.extract` where the roster names no
     /// single kit for the working's held rung.
-    pub fn extract_default_kit(
-        &self,
-        branch: crate::intensification::RungBranch,
-        rung: &str,
-    ) -> KitChoice {
+    pub fn extract_default_kit(&self, branch: BranchId, rung: &str) -> KitChoice {
         self.deposit_kit_for(branch, rung)
             .unwrap_or_else(|| self.default_kit(KitJob::Extraction))
     }
@@ -2609,7 +2573,7 @@ impl EquipmentConfig {
         &self,
         kit: &KitChoice,
         wear: &crate::components::BandEquipment,
-        branch: crate::intensification::RungBranch,
+        branch: BranchId,
         rung: Option<&str>,
     ) -> f32 {
         kit.best_scoped(EquipmentStat::DepositTake, wear, self, branch, rung)
@@ -2626,7 +2590,7 @@ impl EquipmentConfig {
         &self,
         coverage: &KitCoverage,
         wear: &crate::components::BandEquipment,
-        branch: crate::intensification::RungBranch,
+        branch: BranchId,
         rung: Option<&str>,
     ) -> DepositGear {
         let per_crew = |kit: &KitChoice| self.deposit_take_per_worker(kit, wear, branch, rung);
@@ -3474,7 +3438,7 @@ impl EquipmentConfig {
         &self,
         kit: &KitChoice,
         wear: &crate::components::BandEquipment,
-        branch: crate::intensification::RungBranch,
+        branch: BranchId,
         rung: Option<&str>,
     ) -> f32 {
         kit.best_build_work(wear, self, branch, rung)
@@ -3503,7 +3467,7 @@ impl EquipmentConfig {
         &self,
         kit: &KitChoice,
         wear: &crate::components::BandEquipment,
-    ) -> Option<(f32, crate::intensification::RungBranch, Option<String>)> {
+    ) -> Option<(f32, BranchId, Option<String>)> {
         kit.live_items(wear, self)
             .flat_map(|item| item.build_work_entries())
             .filter_map(|effect| Some((effect.tier.value(), effect.branch?, effect.rung.clone())))
@@ -3562,7 +3526,7 @@ impl EquipmentConfig {
         &self,
         kit: &KitChoice,
         wear: &crate::components::BandEquipment,
-        branch: crate::intensification::RungBranch,
+        branch: BranchId,
         rung: Option<&str>,
     ) -> u32 {
         let worth = self.build_work_per_worker(kit, wear, branch, rung);
@@ -3734,10 +3698,9 @@ impl EquipmentConfig {
                 .as_ref()
                 .map_or(NO_BUILD_GEAR, |(worth, _, _)| *worth),
             build_work_branch: build_work.as_ref().map(|(_, branch, _)| *branch),
-            build_work_rung: build_work.as_ref().and_then(|(_, _, rung)| {
-                rung.as_deref()
-                    .and_then(crate::intensification::RungKey::from_wire_key)
-            }),
+            build_work_rung: build_work
+                .as_ref()
+                .and_then(|(_, _, rung)| rung.as_deref().and_then(|key| key.parse().ok())),
         }
     }
 
@@ -4176,6 +4139,69 @@ impl EquipmentConfig {
         Ok(())
     }
 
+    /// **EVERY BRANCH AND RUNG A TOOL IS BOUND TO MUST EXIST IN THE LADDER** — the cross-file half
+    /// of the `build_work` / `deposit_take` bounds, run at boot where both configs are in scope.
+    /// `validate` can only check that a `rung` is spelled `branch:id` and agrees with its `branch`;
+    /// whether the ladder defines it is the ladder's to say. A tool bound to a rung nobody defines
+    /// would take nothing off any build, for ever, with no fault reported.
+    ///
+    /// A `deposit_take` tool's branch must be a `deposit` branch, and a `build_work` tool's any
+    /// branch the ladder declares.
+    pub fn validate_against_ladder(
+        &self,
+        ladder: &crate::intensification::LadderConfig,
+    ) -> Result<(), EquipmentConfigError> {
+        for (id, item) in &self.items {
+            let layered = item
+                .effects
+                .iter()
+                .chain(item.tiers.iter().flat_map(|tier| tier.effects.iter()));
+            for (index, effect) in layered.enumerate() {
+                if let Some(branch) = effect.branch {
+                    let kind = ladder.source_kind(branch);
+                    let wanted_deposit = effect.stat == EquipmentStat::DepositTake;
+                    let ok = match kind {
+                        None => false,
+                        Some(kind) => {
+                            !wanted_deposit || kind == crate::intensification::SourceKind::Deposit
+                        }
+                    };
+                    if !ok {
+                        return Err(EquipmentConfigError::InvalidRoster {
+                            reason: format!(
+                                "item '{id}' binds effect[{index}] ({:?}) to branch \"{}\", which \
+                                 the ladder {}",
+                                effect.stat,
+                                branch.as_str(),
+                                if kind.is_none() {
+                                    "does not declare"
+                                } else {
+                                    "does not declare as a `deposit` branch"
+                                }
+                            ),
+                        });
+                    }
+                }
+                if let Some(rung) = effect
+                    .rung
+                    .as_deref()
+                    .and_then(|key| key.parse::<RungId>().ok())
+                {
+                    if ladder.rung_by_id(rung).is_none() {
+                        return Err(EquipmentConfigError::InvalidRoster {
+                            reason: format!(
+                                "item '{id}' bounds effect[{index}] to rung \"{rung}\", which the \
+                                 ladder does not define - the tool would take nothing off any \
+                                 build, for ever, with no fault reported"
+                            ),
+                        });
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// **Every `bounds_material` reconciled against the materials table** — the cross-config half,
     /// run at the composition seam in `build_headless_app` where both configs are in scope. Same
     /// `UnknownItem` debt the two food webs' yield edges pay: a tool bounding `hyde` would parse,
@@ -4360,7 +4386,7 @@ impl EquipmentConfig {
     /// - **A `rung` naming no rung the ladder carries** — a typo, or a rung renamed out from under
     ///   the roster — would narrow the effect to a token nothing ever asks with, so the tool would
     ///   contribute [`NO_BUILD_GEAR`] on every build for ever and report nothing. It is checked
-    ///   against [`crate::intensification::RungKey::from_wire_key`], the inverse of the spelling the
+    ///   against `RungId::from_str`, the inverse of the spelling the
     ///   wire itself uses.
     /// - **A `rung` whose branch disagrees with the `branch` beside it** — `route:paved_road` under
     ///   `branch: "plant"` — is the same silence wearing a plausible face: both bounds are read
@@ -4425,27 +4451,21 @@ impl EquipmentConfig {
                 ),
             });
         }
-        let Some(rung) = crate::intensification::RungKey::from_wire_key(declared) else {
+        let Ok(rung) = declared.parse::<RungId>() else {
             return Err(EquipmentConfigError::InvalidRoster {
                 reason: format!(
-                    "item '{id}' bounds effect[{index}] `build_work` to rung {declared:?}, which no \
-                     rung answers to - the tool would take nothing off any build, for ever, with no \
-                     fault reported; name one of: {}",
-                    crate::intensification::RungKey::ALL
-                        .iter()
-                        .map(|rung| rung.wire_key())
-                        .collect::<Vec<_>>()
-                        .join(", ")
+                    "item '{id}' bounds effect[{index}] `build_work` to rung {declared:?}, which is \
+                     not a rung id - spell it `<branch>:<rung>`"
                 ),
             });
         };
         match effect.branch {
-            Some(branch) if branch != rung.branch() => Err(EquipmentConfigError::InvalidRoster {
+            Some(branch) if branch != rung.branch => Err(EquipmentConfigError::InvalidRoster {
                 reason: format!(
                     "item '{id}' bounds effect[{index}] `build_work` to rung {declared:?} (the {} \
                      branch) under `branch` {:?} - the two bounds are read together, so no build \
                      could ever satisfy both and the tool would be dead config",
-                    rung.branch().as_str(),
+                    rung.branch.as_str(),
                     branch.as_str()
                 ),
             }),
@@ -4639,7 +4659,7 @@ pub struct ResolvedKitTiers {
     /// adds `+0.5` per worker per turn to a Cultivate and nothing at all to a `Tame`, so a picker
     /// quoting the worth against the wrong web quotes an uplift the sim will never pay — the same class of defect as a
     /// kit picker asking a snare whether it can hurt a Red Deer and reading its unbounded `attack`.
-    pub build_work_branch: Option<crate::intensification::RungBranch>,
+    pub build_work_branch: Option<BranchId>,
     /// **WHICH RUNG OF THAT WEB [`Self::build_work_per_worker`] IS FOR** — `None` when the kit's
     /// build tool serves every rung on its branch, which is every kit that ships today.
     ///
@@ -4648,10 +4668,10 @@ pub struct ResolvedKitTiers {
     /// on jobs the sim pays nothing for. A stone-dressing tool worth `2.0` is worth `2.0` on a
     /// `pave` and [`NO_BUILD_GEAR`] on the `grade` that has to happen first.
     ///
-    /// **A [`crate::intensification::RungKey`] rather than the declared string**, so this stays a
+    /// **A `RungId` rather than the declared string**, so this stays a
     /// `Copy` value of resolved numbers and the wire spells the rung through the one
-    /// [`crate::intensification::RungKey::wire_key`] every other rung token on the wire uses.
-    pub build_work_rung: Option<crate::intensification::RungKey>,
+    /// `RungId::wire_key` every other rung token on the wire uses.
+    pub build_work_rung: Option<RungId>,
 }
 
 /// **"This end of the attack's mass window is not bounded"** — `0`, which is both the FlatBuffers
@@ -4734,6 +4754,7 @@ mod tests {
     use super::*;
     use crate::combat::RangeBand;
     use crate::components::BandEquipment;
+    use crate::ladder_ids::shipped;
 
     /// A band holding `spears` spears and nothing else, and the `big_game` kit that reaches for them.
     fn spears_and_the_kit(spears: u32) -> (Arc<EquipmentConfig>, BandEquipment, KitChoice) {
@@ -4844,7 +4865,6 @@ mod tests {
         );
     }
     use crate::creatures_config::CreaturesConfig;
-    use crate::intensification::RungBranch;
 
     /// The shipped item ids. Named here rather than inlined so a rename shows up as a compile-adjacent
     /// diff in one place — the *sim* never spells an item, it resolves stats and quanta.
@@ -5351,12 +5371,11 @@ mod tests {
             .kit("big_game")
             .expect("the shipped roster carries the stalking kit");
         assert!(
-            config.build_work_per_worker(&hurdling, &wear, RungBranch::Animal, None)
-                > NO_BUILD_GEAR,
+            config.build_work_per_worker(&hurdling, &wear, shipped::animal(), None) > NO_BUILD_GEAR,
             "the hurdling kit must declare a build contribution above neutral"
         );
         assert_eq!(
-            config.build_work_per_worker(&big_game, &wear, RungBranch::Animal, None),
+            config.build_work_per_worker(&big_game, &wear, shipped::animal(), None),
             NO_BUILD_GEAR,
             "a kit carrying nothing that helps a build must be exactly neutral"
         );
@@ -5366,7 +5385,7 @@ mod tests {
         let mut dry = wear.clone();
         dry.wear_item(&config, CROOK, WearQuantum::BuildProgress, f32::MAX / 2.0);
         assert_eq!(
-            config.build_work_per_worker(&hurdling, &dry, RungBranch::Animal, None),
+            config.build_work_per_worker(&hurdling, &dry, shipped::animal(), None),
             NO_BUILD_GEAR,
             "a crook that has run dry must add nothing to what a builder delivers"
         );
@@ -5392,21 +5411,21 @@ mod tests {
             .kit("hurdling")
             .expect("the shipped roster carries the hurdling kit");
 
-        let hoed_plant = config.build_work_per_worker(&tillage, &wear, RungBranch::Plant, None);
+        let hoed_plant = config.build_work_per_worker(&tillage, &wear, shipped::plant(), None);
         let hurdled_animal =
-            config.build_work_per_worker(&hurdling, &wear, RungBranch::Animal, None);
+            config.build_work_per_worker(&hurdling, &wear, shipped::animal(), None);
         assert!(
             hoed_plant > NO_BUILD_GEAR && hurdled_animal > NO_BUILD_GEAR,
             "**LIVENESS**: each builders kit must be worth something on its own web - hoes/plant \
              {hoed_plant}, crook/animal {hurdled_animal}"
         );
         assert_eq!(
-            config.build_work_per_worker(&tillage, &wear, RungBranch::Animal, None),
+            config.build_work_per_worker(&tillage, &wear, shipped::animal(), None),
             NO_BUILD_GEAR,
             "a hoe must take nothing off an animal build"
         );
         assert_eq!(
-            config.build_work_per_worker(&hurdling, &wear, RungBranch::Plant, None),
+            config.build_work_per_worker(&hurdling, &wear, shipped::plant(), None),
             NO_BUILD_GEAR,
             "a crook must take nothing off a plant build"
         );
@@ -5419,12 +5438,12 @@ mod tests {
             uses: Arc::from(vec![Arc::from("hoes"), Arc::from(CROOK)]),
         };
         assert_eq!(
-            config.build_work_per_worker(&both, &wear, RungBranch::Plant, None),
+            config.build_work_per_worker(&both, &wear, shipped::plant(), None),
             hoed_plant,
             "a kit holding a hoe AND a crook must take ONE tool's worth off a plant build"
         );
         assert_eq!(
-            config.build_work_per_worker(&both, &wear, RungBranch::Animal, None),
+            config.build_work_per_worker(&both, &wear, shipped::animal(), None),
             hurdled_animal,
             "...and one tool's worth off an animal build"
         );
@@ -5487,16 +5506,15 @@ mod tests {
     /// only the `none` fall-back.
     #[test]
     fn a_workings_default_kit_is_the_tightest_offered_kit_for_its_held_rung() {
-        use crate::intensification::RungKey;
         let config = EquipmentConfig::builtin();
         for (rung, expected) in [
-            (RungKey::ForestryDeadfall, "sledding"),
-            (RungKey::ExtractionGathering, "sledding"),
-            (RungKey::ForestryFelling, "woodcutting"),
-            (RungKey::ForestryCoppice, "woodcutting"),
-            (RungKey::ExtractionQuarry, "stonework"),
+            (shipped::forestry_deadfall(), "sledding"),
+            (shipped::extraction_gathering(), "sledding"),
+            (shipped::forestry_felling(), "woodcutting"),
+            (shipped::forestry_coppice(), "woodcutting"),
+            (shipped::extraction_quarry(), "stonework"),
         ] {
-            let default = config.extract_default_kit(rung.branch(), &rung.wire_key());
+            let default = config.extract_default_kit(rung.branch, &rung.wire_key());
             assert_eq!(
                 default.id(),
                 expected,
@@ -5505,7 +5523,7 @@ mod tests {
             );
             assert!(
                 config
-                    .deposit_kits_for(rung.branch())
+                    .deposit_kits_for(rung.branch)
                     .iter()
                     .any(|offered| offered.id() == default.id()),
                 "{}: the default is one of the kits the working offers",
@@ -5530,7 +5548,6 @@ mod tests {
     /// nothing on wood), and neither offers the itemless `none` as a take kit.
     #[test]
     fn a_working_offers_the_take_kits_whose_items_all_serve_its_branch() {
-        use crate::intensification::RungBranch;
         let config = EquipmentConfig::builtin();
         let offered = |branch| -> Vec<String> {
             config
@@ -5540,11 +5557,11 @@ mod tests {
                 .collect()
         };
         assert_eq!(
-            offered(RungBranch::Forestry),
+            offered(shipped::forestry()),
             vec!["sledding", "woodcutting"]
         );
         assert_eq!(
-            offered(RungBranch::Extraction),
+            offered(shipped::extraction()),
             vec!["sledding", "stonework"]
         );
     }
@@ -5565,13 +5582,13 @@ mod tests {
                 "uses": ["sled", "axe"]
             }));
         let config = EquipmentConfig::from_json_str(&json.to_string()).expect("still valid");
-        let felling = crate::intensification::RungKey::ForestryFelling;
+        let felling = shipped::forestry_felling();
         assert!(config
-            .deposit_kit_for(felling.branch(), &felling.wire_key())
+            .deposit_kit_for(felling.branch, &felling.wire_key())
             .is_none());
         assert_eq!(
             config
-                .extract_default_kit(felling.branch(), &felling.wire_key())
+                .extract_default_kit(felling.branch, &felling.wire_key())
                 .id(),
             "none"
         );
@@ -5593,29 +5610,29 @@ mod tests {
     /// with nothing in hand.
     #[test]
     fn each_take_tool_serves_only_its_own_rung_and_the_floors_stay_bare() {
-        use crate::intensification::RungKey;
+        use crate::intensification::RungId;
         let config = EquipmentConfig::builtin();
         let mut ledger = crate::components::BandEquipment::default();
         ledger.stock("axe", 1, "flint", None);
         ledger.stock("wedges", 1, "flint", None);
         let kit = both_take_tools();
-        let take = |rung: RungKey| {
-            config.deposit_take_per_worker(&kit, &ledger, rung.branch(), Some(&rung.wire_key()))
+        let take = |rung: RungId| {
+            config.deposit_take_per_worker(&kit, &ledger, rung.branch, Some(&rung.wire_key()))
         };
-        assert_eq!(take(RungKey::ForestryFelling), 1.0, "the axe on felling");
-        assert_eq!(take(RungKey::ForestryCoppice), 1.0, "the axe on coppice");
+        assert_eq!(take(shipped::forestry_felling()), 1.0, "the axe on felling");
+        assert_eq!(take(shipped::forestry_coppice()), 1.0, "the axe on coppice");
         assert_eq!(
-            take(RungKey::ExtractionQuarry),
+            take(shipped::extraction_quarry()),
             1.0,
             "the wedges on the quarry"
         );
         assert_eq!(
-            take(RungKey::ForestryDeadfall),
+            take(shipped::forestry_deadfall()),
             crate::extraction::NO_DEPOSIT_GEAR,
             "fallen wood is not axe work: the forestry floor stays bare"
         );
         assert_eq!(
-            take(RungKey::ExtractionGathering),
+            take(shipped::extraction_gathering()),
             crate::extraction::NO_DEPOSIT_GEAR,
             "loose stone is picked by hand: the extraction floor stays bare"
         );
@@ -5629,25 +5646,15 @@ mod tests {
         };
         let axe_only = only("axe");
         let wedges_only = only("wedges");
-        let quarry = RungKey::ExtractionQuarry.wire_key();
-        let felling = RungKey::ForestryFelling.wire_key();
+        let quarry = shipped::extraction_quarry().wire_key();
+        let felling = shipped::forestry_felling().wire_key();
         assert_eq!(
-            config.deposit_take_per_worker(
-                &kit,
-                &axe_only,
-                crate::intensification::RungBranch::Extraction,
-                Some(&quarry)
-            ),
+            config.deposit_take_per_worker(&kit, &axe_only, shipped::extraction(), Some(&quarry)),
             crate::extraction::NO_DEPOSIT_GEAR,
             "an axe must not reach a stone deposit"
         );
         assert_eq!(
-            config.deposit_take_per_worker(
-                &kit,
-                &wedges_only,
-                crate::intensification::RungBranch::Forestry,
-                Some(&felling)
-            ),
+            config.deposit_take_per_worker(&kit, &wedges_only, shipped::forestry(), Some(&felling)),
             crate::extraction::NO_DEPOSIT_GEAR,
             "a woodcutter's wedges add nothing"
         );
@@ -5658,18 +5665,17 @@ mod tests {
     /// equipped workers' sum, not the whole crew's.
     #[test]
     fn deposit_gear_sums_the_equipped_crew_and_wears_only_the_serving_tool() {
-        use crate::intensification::RungKey;
         let config = EquipmentConfig::builtin();
         let mut ledger = crate::components::BandEquipment::default();
         ledger.stock("axe", 2, "flint", None);
         ledger.stock("wedges", 5, "flint", None);
         let kit = both_take_tools();
         let coverage = config.coverage(&kit, 5.0, &ledger);
-        let felling = RungKey::ForestryFelling;
+        let felling = shipped::forestry_felling();
         let gear = config.deposit_gear(
             &coverage,
             &ledger,
-            felling.branch(),
+            felling.branch,
             Some(&felling.wire_key()),
         );
         assert!(
@@ -5708,7 +5714,7 @@ mod tests {
         let mut json: serde_json::Value =
             serde_json::from_str(BUILTIN_EQUIPMENT_CONFIG).expect("the builtin parses");
         json["items"]["spears"]["tiers"][0]["effects"][0]["rung"] =
-            serde_json::Value::String(crate::intensification::RungKey::PlantTended.wire_key());
+            serde_json::Value::String(shipped::plant_tended().wire_key());
         let err = EquipmentConfig::from_json_str(&json.to_string())
             .expect_err("a rung on `attack` is invalid");
         assert!(
@@ -5727,7 +5733,12 @@ mod tests {
             serde_json::from_str(BUILTIN_EQUIPMENT_CONFIG).expect("the builtin parses");
         json["items"]["hoes"]["tiers"][0]["effects"][0]["rung"] =
             serde_json::Value::String("plant:orchard".to_string());
-        let err = EquipmentConfig::from_json_str(&json.to_string())
+        // The spelling parses and agrees with its branch, so `from_json_str` accepts it; whether
+        // the ladder defines the rung is the boot cross-check's to say.
+        let config = EquipmentConfig::from_json_str(&json.to_string())
+            .expect("a well-formed rung id loads - the ladder reconciles it at boot");
+        let err = config
+            .validate_against_ladder(&crate::intensification::LadderConfig::builtin())
             .expect_err("a rung the ladder does not carry is invalid");
         assert!(
             matches!(&err, EquipmentConfigError::InvalidRoster { reason }
@@ -5745,7 +5756,7 @@ mod tests {
         let mut json: serde_json::Value =
             serde_json::from_str(BUILTIN_EQUIPMENT_CONFIG).expect("the builtin parses");
         json["items"]["hoes"]["tiers"][0]["effects"][0]["rung"] =
-            serde_json::Value::String(crate::intensification::RungKey::RoutePavedRoad.wire_key());
+            serde_json::Value::String(shipped::route_paved_road().wire_key());
         let err = EquipmentConfig::from_json_str(&json.to_string())
             .expect_err("a route rung under `branch: plant` is invalid");
         assert!(
@@ -5767,27 +5778,27 @@ mod tests {
     /// [`NO_BUILD_GEAR`] rather than an uplift the sim will never pay.
     #[test]
     fn each_route_rung_derives_its_own_kit_and_the_other_rungs_tool_is_worth_nothing() {
-        use crate::intensification::{RungBranch, RungKey};
+        use crate::intensification::RungId;
         let config = EquipmentConfig::builtin();
         let fresh = crate::components::BandEquipment::start_stocked(&config);
-        let rungs = [RungKey::RouteDirtRoad, RungKey::RoutePavedRoad];
-        let mut derived: Vec<(RungKey, KitChoice)> = Vec::new();
+        let rungs = [shipped::route_dirt_road(), shipped::route_paved_road()];
+        let mut derived: Vec<(RungId, KitChoice)> = Vec::new();
         for rung in rungs {
             let key = rung.wire_key();
             let kit = config
-                .build_kit_for_branch(RungBranch::Route, Some(&key))
+                .build_kit_for_branch(shipped::route(), Some(&key))
                 .unwrap_or_else(|| {
                     panic!("the shipped roster must carry a builders kit serving {key}")
                 });
             assert!(
-                config.build_work_per_worker(&kit, &fresh, RungBranch::Route, Some(&key))
+                config.build_work_per_worker(&kit, &fresh, shipped::route(), Some(&key))
                     > NO_BUILD_GEAR,
                 "**LIVENESS**: '{}' must actually take work off a {key} build",
                 kit.id()
             );
             // ⛔ **AND NOTHING WITHOUT A RUNG IN HAND** — the `(Some(_), None)` arm.
             assert_eq!(
-                config.build_work_per_worker(&kit, &fresh, RungBranch::Route, None),
+                config.build_work_per_worker(&kit, &fresh, shipped::route(), None),
                 NO_BUILD_GEAR,
                 "'{}' is bound to {key}, so a caller that named no rung must be quoted nothing",
                 kit.id()
@@ -5805,7 +5816,7 @@ mod tests {
                     config.build_work_per_worker(
                         kit,
                         &fresh,
-                        RungBranch::Route,
+                        shipped::route(),
                         Some(&other.wire_key())
                     ),
                     NO_BUILD_GEAR,
@@ -5835,14 +5846,10 @@ mod tests {
             .build_work_declared(&kit, &fresh)
             .expect("a kit carrying a road tool declares a build worth");
         assert!(worth > NO_BUILD_GEAR, "the paving kit declares a worth");
-        assert_eq!(branch, crate::intensification::RungBranch::Route);
+        assert_eq!(branch, shipped::route());
         assert_eq!(
             rung.as_deref(),
-            Some(
-                crate::intensification::RungKey::RoutePavedRoad
-                    .wire_key()
-                    .as_str()
-            ),
+            Some(shipped::route_paved_road().wire_key().as_str()),
             "the bound must ride with the worth, or a consumer prices a `grade` off it"
         );
     }
@@ -5888,24 +5895,27 @@ mod tests {
     /// about the roster that no single edit can create by accident.
     #[test]
     fn every_crew_built_rung_has_a_builders_kit_that_serves_no_other_web() {
-        use crate::intensification::RungKey;
+        use crate::intensification::RungId;
         let config = EquipmentConfig::builtin();
         let fresh = crate::components::BandEquipment::start_stocked(&config);
-        let crew_built: Vec<RungKey> = RungKey::ALL
-            .into_iter()
-            .filter(|rung| rung.builder_verb().is_some())
+        let ladder = crate::intensification::LadderConfig::builtin();
+        let crew_built: Vec<RungId> = ladder
+            .rungs
+            .iter()
+            .filter(|rung| rung.verb.is_some())
+            .map(|rung| rung.rung_id())
             .collect();
         assert!(
-            crew_built.len() >= crate::intensification::ALL_BRANCHES.len(),
+            crew_built.len() >= ladder.branches_in_config_order().len(),
             "fixture: every branch must contribute a crew-built rung, or the sweep skips a ladder"
         );
         for rung in &crew_built {
-            let branch = rung.branch();
+            let branch = rung.branch;
             let key = rung.wire_key();
             let Some(kit) = config.build_kit_for_branch(branch, Some(&key)) else {
                 // **A wholly kitless branch is legal; a half-kitted one is not.** If anything on
                 // this branch is served, this rung's kit has gone missing and its builds are bare.
-                for sibling in crew_built.iter().filter(|other| other.branch() == branch) {
+                for sibling in crew_built.iter().filter(|other| other.branch == branch) {
                     assert!(
                         config
                             .build_kit_for_branch(branch, Some(&sibling.wire_key()))
@@ -5938,7 +5948,7 @@ mod tests {
             for other in crew_built.iter().filter(|other| **other != *rung) {
                 let other_key = other.wire_key();
                 if config
-                    .build_kit_for_branch(other.branch(), Some(&other_key))
+                    .build_kit_for_branch(other.branch, Some(&other_key))
                     .is_some_and(|serving| serving.id() == kit.id())
                 {
                     // The same kit is this rung's answer too — a widened binding, which is the
@@ -5946,7 +5956,7 @@ mod tests {
                     continue;
                 }
                 assert_eq!(
-                    config.build_work_per_worker(&kit, &fresh, other.branch(), Some(&other_key)),
+                    config.build_work_per_worker(&kit, &fresh, other.branch, Some(&other_key)),
                     NO_BUILD_GEAR,
                     "'{}' is {key}'s kit and does not declare {other_key}, so it must take nothing \
                      off that build",
@@ -5980,9 +5990,9 @@ mod tests {
         let hurdling = config
             .kit("hurdling")
             .expect("the shipped roster carries the hurdling kit");
-        let worth = config.build_work_per_worker(&hurdling, &wear, RungBranch::Animal, None);
+        let worth = config.build_work_per_worker(&hurdling, &wear, shipped::animal(), None);
         let saturating =
-            config.build_work_saturating_crew(&hurdling, &wear, RungBranch::Animal, None);
+            config.build_work_saturating_crew(&hurdling, &wear, shipped::animal(), None);
         assert_eq!(
             saturating, HELD,
             "fixture: the reference ledger holds one crook, so one worker saturates it - \
@@ -5995,7 +6005,7 @@ mod tests {
                 config
                     .coverage(&hurdling, workers as f32, &wear)
                     .weighted_rate(|kit| {
-                        config.build_work_per_worker(kit, &wear, RungBranch::Animal, None)
+                        config.build_work_per_worker(kit, &wear, shipped::animal(), None)
                     }),
                 workers,
             );
@@ -6520,4 +6530,45 @@ mod tests {
                 "start_stock_fraction": 1.5,
             "life_readout": { "warn_fraction": 0.34, "danger_fraction": 0.10 },
             "wear_forecast": { "window_turns": 10 }"#;
+    /// **A TOOL'S BRANCH AND RUNG ARE RECONCILED AGAINST THE LADDER AT BOOT.** `validate` can only
+    /// check that a `rung` is spelled `branch:id` and agrees with its `branch`; whether the ladder
+    /// defines it is the ladder's to say, and a tool bound to a rung nobody defines would take
+    /// nothing off any build, for ever.
+    #[test]
+    fn a_tool_bound_to_a_rung_or_branch_the_ladder_lacks_is_refused_at_boot() {
+        let ladder = crate::intensification::LadderConfig::builtin();
+        let shipped = EquipmentConfig::builtin();
+        shipped
+            .validate_against_ladder(&ladder)
+            .expect("the shipped roster names only rungs and branches the ladder defines");
+
+        let mutate = |edit: &dyn Fn(&mut EquipmentEffect)| {
+            let mut config = (*shipped).clone();
+            let mut edited = false;
+            for item in config.items.values_mut() {
+                for effect in item.effects.iter_mut().chain(
+                    item.tiers
+                        .iter_mut()
+                        .flat_map(|tier| tier.effects.iter_mut()),
+                ) {
+                    if effect.stat == EquipmentStat::BuildWork && !edited {
+                        edit(effect);
+                        edited = true;
+                    }
+                }
+            }
+            assert!(edited, "fixture: the roster declares a build_work effect");
+            config
+        };
+        let no_such_rung = mutate(&|effect| {
+            let branch = effect.branch.expect("a build_work names its branch");
+            effect.rung = Some(format!("{}:no_such_rung", branch.as_str()));
+        });
+        assert!(no_such_rung.validate_against_ladder(&ladder).is_err());
+        let no_such_branch = mutate(&|effect| {
+            effect.branch = Some(crate::ladder_ids::BranchId::new("no_such_branch"));
+            effect.rung = None;
+        });
+        assert!(no_such_branch.validate_against_ladder(&ladder).is_err());
+    }
 }

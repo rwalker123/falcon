@@ -313,6 +313,7 @@ fn create_populations<'a>(
                         };
                         // The deposit this crew is on — `None` on every row that is not
                         // `extract`, the `fauna_id` convention: an absent string is "no selection".
+                        let branch = builder.create_string(&assignment.branch);
                         let material = if assignment.material.is_empty() {
                             None
                         } else {
@@ -470,6 +471,7 @@ fn create_populations<'a>(
                                 rejoiningWorkers: assignment.rejoining_workers,
                                 rejoiningAllHomeIn: assignment.rejoining_all_home_in,
                                 rejoiningFood: assignment.rejoining_food,
+                                branch: Some(branch),
                             },
                         )
                     })
@@ -512,6 +514,12 @@ fn create_populations<'a>(
                         } else {
                             Some(builder.create_string(&entry.material))
                         };
+                        // The branch of a per-tile entry, absent off one - `material`'s reading.
+                        let branch = if entry.branch.is_empty() {
+                            None
+                        } else {
+                            Some(builder.create_string(&entry.branch))
+                        };
                         fb::BuildQueueEntryState::create(
                             builder,
                             &fb::BuildQueueEntryStateArgs {
@@ -521,7 +529,7 @@ fn create_populations<'a>(
                                 faunaId: fauna_id,
                                 buildPriority: Some(build_priority),
                                 material,
-                                road: entry.road,
+                                branch,
                             },
                         )
                     })
@@ -797,6 +805,7 @@ fn create_populations<'a>(
                         let display_name = builder.create_string(&offer.display_name);
                         let group = builder.create_string(&offer.group);
                         let output_item_id = builder.create_string(&offer.output_item_id);
+                        let output_material_id = builder.create_string(&offer.output_material_id);
                         let reason = builder.create_string(&offer.reason);
                         let severity = builder.create_string(&offer.severity);
                         let output_grade = builder.create_string(&offer.output_grade);
@@ -823,6 +832,7 @@ fn create_populations<'a>(
                                 suggested: offer.suggested,
                                 ownedAtTier: offer.owned_at_tier,
                                 queueable: offer.queueable,
+                                outputMaterialId: Some(output_material_id),
                             },
                         )
                     })
@@ -1361,6 +1371,8 @@ fn create_kit_needs<'a>(
                             have: item.have,
                             queued: item.queued,
                             recipes: Some(recipes),
+                            claimed: item.claimed,
+                            short: item.short,
                         },
                     )
                 })
@@ -1416,6 +1428,8 @@ fn create_craft_suggestions<'a>(
                 .collect();
             let sources = builder.create_vector(&sources);
             let item_id = builder.create_string(&suggestion.item_id);
+            let display_name = builder.create_string(&suggestion.display_name);
+            let reason = builder.create_string(&suggestion.reason);
             let shortfalls = create_shortfalls(builder, &suggestion.shortfalls);
             fb::CraftSuggestion::create(
                 builder,
@@ -1429,6 +1443,8 @@ fn create_craft_suggestions<'a>(
                     upcomingCount: suggestion.upcoming_count,
                     expiresInTurns: suggestion.expires_in_turns,
                     leadTurns: suggestion.lead_turns,
+                    displayName: Some(display_name),
+                    reason: Some(reason),
                 },
             )
         })
@@ -1620,6 +1636,7 @@ fn decode_labor_assignment(
         rejoining_workers: assignment.rejoiningWorkers(),
         rejoining_all_home_in: assignment.rejoiningAllHomeIn(),
         rejoining_food: assignment.rejoiningFood(),
+        branch: text(assignment.branch()),
     })
 }
 
@@ -1877,6 +1894,7 @@ fn decode_population(
             suggested: offer.suggested(),
             owned_at_tier: offer.ownedAtTier(),
             queueable: offer.queueable(),
+            output_material_id: text(offer.outputMaterialId()),
         }),
         equipment_batches: map_rows(cohort.equipmentBatches(), |batch| EquipmentBatchState {
             item_id: text(batch.itemId()),
@@ -1914,7 +1932,7 @@ fn decode_population(
             fauna_id: text(entry.faunaId()),
             build_priority: text(entry.buildPriority()),
             material: text(entry.material()),
-            road: entry.road(),
+            branch: text(entry.branch()),
         }),
         fodder_need: cohort.fodderNeed(),
         fodder_income: cohort.fodderIncome(),
@@ -2009,6 +2027,8 @@ fn decode_population(
                 upcoming_count: suggestion.upcomingCount(),
                 expires_in_turns: suggestion.expiresInTurns(),
                 lead_turns: suggestion.leadTurns(),
+                display_name: text(suggestion.displayName()),
+                reason: text(suggestion.reason()),
             }
         }),
         fertility_ceiling: cohort.fertilityCeiling(),
@@ -2060,6 +2080,8 @@ fn decode_population(
                 workers_per_unit: item.workersPerUnit(),
                 have: item.have(),
                 queued: item.queued(),
+                claimed: item.claimed(),
+                short: item.short(),
                 recipes: map_rows(item.recipes(), |recipe| KitNeedRecipeState {
                     recipe_id: text(recipe.recipeId()),
                     output_per_pass: recipe.outputPerPass(),

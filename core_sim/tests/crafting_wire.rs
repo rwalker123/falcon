@@ -1966,12 +1966,14 @@ fn every_sources_material_rate_reaches_the_wire() {
                 .iter(),
         );
         let corral = material_rows(
-            herd.corralMaterial()
+            sim_schema::wire_rung_quote(herd.rungQuotes(), "animal:pen")
+                .and_then(|quote| quote.materialPayoff())
                 .expect("the key is always written, empty or not")
                 .iter(),
         );
         let pastoral = material_rows(
-            herd.pastoralMaterial()
+            sim_schema::wire_rung_quote(herd.rungQuotes(), "animal:pastoral")
+                .and_then(|quote| quote.materialPayoff())
                 .expect("the key is always written, empty or not")
                 .iter(),
         );
@@ -2024,8 +2026,18 @@ fn every_sources_material_rate_reaches_the_wire() {
         );
         let food_rate = herd.provisionsPerBiomass();
         for (factor, food, rung) in [
-            (corral_factor, herd.corralYield(), "corral"),
-            (pastoral_factor, herd.pastoralYield(), "pastoral"),
+            (
+                corral_factor,
+                sim_schema::wire_rung_quote(herd.rungQuotes(), "animal:pen")
+                    .map_or(0.0, |quote| quote.foodYield()),
+                "corral",
+            ),
+            (
+                pastoral_factor,
+                sim_schema::wire_rung_quote(herd.rungQuotes(), "animal:pastoral")
+                    .map_or(0.0, |quote| quote.foodYield()),
+                "pastoral",
+            ),
         ] {
             let Some(factor) = factor else { continue };
             live_rung_material = true;

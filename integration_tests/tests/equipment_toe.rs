@@ -21,6 +21,7 @@
 //! confusion this slice corrects.
 
 use bevy::{math::UVec2, prelude::Entity};
+use core_sim::shipped;
 use core_sim::TakeSelection;
 use core_sim::{
     available_workers, build_test_app, run_turn, BandEquipment, CommandEventKind, CommandEventLog,
@@ -275,6 +276,7 @@ fn seat_quarry(app: &mut bevy::prelude::App, pos: UVec2, species: &str, body_mas
             DEER_FODDER_PER_BIOMASS,
             DEER_REGROWTH,
             body_mass,
+            shipped::root_standing(shipped::animal()),
         ));
 }
 

@@ -28,6 +28,7 @@
 use bevy::app::App;
 use bevy::ecs::system::RunSystemOnce;
 use bevy::math::UVec2;
+use core_sim::shipped;
 
 use core_sim::{
     advance_labor_allocation, build_test_app, patch_material_yields, patch_provisions_per_biomass,
@@ -328,7 +329,7 @@ fn a_narrowed_gather_never_stalls_the_build_beside_it() {
         let ladder = app.world.resource::<core_sim::LadderConfigHandle>().get();
         let banked = core_sim::patch_rung_work_done(
             &patch_at(&app, coord),
-            core_sim::RungKey::PlantTended,
+            shipped::plant_tended(),
             &ladder,
         );
         (before - patch_at(&app, coord).biomass, banked)
@@ -1229,7 +1230,7 @@ fn spawn_band(
                 build_queue: if builders > 0 {
                     vec![core_sim::BuildQueueEntry {
                         source: core_sim::BuildSource::Patch(patch),
-                        declared: core_sim::BuildJob::Rung(core_sim::Improvement::Cultivate),
+                        declared: core_sim::BuildJob::Climb(shipped::plant_tended()),
                         priority: core_sim::SourcePriority::default(),
                     }]
                 } else {

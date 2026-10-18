@@ -262,7 +262,7 @@ const COASTLINE_ROUGHNESS_GAIN: f32 = 0.5;
 ///   few long trunk drainages — measured: the largest basin was ~5% of its landmass and max drainage
 ///   accumulation topped out at 10–20 against a navigable threshold of 25, so 80×52 maps grew **no
 ///   rivers at all**, and with no rivers there were no `RiverDelta`/`Floodplain` tiles and therefore
-///   **zero** ground the `plant:field` rung could take seed on. The three terms below exist to give a
+///   **zero** ground the `plant:farm` rung could take seed on. The three terms below exist to give a
 ///   continent **internal divides and directional drainage**, which the dome cannot have:
 ///   1. **Domain warp** — the sample coordinates are displaced by low-frequency noise *before* the
 ///      envelope is evaluated, so continents are irregular and lobed rather than circular.

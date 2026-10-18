@@ -440,7 +440,9 @@ func _ungathered_tile_fixture() -> Dictionary:
 	tile["food_module"] = ""
 	tile["food_module_label"] = ""
 	tile.erase("food_kind")
-	return tile
+	# What the server says of ground off the gathering sites: not workable, and no lesson would open it.
+	tile["patch_sow_site_refusal"] = "not_gathering_site"
+	return RungFx.stamp_patch(tile, HudComposeVocab.FORAGE_FORECAST_PREFIX)
 
 ## Ground that offers NOTHING to gather: no food module, no patch. The land row's meta must read
 ## "No forage" (not a blank), and the drawer must carry terrain rows with no compose block.
@@ -812,12 +814,12 @@ const SURVIVABLE_TEMPERATURE := 19.0
 ## and these two fixtures happen to sit ten degrees past their own onsets. The assertions still tell
 ## the tails apart on the trailing word, and swapping the two parameter TRIPLES reddens both (the
 ## cold arm would then read the heat ceiling). Do not "simplify" them to one constant.
-const LETHAL_COLD_TOOLTIP := "1.8% increased mortality per turn due to severe cold"
-const LETHAL_HEAT_TOOLTIP := "1.8% increased mortality per turn due to severe heat"
-const CAPPED_COLD_TOOLTIP := "10.0% increased mortality per turn due to severe cold"
+const LETHAL_COLD_TOOLTIP := "⚠ Severe cold: +1.8% deaths/turn"
+const LETHAL_HEAT_TOOLTIP := "⚠ Severe heat: +1.8% deaths/turn"
+const CAPPED_COLD_TOOLTIP := "⚠ Severe cold: +10.0% deaths/turn"
 ## …and the near-boundary tile, whose rate is real but below what one decimal can show. It states the
 ## BOUND rather than a rounded zero.
-const NEAR_LINE_COLD_TOOLTIP := "<0.1% increased mortality per turn due to severe cold"
+const NEAR_LINE_COLD_TOOLTIP := "⚠ Severe cold: +<0.1% deaths/turn"
 
 ## The two spellings the near-boundary hover must never contain again — a rounded-away rate, and the
 ## minus sign that made it read as `−0.0 %`, i.e. as nothing happening at all.

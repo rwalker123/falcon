@@ -296,7 +296,7 @@ exception.
 **`shortfall` USED TO BE the decay**, which welded the first two: raising a demand made the
 improvement rot faster in exact proportion, so neither number could be retuned. Splitting them is what
 let the plant demands become whole numbers a player can staff exactly — **`plant:tended` 2,
-`plant:field` 4** — while the rot rates stayed precisely where they were (**0.5** and **0.75**, the
+`plant:farm` 4** — while the rot rates stayed precisely where they were (**0.5** and **0.75**, the
 retired `decay_fraction_per_turn`'s own product). The demands moved; the rotting did not.
 
 **The animal web already had the rate half**, which is why neither animal rung declares a
@@ -529,7 +529,7 @@ quarrying and hauling: that work is the upkeep, not a second line beside it.
 ### 2.8 ONE POSITION ON THE LADDER — the rung stops being a status and becomes a place
 
 **A source has ONE number: how far up its own ladder it has been worked, in cumulative work units.**
-`plant:tended` runs 0 → 50, `plant:field` 50 → 125. Everything a rung means is read off that one
+`plant:tended` runs 0 → 50, `plant:farm` 50 → 125. Everything a rung means is read off that one
 position: what the ground pays, what it costs to hold, what is offered next, and what a decay takes
 away.
 
@@ -735,7 +735,7 @@ invisible*. Tuning is therefore **last**, and after §4.10, which changes what t
 1. **This design doc.**
 2. **The mechanism** — the upkeep term on the ladder engine; `yield_fraction_while_building` retired,
    because the dip and a work budget cannot both be live without double-counting.
-3. **The plant web onto it** — `plant:tended` / `plant:field` declare upkeep; the binary
+3. **The plant web onto it** — `plant:tended` / `plant:farm` declare upkeep; the binary
    `tended_this_turn` bleed retires.
 4. **The animal web onto it** — `herders_needed` becomes an upkeep rate; the shed becomes its
    shortfall penalty.
@@ -2782,7 +2782,7 @@ against the measurements item 12c forced. Not a readout slice: it is the structu
     It is the
     ladder's existing per-source price hook (`RungStanding::at`'s `cost_at`, which the animal web
     already spends on a species' `taming_cost_multiplier`) claimed by the plant web, which passed
-    `RUNG_COST_UNSCALED` with a comment saying a plant has no species. **`plant:field` only** —
+    `RUNG_COST_UNSCALED` with a comment saying a plant has no species. **`plant:farm` only** —
     `plant:tended` is untouched, because clearing wild ground is clearing wild ground.
 
     Ray: *"I think maybe it should take more work to sow a field based on what % the crop is on the
@@ -2802,7 +2802,7 @@ against the measurements item 12c forced. Not a readout slice: it is the structu
     >
     > `field_reference_crop_share` is **0.5625, the reference basket's own weeded share** —
     > `wild_emmer` holds `0.375` of `AlluvialPlain`'s realized basket and a Cultivate weeds it to
-    > `0.375 × 1.5` — so the shipped `plant:field` price of 75 work units is **provably
+    > `0.375 × 1.5` — so the shipped `plant:farm` price of 75 work units is **provably
     > pacing-neutral there**, exactly as `capacity_per_tender` is 195.0 for being that same tile's own
     > `K`. A bare penalty would make the ladder's declared cost the *cheapest* case and inflate the
     > whole plant branch; a bare discount would deflate it. With an anchor, ordinary sowable ground
@@ -2845,7 +2845,7 @@ against the measurements item 12c forced. Not a readout slice: it is the structu
     > stamped when its Field leg finally begins are the same number, which is what keeps the chained
     > date a construction.
     >
-    > **⛔ ③ IT DOES NOT TOUCH THE UPKEEP, AND THAT IS THE §4.11 RULE.** `plant:field`'s hold cost is
+    > **⛔ ③ IT DOES NOT TOUCH THE UPKEEP, AND THAT IS THE §4.11 RULE.** `plant:farm`'s hold cost is
     > `scaled_by: source_load`, which reads the **tile's** `K` — holding a field is about how big the
     > place is, never about what used to grow there. Two scale terms on one bill is exactly the
     > compounding §4.11 ① measured (a Field billing 10.898 against the 4.308 it owed), so a Field that
@@ -2876,7 +2876,7 @@ against the measurements item 12c forced. Not a readout slice: it is the structu
     > than a second derivation that happens to agree. Asserted on the encoded envelope, at
     > declaration, at the commitment and again with the leg stamped.
     >
-    > **Empty for a crop that cannot climb to a Field here** (`species_climbs` at `plant:field`),
+    > **Empty for a crop that cannot climb to a Field here** (`species_climbs` at `plant:farm`),
     > which renders as *no row*: a `0` would read as a free Sow, and a real price never is one — the
     > floor clamp exists precisely because laying the rows and putting the seed in costs work on any
     > ground.

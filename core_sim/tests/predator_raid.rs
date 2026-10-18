@@ -12,6 +12,7 @@ use bevy::ecs::system::RunSystemOnce;
 use bevy::math::UVec2;
 use bevy::prelude::{Entity, With};
 use bevy::MinimalPlugins;
+use core_sim::shipped;
 
 use core_sim::{
     advance_predator_raids, scalar_from_f32, scalar_one, scalar_zero, spawn_initial_forage,
@@ -151,6 +152,7 @@ fn seat(app: &mut App, id: &str, species: &str, pos: UVec2) {
             0.0,
             0.15,
             30.0,
+            shipped::root_standing(shipped::animal()),
         ));
 }
 

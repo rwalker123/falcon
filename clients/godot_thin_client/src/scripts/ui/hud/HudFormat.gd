@@ -30,10 +30,9 @@ const PEOPLE_DEPENDENCY_BASE := 100
 ## jargon without making it any more useful — the ratio itself is gone from the UI entirely.
 ## The food store is `storage`, never `larder` — a tooltip is read at a glance, and one store carries
 ## one word across the panel (`DetailFormat.FERTILITY_LABEL_RESERVE` and its trend twins).
-const PEOPLE_DEPENDENCY_TOOLTIP := """Children and elders — they eat from your storage but cannot be put to work.
-%d working-age adults support them."""
-## Appended when dependents outnumber workers — the reason the chip is WARN-tinted.
-const PEOPLE_DEPENDENCY_HEAVY_TOOLTIP := "\nMore mouths than hands."
+const PEOPLE_DEPENDENCY_TOOLTIP := "%d dependents · %d workers"
+## Second line when dependents outnumber workers — the reason the chip is WARN-tinted.
+const PEOPLE_DEPENDENCY_HEAVY_TOOLTIP := "\n⚠ More mouths than hands"
 ## Band/City panel "Active expeditions" mission glyphs — they mirror the map markers
 ## (MapView EXPEDITION_GLYPH).
 const PANEL_EXPEDITION_SCOUT_GLYPH := "⚑"
@@ -388,7 +387,7 @@ static func dependency_per_hundred(dependents: int, working: int) -> int:
 ## decides the WARN tint — so it stays out of the words too. `PEOPLE_DEPENDENCY_HEAVY` lives in
 ## `HudWorkVocab` (the chip's own tint reads it too) and is read as `HudWorkVocab.X`.
 static func dependency_tooltip(dependents: int, working: int) -> String:
-    var text: String = PEOPLE_DEPENDENCY_TOOLTIP % working
+    var text: String = PEOPLE_DEPENDENCY_TOOLTIP % [dependents, working]
     if dependency_per_hundred(dependents, working) > HudWorkVocab.PEOPLE_DEPENDENCY_HEAVY:
         text += PEOPLE_DEPENDENCY_HEAVY_TOOLTIP
     return text

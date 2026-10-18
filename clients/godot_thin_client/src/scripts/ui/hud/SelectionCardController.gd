@@ -441,7 +441,7 @@ func _land_row_meta(tile_info: Dictionary) -> String:
 	var workers := _forage_workers_on_tile(int(tile_info.get("x", -1)), int(tile_info.get("y", -1)))
 	# Gated on the module KEY, never on its label: a tile with no module still ships the label
 	# `"None"`, which would render as a source called "None" instead of the honest "No forage".
-	if workers > 0 or DetailFormat.tile_is_gathering_site(tile_info):
+	if workers > 0 or DetailFormat.tile_is_workable(tile_info):
 		# An UNWORKED patch states the ZERO — a bare `0` under the row's trailing forage mark —
 		# rather than its module label. (The count and the mark are two nodes since issue #249;
 		# `HudSelectionVocab.LAND_META_WORKERS_FORMAT` records why.) The row already LEADS with
@@ -501,7 +501,7 @@ func _band_row_glyph(unit: Dictionary) -> String:
 ## disagree about whether this hex is a source — the pair reads `2 <forage>` or neither half at all.
 func _land_row_activity(tile_info: Dictionary) -> String:
 	var workers := _forage_workers_on_tile(int(tile_info.get("x", -1)), int(tile_info.get("y", -1)))
-	if workers > 0 or DetailFormat.tile_is_gathering_site(tile_info):
+	if workers > 0 or DetailFormat.tile_is_workable(tile_info):
 		return SourceForecast.LABOR_KIND_FORAGE
 	return ""
 

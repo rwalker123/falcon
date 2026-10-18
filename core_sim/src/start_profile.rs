@@ -1057,12 +1057,17 @@ mod tests {
     /// Every knowledge the intensification ladder gates on (or earns), and the id it must map to.
     /// `foddering` (F3) is earned by running a pen but gates no rung of its own — still it must be
     /// mappable and, like every ladder knowledge, never start-granted.
-    const LADDER_KNOWLEDGE: [(&str, u32); 5] = [
+    const LADDER_KNOWLEDGE: [(&str, u32); 7] = [
         ("cultivation", CULTIVATION_DISCOVERY_ID),
         ("herding", HERDING_DISCOVERY_ID),
         ("seed_selection", SEED_SELECTION_DISCOVERY_ID),
         ("penning", PENNING_DISCOVERY_ID),
         ("foddering", FODDERING_DISCOVERY_ID),
+        ("worked_land", crate::forage::WORKED_LAND_DISCOVERY_ID),
+        (
+            "selective_breeding",
+            crate::fauna::SELECTIVE_BREEDING_DISCOVERY_ID,
+        ),
     ];
 
     /// **Nothing on the ladder is start-granted** (`docs/plan_intensification_ladder.md` §2a) — the

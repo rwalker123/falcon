@@ -27,7 +27,8 @@ use crate::{
         HEAD_ORDER, MIN_ORDER_COUNT,
     },
     craft_suggestions::{
-        band_suggestions, take_row_gear, CraftSuggestion, ForecastInputs, SuggestionConfigs,
+        band_suggestions, build_material_suggestions_in_world, merge_build_material_suggestions,
+        take_row_gear, CraftSuggestion, ForecastInputs, SuggestionConfigs,
     },
     equipment_config::{EquipmentConfig, EquipmentConfigHandle},
     intensification::LadderConfigHandle,
@@ -76,17 +77,19 @@ impl FillConfigs {
 /// **THE RECIPE AN ITEM WOULD BE QUEUED WITH** — the offer the crafting ledger marks `suggested` on
 /// that item's row. The panel's Queue button queues exactly this one.
 fn suggested_offer<'a>(offers: &'a [CraftOfferState], item: &str) -> Option<&'a CraftOfferState> {
-    offers
-        .iter()
-        .find(|offer| offer.suggested && offer.output_item_id == item)
+    offers.iter().find(|offer| {
+        offer.suggested && (offer.output_item_id == item || offer.output_material_id == item)
+    })
 }
 
 /// **THE PURE PICK** — given the band's suggestions and offers, drop from `auto_skipped` every item
 /// that can now be drawn, then queue the first suggestion that is not skipped and whose craft is
 /// known. Returns whether an order was queued.
 ///
-/// Only an empty queue on an auto bench is filled. Never touches the crew.
-fn fill_empty_queue(
+/// An auto bench is filled whenever no order can progress (`worked_order` is `None`): an empty
+/// queue is the special case, and a blocked order keeps its place and resumes by itself. Never
+/// touches the crew.
+fn fill_idle_bench(
     bench: &mut BandBench,
     suggestions: &[CraftSuggestion],
     offers: &[CraftOfferState],
@@ -94,7 +97,20 @@ fn fill_empty_queue(
     wear: &BandEquipment,
     configs: &FillConfigs,
 ) -> bool {
-    if !bench.auto || !bench.orders.is_empty() {
+    // **ONLY AN ORDER THAT CAN PROGRESS FILLS THE BENCH.** A blocked order (short of an input) holds
+    // nothing: the bench works the first order that can, so auto-craft fills whenever none can - an
+    // empty queue is the special case - and a blocked order keeps its place and resumes by itself.
+    if !bench.auto
+        || worked_order(
+            bench,
+            store,
+            &configs.recipes,
+            &configs.materials,
+            &configs.equipment,
+            wear,
+        )
+        .is_some()
+    {
         return false;
     }
     // **Un-skip first**: an item whose recipe can draw ONE item from the stock on hand is eligible
@@ -119,13 +135,23 @@ fn fill_empty_queue(
             .any(|suggestion| &suggestion.item == item)
             && !drawable(item)
     });
+    let already_queued = |item: &str| {
+        bench.orders.iter().any(|order| {
+            configs
+                .recipes
+                .recipe(&order.recipe_id)
+                .and_then(|recipe| recipe.row_key())
+                == Some(item)
+        })
+    };
     let pick = suggestions.iter().find_map(|suggestion| {
-        if bench.auto_skipped.contains(&suggestion.item) {
+        if bench.auto_skipped.contains(&suggestion.item) || already_queued(&suggestion.item) {
             return None;
         }
         let offer = suggested_offer(offers, &suggestion.item)?;
-        offer
-            .queueable
+        // **Never a suggestion that is itself short of an input** - it could not progress either,
+        // and the next makeable one is worth more to idle crafters.
+        (offer.queueable && drawable(&suggestion.item))
             .then(|| (offer.recipe_id.clone(), suggestion.count))
     });
     let Some((recipe_id, count)) = pick else {
@@ -190,7 +216,7 @@ fn band_suggestions_and_offers(
     };
     let offers = band_craft_state(&cohort.stores, Some(bench), 0, &wear, &inputs).craft_offers;
     // The offers come first: the wear forecast reads the recipe each item's row marks `suggested`.
-    let suggestions = band_suggestions(
+    let mut suggestions = band_suggestions(
         allocation,
         take_rows,
         hunt_turn.as_deref(),
@@ -205,6 +231,18 @@ fn band_suggestions_and_offers(
             materials: &configs.materials,
         }),
     );
+    // **A queued build short of the GOODS it draws** (hurdles for a pen) is a suggestion like any
+    // other - the same wrapper the snapshot merges - so an empty auto bench works it down.
+    let build_materials = with_world_sources(world, cohort.faction, |sources| {
+        build_material_suggestions_in_world(
+            allocation,
+            &cohort.stores,
+            &configs.recipes,
+            Some(bench),
+            sources,
+        )
+    });
+    merge_build_material_suggestions(&mut suggestions, build_materials);
     Some((suggestions, offers))
 }
 
@@ -259,22 +297,39 @@ fn band_wear(world: &World, band: Entity, equipment: &EquipmentConfig) -> BandEq
         .unwrap_or_else(|| BandEquipment::start_stocked(equipment))
 }
 
-/// **FILL A BAND'S EMPTY QUEUE FROM ITS SUGGESTIONS** when auto-craft is on. Returns whether an
-/// order was queued. A no-op for a bench that is off, a queue that is not empty, a detached party,
-/// or a band with no usable suggestion.
+/// **FILL A BAND'S IDLE BENCH FROM ITS SUGGESTIONS** when auto-craft is on - whenever no order can
+/// progress (`worked_order` is `None`), which an empty queue is one case of. Returns whether an
+/// order was queued. A no-op for a bench that is off, a bench with an order that can progress, a
+/// detached party, or a band with no usable suggestion.
 ///
 /// Called by the turn system ([`advance_auto_craft`]) and at the end of every command that can
-/// leave the queue empty or switch auto on.
+/// leave the bench with nothing workable or switch auto on.
 pub fn auto_craft_fill(world: &mut World, band: Entity) -> bool {
     let Some(original) = world.get::<BandBench>(band) else {
         return false;
     };
-    if !original.auto || !original.orders.is_empty() {
+    if !original.auto {
         return false;
     }
     let Some(configs) = FillConfigs::resolve(world) else {
         return false;
     };
+    // A bench with an order that can progress needs no suggestions computed at all.
+    if let Some(cohort) = world.get::<PopulationCohort>(band) {
+        let wear = band_wear(world, band, &configs.equipment);
+        if worked_order(
+            original,
+            &cohort.stores,
+            &configs.recipes,
+            &configs.materials,
+            &configs.equipment,
+            &wear,
+        )
+        .is_some()
+        {
+            return false;
+        }
+    }
     let mut bench = original.clone();
     let queued = {
         let Some((suggestions, offers)) =
@@ -286,7 +341,7 @@ pub fn auto_craft_fill(world: &mut World, band: Entity) -> bool {
             return false;
         };
         let wear = band_wear(world, band, &configs.equipment);
-        fill_empty_queue(
+        fill_idle_bench(
             &mut bench,
             &suggestions,
             &offers,
@@ -352,7 +407,7 @@ pub fn auto_craft_skip(world: &mut World, band: Entity) -> Result<String, AutoSk
     let item = configs
         .recipes
         .recipe(&head.recipe_id)
-        .and_then(|recipe| recipe.output_equipment_id())
+        .and_then(|recipe| recipe.row_key())
         .map(str::to_string)
         .unwrap_or_else(|| head.recipe_id.clone());
     let mut bench = world
@@ -383,7 +438,7 @@ fn fill_every_empty_auto_bench(world: &mut World) {
     let bands: Vec<Entity> = world
         .query::<(Entity, &BandBench)>()
         .iter(world)
-        .filter(|(_, bench)| bench.auto && bench.orders.is_empty())
+        .filter(|(_, bench)| bench.auto)
         .map(|(entity, _)| entity)
         .collect();
     for band in bands {

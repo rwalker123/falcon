@@ -858,11 +858,10 @@ over four wire terms — `kit_needs[]` and `materials_free[]` on the cohort, `be
 
 - **A KITS group leads the ledger, above Gear**, one row per `kit_needs` entry in config order, folded by
   the same head builder. The row reads the kit's items and job noun (`Spears · Sled — hunters`), what is
-  equipped (`min over items of min(have × workers_per_unit, people)`, shown `e of P` with an `equipped`
-  chip, or a `None equipped` / `Not used` pill), one kit's rebuild cost at each item's `suggested`
-  recipe (with `each` under it) and one reason under Make: danger for the first item with an unqueued
-  gap, dim when every gap is queued, faint (`All 3 hunters equipped` / `No hunters yet`) when the kit is
-  covered or nobody is on its job. **No kit row is ever dimmed** — a covered kit can still be ordered.
+  equipped against what is claimed (shown `e of c` with an `equipped` chip, or a `None equipped` / `Not
+  used` pill), one kit's rebuild cost at each item's `suggested` recipe (with `each` under it) and one
+  reason under Make (`Not in use`, `<Item> N short`, or `All N <noun> equipped`; see "A kit row reads
+  CLAIMS" below). **No kit row is ever dimmed** — a covered kit can still be ordered.
 - **A KIT ORDER IS A COUNT OF KITS, never netted against need.** Make opens a PICKER under the row:
   `Make how many <Kit>s?` with a `− N +` stepper (default 1, never below 1) and the columns ITEM · OWNED ·
   MAKE · RECIPE. OWNED is `×<units>` in dim ink, the Gear cell's own reading (the sum of the item's
@@ -884,6 +883,36 @@ over four wire terms — `kit_needs[]` and `materials_free[]` on the cohort, `be
   each part has a `− made/count +` addressing it by its own order index, and no ↑ or ✕. The worked part
   is in the box as well as in the well.
 - **The well's title appends `· for <Kit>`** when the worked order belongs to a kit order.
+- **A kit row reads CLAIMS, not the headcount.** Each `kit_needs[].items[]` carries `claimed` (a float:
+  units actually claimed on this kit by rows, pools, sites and queued builds) and `short` (an int: whole
+  units missing on those claims, before the bench's queue is netted off - the figure Make Next starts
+  from), beside `have` and `queued`. `kit_needs[].people` counts everyone on the kit's jobs against every
+  kit those jobs could use, which read `6 hunters without traps` with no row using traps and `1 without
+  hoes` beside a Sow that was four hoes short. Per item, need is `ceil(claimed) x workers_per_unit`
+  (`CraftingPanel._kit_item_claim`; an item under `KIT_CLAIMED_MIN` is unclaimed). The row has three states:
+  - **no item claimed** - the reason is a quiet `Not in use` (`INK_FAINT`, never red, no `N without`) and
+    the Owned cell the faint `Not used` pill;
+  - **some item `short > 0`** - `<Item> N short` per short item (the item's own display name as a label,
+    since names are mixed singular and plural and there is no pluraliser), joined by ` · `, with `, Q coming`
+    where `queued > 0`: `DANGER` while any short item is not covered by its queue, `INK_DIM` once every one is
+    (`Spears 2 short · Sled 5 short, 1 coming` / `Baskets 1 short, 1 coming`);
+  - **claimed and nothing short** - `All N <noun> equipped` in `INK_FAINT`.
+
+  The Owned cell is `X of Y equipped` for the weakest claimed item (largest `need - equipped`), Y being the
+  claim rounded up; `None equipped` (`DANGER`) when something is claimed and nothing held. **Kit ORDERING is
+  unchanged: the order count is the player's and is never capped by need.** Pinned by `crafting_bench`
+  frames `crafting_kits_ledger` (partial queue, fully queued, all equipped and not in use at once) and
+  `crafting_kit_settled_short` (8 crooks held, 9 claimed: `8 of 9`, `Crook 1 short`).
+- **A Make Next entry can name a MATERIAL** (a queued build short of the goods it draws): its `item_id` is
+  the bare material id (`hurdles`) while its ledger row is keyed `material:hurdles`.
+  `CraftingPanel._row_in` falls back to the `material:` key after an item's own row, and
+  `_row_key_of` keys a stock offer by the published `output_material_id` before the recipe-book lookup.
+  Without the join the Queue button was dead (`ledger_row.is_empty()`), the name was the raw id and the
+  reason read kit wording. A material entry is named by the offer's `display_name` ("Hurdles"), states goods
+  (`2.1 more Hurdles, for the top job`, or the queue row's own label for a later build; the amount is the
+  sources' `missing_units` summed), its hover lines read `<who>: N short` with no crew count, and Queue sends
+  the material's recipe and the suggestion's whole count, as the Materials row's Make does. Pinned by
+  `crafting_bench` frame `crafting_material_suggestion`.
 
 ## Key scripts
 

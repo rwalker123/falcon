@@ -253,9 +253,9 @@ const FACTION_MOBILITY_TOOLTIP_FORMAT := "Roaming skills (herd lore, travois, dr
 ## turn (`domestication_points`, `surplus_points`, `land_points`, `population_points`, `belief_points`,
 ## pre-smoothing, so the five sum to the raw score and the meter follows them). A key the entry lacks
 ## reads 0.
-const FACTION_SETTLING_TOOLTIP_FORMAT := "Settling score (sedentarization)\nTamed herds and tended plants: +%d\nFood to spare: +%d\nRich land: +%d\nPopulation: +%d\nFrom the dead: +%d"
+const FACTION_SETTLING_TOOLTIP_FORMAT := "Settling %d\nTamed/tended +%d · Surplus +%d\nRich land +%d · Pop +%d · Dead +%d"
 ## The `From the dead` row's hover, on both of its forms (the `+N` one and the dimmed zero one).
-const FACTION_SETTLING_BELIEF_TOOLTIP := "Points to Settling from bands camped where their dead lie."
+const FACTION_SETTLING_BELIEF_TOOLTIP_FORMAT := "Camped by their dead: +%d"
 
 ## **OPEN BORDERS — the faction page's one control** (issue #512, `docs/plan_band_fission.md`
 ## §Defection). A faction-wide policy with no other home: whether another people's unhappy leavers,
@@ -472,8 +472,7 @@ const HEART_NEVER_SEEN_TEXT := "never seen"
 const HEART_SEGMENT_SEPARATOR := " · "
 const HEART_DRIFTING_FORMAT := "Drifting away — grievance %.2f / %.2f"
 ## One sentence: the lever, and what happens at the threshold.
-const HEART_TOOLTIP_FORMAT := "Visiting them with another band, or a scout that returns home, " \
-        + "restores contact; a cut-off band whose grievance reaches %.2f becomes its own people."
+const HEART_TOOLTIP_FORMAT := "⚠ Cut off · breaks away at %.2f grievance\nFix: visit with a band · scout home"
 
 ## The band zone renders at DENSER TIERS as its box shrinks. **A TIER NEVER DROPS A BLOCK** — the zone
 ## scrolls (`BAND_ZONE_SCROLL_NAME`), so content that outgrows the box is reached rather than lost, and
@@ -639,7 +638,7 @@ static func homeward_spoils_line(band: Dictionary) -> String:
         return ""
     return HOMEWARD_SPOILS_FORMAT % SourceForecast.format_magnitude(spoils)
 
-const WORKFORCE_AWAY_TOOLTIP := "Out with a party — no longer part of this band's workforce, and not counted in the bar below."
+const WORKFORCE_AWAY_TOOLTIP_FORMAT := "%d away with parties\nNot in the bar below"
 
 const WORKFORCE_KEY_FORAGE := "Forage"
 
@@ -1352,6 +1351,12 @@ const WORK_ROW_PARTY_WALKING_OUT_ONE_FORMAT := "Walking out — reaches the %s i
 const WORK_ROW_PARTY_WALK_TARGET_HERD := "herd"
 const WORK_ROW_PARTY_WALK_TARGET_PATCH := "patch"
 const WORK_ROW_PARTY_WALK_TARGET_WORKING := "working"
+const WORK_ROW_PARTY_WALK_TARGET_TILE := "improvement"
+
+## A tile crew row's meta and crew noun (issue #175): the row carries `"x,y:branch"` so a harness finds
+## it by identity, and its crew reads as *workers* where a working's reads as *cutters*.
+const TILE_ROW_META := &"tile_crew_row"
+const TILE_CREW_NOUN := "workers"
 
 ## **WHAT ARRIVES HOME, ON A ROW WITH NO RATE SLOT** — the workings roster's hover, whose one-line
 ## value cell states the ground rather than a rate. `netRateHome` in the working's OWN material
@@ -1912,7 +1917,7 @@ const WORK_ROW_BUILDING_UNSTAFFED_FORMAT := "%s⚠"
 ## …and its tooltip, which drops the percent for the reason the face does and names both remedies —
 ## the two ways a meter comes to a stop have two different fixes, and the row cannot tell which
 ## without stating a number it has just refused to state.
-const WORK_ROW_BUILDING_UNSTAFFED_TOOLTIP_FORMAT := "%s in progress — it is NOT advancing. Staff the band's Builders role, or cover this source's keeping."
+const WORK_ROW_BUILDING_UNSTAFFED_TOOLTIP_FORMAT := "⚠ %s stalled: no builders\nFix: staff Builders"
 
 ## **THE ROW'S RUNG-AXIS SLOT, VALUED THE FACE IT RENDERED.** Every claim about that slot is a STRING
 ## composed at render time, so a harness that found it by its text would only confirm the string it
@@ -1930,7 +1935,7 @@ const WORK_TOTAL_TOOLTIP := "Total food per turn from every worked source."
 # larder, so folding it into the food figure would break the identity the Food line is denominated in.
 # Shown only when a worked source actually pays fodder, so a band growing no feed reads exactly as it
 # did before the third account.
-const WORK_FODDER_TOTAL_TOOLTIP := "Total fodder per turn from every worked source. Fodder feeds penned animals — it is not food for people, so it is counted beside the food total, not in it."
+const WORK_FODDER_TOTAL_TOOLTIP_FORMAT := "Fodder %s/turn\nFeeds pens, not people"
 
 # The band's PRODUCTIVITY, as a head item beside the two totals. It is the multiplier every rate on
 # this board is ALREADY scaled by, which is why it reads here rather than as a band-zone vitals row:
@@ -1939,7 +1944,7 @@ const WORK_FODDER_TOTAL_TOOLTIP := "Total fodder per turn from every worked sour
 # fodder total follows.
 const WORK_OUTPUT_FORMAT := "Output %d%%"
 
-const WORK_OUTPUT_TOOLTIP := "Discontent is holding this band below full productivity, and every rate on this board is already scaled by it. Raise morale to restore full output."
+const WORK_OUTPUT_TOOLTIP_FORMAT := "⚠ Output %d%% (low morale)\nFix: raise morale"
 
 const WORK_MENU_TOOLTIP := "Sort and bulk actions for worked sources."
 
@@ -1973,7 +1978,7 @@ const WORK_ROW_PLANT_FORMATS := {
 
 const WORK_ROW_HUNT_FORMAT := "Hunt %s"
 
-const WORK_ROW_OPEN_HINT := "Click the row for detail and actions."
+const WORK_ROW_OPEN_HINT := "Click for details"
 
 ## THE SOURCE-RUNG MARK — what the source IS, beside the policy glyph's what-the-band-is-DOING.
 ## The two are ORTHOGONAL and the row carries both: a Tended Patch being Sustained and a Tended Patch
@@ -2003,9 +2008,9 @@ const WORK_ROW_RUNG_TENDED_TOOLTIP := "Tended Patch — this ground has been cul
 ## …and the committed crop when the patch carries one (`committed_display_name`, e.g. "Wild Emmer").
 const WORK_ROW_RUNG_TENDED_CROP_FORMAT := "Tended Patch — %s. This ground has been cultivated."
 
-const WORK_ROW_RUNG_FIELD_TOOLTIP := "Field — this ground has been sown, and there is no improving it further."
+const WORK_ROW_RUNG_FIELD_TOOLTIP := "Farm — this ground has been sown, and there is no improving it further."
 
-const WORK_ROW_RUNG_FIELD_CROP_FORMAT := "Field — %s sown, and there is no improving this ground further."
+const WORK_ROW_RUNG_FIELD_CROP_FORMAT := "Farm — %s sown, and there is no improving this ground further."
 
 const WORK_ROW_RUNG_PASTORAL_TOOLTIP := "Pastoral herd — tamed, and it keeps to your camp."
 
@@ -2840,7 +2845,7 @@ const BUILD_QUEUE_DRAG_HANDLE := "⠿"
 ## something about the queue.
 const BUILD_QUEUE_DRAG_HANDLE_FONT_SIZE := WORK_ROW_FONT_SIZE
 
-const BUILD_QUEUE_DRAG_TOOLTIP := "Drag to reorder. The builders fund the top entry until its meter fills, then the next — so the order IS the funding decision."
+const BUILD_QUEUE_DRAG_TOOLTIP := "Drag to reorder · top builds first"
 
 ## The drag preview's face: the job it is carrying, so a list of near-identical rows still says which
 ## one is in flight.
@@ -2865,7 +2870,7 @@ const BUILD_QUEUE_DRAG_TYPE := "build_queue_entry"
 ## …and the head's tooltip. **It names where the pool is staffed, so it moved with the card** (§4.7):
 ## the Builders card is in the POOLS block directly above this head now, not in the band tab's
 ## WORKFORCE zone, and a remedy pointing at a control that is no longer there is worse than none.
-const BUILD_QUEUE_BUILDERS_TOOLTIP := "The band's builders pool funds the HEAD of this queue until its meter fills, then the next. Staff it on the Builders card just above."
+const BUILD_QUEUE_BUILDERS_TOOLTIP_FORMAT := "%d builders · top job first"
 
 ## A queued PLANT entry's face — the declared verb (glyph and word, `HudFormat.policy_face`) plus the
 ## tile it stands on. The verb's vocabulary is the board row's in-progress axis's own, so a rung under
@@ -2912,9 +2917,9 @@ static func build_queue_subject(kind: String, x: int, y: int, herd_label: String
 ## FIRST line with the ellipsising detail label instead, and a crop strip pays one more control line
 ## for its picker (`build_queue_settings_height`'s `has_crop`). Ray chose the words over the queue row
 ## that costs on the 1920 BOTTOM dock.
-const BUILD_QUEUE_UNQUEUE_LABEL := "Remove from queue"
+const BUILD_QUEUE_UNQUEUE_LABEL := "✕"
 
-const BUILD_QUEUE_UNQUEUE_TOOLTIP := "Take this job out of the build queue. The work already done on it is kept, and the source keeps its crew — queue it again to carry on."
+const BUILD_QUEUE_UNQUEUE_TOOLTIP := "Remove from queue"
 
 ## **ONE GLYPH IN A COMPACT GHOST BUTTON — 32 BECAUSE `HudWidgets.compact` LEAVES THE BUTTON ITS
 ## HORIZONTAL PADDING.** The trim squeezes the type size and the VERTICAL padding — that is what keeps
@@ -2973,9 +2978,9 @@ const BUILD_QUEUE_DEMOTE_GLYPH := "▼"
 
 ## Both tooltips say what the ORDER decides, in `BUILD_QUEUE_DRAG_TOOLTIP`'s own words — the two
 ## controls do one thing and a player who learned it from the handle must read it again here.
-const BUILD_QUEUE_PROMOTE_TOOLTIP := "Move this build UP one place. The builders fund the top entry until its meter fills, then the next — so the order IS the funding decision."
+const BUILD_QUEUE_PROMOTE_TOOLTIP := "Move up"
 
-const BUILD_QUEUE_DEMOTE_TOOLTIP := "Move this build DOWN one place. The builders fund the top entry until its meter fills, then the next — so the order IS the funding decision."
+const BUILD_QUEUE_DEMOTE_TOOLTIP := "Move down"
 
 ## The arrows' hover when they grey at either end of the line — the reason in place of the order.
 const BUILD_QUEUE_PROMOTE_AT_HEAD_REASON := "Already first — the builders are funding this one now."
@@ -3148,7 +3153,7 @@ const WORK_INSPECT_KITS_UPKEEP_GOODS_FORMAT := "%s a turn"
 ## `No kit` entry means is a per-control fact rather than a section-wide one. What each tooltip carries
 ## besides is the half a shared line never could — which of the two this picker IS (the crew\'s tool
 ## against the site\'s) and the upkeep one\'s SCOPE.
-const WORK_INSPECT_TAKE_KIT_TOOLTIP := "What this crew carries when it works the source. `none` is a real choice, not an empty one — it is how a site is worked bare-handed to conserve the tool."
+const WORK_INSPECT_TAKE_KIT_TOOLTIP := "Crew kit · none = bare hands, saves tools"
 
 ## > ⛔ RETIRED — **`WORK_INSPECT_UPKEEP_KIT_TOOLTIP`**: *"What this SITE is held with, turn after
 ## > turn — the keeping tool, not the take one. Set per site, so a pick here moves this row and no
@@ -3214,13 +3219,11 @@ const BUILD_QUEUE_CROP_TOOLTIP := "Which crop this job commits the patch to. Lea
 ## the plant web's alone, a `Tame` committing no species, so on a hunt row the sentence promised two
 ## controls that are not in the strip. **The detail line and the withdrawal are what every entry's
 ## strip carries**, so the hint names those and nothing a row might not have.
-const BUILD_QUEUE_ROW_OPEN_HINT := "Click for this job's details, and to remove it from the queue."
 
 ## `Wild Emmer 56%` — the entry's face, the crop basket's own pairing of a plant with its share.
 const BUILD_QUEUE_CROP_ENTRY_FORMAT := "%s %d%%"
 
 ## The row's own tooltip: the job face and its date in full, since both columns clip.
-const BUILD_QUEUE_ROW_TOOLTIP_FORMAT := "%s — %s"
 
 ## The indent a queue row's blocked-cause line takes: NONE. `DetailFormat.build_blocked_lines` hangs
 ## its sentence under a rung row on the source's card and indents it to say so; a tooltip has no row
@@ -3233,7 +3236,6 @@ const BUILD_QUEUE_TOOLTIP_UNINDENTED := ""
 ## playtest tripped over; the span is still the number a player reasons with when deciding whether to
 ## reorder, so the hover states it rather than making them subtract. A SENTINEL keeps its single face
 ## — there is no span to state — and so does a pending row, whose date slot is a status glyph.
-const BUILD_QUEUE_ROW_SPAN_FORMAT := "%s · %d turns from now"
 
 # ---- A DECLARATION THE WIRE HAS NOT PLACED YET ---------------------------------------------------
 #
@@ -3348,12 +3350,13 @@ const BUILD_QUEUE_HEAD_HEIGHT := 22.0
 ## strip. The block's HEAD is the section's (`BandPanelController._build_build_queue_head`) and is
 ## reserved there, so it is not a term here.
 static func build_queue_block_height(entries: int, rows_max: int,
-        settings_open: bool = false, settings_legs: int = 0, settings_crop: bool = false) -> float:
+        settings_open: bool = false, settings_legs: int = 0, settings_crop: bool = false,
+        settings_fact_lines: int = 0) -> float:
     if entries <= 0:
         return 0.0
     var rows := mini(entries, rows_max)
     return float(rows) * BUILD_QUEUE_ROW_HEIGHT \
-        + build_queue_settings_height(settings_open, settings_legs, settings_crop)
+        + build_queue_settings_height(settings_open, settings_legs, settings_crop, settings_fact_lines)
 
 # ---- THE EXPANSION — the whole queue over the whole Work zone (§4.9 item 9c) ---------------------------
 #
@@ -3433,7 +3436,7 @@ const ZONE_DISCLOSURE_META := "zone_disclosure"
 ## It states what the control is FOR in BOTH directions, the same press being the way in and the way
 ## back, and it names no particular roster: one roster head opens `Roads kept` and the other
 ## `Workings`, and the sentence has to be true of both.
-const ZONE_DISCLOSURE_TOOLTIP_FORMAT := "Show every row of this %s over the Work board, or fold it back and give the board its space again."
+const ZONE_DISCLOSURE_TOOLTIP_FORMAT := "Expand / collapse %s"
 
 ## The nouns that format takes — the block saying what KIND of list it is holding back.
 const ZONE_DISCLOSURE_NOUN_QUEUE := "queue"
@@ -3575,10 +3578,11 @@ const MICROSECONDS_PER_SECOND := 1_000_000.0
 ## sit beside the crop picker at the narrow shell) is right-aligned ON it, at the control height. A
 ## plant entry's crop picker is a line of its own beneath, which is what `has_crop` prices; the caller
 ## reads it off the same `_queue_settings_content` answer the builder draws.
-static func build_queue_settings_height(is_open: bool, legs: int, has_crop: bool = false) -> float:
+static func build_queue_settings_height(is_open: bool, legs: int, has_crop: bool = false,
+        fact_lines: int = 0) -> float:
     if not is_open:
         return 0.0
-    var height := BUILD_QUEUE_SETTINGS_HEIGHT
+    var height := BUILD_QUEUE_SETTINGS_HEIGHT + float(fact_lines) * BUILD_QUEUE_FACT_LINE_HEIGHT
     if legs > 0:
         height += float(legs + 1) * BUILD_QUEUE_LEG_HEIGHT
     if has_crop:
@@ -3635,14 +3639,61 @@ const BUILD_QUEUE_ROW_TOOLS_LINE_META := "build_queue_row_tools_line"
 ## `_work_board_capacity` through their `head_tools_height`.
 const BUILD_QUEUE_ROW_TOOLS_LINE_HEIGHT := WORK_ROW_TWO_LINE_HEIGHT - WORK_ROW_HEIGHT
 
-## …and the same fact on the head ROW's hover, as a sentence, beside the job's price and cause.
-const BUILD_QUEUE_HEAD_TOOLS_SHORT_TOOLTIP := "The builders are short of tools for this job — more tools would speed it up."
-## …and NAMED: `The builders are short of hoes for this job — more hoes would speed it up.`
-const BUILD_QUEUE_HEAD_TOOLS_SHORT_NAMED_TOOLTIP := "The builders are short of %s for this job — more %s would speed it up."
+## The widest the date column on a queue row's second line may ask for. The label is as wide as its text
+## up to this and ellipsises beyond it (the full text rides the row's tooltip), so no string the sim
+## publishes can widen the panel; the room left of it holds the `Build: Normal` mark.
+const BUILD_QUEUE_DATE_MAX_WIDTH := 120.0
 
-static func build_queue_tools_tooltip(named: String) -> String:
-    return BUILD_QUEUE_HEAD_TOOLS_SHORT_TOOLTIP if named == "" \
-        else BUILD_QUEUE_HEAD_TOOLS_SHORT_NAMED_TOOLTIP % [named, named]
+## **A QUEUE HEAD THE SHELF CANNOT FEED SAYS SO ON ITS OWN SECOND LINE**, in the player's words and
+## naming the good: `⚠ No hurdles — needs 2.1 more` while the shelf holds none of it, `⚠ Short of
+## hurdles — needs 1.1 more` while it holds some. It takes the slot the builders' `◆` clause uses and
+## wins it, because a build with no hurdles banks nothing whatever the tools are.
+## **A HEAD BLOCKED ON GOODS** reads `⚠ Blocked · need 1.1 hurdles` in `HudStyle.DANGER`, in the date's place
+## and with no date; its hover headline is `<face> — Blocked 64%`.
+const BUILD_QUEUE_BLOCKED_NEED_FORMAT := "%s Blocked · need %s %s"
+const BUILD_QUEUE_BLOCKED_PROGRESS_FORMAT := "Blocked %d%%"
+## **AN ENTRY BEHIND A BLOCKED HEAD** is not itself broken and has nothing to fix, so it reads the plain
+## `Queued 0%` (`HudSelectionVocab.RUNG_QUEUED_FORMAT`) in `HudStyle.INK_DIM`, no mark; its hover headline
+## is `<face> — Queued 0%`, then the cost line.
+## **WHERE A QUEUED CORRAL WILL PEN THE HERD**: `Pen at (7, 9)`, right after the headline.
+const BUILD_QUEUE_PEN_SITE_FORMAT := "Pen at (%d, %d)"
+## The widest the blocked clause may ask for: its own text up to this, trimmed beyond.
+const BUILD_QUEUE_CLAUSE_MAX_WIDTH := 240.0
+## …and the same fact as a hover / detail line, without the mark: one per missing material.
+const BUILD_QUEUE_MATERIAL_LINE_FORMAT := "Need %s %s"
+## **THE KIT LINE**: `Short 1 crook` — the builders without the item.
+const BUILD_QUEUE_KIT_SHORT_LINE_FORMAT := "Short %d %s"
+## **THE COST LINE**: `Costs 75 work · upkeep 2.8/turn`; the upkeep clause only where the rung bills one.
+const BUILD_QUEUE_COST_FORMAT := "Costs %s work"
+const BUILD_QUEUE_UPKEEP_CLAUSE_FORMAT := " · upkeep %s/turn"
+## **THE HEADLINE**: `Corral Wild Boar — Penning 64%` (`· turn N` only on a real date).
+const BUILD_QUEUE_HEADLINE_FORMAT := "%s — %s"
+## One fact line in the open strip, and the width a line wraps at (conservative against the narrowest
+## shell), so the strip's height is reserved from the same arithmetic it draws.
+const BUILD_QUEUE_FACT_LINE_HEIGHT := 18.0
+const BUILD_QUEUE_FACT_WRAP_WIDTH := 280.0
+const BUILD_QUEUE_MATERIAL_LINE_META := "build_queue_row_material_line"
+
+## …and the same fact on the head ROW's hover, as a sentence, beside the job's price and cause.
+## …and NAMED: `The builders are short of hoes for this job — more hoes would speed it up.`
+
+## **ONE `Short N <item>` LINE PER SHORT TOOL** — N the builders without it (`required − filled`, rounded
+## up), the item named by its roster display name, lower-cased — or by its own wire id until the roster
+## arrives, so the shortfall is never silent.
+static func toe_short_lines(lines: Array, item_names: Dictionary) -> Array[String]:
+    var out: Array[String] = []
+    for row_variant in lines:
+        if not (row_variant is Dictionary) or not pool_toe_row_is_short(row_variant):
+            continue
+        var row: Dictionary = row_variant
+        var id := String(row.get(HudBandLaborState.POOL_TOE_ITEM_KEY, ""))
+        var name := String(item_names.get(id, id.capitalize())).strip_edges().to_lower()
+        if name == "":
+            continue
+        var without := ceili(float(row.get(HudBandLaborState.POOL_TOE_REQUIRED_KEY, 0.0))
+            - float(row.get(HudBandLaborState.POOL_TOE_FILLED_KEY, 0.0)) - POOL_TOE_SHORT_MIN)
+        out.append(BUILD_QUEUE_KIT_SHORT_LINE_FORMAT % [maxi(without, 1), name])
+    return out
 
 ## The detail label's stable handle, carrying the line's FULL text — a harness asks what the line
 ## says without reading an ellipsised face.
@@ -3663,19 +3714,6 @@ const BUILD_QUEUE_ROW_TOOLS_SHORT_META := "build_queue_row_tools_short"
 ## computes a number. **`tools_short` LEADS with `◆ builders short of tools`** on the tool-short
 ## head's OPEN strip: the head row drops its own second line while its strip is open, so this is the
 ## only statement of the fact in that state — one sentence visible in either state, never both.
-static func build_queue_detail_line(tools_short: bool, blocked_lines: Array,
-        price: String, tools_named: String = "") -> String:
-    var parts: Array[String] = []
-    if tools_short:
-        parts.append(BUILD_QUEUE_ROW_TOOLS_SHORT_FORMAT % [KIT_SHORT_MARK,
-            build_queue_tools_text(tools_named)])
-    for line in blocked_lines:
-        if String(line) != "":
-            parts.append(String(line))
-    if price != "":
-        parts.append(price)
-    return BUILD_QUEUE_DETAIL_SEPARATOR.join(parts)
-
 ## **THE LEG IN FLIGHT WEARS THE QUEUE HEAD'S OWN MARKER**, and every other leg reserves its slot —
 ## the block's standing rule one level in. The first published leg IS the one in flight (the wire
 ## lists them first-incomplete first), so nothing here decides which.
@@ -4207,8 +4245,8 @@ const WORK_ROW_PRIORITY_PILL_FORMAT := "Priority: %s"
 const WORK_ROW_BUILD_PILL_FORMAT := "Build: %s"
 const WORK_ROW_PRIORITY_PILL_META := &"work_row_priority_pill"
 const WORK_ROW_BUILD_PILL_META := &"work_row_build_pill"
-const WORK_ROW_PRIORITY_PILL_TOOLTIP := "This crew's claim on scarce tools and materials — click to cycle Normal, High, Low."
-const WORK_ROW_BUILD_PILL_TOOLTIP := "The queued build's claim on scarce tools and materials — click to cycle Normal, High, Low."
+const WORK_ROW_PRIORITY_PILL_TOOLTIP := "Priority for scarce tools\nClick: Normal → High → Low"
+const WORK_ROW_BUILD_PILL_TOOLTIP := "Priority for scarce tools\nClick: Normal → High → Low"
 
 ## The cycle a click walks: Normal → High → Low → Normal. Normal first because it is the default, and
 ## High next because raising a claim is the commoner intent.
@@ -4299,9 +4337,11 @@ const CREW_SPLIT_SENTENCE_META := &"crew_split_sentence"
 const CREW_SPLIT_VERB_HARVEST := "harvest"
 const CREW_SPLIT_VERB_HUNT := "hunt"
 const CREW_SPLIT_VERB_CUT := "cut"
+const CREW_SPLIT_VERB_TILE := "tend"
 const CREW_SPLIT_OBJECT_PATCH := "the patch"
 const CREW_SPLIT_OBJECT_HERD := "the herd"
 const CREW_SPLIT_OBJECT_WORKING := "the working"
+const CREW_SPLIT_OBJECT_TILE := "the improvement"
 const CREW_SPLIT_SOME_FORMAT := "%s%d of %d %s tending %s; %d %s free to %s."
 const CREW_SPLIT_ALL_FORMAT := "All %d are tending %s — nobody is free to %s."
 const CREW_SPLIT_ONE_FORMAT := "The one worker is tending %s — nobody is free to %s."
@@ -4324,6 +4364,9 @@ static func crew_split_words(crew: int, keep_hands: float, labor_kind: String) -
     elif labor_kind == HudConst.LABOR_KIND_EXTRACT:
         verb = CREW_SPLIT_VERB_CUT
         what = CREW_SPLIT_OBJECT_WORKING
+    elif labor_kind == HudConst.LABOR_KIND_TILE:
+        verb = CREW_SPLIT_VERB_TILE
+        what = CREW_SPLIT_OBJECT_TILE
     var keep := maxf(keep_hands, 0.0)
     var tending := clampi(roundi(keep), 1, crew)
     var free := crew - tending
