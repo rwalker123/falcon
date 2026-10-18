@@ -909,7 +909,7 @@ func _ready() -> void:
     _attention = AttentionController.new(_band_labor, _bandpanel, _herd_label_for_id)
     _attention.alert_focus_requested.connect(
         func(x: int, y: int) -> void: alert_focus_requested.emit(x, y))
-    # A "a people awaits your answer" orb row brings the receiving band's Dealings tab forward.
+    # A "a people awaits your answer" orb row brings the receiving band's Trade (or Peoples) tab forward.
     _turnorb.dealings_focus_requested.connect(
         func(band_id: int) -> void: _bandpanel.focus_dealings(band_id))
     # The faction page's Work and Parties tabs read the same alerts the orb does. Handed over HERE
@@ -1119,8 +1119,8 @@ func update_faction_policies(policies_variant: Variant) -> void:
     _topbar.update_faction_policies(policies_variant)
     if _bandpanel != null and _bandpanel.is_faction_page():
         _bandpanel.rerender()
-    # The gift setting lives at the top of the Dealings tab, and the border overrides on the Peoples
-    # tab: re-fill both in place.
+    # The gift setting lives at the top of the Trade tab's waiting section, and the border overrides on
+    # the Peoples tab: re-fill both in place.
     if _bandpanel != null:
         _bandpanel.refresh_dealings()
         _bandpanel.refresh_connections()
@@ -1353,12 +1353,19 @@ func update_herds(herds_variant: Variant) -> void:
 ## **THE VIEWER'S PENDING DEALINGS** (early diplomacy) -- offers, proposals, counters and treaty
 ## proposals addressed to this people or sent by it. A thin delegator because `Main` reaches it BY NAME
 ## through `_hud_invoke`. Three things follow a frame that moves it, none of which waits for a turn:
-## the open Dealings tab is re-filled in place, the orb's "awaits your answer" half is rebuilt
+## the open Trade tab's waiting list (and the Peoples tab's treaty proposals) is re-filled in place, the orb's "awaits your answer" half is rebuilt
 ## (**the answer window is ONE turn**, so the row cannot trail the offer by a `populations` frame), and
 ## the tab badge is re-pushed.
 func update_dealings(dealings_variant: Variant) -> void:
     _band_labor.set_dealings(dealings_variant)
     _turnorb.set_dealing_attention(_attention.build_dealing_attention())
+    _bandpanel.refresh_dealings()
+
+## **THE VIEWER'S TRADE HISTORY** -- one record per trade that ended, oldest first, a whole-section
+## replace. A thin delegator because `Main` reaches it BY NAME through `_hud_invoke`. A frame that moves
+## only the history re-fills the open Trade tab's History list in place.
+func update_trade_history(history_variant: Variant) -> void:
+    _band_labor.set_trade_history(history_variant)
     _bandpanel.refresh_dealings()
 
 ## The goodwill section (`{known, own, cuts}`) and the treaty section (`{treaties, standing_links}`).

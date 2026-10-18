@@ -138,6 +138,8 @@ const SIGNED_AMOUNT_FORMAT := "%+.1f"
 ## A shipment's cargo clause: `12.0 food · 1.1 wood`.
 const CARGO_TERM_FORMAT := "%.1f %s"
 
+## The Trade tab's middle section: what crossed this band's store this turn.
+const THIS_TURN_HEAD := "This turn"
 const EMPTY_HEAD := "Nothing crossed this turn."
 const EMPTY_BODY := "Camps pool when one is short of what another holds; shipments appear here the turn they land or leave."
 
@@ -146,8 +148,6 @@ const CAMPS_TITLE := "The pooling network"
 const GOOD_SCOPE_TITLE_FORMAT := "%s across the network"
 ## `2 camps moved it; 2 sat even` — the first half is a `CAMP_WORDS` count.
 const GOOD_SCOPE_SUMMARY_FORMAT := "%s moved it; %d sat even"
-const LOCAL_TITLE := "Pooled this turn"
-const ROUTE_TITLE_BOTH := "Trade this turn"
 const ROUTE_TITLE_IN := "Imports this turn"
 const ROUTE_TITLE_OUT := "Exports this turn"
 const THIS_BAND_WORD := "this band"

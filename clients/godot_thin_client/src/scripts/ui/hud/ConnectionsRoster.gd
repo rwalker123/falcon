@@ -202,16 +202,24 @@ static func _fill_rows(rows: VBoxContainer, ties: Array, band_labor: HudBandLabo
 	# (`PeoplesDiplomacy`), then the bands this one knows. It is bounded by the number of peoples, so it
 	# needs no tab of its own; the ties list below stays the unbounded one.
 	var block: Control = null
+	# **TREATY PROPOSALS AWAITING THIS BAND'S ANSWER come first** (`DealingsRoster.build_treaty_block`),
+	# under the same `Waiting on an answer` head the Trade tab uses, and only where one is pending: they
+	# are the one thing on this tab with a one-turn window.
+	var proposals: Control = null
 	if not diplomacy.is_empty():
+		proposals = DealingsRoster.build_treaty_block(band_id, band_labor,
+			Dictionary(diplomacy.get("dealing_actions", {})))
 		block = PeoplesDiplomacy.build_block(band_labor, Dictionary(diplomacy.get("policy", {})),
 			Dictionary(diplomacy.get("actions", {})))
+	if proposals != null:
+		rows.add_child(proposals)
 	if block != null:
 		rows.add_child(block)
 		if not ties.is_empty():
 			rows.add_child(HudWidgets.alloc_section_label(HudDealingsVocab.BANDS_SECTION))
 	if ties.is_empty():
-		# With a diplomacy block above, "no people met" would contradict it.
-		if block == null:
+		# With a diplomacy block or a waiting proposal above, "no people met" would contradict it.
+		if block == null and proposals == null:
 			rows.add_child(HudWidgets.alloc_hint_label(HudConnectionsVocab.EMPTY))
 		return
 	var turn := band_labor.current_turn()

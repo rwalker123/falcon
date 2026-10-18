@@ -503,6 +503,15 @@ fn build_planned_delta(
         }
         rows
     });
+    // The trade history is diffed whole too: drop the LAST record and move the first one's `turn`.
+    let trade_history = witnesses.diplomacy.then(|| {
+        let mut rows: Vec<_> = snapshot.trade_history.clone();
+        rows.pop();
+        if let Some(first) = rows.first_mut() {
+            first.turn += u64::from(DELTA_DIPLOMACY_STEP);
+        }
+        rows
+    });
     let moved_goodwill = |rows: &[GoodwillState]| {
         let mut rows = rows.to_vec();
         if let Some(first) = rows.first_mut() {
@@ -552,6 +561,7 @@ fn build_planned_delta(
         own_goodwill,
         goodwill_cuts: witnesses.diplomacy.then(|| snapshot.goodwill_cuts.clone()),
         standing_links: witnesses.diplomacy.then(|| snapshot.standing_links.clone()),
+        trade_history,
         command_events,
         command_events_retention_turns: Some(plan.retention_turns),
         lineage_constants: Some(Box::new(snapshot.lineage_constants)),
@@ -841,8 +851,22 @@ mod tests {
             first.goodwill.as_ref().expect("delta 1 carries `goodwill`")[0].total,
             "delta 1's first goodwill row must read a different `total`"
         );
+        let carried_history = first
+            .trade_history
+            .as_ref()
+            .expect("delta 1 must carry `trade_history`");
+        assert!(
+            carried_history.len() < snapshot.trade_history.len(),
+            "delta 1's `trade_history` must hold FEWER records than the baseline's, or a decoder \
+             that patched instead of replacing the section would pass"
+        );
+        assert_ne!(
+            snapshot.trade_history[0].turn, carried_history[0].turn,
+            "delta 1's first trade record must read a different `turn`"
+        );
         assert!(
             second.dealings.is_none()
+                && second.trade_history.is_none()
                 && second.treaties.is_none()
                 && second.goodwill.is_none()
                 && second.own_goodwill.is_none(),

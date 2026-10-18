@@ -1,24 +1,28 @@
 class_name DealingsRoster
 extends RefCounted
 
-## **"DEALINGS" -- THE PENDING ITEMS ONE BAND TAKES PART IN, ON ITS OWN PAGE** (early diplomacy,
-## issue #233, `docs/plan_early_diplomacy.md` §7).
+## **"WAITING ON AN ANSWER" -- THE PENDING ITEMS ONE BAND TAKES PART IN** (early diplomacy, issue #233,
+## `docs/plan_early_diplomacy.md` §7).
 ##
-## All-`static`, stateless: the Dealings tab, its wide-shell section, the in-place `refill`, the badge
-## and the one ordering. The labor model is threaded in as a PARAMETER (the `ConnectionsRoster` idiom),
-## and the three answers are Callables the caller hands in -- this file builds rows and emits nothing.
+## All-`static`, stateless: the Trade tab's FIRST SECTION (offers, proposals, counters and replies), the
+## Peoples tab's block of TREATY PROPOSALS, the in-place `refill`, the badges and the one ordering. The
+## labor model is threaded in as a PARAMETER (the `ConnectionsRoster` idiom), and the answers are
+## Callables the caller hands in -- this file builds rows and emits nothing.
 ##
-## **AN UNBOUNDED LIST GETS ITS OWN TAB.** A band can hold any number of dealings, so the tab scrolls
-## with no row cap and no `+N more`, exactly as the Peoples tab does.
+## **TWO WORDS FOR ONE THING WAS THE DEFECT.** The player found "Trade" and "Dealings" to be the same
+## subject twice, so the Dealings tab is gone: a trade dealing waits on the Trade tab, above what
+## crossed this turn and the history of what was settled. A TREATY PROPOSAL is not a trade, so it waits
+## where the treaties are shown -- the Peoples tab -- under the same head.
 ##
 ## **THE ROW IS THE SIM'S, NOT THE CLIENT'S.** The turns left, the kind, the legs and which side is
 ## shipper are published; nothing here re-derives a window, a link or a leg. The two things this file
 ## decides are wording (`HudDealingsVocab`) and which actions a row offers, and the second is a
-## statement about the row's DIRECTION alone: an item addressed to this band is answered, one this band
-## sent is waited on.
+## statement about the row's DIRECTION and KIND alone: an item addressed to this band is answered, one
+## this band sent is waited on, and a reply is taken or walked away from.
 
 ## The row directions. **Incoming** is addressed to this band (it is the receiver); **outgoing** is the
-## rest -- the band sent it, or its people did.
+## rest -- the band sent it, or its people did. (On a reply the receiver is the ORIGINAL sender, the one
+## who answers, so the same rule holds.)
 const DIRECTION_INCOMING := 0
 const DIRECTION_OUTGOING := 1
 
@@ -27,6 +31,22 @@ static func direction_of(dealing: Dictionary, band_id: int) -> int:
 	if int(dealing.get("receiver_band", HudConst.NO_BAND_ID)) == band_id:
 		return DIRECTION_INCOMING
 	return DIRECTION_OUTGOING
+
+static func is_treaty(dealing: Dictionary) -> bool:
+	return String(dealing.get("kind", "")) == HudDealingsVocab.KIND_TREATY_PROPOSAL
+
+static func is_reply(dealing: Dictionary) -> bool:
+	return String(dealing.get("kind", "")) == HudDealingsVocab.KIND_REPLY
+
+## This band's dealings that are about GOODS (the Trade tab's), and its treaty proposals (the Peoples
+## tab's), each in the sim's id order.
+static func trade_rows(band_id: int, band_labor: HudBandLaborState) -> Array:
+	return band_labor.dealings_for_band(band_id).filter(
+		func(dealing: Dictionary) -> bool: return not is_treaty(dealing))
+
+static func treaty_rows(band_id: int, band_labor: HudBandLaborState) -> Array:
+	return band_labor.dealings_for_band(band_id).filter(
+		func(dealing: Dictionary) -> bool: return is_treaty(dealing))
 
 ## **THE ROSTER'S ORDER**: what waits on this band first (ids ascending: the sim's monotonic ids make
 ## it a pure function of the rows), then what this band waits on.
@@ -47,71 +67,48 @@ static func ordered(dealings: Array, band_id: int) -> Array:
 static func _id_before(a: Dictionary, b: Dictionary) -> bool:
 	return int(a.get("id", 0)) < int(b.get("id", 0))
 
-## How many dealings wait on THIS band's answer.
-static func awaiting_count(band_id: int, band_labor: HudBandLaborState) -> int:
+static func _awaiting(rows: Array, band_id: int) -> int:
 	var count := 0
-	for dealing_variant in band_labor.dealings_for_band(band_id):
+	for dealing_variant in rows:
 		if direction_of(dealing_variant as Dictionary, band_id) == DIRECTION_INCOMING:
 			count += 1
 	return count
 
-## The tab's badge: how many items wait on this band's answer (the hot case), else how many it waits
-## on, and nothing at none. Returns `{text, hot}`.
-static func badge(band_id: int, band_labor: HudBandLaborState) -> Dictionary:
-	var rows := band_labor.dealings_for_band(band_id)
-	var awaiting := awaiting_count(band_id, band_labor)
+## How many TRADE dealings wait on THIS band's answer.
+static func awaiting_count(band_id: int, band_labor: HudBandLaborState) -> int:
+	return _awaiting(trade_rows(band_id, band_labor), band_id)
+
+## How many TREATY proposals wait on this band's answer.
+static func treaty_awaiting_count(band_id: int, band_labor: HudBandLaborState) -> int:
+	return _awaiting(treaty_rows(band_id, band_labor), band_id)
+
+static func _badge_of(rows: Array, band_id: int) -> Dictionary:
+	var awaiting := _awaiting(rows, band_id)
 	if awaiting > 0:
 		return {"text": str(awaiting), "hot": true}
 	return {"text": str(rows.size()) if not rows.is_empty() else "", "hot": false}
 
-## The tab's declared scroll viewport: the zone box less the head and the gap under it, floored at the
-## parties list's own floor so an unknown or tiny box never collapses the list into a bare scrollbar.
-static func list_viewport_height(box_height: float) -> float:
-	return maxf(HudWorkVocab.PARTIES_LIST_MIN_HEIGHT,
-		box_height - HudWorkVocab.ZONE_HEAD_HEIGHT - float(HudWorkVocab.ZONE_BLOCK_SEPARATION))
+## The Trade tab's badge: how many trade items wait on this band's answer (the hot case), else how many
+## it waits on, and nothing at none. Returns `{text, hot}`.
+static func badge(band_id: int, band_labor: HudBandLaborState) -> Dictionary:
+	return _badge_of(trade_rows(band_id, band_labor), band_id)
 
-## **THE DEALINGS TAB** -- the head counting the rows, then EVERY row in a sanctioned `ScrollContainer`
-## that fills the tab. `actions` carries `accept` / `refuse` / `counter`, each a Callable taking the
-## decoded dealing.
-static func build_tab(band_id: int, band_labor: HudBandLaborState, box_height: float,
-		actions: Dictionary = {}, policy: Dictionary = {}) -> VBoxContainer:
-	var column := HudWidgets.make_zone_column()
-	column.name = HudDealingsVocab.BLOCK_NAME
-	column.add_theme_constant_override("separation", HudWorkVocab.ZONE_BLOCK_SEPARATION)
-	var rows_data := ordered(band_labor.dealings_for_band(band_id), band_id)
-	column.add_child(_build_head(rows_data.size()))
-	var gifts := _build_gift_row(policy, actions)
-	if gifts != null:
-		column.add_child(gifts)
-	var scroll := ScrollContainer.new()
-	scroll.name = HudDealingsVocab.LIST_NAME
-	scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-	scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
-	scroll.custom_minimum_size = Vector2(0.0, list_viewport_height(box_height) \
-		- (HudDealingsVocab.GIFT_ROW_HEIGHT if gifts != null else 0.0))
-	var gutter := MarginContainer.new()
-	gutter.name = HudDealingsVocab.GUTTER_NAME
-	gutter.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	gutter.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
-	gutter.add_theme_constant_override("margin_right",
-		int(scroll.get_v_scroll_bar().get_combined_minimum_size().x))
-	scroll.add_child(gutter)
-	var rows := _make_rows_box()
-	rows.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
-	gutter.add_child(rows)
-	column.add_child(scroll)
-	_fill_rows(rows, rows_data, band_labor, band_id, actions)
-	return column
+## The same rule over treaty proposals, for the Peoples tab: only the HOT half is the Peoples tab's to
+## add (`{text, hot}` with `hot` false and `""` when none waits on this band's answer).
+static func treaty_badge(band_id: int, band_labor: HudBandLaborState) -> Dictionary:
+	var awaiting := treaty_awaiting_count(band_id, band_labor)
+	if awaiting > 0:
+		return {"text": str(awaiting), "hot": true}
+	return {"text": "", "hot": false}
 
-## **THE WIDE SHELL'S SECTION** -- the same head and rows with no scroll of its own: it rides at the
-## foot of the Parties zone's sanctioned list, after the Peoples section.
+## **THE TRADE TAB'S FIRST SECTION** -- the head counting the rows, the standing gift setting, then EVERY
+## trade row (no cap, no `+N more`: the tab scrolls). `actions` carries `accept` / `refuse` /
+## `counter` and the gift toggle, each a Callable taking the decoded dealing (or the box state).
 static func build_section(band_id: int, band_labor: HudBandLaborState,
 		actions: Dictionary = {}, policy: Dictionary = {}) -> VBoxContainer:
 	var block := HudWidgets.make_zone_block()
 	block.name = HudDealingsVocab.BLOCK_NAME
-	var rows_data := ordered(band_labor.dealings_for_band(band_id), band_id)
+	var rows_data := ordered(trade_rows(band_id, band_labor), band_id)
 	block.add_child(_build_head(rows_data.size()))
 	var gifts := _build_gift_row(policy, actions)
 	if gifts != null:
@@ -121,14 +118,14 @@ static func build_section(band_id: int, band_labor: HudBandLaborState,
 	_fill_rows(rows, rows_data, band_labor, band_id, actions)
 	return block
 
-## **RE-FILL A BUILT TAB OR SECTION IN PLACE** -- the head's count and the rows, nothing else, so the
-## tab's scroll keeps its node and offset when a frame moves only the dealings.
+## **RE-FILL A BUILT SECTION IN PLACE** -- the head's count, the setting row and the rows, nothing else,
+## so the tab's scroll keeps its node and offset when a frame moves only the dealings.
 static func refill(block: Control, band_id: int, band_labor: HudBandLaborState,
 		actions: Dictionary = {}, policy: Dictionary = {}) -> void:
 	var rows := rows_box(block)
 	if block == null or rows == null or block.get_child_count() == 0:
 		return
-	var rows_data := ordered(band_labor.dealings_for_band(band_id), band_id)
+	var rows_data := ordered(trade_rows(band_id, band_labor), band_id)
 	var old_head := block.get_child(0)
 	block.remove_child(old_head)
 	old_head.queue_free()
@@ -148,6 +145,22 @@ static func refill(block: Control, band_id: int, band_labor: HudBandLaborState,
 			block.move_child(gifts, index)
 	_fill_rows(rows, rows_data, band_labor, band_id, actions)
 
+## **THE PEOPLES TAB'S BLOCK OF TREATY PROPOSALS** -- the same head and rows, the same Accept / Refuse /
+## Counter, shown ONLY where one is pending (`null` otherwise: there is nothing to say about a treaty
+## nobody proposed, and the treaties in force are the block beside it).
+static func build_treaty_block(band_id: int, band_labor: HudBandLaborState,
+		actions: Dictionary = {}) -> VBoxContainer:
+	var rows_data := ordered(treaty_rows(band_id, band_labor), band_id)
+	if rows_data.is_empty():
+		return null
+	var block := HudWidgets.make_zone_block()
+	block.name = HudDealingsVocab.TREATY_BLOCK_NAME
+	block.add_child(_build_head(rows_data.size()))
+	var rows := _make_rows_box()
+	block.add_child(rows)
+	_fill_rows(rows, rows_data, band_labor, band_id, actions)
+	return block
+
 static func rows_box(block: Node) -> VBoxContainer:
 	if block == null:
 		return null
@@ -157,7 +170,7 @@ static func _build_head(count: int) -> Control:
 	return HudWidgets.zone_head(HudDealingsVocab.HEAD,
 		HudDealingsVocab.HEAD_COUNT_FORMAT % count if count > 0 else "")
 
-## **THE STANDING ANSWER TO A GIFT FROM THE PLAYER'S OWN PEOPLE**, at the top of the tab it governs:
+## **THE STANDING ANSWER TO A GIFT FROM THE PLAYER'S OWN PEOPLE**, at the top of the section it governs:
 ## on (the sim's default), such a shipment lands on arrival; off, it waits here to be answered. It is a
 ## setting of the WHOLE people (every band), which the hover says. The state is the snapshot's
 ## (`accept_own_gifts`), every render; a press flips the box locally and emits, and the server's
@@ -207,20 +220,26 @@ static func other_band_of(dealing: Dictionary, direction: int) -> int:
 		if direction == DIRECTION_INCOMING \
 		else int(dealing.get("receiver_band", HudConst.NO_BAND_ID))
 
-## `Ashfell · Brackwater` -- the other people's name then the band of theirs it concerns, through the
-## roster's own naming rule (`HudBandLaborState.host_label_for_id`: the roster, else the name a tie
-## remembers, else where it was last seen). A raw id never reaches the label.
+## A band's name through the roster's own naming rule (`HudBandLaborState.host_label_for_id`: the roster,
+## else the name a tie remembers, else where it was last seen); a raw id never reaches the label.
+static func band_name_of(band_id: int, band_labor: HudBandLaborState) -> String:
+	var band := band_labor.host_label_for_id(band_id)
+	return band if band != "" else HudDealingsVocab.WHO_UNKNOWN_BAND
+
+## `Ashfell · Brackwater` -- the other people's name then the band of theirs it concerns.
+static func who_text_for(faction: int, band_id: int, band_labor: HudBandLaborState) -> String:
+	return HudDealingsVocab.WHO_FORMAT % [FactionMark.faction_name(faction),
+		band_name_of(band_id, band_labor)]
+
 static func who_text(dealing: Dictionary, direction: int, band_labor: HudBandLaborState) -> String:
-	var people := FactionMark.faction_name(other_faction_of(dealing, direction))
-	var band := band_labor.host_label_for_id(other_band_of(dealing, direction))
-	if band == "":
-		band = HudDealingsVocab.WHO_UNKNOWN_BAND
-	return HudDealingsVocab.WHO_FORMAT % [people, band]
+	return who_text_for(other_faction_of(dealing, direction), other_band_of(dealing, direction), band_labor)
 
 ## **WHAT THE ROW SAYS** in one sentence from the viewing band's seat: a treaty reads its terms in
-## words; an offer says what is carried and that the return is unnamed; a proposal or counter is stated
-## from the SHIPPER's point of view on the wire, so the seat decides the pronouns.
-static func what_text(dealing: Dictionary, direction: int, band_id: int) -> String:
+## words; an offer says what is carried and that the return is unnamed; a reply says what is named
+## back for what cargo; a proposal or counter is stated from the SHIPPER's point of view on the wire,
+## so the seat decides the pronouns.
+static func what_text(dealing: Dictionary, direction: int, band_id: int,
+		band_labor: HudBandLaborState = null) -> String:
 	var kind := String(dealing.get("kind", ""))
 	var incoming := direction == DIRECTION_INCOMING
 	if kind == HudDealingsVocab.KIND_TREATY_PROPOSAL:
@@ -232,6 +251,16 @@ static func what_text(dealing: Dictionary, direction: int, band_id: int) -> Stri
 		return (HudDealingsVocab.OFFER_IN_FORMAT if incoming \
 			else HudDealingsVocab.OFFER_OUT_FORMAT) % sent
 	var asked := HudDealingsVocab.goods_text(Dictionary(dealing.get("goods_asked", {})))
+	if kind == HudDealingsVocab.KIND_REPLY:
+		# `sent` is the original sender's cargo and `asked` the return the other band named. The band
+		# named on the row is the one whose seat the sentence is NOT from: whoever named the return when
+		# this band answers it, and whose party waits when this band named it.
+		var named := band_name_of(other_band_of(dealing, direction), band_labor) \
+			if band_labor != null else HudDealingsVocab.WHO_UNKNOWN_BAND
+		# The band opens the incoming sentence, so a name that falls back to `a band of theirs` takes a
+		# capital; a roster name already has one.
+		return HudDealingsVocab.REPLY_IN_FORMAT % [named.substr(0, 1).to_upper() + named.substr(1), asked, sent] \
+			if incoming else HudDealingsVocab.REPLY_OUT_FORMAT % [named, asked]
 	if int(dealing.get("shipper_band", HudConst.NO_BAND_ID)) == band_id:
 		return HudDealingsVocab.SHIPPER_FORMAT % [sent, asked]
 	return (HudDealingsVocab.CONSIGNEE_IN_FORMAT if incoming \
@@ -239,17 +268,21 @@ static func what_text(dealing: Dictionary, direction: int, band_id: int) -> Stri
 
 ## **A ROW IS TWO LINES AND, WHERE IT IS ADDRESSED HERE, AN ACTION STRIP.**
 ##   * incoming -- line 1 `← Ashfell · Brackwater ……… 1 turn left` (the window in amber beside the
-##     number it explains), line 2 what it says, then `Accept · Refuse · Counter`;
-##   * outgoing -- line 1 `→ Ashfell · Brackwater`, line 2 `Awaiting their answer · 1 turn left`.
+##     number it explains), line 2 what it says, then `Accept · Refuse · Counter` (`Take it · Walk home`
+##     on a reply);
+##   * outgoing -- line 1 `→ Ashfell · Brackwater` with what was sent clipped at the right end, line 2
+##     `Awaiting their answer · 1 turn left`. **A reply this band named** puts its turns left on line 1
+##     and the sentence it exists to say (`Waiting on … party to take your return of …`) on line 2.
 ## Every line is one line, clipped with an ellipsis, so a row cannot wrap to a third; the hover carries
 ## the whole sentence.
 static func _build_row(dealing: Dictionary, band_labor: HudBandLaborState, band_id: int,
 		actions: Dictionary) -> VBoxContainer:
 	var direction := direction_of(dealing, band_id)
 	var incoming := direction == DIRECTION_INCOMING
+	var reply := is_reply(dealing)
 	var turns := int(dealing.get("turns_left", 0))
 	var who := who_text(dealing, direction, band_labor)
-	var what := what_text(dealing, direction, band_id)
+	var what := what_text(dealing, direction, band_id, band_labor)
 	var row := VBoxContainer.new()
 	row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	row.add_theme_constant_override("separation", HudDealingsVocab.ROW_LINE_SEPARATION)
@@ -274,6 +307,8 @@ static func _build_row(dealing: Dictionary, band_labor: HudBandLaborState, band_
 		var window := _cell(HudDealingsVocab.turns_left_text(turns), HudStyle.WARN)
 		HudWidgets.set_label_tooltip(window, HudDealingsVocab.TURNS_LEFT_TOOLTIP)
 		head.add_child(window)
+	elif reply:
+		head.add_child(_cell(HudDealingsVocab.turns_left_text(turns), HudStyle.INK_FAINT))
 	else:
 		# What we sent rides line 1's right end, clipped first, so line 2 stays the one sentence the
 		# row exists to say: that nothing is owed until they answer.
@@ -284,7 +319,7 @@ static func _build_row(dealing: Dictionary, band_labor: HudBandLaborState, band_
 	row.add_child(head)
 
 	var second: Label
-	if incoming:
+	if incoming or reply:
 		second = _line_label(what, HudStyle.INK_DIM, HudWorkVocab.ALLOC_SECTION_FONT_SIZE)
 		HudWidgets.set_label_tooltip(second, "\n".join(hover))
 	else:
@@ -300,24 +335,34 @@ static func _build_row(dealing: Dictionary, band_labor: HudBandLaborState, band_
 	return row
 
 ## The incoming row's strip: `Accept · Refuse · Counter`. An offer cannot be countered (the receiver
-## names the return in its accept); every other kind can. Each is greyed with its reason where the
-## caller supplied none.
+## names the return in its accept); a REPLY cannot either, and names nothing -- it is `Take it · Walk
+## home`, which send the same accept and refuse. Every other kind has all three. Each is greyed with its
+## reason where the caller supplied none.
 static func _build_actions(dealing: Dictionary, actions: Dictionary) -> HBoxContainer:
 	var strip := HBoxContainer.new()
 	strip.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	strip.add_theme_constant_override("separation", HudWorkVocab.ZONE_HEAD_SEPARATION)
 	strip.set_meta(HudDealingsVocab.ACTION_META, int(dealing.get("id", 0)))
 	var is_offer := String(dealing.get("kind", "")) == HudDealingsVocab.KIND_OFFER
-	var entries: Array[Dictionary] = [
-		{"id": HudDealingsVocab.ANSWER_ACCEPT, "text": HudDealingsVocab.ACTION_ACCEPT,
-			"tip": HudDealingsVocab.ACCEPT_OFFER_TOOLTIP if is_offer else HudDealingsVocab.ACCEPT_TOOLTIP,
-			"ink": HudStyle.HEALTHY},
-		{"id": HudDealingsVocab.ANSWER_REFUSE, "text": HudDealingsVocab.ACTION_REFUSE,
-			"tip": HudDealingsVocab.REFUSE_TOOLTIP, "ink": HudStyle.DANGER},
-	]
-	if not is_offer:
-		entries.append({"id": HudDealingsVocab.ANSWER_COUNTER, "text": HudDealingsVocab.ACTION_COUNTER,
-			"tip": HudDealingsVocab.COUNTER_TOOLTIP, "ink": HudStyle.SIGNAL})
+	var entries: Array[Dictionary] = []
+	if is_reply(dealing):
+		entries = [
+			{"id": HudDealingsVocab.ANSWER_ACCEPT, "text": HudDealingsVocab.ACTION_TAKE_IT,
+				"tip": HudDealingsVocab.TAKE_IT_TOOLTIP, "ink": HudStyle.HEALTHY},
+			{"id": HudDealingsVocab.ANSWER_REFUSE, "text": HudDealingsVocab.ACTION_WALK_HOME,
+				"tip": HudDealingsVocab.WALK_HOME_TOOLTIP, "ink": HudStyle.DANGER},
+		]
+	else:
+		entries = [
+			{"id": HudDealingsVocab.ANSWER_ACCEPT, "text": HudDealingsVocab.ACTION_ACCEPT,
+				"tip": HudDealingsVocab.ACCEPT_OFFER_TOOLTIP if is_offer else HudDealingsVocab.ACCEPT_TOOLTIP,
+				"ink": HudStyle.HEALTHY},
+			{"id": HudDealingsVocab.ANSWER_REFUSE, "text": HudDealingsVocab.ACTION_REFUSE,
+				"tip": HudDealingsVocab.REFUSE_TOOLTIP, "ink": HudStyle.DANGER},
+		]
+		if not is_offer:
+			entries.append({"id": HudDealingsVocab.ANSWER_COUNTER, "text": HudDealingsVocab.ACTION_COUNTER,
+				"tip": HudDealingsVocab.COUNTER_TOOLTIP, "ink": HudStyle.SIGNAL})
 	for entry in entries:
 		var callback: Callable = actions.get(entry["id"], Callable())
 		var link := HudWidgets.build_inline_link(String(entry["text"]), entry["ink"] as Color,

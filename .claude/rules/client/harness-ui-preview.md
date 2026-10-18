@@ -3900,8 +3900,26 @@ is asserted by EQUALITY through the real `Main` builder**: a payload can be perf
 into a line the server's parser refuses (the same lines were also fed to `parse_command_line` once, in a
 throwaway test, and all parse).
 
-- **The gift setting is judged on the Dealings tab** (`dealings_faction_page` asserts it is NOT on the
-  faction page; `dealings_gift_setting` / `_off` assert it is the first row under the head, labelled in the
+- **THE DEALINGS TAB IS GONE; THE CHAPTER KEEPS ITS NAME.** What it walks is the merged Trade tab
+  (`Waiting on an answer`, `This turn`, `History`, in one scroll) and the Peoples tab's treaty proposals.
+  `dealings_tab` asserts the three sections in order, the one sanctioned scroll, no SHORT tier, the six
+  TRADE rows (a treaty proposal is not among them) and the Trade badge counting the four trade items that
+  wait on the band, hot. `dealings_reply` drives the reply row: an incoming reply reads `<band> would give
+  back <return> for your <cargo>` with `Take it` / `Walk home` and no counter, pressing them sends the
+  bare `answer_dealing 0 16 accept` / `refuse` with their own receipts, and the outgoing one reads
+  `Waiting on <band>'s party to take your return of <return>` with no action. `dealings_history` scrolls
+  the tab to its foot and asserts every record of THIS band newest first (another band's is absent), the
+  outcome words and inks, `gave … · got …` against `offered … for …` with an empty side left out, the
+  same-people record read from both ends, and that a history-only frame refills the list in place (same
+  scroll node, same offset, one more row). `dealings_tab_empty` is both empty states (`Nothing waiting`,
+  `No trades yet`), each under its head, with the Trade badge gone. `dealings_peoples_treaty` is the
+  treaty proposal on the Peoples tab: first on the tab, under `Waiting on an answer`, the same three
+  actions, the Peoples badge counting it hot, and absent (the badge back to the tie count) once none
+  waits. The feed block asserts the Notable set (`offered`, `accepted`, `refused`, `declined`,
+  `expired`, `failed`, and a reply addressed to you) against the Routine one (`posted`, `withdrawn`,
+  `settled`).
+- **The gift setting is judged on the Trade tab** (`dealings_faction_page` asserts it is NOT on the
+  faction page; `dealings_gift_setting` / `_off` assert it is the first row under the waiting head, labelled in the
   player's words, followed by the snapshot, with a hover that says what turning it on does, and that
   turning it off emits `set_accept_own_gifts 0 off`).
 - **The dock is moved on purpose.** The harness's 1500px canvas clips the right dock, so the tab, the
@@ -3909,9 +3927,9 @@ throwaway test, and all parse).
   covered by a left dock) with it RIGHT. `set_dock(SIDE_LEFT)` precedes everything: a panel built after
   another chapter inherits that chapter's persisted edge, and `set_dock` on the edge it already holds emits
   no reservation, so the HUD would not yield.
-- **Five states, five kinds**: an offer addressed to the player, a proposal, a counter to the player's own
-  proposal (the player is the shipper, so the legs swap seats), a treaty proposal carried by an envoy, and an
-  outgoing offer. Each is the others' control: the assertions are that incoming sorts first, that an offer
+- **Seven states, five kinds plus the reply**: an offer addressed to the player, a proposal, a counter to the
+  player's own proposal (the player is the shipper, so the legs swap seats), a treaty proposal carried by an
+  envoy, an outgoing offer, and a reply in each direction. Each is the others' control: the assertions are that incoming sorts first, that an offer
   has no Counter, that the window is amber beside its number, that rows are two lines of copy, and that no
   row prints a raw id.
 - **The answer sheet is driven through the row's own buttons and the picker's own `+`**, and ends in the

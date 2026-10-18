@@ -1,5 +1,5 @@
-//! `dealings`, `goodwill` and `treaties` sections -- early diplomacy (issue #233,
-//! `docs/plan_early_diplomacy.md`), one module because the three are one arc and every converter
+//! `dealings`, `goodwill`, `treaties` and `trade_history` sections -- early diplomacy (issue #233,
+//! `docs/plan_early_diplomacy.md`), one module because the four are one arc and every converter
 //! shares the goods-list and treaty-terms shapes.
 //!
 //! **A goods list is never a summed value.** `food` and `fodder` are two accounts that never
@@ -77,6 +77,29 @@ pub(crate) fn dealings_to_array(
         let _ = dict.insert("treaty", &treaty_terms_to_dict(dealing.treaty()));
         // "road" | "envoy" on a treaty proposal, "" on every other kind.
         let _ = dict.insert("carrier", dealing.carrier().unwrap_or_default());
+        array.push(&dict.to_variant());
+    }
+    array
+}
+
+/// `[{turn, own_band, other_faction, other_band, dealing_id, outcome, goods_out, goods_in}]`, oldest
+/// first, exactly as the sim published it (a whole-section replace on both paths). `outcome` is the
+/// sim's token (`exchanged`, `gift_given`, ...); the goods lists are the proposal-leg form (unrated
+/// material rows) and are always a full dict, so a reader never branches on "no goods".
+pub(crate) fn trade_history_to_array(
+    list: Vector<'_, ForwardsUOffset<fb::TradeRecordState<'_>>>,
+) -> VarArray {
+    let mut array = VarArray::new();
+    for record in list {
+        let mut dict = VarDictionary::new();
+        let _ = dict.insert("turn", record.turn() as i64);
+        let _ = dict.insert("own_band", record.ownBand() as i64);
+        let _ = dict.insert("other_faction", record.otherFaction() as i64);
+        let _ = dict.insert("other_band", record.otherBand() as i64);
+        let _ = dict.insert("dealing_id", record.dealingId() as i64);
+        let _ = dict.insert("outcome", record.outcome().unwrap_or_default());
+        let _ = dict.insert("goods_out", &goods_to_dict(record.goodsOut()));
+        let _ = dict.insert("goods_in", &goods_to_dict(record.goodsIn()));
         array.push(&dict.to_variant());
     }
     array

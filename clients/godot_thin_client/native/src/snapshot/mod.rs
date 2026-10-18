@@ -20,7 +20,9 @@ use crate::dict::culture::{
     axis_bias_to_dict, culture_layers_to_array, culture_tensions_to_array, influencers_to_array,
     sentiment_to_dict,
 };
-use crate::dict::dealings::{dealings_to_array, goodwill_to_dict, treaties_to_dict};
+use crate::dict::dealings::{
+    dealings_to_array, goodwill_to_dict, trade_history_to_array, treaties_to_dict,
+};
 use crate::dict::deposits::deposits_to_array;
 use crate::dict::economy::faction_inventory_to_array;
 use crate::dict::fixed64_to_f32;
@@ -1650,6 +1652,10 @@ pub(crate) fn snapshot_to_dict(
     }
     if let Some(treaties) = snapshot.treaties() {
         let _ = dict.insert("treaties", &treaties_to_dict(treaties));
+    }
+    // The viewer's people's trade history, oldest first: a whole-section replace like `dealings`.
+    if let Some(records) = snapshot.tradeHistory().and_then(|s| s.records()) {
+        let _ = dict.insert("trade_history", &trade_history_to_array(records));
     }
 
     // ...and the improvements on TILE-kind branches, the same section and the same whole-section

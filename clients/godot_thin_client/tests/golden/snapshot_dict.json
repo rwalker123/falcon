@@ -14812,6 +14812,272 @@
       "y": 2
     }
   ],
+  "trade_history": [
+    {
+      "dealing_id": 133,
+      "goods_in": {
+        "fodder": 44.610001,
+        "food": 1.37,
+        "materials": [
+          {
+            "amount": 2.91,
+            "material_id": "hide",
+            "readings": [
+              {
+                "axis": "trade_history[0].goods_in.materials[0].readings[0].axis",
+                "band_name": "trade_history[0].goods_in.materials[0].readings[0].band_name",
+                "value": 11.36
+              },
+              {
+                "axis": "trade_history[0].goods_in.materials[0].readings[1].axis",
+                "band_name": "trade_history[0].goods_in.materials[0].readings[1].band_name",
+                "value": 69.239998
+              }
+            ],
+            "variety_name": "trade_history[0].goods_in.materials[0].variety_name"
+          },
+          {
+            "amount": 41.720001,
+            "material_id": "fibre",
+            "readings": [
+              {
+                "axis": "trade_history[0].goods_in.materials[1].readings[0].axis",
+                "band_name": "trade_history[0].goods_in.materials[1].readings[0].band_name",
+                "value": 35.450001
+              },
+              {
+                "axis": "trade_history[0].goods_in.materials[1].readings[1].axis",
+                "band_name": "trade_history[0].goods_in.materials[1].readings[1].band_name",
+                "value": 108.650002
+              }
+            ],
+            "variety_name": "trade_history[0].goods_in.materials[1].variety_name"
+          }
+        ]
+      },
+      "goods_out": {
+        "fodder": 55.619999,
+        "food": 18.17,
+        "materials": [
+          {
+            "amount": 100.529999,
+            "material_id": "hide",
+            "readings": [
+              {
+                "axis": "trade_history[0].goods_out.materials[0].readings[0].axis",
+                "band_name": "trade_history[0].goods_out.materials[0].readings[0].band_name",
+                "value": 8.46
+              },
+              {
+                "axis": "trade_history[0].goods_out.materials[0].readings[1].axis",
+                "band_name": "trade_history[0].goods_out.materials[0].readings[1].band_name",
+                "value": 63.209999
+              }
+            ],
+            "variety_name": "trade_history[0].goods_out.materials[0].variety_name"
+          },
+          {
+            "amount": 12.2,
+            "material_id": "fibre",
+            "readings": [
+              {
+                "axis": "trade_history[0].goods_out.materials[1].readings[0].axis",
+                "band_name": "trade_history[0].goods_out.materials[1].readings[0].band_name",
+                "value": 59.950001
+              },
+              {
+                "axis": "trade_history[0].goods_out.materials[1].readings[1].axis",
+                "band_name": "trade_history[0].goods_out.materials[1].readings[1].band_name",
+                "value": 19.08
+              }
+            ],
+            "variety_name": "trade_history[0].goods_out.materials[1].variety_name"
+          }
+        ]
+      },
+      "other_band": 91,
+      "other_faction": 24,
+      "outcome": "trade_history[0].outcome",
+      "own_band": 29,
+      "turn": 6
+    },
+    {
+      "dealing_id": 192,
+      "goods_in": {
+        "fodder": 63.560001,
+        "food": 51.380001,
+        "materials": [
+          {
+            "amount": 14.81,
+            "material_id": "hide",
+            "readings": [
+              {
+                "axis": "trade_history[1].goods_in.materials[0].readings[0].axis",
+                "band_name": "trade_history[1].goods_in.materials[0].readings[0].band_name",
+                "value": 53.380001
+              },
+              {
+                "axis": "trade_history[1].goods_in.materials[0].readings[1].axis",
+                "band_name": "trade_history[1].goods_in.materials[0].readings[1].band_name",
+                "value": 14.5
+              }
+            ],
+            "variety_name": "trade_history[1].goods_in.materials[0].variety_name"
+          },
+          {
+            "amount": 43.66,
+            "material_id": "fibre",
+            "readings": [
+              {
+                "axis": "trade_history[1].goods_in.materials[1].readings[0].axis",
+                "band_name": "trade_history[1].goods_in.materials[1].readings[0].band_name",
+                "value": 104.050003
+              },
+              {
+                "axis": "trade_history[1].goods_in.materials[1].readings[1].axis",
+                "band_name": "trade_history[1].goods_in.materials[1].readings[1].band_name",
+                "value": 20.969999
+              }
+            ],
+            "variety_name": "trade_history[1].goods_in.materials[1].variety_name"
+          }
+        ]
+      },
+      "goods_out": {
+        "fodder": 27.450001,
+        "food": 91.699997,
+        "materials": [
+          {
+            "amount": 0.04,
+            "material_id": "hide",
+            "readings": [
+              {
+                "axis": "trade_history[1].goods_out.materials[0].readings[0].axis",
+                "band_name": "trade_history[1].goods_out.materials[0].readings[0].band_name",
+                "value": 33.25
+              },
+              {
+                "axis": "trade_history[1].goods_out.materials[0].readings[1].axis",
+                "band_name": "trade_history[1].goods_out.materials[0].readings[1].band_name",
+                "value": 30.940001
+              }
+            ],
+            "variety_name": "trade_history[1].goods_out.materials[0].variety_name"
+          },
+          {
+            "amount": 62.23,
+            "material_id": "fibre",
+            "readings": [
+              {
+                "axis": "trade_history[1].goods_out.materials[1].readings[0].axis",
+                "band_name": "trade_history[1].goods_out.materials[1].readings[0].band_name",
+                "value": 24.75
+              },
+              {
+                "axis": "trade_history[1].goods_out.materials[1].readings[1].axis",
+                "band_name": "trade_history[1].goods_out.materials[1].readings[1].band_name",
+                "value": 35.290001
+              }
+            ],
+            "variety_name": "trade_history[1].goods_out.materials[1].variety_name"
+          }
+        ]
+      },
+      "other_band": 102,
+      "other_faction": 19,
+      "outcome": "trade_history[1].outcome",
+      "own_band": 24,
+      "turn": 131
+    },
+    {
+      "dealing_id": 23,
+      "goods_in": {
+        "fodder": 30.780001,
+        "food": 3.22,
+        "materials": [
+          {
+            "amount": 100.190002,
+            "material_id": "hide",
+            "readings": [
+              {
+                "axis": "trade_history[2].goods_in.materials[0].readings[0].axis",
+                "band_name": "trade_history[2].goods_in.materials[0].readings[0].band_name",
+                "value": 81.459999
+              },
+              {
+                "axis": "trade_history[2].goods_in.materials[0].readings[1].axis",
+                "band_name": "trade_history[2].goods_in.materials[0].readings[1].band_name",
+                "value": 63.41
+              }
+            ],
+            "variety_name": "trade_history[2].goods_in.materials[0].variety_name"
+          },
+          {
+            "amount": 50.360001,
+            "material_id": "fibre",
+            "readings": [
+              {
+                "axis": "trade_history[2].goods_in.materials[1].readings[0].axis",
+                "band_name": "trade_history[2].goods_in.materials[1].readings[0].band_name",
+                "value": 90.110001
+              },
+              {
+                "axis": "trade_history[2].goods_in.materials[1].readings[1].axis",
+                "band_name": "trade_history[2].goods_in.materials[1].readings[1].band_name",
+                "value": 111.019997
+              }
+            ],
+            "variety_name": "trade_history[2].goods_in.materials[1].variety_name"
+          }
+        ]
+      },
+      "goods_out": {
+        "fodder": 47.419998,
+        "food": 88.980003,
+        "materials": [
+          {
+            "amount": 37.630001,
+            "material_id": "hide",
+            "readings": [
+              {
+                "axis": "trade_history[2].goods_out.materials[0].readings[0].axis",
+                "band_name": "trade_history[2].goods_out.materials[0].readings[0].band_name",
+                "value": 65.959999
+              },
+              {
+                "axis": "trade_history[2].goods_out.materials[0].readings[1].axis",
+                "band_name": "trade_history[2].goods_out.materials[0].readings[1].band_name",
+                "value": 102.839996
+              }
+            ],
+            "variety_name": "trade_history[2].goods_out.materials[0].variety_name"
+          },
+          {
+            "amount": 86.199997,
+            "material_id": "fibre",
+            "readings": [
+              {
+                "axis": "trade_history[2].goods_out.materials[1].readings[0].axis",
+                "band_name": "trade_history[2].goods_out.materials[1].readings[0].band_name",
+                "value": 80.089996
+              },
+              {
+                "axis": "trade_history[2].goods_out.materials[1].readings[1].axis",
+                "band_name": "trade_history[2].goods_out.materials[1].readings[1].band_name",
+                "value": 92.370003
+              }
+            ],
+            "variety_name": "trade_history[2].goods_out.materials[1].variety_name"
+          }
+        ]
+      },
+      "other_band": 29,
+      "other_faction": 190,
+      "outcome": "trade_history[2].outcome",
+      "own_band": 19,
+      "turn": 156
+    }
+  ],
   "treaties": {
     "standing_links": [
       {

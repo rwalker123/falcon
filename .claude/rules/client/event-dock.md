@@ -1269,10 +1269,16 @@ with the reduced mark, and the phrase table says "their home band is gone".
 
 Two kinds, both **Routine** in `RUNG_BY_KIND` (stated rather than left to the default): a post, an answer,
 a lapse, a settled exchange, a treaty formed or amended are receipts for things the player asked for or
-already saw on the Dealings tab. Two moments are lifted by the DETAIL, never by the kind:
+already saw on the Trade tab. The moments that matter are lifted by the DETAIL, never by the kind:
 
-- **`status=offered` is Notable** (`HudEventVocab.is_offered_to_us`, read by `EventDockPanel._resolve_rung`):
-  the sim writes it to the RECEIVER alone and silence refuses the item after one turn. It is not in
+- **A dealing's `offered`, `accepted`, `refused`, `declined`, `expired` and `failed` are Notable; `posted`,
+  `withdrawn` and `countered` stay Routine** (`HudEventVocab.is_notable_dealing_line` over
+  `DEALING_NOTABLE_STATUS_TOKENS`, read by `EventDockPanel._resolve_rung`; a TREATY line is Notable only on
+  `status=offered`). `offered` is written to the RECEIVER alone and silence refuses the item after one turn;
+  the others say a bargain landed or fell through. A reply (`kind=reply`) is an ordinary dealing line: the
+  sim posts `offered` to the original sender, `posted` to the namer, then `accepted` / `declined` /
+  `expired` / `failed reason=receiver_short` to both and `withdrawn` to the namer. Their phrases
+  (`DETAIL_VALUE_LABELS`: `declined` reads `turned down`) continue the label. It is not in
   `DETAIL_STATUS_STYLE`, because that table's glyph is the rung's warning mark (`▾` on Notable, "less than you
   had") and an iff test over it requires every entry to track that; an offer takes the Notable rung's own
   `✦` and signal ink.

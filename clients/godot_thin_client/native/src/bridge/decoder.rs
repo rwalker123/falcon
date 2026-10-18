@@ -15,7 +15,9 @@ use crate::dict::culture::{
     axis_bias_to_dict, culture_layers_to_array, culture_tensions_to_array, influencers_to_array,
     sentiment_to_dict,
 };
-use crate::dict::dealings::{dealings_to_array, goodwill_delta_dict, treaties_delta_dict};
+use crate::dict::dealings::{
+    dealings_to_array, goodwill_delta_dict, trade_history_to_array, treaties_delta_dict,
+};
 use crate::dict::deposits::deposits_to_array;
 use crate::dict::economy::faction_inventory_to_array;
 use crate::dict::governance::{
@@ -884,6 +886,11 @@ fn decode_delta_against(
     // "nothing pending / no treaty now". No emptiness gate.
     if let Some(dealings) = delta.dealings().and_then(|s| s.dealings()) {
         frame.insert_changed("dealings", &dealings_to_array(dealings));
+    }
+    // The trade history is diffed whole by the sim: the list rides only when it moved, and
+    // present-and-EMPTY means "no records now".
+    if let Some(records) = delta.tradeHistory().and_then(|s| s.records()) {
+        frame.insert_changed("trade_history", &trade_history_to_array(records));
     }
     // `goodwill` and `treaties` are tables the codec always writes, with each part an "absent =
     // unchanged" Option, so they merge over the held dict part by part (see `goodwill_delta_dict`).

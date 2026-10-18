@@ -441,7 +441,7 @@ func _assert_delta_chain(decoder: Object, baseline: Dictionary) -> bool:
 ## none, so their survival there is the merge starting from the frame before it, and an unchanged
 ## section staying out of `changed_sections` is the sparse half. Every probe is read as a plain value
 ## immediately, since merged arrays share row dictionaries between frames.
-const DIPLOMACY_SECTIONS := ["dealings", "goodwill", "treaties"]
+const DIPLOMACY_SECTIONS := ["dealings", "goodwill", "treaties", "trade_history"]
 
 func _diplomacy_probe(frame: Dictionary) -> Dictionary:
 	var dealings: Array = frame.get("dealings", [])
@@ -450,7 +450,10 @@ func _diplomacy_probe(frame: Dictionary) -> Dictionary:
 	var own: Array = goodwill.get("own", [])
 	var treaties: Dictionary = frame.get("treaties", {})
 	var treaty_rows: Array = treaties.get("treaties", [])
+	var history: Array = frame.get("trade_history", [])
 	return {
+		"history_count": history.size(),
+		"history_first_turn": int(history[0].get("turn", -1)) if not history.is_empty() else -1,
 		"dealing_count": dealings.size(),
 		"dealing_turns_left": int(dealings[0].get("turns_left", -1)) if not dealings.is_empty() else -1,
 		"known_total": float(known[0].get("total", 0.0)) if not known.is_empty() else 0.0,
@@ -479,7 +482,10 @@ func _assert_diplomacy_witnesses(baseline: Dictionary, frame1: Dictionary, frame
 	if int(after_1["dealing_count"]) != int(before["dealing_count"]) - 1:
 		_die("delta 1 replaced `dealings` with %d rows, but the merged frame holds %d: the section must be REPLACED whole, since a dealing the delta no longer lists is one the sim retired." % [int(before["dealing_count"]) - 1, int(after_1["dealing_count"])])
 		return false
-	for probe in ["dealing_turns_left", "known_total", "own_total", "treaty_formed"]:
+	if int(before["history_count"]) == 0 or int(after_1["history_count"]) != int(before["history_count"]) - 1:
+		_die("delta 1 replaced `trade_history` with %d records, but the merged frame holds %d (baseline %d): the section must be REPLACED whole." % [int(before["history_count"]) - 1, int(after_1["history_count"]), int(before["history_count"])])
+		return false
+	for probe in ["history_first_turn", "dealing_turns_left", "known_total", "own_total", "treaty_formed"]:
 		if after_1[probe] == before[probe]:
 			_die("delta 1's `%s` reads %s, the BASELINE's value, so the diplomacy section never reached the merged frame." % [probe, str(after_1[probe])])
 			return false

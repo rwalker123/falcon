@@ -382,24 +382,19 @@ const HEADER_HEIGHT_FALLBACK := 44.0
 const ZONE_BAND := &"band"
 const ZONE_WORK := &"work"
 const ZONE_PARTIES := &"parties"
-## The band page's Trade zone (issue #731). A band declares it `ZONE_SPEC_NARROW_ONLY`: a tab in the
-## narrow shell, and no flank of its own in the wide one.
+## The band page's Trade zone (issue #731, merged with the retired Dealings zone). A band declares it
+## `ZONE_SPEC_NARROW_ONLY`: a tab in the narrow shell, and no flank of its own in the wide one.
 const ZONE_TRADE := &"trade"
 ## The band page's Peoples zone (issue #549) — the ties the band holds. NARROW-ONLY like Trade: a tab in
 ## the narrow shell, a section under Parties (after Trade's) in the wide one.
 const ZONE_PEOPLES := &"peoples"
-## The band page's Dealings zone (early diplomacy, issue #233) -- the pending items this band takes part
-## in. NARROW-ONLY like Peoples: a tab in the narrow shell, a section under Parties (after Peoples') in
-## the wide one.
-const ZONE_DEALINGS := &"dealings"
 ## Every zone key the panel knows. **The persisted tab is validated against THIS rather than against
 ## the live layout**, because prefs load before any subject has declared one — the only layout
 ## standing at that moment is the bootstrap `DEFAULT_ZONE_LAYOUT`, and a player who left on the
 ## faction page's `parties` tab must have that selection survive a check against a layout no subject
 ## has authored yet. A key the live layout lacks is handled by `_effective_tab`, which falls back to
 ## the first zone that has content.
-const ZONE_KEYS: Array[StringName] = [ZONE_BAND, ZONE_WORK, ZONE_PARTIES, ZONE_TRADE, ZONE_PEOPLES,
-		ZONE_DEALINGS]
+const ZONE_KEYS: Array[StringName] = [ZONE_BAND, ZONE_WORK, ZONE_PARTIES, ZONE_TRADE, ZONE_PEOPLES]
 ## A zone descriptor's fields (`set_zone_layout`). Named consts rather than bare strings, the
 ## `HudWidgets.MENU_ENTRY_*` idiom: a mistyped key in a Dictionary literal is silent.
 const ZONE_SPEC_KEY := "key"

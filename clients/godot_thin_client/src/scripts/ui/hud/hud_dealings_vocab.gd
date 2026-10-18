@@ -2,7 +2,8 @@ class_name HudDealingsVocab
 extends RefCounted
 
 ## **THE DEALINGS VOCABULARY** (early diplomacy, issue #233, `docs/plan_early_diplomacy.md` §7) -- the
-## band page's Dealings tab, the answer sheet it opens, the trade sheet's offer and propose modes, the
+## band page's Trade tab (its "Waiting on an answer" and "History" sections), the Peoples tab's block of
+## treaty proposals awaiting an answer, the answer sheet they open, the trade sheet's offer and propose modes, the
 ## scout sheet's pack, the faction page's gift toggle and the turn orb's "a people awaits your answer"
 ## row. `DealingsRoster` is the tab's one reader; `BandPanelController` the sheets'.
 ##
@@ -13,8 +14,10 @@ extends RefCounted
 
 # ---- THE WIRE'S TOKENS ------------------------------------------------------------------------------
 ## `DealingState.kind`. A treaty proposal is the one kind whose terms ride `treaty` rather than the two
-## goods lists.
+## goods lists. A REPLY is the receiver's named return, posted back to the original sender: the sender
+## takes it or walks home, and it cannot be countered.
 const KIND_OFFER := "offer"
+const KIND_REPLY := "reply"
 const KIND_PROPOSAL := "proposal"
 const KIND_COUNTER := "counter"
 const KIND_TREATY_PROPOSAL := "treaty_proposal"
@@ -54,16 +57,16 @@ const ANSWER_ACCEPT := "accept"
 const ANSWER_REFUSE := "refuse"
 const ANSWER_COUNTER := "counter"
 
-# ---- THE TAB -----------------------------------------------------------------------------------------
-const ZONE_TAB_DEALINGS := "Dealings"
-const HEAD := "Dealings"
+# ---- THE WAITING SECTION -------------------------------------------------------------------------------
+## The Trade tab's first section and the Peoples tab's block of treaty proposals share one head: both are
+## the items that wait on an answer.
+const HEAD := "Waiting on an answer"
 const HEAD_COUNT_FORMAT := "%d"
-const EMPTY := "Nothing is waiting on an answer."
-## Node names the harness finds the tab's pieces by, and the metadata on a row (value: the dealing id).
+const EMPTY := "Nothing waiting"
+## Node names the harness finds the pieces by, and the metadata on a row (value: the dealing id).
 const BLOCK_NAME := "DealingsRoster"
 const ROWS_NAME := "DealingsRosterRows"
-const LIST_NAME := "DealingsList"
-const GUTTER_NAME := "DealingsListGutter"
+const TREATY_BLOCK_NAME := "TreatyProposals"
 const ROW_META := &"dealings_row"
 const ACTION_META := &"dealings_action"
 ## The row's gap between its lines (none: they are one row) and its separator glyph.
@@ -94,6 +97,10 @@ const OUTGOING_TOOLTIP := "Waiting on them. Nothing to do until they answer."
 const NOTHING := "nothing"
 const OFFER_IN_FORMAT := "Offers %s · you name what comes back"
 const OFFER_OUT_FORMAT := "You offered %s · they name what comes back"
+## A REPLY, from the seat of the band that answers it (the band that named the return, the return, the
+## cargo it is for) and of the band that named the return (the party's band, the return).
+const REPLY_IN_FORMAT := "%s would give back %s for your %s"
+const REPLY_OUT_FORMAT := "Waiting on %s's party to take your return of %s"
 const SHIPPER_FORMAT := "You send %s · you get %s"
 const CONSIGNEE_IN_FORMAT := "They send %s · they want %s from you"
 const CONSIGNEE_OUT_FORMAT := "They send %s · you send back %s"
@@ -124,6 +131,11 @@ const ACCEPT_OFFER_TOOLTIP := "Take the cargo, and choose what you send back -- 
 const ACCEPT_TOOLTIP := "Agree to the terms as written."
 const REFUSE_TOOLTIP := "Turn them down. A shipment goes home with its cargo."
 const COUNTER_TOOLTIP := "Answer with different terms. It costs a turn."
+## A reply is taken or walked away from: never countered, and no return to name.
+const ACTION_TAKE_IT := "Take it"
+const ACTION_WALK_HOME := "Walk home"
+const TAKE_IT_TOOLTIP := "Take what they name: the exchange settles now."
+const WALK_HOME_TOOLTIP := "Turn the return down. The party walks home with its cargo."
 
 # ---- THE ANSWER SHEET ----------------------------------------------------------------------------------
 ## The sheet opens as a verb sheet of its own mission, off the action bar -- the station sheet's shape.
@@ -197,7 +209,6 @@ const ACCEPT_GIFTS_COMMAND_MESSAGE_OFF := "Gifts from your own people will wait 
 const GIFT_ROW_NAME := "DealingsGiftSetting"
 const GIFT_TOGGLE_META := &"dealings_gift_toggle"
 const ACTION_ACCEPT_GIFTS := "accept_gifts"
-const GIFT_ROW_HEIGHT := 26.0
 const ACCEPT_GIFTS_TOKEN_ON := "on"
 const ACCEPT_GIFTS_TOKEN_OFF := "off"
 
@@ -210,14 +221,68 @@ const ATTENTION_DETAIL_FORMAT := "%s · %s"
 ## puts its own `Advance` footer off it).
 const ATTENTION_MAX_ROWS := 3
 const ATTENTION_OVERFLOW_LABEL_FORMAT := "%d more dealings await your answer"
-const ATTENTION_OVERFLOW_DETAIL := "Open the Dealings tab"
+const ATTENTION_OVERFLOW_DETAIL := "Open the Trade tab"
 
 # ---- COMMAND RECEIPTS ---------------------------------------------------------------------------------------
 const ANSWER_MESSAGE_ACCEPT := "Accepted the dealing."
 const ANSWER_MESSAGE_ACCEPT_GIFT := "Accepted the dealing as a gift."
 const ANSWER_MESSAGE_REFUSE := "Refused the dealing."
 const ANSWER_MESSAGE_COUNTER := "Countered the dealing."
+const ANSWER_MESSAGE_TAKE_RETURN := "Took the return."
+const ANSWER_MESSAGE_WALK_HOME := "Walked home with the cargo."
 const PROPOSE_MESSAGE_FORMAT := "Propose a trade to %s: %s for %s."
+
+# ---- THE HISTORY SECTION ---------------------------------------------------------------------------------
+## The Trade tab's third section: one record per trade, from this people's point of view.
+const HISTORY_HEAD := "History"
+const HISTORY_EMPTY := "No trades yet"
+const HISTORY_BLOCK_NAME := "TradeHistory"
+const HISTORY_ROWS_NAME := "TradeHistoryRows"
+const HISTORY_ROW_META := &"trade_history_row"
+## Line 1: `Turn 12 · Ashfell · Brackwater · Traded` -- the turn, the counterparty, the outcome. The lead
+## and the joiner are separate so the outcome word can wear its own ink; the whole line is the hover.
+const HISTORY_LEAD_FORMAT := "Turn %d · %s"
+const HISTORY_OUTCOME_JOINER := " · "
+const HISTORY_LINE_FORMAT := "Turn %d · %s · %s"
+## Line 2 where goods moved: `gave 5.0 food · got 2.0 hide`, each side omitted when it is empty.
+const HISTORY_GAVE_FORMAT := "gave %s"
+const HISTORY_GOT_FORMAT := "got %s"
+const HISTORY_SIDES_SEPARATOR := " · "
+## Line 2 where nothing moved: `offered 5.0 food for 2.0 hide`. A side that was empty is left out, and a
+## record that named only what was wanted reads `asked for 2.0 hide`.
+const HISTORY_OFFERED_FORMAT := "offered %s"
+const HISTORY_OFFERED_FOR_FORMAT := "offered %s for %s"
+const HISTORY_ASKED_FORMAT := "asked for %s"
+## `TradeRecordState.outcome`'s tokens.
+const OUTCOME_EXCHANGED := "exchanged"
+const OUTCOME_GIFT_GIVEN := "gift_given"
+const OUTCOME_GIFT_RECEIVED := "gift_received"
+const OUTCOME_DELIVERED := "delivered"
+const OUTCOME_DECLINED := "declined"
+const OUTCOME_REFUSED := "refused"
+const OUTCOME_EXPIRED := "expired"
+const OUTCOME_WITHDRAWN := "withdrawn"
+const OUTCOME_FAILED := "failed"
+## The outcome in the tab's own words.
+const OUTCOME_WORDS := {
+	OUTCOME_EXCHANGED: "Traded",
+	OUTCOME_GIFT_GIVEN: "Gift given",
+	OUTCOME_GIFT_RECEIVED: "Gift received",
+	OUTCOME_DELIVERED: "Delivered",
+	OUTCOME_DECLINED: "Declined",
+	OUTCOME_REFUSED: "Refused",
+	OUTCOME_EXPIRED: "Lapsed",
+	OUTCOME_WITHDRAWN: "Withdrawn",
+	OUTCOME_FAILED: "Failed",
+}
+## The outcomes in which goods changed hands. Every other outcome is a deal that did not happen, whose
+## goods lists state what was offered and what was asked.
+const OUTCOMES_MOVED: Array[String] = [OUTCOME_EXCHANGED, OUTCOME_GIFT_GIVEN, OUTCOME_GIFT_RECEIVED,
+	OUTCOME_DELIVERED]
+## The outcomes worn in the DANGER ink (the deal was turned down or broke) and in the faint one (it ran
+## out unanswered or was taken back); the rest wear HEALTHY, the ink Accept wears.
+const OUTCOMES_DANGER: Array[String] = [OUTCOME_DECLINED, OUTCOME_REFUSED, OUTCOME_FAILED]
+const OUTCOMES_FAINT: Array[String] = [OUTCOME_EXPIRED, OUTCOME_WITHDRAWN]
 
 # ---- PURE TEXT BUILDERS ---------------------------------------------------------------------------------------
 

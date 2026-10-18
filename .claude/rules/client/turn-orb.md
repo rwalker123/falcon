@@ -544,5 +544,5 @@ row, like the awaiting-orders rows.
   `populations` frame could arrive after the offer lapsed). `reset_world_state` empties it.
 - **The press** reaches `TurnOrbController._on_turn_orb_panel_requested`, which emits
   `dealings_focus_requested(band_id)`; `HudLayer` relays it to `BandPanelController.focus_dealings`, which
-  brings that band's page forward on its Dealings tab (the Parties flank on a wide shell, where the section
-  sits under the parties list).
+  brings that band's page forward on the tab the answer waits on: the Trade tab for a trade item, the Peoples tab for
+  a treaty proposal (the Parties flank on a wide shell, where both sit under the parties list).

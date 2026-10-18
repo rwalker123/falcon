@@ -581,7 +581,7 @@ func _resolve_rung(kind: String, detail: String) -> String:
 	if HudEventVocab.is_treaty_end(kind, detail):
 		return HudEventVocab.RUNG_NOTABLE if HudEventVocab.breach_against_us(kind, detail) \
 			else HudEventVocab.RUNG_ROUTINE
-	if HudEventVocab.is_offered_to_us(kind, detail):
+	if HudEventVocab.is_notable_dealing_line(kind, detail):
 		return HudEventVocab.RUNG_NOTABLE
 	var token := _detail_status_key(detail)
 	if token != "":

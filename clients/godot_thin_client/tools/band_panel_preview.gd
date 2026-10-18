@@ -8182,8 +8182,8 @@ func _has_label_titled(node: Node, title: String) -> bool:
 			return true
 	return false
 
-## The panel's SANCTIONED `ScrollContainer`s, by node name and by the zone each must sit under. Two,
-## and the pairing is half the claim: a scroll is only safe in a zone whose builder declares a fixed
+## The panel's SANCTIONED `ScrollContainer`s, by node name and by the zone each must sit under. The
+## pairing is half the claim: a scroll is only safe in a zone whose builder declares a fixed
 ## minimum for it, so `PartiesList` under the band zone would be as much a stray as an unnamed one.
 const SANCTIONED_SCROLLS := [
 	[HudWorkVocab.PARTIES_LIST_NAME, BandCityPanel.ZONE_PARTIES],
@@ -8192,6 +8192,9 @@ const SANCTIONED_SCROLLS := [
 	[HudWorkVocab.ROSTER_EXPANDED_SCROLL_NAME, BandCityPanel.ZONE_WORK],
 	[HudWorkVocab.WORK_SECTIONS_SCROLL_NAME, BandCityPanel.ZONE_WORK],
 	[HudConnectionsVocab.LIST_NAME, BandCityPanel.ZONE_PEOPLES],
+	# The merged Trade tab (Waiting on an answer / This turn / History) is ONE scroll; it replaced the
+	# retired Dealings tab's sanctioned list.
+	[TradeZoneController.TAB_SCROLL_NAME, BandCityPanel.ZONE_TRADE],
 ]
 
 ## GUARD: the zone model is NO-SCROLL by construction, with **exactly two sanctioned exceptions** —
@@ -8270,6 +8273,13 @@ func _assert_scroll_only_where_sanctioned() -> void:
 	_assert_band_panel("…and the PEOPLES tab scrolls its roster IFF it is mounted (mounted %s, %d found)"
 			% [str(peoples_mounted), int(counts[HudConnectionsVocab.LIST_NAME])],
 		int(counts[HudConnectionsVocab.LIST_NAME]) == (1 if peoples_mounted else 0))
+	# The Trade tab (the dealings merge) scrolls its three sections IFF it is mounted, the narrow shell
+	# on a band page; the wide shell's Trade section rides inside the parties list and owns no scroll.
+	var trade_zone: Variant = _panel._zones.get(BandCityPanel.ZONE_TRADE)
+	var trade_mounted := trade_zone is Node and _panel.is_ancestor_of(trade_zone as Node)
+	_assert_band_panel("…and the TRADE tab scrolls its three sections IFF it is mounted (mounted %s, %d found)"
+			% [str(trade_mounted), int(counts[TradeZoneController.TAB_SCROLL_NAME])],
+		int(counts[TradeZoneController.TAB_SCROLL_NAME]) == (1 if trade_mounted else 0))
 	var work_zone: Variant = _panel._zones.get(BandCityPanel.ZONE_WORK)
 	var work_mounted := work_zone is Node and _panel.is_ancestor_of(work_zone as Node)
 	var wants_list := _hud._bandpanel._queue_expanded and work_mounted

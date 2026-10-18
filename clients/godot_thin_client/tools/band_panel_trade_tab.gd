@@ -6,10 +6,11 @@ extends RefCounted
 ##
 ## The frames: the narrow tab on a busy turn, a good's hover card, the camps list (unscoped and scoped
 ## to food) hanging under its row, a folded direction and its `N more shipments` list, the empty turn,
-## the wide shell's option (iii) layout (Trade under Parties, the shell threshold still 1190), a list
-## opening UPWARD off a bottom dock's row, and the SHORT tier. The
-## claims are what a frame cannot say: which causes reached the tab, the badge's count, the tier the
-## measurement chose, the relay's first hop, the friction row, and that no zone grew a scroll.
+## the wide shell's option (iii) layout (Trade under Parties, the shell threshold still 1190) and a
+## list opening off a bottom dock's row. **The tab is ONE scroll of three sections now** (waiting on an
+## answer, this turn, history -- the Dealings tab merged in) and the SHORT tier is gone: the full tier
+## is always drawn. The claims are what a frame cannot say: which causes reached the tab, the badge
+## rule, the relay's first hop, the friction row, and that the tab owns exactly one scroll.
 
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 
@@ -88,7 +89,7 @@ const MANY_IMPORT_BASE_PARTY := 7100
 const MANY_IMPORT_AMOUNT_STEP := 1.5
 
 ## Canvases: a tall side dock (the narrow tab), the 1920 bottom dock (the wide shell), and a narrow
-## bottom dock (the tabbed shell at a strip's height, which is where the SHORT tier lands).
+## bottom dock (the tabbed shell at a strip's height, where the tab simply scrolls).
 const SIDE_CANVAS := Vector2i(1500, 900)
 const WIDE_CANVAS := Vector2i(1920, 1080)
 ## A second wide canvas to resize through and back — still wide, so the shell does not flip.
@@ -122,11 +123,14 @@ func run(harness) -> void:
 	var zone: Control = panel._zones.get(BandCityPanel.ZONE_TRADE)
 	h._assert_band_panel("the band page declares a Trade tab, and the narrow shell draws it",
 		zone != null and panel.shows_zone(BandCityPanel.ZONE_TRADE))
-	h._assert_band_panel("…in the FULL tier, on a side dock with room for it",
-		not trade.is_short_tier() and _find_named(zone, TradeZoneController.FULL_TIER_NAME) != null)
+	h._assert_band_panel("…in the FULL tier, the only tier there is",
+		_find_named(zone, TradeZoneController.FULL_TIER_NAME) != null
+			and _find_named(zone, "TradeShortTier") == null)
 	var badge: Dictionary = panel._tab_badges.get(BandCityPanel.ZONE_TRADE, {})
-	h._assert_band_panel("the tab's badge counts this turn's SHIPMENTS, both ways — 2 (got `%s`)"
-		% String(badge.get("text", "")), String(badge.get("text", "")) == "2")
+	h._assert_band_panel("the tab's badge is the DEALINGS rule, so with nothing waiting it carries none even on a busy turn (got `%s`)"
+		% String(badge.get("text", "")), String(badge.get("text", "")) == "" and not bool(badge.get("hot", false)))
+	h._assert_band_panel("the tab holds its three sections in order: waiting on an answer, this turn, history",
+		_sections_in_order(zone))
 	var goods := _metas(zone, TradeZoneController.ROW_GOOD_META)
 	h._assert_band_panel("the Local arm is one line per MOVING good, food and fodder first (got %s)" % str(goods),
 		goods == ["provisions", "fodder", "bone"])
@@ -242,6 +246,8 @@ func run(harness) -> void:
 		_find_named(zone, TradeZoneController.NETWORK_LINE_NAME) != null
 			and _text_of(zone).contains(HudTradeVocab.EMPTY_HEAD))
 	h._assert_band_panel("…and carries no badge", String(badge.get("text", "")) == "")
+	h._assert_band_panel("…while the other two sections keep their heads and say so (`Nothing waiting`, `No trades yet`)",
+		_text_of(zone).contains(HudDealingsVocab.EMPTY) and _text_of(zone).contains(HudDealingsVocab.HISTORY_EMPTY))
 
 	# ---- 5b. ONLY WHAT IS MOVING: three turns, one arm or none ----------------------------------
 	# Only piles that net EVEN moved: nothing is on the tab, so it reads as the empty turn.
@@ -276,11 +282,9 @@ func run(harness) -> void:
 	await h._settle()
 	await h._save("trade_tab_shipment_cancelled")
 	zone = panel._zones.get(BandCityPanel.ZONE_TRADE)
-	badge = panel._tab_badges.get(BandCityPanel.ZONE_TRADE, {})
 	var cancel_food: Array[String] = h._hud._disclosures.food_breakdown_lines(_subject())
-	h._assert_band_panel("a shipment cancelled in camp has no route row and no badge (badge `%s`)"
-			% String(badge.get("text", "")),
-		not _has_heading(zone, DetailFormat.TRANSFER_LABEL_ROUTE) and String(badge.get("text", "")) == ""
+	h._assert_band_panel("a shipment cancelled in camp has no route row",
+		not _has_heading(zone, DetailFormat.TRANSFER_LABEL_ROUTE)
 			and _metas(zone, TradeZoneController.ROW_SHIPMENT_META).is_empty())
 	h._assert_band_panel("…and the Food popover shows no `⇄ Trade route` row and no `Brought home` — cargo is not the party's haul",
 		not _any_line(cancel_food, DetailFormat.TRANSFER_LABEL_ROUTE)
@@ -290,15 +294,13 @@ func run(harness) -> void:
 	await h._settle()
 	await h._save("trade_tab_shipment_returned")
 	zone = panel._zones.get(BandCityPanel.ZONE_TRADE)
-	badge = panel._tab_badges.get(BandCityPanel.ZONE_TRADE, {})
 	var returned_row := _row(zone, TradeZoneController.ROW_SHIPMENT_META, NAMES[BITTERBROOK])
 	h._assert_band_panel("a return with no export in the window lists under Imports as `%s %s … %s`, counted"
 			% [HudTradeVocab.RETURN_ARROW, NAMES[BITTERBROOK], HudTradeVocab.RETURNED_SUFFIX],
 		returned_row != null and _text_of(returned_row).contains(HudTradeVocab.RETURN_ARROW)
 			and _text_of(returned_row).contains(HudTradeVocab.RETURNED_SUFFIX)
 			and _text_of(zone).contains(HudTradeVocab.IMPORTS_WORD)
-			and _find_all(returned_row, "FactionMark").size() == 1
-			and String(badge.get("text", "")) == "1")
+			and _find_all(returned_row, "FactionMark").size() == 1)
 
 	# ---- 5d. AN OPEN LIST WHOSE ROW VANISHES CLOSES ------------------------------------------------
 	h._push_bands(_network(_busy_crossings()))
@@ -330,78 +332,64 @@ func run(harness) -> void:
 	h._assert_band_panel("…no Trade flank, and the Trade content rides under Parties",
 		not panel._wide_zone_hosts.has(BandCityPanel.ZONE_TRADE)
 			and _find_named(parties, "TradeSection") != null)
-	h._assert_band_panel("…in the SHORT tier: the full tab does not fit the strip's body",
-		trade.is_short_tier() and _find_named(parties, TradeZoneController.SHORT_TIER_NAME) != null)
+	h._assert_band_panel("…and the FULL tier is drawn there whatever the strip's room (the SHORT tier is gone)",
+		_find_named(parties, TradeZoneController.FULL_TIER_NAME) != null
+			and _find_named(parties, "TradeShortTier") == null)
+	h._assert_band_panel("…with the three sections under one head, and no Dealings section anywhere",
+		_sections_in_order(_find_named(parties, "TradeSection")))
 	h._assert_scroll_only_where_sanctioned()
 	await _assert_peoples_rides_under_parties(panel)
-	trade.open_list(TradeZoneController.KIND_ROUTE_BOTH)
+	await _reveal(trade, TradeZoneController.ROW_OPENS_META, TradeZoneController.KIND_ROUTE_IN)
+	trade.open_list(TradeZoneController.KIND_ROUTE_IN)
 	await h._settle()
 	await h._settle()
 	await h._save("trade_tab_wide_route_list")
-	h._assert_band_panel("the SHORT tier's route row opens BOTH directions (%d shipments)"
-		% (BUSIEST_IMPORTS + BUSIEST_EXPORTS),
-		_metas(list, TradeZoneController.ROW_SHIPMENT_META).size() == BUSIEST_IMPORTS + BUSIEST_EXPORTS)
-	_assert_hangs_from_its_row("trade_tab_wide_route_list", trade, true)
+	h._assert_band_panel("the folded import row opens every import (%d shipments)" % BUSIEST_IMPORTS,
+		_metas(list, TradeZoneController.ROW_SHIPMENT_META).size() == BUSIEST_IMPORTS)
+	_assert_hangs_from_its_row("trade_tab_wide_route_list", trade, WANT_EITHER)
 	trade.dismiss()
 
-	# ---- 6b. A SHORT LIST NEAR THE BOTTOM EDGE STILL OPENS BELOW -------------------------------
-	# The camps list off the network line: the row sits in the strip, with far more room above it
-	# than below — and the five camps fit below anyway, so that is where it opens. Only a list that
-	# does NOT fit below (the route list above) takes the bigger side.
+	# ---- 6b. THE CAMPS LIST OFF THE WIDE SECTION'S NETWORK LINE ---------------------------------
+	await _reveal(trade, TradeZoneController.ROW_OPENS_META, TradeZoneController.KIND_CAMPS)
 	trade.open_list(TradeZoneController.KIND_CAMPS)
 	await h._settle()
 	await h._settle()
-	await h._save("trade_tab_wide_short_below")
-	var visible_screen: Rect2 = h.get_viewport().get_visible_rect()
-	var anchor := trade.anchor_rect()
-	h._assert_band_panel("precondition: the row sits near the bottom edge — more room above it than below (%.0f vs %.0f)"
-			% [anchor.position.y - visible_screen.position.y, visible_screen.end.y - anchor.end.y],
-		anchor.position.y - visible_screen.position.y > visible_screen.end.y - anchor.end.y)
-	_assert_hangs_from_its_row("trade_tab_wide_short_below", trade, false)
-	h._assert_band_panel("…and the whole list fits below, unscrolled (5 camps)",
-		list.get_child_count() == 5
-			and trade._popover_scroll.size.y >= list.get_combined_minimum_size().y - ADJACENCY_TOLERANCE)
+	await h._save("trade_tab_wide_camps")
+	_assert_hangs_from_its_row("trade_tab_wide_camps", trade, WANT_EITHER)
+	h._assert_band_panel("…and the whole camps list is in it (5 camps)", list.get_child_count() == 5)
 	trade.dismiss()
 
-	# ---- 6c. A HOVER CARD OFF A ROW INSIDE THE POPOVER -------------------------------------------
-	# The local list off the SHORT tier's own row, and a good's hover card from inside it: beside the
-	# popover, never under it.
-	trade.open_list(TradeZoneController.KIND_LOCAL)
+	# ---- 6c. A HOVER CARD OFF A GOOD'S ROW IN THE WIDE SECTION ------------------------------------
+	var bone_in_section := _row(_find_named(parties, "TradeSection"), TradeZoneController.ROW_GOOD_META, "bone")
+	await _reveal(trade, TradeZoneController.ROW_GOOD_META, "bone")
+	trade.show_hover_for(bone_in_section)
 	await h._settle()
-	await h._settle()
-	var bone_in_list := _row(list, TradeZoneController.ROW_GOOD_META, "bone")
-	trade.show_hover_for(bone_in_list)
-	await h._settle()
-	await h._save("trade_tab_wide_local_hover")
-	_assert_hangs_from_its_row("trade_tab_wide_local_hover", trade, trade.list_opened_above())
+	await h._save("trade_tab_wide_hover")
 	var hover := trade.hover_card()
-	var hover_screen := hover.get_global_rect()
-	h._assert_band_panel("…and a hover card off a row inside it never sits under the popover",
-		hover.visible and not hover_screen.intersects(trade.list_rect()))
+	h._assert_band_panel("a good's hover card off the wide section sits beside its row, never over it",
+		hover != null and hover.visible and not hover.get_global_rect().intersects(bone_in_section.get_global_rect()))
 	hover.dismiss()
-	trade.dismiss()
 
-	# ---- 6e. THE WIDE SHELL'S TIER IS CHOSEN AFTER LAYOUT -----------------------------------------
-	# A Parties column carrying its empty-parties hint (an autowrap label, which measures a word per
-	# line while its column is detached) and room enough for the FULL tier: the tier must be FULL after
-	# a snapshot render AND after a resize — one path, so the two cannot disagree.
+	# ---- 6e. THE WIDE SHELL'S SECTION IS THE SAME AFTER A RESIZE -----------------------------------
 	h._push_bands(_network(_food_only()))
 	await h._settle()
 	await h._settle()
 	parties = panel._zones.get(BandCityPanel.ZONE_PARTIES)
-	h._assert_band_panel("precondition: the Parties column carries its empty-parties hint",
-		_text_of(parties).contains(HudComposeVocab.PARTIES_EMPTY_HINT))
 	await h._save("trade_tab_wide_full_after_render")
 	h._assert_band_panel("the wide shell's Trade section is FULL after a snapshot render",
-		not trade.is_short_tier() and _find_named(parties, TradeZoneController.FULL_TIER_NAME) != null)
+		_find_named(parties, TradeZoneController.FULL_TIER_NAME) != null)
 	await h._pin_canvas(WIDE_RESIZE_CANVAS)
 	await h._settle()
 	await h._pin_canvas(WIDE_CANVAS)
 	await h._settle()
 	await h._settle()
 	parties = panel._zones.get(BandCityPanel.ZONE_PARTIES)
-	h._assert_band_panel("…and still FULL after a resize",
-		not trade.is_short_tier() and _find_named(parties, TradeZoneController.FULL_TIER_NAME) != null)
+	h._assert_band_panel("…and still FULL, with its three sections, after a resize",
+		_find_named(parties, TradeZoneController.FULL_TIER_NAME) != null
+			and _sections_in_order(_find_named(parties, "TradeSection")))
+
+	# ---- 6f. THE WIDE SHELL CARRIES THE MERGED SECTIONS, AND TREATY PROPOSALS ON PEOPLES ----------
+	await _assert_wide_sections_with_dealings(panel)
 
 	# ---- 6d. EVERY LIST AGAIN, AT A RAISED INTERFACE SCALE -------------------------------------
 	# The Options slider's own lever (`ClientSettings.ui_scale` → `UiScaler` → the window's
@@ -416,6 +404,7 @@ func run(harness) -> void:
 	for kind in [TradeZoneController.KIND_CAMPS,
 			TradeZoneController.KIND_CAMPS + TradeZoneController.KIND_SCOPE_SEPARATOR + HudTradeVocab.COMMODITY_FOOD,
 			TradeZoneController.KIND_CAMPS + TradeZoneController.KIND_SCOPE_SEPARATOR + "bone"]:
+		await _reveal(trade, TradeZoneController.ROW_OPENS_META, kind)
 		trade.open_list(kind)
 		await h._settle()
 		await h._settle()
@@ -426,6 +415,7 @@ func run(harness) -> void:
 		await h._settle()
 	h._push_bands(_network(_many_crossings()))
 	await h._settle()
+	await _reveal(trade, TradeZoneController.ROW_OPENS_META, TradeZoneController.KIND_ROUTE_IN)
 	trade.open_list(TradeZoneController.KIND_ROUTE_IN)
 	await h._settle()
 	await h._settle()
@@ -438,8 +428,9 @@ func run(harness) -> void:
 	panel.set_active_tab(BandCityPanel.ZONE_TRADE)
 	await h._settle()
 	await h._settle()
-	for kind in [TradeZoneController.KIND_ROUTE_BOTH, TradeZoneController.KIND_CAMPS,
-			TradeZoneController.KIND_LOCAL]:
+	for kind in [TradeZoneController.KIND_ROUTE_IN, TradeZoneController.KIND_ROUTE_OUT,
+			TradeZoneController.KIND_CAMPS]:
+		await _reveal(trade, TradeZoneController.ROW_OPENS_META, kind)
 		trade.open_list(kind)
 		await h._settle()
 		await h._settle()
@@ -451,7 +442,7 @@ func run(harness) -> void:
 	h._apply_ui_scale(1.0)
 	await h._settle()
 
-	# ---- 7. THE SHORT TIER IN THE TABBED SHELL ---------------------------------------------------
+	# ---- 7. THE TAB IN A STRIP-HEIGHT BODY: IT SCROLLS, IT DOES NOT SHORTEN -----------------------
 	await h._pin_canvas(NARROW_BOTTOM_CANVAS)
 	panel.set_dock(SIDE_BOTTOM)
 	panel.set_active_tab(BandCityPanel.ZONE_TRADE)
@@ -459,8 +450,10 @@ func run(harness) -> void:
 	await h._save("trade_tab_short")
 	h._assert_shell_is_wide(false, "trade_tab_short")
 	zone = panel._zones.get(BandCityPanel.ZONE_TRADE)
-	h._assert_band_panel("a narrow bottom dock's Trade tab lands in the SHORT tier, measured against its box",
-		trade.is_short_tier() and _find_named(zone, TradeZoneController.SHORT_TIER_NAME) != null)
+	var tab_scroll := _find_named(zone, TradeZoneController.TAB_SCROLL_NAME) as ScrollContainer
+	h._assert_band_panel("a narrow bottom dock's Trade tab draws the FULL tier inside its one scroll, which overflows the body",
+		_find_named(zone, TradeZoneController.FULL_TIER_NAME) != null and tab_scroll != null
+			and tab_scroll.get_v_scroll_bar().max_value - tab_scroll.get_v_scroll_bar().page > 0.0)
 	h._assert_zone_content_fits()
 
 	# ---- 8. THE FOOD OUTLOOK CHART EMPTIES WHEN THE RUNWAY SAYS IT DOES ---------------------------
@@ -509,6 +502,31 @@ func run(harness) -> void:
 	panel.set_dock(SIDE_LEFT)
 	panel.set_active_tab(BandCityPanel.ZONE_WORK)
 	h._push_bands([h._band_fixture()])
+	await h._settle()
+
+## Do the three sections stand under `root` in order -- waiting on an answer, this turn, history? The
+## heads are matched case-blind (`zone_head` upper-cases its title).
+func _sections_in_order(root: Node) -> bool:
+	var text := _text_of(root).to_lower()
+	var waiting := text.find(HudDealingsVocab.HEAD.to_lower())
+	var turn := text.find(HudTradeVocab.THIS_TURN_HEAD.to_lower())
+	var history := text.find(HudDealingsVocab.HISTORY_HEAD.to_lower())
+	return waiting >= 0 and turn > waiting and history > turn
+
+## **SCROLL THE ROW A LIST OPENS FROM INTO VIEW** before the list opens. The tab is a scroll now, so a
+## row can sit below the fold of whichever scroll holds it (the Trade tab's own, or the wide shell's
+## Parties list), and a popover anchored to a row that is not on screen is placed against nothing.
+func _reveal(trade: TradeZoneController, meta: StringName, value: Variant) -> void:
+	var column := trade._column
+	var row := _find_meta(column, meta, value)
+	if row == null:
+		return
+	var node: Node = row.get_parent()
+	while node != null:
+		if node is ScrollContainer:
+			(node as ScrollContainer).ensure_control_visible(row)
+			break
+		node = node.get_parent()
 	await h._settle()
 
 ## **THE POPOVER HANGS FROM ITS ROW** — its top one `POPOVER_GAP` under the row's bottom (or, opened
@@ -582,6 +600,85 @@ func _assert_peoples_rides_under_parties(panel: BandCityPanel) -> void:
 	h._assert_scroll_only_where_sanctioned()
 	h._hud.update_connections([])
 	await h._settle()
+
+## **THE WIDE SHELL, WITH DEALINGS AND HISTORY PUSHED** (the dealings merge): the Trade section under
+## Parties carries the waiting list, this turn and the history, NO Dealings section stands anywhere
+## under Parties, and the Peoples section carries the treaty proposal under its own `Waiting on an
+## answer`. Pushed through the real `update_dealings` / `update_trade_history` and cleared afterwards.
+func _assert_wide_sections_with_dealings(panel: BandCityPanel) -> void:
+	h._push_bands(_network(_busy_crossings()))
+	h._hud.update_dealings(_wide_dealings())
+	h._hud.update_trade_history(_wide_history())
+	h._hud.update_connections(_wide_ties())
+	await h._settle()
+	await h._settle()
+	await h._save("trade_tab_wide_sections")
+	var parties: Control = panel._zones.get(BandCityPanel.ZONE_PARTIES)
+	var section := _find_named(parties, "TradeSection")
+	h._assert_band_panel("wide shell: the Trade section carries the waiting list (2 trade items), this turn and the history (3)",
+		section != null and _sections_in_order(section)
+			and _metas(section, HudDealingsVocab.ROW_META).size() == 2
+			and _metas(section, HudDealingsVocab.HISTORY_ROW_META).size() >= 3)
+	h._assert_band_panel("…the treaty proposal is NOT in the Trade section, it waits in the Peoples section",
+		_find_meta(section, HudDealingsVocab.ROW_META, WIDE_TREATY_ID) == null
+			and _find_meta(_find_named(parties, HudConnectionsVocab.BLOCK_NAME), HudDealingsVocab.ROW_META,
+				WIDE_TREATY_ID) != null)
+	h._assert_band_panel("…and only ONE waiting-list block stands under Parties (no Dealings section)",
+		_count_named(parties, HudDealingsVocab.BLOCK_NAME) == 1)
+	h._assert_band_panel("…adding no ScrollContainer of its own",
+		_find_named(panel, TradeZoneController.TAB_SCROLL_NAME) == null)
+	h._assert_scroll_only_where_sanctioned()
+	h._hud.update_dealings([])
+	h._hud.update_trade_history([])
+	h._hud.update_connections([])
+	await h._settle()
+
+func _count_named(node: Node, wanted: String) -> int:
+	if node == null:
+		return 0
+	var count := 1 if String(node.name) == wanted else 0
+	for child in node.get_children():
+		count += _count_named(child, wanted)
+	return count
+
+const WIDE_TREATY_ID := 903
+const WIDE_OFFER_ID := 901
+const WIDE_REPLY_ID := 902
+const WIDE_PEER_ENTITY := 960
+
+func _wide_goods(food: float) -> Dictionary:
+	return {"food": food, "fodder": 0.0, "materials": []}
+
+func _wide_dealing(id: int, kind: String, goods_sent: Dictionary, goods_asked: Dictionary) -> Dictionary:
+	return {"id": id, "kind": kind, "sender_faction": FOREIGN_FACTION, "sender_band": _id(WIDE_PEER_ENTITY),
+		"receiver_faction": HudConst.PLAYER_FACTION_ID, "receiver_band": _id(ASHFELL),
+		"goods_sent": goods_sent, "goods_asked": goods_asked, "turns_left": 2,
+		"shipper_band": _id(ASHFELL) if kind == HudDealingsVocab.KIND_REPLY else 0, "party_workers": 2,
+		"treaty": {"road_rights": kind == HudDealingsVocab.KIND_TREATY_PROPOSAL, "open_borders": false,
+			"bundles": []}, "carrier": ""}
+
+func _wide_dealings() -> Array:
+	return [
+		_wide_dealing(WIDE_OFFER_ID, HudDealingsVocab.KIND_OFFER, _wide_goods(6.0), _wide_goods(0.0)),
+		_wide_dealing(WIDE_REPLY_ID, HudDealingsVocab.KIND_REPLY, _wide_goods(8.0), _wide_goods(2.0)),
+		_wide_dealing(WIDE_TREATY_ID, HudDealingsVocab.KIND_TREATY_PROPOSAL, _wide_goods(0.0), _wide_goods(0.0)),
+	]
+
+func _wide_history() -> Array:
+	var rows: Array = []
+	var outcomes := [HudDealingsVocab.OUTCOME_EXCHANGED, HudDealingsVocab.OUTCOME_DECLINED,
+		HudDealingsVocab.OUTCOME_GIFT_GIVEN]
+	for i in outcomes.size():
+		rows.append({"turn": 30 + i, "own_band": _id(ASHFELL), "other_faction": FOREIGN_FACTION,
+			"other_band": _id(WIDE_PEER_ENTITY), "dealing_id": 0, "outcome": outcomes[i],
+			"goods_out": _wide_goods(3.0 + i), "goods_in": _wide_goods(1.0 if i == 0 else 0.0)})
+	return rows
+
+func _wide_ties() -> Array:
+	return [{"observer_band_id": _id(ASHFELL), "subject_band_id": _id(WIDE_PEER_ENTITY),
+		"subject_name": "Reedfolk 1", "strength": PEOPLES_WIDE_STRENGTH, "first_contact_turn": 1,
+		"last_contact_turn": 1, "last_seen_x": POS[ASHFELL].x, "last_seen_y": POS[ASHFELL].y,
+		"last_seen_turn": 1}]
 
 # ---- FIXTURES ------------------------------------------------------------------------------------
 

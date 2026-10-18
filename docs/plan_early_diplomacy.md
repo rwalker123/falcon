@@ -303,10 +303,15 @@ version. `Expedition` gains the scout pack, its order and the envoy's proposal; 
 - **The scouting sheet** gains the pack and the strangers order (give / offer / keep).
 - **The trade sheet** gains *offer* beside *gift* and, where a kept road joins the bands, *propose*
   with a return list.
-- **A dealings list** shows pending items addressed to you, with accept / refuse / counter, and your
-  own outgoing items with turns left. It is unbounded, so it is its own tab.
+- **There is one Trade tab, not a Trade tab and a Dealings tab.** It is a single scroll of three
+  sections: *Waiting on an answer* (the trade items addressed to you with accept / refuse / counter, a
+  reply with *Take it* / *Walk home*, and your own outgoing items with turns left), *This turn* (what
+  crossed the store) and *History* (every trade that ended, newest first, from `tradeHistory`). Two of
+  its sections are unbounded lists, which is why the tab scrolls.
 - **The Peoples tab** shows each people's goodwill word, its treaty terms, a propose-treaty action and
-  an end-treaty action, and the per-people borders toggle.
+  an end-treaty action, and the per-people borders toggle. **Treaty proposals addressed to you wait
+  here**, above the treaties in force, with the same accept / refuse / counter; a treaty is not a
+  trade, so it is not on the Trade tab.
 - **Event feed** lines for a gift landing, an exchange settling or failing, a refusal, a treaty
   formed, amended or broken.
 

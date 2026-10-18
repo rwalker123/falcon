@@ -265,12 +265,14 @@ const RUNG_BY_KIND := {
 	# those. A REFUSED shipment is not this kind at all — a rejected command rides `system`, which is
 	# already Alert.
 	"trade_delivered": RUNG_NOTABLE,
-	# **DEALINGS AND TREATIES ARE RECEIPTS UNTIL ONE IS ADDRESSED TO YOU** (early diplomacy, #233). Both
-	# kinds ride Routine -- a post, an answer, a lapse, a settled exchange, a treaty formed or amended are
-	# things the player asked for or already saw on the Dealings tab -- and the two moments that are not
-	# receipts are lifted by the detail, not the kind: `status=offered` (an offer or proposal ADDRESSED
-	# TO YOU, whose window is one turn: `DETAIL_STATUS_STYLE`) and a treaty broken by the OTHER people
-	# (`breach_against_us`). Stated rather than left to `DEFAULT_RUNG`, so the choice is on the page.
+	# **DEALINGS AND TREATIES ARE RECEIPTS UNTIL AN ANSWER IS AT STAKE** (early diplomacy, #233). Both
+	# kinds ride Routine -- a post, a withdrawal, a counter, a treaty formed or amended are things the
+	# player asked for or already saw on the Trade tab -- and the moments that are not receipts are lifted
+	# by the detail, not the kind: a dealing line whose `status=` is `offered` (addressed TO YOU, whose
+	# window is one turn), `accepted`, `refused`, `declined`, `expired` or `failed` (how it ended:
+	# `DEALING_NOTABLE_STATUS_TOKENS`), a treaty proposal `status=offered`, and a treaty broken by the
+	# OTHER people (`breach_against_us`). Stated rather than left to `DEFAULT_RUNG`, so the choice is on the
+	# page.
 	"dealing": RUNG_ROUTINE,
 	"treaty": RUNG_ROUTINE,
 	# Routine — bracket transitions, and receipts for things the player asked for.
@@ -438,14 +440,30 @@ const KIND_TREATY := "treaty"
 const KIND_DEALING := "dealing"
 const OFFERED_STATUS_TOKEN := "status=offered"
 
-## **AN OFFER OR PROPOSAL ADDRESSED TO YOU IS NOTABLE** (early diplomacy, #233): the sim writes
-## `status=offered` to the RECEIVER alone, and silence refuses it after one turn, so it is the one
-## dealing line the player cannot afford to miss. It is decided here rather than in
-## `DETAIL_STATUS_STYLE` because that table's glyph is the rung's WARNING mark (`▾` on Notable, "less
-## than you had") and an offer is not a loss: the row takes the Notable rung's own `✦` and ink.
-static func is_offered_to_us(kind: String, detail: String) -> bool:
-	return (kind == KIND_DEALING or kind == KIND_TREATY) \
-		and detail.split(" ", false).has(OFFERED_STATUS_TOKEN)
+## **THE MOMENTS OF A DEALING THE PLAYER CANNOT AFFORD TO MISS** (early diplomacy, #233): an offer, proposal
+## or REPLY ADDRESSED TO YOU (`offered`, written to the RECEIVER alone, whose window is one turn: silence
+## refuses it), and how a dealing ENDED (`accepted`, `refused`, `declined`, `expired`, `failed`), because
+## each says goods moved or a bargain fell through. `posted`, `withdrawn` and `countered` are receipts of
+## the player's own act and stay Routine.
+const DEALING_NOTABLE_STATUS_TOKENS: Array[String] = [
+	"status=offered", "status=accepted", "status=refused", "status=declined", "status=expired",
+	"status=failed",
+]
+
+## Is this line one of those moments? A treaty line is Notable only when it is `status=offered` to us (a
+## treaty ending is `is_treaty_end`'s). It is decided here rather than in `DETAIL_STATUS_STYLE` because
+## that table's glyph is the rung's WARNING mark (`▾` on Notable, "less than you had") and an answer is
+## not a loss: the row takes the Notable rung's own `✦` and ink.
+static func is_notable_dealing_line(kind: String, detail: String) -> bool:
+	var tokens := detail.split(" ", false)
+	if kind == KIND_TREATY:
+		return tokens.has(OFFERED_STATUS_TOKEN)
+	if kind != KIND_DEALING:
+		return false
+	for token in DEALING_NOTABLE_STATUS_TOKENS:
+		if tokens.has(token):
+			return true
+	return false
 
 ## Is this line a treaty ending (either side's)? Its rung is then decided by `breach_against_us` ALONE --
 ## the status table's `reason=borders_closed` row would otherwise lift the breaker's own receipt.
@@ -825,6 +843,13 @@ const DETAIL_VALUE_LABELS := {
 	"expired": "lapsed unanswered",
 	"countered": "countered",
 	"settled": "settled",
+	# How a dealing (an offer, a proposal, or the reply to one) ended. `declined` is a reply the sender
+	# walked home from; `refused` is a no from the receiver; `withdrawn` is the namer taking a return back.
+	"accepted": "accepted",
+	"refused": "refused",
+	"declined": "turned down",
+	"withdrawn": "withdrawn",
+	"failed": "failed",
 }
 
 ## Fragment separator. A middot rather than a comma: the fragments are peers, not a list.

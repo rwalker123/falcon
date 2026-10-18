@@ -248,9 +248,10 @@ because the config pages gate on `SnapshotSections.changed()` for exactly this k
 replacement is one they skip.
 
 **The DIPLOMACY sections are a third whole-section witness** (`_assert_diplomacy_witnesses`, issue #233):
-delta 1 REPLACES `dealings`, `goodwill` (known, own and cuts) and `treaties` (with the standing links) with
-visibly different rows, and **one dealing fewer**, so a decoder that patched by id instead of replacing the
-section fails on the count; delta 2 carries none of them. Five claims: each is named in
+delta 1 REPLACES `dealings`, `trade_history`, `goodwill` (known, own and cuts) and `treaties` (with the
+standing links) with visibly different rows, and **one dealing and one trade record fewer** (the first
+record's `turn` moved too, so a decoder that patched instead of replacing fails on the count and one that
+republished the baseline fails on the turn); delta 2 carries none of them. Five claims: each is named in
 `changed_sections` on delta 1 and NOT on delta 2 (the table-always-present trap in `native-extension.md`
 is exactly what failed this); the dealing count fell by one; the four probe values (first dealing's
 `turns_left`, first treaty's `formed_turn`, the first known and own goodwill `total`) read the delta's and

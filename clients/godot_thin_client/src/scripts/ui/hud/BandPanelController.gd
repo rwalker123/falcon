@@ -400,12 +400,12 @@ var _band_zone_scroll: ScrollContainer = null
 var _connections_block: Control = null
 var _connections_block_band_id: int = HudConst.NO_BAND_ID
 var _connections_block_source: Array = []
-## The live DEALINGS content -- the tab in the narrow shell, its section under Parties in the wide one --
-## the band it lists and what it was built from, kept so `refresh_dealings` can re-fill it in place when
-## the `dealings` section moves on a frame that re-renders nothing else.
-var _dealings_block: Control = null
-var _dealings_block_band_id: int = HudConst.NO_BAND_ID
-var _dealings_block_source: Array = []
+## The live TRADE content -- the tab in the narrow shell, its section under Parties in the wide one -- the
+## band it lists and what its two lists were built from, kept so `refresh_dealings` can re-fill them in
+## place when `dealings` or `trade_history` moves on a frame that re-renders nothing else.
+var _trade_block: Control = null
+var _trade_block_band_id: int = HudConst.NO_BAND_ID
+var _trade_block_source: Array = []
 ## --- THE DIPLOMACY SHEETS' COMPOSING STATE (early diplomacy, issue #233) ------------------------
 ## All of it belongs to ONE composing act and goes with the verb (`_reset_verb_state`).
 ## How the open shipment is sent: `gift` (the default), `offer`, or `propose` (a haggle over a standing
@@ -508,12 +508,6 @@ const BAND_ZONE_LAYOUT: Array[Dictionary] = [
     # on a wide shell a section under Parties after Trade's, so the threshold stays 1190.
     {BandCityPanel.ZONE_SPEC_KEY: BandCityPanel.ZONE_PEOPLES,
         BandCityPanel.ZONE_SPEC_LABEL: HudWorkVocab.ZONE_TAB_PEOPLES,
-        BandCityPanel.ZONE_SPEC_WIDTH: BandCityPanel.ZONE_PARTY_WIDTH,
-        BandCityPanel.ZONE_SPEC_NARROW_ONLY: true},
-    # **DEALINGS IS NARROW-ONLY TOO** (early diplomacy, issue #233): an unbounded list gets its own tab,
-    # and on a wide shell a section under Parties after Peoples', so the threshold stays 1190.
-    {BandCityPanel.ZONE_SPEC_KEY: BandCityPanel.ZONE_DEALINGS,
-        BandCityPanel.ZONE_SPEC_LABEL: HudDealingsVocab.ZONE_TAB_DEALINGS,
         BandCityPanel.ZONE_SPEC_WIDTH: BandCityPanel.ZONE_PARTY_WIDTH,
         BandCityPanel.ZONE_SPEC_NARROW_ONLY: true},
 ]
@@ -640,11 +634,6 @@ var _trade_cargo_committing: bool = false
 ## It covers a SNAPSHOT rebuild too, which is the same teardown from a different cause: the focus key
 ## must survive it, or a turn landing mid-word takes the keyboard off the player.
 var _trade_cargo_zones_rebuilding: bool = false
-## The live PARTIES zone column, the parties twin of `_work_zone_host` — held so the deferred
-## measurement below can read what the zone's content demands off the REAL laid-out tree rather than
-## off a detached one. `HudWidgets.wrap_zone` anchors this column full-rect into the panel's zone host,
-## so what it demands is exactly what the host must hold.
-var _parties_zone_col: VBoxContainer = null
 # Compose state for the send-expedition party stepper (workers to detach), preserved across the
 # resident band's per-snapshot allocation-panel re-renders.
 var _send_expedition_count: int = HudConst.WORKER_STEP
@@ -660,12 +649,6 @@ var _forecast_query: ForecastQuery = null
 ## narrow, a section under Parties wide), so a flip is a re-render rather than a re-page.
 var _trade: TradeZoneController = null
 var _trade_wide: bool = false
-## The last Trade room measured on a LAID-OUT Parties column, and the box it was measured in — what a
-## render answers with while its own column is still detached (`_trade_room`).
-var _trade_live_room: Vector2 = Vector2.ZERO
-var _trade_live_box: Vector2 = Vector2.ZERO
-## A post-layout tier re-check is queued for the next frame (`_schedule_trade_refill`).
-var _trade_refill_pending: bool = false
 
 ## The Trade tab's controller, for the harness and for nothing that decides anything.
 func trade_zone() -> TradeZoneController:
@@ -1177,9 +1160,18 @@ func refresh_connections() -> void:
     ConnectionsRoster.refill(_connections_block, _connections_block_band_id, _band_labor,
         _station_press(), _peoples_diplomacy())
     _connections_block_source = source
-    if _panel != null and not _panel_is_faction:
-        _panel.set_tab_badge(BandCityPanel.ZONE_PEOPLES,
-            ConnectionsRoster.badge_text(_connections_block_band_id, _band_labor), false)
+    _push_peoples_badge(_connections_block_band_id)
+
+## **THE PEOPLES TAB'S BADGE**: the treaty proposals waiting on this band's answer (hot: the window is one
+## turn), else how many ties the band holds, parked ones included; nothing at none.
+func _push_peoples_badge(band_id: int) -> void:
+    if _panel == null or _panel_is_faction:
+        return
+    var treaty := DealingsRoster.treaty_badge(band_id, _band_labor)
+    if bool(treaty["hot"]):
+        _panel.set_tab_badge(BandCityPanel.ZONE_PEOPLES, String(treaty["text"]), true)
+        return
+    _panel.set_tab_badge(BandCityPanel.ZONE_PEOPLES, ConnectionsRoster.badge_text(band_id, _band_labor), false)
 
 ## Re-declare the Peoples tab's scroll viewport against the zone's current box — the band zone
 ## scroll's own correction (`_sync_band_zone_scroll`), for the same reason: a box the panel was still
@@ -1195,25 +1187,29 @@ func _sync_peoples_scroll() -> void:
     if not is_equal_approx(scroll.custom_minimum_size.y, want):
         scroll.custom_minimum_size.y = want
 
-## **RE-FILL THE DEALINGS CONTENT IN PLACE** when the `dealings` section moves (`HudLayer.update_dealings`).
-## The section moves on a command (an answer recapture) as often as on a turn, so a frame can carry it
-## and no population; only the head and the rows are rebuilt (`DealingsRoster.refill`), the tab's scroll
-## keeps its node and offset, and the tab badge is re-pushed. An answer sheet open on a dealing that has
-## since been answered or lapsed is closed -- its Accept would address an id the sim no longer holds.
+## **RE-FILL THE TRADE TAB'S TWO LISTS IN PLACE** when `dealings` or `trade_history` moves
+## (`HudLayer.update_dealings` / `update_trade_history`). The sections move on a command (an answer
+## recapture) as often as on a turn, so a frame can carry them and no population; only `Waiting on an
+## answer` and `History` are rebuilt (`TradeZoneController.refill_lists`), the tab's scroll keeps its
+## node and offset, and the Trade badge is re-pushed. **The Peoples tab's treaty proposals ride the same
+## `dealings` section**, so its block is re-filled too (`refresh_connections`). An answer sheet open on
+## a dealing that has since been answered or lapsed is closed -- its Accept would address an id the sim
+## no longer holds.
 func refresh_dealings() -> void:
     if _compose.has_verb() and _compose.verb_mission() == HudDealingsVocab.COMPOSE_MISSION_DEALING \
             and _band_labor.dealing_by_id(_dealing_sheet_id).is_empty():
         close_verb_form()
         return
-    if not is_instance_valid(_dealings_block) or _dealings_block.is_queued_for_deletion():
+    refresh_connections()
+    if not is_instance_valid(_trade_block) or _trade_block.is_queued_for_deletion():
         return
-    var source := _dealings_source(_dealings_block_band_id)
-    if source == _dealings_block_source:
+    var source := _trade_source(_trade_block_band_id)
+    if source == _trade_block_source:
         return
-    DealingsRoster.refill(_dealings_block, _dealings_block_band_id, _band_labor, _dealing_actions(),
+    TradeZoneController.refill_lists(_trade_block, _trade_block_band_id, _band_labor, _dealing_actions(),
         _faction_policy())
-    _dealings_block_source = source
-    _push_dealings_badge(_dealings_block_band_id)
+    _trade_block_source = source
+    _push_trade_badge(_trade_block_band_id)
 
 ## A frame that moves the published standing links re-renders the band page: the trade sheet offers
 ## its propose mode from those rows alone, so the mode must follow the sim's answer.
@@ -1221,46 +1217,52 @@ func refresh_standing_links() -> void:
     if _compose.has_verb() and _compose.verb_mission() == HudComposeVocab.COMPOSE_MISSION_TRADE:
         rerender()
 
-func _push_dealings_badge(band_id: int) -> void:
+## The Trade tab's badge: what waits on THIS band's answer (hot: the window is one turn), else how many
+## trade items it waits on, and nothing at none.
+func _push_trade_badge(band_id: int) -> void:
     if _panel == null or _panel_is_faction:
         return
     var badge := DealingsRoster.badge(band_id, _band_labor)
-    _panel.set_tab_badge(BandCityPanel.ZONE_DEALINGS, String(badge["text"]), bool(badge["hot"]))
+    _panel.set_tab_badge(BandCityPanel.ZONE_TRADE, String(badge["text"]), bool(badge["hot"]))
 
-## Re-declare the Dealings tab's scroll viewport against the zone's current box (`_sync_peoples_scroll`'s
+## Re-declare the Trade tab's scroll viewport against the zone's current box (`_sync_peoples_scroll`'s
 ## twin). The wide section has no scroll of its own.
-func _sync_dealings_scroll() -> void:
-    if _panel == null or _trade_wide or not is_instance_valid(_dealings_block):
+func _sync_trade_scroll() -> void:
+    if _panel == null or _trade_wide or not is_instance_valid(_trade_block):
         return
-    var scroll := _dealings_block.find_child(HudDealingsVocab.LIST_NAME, true, false) as ScrollContainer
+    var scroll := _trade_block.find_child(TradeZoneController.TAB_SCROLL_NAME, true, false) \
+        as ScrollContainer
     if scroll == null:
         return
-    var want := DealingsRoster.list_viewport_height(_panel.zone_size(BandCityPanel.ZONE_DEALINGS).y)
+    var want := TradeZoneController.tab_viewport_height(_panel.zone_size(BandCityPanel.ZONE_TRADE).y)
     if not is_equal_approx(scroll.custom_minimum_size.y, want):
         scroll.custom_minimum_size.y = want
 
-func _track_dealings_block(block: Control, band: Dictionary) -> void:
+func _track_trade_block(block: Control, band: Dictionary) -> void:
     var band_id := int(band.get("band_id", HudConst.NO_BAND_ID))
-    _dealings_block = block
-    _dealings_block_band_id = band_id
-    _dealings_block_source = _dealings_source(band_id)
+    _trade_block = block
+    _trade_block_band_id = band_id
+    _trade_block_source = _trade_source(band_id)
 
-## What the Dealings content for `band_id` is built from: its rows. Turns left ride the rows themselves.
-func _dealings_source(band_id: int) -> Array:
-    return [_band_labor.dealings_for_band(band_id), _band_labor.current_turn(),
-        bool(_faction_policy().get("accept_own_gifts", true))]
+## What the Trade tab's two lists are built from: this band's trade rows, its history, the turn (the
+## turns left ride the rows, the rows' ages the turn) and the standing gift setting.
+func _trade_source(band_id: int) -> Array:
+    return [DealingsRoster.trade_rows(band_id, _band_labor), _band_labor.trade_history_for_band(band_id),
+        _band_labor.current_turn(), bool(_faction_policy().get("accept_own_gifts", true))]
 
-## **THE ORB'S "A PEOPLE AWAITS YOUR ANSWER" LANDS HERE**: bring `band_id`'s page forward on its Dealings
-## tab (the narrow shell's tab, or the Parties flank on a wide shell, where the section sits under the
-## parties list).
+## **THE ORB'S "A PEOPLE AWAITS YOUR ANSWER" LANDS HERE**: bring `band_id`'s page forward on the tab the
+## answer waits on -- the Trade tab for a trade item, the Peoples tab for a treaty proposal (on a wide
+## shell both are sections under the Parties flank).
 func focus_dealings(band_id: int) -> void:
     var band := _band_labor.player_band_by_band_id(band_id)
     if band.is_empty() or _panel == null:
         return
     if _panel_is_faction or int(_band_labor.panel_band().get("band_id", HudConst.NO_BAND_ID)) != band_id:
         jump_to_band_entity(int(band.get("entity", -1)))
+    var treaty_only := DealingsRoster.awaiting_count(band_id, _band_labor) == 0 \
+        and DealingsRoster.treaty_awaiting_count(band_id, _band_labor) > 0
     _panel.set_active_tab(BandCityPanel.ZONE_PARTIES if _panel.is_wide_shell() \
-        else BandCityPanel.ZONE_DEALINGS)
+        else (BandCityPanel.ZONE_PEOPLES if treaty_only else BandCityPanel.ZONE_TRADE))
 
 ## The three answers the Dealings rows hand back, by `HudDealingsVocab.ANSWER_*`.
 func _dealing_actions() -> Dictionary:
@@ -1282,7 +1284,8 @@ func _track_connections_block(block: Control, band: Dictionary) -> void:
 ## growing against fading.
 func _connections_source(band_id: int) -> Array:
     return [_band_labor.current_turn(), _band_labor.connections_for_band(band_id),
-        PeoplesDiplomacy.signature(_band_labor, _faction_policy())]
+        PeoplesDiplomacy.signature(_band_labor, _faction_policy()),
+        DealingsRoster.treaty_rows(band_id, _band_labor)]
 
 ## The two authored columns of a widened band flank, named for what they are ABOUT rather than by
 ## index: what the band has to eat, and who the band is. See `build_band_zone` for the measurement
@@ -2067,10 +2070,8 @@ func _on_zones_resized() -> void:
     # zone for it would be three.
     _sync_band_zone_scroll()
     _sync_peoples_scroll()
-    _sync_dealings_scroll()
+    _sync_trade_scroll()
     _repage_work_zone()
-    # The Trade tier is chosen against the box, so a new box may re-author it — in place, after layout.
-    _schedule_trade_refill()
 
 ## The panel's `shown_zone_changed` handler — the narrow shell swapped the zone its body draws.
 ##
@@ -8588,17 +8589,16 @@ func _emit_cancel_order(band: Dictionary, scope: String) -> void:
         return
     emit_signal("cancel_order_requested", band, scope)
 
-## **THE NO-DOCK DRAWER'S TRADE AND PEOPLES SECTIONS**, in that order — the flat host has no tabs, so
-## it mounts both after the Parties zone in its own flow. The roster is tracked like the dock's, so a
-## connections-only frame re-fills it there too.
+## **THE NO-DOCK DRAWER'S TRADE AND PEOPLES SECTIONS**, in that order -- the flat host has no tabs, so
+## it mounts both after the Parties zone in its own flow. Both are tracked like the dock's, so a
+## connections-only or dealings-only frame re-fills them there too.
 func build_flat_sections(band: Dictionary) -> Array[Control]:
     var peoples := ConnectionsRoster.build_section(int(band.get("band_id", HudConst.NO_BAND_ID)),
         _band_labor, _station_press(), _peoples_diplomacy())
     _track_connections_block(peoples, band)
-    var dealings := DealingsRoster.build_section(int(band.get("band_id", HudConst.NO_BAND_ID)),
-        _band_labor, _dealing_actions(), _faction_policy())
-    _track_dealings_block(dealings, band)
-    return [_trade.build_section(band, _trade_zone_box()), peoples, dealings]
+    var trade := _trade.build_section(band, _dealing_actions(), _faction_policy())
+    _track_trade_block(trade, band)
+    return [trade, peoples]
 
 # ---- zone `peoples` ---------------------------------------------------------
 
@@ -8611,77 +8611,17 @@ func build_peoples_zone(band: Dictionary) -> VBoxContainer:
     _track_connections_block(tab, band)
     return tab
 
-# ---- zone `dealings` ---------------------------------------------------------
-
-## Zone `dealings` (early diplomacy) -- the narrow shell's sixth tab: every pending item this band takes
-## part in, in a sanctioned scroll whose viewport is declared off this zone's own box.
-func build_dealings_zone(band: Dictionary) -> VBoxContainer:
-    var box := _panel.zone_size(BandCityPanel.ZONE_DEALINGS) if _panel != null else Vector2.ZERO
-    var tab := DealingsRoster.build_tab(int(band.get("band_id", HudConst.NO_BAND_ID)), _band_labor,
-        box.y, _dealing_actions(), _faction_policy())
-    _track_dealings_block(tab, band)
-    return tab
-
 # ---- zone `trade` -----------------------------------------------------------
 
-## Zone `trade` (issue #731) — the narrow shell's fourth tab. `TradeZoneController` authors it; this
-## only hands it the band and the box. A wide shell never calls this: the same content is a section
-## under Parties there (`build_parties_zone`).
+## Zone `trade` (issue #731, merged with the dealings tab) — the narrow shell's fourth tab, ONE sanctioned
+## scroll of three sections: waiting on an answer, this turn, history. `TradeZoneController` authors it;
+## this hands it the band, the box and the answers. A wide shell never calls this: the same sections are
+## a section under Parties there (`build_parties_zone`).
 func build_trade_zone(band: Dictionary) -> VBoxContainer:
-    return _trade.build(band, _trade_zone_box())
-
-## The box the Trade content is authored against: its own zone's in the narrow shell, the Parties
-## zone's in the wide one (where it lives). The fallback keeps a no-dock host laying out sensibly.
-func _trade_zone_box() -> Vector2:
-    if _panel == null:
-        return HudWorkVocab.ZONE_FALLBACK_SIZE
-    var zone := BandCityPanel.ZONE_PARTIES if _trade_wide else BandCityPanel.ZONE_TRADE
-    var box: Vector2 = _panel.zone_size(zone)
-    return box if box.x > 0.0 and box.y > 0.0 else HudWorkVocab.ZONE_FALLBACK_SIZE
-
-## **THE ROOM THE TRADE TIER IS MEASURED AGAINST.** Narrow: its own zone's box. Wide: the Parties
-## zone's scrolling list — the box less the zone's fixed chrome (its head, any empty hint and the gaps
-## between them), since that list is where the section sits and the most of it a player sees without
-## scrolling.
-##
-## ⛔ **ONLY A LAID-OUT COLUMN CAN ANSWER.** The Parties column's autowrap hint (the empty-parties hint)
-## reports a word-per-line height while the column is
-## detached — which it is, mid-`build_parties_zone` — so a room measured there is too short and the
-## section drops to SHORT on every render while the resize path, measuring the live column, picks
-## FULL. So a detached column answers with the last LIVE measurement for the same box
-## (`_trade_live_room`), and `_schedule_trade_refill` re-chooses the tier a frame after every render
-## and every resize, on one path, so the two can never disagree.
-func _trade_room() -> Vector2:
-    var box := _trade_zone_box()
-    if not _trade_wide or _parties_zone_col == null or not is_instance_valid(_parties_zone_col):
-        return box
-    if not _parties_zone_col.is_inside_tree() and _trade_live_box == box \
-            and _trade_live_room != Vector2.ZERO:
-        return _trade_live_room
-    var used := 0.0
-    for child in _parties_zone_col.get_children():
-        if child is Control and String(child.name) != HudWorkVocab.PARTIES_LIST_NAME:
-            used += (child as Control).get_combined_minimum_size().y
-    used += float(maxi(_parties_zone_col.get_child_count() - 1, 0)) \
-        * float(_parties_zone_col.get_theme_constant("separation"))
-    var room := Vector2(box.x, maxf(box.y - used, 0.0))
-    if _parties_zone_col.is_inside_tree():
-        _trade_live_box = box
-        _trade_live_room = room
-    return room
-
-## **RE-CHOOSE THE TRADE TIER AFTER LAYOUT** — the one path a render and a resize both take, run at
-## most once per frame (a second request in the same frame rides the first). `refill` is a no-op when
-## the room has not moved.
-func _schedule_trade_refill() -> void:
-    if _trade_refill_pending or _host == null or not _host.is_inside_tree():
-        return
-    _trade_refill_pending = true
-    await _host.get_tree().process_frame
-    _trade_refill_pending = false
-    if _panel_is_faction or _panel == null:
-        return
-    _trade.refill(_trade_room())
+    var box := _panel.zone_size(BandCityPanel.ZONE_TRADE) if _panel != null else HudWorkVocab.ZONE_FALLBACK_SIZE
+    var tab := _trade.build_tab(band, box.y, _dealing_actions(), _faction_policy())
+    _track_trade_block(tab, band)
+    return tab
 
 ## Is the Trade content on screen — its own tab in the narrow shell, the Parties flank in the wide?
 func _trade_zone_is_on_screen() -> bool:
@@ -8713,11 +8653,9 @@ func _trade_zone_is_on_screen() -> bool:
 ##
 ## The scroll takes `SIZE_EXPAND_FILL`, so the list fills the zone under its head.
 func build_parties_zone(band: Dictionary, with_trade: bool = false,
-        with_peoples: bool = false, with_dealings: bool = false) -> VBoxContainer:
+        with_peoples: bool = false) -> VBoxContainer:
     var col := HudWidgets.make_zone_column()
     col.add_theme_constant_override("separation", HudWorkVocab.ZONE_BLOCK_SEPARATION)
-    # Held for the Trade section's room, measured off this column's laid-out chrome (`_trade_room`).
-    _parties_zone_col = col
     var parties := _band_labor.band_parties(band)
     var menu := HudWidgets.build_section_menu([
         {"label": HudComposeVocab.PARTY_RECALL_ALL_FORMAT % parties.size(), "disabled": parties.is_empty(),
@@ -8751,9 +8689,10 @@ func build_parties_zone(band: Dictionary, with_trade: bool = false,
     # Inside the sanctioned scroll, so it adds no `ScrollContainer` of its own. Only the DOCK asks for it
     # (`with_trade`): the drawer's flat host stacks the same sections after this zone itself
     # (`build_flat_sections`).
-    # Built last, because the room it is tiered against is what the head leaves.
     if with_trade:
-        rows.add_child(_trade.build_section(band, _trade_room()))
+        var trade := _trade.build_section(band, _dealing_actions(), _faction_policy())
+        rows.add_child(trade)
+        _track_trade_block(trade, band)
     # **…AND FOR THE PEOPLES ROSTER** (issue #549), after Trade's section: every tie, no cap, inside the
     # same sanctioned scroll — Trade's wide section scrolls rather than capping, and so does this one.
     if with_peoples:
@@ -8761,13 +8700,6 @@ func build_parties_zone(band: Dictionary, with_trade: bool = false,
             _band_labor, _station_press(), _peoples_diplomacy())
         rows.add_child(peoples)
         _track_connections_block(peoples, band)
-    # **…AND FOR THE DEALINGS LIST** (early diplomacy), after Peoples': every item, no cap, inside the same
-    # sanctioned scroll.
-    if with_dealings:
-        var dealings := DealingsRoster.build_section(int(band.get("band_id", HudConst.NO_BAND_ID)),
-            _band_labor, _dealing_actions(), _faction_policy())
-        rows.add_child(dealings)
-        _track_dealings_block(dealings, band)
     return col
 
 ## The parties zone's scrolling list host — a `ScrollContainer` whose single child is the VBox the rows
@@ -10070,6 +10002,8 @@ func _emit_dealing_answer(dealing: Dictionary, extra: Dictionary) -> void:
         "dealing_id": int(dealing.get("id", 0)),
     }
     payload.merge(extra, true)
+    # A reply is answered bare (see `Main.format_answer_dealing`), and says so in its receipt.
+    payload["reply"] = DealingsRoster.is_reply(dealing)
     diplomacy_command_requested.emit(payload)
     if _compose.has_verb() and _compose.verb_mission() == HudDealingsVocab.COMPOSE_MISSION_DEALING:
         close_verb_form()
@@ -10218,6 +10152,8 @@ func _build_term_check(text: String, on: bool, on_toggle: Callable) -> CheckBox:
 func _peoples_diplomacy() -> Dictionary:
     return {
         "policy": _faction_policy(),
+        # The treaty proposals waiting on this band's answer, shown above the treaties in force.
+        "dealing_actions": _dealing_actions(),
         "actions": {
             HudDealingsVocab.PEOPLE_ACTION_PROPOSE: Callable(self, "_on_people_propose_pressed"),
             HudDealingsVocab.PEOPLE_ACTION_END: Callable(self, "_on_people_end_treaty_pressed"),
@@ -11829,16 +11765,12 @@ func _push_zone_badges(band: Dictionary) -> void:
             awaiting = true
     _panel.set_tab_badge(BandCityPanel.ZONE_PARTIES,
         str(parties.size()) if not parties.is_empty() else "", awaiting)
-    # Trade carries this turn's SHIPMENTS, both ways, and nothing on a turn with none. Pooling never
-    # counts — it happens most turns whether the player looks or not, so a badge that counted it would
-    # never go out.
-    _panel.set_tab_badge(BandCityPanel.ZONE_TRADE, TradeZoneController.badge_text(band), false)
-    # Peoples carries how many ties the band holds, parked included, and nothing at none.
-    _panel.set_tab_badge(BandCityPanel.ZONE_PEOPLES,
-        ConnectionsRoster.badge_text(int(band.get("band_id", HudConst.NO_BAND_ID)), _band_labor), false)
-    # Dealings carries what waits on THIS band's answer (hot: the window is one turn), else how many it
-    # waits on, and nothing at none.
-    _push_dealings_badge(int(band.get("band_id", HudConst.NO_BAND_ID)))
+    # Trade carries what waits on THIS band's answer (hot: the window is one turn), else how many trade
+    # items it waits on, and nothing at none.
+    _push_trade_badge(int(band.get("band_id", HudConst.NO_BAND_ID)))
+    # Peoples carries the treaty proposals awaiting this band's answer (hot), else how many ties the band
+    # holds, parked included, and nothing at none.
+    _push_peoples_badge(int(band.get("band_id", HudConst.NO_BAND_ID)))
 
 ## Recall the selected in-flight expedition (folds it home). Emits recall_expedition_requested;
 ## Main formats the `recall_expedition …` command.
@@ -11914,7 +11846,7 @@ func render_band(unit: Dictionary) -> void:
         BandCityPanel.ZONE_BAND: HudWidgets.wrap_zone(build_band_zone(_band_labor.panel_band())),
         BandCityPanel.ZONE_WORK: HudWidgets.wrap_zone(build_work_zone(_band_labor.panel_band())),
         BandCityPanel.ZONE_PARTIES: HudWidgets.wrap_zone(build_parties_zone(_band_labor.panel_band(),
-            _trade_wide, _trade_wide, _trade_wide)),
+            _trade_wide, _trade_wide)),
     }
     # The Peoples roster moves on the same flip and reads the same record: a tab of its own in the
     # narrow shell, a section after Trade's under Parties in the wide one.
@@ -11922,13 +11854,9 @@ func render_band(unit: Dictionary) -> void:
         zones[BandCityPanel.ZONE_TRADE] = HudWidgets.wrap_zone(build_trade_zone(_band_labor.panel_band()))
         zones[BandCityPanel.ZONE_PEOPLES] = HudWidgets.wrap_zone(
             build_peoples_zone(_band_labor.panel_band()))
-        zones[BandCityPanel.ZONE_DEALINGS] = HudWidgets.wrap_zone(
-            build_dealings_zone(_band_labor.panel_band()))
     _panel.set_zones(zones)
     _trade_cargo_zones_rebuilding = false
     _push_zone_badges(_band_labor.panel_band())
-    # The Trade tier, re-chosen against the laid-out column a frame from now — see `_trade_room`.
-    _schedule_trade_refill()
     # Header: settlement stage + name + stage label. The stage `id` is the panel's sprite key
     # (bundled art), the `icon` its emoji fallback for a stage with no art; both already flow
     # onto the marker/cohort dict. A missing stage falls back to a neutral glyph.
@@ -11978,7 +11906,6 @@ func render_faction() -> void:
     close_work_inspector()
     _work_zone_host = null
     _work_zone_band = {}
-    _parties_zone_col = null
     # The faction's alerts, read from the ONE model the turn orb reads — so the orb, the map and this
     # page can never disagree about which band needs the player.
     var attention := _attention.build_band_attention(

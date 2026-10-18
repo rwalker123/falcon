@@ -1422,11 +1422,12 @@ const EXPECTED_KINDS := {
 	"send_denial_raid": 1,
 	# ONE — the Trade verb's sheet is the shipment's only launch site, and one line carries every pile.
 	"send_trade_expedition": 2,
-	# EARLY DIPLOMACY (#233) — see `_drive_diplomacy`. FIVE answers (refuse, a bare accept, an offer's
-	# accept with a return, a trade counter, a treaty counter that names a new bundle), TWO gift
+	# EARLY DIPLOMACY (#233) — see `_drive_diplomacy`. SEVEN answers (refuse, a bare accept, an offer's
+	# accept with a return, a trade counter, a treaty counter that names a new bundle, and a reply taken
+	# and walked home from, each a bare accept / refuse), TWO gift
 	# settings (off, on), the proposal over a link, the treaty proposal over a link, the envoy, ending a
 	# treaty, and the per-people border both ways.
-	"answer_dealing": 5,
+	"answer_dealing": 7,
 	"set_accept_own_gifts": 2,
 	"propose_trade": 1,
 	"propose_treaty": 1,
@@ -1522,6 +1523,9 @@ const DEALING_REFUSED := 32
 const DEALING_ACCEPTED := 33
 const DEALING_COUNTERED := 34
 const DEALING_TREATY := 35
+## Two REPLIES addressed to the band: one it takes (`Take it`), one it walks home from (`Walk home`).
+const DEALING_REPLY_TAKEN := 36
+const DEALING_REPLY_WALKED := 37
 ## What the fixtures hold: the offer's cargo, the proposals' two legs, and the treaty's bundle.
 const OFFER_FOOD := 6.0
 const PROPOSAL_FLINT := 3.0
@@ -1557,7 +1561,7 @@ func _drive_diplomacy() -> void:
 	await _drive_treaties_and_borders()
 
 ## The world as the wire describes it: three peoples, a standing link to the tie's band, a treaty in
-## force with the first people, and five pending dealings addressed to the band.
+## force with the first people, and seven pending dealings addressed to the band.
 func _push_diplomacy_world() -> void:
 	FactionNames.update([{"faction": FACTION, "name": "Ashfolk"},
 		{"faction": FOREIGN_FACTION, "name": "Brackfolk"}, {"faction": ENVOY_FACTION, "name": "Thornfolk"}])
@@ -1606,6 +1610,11 @@ func _dealing_fixtures() -> Array:
 		_dealing(DEALING_TREATY, HudDealingsVocab.KIND_TREATY_PROPOSAL, ENVOY_FACTION, ENVOY_BAND_ID,
 			_goods(), _goods(), {"road_rights": true, "open_borders": false, "bundles": [{
 				"sent": proposal_sent, "returned": proposal_asked}]}),
+		# A reply: our cargo (`sent`) and the return the other band named (`asked`).
+		_dealing(DEALING_REPLY_TAKEN, HudDealingsVocab.KIND_REPLY, FOREIGN_FACTION, DESTINATION_ID,
+			_goods(OFFER_FOOD), proposal_sent),
+		_dealing(DEALING_REPLY_WALKED, HudDealingsVocab.KIND_REPLY, FOREIGN_FACTION, DESTINATION_ID,
+			_goods(OFFER_FOOD), proposal_sent),
 	]
 
 ## The band's page on a given tab, rendered.
@@ -1711,7 +1720,14 @@ func _confirm_pending(where: String) -> void:
 	dialog.queue_free()
 
 func _drive_dealing_answers() -> void:
-	_show_tab(BandCityPanel.ZONE_DEALINGS)
+	_show_tab(BandCityPanel.ZONE_TRADE)
+	await _settle()
+	# A reply is taken or walked away from: a bare `accept` / `refuse`, no return and no sheet.
+	_expect({"expected_dealing_id": DEALING_REPLY_TAKEN, "expected_reply": "accept"})
+	_press_dealing_action(DEALING_REPLY_TAKEN, HudDealingsVocab.ANSWER_ACCEPT)
+	await _settle()
+	_expect({"expected_dealing_id": DEALING_REPLY_WALKED, "expected_reply": "refuse"})
+	_press_dealing_action(DEALING_REPLY_WALKED, HudDealingsVocab.ANSWER_REFUSE)
 	await _settle()
 	# A refusal and a bare accept are one press each, no sheet.
 	_expect({"expected_dealing_id": DEALING_REFUSED, "expected_reply": "refuse"})
@@ -1728,7 +1744,7 @@ func _drive_dealing_answers() -> void:
 	_press_sheet_action("offer's answer sheet")
 	await _settle()
 	# A proposal's counter changes the legs.
-	_show_tab(BandCityPanel.ZONE_DEALINGS)
+	_show_tab(BandCityPanel.ZONE_TRADE)
 	await _settle()
 	_press_dealing_action(DEALING_COUNTERED, HudDealingsVocab.ANSWER_COUNTER)
 	await _settle()
@@ -1737,8 +1753,9 @@ func _drive_dealing_answers() -> void:
 	_expect({"expected_dealing_id": DEALING_COUNTERED, "expected_reply": "counter"})
 	_press_sheet_action("trade counter sheet")
 	await _settle()
-	# A treaty proposal's counter keeps its terms and adds a bundle of its own.
-	_show_tab(BandCityPanel.ZONE_DEALINGS)
+	# A treaty proposal's counter keeps its terms and adds a bundle of its own. Treaty proposals wait on
+	# the Peoples tab, beside the treaties in force.
+	_show_tab(BandCityPanel.ZONE_PEOPLES)
 	await _settle()
 	_press_dealing_action(DEALING_TREATY, HudDealingsVocab.ANSWER_COUNTER)
 	await _settle()
@@ -1760,11 +1777,11 @@ func _drive_dealing_answers() -> void:
 
 ## The standing answer to a gift from our own people, off and back on, through the tab's own checkbox.
 func _drive_gift_setting() -> void:
-	_show_tab(BandCityPanel.ZONE_DEALINGS)
+	_show_tab(BandCityPanel.ZONE_TRADE)
 	await _settle()
 	var toggle := _find_meta_control_in(_panel, HudDealingsVocab.GIFT_TOGGLE_META) as CheckBox
 	if toggle == null:
-		_fail("diplomacy: the Dealings tab carries no gift setting")
+		_fail("diplomacy: the Trade tab carries no gift setting")
 		return
 	_expect({"expected_accept": false})
 	toggle.button_pressed = false

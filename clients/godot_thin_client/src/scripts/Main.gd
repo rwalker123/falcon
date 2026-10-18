@@ -1056,11 +1056,13 @@ func _apply_snapshot(snapshot: Dictionary) -> void:
         # …and the map, which draws a ghost marker for every tied band it cannot currently see.
         if map_view != null and map_view.has_method("set_connections"):
             map_view.set_connections(snapshot["connections"])
-    # EARLY DIPLOMACY (#233): the pending dealings, goodwill and treaties -- three whole-section
+    # EARLY DIPLOMACY (#233): the pending dealings, trade history, goodwill and treaties -- whole-section
     # replaces, viewer-scoped. Gated like every other whole section; `dealings` in particular moves on a
     # command (an AI's answer recapture) and so may arrive on a frame that moves nothing else.
     if snapshot.has("dealings") and SnapshotSections.changed(snapshot, "dealings"):
         _hud_invoke("update_dealings", [snapshot["dealings"]])
+    if snapshot.has("trade_history") and SnapshotSections.changed(snapshot, "trade_history"):
+        _hud_invoke("update_trade_history", [snapshot["trade_history"]])
     if snapshot.has("goodwill") and SnapshotSections.changed(snapshot, "goodwill"):
         _hud_invoke("update_goodwill", [snapshot["goodwill"]])
     if snapshot.has("treaties") and SnapshotSections.changed(snapshot, "treaties"):
@@ -2541,10 +2543,16 @@ static func format_answer_dealing(payload: Dictionary) -> Dictionary:
         return {}
     var faction := int(payload.get("faction", HudConst.PLAYER_FACTION_ID))
     var line := "answer_dealing %d %d" % [faction, dealing_id]
+    # A REPLY (`reply: true`) is answered with a bare `accept` (take the return) or `refuse` (walk home);
+    # it names no return of its own, so its receipts are not the offer's.
+    var reply := bool(payload.get("reply", false))
     match String(payload.get("answer", "")):
         HudDealingsVocab.ANSWER_REFUSE:
-            return {"line": line + " refuse", "message": HudDealingsVocab.ANSWER_MESSAGE_REFUSE}
+            return {"line": line + " refuse", "message": HudDealingsVocab.ANSWER_MESSAGE_WALK_HOME \
+                if reply else HudDealingsVocab.ANSWER_MESSAGE_REFUSE}
         HudDealingsVocab.ANSWER_ACCEPT:
+            if reply:
+                return {"line": line + " accept", "message": HudDealingsVocab.ANSWER_MESSAGE_TAKE_RETURN}
             var returned := cargo_manifest(Array(payload.get("returned", [])))
             return {
                 "line": line + " accept" + String(returned["tail"]),

@@ -428,10 +428,11 @@ func _sheet_states(panel: BandCityPanel) -> void:
 # ---- (d) A COUNTER THAT NAMES NEW AGREED TRADE -----------------------------------------------------
 
 func _counter_states(panel: BandCityPanel) -> void:
-	panel.set_active_tab(BandCityPanel.ZONE_DEALINGS)
+	# A treaty proposal waits on the Peoples tab, beside the treaties in force.
+	panel.set_active_tab(BandCityPanel.ZONE_PEOPLES)
 	h._hud.show_unit_selection(_fx._home_band())
 	await h._settle()
-	var block := panel.find_child(HudDealingsVocab.BLOCK_NAME, true, false) as Control
+	var block := panel.find_child(HudDealingsVocab.TREATY_BLOCK_NAME, true, false) as Control
 	var counter: Button = _fx._action(_fx._row(_fx._rows(block), DEALINGS.TREATY_IN), HudDealingsVocab.ANSWER_COUNTER)
 	h._assert_hud("counter: a treaty proposal offers Counter", counter != null)
 	if counter == null:
@@ -490,18 +491,18 @@ func _envoy_row_states(panel: BandCityPanel) -> void:
 	h._assert_hud("envoy: …under the envoy's own mark, not the scout's",
 		row_button != null and HudFormat.expedition_mission_mark("envoy") == "envoy"
 			and HudFormat.expedition_mission_glyph("envoy") == HudFormat.PANEL_EXPEDITION_ENVOY_GLYPH)
-	# ---- the six tabs fit the strip, with EVERY badge showing at its widest -----------------------------
-	# The Dealings tab made six; at the old padding the bar overran the 380px strip and the card widened
-	# past its reserved edge (the dock's border then ran through the tab bar and the rows).
+	# ---- the five tabs fit the strip, with EVERY badge showing at its widest -----------------------------
+	# The Dealings tab once made six; at the old padding the bar overran the 380px strip and the card
+	# widened past its reserved edge (the dock's border then ran through the tab bar and the rows).
 	var interior := BandCityPanel.PANEL_WIDTH - BandCityPanel.PANEL_CHROME_H
-	h._assert_hud("tabs: the six-tab bar fits the strip's interior as the badges stand (%.0f of %.0f)" % [
+	h._assert_hud("tabs: the five-tab bar fits the strip's interior as the badges stand (%.0f of %.0f)" % [
 		panel._tab_bar.get_combined_minimum_size().x, interior],
 		panel._tab_bar.get_combined_minimum_size().x <= interior)
 	for zone in [BandCityPanel.ZONE_WORK, BandCityPanel.ZONE_PARTIES, BandCityPanel.ZONE_TRADE,
-			BandCityPanel.ZONE_PEOPLES, BandCityPanel.ZONE_DEALINGS]:
+			BandCityPanel.ZONE_PEOPLES]:
 		panel.set_tab_badge(zone, TAB_WIDEST_BADGE, false)
 	await h._settle()
-	h._assert_hud("tabs: ...and with all five badges at two digits (%.0f of %.0f)" % [
+	h._assert_hud("tabs: ...and with all four badges at two digits (%.0f of %.0f)" % [
 		panel._tab_bar.get_combined_minimum_size().x, interior],
 		panel._tab_bar.get_combined_minimum_size().x <= interior)
 	h._hud.update_band_alerts([_fx._home_band()])

@@ -1,7 +1,7 @@
 extends RefCounted
 
-## EARLY DIPLOMACY, THE CLIENT'S HALF (issue #233, slice C1) — the Dealings tab, the answer sheet it
-## opens, the trade sheet's gift / offer / propose modes, the scout sheet's pack and strangers order,
+## EARLY DIPLOMACY, THE CLIENT'S HALF (issue #233, slice C1) — the merged Trade tab's waiting list and
+## history (the Dealings tab is gone), the Peoples tab's treaty proposals, the answer sheet they open, the trade sheet's gift / offer / propose modes, the scout sheet's pack and strangers order,
 ## the faction page's gift toggle, the orb's "a people awaits your answer" row, and the event dock's
 ## dealing and treaty lines.
 ##
@@ -15,7 +15,7 @@ extends RefCounted
 ## and be spelled into a line the server's parser refuses.
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
-const EXPECTED_CHECKPOINTS := 142
+const EXPECTED_CHECKPOINTS := 207
 
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 const Q := preload("res://tools/ui_preview/node_query.gd")
@@ -74,6 +74,10 @@ const PROPOSAL_IN := 12
 const OFFER_OUT := 13
 const TREATY_IN := 14
 const COUNTER_IN := 15
+## A REPLY addressed to the home band (Brackwater named a return for our cargo) and one the home band
+## named (Thornwick's party waits on our return).
+const REPLY_IN := 16
+const REPLY_OUT := 17
 
 ## What an offer carries, and the party that waits with it.
 const OFFER_FOOD := 12.0
@@ -85,6 +89,23 @@ const PROPOSAL_FOOD := 10.0
 const PROPOSAL_PARTY := 2
 ## The return the answer sheet is driven to.
 const RETURN_FOOD := 3.0
+## What a reply carries: the cargo it is for, and the return named for it.
+const REPLY_CARGO_FOOD := 9.0
+const REPLY_RETURN_FLINT := 5.0
+## The trade history's turns, oldest first (the newest is the turn before the one the frames render on).
+const HISTORY_TURN_TRADED := 38
+const HISTORY_TURN_GIFT_GIVEN := 41
+const HISTORY_TURN_DECLINED := 43
+const HISTORY_TURN_REFUSED := 44
+const HISTORY_TURN_EXPIRED := 46
+const HISTORY_TURN_GIFT_RECEIVED := 47
+const HISTORY_TURN_WITHDRAWN := 48
+const HISTORY_TURN_FAILED := 50
+## A record of ANOTHER band of the player's, which this band's page must not show.
+const HISTORY_TURN_OTHER_BAND := 45
+const OTHER_BAND_ENTITY := 1299
+## A turn added to prove the history re-fills in place.
+const HISTORY_TURN_ADDED := 51
 
 var _commands: Array = []
 
@@ -101,7 +122,7 @@ func run(harness) -> void:
 	# edge it already holds emits no reservation -- so the HUD would not yield. Leave it, then arrive.
 	panel.set_dock(SIDE_RIGHT)
 	panel.set_dock(SIDE_LEFT)
-	panel.set_active_tab(BandCityPanel.ZONE_DEALINGS)
+	panel.set_active_tab(BandCityPanel.ZONE_TRADE)
 	h._hud.set_band_city_panel(panel)
 	h._hud.diplomacy_command_requested.connect(func(payload: Dictionary) -> void: _commands.append(payload))
 
@@ -115,12 +136,16 @@ func run(harness) -> void:
 	h._hud.update_treaties(_treaties())
 	h._hud.update_goodwill(_goodwill())
 	h._hud.update_dealings(_dealings())
+	h._hud.update_trade_history(_history())
 	h._hud.show_unit_selection(_home_band())
 	await h._settle()
 
 	# The dock reads in full on the LEFT (the right dock runs off the harness's 1500px canvas); the SHEETS
 	# live in the tile drawer, which the left dock covers, so they are judged with the dock on the right.
 	await _tab_states(panel)
+	await _reply_states(panel)
+	await _history_states(panel)
+	await _peoples_treaty_states(panel)
 	panel.set_dock(SIDE_RIGHT)
 	await h._settle()
 	await _answer_sheet_states(panel)
@@ -148,16 +173,33 @@ func run(harness) -> void:
 	await h._settle()
 
 
-# ---- (a) THE DEALINGS TAB ------------------------------------------------------------------------
+# ---- (a) THE MERGED TRADE TAB ----------------------------------------------------------------------
 
 func _tab_states(panel: BandCityPanel) -> void:
 	await h._save("dealings_tab")
-	var block := panel.find_child(HudDealingsVocab.BLOCK_NAME, true, false) as Control
-	h._assert_hud("dealings: the band page carries a Dealings tab", block != null)
+	var block := _block(panel)
+	h._assert_hud("dealings: the band page's Trade tab carries the waiting list", block != null)
+	h._assert_hud("dealings: …there is NO Dealings tab any more (the zone key is gone)",
+		not BandCityPanel.ZONE_KEYS.has(&"dealings"))
+	var tab_text := _text_of(panel).to_lower()
+	var at_waiting := tab_text.find(HudDealingsVocab.HEAD.to_lower())
+	var at_turn := tab_text.find(HudTradeVocab.THIS_TURN_HEAD.to_lower())
+	var at_history := tab_text.find(HudDealingsVocab.HISTORY_HEAD.to_lower())
+	h._assert_hud("dealings: the tab holds three sections in order: waiting on an answer, this turn, history",
+		at_waiting >= 0 and at_turn > at_waiting and at_history > at_turn)
+	var scrolls: Array = []
+	_collect_scrolls(panel._zones.get(BandCityPanel.ZONE_TRADE), scrolls)
+	h._assert_hud("dealings: the whole tab is ONE sanctioned scroll (%d found)" % scrolls.size(),
+		scrolls.size() == 1 and String((scrolls[0] as Node).name) == TradeZoneController.TAB_SCROLL_NAME)
+	h._assert_hud("dealings: …and the SHORT tier is gone (the full tier is always drawn)",
+		panel.find_child("TradeShortTier", true, false) == null
+			and panel.find_child(TradeZoneController.FULL_TIER_NAME, true, false) != null)
 	var rows := _rows(block)
-	h._assert_hud("dealings: all five items are listed (%d)" % rows.size(), rows.size() == 5)
+	h._assert_hud("dealings: the six TRADE items are listed, the treaty proposal is not (%d)" % rows.size(),
+		rows.size() == 6)
 	h._assert_hud("dealings: what waits on this band's answer is listed FIRST, ids ascending",
-		_row_ids(rows) == [OFFER_IN, PROPOSAL_IN, TREATY_IN, COUNTER_IN, OFFER_OUT])
+		_row_ids(rows) == [OFFER_IN, PROPOSAL_IN, COUNTER_IN, REPLY_IN, OFFER_OUT, REPLY_OUT])
+	h._assert_hud("dealings: …a treaty proposal is NOT in the Trade tab", _row(rows, TREATY_IN) == null)
 	var offer := _row(rows, OFFER_IN)
 	var offer_text := _text_of(offer)
 	h._assert_hud("dealings: an offer names the other PEOPLE and the band of theirs (\"%s\")" % offer_text.left(60),
@@ -180,13 +222,6 @@ func _tab_states(panel: BandCityPanel) -> void:
 	h._assert_hud("dealings: …and offers accept, refuse AND counter",
 		_action(proposal, HudDealingsVocab.ANSWER_ACCEPT) != null
 			and _action(proposal, HudDealingsVocab.ANSWER_COUNTER) != null)
-	var treaty := _row(rows, TREATY_IN)
-	var treaty_text := _text_of(treaty)
-	h._assert_hud("dealings: a treaty proposal reads its terms in words (\"%s\")" % treaty_text.left(90),
-		treaty_text.contains("Road rights") and treaty_text.contains("Open borders")
-			and treaty_text.contains("Agreed trade: 5.0 flint for 10.0 food"))
-	h._assert_hud("dealings: …and says an envoy brought it on its hover",
-		treaty.tooltip_text.contains(HudDealingsVocab.TREATY_ENVOY_TOOLTIP))
 	var counter := _row(rows, COUNTER_IN)
 	h._assert_hud("dealings: a counter to OUR proposal reads from our seat as the shipper",
 		_text_of(counter).contains("You send 8.0 food") and _text_of(counter).contains("you get 2.0 hide"))
@@ -200,9 +235,208 @@ func _tab_states(panel: BandCityPanel) -> void:
 	for row in rows:
 		h._assert_hud("dealings: no row prints a raw id (%s)" % _text_of(row).left(30),
 			not _text_of(row).contains(str(BandFx.FIXTURE_BAND_ID_OFFSET)))
-	h._assert_hud("dealings: the tab badge counts what waits on this band, hot",
-		String(panel._tab_badges.get(BandCityPanel.ZONE_DEALINGS, {}).get("text", "")) == "4"
-			and bool(panel._tab_badges.get(BandCityPanel.ZONE_DEALINGS, {}).get("hot", false)))
+	h._assert_hud("dealings: the Trade tab badge counts the TRADE items that wait on this band, hot",
+		String(panel._tab_badges.get(BandCityPanel.ZONE_TRADE, {}).get("text", "")) == "4"
+			and bool(panel._tab_badges.get(BandCityPanel.ZONE_TRADE, {}).get("hot", false)))
+
+
+# ---- (a2) A REPLY ---------------------------------------------------------------------------------------
+
+func _reply_states(panel: BandCityPanel) -> void:
+	var rows := _rows(_block(panel))
+	var incoming := _row(rows, REPLY_IN)
+	var in_text := _text_of(incoming)
+	h._assert_hud("reply: the one this band answers reads \"<band> would give back <return> for your <cargo>\" (\"%s\")" % in_text.left(90),
+		in_text.contains("%s would give back 5.0 flint for your 9.0 food" % BRACK_NAME))
+	h._assert_hud("reply: …with its turns left in amber",
+		_find_label(incoming, HudDealingsVocab.TURNS_LEFT_ONE) != null
+			and _find_label(incoming, HudDealingsVocab.TURNS_LEFT_ONE).get_theme_color("font_color") == HudStyle.WARN)
+	var take := _action(incoming, HudDealingsVocab.ANSWER_ACCEPT)
+	var walk := _action(incoming, HudDealingsVocab.ANSWER_REFUSE)
+	h._assert_hud("reply: …offers `Take it` and `Walk home`, and NO counter",
+		take != null and take.text == HudDealingsVocab.ACTION_TAKE_IT
+			and walk != null and walk.text == HudDealingsVocab.ACTION_WALK_HOME
+			and _action(incoming, HudDealingsVocab.ANSWER_COUNTER) == null)
+	h._assert_hud("reply: …in two lines of copy", _copy_lines(incoming) == 2)
+	var outgoing := _row(rows, REPLY_OUT)
+	var out_text := _text_of(outgoing)
+	h._assert_hud("reply: the one this band named waits: \"Waiting on <band>'s party to take your return of <return>\" (\"%s\")" % out_text.left(100),
+		out_text.contains("Waiting on %s's party to take your return of 10.0 food" % THORN_NAME))
+	h._assert_hud("reply: …offers no action, in two lines",
+		_action(outgoing, HudDealingsVocab.ANSWER_ACCEPT) == null and _copy_lines(outgoing) == 2)
+	await h._save("dealings_reply")
+	# Take it: a bare accept, no return and no sheet.
+	_commands.clear()
+	if take != null:
+		take.emit_signal("pressed")
+	h._assert_hud("reply: Take it emits ONE command and opens no sheet", _commands.size() == 1 and _form() == null)
+	if _commands.size() == 1:
+		var built := MAIN_SCRIPT.format_diplomacy_command(_commands[0])
+		h._assert_hud("reply: …`answer_dealing 0 %d accept` with NO return list (got `%s`)" % [REPLY_IN, built.get("line", "")],
+			String(built.get("line", "")) == "answer_dealing 0 %d accept" % REPLY_IN)
+		h._assert_hud("reply: …whose receipt says the return was taken, not a gift",
+			String(built.get("message", "")) == HudDealingsVocab.ANSWER_MESSAGE_TAKE_RETURN)
+	_commands.clear()
+	if walk != null:
+		walk.emit_signal("pressed")
+	h._assert_hud("reply: Walk home emits ONE command", _commands.size() == 1)
+	if _commands.size() == 1:
+		var built := MAIN_SCRIPT.format_diplomacy_command(_commands[0])
+		h._assert_hud("reply: …`answer_dealing 0 %d refuse` (got `%s`)" % [REPLY_IN, built.get("line", "")],
+			String(built.get("line", "")) == "answer_dealing 0 %d refuse" % REPLY_IN)
+		h._assert_hud("reply: …whose receipt says the party walked home",
+			String(built.get("message", "")) == HudDealingsVocab.ANSWER_MESSAGE_WALK_HOME)
+	# Take the offer's own receipts unchanged: an ordinary refuse is still "Refused the dealing."
+	var ordinary := MAIN_SCRIPT.format_answer_dealing({"dealing_id": 3, "answer": "refuse"})
+	h._assert_hud("reply: …and an ordinary refuse keeps its own receipt",
+		String(ordinary.get("message", "")) == HudDealingsVocab.ANSWER_MESSAGE_REFUSE)
+
+
+# ---- (a3) THE HISTORY -----------------------------------------------------------------------------------
+
+func _history_states(panel: BandCityPanel) -> void:
+	var scroll := panel.find_child(TradeZoneController.TAB_SCROLL_NAME, true, false) as ScrollContainer
+	# Scroll the tab to its foot, where the history sits.
+	scroll.scroll_vertical = int(scroll.get_v_scroll_bar().max_value)
+	await h._settle()
+	await h._save("dealings_history")
+	var block := panel.find_child(HudDealingsVocab.HISTORY_BLOCK_NAME, true, false) as Control
+	h._assert_hud("history: the tab carries a History section", block != null)
+	var rows := _history_rows(block)
+	h._assert_hud("history: every record of THIS band is listed, none of another's (%d of 8)" % rows.size(),
+		rows.size() == 8)
+	var turns: Array = []
+	for row in rows:
+		turns.append(int((row as Control).get_meta(HudDealingsVocab.HISTORY_ROW_META)))
+	h._assert_hud("history: …newest first (%s)" % str(turns), _is_non_increasing(turns))
+	var traded := _history_row(rows, HISTORY_TURN_TRADED)
+	var traded_text := _text_of(traded)
+	h._assert_hud("history: a trade reads `Turn n · <counterparty> · Traded` (\"%s\")" % traded_text.left(80),
+		traded_text.contains("Turn %d · %s · %s" % [HISTORY_TURN_TRADED, "%s · %s" % [BRACK_PEOPLE, BRACK_NAME],
+			"Traded"]) or (traded_text.contains("Turn %d" % HISTORY_TURN_TRADED)
+			and traded_text.contains("%s · %s" % [BRACK_PEOPLE, BRACK_NAME]) and traded_text.contains("Traded")))
+	h._assert_hud("history: …and what moved each way, `gave 5.0 food · got 2.0 hide`",
+		traded_text.contains("gave 5.0 food · got 2.0 hide"))
+	var declined_text := _text_of(_history_row(rows, HISTORY_TURN_DECLINED))
+	h._assert_hud("history: a deal that did not happen says what was OFFERED for what (\"%s\")" % declined_text.left(90),
+		declined_text.contains("Declined") and declined_text.contains("offered 3.0 flint for 4.0 food"))
+	var refused_text := _text_of(_history_row(rows, HISTORY_TURN_REFUSED))
+	h._assert_hud("history: …an empty side is left out (`offered 8.0 food`)",
+		refused_text.contains("Refused") and refused_text.contains("offered 8.0 food")
+			and not refused_text.contains(" for "))
+	var gift_text := _text_of(_history_row(rows, HISTORY_TURN_GIFT_GIVEN))
+	h._assert_hud("history: a gift given says `gave`, and nothing came back (\"%s\")" % gift_text.left(70),
+		gift_text.contains("Gift given") and gift_text.contains("gave 6.0 hay") and not gift_text.contains("got"))
+	var received_text := _text_of(_history_row(rows, HISTORY_TURN_GIFT_RECEIVED))
+	h._assert_hud("history: a gift received says `got`",
+		received_text.contains("Gift received") and received_text.contains("got 2.0 hide")
+			and not received_text.contains("gave"))
+	h._assert_hud("history: the other outcome words read Lapsed, Withdrawn and Failed",
+		_text_of(_history_row(rows, HISTORY_TURN_EXPIRED)).contains("Lapsed")
+			and _text_of(block).contains("Withdrawn") and _text_of(block).contains("Failed"))
+	for row in rows:
+		h._assert_hud("history: a row is at most two lines (%s)" % _text_of(row).left(30),
+			_copy_lines(row) <= 2)
+	var word := _find_meta_all(traded, HudDealingsVocab.HISTORY_ROW_META).filter(
+		func(n: Node) -> bool: return n is Label)
+	var danger := _find_meta_all(_history_row(rows, HISTORY_TURN_DECLINED), HudDealingsVocab.HISTORY_ROW_META).filter(
+		func(n: Node) -> bool: return n is Label)
+	h._assert_hud("history: the outcome word wears its ink (a trade healthy, a refusal danger)",
+		word.size() == 1 and (word[0] as Label).get_theme_color("font_color") == HudStyle.HEALTHY
+			and danger.size() == 1 and (danger[0] as Label).get_theme_color("font_color") == HudStyle.DANGER)
+	# The receiving end of a SAME-PEOPLE shipment reads the one record from its own seat.
+	var record := {"turn": 40, "own_band": 5, "other_faction": HudConst.PLAYER_FACTION_ID, "other_band": 9,
+		"outcome": HudDealingsVocab.OUTCOME_GIFT_GIVEN, "goods_out": _goods(4.0), "goods_in": _goods()}
+	var sender_view := TradeHistoryRoster.view_of(record, 5)
+	var receiver_view := TradeHistoryRoster.view_of(record, 9)
+	h._assert_hud("history: a same-people shipment is ONE record, read from both ends (sender gives, receiver gets)",
+		int(sender_view["band"]) == 9 and sender_view["outcome"] == HudDealingsVocab.OUTCOME_GIFT_GIVEN
+			and TradeHistoryRoster.detail_text(sender_view) == "gave 4.0 food"
+			and int(receiver_view["band"]) == 5 and receiver_view["outcome"] == HudDealingsVocab.OUTCOME_GIFT_RECEIVED
+			and TradeHistoryRoster.detail_text(receiver_view) == "got 4.0 food")
+	# A frame that moves only the history re-fills the list in place.
+	var scroll_id := scroll.get_instance_id()
+	var offset := scroll.scroll_vertical
+	var history := _history()
+	history.append(_record(HISTORY_TURN_ADDED, HOME_ENTITY, BRACK_FACTION, BRACK_ENTITY,
+		HudDealingsVocab.OUTCOME_EXCHANGED, _goods(1.0), _goods(0.0, 0.0, [_flat_hide(1.0)])))
+	h._hud.update_trade_history(history)
+	await h._settle()
+	var after := panel.find_child(TradeZoneController.TAB_SCROLL_NAME, true, false) as ScrollContainer
+	h._assert_hud("history: a history-only frame refills the list IN PLACE (same scroll, same offset, one more row)",
+		after != null and after.get_instance_id() == scroll_id and after.scroll_vertical == offset
+			and _history_rows(panel.find_child(HudDealingsVocab.HISTORY_BLOCK_NAME, true, false)).size() == 9)
+	# Empty states: no history says so, under its head; so does an empty waiting list.
+	h._hud.update_trade_history([])
+	h._hud.update_dealings(_dealings().filter(func(d: Dictionary) -> bool: return int(d["id"]) == TREATY_IN))
+	await h._settle()
+	await h._save("dealings_tab_empty")
+	var empty_history := panel.find_child(HudDealingsVocab.HISTORY_BLOCK_NAME, true, false) as Control
+	h._assert_hud("history: with no records the section keeps its head and says `No trades yet`",
+		empty_history != null and _text_of(empty_history).contains(HudDealingsVocab.HISTORY_EMPTY)
+			and _history_rows(empty_history).is_empty())
+	var empty_waiting := _block(panel)
+	h._assert_hud("dealings: with nothing waiting the section keeps its head and says `Nothing waiting`",
+		empty_waiting != null and _text_of(empty_waiting).contains(HudDealingsVocab.EMPTY)
+			and _rows(empty_waiting).is_empty() and _has(_text_of(empty_waiting), HudDealingsVocab.HEAD))
+	h._assert_hud("dealings: …and the Trade badge is gone (a treaty proposal is not a trade)",
+		String(panel._tab_badges.get(BandCityPanel.ZONE_TRADE, {}).get("text", "x")) == "")
+	h._hud.update_trade_history(_history())
+	h._hud.update_dealings(_dealings())
+	await h._settle()
+
+
+# ---- (a4) TREATY PROPOSALS, ON THE PEOPLES TAB ------------------------------------------------------
+
+func _peoples_treaty_states(panel: BandCityPanel) -> void:
+	panel.set_active_tab(BandCityPanel.ZONE_PEOPLES)
+	h._hud.show_unit_selection(_home_band())
+	await h._settle()
+	await h._save("dealings_peoples_treaty")
+	var block := panel.find_child(HudDealingsVocab.TREATY_BLOCK_NAME, true, false) as Control
+	h._assert_hud("treaty: the Peoples tab carries the treaty proposal under `Waiting on an answer`",
+		block != null and _has(_text_of(block), HudDealingsVocab.HEAD))
+	var rows := _rows(block)
+	h._assert_hud("treaty: …just the one treaty proposal (%d)" % rows.size(),
+		_row_ids(rows) == [TREATY_IN])
+	var treaty := _row(rows, TREATY_IN)
+	var treaty_text := _text_of(treaty)
+	h._assert_hud("treaty: it reads its terms in words (\"%s\")" % treaty_text.left(90),
+		treaty_text.contains("Road rights") and treaty_text.contains("Open borders")
+			and treaty_text.contains("Agreed trade: 5.0 flint for 10.0 food"))
+	h._assert_hud("treaty: …says an envoy brought it on its hover",
+		treaty.tooltip_text.contains(HudDealingsVocab.TREATY_ENVOY_TOOLTIP))
+	h._assert_hud("treaty: …and keeps accept, refuse AND counter",
+		_action(treaty, HudDealingsVocab.ANSWER_ACCEPT) != null
+			and _action(treaty, HudDealingsVocab.ANSWER_REFUSE) != null
+			and _action(treaty, HudDealingsVocab.ANSWER_COUNTER) != null)
+	h._assert_hud("treaty: it is the FIRST thing on the tab, above the regard block",
+		block.get_index() == 0 or block.get_parent().get_child(0) == block)
+	h._assert_hud("treaty: the Peoples badge counts the proposals awaiting this band's answer, hot",
+		String(panel._tab_badges.get(BandCityPanel.ZONE_PEOPLES, {}).get("text", "")) == "1"
+			and bool(panel._tab_badges.get(BandCityPanel.ZONE_PEOPLES, {}).get("hot", false)))
+	_commands.clear()
+	var accept := _action(treaty, HudDealingsVocab.ANSWER_ACCEPT)
+	if accept != null:
+		accept.emit_signal("pressed")
+	h._assert_hud("treaty: Accept emits ONE command", _commands.size() == 1)
+	if _commands.size() == 1:
+		var line := String(MAIN_SCRIPT.format_diplomacy_command(_commands[0]).get("line", ""))
+		h._assert_hud("treaty: …`answer_dealing 0 %d accept` (got `%s`)" % [TREATY_IN, line],
+			line == "answer_dealing 0 %d accept" % TREATY_IN)
+	# With none pending the block is absent and the badge falls back to the tie count.
+	h._hud.update_dealings(_dealings().filter(func(d: Dictionary) -> bool: return int(d["id"]) != TREATY_IN))
+	await h._settle()
+	h._assert_hud("treaty: with none pending the block is not drawn",
+		panel.find_child(HudDealingsVocab.TREATY_BLOCK_NAME, true, false) == null)
+	h._assert_hud("treaty: …and the Peoples badge is the tie count again, not hot",
+		String(panel._tab_badges.get(BandCityPanel.ZONE_PEOPLES, {}).get("text", "")) == "3"
+			and not bool(panel._tab_badges.get(BandCityPanel.ZONE_PEOPLES, {}).get("hot", false)))
+	h._hud.update_dealings(_dealings())
+	await h._settle()
+	panel.set_active_tab(BandCityPanel.ZONE_TRADE)
+	h._hud.show_unit_selection(_home_band())
+	await h._settle()
 
 
 # ---- (b) THE ANSWER SHEET ------------------------------------------------------------------------
@@ -232,7 +466,7 @@ func _answer_sheet_states(panel: BandCityPanel) -> void:
 
 	# ---- the OFFER's sheet: pick a return from the holdings -----------------------------------------
 	_commands.clear()
-	panel.set_active_tab(BandCityPanel.ZONE_DEALINGS)
+	panel.set_active_tab(BandCityPanel.ZONE_TRADE)
 	h._hud.show_unit_selection(_home_band())
 	await h._settle()
 	var accept := _action(_row(_rows(_block(panel)), OFFER_IN), HudDealingsVocab.ANSWER_ACCEPT)
@@ -332,8 +566,12 @@ func _answer_sheet_states(panel: BandCityPanel) -> void:
 	h._hud.close_verb_form()
 	await h._settle()
 
-	# ---- the TREATY counter: tick the terms --------------------------------------------------------
-	var treaty_counter := _action(_row(_rows(_block(panel)), TREATY_IN), HudDealingsVocab.ANSWER_COUNTER)
+	# ---- the TREATY counter: tick the terms (the proposal waits on the Peoples tab) ----------------------
+	panel.set_active_tab(BandCityPanel.ZONE_PEOPLES)
+	h._hud.show_unit_selection(_home_band())
+	await h._settle()
+	var treaty_block := panel.find_child(HudDealingsVocab.TREATY_BLOCK_NAME, true, false) as Control
+	var treaty_counter := _action(_row(_rows(treaty_block), TREATY_IN), HudDealingsVocab.ANSWER_COUNTER)
 	if treaty_counter != null:
 		treaty_counter.emit_signal("pressed")
 	await h._settle()
@@ -361,6 +599,7 @@ func _answer_sheet_states(panel: BandCityPanel) -> void:
 		var expected := "answer_dealing 0 %d counter open_borders bundle give material flint %s ask food %s" % [
 			TREATY_IN, sent, returned]
 		h._assert_hud("treaty: …`%s` (got `%s`)" % [expected, line], line == expected)
+	panel.set_active_tab(BandCityPanel.ZONE_TRADE)
 	h._hud.show_unit_selection(_home_band())
 	await h._settle()
 	# A sheet for a dealing the server answered closes itself.
@@ -567,15 +806,15 @@ func _faction_page_states(panel: BandCityPanel) -> void:
 	h._assert_hud("faction: the gift setting is NOT on the faction page (it is a dealings setting)",
 		Q.find_meta_node(panel, HudDealingsVocab.GIFT_TOGGLE_META) == null
 			and Q.find_meta_node(panel, FactionRollup.OPEN_BORDERS_TOGGLE_META) != null)
-	# ---- the setting, at the top of the Dealings tab ------------------------------------------------
-	panel.set_active_tab(BandCityPanel.ZONE_DEALINGS)
+	# ---- the setting, at the top of the Trade tab's waiting section --------------------------------
+	panel.set_active_tab(BandCityPanel.ZONE_TRADE)
 	h._hud.show_unit_selection(_home_band())
 	await h._settle()
 	await h._save("dealings_gift_setting")
 	var toggle := Q.find_meta_node(panel, HudDealingsVocab.GIFT_TOGGLE_META) as CheckBox
-	h._assert_hud("gifts: the Dealings tab carries the setting, labelled in the player's words, on by default",
+	h._assert_hud("gifts: the Trade tab carries the setting, labelled in the player's words, on by default",
 		toggle != null and toggle.text == HudDealingsVocab.ACCEPT_GIFTS_LABEL and toggle.button_pressed)
-	h._assert_hud("gifts: …above the list (the head, then the setting, then the scroll)",
+	h._assert_hud("gifts: …above the waiting list (the head, then the setting, then the rows)",
 		toggle != null and toggle.get_index() == 1)
 	h._assert_hud("gifts: …and its hover says what turning it on does",
 		toggle != null and toggle.tooltip_text == HudDealingsVocab.ACCEPT_GIFTS_HINT)
@@ -594,7 +833,7 @@ func _faction_page_states(panel: BandCityPanel) -> void:
 	await h._settle()
 	var off := Q.find_meta_node(panel, HudDealingsVocab.GIFT_TOGGLE_META) as CheckBox
 	h._assert_hud("gifts: the box follows the SNAPSHOT, refilled in place (off when the sim says off)",
-		off != null and not off.button_pressed and _rows(_block(panel)).size() == 5)
+		off != null and not off.button_pressed and _rows(_block(panel)).size() == 6)
 	await h._save("dealings_gift_setting_off")
 	h._hud.update_faction_policies([{"faction": 0, "open_borders": true, "accept_own_gifts": true,
 		"border_overrides": []}])
@@ -611,9 +850,9 @@ func _orb_states() -> void:
 		% dealing_rows.size(), dealing_rows.size() == 1)
 	if dealing_rows.size() == 1:
 		var row: Dictionary = dealing_rows[0]
-		h._assert_hud("orb: …reading `%s` (4 items wait on this band)" % (
-				HudDealingsVocab.ATTENTION_LABEL_MANY_FORMAT % 4),
-			String(row.get("label", "")) == HudDealingsVocab.ATTENTION_LABEL_MANY_FORMAT % 4)
+		h._assert_hud("orb: …reading `%s` (5 items wait on this band)" % (
+				HudDealingsVocab.ATTENTION_LABEL_MANY_FORMAT % 5),
+			String(row.get("label", "")) == HudDealingsVocab.ATTENTION_LABEL_MANY_FORMAT % 5)
 		h._assert_hud("orb: …non-locating, carrying its band as the panel subject",
 			int(row.get("x", 0)) < 0 and int(row.get(HudAttentionVocab.ATTENTION_PANEL_SUBJECT, 0))
 				== BandFx.FIXTURE_BAND_ID_OFFSET + HOME_ENTITY)
@@ -629,12 +868,12 @@ func _orb_states() -> void:
 	h._assert_hud("orb: the popover shows the row with an `Open` affordance (%d)" % shown.size(),
 		shown.size() == 1 and not String(shown[0].get("jump", "")).is_empty())
 	h._hud.turn_orb.toggle_popover()
-	# Pressing the row brings the receiving band's Dealings tab forward.
+	# Pressing the row brings the receiving band's Trade tab forward.
 	h._hud._turnorb._on_turn_orb_panel_requested(HudDealingsVocab.ATTENTION_KIND_DEALING,
 		BandFx.FIXTURE_BAND_ID_OFFSET + HOME_ENTITY)
 	await h._settle()
-	h._assert_hud("orb: pressing the row focuses that band's Dealings tab",
-		h._hud._bandpanel._panel._active_tab == BandCityPanel.ZONE_DEALINGS)
+	h._assert_hud("orb: pressing the row focuses that band's Trade tab",
+		h._hud._bandpanel._panel._active_tab == BandCityPanel.ZONE_TRADE)
 	# Answered, the row goes.
 	h._hud.update_dealings([])
 	await h._settle()
@@ -666,6 +905,10 @@ func _feed_states() -> void:
 	var withdrawn := "The road to %s is broken — the proposal from them was withdrawn" % sim_brack
 	var settled := "%s paid 10.00 food for the shipment" % sim_brack
 	var failed := "%s no longer holds the agreed return — your party is coming home with its cargo" % sim_brack
+	var reply_offered := "%s would give back 5.00 flint for your 9.00 food: take it or walk home" % sim_brack
+	var reply_posted := "Your return of 5.00 flint is waiting on %s's party to take it" % sim_brack
+	var reply_declined := "%s's party walked home with its cargo" % sim_brack
+	var reply_withdrawn := "You took back your return of 5.00 flint"
 	var treaty_offered := "A treaty proposal from %s: road rights, open borders" % sim_brack
 	var treaty_formed := "%s accepted your treaty proposal" % sim_brack
 	var breach_against := "Faction %d ended its treaty with you" % BRACK_FACTION
@@ -692,6 +935,15 @@ func _feed_states() -> void:
 		{"tick": TURN, "kind": "dealing", "faction": 0, "label": failed,
 			"detail": "status=failed dealing=16 kind=exchange destination=%d reason=receiver_short" % brack_id,
 			"seq": 808},
+		{"tick": TURN, "kind": "dealing", "faction": 0, "label": reply_offered,
+			"detail": "status=offered dealing=16 kind=reply from=%d sender=%d band=%d" % [
+				BRACK_FACTION, brack_id, home_id], "seq": 813, "band": home_id},
+		{"tick": TURN, "kind": "dealing", "faction": 0, "label": reply_posted,
+			"detail": "status=posted dealing=17 kind=reply destination=%d" % brack_id, "seq": 814},
+		{"tick": TURN, "kind": "dealing", "faction": 0, "label": reply_declined,
+			"detail": "status=declined dealing=17 kind=reply destination=%d" % brack_id, "seq": 815},
+		{"tick": TURN, "kind": "dealing", "faction": 0, "label": reply_withdrawn,
+			"detail": "status=withdrawn dealing=17 kind=reply destination=%d" % brack_id, "seq": 816},
 		{"tick": TURN, "kind": "treaty", "faction": 0, "label": treaty_offered,
 			"detail": "status=offered dealing=14 kind=treaty_proposal carrier=envoy from=%d sender=%d band=%d" % [
 				BRACK_FACTION, brack_id, home_id], "seq": 809},
@@ -711,9 +963,20 @@ func _feed_states() -> void:
 		_rung(dock, breach_against) == HudEventVocab.RUNG_NOTABLE)
 	h._assert_hud("feed: …and the one YOU ended is a routine receipt",
 		_rung(dock, breach_by_us) == HudEventVocab.RUNG_ROUTINE)
-	for label in [posted, accepted, refused, expired, withdrawn, settled, failed, treaty_formed]:
+	# **THE ANSWER IS NOTABLE**: how a dealing ended (accepted, refused, declined, lapsed, failed) and a
+	# reply addressed to us; a post, a withdrawal and a settled receipt stay routine.
+	for label in [accepted, refused, expired, failed, reply_offered, reply_declined]:
+		h._assert_hud("feed: `%s` is NOTABLE" % String(label).left(48),
+			_rung(dock, label) == HudEventVocab.RUNG_NOTABLE)
+	for label in [posted, withdrawn, settled, treaty_formed, reply_posted, reply_withdrawn]:
 		h._assert_hud("feed: `%s` is a routine line" % String(label).left(48),
 			_rung(dock, label) == HudEventVocab.RUNG_ROUTINE)
+	h._assert_hud("feed: `declined` and the reply's phrases read in English, not as a raw token",
+		EventDockPanel.detail_phrase("status=declined dealing=17 kind=reply destination=1").contains("turned down")
+			and EventDockPanel.detail_phrase("status=failed dealing=17 kind=reply reason=receiver_short").contains(
+				"they no longer held the return")
+			and EventDockPanel.detail_phrase("status=accepted dealing=17 kind=reply").contains("accepted")
+			and EventDockPanel.detail_phrase("status=withdrawn dealing=17 kind=reply").contains("withdrawn"))
 	h._assert_hud("feed: the sender band is named by the tie's remembered name, not `band N`",
 		_label_count(dock, offered.replace(sim_brack, BRACK_NAME)) == 1)
 	h._assert_hud("feed: …and the treaty's people by their published name",
@@ -765,6 +1028,38 @@ func _rows(block: Node) -> Array:
 		if child is Control and (child as Control).has_meta(HudDealingsVocab.ROW_META):
 			rows.append(child)
 	return rows
+
+func _collect_scrolls(node: Node, into: Array) -> void:
+	if node == null:
+		return
+	if node is ScrollContainer:
+		into.append(node)
+	for child in node.get_children():
+		_collect_scrolls(child, into)
+
+func _history_rows(block: Node) -> Array:
+	var rows: Array = []
+	if block == null:
+		return rows
+	var box := block.find_child(HudDealingsVocab.HISTORY_ROWS_NAME, true, false)
+	if box == null:
+		return rows
+	for child in box.get_children():
+		if child is Control and (child as Control).has_meta(HudDealingsVocab.HISTORY_ROW_META):
+			rows.append(child)
+	return rows
+
+func _history_row(rows: Array, turn: int) -> Control:
+	for row in rows:
+		if int((row as Control).get_meta(HudDealingsVocab.HISTORY_ROW_META)) == turn:
+			return row
+	return null
+
+func _is_non_increasing(values: Array) -> bool:
+	for i in range(1, values.size()):
+		if int(values[i]) > int(values[i - 1]):
+			return false
+	return true
 
 func _row_ids(rows: Array) -> Array:
 	var ids: Array = []
@@ -1058,6 +1353,41 @@ func _dealing(id: int, kind: String, sender_faction: int, sender_entity: int, re
 		"party_workers": party, "treaty": treaty if not treaty.is_empty() else _no_terms(), "carrier": carrier,
 	}
 
+func _flat_hide(amount: float) -> Dictionary:
+	return {"material_id": "hide", "amount": amount, "readings": [], "variety_name": ""}
+
+## One trade record as `dict/dealings.rs` writes it: from the viewer's people's point of view, the goods
+## lists unrated.
+func _record(turn: int, own_entity: int, other_faction: int, other_entity: int, outcome: String,
+		goods_out: Dictionary, goods_in: Dictionary) -> Dictionary:
+	return {"turn": turn, "own_band": BandFx.FIXTURE_BAND_ID_OFFSET + own_entity,
+		"other_faction": other_faction, "other_band": BandFx.FIXTURE_BAND_ID_OFFSET + other_entity,
+		"dealing_id": 0, "outcome": outcome, "goods_out": goods_out, "goods_in": goods_in}
+
+## The history, OLDEST FIRST as the sim publishes it: eight of this band's, and one of another band's.
+func _history() -> Array:
+	return [
+		_record(HISTORY_TURN_TRADED, HOME_ENTITY, BRACK_FACTION, BRACK_ENTITY,
+			HudDealingsVocab.OUTCOME_EXCHANGED, _goods(5.0), _goods(0.0, 0.0, [_flat_hide(2.0)])),
+		_record(HISTORY_TURN_GIFT_GIVEN, HOME_ENTITY, THORN_FACTION, THORN_ENTITY,
+			HudDealingsVocab.OUTCOME_GIFT_GIVEN, _goods(0.0, 6.0), _goods()),
+		_record(HISTORY_TURN_DECLINED, HOME_ENTITY, BRACK_FACTION, BRACK_ENTITY,
+			HudDealingsVocab.OUTCOME_DECLINED, _goods(0.0, 0.0, [{"material_id": "flint", "amount": 3.0,
+				"readings": [], "variety_name": ""}]), _goods(4.0)),
+		_record(HISTORY_TURN_REFUSED, HOME_ENTITY, MOOR_FACTION, MOOR_ENTITY,
+			HudDealingsVocab.OUTCOME_REFUSED, _goods(8.0), _goods()),
+		_record(HISTORY_TURN_OTHER_BAND, OTHER_BAND_ENTITY, BRACK_FACTION, BRACK_ENTITY,
+			HudDealingsVocab.OUTCOME_EXCHANGED, _goods(7.0), _goods(2.0)),
+		_record(HISTORY_TURN_EXPIRED, HOME_ENTITY, THORN_FACTION, THORN_ENTITY,
+			HudDealingsVocab.OUTCOME_EXPIRED, _goods(2.0), _goods()),
+		_record(HISTORY_TURN_GIFT_RECEIVED, HOME_ENTITY, BRACK_FACTION, BRACK_ENTITY,
+			HudDealingsVocab.OUTCOME_GIFT_RECEIVED, _goods(), _goods(0.0, 0.0, [_flat_hide(2.0)])),
+		_record(HISTORY_TURN_WITHDRAWN, HOME_ENTITY, THORN_FACTION, THORN_ENTITY,
+			HudDealingsVocab.OUTCOME_WITHDRAWN, _goods(), _goods(PROPOSAL_FOOD)),
+		_record(HISTORY_TURN_FAILED, HOME_ENTITY, BRACK_FACTION, BRACK_ENTITY,
+			HudDealingsVocab.OUTCOME_FAILED, _goods(4.0), _goods()),
+	]
+
 func _dealings() -> Array:
 	var hide := _batch("hide", OFFER_HIDE, [["tough", 0.45, "fair"], ["supple", 0.58, "good"]])
 	var flint := {"material_id": "flint", "amount": PROPOSAL_FLINT, "readings": [], "variety_name": ""}
@@ -1076,4 +1406,11 @@ func _dealings() -> Array:
 		_dealing(COUNTER_IN, HudDealingsVocab.KIND_COUNTER, BRACK_FACTION, BRACK_ENTITY, 0, HOME_ENTITY,
 			_goods(8.0), _goods(0.0, 0.0, [{"material_id": "hide", "amount": 2.0, "readings": [],
 				"variety_name": ""}]), 2, HOME_ENTITY),
+		# A REPLY to our offer: Brackwater named a return of flint for our food (we answer it).
+		_dealing(REPLY_IN, HudDealingsVocab.KIND_REPLY, BRACK_FACTION, BRACK_ENTITY, 0, HOME_ENTITY,
+			_goods(REPLY_CARGO_FOOD), _goods(0.0, 0.0, [{"material_id": "flint", "amount": REPLY_RETURN_FLINT,
+				"readings": [], "variety_name": ""}]), 2, HOME_ENTITY),
+		# …and a reply WE named to Thornwick's offer: their party waits on our return of food.
+		_dealing(REPLY_OUT, HudDealingsVocab.KIND_REPLY, 0, HOME_ENTITY, THORN_FACTION, THORN_ENTITY,
+			_goods(0.0, 0.0, [_flat_hide(OFFER_HIDE)]), _goods(PROPOSAL_FOOD), 2, THORN_ENTITY),
 	]

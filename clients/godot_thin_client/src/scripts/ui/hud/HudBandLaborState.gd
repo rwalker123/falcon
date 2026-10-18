@@ -66,6 +66,9 @@ var _connections: Array = []
 var _dealings: Array = []
 var _goodwill: Dictionary = {}
 var _treaties: Dictionary = {}
+# The viewer's people's TRADE HISTORY (`trade_history`), oldest first, a whole-section replace: one
+# record per trade from this people's point of view. Held verbatim, like the three above.
+var _trade_history: Array = []
 var _material_ids: Array = []
 # Optimistic pending labor per band entity: {turn, assign:{key->{...}}, move:{x,y}} (see the HUD).
 var _pending_labor: Dictionary = {}
@@ -370,6 +373,36 @@ func set_dealings(dealings_variant: Variant) -> void:
 func dealings() -> Array:
 	return _dealings
 
+## Ingest the viewer's TRADE HISTORY (`trade_history`). A whole-section replace: a non-Array is ignored
+## and the last value stands, and an EMPTY Array means "no records now".
+func set_trade_history(history_variant: Variant) -> void:
+	if not (history_variant is Array):
+		return
+	_trade_history = history_variant
+	changed.emit(&"trade_history")
+
+func trade_history() -> Array:
+	return _trade_history
+
+## **THE RECORDS THIS BAND TOOK PART IN, NEWEST FIRST** -- rows whose `own_band` is the band, plus the
+## same-people rows (`other_faction` is the viewer's own, a shipment between two of its bands writes ONE
+## record) whose `other_band` is the band. The sim publishes oldest first and the order of equal turns
+## is the sim's, so the newest-first list is the held list reversed, never re-sorted.
+func trade_history_for_band(band_id: int) -> Array:
+	var rows: Array = []
+	if band_id == HudConst.NO_BAND_ID:
+		return rows
+	for index in range(_trade_history.size() - 1, -1, -1):
+		var row_variant: Variant = _trade_history[index]
+		if not (row_variant is Dictionary):
+			continue
+		var row: Dictionary = row_variant
+		if int(row.get("own_band", HudConst.NO_BAND_ID)) == band_id \
+				or (int(row.get("other_faction", HudConst.NO_FACTION_ID)) == HudConst.PLAYER_FACTION_ID \
+				and int(row.get("other_band", HudConst.NO_BAND_ID)) == band_id):
+			rows.append(row)
+	return rows
+
 ## The world's material ids, in catalogue order (`materials[].id`), for the one reader that must name a good
 ## the band does not hold: a proposal or counter's ASK list. Ignored unless an Array, the last value
 ## standing -- the crafting catalogue is a per-world constant a delta never restates.
@@ -392,6 +425,7 @@ func reset_diplomacy() -> void:
 	_dealings = []
 	_goodwill = {}
 	_treaties = {}
+	_trade_history = []
 	changed.emit(&"dealings")
 
 ## The goodwill section (`{known, own, cuts}`) and the treaty section (`{treaties, standing_links}`),
