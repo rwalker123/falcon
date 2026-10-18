@@ -5105,6 +5105,9 @@ func _queue_entry_facts(band: Dictionary, model: Dictionary, builders: int) -> A
     facts.append({"text": HudWorkVocab.BUILD_QUEUE_HEADLINE_FORMAT % [_build_queue_job_face(model), headline],
         "ink": HudStyle.INK})
     var waiting := _queue_row_is_waiting_behind_block(model)
+    var pen_site := _queue_pen_site_line(model)
+    if pen_site != "":
+        facts.append({"text": pen_site, "ink": HudStyle.INK})
     for short_variant in shorts:
         facts.append({"text": DetailFormat.build_material_need_line(short_variant as Dictionary),
             "ink": HudStyle.DANGER})
@@ -5123,6 +5126,26 @@ func _queue_entry_facts(band: Dictionary, model: Dictionary, builders: int) -> A
     if cost != "":
         facts.append({"text": cost, "ink": HudStyle.INK_DIM})
     return facts
+
+## `Pen at (x, y)` for a herd entry whose destination is an enclosed (pen) rung and whose herd publishes
+## the tile the queued Corral will pen it on; `""` when it is not a Corral entry or either coordinate is -1.
+func _queue_pen_site_line(model: Dictionary) -> String:
+    if String(model.get("kind", "")) != SourceForecast.LABOR_KIND_HUNT:
+        return ""
+    var herd := _band_labor.find_world_herd(String(model.get("herd_id", "")))
+    if herd.is_empty():
+        return ""
+    var x := int(herd.get("pen_site_x", -1))
+    var y := int(herd.get("pen_site_y", -1))
+    if x < 0 or y < 0:
+        return ""
+    var destination := String(model.get("build_destination", ""))
+    for quote in RungQuotes.quotes(herd, ""):
+        var names_it := String(quote.get(RungQuotes.KEY_RUNG, "")) == destination \
+            or String(quote.get(RungQuotes.KEY_VERB, "")) == destination
+        if names_it and RungQuotes.has_trait(quote, RungQuotes.TRAIT_ENCLOSED):
+            return HudWorkVocab.BUILD_QUEUE_PEN_SITE_FORMAT % [x, y]
+    return ""
 
 ## `Costs 75 work · upkeep 2.8/turn`, `""` for an entry with no priced job.
 func _queue_entry_cost_line(model: Dictionary) -> String:

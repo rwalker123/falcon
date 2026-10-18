@@ -3655,6 +3655,8 @@ const BUILD_QUEUE_BLOCKED_PROGRESS_FORMAT := "Blocked %d%%"
 ## **AN ENTRY BEHIND A BLOCKED HEAD** is not itself broken and has nothing to fix, so it reads the plain
 ## `Queued 0%` (`HudSelectionVocab.RUNG_QUEUED_FORMAT`) in `HudStyle.INK_DIM`, no mark; its hover headline
 ## is `<face> — Queued 0%`, then the cost line.
+## **WHERE A QUEUED CORRAL WILL PEN THE HERD**: `Pen at (7, 9)`, right after the headline.
+const BUILD_QUEUE_PEN_SITE_FORMAT := "Pen at (%d, %d)"
 ## The widest the blocked clause may ask for: its own text up to this, trimmed beyond.
 const BUILD_QUEUE_CLAUSE_MAX_WIDTH := 240.0
 ## …and the same fact as a hover / detail line, without the mark: one per missing material.

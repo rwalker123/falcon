@@ -3625,6 +3625,9 @@ head's causes (`_queue_row_is_waiting_behind_block`).
 1. the headline, `<face> — <verb-ing> 64%` with `· turn N` only on a real date. A head blocked on goods
    reads `<face> — Blocked 64%`; an entry behind a blocked head `<face> — Queued 0%`; a pending entry says
    its pending words;
+1b. for a Corral entry (a herd source whose destination rung is an enclosed one), `Pen at (7, 9)`
+   (`BUILD_QUEUE_PEN_SITE_FORMAT`) off the herd's `pen_site_x` / `pen_site_y` — the tile the queued Corral
+   will pen it on — right after the headline; absent when either coordinate is -1;
 2. one `Need N <material>` per missing good (head only);
 3. one `Short N <item>` per short builders' tool (head only; N the builders without it, `required −
    filled` rounded up; the item the roster's lower-cased name, or its humanised wire id until the roster

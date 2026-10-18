@@ -11377,8 +11377,48 @@ func _assert_blocked_pen_head_hover_and_detail() -> void:
 		withdraw != null and withdraw.text == "✕" and withdraw.tooltip_text == "Remove from queue")
 	_assert_zone_content_fits()
 	_hud._bandpanel._queue_open_key = ""
+	await _assert_the_corral_entry_states_its_pen_site(pile, band)
 	_push_bands([_ring_band_fixture()])
 	await _settle()
+
+## **A QUEUED CORRAL SAYS WHERE IT WILL PEN THE HERD** — `Pen at (7, 9)` right after the headline, in the
+## hover and the open detail alike (they share `_queue_entry_facts`); a herd publishing -1 on either
+## coordinate gets no such line.
+const PEN_SITE := Vector2i(7, 9)
+
+func _assert_the_corral_entry_states_its_pen_site(pile: Array, band: Dictionary) -> void:
+	var line := HudWorkVocab.BUILD_QUEUE_PEN_SITE_FORMAT % [PEN_SITE.x, PEN_SITE.y]
+	_set_world_herds(_ring_herd_fixtures(pile, {"pen_extend_progress": BLOCKED_PEN_WORK_DONE,
+		"pen_site_x": PEN_SITE.x, "pen_site_y": PEN_SITE.y}))
+	_push_bands([band])
+	await _settle()
+	var rows := _build_queue_rows()
+	var hover: Array = [] if rows.is_empty() else rows[0].tooltip_text.split("\n")
+	_assert_band_panel("pen site — the Corral entry's hover has \"%s\" right after the headline (%s)"
+			% [line, str(hover)],
+		hover.size() >= 2 and hover[1] == line)
+	_hud._bandpanel._toggle_queue_settings(String(_hud._bandpanel._build_queue_models(
+		_hud._band_labor.panel_band(), _hud._bandpanel._work_source_models(
+			_hud._band_labor.panel_band(), 0))[0].get("key", "")))
+	await _settle()
+	var detail: Array = _queue_strip_detail().split("\n")
+	_assert_band_panel("pen site — …and so does the open detail (%s)" % str(detail),
+		detail.size() >= 2 and detail[1] == line)
+	_hud._bandpanel._queue_open_key = ""
+	_set_world_herds(_ring_herd_fixtures(pile, {"pen_extend_progress": BLOCKED_PEN_WORK_DONE,
+		"pen_site_x": -1, "pen_site_y": -1}))
+	_push_bands([band])
+	await _settle()
+	rows = _build_queue_rows()
+	_assert_band_panel("pen site — a herd with no pen site (-1) states no `Pen at` line",
+		not rows.is_empty() and not rows[0].tooltip_text.contains("Pen at"))
+	_set_world_herds(_ring_herd_fixtures(pile, {"pen_extend_progress": BLOCKED_PEN_WORK_DONE,
+		"pen_site_x": PEN_SITE.x, "pen_site_y": -1}))
+	_push_bands([band])
+	await _settle()
+	rows = _build_queue_rows()
+	_assert_band_panel("pen site — …nor does one with only one coordinate set",
+		not rows.is_empty() and not rows[0].tooltip_text.contains("Pen at"))
 
 ## **THE ENTRY BEHIND A BLOCKED HEAD IS NOT BLOCKED, AND SAYS NOTHING IS WRONG WITH IT.** Ray's game showed the
 ## blocked pen head as a plain date and the road waiting behind it as `⚠ Blocked 0%`. The sim mints
