@@ -1575,7 +1575,7 @@ worked like any order.
   never left without parts and never outlives them, however the last one went.
 - `complete_item` banks a finished part's `made` into its `KitOrder::done` before the part leaves; a
   part still queued reports its own `made` (the grouped box's progress is `done` + the live parts').
-- **Auto-craft is unchanged** — it fills an empty queue only, so it never interleaves with a kit block.
+- **Auto-craft queues at the END** of the queue, behind any kit block, so it never interleaves with one.
 - **Persisted** (`BandRecord::bench`; `SAVE_FORMAT_VERSION` 44).
 
 **Commands** (proto 85-87, `CommandEventKind::Craft`, band-addressed with a required handle in `xtask`'s
@@ -1642,9 +1642,19 @@ behaviour; `BandBench::auto` is the per-band toggle (`bench_auto <f> <b> on|off`
 auto-craft queued. All three ride `BandRecord::bench` (`SAVE_FORMAT_VERSION` 33) and the wire
 (`BenchState.auto` / `autoSkipped`, `BenchOrder.auto`).
 
-- **It fills an EMPTY queue, and only an empty one.** `auto_craft_fill` queues the first usable
-  suggestion at its whole netted `count` as one `auto` order. A player-queued order on the queue means
-  it adds nothing, so overriding is just queueing.
+- **It fills the bench whenever NO order can progress** (an empty queue is the special case).
+  `auto_craft_fill` asks `systems::worked_order` - the bench's own question - and acts only when it
+  answers `None`; a blocked order (short of an input) holds nothing, keeps its place and resumes by
+  itself when its input arrives, exactly as the bench already skips it. It then queues the first
+  usable suggestion at its whole netted `count` as one `auto` order. **It never queues a suggestion
+  that is itself short of an input** (the suggested recipe must be drawable for ONE pass,
+  `order_is_workable`), so the makeable suggestion behind a short one is the one queued, and **never a
+  suggestion whose row already has an order on the bench**, blocked or not (no duplicate hurdles).
+  One order is queued per fill; the next fill comes the turn nothing can progress again. The
+  live bug: 16 crafters idled at turn 209 behind a blocked hurdles and sled order because the fill
+  required an empty queue. Pinned by `auto_craft::{a_bench_whose_only_order_is_blocked_gets_the_makeable_suggestions,
+  a_blocked_order_resumes_once_its_hide_arrives, a_suggestion_already_queued_is_not_queued_twice,
+  a_short_suggestion_is_never_queued_and_the_makeable_one_behind_it_is_made}`.
 - **The suggestions are the snapshot's own.** `craft_suggestions::take_row_gear` settles the rows'
   gear and `band_suggestions` ranks it — the two functions `snapshot::population` calls — fed by
   `take_claims::with_world_sources` (between-turns, regrow-first, exactly the capture's reading).
@@ -1660,8 +1670,8 @@ auto-craft queued. All three ride `BandRecord::bench` (`SAVE_FORMAT_VERSION` 33)
   suggestion ranks (a kit shortage outranks it). Pinned by
   `build_queue::{an_empty_auto_bench_queues_the_hurdles_a_pen_build_is_short_of,
   a_hurdles_auto_order_can_be_skipped_and_stays_skipped}`.
-- **It never walks down the list on its own.** An auto order short of material WAITS (the ordinary
-  skip/waiting semantics). Only the player's skip moves on.
+- **A queued auto order that later runs short WAITS** (the ordinary skip/waiting semantics) and no
+  longer holds the bench: the next fill queues what can be made. Only the player's skip parks it.
 - **It never picks the crew.** `BandBench::workers` is untouched by every path.
 - **Skip** (`bench_auto_skip <f> <b>`, field 83) is valid only when `worked_order` is `None` **and** the
   head is `auto`; otherwise it is refused by name. It parks the head's row key (its recipe's

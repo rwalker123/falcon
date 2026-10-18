@@ -4423,6 +4423,8 @@ fn an_empty_auto_bench_queues_the_hurdles_a_pen_build_is_short_of() {
     let (published_count, _) = published_suggestion(&app, band, "hurdles")
         .expect("Make Next names the hurdles a pen build is short of");
 
+    // The wood and hide to weave one pass: auto never queues a suggestion that is itself short.
+    stock_the_hurdles_inputs(&mut app, band);
     assert!(
         core_sim::auto_craft::auto_craft_fill(&mut app.world, band),
         "the fill must find a usable suggestion"
@@ -4445,8 +4447,13 @@ fn an_empty_auto_bench_queues_the_hurdles_a_pen_build_is_short_of() {
 #[test]
 fn a_hurdles_auto_order_can_be_skipped_and_stays_skipped() {
     let (mut app, band) = an_auto_bench_beside_a_pen_short_of_hurdles();
+    stock_the_hurdles_inputs(&mut app, band);
     assert!(core_sim::auto_craft::auto_craft_fill(&mut app.world, band));
-    // The store holds no wood or hide, so the bench cannot work the order: it is waiting.
+    // The wood and hide run out after the order was queued, so the bench cannot work it: waiting.
+    app.world
+        .get_mut::<PopulationCohort>(band)
+        .expect("the fixture band")
+        .stores = LocalStore::new();
     let skipped = core_sim::auto_craft::auto_craft_skip(&mut app.world, band)
         .expect("a waiting auto head can be skipped");
     assert_eq!(skipped, "hurdles");
@@ -4460,6 +4467,32 @@ fn a_hurdles_auto_order_can_be_skipped_and_stays_skipped() {
         "nothing else is suggested, so the skipped material is not re-queued: {:?}",
         bench.orders
     );
+}
+
+/// Wood and hide enough for several passes of the hurdles recipe.
+fn stock_the_hurdles_inputs(app: &mut App, band: Entity) {
+    let materials = app
+        .world
+        .resource::<core_sim::MaterialsConfigHandle>()
+        .get();
+    let mut stores = LocalStore::new();
+    for (material, axes) in [
+        ("wood", [("hardness", 0.5), ("pliancy", 0.5)]),
+        ("hide", [("toughness", 0.5), ("suppleness", 0.5)]),
+    ] {
+        let readings: std::collections::BTreeMap<String, f32> = axes
+            .iter()
+            .map(|(axis, value)| ((*axis).to_string(), *value))
+            .collect();
+        let key = materials
+            .band_key(material, &readings)
+            .expect("the shipped table carries this material");
+        stores.deposit_material(material, key, scalar_from_f32(40.0), &readings);
+    }
+    app.world
+        .get_mut::<PopulationCohort>(band)
+        .expect("the fixture band")
+        .stores = stores;
 }
 
 /// Enough fixture workers that every kit unit is stocked for everyone.
