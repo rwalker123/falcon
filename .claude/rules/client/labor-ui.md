@@ -8377,7 +8377,7 @@ forage block, the Assign button and the compose sheet.
   (`unlock_knowledge`, read off the catalog-stamped quote by `RungGates.knowledge_gate_unmet` against the
   people's published knowledge) is met, so this people can raise the rung today and working it really
   teaches the lesson. Before that there is no row (it would send a people that cannot farm anywhere to
-  farm). The value is `Not yet — work a farm to learn how` (`Not yet — learn Worked Land` where no teaching
+  farm). The value is `Not here yet — work a farm on a gathering site to learn how` (`Not here yet — learn Worked Land` where no teaching
   rung is named) and its hover `Working a farm teaches Worked Land; then ground like this can be farmed.`
   (`site_lesson_tooltip`, registered on the row through the card's `Context`); the lesson and rung names
   come from the roster and catalog, no knowledge id is spelled in the client. The deciding fields are the

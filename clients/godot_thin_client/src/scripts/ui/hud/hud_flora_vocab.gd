@@ -191,8 +191,8 @@ const SOW_NEEDS_LESSON_FORMAT := "Off your gathering sites — learn %s to farm 
 const SITE_LESSON_ROW := "Farming"
 ## The row's value: what to do, in plain words. `%s` is the rung that teaches the lesson (`farm`), off the
 ## catalog; with no teaching rung named it states the lesson alone.
-const SITE_LESSON_FORMAT := "Not yet — work a %s to learn how"
-const SITE_LESSON_BARE_FORMAT := "Not yet — learn %s"
+const SITE_LESSON_FORMAT := "Not here yet — work a %s on a gathering site to learn how"
+const SITE_LESSON_BARE_FORMAT := "Not here yet — learn %s"
 ## Its hover: the lesson's and the rung's names off the roster and the catalog.
 const SITE_LESSON_TOOLTIP_FORMAT := "Working a %s teaches %s; then ground like this can be farmed."
 const SITE_LESSON_TOOLTIP_BARE := "Then ground like this can be farmed."

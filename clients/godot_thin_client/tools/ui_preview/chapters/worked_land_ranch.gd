@@ -45,7 +45,7 @@ const PEN_FOOTPRINT_AT_TIER := 19
 const SOW_BUTTON := "Sow farm"
 const RAISE_EYEBROW := "Raise a farm"
 const CREW_LINE := "The crew will raise a farm of Wild Tubers here."
-const LESSON_LINE := "Not yet — work a farm to learn how"
+const LESSON_LINE := "Not here yet — work a farm on a gathering site to learn how"
 const LESSON_TIP := "Working a farm teaches Worked Land; then ground like this can be farmed."
 ## Seed Selection short of complete: the Farm's own gate is unmet, so this people cannot raise one yet.
 const SEED_SELECTION_PARTIAL := 0.4
