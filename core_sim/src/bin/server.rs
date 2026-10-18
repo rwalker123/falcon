@@ -922,7 +922,10 @@ fn seat_authorizes(seats: &SeatRegistry, connection: ConnectionId, command: &Com
 /// the world's fog against each other indefinitely, one command per frame each.
 fn solo_only_verb(command: &Command) -> Option<&'static str> {
     match command {
-        Command::SetFogEnabled { .. } => Some("set_fog"),
+        // Only turning fog OFF discloses. Turning it back on hides, so it is never refused: a world
+        // whose fog went off while one player sat in it (the AI rival claiming its seat after the
+        // client pushed its "fog off" preference) must still be able to close it again.
+        Command::SetFogEnabled { enabled: false } => Some("set_fog"),
         _ => None,
     }
 }
@@ -30743,6 +30746,37 @@ mod tests {
         assert!(
             !fog_of(&app),
             "back to one player, fog is a convenience again"
+        );
+
+        // Fog went off while one player sat alone, and then a second sits down. Turning it back ON
+        // discloses nothing, so nobody is refused it — the playtest where a `sim_ai` rival claimed
+        // its seat after the client pushed "fog off" left a world nobody could fog again.
+        seats
+            .claim(RIVAL, RIVAL_CLIENT, &TWO_SEAT_ROSTER)
+            .expect("the second player sits down again");
+        for sender in [
+            HOME_CLIENT,
+            RIVAL_CLIENT,
+            UNSEATED_CLIENT,
+            ConnectionId::INTERNAL,
+        ] {
+            assert!(
+                seat_authorizes(&seats, sender, &Command::SetFogEnabled { enabled: true }),
+                "connection {sender} was refused turning fog back ON with another player seated"
+            );
+        }
+        dispatch_connection_command(
+            &mut app,
+            HOME_CLIENT,
+            Command::SetFogEnabled { enabled: true },
+            &seats,
+            &mut log,
+            &flat,
+            None,
+        );
+        assert!(
+            fog_of(&app),
+            "with two players seated, fog turned back on must take"
         );
     }
 

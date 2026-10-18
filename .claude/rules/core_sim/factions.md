@@ -592,6 +592,11 @@ The rule is therefore about the *world*, not about the sender: `solo_only_verb` 
 switch, every dev session — nothing changes at all, and the switch opens again when the second player
 leaves.
 
+**Only turning fog OFF is gated; turning it back ON is never refused.** Fog on hides, so it discloses
+nothing. Gating both directions stranded a world: a client pushes its "fog off" preference on turn
+one, an AI rival claims its seat afterwards, and from then on nobody could fog the world again (a
+playtest found it; `fog_off_is_refused_once_a_second_seat_is_occupied` pins both halves).
+
 > ⛔ **THIS IS DELIBERATELY NOT A HOST VERB.** "Host" means *holds no seat*, and any process may
 > connect and simply decline to claim one — so host-gating `set_fog` would move the hole rather than
 > close it. It is refused from the operator channel too, for the same reason it is refused from a seat:
