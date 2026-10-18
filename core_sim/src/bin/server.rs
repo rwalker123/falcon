@@ -4700,6 +4700,7 @@ fn site_refusal_message(refusal: SiteRefusal, tile: UVec2, verb: &str) -> String
              at ({}, {}) - a lesson they have not learned would open it.",
             verb, tile.x, tile.y
         ),
+        SiteRefusal::PenTaken => PEN_TAKEN_HINT.to_string(),
     }
 }
 
@@ -8935,13 +8936,16 @@ fn handle_build_rung(app: &mut bevy::prelude::App, faction: FactionId, request: 
     let switched =
         queue_build_on_working_bands(app, faction, &target, BuildJob::Climb(rung.rung_id()));
     if switched == 0 {
-        reject_build(
-            app,
-            faction,
-            channel,
-            &verb,
-            format!("No band of yours works {label}. Assign a crew to it first, then {verb} it."),
-        );
+        let pen_taken = BuildSource::of(&target).is_some_and(|source| {
+            is_pen_climb(app, &source, BuildJob::Climb(rung.rung_id()))
+                && pen_queuer(app, &source).is_some()
+        });
+        let refusal = if pen_taken {
+            PEN_TAKEN_HINT.to_string()
+        } else {
+            format!("No band of yours works {label}. Assign a crew to it first, then {verb} it.")
+        };
+        reject_build(app, faction, channel, &verb, refusal);
         return;
     }
 
@@ -10892,6 +10896,11 @@ fn queue_build_on_working_bands(
                 .map(|assignment| (entity, assignment.workers, assignment.target.clone()))
         })
         .collect();
+    let bands = if is_pen_climb(app, &source, declared) {
+        bands_that_may_queue_the_pen(app, &source, bands)
+    } else {
+        bands
+    };
     for (entity, workers, band_target) in &bands {
         {
             let mut allocation = band_allocation_mut(app, *entity);
@@ -10917,6 +10926,67 @@ fn queue_build_on_working_bands(
     }
     bands.len()
 }
+
+/// **IS `job` ON `source` A CORRAL?** - a climb onto an `enclosed` rung of a herd. The pen is the one
+/// build a herd can hold in one place only, so it is the one the queue admits a single band for.
+fn is_pen_climb(app: &bevy::prelude::App, source: &BuildSource, job: BuildJob) -> bool {
+    let (BuildSource::Herd(_), BuildJob::Climb(rung)) = (source, job) else {
+        return false;
+    };
+    app.world
+        .resource::<LadderConfigHandle>()
+        .get()
+        .rung(rung)
+        .trait_set()
+        .has(core_sim::RungTrait::Enclosed)
+}
+
+/// **THE BAND, OF ANY FACTION, THAT HOLDS THIS HERD'S CORRAL IN ITS QUEUE** - `None` when no band
+/// has one queued.
+fn pen_queuer(app: &mut bevy::prelude::App, source: &BuildSource) -> Option<Entity> {
+    let ladder = app.world.resource::<LadderConfigHandle>().get();
+    app.world
+        .query::<(Entity, &LaborAllocation)>()
+        .iter(&app.world)
+        .find(|(_, allocation)| {
+            allocation
+                .build_queue_entry(source)
+                .and_then(|entry| entry.declared.climb())
+                .is_some_and(|rung| {
+                    ladder
+                        .rung(rung)
+                        .trait_set()
+                        .has(core_sim::RungTrait::Enclosed)
+                })
+        })
+        .map(|(entity, _)| entity)
+}
+
+/// **A HERD CAN BE PENNED IN ONE PLACE ONLY**, so the Corral is queued on exactly one band: the one
+/// that already holds it (a re-issue replaces its entry in place), else the lowest `BandId` of the
+/// bands working the herd. Another band's hold - of any faction - leaves none, and the caller
+/// refuses with [`PEN_TAKEN_HINT`].
+fn bands_that_may_queue_the_pen(
+    app: &mut bevy::prelude::App,
+    source: &BuildSource,
+    mut bands: Vec<(Entity, u32, LaborTarget)>,
+) -> Vec<(Entity, u32, LaborTarget)> {
+    match pen_queuer(app, source) {
+        Some(holder) => bands.retain(|(entity, ..)| *entity == holder),
+        None => {
+            bands.sort_by_key(|(entity, ..)| app.world.get::<BandId>(*entity).copied());
+            bands.truncate(PEN_QUEUERS_PER_HERD);
+        }
+    }
+    bands
+}
+
+/// The hint a refused second Corral carries.
+const PEN_TAKEN_HINT: &str = "Another band is already penning this herd";
+
+/// How many bands may hold one herd's Corral in their queues at once - a herd cannot be in two
+/// places.
+const PEN_QUEUERS_PER_HERD: usize = 1;
 
 /// **STAMP THE TILE A QUEUED CORRAL'S PEN WILL STAND ON** - `fauna::pen_site_in_world` for the herd
 /// as the keeping band at `band` sees it, written to the herd's `pen_site`.
@@ -19661,6 +19731,147 @@ mod tests {
             stamped,
             Some(RICH_AT),
             "queueing the Corral stamps the best-grazing tile within the band's work range"
+        );
+    }
+
+    /// **A band of `faction` on a real tile, hunting `herd_id`, with a durable id** - the fixture the
+    /// one-pen-per-herd tests share.
+    fn a_band_hunting_on(
+        app: &mut bevy::prelude::App,
+        faction: FactionId,
+        herd_id: &str,
+        at: UVec2,
+        band_id: u64,
+    ) -> Entity {
+        let band = spawn_working_band(
+            app,
+            faction,
+            LaborTarget::Hunt {
+                fauna_id: herd_id.to_string(),
+                floor: 0.5,
+                move_with_herd: false,
+            },
+        );
+        let tile = app
+            .world
+            .resource::<TileRegistry>()
+            .index(at.x, at.y)
+            .expect("the band's tile");
+        app.world
+            .get_mut::<PopulationCohort>(band)
+            .expect("the band")
+            .current_tile = tile;
+        app.world.entity_mut(band).insert(core_sim::BandId(band_id));
+        band
+    }
+
+    /// The bands (of any faction) holding this herd's Corral in their queues.
+    fn bands_queueing_the_corral(app: &mut bevy::prelude::App, id: &str) -> Vec<Entity> {
+        let source = BuildSource::Herd(id.to_string());
+        app.world
+            .query::<(Entity, &LaborAllocation)>()
+            .iter(&app.world)
+            .filter(|(_, allocation)| allocation.build_queue_entry(&source).is_some())
+            .map(|(entity, _)| entity)
+            .collect()
+    }
+
+    const ONE_PEN_GRID_SIDE: u32 = 12;
+    const ONE_PEN_HERD_AT: UVec2 = UVec2::new(6, 6);
+
+    fn a_herd_to_pen(app: &mut bevy::prelude::App, faction: FactionId) -> String {
+        seed_grid_with_baskets(app, ONE_PEN_GRID_SIDE);
+        let id = seed_herd(app, ONE_PEN_HERD_AT, Some(faction));
+        grant_penning(app, faction);
+        id
+    }
+
+    /// ⛔ **A HERD CAN'T BE IN TWO PLACES AT ONCE**: a Corral issued for a herd two bands of the same
+    /// people work is queued on exactly one of them - the lowest `BandId` - and the pen site is that
+    /// band's. Re-issuing it keeps the holder.
+    #[test]
+    fn a_corral_is_queued_on_one_band_of_the_two_that_work_the_herd() {
+        let mut app = build_test_app();
+        let faction = FactionId(0);
+        let id = a_herd_to_pen(&mut app, faction);
+        let later = a_band_hunting_on(&mut app, faction, &id, ONE_PEN_HERD_AT, 9);
+        let first = a_band_hunting_on(&mut app, faction, &id, ONE_PEN_HERD_AT, 4);
+
+        handle_corral(&mut app, faction, ONE_PEN_HERD_AT);
+        assert_eq!(
+            bands_queueing_the_corral(&mut app, &id),
+            vec![first],
+            "one command queues the pen on ONE band, the lowest BandId"
+        );
+        assert!(
+            app.world
+                .get::<LaborAllocation>(later)
+                .expect("the other band")
+                .build_queue
+                .is_empty(),
+            "the other band's queue is untouched"
+        );
+
+        handle_corral(&mut app, faction, ONE_PEN_HERD_AT);
+        assert_eq!(
+            bands_queueing_the_corral(&mut app, &id),
+            vec![first],
+            "re-issuing replaces the holder's entry in place; it does not add a second queuer"
+        );
+    }
+
+    /// ⛔ **A SECOND BAND IS REFUSED, WITH THE HINT, AND STAMPS NOTHING** - and once the holder
+    /// unqueues, the herd can be penned again.
+    #[test]
+    fn a_corral_another_band_already_holds_is_refused_until_it_unqueues() {
+        let mut app = build_test_app();
+        let ours = FactionId(0);
+        let theirs = FactionId(1);
+        let id = a_herd_to_pen(&mut app, ours);
+        let holder = a_band_hunting_on(&mut app, theirs, &id, ONE_PEN_HERD_AT, 1);
+        let asker = a_band_hunting_on(&mut app, ours, &id, ONE_PEN_HERD_AT, 2);
+        let corral = shipped::animal_pen();
+        band_allocation_mut(&mut app, holder)
+            .enqueue_build(BuildSource::Herd(id.clone()), BuildJob::Climb(corral));
+
+        handle_corral(&mut app, ours, ONE_PEN_HERD_AT);
+
+        assert!(
+            corral_failure_detail_contains(&app, "Another band is already penning this herd"),
+            "the refusal carries the hint"
+        );
+        assert!(
+            app.world
+                .get::<LaborAllocation>(asker)
+                .expect("the asking band")
+                .build_queue
+                .is_empty(),
+            "nothing was queued on the asking band"
+        );
+        assert_eq!(
+            bands_queueing_the_corral(&mut app, &id),
+            vec![holder],
+            "the holder keeps the only entry"
+        );
+        assert_eq!(
+            app.world
+                .resource::<HerdRegistry>()
+                .find(&id)
+                .and_then(|herd| herd.pen_site),
+            None,
+            "a refused Corral stamps no site"
+        );
+
+        assert!(core_sim::unqueue_build_and_cancel_ring(
+            &mut app.world,
+            holder,
+            &BuildSource::Herd(id.clone()),
+        ));
+        handle_corral(&mut app, ours, ONE_PEN_HERD_AT);
+        assert_eq!(
+            bands_queueing_the_corral(&mut app, &id),
+            vec![asker],
+            "with the holder gone, the asking band can queue the pen"
         );
     }
 

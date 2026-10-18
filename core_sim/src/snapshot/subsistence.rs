@@ -187,6 +187,9 @@ pub(crate) fn published_build_legs(
 pub(crate) struct QueuedBuildSources {
     patches: std::collections::HashSet<UVec2>,
     herds: std::collections::HashSet<String>,
+    /// **The rung each queued herd entry climbs to**, keyed `(herd id, rung)` - what lets a rung
+    /// quote say its step is already spoken for (`SiteRefusal::PenTaken`).
+    herd_climbs: std::collections::HashSet<(String, crate::intensification::RungId)>,
     roads: std::collections::HashSet<UVec2>,
     /// **The workings some band has queued**, keyed `(tile, material)` because one tile can hold two
     /// and a `fell` queued on the timber is not a `quarry` queued on the rock beneath it.
@@ -224,6 +227,11 @@ impl QueuedBuildSources {
         self.herds.contains(id)
     }
 
+    /// **IS THIS HERD'S CLIMB TO `rung` IN SOME BAND'S LIVE QUEUE?**
+    fn herd_climb_is_queued(&self, id: &str, rung: crate::intensification::RungId) -> bool {
+        self.herd_climbs.contains(&(id.to_string(), rung))
+    }
+
     /// **IS THIS WORKING IN SOME BAND'S LIVE QUEUE?** — the deposit twin of
     /// [`Self::patch_is_queued`], and the source of the working row's own `isQueued`.
     pub(crate) fn deposit_is_queued(&self, tile: UVec2, material: &str) -> bool {
@@ -251,6 +259,9 @@ pub(crate) fn resolve_queued_build_sources<'a>(
                 }
                 crate::components::BuildSource::Herd(id) => {
                     resolved.herds.insert(id.clone());
+                    if let Some(rung) = entry.declared.climb() {
+                        resolved.herd_climbs.insert((id.clone(), rung));
+                    }
                 }
                 crate::components::BuildSource::Road(tile) => {
                     resolved.roads.insert(*tile);
@@ -514,10 +525,6 @@ pub(crate) struct HerdSnapshotInputs<'a> {
     /// tamed reads the camps of the faction building it: the herd's owner, else the viewer (the
     /// builder state on a herd row is the viewer's own).
     pub(crate) owner_camps: &'a std::collections::BTreeMap<FactionId, Vec<UVec2>>,
-    /// **The ground a queued Corral's pen site is chosen over** - what
-    /// [`crate::fauna::herd_at_projected_pen_site`] needs to project a build that no queue-time stamp
-    /// reached. `None` in a fixture with no map.
-    pub(crate) pen_scene: Option<&'a crate::fauna::PenSiteScene<'a>>,
     /// The same ledger `visibility_raster_from_ledger` renders the client's fog from, read for the
     /// same faction — so a herd can never be drawn on a tile the raster paints black.
     pub(crate) visibility: &'a crate::visibility::VisibilityLedger,
@@ -612,7 +619,6 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
         wrap_horizontal,
         graze,
         owner_camps,
-        pen_scene,
         parties,
         penned_parties,
         fallback_party,
@@ -1186,6 +1192,7 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
                     fauna,
                     ladder,
                     forecast: &forecast,
+                    queued: inputs.build_kits,
                 }),
                 // **THE MATERIAL HALF OF THE LADDER'S PRICE** (`docs/plan_standing_upkeep.md` §2.7).
                 // The pile is the rung the `⌃` track would offer next — `LadderConfig::above_id` the one the
@@ -1229,16 +1236,8 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
                     let camps = owner_camps
                         .get(&herd.owner.unwrap_or(viewer))
                         .map_or(&[][..], Vec::as_slice);
-                    // **THE PEN IS QUOTED WHERE IT WILL STAND** - the stamped site, else the one the
-                    // chooser would pick for the nearest camp.
-                    let herd = crate::fauna::herd_at_projected_pen_site(
-                        herd,
-                        &registry.herds,
-                        camps,
-                        pen_scene,
-                    );
                     crate::fauna::herd_destination_capacity(
-                        &herd,
+                        herd,
                         species_def,
                         graze,
                         &prey_index,
@@ -1432,6 +1431,8 @@ struct HerdQuoteInputs<'a> {
     fauna: &'a FaunaConfig,
     ladder: &'a LadderConfig,
     forecast: &'a crate::fauna::SourceYieldForecast,
+    /// The viewer's own queued builds - what says a rung is already spoken for.
+    queued: &'a QueuedBuildSources,
 }
 
 /// The wire's `-1` for "no Corral queued" on `HerdTelemetryState.penSiteX` / `penSiteY`.
@@ -1453,6 +1454,7 @@ fn herd_rung_quotes(inputs: &HerdQuoteInputs<'_>) -> Vec<RungQuoteState> {
         fauna,
         ladder,
         forecast,
+        queued,
     } = *inputs;
     ladder
         .rungs_of(ladder.branch_of_kind(SourceKind::Herd))
@@ -1514,7 +1516,21 @@ fn herd_rung_quotes(inputs: &HerdQuoteInputs<'_>) -> Vec<RungQuoteState> {
                         )
                     })
                     .unwrap_or_default(),
-                site_refusal: SITE_ACCEPTED.to_string(),
+                // **A herd is penned in one place only**: while one of the viewer's bands has this
+                // rung's climb queued on an `enclosed` rung, the quote says so.
+                site_refusal: match herd {
+                    Some(herd)
+                        if def
+                            .trait_set()
+                            .has(crate::intensification::RungTrait::Enclosed)
+                            && queued.herd_climb_is_queued(&herd.id, rung) =>
+                    {
+                        crate::intensification::SiteRefusal::PenTaken
+                            .as_str()
+                            .to_string()
+                    }
+                    _ => SITE_ACCEPTED.to_string(),
+                },
             }
         })
         .collect()

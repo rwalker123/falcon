@@ -1453,3 +1453,64 @@ fn unqueueing_the_corral_clears_the_site() {
         "a Corral that left the queue announces no site"
     );
 }
+
+/// The refusal key a herd's rung quote publishes while another band holds its Corral.
+const PEN_TAKEN: &str = "pen_taken";
+
+/// **One rung's `siteRefusal`, read out of the ENCODED buffer.**
+fn published_site_refusal(app: &App, id: &str, rung_key: &str) -> String {
+    published_herd_field(app, id, |herd| {
+        herd.rungQuotes()
+            .expect("every herd publishes its quotes")
+            .iter()
+            .find(|quote| quote.rungKey().unwrap_or_default() == rung_key)
+            .map(|quote| quote.siteRefusal().unwrap_or_default().to_string())
+            .expect("the herd quotes the rung")
+    })
+}
+
+/// ⛔ **THE PEN RUNG SAYS IT IS TAKEN WHILE A BAND HOLDS THE CORRAL - BEFORE ANYONE CLICKS.**
+///
+/// The refusal rides the pen rung's quote only: the pastoral rung beside it stays open, and the quote
+/// goes back to open the moment the holder unqueues.
+#[test]
+fn the_pen_quote_says_taken_while_a_band_holds_the_corral() {
+    let (mut app, id) = world_with_a_corral_in_flight();
+    lay_out_the_pasture(&mut app, &id);
+    run_a_kept_turn(&mut app, &[id.as_str()]);
+
+    let pen = shipped::animal_pen().wire_key();
+    let pastoral = shipped::animal_pastoral().wire_key();
+    assert_eq!(
+        published_site_refusal(&app, &id, &pen),
+        PEN_TAKEN,
+        "the queued Corral is announced on the pen rung's quote"
+    );
+    assert_eq!(
+        published_site_refusal(&app, &id, &pastoral),
+        "",
+        "the pastoral rung is not the Corral and stays open"
+    );
+
+    let band = {
+        let mut query = app
+            .world
+            .query_filtered::<(bevy::prelude::Entity, &LaborAllocation), bevy::prelude::With<ResidentBand>>();
+        query
+            .iter(&app.world)
+            .find(|(_, allocation)| !allocation.build_queue.is_empty())
+            .map(|(entity, _)| entity)
+            .expect("the fixture band holds the queued Corral")
+    };
+    assert!(core_sim::unqueue_build_and_cancel_ring(
+        &mut app.world,
+        band,
+        &core_sim::BuildSource::Herd(id.clone()),
+    ));
+    recapture_snapshot_in_place(&mut app.world);
+    assert_eq!(
+        published_site_refusal(&app, &id, &pen),
+        "",
+        "with the Corral withdrawn the pen rung quotes open again"
+    );
+}

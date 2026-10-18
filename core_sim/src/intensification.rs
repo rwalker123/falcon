@@ -2069,6 +2069,12 @@ pub enum SiteRefusal {
     /// not. It supersedes the ordinary refusal: the useful answer is what to LEARN, not what is
     /// wrong with the ground. A tile no lesson would admit keeps its ordinary refusal.
     NeedsLesson,
+    /// **ANOTHER BAND HOLDS THIS HERD'S CORRAL IN ITS QUEUE** - a herd can be penned in one place
+    /// only, so a second band may not queue the same pen. Unlike the ground refusals above this is
+    /// a fact about the queue, not the land: it is raised on a herd's `enclosed` rung quote while
+    /// the viewer's own bands have that climb queued, and a client lifts it for the one band that
+    /// holds the entry.
+    PenTaken,
 }
 
 impl SiteRefusal {
@@ -2084,6 +2090,7 @@ impl SiteRefusal {
             SiteRefusal::TooDry => "too_dry",
             SiteRefusal::TooPoorAndTooDry => "too_poor_and_too_dry",
             SiteRefusal::NeedsLesson => "needs_lesson",
+            SiteRefusal::PenTaken => "pen_taken",
         }
     }
 }

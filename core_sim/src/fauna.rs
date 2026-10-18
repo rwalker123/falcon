@@ -409,7 +409,8 @@ pub struct Herd {
     pub pen_radius: u32,
     /// **WHERE THE PEN WILL GO** - the tile [`choose_pen_site`] picked when a Corral was queued: the
     /// best-grazing land within the keeping band's work range, not wherever the herd happens to
-    /// stand. Set at queue time, read by every projection of the pen's footprint
+    /// stand. A herd is penned in one place, so one band holds its Corral and the site is that
+    /// band's. Set at queue time, read by every projection of the pen's footprint
     /// ([`herd_footprint_at`]), consumed by [`Self::corral_at`] (which pens the herd there and clears
     /// it) and cleared when the Corral leaves the queue ([`cancel_dropped_rings`]). `None` = no
     /// Corral queued. Authoritative sim state, rewound by rollback with the cloned registry.
@@ -3375,44 +3376,6 @@ pub fn penned_tiles_except(herds: &[Herd], id: &str) -> Vec<UVec2> {
         .filter(|herd| herd.id != id)
         .filter_map(|herd| herd.corralled_at)
         .collect()
-}
-
-/// **THE HERD AS ITS QUEUED CORRAL WILL FIND IT** - `herd` itself when it carries a chosen
-/// `pen_site`, is already penned, or is not climbing toward a pen; otherwise a clone with the site
-/// the chooser would pick for the nearest of `camps` (the keeping band's tile). It is how a
-/// projection that runs before - or without - the queue-time stamp ([`herd_destination_capacity`]
-/// on a build queued by a path that does not stamp) still quotes the tile the pen will stand on
-/// rather than the tile the herd stands on.
-pub fn herd_at_projected_pen_site<'a>(
-    herd: &'a Herd,
-    herds: &[Herd],
-    camps: &[UVec2],
-    scene: Option<&PenSiteScene<'_>>,
-) -> std::borrow::Cow<'a, Herd> {
-    let Some(scene) = scene else {
-        return std::borrow::Cow::Borrowed(herd);
-    };
-    let climbing_to_a_pen = herd.build_destination.is_some_and(|destination| {
-        scene
-            .ladder
-            .rung(destination)
-            .trait_set()
-            .has(RungTrait::Enclosed)
-    });
-    if herd.pen_site.is_some() || herd.corralled_at.is_some() || !climbing_to_a_pen {
-        return std::borrow::Cow::Borrowed(herd);
-    }
-    let Some(band_tile) = nearest_camp(herd.current_pos, camps, scene.width, scene.wrap) else {
-        return std::borrow::Cow::Borrowed(herd);
-    };
-    let mut projected = herd.clone();
-    projected.pen_site = choose_pen_site(
-        herd,
-        band_tile,
-        &penned_tiles_except(herds, &herd.id),
-        scene,
-    );
-    std::borrow::Cow::Owned(projected)
 }
 
 /// **THE SITE THE CHOOSER PICKS FOR `herd` KEPT BY THE BAND AT `band_tile`, READ OFF THE WORLD** - the

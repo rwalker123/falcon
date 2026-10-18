@@ -1616,14 +1616,30 @@ units**, complete at its stored `corral_cost`; the pen under construction), `cor
 >   pen standing over the one-tile footprint (`hex_range_tiles(site, pen_radius)`), so the score is the
 >   `K` the herd is handed once it is penned there. Ties break by hex distance to the band ascending,
 >   then `y`, then `x`.
-> - **Every projection reads the site**: `herd_footprint_at` (used by `herd_destination_capacity`, the
->   wire's `buildDestinationCapacity`) takes `pen_site` before `current_pos`. A build no stamp reached
->   is projected at the site the chooser would pick for the nearest camp of the owner
->   (`herd_at_projected_pen_site`, fed by the capture), and the compose sheet's *once corralled* herd
->   (`forecast_query::herd_once_raised`) is seated at the stamped site, else the asking band's pick.
+> - **ONE BAND HOLDS A HERD'S CORRAL** - a herd is penned in one place, so the queue admits one
+>   queuer per herd across all bands and factions. A `build corral` reaches the band that already
+>   holds the entry (a re-issue replaces it in place), else the lowest `BandId` of the bands working
+>   the herd; the other bands are not queued. When another band - of any people - holds it and none of
+>   the asking people's working bands is that holder, the command is refused with *"Another band is
+>   already penning this herd"* and stamps nothing. The pen site is therefore the one holder's.
+>   Another people never queues a pen on a herd the owner holds - `animal:pen` requires the rung below
+>   held *and* owned (`validate_herd_build`) - so in play the hint is met when the holder is the
+>   owner's band whose row sits at zero hands (a holding keeps its entry), not among the bands the
+>   command can reach.
+> - **The quote says it before the click**: while one of the viewer's bands has the Corral queued the
+>   herd's `animal:pen` rung quote publishes `siteRefusal = "pen_taken"` (`SiteRefusal::PenTaken`), to
+>   every band of that people. The holder's own band is the one exception, and the wire does not name
+>   it: the row is per viewer-faction, so a client lifts the refusal for the band whose
+>   `buildQueue` names the herd. Other rungs on the herd keep their quotes, and a rival's queue is
+>   never published (the build scratch follows the builder).
+> - **Every projection reads the site**: `herd_footprint_at` (used by `herd_destination_capacity`,
+>   the wire's `buildDestinationCapacity`) takes `pen_site` before `current_pos`, and the compose
+>   sheet's *once corralled* herd (`forecast_query::herd_once_raised`) is seated at the stamped site,
+>   else the asking band's pick.
 > - **It leaves with the entry**: `Herd::corral_at` consumes it, and `cancel_dropped_rings` clears it
->   on all three exits an entry leaves a queue by (unqueue, abandon, lapse). A second band's entry for
->   the same herd does not keep it alive; the next accrual picks again.
+>   when the entry leaves the queue (unqueue, abandon, lapse). If the stamped site has been taken by
+>   another herd's pen by the time the Corral completes, the completion picks again from the
+>   completing band's tile through the same function - the one fallback.
 > - **A herd that eats nothing has no graze reading**: its `K` is the fallback constant on every tile,
 >   so every candidate ties and the choice falls to distance. A real herd's `fodder_per_biomass` is
 >   cached at spawn, so only a hand-built fixture meets this.
