@@ -8155,8 +8155,8 @@ next `dealings` section. `command_guard` drives every one of them through the re
 
 `Accept gifts from our own people`, a checkbox off `faction_policies[].accept_own_gifts` (default on) as the
 **first row under the Dealings head** (`DealingsRoster._build_gift_row`, emitting through
-`BandPanelController._emit_accept_own_gifts`). It is a setting of the whole people, which its hover says,
-and it lives on the tab it governs: it was on the faction page first, where a short bottom or top dock
+`BandPanelController._emit_accept_own_gifts`). It is a setting of the whole people; its hover says
+only what turning it on does, and it lives on the tab it governs: it was on the faction page first, where a short bottom or top dock
 (`FACTION_BAND_FULL_MIN_HEIGHT`) dropped it, so the setting was unreachable on exactly those dock shapes.
 The tab exists on every dock shape and in the no-dock drawer, so the setting is reachable on all of them.
 The state is the snapshot's on every render; `update_faction_policies` re-fills the tab in place so a

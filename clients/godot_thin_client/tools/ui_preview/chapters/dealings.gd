@@ -577,8 +577,8 @@ func _faction_page_states(panel: BandCityPanel) -> void:
 		toggle != null and toggle.text == HudDealingsVocab.ACCEPT_GIFTS_LABEL and toggle.button_pressed)
 	h._assert_hud("gifts: …above the list (the head, then the setting, then the scroll)",
 		toggle != null and toggle.get_index() == 1)
-	h._assert_hud("gifts: …and its hover says it covers the whole people",
-		toggle != null and toggle.tooltip_text.contains("whole people"))
+	h._assert_hud("gifts: …and its hover says what turning it on does",
+		toggle != null and toggle.tooltip_text == HudDealingsVocab.ACCEPT_GIFTS_HINT)
 	_commands.clear()
 	if toggle != null:
 		toggle.button_pressed = false

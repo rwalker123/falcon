@@ -3902,7 +3902,7 @@ throwaway test, and all parse).
 
 - **The gift setting is judged on the Dealings tab** (`dealings_faction_page` asserts it is NOT on the
   faction page; `dealings_gift_setting` / `_off` assert it is the first row under the head, labelled in the
-  player's words, followed by the snapshot, with a hover that says it covers the whole people, and that
+  player's words, followed by the snapshot, with a hover that says what turning it on does, and that
   turning it off emits `set_accept_own_gifts 0 off`).
 - **The dock is moved on purpose.** The harness's 1500px canvas clips the right dock, so the tab, the
   faction page and the orb are judged with the dock LEFT, and the sheets (which live in the tile drawer,

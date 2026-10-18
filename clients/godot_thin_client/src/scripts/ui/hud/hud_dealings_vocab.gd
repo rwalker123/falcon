@@ -190,7 +190,7 @@ const SCOUT_STRANGERS_NEEDS_PACK := "Load a pack first: Give and Offer need some
 
 # ---- THE FACTION PAGE'S GIFT TOGGLE ------------------------------------------------------------------------
 const ACCEPT_GIFTS_LABEL := "Accept gifts from our own people"
-const ACCEPT_GIFTS_HINT := "Applies to the whole people, every band. On, a shipment from one of your own bands lands on arrival; off, it waits here for your answer like any other."
+const ACCEPT_GIFTS_HINT := "A shipment from one of your own bands lands as soon as it arrives."
 const ACCEPT_GIFTS_COMMAND_MESSAGE_ON := "Gifts from your own people will land on arrival."
 const ACCEPT_GIFTS_COMMAND_MESSAGE_OFF := "Gifts from your own people will wait for your answer."
 ## Node name and metas of the setting row, the actions key it emits through, and the room it takes.
