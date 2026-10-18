@@ -1187,6 +1187,17 @@ pub struct ForageRegistry {
 }
 
 impl ForageRegistry {
+    /// **CLEAR EVERY SOURCE'S PER-TURN BUILD SCRATCH - what a restore does so a load never republishes
+    /// a stale date.** The scratch is stamped by the labor pass and cleared by the decay pass each
+    /// turn, yet the checkpoint carries it, so a loaded world's first frame repeated the last
+    /// turn's stamp (a pre-fix 2,101,109-turn date outlived the fix that removed it). Cleared here
+    /// the frame reads "not yet estimated" until the first turn restamps it.
+    pub(crate) fn clear_build_scratch(&mut self) {
+        for patch in self.patches.values_mut() {
+            patch.clear_build_estimate();
+        }
+    }
+
     pub fn patch(&self, tile: UVec2) -> Option<&ForagePatch> {
         self.patches.get(&tile)
     }

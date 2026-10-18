@@ -4182,7 +4182,7 @@ func _build_build_queue_block(band: Dictionary, queued: Array) -> VBoxContainer:
     var confirmed := _queue_rank_keys(band).size()
     block.custom_minimum_size = Vector2(0.0, HudWorkVocab.build_queue_block_height(
         queued.size(), HudWorkVocab.BUILD_QUEUE_ROWS_MAX, _queue_settings_is_open(settings),
-        int(settings["legs"]), bool(settings["crop"])))
+        int(settings["legs"]), bool(settings["crop"]), int(settings.get("fact_lines", 0))))
     _queue_row_nodes.clear()
     var builders := int(_band_labor.effective_role_workers(
         band, HudConst.LABOR_KIND_BUILDERS).get("workers", 0))
@@ -4588,7 +4588,11 @@ func _queue_settings_content(band: Dictionary, model: Dictionary) -> Dictionary:
     return {
         "legs": (model.get("build_legs", []) as Array).size(),
         "crop": not _queue_crop_choices(band, model).is_empty(),
+        "fact_lines": _queue_fact_extra_lines(_queue_entry_facts(band, model, _queue_builders(band))),
     }
+
+func _queue_builders(band: Dictionary) -> int:
+    return int(_band_labor.effective_role_workers(band, HudConst.LABOR_KIND_BUILDERS).get("workers", 0))
 
 ## Open this entry's settings, or close them if they are already open — the queue's twin of
 ## `_toggle_work_inspector`, and one at a time for the same reason: the strip costs the block height
@@ -4620,7 +4624,7 @@ func _build_queue_settings_strip(band: Dictionary, model: Dictionary) -> PanelCo
     # `true` unconditionally: reaching this builder IS the strip drawing, so the one thing the
     # reservation has to be told — does it draw — is settled here by construction.
     strip.custom_minimum_size = Vector2(0.0, HudWorkVocab.build_queue_settings_height(
-        true, int(content["legs"]), bool(content["crop"])))
+        true, int(content["legs"]), bool(content["crop"]), int(content["fact_lines"])))
     # The work inspector's stylebox with its top and bottom trimmed to `BUILD_QUEUE_SETTINGS_PADDING_V`
     # — the chrome `build_queue_settings_height` charges — so the lines inside keep their full height.
     var box := HudStyle.work_inspector_stylebox()
@@ -4636,9 +4640,19 @@ func _build_queue_settings_strip(band: Dictionary, model: Dictionary) -> PanelCo
     # withdrawal, at the control height `build_queue_settings_height` charges unconditionally. The
     # words `Remove from queue` do not fit beside the crop picker at the narrow shell, which is why
     # they ride THIS line (`HudWorkVocab.BUILD_QUEUE_UNQUEUE_LABEL` carries the measurement).
+    var facts := _queue_entry_facts(band, model, _queue_builders(band))
     var detail_line := _build_queue_settings_line(column, "")
-    detail_line.add_child(_build_queue_detail_line(band, model))
+    var headline_label := _build_queue_fact_label(facts[0], true)
+    detail_line.add_child(headline_label)
     detail_line.add_child(_build_queue_unqueue_button(band, model))
+    var joined: Array[String] = []
+    for fact in facts:
+        joined.append(String(fact["text"]))
+    # The handle carries EVERY fact's text (newline-joined): a harness asks what the strip says without
+    # reading a wrapped face.
+    headline_label.set_meta(HudWorkVocab.BUILD_QUEUE_DETAIL_META, "\n".join(joined))
+    for index in range(1, facts.size()):
+        column.add_child(_build_queue_fact_label(facts[index], false))
     # **THE ENTRY'S CLIMB, ONE LINE PER LEG** (`docs/plan_standing_upkeep.md` §2.8). A `sow` declared
     # on untended ground is TWO legs and is still ONE queue row: splitting it would offer two
     # withdrawals for one entry and two places to drag for one reorder, so the entry stays one unit
@@ -4662,42 +4676,21 @@ func _build_queue_settings_strip(band: Dictionary, model: Dictionary) -> PanelCo
             line.add_child(crop_picker)
     return strip
 
-## **THE DETAIL LINE — one ellipsised readout of the job.** The text is
-## `HudWorkVocab.build_queue_detail_line` over fields the queue model already carries: the model's
-## `build_blocked_lines` (the source card's own producer) and `DetailFormat.build_price_clause` — the
-## same price the row's hover quotes, with its turn term suppressed because the date column is the
-## sim's own chained answer. On the tool-short HEAD it leads with `◆ builders short of tools` — the
-## row drops its own second line while this strip is open, so this is the fact's one statement here.
-##
-## **IT ELIDES, NEVER WRAPS**: it shares a control line with the withdrawal, reserved at that line's
-## height, and the zone clips. The label carries the FULL text on its hover (`HudWidgets.build_status_part`'s elide
-## form) and on `BUILD_QUEUE_DETAIL_META`. A cause reads in the kit-short amber; a bare price reads dim.
-func _build_queue_detail_line(band: Dictionary, model: Dictionary) -> Label:
-    var tools_short := _queue_entry_tools_short(band, model)
-    var blocked_lines: Array = model.get("build_blocked_lines", []) as Array
-    var text := HudWorkVocab.build_queue_detail_line(tools_short, blocked_lines,
-        _queue_entry_price(model), _builders_short_tool_names(band) if tools_short else "")
-    var has_cause := tools_short or not blocked_lines.is_empty()
-    var label := HudWidgets.build_status_part(text,
-        HudWorkVocab.note_color(HudWorkVocab.KIT_SHORT_SEVERITY) if has_cause else HudStyle.INK_DIM,
-        true)
-    label.set_meta(HudWorkVocab.BUILD_QUEUE_DETAIL_META, text)
+## **ONE FACT, ONE LABEL — WRAPPED, NEVER CLIPPED.** The strip used to be one ellipsised readout, which
+## cut the cause and the price off at the shell's width; each fact is its own label now, wraps at the
+## strip's width, and the strip's height is reserved from the same facts (`_queue_fact_extra_lines`).
+func _build_queue_fact_label(fact: Dictionary, beside_control: bool) -> Label:
+    var label := Label.new()
+    label.text = String(fact["text"])
+    label.add_theme_color_override("font_color", fact["ink"])
     label.add_theme_font_size_override("font_size", HudWorkVocab.BUILD_QUEUE_DETAIL_FONT_SIZE)
-    label.clip_text = true
+    label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
     label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+    label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    if not beside_control:
+        label.custom_minimum_size = Vector2(0.0, HudWorkVocab.BUILD_QUEUE_FACT_LINE_HEIGHT)
     return label
-
-## **THE JOB'S FULL PRICE, BOTH HALVES** — the one composition the row's hover and the strip's detail
-## line both quote, so the two cannot state one entry's price two ways. `BUILD_TURNS_NO_ESTIMATE`
-## suppresses the turn term deliberately: the date column is the sim's own chained answer, and a second
-## estimate here would be two producers for one number.
-func _queue_entry_price(model: Dictionary) -> String:
-    return DetailFormat.build_price_clause(
-        float(model.get("build_work_cost", SourceForecast.BUILD_WORK_COST_NONE)),
-        SourceForecast.BUILD_TURNS_NO_ESTIMATE,
-        float(model.get("build_upkeep_demand", SourceForecast.NO_UPKEEP_DEMAND)),
-        _queue_source_kind(model))
 
 ## **THE WITHDRAWAL — same command, same optimistic write; its host moved and its face took words**
 ## (§4.7b ③). It keeps `BUILD_QUEUE_UNQUEUE_META` and the entry's own rank on it, so every reader that
@@ -4905,12 +4898,8 @@ func _build_build_queue_row(band: Dictionary, model: Dictionary, is_head: bool,
     # it — and, on a tool-short head whose strip is closed, the builders' `◆` after it. One height
     # for every row, so the block's reservation is `rows × BUILD_QUEUE_ROW_HEIGHT` with no fork.
     row.custom_minimum_size.y = HudWorkVocab.BUILD_QUEUE_ROW_HEIGHT
-    var material_short: Dictionary = model.get("build_material_short", {}) as Dictionary
-    if _build_queue_row_is_pending(model) \
-            or _build_queue_row_rank(model) != SourceForecast.BUILD_QUEUE_HEAD:
-        material_short = {}
     var second := _build_queue_row_second_line(band, model,
-        tools_short and String(model.get("key", "")) != _queue_open_key, material_short)
+        tools_short and String(model.get("key", "")) != _queue_open_key)
     body.add_child(second)
     line.add_child(_build_queue_row_marker(band, model, is_head))
     # **AND THE ROW IS THE DROP TARGET, where the marker alone is the grab** — a drop that only
@@ -4984,19 +4973,25 @@ func _build_build_queue_row(band: Dictionary, model: Dictionary, is_head: bool,
     # It feeds `build_sentinel_value`'s lapsed fork, which is by construction unreachable from here —
     # a drawn row is an entry, so its rank is a real place in the line — and that is the correct
     # reading rather than a suppression: a rung with an entry still funding it has not lapsed.
-    var value := FoodIcons.for_status(HudWorkVocab.BUILD_QUEUE_PENDING_STATUS) if pending \
-        else DetailFormat.build_completion_value(turns, builders, percent,
-            _band_labor.current_turn(), _build_queue_row_rank(model),
-            String(model.get("building_policy", "")))
+    var value := _queue_row_value(model, builders)
+    # **A HEAD THE SHELF CANNOT FEED STATES THAT IN THE DATE'S PLACE** — `⚠ Need 2.1 hurdles`, short
+    # enough to always fit, and no date at all: a date counted off a stalled build is a number nobody can
+    # act on, and it clipped the clause the first time they shared the slot.
+    var material_shorts := _queue_row_material_shorts(model)
+    var material_clause := DetailFormat.build_material_short_text(
+        _worst_material_short(material_shorts)) if not material_shorts.is_empty() else ""
+    var shown := material_clause if material_clause != "" else value
     # **THE DATE LEADS LINE TWO, UNDER THE FACE** — a site row's shape (line one identity and controls,
     # line two state). It used to be a fixed 168px column on line one, and with the face moved onto the
     # site rows' TITLE column (`BUILD_QUEUE_MARKER_WIDTH`) that column left the face too little width to
     # state `🌱 Cultivate (71, 18)` whole. Line two has the row's width, so neither clips.
     var date := Label.new()
-    date.set_meta(HudWorkVocab.BUILD_QUEUE_DATE_META, value)
-    date.text = value
-    date.add_theme_color_override("font_color",
-        HudStyle.WARN if pending else DetailFormat.rung_value_color(value))
+    date.set_meta(HudWorkVocab.BUILD_QUEUE_DATE_META, shown)
+    if material_clause != "":
+        date.set_meta(HudWorkVocab.BUILD_QUEUE_MATERIAL_LINE_META, material_clause)
+    date.text = shown
+    date.add_theme_color_override("font_color", HudStyle.DANGER if material_clause != "" \
+        else (HudStyle.WARN if pending else DetailFormat.rung_value_color(value)))
     date.add_theme_font_size_override("font_size", HudWorkVocab.ALLOC_SECTION_FONT_SIZE)
     date.mouse_filter = Control.MOUSE_FILTER_IGNORE
     # **A LABEL'S TEXT IS ITS MINIMUM WIDTH unless it clips**, and this one states whatever the wire's date
@@ -5005,9 +5000,11 @@ func _build_build_queue_row(band: Dictionary, model: Dictionary, is_head: bool,
     date.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
     date.clip_text = true
     var date_font := date.get_theme_default_font()
-    var date_natural := date_font.get_string_size(value, HORIZONTAL_ALIGNMENT_LEFT, -1,
+    var date_natural := date_font.get_string_size(shown, HORIZONTAL_ALIGNMENT_LEFT, -1,
         HudWorkVocab.ALLOC_SECTION_FONT_SIZE).x
-    date.custom_minimum_size.x = minf(date_natural, HudWorkVocab.BUILD_QUEUE_DATE_MAX_WIDTH)
+    # The clause is a short, bounded string of our own and is never trimmed; a date is the wire's.
+    date.custom_minimum_size.x = date_natural if material_clause != "" \
+        else minf(date_natural, HudWorkVocab.BUILD_QUEUE_DATE_MAX_WIDTH)
     second.add_child(date)
     second.move_child(date, QUEUE_SECOND_LINE_DATE_INDEX)
     if second.get_child_count() > QUEUE_SECOND_LINE_DATE_INDEX + 1:
@@ -5023,47 +5020,114 @@ func _build_build_queue_row(band: Dictionary, model: Dictionary, is_head: bool,
     # **ON A REAL COUNT IT CARRIES BOTH READINGS**, which is what actually kills the ambiguity: the
     # column states the date and the hover adds the span, so a player weighing a reorder does not have
     # to subtract. A SENTINEL has no span to state and keeps its single face.
-    var date_tooltip := value
-    if not pending and DetailFormat.build_sentinel_value(turns, builders, percent,
-            _build_queue_row_rank(model)) == "":
-        date_tooltip = HudWorkVocab.BUILD_QUEUE_ROW_SPAN_FORMAT % [value, turns]
-    # **THE CAUSE OF A BLOCK RIDES THE HOVER, AND IT IS THE CARD'S OWN SENTENCE**
-    # (`docs/plan_standing_upkeep.md` §4.6b). The date column can only ever say `⚠ Blocked 32%`,
-    # which is the state and not the reason; the reason is a sentence, and the one place a 28px row
-    # has for one is its tooltip. Empty on every entry that is not blocked, so the hover is unchanged
-    # wherever nothing is wrong.
-    var blocked_lines: Array = model.get("build_blocked_lines", []) as Array
-    var tooltip_lines: Array = [HudWorkVocab.BUILD_QUEUE_ROW_TOOLTIP_FORMAT % [face,
-        HudFormat.status_tooltip_line(HudWorkVocab.BUILD_QUEUE_PENDING_STATUS) if pending \
-            else date_tooltip]]
-    # **AND THE JOB'S FULL PRICE, BOTH HALVES — the work pile and the keeping it will owe.** The row
-    # already carries the face and the date; what it never said is that finishing this job commits the
-    # band to a standing bill, which is the other half of the decision and the reason the keeping
-    # warning used to arrive a turn late. **TOOLTIP ONLY** — the row is four slots and cannot take a
-    # sixth. `DetailFormat.build_price_clause` is the same composer the `⌃`'s own hover uses, so the
-    # offer and the queued entry quote one price in one wording; `BUILD_TURNS_NO_ESTIMATE` suppresses
-    # its turn term deliberately, the date column above being the sim's own chained answer and a
-    # second estimate here two producers for one number.
-    #
-    # **THE HEAD STATES THE BUILDERS' TOOL SHORTFALL, BECAUSE IT IS THE HEAD'S** (`docs/plan_pool_toe.md`
-    # §2.4 — the builders' tool claim is the head entry's alone). The Builders card says *the top job
-    # in the queue is short of tools*; this is that job saying so, on its hover and its detail line.
-    # The mark itself is the row's second line, built above.
+    # **THE HOVER IS ONE FACT A LINE, AND THE STRIP SHOWS THE SAME LINES** (`_queue_entry_facts`):
+    # headline, one `Need N <material>` per missing good, one `Short N <item>` per short tool, any
+    # cause the sim named, then the cost. No explanation and no open hint.
     row.set_meta(HudWorkVocab.BUILD_QUEUE_ROW_TOOLS_SHORT_META, tools_short)
-    if tools_short:
-        tooltip_lines.append(HudWorkVocab.build_queue_tools_tooltip(_builders_short_tool_names(band)))
-    var price := _queue_entry_price(model)
-    if price != "":
-        tooltip_lines.append(price)
-    tooltip_lines.append_array(blocked_lines)
-    # **A ROW THAT OPENS HAS TO SAY SO**, the board row's `WORK_ROW_OPEN_HINT` being the pattern —
-    # and it is appended UNCONDITIONALLY because every row opens. The sentence that promised the crop
-    # alone was false on every animal row the moment §4.7a ②'s kit made those rows expandable, which
-    # is why it names the withdrawal instead: the `✕` is the one control every entry's strip carries.
-    tooltip_lines.append(HudWorkVocab.BUILD_QUEUE_ROW_OPEN_HINT)
-    row.tooltip_text = HudFormat.join_tooltip_lines(tooltip_lines)
+    var hover: Array[String] = []
+    for fact in _queue_entry_facts(band, model, builders):
+        hover.append(String(fact["text"]))
+    row.tooltip_text = "\n".join(hover)
     line.add_child(_build_queue_reorder_column(band, model, confirmed))
     return row
+
+## The date column's value for an entry: the pending mark, or the shared fork over the wire's countdown.
+func _queue_row_value(model: Dictionary, builders: int) -> String:
+    if _build_queue_row_is_pending(model):
+        return FoodIcons.for_status(HudWorkVocab.BUILD_QUEUE_PENDING_STATUS)
+    return DetailFormat.build_completion_value(
+        int(model.get("build_turns", SourceForecast.BUILD_TURNS_NO_ESTIMATE)), builders,
+        _queue_row_percent(model), _band_labor.current_turn(), _build_queue_row_rank(model),
+        String(model.get("building_policy", "")))
+
+func _queue_row_percent(model: Dictionary) -> int:
+    var is_ring := String(model.get("improvement", "")) == SourceForecast.BUILD_JOB_EXTEND_PEN
+    return HudFormat.progress_percent(float(model.get(
+        "build_ring_progress" if is_ring else "building_progress", 0.0)))
+
+## The missing goods the head entry's pile still lacks, `[]` for every entry behind the head (they claim
+## nothing) and for a pending one.
+func _queue_row_material_shorts(model: Dictionary) -> Array:
+    if _build_queue_row_is_pending(model) \
+            or _build_queue_row_rank(model) != SourceForecast.BUILD_QUEUE_HEAD:
+        return []
+    return model.get("build_material_shorts", []) as Array
+
+func _worst_material_short(shorts: Array) -> Dictionary:
+    var worst := {}
+    var worst_share := 2.0
+    for short_variant in shorts:
+        var short: Dictionary = short_variant
+        var wanted := float(short[DetailFormat.MATERIAL_SHORT_HELD_KEY]) \
+            + float(short[DetailFormat.MATERIAL_SHORT_MISSING_KEY])
+        var share := float(short[DetailFormat.MATERIAL_SHORT_HELD_KEY]) / wanted
+        if share < worst_share:
+            worst_share = share
+            worst = short
+    return worst
+
+## **THE ENTRY'S FACTS, ONE PER LINE — the row's hover and the open strip are both this list.** Each is
+## `{text, ink}`. Headline (`Corral Wild Boar — Penning 64%`, with `· turn N` only on a real date: a head
+## blocked on goods, or carrying any sentinel, states none), then one `Need N <material>` per missing
+## good, one `Short N <item>` per short builders' tool (head only), the causes the sim named (not the
+## materials one, which the need lines state), and the cost (`Costs 75 work · upkeep 2.8/turn`).
+func _queue_entry_facts(band: Dictionary, model: Dictionary, builders: int) -> Array[Dictionary]:
+    var facts: Array[Dictionary] = []
+    var pending := _build_queue_row_is_pending(model)
+    var shorts := _queue_row_material_shorts(model)
+    var headline: String
+    if pending:
+        headline = HudFormat.status_tooltip_line(HudWorkVocab.BUILD_QUEUE_PENDING_STATUS)
+    elif not shorts.is_empty():
+        headline = DetailFormat.build_progress_value(_queue_row_percent(model),
+            String(model.get("building_policy", "")))
+    else:
+        headline = _queue_row_value(model, builders)
+    facts.append({"text": HudWorkVocab.BUILD_QUEUE_HEADLINE_FORMAT % [_build_queue_job_face(model), headline],
+        "ink": HudStyle.INK})
+    for short_variant in shorts:
+        facts.append({"text": DetailFormat.build_material_need_line(short_variant as Dictionary),
+            "ink": HudStyle.DANGER})
+    if _queue_entry_tools_short(band, model):
+        for line in HudWorkVocab.toe_short_lines(_pool_toe_settled_rows(band,
+                HudConst.LABOR_KIND_BUILDERS,
+                _band_labor.effective_role_workers(band, HudConst.LABOR_KIND_BUILDERS)),
+                _item_display_names):
+            facts.append({"text": line,
+                "ink": HudWorkVocab.note_color(HudWorkVocab.KIT_SHORT_SEVERITY)})
+    if shorts.is_empty():
+        for cause in model.get("build_blocked_lines", []) as Array:
+            if String(cause) != "":
+                facts.append({"text": String(cause), "ink": HudStyle.WARN})
+    var cost := _queue_entry_cost_line(model)
+    if cost != "":
+        facts.append({"text": cost, "ink": HudStyle.INK_DIM})
+    return facts
+
+## `Costs 75 work · upkeep 2.8/turn`, `""` for an entry with no priced job.
+func _queue_entry_cost_line(model: Dictionary) -> String:
+    var work := float(model.get("build_work_cost", SourceForecast.BUILD_WORK_COST_NONE))
+    if work <= SourceForecast.BUILD_WORK_COST_NONE:
+        return ""
+    var line := HudWorkVocab.BUILD_QUEUE_COST_FORMAT % DetailFormat.format_work_units(work)
+    var upkeep := float(model.get("build_upkeep_demand", SourceForecast.NO_UPKEEP_DEMAND))
+    if upkeep >= SourceForecast.UPKEEP_WORK_MIN:
+        line += HudWorkVocab.BUILD_QUEUE_UPKEEP_CLAUSE_FORMAT % DetailFormat.format_work_units(upkeep)
+    return line
+
+## The lines the open strip needs BEYOND its one control line (the headline shares that with the `✕`):
+## each fact is one line, plus one more per wrap at the strip's conservative width.
+func _queue_fact_extra_lines(facts: Array[Dictionary]) -> int:
+    var probe := Label.new()
+    var font := probe.get_theme_default_font()
+    probe.free()
+    var extra := 0
+    for index in range(facts.size()):
+        var width := font.get_string_size(String(facts[index]["text"]), HORIZONTAL_ALIGNMENT_LEFT, -1,
+            HudWorkVocab.BUILD_QUEUE_DETAIL_FONT_SIZE).x
+        var lines := maxi(1, ceili(width / HudWorkVocab.BUILD_QUEUE_FACT_WRAP_WIDTH))
+        extra += lines - 1 if index == 0 else lines
+    return extra
 
 ## **THE QUEUE ROW'S SECOND LINE** — the date (inserted by the row builder at
 ## `QUEUE_SECOND_LINE_DATE_INDEX`), then `Build: Normal`, the entry's own mark, read-only, then (on the
@@ -5073,7 +5137,7 @@ func _build_build_queue_row(band: Dictionary, model: Dictionary, is_head: bool,
 const QUEUE_SECOND_LINE_DATE_INDEX := 1
 
 func _build_queue_row_second_line(band: Dictionary, model: Dictionary,
-        wears_tools: bool, material_short: Dictionary = {}) -> HBoxContainer:
+        wears_tools: bool) -> HBoxContainer:
     var line := HBoxContainer.new()
     line.add_theme_constant_override("separation", HudWorkVocab.WORK_ROW_SEPARATION)
     line.custom_minimum_size = Vector2(0.0, HudWorkVocab.BUILD_QUEUE_ROW_TOOLS_LINE_HEIGHT)
@@ -5089,25 +5153,16 @@ func _build_queue_row_second_line(band: Dictionary, model: Dictionary,
         mark.set_meta(HudWorkVocab.BUILD_QUEUE_ROW_BUILD_MARK_META, HudWorkVocab.work_priority_of(level))
         mark.mouse_filter = Control.MOUSE_FILTER_IGNORE
         line.add_child(mark)
-    # **A SHELF THAT CANNOT FEED THE HEAD WINS THE LINE'S LAST SLOT** — a build with no hurdles banks
-    # nothing whatever the tools are, so the `◆` clause moves to the row's hover (it is already there).
-    # The slot trims rather than widening the line, as the tools clause does.
-    var material_text := DetailFormat.build_material_short_text(material_short)
-    if material_text != "":
-        if line.get_child_count() > 1:
-            var material_sep := HudWidgets.build_status_part(
-                HudWorkVocab.BUILD_QUEUE_DETAIL_SEPARATOR.strip_edges(), HudStyle.INK_DIM)
-            material_sep.mouse_filter = Control.MOUSE_FILTER_IGNORE
-            line.add_child(material_sep)
-        var material_label := HudWidgets.build_status_part(material_text, HudStyle.DANGER, true)
-        material_label.set_meta(HudWorkVocab.BUILD_QUEUE_MATERIAL_LINE_META, material_text)
-        material_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-        material_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
-        line.add_child(material_label)
-        wears_tools = false
     if wears_tools:
+        # **THE SAME `Short N <item>` FACTS THE HOVER STATES**, joined with ` · ` where several tools
+        # are short — `◆ Short 1 crook` — in place of the old `◆ builders short of tools`.
+        var kit_lines := HudWorkVocab.toe_short_lines(_pool_toe_settled_rows(band,
+            HudConst.LABOR_KIND_BUILDERS,
+            _band_labor.effective_role_workers(band, HudConst.LABOR_KIND_BUILDERS)),
+            _item_display_names)
         var text := HudWorkVocab.BUILD_QUEUE_ROW_TOOLS_SHORT_FORMAT % [HudWorkVocab.KIT_SHORT_MARK,
-            HudWorkVocab.build_queue_tools_text(_builders_short_tool_names(band))]
+            HudWorkVocab.BUILD_QUEUE_DETAIL_SEPARATOR.join(kit_lines) if not kit_lines.is_empty() \
+            else HudWorkVocab.build_queue_tools_text(_builders_short_tool_names(band))]
         if line.get_child_count() > 1:
             var sep := HudWidgets.build_status_part(
                 HudWorkVocab.BUILD_QUEUE_DETAIL_SEPARATOR.strip_edges(), HudStyle.INK_DIM)
@@ -7919,7 +7974,7 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
             # **WHAT THE SHELF LACKS OF THE PILE THIS BUILD STILL DRAWS** — the queue row's own clause,
             # which the sim's `materials` cause cannot be: that key rides `-4` and fires only on an
             # EMPTY shelf. A pen ring weighs the pen rung's own pile at the ring's own meter.
-            "build_material_short": DetailFormat.build_material_shortfall(
+            "build_material_shorts": DetailFormat.build_material_shortfalls(
                 SourceForecast.corral_build_material_cost(rung_source,
                     HudComposeVocab.BARE_FORECAST_PREFIX) \
                     if improvement == SourceForecast.BUILD_JOB_EXTEND_PEN \

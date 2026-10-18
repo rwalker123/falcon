@@ -2495,11 +2495,10 @@ const MATERIAL_SHORT_MISSING_KEY := "missing"
 ## covering NOTHING, so a shelf with some of the good — which stalls the build in proportion — never
 ## carries it. The pair compared here is two things the wire already states (the pile and the band's
 ## `material_store`); the sim's own cause, where it arrives, goes through `build_blocked_lines`.
-static func build_material_shortfall(pile: Array[Dictionary], store: Dictionary,
-        progress: float) -> Dictionary:
+static func build_material_shortfalls(pile: Array[Dictionary], store: Dictionary,
+        progress: float) -> Array[Dictionary]:
     var left := SourceForecast.BUILD_METER_FULL - clampf(progress, 0.0, SourceForecast.BUILD_METER_FULL)
-    var worst := {}
-    var worst_share := 1.0
+    var shorts: Array[Dictionary] = []
     for row in pile:
         var id := String(row.get(SourceForecast.MATERIAL_PAYOFF_ID_KEY, ""))
         var needed := float(row.get(SourceForecast.MATERIAL_PAYOFF_AMOUNT_KEY, 0.0)) * left
@@ -2509,24 +2508,52 @@ static func build_material_shortfall(pile: Array[Dictionary], store: Dictionary,
         var missing := needed - held
         if missing < SourceForecast.MATERIAL_FLOW_MIN:
             continue
-        var share := held / needed
+        shorts.append({MATERIAL_SHORT_ID_KEY: id, MATERIAL_SHORT_HELD_KEY: held,
+            MATERIAL_SHORT_MISSING_KEY: missing})
+    return shorts
+
+## The good the shelf is shortest of (the smallest held share of what is still to draw), `{}` for none.
+static func build_material_shortfall(pile: Array[Dictionary], store: Dictionary,
+        progress: float) -> Dictionary:
+    var left := SourceForecast.BUILD_METER_FULL - clampf(progress, 0.0, SourceForecast.BUILD_METER_FULL)
+    var worst := {}
+    var worst_share := 1.0
+    for short in build_material_shortfalls(pile, store, progress):
+        var needed := float(short[MATERIAL_SHORT_HELD_KEY]) + float(short[MATERIAL_SHORT_MISSING_KEY])
+        var share := float(short[MATERIAL_SHORT_HELD_KEY]) / needed
         if share < worst_share:
             worst_share = share
-            worst = {MATERIAL_SHORT_ID_KEY: id, MATERIAL_SHORT_HELD_KEY: held,
-                MATERIAL_SHORT_MISSING_KEY: missing}
+            worst = short
     return worst
 
-## The queue row's clause for a shortfall, `""` for none.
+## The queue row's clause for a shortfall, `""` for none: `⚠ Need 2.1 hurdles` — the shortfall at one
+## decimal-trimmed precision and the material's own name. Short enough to always fit its slot.
 static func build_material_short_text(short: Dictionary) -> String:
     if short.is_empty():
         return ""
-    var amount := format_trimmed(float(short[MATERIAL_SHORT_MISSING_KEY]),
-        HudWorkVocab.RUNG_TRACK_MATERIAL_DECIMALS)
-    var id := String(short[MATERIAL_SHORT_ID_KEY])
-    var format := HudWorkVocab.BUILD_QUEUE_MATERIAL_NONE_FORMAT \
-        if float(short[MATERIAL_SHORT_HELD_KEY]) < SourceForecast.MATERIAL_FLOW_MIN \
-        else HudWorkVocab.BUILD_QUEUE_MATERIAL_SHORT_FORMAT
-    return format % [HudSelectionVocab.RUNG_HAZARD_GLYPH, id, amount]
+    return HudWorkVocab.BUILD_QUEUE_MATERIAL_FORMAT % [HudSelectionVocab.RUNG_HAZARD_GLYPH,
+        _material_missing_text(short), material_noun(String(short[MATERIAL_SHORT_ID_KEY]))]
+
+## …and the same fact as a hover / detail line: `Need 2.1 hurdles`.
+static func build_material_need_line(short: Dictionary) -> String:
+    return HudWorkVocab.BUILD_QUEUE_MATERIAL_LINE_FORMAT % [_material_missing_text(short),
+        material_noun(String(short[MATERIAL_SHORT_ID_KEY]))]
+
+## **THE MATERIAL'S NAME IS THE CRAFTING RAIL'S** — it humanises the id with `String.capitalize()`
+## (`wild_boar_hide` → `Wild Boar Hide`, `CraftingPanel._build_material_group`); a sentence takes it
+## lower-cased. One rule, so `stone_dressing` never reaches a queue row as a snake_case token.
+static func material_noun(material_id: String) -> String:
+    return material_id.capitalize().to_lower()
+
+static func _material_missing_text(short: Dictionary) -> String:
+    return format_trimmed(float(short[MATERIAL_SHORT_MISSING_KEY]), MATERIAL_SHORT_DECIMALS)
+
+const MATERIAL_SHORT_DECIMALS := 1
+
+## `Penning 64%` — the leg's participle and the meter, no date (a headline on a head with no real date).
+static func build_progress_value(percent: int, leg: String) -> String:
+    var verb := HudComposeVocab.improvement_running_label(leg)
+    return "%d%%" % percent if verb == "" else "%s %d%%" % [verb, percent]
 
 ## **THE PREDATOR THAT ATE THE GROWTH, IN THE PLAYER'S WORDS.** The wire names it by its fauna_config
 ## species KEY (`predator_eaten_by`, `"wolf"`) and the client holds no fauna roster, so the name comes

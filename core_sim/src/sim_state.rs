@@ -668,7 +668,13 @@ pub fn restore_sim_state(world: &mut World, state: &SimState) {
     world.insert_resource(state.command_events.clone());
     world.insert_resource(state.connections.clone());
     world.insert_resource(state.roads.clone());
+    world
+        .resource_mut::<crate::routes::RoadRegistry>()
+        .clear_build_scratch();
     world.insert_resource(state.tile_improvements.clone());
+    world
+        .resource_mut::<crate::tile_improvement::TileImprovementRegistry>()
+        .clear_build_scratch();
     world.insert_resource(state.corruption.clone());
     world.insert_resource(state.corruption_telemetry.clone());
     world.insert_resource(state.counter_intel.clone());
@@ -693,6 +699,15 @@ pub fn restore_sim_state(world: &mut World, state: &SimState) {
     world.insert_resource(state.great_discovery_readiness.clone());
     world.insert_resource(state.great_discovery_telemetry.clone());
     world.insert_resource(state.herds.clone());
+    // **The per-turn build scratch is not state a restore may republish** - see
+    // `HerdRegistry::clear_build_scratch`. Cleared on every source registry, load and rollback alike.
+    world.resource_mut::<HerdRegistry>().clear_build_scratch();
+    world
+        .resource_mut::<crate::forage::ForageRegistry>()
+        .clear_build_scratch();
+    world
+        .resource_mut::<crate::extraction::DepositRegistry>()
+        .clear_build_scratch();
     world.insert_resource(state.influencer_impacts.clone());
     world.insert_resource(state.pending_crisis_seeds.clone());
     world.insert_resource(state.pending_crisis_spawns.clone());

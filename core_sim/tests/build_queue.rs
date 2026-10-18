@@ -4464,3 +4464,70 @@ fn a_hurdles_auto_order_can_be_skipped_and_stays_skipped() {
 
 /// Enough fixture workers that every kit unit is stocked for everyone.
 const A_WHOLE_BAND_OF_GEAR: f32 = 200.0;
+
+/// **A LOAD DOES NOT REPUBLISH THE STAMP THE LAST TURN LEFT.** Live, a Corral head showed `2101109`
+/// turns after the dust fix shipped: that number is the pre-fix turn's own stamp, carried in the save
+/// (the registries are checkpointed whole, scratch included). `restore_sim_state` now clears the
+/// per-turn build scratch on all five source registries. Drives the shipped encoded path with a
+/// Corral at the head of the queue, no hurdles in the store and the stale stamp on the herd: after
+/// the restore the frame says "not yet estimated" (-5), and after one turn the head publishes
+/// Blocked/materials.
+#[test]
+fn a_load_clears_a_corral_heads_stale_date_and_the_next_turn_blocks_it() {
+    use core_sim::BuildTurns;
+    /// The date the pre-fix turn stamped on the live Corral head.
+    const STALE_TURNS: u32 = 2_101_109;
+
+    let (mut app, band, herd_id) = world_with_a_half_tamed_herd(HUNTERS, FOOD_PEAK);
+    app.world
+        .resource_mut::<core_sim::DiscoveryProgressLedger>()
+        .add_progress(FactionId(0), core_sim::PENNING_DISCOVERY_ID, scalar_one());
+    {
+        let mut registry = app.world.resource_mut::<core_sim::HerdRegistry>();
+        let herd = registry
+            .herds
+            .iter_mut()
+            .find(|herd| herd.id == herd_id)
+            .expect("the fixture herd");
+        herd.tame_outright(FactionId(0), &core_sim::LadderConfig::builtin());
+        herd.build_turns_remaining = Some(BuildTurns::Turns(STALE_TURNS));
+    }
+    {
+        let mut allocation = app
+            .world
+            .get_mut::<LaborAllocation>(band)
+            .expect("the fixture band");
+        allocation.build_queue[0].declared = BuildJob::Climb(shipped::animal_pen());
+    }
+    app.world
+        .get_mut::<PopulationCohort>(band)
+        .expect("the fixture band")
+        .stores
+        .clear_materials();
+
+    recapture_snapshot_in_place(&mut app.world);
+    assert_eq!(
+        published_herd(&app, &herd_id).0,
+        STALE_TURNS as i32,
+        "fixture: a frame captured before any turn repeats the stamp"
+    );
+
+    // **THE LOAD**: checkpoint the world with the stale stamp in it and restore it - the same
+    // function a save load and a rollback both run. The first frame must not repeat the stamp.
+    let checkpoint = core_sim::sim_state::capture_sim_state(&app.world);
+    core_sim::sim_state::restore_sim_state(&mut app.world, &checkpoint);
+    recapture_snapshot_in_place(&mut app.world);
+    assert_eq!(
+        published_herd(&app, &herd_id).0,
+        BUILD_NOT_YET_ESTIMATED,
+        "the frame straight after a load says it has no estimate yet, never last turn's date"
+    );
+
+    resolve_an_animal_turn(&mut app);
+    let (turns, reason, ..) = published_herd(&app, &herd_id);
+    assert_eq!(
+        turns, BUILD_QUEUE_BLOCKED,
+        "after one turn the Corral head, short of hurdles it cannot get, publishes Blocked"
+    );
+    assert_eq!(reason, "materials");
+}

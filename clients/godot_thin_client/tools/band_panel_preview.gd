@@ -11291,7 +11291,94 @@ func _assert_queue_row_ring_quotes_its_own_meter() -> void:
 	_push_bands([_ring_band_fixture()])
 	await _settle()
 	await _assert_queue_head_says_what_the_shelf_lacks()
+	await _assert_blocked_pen_head_hover_and_detail()
 	await _assert_work_row_warns_of_an_underfed_pen()
+
+## **RAY'S GAME: A PEN HEAD BLOCKED ON HURDLES AND SHORT OF A CROOK.** 65% built, 2.1 hurdles still to draw
+## and none held, one builder without a crook. The row states `⚠ Need 2.1 hurdles` IN THE DATE'S PLACE (no
+## `turn …` at all), the hover is one fact a line — headline, `Need 2.1 hurdles`, `Short 1 crook`, the
+## cost — with no explanation and no open hint, and the clicked detail shows the same facts WHOLE: every
+## line wrapped inside the strip, none clipped, beside a `✕` reading `Remove from queue`.
+const BLOCKED_PEN_WORK_DONE := 26.0
+const BLOCKED_PEN_CROOK_REQUIRED := 6.0
+const BLOCKED_PEN_CROOK_FILLED := 5.0
+
+func _assert_blocked_pen_head_hover_and_detail() -> void:
+	var pile := [{"material_id": PEN_MATERIAL, "amount": PEN_BUILD_PILE}]
+	_set_world_herds(_ring_herd_fixtures(pile, {"pen_extend_progress": BLOCKED_PEN_WORK_DONE}))
+	var band := _ring_band_fixture()
+	band["material_store"] = []
+	band[HudBandLaborState.POOL_TOE_KEY] = [_pool_toe_row(HudConst.LABOR_KIND_BUILDERS, "crook",
+		BLOCKED_PEN_CROOK_REQUIRED, BLOCKED_PEN_CROOK_FILLED)]
+	_push_bands([band])
+	await _settle()
+	var rows := _build_queue_rows()
+	if rows.is_empty():
+		_fail("blocked pen — the queue draws no row")
+		return
+	var model := {}
+	for model_variant in _hud._bandpanel._build_queue_models(_hud._band_labor.panel_band(),
+			_hud._bandpanel._work_source_models(_hud._band_labor.panel_band(), 0)):
+		if _hud._bandpanel._build_queue_row_rank(model_variant) == SourceForecast.BUILD_QUEUE_HEAD:
+			model = model_variant
+	var short := {DetailFormat.MATERIAL_SHORT_ID_KEY: PEN_MATERIAL,
+		DetailFormat.MATERIAL_SHORT_HELD_KEY: 0.0,
+		DetailFormat.MATERIAL_SHORT_MISSING_KEY: PEN_BUILD_PILE * (1.0 - BLOCKED_PEN_WORK_DONE / RING_WORK_COST)}
+	var clause_label := _find_meta_control(rows[0], HudWorkVocab.BUILD_QUEUE_DATE_META) as Label
+	var clause := DetailFormat.build_material_short_text(short)
+	_assert_band_panel("blocked pen — the row's date slot reads \"%s\" and no date (got \"%s\")" % [
+			clause, "" if clause_label == null else clause_label.text],
+		clause_label != null and clause_label.text == clause and clause == "⚠ Need 2.1 hurdles"
+			and not clause_label.text.contains("turn"))
+	_assert_band_panel("blocked pen — …and the clause draws whole (not trimmed, %.0f of %.0f px)" % [
+			0.0 if clause_label == null else clause_label.size.x,
+			0.0 if clause_label == null else clause_label.get_minimum_size().x],
+		clause_label != null and clause_label.get_line_count() == 1
+			and clause_label.size.x + 0.5 >= clause_label.get_minimum_size().x)
+	var wanted: Array[String] = [
+		HudWorkVocab.BUILD_QUEUE_HEADLINE_FORMAT % [_hud._bandpanel._build_queue_job_face(model),
+			DetailFormat.build_progress_value(_hud._bandpanel._queue_row_percent(model),
+				String(model.get("building_policy", "")))],
+		DetailFormat.build_material_need_line(short),
+		HudWorkVocab.BUILD_QUEUE_KIT_SHORT_LINE_FORMAT % [1, "crook"]]
+	var cost: String = _hud._bandpanel._queue_entry_cost_line(model)
+	if cost != "":
+		wanted.append(cost)
+	var hover: Array = rows[0].tooltip_text.split("\n")
+	_assert_band_panel("blocked pen — the hover is one fact a line: %s (got %s)" % [str(wanted), str(hover)],
+		hover == wanted and wanted[1] == "Need 2.1 hurdles" and wanted[2] == "Short 1 crook"
+			and not rows[0].tooltip_text.contains("Click") and not rows[0].tooltip_text.contains("builders are"))
+	await _save("band_panel_queue_blocked_pen_head")
+	_assert_zones_within_bounds()
+	# THE CLICKED DETAIL: the same facts, whole.
+	_hud._bandpanel._toggle_queue_settings(String(model.get("key", "")))
+	await _settle()
+	await _save("band_panel_queue_blocked_pen_detail")
+	var strip := _find_meta_control(_panel, HudWorkVocab.BUILD_QUEUE_SETTINGS_META)
+	var detail := _queue_strip_detail()
+	_assert_band_panel("blocked pen — the open detail states the same facts (%s)" % detail.replace("\n", " | "),
+		detail.split("\n") == PackedStringArray(wanted))
+	var clipped := false
+	var labels: Array = []
+	if strip != null:
+		_collect_labels(strip, labels)
+	for label_variant in labels:
+		var label: Label = label_variant
+		if label.get_line_count() > label.get_visible_line_count() \
+				or label.get_global_rect().end.y > strip.get_global_rect().end.y + 0.5 \
+				or label.get_global_rect().end.x > strip.get_global_rect().end.x + 0.5:
+			clipped = true
+	_assert_band_panel("blocked pen — …and no line of it is clipped or past the strip (%d labels)" % labels.size(),
+		strip != null and not clipped and labels.size() >= wanted.size())
+	var withdraw: Button = null
+	if strip != null:
+		withdraw = _find_meta_control(strip, HudWorkVocab.BUILD_QUEUE_UNQUEUE_META) as Button
+	_assert_band_panel("blocked pen — the withdrawal is a `✕` whose tooltip reads \"Remove from queue\"",
+		withdraw != null and withdraw.text == "✕" and withdraw.tooltip_text == "Remove from queue")
+	_assert_zone_content_fits()
+	_hud._bandpanel._queue_open_key = ""
+	_push_bands([_ring_band_fixture()])
+	await _settle()
 
 ## **THE WORK ROW WARNS OF AN UNDERFED PEN THE WAY THE MAP, THE ORB AND THE TILE CARD DO.** All three ask
 ## `PenStatus.herd_is_starving`; the board row said `Penned` and nothing else. Live: a pen at 56% fed with
@@ -17048,14 +17135,12 @@ func _render_queue_head_tools_short_state() -> void:
 	_assert_zones_within_bounds()
 	_assert_zone_content_fits()
 	_assert_queue_head_tools_mark("the tall LEFT dock")
+	# Without the roster's names the line falls back to the wire's own item id, on the head's hover only.
 	for row in _build_queue_rows():
-		var is_head := int(row.get_meta(HudWorkVocab.BUILD_QUEUE_ROW_META)) \
-			== SourceForecast.BUILD_QUEUE_HEAD
-		var says := row.tooltip_text.contains(HudWorkVocab.BUILD_QUEUE_HEAD_TOOLS_SHORT_TOOLTIP)
-		_assert_band_panel("head tools — rank %d's hover %s the tool sentence"
-				% [int(row.get_meta(HudWorkVocab.BUILD_QUEUE_ROW_META)),
-					"states" if is_head else "does NOT state"],
-			says == is_head)
+		var is_head := int(row.get_meta(HudWorkVocab.BUILD_QUEUE_ROW_META)) == SourceForecast.BUILD_QUEUE_HEAD
+		_assert_band_panel("head tools — rank %d's hover %s a `Short N <item>` line before the roster arrives"
+				% [int(row.get_meta(HudWorkVocab.BUILD_QUEUE_ROW_META)), "has" if is_head else "has no"],
+			row.tooltip_text.contains("Short 1 %s" % POOL_TOE_BUILDERS_ITEM) == is_head)
 	var builders := _pool_card_answers(HudWorkVocab.ROLE_NAME_BUILDERS)
 	_assert_band_panel("head tools — …and the Builders card names the top job: \"%s\" (got \"%s\")"
 			% [HudWorkVocab.POOL_TOOLS_SHORT_BUILDERS_LINE, builders.get("gear", "")],
@@ -17071,20 +17156,23 @@ func _render_queue_head_tools_short_state() -> void:
 		String(named.get("gear", "")) == named_want)
 	# …and the QUEUE HEAD names the same tool, on its amber second line and its hover.
 	var hoes := POOL_TOE_BUILDERS_ITEM_NAME.to_lower()
-	var head_line_want := HudWorkVocab.BUILD_QUEUE_ROW_TOOLS_SHORT_FORMAT % [HudWorkVocab.KIT_SHORT_MARK,
-		HudWorkVocab.BUILD_QUEUE_ROW_TOOLS_SHORT_NAMED_FORMAT % hoes]
+	var head_line_want := _queue_tools_clause()
 	var head_lines := _queue_tools_lines()
 	var head_line := "" if head_lines.is_empty() else (head_lines[0] as Label).text
 	_assert_band_panel("head tools — …and the queue HEAD's second line names it: \"%s\" (got \"%s\")"
 			% [head_line_want, head_line],
 		head_line == head_line_want)
-	var head_tip_want := HudWorkVocab.BUILD_QUEUE_HEAD_TOOLS_SHORT_NAMED_TOOLTIP % [hoes, hoes]
+	var head_tip_want := HudWorkVocab.BUILD_QUEUE_KIT_SHORT_LINE_FORMAT % [1, hoes]
 	var head_tip := ""
+	var others_name_it := false
 	for row in _build_queue_rows():
 		if int(row.get_meta(HudWorkVocab.BUILD_QUEUE_ROW_META)) == SourceForecast.BUILD_QUEUE_HEAD:
 			head_tip = row.tooltip_text
-	_assert_band_panel("head tools — …and its hover: \"%s\"" % head_tip_want,
-		head_tip.contains(head_tip_want))
+		elif row.tooltip_text.contains(head_tip_want):
+			others_name_it = true
+	_assert_band_panel("head tools — …and its hover has the line \"%s\", which no other entry's does"
+			% head_tip_want,
+		head_tip.split("\n").has(head_tip_want) and not others_name_it)
 	await _save("band_panel_queue_head_tools_named")
 	_hud.update_equipment_config(JSON.stringify({}))
 	_hud._bandpanel.rerender()
@@ -17105,14 +17193,15 @@ func _render_queue_head_tools_short_state() -> void:
 		_queue_tools_lines().is_empty() and head_open != null
 			and absf(head_open.size.y - HudWorkVocab.BUILD_QUEUE_ROW_HEIGHT) <= QUEUE_FACE_WIDTH_TOLERANCE
 			and is_equal_approx(head_open.custom_minimum_size.y, HudWorkVocab.BUILD_QUEUE_ROW_HEIGHT))
-	_assert_band_panel("head tools — …and the strip's detail line LEADS with \"%s\" (\"%s\")"
-			% [_queue_tools_clause(), detail],
-		detail.begins_with(_queue_tools_clause()))
-	var open_detail := _find_meta_control(_panel, HudWorkVocab.BUILD_QUEUE_DETAIL_META) as Label
+	var kit_line := HudWorkVocab.BUILD_QUEUE_KIT_SHORT_LINE_FORMAT % [1, POOL_TOE_BUILDERS_ITEM_NAME.to_lower()]
+	_assert_band_panel("head tools — …and the strip states the same kit line \"%s\" (\"%s\")"
+			% [kit_line, detail.replace("\n", " | ")],
+		detail.split("\n").has(kit_line))
+	var kit_label := _strip_fact_label(kit_line)
 	_assert_band_panel("head tools — …in the kit-short amber (%s)"
-			% [Color.TRANSPARENT if open_detail == null
-				else open_detail.get_theme_color(FONT_COLOR_THEME_KEY)],
-		open_detail != null and open_detail.get_theme_color(FONT_COLOR_THEME_KEY).is_equal_approx(
+			% [Color.TRANSPARENT if kit_label == null
+				else kit_label.get_theme_color(FONT_COLOR_THEME_KEY)],
+		kit_label != null and kit_label.get_theme_color(FONT_COLOR_THEME_KEY).is_equal_approx(
 			HudWorkVocab.note_color(HudWorkVocab.KIT_SHORT_SEVERITY)))
 	# THE TAME ROW'S STRIP — it opened to a bare `✕` before; now a detail line and a labelled button.
 	_hud._bandpanel._toggle_queue_settings(_queue_entry_key(true))
@@ -17124,19 +17213,21 @@ func _render_queue_head_tools_short_state() -> void:
 	print("band_panel_preview: head tools — the Tame strip's detail line reads \"%s\"" % tame_detail)
 	# BY EQUALITY against the fixture's own price, composed through the producer the row's hover
 	# uses — so the claim is that the line states THIS job's price, not that some text rendered.
-	var tame_price := DetailFormat.build_price_clause(QUEUE_TAME_WORK_COST,
-		SourceForecast.BUILD_TURNS_NO_ESTIMATE, QUEUE_TAME_UPKEEP, SourceForecast.SOURCE_KIND_HERD)
+	var tame_price := HudWorkVocab.BUILD_QUEUE_COST_FORMAT % DetailFormat.format_work_units(
+		QUEUE_TAME_WORK_COST) + HudWorkVocab.BUILD_QUEUE_UPKEEP_CLAUSE_FORMAT % DetailFormat.format_work_units(
+		QUEUE_TAME_UPKEEP)
 	_assert_band_panel("head tools — the TAME row opens on its price, not a bare control — \"%s\" (want \"%s\")"
 			% [tame_detail, tame_price],
-		tame_strip != null and tame_price != "" and tame_detail == tame_price)
+		tame_strip != null and tame_price != "" and tame_detail.split("\n").has(tame_price))
 	# …and with a NON-head strip open, the head's own strip is closed, so the head wears its line again.
 	_assert_queue_head_tools_mark("a non-head strip open")
 	if tame_strip != null:
-		_assert_band_panel("head tools — …and a crop-less strip is ONE control line — %.0f reserved (want %.0f), %.0f drawn"
-				% [tame_strip.custom_minimum_size.y, HudWorkVocab.BUILD_QUEUE_SETTINGS_HEIGHT,
-					tame_strip.size.y],
-			is_equal_approx(tame_strip.custom_minimum_size.y,
-				HudWorkVocab.BUILD_QUEUE_SETTINGS_HEIGHT)
+		# One control line (headline + `✕`) plus one line per further fact — the Tame entry's cost line.
+		var tame_reserved := HudWorkVocab.build_queue_settings_height(true, 0, false,
+			_tame_fact_lines())
+		_assert_band_panel("head tools — …and a crop-less strip is the control line plus one line per further fact — %.0f reserved (want %.0f), %.0f drawn"
+				% [tame_strip.custom_minimum_size.y, tame_reserved, tame_strip.size.y],
+			is_equal_approx(tame_strip.custom_minimum_size.y, tame_reserved)
 				and absf(tame_strip.size.y - tame_strip.custom_minimum_size.y)
 					<= QUEUE_FACE_WIDTH_TOLERANCE)
 		await _assert_labelled_withdrawal_by_real_input(tame_strip)
@@ -17171,7 +17262,7 @@ func _render_queue_head_tools_short_state() -> void:
 	_assert_band_panel("head tools — …and the FILLED head's open strip does not state it (\"%s\")"
 			% _queue_strip_detail(),
 		_find_meta_control(_panel, HudWorkVocab.BUILD_QUEUE_SETTINGS_META) != null
-			and not _queue_strip_detail().contains(HudWorkVocab.BUILD_QUEUE_ROW_TOOLS_SHORT_TEXT))
+			and not _queue_strip_detail().contains("Short "))
 	_hud._bandpanel._queue_open_key = ""
 	# THE PENDING ROW IS NEVER THE HEAD — even stamped at rank 0 the helper refuses it, and at its
 	# real `NOT_IN_ANY_BUILD_QUEUE` rank too; and a queue LED by a pending entry charges no second line.
@@ -17203,7 +17294,7 @@ func _render_queue_head_tools_short_state() -> void:
 ## The detail line's leading clause on the tool-short head's open strip.
 func _queue_tools_clause() -> String:
 	return HudWorkVocab.BUILD_QUEUE_ROW_TOOLS_SHORT_FORMAT % [HudWorkVocab.KIT_SHORT_MARK,
-		HudWorkVocab.BUILD_QUEUE_ROW_TOOLS_SHORT_TEXT]
+		HudWorkVocab.BUILD_QUEUE_KIT_SHORT_LINE_FORMAT % [1, POOL_TOE_BUILDERS_ITEM.to_lower()]]
 
 ## The drawn `◆` second lines, wherever they are.
 func _queue_tools_lines() -> Array[Control]:
@@ -17230,8 +17321,7 @@ func _assert_queue_head_tools_mark(where: String) -> void:
 		_fail("head mark — %s: no head row / mark line to measure" % where)
 		return
 	var mark := lines[0] as Label
-	var want_text := HudWorkVocab.BUILD_QUEUE_ROW_TOOLS_SHORT_FORMAT % [HudWorkVocab.KIT_SHORT_MARK,
-		HudWorkVocab.BUILD_QUEUE_ROW_TOOLS_SHORT_TEXT]
+	var want_text := _queue_tools_clause()
 	_assert_band_panel("head mark — %s: …it reads \"%s\" (got \"%s\")" % [where, want_text, mark.text],
 		mark.text == want_text)
 	_assert_band_panel("head mark — %s: …in the kit-short amber (%s)"
@@ -17273,6 +17363,39 @@ func _assert_queue_head_tools_mark(where: String) -> void:
 	_assert_band_panel("head mark — %s: …and the marker column still holds `%s` (\"%s\")"
 			% [where, HudWorkVocab.BUILD_QUEUE_HEAD_MARKER, marker.text],
 		marker.text == HudWorkVocab.BUILD_QUEUE_HEAD_MARKER)
+
+## The extra fact lines an open strip needs, off the controller's own content answer for ITS entry.
+func _strip_fact_lines(strip: Control) -> int:
+	var band := _hud._band_labor.panel_band()
+	var key := String(strip.get_meta(HudWorkVocab.BUILD_QUEUE_SETTINGS_META))
+	for model_variant in _hud._bandpanel._build_queue_models(band,
+			_hud._bandpanel._work_source_models(band, 0)):
+		var model: Dictionary = model_variant
+		if String(model.get("key", "")) == key:
+			return int(_hud._bandpanel._queue_settings_content(band, model)["fact_lines"])
+	return 0
+
+## The extra fact lines the open (Tame) strip needs, off the controller's own content answer.
+func _tame_fact_lines() -> int:
+	var band := _hud._band_labor.panel_band()
+	for model_variant in _hud._bandpanel._build_queue_models(band,
+			_hud._bandpanel._work_source_models(band, 0)):
+		var model: Dictionary = model_variant
+		if String(model.get("key", "")) == _queue_entry_key(true):
+			return int(_hud._bandpanel._queue_settings_content(band, model)["fact_lines"])
+	return 0
+
+## The Label in the open strip whose text is exactly `text` (one fact each), `null` for none.
+func _strip_fact_label(text: String) -> Label:
+	var strip := _find_meta_control(_panel, HudWorkVocab.BUILD_QUEUE_SETTINGS_META)
+	if strip == null:
+		return null
+	var labels: Array = []
+	_collect_labels(strip, labels)
+	for label_variant in labels:
+		if (label_variant as Label).text == text:
+			return label_variant
+	return null
 
 ## The open strip's detail line, off its handle — the FULL text, not the ellipsised face.
 func _queue_strip_detail() -> String:
@@ -17394,7 +17517,7 @@ func _assert_queue_settings_strip(where: String) -> void:
 	# strip; a crop strip reserving more than that is a strip the zone was never told could draw.
 	_assert_band_panel("%s …leading with the job's DETAIL line" % where,
 		_find_meta_control(strip, HudWorkVocab.BUILD_QUEUE_DETAIL_META) != null)
-	var ceiling := HudWorkVocab.build_queue_settings_height(true, 0, true)
+	var ceiling := HudWorkVocab.build_queue_settings_height(true, 0, true, _strip_fact_lines(strip))
 	_assert_band_panel("%s …and its %.0fpx is within a crop strip's %.0f"
 			% [where, reserved, ceiling],
 		reserved <= ceiling + QUEUE_FACE_WIDTH_TOLERANCE)

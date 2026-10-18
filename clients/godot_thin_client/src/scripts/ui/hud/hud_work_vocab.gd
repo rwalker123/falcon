@@ -2917,9 +2917,9 @@ static func build_queue_subject(kind: String, x: int, y: int, herd_label: String
 ## FIRST line with the ellipsising detail label instead, and a crop strip pays one more control line
 ## for its picker (`build_queue_settings_height`'s `has_crop`). Ray chose the words over the queue row
 ## that costs on the 1920 BOTTOM dock.
-const BUILD_QUEUE_UNQUEUE_LABEL := "Remove from queue"
+const BUILD_QUEUE_UNQUEUE_LABEL := "✕"
 
-const BUILD_QUEUE_UNQUEUE_TOOLTIP := "Unqueue · progress kept"
+const BUILD_QUEUE_UNQUEUE_TOOLTIP := "Remove from queue"
 
 ## **ONE GLYPH IN A COMPACT GHOST BUTTON — 32 BECAUSE `HudWidgets.compact` LEAVES THE BUTTON ITS
 ## HORIZONTAL PADDING.** The trim squeezes the type size and the VERTICAL padding — that is what keeps
@@ -3219,13 +3219,11 @@ const BUILD_QUEUE_CROP_TOOLTIP := "Which crop this job commits the patch to. Lea
 ## the plant web's alone, a `Tame` committing no species, so on a hunt row the sentence promised two
 ## controls that are not in the strip. **The detail line and the withdrawal are what every entry's
 ## strip carries**, so the hint names those and nothing a row might not have.
-const BUILD_QUEUE_ROW_OPEN_HINT := "Click for this job's details, and to remove it from the queue."
 
 ## `Wild Emmer 56%` — the entry's face, the crop basket's own pairing of a plant with its share.
 const BUILD_QUEUE_CROP_ENTRY_FORMAT := "%s %d%%"
 
 ## The row's own tooltip: the job face and its date in full, since both columns clip.
-const BUILD_QUEUE_ROW_TOOLTIP_FORMAT := "%s — %s"
 
 ## The indent a queue row's blocked-cause line takes: NONE. `DetailFormat.build_blocked_lines` hangs
 ## its sentence under a rung row on the source's card and indents it to say so; a tooltip has no row
@@ -3238,7 +3236,6 @@ const BUILD_QUEUE_TOOLTIP_UNINDENTED := ""
 ## playtest tripped over; the span is still the number a player reasons with when deciding whether to
 ## reorder, so the hover states it rather than making them subtract. A SENTINEL keeps its single face
 ## — there is no span to state — and so does a pending row, whose date slot is a status glyph.
-const BUILD_QUEUE_ROW_SPAN_FORMAT := "%s · %d turns from now"
 
 # ---- A DECLARATION THE WIRE HAS NOT PLACED YET ---------------------------------------------------
 #
@@ -3353,12 +3350,13 @@ const BUILD_QUEUE_HEAD_HEIGHT := 22.0
 ## strip. The block's HEAD is the section's (`BandPanelController._build_build_queue_head`) and is
 ## reserved there, so it is not a term here.
 static func build_queue_block_height(entries: int, rows_max: int,
-        settings_open: bool = false, settings_legs: int = 0, settings_crop: bool = false) -> float:
+        settings_open: bool = false, settings_legs: int = 0, settings_crop: bool = false,
+        settings_fact_lines: int = 0) -> float:
     if entries <= 0:
         return 0.0
     var rows := mini(entries, rows_max)
     return float(rows) * BUILD_QUEUE_ROW_HEIGHT \
-        + build_queue_settings_height(settings_open, settings_legs, settings_crop)
+        + build_queue_settings_height(settings_open, settings_legs, settings_crop, settings_fact_lines)
 
 # ---- THE EXPANSION — the whole queue over the whole Work zone (§4.9 item 9c) ---------------------------
 #
@@ -3580,10 +3578,11 @@ const MICROSECONDS_PER_SECOND := 1_000_000.0
 ## sit beside the crop picker at the narrow shell) is right-aligned ON it, at the control height. A
 ## plant entry's crop picker is a line of its own beneath, which is what `has_crop` prices; the caller
 ## reads it off the same `_queue_settings_content` answer the builder draws.
-static func build_queue_settings_height(is_open: bool, legs: int, has_crop: bool = false) -> float:
+static func build_queue_settings_height(is_open: bool, legs: int, has_crop: bool = false,
+        fact_lines: int = 0) -> float:
     if not is_open:
         return 0.0
-    var height := BUILD_QUEUE_SETTINGS_HEIGHT
+    var height := BUILD_QUEUE_SETTINGS_HEIGHT + float(fact_lines) * BUILD_QUEUE_FACT_LINE_HEIGHT
     if legs > 0:
         height += float(legs + 1) * BUILD_QUEUE_LEG_HEIGHT
     if has_crop:
@@ -3649,19 +3648,42 @@ const BUILD_QUEUE_DATE_MAX_WIDTH := 120.0
 ## naming the good: `⚠ No hurdles — needs 2.1 more` while the shelf holds none of it, `⚠ Short of
 ## hurdles — needs 1.1 more` while it holds some. It takes the slot the builders' `◆` clause uses and
 ## wins it, because a build with no hurdles banks nothing whatever the tools are.
-const BUILD_QUEUE_MATERIAL_NONE_FORMAT := "%s No %s — needs %s more"
-const BUILD_QUEUE_MATERIAL_SHORT_FORMAT := "%s Short of %s — needs %s more"
-## The line's handle, carrying the drawn text — a harness finds the clause by meta, never by glyph.
+const BUILD_QUEUE_MATERIAL_FORMAT := "%s Need %s %s"
+## …and the same fact as a hover / detail line, without the mark: one per missing material.
+const BUILD_QUEUE_MATERIAL_LINE_FORMAT := "Need %s %s"
+## **THE KIT LINE**: `Short 1 crook` — the builders without the item.
+const BUILD_QUEUE_KIT_SHORT_LINE_FORMAT := "Short %d %s"
+## **THE COST LINE**: `Costs 75 work · upkeep 2.8/turn`; the upkeep clause only where the rung bills one.
+const BUILD_QUEUE_COST_FORMAT := "Costs %s work"
+const BUILD_QUEUE_UPKEEP_CLAUSE_FORMAT := " · upkeep %s/turn"
+## **THE HEADLINE**: `Corral Wild Boar — Penning 64%` (`· turn N` only on a real date).
+const BUILD_QUEUE_HEADLINE_FORMAT := "%s — %s"
+## One fact line in the open strip, and the width a line wraps at (conservative against the narrowest
+## shell), so the strip's height is reserved from the same arithmetic it draws.
+const BUILD_QUEUE_FACT_LINE_HEIGHT := 18.0
+const BUILD_QUEUE_FACT_WRAP_WIDTH := 280.0
 const BUILD_QUEUE_MATERIAL_LINE_META := "build_queue_row_material_line"
 
 ## …and the same fact on the head ROW's hover, as a sentence, beside the job's price and cause.
-const BUILD_QUEUE_HEAD_TOOLS_SHORT_TOOLTIP := "The builders are short of tools for this job — more tools would speed it up."
 ## …and NAMED: `The builders are short of hoes for this job — more hoes would speed it up.`
-const BUILD_QUEUE_HEAD_TOOLS_SHORT_NAMED_TOOLTIP := "The builders are short of %s for this job — more %s would speed it up."
 
-static func build_queue_tools_tooltip(named: String) -> String:
-    return BUILD_QUEUE_HEAD_TOOLS_SHORT_TOOLTIP if named == "" \
-        else BUILD_QUEUE_HEAD_TOOLS_SHORT_NAMED_TOOLTIP % [named, named]
+## **ONE `Short N <item>` LINE PER SHORT TOOL** — N the builders without it (`required − filled`, rounded
+## up), the item named by its roster display name, lower-cased — or by its own wire id until the roster
+## arrives, so the shortfall is never silent.
+static func toe_short_lines(lines: Array, item_names: Dictionary) -> Array[String]:
+    var out: Array[String] = []
+    for row_variant in lines:
+        if not (row_variant is Dictionary) or not pool_toe_row_is_short(row_variant):
+            continue
+        var row: Dictionary = row_variant
+        var id := String(row.get(HudBandLaborState.POOL_TOE_ITEM_KEY, ""))
+        var name := String(item_names.get(id, id.capitalize())).strip_edges().to_lower()
+        if name == "":
+            continue
+        var without := ceili(float(row.get(HudBandLaborState.POOL_TOE_REQUIRED_KEY, 0.0))
+            - float(row.get(HudBandLaborState.POOL_TOE_FILLED_KEY, 0.0)) - POOL_TOE_SHORT_MIN)
+        out.append(BUILD_QUEUE_KIT_SHORT_LINE_FORMAT % [maxi(without, 1), name])
+    return out
 
 ## The detail label's stable handle, carrying the line's FULL text — a harness asks what the line
 ## says without reading an ellipsised face.
@@ -3682,19 +3704,6 @@ const BUILD_QUEUE_ROW_TOOLS_SHORT_META := "build_queue_row_tools_short"
 ## computes a number. **`tools_short` LEADS with `◆ builders short of tools`** on the tool-short
 ## head's OPEN strip: the head row drops its own second line while its strip is open, so this is the
 ## only statement of the fact in that state — one sentence visible in either state, never both.
-static func build_queue_detail_line(tools_short: bool, blocked_lines: Array,
-        price: String, tools_named: String = "") -> String:
-    var parts: Array[String] = []
-    if tools_short:
-        parts.append(BUILD_QUEUE_ROW_TOOLS_SHORT_FORMAT % [KIT_SHORT_MARK,
-            build_queue_tools_text(tools_named)])
-    for line in blocked_lines:
-        if String(line) != "":
-            parts.append(String(line))
-    if price != "":
-        parts.append(price)
-    return BUILD_QUEUE_DETAIL_SEPARATOR.join(parts)
-
 ## **THE LEG IN FLIGHT WEARS THE QUEUE HEAD'S OWN MARKER**, and every other leg reserves its slot —
 ## the block's standing rule one level in. The first published leg IS the one in flight (the wire
 ## lists them first-incomplete first), so nothing here decides which.
