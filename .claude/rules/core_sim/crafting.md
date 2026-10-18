@@ -1678,7 +1678,7 @@ auto-craft queued. All three ride `BandRecord::bench` (`SAVE_FORMAT_VERSION` 33)
   `RecipeDef::row_key`: the equipment id, else the material id, so hurdles can be skipped) in
   `auto_skipped`, removes the head (a drawn order is workable, so a waiting
   head holds no pile and nothing is forfeited) and refills.
-- **A skipped item returns only when the queue is next empty.** At each fill an item whose suggested
+- **A skipped item returns only at the next fill** (when no order can progress). At each fill an item whose suggested
   recipe can draw ONE item from stock (`order_is_workable` on a count-1 order) leaves `auto_skipped`,
   and so does an item that is no longer in the suggestion list (nobody is going without it, so a
   stale skip must not survive); it never preempts a running order. Turning auto off clears the set and leaves every order alone.

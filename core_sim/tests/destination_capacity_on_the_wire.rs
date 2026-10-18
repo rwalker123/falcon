@@ -1514,3 +1514,137 @@ fn the_pen_quote_says_taken_while_a_band_holds_the_corral() {
         "with the Corral withdrawn the pen rung quotes open again"
     );
 }
+
+/// A second herd cloned from the fixture herd, standing nowhere near a pen.
+fn a_second_herd(app: &mut App, id: &str, other_id: &str) -> core_sim::Herd {
+    let registry = app.world.resource::<HerdRegistry>();
+    let mut other = registry.find(id).expect("the fixture herd").clone();
+    other.id = other_id.to_string();
+    other.label = other_id.to_string();
+    other
+}
+
+/// ⛔ **A TILE INSIDE ANOTHER HERD'S FENCE IS TAKEN, NOT JUST ITS CENTRE.**
+///
+/// A two-ring Ranch is nineteen tiles. The rich tile lies inside its outer ring but is not its centre;
+/// the chooser must not put a second pen there.
+#[test]
+fn a_tile_inside_a_ranchs_fence_is_never_chosen() {
+    let (mut app, id) = world_with_a_corral_in_flight();
+    let pasture = lay_out_the_pasture(&mut app, &id);
+    let centre = land_tiles_around(&mut app, pasture.rich, 1)
+        .into_iter()
+        .find(|tile| hex_steps(&app, pasture.rich, *tile) == 1)
+        .expect("fixture: a land tile beside the rich one");
+    let mut ranch = a_second_herd(&mut app, &id, "game_the_ranch");
+    ranch.route = vec![centre];
+    ranch.current_pos = centre;
+    assert!(ranch.corral_at(centre, &core_sim::LadderConfig::builtin()));
+    ranch.pen_radius = 2;
+    let (width, height) = {
+        let tiles = app.world.resource::<TileRegistry>();
+        (tiles.width, tiles.height)
+    };
+    let wrap = app
+        .world
+        .resource::<core_sim::SimulationConfig>()
+        .map_topology
+        .wrap_horizontal;
+    let fence = core_sim::grid_utils::hex_range_tiles(centre, 2, width, height, wrap);
+    assert!(
+        fence.contains(&pasture.rich) && centre != pasture.rich,
+        "fixture: the rich tile is inside the Ranch's fence and is not its centre"
+    );
+    app.world.resource_mut::<HerdRegistry>().herds.push(ranch);
+
+    let herd = app
+        .world
+        .resource::<HerdRegistry>()
+        .find(&id)
+        .expect("the fixture herd")
+        .clone();
+    let chosen = core_sim::pen_site_in_world(&app.world, &herd, pasture.herd_tile)
+        .expect("something in range is open");
+    assert!(
+        !fence.contains(&chosen),
+        "the chosen site {chosen:?} lies inside the Ranch's fence"
+    );
+}
+
+/// ⛔ **TWO HERDS QUEUED IN ONE RANGE GET DIFFERENT SITES** - a queued Corral's stamped site is taken
+/// for the next herd's pick.
+#[test]
+fn two_herds_queued_in_one_range_get_different_sites() {
+    let (mut app, id) = world_with_a_corral_in_flight();
+    lay_out_the_pasture(&mut app, &id);
+    let other = a_second_herd(&mut app, &id, "game_the_second_queue");
+    let other_id = other.id.clone();
+    let band_tile = other.current_pos;
+    app.world.resource_mut::<HerdRegistry>().herds.push(other);
+
+    let pick = |app: &App, which: &str| {
+        let herd = app
+            .world
+            .resource::<HerdRegistry>()
+            .find(which)
+            .expect("the herd")
+            .clone();
+        core_sim::pen_site_in_world(&app.world, &herd, band_tile)
+    };
+    let first = pick(&app, &id).expect("a site for the first herd");
+    app.world
+        .resource_mut::<HerdRegistry>()
+        .herds
+        .iter_mut()
+        .find(|herd| herd.id == id)
+        .expect("the fixture herd")
+        .pen_site = Some(first);
+    let second = pick(&app, &other_id).expect("a site for the second herd");
+    assert_ne!(
+        first, second,
+        "the second herd must not take the first's site"
+    );
+}
+
+/// ⛔ **A RIVAL'S QUEUED PEN SITE IS NOT THE VIEWER'S TO READ.**
+///
+/// The herd is visible (fog off) and carries a stamped site, but the Corral is queued by faction 0's
+/// band: faction 0 reads the site, faction 1 reads `-1`.
+#[test]
+fn a_rivals_queued_pen_site_is_withheld_from_the_viewer() {
+    let (mut app, id) = world_with_a_corral_in_flight();
+    let pasture = lay_out_the_pasture(&mut app, &id);
+    app.world
+        .resource_mut::<core_sim::SimulationConfig>()
+        .fog_enabled = false;
+    let herd = app
+        .world
+        .resource::<HerdRegistry>()
+        .find(&id)
+        .expect("the fixture herd")
+        .clone();
+    let chosen = core_sim::pen_site_in_world(&app.world, &herd, pasture.herd_tile);
+    app.world
+        .resource_mut::<HerdRegistry>()
+        .herds
+        .iter_mut()
+        .find(|herd| herd.id == id)
+        .expect("the fixture herd")
+        .pen_site = chosen;
+    recapture_snapshot_in_place(&mut app.world);
+    let site = chosen.expect("fixture: a site was chosen");
+    assert_eq!(
+        published_pen_site(&app, &id),
+        (site.x as i32, site.y as i32),
+        "LIVENESS: the builder's own frame carries the site"
+    );
+
+    app.world
+        .insert_resource(core_sim::ViewerFaction(FactionId(1)));
+    recapture_snapshot_in_place(&mut app.world);
+    assert_eq!(
+        published_pen_site(&app, &id),
+        (-1, -1),
+        "a rival's frame publishes no pen site for a Corral it did not queue"
+    );
+}

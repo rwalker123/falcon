@@ -3369,12 +3369,30 @@ pub fn pen_site_is_free(site: UVec2, taken: &[UVec2]) -> bool {
     !taken.contains(&site)
 }
 
-/// **EVERY TILE SOME OTHER HERD'S PEN HOLDS** - the `taken` list [`choose_pen_site`] takes.
-pub fn penned_tiles_except(herds: &[Herd], id: &str) -> Vec<UVec2> {
+/// **EVERY TILE ONE HERD CLAIMS FOR ITS PEN** - the whole fenced footprint of a standing pen
+/// (`hex_range_tiles(corralled_at, pen_radius)`, so a Ranch's outer rings count) plus the site a
+/// queued Corral has stamped.
+pub fn pen_tiles_claimed_by(herd: &Herd, width: u32, height: u32, wrap: bool) -> Vec<UVec2> {
+    let mut claimed = herd.corralled_at.map_or_else(Vec::new, |centre| {
+        hex_range_tiles(centre, herd.pen_radius, width, height, wrap)
+    });
+    claimed.extend(herd.pen_site);
+    claimed
+}
+
+/// **EVERY TILE SOME OTHER HERD'S PEN OR QUEUED PEN HOLDS** - the one `taken` list [`choose_pen_site`]
+/// takes, for the queue-time stamp and the completion re-pick alike.
+pub fn taken_pen_tiles(
+    herds: &[Herd],
+    id: &str,
+    width: u32,
+    height: u32,
+    wrap: bool,
+) -> Vec<UVec2> {
     herds
         .iter()
         .filter(|herd| herd.id != id)
-        .filter_map(|herd| herd.corralled_at)
+        .flat_map(|herd| pen_tiles_claimed_by(herd, width, height, wrap))
         .collect()
 }
 
@@ -3397,7 +3415,17 @@ pub fn pen_site_in_world(world: &World, herd: &Herd, band_tile: UVec2) -> Option
             .and_then(|entity| world.get::<Tile>(entity))
             .is_some_and(|tile| !tile.terrain_tags.contains(TerrainTags::WATER))
     };
-    let taken = penned_tiles_except(&world.resource::<HerdRegistry>().herds, &herd.id);
+    let wrap = world
+        .resource::<SimulationConfig>()
+        .map_topology
+        .wrap_horizontal;
+    let taken = taken_pen_tiles(
+        &world.resource::<HerdRegistry>().herds,
+        &herd.id,
+        tiles.width,
+        tiles.height,
+        wrap,
+    );
     choose_pen_site(
         herd,
         band_tile,

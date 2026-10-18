@@ -11435,8 +11435,10 @@ func _assert_pen_taken_refusal_by_viewing_band() -> void:
 	var knowledge := {"herding": HudConst.KNOWLEDGE_COMPLETE, "penning": HudConst.KNOWLEDGE_COMPLETE}
 	var sentence := "Another band is already penning this herd"
 	var outsider := _declare_band_fixture()
-	var holder := _declare_band_fixture()
-	holder["build_queue"] = [_queue_hunt_entry(DECLARE_CORRAL_HERD)]
+	var holder := _band_holding_the_herd_job(SourceForecast.IMPROVEMENT_CORRAL)
+	# A band whose queue holds a DIFFERENT job on the same herd (a herd-output commitment) while the
+	# holder has the Corral: it shares the herd id and must still be refused.
+	var committer := _band_holding_the_herd_job("set_output")
 	var seen_outsider := RungGates.seen_by_band(herd, outsider)
 	var seen_holder := RungGates.seen_by_band(herd, holder)
 	var outsider_gates := RungGates.source_gates(seen_outsider, "", knowledge)
@@ -11454,9 +11456,30 @@ func _assert_pen_taken_refusal_by_viewing_band() -> void:
 	var holder_reasons: Array = holder_gates.get(SourceForecast.IMPROVEMENT_CORRAL, [])
 	_assert_band_panel("pen taken — the HOLDING band sees no refusal (%s)" % str(holder_reasons),
 		not holder_reasons.has(sentence))
+	var committer_reasons: Array = RungGates.source_gates(RungGates.seen_by_band(herd, committer), "",
+		knowledge).get(SourceForecast.IMPROVEMENT_CORRAL, [])
+	_assert_band_panel("pen taken — a band holding a DIFFERENT job on the herd (output commitment) is still refused (%s)"
+			% str(committer_reasons),
+		committer_reasons.has(sentence))
+	var committer_seen := RungGates.seen_by_band(herd, committer)
+	_assert_band_panel("pen taken — …and gets no Corral button",
+		RungGates.next_rung_ready(SourceForecast.LABOR_KIND_HUNT, committer_seen,
+			SourceForecast.IMPROVEMENT_NONE, knowledge).is_empty()
+			and String(_corral_track_row(herd, knowledge, committer).get(RungLadder.ROW_STATE_KEY, ""))
+				== RungLadder.STATE_LOCKED)
 	var holder_row := _corral_track_row(herd, knowledge, holder)
 	_assert_band_panel("pen taken — …and its Pen row is not locked on it (%s)" % str(holder_row.get(RungLadder.ROW_REASONS_KEY, [])),
 		not (holder_row.get(RungLadder.ROW_REASONS_KEY, []) as Array).has(sentence))
+
+## The declare band with its hunt row on the herd carrying `improvement` — the field the sim derives from
+## the band's own build queue, naming the job it holds on that source.
+func _band_holding_the_herd_job(improvement: String) -> Dictionary:
+	var band := _declare_band_fixture()
+	for row_variant in band["labor_assignments"]:
+		var row: Dictionary = row_variant
+		if String(row.get("fauna_id", "")) == DECLARE_CORRAL_HERD:
+			row["improvement"] = improvement
+	return band
 
 ## The destination track's row for the Corral rung, as `RungLadder.track` composes it for `band`.
 func _corral_track_row(herd: Dictionary, knowledge: Dictionary, band: Dictionary) -> Dictionary:

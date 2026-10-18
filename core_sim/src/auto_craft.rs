@@ -86,8 +86,10 @@ fn suggested_offer<'a>(offers: &'a [CraftOfferState], item: &str) -> Option<&'a 
 /// that can now be drawn, then queue the first suggestion that is not skipped and whose craft is
 /// known. Returns whether an order was queued.
 ///
-/// Only an empty queue on an auto bench is filled. Never touches the crew.
-fn fill_empty_queue(
+/// An auto bench is filled whenever no order can progress (`worked_order` is `None`): an empty
+/// queue is the special case, and a blocked order keeps its place and resumes by itself. Never
+/// touches the crew.
+fn fill_idle_bench(
     bench: &mut BandBench,
     suggestions: &[CraftSuggestion],
     offers: &[CraftOfferState],
@@ -295,12 +297,13 @@ fn band_wear(world: &World, band: Entity, equipment: &EquipmentConfig) -> BandEq
         .unwrap_or_else(|| BandEquipment::start_stocked(equipment))
 }
 
-/// **FILL A BAND'S EMPTY QUEUE FROM ITS SUGGESTIONS** when auto-craft is on. Returns whether an
-/// order was queued. A no-op for a bench that is off, a queue that is not empty, a detached party,
-/// or a band with no usable suggestion.
+/// **FILL A BAND'S IDLE BENCH FROM ITS SUGGESTIONS** when auto-craft is on - whenever no order can
+/// progress (`worked_order` is `None`), which an empty queue is one case of. Returns whether an
+/// order was queued. A no-op for a bench that is off, a bench with an order that can progress, a
+/// detached party, or a band with no usable suggestion.
 ///
 /// Called by the turn system ([`advance_auto_craft`]) and at the end of every command that can
-/// leave the queue empty or switch auto on.
+/// leave the bench with nothing workable or switch auto on.
 pub fn auto_craft_fill(world: &mut World, band: Entity) -> bool {
     let Some(original) = world.get::<BandBench>(band) else {
         return false;
@@ -338,7 +341,7 @@ pub fn auto_craft_fill(world: &mut World, band: Entity) -> bool {
             return false;
         };
         let wear = band_wear(world, band, &configs.equipment);
-        fill_empty_queue(
+        fill_idle_bench(
             &mut bench,
             &suggestions,
             &offers,

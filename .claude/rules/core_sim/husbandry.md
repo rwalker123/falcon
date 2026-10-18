@@ -1603,7 +1603,9 @@ units**, complete at its stored `corral_cost`; the pen under construction), `cor
 > A new pen is not built around the flock wherever it happens to be grazing; it goes on the best
 > ground the band can reach. `fauna::choose_pen_site` picks the tile and `Herd::pen_site:
 > Option<UVec2>` carries it (checkpointed with the registry; the wire is `HerdTelemetryState.penSiteX`
-> / `penSiteY`, `-1` on both when no Corral is queued).
+> / `penSiteY`, `-1` on both when no Corral is queued, **and `-1` on both for every viewer whose own
+> band has not queued the Corral** - builder state follows the builder, so a rival never reads where
+> a pen is going; the authoritative `Herd::pen_site` is untouched).
 >
 > - **Chosen when the Corral is queued** — `queue_build_on_working_bands` stamps it (`build corral`,
 >   the `animal:pen` rung of `build_rung`); an `extend_pen` ring never does, a ring widens a pen that
@@ -1611,7 +1613,11 @@ units**, complete at its stored `corral_cost`; the pen under construction), `cor
 >   taken since) picks again from the completing band's tile through the same function.
 > - **Candidates**: land tiles of `hex_range_tiles(band tile, labor.band_work_range)` — the same apron
 >   every other job is measured by — that the roam could stand on (`is_land`, and once a graze layer is
->   seeded, not barren) and that no *other* herd's `corralled_at` holds.
+>   seeded, not barren) and that is not **taken**. Taken is every *other* herd's whole claim
+>   (`fauna::pen_tiles_claimed_by`): its standing pen's full footprint
+>   (`hex_range_tiles(corralled_at, pen_radius)`, so a Ranch's outer rings count, not just its centre)
+>   plus its stamped `pen_site`. `fauna::taken_pen_tiles` is the one list, read by the queue-time
+>   stamp (`pen_site_in_world`) and by the completion re-pick in `systems/labor.rs` alike.
 > - **Scored through the one `K` seam**, never a second formula: `ecological_carrying_capacity` at the
 >   pen standing over the one-tile footprint (`hex_range_tiles(site, pen_radius)`), so the score is the
 >   `K` the herd is handed once it is penned there. Ties break by hex distance to the band ascending,
@@ -1645,6 +1651,8 @@ units**, complete at its stored `corral_cost`; the pen under construction), `cor
 >   cached at spawn, so only a hand-built fixture meets this.
 > - Pinned on the encoded wire by `destination_capacity_on_the_wire.rs`
 >   (`a_new_pen_goes_on_the_best_grazing_tile_in_range`, `a_tile_already_holding_a_pen_is_skipped`,
+>   `a_tile_inside_a_ranchs_fence_is_never_chosen`, `two_herds_queued_in_one_range_get_different_sites`,
+>   `a_rivals_queued_pen_site_is_withheld_from_the_viewer`,
 >   `the_quote_names_the_capacity_of_the_tile_the_pen_lands_on`, `unqueueing_the_corral_clears_the_site`)
 >   and, for the queue-time stamp, by `server::tests::corral_stamps_the_best_grazing_tile_in_the_bands_range`.
 

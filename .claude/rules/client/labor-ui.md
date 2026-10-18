@@ -5896,7 +5896,9 @@ spelled and never a raw count.
       band's queue holds it the enclosed (pen) rung's quote carries `site_refusal = pen_taken` (the herd row
       is per faction). `SOW_REFUSAL_REASONS` maps it to `Another band is already penning this herd` (the
       map is plant-named and was kept, not renamed). `RungGates.seen_by_band(src, band)` blanks the refusal
-      for the band whose own `build_queue` holds a hunt entry for that herd — it sees its ordinary
+      for the band whose own hunt `labor_assignments` row for that herd has `improvement == enclosed_verb`
+      (the sim derives it from that band's own queue; a `build_queue` entry with the herd id is not enough,
+      because a `SetHerdOutput` commitment shares it) — it sees its ordinary
       queued/progress state — and leaves it for every other band, whose Pen row is locked on the sentence and
       who is offered no Corral button. Applied where a band is in hand: `RungLadder.track`, the Work row's
       ready offer and the compose sheet's offer. Pinned by

@@ -105,19 +105,26 @@ static func _required_rung_quote(src: Dictionary, prefix: String, quote: Diction
     return RungQuotes.quote_of_rung(src, prefix, String(quote.get(RungQuotes.KEY_REQUIRES_RUNG, "")))
 
 ## **THE HERD AS THE VIEWING BAND SEES IT.** The enclosed rung's `pen_taken` refusal means *another band
-## holds this herd's Corral*; the band whose own `build_queue` holds a hunt entry for the herd IS that band,
-## so for it the refusal is absent and it keeps its ordinary queued/progress state. Every other band (and a
-## caller with no band) sees the source untouched, refusal and all. Returns a copy only when it changes
-## something.
+## holds this herd's Corral*. A band holds it when its OWN hunt row for the herd carries
+## `improvement == RungQuotes.enclosed_verb(herd)`: that field is derived at capture from the band's own
+## build queue (one entry per source per band), so it names the entry's job. A `build_queue` entry with the
+## herd's `fauna_id` is not enough — a `SetHerdOutput` commitment (allowed on any managed herd, queued on
+## every band working it) shares the herd id while a different band holds the Corral, and that band must
+## still be refused. For the holder the refusal is absent and it keeps its ordinary queued/progress state;
+## every other band (and a caller with no band) sees the source untouched, refusal and all. Returns a copy
+## only when it changes something.
 static func seen_by_band(src: Dictionary, band: Dictionary) -> Dictionary:
     if band.is_empty() or not _has_pen_taken(src):
         return src
     var herd_id := String(src.get("id", ""))
+    var pen_verb := RungQuotes.enclosed_verb(src)
     var holds := false
-    for entry_variant in band.get("build_queue", []):
-        if entry_variant is Dictionary \
-                and String((entry_variant as Dictionary).get("fauna_id", "")) == herd_id \
-                and herd_id != "":
+    for row_variant in HudBandLaborState.labor_assignments_of(band):
+        if row_variant is Dictionary \
+                and String((row_variant as Dictionary).get("kind", "")) == SourceForecast.LABOR_KIND_HUNT \
+                and String((row_variant as Dictionary).get("fauna_id", "")) == herd_id \
+                and herd_id != "" and pen_verb != "" \
+                and String((row_variant as Dictionary).get("improvement", "")) == pen_verb:
             holds = true
     if not holds:
         return src

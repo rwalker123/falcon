@@ -1178,11 +1178,15 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
                     .unwrap_or_default(),
                 // **WHERE THE QUEUED CORRAL WILL PEN THIS HERD** - the stamped `Herd::pen_site`, `-1`
                 // on both axes when none is queued.
+                // **Builder state, so the viewer's own queue only**: a rival's queued pen site is withheld
+                // like every other builder field on the row (the authoritative field is untouched).
                 pen_site_x: herd
                     .and_then(|herd| herd.pen_site)
+                    .filter(|_| build_kits.herd_is_queued(&entry.id))
                     .map_or(NO_PEN_SITE, |site| site.x as i32),
                 pen_site_y: herd
                     .and_then(|herd| herd.pen_site)
+                    .filter(|_| build_kits.herd_is_queued(&entry.id))
                     .map_or(NO_PEN_SITE, |site| site.y as i32),
                 // **EVERY RUNG'S QUOTE** - one row per rung of the herd branch above the root, built
                 // by iterating the ladder; see [`herd_rung_quotes`].

@@ -5703,10 +5703,16 @@ pub fn advance_labor_allocation(
         wrap: wrap_horizontal,
         work_range: labor.band_work_range,
     };
-    let mut pen_holders: Vec<(String, UVec2)> = registry
+    // Every herd's claimed pen tiles (footprint + stamped site), kept current as pens are sited.
+    let mut pen_claims: Vec<(String, Vec<UVec2>)> = registry
         .herds
         .iter()
-        .filter_map(|herd| herd.corralled_at.map(|tile| (herd.id.clone(), tile)))
+        .map(|herd| {
+            (
+                herd.id.clone(),
+                crate::fauna::pen_tiles_claimed_by(herd, grid_width, grid_height, wrap_horizontal),
+            )
+        })
         .collect();
     let cargo_home_of = |target: &LaborTarget| {
         CargoHome::of(
@@ -9138,10 +9144,10 @@ pub fn advance_labor_allocation(
                             .trait_set()
                             .has(crate::intensification::RungTrait::Enclosed)
                         {
-                            let taken: Vec<UVec2> = pen_holders
+                            let taken: Vec<UVec2> = pen_claims
                                 .iter()
                                 .filter(|(id, _)| *id != herd.id)
-                                .map(|(_, tile)| *tile)
+                                .flat_map(|(_, tiles)| tiles.iter().copied())
                                 .collect();
                             let site = herd
                                 .pen_site
@@ -9159,8 +9165,15 @@ pub fn advance_labor_allocation(
                         let progress_before = herd.ladder_position();
                         let completed_rung = accrual > 0.0
                             && herd.accrue_rung(faction, accrual, rung, &fauna, &ladder, pen_tile);
-                        if completed_rung && herd.corralled_at.is_some() {
-                            pen_holders.push((herd.id.clone(), pen_tile));
+                        if let Some((_, claimed)) =
+                            pen_claims.iter_mut().find(|(id, _)| *id == herd.id)
+                        {
+                            *claimed = crate::fauna::pen_tiles_claimed_by(
+                                herd,
+                                grid_width,
+                                grid_height,
+                                wrap_horizontal,
+                            );
                         }
                         // Recorded for the band's chain pass, which dates it at its place in the
                         // queue. **Only for a source that carries an entry** - see
