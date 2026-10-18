@@ -80,6 +80,13 @@ const PARTY_SHORT_LABELS := {
 ## How the mission word joins the name: `<band> (<mission>)`.
 const PARTY_NAME_FORMAT := "%s (%s)"
 
+## **A SHIPMENT OR AN ENVOY STANDING IN A CAMP IS NOT WAITING FOR ORDERS** -- it is waiting for the people
+## it came to answer. `awaiting` on these two missions reads this, and its hint says so; every other
+## mission keeps `Awaiting orders` (it IS parked until the player acts).
+const MISSIONS_WAITING_ON_AN_ANSWER: Array[String] = [EXPEDITION_MISSION_TRADE, EXPEDITION_MISSION_ENVOY]
+const EXPEDITION_PHASE_WAITING_ON_ANSWER_LABEL := "Waiting on an answer"
+const STATUS_HINT_WAITING_ON_ANSWER := "waiting in their camp for them to answer"
+
 const EXPEDITION_PHASE_LABELS := {
 	"outbound": "Outbound",
 	"awaiting": "Awaiting orders",

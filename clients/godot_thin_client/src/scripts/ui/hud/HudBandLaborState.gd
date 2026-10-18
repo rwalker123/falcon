@@ -271,6 +271,80 @@ func band_parties(band: Dictionary) -> Array:
 			rows.append(exp_variant)
 	return rows
 
+## **A SHIPMENT IS THE TRADE TAB'S, END TO END.** Whether a party is one is this ONE predicate, and every
+## reader that lists or counts the band's parties for the PARTIES zone (its rows, its head's counts, its
+## badge, the faction page's twin) goes through `band_zone_parties` / `faction_zone_parties` rather than
+## testing the mission itself. Scouts, work parties and ENVOYS are not trade parties and stay.
+static func is_trade_party(exp: Dictionary) -> bool:
+	return String(exp.get("expedition_mission", "")).strip_edges().to_lower() \
+		== HudExpeditionVocab.EXPEDITION_MISSION_TRADE
+
+## The parties the PARTIES zone lists for `band`: every out-party but its shipments. (`band_parties` stays
+## the whole set: the Workforce bar's `away` clause counts every worker who is out, shipments included,
+## since those hands really are gone from the band.)
+func band_zone_parties(band: Dictionary) -> Array:
+	return band_parties(band).filter(func(exp: Dictionary) -> bool: return not is_trade_party(exp))
+
+## Workers out with the parties `band_zone_parties` lists -- the Parties head's `N workers`.
+func band_zone_party_workers(band: Dictionary) -> int:
+	var total := 0
+	for exp in band_zone_parties(band):
+		total += int((exp as Dictionary).get("size", 0))
+	return total
+
+## The faction page's Parties zone: every player party but its shipments.
+func faction_zone_parties() -> Array:
+	return _player_expeditions.filter(
+		func(exp: Variant) -> bool: return exp is Dictionary and not is_trade_party(exp))
+
+## **THE TRADE PARTY STANDING IN A CAMP ON A PENDING DEALING**, or `{}`. The decoded dealing carries the
+## party's two bands and no party id, so the join is the pair: an OFFER this people sent is the party of
+## its `sender_band` bound for `receiver_band`; a REPLY addressed to this people is the party of its
+## `receiver_band` (the original sender) bound for `sender_band`. Only a party standing in a camp
+## (`awaiting`) is matched, and two parties on one pair resolve to the first, so a dealing never claims
+## two parties and a party never answers for two dealings.
+func party_for_dealing(dealing: Dictionary) -> Dictionary:
+	var kind := String(dealing.get("kind", ""))
+	var home := HudConst.NO_BAND_ID
+	var destination := HudConst.NO_BAND_ID
+	if kind == HudDealingsVocab.KIND_OFFER \
+			and int(dealing.get("sender_faction", HudConst.NO_FACTION_ID)) == HudConst.PLAYER_FACTION_ID:
+		home = int(dealing.get("sender_band", HudConst.NO_BAND_ID))
+		destination = int(dealing.get("receiver_band", HudConst.NO_BAND_ID))
+	elif kind == HudDealingsVocab.KIND_REPLY \
+			and int(dealing.get("receiver_faction", HudConst.NO_FACTION_ID)) == HudConst.PLAYER_FACTION_ID:
+		home = int(dealing.get("receiver_band", HudConst.NO_BAND_ID))
+		destination = int(dealing.get("sender_band", HudConst.NO_BAND_ID))
+	else:
+		return {}
+	for exp_variant in _player_expeditions:
+		if not (exp_variant is Dictionary):
+			continue
+		var exp: Dictionary = exp_variant
+		if not is_trade_party(exp) \
+				or String(exp.get("expedition_phase", "")).strip_edges().to_lower() \
+					!= HudExpeditionVocab.EXPEDITION_PHASE_AWAITING \
+				or int(exp.get("expedition_destination_band", HudConst.NO_BAND_ID)) != destination:
+			continue
+		if int(player_band_by_entity(int(exp.get("home_band_entity", NO_HOME_BAND_ENTITY))).get(
+				"band_id", HudConst.NO_BAND_ID)) == home:
+			return exp
+	return {}
+
+## Is this trade party shown by a dealing's row (so the Trade tab must not list it a second time)?
+func party_stands_on_a_dealing(exp: Dictionary) -> bool:
+	for dealing_variant in _dealings:
+		if dealing_variant is Dictionary \
+				and int(party_for_dealing(dealing_variant).get("entity", -1)) == int(exp.get("entity", -2)):
+			return true
+	return false
+
+## **THE TRADE TAB'S `On the road` SET**: this band's shipments that no dealing row stands for -- heading
+## out, coming home, or standing in a camp with no pending dealing behind them.
+func band_road_parties(band: Dictionary) -> Array:
+	return band_parties(band).filter(func(exp: Dictionary) -> bool:
+		return is_trade_party(exp) and not party_stands_on_a_dealing(exp))
+
 ## **WOULD RECALLING THIS PARTY CANCEL IT ON THE SPOT?** The client-side reading of the sim's
 ## `cancel_party_standing_in_camp`: a party standing in its home band's camp with no map report owed is
 ## folded back by `handle_recall_expedition` the instant the command lands, so the order is a CANCEL of

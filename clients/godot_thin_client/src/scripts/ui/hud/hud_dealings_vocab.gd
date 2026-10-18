@@ -233,6 +233,35 @@ const ANSWER_MESSAGE_WALK_HOME := "Walked home with the cargo."
 const PROPOSE_MESSAGE_FORMAT := "Propose a trade to %s: %s for %s."
 
 # ---- THE HISTORY SECTION ---------------------------------------------------------------------------------
+## **ON THE ROAD** -- the Trade tab's section between `Waiting on an answer` and `This turn`: this band's
+## trade parties that no dealing row stands for. A party standing in a camp on a pending dealing is shown
+## once, by that dealing's row, which carries the party's Jump and Recall links instead.
+const ROAD_HEAD := "On the road"
+const ROAD_BLOCK_NAME := "TradeOnTheRoad"
+const ROAD_ROWS_NAME := "TradeOnTheRoadRows"
+## Row meta (value: the party's entity id) and the meta of the party links, on the road rows AND on the
+## dealing rows that stand for a party (value: `PARTY_LINK_JUMP` / `PARTY_LINK_RECALL`).
+const ROAD_ROW_META := &"trade_road_row"
+const PARTY_LINK_META := &"dealings_party_link"
+const PARTY_LINK_JUMP := "jump"
+const PARTY_LINK_RECALL := "recall"
+## The `actions` keys the Trade tab hands the roster for a party's two links: the Parties inspector's own
+## Jump and Recall, reused rather than re-implemented.
+const ACTION_PARTY_JUMP := "party_jump"
+const ACTION_PARTY_RECALL := "party_recall"
+const ACTION_PARTY_RECALL_VERB := "party_recall_verb"
+const ACTION_PARTY_RECALL_TIP := "party_recall_tip"
+## Phase words of a road row. (A party standing in a camp with no dealing behind it reads the shared
+## `Waiting on an answer`, `HudExpeditionVocab.EXPEDITION_PHASE_WAITING_ON_ANSWER_LABEL`.)
+const PHASE_HEADING_OUT := "Heading out"
+const PHASE_COMING_HOME := "Coming home"
+## Line 1 `→ Brackwater · Heading out` (the glyph is the row's direction glyph), line 2 `Carrying 6.0 hay`.
+const ROAD_PHASE_FORMAT := "%s · %s"
+const ROAD_CARRYING_FORMAT := "Carrying %s"
+const ROAD_UNKNOWN_DESTINATION := "a band of theirs"
+## The direction glyph of a party walking home (a heading-out or camped one wears `OUTGOING_GLYPH`).
+const ROAD_HOME_GLYPH := "↩"
+
 ## The Trade tab's third section: one record per trade, from this people's point of view.
 const HISTORY_HEAD := "History"
 const HISTORY_EMPTY := "No trades yet"

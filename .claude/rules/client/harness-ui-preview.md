@@ -3900,6 +3900,21 @@ is asserted by EQUALITY through the real `Main` builder**: a payload can be perf
 into a line the server's parser refuses (the same lines were also fed to `parse_command_line` once, in a
 throwaway test, and all parse).
 
+- **A TRADE PARTY IS THE TRADE TAB'S, END TO END** (`_road_states`, frames `dealings_road` and
+  `dealings_road_waiting`). The chapter stages five parties of the home band (`_parties`): a shipment
+  standing in Brackwater's camp (the party of the pending offer we sent and of the reply addressed to us),
+  one heading out, one coming home, an **envoy** and a **scout**. Claims: the Parties head reads
+  `2 out · 5 workers` (the envoy and the scout) and its badge `2`, no shipment's band is named there, the
+  envoy reads `Waiting on an answer` and the scout `Awaiting orders`; the full set of five stays in
+  `band_parties` and the Workforce `away` clause; `On the road` sits between `Waiting on an answer` and
+  `This turn` with two rows (heading out, coming home) and not the camped party; each carries `Jump to
+  party` and `Recall`, as do the offer row and the reply row (the reply beside `Take it` / `Walk home`,
+  the offer row still two lines of copy); the offer addressed to us has no party links; pressing `Jump to
+  party` focuses that party's tile. A dealings-only frame withdrawing the offer and reply moves the party
+  onto a third road row in the SAME scroll, reading `Waiting on an answer`; restoring them takes it off
+  again; with no trade party at all the section is not drawn. The chapter's `EXPECTED_CHECKPOINTS` was
+  re-measured. **Both parties sharing the Brackwater pair claim the one camped party** (the fixture's
+  offer and reply are between the same two bands), which is the documented first-awaiting-party rule.
 - **THE DEALINGS TAB IS GONE; THE CHAPTER KEEPS ITS NAME.** What it walks is the merged Trade tab
   (`Waiting on an answer`, `This turn`, `History`, in one scroll) and the Peoples tab's treaty proposals.
   `dealings_tab` asserts the three sections in order, the one sanctioned scroll, no SHORT tier, the six

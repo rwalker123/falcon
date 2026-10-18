@@ -26,6 +26,12 @@ extends RefCounted
 const DIRECTION_INCOMING := 0
 const DIRECTION_OUTGOING := 1
 
+## The `actions` keys of a trade party's two links (see `HudDealingsVocab.ACTION_PARTY_*`).
+const ACTION_PARTY_JUMP := HudDealingsVocab.ACTION_PARTY_JUMP
+const ACTION_PARTY_RECALL := HudDealingsVocab.ACTION_PARTY_RECALL
+const ACTION_PARTY_RECALL_VERB := HudDealingsVocab.ACTION_PARTY_RECALL_VERB
+const ACTION_PARTY_RECALL_TIP := HudDealingsVocab.ACTION_PARTY_RECALL_TIP
+
 ## Which way a dealing runs from `band_id`'s page. The receiver band answers; anything else is waited on.
 static func direction_of(dealing: Dictionary, band_id: int) -> int:
 	if int(dealing.get("receiver_band", HudConst.NO_BAND_ID)) == band_id:
@@ -161,6 +167,115 @@ static func build_treaty_block(band_id: int, band_labor: HudBandLaborState,
 	_fill_rows(rows, rows_data, band_labor, band_id, actions)
 	return block
 
+# ---- ON THE ROAD -------------------------------------------------------------------------------------
+
+## This band's trade parties that no dealing row stands for (`HudBandLaborState.band_road_parties`).
+static func road_parties(band_id: int, band_labor: HudBandLaborState) -> Array:
+	return band_labor.band_road_parties(band_labor.player_band_by_band_id(band_id))
+
+## **THE TRADE TAB'S `On the road` SECTION**, shown only when there is a party on it (`null` otherwise: a
+## head over nothing is furniture). One two-line row per party: the destination and the phase word, then
+## what it carries and its Jump to party / Recall links.
+static func build_road_section(band_id: int, band_labor: HudBandLaborState,
+		actions: Dictionary = {}) -> VBoxContainer:
+	var parties := road_parties(band_id, band_labor)
+	if parties.is_empty():
+		return null
+	var block := HudWidgets.make_zone_block()
+	block.name = HudDealingsVocab.ROAD_BLOCK_NAME
+	block.add_child(HudWidgets.zone_head(HudDealingsVocab.ROAD_HEAD,
+		HudDealingsVocab.HEAD_COUNT_FORMAT % parties.size()))
+	var rows := HudWidgets.make_zone_block()
+	rows.name = HudDealingsVocab.ROAD_ROWS_NAME
+	for party_variant in parties:
+		rows.add_child(_build_road_row(party_variant as Dictionary, band_labor, actions))
+	block.add_child(rows)
+	return block
+
+## The phase word of a party on the road. A shipment standing in a camp with no dealing behind it is
+## waiting on an answer, not on orders (`HudFormat.expedition_phase_label` says so for a trade party).
+static func road_phase_word(exp: Dictionary) -> String:
+	var phase := String(exp.get("expedition_phase", "")).strip_edges().to_lower()
+	if phase == HudExpeditionVocab.EXPEDITION_PHASE_OUTBOUND:
+		return HudDealingsVocab.PHASE_HEADING_OUT
+	if phase == HudExpeditionVocab.EXPEDITION_PHASE_RETURNING:
+		return HudDealingsVocab.PHASE_COMING_HOME
+	return HudFormat.expedition_phase_label(phase, String(exp.get("expedition_mission", "")))
+
+## What a party carries, as the dealings rows word a goods list (never summed across accounts).
+static func road_cargo_text(exp: Dictionary) -> String:
+	return HudDealingsVocab.goods_text({
+		HudDealingsVocab.GOODS_FOOD: float(exp.get("expedition_cargo_food", 0.0)),
+		HudDealingsVocab.GOODS_FODDER: float(exp.get("expedition_cargo_fodder", 0.0)),
+		HudDealingsVocab.GOODS_MATERIALS: exp.get("expedition_cargo_materials", []),
+	})
+
+static func _build_road_row(exp: Dictionary, band_labor: HudBandLaborState,
+		actions: Dictionary) -> VBoxContainer:
+	var phase := String(exp.get("expedition_phase", "")).strip_edges().to_lower()
+	var returning := phase == HudExpeditionVocab.EXPEDITION_PHASE_RETURNING
+	# The Parties row's own resolution: the published name, else this client's label for that band, and
+	# the roster's tie memory (`host_label_for_id`) for a band of another people.
+	var destination := HudFormat.expedition_destination_label(exp,
+		Callable(band_labor, "host_label_for_id"))
+	if destination == "":
+		destination = HudDealingsVocab.ROAD_UNKNOWN_DESTINATION
+	var phase_word := road_phase_word(exp)
+	var cargo := HudDealingsVocab.ROAD_CARRYING_FORMAT % road_cargo_text(exp)
+	var row := VBoxContainer.new()
+	row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	row.add_theme_constant_override("separation", HudDealingsVocab.ROW_LINE_SEPARATION)
+	row.set_meta(HudDealingsVocab.ROAD_ROW_META, int(exp.get("entity", -1)))
+	row.tooltip_text = "\n".join(PackedStringArray([
+		HudDealingsVocab.ROAD_PHASE_FORMAT % [destination, phase_word], cargo]))
+	row.mouse_filter = Control.MOUSE_FILTER_PASS
+	var head := HBoxContainer.new()
+	head.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	head.add_theme_constant_override("separation", HudWorkVocab.ZONE_HEAD_SEPARATION)
+	head.add_child(_cell(HudDealingsVocab.ROAD_HOME_GLYPH if returning else HudDealingsVocab.OUTGOING_GLYPH,
+		HudStyle.INK_FAINT))
+	var name_label := _line_label(destination, HudStyle.INK, HudWorkVocab.WORK_ROW_FONT_SIZE)
+	name_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	head.add_child(name_label)
+	head.add_child(_cell(phase_word, HudStyle.INK_FAINT))
+	row.add_child(head)
+	var line := HBoxContainer.new()
+	line.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	line.add_theme_constant_override("separation", HudWorkVocab.ZONE_HEAD_SEPARATION)
+	line.add_child(_line_label(cargo, HudStyle.INK_DIM, HudWorkVocab.ALLOC_SECTION_FONT_SIZE))
+	for link in _party_links(exp, actions):
+		line.add_child(link)
+	row.add_child(line)
+	return row
+
+## **A TRADE PARTY'S TWO LINKS** -- `Jump to party` and `Recall` (`Cancel` where the sim folds it back on
+## the spot), the Parties inspector's own actions handed in as Callables, so a row on the Trade tab that
+## stands for a party offers exactly what its row on the Parties tab used to.
+static func _party_links(exp: Dictionary, actions: Dictionary) -> Array[Button]:
+	var links: Array[Button] = []
+	var jump: Callable = actions.get(ACTION_PARTY_JUMP, Callable())
+	var recall: Callable = actions.get(ACTION_PARTY_RECALL, Callable())
+	var verb_of: Callable = actions.get(ACTION_PARTY_RECALL_VERB, Callable())
+	var tip_of: Callable = actions.get(ACTION_PARTY_RECALL_TIP, Callable())
+	var jump_link := HudWidgets.build_inline_link(HudComposeVocab.PARTY_INSPECT_JUMP, HudStyle.INK,
+		func() -> void:
+			if jump.is_valid():
+				jump.call(exp))
+	jump_link.set_meta(HudDealingsVocab.PARTY_LINK_META, HudDealingsVocab.PARTY_LINK_JUMP)
+	jump_link.disabled = not jump.is_valid()
+	links.append(jump_link)
+	var verb := String(verb_of.call(exp)) if verb_of.is_valid() else HudComposeVocab.PARTY_RECALL_VERB
+	var recall_link := HudWidgets.build_inline_link(verb, HudStyle.DANGER,
+		func() -> void:
+			if recall.is_valid():
+				recall.call(exp))
+	recall_link.tooltip_text = String(tip_of.call(exp)) if tip_of.is_valid() \
+		else HudComposeVocab.PARTY_RECALL_TOOLTIP
+	recall_link.set_meta(HudDealingsVocab.PARTY_LINK_META, HudDealingsVocab.PARTY_LINK_RECALL)
+	recall_link.disabled = not recall.is_valid()
+	links.append(recall_link)
+	return links
+
 static func rows_box(block: Node) -> VBoxContainer:
 	if block == null:
 		return null
@@ -283,6 +398,9 @@ static func _build_row(dealing: Dictionary, band_labor: HudBandLaborState, band_
 	var turns := int(dealing.get("turns_left", 0))
 	var who := who_text(dealing, direction, band_labor)
 	var what := what_text(dealing, direction, band_id, band_labor)
+	# The trade party standing in a camp on this dealing (an offer we sent, a reply to us), so the row
+	# carries its Jump and Recall: the party is shown once, here, and not on a list of its own.
+	var party: Dictionary = band_labor.party_for_dealing(dealing) if band_labor != null else {}
 	var row := VBoxContainer.new()
 	row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	row.add_theme_constant_override("separation", HudDealingsVocab.ROW_LINE_SEPARATION)
@@ -328,17 +446,28 @@ static func _build_row(dealing: Dictionary, band_labor: HudBandLaborState, band_
 			HudStyle.INK_FAINT, HudWorkVocab.ALLOC_SECTION_FONT_SIZE)
 		HudWidgets.set_label_tooltip(second, HudDealingsVocab.OUTGOING_TOOLTIP)
 		row.tooltip_text = "\n".join(PackedStringArray([who, what, HudDealingsVocab.OUTGOING_TOOLTIP]))
-	row.add_child(second)
 	if not incoming:
+		if party.is_empty():
+			row.add_child(second)
+		else:
+			var line := HBoxContainer.new()
+			line.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			line.add_theme_constant_override("separation", HudWorkVocab.ZONE_HEAD_SEPARATION)
+			line.add_child(second)
+			for link in _party_links(party, actions):
+				line.add_child(link)
+			row.add_child(line)
 		return row
-	row.add_child(_build_actions(dealing, actions))
+	row.add_child(second)
+	row.add_child(_build_actions(dealing, actions, party))
 	return row
 
 ## The incoming row's strip: `Accept · Refuse · Counter`. An offer cannot be countered (the receiver
 ## names the return in its accept); a REPLY cannot either, and names nothing -- it is `Take it · Walk
 ## home`, which send the same accept and refuse. Every other kind has all three. Each is greyed with its
 ## reason where the caller supplied none.
-static func _build_actions(dealing: Dictionary, actions: Dictionary) -> HBoxContainer:
+static func _build_actions(dealing: Dictionary, actions: Dictionary,
+		party: Dictionary = {}) -> HBoxContainer:
 	var strip := HBoxContainer.new()
 	strip.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	strip.add_theme_constant_override("separation", HudWorkVocab.ZONE_HEAD_SEPARATION)
@@ -373,6 +502,9 @@ static func _build_actions(dealing: Dictionary, actions: Dictionary) -> HBoxCont
 		link.set_meta(HudDealingsVocab.ACTION_META, String(entry["id"]))
 		link.disabled = not callback.is_valid()
 		strip.add_child(link)
+	if not party.is_empty():
+		for party_link in _party_links(party, actions):
+			strip.add_child(party_link)
 	return strip
 
 ## A single-line, ellipsis-clipped label -- a row's line can never wrap into a third.

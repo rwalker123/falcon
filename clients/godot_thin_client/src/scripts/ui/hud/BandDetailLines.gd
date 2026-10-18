@@ -622,7 +622,8 @@ func expedition_summary_lines(unit_data: Dictionary, ctx: DetailFormat.Context =
             lines.append(target_line)
     var phase := String(unit_data.get("expedition_phase", "")).strip_edges()
     if phase != "":
-        lines.append("Phase: %s" % HudFormat.expedition_phase_label(phase))
+        lines.append("Phase: %s" % HudFormat.expedition_phase_label(phase,
+            String(unit_data.get("expedition_mission", ""))))
     # NO `Party` row: it printed `unit_data["size"]` — the exact field the roster row already shows as
     # its size meta (`Hunters 1 … 5`), so it was the band `Size` restatement under another name.
     # Food it carries — larder-drawn provisions for a scout, the raided haul for a denial party —
@@ -678,7 +679,8 @@ func _station_summary_lines(unit_data: Dictionary, lines: Array[String]) -> Arra
         lines.append("%s: %s" % [HudExpeditionVocab.STATION_HOST_ROW, host])
     var phase := String(unit_data.get("expedition_phase", "")).strip_edges()
     if phase != "":
-        lines.append("Phase: %s" % HudFormat.expedition_phase_label(phase))
+        lines.append("Phase: %s" % HudFormat.expedition_phase_label(phase,
+            String(unit_data.get("expedition_mission", ""))))
     var pos_array: Array = Array(unit_data.get("pos", []))
     if pos_array.size() == 2:
         lines.append("Position: (%d, %d)" % [int(pos_array[0]), int(pos_array[1])])
@@ -705,7 +707,8 @@ func _shipment_summary_lines(unit_data: Dictionary, context: DetailFormat.Contex
         lines.append("%s: %s" % [TRADE_DESTINATION_ROW, destination])
     var phase := String(unit_data.get("expedition_phase", "")).strip_edges()
     if phase != "":
-        lines.append("Phase: %s" % HudFormat.expedition_phase_label(phase))
+        lines.append("Phase: %s" % HudFormat.expedition_phase_label(phase,
+            String(unit_data.get("expedition_mission", ""))))
     # The party's own runway still tints the cargo row, the `Carried:` contract: a shipment eats out
     # of its provisions on the road exactly as a scout does, and the walk is where a haul's cost lives.
     context.food_turns = float(unit_data.get("turns_of_food", BandFoodStatus.UNLIMITED_TURNS))

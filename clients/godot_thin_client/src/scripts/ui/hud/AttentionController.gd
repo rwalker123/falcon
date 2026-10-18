@@ -472,7 +472,8 @@ func _awaiting_orders_attention(expeditions: Array) -> Array:
             "severity": HudAttentionVocab.ATTENTION_SEVERITY_WARN,
             # The demand headline reuses the phase words ("Awaiting orders"); the context line names
             # the mission + its objective, so the row is actionable without opening anything.
-            "label": HudFormat.expedition_phase_label(HudExpeditionVocab.EXPEDITION_PHASE_AWAITING),
+            "label": HudFormat.expedition_phase_label(HudExpeditionVocab.EXPEDITION_PHASE_AWAITING,
+                String(exp.get("expedition_mission", ""))),
             "detail": HudAttentionVocab.ATTENTION_AWAITING_DETAIL_FORMAT % [
                 DetailFormat.expedition_mission_label(String(exp.get("expedition_mission", ""))),
                 _expedition_objective(exp)],

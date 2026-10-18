@@ -199,6 +199,9 @@ func _build_sections(band: Dictionary, actions: Dictionary, policy: Dictionary) 
 	sections.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
 	sections.add_theme_constant_override("separation", HudTradeVocab.SECTION_SEPARATION)
 	sections.add_child(DealingsRoster.build_section(band_id, _band_labor, actions, policy))
+	var on_the_road := DealingsRoster.build_road_section(band_id, _band_labor, actions)
+	if on_the_road != null:
+		sections.add_child(on_the_road)
 	var this_turn := HudWidgets.make_zone_block()
 	this_turn.add_child(HudWidgets.zone_head(HudTradeVocab.THIS_TURN_HEAD, ""))
 	this_turn.add_child(build(band))
@@ -213,10 +216,30 @@ static func refill_lists(root: Control, band_id: int, band_labor: HudBandLaborSt
 		actions: Dictionary = {}, policy: Dictionary = {}) -> void:
 	if root == null:
 		return
-	DealingsRoster.refill(root.find_child(HudDealingsVocab.BLOCK_NAME, true, false) as Control,
-		band_id, band_labor, actions, policy)
+	var waiting := root.find_child(HudDealingsVocab.BLOCK_NAME, true, false) as Control
+	DealingsRoster.refill(waiting, band_id, band_labor, actions, policy)
+	_refill_road_section(root, waiting, band_id, band_labor, actions)
 	TradeHistoryRoster.refill(root.find_child(HudDealingsVocab.HISTORY_BLOCK_NAME, true, false) as Control,
 		band_id, band_labor)
+
+## The `On the road` section is rebuilt in place: the set of parties on it can change on a frame that
+## moves only the dealings (a party reaching a camp moves to its dealing's row), so it can appear, change
+## or go.
+static func _refill_road_section(root: Control, waiting: Control, band_id: int,
+		band_labor: HudBandLaborState, actions: Dictionary) -> void:
+	if waiting == null or waiting.get_parent() == null:
+		return
+	var sections := waiting.get_parent()
+	var old := root.find_child(HudDealingsVocab.ROAD_BLOCK_NAME, true, false)
+	var index := waiting.get_index() + 1
+	if old != null:
+		index = old.get_index()
+		old.get_parent().remove_child(old)
+		old.queue_free()
+	var fresh := DealingsRoster.build_road_section(band_id, band_labor, actions)
+	if fresh != null:
+		sections.add_child(fresh)
+		sections.move_child(fresh, index)
 
 ## **THE `This turn` CONTENT**: the network line, `⇄ Local exchange` and `⇄ Trade route`, drawn in
 ## full whatever the room (the tab scrolls). Its column is also what the list popover is sized and

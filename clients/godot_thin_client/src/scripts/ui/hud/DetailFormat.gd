@@ -4124,7 +4124,7 @@ static func expedition_row_tooltip(exp: Dictionary, phase: String, target_herd: 
         Dictionary(exp.get("envoy_terms", {}))) \
         if mission == HudExpeditionVocab.EXPEDITION_MISSION_ENVOY else ""
     return HudFormat.join_tooltip_lines([
-        expedition_mission_label(mission), envoy_line, HudFormat.status_tooltip_line(phase), collapse_line,
+        expedition_mission_label(mission), envoy_line, HudFormat.status_tooltip_line(phase, mission), collapse_line,
         EXPEDITION_ROW_FOCUS_HINT])
 
 ## **THE IN-FLIGHT DENIAL READOUT** (`docs/plan_denial_raid.md` §3) — the collapse verdict. A denial

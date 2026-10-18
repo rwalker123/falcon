@@ -204,9 +204,26 @@ static func source_icon_prefix(icon: String) -> String:
 static func row_glyph_suffix(glyph: String) -> String:
     return "" if glyph == "" else HudExpeditionVocab.ROW_GLYPH_SEPARATOR + glyph
 
-## Humanize an expedition phase id ("awaiting" → "Awaiting orders").
-static func expedition_phase_label(phase: String) -> String:
+## Is this party waiting on an ANSWER rather than on orders -- a shipment or an envoy standing in a camp?
+## `awaiting` only; any other phase of any mission reads as it always did.
+static func waits_on_an_answer(phase: String, mission: String) -> bool:
+    return phase.strip_edges().to_lower() == HudExpeditionVocab.EXPEDITION_PHASE_AWAITING \
+        and HudExpeditionVocab.MISSIONS_WAITING_ON_AN_ANSWER.has(mission.strip_edges().to_lower())
+
+## Is this party parked and WAITING FOR THE PLAYER'S ORDERS -- the demand amber and the hot badge mean? A
+## shipment or an envoy standing in a camp is parked too, but it waits on an answer and asks nothing.
+static func awaits_orders(exp: Dictionary) -> bool:
+    var phase := expedition_phase_key(exp)
+    return phase == HudExpeditionVocab.EXPEDITION_PHASE_AWAITING \
+        and not waits_on_an_answer(phase, String(exp.get("expedition_mission", "")))
+
+## Humanize an expedition phase id ("awaiting" → "Awaiting orders"). `mission`, where the caller has it,
+## rewrites `awaiting` on a trade or envoy party to `Waiting on an answer`: telling the player to give a
+## shipment orders is wrong, since it is waiting in their camp for the answer.
+static func expedition_phase_label(phase: String, mission: String = "") -> String:
     var key := phase.strip_edges().to_lower()
+    if waits_on_an_answer(key, mission):
+        return HudExpeditionVocab.EXPEDITION_PHASE_WAITING_ON_ANSWER_LABEL
     if HudExpeditionVocab.EXPEDITION_PHASE_LABELS.has(key):
         return HudExpeditionVocab.EXPEDITION_PHASE_LABELS[key]
     return key.capitalize()
@@ -214,21 +231,22 @@ static func expedition_phase_label(phase: String) -> String:
 ## The WORDS behind a status glyph. Order-level statuses come from `HudExpeditionVocab.STATUS_LABELS`; an expedition
 ## PHASE reads from `HudExpeditionVocab.EXPEDITION_PHASE_LABELS` (`expedition_phase_label`), which stays the single
 ## source of truth for the phase words — they are never re-typed here.
-static func status_label(status: String) -> String:
+static func status_label(status: String, mission: String = "") -> String:
     var key := status.strip_edges().to_lower()
     if key == "":
         return ""
     if HudExpeditionVocab.STATUS_LABELS.has(key):
         return String(HudExpeditionVocab.STATUS_LABELS[key])
-    return expedition_phase_label(key)
+    return expedition_phase_label(key, mission)
 
 ## One tooltip line spelling a status glyph out: the word plus its behaviour hint ("Pending — starts
 ## when you advance the turn"); a status whose word says it all (`Working`) renders bare.
-static func status_tooltip_line(status: String) -> String:
-    var label := status_label(status)
+static func status_tooltip_line(status: String, mission: String = "") -> String:
+    var label := status_label(status, mission)
     if label == "":
         return ""
-    var hint := String(HudExpeditionVocab.STATUS_HINTS.get(status.strip_edges().to_lower(), ""))
+    var hint := HudExpeditionVocab.STATUS_HINT_WAITING_ON_ANSWER if waits_on_an_answer(status, mission) \
+        else String(HudExpeditionVocab.STATUS_HINTS.get(status.strip_edges().to_lower(), ""))
     return label if hint == "" else HudExpeditionVocab.STATUS_HINT_FORMAT % [label, hint]
 
 ## Append the status words to a row tooltip. The glyph on the row is terse by design, so the hover
@@ -406,10 +424,10 @@ static func expedition_phase_key(exp: Dictionary) -> String:
 
 ## The phase as it renders ON the row: the glyph alone, except `awaiting`, which keeps its words
 ## (`▮▮ Awaiting orders`) — a demand on the player must read without a hover.
-static func expedition_phase_suffix(phase: String) -> String:
+static func expedition_phase_suffix(phase: String, mission: String = "") -> String:
     var suffix := row_glyph_suffix(FoodIcons.for_status(phase))
     if phase == HudExpeditionVocab.EXPEDITION_PHASE_AWAITING:
-        return "%s %s" % [suffix, expedition_phase_label(phase)]
+        return "%s %s" % [suffix, expedition_phase_label(phase, mission)]
     return suffix
 
 ## Compact one-line expedition summary: deny → `💀 <herd>  <phase glyph>`; trade →
@@ -458,7 +476,7 @@ static func expedition_destination_label(exp: Dictionary,
 static func panel_expedition_summary(exp: Dictionary, herd_label_for_id: Callable,
         band_label_for_id: Callable = Callable()) -> String:
     var mission := String(exp.get("expedition_mission", "")).strip_edges().to_lower()
-    var phase_suffix := expedition_phase_suffix(expedition_phase_key(exp))
+    var phase_suffix := expedition_phase_suffix(expedition_phase_key(exp), mission)
     # DENIAL — the quarry with the mission's own mark and NO floor glyph: the mission has no floor.
     if mission == HudExpeditionVocab.EXPEDITION_MISSION_DENY:
         var quarry := String(herd_label_for_id.call(String(exp.get("expedition_target_herd", "")).strip_edges()))

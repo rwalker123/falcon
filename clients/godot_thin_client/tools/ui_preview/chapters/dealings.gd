@@ -15,7 +15,7 @@ extends RefCounted
 ## and be spelled into a line the server's parser refuses.
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
-const EXPECTED_CHECKPOINTS := 207
+const EXPECTED_CHECKPOINTS := 234
 
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 const Q := preload("res://tools/ui_preview/node_query.gd")
@@ -92,6 +92,21 @@ const RETURN_FOOD := 3.0
 ## What a reply carries: the cargo it is for, and the return named for it.
 const REPLY_CARGO_FOOD := 9.0
 const REPLY_RETURN_FLINT := 5.0
+## The home band's parties (issue #233): four trade parties and the two that are NOT. The waiting one
+## stands in Brackwater's camp, so the pending offer we sent and the reply addressed to us (both between
+## the home band and Brackwater) are its dealing rows; the other two shipments have none.
+const PARTY_WAITING := 7301
+const PARTY_HEADING_OUT := 7302
+const PARTY_COMING_HOME := 7303
+const PARTY_ENVOY := 7304
+const PARTY_SCOUT := 7305
+const PARTY_SIZE := 2
+const PARTY_ENVOY_SIZE := 2
+const PARTY_SCOUT_SIZE := 3
+## The envoy's destination band is named by the wire itself (a published name wins over the roster's).
+const ENVOY_DESTINATION := "Fenmere"
+const ROAD_CARGO_FOOD := 5.0
+const ROAD_CARGO_HIDE := 2.0
 ## The trade history's turns, oldest first (the newest is the turn before the one the frames render on).
 const HISTORY_TURN_TRADED := 38
 const HISTORY_TURN_GIFT_GIVEN := 41
@@ -132,7 +147,7 @@ func run(harness) -> void:
 		{"faction": THORN_FACTION, "name": THORN_PEOPLE}, {"faction": MOOR_FACTION, "name": MOOR_PEOPLE}])
 	h._hud.update_overlay(TURN, {})
 	h._hud.update_connections(_ties())
-	h._hud.update_band_alerts([_home_band()])
+	h._hud.update_band_alerts([_home_band()] + _parties())
 	h._hud.update_treaties(_treaties())
 	h._hud.update_goodwill(_goodwill())
 	h._hud.update_dealings(_dealings())
@@ -143,6 +158,7 @@ func run(harness) -> void:
 	# The dock reads in full on the LEFT (the right dock runs off the harness's 1500px canvas); the SHEETS
 	# live in the tile drawer, which the left dock covers, so they are judged with the dock on the right.
 	await _tab_states(panel)
+	await _road_states(panel)
 	await _reply_states(panel)
 	await _history_states(panel)
 	await _peoples_treaty_states(panel)
@@ -238,6 +254,153 @@ func _tab_states(panel: BandCityPanel) -> void:
 	h._assert_hud("dealings: the Trade tab badge counts the TRADE items that wait on this band, hot",
 		String(panel._tab_badges.get(BandCityPanel.ZONE_TRADE, {}).get("text", "")) == "4"
 			and bool(panel._tab_badges.get(BandCityPanel.ZONE_TRADE, {}).get("hot", false)))
+
+
+# ---- (a1) A TRADE PARTY BELONGS TO THE TRADE TAB, END TO END ----------------------------------------------
+
+func _road_states(panel: BandCityPanel) -> void:
+	var labor: HudBandLaborState = h._hud._band_labor
+	var parties_zone: Control = panel._zones.get(BandCityPanel.ZONE_PARTIES)
+	# The Parties tab drops every trade party: its head and badge count the scout and the envoy alone.
+	panel.set_active_tab(BandCityPanel.ZONE_PARTIES)
+	await h._settle()
+	var parties_text := _text_of(parties_zone)
+	h._assert_hud("road: the Parties head counts the scout and the envoy only (\"%s\")" % parties_text.left(60),
+		parties_text.contains(HudComposeVocab.PARTIES_HEADER_FORMAT % [2, PARTY_ENVOY_SIZE + PARTY_SCOUT_SIZE]))
+	h._assert_hud("road: …no trade party is a row there (Gorsemoor, Thornwick and Brackwater are the shipments' bands)",
+		not parties_text.contains(MOOR_NAME) and not parties_text.contains(THORN_NAME)
+			and not parties_text.contains(BRACK_NAME))
+	h._assert_hud("road: …the envoy IS a row there, reading Waiting on an answer",
+		parties_text.contains(ENVOY_DESTINATION)
+			and parties_text.contains(HudExpeditionVocab.EXPEDITION_PHASE_WAITING_ON_ANSWER_LABEL))
+	h._assert_hud("road: …the scout keeps its own wording, Awaiting orders",
+		parties_text.contains("Awaiting orders"))
+	h._assert_hud("road: …and the Parties badge counts 2, not the four shipments as well",
+		String(panel._tab_badges.get(BandCityPanel.ZONE_PARTIES, {}).get("text", "")) == "2")
+	h._assert_hud("road: …the band's own roster still has all five parties (the Workforce 'away' clause reads them)",
+		labor.band_parties(_home_band()).size() == 5 and labor.band_zone_parties(_home_band()).size() == 2)
+	await h._save("dealings_parties_no_shipments")
+	panel.set_active_tab(BandCityPanel.ZONE_TRADE)
+	await h._settle()
+	# The Trade tab gains the On the road section between waiting and this turn.
+	var block := panel.find_child(HudDealingsVocab.ROAD_BLOCK_NAME, true, false) as Control
+	h._assert_hud("road: the Trade tab has an On the road section", block != null)
+	var tab_text := _text_of(panel).to_lower()
+	var at_waiting := tab_text.find(HudDealingsVocab.HEAD.to_lower())
+	var at_road := tab_text.find(HudDealingsVocab.ROAD_HEAD.to_lower())
+	var at_turn := tab_text.find(HudTradeVocab.THIS_TURN_HEAD.to_lower())
+	h._assert_hud("road: …between Waiting on an answer and This turn",
+		at_waiting >= 0 and at_road > at_waiting and at_turn > at_road)
+	var rows := _road_rows(block)
+	h._assert_hud("road: …one row for each shipment no dealing stands for, and not the one standing in a camp (%d)" % rows.size(),
+		rows.size() == 2 and _road_row(rows, PARTY_HEADING_OUT) != null and _road_row(rows, PARTY_COMING_HOME) != null
+			and _road_row(rows, PARTY_WAITING) == null)
+	var out := _road_row(rows, PARTY_HEADING_OUT)
+	var out_text := _text_of(out)
+	h._assert_hud("road: a party leaving reads its destination, Heading out and its cargo (\"%s\")" % out_text.left(70),
+		out_text.contains(MOOR_NAME) and out_text.contains(HudDealingsVocab.PHASE_HEADING_OUT)
+			and out_text.contains("%.1f food" % ROAD_CARGO_FOOD))
+	var home := _road_row(rows, PARTY_COMING_HOME)
+	var home_text := _text_of(home)
+	h._assert_hud("road: …one walking home reads Coming home and its cargo (\"%s\")" % home_text.left(70),
+		home_text.contains(THORN_NAME) and home_text.contains(HudDealingsVocab.PHASE_COMING_HOME)
+			and home_text.contains("%.1f hide" % ROAD_CARGO_HIDE))
+	h._assert_hud("road: …every road row is two lines (the links ride the second)",
+		_copy_lines(out) == 2 and _copy_lines(home) == 2)
+	for row in rows:
+		var jump := _party_link(row, HudDealingsVocab.PARTY_LINK_JUMP)
+		var recall := _party_link(row, HudDealingsVocab.PARTY_LINK_RECALL)
+		h._assert_hud("road: …each row offers Jump to party and Recall",
+			jump != null and recall != null and jump.text == HudComposeVocab.PARTY_INSPECT_JUMP
+				and recall.text == HudComposeVocab.PARTY_RECALL_VERB)
+	# The shipment standing in the camp shows once: on its dealing rows, with the same two links.
+	var waiting := _block(panel)
+	var dealing_rows := _rows(waiting)
+	var offer_out := _row(dealing_rows, OFFER_OUT)
+	var reply_in := _row(dealing_rows, REPLY_IN)
+	h._assert_hud("road: the offer we sent, standing in a camp, carries the party's Jump and Recall",
+		_party_link(offer_out, HudDealingsVocab.PARTY_LINK_JUMP) != null
+			and _party_link(offer_out, HudDealingsVocab.PARTY_LINK_RECALL) != null)
+	h._assert_hud("road: …and so does the reply addressed to us, beside Take it and Walk home",
+		_party_link(reply_in, HudDealingsVocab.PARTY_LINK_JUMP) != null
+			and _party_link(reply_in, HudDealingsVocab.PARTY_LINK_RECALL) != null
+			and _action(reply_in, HudDealingsVocab.ANSWER_ACCEPT) != null)
+	h._assert_hud("road: …a dealing with no party of ours behind it offers neither (the offer addressed to us)",
+		_party_link(_row(dealing_rows, OFFER_IN), HudDealingsVocab.PARTY_LINK_JUMP) == null)
+	h._assert_hud("road: …the offer row is still two lines of copy with the links on it",
+		_copy_lines(offer_out) == 2)
+	h._assert_hud("road: …the Trade badge still counts the TRADE items waiting on the band (unchanged)",
+		String(panel._tab_badges.get(BandCityPanel.ZONE_TRADE, {}).get("text", "")) == "4")
+	# The links are the Parties row's own actions: Recall asks the same confirm, Jump selects the party.
+	var focused: Array = []
+	h._hud.alert_focus_requested.connect(func(x: int, y: int) -> void: focused.append(Vector2i(x, y)))
+	var link := _party_link(offer_out, HudDealingsVocab.PARTY_LINK_JUMP)
+	if link != null:
+		link.emit_signal("pressed")
+	h._assert_hud("road: …pressing Jump to party focuses THAT party's tile, as the Parties row's did (%s)" % str(focused),
+		focused.has(Vector2i(HOME_TILE.x + 1, HOME_TILE.y)))
+	await h._save("dealings_road")
+	# A frame that moves only the dealings re-fills the road section in place: the waiting party's offer is
+	# withdrawn and its row goes, so the party is on the road as a row of its own.
+	var scroll := panel.find_child(TradeZoneController.TAB_SCROLL_NAME, true, false) as ScrollContainer
+	var kept: Array = _dealings().filter(func(dealing: Dictionary) -> bool:
+		return int(dealing["id"]) != OFFER_OUT and int(dealing["id"]) != REPLY_IN)
+	h._hud.update_dealings(kept)
+	await h._settle()
+	h._assert_hud("road: a party whose dealing is gone is on the road as a row of its own, in the same scroll",
+		panel.find_child(TradeZoneController.TAB_SCROLL_NAME, true, false) == scroll
+			and _road_rows(panel.find_child(HudDealingsVocab.ROAD_BLOCK_NAME, true, false)).size() == 3
+			and _road_row(_road_rows(panel.find_child(HudDealingsVocab.ROAD_BLOCK_NAME, true, false)),
+				PARTY_WAITING) != null)
+	var waiting_row := _road_row(_road_rows(panel.find_child(HudDealingsVocab.ROAD_BLOCK_NAME, true, false)),
+		PARTY_WAITING)
+	h._assert_hud("road: …reading Waiting on an answer, not Awaiting orders (\"%s\")" % _text_of(waiting_row).left(60),
+		_text_of(waiting_row).contains(HudExpeditionVocab.EXPEDITION_PHASE_WAITING_ON_ANSWER_LABEL)
+			and not _text_of(waiting_row).contains("Awaiting orders"))
+	await h._save("dealings_road_waiting")
+	h._hud.update_dealings(_dealings())
+	await h._settle()
+	h._assert_hud("road: …and with the offer back it goes again, the dealing row carrying it",
+		_road_row(_road_rows(panel.find_child(HudDealingsVocab.ROAD_BLOCK_NAME, true, false)), PARTY_WAITING) == null)
+	# With no party on the road at all, the section is not drawn.
+	h._hud.update_band_alerts([_home_band()])
+	await h._settle()
+	h._assert_hud("road: no trade party anywhere -> no On the road section (an empty head is furniture)",
+		panel.find_child(HudDealingsVocab.ROAD_BLOCK_NAME, true, false) == null)
+	h._hud.update_band_alerts([_home_band()] + _parties())
+	await h._settle()
+
+
+func _road_rows(block: Node) -> Array:
+	var rows: Array = []
+	if block == null:
+		return rows
+	var box := block.find_child(HudDealingsVocab.ROAD_ROWS_NAME, true, false)
+	if box == null:
+		return rows
+	for child in box.get_children():
+		if child is Control and (child as Control).has_meta(HudDealingsVocab.ROAD_ROW_META):
+			rows.append(child)
+	return rows
+
+func _road_row(rows: Array, entity: int) -> Control:
+	for row in rows:
+		if int((row as Control).get_meta(HudDealingsVocab.ROAD_ROW_META)) == entity:
+			return row
+	return null
+
+## A party link (`jump` / `recall`) on a road row or a dealing row, by its meta.
+func _party_link(root: Node, which: String) -> Button:
+	if root == null:
+		return null
+	if root is Button and root.has_meta(HudDealingsVocab.PARTY_LINK_META) \
+			and String(root.get_meta(HudDealingsVocab.PARTY_LINK_META)) == which:
+		return root as Button
+	for child in root.get_children():
+		var found := _party_link(child, which)
+		if found != null:
+			return found
+	return null
 
 
 # ---- (a2) A REPLY ---------------------------------------------------------------------------------------
@@ -1304,6 +1467,39 @@ func _home_band() -> Dictionary:
 		_batch("flint", 9.0, [["sharp", 0.70, "good"]]),
 	]
 	return band
+
+## The home band's parties, shaped as the native decoder writes a cohort. The first three are the
+## player's shipments; the envoy and the scout are the parties that stay on the Parties tab.
+func _parties() -> Array:
+	return [
+		_party(PARTY_WAITING, "trade", "awaiting", BRACK_ENTITY, PARTY_SIZE, {
+			"expedition_cargo_fodder": 3.0}),
+		_party(PARTY_HEADING_OUT, "trade", "outbound", MOOR_ENTITY, PARTY_SIZE, {
+			"expedition_cargo_food": ROAD_CARGO_FOOD, "expedition_cargo_fodder": 2.0}),
+		_party(PARTY_COMING_HOME, "trade", "returning", THORN_ENTITY, PARTY_SIZE, {
+			"expedition_cargo_materials": [{"material_id": "hide", "amount": ROAD_CARGO_HIDE}]}),
+		_party(PARTY_ENVOY, "envoy", "awaiting", ASH_ENTITY, PARTY_ENVOY_SIZE, {
+			"expedition_destination_name": ENVOY_DESTINATION,
+			"envoy_terms": {"road_rights": true, "open_borders": false, "bundles": []}}),
+		_party(PARTY_SCOUT, "scout", "awaiting", 0, PARTY_SCOUT_SIZE, {}),
+	]
+
+func _party(entity: int, mission: String, phase: String, destination_entity: int, size: int,
+		extra: Dictionary) -> Dictionary:
+	var party := {
+		"id": "Party %d" % entity, "size": size, "entity": entity, "faction": 0,
+		"pos": [HOME_TILE.x + 1, HOME_TILE.y], "current_x": HOME_TILE.x + 1, "current_y": HOME_TILE.y,
+		"turns_of_food": 6.0, "stores": {"provisions": 5.0}, "is_expedition": true,
+		"home_band_entity": HOME_ENTITY, "expedition_mission": mission, "expedition_phase": phase,
+		"expedition_destination_band": BandFx.FIXTURE_BAND_ID_OFFSET + destination_entity
+			if destination_entity > 0 else 0,
+		"expedition_destination_name": "", "expedition_cargo_food": 0.0, "expedition_cargo_fodder": 0.0,
+		"expedition_cargo_materials": [],
+		"tile_info": {"x": HOME_TILE.x + 1, "y": HOME_TILE.y, "terrain_label": "Prairie Steppe",
+			"tags_text": "Fertile", "visibility_state": "active", "food_module": "", "food_module_label": "None"},
+	}
+	party.merge(extra, true)
+	return party
 
 func _batch(material_id: String, amount: float, readings: Array) -> Dictionary:
 	var reading_rows: Array = []

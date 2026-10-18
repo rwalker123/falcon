@@ -1247,7 +1247,8 @@ func _track_trade_block(block: Control, band: Dictionary) -> void:
 ## What the Trade tab's two lists are built from: this band's trade rows, its history, the turn (the
 ## turns left ride the rows, the rows' ages the turn) and the standing gift setting.
 func _trade_source(band_id: int) -> Array:
-    return [DealingsRoster.trade_rows(band_id, _band_labor), _band_labor.trade_history_for_band(band_id),
+    return [DealingsRoster.trade_rows(band_id, _band_labor), DealingsRoster.road_parties(band_id, _band_labor),
+        _band_labor.trade_history_for_band(band_id),
         _band_labor.current_turn(), bool(_faction_policy().get("accept_own_gifts", true))]
 
 ## **THE ORB'S "A PEOPLE AWAITS YOUR ANSWER" LANDS HERE**: bring `band_id`'s page forward on the tab the
@@ -1264,9 +1265,20 @@ func focus_dealings(band_id: int) -> void:
     _panel.set_active_tab(BandCityPanel.ZONE_PARTIES if _panel.is_wide_shell() \
         else (BandCityPanel.ZONE_PEOPLES if treaty_only else BandCityPanel.ZONE_TRADE))
 
+## The Jump link of a trade party's row: the Parties inspector's own `select_expedition` press.
+func _on_trade_party_jump(exp: Dictionary) -> void:
+    select_expedition(int(exp.get("entity", -1)), int(exp.get("current_x", -1)),
+        int(exp.get("current_y", -1)))
+
 ## The three answers the Dealings rows hand back, by `HudDealingsVocab.ANSWER_*`.
 func _dealing_actions() -> Dictionary:
     return {
+        # The party links a Trade-tab row offers for the trade party it stands for: the Parties row's own
+        # Jump and Recall, reused rather than re-implemented.
+        DealingsRoster.ACTION_PARTY_JUMP: Callable(self, "_on_trade_party_jump"),
+        DealingsRoster.ACTION_PARTY_RECALL: Callable(self, "confirm_recall_expedition"),
+        DealingsRoster.ACTION_PARTY_RECALL_VERB: Callable(self, "recall_verb"),
+        DealingsRoster.ACTION_PARTY_RECALL_TIP: Callable(self, "recall_tooltip"),
         HudDealingsVocab.ANSWER_ACCEPT: Callable(self, "_on_dealing_accept_pressed"),
         HudDealingsVocab.ANSWER_REFUSE: Callable(self, "_on_dealing_refuse_pressed"),
         HudDealingsVocab.ANSWER_COUNTER: Callable(self, "_on_dealing_counter_pressed"),
@@ -8656,13 +8668,15 @@ func build_parties_zone(band: Dictionary, with_trade: bool = false,
         with_peoples: bool = false) -> VBoxContainer:
     var col := HudWidgets.make_zone_column()
     col.add_theme_constant_override("separation", HudWorkVocab.ZONE_BLOCK_SEPARATION)
-    var parties := _band_labor.band_parties(band)
+    # A shipment is the Trade tab's end to end: the Parties zone lists, counts and badges everything out
+    # but its trade parties (`HudBandLaborState.band_zone_parties`).
+    var parties := _band_labor.band_zone_parties(band)
     var menu := HudWidgets.build_section_menu([
         {"label": HudComposeVocab.PARTY_RECALL_ALL_FORMAT % parties.size(), "disabled": parties.is_empty(),
             "on_pick": func() -> void: _on_recall_all_parties_pressed(parties)},
     ], HudComposeVocab.PARTY_MENU_TOOLTIP)
     col.add_child(HudWidgets.zone_head(HudWorkVocab.ZONE_HEADER_PARTIES,
-        HudComposeVocab.PARTIES_HEADER_FORMAT % [parties.size(), _band_labor.band_party_workers(band)], menu))
+        HudComposeVocab.PARTIES_HEADER_FORMAT % [parties.size(), _band_labor.band_zone_party_workers(band)], menu))
     # **THE EMPTY HINT IS ZONE-LEVEL, NOT A LIST ITEM** — `_fill_work_zone`'s idiom exactly, where the
     # board's empty hint is a sibling of the board rather than a row of it. What the zone says when
     # there are no parties is a statement about the ZONE, and it must never be something the player can
@@ -8821,7 +8835,9 @@ func _build_party_row(exp: Dictionary) -> HBoxContainer:
     body.clip_text = true
     body.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     HudStyle.apply_button(body, "ghost")
-    if phase == HudExpeditionVocab.EXPEDITION_PHASE_AWAITING:
+    # `Awaiting orders` is a demand on the player and wears amber; an envoy waiting on an answer asks
+    # nothing of them.
+    if HudFormat.awaits_orders(exp):
         body.add_theme_color_override("font_color", HudStyle.WARN)
     # A tooltip renders tags literally, and the denial row's `Collapse:` line carries one.
     body.tooltip_text = _plain_text(DetailFormat.expedition_row_tooltip(
@@ -11758,10 +11774,12 @@ func _push_zone_badges(band: Dictionary) -> void:
     _panel.set_tab_badge(BandCityPanel.ZONE_WORK,
         str(attention.size()) if not attention.is_empty() else str(models.size()),
         not attention.is_empty())
-    var parties := _band_labor.band_parties(band)
+    # A shipment is the Trade tab's end to end: the Parties zone lists, counts and badges everything out
+    # but its trade parties (`HudBandLaborState.band_zone_parties`).
+    var parties := _band_labor.band_zone_parties(band)
     var awaiting := false
     for exp in parties:
-        if HudFormat.expedition_phase_key(exp) == HudExpeditionVocab.EXPEDITION_PHASE_AWAITING:
+        if HudFormat.awaits_orders(exp):
             awaiting = true
     _panel.set_tab_badge(BandCityPanel.ZONE_PARTIES,
         str(parties.size()) if not parties.is_empty() else "", awaiting)
@@ -11952,10 +11970,10 @@ func _push_faction_zone_badges() -> void:
             population += int((band_variant as Dictionary).get("size", 0))
     _panel.set_tab_badge(BandCityPanel.ZONE_BAND, str(population) if population > 0 else "", false)
     _panel.set_tab_badge(BandCityPanel.ZONE_WORK, str(_band_labor.player_bands().size()), false)
-    var parties := _band_labor.player_expeditions()
+    var parties := _band_labor.faction_zone_parties()
     var awaiting := false
     for party in parties:
-        if HudFormat.expedition_phase_key(party) == HudExpeditionVocab.EXPEDITION_PHASE_AWAITING:
+        if HudFormat.awaits_orders(party):
             awaiting = true
     _panel.set_tab_badge(BandCityPanel.ZONE_PARTIES,
         str(parties.size()) if not parties.is_empty() else "", awaiting)
