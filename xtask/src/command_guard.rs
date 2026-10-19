@@ -460,7 +460,8 @@ fn band_handle(payload: &CommandPayload) -> BandHandle {
 /// The failure for an expectation the Godot half did not state: a line compared against nothing.
 fn missing(label: &str, line: &str, what: &str) -> String {
     format!(
-        "{label}: the Godot half stated no `{what}` for this line, so it is compared against          nothing. Line: `{line}`"
+        "{label}: the Godot half stated no `{what}` for this line, so it is compared against \
+          nothing. Line: `{line}`"
     )
 }
 
@@ -515,7 +516,8 @@ fn faction_addressed_failures(
             match extra_u64(map, "expected_other_faction") {
                 None => failures.push(missing(label, line, "expected_other_faction")),
                 Some(want) if want != u64::from(*other_faction) => failures.push(format!(
-                    "{label}: ended the treaty with people {other_faction}, the drive composed {want}.                      Line: `{line}`"
+                    "{label}: ended the treaty with people {other_faction}, the drive composed {want}. \
+                      Line: `{line}`"
                 )),
                 Some(_) => {}
             }
@@ -570,7 +572,8 @@ fn terms_failures(
     ] {
         match extra_bool(map, key) {
             None => failures.push(format!(
-                "{label}: the Godot half stated no `{key}`, so the terms are compared against nothing.                  Line: `{line}`"
+                "{label}: the Godot half stated no `{key}`, so the terms are compared against nothing. \
+                  Line: `{line}`"
             )),
             Some(want) if want != got => failures.push(format!(
                 "{label}: terms carry {key}={got}, the drive composed {want}. Line: `{line}`"
@@ -629,11 +632,13 @@ fn diplomacy_field_failures(
             (Some(want), Some(entity)) => {
                 if entity == want {
                     failures.push(format!(
-                        "{label}: the fixture's destination BandId and entity are the same number                          ({want}), so this gate cannot tell the right handle from the wrong one"
+                        "{label}: the fixture's destination BandId and entity are the same number \
+                          ({want}), so this gate cannot tell the right handle from the wrong one"
                     ));
                 } else if sent == entity {
                     failures.push(format!(
-                        "{label}: sent the destination's ENTITY ({sent}) where the server resolves a                          BandId. Expected {want}. Line: `{line}`"
+                        "{label}: sent the destination's ENTITY ({sent}) where the server resolves a \
+                          BandId. Expected {want}. Line: `{line}`"
                     ));
                 } else if sent != want {
                     failures.push(format!(
@@ -642,7 +647,8 @@ fn diplomacy_field_failures(
                 }
             }
             _ => failures.push(format!(
-                "{label}: the Godot half stated no destination BandId and entity, so the destination                  is compared against nothing. Line: `{line}`"
+                "{label}: the Godot half stated no destination BandId and entity, so the destination \
+                  is compared against nothing. Line: `{line}`"
             )),
         }
     }

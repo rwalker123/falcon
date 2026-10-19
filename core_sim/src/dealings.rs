@@ -2926,7 +2926,8 @@ fn answer_treaty(
             let carrier = if proposal.carrier == TreatyCarrier::Envoy && party.is_none() {
                 if !bands_have_standing_link(world, ends.sender_band, ends.receiver_band) {
                     return Err(format!(
-                        "{VERB}: no standing link to band {} carries a counter — accept or refuse                          this proposal, or send an envoy with the new terms (send_envoy).",
+                        "{VERB}: no standing link to band {} carries a counter — accept or refuse \
+                          this proposal, or send an envoy with the new terms (send_envoy).",
                         ends.sender_band.0
                     ));
                 }
