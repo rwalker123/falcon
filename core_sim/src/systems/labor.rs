@@ -7642,6 +7642,7 @@ pub fn advance_labor_allocation(
                                 ..GateFacts::open()
                             },
                         );
+                        let position_before_build = patch.ladder_position();
                         let crossed = accrue_patch_rung(
                             patch,
                             rung,
@@ -7664,6 +7665,13 @@ pub fn advance_labor_allocation(
                             field_cost_multiplier,
                             entry_material_coverage,
                         );
+                        // **The band that moved the meter is recorded beside the owner**, so a foreign
+                        // build can be named by band.
+                        if patch.owner == Some(faction)
+                            && patch.ladder_position() > position_before_build
+                        {
+                            patch.builder_band = band_id;
+                        }
                         // **The FEED line rides every rung crossed; the QUEUE only retires at the
                         // DESTINATION** - an entry names where the land should end up and stays at the
                         // head until it arrives, so a two-leg `sow` does not hand the pool away at 50.
@@ -8636,6 +8644,10 @@ pub fn advance_labor_allocation(
                                 ring_cost,
                                 husbandry.pen_radius_max,
                             );
+                        if ring_in_flight && pen_extend_accrual > 0.0 && herd.owner == Some(faction)
+                        {
+                            herd.builder_band = band_id;
+                        }
                         // **A RING IS AN ORDINARY BUILD AND IS DATED LIKE ONE** — recorded for the
                         // band's chain pass exactly as the four rung arms record theirs.
                         //
@@ -9177,6 +9189,10 @@ pub fn advance_labor_allocation(
                         let progress_before = herd.ladder_position();
                         let completed_rung = accrual > 0.0
                             && herd.accrue_rung(faction, accrual, rung, &fauna, &ladder, pen_tile);
+                        // **The band that moved the meter is recorded beside the owner.**
+                        if herd.owner == Some(faction) && herd.ladder_position() > progress_before {
+                            herd.builder_band = band_id;
+                        }
                         if let Some((_, claimed)) =
                             pen_claims.iter_mut().find(|(id, _)| *id == herd.id)
                         {

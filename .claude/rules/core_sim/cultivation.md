@@ -997,3 +997,17 @@ The Farm (`plant:farm`, formerly `plant:field`) is sown only on a gathering site
 **Worked Land** (earned by working a Farm); the lesson swaps in the Farm's `site_relaxations` rule (fertile,
 watered ground, no gathering site). Mechanism, the F lever and the counts: `intensification.md` -> "Site
 relaxations".
+
+## Which band is building it — `builder_band`
+
+`ForagePatch::builder_band` (`Option<BandId>`) is the **band** whose work last advanced the patch's build
+meter, recorded by the labor pass (`advance_labor_allocation`, beside `accrue_patch_rung`) whenever the
+owner's meter moves, and cleared with the owner (`reconcile_owner`, the feral reset). The owner is a people;
+this names the band, so a foreign build reads *"Netherford, Lothari cultivating"*. Published as
+`ForagePatchState.builderBand` (decoded `builder_band: u64`, `0` = none) on the same row as `owner` /
+`hasOwner`, so it follows the row's legibility (a wild-ground substitution for an unexplored rival patch
+carries `0`). The herd twin is `Herd::builder_band` (`fauna.md` → herd display telemetry). Both ride the
+checkpoint with the patch / herd (`SAVE_FORMAT_VERSION` 47). Pinned on the encoded frame by
+`destination_capacity_on_the_wire::{a_patch_one_cultivate_turn_up_names_the_band_building_it,
+a_herd_one_tame_turn_up_names_the_band_taming_it}` and, for the feral clear, by
+`forage::tests` (`feral.builder_band` goes with the owner).

@@ -3449,6 +3449,8 @@ table ForagePatchState {
   // --- EVERY RUNG'S QUOTE ON THIS SOURCE (appended last; replaces the per-step fields) ----------
   // One row per rung of this source's branch above the root - see RungQuoteState.
   rungQuotes:[RungQuoteState];
+  // The BAND whose work last advanced this patch's build meter (`bandId` of its `PopulationCohortState` row), 0 = none. Set with `owner` and cleared with it, so a client can name a foreign build by band and people. Follows the row's own legibility (a wild-ground substitution carries 0). Appended.
+  builderBand:ulong;
 }
 
 // ONE LEG OF A QUEUE ENTRY'S CLIMB (appended) - a rung the entry has still to raise, and what it
@@ -4456,6 +4458,8 @@ table HerdTelemetryState {
   // fog-filtered as the herd's rung and domestication fields.
   hasOwner:bool = false;
   owner:uint = 0;
+  // The BAND whose work last advanced this herd's build meter (`bandId` of its `PopulationCohortState` row), 0 = none. Set with `owner` and cleared with it, so a client can name a foreign build by band and people. Follows the row's own legibility (a wild-ground substitution carries 0). Appended.
+  builderBand:ulong;
 }
 
 table CommandEventState {

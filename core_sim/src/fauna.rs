@@ -390,6 +390,9 @@ pub struct Herd {
     /// and an owner is what puts it in the managed set (`is_corralled() || owner.is_some()`) that
     /// pays keeping and sheds.
     pub owner: Option<FactionId>,
+    /// **The band whose work last advanced this herd's build meter** (Tame, Corral, a pen's
+    /// extension) — set by the labor pass beside the owner, so a foreign build can be named by band.
+    pub builder_band: Option<crate::components::BandId>,
     /// Corral (Rung 1c): the tile a **penned** herd is fixed at, or `None` for a mobile herd.
     /// `Some` = the herd does NOT roam (`advance_herds` skips its movement — it stays put) and is
     /// paid its keeper **place-local** at the higher corral rate (via the tending Hunt assignment in
@@ -897,6 +900,7 @@ impl Herd {
             standing: root,
             taming_cost_multiplier: RUNG_COST_UNSCALED,
             owner: None,
+            builder_band: None,
             corralled_at: None,
             pen_radius: 0,
             pen_site: None,

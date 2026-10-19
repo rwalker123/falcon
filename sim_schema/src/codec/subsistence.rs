@@ -677,6 +677,7 @@ fn create_herds<'a>(
                 penSiteY: herd.pen_site_y,
                 hasOwner: herd.owner.is_some(),
                 owner: herd.owner.unwrap_or_default(),
+                builderBand: herd.builder_band,
                 // **WHERE THAT DESTINATION WILL LEAVE THIS HERD'S `K`** — appended last
                 // (append-only wire). `None` is *"no band has queued it"*, which crosses as the
                 // [`crate::NO_BUILD_DESTINATION_CAPACITY`] sentinel rather than as `0`: a capacity
@@ -818,6 +819,7 @@ fn create_forage_patches<'a>(
                 x: patch.x,
                 y: patch.y,
                 hasOwner: patch.owner.is_some(),
+                builderBand: patch.builder_band,
                 owner: patch.owner.unwrap_or(0),
                 biomass: patch.biomass,
                 carryingCapacity: patch.carrying_capacity,
@@ -1706,6 +1708,7 @@ fn decode_herd(herd: fb::HerdTelemetryState<'_>) -> HerdTelemetryState {
         pen_site_y: herd.penSiteY(),
         // The pair `hasOwner`/`owner` is how the serializer spells `Option`.
         owner: herd.hasOwner().then(|| herd.owner()),
+        builder_band: herd.builderBand(),
         build_destination_capacity: decode_build_destination_capacity(
             herd.buildDestinationCapacity(),
         ),
@@ -1734,6 +1737,7 @@ fn decode_forage_patch(patch: fb::ForagePatchState<'_>) -> ForagePatchState {
         y: patch.y(),
         // The pair `hasOwner`/`owner` is how the serializer spells `Option`.
         owner: patch.hasOwner().then(|| patch.owner()),
+        builder_band: patch.builderBand(),
         biomass: patch.biomass(),
         carrying_capacity: patch.carryingCapacity(),
         ecology_phase: text(patch.ecologyPhase()),

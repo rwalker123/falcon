@@ -391,6 +391,11 @@ verbs — a free-form `species` string means new species need no schema change).
 >   accrual — in the forage patch's pair (`hasOwner = false` is an untouched herd; faction 0 is a real
 >   id). It is no more secret than the herd's rung, so it is filtered exactly as the row is: a rival's
 >   herd you can see names its owner. Pinned on the encoded frame by `tests/herd_owner_wire.rs`.
+> - **And which BAND is building it.** `Herd::builder_band` (`Option<BandId>`, published as
+>   `HerdTelemetryState.builderBand`, decoded `builder_band: u64`, `0` = none) is the band whose work last
+>   advanced the herd's build meter — Tame, Corral or a pen's extension — recorded by the labor pass beside
+>   the owner, so a foreign taming can be named *"<band>, <people> taming"*. It is the band's durable
+>   `BandId`, the `bandId` of its cohort row. Checkpointed with the herd (`SAVE_FORMAT_VERSION` 47).
 > - **The heading arrow is filtered separately** — `next_x`/`next_y` name a *second* tile, so a herd
 >   visible at the edge of your sight would otherwise hand you a free look at where it is walking.
 >   Withheld as the existing `-1` "no heading" sentinel.

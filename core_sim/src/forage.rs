@@ -323,6 +323,10 @@ pub struct ForagePatch {
     pub species: Option<String>,
     /// Faction tending/owning this patch (`Some` iff either improvement meter is `> 0`).
     pub owner: Option<FactionId>,
+    /// **The band whose work last advanced this patch's build meter** — set by the labor pass beside
+    /// the owner, cleared with it ([`Self::reconcile_owner`]). The owner is a people; this is the band,
+    /// so a foreign build can be named *"Netherford, Lothari cultivating"*.
+    pub builder_band: Option<crate::components::BandId>,
     /// **How many consecutive turns this patch's standing upkeep has gone unmet** — the counter
     /// `advance_cultivation` gates the feral bleed on. Reset to [`NEGLECT_NONE`] on any turn the
     /// keepers met the demand ([`Self::upkeep_supplied`] covers the at-risk rung's
@@ -607,6 +611,7 @@ impl ForagePatch {
             build_legs: Vec::new(),
             species: None,
             owner: None,
+            builder_band: None,
             neglect_turns: NEGLECT_NONE,
             peak_rung: None,
             upkeep_supplied: NO_UPKEEP_DEMAND,
@@ -1042,6 +1047,7 @@ impl ForagePatch {
     fn reconcile_owner(&mut self) {
         if self.ladder_position <= RUNG_UNSTARTED {
             self.owner = None;
+            self.builder_band = None;
             self.species = None;
         }
     }
@@ -7260,6 +7266,7 @@ mod tests {
             shipped::root_standing(shipped::plant()),
         );
         feral.accrue_to(FactionId(0), cost, shipped::plant_tended(), &ladder);
+        feral.builder_band = Some(crate::components::BandId(7));
         feral.decay_ladder(unkept_bleed, &ladder);
         assert!(
             !feral.is_cultivated(),
@@ -7276,6 +7283,10 @@ mod tests {
             "feral patch fully reverts"
         );
         assert_eq!(feral.owner, None, "ownership lapses once fully feral");
+        assert_eq!(
+            feral.builder_band, None,
+            "and the builder band goes with the owner"
+        );
     }
 
     /// **HALF THE HANDS IS HALF THE BLEED** — the property the retired binary flag could not express
