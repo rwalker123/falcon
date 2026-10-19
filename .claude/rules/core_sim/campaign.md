@@ -1401,8 +1401,8 @@ The entry is checkpoint state (`SimState::sedentarization`, `SAVE_FORMAT_VERSION
 
 ### Mobility
 The roaming counterpart of the Sedentarization Score: a per-faction 0-100 readout of how roaming a
-people is. `mobility_tick` (`mobility.rs`, `TurnStage::Population`, the chain's last system, after
-`advance_band_movement`) computes a **`MobilityScore`** each turn from two normalized inputs, then
+people is. `mobility_tick` (`mobility.rs`, `TurnStage::Population`, after `advance_culture_splits`
+and so after `advance_band_movement`; unordered against `sedentarization_tick`) computes a **`MobilityScore`** each turn from two normalized inputs, then
 **EMA-smooths** it exactly as sedentarization does (`smoothing` weighs the previous score; a
 faction's first reading starts from zero). There are no stages, thresholds or prompts.
 

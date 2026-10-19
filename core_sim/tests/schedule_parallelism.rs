@@ -33,8 +33,9 @@ const MUST_BE_CONCURRENT: [(&str, &str); 8] = [
     ("advance_forage_regrowth", "advance_herds"),
     ("advance_graze_regrowth", "advance_predation"),
     ("balance_supply_networks", "advance_herd_grazing"),
-    // Population: pure telemetry vs. the tail of the movement/labor run. It is ordered after its
-    // one writer, `advance_population_migration`, and nothing that follows it.
+    // Population: pure telemetry vs. the tail of the movement/labor run. It is ordered after
+    // `break_off_breeding_excess` (and so after its two writers, `advance_population_migration`
+    // and `shed_breeding_excess`), and nothing that follows it.
     ("publish_trade_telemetry", "sedentarization_tick"),
     // Population: the roaming drain and the settling/pressure passes share nothing — each is
     // ordered after the culture split and neither follows the other.
@@ -82,9 +83,9 @@ const MUST_BE_ORDERED: [(&str, &str); 5] = [
 /// (`advance_band_movement`) reads; no other system reads it between the two (the `MUST_BE_ORDERED`
 /// entry above pins that edge). `advance_party_defection` despawns a party that joined another
 /// people; every pass after it in the stage hangs off it through `advance_band_independence`, and
-/// the only Population system free of it, `publish_trade_telemetry`, reads resources alone. A third system taking `Commands` is not
-/// necessarily wrong — it just cannot be checked by the machinery, so it has to be checked by a
-/// person: does it spawn or despawn anything another system reads in the same turn, and is the
+/// the only Population system free of it, `publish_trade_telemetry`, reads resources alone.
+/// A new system taking `Commands` is not necessarily wrong — it just cannot be checked by the
+/// machinery, so it has to be checked by a person: does it spawn or despawn anything another system reads in the same turn, and is the
 /// edge that orders them declared? Answer that, then add it here.
 ///
 /// It matters beyond a lost core. A rollback rewound by replaying a command log reproduces the
