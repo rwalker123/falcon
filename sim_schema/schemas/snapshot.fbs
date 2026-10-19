@@ -4449,6 +4449,13 @@ table HerdTelemetryState {
   // not compute it.
   penSiteX:int = -1;
   penSiteY:int = -1;
+  // --- WHOSE HERD THIS IS (appended last) ------------------------------------------------------
+  // `owner`/`hasOwner` carry the faction that is taming or keeping this herd (`Herd::owner`, set on
+  // the first Tame accrual) - the forage patch's pair exactly: `hasOwner = false` is an untouched herd
+  // (faction 0 is a valid id, so `owner == 0` cannot mean none). It rides the row, so it is exactly as
+  // fog-filtered as the herd's rung and domestication fields.
+  hasOwner:bool = false;
+  owner:uint = 0;
 }
 
 table CommandEventState {

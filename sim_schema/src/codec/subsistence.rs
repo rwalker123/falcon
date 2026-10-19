@@ -675,6 +675,8 @@ fn create_herds<'a>(
                 sizeTier: Some(size_tier),
                 penSiteX: herd.pen_site_x,
                 penSiteY: herd.pen_site_y,
+                hasOwner: herd.owner.is_some(),
+                owner: herd.owner.unwrap_or_default(),
                 // **WHERE THAT DESTINATION WILL LEAVE THIS HERD'S `K`** — appended last
                 // (append-only wire). `None` is *"no band has queued it"*, which crosses as the
                 // [`crate::NO_BUILD_DESTINATION_CAPACITY`] sentinel rather than as `0`: a capacity
@@ -1702,6 +1704,8 @@ fn decode_herd(herd: fb::HerdTelemetryState<'_>) -> HerdTelemetryState {
         size_tier: text(herd.sizeTier()),
         pen_site_x: herd.penSiteX(),
         pen_site_y: herd.penSiteY(),
+        // The pair `hasOwner`/`owner` is how the serializer spells `Option`.
+        owner: herd.hasOwner().then(|| herd.owner()),
         build_destination_capacity: decode_build_destination_capacity(
             herd.buildDestinationCapacity(),
         ),

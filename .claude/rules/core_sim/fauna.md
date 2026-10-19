@@ -386,6 +386,11 @@ verbs — a free-form `species` string means new species need no schema change).
 > - **Ownership is not a leak.** A tamed or penned herd is your property. Without that clause a
 >   pastoral herd drifting a hex out of sight would take its `rungQuotes[animal:pen].progress` /
 >   `penFedFraction` starving warning with it, and a pen alert that vanishes because of fog is a bug.
+> - **Whose herd it is rides the row.** `HerdTelemetryState.hasOwner` / `owner` (appended; decoded
+>   `owner: Option<u32>`) is `Herd::owner` — the faction taming or keeping it, set by the first `Tame`
+>   accrual — in the forage patch's pair (`hasOwner = false` is an untouched herd; faction 0 is a real
+>   id). It is no more secret than the herd's rung, so it is filtered exactly as the row is: a rival's
+>   herd you can see names its owner. Pinned on the encoded frame by `tests/herd_owner_wire.rs`.
 > - **The heading arrow is filtered separately** — `next_x`/`next_y` name a *second* tile, so a herd
 >   visible at the edge of your sight would otherwise hand you a free look at where it is walking.
 >   Withheld as the existing `-1` "no heading" sentinel.

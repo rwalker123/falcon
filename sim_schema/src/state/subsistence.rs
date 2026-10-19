@@ -894,6 +894,10 @@ pub struct HerdTelemetryState {
     /// See [`Self::pen_site_x`].
     #[serde(default = "no_pen_site")]
     pub pen_site_y: i32,
+    /// **The faction taming or keeping this herd** (`None` = an untouched herd). Rides the wire as the
+    /// `hasOwner`/`owner` pair, the forage patch's spelling of the same `Option`. Appended last.
+    #[serde(default)]
+    pub owner: Option<u32>,
 }
 
 /// The `-1` "no Corral queued" sentinel of the pen-site pair.
@@ -1009,6 +1013,7 @@ impl Default for HerdTelemetryState {
             rung_quotes: Vec::new(),
             pen_site_x: no_pen_site(),
             pen_site_y: no_pen_site(),
+            owner: None,
         }
     }
 }
