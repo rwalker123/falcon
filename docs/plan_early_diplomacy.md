@@ -305,7 +305,7 @@ version. `Expedition` gains the scout pack, its order and the envoy's proposal; 
   with a return list.
 - **There is one Trade tab, not a Trade tab and a Dealings tab.** It is a single scroll of three
   sections: *Waiting on an answer* (the trade items addressed to you with accept / refuse / counter, a
-  reply with *Take it* / *Walk home*, and your own outgoing items with turns left), *This turn* (what
+  reply with *Take it* / *Reject it*, and your own outgoing items with turns left), *This turn* (what
   crossed the store) and *History* (every trade that ended, newest first, from `tradeHistory`). Two of
   its sections are unbounded lists, which is why the tab scrolls.
 - **The Peoples tab** shows each people's goodwill word, its treaty terms, a propose-treaty action and

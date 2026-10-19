@@ -7831,7 +7831,7 @@ Each sits under a small section head (`HudWidgets.zone_head`), in this order:
    (`party_for_dealing`: the dealing's `party_band` is the party's cohort `band_id`, so two parties camped
    on one pair each answer for their own dealing), and the row
    carries the same two links: at the right end of an outgoing row's second line, after `Take it` /
-   `Walk home` on a reply. `refill_lists` rebuilds the section in place, since a frame that moves only
+   `Reject it` on a reply. `refill_lists` rebuilds the section in place, since a frame that moves only
    the dealings moves a party between a dealing row and a road row.
 3. **This turn** — the tab's original content (below): the network line, `⇄ Local exchange`, `⇄ Trade
    route`.
@@ -8142,7 +8142,7 @@ block of the same head on the Peoples tab (below). Both are built by `DealingsRo
   `goodsAsked` the named return. The row keeps `direction_of`'s rule (the receiver answers), so:
   - *incoming*: `<band> would give back <return> for your <cargo>`, the turns-left text, and exactly
     two buttons, **`Take it`** (sends `answer_dealing <f> <id> accept` with NO return list) and
-    **`Walk home`** (sends `refuse`). No counter and no return sheet: `_on_dealing_accept_pressed` sends
+    **`Reject it`** (sends `refuse`). No counter and no return sheet: `_on_dealing_accept_pressed` sends
     at once for every kind but an offer. The receipts differ (`Took the return.` / `Walked home with
     the cargo.`, selected by the `reply` flag `_emit_dealing_answer` stamps on the payload);
   - *outgoing* (the band that named the return): `Waiting on <band>'s party to take your return of

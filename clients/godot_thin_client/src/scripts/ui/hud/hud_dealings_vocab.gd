@@ -133,7 +133,7 @@ const REFUSE_TOOLTIP := "Turn them down. A shipment goes home with its cargo."
 const COUNTER_TOOLTIP := "Answer with different terms. It costs a turn."
 ## A reply is taken or walked away from: never countered, and no return to name.
 const ACTION_TAKE_IT := "Take it"
-const ACTION_WALK_HOME := "Walk home"
+const ACTION_WALK_HOME := "Reject it"
 const TAKE_IT_TOOLTIP := "Take what they name: the exchange settles now."
 const WALK_HOME_TOOLTIP := "Turn the return down. The party walks home with its cargo."
 

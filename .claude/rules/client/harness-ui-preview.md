@@ -3908,7 +3908,7 @@ throwaway test, and all parse).
   envoy reads `Waiting on an answer` and the scout `Awaiting orders`; the full set of five stays in
   `band_parties` and the Workforce `away` clause; `On the road` sits between `Waiting on an answer` and
   `This turn` with two rows (heading out, coming home) and not the camped party; each carries `Jump to
-  party` and `Recall`, as do the offer row and the reply row (the reply beside `Take it` / `Walk home`,
+  party` and `Recall`, as do the offer row and the reply row (the reply beside `Take it` / `Reject it`,
   the offer row still two lines of copy); the offer addressed to us has no party links; pressing `Jump to
   party` focuses that party's tile. A dealings-only frame withdrawing the offer and reply moves the party
   onto a third road row in the SAME scroll, reading `Waiting on an answer`; restoring them takes it off
@@ -3920,7 +3920,7 @@ throwaway test, and all parse).
   `dealings_tab` asserts the three sections in order, the one sanctioned scroll, no SHORT tier, the six
   TRADE rows (a treaty proposal is not among them) and the Trade badge counting the four trade items that
   wait on the band, hot. `dealings_reply` drives the reply row: an incoming reply reads `<band> would give
-  back <return> for your <cargo>` with `Take it` / `Walk home` and no counter, pressing them sends the
+  back <return> for your <cargo>` with `Take it` / `Reject it` and no counter, pressing them sends the
   bare `answer_dealing 0 16 accept` / `refuse` with their own receipts, and the outgoing one reads
   `Waiting on <band>'s party to take your return of <return>` with no action. `dealings_history` scrolls
   the tab to its foot and asserts every record of THIS band newest first (another band's is absent), the

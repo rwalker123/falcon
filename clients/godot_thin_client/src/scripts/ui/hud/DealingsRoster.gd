@@ -383,7 +383,7 @@ static func what_text(dealing: Dictionary, direction: int, band_id: int,
 
 ## **A ROW IS TWO LINES AND, WHERE IT IS ADDRESSED HERE, AN ACTION STRIP.**
 ##   * incoming -- line 1 `← Ashfell · Brackwater ……… 1 turn left` (the window in amber beside the
-##     number it explains), line 2 what it says, then `Accept · Refuse · Counter` (`Take it · Walk home`
+##     number it explains), line 2 what it says, then `Accept · Refuse · Counter` (`Take it · Reject it`
 ##     on a reply);
 ##   * outgoing -- line 1 `→ Ashfell · Brackwater` with what was sent clipped at the right end, line 2
 ##     `Awaiting their answer · 1 turn left`. **A reply this band named** puts its turns left on line 1

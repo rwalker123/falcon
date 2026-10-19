@@ -3091,7 +3091,7 @@ gift checkbox, the confirm dialogs) and **states what the line must say just bef
 
 - **Seven answers**: a refusal, a bare accept, an offer's accept with a return drawn from the larder, a
   trade counter (both legs), a treaty counter that keeps the proposal's terms and adds a bundle, and a
-  REPLY taken (`Take it`, a bare `accept`) and walked home from (`Walk home`, a bare `refuse`). The
+  REPLY taken (`Take it`, a bare `accept`) and walked home from (`Reject it`, a bare `refuse`). The
   proposals and replies are pressed on the Trade tab, the treaty proposal on the Peoples tab, and the gift
   setting on the Trade tab.
 - **The Rust half checks what the parse recovered** (`faction_addressed_failures`,

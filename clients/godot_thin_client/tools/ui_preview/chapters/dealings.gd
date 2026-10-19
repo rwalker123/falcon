@@ -323,7 +323,7 @@ func _road_states(panel: BandCityPanel) -> void:
 	h._assert_hud("road: the offer we sent, standing in a camp, carries the party's Jump and Recall",
 		_party_link(offer_out, HudDealingsVocab.PARTY_LINK_JUMP) != null
 			and _party_link(offer_out, HudDealingsVocab.PARTY_LINK_RECALL) != null)
-	h._assert_hud("road: …and so does the reply addressed to us, beside Take it and Walk home",
+	h._assert_hud("road: …and so does the reply addressed to us, beside Take it and Reject it",
 		_party_link(reply_in, HudDealingsVocab.PARTY_LINK_JUMP) != null
 			and _party_link(reply_in, HudDealingsVocab.PARTY_LINK_RECALL) != null
 			and _action(reply_in, HudDealingsVocab.ANSWER_ACCEPT) != null)
@@ -423,7 +423,7 @@ func _reply_states(panel: BandCityPanel) -> void:
 			and _find_label(incoming, HudDealingsVocab.TURNS_LEFT_ONE).get_theme_color("font_color") == HudStyle.WARN)
 	var take := _action(incoming, HudDealingsVocab.ANSWER_ACCEPT)
 	var walk := _action(incoming, HudDealingsVocab.ANSWER_REFUSE)
-	h._assert_hud("reply: …offers `Take it` and `Walk home`, and NO counter",
+	h._assert_hud("reply: …offers `Take it` and `Reject it`, and NO counter",
 		take != null and take.text == HudDealingsVocab.ACTION_TAKE_IT
 			and walk != null and walk.text == HudDealingsVocab.ACTION_WALK_HOME
 			and _action(incoming, HudDealingsVocab.ANSWER_COUNTER) == null)
@@ -449,7 +449,7 @@ func _reply_states(panel: BandCityPanel) -> void:
 	_commands.clear()
 	if walk != null:
 		walk.emit_signal("pressed")
-	h._assert_hud("reply: Walk home emits ONE command", _commands.size() == 1)
+	h._assert_hud("reply: Reject it emits ONE command", _commands.size() == 1)
 	if _commands.size() == 1:
 		var built := MAIN_SCRIPT.format_diplomacy_command(_commands[0])
 		h._assert_hud("reply: …`answer_dealing 0 %d refuse` (got `%s`)" % [REPLY_IN, built.get("line", "")],

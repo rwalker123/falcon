@@ -1523,7 +1523,7 @@ const DEALING_REFUSED := 32
 const DEALING_ACCEPTED := 33
 const DEALING_COUNTERED := 34
 const DEALING_TREATY := 35
-## Two REPLIES addressed to the band: one it takes (`Take it`), one it walks home from (`Walk home`).
+## Two REPLIES addressed to the band: one it takes (`Take it`), one it walks home from (`Reject it`).
 const DEALING_REPLY_TAKEN := 36
 const DEALING_REPLY_WALKED := 37
 ## What the fixtures hold: the offer's cargo, the proposals' two legs, and the treaty's bundle.
