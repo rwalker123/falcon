@@ -121,6 +121,10 @@ pub(crate) fn herds_to_array(
             let _ = dict.insert("size_class", size_class);
         }
         let _ = dict.insert("huntable", herd.huntable());
+        // The people taming or keeping this herd -- the forage patch's pair exactly (`has_owner`
+        // first: faction 0 is a real id). The client reads another people's build off it.
+        let _ = dict.insert("has_owner", herd.hasOwner());
+        let _ = dict.insert("owner", herd.owner() as i64);
         if let Some(ecology_phase) = herd.ecologyPhase() {
             let _ = dict.insert("ecology_phase", ecology_phase);
         }

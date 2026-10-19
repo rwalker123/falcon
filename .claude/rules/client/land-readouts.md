@@ -728,5 +728,5 @@ another people (`patch_has_owner` and `patch_owner != PLAYER_FACTION_ID`) reads 
 (`HudSelectionVocab.RUNG_FOREIGN_FORMAT`, composed by `DetailFormat.foreign_rung_value`) instead of the
 crew-dependent readings of `rung_row_value`, and takes WARN ink through the `RUNG_FOREIGN_MARK` needle in
 `rung_value_hex`. A rung already reached keeps its ordinary built row. Our own build on the same patch is
-unchanged. Herds carry no owner on the wire, so the Husbandry/Corral rows have no such state.
+unchanged. The herd card's Husbandry / Corral rows do the same off the herd's own `has_owner`/`owner` (`⚑ Lothari · 30%`); a rung with no meter yet states no row. Frame `other_people_build_herd`.
 Frame: `other_people_build_tile` (`chapters/worked_land_ranch.gd`, with the owned-by-us control by equality).

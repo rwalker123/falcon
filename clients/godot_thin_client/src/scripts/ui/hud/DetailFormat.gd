@@ -4048,6 +4048,13 @@ static func herd_summary_lines(herd_data: Dictionary, world_herds: Array,
             var declared := verb != "" and unstaffed_build == verb
             var enclosed := RungQuotes.has_trait(quote, RungQuotes.TRAIT_ENCLOSED)
             var row_key := herd_rung_row_key(quote)
+            # Another people's taming in progress: the row names whose it is, in warn ink -- the patch
+            # card's rule, asked through the same predicate.
+            var foreign_owner := RungQuotes.foreign_owner(herd_data, herd_prefix)
+            if foreign_owner != RungQuotes.NO_FOREIGN_OWNER and not reached:
+                if progress > BUILD_METER_EMPTY:
+                    lines.append("%s: %s" % [row_key, foreign_rung_value(foreign_owner, progress)])
+                continue
             var rung_label := rung_built_label(verb, herd_data, herd_prefix)
             if reached and enclosed:
                 # A PENNED herd is a managed population: it eats its fenced footprint's grass plus

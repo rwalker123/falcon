@@ -13,7 +13,7 @@ extends RefCounted
 ## catalog's tier row: a pen below it says how many rings reach it, a pen in it says what it does.
 
 ## The checkpoints this chapter owes the walk -- assertions made plus frames saved, as a FLOOR.
-const EXPECTED_CHECKPOINTS := 38
+const EXPECTED_CHECKPOINTS := 51
 
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 const ForageFx := preload("res://tools/ui_preview/fixtures_forage.gd")
@@ -340,4 +340,56 @@ func _another_peoples_build() -> void:
 	h._assert_hud("...and the next-rung offer is withdrawn on their ground, kept on ours",
 		RungQuotes.blocked_by_owner(theirs, HudComposeVocab.FORAGE_FORECAST_PREFIX)
 			and not RungQuotes.blocked_by_owner(ours, HudComposeVocab.FORAGE_FORECAST_PREFIX))
+	await _another_peoples_herd()
 	FactionNames.reset()
+
+const OTHER_TAME_PROGRESS := 0.3
+const OTHER_HERD_ROW := "\u2691 Lothari \u00b7 30%"
+const OTHER_HERD_SHEET_LINE := "Lothari is taming this"
+
+## A wild herd 30% through the Tame, owned by `owner_faction`.
+func _owned_herd(owner_faction: int) -> Dictionary:
+	var herd := HerdFx.herd_fixture()
+	herd["domestication"] = OTHER_TAME_PROGRESS
+	herd["corralled"] = false
+	herd["has_owner"] = true
+	herd["owner"] = owner_faction
+	return RungFx.stamp_herd(herd)
+
+func _herd_sheet_state(herd: Dictionary) -> String:
+	var host := VBoxContainer.new()
+	h.add_child(host)
+	h._hud._drawercompose._build_improvement_control(SourceForecast.LABOR_KIND_HUNT, herd,
+		HudComposeVocab.BARE_FORECAST_PREFIX, 0.5, "", BandFx.band_fixture(), 1, {}, false, host)
+	var out := ""
+	for child in host.get_children():
+		if child is Label:
+			out = (child as Label).text
+			if child.has_meta(HudWidgets.IMPROVEMENT_CONTROL_META):
+				out = "%s|%s" % [child.get_meta(HudWidgets.IMPROVEMENT_CONTROL_META), out]
+			break
+	host.queue_free()
+	return out
+
+func _another_peoples_herd() -> void:
+	var theirs := _owned_herd(OTHER_PEOPLE)
+	var ours := _owned_herd(HudConst.PLAYER_FACTION_ID)
+	h._show_herd(theirs)
+	await h._settle()
+	await h._save("other_people_build_herd")
+	var world: Array = h._hud._band_labor.world_herds()
+	var their_lines := DetailFormat.herd_summary_lines(theirs, world)
+	var our_lines := DetailFormat.herd_summary_lines(ours, world)
+	h._assert_hud("herd card: another people's 30%% Tame names the people (got `%s`)" % _row_value(their_lines, DetailFormat.HUSBANDRY_ROW),
+		_row_value(their_lines, DetailFormat.HUSBANDRY_ROW) == OTHER_HERD_ROW)
+	h._assert_hud("...and the unstarted Corral carries no meter row at all",
+		_row_value(their_lines, DetailFormat.CORRAL_ROW) == "")
+	h._assert_hud("...and our own Tame on the same herd reads as today",
+		not _row_value(our_lines, DetailFormat.HUSBANDRY_ROW).contains("Lothari")
+			and _row_value(our_lines, DetailFormat.HUSBANDRY_ROW) != "")
+	var their_sheet := _herd_sheet_state(theirs)
+	h._assert_hud("herd sheet: one line, not a Tame control (got `%s`)" % their_sheet,
+		their_sheet == "%s|%s" % [HudWidgets.IMPROVEMENT_STATE_FOREIGN, OTHER_HERD_SHEET_LINE])
+	h._assert_hud("...and our own herd keeps its control",
+		not _herd_sheet_state(ours).begins_with(HudWidgets.IMPROVEMENT_STATE_FOREIGN))
+

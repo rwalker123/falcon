@@ -27111,6 +27111,8 @@ const OTHER_PEOPLE_FACTION := 1
 const OTHER_PEOPLE_NAME := "Lothari"
 const OTHER_BUILD_METER := 0.2
 ## What the row's second line leads with when the meter is another people's, as the player reads it.
+const OTHER_TAME_METER := 0.3
+const OTHER_TAME_LINE := "Lothari taming \u00b7 30%"
 const OTHER_BUILD_LINE := "Lothari cultivating \u00b7 20%"
 
 ## The wild tile of the rung board, carrying a 20% Cultivate meter owned by `owner_faction`.
@@ -27169,5 +27171,35 @@ func _other_peoples_build_rows() -> void:
 	if _wild_row_foreign_text() != "":
 		_fail("work row, our own build: rendered a foreign line")
 	_set_forage_patches(_rung_patch_fixtures())
+	# THE HERD SIDE: the pastoral herd 30% through the Tame, Lothari's and then ours.
+	for owner in [OTHER_PEOPLE_FACTION, HudConst.PLAYER_FACTION_ID]:
+		var herds := _rung_herd_fixtures()
+		var boar: Dictionary = herds[0]
+		boar["domestication"] = OTHER_TAME_METER
+		boar["has_owner"] = true
+		boar["owner"] = owner
+		RUNG_FX.stamp_herd(boar)
+		_set_world_herds(herds)
+		_push_bands([_rung_band_fixture()])
+		await _settle()
+		var frame := "band_panel_work_other_tame" if owner == OTHER_PEOPLE_FACTION else "band_panel_work_own_tame"
+		await _save(frame)
+		var model := {}
+		for candidate in _hud._bandpanel._work_source_models(_hud._band_labor._panel_band, 0):
+			if String(candidate.get("key", "")) == "hunt:%s" % RUNG_PASTORAL_HERD_ID:
+				model = candidate
+		if owner == OTHER_PEOPLE_FACTION:
+			if String(model.get("foreign_build", "")) != OTHER_TAME_LINE:
+				_fail("work row, another people's Tame: wanted `%s`, got `%s`" % [OTHER_TAME_LINE, model.get("foreign_build", "")])
+			if String(model.get("building_glyph", "")) != "" or String(model.get("ready_glyph", "")) != "":
+				_fail("work row, another people's Tame: still wears OUR build or offer face")
+			if _wild_row_foreign_text() != OTHER_TAME_LINE:
+				_fail("work row, another people's Tame: the rendered line two does not lead with `%s`" % OTHER_TAME_LINE)
+		else:
+			if String(model.get("foreign_build", "")) != "" or String(model.get("building_glyph", "")) == "":
+				_fail("work row, our own Tame: changed (foreign `%s`, face `%s`)" % [model.get("foreign_build", ""), model.get("building_glyph", "")])
+			if _wild_row_foreign_text() != "":
+				_fail("work row, our own Tame: rendered a foreign line")
+	_set_world_herds(_rung_herd_fixtures())
 	FactionNames.reset()
 

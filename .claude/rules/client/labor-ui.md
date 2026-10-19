@@ -8417,3 +8417,5 @@ or `Lothari holds this ground` where nothing is in flight -- tagged `IMPROVEMENT
 The test is `RungQuotes.blocked_by_owner`: the wire's owner read against the catalog's flag, never a
 re-derived rule; the quotes carry no per-rung owner refusal of their own (`site_refusal` is the sow site
 verdict only). Asserted in `chapters/worked_land_ranch.gd` by equality, with our own patch as the control.
+
+A herd source takes the same line (`Lothari is taming this`): `has_owner`/`owner` ride the herd dict, and `RungQuotes.foreign_owner` takes the bare prefix.

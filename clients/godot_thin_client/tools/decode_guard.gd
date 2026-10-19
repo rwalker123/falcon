@@ -443,6 +443,14 @@ func _assert_delta_chain(decoder: Object, baseline: Dictionary) -> bool:
 ## immediately, since merged arrays share row dictionaries between frames.
 const DIPLOMACY_SECTIONS := ["dealings", "goodwill", "treaties", "trade_history"]
 
+func _first_herd_has_owner(frame: Dictionary) -> bool:
+	var herds: Array = frame.get("herds", [])
+	if herds.is_empty():
+		return false
+	var herd := herds[0] as Dictionary
+	return herd.has("has_owner") and herd.has("owner")
+
+
 func _diplomacy_probe(frame: Dictionary) -> Dictionary:
 	var dealings: Array = frame.get("dealings", [])
 	var goodwill: Dictionary = frame.get("goodwill", {})
@@ -461,6 +469,7 @@ func _diplomacy_probe(frame: Dictionary) -> Dictionary:
 		"treaty_formed": int(treaty_rows[0].get("formed_turn", -1)) if not treaty_rows.is_empty() else -1,
 		"has_cuts": goodwill.has("cuts"),
 		"dealing_has_party_band": (not dealings.is_empty()) and (dealings[0] as Dictionary).has("party_band"),
+		"herd_has_owner": _first_herd_has_owner(frame),
 		"dealing_has_terms": (not dealings.is_empty()) and (dealings[0] as Dictionary).has("terms"),
 	}
 
@@ -471,6 +480,8 @@ func _assert_diplomacy_witnesses(baseline: Dictionary, frame1: Dictionary, frame
 	var after_2 := _diplomacy_probe(frame2)
 	if not bool(before["dealing_has_terms"]):
 		_die("the decoded dealing rows carry no `terms` key: the client reads an offer as a gift on it.")
+	if not bool(before["herd_has_owner"]):
+		_die("the decoded herd rows carry no `has_owner` / `owner` keys: the client names another people's taming on them.")
 	if not bool(before["dealing_has_party_band"]):
 		_die("the decoded dealing rows carry no `party_band` key: the client joins a dealing to its party on it.")
 	if int(before["dealing_count"]) == 0 or int(before["treaty_formed"]) < 0 or not bool(before["has_cuts"]):

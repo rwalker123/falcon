@@ -8323,5 +8323,5 @@ therefore carries the owner's build, not ours: `RungQuotes.foreign_owner` answer
 `FactionMark.faction_name`) -- and clears the row's own `building_*` / `ready_*` keys so the ready slot
 draws no `20%` face and no `⌃`. Line two leads with that text in WARN ink
 (`WORK_ROW_FOREIGN_BUILD_META` on the label, ahead of the yield summary). A patch we own reads exactly as
-before. A herd row is unaffected: `HerdTelemetryState` carries no owner on the wire.
+before. A herd row reads the same way (`HerdTelemetryState.hasOwner`/`owner`, decoded as `has_owner`/`owner` like the patch's; the same `foreign_owner` predicate, bare prefix): `Lothari taming · 30%`. Frames `band_panel_work_other_tame` / `_own_tame`.
 Frames: `band_panel_work_other_build` / `band_panel_work_own_build` (`_other_peoples_build_rows`, the pair).
