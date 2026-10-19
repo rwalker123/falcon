@@ -187,12 +187,11 @@ const SOW_REFUSAL_TOO_DRY := "too_dry"
 const SOW_REFUSAL_NEEDS_LESSON := "needs_lesson"
 const SOW_NEEDS_LESSON_FORMAT := "Off your gathering sites — learn %s to farm ground like this."
 
-# The tile card's teaching line for such ground, and its key. `Learn Worked Land — work a farm`.
+# The tile card's teaching line for such ground, and its key. `Needs Worked Land`.
 const SITE_LESSON_ROW := "Farming"
-## The row's value: what to do, in plain words. `%s` is the rung that teaches the lesson (`farm`), off the
-## catalog; with no teaching rung named it states the lesson alone.
-const SITE_LESSON_FORMAT := "Not here yet — work a %s on a gathering site to learn how"
-const SITE_LESSON_BARE_FORMAT := "Not here yet — learn %s"
+## The row's value: the lesson this ground still needs, off the roster. The people already farm when the
+## row shows, so it names only what they lack; the hover says what teaches it.
+const SITE_LESSON_FORMAT := "Needs %s"
 ## Its hover: the lesson's and the rung's names off the roster and the catalog.
 const SITE_LESSON_TOOLTIP_FORMAT := "Working a %s teaches %s; then ground like this can be farmed."
 const SITE_LESSON_TOOLTIP_BARE := "Then ground like this can be farmed."

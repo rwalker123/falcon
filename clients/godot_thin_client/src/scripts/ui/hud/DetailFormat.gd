@@ -1407,15 +1407,14 @@ static func offsite_crop_label(tile_info: Dictionary) -> String:
 ## answered `needs_lesson` for a placing rung AND this people can already raise that rung today -- the
 ## rung's own gate (the catalog's `unlock_knowledge` on the quote) is met in `knowledge`
 ## (`{knowledge_id: progress}`), so working one would really teach the lesson. Before that the row is
-## absent: it would tell a people that cannot farm anywhere yet to go and farm. The lesson's own name is
-## off the roster (`labels`), the teaching rung off the catalog; with no teaching rung it names the lesson.
+## absent: it would tell a people that cannot farm anywhere yet to go and farm. It names the lesson alone
+## (off the roster, `labels`): the people already farm, so the row says only what they still lack, and the
+## hover says what teaches it.
 static func site_lesson_line(tile_info: Dictionary, labels: Dictionary, knowledge: Dictionary) -> String:
     var parts := _site_lesson_parts(tile_info, labels, knowledge)
     if parts.is_empty():
         return ""
-    if String(parts["teacher"]) == "":
-        return HudFloraVocab.SITE_LESSON_BARE_FORMAT % String(parts["lesson"])
-    return HudFloraVocab.SITE_LESSON_FORMAT % String(parts["teacher"])
+    return HudFloraVocab.SITE_LESSON_FORMAT % String(parts["lesson"])
 
 ## The row's hover, `""` exactly where the row is absent.
 static func site_lesson_tooltip(tile_info: Dictionary, labels: Dictionary, knowledge: Dictionary) -> String:

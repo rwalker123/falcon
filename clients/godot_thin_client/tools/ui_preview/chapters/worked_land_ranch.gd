@@ -45,7 +45,7 @@ const PEN_FOOTPRINT_AT_TIER := 19
 const SOW_BUTTON := "Sow farm"
 const RAISE_EYEBROW := "Raise a farm"
 const CREW_LINE := "The crew will raise a farm of Wild Tubers here."
-const LESSON_LINE := "Not here yet — work a farm on a gathering site to learn how"
+const LESSON_LINE := "Needs Worked Land"
 const LESSON_TIP := "Working a farm teaches Worked Land; then ground like this can be farmed."
 ## Seed Selection short of complete: the Farm's own gate is unmet, so this people cannot raise one yet.
 const SEED_SELECTION_PARTIAL := 0.4
@@ -144,7 +144,7 @@ func _off_site_states() -> void:
 	h._assert_hud("…so no forage block and no compose sheet are offered on it",
 		Readout.detail_row_index(lines, HudFloraVocab.FORAGING_KEY) < 0
 			and not h._hud._drawercompose._forage_compose_available(needs))
-	h._assert_hud("…and the card names the lesson and what teaches it: `%s`" % LESSON_LINE,
+	h._assert_hud("…and the card names the lesson it still needs: `%s`" % LESSON_LINE,
 		_row_value(lines, HudFloraVocab.SITE_LESSON_ROW) == LESSON_LINE)
 	h._assert_hud("…and its hover names the lesson and the rung from the roster and catalog: `%s`" % LESSON_TIP,
 		String(lesson_ctx.row_tooltips.get(HudFloraVocab.SITE_LESSON_ROW, "")) == LESSON_TIP)
