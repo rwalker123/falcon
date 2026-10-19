@@ -149,6 +149,12 @@ static func foreign_owner(src: Dictionary, prefix: String = "") -> int:
 	var owner := int(src.get(prefix + "owner", HudConst.PLAYER_FACTION_ID))
 	return NO_FOREIGN_OWNER if owner == HudConst.PLAYER_FACTION_ID else owner
 
+## The `BandId` of the band whose work last advanced this source's build meter; `HudConst.NO_BAND_ID` when
+## the wire says 0 (none, or a rival patch the viewer cannot see into).
+static func builder_band(src: Dictionary, prefix: String = "") -> int:
+	var band_id := int(src.get(prefix + "builder_band", 0))
+	return band_id if band_id > 0 else HudConst.NO_BAND_ID
+
 ## Does another people's ownership shut the viewer out of a rung this source has not reached? The
 ## catalog's `requires_ownership` read against the wire's owner, never a re-derived rule.
 static func blocked_by_owner(src: Dictionary, prefix: String = "") -> bool:

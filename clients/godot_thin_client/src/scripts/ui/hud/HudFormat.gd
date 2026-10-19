@@ -194,6 +194,14 @@ static func band_name(entry: Dictionary) -> String:
         return name
     return HudExpeditionVocab.PARTY_NAME_FORMAT % [name, HudExpeditionVocab.PARTY_SHORT_LABELS[mission]]
 
+## **A BAND WITH ITS PEOPLE** -- `Netherford, Lothari` -- or the people alone when no band is named
+## (a builder the roster does not hold, or the wire's 0).
+static func band_with_people(band_label: String, faction: int) -> String:
+    var people := FactionMark.faction_name(faction)
+    if band_label.strip_edges() == "":
+        return people
+    return HudSelectionVocab.BAND_PEOPLE_FORMAT % [band_label, people]
+
 ## "<glyph> " for a resolved glyph, "" for none — so a Current-actions row degrades to bare text
 ## (no stray leading space) when the resource can't be resolved.
 static func source_icon_prefix(icon: String) -> String:

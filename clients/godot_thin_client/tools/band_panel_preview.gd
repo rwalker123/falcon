@@ -11555,7 +11555,7 @@ func _assert_a_road_behind_a_blocked_pen_head_is_just_queued() -> void:
 		road_hover == road_want and not rows[1].tooltip_text.contains("Blocked")
 			and not rows[1].tooltip_text.contains("Waiting") and not rows[1].tooltip_text.contains("Behind"))
 	var head_hover: Array = rows[0].tooltip_text.split("\n")
-	_assert_band_panel("road behind blocked head — …the head's hover opens \"… — Blocked 65%\" then its needs (got %s)"
+	_assert_band_panel("road behind blocked head — …the head's hover opens \"… — Blocked 65%%\" then its needs (got %s)"
 			% str(head_hover),
 		head_hover.size() >= 3 and String(head_hover[0]).ends_with("— Blocked 65%")
 			and head_hover[1] == "Need 2.1 hurdles" and head_hover[2] == "Short 1 crook")
@@ -27112,6 +27112,9 @@ const OTHER_PEOPLE_NAME := "Lothari"
 const OTHER_BUILD_METER := 0.2
 ## What the row's second line leads with when the meter is another people's, as the player reads it.
 const OTHER_TAME_METER := 0.3
+const OTHER_BUILDER_ENTITY := 777
+const OTHER_BUILDER_NAME := "Netherford"
+const OTHER_BUILDER_POS := Vector2i(70, 5)
 const OTHER_TAME_LINE := "Lothari taming \u00b7 30%"
 const OTHER_BUILD_LINE := "Lothari cultivating \u00b7 20%"
 
@@ -27156,6 +27159,32 @@ func _other_peoples_build_rows() -> void:
 		_fail("work row, another people's build: the row still wears OUR build or offer face")
 	if _wild_row_foreign_text() != OTHER_BUILD_LINE:
 		_fail("work row, another people's build: the rendered line two does not lead with `%s`" % OTHER_BUILD_LINE)
+	if _find_meta_control(_panel, HudWorkVocab.WORK_ROW_FOREIGN_BAND_META) != null:
+		_fail("work row, no builder named: a band link was drawn with nothing to jump to")
+	# A NAMED BUILDER: the band's name only, as a link that focuses its tile.
+	patches = _rung_patch_fixtures()
+	patches[0] = _other_build_patches(OTHER_PEOPLE_FACTION)[0]
+	patches[0]["builder_band"] = OTHER_BUILDER_ENTITY + FIXTURE_BAND_ID_OFFSET
+	_set_forage_patches(patches)
+	# The builder is a foreign band in sight, so it rides the roster push like any other cohort.
+	_push_bands([_rung_band_fixture(), {"entity": OTHER_BUILDER_ENTITY, "name": OTHER_BUILDER_NAME,
+		"faction": OTHER_PEOPLE_FACTION, "current_x": OTHER_BUILDER_POS.x,
+		"current_y": OTHER_BUILDER_POS.y, "size": 22}])
+	await _settle()
+	await _save("band_panel_work_other_builder")
+	var named_line := "%s cultivating \u00b7 20%%" % OTHER_BUILDER_NAME
+	if _wild_row_foreign_text() != named_line:
+		_fail("work row, named builder: wanted `%s`, got `%s`" % [named_line, _wild_row_foreign_text()])
+	var link := _find_meta_control(_panel, HudWorkVocab.WORK_ROW_FOREIGN_BAND_META)
+	if link == null or not (link is Button) or (link as Button).text != OTHER_BUILDER_NAME:
+		_fail("work row, named builder: no `%s` link" % OTHER_BUILDER_NAME)
+	else:
+		var focused: Array = []
+		_hud._bandpanel.alert_focus_requested.connect(func(x: int, y: int) -> void: focused.append(Vector2i(x, y)))
+		(link as Button).pressed.emit()
+		if focused != [OTHER_BUILDER_POS]:
+			_fail("work row, builder link: pressing it focused %s, wanted [%s]" % [str(focused), str(OTHER_BUILDER_POS)])
+	_push_bands([_rung_band_fixture()])
 	# OURS: the same patch owned by us reads unchanged -- the control.
 	patches = _rung_patch_fixtures()
 	patches[0] = _other_build_patches(HudConst.PLAYER_FACTION_ID)[0]

@@ -479,7 +479,7 @@ const FOW_EXPLORED_THRESHOLD := 0.3  # Above this a tile is at least Discovered
 # for the sake of a symmetry the sim does not have.
 const FOW_DISCOVERED_HIDDEN_KEYS := [
 	"food_module", "food_module_label", "food_module_weight", "food_kind",
-	"patch_rung_quotes", "patch_has_owner", "patch_owner",
+	"patch_rung_quotes", "patch_has_owner", "patch_owner", "patch_builder_band",
 	"patch_ecology_phase", "patch_biomass",
 	# THE PATCH'S CEILING, redacted because the FIELD RUNG IS IN IT — see this list's header. Its
 	# fog-safe twin `patch_tile_capacity` is deliberately NOT here: that one is terrain.
@@ -3565,6 +3565,7 @@ func _tile_info_at(col: int, row: int) -> Dictionary:
 		info["patch_rung_quotes"] = patch.get("rung_quotes", [])
 		info["patch_has_owner"] = bool(patch.get("has_owner", false))
 		info["patch_owner"] = int(patch.get("owner", 0))
+		info["patch_builder_band"] = int(patch.get("builder_band", 0))
 		info["patch_ecology_phase"] = String(patch.get("ecology_phase", ""))
 		# Standing forage stock vs the patch's ceiling — "how much there is", the patch
 		# counterpart to a herd's Biomass row (Hud._tile_terrain_lines renders both).

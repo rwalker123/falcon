@@ -8325,3 +8325,15 @@ draws no `20%` face and no `⌃`. Line two leads with that text in WARN ink
 (`WORK_ROW_FOREIGN_BUILD_META` on the label, ahead of the yield summary). A patch we own reads exactly as
 before. A herd row reads the same way (`HerdTelemetryState.hasOwner`/`owner`, decoded as `has_owner`/`owner` like the patch's; the same `foreign_owner` predicate, bare prefix): `Lothari taming · 30%`. Frames `band_panel_work_other_tame` / `_own_tame`.
 Frames: `band_panel_work_other_build` / `band_panel_work_own_build` (`_other_peoples_build_rows`, the pair).
+
+### The builder band is a link on the Work row
+
+`ForagePatchState` / `HerdTelemetryState` carry `builderBand` (decoded `builder_band`; `patch_builder_band` on
+`tile_info`; 0 = none or a rival patch out of sight). `RungQuotes.builder_band` reads it and
+`HudBandLaborState.builder_label` resolves it against the roster (ours, else a foreign band in sight). The
+Work row's foreign line shows the BAND NAME ONLY, as a flat button (`WORK_ROW_FOREIGN_BAND_META` holds the
+`BandId`), `Netherford cultivating · 86%`; pressing it calls `BandPanelController.jump_to_builder_band`
+(our band: `_select_band_on_map`; a foreign band: `alert_focus_requested` on its tile, then picked in the
+tile roster, never made the panel's subject). With no builder named, or one the roster does not hold, the
+line falls back to the people (`Lothari cultivating · 86%`) and draws no link. Frames
+`band_panel_work_other_builder`; the link press and the fallback are asserted in `_other_peoples_build_rows`.

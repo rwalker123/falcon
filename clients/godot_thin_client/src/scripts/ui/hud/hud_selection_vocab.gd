@@ -313,6 +313,9 @@ const RUNG_HAZARD_GLYPH := "⚠"
 ## WARN ink. The flag is the mark the row's ink is keyed off.
 const RUNG_FOREIGN_MARK := "⚑"
 const RUNG_FOREIGN_FORMAT := "⚑ %s · %d%%"
+## A band named with its people, City-State style: `Netherford, Lothari`. Used by the tile card's meter
+## row, the compose sheet's foreign line and every band row of the selection list.
+const BAND_PEOPLE_FORMAT := "%s, %s"
 
 # **A BUILT RUNG WHOSE KEEPING IS SHORT: the badge, the mark, and WHAT IS HAPPENING TO IT.**
 #

@@ -8419,3 +8419,6 @@ re-derived rule; the quotes carry no per-rung owner refusal of their own (`site_
 verdict only). Asserted in `chapters/worked_land_ranch.gd` by equality, with our own patch as the control.
 
 A herd source takes the same line (`Lothari is taming this`): `has_owner`/`owner` ride the herd dict, and `RungQuotes.foreign_owner` takes the bare prefix.
+
+The sheet's foreign line names the builder band the same way: `Netherford, Lothari is cultivating this`,
+falling back to `Lothari is cultivating this` when no builder is named or the roster lacks it.

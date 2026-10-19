@@ -570,7 +570,7 @@ func _build_band_row(unit: Dictionary) -> Button:
 	# rule the land and herd rows carry, so the three lead with one column of marks (issue #249).
 	var icon := _row_icon(_band_row_sprite(unit), _band_row_glyph(unit), selected)
 	row.add_child(icon)
-	var name_label := _roster_name_label(String(unit.get("id", "Band")), selected)
+	var name_label := _roster_name_label(_band_row_name(unit), selected)
 	row.add_child(name_label)
 	var meta_label := _roster_meta_label(str(int(unit.get("size", 0))))
 	row.add_child(meta_label)
@@ -585,6 +585,12 @@ func _build_band_row(unit: Dictionary) -> Button:
 	button.pressed.connect(_on_roster_row_selected.bind("unit", entity_id))
 	_store_row_refs(button, row, name_label, meta_label, glyph_label, icon)
 	return button
+
+## **A BAND ROW READS `Band, People`** -- ours and theirs alike -- so whose band it is never needs a
+## click. The band half is the marker's own display name (`HudFormat.band_name`, stamped as `id`).
+func _band_row_name(unit: Dictionary) -> String:
+	return HudFormat.band_with_people(String(unit.get("id", "Band")),
+		int(unit.get("faction", HudConst.NO_FACTION_ID)))
 
 ## Patch a band row in place. `is_player` (hence the trailing glyph's presence) is stable per entity
 ## and rides the row key, so that label is present here exactly when it was built. The LEADING stage
@@ -603,7 +609,7 @@ func _update_band_row(button: Button, unit: Dictionary) -> void:
 	# a band whose stage crosses from a bundled one to a config-defined one changes the mark's node kind,
 	# and writing `.text` to a `TextureRect` is a silent no-op.
 	_set_row_icon(button, _band_row_sprite(unit), _band_row_glyph(unit), selected)
-	_set_row_name(button, String(unit.get("id", "Band")), selected)
+	_set_row_name(button, _band_row_name(unit), selected)
 	_set_row_meta(button, str(int(unit.get("size", 0))))
 	_set_row_activity_mark(button, _band_row_activity(unit, is_player))
 	button.tooltip_text = String(unit.get("settlement_stage_label", "")).strip_edges()

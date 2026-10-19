@@ -6526,13 +6526,34 @@ func _build_work_row_accounts(band: Dictionary, model: Dictionary) -> MarginCont
     accounts.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     var foreign_build := String(model.get("foreign_build", ""))
     if foreign_build != "":
+        var owner_box := HBoxContainer.new()
+        owner_box.mouse_filter = Control.MOUSE_FILTER_IGNORE
+        owner_box.add_theme_constant_override("separation", 0)
+        owner_box.set_meta(HudWorkVocab.WORK_ROW_FOREIGN_BUILD_META, foreign_build)
+        var band_name := String(model.get("foreign_band_name", ""))
+        var tail := foreign_build + HudWorkVocab.WORK_INSPECT_SENTENCE_SEPARATOR
+        if band_name != "" and foreign_build.begins_with(band_name):
+            # The band's name is a LINK: it jumps the map to that band and selects it.
+            var link := Button.new()
+            link.text = band_name
+            link.flat = true
+            link.focus_mode = Control.FOCUS_NONE
+            link.mouse_filter = Control.MOUSE_FILTER_STOP
+            link.add_theme_color_override("font_color", HudStyle.WARN)
+            link.add_theme_color_override("font_hover_color", HudStyle.INK)
+            link.add_theme_font_size_override("font_size", HudWorkVocab.ALLOC_SECTION_FONT_SIZE)
+            link.set_meta(HudWorkVocab.WORK_ROW_FOREIGN_BAND_META, int(model.get("foreign_band_id", HudConst.NO_BAND_ID)))
+            var builder_id := int(model.get("foreign_band_id", HudConst.NO_BAND_ID))
+            link.pressed.connect(func() -> void: jump_to_builder_band(builder_id))
+            owner_box.add_child(link)
+            tail = foreign_build.substr(band_name.length()) + HudWorkVocab.WORK_INSPECT_SENTENCE_SEPARATOR
         var owner_label := Label.new()
-        owner_label.text = foreign_build + HudWorkVocab.WORK_INSPECT_SENTENCE_SEPARATOR
+        owner_label.text = tail
         owner_label.add_theme_color_override("font_color", HudStyle.WARN)
         owner_label.add_theme_font_size_override("font_size", HudWorkVocab.ALLOC_SECTION_FONT_SIZE)
         owner_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
-        owner_label.set_meta(HudWorkVocab.WORK_ROW_FOREIGN_BUILD_META, foreign_build)
-        line_two.add_child(owner_label)
+        owner_box.add_child(owner_label)
+        line_two.add_child(owner_box)
     line_two.add_child(accounts)
     # **THE PARTY BLOCK HANGS UNDER THE ACCOUNTS, IN THEIR OWN INDENT** — one column, so the lines
     # sit under the row's NAME exactly as line two does and the block reads as part of this row
@@ -7775,10 +7796,18 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
         # whose it is (line two, warn ink) and the ready slot offers and reports nothing of ours.
         var foreign_owner := RungQuotes.foreign_owner(rung_source, HudComposeVocab.BARE_FORECAST_PREFIX)
         var foreign_build := ""
+        var foreign_band_id := HudConst.NO_BAND_ID
+        var foreign_band_name := ""
         if foreign_owner != RungQuotes.NO_FOREIGN_OWNER:
+            # The BAND only, on the row (screen space), as a link; the people's name where the wire
+            # names no builder or the roster does not hold it.
+            foreign_band_id = RungQuotes.builder_band(rung_source, HudComposeVocab.BARE_FORECAST_PREFIX)
+            foreign_band_name = _band_labor.builder_label(foreign_band_id)
+            if foreign_band_name == "":
+                foreign_band_id = HudConst.NO_BAND_ID
             if not building.is_empty():
                 foreign_build = HudWorkVocab.WORK_ROW_FOREIGN_BUILD_FORMAT % [
-                    FactionMark.faction_name(foreign_owner),
+                    foreign_band_name if foreign_band_name != "" else FactionMark.faction_name(foreign_owner),
                     HudComposeVocab.improvement_running_label(String(building.get("policy", ""))).to_lower(),
                     HudFormat.progress_percent(float(building.get("progress", 0.0)))]
             building = {}
@@ -8114,6 +8143,8 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
             # so the row builder cannot ask the question a second way (see `build_stalled`).
             "build_stalled": build_stalled,
             "foreign_build": foreign_build,
+            "foreign_band_id": foreign_band_id,
+            "foreign_band_name": foreign_band_name,
             "floor": floor, "improvement": improvement, "x": x, "y": y, "herd_id": herd_id,
             # **WHERE THE PLAYER PUT THIS ROW WHEN THE BAND RUNS SHORT** (`docs/plan_standing_upkeep.md`
             # §4.9 item 9b) — one of the three WORDS, normalized by `effective_worker_map`. It rides
@@ -12301,6 +12332,25 @@ func jump_to_band_entity(entity: int) -> void:
     if band.is_empty():
         return
     _select_band_on_map(band)
+
+## **THE WORK ROW'S BUILDER LINK**: recentre the map on the band that builds a source and select it. Our
+## own band takes the cycler's path (`_select_band_on_map`); a foreign band in sight is focused and
+## picked in the tile roster, never made the panel's subject. A band the roster does not hold is a no-op.
+func jump_to_builder_band(band_id: int) -> void:
+    var band := _band_labor.band_entry_for_id(band_id)
+    if band.is_empty():
+        return
+    if HudConst.is_player_unit(band):
+        _select_band_on_map(band)
+        return
+    var x := int(band.get("current_x", -1))
+    var y := int(band.get("current_y", -1))
+    if x >= 0 and y >= 0:
+        emit_signal("alert_focus_requested", x, y)
+    var entity := int(band.get("entity", -1))
+    if not _selectioncard.find_roster_unit(entity).is_empty():
+        _selectioncard.select_roster_occupant("unit", entity)
+        emit_signal("roster_occupant_selected", "unit", entity)
 
 ## Walk to the next/prev subject (cycler ◀/▶) over `[the faction page] + player_bands()`.
 ##

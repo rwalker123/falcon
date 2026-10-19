@@ -719,7 +719,8 @@ func _tile_terrain_lines(tile_info: Dictionary,
         # of this viewer's crew-dependent readings.
         var foreign_owner := RungQuotes.foreign_owner(tile_info, prefix)
         if foreign_owner != RungQuotes.NO_FOREIGN_OWNER and not reached:
-            lines.append("%s: %s" % [row_key, DetailFormat.foreign_rung_value(foreign_owner, progress)])
+            lines.append("%s: %s" % [row_key, DetailFormat.foreign_rung_value(foreign_owner, progress,
+                _band_labor.builder_label(RungQuotes.builder_band(tile_info, prefix)))])
             continue
         var value := DetailFormat.rung_row_value(tile_info, prefix, verb,
             SourceForecast.SOURCE_KIND_FORAGE, DetailFormat.rung_built_label(verb, tile_info, prefix),
@@ -911,7 +912,8 @@ func _render_occupant_drawer(from_selection: bool = false) -> void:
         lines = DetailFormat.herd_summary_lines(_selection.herd(), _band_labor.world_herds(),
             _band_labor.unstaffed_build_hunt(String(_selection.herd().get("id", ""))),
             _band_labor.build_crew_hunt(String(_selection.herd().get("id", ""))), ctx,
-            _band_labor.working_floor_hunt(String(_selection.herd().get("id", ""))))
+            _band_labor.working_floor_hunt(String(_selection.herd().get("id", ""))),
+            _band_labor.builder_label(RungQuotes.builder_band(_selection.herd())))
     _occupant_detail.text = DetailFormat.detail_bbcode(lines, ctx)
     # …and the animal web's half of the same hover, on the drawer that describes one herd.
     DetailFormat.wire_row_hovers(_occupant_detail, ctx)

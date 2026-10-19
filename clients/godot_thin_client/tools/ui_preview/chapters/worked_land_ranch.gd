@@ -13,7 +13,7 @@ extends RefCounted
 ## catalog's tier row: a pen below it says how many rings reach it, a pen in it says what it does.
 
 ## The checkpoints this chapter owes the walk -- assertions made plus frames saved, as a FLOOR.
-const EXPECTED_CHECKPOINTS := 51
+const EXPECTED_CHECKPOINTS := 58
 
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 const ForageFx := preload("res://tools/ui_preview/fixtures_forage.gd")
@@ -341,6 +341,7 @@ func _another_peoples_build() -> void:
 		RungQuotes.blocked_by_owner(theirs, HudComposeVocab.FORAGE_FORECAST_PREFIX)
 			and not RungQuotes.blocked_by_owner(ours, HudComposeVocab.FORAGE_FORECAST_PREFIX))
 	await _another_peoples_herd()
+	await _builder_band_names()
 	FactionNames.reset()
 
 const OTHER_TAME_PROGRESS := 0.3
@@ -393,3 +394,54 @@ func _another_peoples_herd() -> void:
 	h._assert_hud("...and our own herd keeps its control",
 		not _herd_sheet_state(ours).begins_with(HudWidgets.IMPROVEMENT_STATE_FOREIGN))
 
+const BUILDER_BAND_ID := 77
+const BUILDER_BAND_NAME := "Netherford"
+const OWN_BAND_NAME := "Peatmoor"
+const OWN_PEOPLE := "Thornfolk"
+
+## `owner_faction`'s 20% patch whose builder band is `builder_band` (0 = the wire names none).
+func _built_patch(owner_faction: int, builder_band: int) -> Dictionary:
+	var tile := _owned_patch(owner_faction)
+	tile["patch_builder_band"] = builder_band
+	return tile
+
+func _band_row(id: String, entity: int, faction: int, size: int) -> Dictionary:
+	return {"id": id, "entity": entity, "faction": faction, "size": size,
+		"pos": [OFF_SITE_X, OFF_SITE_Y], "current_x": OFF_SITE_X, "current_y": OFF_SITE_Y,
+		"activity": "idle", "working_age": 10, "idle_workers": 0, "output_multiplier": 1.0,
+		"turns_of_food": 20.0, "labor_assignments": []}
+
+func _builder_band_names() -> void:
+	FactionNames.update([{"faction": 0, "name": OWN_PEOPLE}, {"faction": OTHER_PEOPLE, "name": "Lothari"}])
+	h._hud._band_labor.set_foreign_bands([{"band_id": BUILDER_BAND_ID, "entity": 777, "name": BUILDER_BAND_NAME,
+		"faction": OTHER_PEOPLE, "current_x": 70, "current_y": 5, "size": 22}])
+	var named := _built_patch(OTHER_PEOPLE, BUILDER_BAND_ID)
+	var named_lines: Array = h._hud._drawer._tile_terrain_lines(named, DetailFormat.Context.new())
+	h._assert_hud("tile card: a named builder reads `Band, People`",
+		_row_value(named_lines, DetailFormat.CULTIVATION_ROW) == "\u2691 Netherford, Lothari \u00b7 20%")
+	h._assert_hud("compose sheet: a named builder reads `Band, People is cultivating this`",
+		_sheet_state(named) == "%s|Netherford, Lothari is cultivating this" % HudWidgets.IMPROVEMENT_STATE_FOREIGN)
+	var gone := _built_patch(OTHER_PEOPLE, BUILDER_BAND_ID + 1)
+	var gone_lines: Array = h._hud._drawer._tile_terrain_lines(gone, DetailFormat.Context.new())
+	h._assert_hud("...a builder the roster does not hold falls back to the people alone",
+		_row_value(gone_lines, DetailFormat.CULTIVATION_ROW) == OTHER_TILE_ROW)
+	# EVERY band row, ours included, reads `Band, People`.
+	var tile := TileFx.three_role_tile_fixture()
+	tile["x"] = OFF_SITE_X
+	tile["y"] = OFF_SITE_Y
+	tile["units"] = [_band_row(OWN_BAND_NAME, 901, 0, 30), _band_row(BUILDER_BAND_NAME, 902, OTHER_PEOPLE, 22)]
+	h._hud._compose.reset_forage_source()
+	h._show_tile(tile)
+	await h._settle()
+	await h._save("tile_panel_band_people")
+	h._assert_hud("tile panel: our own band row reads `Peatmoor, Thornfolk`",
+		Q.has_label_containing(h._hud.subject_list, "Peatmoor, Thornfolk"))
+	h._assert_hud("tile panel: a foreign band row reads `Netherford, Lothari`",
+		Q.has_label_containing(h._hud.subject_list, "Netherford, Lothari"))
+	var widest := 0.0
+	for row in h._hud.subject_list.get_children():
+		if row is Button:
+			widest = maxf(widest, (row.get_child(0) as Control).get_combined_minimum_size().x)
+	h._assert_hud("tile panel: the widest band row (%d) fits the list (%d)" % [int(widest), int(h._hud.subject_list.size.x)],
+		widest <= h._hud.subject_list.size.x)
+	h._hud._band_labor.set_foreign_bands([])

@@ -448,7 +448,7 @@ func _first_herd_has_owner(frame: Dictionary) -> bool:
 	if herds.is_empty():
 		return false
 	var herd := herds[0] as Dictionary
-	return herd.has("has_owner") and herd.has("owner")
+	return herd.has("has_owner") and herd.has("owner") and herd.has("builder_band")
 
 
 func _diplomacy_probe(frame: Dictionary) -> Dictionary:
@@ -481,7 +481,7 @@ func _assert_diplomacy_witnesses(baseline: Dictionary, frame1: Dictionary, frame
 	if not bool(before["dealing_has_terms"]):
 		_die("the decoded dealing rows carry no `terms` key: the client reads an offer as a gift on it.")
 	if not bool(before["herd_has_owner"]):
-		_die("the decoded herd rows carry no `has_owner` / `owner` keys: the client names another people's taming on them.")
+		_die("the decoded herd rows carry no `has_owner` / `owner` / `builder_band` keys: the client names another people's taming on them.")
 	if not bool(before["dealing_has_party_band"]):
 		_die("the decoded dealing rows carry no `party_band` key: the client joins a dealing to its party on it.")
 	if int(before["dealing_count"]) == 0 or int(before["treaty_formed"]) < 0 or not bool(before["has_cuts"]):

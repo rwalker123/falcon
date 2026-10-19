@@ -1898,6 +1898,8 @@ const WORK_ROW_BUILDING_FORMAT := "%s%d%%"
 ## participle (lowercased) and the percent, in WARN ink at the head of line two. Not ours: nothing here moves it.
 const WORK_ROW_FOREIGN_BUILD_FORMAT := "%s %s · %d%%"
 const WORK_ROW_FOREIGN_BUILD_META := &"work_row_foreign_build"
+## On the band-name link of that line: the `BandId` it jumps to.
+const WORK_ROW_FOREIGN_BAND_META := &"work_row_foreign_band"
 
 const WORK_ROW_BUILDING_TOOLTIP_FORMAT := "%s in progress — %d%% done."
 

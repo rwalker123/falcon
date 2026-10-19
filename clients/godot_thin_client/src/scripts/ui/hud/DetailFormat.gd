@@ -2251,8 +2251,8 @@ static func rung_value_color(value: String, built_needle: String = "") -> Color:
 
 ## **A METER ANOTHER PEOPLE OWNS**: `⚑ Lothari · 20%`. Only the owner's work moves it, so a bare percent
 ## would read as the viewer's own build.
-static func foreign_rung_value(owner_faction: int, progress: float) -> String:
-    return HudSelectionVocab.RUNG_FOREIGN_FORMAT % [FactionMark.faction_name(owner_faction),
+static func foreign_rung_value(owner_faction: int, progress: float, builder_name: String = "") -> String:
+    return HudSelectionVocab.RUNG_FOREIGN_FORMAT % [HudFormat.band_with_people(builder_name, owner_faction),
         HudFormat.progress_percent(progress)]
 
 ## A quantity of WORK UNITS: whole numbers bare (`50`), fractions to one place (`17.6`). One unit is
@@ -3957,7 +3957,8 @@ static func _breakdown_row(value: float, magnitude: String, label: String) -> St
 static func herd_summary_lines(herd_data: Dictionary, world_herds: Array,
         unstaffed_build: String = SourceForecast.IMPROVEMENT_NONE,
         build_crew: int = SourceForecast.BUILD_CREW_NONE,
-        ctx: Context = null, blocked_floor: float = BLOCKED_FLOOR_UNKNOWN) -> Array[String]:
+        ctx: Context = null, blocked_floor: float = BLOCKED_FLOOR_UNKNOWN,
+        builder_name: String = "") -> Array[String]:
     var lines: Array[String] = []
     # A predator is a hunter, not quarry — the SAME `prey_sense_radius > 0` signal the map's prey-sense
     # ring keys on (carnivore == 4, herbivore == 0). A herbivore's drawer is byte-for-byte unchanged.
@@ -4053,7 +4054,7 @@ static func herd_summary_lines(herd_data: Dictionary, world_herds: Array,
             var foreign_owner := RungQuotes.foreign_owner(herd_data, herd_prefix)
             if foreign_owner != RungQuotes.NO_FOREIGN_OWNER and not reached:
                 if progress > BUILD_METER_EMPTY:
-                    lines.append("%s: %s" % [row_key, foreign_rung_value(foreign_owner, progress)])
+                    lines.append("%s: %s" % [row_key, foreign_rung_value(foreign_owner, progress, builder_name)])
                 continue
             var rung_label := rung_built_label(verb, herd_data, herd_prefix)
             if reached and enclosed:

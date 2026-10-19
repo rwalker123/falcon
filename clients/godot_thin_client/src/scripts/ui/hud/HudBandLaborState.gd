@@ -784,6 +784,20 @@ func set_foreign_bands(bands: Array) -> void:
 		if band_id != HudConst.NO_BAND_ID:
 			_foreign_bands[band_id] = band
 
+## The roster's row for a band by `BandId` -- ours, else a foreign band in sight -- or `{}`.
+func band_entry_for_id(band_id: int) -> Dictionary:
+	if band_id == HudConst.NO_BAND_ID:
+		return {}
+	for candidate_variant in _player_bands:
+		if int((candidate_variant as Dictionary).get("band_id", HudConst.NO_BAND_ID)) == band_id:
+			return candidate_variant
+	return _foreign_bands.get(band_id, {})
+
+## What to call the band that builds a source, `""` when the roster does not hold it.
+func builder_label(band_id: int) -> String:
+	var entry := band_entry_for_id(band_id)
+	return "" if entry.is_empty() else HudFormat.band_name(entry)
+
 ## The visible foreign band with this id, or `{}`.
 func foreign_band(band_id: int) -> Dictionary:
 	return _foreign_bands.get(band_id, {})

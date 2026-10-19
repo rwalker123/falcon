@@ -2148,7 +2148,9 @@ func _build_improvement_control(kind: String, source: Dictionary, prefix: String
     # **ANOTHER PEOPLE'S SOURCE OFFERS THIS VIEWER NO BUILD CONTROL**: the sim refuses an ownership-gated
     # rung there, so one line says whose it is instead of a control the server would refuse.
     if RungQuotes.blocked_by_owner(source, prefix):
-        var owner_name := FactionMark.faction_name(RungQuotes.foreign_owner(source, prefix))
+        var owner_name := HudFormat.band_with_people(
+            _band_labor.builder_label(RungQuotes.builder_band(source, prefix)),
+            RungQuotes.foreign_owner(source, prefix))
         var owner_line := Label.new()
         owner_line.text = (HudComposeVocab.IMPROVEMENT_FOREIGN_RUNNING_FORMAT % [owner_name,
                 HudComposeVocab.improvement_running_label(running_verb).to_lower()]) \
