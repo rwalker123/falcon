@@ -284,6 +284,7 @@ fn pools_freely(a: &Node, b: &Node) -> bool {
 #[allow(clippy::too_many_arguments)] // The geometry a hex distance needs, plus the two reaches.
 fn link_holds(
     roads: &crate::routes::RoadRegistry,
+    access: &crate::routes::RoadAccess<'_>,
     a: UVec2,
     b: UVec2,
     free_reach: u32,
@@ -295,6 +296,7 @@ fn link_holds(
     hex_distance_wrapped(a, b, width, wrap)
         <= free_pooling_reach_tiles(
             roads,
+            access,
             a,
             b,
             free_reach,
@@ -320,6 +322,7 @@ fn link_holds(
 #[allow(clippy::too_many_arguments)] // The geometry a hex distance needs, plus the two reaches.
 pub fn free_pooling_reach_tiles(
     roads: &crate::routes::RoadRegistry,
+    access: &crate::routes::RoadAccess<'_>,
     a: UVec2,
     b: UVec2,
     free_reach: u32,
@@ -333,7 +336,7 @@ pub fn free_pooling_reach_tiles(
         return free_reach;
     }
     let path = crate::routes::trace_path(a, b, width, height, wrap, roads);
-    free_reach.max(crate::routes::path_reach_tiles(roads, &path))
+    free_reach.max(crate::routes::path_reach_tiles(roads, &path, access))
 }
 
 /// ⛔ **HOW FAR PEOPLE WALK — THE ONE ROAD-AWARE "WITHIN REACH" TEST** for a band's people on foot.
@@ -364,6 +367,9 @@ pub struct WalkReach {
     pub width: u32,
     pub height: u32,
     pub wrap: bool,
+    /// What a foreigner's walk over a built road is worth (`diplomacy_config.json` → `roads`), so a
+    /// walk reads a road as **its people** would ([`crate::routes::road_reach_for`]).
+    pub foreign: crate::routes::ForeignRoads,
 }
 
 impl WalkReach {
@@ -373,6 +379,7 @@ impl WalkReach {
         base_reach: f32,
         supply: &crate::supply_network_config::SupplyNetworkConfig,
         ladder: &crate::intensification::LadderConfig,
+        foreign: crate::routes::ForeignRoads,
         width: u32,
         height: u32,
         wrap: bool,
@@ -384,6 +391,7 @@ impl WalkReach {
             width,
             height,
             wrap,
+            foreign,
         }
     }
 
@@ -398,8 +406,16 @@ impl WalkReach {
         (self.base_reach + self.max_road_bonus() as f32).floor() as u32
     }
 
-    /// Whether `b` is within walking reach of `a` over the roads in `roads`.
-    pub fn within(&self, roads: &crate::routes::RoadRegistry, a: UVec2, b: UVec2) -> bool {
+    /// Whether `b` is within walking reach of `a` over the roads in `roads`, **as `walker`'s people
+    /// read those roads** (a foreigner's walk over a built road is worth a share of it unless a
+    /// road-rights treaty joins the two peoples).
+    pub fn within(
+        &self,
+        roads: &crate::routes::RoadRegistry,
+        walker: crate::routes::Walker<'_>,
+        a: UVec2,
+        b: UVec2,
+    ) -> bool {
         let distance = hex_distance_wrapped(a, b, self.width, self.wrap);
         if distance as f32 <= self.base_reach {
             return true;
@@ -408,8 +424,13 @@ impl WalkReach {
         if distance > self.max_reach_tiles() {
             return false;
         }
+        let access = crate::routes::RoadAccess {
+            walker,
+            foreign: self.foreign,
+        };
         let road_bonus = free_pooling_reach_tiles(
             roads,
+            &access,
             a,
             b,
             self.free_reach,
@@ -426,7 +447,12 @@ impl WalkReach {
     /// exactly the tiles `t` for which `self.within(roads, t, target)` holds, with the standing tile
     /// FIRST as every reader calls it. Bounded: the candidates are the hex disk of
     /// [`Self::max_reach_tiles`] around `target`, the same bound `within` refuses past.
-    pub fn region_around(&self, roads: &crate::routes::RoadRegistry, target: UVec2) -> Vec<UVec2> {
+    pub fn region_around(
+        &self,
+        roads: &crate::routes::RoadRegistry,
+        walker: crate::routes::Walker<'_>,
+        target: UVec2,
+    ) -> Vec<UVec2> {
         let mut region: Vec<UVec2> = crate::grid_utils::hex_range_tiles(
             target,
             self.max_reach_tiles(),
@@ -435,7 +461,7 @@ impl WalkReach {
             self.wrap,
         )
         .into_iter()
-        .filter(|&standing| self.within(roads, standing, target))
+        .filter(|&standing| self.within(roads, walker, standing, target))
         .collect();
         region.sort_by_key(|tile| (tile.y, tile.x));
         region
@@ -604,6 +630,9 @@ pub fn balance_supply_networks(
     // recorded link banks. Both are read through their seams rather than off a rung record.
     ladder: Res<crate::intensification::LadderConfigHandle>,
     mut route_traffic: ResMut<crate::routes::RouteTrafficLog>,
+    // **Whose feet are on the road**: a link is read as the pooling people reads it, so a foreign
+    // keeper's built road holds a share of its reach open unless a road-rights treaty joins the two.
+    rights: crate::routes::RoadRights,
     // `With<ResidentBand>`: an expedition manages its own larder — its drop-off is the explicit
     // fold-back on arrival, not a passive supply-network leak — so it is excluded here.
     // **The food ledger's transfer terms ride here**, because this system is one of their writers:
@@ -618,6 +647,7 @@ pub fn balance_supply_networks(
     membership.clear();
     let cfg = config.get();
     let ladder = ladder.get();
+    let foreign = rights.foreign(&ladder);
     let width = tile_registry.width;
     let height = tile_registry.height;
     let wrap = sim_config.map_topology.wrap_horizontal;
@@ -733,6 +763,7 @@ pub fn balance_supply_networks(
                     if pools_freely(&nodes[i], &nodes[j])
                         && link_holds(
                             &roads,
+                            &rights.access(nodes[i].faction, foreign),
                             nodes[i].pos,
                             nodes[j].pos,
                             cfg.reach_tiles,

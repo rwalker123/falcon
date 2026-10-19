@@ -438,6 +438,47 @@ tense — and it is what makes the top rungs a **capability** rather than a disc
 `Road::standing` is. A supply pass that resolved it would take a `LadderConfigHandle` to re-derive a
 number the road already knows, and every harness that stands the pooling up would have to hand it one.
 
+### A standing link is the SAME tile set, asked a different question
+
+`routes::standing_link(roads, a, b, width, height, wrap, floor)` is true when every tile of the
+`trace_path` between two camps carries a road that is `keeping_is_met` and held at `floor` or above
+(`diplomacy_config.json` → `offers.standing_link_min_rung`, opening `route:dirt_road`). It reads
+exactly the tiles `path_reach_tiles` reads, through the same trace and the same keeping filter, so
+the reach a road buys and the standing link it makes can never be two runs of ground; where
+`path_reach_tiles` takes the weakest tile's *reach*, this asks the weakest tile's *rung*. Early
+diplomacy reads it for stage-4 haggling and for the link's goodwill (`diplomacy.md`).
+
+### A foreigner's walk reads a share of a built road (#233, `docs/plan_early_diplomacy.md` §3)
+
+`routes::path_reach_tiles(registry, path, access)` takes a [`RoadAccess`] — **whose feet are on the
+road** — and reads each tile through one function beside it, `routes::road_reach_for`:
+
+```text
+full                                        a path or a trail (traffic made them), a road nobody keeps,
+                                            the walker's own people's road, a road a road-rights treaty
+                                            joins to the walker's people
+max(trail_reach, floor(full × share))       a BUILT road (>= the first built rung) kept by another people,
+  (capped at full)                          `share` = diplomacy_config.json → roads.foreign_road_share
+```
+
+`access` is `{ walker: Walker { people, treaties }, foreign: ForeignRoads { share, trail_reach } }`.
+**Only the reading changes**: which tiles qualify as a kept road, and so [`standing_link`], is
+untouched, and `path_friction_multiplier` and `path_lesson_rung` are untouched. `trail_reach` is the
+free floor's top rung's reach, read off the ladder (`trail_reach_tiles`).
+
+**Every caller says whose feet they are**, and the sweep is the rule: `supply::free_pooling_reach_tiles`
+and `link_holds` (pooling, read as the *larder's* people), `WalkReach::within` / `region_around`
+(the unhappy trickle and the breeding shed through `walkable_destination`, the culture term's anchor
+and belief relay — the leavers' / kin's own people), `work_party::resolve_walk` (a posting, the
+assign-time seed and the compose query — the band's own people). Systems take the inputs as a
+`RoadRights` `SystemParam` (`treaties` + the diplomacy config's share, both optional so a hand-rolled
+world reads no treaties and the builtin share); a `&World` caller uses `road_access_in_world`.
+
+⛔ **The connection LESSON stays distance-only** (`credit_route_lessons` reads
+`RoadAccess::NEUTRAL`): the lesson is credited per connection, to both ends, and a connection has no
+single walker. `RoadAccess::NEUTRAL` (every road full for anyone) is the reading for any caller with
+no one walking.
+
 ## The one-turn lag is the ledger's, and it is accepted for the ledger's reason
 
 `balance_supply_networks` runs in `TurnStage::Logistics` and **`routes::advance_roads` runs after it**

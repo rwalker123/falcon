@@ -164,6 +164,11 @@ signal upkeep_mode_requested(payload: Dictionary)
 ## `set_open_borders <faction> open|closed`. A FACTION policy — whether another people's leavers and
 ## defecting parties may join this people's bands. RELAYED from `BandPanelController`, its only emitter.
 signal open_borders_requested(payload: Dictionary)
+## Emitted for the diplomacy verbs (early diplomacy, issue #233): answering a dealing, proposing a trade
+## over a standing link, and the faction page's gift toggle. `payload["command"]` names the verb
+## (`Main.DIPLOMACY_*`) and `Main.format_diplomacy_command` spells it. RELAYED from
+## `BandPanelController`, its only emitter.
+signal diplomacy_command_requested(payload: Dictionary)
 ## Emitted when the player presses **Make** (count 1) or a suggestion's **Queue** (its whole count) in
 ## Materials & Crafting — an ORDER joins the back of the band's bench queue and nobody is recruited
 ## onto it. **The player staffs the bench and the sim never does**, so there is no crew argument here:
@@ -775,6 +780,8 @@ func _ready() -> void:
         func(payload: Dictionary) -> void: upkeep_mode_requested.emit(payload))
     _bandpanel.open_borders_requested.connect(
         func(payload: Dictionary) -> void: open_borders_requested.emit(payload))
+    _bandpanel.diplomacy_command_requested.connect(
+        func(payload: Dictionary) -> void: diplomacy_command_requested.emit(payload))
     # The BUILD QUEUE block's row `✕` (`docs/plan_standing_upkeep.md` §4.6b) joins the compose
     # sheet's uncheck on the ONE `unqueue_requested` edge — the payloads are identical, so
     # `Main.format_unqueue` serves both without knowing which control withdrew the entry.
@@ -902,6 +909,9 @@ func _ready() -> void:
     _attention = AttentionController.new(_band_labor, _bandpanel, _herd_label_for_id)
     _attention.alert_focus_requested.connect(
         func(x: int, y: int) -> void: alert_focus_requested.emit(x, y))
+    # A "a people awaits your answer" orb row brings the receiving band's Trade (or Peoples) tab forward.
+    _turnorb.dealings_focus_requested.connect(
+        func(band_id: int) -> void: _bandpanel.focus_dealings(band_id))
     # The faction page's Work and Parties tabs read the same alerts the orb does. Handed over HERE
     # rather than in `_bandpanel`'s construction because `_attention` takes `_bandpanel` itself, so the
     # two cannot both be constructed with the other in hand.
@@ -1109,6 +1119,11 @@ func update_faction_policies(policies_variant: Variant) -> void:
     _topbar.update_faction_policies(policies_variant)
     if _bandpanel != null and _bandpanel.is_faction_page():
         _bandpanel.rerender()
+    # The gift setting lives at the top of the Trade tab's waiting section, and the border overrides on
+    # the Peoples tab: re-fill both in place.
+    if _bandpanel != null:
+        _bandpanel.refresh_dealings()
+        _bandpanel.refresh_connections()
 
 ## **THE LADDER'S KNOWLEDGE ROSTER** (arc #532 / `docs/plan_knowledge_screen.md`) — what there IS to
 ## learn, per world. A thin delegator because `Main` reaches it BY NAME through `_hud_invoke`, whose
@@ -1335,6 +1350,38 @@ func update_herds(herds_variant: Variant) -> void:
     _band_labor.set_world_herds(herds_variant)
     _targeting.refresh_live_targets()
 
+## **THE VIEWER'S PENDING DEALINGS** (early diplomacy) -- offers, proposals, counters and treaty
+## proposals addressed to this people or sent by it. A thin delegator because `Main` reaches it BY NAME
+## through `_hud_invoke`. Three things follow a frame that moves it, none of which waits for a turn:
+## the open Trade tab's waiting list (and the Peoples tab's treaty proposals) is re-filled in place, the orb's "awaits your answer" half is rebuilt
+## (**the answer window is ONE turn**, so the row cannot trail the offer by a `populations` frame), and
+## the tab badge is re-pushed.
+func update_dealings(dealings_variant: Variant) -> void:
+    _band_labor.set_dealings(dealings_variant)
+    _turnorb.set_dealing_attention(_attention.build_dealing_attention())
+    _bandpanel.refresh_dealings()
+
+## **THE VIEWER'S TRADE HISTORY** -- one record per trade that ended, oldest first, a whole-section
+## replace. A thin delegator because `Main` reaches it BY NAME through `_hud_invoke`. A frame that moves
+## only the history re-fills the open Trade tab's History list in place.
+func update_trade_history(history_variant: Variant) -> void:
+    _band_labor.set_trade_history(history_variant)
+    _bandpanel.refresh_dealings()
+
+## The goodwill section (`{known, own, cuts}`) and the treaty section (`{treaties, standing_links}`).
+## Held for their readers -- the trade sheet's propose mode asks the published standing links; the
+## Peoples tab's goodwill words and treaty rows read them too -- and a frame that moves a standing link re-renders the band page
+## so the offer of the mode follows the sim's answer.
+func update_goodwill(goodwill_variant: Variant) -> void:
+    _band_labor.set_goodwill(goodwill_variant)
+    # The Peoples tab's regard words are read off this section: re-fill in place.
+    _bandpanel.refresh_connections()
+
+func update_treaties(treaties_variant: Variant) -> void:
+    _band_labor.set_treaties(treaties_variant)
+    _bandpanel.refresh_standing_links()
+    _bandpanel.refresh_connections()
+
 ## Ingests the viewer's CONTACT TIES (arc #527) — one directed row per edge, already filtered
 ## sim-side to this faction's observing bands. Two readers: the band page's Peoples tab
 ## (`ConnectionsRoster`) and the trade compose sheet's destination picker, a tie being what gates a
@@ -1379,6 +1426,8 @@ func update_kit_roster(kits_variant: Variant, default_hunt: Variant, default_for
 func update_crafting_catalogues(materials: Variant, characteristic_bands: Variant,
         recipes: Variant, craft_knowledge: Variant) -> void:
     _crafting.set_catalogues(materials, characteristic_bands, recipes, craft_knowledge)
+    # …and the diplomacy sheets' ask lists name goods the band may not hold, so they need the catalogue.
+    _band_labor.set_material_catalog(materials)
     # The knowledge screen reads TWO of the four: the recipe book, for its "is anything made of this
     # craft" join, and the craft tracks, which are its whole CRAFT column. Two readers of one wire
     # field rather than a copy — re-deriving either would be a second answer to a question the
@@ -2095,6 +2144,10 @@ func _recompute_overlays() -> void:
 ## module resets ITSELF; nothing but delegation belongs here.
 func reset_world_state() -> void:
     _topbar.reset_world_state()
+    # The dealings, goodwill and treaties belong to ONE world: their ids and band handles restart in the
+    # next, and a held "awaits your answer" row would name a band that no longer exists.
+    _band_labor.reset_diplomacy()
+    _turnorb.set_dealing_attention([])
     # The Telling is deliberately NOT reset per snapshot (see `TellingPanel.ingest_events`), and this
     # is the one exception: a world CHANGE is not another snapshot of the same story, it is a
     # different story, and the previous world's beats are not part of it.
@@ -2514,6 +2567,16 @@ func update_band_alerts(populations_variant: Variant) -> void:
     for party_variant in player_expeditions:
         var party: Dictionary = party_variant
         band_labels[str(int(party.get("band_id", -1)))] = HudFormat.band_name(party)
+    # …and the bands this faction holds a TIE to, by the name the tie remembers (clock 1): a dealing's
+    # `sender=` / `destination=` is another people's band, which no roster here holds, and the dock would
+    # otherwise print the sim's `band 7`. The roster's own name always wins.
+    for tie_variant in _band_labor.connections():
+        if not (tie_variant is Dictionary):
+            continue
+        var tie: Dictionary = tie_variant
+        var tied_key := str(int(tie.get("subject_band_id", -1)))
+        if not band_labels.has(tied_key) and String(tie.get("subject_name", "")) != "":
+            band_labels[tied_key] = String(tie.get("subject_name", ""))
     band_labels_changed.emit(band_labels)
     # 4. Feed the band/expedition half to the turn-orb controller, which caches it and pushes the whole
     # registry (bands + the fork producer) as ONE replace — set_attention is wholesale, so a separate

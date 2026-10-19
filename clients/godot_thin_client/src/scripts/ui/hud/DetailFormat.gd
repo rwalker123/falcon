@@ -1403,20 +1403,39 @@ static func offsite_crop_label(tile_info: Dictionary) -> String:
     return RungQuotes.name_of(RungQuotes.offsite_placing_quote(
         tile_info, HudComposeVocab.FORAGE_FORECAST_PREFIX)).to_lower()
 
-## **THE TEACHING LINE FOR GROUND A LESSON WOULD OPEN**, `""` unless the server answered `needs_lesson`
-## for a placing rung. `Learn Worked Land — work a farm`: the lesson's own name off the knowledge roster
-## (`labels`, `{knowledge_id: display_name}`), the rung that teaches it off the catalog. Two lines at
-## most on the card; with no teaching rung to name it states the lesson alone.
-static func site_lesson_line(tile_info: Dictionary, labels: Dictionary) -> String:
+## **THE `Farming` ROW'S VALUE, FOR GROUND A LESSON WOULD OPEN**, `""` unless it is USEFUL: the server
+## answered `needs_lesson` for a placing rung AND this people can already raise that rung today -- the
+## rung's own gate (the catalog's `unlock_knowledge` on the quote) is met in `knowledge`
+## (`{knowledge_id: progress}`), so working one would really teach the lesson. Before that the row is
+## absent: it would tell a people that cannot farm anywhere yet to go and farm. It names the lesson alone
+## (off the roster, `labels`): the people already farm, so the row says only what they still lack, and the
+## hover says what teaches it.
+static func site_lesson_line(tile_info: Dictionary, labels: Dictionary, knowledge: Dictionary) -> String:
+    var parts := _site_lesson_parts(tile_info, labels, knowledge)
+    if parts.is_empty():
+        return ""
+    return HudFloraVocab.SITE_LESSON_FORMAT % String(parts["lesson"])
+
+## The row's hover, `""` exactly where the row is absent.
+static func site_lesson_tooltip(tile_info: Dictionary, labels: Dictionary, knowledge: Dictionary) -> String:
+    var parts := _site_lesson_parts(tile_info, labels, knowledge)
+    if parts.is_empty():
+        return ""
+    if String(parts["teacher"]) == "":
+        return HudFloraVocab.SITE_LESSON_TOOLTIP_BARE
+    return HudFloraVocab.SITE_LESSON_TOOLTIP_FORMAT % [String(parts["teacher"]), String(parts["lesson"])]
+
+static func _site_lesson_parts(tile_info: Dictionary, labels: Dictionary, knowledge: Dictionary) -> Dictionary:
     var prefix: String = HudComposeVocab.FORAGE_FORECAST_PREFIX
     var lesson := RungQuotes.lesson_to_place(tile_info, prefix)
     if lesson == "":
-        return ""
-    var lesson_name := String(labels.get(lesson, lesson.capitalize()))
-    var teacher := RungQuotes.rung_teaching(tile_info, prefix, lesson).to_lower()
-    if teacher == "":
-        return HudFloraVocab.SITE_LESSON_FORMAT % lesson_name
-    return HudFloraVocab.SITE_LESSON_TEACHER_FORMAT % [lesson_name, teacher]
+        return {}
+    if RungGates.knowledge_gate_unmet(RungQuotes.lesson_placing_quote(tile_info, prefix), knowledge):
+        return {}
+    return {
+        "lesson": String(labels.get(lesson, lesson.capitalize())),
+        "teacher": RungQuotes.rung_teaching(tile_info, prefix, lesson).to_lower(),
+    }
 
 ## **THE ONE ANSWER TO "WHAT FORAGE CAPACITY DOES THIS CARD SHOW"** — the patch's live ceiling where
 ## the player can see it, the tile's own ground `K` where they only remember it. `0.0` where the
@@ -2212,6 +2231,8 @@ const BUILD_PERCENT_EMPTY := 0
 static func rung_value_hex(value: String, built_needle: String) -> String:
     if value.contains(HudSelectionVocab.RUNG_ROTTING_PHRASE):
         return HudStyle.DANGER_HEX
+    if value.contains(HudSelectionVocab.RUNG_FOREIGN_MARK):
+        return HudStyle.WARN_HEX
     if value.contains(HudSelectionVocab.RUNG_HAZARD_GLYPH):
         return HudStyle.WARN_HEX
     if built_needle != "" and value.to_lower().contains(built_needle):
@@ -2227,6 +2248,12 @@ static func rung_value_hex(value: String, built_needle: String) -> String:
 ## empty for the caller that has no badge to match (see above).
 static func rung_value_color(value: String, built_needle: String = "") -> Color:
     return Color.html(rung_value_hex(value, built_needle))
+
+## **A METER ANOTHER PEOPLE OWNS**: `⚑ Lothari · 20%`. Only the owner's work moves it, so a bare percent
+## would read as the viewer's own build.
+static func foreign_rung_value(owner_faction: int, progress: float, builder_name: String = "") -> String:
+    return HudSelectionVocab.RUNG_FOREIGN_FORMAT % [HudFormat.band_with_people(builder_name, owner_faction),
+        HudFormat.progress_percent(progress)]
 
 ## A quantity of WORK UNITS: whole numbers bare (`50`), fractions to one place (`17.6`). One unit is
 ## one worker-turn at the food peak with no gear, so a cost reads itself — and the shipped costs are
@@ -3930,7 +3957,8 @@ static func _breakdown_row(value: float, magnitude: String, label: String) -> St
 static func herd_summary_lines(herd_data: Dictionary, world_herds: Array,
         unstaffed_build: String = SourceForecast.IMPROVEMENT_NONE,
         build_crew: int = SourceForecast.BUILD_CREW_NONE,
-        ctx: Context = null, blocked_floor: float = BLOCKED_FLOOR_UNKNOWN) -> Array[String]:
+        ctx: Context = null, blocked_floor: float = BLOCKED_FLOOR_UNKNOWN,
+        builder_name: String = "") -> Array[String]:
     var lines: Array[String] = []
     # A predator is a hunter, not quarry — the SAME `prey_sense_radius > 0` signal the map's prey-sense
     # ring keys on (carnivore == 4, herbivore == 0). A herbivore's drawer is byte-for-byte unchanged.
@@ -4021,6 +4049,13 @@ static func herd_summary_lines(herd_data: Dictionary, world_herds: Array,
             var declared := verb != "" and unstaffed_build == verb
             var enclosed := RungQuotes.has_trait(quote, RungQuotes.TRAIT_ENCLOSED)
             var row_key := herd_rung_row_key(quote)
+            # Another people's taming in progress: the row names whose it is, in warn ink -- the patch
+            # card's rule, asked through the same predicate.
+            var foreign_owner := RungQuotes.foreign_owner(herd_data, herd_prefix)
+            if foreign_owner != RungQuotes.NO_FOREIGN_OWNER and not reached:
+                if progress > BUILD_METER_EMPTY:
+                    lines.append("%s: %s" % [row_key, foreign_rung_value(foreign_owner, progress, builder_name)])
+                continue
             var rung_label := rung_built_label(verb, herd_data, herd_prefix)
             if reached and enclosed:
                 # A PENNED herd is a managed population: it eats its fenced footprint's grass plus
@@ -4119,8 +4154,12 @@ static func expedition_row_tooltip(exp: Dictionary, phase: String, target_herd: 
     var mission := String(exp.get("expedition_mission", "")).strip_edges().to_lower()
     var collapse_line := expedition_collapse_line(exp, target_herd, denial_view) \
         if mission == HudExpeditionVocab.EXPEDITION_MISSION_DENY else ""
+    # An envoy's hover states the proposal it carries, whole.
+    var envoy_line := HudDealingsVocab.ENVOY_TERMS_FORMAT % HudDealingsVocab.terms_text(
+        Dictionary(exp.get("envoy_terms", {}))) \
+        if mission == HudExpeditionVocab.EXPEDITION_MISSION_ENVOY else ""
     return HudFormat.join_tooltip_lines([
-        expedition_mission_label(mission), HudFormat.status_tooltip_line(phase), collapse_line,
+        expedition_mission_label(mission), envoy_line, HudFormat.status_tooltip_line(phase, mission), collapse_line,
         EXPEDITION_ROW_FOCUS_HINT])
 
 ## **THE IN-FLIGHT DENIAL READOUT** (`docs/plan_denial_raid.md` §3) — the collapse verdict. A denial

@@ -1188,6 +1188,12 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
                     .and_then(|herd| herd.pen_site)
                     .filter(|_| build_kits.herd_is_queued(&entry.id))
                     .map_or(NO_PEN_SITE, |site| site.y as i32),
+                // **Whose herd it is** — no more secret than the rung the row already publishes, and
+                // fog-filtered with the row itself.
+                owner: herd.and_then(|herd| herd.owner).map(|faction| faction.0),
+                builder_band: herd
+                    .and_then(|herd| herd.builder_band)
+                    .map_or(0, |band| band.0),
                 // **EVERY RUNG'S QUOTE** - one row per rung of the herd branch above the root, built
                 // by iterating the ladder; see [`herd_rung_quotes`].
                 rung_quotes: herd_rung_quotes(&HerdQuoteInputs {
@@ -1914,6 +1920,7 @@ pub(crate) fn snapshot_forage_patches(
             x: patch.tile.x,
             y: patch.tile.y,
             owner: patch.owner.map(|faction| faction.0),
+            builder_band: patch.builder_band.map_or(0, |band| band.0),
             biomass: patch.biomass,
             // **WHAT THE PATCH HOLDS NOW — the rung is IN this number.** It is the tile's `K`
             // times the interpolated `field_capacity_gain` (`patch_carrying_capacity`, written

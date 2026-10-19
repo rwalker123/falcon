@@ -653,7 +653,8 @@ static func worst_severity(entries: Array) -> String:
 static func build_parties_zone(labor: HudBandLaborState, herd_label_for_id: Callable, attention: Array,
         open_owner: int, on_toggle: Callable, on_jump: Callable) -> VBoxContainer:
     var col := HudWidgets.make_zone_column()
-    var parties := labor.player_expeditions()
+    # A shipment is the Trade tab's, end to end: it is not a row here and not in this zone's counts.
+    var parties := labor.faction_zone_parties()
     var by_owner := group_attention(attention)
     var block := HudWidgets.make_zone_block()
     var flagged := 0
@@ -705,7 +706,8 @@ static func _party_detail_lines(party: Dictionary) -> Array:
     lines.append([HudWorkVocab.FACTION_PARTY_CREW, str(int(party.get("size", 0)))])
     var phase := String(party.get("expedition_phase", "")).strip_edges()
     if phase != "":
-        lines.append([HudWorkVocab.FACTION_PARTY_PHASE, HudFormat.expedition_phase_label(phase)])
+        lines.append([HudWorkVocab.FACTION_PARTY_PHASE, HudFormat.expedition_phase_label(phase,
+            String(party.get("expedition_mission", "")))])
     return lines
 
 # ---- band zone blocks -------------------------------------------------------

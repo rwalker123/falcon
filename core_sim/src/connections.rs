@@ -42,7 +42,7 @@
 //!
 //! | What decays | Speed | What it means |
 //! |---|---|---|
-//! | [`Connection::last_seen_position`] / [`Connection::subject_name`] | immediately on losing sight | you know where they *were*, and what they were called. Same as a herd. |
+//! | [`Connection::last_seen_position`] / [`Connection::subject_name`] / [`Connection::subject_faction`] | immediately on losing sight | you know where they *were*, what they were called and whose people they belonged to. Same as a herd. |
 //! | [`Connection::strength`] | over turns without contact, down to zero | the currency of what you know. **At zero nothing flows.** |
 //! | the edge itself | very slowly, but not never | eventually you have simply forgotten there was such a people |
 //!
@@ -90,13 +90,14 @@ impl ConnectionKey {
     }
 }
 
-/// **One observation of a subject** — where it stood, on which turn, and the name it answered to.
+/// **One observation of a subject** — where it stood, on which turn, the name it answered to and
+/// the people it belonged to.
 ///
-/// The three travel together because they are one sighting: whoever saw the band saw all three at
+/// The four travel together because they are one sighting: whoever saw the band saw all four at
 /// once, so every place a contact is carried (the turn's [`ContactsThisTurn`], an expedition's
 /// unreported `pending_contacts`) carries this whole, and [`ConnectionLedger::record_contact`]
-/// takes all three or none of them. Splitting the name off would let a fresher position sit beside
-/// a staler name.
+/// takes all four or none of them. Splitting the name or the people off would let a fresher
+/// position sit beside a staler name or a staler people.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Sighting {
     pub position: UVec2,
@@ -106,14 +107,23 @@ pub struct Sighting {
     /// The subject's [`crate::components::BandName`] at `observed_turn`; empty when the subject
     /// carried none.
     pub subject_name: String,
+    /// The people the subject belonged to at `observed_turn`. Captured at the moment of sight,
+    /// exactly like the name.
+    pub subject_faction: FactionId,
 }
 
 impl Sighting {
-    pub fn new(position: UVec2, observed_turn: u64, subject_name: impl Into<String>) -> Self {
+    pub fn new(
+        position: UVec2,
+        observed_turn: u64,
+        subject_name: impl Into<String>,
+        subject_faction: FactionId,
+    ) -> Self {
         Self {
             position,
             observed_turn,
             subject_name: subject_name.into(),
+            subject_faction,
         }
     }
 }
@@ -139,6 +149,11 @@ pub struct Connection {
     /// since died or split while the tie lingers — still be named. A rename the observer has not
     /// seen does not reach it; a connection never grants live knowledge. Empty means unknown.
     pub subject_name: String,
+    /// …and the people they belonged to then. **Clock 1, like the name**: it is the faction the
+    /// subject was last SEEN under, not a live lookup, so a band that has since defected is still
+    /// remembered under its old people until it is seen again. It is carried and published; nothing
+    /// in this module branches on it.
+    pub subject_faction: FactionId,
     /// The turn the tie was last refreshed by a contact event — when the report *reached* the
     /// observer, which for a live sighting is the same turn it was observed. Drives clocks 2 and 3.
     pub last_contact_turn: u64,
@@ -244,6 +259,7 @@ impl ConnectionLedger {
                 last_seen_position: sighting.position,
                 last_seen_turn: sighting.observed_turn,
                 subject_name: sighting.subject_name.clone(),
+                subject_faction: sighting.subject_faction,
                 last_contact_turn: turn,
                 first_contact_turn: turn,
             },
@@ -251,7 +267,7 @@ impl ConnectionLedger {
     }
 
     /// Refresh (or form) the tie `key` from a report that the subject was at `sighting.position`
-    /// under `sighting.subject_name` on `sighting.observed_turn`, which reached the observer on
+    /// under `sighting.subject_name` (of `sighting.subject_faction`) on `sighting.observed_turn`, which reached the observer on
     /// `contact_turn`.
     ///
     /// **The two turns are separate because a report can be old.** A live sighting is observed and
@@ -259,7 +275,7 @@ impl ConnectionLedger {
     /// one turn everywhere; an expedition's comm flush is what makes them differ, reporting on turn
     /// 60 what it saw on turn 40.
     ///
-    /// Clock 1 (`last_seen_position` / `last_seen_turn` / `subject_name`) therefore moves **only
+    /// Clock 1 (`last_seen_position` / `last_seen_turn` / `subject_name` / `subject_faction`) therefore moves **only
     /// when this observation is at least as fresh as the one already held**. A party flushing a stale sighting
     /// still refreshes clocks 2 and 3 — the news arrived, so the tie is live — but it cannot drag
     /// the remembered position backwards to somewhere the subject has since left.
@@ -282,6 +298,7 @@ impl ConnectionLedger {
                     connection.last_seen_position = sighting.position;
                     connection.last_seen_turn = sighting.observed_turn;
                     connection.subject_name.clone_from(&sighting.subject_name);
+                    connection.subject_faction = sighting.subject_faction;
                 }
                 false
             }
@@ -293,6 +310,7 @@ impl ConnectionLedger {
                         last_seen_position: sighting.position,
                         last_seen_turn: sighting.observed_turn,
                         subject_name: sighting.subject_name.clone(),
+                        subject_faction: sighting.subject_faction,
                         last_contact_turn: contact_turn,
                         first_contact_turn: contact_turn,
                     },
@@ -309,7 +327,7 @@ impl ConnectionLedger {
     /// already stamped — so this needs no second copy of the turn's contact set, and cannot
     /// disagree with one.
     ///
-    /// `last_seen_position` / `last_seen_turn` / `subject_name` are deliberately **not** touched:
+    /// `last_seen_position` / `last_seen_turn` / `subject_name` / `subject_faction` are deliberately **not** touched:
     /// clock 1 is exactly the memory of where they were.
     pub fn decay_all(&mut self, turn: u64, cfg: &ConnectionsConfig) -> usize {
         let drain = Scalar::from_f32(cfg.strength.decay_per_turn);
@@ -429,9 +447,12 @@ mod tests {
 
     const SUBJECT_NAME: &str = "Reed People";
     const RENAMED: &str = "Ash People";
+    /// The people the subject belonged to when first seen, and the people a later report names.
+    const SUBJECT_FACTION: FactionId = FactionId(1);
+    const DEFECTED_TO: FactionId = FactionId(2);
 
     fn seen(position: UVec2, observed_turn: u64) -> Sighting {
-        Sighting::new(position, observed_turn, SUBJECT_NAME)
+        Sighting::new(position, observed_turn, SUBJECT_NAME, SUBJECT_FACTION)
     }
 
     #[test]
@@ -511,6 +532,11 @@ mod tests {
             "clock 1 still reports where they were"
         );
         assert_eq!(connection.last_seen_turn, 0);
+        assert_eq!(connection.subject_name, SUBJECT_NAME);
+        assert_eq!(
+            connection.subject_faction, SUBJECT_FACTION,
+            "decay never touches the remembered people"
+        );
     }
 
     #[test]
@@ -586,6 +612,11 @@ mod tests {
 
         let connection = ledger.get(&edge()).expect("the edge formed");
         assert_eq!(connection.last_seen_turn, MARCH_TURN);
+        assert_eq!(connection.subject_name, SUBJECT_NAME);
+        assert_eq!(
+            connection.subject_faction, SUBJECT_FACTION,
+            "formation records the people the subject was seen under"
+        );
         assert_eq!(connection.last_contact_turn, FLUSH_TURN);
         assert_eq!(connection.first_contact_turn, FLUSH_TURN);
     }
@@ -609,7 +640,11 @@ mod tests {
     fn a_fresher_observation_of_the_same_edge_wins() {
         let mut contacts = ContactsThisTurn::default();
         contacts.record(OBSERVER, SUBJECT, seen(SOMEWHERE, 12));
-        contacts.record(OBSERVER, SUBJECT, Sighting::new(ELSEWHERE, 3, RENAMED));
+        contacts.record(
+            OBSERVER,
+            SUBJECT,
+            Sighting::new(ELSEWHERE, 3, RENAMED, DEFECTED_TO),
+        );
         assert_eq!(contacts.len(), 1);
         let held = contacts.iter().next().expect("one contact").1;
         assert_eq!(held.position, SOMEWHERE);
@@ -617,16 +652,25 @@ mod tests {
             held.subject_name, SUBJECT_NAME,
             "a staler observation loses whole — its name with its position"
         );
-        contacts.record(OBSERVER, SUBJECT, Sighting::new(ELSEWHERE, 20, RENAMED));
+        assert_eq!(
+            held.subject_faction, SUBJECT_FACTION,
+            "…and its people with its position"
+        );
+        contacts.record(
+            OBSERVER,
+            SUBJECT,
+            Sighting::new(ELSEWHERE, 20, RENAMED, DEFECTED_TO),
+        );
         let held = contacts.iter().next().expect("one contact").1;
         assert_eq!(held.position, ELSEWHERE);
         assert_eq!(held.subject_name, RENAMED);
+        assert_eq!(held.subject_faction, DEFECTED_TO);
     }
 
-    /// **The name is clock 1**: a stale report under a different name cannot overwrite the name the
-    /// observer last saw them under, and a fresher one does.
+    /// **The name and the people are clock 1**: a stale report under a different name or people
+    /// cannot overwrite what the observer last saw them as, and a fresher one does.
     #[test]
-    fn the_remembered_name_moves_with_the_remembered_position() {
+    fn the_remembered_name_and_people_move_with_the_remembered_position() {
         const SEEN_TURN: u64 = 50;
         const MARCH_TURN: u64 = 40;
         const LATER_TURN: u64 = 55;
@@ -636,20 +680,24 @@ mod tests {
         ledger.record_contact(edge(), &seen(SOMEWHERE, SEEN_TURN), SEEN_TURN, &cfg);
         ledger.record_contact(
             edge(),
-            &Sighting::new(ELSEWHERE, MARCH_TURN, RENAMED),
+            &Sighting::new(ELSEWHERE, MARCH_TURN, RENAMED, DEFECTED_TO),
             LATER_TURN,
             &cfg,
         );
+        let held = ledger.get(&edge()).expect("the edge");
+        assert_eq!(held.subject_name, SUBJECT_NAME);
         assert_eq!(
-            ledger.get(&edge()).expect("the edge").subject_name,
-            SUBJECT_NAME
+            held.subject_faction, SUBJECT_FACTION,
+            "a stale report cannot move the remembered people either"
         );
         ledger.record_contact(
             edge(),
-            &Sighting::new(ELSEWHERE, LATER_TURN, RENAMED),
+            &Sighting::new(ELSEWHERE, LATER_TURN, RENAMED, DEFECTED_TO),
             LATER_TURN,
             &cfg,
         );
-        assert_eq!(ledger.get(&edge()).expect("the edge").subject_name, RENAMED);
+        let held = ledger.get(&edge()).expect("the edge");
+        assert_eq!(held.subject_name, RENAMED);
+        assert_eq!(held.subject_faction, DEFECTED_TO);
     }
 }

@@ -268,6 +268,7 @@ func _ready() -> void:
 	await _drive_set_starting_loadout()
 	await _drive_bench_queue()
 	await _drive_bench_kit_orders()
+	await _drive_diplomacy()
 
 	_assert_every_command_emitted()
 	_assert_every_role_is_emittable()
@@ -981,7 +982,7 @@ func _connect_recorders() -> void:
 	_hud.move_band_requested.connect(func(p: Dictionary) -> void:
 		_record("move_band", p, MAIN_SCRIPT.format_move_band(p)))
 	_hud.send_expedition_requested.connect(func(p: Dictionary) -> void:
-		_record("send_expedition", p, MAIN_SCRIPT.format_send_expedition(p)))
+		_record("send_expedition", p, MAIN_SCRIPT.format_send_expedition(p), {}, _take_expectation()))
 	_hud.send_denial_raid_requested.connect(func(p: Dictionary) -> void:
 		_record("send_denial_raid", p, MAIN_SCRIPT.format_send_denial_raid(p)))
 	_hud.recall_expedition_requested.connect(func(p: Dictionary) -> void:
@@ -1019,6 +1020,13 @@ func _connect_recorders() -> void:
 	# **THE SHIPMENT RECORDS ITS PILES BESIDE ITS LINE.** They are the only thing the emitted amounts
 	# mean anything against, and they are stated in the sim's own TICKS so the comparison is exact —
 	# see the header. The cargo ids are the sender's own store keys, which is what the parser rebuilds.
+	# **THE DIPLOMACY VERBS ARRIVE ON ONE SIGNAL**, spelled by `Main.format_diplomacy_command`, so one
+	# recorder serves every one of them and the kind is the payload's own `command`. What each line must
+	# say is stated by the drive just before it presses (`_expect`), and the Rust half compares the
+	# parsed line with it.
+	_hud.diplomacy_command_requested.connect(func(p: Dictionary) -> void:
+		_record(String(p.get("command", "")), p, MAIN_SCRIPT.format_diplomacy_command(p), {},
+			_take_expectation()))
 	_hud.send_trade_expedition_requested.connect(func(p: Dictionary) -> void:
 		_record("send_trade_expedition", p, MAIN_SCRIPT.format_send_trade_expedition(p), {
 			HudConst.STORE_ITEM_PROVISIONS: TRADE_FOOD_HELD_TICKS,
@@ -1029,7 +1037,7 @@ func _connect_recorders() -> void:
 			# defect the third account invites - cannot pass here.
 			HudConst.CARGO_ITEM_FODDER: TRADE_FODDER_HELD_TICKS,
 			TRADE_HIDE_MATERIAL: TRADE_HIDE_HELD_TICKS,
-		}))
+		}, _take_expectation()))
 
 ## ⛔ **THE ROUTE BRANCH'S TILE VERBS — the only tile commands that NAME A BAND.**
 ##
@@ -1240,7 +1248,7 @@ const KIT_BEARING_KINDS := {
 ## command with no manifest names no pile — and its absence on a shipment is a hard error there rather
 ## than a skip, absence being the state that silently checks nothing.
 func _record(kind: String, payload: Dictionary, formatted: Dictionary,
-		held_ticks: Dictionary = {}) -> void:
+		held_ticks: Dictionary = {}, expectation: Dictionary = {}) -> void:
 	if formatted.is_empty():
 		_fail("%s: Main declined to build a line — a required field was missing from %s" % [kind, payload])
 		return
@@ -1254,6 +1262,9 @@ func _record(kind: String, payload: Dictionary, formatted: Dictionary,
 	var entry := {"kind": kind, "line": String(formatted["line"]), "expected_kit": expected_kit}
 	if not held_ticks.is_empty():
 		entry["cargo_held_ticks"] = held_ticks
+	# What the drive composed, for the Rust half to compare the PARSED line against (the diplomacy
+	# drives state it; every other drive states none and is unchanged).
+	entry.merge(expectation, true)
 	_emitted.append(entry)
 
 ## The commands this guard must see. Missing one is a failure: a driver that quietly stopped
@@ -1393,7 +1404,7 @@ const EXPECTED_KINDS := {
 	"assign_labor": ASSIGN_LABOR_EXPECTED,
 	"cancel_order": 1,
 	"move_band": 1,
-	"send_expedition": 1,
+	"send_expedition": 2,
 	"recall_expedition": 1,
 	# Fission's own verb. It names a BAND rather than a party, so the handle assertion is what proves
 	# the client does not send entity bits down the split either.
@@ -1410,7 +1421,19 @@ const EXPECTED_KINDS := {
 	# ONE — the Deny verb's sheet, opened on the herd its pick landed on, is the raid's only launch site.
 	"send_denial_raid": 1,
 	# ONE — the Trade verb's sheet is the shipment's only launch site, and one line carries every pile.
-	"send_trade_expedition": 1,
+	"send_trade_expedition": 2,
+	# EARLY DIPLOMACY (#233) — see `_drive_diplomacy`. SEVEN answers (refuse, a bare accept, an offer's
+	# accept with a return, a trade counter, a treaty counter that names a new bundle, and a reply taken
+	# and walked home from, each a bare accept / refuse), TWO gift
+	# settings (off, on), the proposal over a link, the treaty proposal over a link, the envoy, ending a
+	# treaty, and the per-people border both ways.
+	"answer_dealing": 7,
+	"set_accept_own_gifts": 2,
+	"propose_trade": 1,
+	"propose_treaty": 1,
+	"send_envoy": 1,
+	"end_treaty": 1,
+	"set_open_borders": 2,
 	# ONE EACH — the route branch's two tile verbs, whose whole difference from `cultivate`/`sow` is
 	# the BAND token in the middle. See `_drive_road_verbs`.
 	"grade": 1,
@@ -1476,6 +1499,413 @@ func _write_emitted() -> void:
 	print("command_guard: wrote %d command(s) to %s" % [_emitted.size(), OUT_PATH])
 	for entry in _emitted:
 		print("command_guard:   %s -> %s" % [entry["kind"], entry["line"]])
+
+# ---- EARLY DIPLOMACY (#233) ------------------------------------------------------------------------
+#
+# **EVERY VERB THE DEALINGS TAB, THE PEOPLES TAB AND THE SHEETS EMIT, through the real parser.** The
+# lines went through a throwaway test once; this is that test made permanent. Each drive presses the
+# control a player presses and states, just before it does, what the line must say (`_expect`); the
+# Rust half then compares the PARSED line with it, which is the only check that can see a counter that
+# answered the wrong dealing, a border set toward the wrong people, or a proposal addressed to a
+# destination's ENTITY (`DESTINATION_ENTITY` differs from `DESTINATION_ID` on purpose).
+
+## The people whose band the standing link joins us to (the tie fixture's destination), and a second
+## people with no road whose band is known only through a dealing.
+const FOREIGN_FACTION := 1
+const ENVOY_FACTION := 2
+## The destination's ENTITY: the number the picker also holds, and the wrong one to send.
+const DESTINATION_ENTITY := 909
+const ENVOY_BAND_ID := 71510
+const ENVOY_BAND_ENTITY := 920
+## The pending dealings' ids.
+const DEALING_OFFER := 31
+const DEALING_REFUSED := 32
+const DEALING_ACCEPTED := 33
+const DEALING_COUNTERED := 34
+const DEALING_TREATY := 35
+## Two REPLIES addressed to the band: one it takes (`Take it`), one it walks home from (`Reject it`).
+const DEALING_REPLY_TAKEN := 36
+const DEALING_REPLY_WALKED := 37
+## What the fixtures hold: the offer's cargo, the proposals' two legs, and the treaty's bundle.
+const OFFER_FOOD := 6.0
+const PROPOSAL_FLINT := 3.0
+const PROPOSAL_FOOD := 4.0
+const WILD_CARGO_STEP := 1.0
+## The turn the world stands on and the one the goodwill was last reported.
+const GOODWILL_CUT_WARY := -0.2
+const GOODWILL_CUT_FRIENDLY := 0.2
+
+## What the next recorded command must say, stated by a drive just before it presses (see `_expect`).
+var _expectation: Dictionary = {}
+
+func _expect(expectation: Dictionary) -> void:
+	_expectation = expectation
+
+func _take_expectation() -> Dictionary:
+	var taken := _expectation
+	_expectation = {}
+	return taken
+
+func _drive_diplomacy() -> void:
+	# The drives before this one leave optimistic assignments on the band (the role sweep puts every
+	# idle worker on a role): start from the band the wire describes, as the trade drive does.
+	_hud._band_labor.reconcile_pending(_hud._band_labor.current_turn() + 1)
+	_hud._selection.clear()
+	_push_diplomacy_world()
+	await _settle()
+	await _drive_dealing_answers()
+	await _drive_gift_setting()
+	await _drive_trade_offer()
+	await _drive_trade_propose()
+	await _drive_scout_pack()
+	await _drive_treaties_and_borders()
+
+## The world as the wire describes it: three peoples, a standing link to the tie's band, a treaty in
+## force with the first people, and seven pending dealings addressed to the band.
+func _push_diplomacy_world() -> void:
+	FactionNames.update([{"faction": FACTION, "name": "Ashfolk"},
+		{"faction": FOREIGN_FACTION, "name": "Brackfolk"}, {"faction": ENVOY_FACTION, "name": "Thornfolk"}])
+	_hud.update_treaties({
+		"treaties": [{"other_faction": FOREIGN_FACTION, "formed_turn": 5, "terms": {
+			"road_rights": true, "open_borders": true, "bundles": []}}],
+		"standing_links": [{"viewer_band": BAND_ID, "other_band": DESTINATION_ID,
+			"other_faction": FOREIGN_FACTION}]})
+	_hud.update_goodwill({"known": [], "own": [], "cuts": {
+		"wary_below": GOODWILL_CUT_WARY, "friendly_above": GOODWILL_CUT_FRIENDLY}})
+	_hud.update_dealings(_dealing_fixtures())
+	_hud.update_faction_policies([{"faction": FACTION, "open_borders": true, "accept_own_gifts": true,
+		"border_overrides": [{"other_faction": ENVOY_FACTION, "open": false}]}])
+
+func _goods(food: float = 0.0, flint: float = 0.0) -> Dictionary:
+	var materials: Array = []
+	if flint > 0.0:
+		materials.append({"material_id": "flint", "amount": flint, "readings": [], "variety_name": ""})
+	return {"food": food, "fodder": 0.0, "materials": materials}
+
+func _dealing(id: int, kind: String, faction: int, band_id: int, sent: Dictionary, asked: Dictionary,
+		treaty: Dictionary = {}) -> Dictionary:
+	return {
+		"id": id, "kind": kind,
+		"sender_faction": faction, "sender_band": band_id,
+		"receiver_faction": FACTION, "receiver_band": BAND_ID,
+		"goods_sent": sent, "goods_asked": asked, "turns_left": 1,
+		"shipper_band": band_id if kind != HudDealingsVocab.KIND_OFFER else 0,
+		"party_workers": 2,
+		"treaty": treaty if not treaty.is_empty() else {"road_rights": false, "open_borders": false, "bundles": []},
+		"carrier": HudDealingsVocab.CARRIER_ENVOY if not treaty.is_empty() else "",
+	}
+
+func _dealing_fixtures() -> Array:
+	var proposal_sent := _goods(0.0, PROPOSAL_FLINT)
+	var proposal_asked := _goods(PROPOSAL_FOOD)
+	return [
+		_dealing(DEALING_OFFER, HudDealingsVocab.KIND_OFFER, FOREIGN_FACTION, DESTINATION_ID,
+			_goods(OFFER_FOOD), _goods()),
+		_dealing(DEALING_REFUSED, HudDealingsVocab.KIND_PROPOSAL, ENVOY_FACTION, ENVOY_BAND_ID,
+			proposal_sent, proposal_asked),
+		_dealing(DEALING_ACCEPTED, HudDealingsVocab.KIND_PROPOSAL, ENVOY_FACTION, ENVOY_BAND_ID,
+			proposal_sent, proposal_asked),
+		_dealing(DEALING_COUNTERED, HudDealingsVocab.KIND_PROPOSAL, ENVOY_FACTION, ENVOY_BAND_ID,
+			proposal_sent, proposal_asked),
+		_dealing(DEALING_TREATY, HudDealingsVocab.KIND_TREATY_PROPOSAL, ENVOY_FACTION, ENVOY_BAND_ID,
+			_goods(), _goods(), {"road_rights": true, "open_borders": false, "bundles": [{
+				"sent": proposal_sent, "returned": proposal_asked}]}),
+		# A reply: our cargo (`sent`) and the return the other band named (`asked`).
+		_dealing(DEALING_REPLY_TAKEN, HudDealingsVocab.KIND_REPLY, FOREIGN_FACTION, DESTINATION_ID,
+			_goods(OFFER_FOOD), proposal_sent),
+		_dealing(DEALING_REPLY_WALKED, HudDealingsVocab.KIND_REPLY, FOREIGN_FACTION, DESTINATION_ID,
+			_goods(OFFER_FOOD), proposal_sent),
+	]
+
+## The band's page on a given tab, rendered.
+func _show_tab(tab: StringName) -> void:
+	var band: Dictionary = _hud._band_labor.panel_band().duplicate(true)
+	var tile := SourceForecast.band_tile(band)
+	band["tile_info"] = {"x": tile.x, "y": tile.y, "visibility_state": "active"}
+	_panel.set_active_tab(tab)
+	_hud.show_unit_selection(band)
+
+## Every node under `root` carrying `meta`, in tree order.
+func _all_with_meta(root: Node, meta: StringName) -> Array:
+	var found: Array = []
+	if root.has_meta(meta):
+		found.append(root)
+	for child in root.get_children():
+		found.append_array(_all_with_meta(child, meta))
+	return found
+
+## The button of one pending dealing's strip, by the dealing's id and the answer it makes.
+func _dealing_action(dealing_id: int, answer: String) -> Button:
+	for row in _all_with_meta(_panel, HudDealingsVocab.ROW_META):
+		if int(row.get_meta(HudDealingsVocab.ROW_META)) != dealing_id:
+			continue
+		for link in _all_with_meta(row, HudDealingsVocab.ACTION_META):
+			if link is Button and String(link.get_meta(HudDealingsVocab.ACTION_META)) == answer:
+				return link as Button
+	return null
+
+func _press_dealing_action(dealing_id: int, answer: String) -> void:
+	var button := _dealing_action(dealing_id, answer)
+	if button == null or button.disabled:
+		_fail("diplomacy: dealing %d has no live `%s` control" % [dealing_id, answer])
+		return
+	button.pressed.emit()
+
+## The answer sheet's own commit button (its `SHEET_ACTION_META`).
+func _press_sheet_action(where: String) -> void:
+	var buttons := _all_with_meta(_hud.allocation_panel, HudDealingsVocab.SHEET_ACTION_META)
+	if buttons.size() != 1 or (buttons[0] as Button).disabled:
+		_fail("diplomacy: the %s has %d live commit control(s), want exactly one" % [where, buttons.size()])
+		return
+	(buttons[0] as Button).pressed.emit()
+
+## One of a sheet's mutually exclusive choice buttons, by id.
+func _choice(id: String) -> Button:
+	for button in _all_with_meta(_hud.allocation_panel, HudDealingsVocab.CHOICE_META):
+		if button is Button and String(button.get_meta(HudDealingsVocab.CHOICE_META)) == id:
+			return button as Button
+	return null
+
+func _press_choice(id: String, where: String) -> void:
+	var button := _choice(id)
+	if button == null or button.disabled:
+		_fail("diplomacy: the %s offers no live `%s` choice" % [where, id])
+		return
+	button.pressed.emit()
+
+## `Add a good` on the Nth leg editor of the open sheet, by the good's key.
+func _add_good(editor_index: int, key: String) -> void:
+	var menus := _all_with_meta(_hud.allocation_panel, HudDealingsVocab.LEG_ADD_META)
+	if editor_index >= menus.size():
+		_fail("diplomacy: the sheet has %d leg editor(s), not %d" % [menus.size(), editor_index + 1])
+		return
+	var popup := (menus[editor_index] as MenuButton).get_popup()
+	var wanted := HudDealingsVocab.leg_label(key)
+	for index in popup.item_count:
+		if popup.get_item_text(index) == wanted:
+			popup.id_pressed.emit(popup.get_item_id(index))
+			return
+	_fail("diplomacy: `Add a good` offers no `%s`" % wanted)
+
+## Tick a checkbox on the open sheet by its face.
+func _tick(text: String) -> void:
+	var box := _checkbox_named(_hud.allocation_panel, text)
+	if box == null:
+		_fail("diplomacy: the sheet has no `%s` checkbox" % text)
+		return
+	box.button_pressed = true
+
+func _checkbox_named(root: Node, text: String) -> CheckBox:
+	if root is CheckBox and (root as CheckBox).text == text:
+		return root as CheckBox
+	for child in root.get_children():
+		var found := _checkbox_named(child, text)
+		if found != null:
+			return found
+	return null
+
+## The first confirmation dialog parented on the HUD.
+func _confirm_dialog() -> ConfirmationDialog:
+	for child in _hud.get_children():
+		if child is ConfirmationDialog and not (child as ConfirmationDialog).is_queued_for_deletion():
+			return child as ConfirmationDialog
+	return null
+
+func _confirm_pending(where: String) -> void:
+	var dialog := _confirm_dialog()
+	if dialog == null:
+		_fail("diplomacy: %s asked nothing, but it breaches a treaty and must confirm" % where)
+		return
+	dialog.confirmed.emit()
+	dialog.queue_free()
+
+func _drive_dealing_answers() -> void:
+	_show_tab(BandCityPanel.ZONE_TRADE)
+	await _settle()
+	# A reply is taken or walked away from: a bare `accept` / `refuse`, no return and no sheet.
+	_expect({"expected_dealing_id": DEALING_REPLY_TAKEN, "expected_reply": "accept"})
+	_press_dealing_action(DEALING_REPLY_TAKEN, HudDealingsVocab.ANSWER_ACCEPT)
+	await _settle()
+	_expect({"expected_dealing_id": DEALING_REPLY_WALKED, "expected_reply": "refuse"})
+	_press_dealing_action(DEALING_REPLY_WALKED, HudDealingsVocab.ANSWER_REFUSE)
+	await _settle()
+	# A refusal and a bare accept are one press each, no sheet.
+	_expect({"expected_dealing_id": DEALING_REFUSED, "expected_reply": "refuse"})
+	_press_dealing_action(DEALING_REFUSED, HudDealingsVocab.ANSWER_REFUSE)
+	await _settle()
+	_expect({"expected_dealing_id": DEALING_ACCEPTED, "expected_reply": "accept"})
+	_press_dealing_action(DEALING_ACCEPTED, HudDealingsVocab.ANSWER_ACCEPT)
+	await _settle()
+	# An offer's accept opens the sheet and NAMES the return, drawn from the band's own larder.
+	_press_dealing_action(DEALING_OFFER, HudDealingsVocab.ANSWER_ACCEPT)
+	await _settle()
+	await _load_whole_pile(HudComposeVocab.COMPOSE_CARGO_FOOD_LABEL)
+	_expect({"expected_dealing_id": DEALING_OFFER, "expected_reply": "accept"})
+	_press_sheet_action("offer's answer sheet")
+	await _settle()
+	# A proposal's counter changes the legs.
+	_show_tab(BandCityPanel.ZONE_TRADE)
+	await _settle()
+	_press_dealing_action(DEALING_COUNTERED, HudDealingsVocab.ANSWER_COUNTER)
+	await _settle()
+	_add_good(0, HudDealingsVocab.LEG_KEY_FOOD)
+	await _settle()
+	_expect({"expected_dealing_id": DEALING_COUNTERED, "expected_reply": "counter"})
+	_press_sheet_action("trade counter sheet")
+	await _settle()
+	# A treaty proposal's counter keeps its terms and adds a bundle of its own. Treaty proposals wait on
+	# the Peoples tab, beside the treaties in force.
+	_show_tab(BandCityPanel.ZONE_PEOPLES)
+	await _settle()
+	_press_dealing_action(DEALING_TREATY, HudDealingsVocab.ANSWER_COUNTER)
+	await _settle()
+	var add := _find_meta_button(_hud.allocation_panel, HudDealingsVocab.TREATY_ADD_BUNDLE_META)
+	if add == null:
+		_fail("diplomacy: the treaty counter sheet offers no `Add agreed trade`")
+		return
+	add.pressed.emit()
+	await _settle()
+	_add_good(0, HudDealingsVocab.LEG_KEY_FOOD)
+	await _settle()
+	# The proposal's road rights ride the counter; its one bundle is kept; ours makes two.
+	_expect({"expected_dealing_id": DEALING_TREATY, "expected_reply": "counter_terms",
+		"expected_road_rights": true, "expected_open_borders": false, "expected_bundles": 2})
+	_press_sheet_action("treaty counter sheet")
+	await _settle()
+	_hud.close_verb_form()
+	await _settle()
+
+## The standing answer to a gift from our own people, off and back on, through the tab's own checkbox.
+func _drive_gift_setting() -> void:
+	_show_tab(BandCityPanel.ZONE_TRADE)
+	await _settle()
+	var toggle := _find_meta_control_in(_panel, HudDealingsVocab.GIFT_TOGGLE_META) as CheckBox
+	if toggle == null:
+		_fail("diplomacy: the Trade tab carries no gift setting")
+		return
+	_expect({"expected_accept": false})
+	toggle.button_pressed = false
+	await _settle()
+	_expect({"expected_accept": true})
+	toggle.button_pressed = true
+	await _settle()
+
+## A shipment OFFERED rather than gifted: the sheet's mode row, then the same send.
+func _drive_trade_offer() -> void:
+	_hud._band_labor.reconcile_pending(_hud._band_labor.current_turn() + 1)
+	_open_verb_sheet(HudComposeVocab.COMPOSE_MISSION_TRADE)
+	await _settle()
+	_press_choice(HudDealingsVocab.TRADE_MODE_OFFER, "trade sheet")
+	await _settle()
+	await _load_whole_pile(HudComposeVocab.COMPOSE_CARGO_FOOD_LABEL)
+	_hud.notify_targeting_click({"x": DESTINATION_LAST_SEEN_X, "y": DESTINATION_LAST_SEEN_Y})
+	await _settle()
+	_expect({"expected_offer": true})
+	_press_meta_button(_hud.allocation_panel, HudWidgets.SEND_TRADE_CONFIRM_META, "offer sheet")
+	await _settle()
+
+## A trade PROPOSED over the standing link: both legs named before any party walks.
+func _drive_trade_propose() -> void:
+	_hud._band_labor.reconcile_pending(_hud._band_labor.current_turn() + 1)
+	_open_verb_sheet(HudComposeVocab.COMPOSE_MISSION_TRADE)
+	await _settle()
+	_hud.notify_targeting_click({"x": DESTINATION_LAST_SEEN_X, "y": DESTINATION_LAST_SEEN_Y})
+	await _settle()
+	_press_choice(HudDealingsVocab.TRADE_MODE_PROPOSE, "trade sheet")
+	await _settle()
+	await _load_whole_pile(HudComposeVocab.COMPOSE_CARGO_FOOD_LABEL)
+	_add_good(0, HudDealingsVocab.LEG_KEY_MATERIAL_PREFIX + TRADE_HIDE_MATERIAL)
+	await _settle()
+	_expect({"destination_band_id": DESTINATION_ID, "destination_entity": DESTINATION_ENTITY})
+	_press_meta_button(_hud.allocation_panel, HudWidgets.SEND_TRADE_CONFIRM_META, "propose sheet")
+	await _settle()
+
+## A scouting party sent with a pack and an order for the first strangers it meets.
+func _drive_scout_pack() -> void:
+	_hud._band_labor.reconcile_pending(_hud._band_labor.current_turn() + 1)
+	var band: Dictionary = _hud._band_labor.panel_band()
+	_open_verb_sheet(HudComposeVocab.COMPOSE_MISSION_SCOUT)
+	# The kit is composed off the job default, so the line carries its tail (see `_drive_send_expedition`).
+	_hud._bandpanel._role_kit_ids[_hud._bandpanel._role_kit_key(band, KitRoster.JOB_EXPEDITION)] = \
+		BandFx.KIT_ID_NONE
+	_hud._bandpanel._send_expedition_count = PARTY_WORKERS
+	_hud._bandpanel.rerender()
+	await _settle()
+	await _load_whole_pile(HudComposeVocab.COMPOSE_CARGO_FOOD_LABEL)
+	_press_choice(HudDealingsVocab.STRANGERS_GIVE, "scout sheet")
+	await _settle()
+	_press_meta_button(_hud.allocation_panel, HudWidgets.SEND_EXPEDITION_CONFIRM_META, "scout verb sheet")
+	await _settle()
+	_expect({"expected_strangers": HudDealingsVocab.STRANGERS_GIVE, "expected_pack_len": 1})
+	_hud.notify_targeting_click({"x": TARGET_X, "y": TARGET_Y})
+	await _settle()
+
+## The Peoples tab's verbs: a treaty proposed over the road, one carried by an envoy, ended, and the
+## per-people border flipped both ways (the closing one confirming, for it breaches a treaty).
+func _drive_treaties_and_borders() -> void:
+	_hud._band_labor.reconcile_pending(_hud._band_labor.current_turn() + 1)
+	# ---- over the road to the first people ---------------------------------------------------------
+	_show_tab(BandCityPanel.ZONE_PEOPLES)
+	await _settle()
+	_press_people_action(FOREIGN_FACTION, HudDealingsVocab.PEOPLE_ACTION_PROPOSE)
+	await _settle()
+	_tick(HudDealingsVocab.SHEET_TREATY_ROAD)
+	await _settle()
+	var add := _find_meta_button(_hud.allocation_panel, HudDealingsVocab.TREATY_ADD_BUNDLE_META)
+	if add != null:
+		add.pressed.emit()
+		await _settle()
+		_add_good(0, HudDealingsVocab.LEG_KEY_FOOD)
+		await _settle()
+	else:
+		_fail("diplomacy: the treaty sheet offers no `Add agreed trade`")
+	_expect({"destination_band_id": DESTINATION_ID, "destination_entity": DESTINATION_ENTITY,
+		"expected_road_rights": true, "expected_open_borders": false, "expected_bundles": 1})
+	_press_meta_button(_hud.allocation_panel, HudDealingsVocab.TREATY_SEND_META, "treaty sheet")
+	await _settle()
+	# ---- by an envoy to the people with no road -----------------------------------------------------
+	_show_tab(BandCityPanel.ZONE_PEOPLES)
+	await _settle()
+	_press_people_action(ENVOY_FACTION, HudDealingsVocab.PEOPLE_ACTION_PROPOSE)
+	await _settle()
+	_tick(HudDealingsVocab.SHEET_TREATY_BORDERS)
+	await _settle()
+	_expect({"destination_band_id": ENVOY_BAND_ID, "destination_entity": ENVOY_BAND_ENTITY,
+		"expected_road_rights": false, "expected_open_borders": true, "expected_bundles": 0})
+	_press_meta_button(_hud.allocation_panel, HudDealingsVocab.TREATY_SEND_META, "envoy sheet")
+	await _settle()
+	# ---- ending the treaty confirms, then sends ---------------------------------------------------
+	_show_tab(BandCityPanel.ZONE_PEOPLES)
+	await _settle()
+	_press_people_action(FOREIGN_FACTION, HudDealingsVocab.PEOPLE_ACTION_END)
+	await _settle()
+	_expect({"expected_other_faction": FOREIGN_FACTION})
+	_confirm_pending("End treaty")
+	await _settle()
+	# ---- the border toward a people we had closed to: one press, no question ---------------------------
+	_expect({"expected_other_faction": ENVOY_FACTION, "expected_open": true})
+	_press_people_action(ENVOY_FACTION, HudDealingsVocab.PEOPLE_ACTION_BORDERS)
+	await _settle()
+	# ---- …and closing against the treaty that holds them open asks first -------------------------------
+	_press_people_action(FOREIGN_FACTION, HudDealingsVocab.PEOPLE_ACTION_BORDERS)
+	await _settle()
+	_expect({"expected_other_faction": FOREIGN_FACTION, "expected_open": false})
+	_confirm_pending("closing borders against an open-borders treaty")
+	await _settle()
+
+## One action link of a people's strip, by the people and the action.
+func _press_people_action(faction: int, action: String) -> void:
+	for row in _all_with_meta(_panel, HudDealingsVocab.PEOPLE_ROW_META):
+		if int(row.get_meta(HudDealingsVocab.PEOPLE_ROW_META)) != faction:
+			continue
+		for link in _all_with_meta(row, HudDealingsVocab.PEOPLE_ACTION_META):
+			if link is Button and String(link.get_meta(HudDealingsVocab.PEOPLE_ACTION_META)) == action:
+				if (link as Button).disabled:
+					_fail("diplomacy: people %d's `%s` is disabled" % [faction, action])
+					return
+				(link as Button).pressed.emit()
+				return
+	_fail("diplomacy: no `%s` link on the row for people %d" % [action, faction])
 
 # ---- Fixtures -----------------------------------------------------------------------------------
 

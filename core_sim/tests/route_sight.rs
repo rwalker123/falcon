@@ -376,7 +376,7 @@ fn a_live_tie_to_a_people_never_travelled_to_grants_no_active_tile() {
         let key = ConnectionKey::new(our_band, stranger_id);
         let mut ledger = app.world.resource_mut::<ConnectionLedger>();
         for _ in 0..((core_sim::FULL_TIE.to_f32() / cfg.strength.gain_per_contact).ceil() as u32) {
-            ledger.record_contact(key, &Sighting::new(far, 0, ""), 0, &cfg);
+            ledger.record_contact(key, &Sighting::new(far, 0, "", FactionId(0)), 0, &cfg);
         }
     }
     app.update();

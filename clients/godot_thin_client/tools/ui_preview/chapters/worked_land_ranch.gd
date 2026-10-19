@@ -13,7 +13,7 @@ extends RefCounted
 ## catalog's tier row: a pen below it says how many rings reach it, a pen in it says what it does.
 
 ## The checkpoints this chapter owes the walk -- assertions made plus frames saved, as a FLOOR.
-const EXPECTED_CHECKPOINTS := 34
+const EXPECTED_CHECKPOINTS := 58
 
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 const ForageFx := preload("res://tools/ui_preview/fixtures_forage.gd")
@@ -45,7 +45,10 @@ const PEN_FOOTPRINT_AT_TIER := 19
 const SOW_BUTTON := "Sow farm"
 const RAISE_EYEBROW := "Raise a farm"
 const CREW_LINE := "The crew will raise a farm of Wild Tubers here."
-const LESSON_LINE := "Learn Worked Land — work a farm"
+const LESSON_LINE := "Needs Worked Land"
+const LESSON_TIP := "Working a farm teaches Worked Land; then ground like this can be farmed."
+## Seed Selection short of complete: the Farm's own gate is unmet, so this people cannot raise one yet.
+const SEED_SELECTION_PARTIAL := 0.4
 const RANCH_BONUS_LINE := "each keeper minds 1.5× the head"
 const RANCH_ONE_RING_LINE := "1 more ring — 1.5× the head"
 
@@ -58,6 +61,7 @@ func run(harness) -> void:
 	await _pen_states()
 	_tended_patch_offers_farm()
 	h._hud._drawercompose.close_compose_sheet()
+	await _another_peoples_build()
 
 ## **A TENDED PATCH MUST OFFER THE FARM** (playtest, #175): Seed Selection known, the ground watered
 ## (the server's `site_refusal` empty), and a crop in the basket that climbs to the farm. The same patch
@@ -95,9 +99,9 @@ func _tended_patch_offers_farm() -> void:
 	h._assert_hud("...and dry ground is OFFERED gated with the server's reason, never silently absent",
 		String(dry_offer.get("policy", "")) == "sow" and not dry_offer.get("reasons", []).is_empty())
 
-func _knowledge(worked_land: float) -> void:
+func _knowledge(worked_land: float, seed_selection: float = KNOWN) -> void:
 	h._hud.update_intensification([{"faction": 0, "knowledges": {
-		"cultivation": KNOWN, "herding": KNOWN, "seed_selection": KNOWN, "penning": KNOWN,
+		"cultivation": KNOWN, "herding": KNOWN, "seed_selection": seed_selection, "penning": KNOWN,
 		"worked_land": worked_land, "selective_breeding": UNKNOWN}}])
 
 ## Fertile ground that is NOT a gathering site, answered by the server as `refusal` (`needs_lesson`
@@ -113,6 +117,20 @@ func _off_site_tile(refusal: String) -> Dictionary:
 	return RungFx.stamp_patch(tile, HudComposeVocab.FORAGE_FORECAST_PREFIX)
 
 func _off_site_states() -> void:
+	# (0) A people that CANNOT raise a farm yet (the Farm rung's own gate is unmet): the same refused
+	# ground carries NO Farming row -- the row would send them to farm when they cannot.
+	_knowledge(UNKNOWN, SEED_SELECTION_PARTIAL)
+	var early := _off_site_tile(RungQuotes.SITE_REFUSAL_NEEDS_LESSON)
+	h._hud._compose.reset_forage_source()
+	h._show_tile(early)
+	await h._settle()
+	await h._save("worked_land_cannot_farm_yet")
+	var early_ctx := DetailFormat.Context.new()
+	var early_lines: Array = h._hud._drawer._tile_terrain_lines(early, early_ctx)
+	h._assert_hud("a people that cannot raise a farm yet gets NO Farming row on lesson-gated ground",
+		_row_value(early_lines, HudFloraVocab.SITE_LESSON_ROW) == ""
+			and DetailFormat.site_lesson_line(early, {}, {"seed_selection": SEED_SELECTION_PARTIAL}) == "")
+	h._assert_hud("…and no hover is registered for the absent row", early_ctx.row_tooltips.is_empty())
 	# (a) WITHOUT the lesson: the server says `needs_lesson`.
 	_knowledge(UNKNOWN)
 	var needs := _off_site_tile(RungQuotes.SITE_REFUSAL_NEEDS_LESSON)
@@ -120,17 +138,20 @@ func _off_site_states() -> void:
 	h._show_tile(needs)
 	await h._settle()
 	await h._save("worked_land_needs_lesson")
-	var lines: Array = h._hud._drawer._tile_terrain_lines(needs)
+	var lesson_ctx := DetailFormat.Context.new()
+	var lines: Array = h._hud._drawer._tile_terrain_lines(needs, lesson_ctx)
 	h._assert_hud("off-site ground refused for want of a lesson is NOT workable",
 		not DetailFormat.tile_is_workable(needs))
 	h._assert_hud("…so no forage block and no compose sheet are offered on it",
 		Readout.detail_row_index(lines, HudFloraVocab.FORAGING_KEY) < 0
 			and not h._hud._drawercompose._forage_compose_available(needs))
-	h._assert_hud("…and the card names the lesson and what teaches it: `%s`" % LESSON_LINE,
+	h._assert_hud("…and the card names the lesson it still needs: `%s`" % LESSON_LINE,
 		_row_value(lines, HudFloraVocab.SITE_LESSON_ROW) == LESSON_LINE)
+	h._assert_hud("…and its hover names the lesson and the rung from the roster and catalog: `%s`" % LESSON_TIP,
+		String(lesson_ctx.row_tooltips.get(HudFloraVocab.SITE_LESSON_ROW, "")) == LESSON_TIP)
 	var thin := _off_site_tile("not_gathering_site")
 	h._assert_hud("a DIFFERENT refusal (not a gathering site) states no lesson line",
-		DetailFormat.site_lesson_line(thin, {}) == "" and not DetailFormat.tile_is_workable(thin))
+		DetailFormat.site_lesson_line(thin, {}, {"seed_selection": KNOWN}) == "" and not DetailFormat.tile_is_workable(thin))
 
 	# (b) WITH the lesson: the server's verdict for the same tile is now empty.
 	_knowledge(KNOWN)
@@ -158,7 +179,7 @@ func _off_site_states() -> void:
 	h._assert_hud("…and no separate Sow checkbox is offered (this order IS the sow)",
 		ForageFx.improvement_state(sheet, "sow") == "")
 	h._assert_hud("…with no lesson line, the lesson being learned",
-		DetailFormat.site_lesson_line(admitted, {}) == "")
+		DetailFormat.site_lesson_line(admitted, {}, {"seed_selection": KNOWN}) == "")
 	# Off the sites the server takes a crew only with a crop named, so the chips are the single-pick
 	# CROP row and the commit carries one; a bare gather is not on offer.
 	h._assert_hud("…the crop row is the single-pick `%s` (a crop must be named)" % HudFloraVocab.TAKE_ROW_LABEL_SINGLE,
@@ -258,3 +279,169 @@ func _row_value(lines: Array, key: String) -> String:
 		if String(line).begins_with(prefix):
 			return String(line).substr(prefix.length())
 	return ""
+
+# ---- ANOTHER PEOPLE'S BUILD (playtest: a Work row wore a 20% Cultivate meter that was Lothari's) --------
+
+const OTHER_PEOPLE := 1
+const OTHER_BUILD_PROGRESS := 0.2
+## The words, as the player reads them (never composed through the producers).
+const OTHER_TILE_ROW := "\u2691 Lothari \u00b7 20%"
+const OTHER_SHEET_LINE := "Lothari is cultivating this"
+
+## A wild patch with a 20% Cultivate meter, owned by `owner_faction`.
+func _owned_patch(owner_faction: int) -> Dictionary:
+	var tile := TileFx.three_role_tile_fixture()
+	tile["x"] = OFF_SITE_X
+	tile["y"] = OFF_SITE_Y
+	tile["patch_is_cultivated"] = false
+	tile["patch_cultivation_progress"] = OTHER_BUILD_PROGRESS
+	tile["patch_has_owner"] = true
+	tile["patch_owner"] = owner_faction
+	return RungFx.stamp_patch(tile, HudComposeVocab.FORAGE_FORECAST_PREFIX)
+
+func _sheet_state(tile: Dictionary) -> String:
+	var host := VBoxContainer.new()
+	h.add_child(host)
+	h._hud._drawercompose._build_improvement_control(SourceForecast.LABOR_KIND_FORAGE, tile,
+		HudComposeVocab.FORAGE_FORECAST_PREFIX, 0.5, "", BandFx.band_fixture(), 1, {}, false, host)
+	var out := ""
+	for child in host.get_children():
+		if child is Label:
+			out = (child as Label).text
+			if child.has_meta(HudWidgets.IMPROVEMENT_CONTROL_META):
+				out = "%s|%s" % [child.get_meta(HudWidgets.IMPROVEMENT_CONTROL_META), out]
+			break
+	host.queue_free()
+	return out
+
+func _another_peoples_build() -> void:
+	FactionNames.update([{"faction": OTHER_PEOPLE, "name": "Lothari"}])
+	_knowledge(UNKNOWN)
+	var theirs := _owned_patch(OTHER_PEOPLE)
+	var ours := _owned_patch(HudConst.PLAYER_FACTION_ID)
+	h._hud._compose.reset_forage_source()
+	h._show_tile(theirs)
+	await h._settle()
+	await h._save("other_people_build_tile")
+	var their_lines: Array = h._hud._drawer._tile_terrain_lines(theirs, DetailFormat.Context.new())
+	var our_lines: Array = h._hud._drawer._tile_terrain_lines(ours, DetailFormat.Context.new())
+	h._assert_hud("tile card: another people's 20% build names the people, in place of the bare meter",
+		_row_value(their_lines, DetailFormat.CULTIVATION_ROW) == OTHER_TILE_ROW)
+	h._assert_hud("...and our own build on the same patch reads as today (no flag, no name)",
+		not _row_value(our_lines, DetailFormat.CULTIVATION_ROW).contains("Lothari")
+			and _row_value(our_lines, DetailFormat.CULTIVATION_ROW) != "")
+	h._assert_hud("...in warn ink",
+		DetailFormat.rung_value_hex(OTHER_TILE_ROW, "") == HudStyle.WARN_HEX)
+	var their_sheet := _sheet_state(theirs)
+	h._assert_hud("compose sheet: another people's source gets ONE line, not a build control (got `%s`)" % their_sheet,
+		their_sheet == "%s|%s" % [HudWidgets.IMPROVEMENT_STATE_FOREIGN, OTHER_SHEET_LINE])
+	h._assert_hud("...and our own patch keeps its control (no foreign line)",
+		not _sheet_state(ours).begins_with(HudWidgets.IMPROVEMENT_STATE_FOREIGN))
+	h._assert_hud("...and the next-rung offer is withdrawn on their ground, kept on ours",
+		RungQuotes.blocked_by_owner(theirs, HudComposeVocab.FORAGE_FORECAST_PREFIX)
+			and not RungQuotes.blocked_by_owner(ours, HudComposeVocab.FORAGE_FORECAST_PREFIX))
+	await _another_peoples_herd()
+	await _builder_band_names()
+	FactionNames.reset()
+
+const OTHER_TAME_PROGRESS := 0.3
+const OTHER_HERD_ROW := "\u2691 Lothari \u00b7 30%"
+const OTHER_HERD_SHEET_LINE := "Lothari is taming this"
+
+## A wild herd 30% through the Tame, owned by `owner_faction`.
+func _owned_herd(owner_faction: int) -> Dictionary:
+	var herd := HerdFx.herd_fixture()
+	herd["domestication"] = OTHER_TAME_PROGRESS
+	herd["corralled"] = false
+	herd["has_owner"] = true
+	herd["owner"] = owner_faction
+	return RungFx.stamp_herd(herd)
+
+func _herd_sheet_state(herd: Dictionary) -> String:
+	var host := VBoxContainer.new()
+	h.add_child(host)
+	h._hud._drawercompose._build_improvement_control(SourceForecast.LABOR_KIND_HUNT, herd,
+		HudComposeVocab.BARE_FORECAST_PREFIX, 0.5, "", BandFx.band_fixture(), 1, {}, false, host)
+	var out := ""
+	for child in host.get_children():
+		if child is Label:
+			out = (child as Label).text
+			if child.has_meta(HudWidgets.IMPROVEMENT_CONTROL_META):
+				out = "%s|%s" % [child.get_meta(HudWidgets.IMPROVEMENT_CONTROL_META), out]
+			break
+	host.queue_free()
+	return out
+
+func _another_peoples_herd() -> void:
+	var theirs := _owned_herd(OTHER_PEOPLE)
+	var ours := _owned_herd(HudConst.PLAYER_FACTION_ID)
+	h._show_herd(theirs)
+	await h._settle()
+	await h._save("other_people_build_herd")
+	var world: Array = h._hud._band_labor.world_herds()
+	var their_lines := DetailFormat.herd_summary_lines(theirs, world)
+	var our_lines := DetailFormat.herd_summary_lines(ours, world)
+	h._assert_hud("herd card: another people's 30%% Tame names the people (got `%s`)" % _row_value(their_lines, DetailFormat.HUSBANDRY_ROW),
+		_row_value(their_lines, DetailFormat.HUSBANDRY_ROW) == OTHER_HERD_ROW)
+	h._assert_hud("...and the unstarted Corral carries no meter row at all",
+		_row_value(their_lines, DetailFormat.CORRAL_ROW) == "")
+	h._assert_hud("...and our own Tame on the same herd reads as today",
+		not _row_value(our_lines, DetailFormat.HUSBANDRY_ROW).contains("Lothari")
+			and _row_value(our_lines, DetailFormat.HUSBANDRY_ROW) != "")
+	var their_sheet := _herd_sheet_state(theirs)
+	h._assert_hud("herd sheet: one line, not a Tame control (got `%s`)" % their_sheet,
+		their_sheet == "%s|%s" % [HudWidgets.IMPROVEMENT_STATE_FOREIGN, OTHER_HERD_SHEET_LINE])
+	h._assert_hud("...and our own herd keeps its control",
+		not _herd_sheet_state(ours).begins_with(HudWidgets.IMPROVEMENT_STATE_FOREIGN))
+
+const BUILDER_BAND_ID := 77
+const BUILDER_BAND_NAME := "Netherford"
+const OWN_BAND_NAME := "Peatmoor"
+const OWN_PEOPLE := "Thornfolk"
+
+## `owner_faction`'s 20% patch whose builder band is `builder_band` (0 = the wire names none).
+func _built_patch(owner_faction: int, builder_band: int) -> Dictionary:
+	var tile := _owned_patch(owner_faction)
+	tile["patch_builder_band"] = builder_band
+	return tile
+
+func _band_row(id: String, entity: int, faction: int, size: int) -> Dictionary:
+	return {"id": id, "entity": entity, "faction": faction, "size": size,
+		"pos": [OFF_SITE_X, OFF_SITE_Y], "current_x": OFF_SITE_X, "current_y": OFF_SITE_Y,
+		"activity": "idle", "working_age": 10, "idle_workers": 0, "output_multiplier": 1.0,
+		"turns_of_food": 20.0, "labor_assignments": []}
+
+func _builder_band_names() -> void:
+	FactionNames.update([{"faction": 0, "name": OWN_PEOPLE}, {"faction": OTHER_PEOPLE, "name": "Lothari"}])
+	h._hud._band_labor.set_foreign_bands([{"band_id": BUILDER_BAND_ID, "entity": 777, "name": BUILDER_BAND_NAME,
+		"faction": OTHER_PEOPLE, "current_x": 70, "current_y": 5, "size": 22}])
+	var named := _built_patch(OTHER_PEOPLE, BUILDER_BAND_ID)
+	var named_lines: Array = h._hud._drawer._tile_terrain_lines(named, DetailFormat.Context.new())
+	h._assert_hud("tile card: a named builder reads `Band, People`",
+		_row_value(named_lines, DetailFormat.CULTIVATION_ROW) == "\u2691 Netherford, Lothari \u00b7 20%")
+	h._assert_hud("compose sheet: a named builder reads `Band, People is cultivating this`",
+		_sheet_state(named) == "%s|Netherford, Lothari is cultivating this" % HudWidgets.IMPROVEMENT_STATE_FOREIGN)
+	var gone := _built_patch(OTHER_PEOPLE, BUILDER_BAND_ID + 1)
+	var gone_lines: Array = h._hud._drawer._tile_terrain_lines(gone, DetailFormat.Context.new())
+	h._assert_hud("...a builder the roster does not hold falls back to the people alone",
+		_row_value(gone_lines, DetailFormat.CULTIVATION_ROW) == OTHER_TILE_ROW)
+	# EVERY band row, ours included, reads `Band, People`.
+	var tile := TileFx.three_role_tile_fixture()
+	tile["x"] = OFF_SITE_X
+	tile["y"] = OFF_SITE_Y
+	tile["units"] = [_band_row(OWN_BAND_NAME, 901, 0, 30), _band_row(BUILDER_BAND_NAME, 902, OTHER_PEOPLE, 22)]
+	h._hud._compose.reset_forage_source()
+	h._show_tile(tile)
+	await h._settle()
+	await h._save("tile_panel_band_people")
+	h._assert_hud("tile panel: our own band row reads `Peatmoor, Thornfolk`",
+		Q.has_label_containing(h._hud.subject_list, "Peatmoor, Thornfolk"))
+	h._assert_hud("tile panel: a foreign band row reads `Netherford, Lothari`",
+		Q.has_label_containing(h._hud.subject_list, "Netherford, Lothari"))
+	var widest := 0.0
+	for row in h._hud.subject_list.get_children():
+		if row is Button:
+			widest = maxf(widest, (row.get_child(0) as Control).get_combined_minimum_size().x)
+	h._assert_hud("tile panel: the widest band row (%d) fits the list (%d)" % [int(widest), int(h._hud.subject_list.size.x)],
+		widest <= h._hud.subject_list.size.x)
+	h._hud._band_labor.set_foreign_bands([])

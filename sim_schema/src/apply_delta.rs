@@ -145,6 +145,13 @@ impl WorldSnapshot {
             routes,
             tile_improvements,
             contact_lessons,
+            dealings,
+            treaties,
+            standing_links,
+            trade_history,
+            goodwill,
+            own_goodwill,
+            goodwill_cuts,
         } = delta;
 
         // --- header, and the one scalar carried on every frame -----------------------------------
@@ -286,6 +293,13 @@ impl WorldSnapshot {
         replace_if_some(&mut self.routes, routes);
         replace_if_some(&mut self.tile_improvements, tile_improvements);
         replace_if_some(&mut self.contact_lessons, contact_lessons);
+        replace_if_some(&mut self.dealings, dealings);
+        replace_if_some(&mut self.treaties, treaties);
+        replace_if_some(&mut self.standing_links, standing_links);
+        replace_if_some(&mut self.trade_history, trade_history);
+        replace_if_some(&mut self.goodwill, goodwill);
+        replace_if_some(&mut self.own_goodwill, own_goodwill);
+        replace_if_some(&mut self.goodwill_cuts, goodwill_cuts);
 
         // --- the flattened `Option<Option<_>>` ---------------------------------------------------
         // The producer cannot say "cleared" (`capture.rs` flattens the whole-diff of an `Option`),
@@ -605,6 +619,13 @@ mod tests {
         delta.routes = Some(Vec::new());
         delta.tile_improvements = Some(Vec::new());
         delta.contact_lessons = Some(Vec::new());
+        delta.dealings = Some(Vec::new());
+        delta.treaties = Some(Vec::new());
+        delta.standing_links = Some(Vec::new());
+        delta.trade_history = Some(Vec::new());
+        delta.goodwill = Some(Vec::new());
+        delta.own_goodwill = Some(Vec::new());
+        delta.goodwill_cuts = Some(Default::default());
 
         let mut applied = world.clone();
         applied.apply_delta(&delta).expect("applies");

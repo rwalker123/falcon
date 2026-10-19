@@ -121,6 +121,11 @@ pub(crate) fn herds_to_array(
             let _ = dict.insert("size_class", size_class);
         }
         let _ = dict.insert("huntable", herd.huntable());
+        // The people taming or keeping this herd -- the forage patch's pair exactly (`has_owner`
+        // first: faction 0 is a real id). The client reads another people's build off it.
+        let _ = dict.insert("has_owner", herd.hasOwner());
+        let _ = dict.insert("owner", herd.owner() as i64);
+        let _ = dict.insert("builder_band", herd.builderBand() as i64);
         if let Some(ecology_phase) = herd.ecologyPhase() {
             let _ = dict.insert("ecology_phase", ecology_phase);
         }
@@ -899,6 +904,9 @@ pub(crate) fn forage_patches_to_array(
         let _ = dict.insert("y", patch.y() as i64);
         let _ = dict.insert("has_owner", patch.hasOwner());
         let _ = dict.insert("owner", patch.owner() as i64);
+        // The `BandId` of the band whose work last advanced the build meter (0 = none, or a rival
+        // patch the viewer cannot see into) -- the id a cohort row publishes as `band_id`.
+        let _ = dict.insert("builder_band", patch.builderBand() as i64);
         let _ = dict.insert("biomass", patch.biomass());
         let _ = dict.insert("carrying_capacity", patch.carryingCapacity());
         // **WHAT THE *GROUND* HOLDS** — this tile's own forage `K` off `forage.capacity_by_biome`,

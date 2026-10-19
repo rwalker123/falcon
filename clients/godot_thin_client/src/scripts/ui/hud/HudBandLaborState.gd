@@ -59,6 +59,17 @@ var _world_herds: Array = []
 # this faction's observers, so nothing here re-filters and nothing here asks about faction: faction
 # is a property of the endpoint and never a column on the row.
 var _connections: Array = []
+# EARLY DIPLOMACY (#233) -- the three viewer-scoped sections, each a whole-section replace. The pending
+# dealings (offers, proposals, counters, treaty proposals), the goodwill rows + word cuts, and the
+# treaties in force + the standing links the sim published. Held verbatim: nothing here derives a link,
+# a cut or a turns-left, because each is the sim's to say.
+var _dealings: Array = []
+var _goodwill: Dictionary = {}
+var _treaties: Dictionary = {}
+# The viewer's people's TRADE HISTORY (`trade_history`), oldest first, a whole-section replace: one
+# record per trade from this people's point of view. Held verbatim, like the three above.
+var _trade_history: Array = []
+var _material_ids: Array = []
 # Optimistic pending labor per band entity: {turn, assign:{key->{...}}, move:{x,y}} (see the HUD).
 var _pending_labor: Dictionary = {}
 # The authoritative snapshot turn (header tick) — reconciles pending against the server's processing.
@@ -260,6 +271,60 @@ func band_parties(band: Dictionary) -> Array:
 			rows.append(exp_variant)
 	return rows
 
+## **A SHIPMENT IS THE TRADE TAB'S, END TO END.** Whether a party is one is this ONE predicate, and every
+## reader that lists or counts the band's parties for the PARTIES zone (its rows, its head's counts, its
+## badge, the faction page's twin) goes through `band_zone_parties` / `faction_zone_parties` rather than
+## testing the mission itself. Scouts, work parties and ENVOYS are not trade parties and stay.
+static func is_trade_party(exp: Dictionary) -> bool:
+	return String(exp.get("expedition_mission", "")).strip_edges().to_lower() \
+		== HudExpeditionVocab.EXPEDITION_MISSION_TRADE
+
+## The parties the PARTIES zone lists for `band`: every out-party but its shipments. (`band_parties` stays
+## the whole set: the Workforce bar's `away` clause counts every worker who is out, shipments included,
+## since those hands really are gone from the band.)
+func band_zone_parties(band: Dictionary) -> Array:
+	return band_parties(band).filter(func(exp: Dictionary) -> bool: return not is_trade_party(exp))
+
+## Workers out with the parties `band_zone_parties` lists -- the Parties head's `N workers`.
+func band_zone_party_workers(band: Dictionary) -> int:
+	var total := 0
+	for exp in band_zone_parties(band):
+		total += int((exp as Dictionary).get("size", 0))
+	return total
+
+## The faction page's Parties zone: every player party but its shipments.
+func faction_zone_parties() -> Array:
+	return _player_expeditions.filter(
+		func(exp: Variant) -> bool: return exp is Dictionary and not is_trade_party(exp))
+
+## **THE TRADE PARTY STANDING IN A CAMP ON A PENDING DEALING**, or `{}`. The dealing names it:
+## `party_band` is the waiting party's band id, equal to that party's cohort `band_id`, and `0` when no
+## party carries the dealing. Two parties camped on one pair of bands therefore each answer for their own
+## dealing.
+func party_for_dealing(dealing: Dictionary) -> Dictionary:
+	var party_band := int(dealing.get("party_band", HudConst.NO_BAND_ID))
+	if party_band == HudConst.NO_BAND_ID:
+		return {}
+	for exp_variant in _player_expeditions:
+		if exp_variant is Dictionary and is_trade_party(exp_variant) \
+				and int((exp_variant as Dictionary).get("band_id", HudConst.NO_BAND_ID)) == party_band:
+			return exp_variant
+	return {}
+
+## Is this trade party shown by a dealing's row (so the Trade tab must not list it a second time)?
+func party_stands_on_a_dealing(exp: Dictionary) -> bool:
+	for dealing_variant in _dealings:
+		if dealing_variant is Dictionary \
+				and int(party_for_dealing(dealing_variant).get("entity", -1)) == int(exp.get("entity", -2)):
+			return true
+	return false
+
+## **THE TRADE TAB'S `On the road` SET**: this band's shipments that no dealing row stands for -- heading
+## out, coming home, or standing in a camp with no pending dealing behind them.
+func band_road_parties(band: Dictionary) -> Array:
+	return band_parties(band).filter(func(exp: Dictionary) -> bool:
+		return is_trade_party(exp) and not party_stands_on_a_dealing(exp))
+
 ## **WOULD RECALLING THIS PARTY CANCEL IT ON THE SPOT?** The client-side reading of the sim's
 ## `cancel_party_standing_in_camp`: a party standing in its home band's camp with no map report owed is
 ## folded back by `handle_recall_expedition` the instant the command lands, so the order is a CANCEL of
@@ -350,6 +415,256 @@ func set_connections(connections_variant: Variant) -> void:
 
 func connections() -> Array:
 	return _connections
+
+## Ingest the viewer's PENDING DEALINGS (`dealings` -- early diplomacy). A whole-section replace: a
+## non-Array is ignored and the last value stands, and an EMPTY Array means "nothing is pending now".
+func set_dealings(dealings_variant: Variant) -> void:
+	if not (dealings_variant is Array):
+		return
+	_dealings = dealings_variant
+	changed.emit(&"dealings")
+
+func dealings() -> Array:
+	return _dealings
+
+## Ingest the viewer's TRADE HISTORY (`trade_history`). A whole-section replace: a non-Array is ignored
+## and the last value stands, and an EMPTY Array means "no records now".
+func set_trade_history(history_variant: Variant) -> void:
+	if not (history_variant is Array):
+		return
+	_trade_history = history_variant
+	changed.emit(&"trade_history")
+
+func trade_history() -> Array:
+	return _trade_history
+
+## **THE RECORDS THIS BAND TOOK PART IN, NEWEST FIRST** -- rows whose `own_band` is the band, plus the
+## same-people rows (`other_faction` is the viewer's own, a shipment between two of its bands writes ONE
+## record) whose `other_band` is the band. The sim publishes oldest first and the order of equal turns
+## is the sim's, so the newest-first list is the held list reversed, never re-sorted.
+func trade_history_for_band(band_id: int) -> Array:
+	var rows: Array = []
+	if band_id == HudConst.NO_BAND_ID:
+		return rows
+	for index in range(_trade_history.size() - 1, -1, -1):
+		var row_variant: Variant = _trade_history[index]
+		if not (row_variant is Dictionary):
+			continue
+		var row: Dictionary = row_variant
+		if int(row.get("own_band", HudConst.NO_BAND_ID)) == band_id \
+				or (int(row.get("other_faction", HudConst.NO_FACTION_ID)) == HudConst.PLAYER_FACTION_ID \
+				and int(row.get("other_band", HudConst.NO_BAND_ID)) == band_id):
+			rows.append(row)
+	return rows
+
+## The world's material ids, in catalogue order (`materials[].id`), for the one reader that must name a good
+## the band does not hold: a proposal or counter's ASK list. Ignored unless an Array, the last value
+## standing -- the crafting catalogue is a per-world constant a delta never restates.
+func set_material_catalog(materials_variant: Variant) -> void:
+	if not (materials_variant is Array):
+		return
+	var ids: Array = []
+	for row_variant in materials_variant:
+		if row_variant is Dictionary:
+			var id := String((row_variant as Dictionary).get("id", ""))
+			if id != "":
+				ids.append(id)
+	_material_ids = ids
+
+func material_ids() -> Array:
+	return _material_ids
+
+## Forget the three diplomacy sections -- a new world restarts its dealing ids and its band handles.
+func reset_diplomacy() -> void:
+	_dealings = []
+	_goodwill = {}
+	_treaties = {}
+	_trade_history = []
+	changed.emit(&"dealings")
+
+## The goodwill section (`{known, own, cuts}`) and the treaty section (`{treaties, standing_links}`),
+## each ignored unless a Dictionary -- the same last-value-stands rule as the ties.
+func set_goodwill(goodwill_variant: Variant) -> void:
+	if not (goodwill_variant is Dictionary):
+		return
+	_goodwill = goodwill_variant
+	changed.emit(&"goodwill")
+
+func goodwill() -> Dictionary:
+	return _goodwill
+
+func set_treaties(treaties_variant: Variant) -> void:
+	if not (treaties_variant is Dictionary):
+		return
+	_treaties = treaties_variant
+	changed.emit(&"treaties")
+
+func treaties() -> Dictionary:
+	return _treaties
+
+## **THE DEALINGS THIS BAND TAKES PART IN** -- as sender, receiver or the party's shipper -- in the
+## sim's id order (ids are monotonic, so the order is a pure function of the rows and two frames of
+## one section cannot reshuffle). Keyed on the durable `band_id`.
+func dealings_for_band(band_id: int) -> Array:
+	var rows: Array = []
+	if band_id == HudConst.NO_BAND_ID:
+		return rows
+	for row_variant in _dealings:
+		if not (row_variant is Dictionary):
+			continue
+		var row: Dictionary = row_variant
+		if int(row.get("sender_band", HudConst.NO_BAND_ID)) == band_id \
+				or int(row.get("receiver_band", HudConst.NO_BAND_ID)) == band_id \
+				or int(row.get("shipper_band", HudConst.NO_BAND_ID)) == band_id:
+			rows.append(row)
+	return rows
+
+## One pending dealing by its id, or `{}`.
+func dealing_by_id(dealing_id: int) -> Dictionary:
+	for row_variant in _dealings:
+		if row_variant is Dictionary and int((row_variant as Dictionary).get("id", 0)) == dealing_id:
+			return row_variant
+	return {}
+
+## **THE STANDING LINKS THE SIM PUBLISHED FOR THIS BAND** -- `{viewer_band, other_band, other_faction}`.
+## The client never derives a link (a kept road on every tile between two camps is the sim's
+## `routes::standing_link`); a mode that needs one is offered from these rows alone.
+func standing_links_for_band(band_id: int) -> Array:
+	var rows: Array = []
+	for row_variant in Array(_treaties.get("standing_links", [])):
+		if row_variant is Dictionary and int((row_variant as Dictionary).get("viewer_band", 0)) == band_id:
+			rows.append(row_variant)
+	return rows
+
+## The published standing link between this band and `other_band_id`, or `{}`.
+func standing_link_between(band_id: int, other_band_id: int) -> Dictionary:
+	for link_variant in standing_links_for_band(band_id):
+		if int((link_variant as Dictionary).get("other_band", 0)) == other_band_id:
+			return link_variant
+	return {}
+
+## **THE OTHER PEOPLES THIS CLIENT HAS ANY PUBLISHED FACT ABOUT** -- every faction named by a goodwill
+## row (either direction), a treaty, a standing link or a pending dealing, plus the `extra` ones the
+## caller holds (a border override, a visible foreign band). Ascending by faction id, so two frames of
+## the same rows cannot reshuffle the Peoples tab. The player's own faction is never one of them.
+func known_peoples(extra: Array = []) -> Array[int]:
+	var seen: Dictionary = {}
+	for key in ["known", "own"]:
+		for row_variant in Array(_goodwill.get(key, [])):
+			if row_variant is Dictionary:
+				seen[int((row_variant as Dictionary).get("other_faction", HudConst.NO_FACTION_ID))] = true
+	for row_variant in Array(_treaties.get("treaties", [])):
+		if row_variant is Dictionary:
+			seen[int((row_variant as Dictionary).get("other_faction", HudConst.NO_FACTION_ID))] = true
+	for row_variant in Array(_treaties.get("standing_links", [])):
+		if row_variant is Dictionary:
+			seen[int((row_variant as Dictionary).get("other_faction", HudConst.NO_FACTION_ID))] = true
+	for row_variant in _dealings:
+		if not (row_variant is Dictionary):
+			continue
+		var row: Dictionary = row_variant
+		seen[int(row.get("sender_faction", HudConst.NO_FACTION_ID))] = true
+		seen[int(row.get("receiver_faction", HudConst.NO_FACTION_ID))] = true
+	for faction_variant in extra:
+		seen[int(faction_variant)] = true
+	seen.erase(HudConst.PLAYER_FACTION_ID)
+	seen.erase(HudConst.NO_FACTION_ID)
+	var ids: Array[int] = []
+	for faction in seen:
+		ids.append(int(faction))
+	ids.sort()
+	return ids
+
+## The factions of the foreign bands this frame shows, for `known_peoples`' `extra`.
+func foreign_factions() -> Array:
+	var factions: Array = []
+	for band_variant in _foreign_bands.values():
+		var faction := int((band_variant as Dictionary).get("faction", HudConst.NO_FACTION_ID))
+		if faction != HudConst.NO_FACTION_ID and not factions.has(faction):
+			factions.append(faction)
+	return factions
+
+## The peoples of the bands a LIVE tie remembers (`subject_faction`), for `known_peoples`' `extra` -- a
+## people met only through a past sighting still has a band an envoy can be sent to.
+func remembered_factions() -> Array:
+	var factions: Array = []
+	for row_variant in _connections:
+		if not (row_variant is Dictionary) or not tie_is_live(row_variant):
+			continue
+		var faction := int((row_variant as Dictionary).get("subject_faction", HudConst.NO_FACTION_ID))
+		if faction != HudConst.NO_FACTION_ID and not factions.has(faction):
+			factions.append(faction)
+	return factions
+
+## **WHAT THE SIM PUBLISHES ABOUT ONE PEOPLE'S REGARD**: the row of `known` (what they think of us, as
+## last reported) or `own` (what we think of them, live) for `faction`, or `{}` when there is none. A
+## missing row is "not known", never a default neutral.
+func goodwill_row(which: String, faction: int) -> Dictionary:
+	for row_variant in Array(_goodwill.get(which, [])):
+		if row_variant is Dictionary \
+				and int((row_variant as Dictionary).get("other_faction", HudConst.NO_FACTION_ID)) == faction:
+			return row_variant
+	return {}
+
+## The word cuts the sim published (`{wary_below, friendly_above}`), `{}` before any frame carried them.
+func goodwill_cuts() -> Dictionary:
+	return Dictionary(_goodwill.get("cuts", {}))
+
+## The treaty in force with `faction` (`{other_faction, terms, formed_turn}`), or `{}`.
+func treaty_with(faction: int) -> Dictionary:
+	for row_variant in Array(_treaties.get("treaties", [])):
+		if row_variant is Dictionary \
+				and int((row_variant as Dictionary).get("other_faction", HudConst.NO_FACTION_ID)) == faction:
+			return row_variant
+	return {}
+
+## **THE BANDS OF `faction` THIS CLIENT CAN NAME**, as `[{band_id, label}]` by band id: the foreign bands
+## in sight, the far ends of the standing links, and the bands a pending dealing names -- the only places
+## the wire states which people a band belongs to -- then, after those, the bands a LIVE tie remembers
+## under that people (`subject_faction`, clock 1). An envoy's destination is picked from these.
+func known_bands_of_people(faction: int) -> Array:
+	var ids: Dictionary = {}
+	for band_id in _foreign_bands:
+		if int((_foreign_bands[band_id] as Dictionary).get("faction", HudConst.NO_FACTION_ID)) == faction:
+			ids[int(band_id)] = true
+	for link_variant in Array(_treaties.get("standing_links", [])):
+		if link_variant is Dictionary \
+				and int((link_variant as Dictionary).get("other_faction", HudConst.NO_FACTION_ID)) == faction:
+			ids[int((link_variant as Dictionary).get("other_band", HudConst.NO_BAND_ID))] = true
+	for row_variant in _dealings:
+		if not (row_variant is Dictionary):
+			continue
+		var row: Dictionary = row_variant
+		if int(row.get("sender_faction", HudConst.NO_FACTION_ID)) == faction:
+			ids[int(row.get("sender_band", HudConst.NO_BAND_ID))] = true
+		if int(row.get("receiver_faction", HudConst.NO_FACTION_ID)) == faction:
+			ids[int(row.get("receiver_band", HudConst.NO_BAND_ID))] = true
+	ids.erase(HudConst.NO_BAND_ID)
+	var sorted_ids: Array = ids.keys()
+	sorted_ids.sort()
+	# Remembered bands follow, filed under their people by the tie's `subject_faction` (clock 1). A
+	# parked tie (strength 0) is left out: the sim refuses an envoy to a band we hold no tie with.
+	var remembered_ids: Array = []
+	for row_variant in _connections:
+		if not (row_variant is Dictionary):
+			continue
+		var tie: Dictionary = row_variant
+		var subject := int(tie.get("subject_band_id", HudConst.NO_BAND_ID))
+		if subject == HudConst.NO_BAND_ID or ids.has(subject) or remembered_ids.has(subject):
+			continue
+		if int(tie.get("subject_faction", HudConst.NO_FACTION_ID)) == faction and tie_is_live(tie):
+			remembered_ids.append(subject)
+	remembered_ids.sort()
+	sorted_ids.append_array(remembered_ids)
+	var bands: Array = []
+	for band_id in sorted_ids:
+		var label := host_label_for_id(int(band_id))
+		if label == "" and _foreign_bands.has(band_id):
+			label = HudFormat.band_name(_foreign_bands[band_id])
+		if label == "":
+			label = HudDealingsVocab.WHO_UNKNOWN_BAND
+		bands.append({"band_id": int(band_id), "label": label})
+	return bands
 
 ## **WHAT THIS CLIENT CALLS THE BAND WITH THIS DURABLE `band_id`** — `""` when the roster holds no
 ## such band at all, which is the answer a caller must be able to act on rather than a name it can
@@ -468,6 +783,20 @@ func set_foreign_bands(bands: Array) -> void:
 		var band_id := int(band.get("band_id", HudConst.NO_BAND_ID))
 		if band_id != HudConst.NO_BAND_ID:
 			_foreign_bands[band_id] = band
+
+## The roster's row for a band by `BandId` -- ours, else a foreign band in sight -- or `{}`.
+func band_entry_for_id(band_id: int) -> Dictionary:
+	if band_id == HudConst.NO_BAND_ID:
+		return {}
+	for candidate_variant in _player_bands:
+		if int((candidate_variant as Dictionary).get("band_id", HudConst.NO_BAND_ID)) == band_id:
+			return candidate_variant
+	return _foreign_bands.get(band_id, {})
+
+## What to call the band that builds a source, `""` when the roster does not hold it.
+func builder_label(band_id: int) -> String:
+	var entry := band_entry_for_id(band_id)
+	return "" if entry.is_empty() else HudFormat.band_name(entry)
 
 ## The visible foreign band with this id, or `{}`.
 func foreign_band(band_id: int) -> Dictionary:

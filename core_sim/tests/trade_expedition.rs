@@ -231,6 +231,7 @@ fn launch_shipment(
                     destination_band: destination,
                     destination_faction,
                     destination_name: "the neighbours".to_string(),
+                    terms: Default::default(),
                 },
                 phase: ExpeditionPhase::Outbound,
                 announced: false,
@@ -240,11 +241,40 @@ fn launch_shipment(
                 cargo,
                 defection_pull: core_sim::Scalar::zero(),
                 station_reports: Vec::new(),
+                goodwill_news: Default::default(),
+                exchange_return: Default::default(),
+                unpaid_return: Default::default(),
+                scout_pack: Default::default(),
                 aim: Some(destination_pos),
             },
             BandTravel::to(destination_pos),
         ))
         .id()
+}
+
+/// **A gift to another people waits to be answered** (`docs/plan_early_diplomacy.md` §1; only a gift
+/// to one's OWN people, with that people's standing answer on, lands on arrival). Every delivery in
+/// this file is cross-faction by design, and what these tests pin is the hand-over itself — so the
+/// receiver accepts whatever is waiting, naming no return, and the cargo lands exactly as it always
+/// did. The pending half is `dealings.rs`'s.
+fn accept_pending(app: &mut App) {
+    let waiting: Vec<_> = app
+        .world
+        .resource::<core_sim::PendingDealings>()
+        .iter()
+        .map(|dealing| (dealing.id, dealing.receiver_faction))
+        .collect();
+    for (id, receiver) in waiting {
+        core_sim::answer_dealing(
+            &mut app.world,
+            receiver,
+            id,
+            &core_sim::DealingAnswer::Accept {
+                returned: Vec::new(),
+            },
+        )
+        .expect("the receiver accepts a bare gift");
+    }
 }
 
 fn band_fodder(app: &App, band: Entity) -> f32 {
@@ -413,6 +443,7 @@ fn a_shipment_lands_in_the_destination_bands_store() {
 
     // One turn: the party is standing in their camp already, so it hands the cargo over at once.
     run_turn(&mut app);
+    accept_pending(&mut app);
 
     let host_after = band_food(&app, destination);
     let ate = app
@@ -481,6 +512,7 @@ fn a_hay_shipment_lands_in_the_destination_bands_fodder_store() {
 
     // One turn: the party stands in their camp already, so the hand-over happens at once.
     run_turn(&mut app);
+    accept_pending(&mut app);
 
     let hay_after = band_fodder(&app, destination);
     let food_after = band_food(&app, destination);
@@ -633,6 +665,7 @@ fn two_ratings_of_one_material_arrive_as_two_batches() {
     );
     for _ in 0..DELIVERY_TURNS {
         run_turn(&mut app);
+        accept_pending(&mut app);
     }
 
     let store = &app
@@ -1356,6 +1389,7 @@ fn a_shipment_that_sees_a_destination_that_moved_a_little_delivers() {
     let mut delivered = false;
     for _ in 0..MAX_TURNS_HOME {
         run_turn(&mut app);
+        accept_pending(&mut app);
         delivered = app
             .world
             .resource::<core_sim::CommandEventLog>()

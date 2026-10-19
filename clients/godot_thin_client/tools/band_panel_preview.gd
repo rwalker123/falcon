@@ -1890,6 +1890,9 @@ func _ready() -> void:
 	_assert_work_zone_readable()
 	_assert_zone_content_fits()
 
+	# ANOTHER PEOPLE'S BUILD ON A ROW WE WORK (playtest): the same 20% meter, owned by Lothari and then by us.
+	await _other_peoples_build_rows()
+
 	# MIGRATION MODE on the hunt rows: the three status lines, the toggle, and the resident control.
 	await _follow_row_states()
 
@@ -8182,8 +8185,8 @@ func _has_label_titled(node: Node, title: String) -> bool:
 			return true
 	return false
 
-## The panel's SANCTIONED `ScrollContainer`s, by node name and by the zone each must sit under. Two,
-## and the pairing is half the claim: a scroll is only safe in a zone whose builder declares a fixed
+## The panel's SANCTIONED `ScrollContainer`s, by node name and by the zone each must sit under. The
+## pairing is half the claim: a scroll is only safe in a zone whose builder declares a fixed
 ## minimum for it, so `PartiesList` under the band zone would be as much a stray as an unnamed one.
 const SANCTIONED_SCROLLS := [
 	[HudWorkVocab.PARTIES_LIST_NAME, BandCityPanel.ZONE_PARTIES],
@@ -8192,6 +8195,9 @@ const SANCTIONED_SCROLLS := [
 	[HudWorkVocab.ROSTER_EXPANDED_SCROLL_NAME, BandCityPanel.ZONE_WORK],
 	[HudWorkVocab.WORK_SECTIONS_SCROLL_NAME, BandCityPanel.ZONE_WORK],
 	[HudConnectionsVocab.LIST_NAME, BandCityPanel.ZONE_PEOPLES],
+	# The merged Trade tab (Waiting on an answer / This turn / History) is ONE scroll; it replaced the
+	# retired Dealings tab's sanctioned list.
+	[TradeZoneController.TAB_SCROLL_NAME, BandCityPanel.ZONE_TRADE],
 ]
 
 ## GUARD: the zone model is NO-SCROLL by construction, with **exactly two sanctioned exceptions** —
@@ -8270,6 +8276,13 @@ func _assert_scroll_only_where_sanctioned() -> void:
 	_assert_band_panel("…and the PEOPLES tab scrolls its roster IFF it is mounted (mounted %s, %d found)"
 			% [str(peoples_mounted), int(counts[HudConnectionsVocab.LIST_NAME])],
 		int(counts[HudConnectionsVocab.LIST_NAME]) == (1 if peoples_mounted else 0))
+	# The Trade tab (the dealings merge) scrolls its three sections IFF it is mounted, the narrow shell
+	# on a band page; the wide shell's Trade section rides inside the parties list and owns no scroll.
+	var trade_zone: Variant = _panel._zones.get(BandCityPanel.ZONE_TRADE)
+	var trade_mounted := trade_zone is Node and _panel.is_ancestor_of(trade_zone as Node)
+	_assert_band_panel("…and the TRADE tab scrolls its three sections IFF it is mounted (mounted %s, %d found)"
+			% [str(trade_mounted), int(counts[TradeZoneController.TAB_SCROLL_NAME])],
+		int(counts[TradeZoneController.TAB_SCROLL_NAME]) == (1 if trade_mounted else 0))
 	var work_zone: Variant = _panel._zones.get(BandCityPanel.ZONE_WORK)
 	var work_mounted := work_zone is Node and _panel.is_ancestor_of(work_zone as Node)
 	var wants_list := _hud._bandpanel._queue_expanded and work_mounted
@@ -11542,7 +11555,7 @@ func _assert_a_road_behind_a_blocked_pen_head_is_just_queued() -> void:
 		road_hover == road_want and not rows[1].tooltip_text.contains("Blocked")
 			and not rows[1].tooltip_text.contains("Waiting") and not rows[1].tooltip_text.contains("Behind"))
 	var head_hover: Array = rows[0].tooltip_text.split("\n")
-	_assert_band_panel("road behind blocked head — …the head's hover opens \"… — Blocked 65%\" then its needs (got %s)"
+	_assert_band_panel("road behind blocked head — …the head's hover opens \"… — Blocked 65%%\" then its needs (got %s)"
 			% str(head_hover),
 		head_hover.size() >= 3 and String(head_hover[0]).ends_with("— Blocked 65%")
 			and head_hover[1] == "Need 2.1 hurdles" and head_hover[2] == "Short 1 crook")
@@ -27091,3 +27104,131 @@ func _render_work_party_spoil_states() -> void:
 	_push_bands([_band_fixture()])
 	_panel.set_dock(SIDE_LEFT)
 	await _settle()
+
+# ---- ANOTHER PEOPLE'S BUILD ON A WORK ROW --------------------------------------------------------------
+
+const OTHER_PEOPLE_FACTION := 1
+const OTHER_PEOPLE_NAME := "Lothari"
+const OTHER_BUILD_METER := 0.2
+## What the row's second line leads with when the meter is another people's, as the player reads it.
+const OTHER_TAME_METER := 0.3
+const OTHER_BUILDER_ENTITY := 777
+const OTHER_BUILDER_NAME := "Netherford"
+const OTHER_BUILDER_POS := Vector2i(70, 5)
+const OTHER_TAME_LINE := "Lothari taming \u00b7 30%"
+const OTHER_BUILD_LINE := "Lothari cultivating \u00b7 20%"
+
+## The wild tile of the rung board, carrying a 20% Cultivate meter owned by `owner_faction`.
+func _other_build_patches(owner_faction: int) -> Array:
+	var patches := _rung_patch_fixtures()
+	var wild: Dictionary = patches[0]
+	wild["cultivation_progress"] = OTHER_BUILD_METER
+	wild["has_owner"] = true
+	wild["owner"] = owner_faction
+	return RUNG_FX.stamp_patches([wild])
+
+func _wild_row_foreign_text() -> String:
+	for control in _collect_meta_controls(_panel, HudWorkVocab.WORK_ROW_FOREIGN_BUILD_META, []):
+		return String(control.get_meta(HudWorkVocab.WORK_ROW_FOREIGN_BUILD_META))
+	return ""
+
+func _wild_row_model() -> Dictionary:
+	for model in _hud._bandpanel._work_source_models(_hud._band_labor._panel_band, 0):
+		if String(model.get("key", "")) == "forage:%d,%d" % [RUNG_WILD_TILE.x, RUNG_WILD_TILE.y]:
+			return model
+	return {}
+
+func _other_peoples_build_rows() -> void:
+	FactionNames.update([{"faction": OTHER_PEOPLE_FACTION, "name": OTHER_PEOPLE_NAME}])
+	_hud.update_food_modules(_rung_forage_modules())
+	_set_world_herds(_rung_herd_fixtures())
+	_push_bands([_rung_band_fixture()])
+	_panel.set_dock(SIDE_LEFT)
+	_panel.set_active_tab(&"work")
+	# THEIRS: the row names the people and carries no ready or building face of ours.
+	var patches := _rung_patch_fixtures()
+	patches[0] = _other_build_patches(OTHER_PEOPLE_FACTION)[0]
+	_set_forage_patches(patches)
+	_push_bands([_rung_band_fixture()])
+	await _settle()
+	await _save("band_panel_work_other_build")
+	var theirs := _wild_row_model()
+	if String(theirs.get("foreign_build", "")) != OTHER_BUILD_LINE:
+		_fail("work row, another people's build: wanted `%s`, got `%s`" % [OTHER_BUILD_LINE, theirs.get("foreign_build", "")])
+	if String(theirs.get("building_glyph", "")) != "" or String(theirs.get("ready_glyph", "")) != "":
+		_fail("work row, another people's build: the row still wears OUR build or offer face")
+	if _wild_row_foreign_text() != OTHER_BUILD_LINE:
+		_fail("work row, another people's build: the rendered line two does not lead with `%s`" % OTHER_BUILD_LINE)
+	if _find_meta_control(_panel, HudWorkVocab.WORK_ROW_FOREIGN_BAND_META) != null:
+		_fail("work row, no builder named: a band link was drawn with nothing to jump to")
+	# A NAMED BUILDER: the band's name only, as a link that focuses its tile.
+	patches = _rung_patch_fixtures()
+	patches[0] = _other_build_patches(OTHER_PEOPLE_FACTION)[0]
+	patches[0]["builder_band"] = OTHER_BUILDER_ENTITY + FIXTURE_BAND_ID_OFFSET
+	_set_forage_patches(patches)
+	# The builder is a foreign band in sight, so it rides the roster push like any other cohort.
+	_push_bands([_rung_band_fixture(), {"entity": OTHER_BUILDER_ENTITY, "name": OTHER_BUILDER_NAME,
+		"faction": OTHER_PEOPLE_FACTION, "current_x": OTHER_BUILDER_POS.x,
+		"current_y": OTHER_BUILDER_POS.y, "size": 22}])
+	await _settle()
+	await _save("band_panel_work_other_builder")
+	var named_line := "%s cultivating \u00b7 20%%" % OTHER_BUILDER_NAME
+	if _wild_row_foreign_text() != named_line:
+		_fail("work row, named builder: wanted `%s`, got `%s`" % [named_line, _wild_row_foreign_text()])
+	var link := _find_meta_control(_panel, HudWorkVocab.WORK_ROW_FOREIGN_BAND_META)
+	if link == null or not (link is Button) or (link as Button).text != OTHER_BUILDER_NAME:
+		_fail("work row, named builder: no `%s` link" % OTHER_BUILDER_NAME)
+	else:
+		var focused: Array = []
+		_hud._bandpanel.alert_focus_requested.connect(func(x: int, y: int) -> void: focused.append(Vector2i(x, y)))
+		(link as Button).pressed.emit()
+		if focused != [OTHER_BUILDER_POS]:
+			_fail("work row, builder link: pressing it focused %s, wanted [%s]" % [str(focused), str(OTHER_BUILDER_POS)])
+	_push_bands([_rung_band_fixture()])
+	# OURS: the same patch owned by us reads unchanged -- the control.
+	patches = _rung_patch_fixtures()
+	patches[0] = _other_build_patches(HudConst.PLAYER_FACTION_ID)[0]
+	_set_forage_patches(patches)
+	_push_bands([_rung_band_fixture()])
+	await _settle()
+	await _save("band_panel_work_own_build")
+	var ours := _wild_row_model()
+	if String(ours.get("foreign_build", "")) != "":
+		_fail("work row, our own build: carries a foreign line `%s`" % ours.get("foreign_build", ""))
+	if String(ours.get("building_glyph", "")) == "":
+		_fail("work row, our own build: lost its own build face")
+	if _wild_row_foreign_text() != "":
+		_fail("work row, our own build: rendered a foreign line")
+	_set_forage_patches(_rung_patch_fixtures())
+	# THE HERD SIDE: the pastoral herd 30% through the Tame, Lothari's and then ours.
+	for owner in [OTHER_PEOPLE_FACTION, HudConst.PLAYER_FACTION_ID]:
+		var herds := _rung_herd_fixtures()
+		var boar: Dictionary = herds[0]
+		boar["domestication"] = OTHER_TAME_METER
+		boar["has_owner"] = true
+		boar["owner"] = owner
+		RUNG_FX.stamp_herd(boar)
+		_set_world_herds(herds)
+		_push_bands([_rung_band_fixture()])
+		await _settle()
+		var frame := "band_panel_work_other_tame" if owner == OTHER_PEOPLE_FACTION else "band_panel_work_own_tame"
+		await _save(frame)
+		var model := {}
+		for candidate in _hud._bandpanel._work_source_models(_hud._band_labor._panel_band, 0):
+			if String(candidate.get("key", "")) == "hunt:%s" % RUNG_PASTORAL_HERD_ID:
+				model = candidate
+		if owner == OTHER_PEOPLE_FACTION:
+			if String(model.get("foreign_build", "")) != OTHER_TAME_LINE:
+				_fail("work row, another people's Tame: wanted `%s`, got `%s`" % [OTHER_TAME_LINE, model.get("foreign_build", "")])
+			if String(model.get("building_glyph", "")) != "" or String(model.get("ready_glyph", "")) != "":
+				_fail("work row, another people's Tame: still wears OUR build or offer face")
+			if _wild_row_foreign_text() != OTHER_TAME_LINE:
+				_fail("work row, another people's Tame: the rendered line two does not lead with `%s`" % OTHER_TAME_LINE)
+		else:
+			if String(model.get("foreign_build", "")) != "" or String(model.get("building_glyph", "")) == "":
+				_fail("work row, our own Tame: changed (foreign `%s`, face `%s`)" % [model.get("foreign_build", ""), model.get("building_glyph", "")])
+			if _wild_row_foreign_text() != "":
+				_fail("work row, our own Tame: rendered a foreign line")
+	_set_world_herds(_rung_herd_fixtures())
+	FactionNames.reset()
+

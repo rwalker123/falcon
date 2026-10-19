@@ -17,11 +17,14 @@ pub use commands::{
     WorkPartySource,
 };
 pub use commands::{
-    CancelScope, CommandDecodeError, CommandEncodeError, CommandEnvelope, CommandPayload,
-    ConfigOverrideKind, OrdersDirective, ReloadConfigKind, SecurityPolicyKind,
-    StartingKitAllocation, StartingMaterialAllocation, TradeCargoItem, FODDER_CARGO_KEY,
-    FOOD_CARGO_KEY, MAX_PROTO_FRAME,
+    BundleRequest, CancelScope, CommandDecodeError, CommandEncodeError, CommandEnvelope,
+    CommandPayload, ConfigOverrideKind, DealingReply, OrdersDirective, ReloadConfigKind,
+    SecurityPolicyKind, StartingKitAllocation, StartingMaterialAllocation, StrangersKind,
+    TradeCargoItem, TreatyTermsRequest, FODDER_CARGO_KEY, FOOD_CARGO_KEY, MAX_PROTO_FRAME,
 };
+
+pub mod worth;
+pub use worth::{good_worth, worth, GoodAmount};
 
 pub mod command_text;
 pub use command_text::{
@@ -363,6 +366,13 @@ pub mod knowledge {
                 lineage_constants: Default::default(),
                 connections: Vec::new(),
                 routes: Vec::new(),
+                dealings: Vec::new(),
+                treaties: Vec::new(),
+                standing_links: Vec::new(),
+                trade_history: Vec::new(),
+                goodwill: Vec::new(),
+                own_goodwill: Vec::new(),
+                goodwill_cuts: Default::default(),
                 tile_improvements: Vec::new(),
                 contact_lessons: Vec::new(),
                 deposits: Vec::new(),

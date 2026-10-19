@@ -710,9 +710,15 @@ func _tie_tile(tie: Dictionary) -> Vector2i:
 ## **THE KIT RIDES THE PAYLOAD** with the job default beside it, because `Main._kit_token` omits the
 ## tail when the two agree — which is what lets a composition that never touched the picker emit the
 ## byte-identical line it emitted before the picker existed.
+##
+## **THE PACK AND THE STRANGERS ORDER RIDE IT TOO** (early diplomacy): `pack` is the picker's manifest
+## rows and `strangers` the order for the first people the party meets (see `HudDealingsVocab`'s
+## strangers words; keep, the default, is not spelled on the line).
 func send_expedition_to(band: Dictionary, party_workers: int, tile: Vector2i,
 		kit_id: String = KitRoster.NO_KIT_ID,
-		default_kit_id: String = KitRoster.NO_KIT_ID) -> void:
+		default_kit_id: String = KitRoster.NO_KIT_ID,
+		strangers: String = HudDealingsVocab.STRANGERS_KEEP,
+		pack: Array = []) -> void:
 	if band.is_empty() or party_workers <= 0 or tile.x < 0 or tile.y < 0:
 		return
 	send_expedition_requested.emit({
@@ -723,6 +729,8 @@ func send_expedition_to(band: Dictionary, party_workers: int, tile: Vector2i,
 		"y": tile.y,
 		"kit_id": kit_id,
 		"default_kit_id": default_kit_id,
+		"strangers": strangers,
+		"pack": pack,
 	})
 
 # ---- Pick-quarry ---------------------------------------------------------------------------------

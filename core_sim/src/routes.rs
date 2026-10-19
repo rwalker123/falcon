@@ -737,19 +737,261 @@ pub fn path_friction_multiplier<'a>(
 ///
 /// ⛔ **THE FILTER IS [`Road::keeping_is_met`] AND NOT [`Road::grants_sight`]** — see
 /// [`path_friction_multiplier`] for why the free floor has to pass it.
+///
+/// ⛔ **IT READS A ROAD AS THE WALKING PEOPLE SEES IT** ([`RoadAccess`], [`road_reach_for`]): a
+/// foreigner's walk over a built road gets a share of the rung's reach unless a road-rights treaty
+/// joins the two peoples. Every caller says whose feet they are.
 pub fn path_reach_tiles<'a>(
     registry: &RoadRegistry,
     path: impl IntoIterator<Item = &'a UVec2>,
+    access: &RoadAccess<'_>,
 ) -> u32 {
     let mut reach: Option<u32> = None;
     for tile in path {
         let tile_reach = registry
             .road(*tile)
             .filter(|road| road.keeping_is_met())
-            .map_or(NO_REACH_HELD_OPEN, |road| road.payoff().holds_link_to_tiles);
+            .map_or(NO_REACH_HELD_OPEN, |road| road_reach_for(road, access));
         reach = Some(reach.map_or(tile_reach, |held| held.min(tile_reach)));
     }
     reach.unwrap_or(NO_REACH_HELD_OPEN)
+}
+
+/// **The inputs of the foreign-road rule a system reads**: the treaties in force and the diplomacy
+/// config's share. Both optional, for the hand-rolled worlds that never installed them — no treaties
+/// reads as none, no config reads as the builtin's share.
+#[derive(bevy::ecs::system::SystemParam)]
+pub struct RoadRights<'w> {
+    treaties: Option<Res<'w, crate::treaties::Treaties>>,
+    diplomacy: Option<Res<'w, crate::diplomacy_config::DiplomacyConfigHandle>>,
+}
+
+/// The builtin config's share, parsed once.
+static BUILTIN_FOREIGN_ROAD_SHARE: std::sync::LazyLock<f32> = std::sync::LazyLock::new(|| {
+    crate::diplomacy_config::DiplomacyConfig::builtin()
+        .roads
+        .foreign_road_share
+});
+
+/// **The foreign-road rule for this ladder**, off the diplomacy config when one is installed and the
+/// builtin's share otherwise — the one construction every reader (a system's [`RoadRights`], the
+/// capture) goes through.
+pub fn foreign_roads(
+    diplomacy: Option<&crate::diplomacy_config::DiplomacyConfigHandle>,
+    ladder: &LadderConfig,
+) -> ForeignRoads {
+    let share = diplomacy.map_or(*BUILTIN_FOREIGN_ROAD_SHARE, |handle| {
+        handle.get().roads.foreign_road_share
+    });
+    ForeignRoads::new(share, ladder)
+}
+
+/// **`people`'s road access read straight off a `World`** — for the callers that hold a `&World`
+/// rather than system params (the compose-sheet query, the assign-time seed). The same rule
+/// [`RoadRights`] hands a system.
+pub fn road_access_in_world<'w>(
+    world: &'w bevy::prelude::World,
+    people: FactionId,
+    ladder: &LadderConfig,
+) -> RoadAccess<'w> {
+    RoadAccess {
+        walker: Walker::new(
+            people,
+            world
+                .get_resource::<crate::treaties::Treaties>()
+                .unwrap_or(&crate::treaties::NO_TREATIES),
+        ),
+        foreign: foreign_roads(
+            world.get_resource::<crate::diplomacy_config::DiplomacyConfigHandle>(),
+            ladder,
+        ),
+    }
+}
+
+impl RoadRights<'_> {
+    /// The rule's scalars for this ladder.
+    pub fn foreign(&self, ladder: &LadderConfig) -> ForeignRoads {
+        foreign_roads(self.diplomacy.as_deref(), ladder)
+    }
+
+    /// The treaties in force, or none.
+    pub fn treaties(&self) -> &crate::treaties::Treaties {
+        self.treaties
+            .as_deref()
+            .unwrap_or(&crate::treaties::NO_TREATIES)
+    }
+
+    /// `people`'s feet on the road, under the treaties in force.
+    pub fn walker(&self, people: FactionId) -> Walker<'_> {
+        Walker::new(people, self.treaties())
+    }
+
+    /// The whole reading for one walking people.
+    pub fn access(&self, people: FactionId, foreign: ForeignRoads) -> RoadAccess<'_> {
+        RoadAccess {
+            walker: self.walker(people),
+            foreign,
+        }
+    }
+}
+
+/// **The config scalars of the foreign-road rule**: a foreigner's share of a built road's payoff
+/// (`diplomacy_config.json` → `roads.foreign_road_share`) and the trail's own reach, below which no
+/// foreign reading falls.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ForeignRoads {
+    /// A foreigner's share of a built road's reach, `0..=1`.
+    pub share: f32,
+    /// What a trail holds open: the floor under a foreign reading, because a path and a trail are
+    /// public (traffic made them) at full value.
+    pub trail_reach: u32,
+}
+
+impl ForeignRoads {
+    /// **Every road is everyone's** — a share of `1.0` reads the rung's full reach for any walker.
+    /// What a caller with no diplomacy to consult (a connection's lesson, a unit fixture) passes.
+    pub const NEUTRAL: ForeignRoads = ForeignRoads {
+        share: 1.0,
+        trail_reach: NO_REACH_HELD_OPEN,
+    };
+
+    /// The rule for this ladder at this share: the floor is the free floor's top rung's reach.
+    pub fn new(share: f32, ladder: &LadderConfig) -> Self {
+        Self {
+            share,
+            trail_reach: trail_reach_tiles(ladder),
+        }
+    }
+}
+
+/// **What a trail holds open** — the free floor's top rung's `holds_link_to_tiles`, read off the
+/// ladder (never a literal), and `0` for a ladder that declares none.
+pub fn trail_reach_tiles(ladder: &LadderConfig) -> u32 {
+    free_floor_top_rung(ladder)
+        .route_payoff
+        .map_or(NO_REACH_HELD_OPEN, |payoff| payoff.holds_link_to_tiles)
+}
+
+/// **Whose feet are on the road**: the walking people, and the treaties that may join it to a
+/// keeper's.
+#[derive(Debug, Clone, Copy)]
+pub struct Walker<'a> {
+    pub people: FactionId,
+    /// `None` reads as no treaties at all (a hand-rolled world with no resource).
+    pub treaties: Option<&'a crate::treaties::Treaties>,
+}
+
+impl<'a> Walker<'a> {
+    pub fn new(people: FactionId, treaties: &'a crate::treaties::Treaties) -> Self {
+        Self {
+            people,
+            treaties: Some(treaties),
+        }
+    }
+}
+
+/// **A walker and the rule it is read by** — the one argument [`path_reach_tiles`] takes.
+#[derive(Debug, Clone, Copy)]
+pub struct RoadAccess<'a> {
+    pub walker: Walker<'a>,
+    pub foreign: ForeignRoads,
+}
+
+impl RoadAccess<'static> {
+    /// Every road full for anyone — see [`ForeignRoads::NEUTRAL`].
+    pub const NEUTRAL: RoadAccess<'static> = RoadAccess {
+        walker: Walker {
+            people: FactionId(0),
+            treaties: None,
+        },
+        foreign: ForeignRoads::NEUTRAL,
+    };
+}
+
+/// ⛔ **ONE TILE'S REACH, AS THE WALKING PEOPLE READS IT** — the foreign-road rule
+/// (`docs/plan_early_diplomacy.md` §3), in one function beside [`path_reach_tiles`]:
+///
+/// ```text
+/// full                                            a path or a trail (public, traffic made it),
+///                                                 a road nobody keeps, the walker's own people's
+///                                                 road, or a road a road-rights treaty joins
+/// max(trail_reach, floor(full × share))           a built road (>= the first built rung) kept by
+///                                                 another people, capped at full
+/// ```
+///
+/// **Only the reading changes.** Which tiles qualify as a kept road, and so
+/// [`standing_link`], is untouched: a foreign kept road is still a kept road.
+pub fn road_reach_for(road: &Road, access: &RoadAccess<'_>) -> u32 {
+    let full = road.payoff().holds_link_to_tiles;
+    if !road.is_built() {
+        return full;
+    }
+    let Some(keeper) = road.keeper else {
+        return full;
+    };
+    let walker = &access.walker;
+    if keeper.faction == walker.people
+        || walker
+            .treaties
+            .is_some_and(|treaties| treaties.road_rights(keeper.faction, walker.people))
+    {
+        return full;
+    }
+    let shared = (full as f32 * access.foreign.share).floor() as u32;
+    shared.max(access.foreign.trail_reach).min(full)
+}
+
+/// **The lowest road rung a standing link needs, resolved against the ladder once** — what
+/// `standing_link` compares each tile's held rung with, so the per-tile test needs no ladder.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LinkFloor {
+    pub rung: RungId,
+    /// The rung's `order` on its branch, as the ladder declared it.
+    pub order: u32,
+}
+
+impl LinkFloor {
+    /// **Does this road hold the floor's rung or one above it on the same branch?**
+    pub fn admits(&self, road: &Road) -> bool {
+        let standing = road.standing();
+        standing.held.branch == self.rung.branch && u32::from(standing.held_order) >= self.order
+    }
+}
+
+/// ⛔ **A STANDING LINK — A BUILT, KEPT ROAD RUNNING THE WHOLE WAY BETWEEN TWO CAMPS.** The one
+/// predicate behind early diplomacy's stage 4 and its link goodwill (`docs/plan_early_diplomacy.md`
+/// §1/§2): true when **every** tile of the path between `a` and `b` carries a road that is
+/// [`Road::keeping_is_met`] **and** held at `floor` or above.
+///
+/// **It reads exactly the tile set [`path_reach_tiles`] reads** — the same [`trace_path`] over the
+/// same registry, the same keeping filter — so "the road holds the link open" and "the road makes
+/// this a standing link" can never be two different runs of ground. Where `path_reach_tiles` takes
+/// the weakest tile's reach, this asks the weakest tile's rung: a single bare, unkept or sub-floor
+/// tile breaks the link, which is the shipped asymmetry again (the whole run holds or it does not).
+///
+/// No faction branch: whose road it is does not matter, only that it is built and kept. The two
+/// endpoint tiles are tested first (they are the cheapest tiles to fail on and every path contains
+/// both), so a pair of camps with no road at either end traces nothing.
+pub fn standing_link(
+    roads: &RoadRegistry,
+    a: UVec2,
+    b: UVec2,
+    width: u32,
+    height: u32,
+    wrap: bool,
+    floor: LinkFloor,
+) -> bool {
+    let tile_stands = |tile: UVec2| {
+        roads
+            .road(tile)
+            .is_some_and(|road| road.keeping_is_met() && floor.admits(road))
+    };
+    if !tile_stands(a) || !tile_stands(b) {
+        return false;
+    }
+    trace_path(a, b, width, height, wrap, roads)
+        .iter()
+        .all(|tile| tile_stands(*tile))
 }
 
 /// **A TILE THAT HOLDS NO LINK OPEN** — what bare ground and a path are both worth to
@@ -1611,7 +1853,10 @@ pub fn credit_route_lessons(
                 continue;
             }
             let path = trace_path(from, to, width, height, wrap, &registry);
-            if distance > free_reach.max(path_reach_tiles(&registry, &path)) {
+            // **A connection is distance only, and so is its lesson**: no walker is asked for, and
+            // a road reads full for both ends however many peoples keep it
+            // (`RoadAccess::NEUTRAL`).
+            if distance > free_reach.max(path_reach_tiles(&registry, &path, &RoadAccess::NEUTRAL)) {
                 continue;
             }
             let Some(lesson_rung) = path_lesson_rung(&registry, &path) else {
@@ -2202,7 +2447,7 @@ mod tests {
             "precondition: a dirt road holds something open"
         );
         assert_eq!(
-            path_reach_tiles(&registry, &path),
+            path_reach_tiles(&registry, &path, &RoadAccess::NEUTRAL),
             dirt_reach,
             "a wholly roaded run holds what its rung holds — the liveness half"
         );
@@ -2210,7 +2455,7 @@ mod tests {
         // One tile in the middle taken back to bare ground.
         registry.remove(path[2]);
         assert_eq!(
-            path_reach_tiles(&registry, &path),
+            path_reach_tiles(&registry, &path, &RoadAccess::NEUTRAL),
             NO_REACH_HELD_OPEN,
             "ONE GAP BREAKS THE LINK — the weakest tile is the answer, not the best one"
         );
@@ -2239,14 +2484,14 @@ mod tests {
             "precondition: the config really does say the free floor buys something ({trail_reach})"
         );
         assert_eq!(
-            path_reach_tiles(&registry, &path),
+            path_reach_tiles(&registry, &path, &RoadAccess::NEUTRAL),
             trail_reach,
             "a wholly trailed run holds the TRAIL rung's own reach — the liveness half, and FREE IS              NOT WORTHLESS"
         );
 
         registry.remove(path[2]);
         assert_eq!(
-            path_reach_tiles(&registry, &path),
+            path_reach_tiles(&registry, &path, &RoadAccess::NEUTRAL),
             NO_REACH_HELD_OPEN,
             "and one bare tile in it still holds nothing — the containment half"
         );
@@ -2335,7 +2580,7 @@ mod tests {
         }
         let dirt = payoff_of(shipped::route_dirt_road(), &ladder);
         assert_eq!(
-            path_reach_tiles(&registry, &path),
+            path_reach_tiles(&registry, &path, &RoadAccess::NEUTRAL),
             dirt.holds_link_to_tiles,
             "precondition: kept, the run holds its rung's reach"
         );
@@ -2345,7 +2590,7 @@ mod tests {
         short.upkeep_demanded = Some(1.0);
         short.upkeep_supplied = NO_UPKEEP_DEMAND;
         assert_eq!(
-            path_reach_tiles(&registry, &path),
+            path_reach_tiles(&registry, &path, &RoadAccess::NEUTRAL),
             NO_REACH_HELD_OPEN,
             "an unmaintained road is not carrying anything, so the run is broken"
         );
@@ -2560,6 +2805,221 @@ mod tests {
             Some(BuildTurns::Holding),
             "and THAT is the parked half-built road the keeping pool holds indefinitely - the \
              sentence the bare arm must not be allowed to borrow"
+        );
+    }
+}
+
+#[cfg(test)]
+mod foreign_road_tests {
+    use super::*;
+    use crate::ladder_ids::shipped;
+    use crate::treaties::{Treaties, TreatyTerms};
+
+    const KEEPER: FactionId = FactionId(0);
+    const FOREIGNER: FactionId = FactionId(1);
+    /// A share that cuts a dirt road below the trail, so the floor is what answers.
+    const HALF_SHARE: f32 = 0.5;
+
+    fn tile(x: u32) -> UVec2 {
+        UVec2::new(x, 1)
+    }
+
+    /// A road held at `rung`'s top, kept by `keeper` (or nobody).
+    fn road_at(
+        roads: &mut RoadRegistry,
+        ladder: &LadderConfig,
+        at: UVec2,
+        rung: RungId,
+        keeper: Option<FactionId>,
+    ) {
+        let (base, span) = road_rung_span(rung, ladder, NEAR_ENOUGH_TO_KEEP);
+        let road = roads.road_or_trail(at, ladder);
+        road.set_position(base + span, ladder);
+        if let Some(faction) = keeper {
+            road.take_keeper(
+                RoadKeeper {
+                    faction,
+                    band: BandId(1),
+                },
+                NEAR_ENOUGH_TO_KEEP,
+                ladder,
+            );
+        }
+    }
+
+    fn reach(roads: &RoadRegistry, at: UVec2, access: &RoadAccess<'_>) -> u32 {
+        road_reach_for(roads.road(at).expect("a road"), access)
+    }
+
+    /// **The rule, tile by tile**: a foreigner's walk over a kept built road is worth
+    /// `max(trail, floor(full × share))`, never below the trail and never above the road; the
+    /// keeper's own people, a road-rights partner, a trail, and a road nobody keeps all read full.
+    #[test]
+    fn a_foreign_built_road_reads_a_share_never_below_the_trail_and_full_for_everyone_else() {
+        let ladder = LadderConfig::builtin();
+        let mut roads = RoadRegistry::default();
+        let (dirt, paved, trail, unkept) = (tile(1), tile(2), tile(3), tile(4));
+        road_at(
+            &mut roads,
+            &ladder,
+            dirt,
+            shipped::route_dirt_road(),
+            Some(KEEPER),
+        );
+        road_at(
+            &mut roads,
+            &ladder,
+            paved,
+            shipped::route_paved_road(),
+            Some(KEEPER),
+        );
+        road_at(&mut roads, &ladder, trail, shipped::route_trail(), None);
+        road_at(
+            &mut roads,
+            &ladder,
+            unkept,
+            shipped::route_dirt_road(),
+            None,
+        );
+        let full = |at| roads.road(at).expect("a road").payoff().holds_link_to_tiles;
+        let (dirt_full, paved_full, trail_full) = (full(dirt), full(paved), full(trail));
+        let trail_reach = trail_reach_tiles(&ladder);
+        assert_eq!(
+            trail_reach, trail_full,
+            "the floor is the trail's own reach"
+        );
+        assert!(
+            trail_full < dirt_full && dirt_full < paved_full,
+            "the ladder climbs"
+        );
+
+        let none = Treaties::default();
+        let rule = ForeignRoads::new(HALF_SHARE, &ladder);
+        let foreign = RoadAccess {
+            walker: Walker::new(FOREIGNER, &none),
+            foreign: rule,
+        };
+        let shared = |full: u32| ((full as f32 * HALF_SHARE).floor() as u32).max(trail_reach);
+        // The dirt road at half is under the trail, so the trail is what a foreigner gets.
+        assert_eq!(reach(&roads, dirt, &foreign), shared(dirt_full));
+        assert_eq!(
+            reach(&roads, dirt, &foreign),
+            trail_reach,
+            "never below the trail"
+        );
+        assert!(reach(&roads, dirt, &foreign) < dirt_full, "and reduced");
+        assert_eq!(reach(&roads, paved, &foreign), shared(paved_full));
+        assert!(reach(&roads, paved, &foreign) < paved_full);
+
+        // The shipped share is gentler: a foreigner keeps most of a dirt road.
+        let shipped = RoadAccess {
+            walker: Walker::new(FOREIGNER, &none),
+            foreign: ForeignRoads::new(
+                crate::diplomacy_config::DiplomacyConfig::builtin()
+                    .roads
+                    .foreign_road_share,
+                &ladder,
+            ),
+        };
+        let at_shipped = reach(&roads, dirt, &shipped);
+        assert!(
+            at_shipped > trail_reach && at_shipped < dirt_full,
+            "{at_shipped}"
+        );
+
+        // The keeper's own people read it whole.
+        let own = RoadAccess {
+            walker: Walker::new(KEEPER, &none),
+            foreign: rule,
+        };
+        assert_eq!(reach(&roads, dirt, &own), dirt_full);
+        assert_eq!(reach(&roads, paved, &own), paved_full);
+
+        // A road-rights treaty makes it whole for the partner.
+        let mut treaties = Treaties::default();
+        treaties.set(
+            KEEPER,
+            FOREIGNER,
+            TreatyTerms {
+                road_rights: true,
+                ..Default::default()
+            },
+            1,
+        );
+        let partner = RoadAccess {
+            walker: Walker::new(FOREIGNER, &treaties),
+            foreign: rule,
+        };
+        assert_eq!(reach(&roads, dirt, &partner), dirt_full);
+        assert_eq!(reach(&roads, paved, &partner), paved_full);
+        // An open-borders treaty alone does not.
+        let mut borders_only = Treaties::default();
+        borders_only.set(
+            KEEPER,
+            FOREIGNER,
+            TreatyTerms {
+                open_borders: true,
+                ..Default::default()
+            },
+            1,
+        );
+        let guest = RoadAccess {
+            walker: Walker::new(FOREIGNER, &borders_only),
+            foreign: rule,
+        };
+        assert_eq!(reach(&roads, paved, &guest), shared(paved_full));
+
+        // A trail is traffic's, and a road nobody keeps is nobody's: full for a foreigner.
+        assert_eq!(reach(&roads, trail, &foreign), trail_full);
+        assert_eq!(reach(&roads, unkept, &foreign), dirt_full);
+    }
+
+    /// The path reads the weakest tile as its own walker sees each one.
+    #[test]
+    fn a_path_is_as_long_as_its_weakest_tile_for_the_walker_reading_it() {
+        let ladder = LadderConfig::builtin();
+        let mut roads = RoadRegistry::default();
+        let (dirt, paved) = (tile(1), tile(2));
+        road_at(
+            &mut roads,
+            &ladder,
+            dirt,
+            shipped::route_dirt_road(),
+            Some(KEEPER),
+        );
+        road_at(
+            &mut roads,
+            &ladder,
+            paved,
+            shipped::route_paved_road(),
+            Some(KEEPER),
+        );
+        let none = Treaties::default();
+        let rule = ForeignRoads::new(HALF_SHARE, &ladder);
+        let foreign = RoadAccess {
+            walker: Walker::new(FOREIGNER, &none),
+            foreign: rule,
+        };
+        let own = RoadAccess {
+            walker: Walker::new(KEEPER, &none),
+            foreign: rule,
+        };
+        let path = [dirt, paved];
+        let dirt_full = roads
+            .road(dirt)
+            .expect("a road")
+            .payoff()
+            .holds_link_to_tiles;
+        assert_eq!(path_reach_tiles(&roads, &path, &own), dirt_full);
+        assert_eq!(
+            path_reach_tiles(&roads, &path, &foreign),
+            trail_reach_tiles(&ladder),
+            "the foreigner's dirt tile is the weakest"
+        );
+        assert_eq!(
+            path_reach_tiles(&roads, &path, &RoadAccess::NEUTRAL),
+            dirt_full,
+            "the neutral reading is distance only"
         );
     }
 }

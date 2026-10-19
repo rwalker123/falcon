@@ -347,7 +347,7 @@ own default, so a party that is not hunting, denying or trading reads as a scout
 and they stay gated on `is_hunt`. The green pip means *"carrying a haul HOME"*; a denial party's haul
 is a rounding error it should not advertise, and a trade party's goods are going the OTHER way. Both
 therefore take none of the hunt decorations. The awaiting-orders pulse is not a hunt decoration and
-rings every mission.
+rings every mission that is waiting on the player's ORDERS (`HudFormat.awaits_orders`): a shipment or envoy parked in a camp waits on an answer, needs no command, and draws no ring (the pulse's animation clock follows the same test).
 
 ## The LETHAL-GROUND mark — a ⚠ on a band standing where the sim is killing people (issue #614)
 

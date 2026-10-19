@@ -644,10 +644,15 @@ func _tile_terrain_lines(tile_info: Dictionary,
     # the server's (`site_refusal == needs_lesson`); once the lesson is learned the same ground reads
     # as workable and this row gives way to the forage block above.
     if not workable:
-        var lesson_line := DetailFormat.site_lesson_line(tile_info,
-            _topbar.knowledge_labels() if _topbar != null else {})
+        var lesson_labels: Dictionary = _topbar.knowledge_labels() if _topbar != null else {}
+        var lesson_knowledge: Dictionary = _topbar.faction_tracks(HudConst.PLAYER_FACTION_ID) \
+            if _topbar != null else {}
+        var lesson_line := DetailFormat.site_lesson_line(tile_info, lesson_labels, lesson_knowledge)
         if lesson_line != "":
             lines.append("%s: %s" % [HudFloraVocab.SITE_LESSON_ROW, lesson_line])
+            if ctx != null:
+                ctx.row_tooltips[HudFloraVocab.SITE_LESSON_ROW] = DetailFormat.site_lesson_tooltip(
+                    tile_info, lesson_labels, lesson_knowledge)
     # THE COMMITTED CROP — what the band committed this patch to, recorded on the FIRST worked turn,
     # ~25 turns before the build lands. It is a different fact from the basket above: committing
     # REWEIGHTS the basket as the build completes (issue #433 — a Tended Patch lifts the favored share
@@ -710,6 +715,13 @@ func _tile_terrain_lines(tile_info: Dictionary,
         # (`docs/plan_standing_upkeep.md` section 4.6a): the crew is what `BUILD_METER_HOLDS` cannot carry.
         var crew := _band_labor.build_crew_forage(tile_x, tile_y)
         var row_key := DetailFormat.patch_rung_row_key(quote)
+        # Another people's build in progress: the row names whose it is, in warn ink, and carries none
+        # of this viewer's crew-dependent readings.
+        var foreign_owner := RungQuotes.foreign_owner(tile_info, prefix)
+        if foreign_owner != RungQuotes.NO_FOREIGN_OWNER and not reached:
+            lines.append("%s: %s" % [row_key, DetailFormat.foreign_rung_value(foreign_owner, progress,
+                _band_labor.builder_label(RungQuotes.builder_band(tile_info, prefix)))])
+            continue
         var value := DetailFormat.rung_row_value(tile_info, prefix, verb,
             SourceForecast.SOURCE_KIND_FORAGE, DetailFormat.rung_built_label(verb, tile_info, prefix),
             reached, progress, crew, unstaffed_rung)
@@ -900,7 +912,8 @@ func _render_occupant_drawer(from_selection: bool = false) -> void:
         lines = DetailFormat.herd_summary_lines(_selection.herd(), _band_labor.world_herds(),
             _band_labor.unstaffed_build_hunt(String(_selection.herd().get("id", ""))),
             _band_labor.build_crew_hunt(String(_selection.herd().get("id", ""))), ctx,
-            _band_labor.working_floor_hunt(String(_selection.herd().get("id", ""))))
+            _band_labor.working_floor_hunt(String(_selection.herd().get("id", ""))),
+            _band_labor.builder_label(RungQuotes.builder_band(_selection.herd())))
     _occupant_detail.text = DetailFormat.detail_bbcode(lines, ctx)
     # …and the animal web's half of the same hover, on the drawer that describes one herd.
     DetailFormat.wire_row_hovers(_occupant_detail, ctx)

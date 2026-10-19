@@ -319,6 +319,7 @@ fn spawn_the_farming_band(
             tags: Vec::new(),
         },
         ResidentBand,
+        core_sim::BandId(BUILDER_BAND_ID),
         LaborAllocation {
             assignments: vec![
                 LaborAssignment {
@@ -494,6 +495,60 @@ fn a_sown_field_delivers_the_capacity_its_build_advertised() {
 /// one. It is asserted because it is the arm that pins the reading to the **destination rung** rather
 /// than to the top of the branch: a quote that reached for `plant:farm` whatever the entry named
 /// would publish `field_capacity_gain ×` here and be wrong by the whole gain.
+/// The durable id the fixture's building band carries, so the wire's `builderBand` has one to name.
+const BUILDER_BAND_ID: u64 = 777;
+
+/// **A foreign build is named by BAND**: one Cultivate turn up, the patch's row carries the band whose
+/// work advanced the meter, beside its owner; a patch nobody has touched carries none.
+#[test]
+fn a_patch_one_cultivate_turn_up_names_the_band_building_it() {
+    let (mut app, source) = world_with_a_cultivate_in_flight();
+    recapture_snapshot_in_place(&mut app.world);
+    assert_eq!(
+        published_patch_field(&app, source, |patch| patch.builderBand()),
+        0,
+        "an untouched patch names no builder"
+    );
+    run_turn(&mut app);
+    recapture_snapshot_in_place(&mut app.world);
+    assert!(
+        published_patch_field(&app, source, |patch| patch.hasOwner()),
+        "fixture: the Cultivate turn took ownership"
+    );
+    assert_eq!(
+        published_patch_field(&app, source, |patch| patch.builderBand()),
+        BUILDER_BAND_ID
+    );
+}
+
+/// **A herd one Tame turn up names the band taming it**, beside its owner.
+#[test]
+fn a_herd_one_tame_turn_up_names_the_band_taming_it() {
+    let (mut app, id) = world_with_a_tame_in_flight();
+    assert!(
+        app.world
+            .resource::<HerdRegistry>()
+            .find(&id)
+            .expect("the herd")
+            .builder_band
+            .is_none(),
+        "an untouched herd names no builder"
+    );
+    refill_the_range(&mut app);
+    seat_the_keeping(&mut app, &id);
+    keep_the_band_alive(&mut app);
+    run_turn(&mut app);
+    recapture_snapshot_in_place(&mut app.world);
+    assert!(
+        published_herd_field(&app, &id, |herd| herd.hasOwner()),
+        "fixture: the Tame turn took ownership"
+    );
+    assert_eq!(
+        published_herd_field(&app, &id, |herd| herd.builderBand()),
+        BUILDER_BAND_ID
+    );
+}
+
 #[test]
 fn a_cultivate_destination_quotes_the_capacity_rung_two_actually_buys() {
     let (mut app, source) = world_with_a_cultivate_in_flight();
@@ -712,6 +767,7 @@ fn spawn_the_herding_band(
             tags: Vec::new(),
         },
         ResidentBand,
+        core_sim::BandId(BUILDER_BAND_ID),
         LaborAllocation {
             assignments: vec![
                 LaborAssignment {

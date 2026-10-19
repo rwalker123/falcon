@@ -247,6 +247,21 @@ is asserted alongside each — named on the frame that carries it, absent on the
 because the config pages gate on `SnapshotSections.changed()` for exactly this key, so an unnamed
 replacement is one they skip.
 
+**The decoded dealing rows must carry `party_band`** (the key the client joins a dealing to its camped party on) **and `terms`** (the key it reads an offer as a gift on); the probe fails the run when either is absent from the first row.
+
+**The DIPLOMACY sections are a third whole-section witness** (`_assert_diplomacy_witnesses`, issue #233):
+delta 1 REPLACES `dealings`, `trade_history`, `goodwill` (known, own and cuts) and `treaties` (with the
+standing links) with visibly different rows, and **one dealing and one trade record fewer** (the first
+record's `turn` moved too, so a decoder that patched instead of replacing fails on the count and one that
+republished the baseline fails on the turn); delta 2 carries none of them. Five claims: each is named in
+`changed_sections` on delta 1 and NOT on delta 2 (the table-always-present trap in `native-extension.md`
+is exactly what failed this); the dealing count fell by one; the four probe values (first dealing's
+`turns_left`, first treaty's `formed_turn`, the first known and own goodwill `total`) read the delta's and
+not the baseline's; and after delta 2 every one of them still reads delta 1's with the cuts intact. The
+fixture side is `WholeSectionWitnesses::diplomacy` in `xtask/src/decode_fixture.rs`, and its CI half
+(`the_delta_fixtures_chain_and_move_disjoint_rows`) asserts the delta's rows really are different and
+delta 2 really carries none.
+
 **Sabotage-verified on the two mutations the pair exists to separate**: deleting the field's line
 from `decode_delta_against` fails claim 1 and names the value as the baseline's, while re-basing the
 cache dictionary on the baseline fails claim 2 — reached by muting the older `demographics`

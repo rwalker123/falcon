@@ -1354,6 +1354,8 @@ pub struct WalkReachInputs<'w> {
     pub supply: Res<'w, crate::supply_network_config::SupplyNetworkConfigHandle>,
     pub ladder: Res<'w, LadderConfigHandle>,
     pub tile_registry: Res<'w, TileRegistry>,
+    /// Whose feet are on a road — the treaties in force and the foreign-road share.
+    pub rights: crate::routes::RoadRights<'w>,
 }
 
 impl WalkReachInputs<'_> {
@@ -1363,6 +1365,7 @@ impl WalkReachInputs<'_> {
             base_reach,
             &self.supply.get(),
             &self.ladder.get(),
+            self.rights.foreign(&self.ladder.get()),
             self.tile_registry.width,
             self.tile_registry.height,
             wrap,
@@ -1386,6 +1389,7 @@ pub fn refresh_belief_anchor(
     belief: &BeliefRegistry,
     walk: &crate::supply::WalkReach,
     roads: &crate::routes::RoadRegistry,
+    walker: crate::routes::Walker<'_>,
     min_anchor_belief: f32,
 ) -> Option<UVec2> {
     let held = anchor.map_or(NO_BELIEF, |tile| belief.get(tile));
@@ -1394,7 +1398,7 @@ pub fn refresh_belief_anchor(
         if value < min_anchor_belief || strongest.is_some_and(|(_, best)| value <= best) {
             continue;
         }
-        if walk.within(roads, standing, tile) {
+        if walk.within(roads, walker, standing, tile) {
             strongest = Some((tile, value));
         }
     }
@@ -1438,6 +1442,7 @@ fn resolve_culture_terms(
     belief: &BeliefRegistry,
     walk: &crate::supply::WalkReach,
     roads: &crate::routes::RoadRegistry,
+    treaties: &crate::treaties::Treaties,
     culture: &crate::wellbeing_config::CultureConfig,
 ) -> BTreeMap<Entity, CultureReading> {
     let mut relay_input: Vec<((u64, u64), Entity, crate::belief_relay::RelayBand)> = Vec::new();
@@ -1451,6 +1456,7 @@ fn resolve_culture_terms(
             belief,
             walk,
             roads,
+            crate::routes::Walker::new(cohort.faction, treaties),
             culture.min_anchor_belief,
         );
         relay_input.push((
@@ -1466,7 +1472,7 @@ fn resolve_culture_terms(
     relay_input.sort_by_key(|(key, _, _)| *key);
     let bands: Vec<crate::belief_relay::RelayBand> =
         relay_input.iter().map(|(_, _, band)| *band).collect();
-    let relay = crate::belief_relay::resolve_belief_relay(&bands, walk, roads);
+    let relay = crate::belief_relay::resolve_belief_relay(&bands, walk, roads, treaties);
     relay_input
         .iter()
         .enumerate()
@@ -1569,6 +1575,7 @@ pub fn simulate_population(
         &belief,
         &walk,
         &walk_inputs.roads,
+        walk_inputs.rights.treaties(),
         &wellbeing.culture,
     );
     for (entity, mut cohort, labor, band_id, mut accumulator) in cohorts.iter_mut() {

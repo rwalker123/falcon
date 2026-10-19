@@ -114,7 +114,7 @@ fn tie(app: &mut App, a: BandId, b: BandId) {
     for key in [ConnectionKey::new(a, b), ConnectionKey::new(b, a)] {
         ledger.record_contact(
             key,
-            &Sighting::new(UVec2::ZERO, SIGHTING_TURN, ""),
+            &Sighting::new(UVec2::ZERO, SIGHTING_TURN, "", FactionId(0)),
             SIGHTING_TURN,
             &config,
         );
@@ -477,6 +477,10 @@ fn spawn_party(app: &mut App, home: Entity, at: Entity) -> (Entity, BandId) {
                 cargo: LocalStore::new(),
                 defection_pull: Scalar::zero(),
                 station_reports: Vec::new(),
+                goodwill_news: Default::default(),
+                exchange_return: Default::default(),
+                unpaid_return: Default::default(),
+                scout_pack: Default::default(),
                 aim: None,
             },
         ))
@@ -650,8 +654,8 @@ fn open_borders_and_a_partys_pull_survive_a_save() {
     let (loaded, _) = core_sim::save::load_save(&blob).expect("the save loads");
 
     let borders = loaded.world.resource::<FactionBorderPolicies>();
-    assert!(!borders.is_open(RIVAL), "a closed border stays closed");
-    assert!(borders.is_open(HOME), "and an open one open");
+    assert!(!borders.default_open(RIVAL), "a closed border stays closed");
+    assert!(borders.default_open(HOME), "and an open one open");
     let mut loaded = loaded;
     let pulls: Vec<Scalar> = loaded
         .world

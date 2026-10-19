@@ -23,8 +23,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use bevy::prelude::{Entity, UVec2};
 
 use crate::orders::FactionId;
-use crate::routes::RoadRegistry;
+use crate::routes::{RoadRegistry, Walker};
 use crate::supply::WalkReach;
+use crate::treaties::Treaties;
 use crate::wellbeing_config::CultureConfig;
 
 /// The hop count of a band standing within walking reach of its anchor itself.
@@ -115,6 +116,7 @@ impl BeliefRelay {
         band: usize,
         walk: &WalkReach,
         roads: &RoadRegistry,
+        treaties: &Treaties,
     ) -> Vec<UVec2> {
         let Some(key) = self.bands.get(band).and_then(key_of) else {
             return Vec::new();
@@ -122,7 +124,7 @@ impl BeliefRelay {
         let kin: Vec<usize> = kin_of(&self.bands, key.0)
             .filter(|&index| index != band)
             .collect();
-        let mut positions: Vec<UVec2> = search(&self.bands, &kin, key, walk, roads)
+        let mut positions: Vec<UVec2> = search(&self.bands, &kin, key, walk, roads, treaties)
             .keys()
             .map(|&index| self.bands[index].standing)
             .collect();
@@ -143,16 +145,19 @@ fn kin_of(bands: &[RelayBand], faction: FactionId) -> impl Iterator<Item = usize
 fn search(
     bands: &[RelayBand],
     kin: &[usize],
-    (_, (y, x)): SearchKey,
+    (people, (y, x)): SearchKey,
     walk: &WalkReach,
     roads: &RoadRegistry,
+    treaties: &Treaties,
 ) -> BTreeMap<usize, u32> {
     let anchor = UVec2::new(x, y);
+    // Every band in the search is of one people, so one walker reads the roads for all of them.
+    let walker = Walker::new(people, treaties);
     let mut hops: BTreeMap<usize, u32> = BTreeMap::new();
     let mut frontier: Vec<usize> = kin
         .iter()
         .copied()
-        .filter(|&index| walk.within(roads, bands[index].standing, anchor))
+        .filter(|&index| walk.within(roads, walker, bands[index].standing, anchor))
         .collect();
     for &index in &frontier {
         hops.insert(index, DIRECT_HOPS);
@@ -166,7 +171,12 @@ fn search(
             .filter(|index| !hops.contains_key(index))
             .filter(|&index| {
                 frontier.iter().any(|&relayer| {
-                    walk.within(roads, bands[index].standing, bands[relayer].standing)
+                    walk.within(
+                        roads,
+                        walker,
+                        bands[index].standing,
+                        bands[relayer].standing,
+                    )
                 })
             })
             .collect();
@@ -184,13 +194,14 @@ pub fn resolve_belief_relay(
     bands: &[RelayBand],
     walk: &WalkReach,
     roads: &RoadRegistry,
+    treaties: &Treaties,
 ) -> BeliefRelay {
     let searches: BTreeSet<SearchKey> = bands.iter().filter_map(key_of).collect();
     let reached = searches
         .into_iter()
         .map(|key| {
             let kin: Vec<usize> = kin_of(bands, key.0).collect();
-            (key, search(bands, &kin, key, walk, roads))
+            (key, search(bands, &kin, key, walk, roads, treaties))
         })
         .collect();
     BeliefRelay {
@@ -227,6 +238,7 @@ mod tests {
             width: GRID,
             height: GRID,
             wrap: false,
+            foreign: crate::routes::ForeignRoads::NEUTRAL,
         }
     }
 
@@ -247,7 +259,12 @@ mod tests {
             band(OTHER, 6, Some(0)),
             band(OTHER, 10, Some(0)),
         ];
-        let relay = resolve_belief_relay(&bands, &walk(), &RoadRegistry::default());
+        let relay = resolve_belief_relay(
+            &bands,
+            &walk(),
+            &RoadRegistry::default(),
+            &Treaties::default(),
+        );
         assert_eq!(relay.hops(0), Some(0));
         assert_eq!(relay.hops(1), Some(1));
         assert_eq!(relay.hops(2), Some(2));
@@ -266,7 +283,12 @@ mod tests {
             band(HOME, 6, None),
             band(HOME, 6, Some(0)),
         ];
-        let relay = resolve_belief_relay(&bands, &walk(), &RoadRegistry::default());
+        let relay = resolve_belief_relay(
+            &bands,
+            &walk(),
+            &RoadRegistry::default(),
+            &Treaties::default(),
+        );
         assert_eq!(relay.hops(1), None, "no anchor, nothing to reach toward");
         assert_eq!(relay.strength(0, &culture(NO_RELAY)), 1.0);
         assert_eq!(relay.strength(2, &culture(NO_RELAY)), 0.0);
@@ -280,14 +302,19 @@ mod tests {
             band(HOME, 6, Some(0)),
             band(HOME, 10, Some(0)),
         ];
-        let relay = resolve_belief_relay(&bands, &walk(), &RoadRegistry::default());
+        let relay = resolve_belief_relay(
+            &bands,
+            &walk(),
+            &RoadRegistry::default(),
+            &Treaties::default(),
+        );
         let roads = RoadRegistry::default();
         assert_eq!(
-            relay.relayers_without(2, &walk(), &roads),
+            relay.relayers_without(2, &walk(), &roads, &Treaties::default()),
             vec![UVec2::new(2, 0), UVec2::new(6, 0)]
         );
         assert_eq!(
-            relay.relayers_without(1, &walk(), &roads),
+            relay.relayers_without(1, &walk(), &roads, &Treaties::default()),
             vec![UVec2::new(2, 0)],
             "the band at 10 is reached only through the band at 6"
         );

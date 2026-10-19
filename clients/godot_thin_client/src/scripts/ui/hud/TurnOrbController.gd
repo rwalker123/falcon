@@ -22,6 +22,10 @@ signal answer_fork_requested(payload: Dictionary)
 signal advance_requested
 # An orb row's "Jump →" — HudLayer wires this to AttentionController.on_turn_orb_focus (the band-routing handler).
 signal focus_requested(x: int, y: int)
+# A "a people awaits your answer" orb row was activated -- relayed to HudLayer, which brings the
+# receiving band's Dealings tab forward (`BandPanelController.focus_dealings`). The row is
+# non-locating, so it reaches this controller through `panel_requested`, not a map jump.
+signal dealings_focus_requested(band_id: int)
 
 # --- Collaborators (handed in by HudLayer) ---
 var _turn_orb: TurnOrb = null
@@ -62,6 +66,11 @@ var _knowledge_attention: Array = []
 ## an open window**, so it is no longer empty from turn two onward: a split opens one on the splinter
 ## on whatever turn it happens.
 var _loadout_attention: Array = []
+## The DEALINGS half (early diplomacy): one row per band with a pending item addressed to it. Its own
+## half for `_loadout_attention`'s reason -- the `dealings` section moves on a command and on a turn
+## without moving the band alerts -- and **the answer window is ONE turn**, so a row that waited for a
+## `populations` frame to appear would be the row that arrived after the offer had lapsed.
+var _dealing_attention: Array = []
 # Beats already auto-opened this session, so a fork the player dismissed does not re-open on every
 # subsequent snapshot. Keyed by beat_id.
 var _auto_opened_forks: Dictionary = {}
@@ -196,6 +205,14 @@ func set_loadout_attention(attention: Array) -> void:
 	_loadout_attention = attention
 	_push_attention()
 
+## Store the DEALINGS half and push the whole registry -- `set_loadout_attention`'s seam, guarded the
+## same way (empty on nearly every turn, so an unguarded push would cost a deep copy and an orb redraw).
+func set_dealing_attention(attention: Array) -> void:
+	if _dealing_attention == attention:
+		return
+	_dealing_attention = attention
+	_push_attention()
+
 ## The knowledge screen, handed over once `HudLayer` has built it. See `_knowledge`.
 func set_knowledge_panel(knowledge: KnowledgePanelController) -> void:
 	_knowledge = knowledge
@@ -220,6 +237,7 @@ func _push_attention() -> void:
 	var attention: Array = _band_attention.duplicate(true)
 	attention.append_array(_knowledge_attention)
 	attention.append_array(_loadout_attention)
+	attention.append_array(_dealing_attention)
 	attention.append_array(_pending_fork_attention())
 	_turn_orb.set_attention(attention)
 
@@ -288,6 +306,11 @@ func _open_fork_panel() -> void:
 func _on_turn_orb_panel_requested(kind: String, subject: int) -> void:
 	if kind == HudAttentionVocab.ATTENTION_KIND_DECISION:
 		_open_fork_panel()
+		return
+	if kind == HudDealingsVocab.ATTENTION_KIND_DEALING:
+		# The row's own band, carried as its panel subject: the dealing is addressed to ONE band and
+		# its Dealings tab is where it is answered.
+		dealings_focus_requested.emit(subject)
 		return
 	if kind == HudAttentionVocab.ATTENTION_KIND_OPENING_LOADOUT \
 			or kind == HudAttentionVocab.ATTENTION_KIND_LOADOUT_KIT_SHORT:

@@ -1255,6 +1255,12 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
         cohort.expeditionMission().unwrap_or(""),
     );
     let _ = dict.insert("expedition_phase", cohort.expeditionPhase().unwrap_or(""));
+    // The treaty terms an envoy party (`expedition_mission` "envoy") posts on arrival; the all-empty
+    // terms dict on every other row.
+    let _ = dict.insert(
+        "envoy_terms",
+        &crate::dict::dealings::treaty_terms_to_dict(cohort.envoyTerms()),
+    );
     // The real band that outfitted this party (entity bits; 0 for a normal band). The Band/City
     // panel groups a band's active expeditions by `home_band_entity == band.entity`, and the band
     // cycler excludes expeditions. Bit-reinterpreted as i64 like `entity` above so the comparison
@@ -1447,28 +1453,8 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
     let mut material_batches = VarArray::new();
     if let Some(batches) = cohort.materialBatches() {
         for batch in batches.iter() {
-            let mut row = VarDictionary::new();
-            // The GENERIC material id — "hide", never "deer_hide".
-            let _ = row.insert("material_id", batch.materialId().unwrap_or(""));
-            let _ = row.insert("amount", batch.amount() as f64);
-            // **THE EXACT READING AND ITS BAND, BOTH.** The band (`poor`/`fair`/`good`/`excellent`)
-            // is the merge key and the word the rail shows; the exact value is what crafting reads,
-            // so two `good` hides are not interchangeable. Published in the material's DECLARED axis
-            // order, which this decoder preserves.
-            let mut readings = VarArray::new();
-            if let Some(list) = batch.readings() {
-                for reading in list.iter() {
-                    let mut entry = VarDictionary::new();
-                    let _ = entry.insert("axis", reading.axis().unwrap_or(""));
-                    let _ = entry.insert("value", reading.value() as f64);
-                    let _ = entry.insert("band_name", reading.bandName().unwrap_or(""));
-                    readings.push(&entry.to_variant());
-                }
-            }
-            let _ = row.insert("readings", &readings);
-            // The nearest declared VARIETY ("copper", "bronze"), `""` when the material declares
-            // none — which is every shipped material. Varieties are NAMING, not materials.
-            let _ = row.insert("variety_name", batch.varietyName().unwrap_or(""));
+            // Shared with the dealings goods lists (`dict::material_batch_to_dict`).
+            let row = crate::dict::material_batch_to_dict(&batch);
             material_batches.push(&row.to_variant());
         }
     }

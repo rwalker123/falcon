@@ -6,6 +6,7 @@
 pub(crate) mod campaign;
 pub(crate) mod connections;
 pub(crate) mod culture;
+pub(crate) mod dealings;
 pub(crate) mod deposits;
 pub(crate) mod economy;
 pub(crate) mod governance;
@@ -24,6 +25,33 @@ pub(crate) fn strings_to_variant_array(values: Vector<'_, ForwardsUOffset<&'_ st
         array.push(&value.to_variant());
     }
     array
+}
+
+/// One `MaterialBatchState` row as a dictionary, the shape `material_batches` has always had: the
+/// generic material id, the amount, EVERY reading (the band is the merge key, the exact value is
+/// what crafting reads) and the nearest declared variety. Shared by the cohort's store and the
+/// dealings goods lists, which are the same representation and so must decode the same way.
+pub(crate) fn material_batch_to_dict(
+    batch: &shadow_scale_flatbuffers::shadow_scale::sim::MaterialBatchState<'_>,
+) -> VarDictionary {
+    let mut row = VarDictionary::new();
+    // The GENERIC material id - "hide", never "deer_hide".
+    let _ = row.insert("material_id", batch.materialId().unwrap_or(""));
+    let _ = row.insert("amount", batch.amount() as f64);
+    let mut readings = VarArray::new();
+    if let Some(list) = batch.readings() {
+        for reading in list.iter() {
+            let mut entry = VarDictionary::new();
+            let _ = entry.insert("axis", reading.axis().unwrap_or(""));
+            let _ = entry.insert("value", reading.value() as f64);
+            let _ = entry.insert("band_name", reading.bandName().unwrap_or(""));
+            readings.push(&entry.to_variant());
+        }
+    }
+    let _ = row.insert("readings", &readings);
+    // `""` when the material declares no variety, which is every shipped material.
+    let _ = row.insert("variety_name", batch.varietyName().unwrap_or(""));
+    row
 }
 
 pub(crate) fn fixed64_to_f32(value: i64) -> f32 {

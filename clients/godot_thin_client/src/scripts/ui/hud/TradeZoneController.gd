@@ -8,17 +8,18 @@ extends RefCounted
 ## asks it for the zone's content and pushes the band, and this owns everything the tab draws — the
 ## zone, its list popover and its hover card.
 ##
-## **TWO TIERS, CHOSEN BY MEASUREMENT.** The FULL tier is the network line, then `⇄ Local exchange`
-## (one line per good, its net) and `⇄ Trade route` (Imports / Exports, one line per shipment). The
-## SHORT tier is the network line and one row per arm, each opening its list. Which one is drawn is
-## the full tier's MEASURED content height against the zone's own `zone_size()` height — never a
-## hard-coded number — so a side dock draws the full tab and a bottom dock's 418px body, which the
-## full tab overruns at its busiest, draws the short one. The panel never grows for it.
+## **THE TAB IS ONE SCROLL OF THREE SECTIONS** (the dealings merge): `Waiting on an answer`
+## (`DealingsRoster`), `This turn` (this controller's own content: the network line, `⇄ Local exchange`
+## and `⇄ Trade route`) and `History` (`TradeHistoryRoster`). Two of them are unbounded lists, so the
+## tab scrolls -- which is also why the content is ONE tier: the SHORT tier existed only because the
+## zone could not scroll, and it was chosen by measuring the zone's height. It, its measurement and the
+## room-tracking that fed it are gone.
 ##
-## **NOTHING EXPANDS IN PLACE.** Every list too long for the zone — the camps, a folded direction, the
-## SHORT tier's arms — opens in the LIST POPOVER, so the zone's height never depends on what the
-## player opened, which is the whole reason it can have a fixed budget. The zone itself owns NO
-## `ScrollContainer` (`band_panel_preview._assert_scroll_only_where_sanctioned`).
+## **NOTHING EXPANDS IN PLACE.** Every list too long for a row's place -- the camps, a folded direction
+## -- opens in the LIST POPOVER, so the tab's height never depends on what the player opened. The tab owns
+## exactly ONE `ScrollContainer` (`TAB_SCROLL_NAME`), the sanctioned one in
+## `band_panel_preview._assert_scroll_only_where_sanctioned`; on a wide shell the same sections ride
+## inside the Parties list's sanctioned scroll and add none.
 ##
 ## **THE POPOVER IS THE BAND TAB'S DISCLOSURE IDIOM** (`DisclosureController._open_popover`): a
 ## `PopupPanel` — a WINDOW, so it changes no zone's height — in `HudStyle.card_stylebox()`, anchored
@@ -34,15 +35,16 @@ extends RefCounted
 
 ## List popover keys. A `camps` key may carry a commodity scope after `KIND_SCOPE_SEPARATOR`.
 const KIND_CAMPS := "camps"
-const KIND_LOCAL := "local"
 const KIND_ROUTE_IN := "route_in"
 const KIND_ROUTE_OUT := "route_out"
-const KIND_ROUTE_BOTH := "route_both"
 const KIND_SCOPE_SEPARATOR := "|"
 
 ## Node names a harness finds the tab's pieces by.
 const FULL_TIER_NAME := "TradeFullTier"
-const SHORT_TIER_NAME := "TradeShortTier"
+const TAB_NAME := "TradeTab"
+const TAB_SCROLL_NAME := "TradeTabScroll"
+const TAB_GUTTER_NAME := "TradeTabGutter"
+const SECTIONS_NAME := "TradeSections"
 const NETWORK_LINE_NAME := "TradeNetworkLine"
 ## The meta a row carries naming what it opens / what it shows, for a harness to drive.
 const ROW_OPENS_META := &"trade_opens"
@@ -84,9 +86,6 @@ var _hover: TradeHoverCard = null
 ## re-author the tier in place.
 var _band: Dictionary = {}
 var _column: VBoxContainer = null
-var _available: Vector2 = Vector2.ZERO
-## Which tier the last build drew — read by the harness and by nothing that decides anything.
-var _short_tier: bool = false
 ## The band the open list belongs to; a different band closes it.
 var _list_band_id: int = HudConst.NO_BAND_ID
 
@@ -99,9 +98,6 @@ func set_topbar(topbar: FactionReadouts) -> void:
 
 func set_panel(panel: BandCityPanel) -> void:
 	_panel = panel
-
-func is_short_tier() -> bool:
-	return _short_tier
 
 ## The open list's rows, for the harness.
 func list_body() -> VBoxContainer:
@@ -146,28 +142,43 @@ func list_opened_above() -> bool:
 func hover_card() -> TradeHoverCard:
 	return _hover
 
-## The tab's badge — this turn's shipments, both ways; `""` on a turn with none. Pooling never counts.
-static func badge_text(band: Dictionary) -> String:
-	var count := TradeLedger.shipment_count(band)
-	return str(count) if count > 0 else ""
-
 # ---- THE ZONE --------------------------------------------------------------------------------------
 
-## The Trade content for `band`, authored against `available` (the zone's `zone_size()`; the parties
-## zone's on a wide shell). The FULL tier where it fits, else the SHORT one.
-func build(band: Dictionary, available: Vector2) -> VBoxContainer:
-	_band = band
-	_available = available
-	_column = HudWidgets.make_zone_column()
-	_column.add_theme_constant_override("separation", HudTradeVocab.SECTION_SEPARATION)
-	_column.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
-	_fill(_column)
-	sync_list(band)
-	return _column
+## The tab's declared scroll viewport: the zone's whole box, floored at the parties list's own floor so
+## an unknown or tiny box never collapses the tab into a bare scrollbar. The scroll reports no minimum
+## on its axis, so this is the one number the tab contributes to the panel.
+static func tab_viewport_height(box_height: float) -> float:
+	return maxf(HudWorkVocab.PARTIES_LIST_MIN_HEIGHT, box_height)
 
-## The same content as a section appended under the Parties zone's list — the wide shell's home for
-## it (option iii): a rule, the `Trade` head, then the tier.
-func build_section(band: Dictionary, available: Vector2) -> VBoxContainer:
+## **THE NARROW SHELL'S TAB**: one sanctioned `ScrollContainer` filling the zone, its rows in a gutter
+## the scrollbar's own width wide (reserved whether or not the bar shows, so the bar never touches a row
+## and the rows do not jump sideways when the list starts to scroll), holding the three sections.
+func build_tab(band: Dictionary, box_height: float, actions: Dictionary = {},
+		policy: Dictionary = {}) -> VBoxContainer:
+	var tab := HudWidgets.make_zone_column()
+	tab.name = TAB_NAME
+	var scroll := ScrollContainer.new()
+	scroll.name = TAB_SCROLL_NAME
+	scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+	scroll.custom_minimum_size = Vector2(0.0, tab_viewport_height(box_height))
+	var gutter := MarginContainer.new()
+	gutter.name = TAB_GUTTER_NAME
+	gutter.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	# A scrolled child must not claim the viewport's height as its own; the width still fills.
+	gutter.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+	gutter.add_theme_constant_override("margin_right",
+		int(scroll.get_v_scroll_bar().get_combined_minimum_size().x))
+	scroll.add_child(gutter)
+	gutter.add_child(_build_sections(band, actions, policy))
+	tab.add_child(scroll)
+	return tab
+
+## **THE WIDE SHELL'S SECTION** under the Parties list -- a rule, the `Trade` head, then the same three
+## sections with no scroll of their own.
+func build_section(band: Dictionary, actions: Dictionary = {}, policy: Dictionary = {}) -> VBoxContainer:
 	var section := HudWidgets.make_zone_block()
 	section.name = "TradeSection"
 	section.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
@@ -177,30 +188,70 @@ func build_section(band: Dictionary, available: Vector2) -> VBoxContainer:
 	rule.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	section.add_child(rule)
 	section.add_child(HudWidgets.zone_head(HudWorkVocab.ZONE_TAB_TRADE, ""))
-	section.add_child(build(band, available))
+	section.add_child(_build_sections(band, actions, policy))
 	return section
 
-## Re-author the tier in place against a new box — the resize path, which must not rebuild the zones.
-func refill(available: Vector2) -> void:
-	if _column == null or not is_instance_valid(_column) or _band.is_empty():
-		return
-	if available == _available:
-		return
-	_available = available
-	HudWidgets.clear_children(_column)
-	_fill(_column)
-	# The rows an open list hangs from were just rebuilt: re-anchor it, or close it if its row is gone.
-	sync_list(_band)
+## The three sections, in order: waiting on an answer, this turn, history.
+func _build_sections(band: Dictionary, actions: Dictionary, policy: Dictionary) -> VBoxContainer:
+	var band_id := TradeLedger.band_id_of(band)
+	var sections := HudWidgets.make_zone_column()
+	sections.name = SECTIONS_NAME
+	sections.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+	sections.add_theme_constant_override("separation", HudTradeVocab.SECTION_SEPARATION)
+	sections.add_child(DealingsRoster.build_section(band_id, _band_labor, actions, policy))
+	var on_the_road := DealingsRoster.build_road_section(band_id, _band_labor, actions)
+	if on_the_road != null:
+		sections.add_child(on_the_road)
+	var this_turn := HudWidgets.make_zone_block()
+	this_turn.add_child(HudWidgets.zone_head(HudTradeVocab.THIS_TURN_HEAD, ""))
+	this_turn.add_child(build(band))
+	sections.add_child(this_turn)
+	sections.add_child(TradeHistoryRoster.build_section(band_id, _band_labor))
+	return sections
 
-func _fill(col: VBoxContainer) -> void:
-	var full := _build_full_tier(_band)
-	var needed := full.get_combined_minimum_size().y
-	_short_tier = TradeLedger.has_trade(_band) and needed > _available.y
-	if _short_tier:
-		full.free()
-		col.add_child(_build_short_tier(_band))
-	else:
-		col.add_child(full)
+## **RE-FILL THE TWO LISTS OF A BUILT TAB OR SECTION IN PLACE** -- `Waiting on an answer` and `History`,
+## which are the parts a `dealings` or `trade_history` frame moves. `This turn` is untouched, so the
+## tab's scroll keeps its node and offset.
+static func refill_lists(root: Control, band_id: int, band_labor: HudBandLaborState,
+		actions: Dictionary = {}, policy: Dictionary = {}) -> void:
+	if root == null:
+		return
+	var waiting := root.find_child(HudDealingsVocab.BLOCK_NAME, true, false) as Control
+	DealingsRoster.refill(waiting, band_id, band_labor, actions, policy)
+	_refill_road_section(root, waiting, band_id, band_labor, actions)
+	TradeHistoryRoster.refill(root.find_child(HudDealingsVocab.HISTORY_BLOCK_NAME, true, false) as Control,
+		band_id, band_labor)
+
+## The `On the road` section is rebuilt in place: the set of parties on it can change on a frame that
+## moves only the dealings (a party reaching a camp moves to its dealing's row), so it can appear, change
+## or go.
+static func _refill_road_section(root: Control, waiting: Control, band_id: int,
+		band_labor: HudBandLaborState, actions: Dictionary) -> void:
+	if waiting == null or waiting.get_parent() == null:
+		return
+	var sections := waiting.get_parent()
+	var old := root.find_child(HudDealingsVocab.ROAD_BLOCK_NAME, true, false)
+	var index := waiting.get_index() + 1
+	if old != null:
+		index = old.get_index()
+		old.get_parent().remove_child(old)
+		old.queue_free()
+	var fresh := DealingsRoster.build_road_section(band_id, band_labor, actions)
+	if fresh != null:
+		sections.add_child(fresh)
+		sections.move_child(fresh, index)
+
+## **THE `This turn` CONTENT**: the network line, `⇄ Local exchange` and `⇄ Trade route`, drawn in
+## full whatever the room (the tab scrolls). Its column is also what the list popover is sized and
+## anchored against.
+func build(band: Dictionary) -> VBoxContainer:
+	_band = band
+	_column = HudWidgets.make_zone_column()
+	_column.add_theme_constant_override("separation", HudTradeVocab.SECTION_SEPARATION)
+	_column.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+	_column.add_child(_build_full_tier(band))
+	sync_list(band)
+	return _column
 
 func _build_full_tier(band: Dictionary) -> VBoxContainer:
 	var tier := _tier_column(FULL_TIER_NAME)
@@ -241,28 +292,6 @@ func _build_full_tier(band: Dictionary) -> VBoxContainer:
 			route_rows.add_child(_build_opens_row("%s %s" % [HudTradeVocab.OPENS_CARET, HudTradeVocab.count_text(rest, HudTradeVocab.MORE_SHIPMENT_WORDS)],
 				HudTradeVocab.SHIPMENT_INDENT, kind))
 	tier.add_child(route_rows)
-	return tier
-
-## **THE SHORT TIER — the zone becomes a way in, not a readout.** The network line, then one row per
-## arm stating what happened, each opening its full list over the map.
-func _build_short_tier(band: Dictionary) -> VBoxContainer:
-	var tier := _tier_column(SHORT_TIER_NAME)
-	tier.add_child(_build_network_line(band))
-	# An arm with nothing moving has no row — the full tier's rule.
-	var goods := TradeLedger.moving_goods(band)
-	if not goods.is_empty():
-		tier.add_child(_build_arm_row(DetailFormat.TRANSFER_LABEL_LOCAL,
-			_goods_count_text(goods.size()), KIND_LOCAL))
-	var imports := TradeLedger.shipments_in_direction(band, HudTradeVocab.DIRECTION_IN).size()
-	var exports := TradeLedger.shipments_in_direction(band, HudTradeVocab.DIRECTION_OUT).size()
-	if imports + exports > 0:
-		tier.add_child(_build_arm_row(DetailFormat.TRANSFER_LABEL_ROUTE,
-			_shipment_count_text(imports + exports), KIND_ROUTE_BOTH))
-		var split := _faint_label(HudTradeVocab.SPLIT_JOIN.join([
-			HudTradeVocab.count_text(imports, HudTradeVocab.IMPORT_WORDS),
-			HudTradeVocab.count_text(exports, HudTradeVocab.EXPORT_WORDS),
-		]))
-		tier.add_child(split)
 	return tier
 
 func _tier_column(tier_name: String) -> VBoxContainer:
@@ -375,19 +404,10 @@ func _add_counterparty(row: HBoxContainer, band: Dictionary, shipment: Dictionar
 	# `↩ Bitterbrook ⚑ (returned)` — cargo that came back, with no export in this window to net.
 	if returned:
 		row.add_child(_faint_label(HudTradeVocab.RETURNED_SUFFIX))
-
-## The SHORT tier's arm row: `⇄ LOCAL EXCHANGE ····· 8 goods ›`, opening `kind` (none when empty).
-func _build_arm_row(title: String, count: String, kind: String) -> Control:
-	var shell := _row_shell(0, kind)
-	var row: HBoxContainer = shell.get_child(0)
-	var label := HudWidgets.alloc_section_label(title)
-	label.add_theme_color_override("font_color", HudStyle.SIGNAL if kind != "" else HudStyle.INK_FAINT)
-	row.add_child(label)
-	row.add_child(_spacer())
-	row.add_child(_row_label(count, HudStyle.INK_DIM))
-	if kind != "":
-		row.add_child(_row_label(HudTradeVocab.OPENS_CARET, HudStyle.INK_FAINT))
-	return shell
+	# `→ Ashfell ⚑ (traded away)` / `← Ashfell ⚑ (traded for)` -- an exchange's half says which half.
+	var cause := int(shipment.get(TradeLedger.SHIPMENT_CAUSE, HudTradeVocab.CAUSE_POOLED))
+	if HudTradeVocab.CAUSE_LABELS.has(cause):
+		row.add_child(_faint_label("(%s)" % String(HudTradeVocab.CAUSE_LABELS[cause])))
 
 ## A row that only opens a list — `› 2 more shipments`.
 func _build_opens_row(text: String, indent: int, kind: String) -> Control:
@@ -687,40 +707,20 @@ func _mount(kind: String, band: Dictionary) -> void:
 			for camp in scoped[TradeLedger.SCOPED_ROWS]:
 				rows.append(_build_scoped_camp_row(camp))
 			rows.append(_build_lost_row(float(scoped[TradeLedger.SCOPED_LOST])))
-	elif kind == KIND_LOCAL:
-		var goods := TradeLedger.moving_goods(band)
-		title = HudTradeVocab.LOCAL_TITLE
-		count = _goods_count_text(goods.size())
-		for good in goods:
-			rows.append(_build_good_row(band, good))
 	else:
-		var directions: Array[int] = []
-		match kind:
-			KIND_ROUTE_IN:
-				directions = [HudTradeVocab.DIRECTION_IN]
-				title = HudTradeVocab.ROUTE_TITLE_IN
-			KIND_ROUTE_OUT:
-				directions = [HudTradeVocab.DIRECTION_OUT]
-				title = HudTradeVocab.ROUTE_TITLE_OUT
-			_:
-				directions = [HudTradeVocab.DIRECTION_IN, HudTradeVocab.DIRECTION_OUT]
-				title = HudTradeVocab.ROUTE_TITLE_BOTH
-		var total := 0
-		for direction in directions:
-			var half := TradeLedger.shipments_in_direction(band, direction)
-			total += half.size()
-			if half.is_empty():
-				continue
-			if directions.size() > 1:
-				rows.append(_build_direction_head(direction, half.size()))
-			for shipment in half:
-				var head := _row_shell(HudTradeVocab.DIRECTION_INDENT, "")
-				head.set_meta(ROW_SHIPMENT_META, TradeLedger.counterparty_label(shipment))
-				var head_row: HBoxContainer = head.get_child(0)
-				_add_counterparty(head_row, band, shipment)
-				rows.append(head)
-				rows.append_array(_cargo_lines(shipment, HudTradeVocab.SHIPMENT_INDENT))
-		count = _shipment_count_text(total)
+		# A folded direction's full list (`route_in` / `route_out`): one direction, so no sub-head.
+		var direction := HudTradeVocab.DIRECTION_IN if kind == KIND_ROUTE_IN \
+			else HudTradeVocab.DIRECTION_OUT
+		title = HudTradeVocab.ROUTE_TITLE_IN if kind == KIND_ROUTE_IN else HudTradeVocab.ROUTE_TITLE_OUT
+		var half := TradeLedger.shipments_in_direction(band, direction)
+		for shipment in half:
+			var head := _row_shell(HudTradeVocab.DIRECTION_INDENT, "")
+			head.set_meta(ROW_SHIPMENT_META, TradeLedger.counterparty_label(shipment))
+			var head_row: HBoxContainer = head.get_child(0)
+			_add_counterparty(head_row, band, shipment)
+			rows.append(head)
+			rows.append_array(_cargo_lines(shipment, HudTradeVocab.SHIPMENT_INDENT))
+		count = _shipment_count_text(half.size())
 	_open_kind = kind
 	_popover_title.text = title
 	_popover_count.text = count
@@ -894,7 +894,7 @@ func _place() -> void:
 	if _popover == null or not is_instance_valid(_popover):
 		return
 	# **THE ROW IT HANGS FROM IS GONE — close it; never re-anchor elsewhere.** A re-render can take the
-	# anchor row away (its good now nets even, the tier flipped FULL↔SHORT, its arm emptied), and a list
+	# anchor row away (its good now nets even, its direction emptied), and a list
 	# left open under a row that no longer exists points at nothing.
 	var anchor := _anchor_row()
 	if anchor == null and _column != null and is_instance_valid(_column):

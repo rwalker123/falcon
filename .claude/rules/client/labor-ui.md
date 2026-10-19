@@ -8372,8 +8372,16 @@ The client holds no site rule. `RungQuotes.placement_admitted` reads the placing
 the quotes; `DetailFormat.tile_is_workable` (gathering site OR admitted) gates the land row, the card's
 forage block, the Assign button and the compose sheet.
 
-- **Refusals.** Empty opens the sheet; `needs_lesson` shows the catalog-derived teaching line on the card
-  (`Learn Worked Land — work a farm`, `DetailFormat.site_lesson_line`); any other refusal keeps its hint.
+- **Refusals.** Empty opens the sheet; any other refusal keeps its hint. `needs_lesson` shows the
+  `Farming` row (`DetailFormat.site_lesson_line`) **only when it is useful**: the placing quote's own gate
+  (`unlock_knowledge`, read off the catalog-stamped quote by `RungGates.knowledge_gate_unmet` against the
+  people's published knowledge) is met, so this people can raise the rung today and working it really
+  teaches the lesson. Before that there is no row (it would send a people that cannot farm anywhere to
+  farm). The value names only the lesson the ground still needs, `Needs Worked Land` (the people already
+  farm when it shows, so a value that told them to farm read as a contradiction), and its hover `Working a farm teaches Worked Land; then ground like this can be farmed.`
+  (`site_lesson_tooltip`, registered on the row through the card's `Context`); the lesson and rung names
+  come from the roster and catalog, no knowledge id is spelled in the client. The deciding fields are the
+  quote's `site_refusal`, its catalog `unlock_knowledge`, and `faction_tracks` progress for that id.
 - **A crop is the commit off the sites.** The server takes a forage crew on a non-gathering-site tile only
   with `species` set, and that command queues the farm build; a bare gather there is refused ("is not a
   gathering site ... name the crop to sow"). `DetailFormat.offsite_crop_verb` returns the placing verb
@@ -8399,3 +8407,18 @@ teaching lines, from the next rung's catalog label and `unlock_knowledge` and th
 and appends nothing once the lesson is known. `harness-ui-preview.md` -> `worked_land_ranch.gd` asserts
 the clause and that a tended patch with the lesson learned, on watered ground, is offered the Farm.
 
+## The improvement control offers nothing on another people's source
+
+The sim refuses an ownership-gated rung (`requires_ownership` on the catalog row, published as
+`RungQuotes.requires_ownership`) on a source another people owns. `_build_improvement_control` therefore
+mounts ONE WARN line -- `Lothari is cultivating this` (`HudComposeVocab.IMPROVEMENT_FOREIGN_RUNNING_FORMAT`),
+or `Lothari holds this ground` where nothing is in flight -- tagged `IMPROVEMENT_STATE_FOREIGN`, and
+`RungGates._next_rung` drops ownership-gated rungs from the offer (so the Work row's `⌃` is absent too).
+The test is `RungQuotes.blocked_by_owner`: the wire's owner read against the catalog's flag, never a
+re-derived rule; the quotes carry no per-rung owner refusal of their own (`site_refusal` is the sow site
+verdict only). Asserted in `chapters/worked_land_ranch.gd` by equality, with our own patch as the control.
+
+A herd source takes the same line (`Lothari is taming this`): `has_owner`/`owner` ride the herd dict, and `RungQuotes.foreign_owner` takes the bare prefix.
+
+The sheet's foreign line names the builder band the same way: `Netherford, Lothari is cultivating this`,
+falling back to `Lothari is cultivating this` when no builder is named or the roster lacks it.

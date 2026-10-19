@@ -38,7 +38,9 @@ mod crisis;
 mod crisis_config;
 mod culture;
 mod culture_corruption_config;
+pub mod dealings;
 mod demographics_config;
+mod diplomacy_config;
 mod equipment_config;
 mod espionage;
 mod expedition_config;
@@ -52,6 +54,7 @@ mod food;
 mod forage;
 pub mod forecast_query;
 mod generations;
+pub mod goodwill;
 mod graze;
 mod great_discovery;
 pub mod grid_utils;
@@ -107,6 +110,8 @@ pub mod take_claims;
 pub mod telling;
 mod terrain;
 pub mod tile_improvement;
+pub mod trade_history;
+pub mod treaties;
 mod turn_pipeline_config;
 pub mod turn_profile;
 mod victory;
@@ -154,11 +159,12 @@ pub use components::{
     FinishedBatch, FoodBatch, FoodMix, KeepingIssue, KeepingToolLine, KitOrder, KnowledgeFragment,
     LaborAllocation, LaborAssignment, LaborTarget, LocalStore, MaterialBatch, MaterialDraw,
     MoraleCause, MusterBench, MusterKit, MusterPlan, PoolToeLine, PopulationCohort, PowerNode,
-    QueuedBuildToe, ResidentBand, Settlement, ShedCrew, ShedFacts, ShedStep, ShedSubject,
-    SourcePriority, SourceShedFacts, SourceYield, StartingUnit, StationReport, TakeSelection, Tile,
-    TownCenter, TransferCause, TransferCounterparty, TransferCrossing, TransferDirection,
-    TransferLedger, TransferLink, YieldRange, DEFAULT_ESCAPEMENT_FLOOR, FODDER, FOOD, HEAD_ORDER,
-    MIN_ORDER_COUNT, NO_IMPROVEMENT_UNDERWAY, STRIP_IT_BARE,
+    QueuedBuildToe, ResidentBand, ScoutPack, Settlement, ShedCrew, ShedFacts, ShedStep,
+    ShedSubject, ShipmentTerms, SourcePriority, SourceShedFacts, SourceYield, StartingUnit,
+    StationReport, StrangersOrder, TakeSelection, Tile, TownCenter, TransferCause,
+    TransferCounterparty, TransferCrossing, TransferDirection, TransferLedger, TransferLink,
+    YieldRange, DEFAULT_ESCAPEMENT_FLOOR, FODDER, FOOD, HEAD_ORDER, MIN_ORDER_COUNT,
+    NO_IMPROVEMENT_UNDERWAY, STRIP_IT_BARE,
 };
 pub use config_fingerprint::{
     current_config_fingerprint, drift_between, ConfigDigest, ConfigFingerprint,
@@ -206,9 +212,20 @@ pub use culture_corruption_config::{
     CorruptionSeverityConfig, CultureCorruptionConfig, CultureCorruptionConfigHandle,
     CultureSeverityConfig, CultureTensionTuning, BUILTIN_CULTURE_CORRUPTION_CONFIG,
 };
+pub use dealings::{
+    advance_dealings, answer_dealing, bands_have_standing_link, check_cargo, check_destination,
+    propose_trade, propose_treaty, standing_answer_covers, Agreement, AnswerReport, Dealing,
+    DealingAnswer, DealingId, DealingKind, GoodsLines, PendingDealings, ShipmentGate,
+    TreatyCarrier, TreatyProposal,
+};
 pub use demographics_config::{
     load_demographics_config_from_env, DemographicsConfig, DemographicsConfigHandle,
     DemographicsConfigMetadata, KeepingClass, KeepingConfig,
+};
+pub use diplomacy_config::{
+    load_diplomacy_config_from_env, DiplomacyConfig, DiplomacyConfigError, DiplomacyConfigHandle,
+    DiplomacyConfigMetadata, DiplomacyRoadsConfig, GoodwillConfig, OffersConfig,
+    BUILTIN_DIPLOMACY_CONFIG,
 };
 pub use equipment_config::{
     load_equipment_config_from_env, BandItemBudget, Crew, DefaultKitsConfig, EffectTier,
@@ -301,6 +318,10 @@ pub use forage::{
     ONE_TENDER_LOAD, SEED_SELECTION_DISCOVERY_ID, WHOLE_BASKET, WORKED_LAND_DISCOVERY_ID,
 };
 pub use generations::{GenerationBias, GenerationId, GenerationProfile, GenerationRegistry};
+pub use goodwill::{
+    cargo_worth, good_worth, worth, GoodAmount, Goodwill, GoodwillEntry, GoodwillNews,
+    GoodwillSource, KnownGoodwill, KnownGoodwillEntry,
+};
 pub use graze::{advance_graze_regrowth, spawn_initial_graze, GrazePatch, GrazeRegistry};
 pub use great_discovery::{
     ConstellationRequirement, GreatDiscoveryCandidateEvent, GreatDiscoveryDefinition,
@@ -327,6 +348,13 @@ pub use lineage::{
 pub use personalities::{
     load_personalities_from_env, PersonalitiesError, Personality, PersonalityCatalog,
     PersonalityCatalogHandle, PersonalityCatalogMetadata, BUILTIN_PERSONALITIES, PERSONALITY_SALT,
+};
+pub use trade_history::{
+    record_trade, TradeEnd, TradeFacts, TradeHistory, TradeOutcome, TradeRecord,
+};
+pub use treaties::{
+    credit_treaty_goodwill, dissolve_extinct_peoples, end_treaty, match_bundles, Bundle,
+    BundleMatch, EnvoyOutcome, Treaties, Treaty, TreatyTerms, NO_TREATIES,
 };
 // The drainage-network measurement instrument (consumed by the `#[ignore]`d census test).
 pub use extraction::{
@@ -386,15 +414,18 @@ pub use recipes_config::{
     RecipeOutput, RecipesConfig, RecipesConfigError, RecipesConfigHandle, RecipesConfigMetadata,
     BUILTIN_RECIPES_CONFIG,
 };
+pub use routes::Walker as RoadWalker;
 pub use routes::{
-    advance_roads, credit_route_lessons, first_built_rung, free_floor_top_rung,
+    advance_roads, credit_route_lessons, first_built_rung, foreign_roads, free_floor_top_rung,
     max_route_reach_tiles, path_friction_multiplier, path_lesson_rung, path_reach_tiles,
-    remoteness_multiplier, road_at_risk_rung, road_build_fraction, road_keeping_basis,
-    road_keeping_range, road_measure, road_neglect_grace_remaining, road_rung_span,
-    road_upkeep_demand, road_upkeep_measure, road_upkeep_workers_needed,
-    route_rungs_in_climb_order, rung_grants_sight, trace_path, traffic_ceiling, Road, RoadKeeper,
-    RoadRegistry, RouteJourney, RouteTrafficLog, TrafficSource, METER_FULL, NEAR_ENOUGH_TO_KEEP,
-    NO_HERD_HAS_CROSSED, NO_REACH_HELD_OPEN, PAVING_DISCOVERY_ID, ROADBUILDING_DISCOVERY_ID,
+    remoteness_multiplier, road_access_in_world, road_at_risk_rung, road_build_fraction,
+    road_keeping_basis, road_keeping_range, road_measure, road_neglect_grace_remaining,
+    road_reach_for, road_rung_span, road_upkeep_demand, road_upkeep_measure,
+    road_upkeep_workers_needed, route_rungs_in_climb_order, rung_grants_sight, standing_link,
+    trace_path, traffic_ceiling, ForeignRoads, LinkFloor, Road, RoadAccess, RoadKeeper,
+    RoadRegistry, RoadRights, RouteJourney, RouteTrafficLog, TrafficSource, METER_FULL,
+    NEAR_ENOUGH_TO_KEEP, NO_HERD_HAS_CROSSED, NO_REACH_HELD_OPEN, PAVING_DISCOVERY_ID,
+    ROADBUILDING_DISCOVERY_ID,
 };
 pub use sedentarization::{
     sedentarization_tick, SedentarizationEntry, SedentarizationScore, SedentarizationStage,
@@ -688,6 +719,10 @@ pub fn build_headless_app() -> App {
         knowledge_contact_config::load_knowledge_contact_config_from_env();
     let knowledge_contact_handle =
         knowledge_contact_config::KnowledgeContactConfigHandle::new(knowledge_contact_config);
+    // Early diplomacy: how long a pending dealing waits, and the goodwill / road / AI levers the
+    // later slices read. No hot reload — it loads here and on every world rebuild.
+    let (diplomacy_config, diplomacy_metadata) = diplomacy_config::load_diplomacy_config_from_env();
+    let diplomacy_handle = diplomacy_config::DiplomacyConfigHandle::new(diplomacy_config);
     // Belief on a place — what each source adds to a tile's stock (`belief::BeliefRegistry`).
     let (belief_config, belief_metadata) = belief_config::load_belief_config_from_env();
     let belief_handle = belief_config::BeliefConfigHandle::new(belief_config);
@@ -940,6 +975,13 @@ pub fn build_headless_app() -> App {
         .insert_resource(connections_metadata)
         .insert_resource(knowledge_contact_handle)
         .insert_resource(knowledge_contact_metadata)
+        .insert_resource(diplomacy_handle)
+        .insert_resource(diplomacy_metadata)
+        .insert_resource(dealings::PendingDealings::default())
+        .insert_resource(goodwill::Goodwill::default())
+        .insert_resource(treaties::Treaties::default())
+        .insert_resource(trade_history::TradeHistory::default())
+        .insert_resource(goodwill::KnownGoodwill::default())
         .insert_resource(belief_handle)
         .insert_resource(belief_metadata)
         .insert_resource(materials_handle)
@@ -1371,6 +1413,9 @@ pub fn build_headless_app() -> App {
                     // movement so it reads the party's fresh position, and before the Visibility stage's
                     // `discover_sites` picks up any site on the newly-flushed Discovered tiles.
                     systems::advance_expeditions,
+                    // Pending dealings: an offer `advance_expeditions` just posted is judged against
+                    // its deadline and its waiting party in the same turn; silence is a refusal.
+                    dealings::advance_dealings,
                     systems::advance_labor_allocation,
                     // The bench runs right after labor, for two reasons that both have to hold: it
                     // draws on the materials THIS turn's take just delivered, and its crew came out
@@ -1397,25 +1442,30 @@ pub fn build_headless_app() -> App {
                     // and before independence, which judges the roster the break-off may grow.
                     systems::shed_breeding_excess,
                     systems::break_off_breeding_excess,
-                    // A detached party defects whole (`docs/plan_band_fission.md` §Defection): it
-                    // reads its home band's morale, which demographics made current, and the
-                    // sightings `advance_expeditions` recorded this turn; it runs after the trickle
-                    // so a band that changed people this turn is judged as the people it now is.
-                    systems::advance_party_defection,
-                    // Independence (#284): every band's people is final for the turn and its
-                    // grievance is this turn's, so a cut-off, aggrieved group is judged as what it
-                    // now is — and a band that went over this turn is not judged by the people it
-                    // left.
-                    systems::advance_band_independence,
-                    // A purist band whose cultural strain held splits off (#702): after
-                    // independence, so every band's people is final and one independence took
-                    // this turn is skipped.
-                    systems::advance_culture_splits,
-                    sedentarization::sedentarization_tick,
-                    // The roaming counterpart: after `advance_band_movement` (in this chain, so
-                    // the order is declared), which records the turn's steps following a herd
-                    // (any roam state) and which this drains.
-                    mobility::mobility_tick,
+                    // The tail of the chain, nested only because a tuple of systems stops at
+                    // twenty members: still one `.chain()`, in the order written.
+                    (
+                        // A detached party defects whole (`docs/plan_band_fission.md` §Defection): it
+                        // reads its home band's morale, which demographics made current, and the
+                        // sightings `advance_expeditions` recorded this turn; it runs after the trickle
+                        // so a band that changed people this turn is judged as the people it now is.
+                        systems::advance_party_defection,
+                        // Independence (#284): every band's people is final for the turn and its
+                        // grievance is this turn's, so a cut-off, aggrieved group is judged as what it
+                        // now is — and a band that went over this turn is not judged by the people it
+                        // left.
+                        systems::advance_band_independence,
+                        // A purist band whose cultural strain held splits off (#702): after
+                        // independence, so every band's people is final and one independence took
+                        // this turn is skipped.
+                        systems::advance_culture_splits,
+                        sedentarization::sedentarization_tick,
+                        // The roaming counterpart: after `advance_band_movement` (in this chain, so
+                        // the order is declared), which records the turn's steps following a herd
+                        // (any roam state) and which this drains.
+                        mobility::mobility_tick,
+                    )
+                        .chain(),
                 )
                     .chain(),
                 // Pure telemetry: reads `TradeTelemetry`, which two systems write (the cross-people
@@ -1463,6 +1513,14 @@ pub fn build_headless_app() -> App {
                 //  - `.after(advance_expeditions)` — it slots into the chain immediately before
                 //    labor, so the bill is struck on the positions this turn's movement left.
                 //  - `.before(advance_labor_allocation)` — the ordering this system exists for.
+                // **A stationed party's standing in a foreign host's camp raises the host people's
+                // opinion of its own.** It reads every party's phase (settled by
+                // `advance_expeditions`) and `PopulationCohort`, which the rest of the chain
+                // writes, so both edges are declared: after the dealings pass that follows the
+                // expeditions, before the labour pass that opens the rest of the chain.
+                goodwill::credit_stationed_goodwill
+                    .after(dealings::advance_dealings)
+                    .before(systems::bill_and_stock_roads),
                 systems::bill_and_stock_roads
                     .after(systems::advance_expeditions)
                     .before(systems::advance_labor_allocation),
@@ -1508,6 +1566,19 @@ pub fn build_headless_app() -> App {
                 // site sweep touches nothing the rider reads. See
                 // `knowledge_contact::learn_over_connections`.
                 knowledge_contact::learn_over_connections.after(sites::discover_sites),
+                // **A standing link raises each people's opinion of the other, and word of it
+                // travels along the road** — read at this stage because the roads' keeping has been
+                // judged by now (the moment `light_kept_routes` reads it). It takes
+                // `PopulationCohort` shared, which `discover_sites` writes, so that edge is stated.
+                goodwill::credit_link_goodwill.after(sites::discover_sites),
+                // **A treaty in force is the other half of the credit**: a people that has ended
+                // goes first (its treaties dissolve with no breach), then each surviving treaty
+                // credits both ways. Both write what `credit_link_goodwill` writes, so they are
+                // ordered behind it.
+                treaties::dissolve_extinct_peoples
+                    .after(sites::discover_sites)
+                    .before(treaties::credit_treaty_goodwill),
+                treaties::credit_treaty_goodwill.after(goodwill::credit_link_goodwill),
             )
                 .in_set(TurnStage::Visibility)
                 .run_if(capability_enabled(CapabilityFlags::ALWAYS_ON)),
@@ -1517,6 +1588,10 @@ pub fn build_headless_app() -> App {
             crisis::advance_crisis_system.in_set(TurnStage::Crisis),
         )
         .add_systems(Update, telling::telling_tick.in_set(TurnStage::Telling))
+        // Opinions fade once a turn, in the FIRST stage, so the fade precedes every credit the turn's
+        // systems make (stage sets are chained: Influence < ... < Population). It writes only
+        // `Goodwill`, which nothing else in Influence touches, so it declares no further edge.
+        .add_systems(Update, goodwill::fade_goodwill.in_set(TurnStage::Influence))
         .add_systems(
             Update,
             // Both write `CorruptionLedgers`; nothing to overlap.

@@ -52,6 +52,7 @@ const TRAIT_ENCLOSED := "enclosed"
 ## The catalog's own gate bools on a rung (always present on the wire): the rung below must be HELD
 ## (not merely reached by web), the step commits a CROP, and the step PLACES a source.
 const KEY_REQUIRES_HELD_BELOW := "requires_held_rung_below"
+const KEY_REQUIRES_OWNERSHIP := "requires_ownership"
 const KEY_REQUIRES_CROP := "requires_crop"
 const KEY_PLACES_SOURCE := "places_source"
 ## What the catalog says a rung's ground and its keepers can come to: the lessons that loosen its site
@@ -119,6 +120,7 @@ static func _enrich_list(quotes_variant: Variant, by_key: Dictionary) -> void:
 		quote[KEY_SIZE_TIERS] = rung.get(KEY_SIZE_TIERS, [])
 		quote[KEY_KNOWLEDGE_GAINS] = rung.get(KEY_KNOWLEDGE_GAINS, [])
 		quote[KEY_REQUIRES_HELD_BELOW] = bool(rung.get(KEY_REQUIRES_HELD_BELOW, false))
+		quote[KEY_REQUIRES_OWNERSHIP] = bool(rung.get(KEY_REQUIRES_OWNERSHIP, false))
 		quote[KEY_REQUIRES_CROP] = bool(rung.get(KEY_REQUIRES_CROP, false))
 		quote[KEY_PLACES_SOURCE] = bool(rung.get(KEY_PLACES_SOURCE, false))
 		quote[KEY_LABEL] = String(rung.get(KEY_LABEL, ""))
@@ -129,6 +131,39 @@ static func _enrich_list(quotes_variant: Variant, by_key: Dictionary) -> void:
 ## Does this rung want the rung below it HELD first? The catalog's `requires_held_rung_below`.
 static func requires_held_below(quote: Dictionary) -> bool:
 	return bool(quote.get(KEY_REQUIRES_HELD_BELOW, false))
+
+## Does this rung want the source to be this people's (or nobody's)? The catalog's `requires_ownership`.
+static func requires_ownership(quote: Dictionary) -> bool:
+	return bool(quote.get(KEY_REQUIRES_OWNERSHIP, false))
+
+## `foreign_owner` answers this when no other people owns the source.
+const NO_FOREIGN_OWNER := -1
+
+## **THE PEOPLE THAT OWNS THIS SOURCE'S BUILD WHEN IT IS NOT THE VIEWER'S**, else `NO_FOREIGN_OWNER`. The
+## wire's `owner` is only meaningful with `has_owner` (faction 0 is a real id), and only the owner's work
+## moves a meter. `prefix` spells the key like the quotes' (`patch_` on a `tile_info`, bare on a wire row).
+## A herd publishes no owner, so it answers `NO_FOREIGN_OWNER`.
+static func foreign_owner(src: Dictionary, prefix: String = "") -> int:
+	if not bool(src.get(prefix + "has_owner", false)):
+		return NO_FOREIGN_OWNER
+	var owner := int(src.get(prefix + "owner", HudConst.PLAYER_FACTION_ID))
+	return NO_FOREIGN_OWNER if owner == HudConst.PLAYER_FACTION_ID else owner
+
+## The `BandId` of the band whose work last advanced this source's build meter; `HudConst.NO_BAND_ID` when
+## the wire says 0 (none, or a rival patch the viewer cannot see into).
+static func builder_band(src: Dictionary, prefix: String = "") -> int:
+	var band_id := int(src.get(prefix + "builder_band", 0))
+	return band_id if band_id > 0 else HudConst.NO_BAND_ID
+
+## Does another people's ownership shut the viewer out of a rung this source has not reached? The
+## catalog's `requires_ownership` read against the wire's owner, never a re-derived rule.
+static func blocked_by_owner(src: Dictionary, prefix: String = "") -> bool:
+	if foreign_owner(src, prefix) == NO_FOREIGN_OWNER:
+		return false
+	for quote in quotes(src, prefix):
+		if requires_ownership(quote) and not bool(quote.get(KEY_REACHED, false)):
+			return true
+	return false
 
 ## Does climbing to this rung commit a crop? The catalog's `requires_crop`.
 static func requires_crop(quote: Dictionary) -> bool:
@@ -335,6 +370,15 @@ static func lesson_to_place(src: Dictionary, prefix: String = "") -> String:
 			if last is Dictionary:
 				return String((last as Dictionary).get("knowledge", ""))
 	return ""
+
+## The placing quote the server answered `needs_lesson` for (`{}` when none): the rung whose own gate
+## (`unlock_knowledge`) says whether this people could raise it today.
+static func lesson_placing_quote(src: Dictionary, prefix: String = "") -> Dictionary:
+	for quote in quotes(src, prefix):
+		if places_source(quote) \
+				and String(quote.get(KEY_SITE_REFUSAL, "")).strip_edges() == SITE_REFUSAL_NEEDS_LESSON:
+			return quote
+	return {}
 
 ## The rung that earns `knowledge_id`, by its catalog label (`Farm` for `worked_land`), `""` when the
 ## source's quotes name none. The `work a farm` of a teaching line.

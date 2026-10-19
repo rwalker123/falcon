@@ -525,3 +525,24 @@ rather than the raw `food_modules` array, and for the same reason: a second deco
 that could disagree with the hex the player is looking at. **No new field, no schema change, no sim
 work.** The lethality VERDICT is not cached with it — `TileSurvivability` owns that, so the card, the
 map and the orb cannot disagree about which ground kills.
+
+## The dealings half of the registry (early diplomacy, issue #233)
+
+**A pending item addressed to the player is an attention row**, because the answer window is ONE turn and
+the orb is the only surface that reaches the player on the turn it opens.
+`AttentionController.build_dealing_attention` makes one row per RECEIVING band
+(`HudDealingsVocab.ATTENTION_KIND_DEALING`): `A people awaits your answer` (or `N peoples await your
+answer` when several wait on that band), detail `<their people> · <band>`, `warn`, **not `blocking`**
+(silence is the sim's refusal, and the orb's job is to say what walking away costs, not to hold the turn).
+It is **non-locating** and carries its band as `ATTENTION_PANEL_SUBJECT`; the kind is on
+`ATTENTION_KINDS_WITH_A_PANEL`, so it wears `Open ▸`. Capped at `ATTENTION_MAX_ROWS` (3) with an overflow
+row, like the awaiting-orders rows. **Those rows are scoped by `HudFormat.awaits_orders`**: a trade party or envoy parked in a camp waits on someone else's answer and raises none (a reply addressed to us is its own row, through the dealing).
+
+- **Its own half** (`TurnOrbController._dealing_attention`, `set_dealing_attention`, guarded like the
+  knowledge and loadout halves): the `dealings` section moves on a command as often as on a turn, so the
+  row is rebuilt by `HudLayer.update_dealings`, not with the band alerts (a row that waited for a
+  `populations` frame could arrive after the offer lapsed). `reset_world_state` empties it.
+- **The press** reaches `TurnOrbController._on_turn_orb_panel_requested`, which emits
+  `dealings_focus_requested(band_id)`; `HudLayer` relays it to `BandPanelController.focus_dealings`, which
+  brings that band's page forward on the tab the answer waits on: the Trade tab for a trade item, the Peoples tab for
+  a treaty proposal (the Parties flank on a wide shell, where both sit under the parties list).

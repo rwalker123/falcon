@@ -30,6 +30,7 @@ pub(crate) fn connection_states(
             last_contact_turn: connection.last_contact_turn,
             first_contact_turn: connection.first_contact_turn,
             subject_name: connection.subject_name.clone(),
+            subject_faction: connection.subject_faction.0,
         })
         .collect()
 }

@@ -953,6 +953,7 @@ fn create_populations<'a>(
             let kit_needs = create_kit_needs(builder, &cohort.kit_needs);
             let materials_free = create_material_amounts(builder, &cohort.materials_free);
             let culture_pressures = create_culture_pressures(builder, &cohort.culture_pressures);
+            let envoy_terms = crate::codec::treaties::create_terms(builder, &cohort.envoy_terms);
             let culture_ancestor_pull = (!cohort.culture_ancestor_pull.is_empty())
                 .then(|| builder.create_vector(&cohort.culture_ancestor_pull));
             let belief_reach_y = if cohort.belief_reach_y.is_empty() {
@@ -1242,6 +1243,7 @@ fn create_populations<'a>(
                     kitNeeds: Some(kit_needs),
                     materialsFree: Some(materials_free),
                     culturePressures: Some(culture_pressures),
+                    envoyTerms: Some(envoy_terms),
                 },
             )
         })
@@ -2097,6 +2099,7 @@ fn decode_population(
             close: row.close(),
             turns_to_next: row.turnsToNext(),
         }),
+        envoy_terms: crate::codec::treaties::decode_terms(cohort.envoyTerms()),
     })
 }
 

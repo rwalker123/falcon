@@ -31,6 +31,10 @@ const EXPEDITION_MISSION_TRADE := "trade"
 
 const EXPEDITION_MISSION_STATION := "station"
 
+## **AN ENVOY** (early diplomacy C2): a party with no cargo that walks a treaty proposal to another people's
+## band and posts it on arrival. It carries `envoy_terms` on its cohort row.
+const EXPEDITION_MISSION_ENVOY := "envoy"
+
 ## **A STATIONED PARTY** (issue #774) — people a band posts at a band it holds a live tie with. The
 ## host is named exactly as a shipment's destination is (`expedition_destination_band` is the key,
 ## `expedition_destination_name` the display twin), and the home band feeds the party from its own
@@ -53,6 +57,7 @@ const EXPEDITION_MISSION_LABELS := {
 	"deny": "Denial raid",
 	"trade": "Trade party",
 	"station": "Stationed people",
+	"envoy": "Envoy",
 }
 
 ## **THE PARENTHETICAL FORMS** — the mission word `HudFormat.band_name` tags a detached party's name
@@ -69,10 +74,18 @@ const PARTY_SHORT_LABELS := {
 	"deny": "Raid",
 	"trade": "Trade",
 	"station": "Station",
+	"envoy": "Envoy",
 }
 
 ## How the mission word joins the name: `<band> (<mission>)`.
 const PARTY_NAME_FORMAT := "%s (%s)"
+
+## **A SHIPMENT OR AN ENVOY STANDING IN A CAMP IS NOT WAITING FOR ORDERS** -- it is waiting for the people
+## it came to answer. `awaiting` on these two missions reads this, and its hint says so; every other
+## mission keeps `Awaiting orders` (it IS parked until the player acts).
+const MISSIONS_WAITING_ON_AN_ANSWER: Array[String] = [EXPEDITION_MISSION_TRADE, EXPEDITION_MISSION_ENVOY]
+const EXPEDITION_PHASE_WAITING_ON_ANSWER_LABEL := "Waiting on an answer"
+const STATUS_HINT_WAITING_ON_ANSWER := "waiting in their camp for them to answer"
 
 const EXPEDITION_PHASE_LABELS := {
 	"outbound": "Outbound",

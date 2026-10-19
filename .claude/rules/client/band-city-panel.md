@@ -5,6 +5,8 @@ paths:
   - "clients/godot_thin_client/src/scripts/ui/hud/WorkInspectorDialog.gd"
   - "clients/godot_thin_client/src/scripts/ui/hud/DisclosureTriangle.gd"
   - "clients/godot_thin_client/src/scripts/ui/hud/{TradeZoneController,TradeLedger,TradeHoverCard,FactionMark,RungLinkIcon,hud_trade_vocab}.gd"
+  - "clients/godot_thin_client/src/scripts/ui/hud/{DealingsRoster,PeoplesDiplomacy,hud_dealings_vocab}.gd"
+  - "clients/godot_thin_client/tools/ui_preview/chapters/{dealings,treaties}.gd"
   - "clients/godot_thin_client/tools/band_panel_preview.gd"
   - "clients/godot_thin_client/tools/band_panel_trade_tab.gd"
 ---
@@ -27,7 +29,11 @@ paths:
 | `ui/hud/FactionRollup.gd` | **All-`static`, stateless** builder of the FACTION PAGE's FOUR zones (issue #450) — the all-band rollup the cycler pins first. `build_band_zone` (the summed PEOPLE bar + the band page's own vitals rows — Food / **Fodder** / **Upkeep** / Morale / Growth; a sixth, Trade, went with arc #527's retired account, and the `Kit` row it sat beside went with `docs/plan_standing_upkeep.md` §4.9 item 12 — durabilities never aggregated, so that row was an alert and a drill-down, and the CRAFTING panel's kit ledger already states the items in full. The **`Upkeep`** row is the standing MATERIAL bill, folded PER BAND out of `DetailFormat.band_material_bill` and rendering only where some band on the roster owes a good — see `band-readouts.md` → "THE STANDING MATERIAL BILL". The `Fodder` row is the Food row beat for beat, sums the same way, and has the band row's DORMANT form on the same gate folded across the roster — see `band-readouts.md` → "THE FACTION PAGE'S `Fodder:` ROW". `build_band_zone` took the faction's `{track: progress}` row as a sixth parameter for that row's hover alone, and **takes no knowledge row at all now** — the dormant row's hover was retired (it reached the whole block, not the row), and the parameter went with its one reader. `_build_vitals_label` CLEARS the previous render's carets before building, which this page did not do until a dormant row inherited one), `build_work_zone` (the whole workforce as one bar and the per-band roster), **`build_knowledge_zone`** (SETTLING, the craft tracks, DISCOVERIES — the fourth column the panel's ordered-list body exists to hold, retired) and `build_parties_zone` (every party and the band it left, its NAME jumping to that band — see "THE PARTIES ROW NAMES THE HOME BAND" for why `_summary_row` binds a separate `jump_owner`), plus the `_stat_row` leaf they are built from. Its two new inputs are threaded in as PARAMETERS like every other: the player faction's sedentarization entry and its discovered-site array, read off `FactionReadouts` (`faction_sedentarization` / `faction_discovered_sites`), which is where the PLAYER-FACTION FILTER over those two per-faction wire arrays already lives — a second walk looking for `PLAYER_FACTION_ID` is a second chance to disagree about whose faction is being reported. **It is a shared LAYER rather than a controller because the page is a READOUT** — no steppers, no compose sheet, no open row, nothing that survives a snapshot; its one control, the Open Borders toggle, reads its state off the snapshot and emits through a Callable the controller threads in — so it has no per-cluster state to own, which is the whole of what makes a controller one (`hud-modules.md`). The one thing it needs is threaded in as a PARAMETER: the `HudBandLaborState` instance, plus the caller's `herd_label_for_id` Callable (the treatment `HudFormat.panel_expedition_summary` already takes — a stateless layer must not reach for the roster/selection/herd-list state that resolver reads). **IT RE-DERIVES NOTHING**: every total is a SUM over answers the per-band surfaces already give (`DetailFormat.band_net_food` / `band_provisions` / `band_fodder_store` / `band_net_fodder` / `band_material_bill`, `HudBandLaborState.effective_idle` / `effective_worker_map` / `effective_role_workers` / `band_party_workers`, `FactionReadouts.faction_tracks`), so a band's own page and this one cannot disagree about a number — a rollup with its own food ledger would be a second source of truth for the identity `larder_delta == income − consumption − pen_feed − raid_forfeit` the food arc keeps closed. Dependency direction: it reads `HudWidgets` / `HudFormat` / `DetailFormat` / `SourceForecast` / `HudStyle` / the vocab leaves and `FactionReadouts`' track table, and none of them may read it back |
 | `ui/hud/ConnectionsRoster.gd` | **All-`static`** builder of the band page's **Peoples tab** and its wide-shell section under Parties (issue #549), the in-place `refill`, the tab badge, and the ONE subject-naming rule (`subject_label`) the trade shipment picker shares. See "The Peoples tab" |
 | `ui/hud/hud_connections_vocab.gd` | `HudConnectionsVocab` — the roster's head, its three tie states and their words, the parked line, the empty line, and the node names of the tab, its rows box and its sanctioned scroll (`LIST_NAME`). A leaf: reads nothing |
-| `ui/hud/TradeZoneController.gd` | `RefCounted` controller for the band page's **Trade tab** (issue #731) — builds the zone (FULL or SHORT tier, chosen by measurement), owns the list popover and the hover card. See "The Trade tab" |
+| `ui/hud/PeoplesDiplomacy.gd` | **All-`static`** builder of the Peoples tab's **diplomacy block** (early diplomacy C2, issue #233): one block per other people the wire names (goodwill words, the treaty in force, `Propose a treaty` / `End treaty` / the border toggle), the border-state rule (`border_state`) and the change signature the in-place refill diffs on. It emits nothing: the three actions are Callables the controller hands in. See "The Peoples tab's diplomacy block" |
+| `ui/hud/DealingsRoster.gd` | **All-`static`** builder of the Trade tab's FIRST SECTION, `Waiting on an answer` (early diplomacy, issue #233): the head, the standing gift setting, every trade row (offers, proposals, counters and REPLIES), the in-place `refill`, the Trade badge and the one ordering; and of the Peoples tab's block of TREATY PROPOSALS (`build_treaty_block`, `treaty_badge`). It emits nothing: the answers are Callables the controller hands in. See "The Trade tab" and "Waiting on an answer" |
+| `ui/hud/TradeHistoryRoster.gd` | **All-`static`** builder of the Trade tab's THIRD SECTION, `History` (early diplomacy, issue #233): one two-line row per `trade_history` record newest first, the outcome word and its ink, the same-people seat swap (`view_of`), the in-place `refill`. See "The history" |
+| `ui/hud/hud_dealings_vocab.gd` | `HudDealingsVocab`, a **leaf**: the wire's tokens (`offer` / `proposal` / `counter` / `reply` / `treaty_proposal`, `road` / `envoy`, `gift` / `offer`, `keep` / `give` / `offer`, the nine trade-record outcomes), every word of the waiting section, the history, the answer sheet, the trade sheet's modes, the scout sheet's pack, the faction toggle and the orb row, and the pure text builders over a decoded goods list or a treaty's terms (`goods_text`, `terms_text`, `turns_left_text`, the leg helpers). Nothing here decides what the sim owns |
+| `ui/hud/TradeZoneController.gd` | `RefCounted` controller for the band page's **Trade tab** (issue #731, merged with the retired Dealings tab) — builds the tab (ONE sanctioned scroll of sections: waiting on an answer, on the road where a shipment is out, this turn, history) and the wide shell's section, authors the `This turn` content in full (there is no SHORT tier), owns the list popover and the hover card. See "The Trade tab" |
 | `ui/hud/TradeLedger.gd` | **All-`static`** arithmetic for the Trade tab and the Food/Fodder popovers: which crossings are trade, one good's net across its ratings, shipments grouped by party, the network's camps and relays, one good across the network |
 | `ui/hud/TradeHoverCard.gd` | The Trade tab's hover card: a row's rating piles or a shipment's cargo, placed beside the row and never under the list panel |
 | `ui/hud/FactionMark.gd` | **The one faction mark** — a flag glyph in `MapView.faction_color`, on every counterparty; the slot a faction's flag (#647) fills |
@@ -665,6 +671,16 @@ stretch, and widening it into that gap would put it over a live HUD column.
   line needed) are all deleted; `_work_inspector_height` has one open height again. The strip still
   does NOT show a build's progress — the work model carries no meter, and the source's own compose
   control has it.
+- **A TRADE PARTY IS NOT A ROW OF THE PARTIES ZONE** (issue #233): the Trade tab owns a shipment end to end
+  (waiting row or `On the road` row, with the party's Jump and Recall), so the Parties zone, its head's
+  `N out · M workers`, its `⋯` menu's recall-all, its tab badge and the faction page's Parties zone all
+  list and count `HudBandLaborState.band_zone_parties` / `faction_zone_parties`, which drop the parties
+  `is_trade_party` names (mission `trade`). Scouts, work parties, stations and **envoys** stay. The whole
+  set (`band_parties`) is kept for the Workforce bar's `away` clause, since a shipment's hands really are
+  gone from the band. A parked envoy or shipment reads `Waiting on an answer` rather than `Awaiting
+  orders` (`HudFormat.expedition_phase_label(phase, mission)`, `HudExpeditionVocab.MISSIONS_WAITING_ON_AN_ANSWER`):
+  it is waiting for the people it came to answer, so it wears no amber and does not turn the Parties
+  badge hot (`HudFormat.awaits_orders` is the one test).
 - **Zone `parties`** (`BandPanelController.build_parties_zone`): head + a `⋯` menu (`Recall all parties (n)`,
   behind the same confirm), one row per party (mission glyph · subject · phase · a **DANGER-red**
   recall `✕` — steady, full-opacity, reading as a destructive control like the Work inspector's
@@ -7684,8 +7700,11 @@ zone is declared on band pages only (`BAND_ZONE_LAYOUT`); the faction page has n
 - **The wide section** (`ConnectionsRoster.build_section`): the same head and rows with no scroll of
   its own; it rides inside the Parties list's sanctioned scroll, which is how Trade's wide section
   overflows too.
-- **The badge** (`ConnectionsRoster.badge_text`): how many ties the band holds, parked ones included;
-  no badge at none, Trade's convention. Pushed with the other tab badges in `_push_zone_badges`.
+- **The badge**: the treaty proposals waiting on this band's answer (hot) while any wait, else
+  `ConnectionsRoster.badge_text` — how many ties the band holds, parked ones included; no badge at none.
+  Pushed with the other tab badges in `_push_zone_badges` (`_push_peoples_badge`).
+- **Treaty proposals awaiting an answer** head the rows (and the wide section), under `Waiting on an
+  answer`, only where one is pending. See "The treaty proposals, on the Peoples tab".
 - **Head**: `PEOPLES WE KNOW` and the tie count. No ties: the head alone and one line, *This band
   has met no other people yet.*
 - **A row is two lines.** Line 1: the subject's name · strength as a whole percent · the state word.
@@ -7783,11 +7802,52 @@ none of them a new panel.
 Frames: `station_peoples`, `station_parties`, `station_party_detail`, `station_sheet`,
 `station_sheet_people` and `station_event_dock`, in `chapters/station.gd` (`harness-ui-preview.md`).
 
-## The Trade tab (issue #731)
+## The Trade tab (issue #731, merged with the Dealings tab)
 
-The band page's fourth zone: what crossed this band's store with SOMEBODY ELSE this turn, by the link
-it crossed. The spec is `docs/band_trade_tab_ux_proposal.html` (layout C; §08 is the decision list).
-`TradeZoneController` builds it; `BandPanelController` hands it the band and the box.
+The band page's fourth zone, and the ONE place trade is read: what waits on this band's answer, what
+crossed its store with SOMEBODY ELSE this turn (by the link it crossed), and the history of what was
+settled. **"Trade" and "Dealings" were two words for one thing**, so the Dealings tab is gone
+(`BandCityPanel.ZONE_DEALINGS`, its tab, its wide-shell section and its `ZONE_KEYS` entry were deleted)
+and a band declares FIVE zones: band, work, parties, trade, peoples. The Trade spec is
+`docs/band_trade_tab_ux_proposal.html` (layout C; §08 is the decision list); the dealings half is
+`docs/plan_early_diplomacy.md` §7. `TradeZoneController` builds it; `BandPanelController` hands it the
+band, the box and the answers.
+
+### The sections, in ONE scroll
+
+Each sits under a small section head (`HudWidgets.zone_head`), in this order:
+
+1. **Waiting on an answer** (`DealingsRoster.build_section`) — the standing gift setting, then every
+   TRADE dealing (offer, proposal, counter, reply), incoming first. When nothing waits the head stays
+   and one quiet line says `Nothing waiting`. **Treaty proposals are not here**: they wait on the Peoples
+   tab. See "Waiting on an answer".
+2. **On the road** (`DealingsRoster.build_road_section`) — **only when there is one**: this band's trade
+   parties that no dealing row stands for (`HudBandLaborState.band_road_parties`). One two-line row each:
+   `→ Moorfolk · Heading out` (`↩ … · Coming home`; a shipment standing in a camp with no dealing behind it
+   reads `Waiting on an answer`), then `Carrying 5.0 food · 2.0 hay` with `Jump to party` and `Recall`
+   (`Cancel` where the sim folds it back on the spot) at the line's right end. The links are the Parties
+   row's own actions, handed in by `BandPanelController._dealing_actions`.
+   **A party standing in a camp on a pending dealing is shown once, by that dealing's row**
+   (`party_for_dealing`: the dealing's `party_band` is the party's cohort `band_id`, so two parties camped
+   on one pair each answer for their own dealing), and the row
+   carries the same two links: at the right end of an outgoing row's second line, after `Take it` /
+   `Reject it` on a reply. `refill_lists` rebuilds the section in place, since a frame that moves only
+   the dealings moves a party between a dealing row and a road row.
+3. **This turn** — the tab's original content (below): the network line, `⇄ Local exchange`, `⇄ Trade
+   route`.
+4. **History** (`TradeHistoryRoster.build_section`) — every record `trade_history_for_band` returns,
+   newest first, no cap and no `+N more`; `No trades yet` when empty. See "The history".
+
+**The whole tab is one `ScrollContainer`** (`TradeZoneController.TAB_SCROLL_NAME`, in a gutter the
+scrollbar's own width wide), sanctioned under `ZONE_TRADE` in `band_panel_preview`'s
+`SANCTIONED_SCROLLS`, which it entered when it replaced the Dealings tab's scroll; two of its sections
+are unbounded lists. Its declared viewport is the zone's box (`TradeZoneController.tab_viewport_height`,
+floored at `PARTIES_LIST_MIN_HEIGHT`) and `_sync_trade_scroll` re-declares it on a resize, so the list's
+own height never reaches the panel. A frame that moves only `dealings` or `trade_history` refills the
+two lists in place (`TradeZoneController.refill_lists`, reached through `refresh_dealings()`), so the
+tab's scroll keeps its node and offset. **The badge is the old Dealings badge rule over trade
+dealings**: how many wait on this band's answer (hot) and otherwise how many it waits on, nothing at
+none; this turn's shipment count no longer badges the tab.
 
 ### Narrow-only: a tab on a side dock, a section under Parties on a wide shell
 
@@ -7798,47 +7858,37 @@ layout less the narrow-only zones — so neither zone has a host, no separator a
 would have made it 1569 and tabbed every laptop bottom dock between the two. `shows_zone()` answers
 `false` for a narrow-only zone in the wide shell.
 
-On a wide shell the SAME content is a section at the foot of the Parties zone's scrolling list
-(`build_parties_zone(band, with_trade)`), one scroll down, inside the scroll that zone is already
-sanctioned for — the Trade content adds no `ScrollContainer` in either shell. **The content moves
-between shells**, so `BandPanelController._trade_wide` records which shell a render authored it for,
-read once off `BandCityPanel.is_wide_shell()` before the builders run, and `_on_zones_resized`
-re-renders on a flip rather than re-paging. The drawer's flat host has no tabs either, so it mounts
-the Trade section (then the Peoples section) after its Parties zone, in the drawer's own scrolling
-flow (`build_flat_sections`).
+On a wide shell the SAME sections are a section at the foot of the Parties zone's scrolling list
+(`build_parties_zone(band, with_trade, with_peoples)`), one scroll down, inside the scroll that zone is
+already sanctioned for — there the Trade content adds no `ScrollContainer`, and there is no Dealings
+section under Parties. **The content moves between shells**, so `BandPanelController._trade_wide`
+records which shell a render authored it for, read once off `BandCityPanel.is_wide_shell()` before the
+builders run, and `_on_zones_resized` re-renders on a flip rather than re-paging. The drawer's flat host
+has no tabs either, so it mounts the Trade section (then the Peoples section) after its Parties zone, in
+the drawer's own scrolling flow (`build_flat_sections`).
 
-### Two tiers, chosen by measurement
+### `This turn`: the FULL tier, always
 
-The FULL tier: the network line (`NETWORK  5 camps ›   within 5 tiles` — the span is
-`supply_network_span_tiles`, never `reach_tiles`), then `⇄ Local exchange` (one line per good that
-MOVED, its net summed across its own ratings and never across goods), then `⇄ Trade route`
-(`▲ Imports` / `▼ Exports`, one line per shipment, no date). The SHORT tier: the network line, then one
-row per arm stating its count and opening its list.
+The network line (`NETWORK  5 camps ›   within 5 tiles` — the span is `supply_network_span_tiles`, never
+`reach_tiles`), then `⇄ Local exchange` (one line per good that MOVED, its net summed across its own
+ratings and never across goods), then `⇄ Trade route` (`▲ Imports` / `▼ Exports`, one line per
+shipment, no date).
+
+**THERE IS NO SHORT TIER.** It existed because the zone could not scroll: the full tier was built, its
+combined minimum height measured against the zone's room, and a busy turn on a bottom dock's strip fell
+to one row per arm. The tab scrolls now, so the measurement, the tier choice, the post-layout re-check
+(`_schedule_trade_refill`, `_trade_room`, `_trade_live_room`) and `TradeZoneController.refill` were
+deleted with it, along with the list popover's `local` and `route_both` kinds that only the SHORT tier's
+arm rows opened. A strip-height body simply scrolls (`trade_tab_short` is that frame).
 
 **The tab shows only what is actually moving.** A good whose net is under
-`HudTradeVocab.EVEN_FLOOR` has no row and is not counted (`TradeLedger.moving_goods`), in both tiers
-and in the local list's popover, so no good row on the tab reads `even`. A section with nothing in
-it is not drawn, heading included — Local exchange with no moving good, Trade route with no shipment,
-an Imports or Exports sub-head with no shipment that way — and the SHORT tier drops an empty arm's
-row the same way. A turn with neither (including one whose pooled piles all net even) is the empty
-turn (`TradeLedger.has_trade` is false). The camps list scoped to a good is the roster, not the tab:
-it still lists every camp, the even ones included, with its `sat even` count.
-
-**The full tier is built, its combined minimum height measured, and compared against the room** — the
-Trade zone's own `zone_size()` in the narrow shell, the Parties list's viewport (the zone box less its
-head, hint and gaps, `_trade_room()`) in the wide one. No height is hard-coded. A 1920 bottom
-dock's strip lands in the SHORT tier on a busy turn; the panel never grows for it. The empty turn is
-the network line and *"Nothing crossed this turn."* in either tier.
-
-**THE TIER IS RE-CHOSEN AFTER LAYOUT, ON ONE PATH.** A render and a resize both queue
-`BandPanelController._schedule_trade_refill`, which a frame later measures the room on the laid-out
-column and re-authors the tier in place (`TradeZoneController.refill`, a no-op when the room has not
-moved), at most once per frame. The Parties column's autowrap hints (the empty-parties hint, the
-no-idle reason) and an inline compose sheet report a word-per-line height while the column is
-detached mid-`build_parties_zone`, so a render measuring there took the section to SHORT while the
-resize path picked FULL; a detached column now answers with the last live measurement for the same
-box (`_trade_live_room`). `trade_tab_wide_full_after_render` asserts FULL after a render and after a
-resize, beside the empty-parties hint.
+`HudTradeVocab.EVEN_FLOOR` has no row and is not counted (`TradeLedger.moving_goods`), so no good row on
+the tab reads `even`. A section with nothing in it is not drawn, heading included — Local exchange with
+no moving good, Trade route with no shipment, an Imports or Exports sub-head with no shipment that way.
+A turn with neither (including one whose pooled piles all net even) is the empty turn
+(`TradeLedger.has_trade` is false): the network line and *"Nothing crossed this turn."* The camps list
+scoped to a good is the roster, not the tab: it still lists every camp, the even ones included, with its
+`sat even` count.
 
 ### What counts as trade
 
@@ -7853,18 +7903,15 @@ that party's export in the same window, good by good and rating by rating: a can
 export to nothing, so the shipment has no row and counts toward neither the badge nor "N shipments"; a
 partial return leaves the remainder on the export row; a return with no export in the window (it left
 on an earlier turn) lists under Imports as its own row, `↩ Bitterbrook ⚑ (returned) ····· 1.5 hide`,
-counted as a shipment. Frames: `trade_tab_shipment_cancelled`, `trade_tab_shipment_returned`. The
-tab badge is this turn's shipment count, both ways, and no badge on a turn with none — pooling never
-counts. A shipment is the crossings one party carried in one direction (`party_id`, falling back to
+counted as a shipment. Frames: `trade_tab_shipment_cancelled`, `trade_tab_shipment_returned`. A shipment is the crossings one party carried in one direction (`party_id`, falling back to
 the counterparty), cargo summed per good; a direction past `SHIPMENT_FOLD_TRIGGER` (4) shows the
 `SHIPMENT_FOLD_KEEP` (3) largest and a `N more shipments` row.
 
 ### The list popover and the hover card
 
-**Nothing expands in place.** The network line, a good's row, a fold row and the SHORT tier's arm rows
-all open ONE list popover — the Band tab's disclosure idiom (`DisclosureController._open_popover`): a
+**Nothing expands in place.** The network line, a good's row and a fold row all open ONE list popover — the Band tab's disclosure idiom (`DisclosureController._open_popover`): a
 `PopupPanel` parented on the HUD, in `HudStyle.card_stylebox()`, so it is a window and changes no
-zone's height. It carries its own `ScrollContainer`; the Trade zone carries none.
+zone's height. It carries its own `ScrollContainer`, which is a window's and not the tab's.
 
 **It hangs from the row that opened it.** The drawn card's left edge and width are the Trade column's
 (its own zone narrow, the section under Parties wide), its top `POPOVER_GAP` under the row's bottom —
@@ -7896,12 +7943,11 @@ bar never covers the value column. Every count on the tab is a `[one, many]` pai
 `Main.escape_claimant` entry either. A click on the map or the work zone closes it by itself, so it
 needs no exclusion against the work inspector. The row that opened it closes it (a press on the same
 frame the popup hid, for the same list, is that close); another Trade row in the zone swaps the
-content and re-anchors under itself; a row INSIDE the popover (a good in the local list) swaps the
-content and keeps the anchor. A popover hidden this frame re-opens a frame later, because the main
+content and re-anchors under itself. A popover hidden this frame re-opens a frame later, because the main
 window regaining focus from the click that hid it would otherwise hide the re-opened one. A snapshot
 re-mounts the open list against the fresh band and re-anchors it under the rebuilt row; a band switch,
 the faction page, the tab leaving the screen and the panel hiding close it. **If the row it hangs from
-is gone after a re-render** — its good now nets even, the tier flipped FULL↔SHORT, its arm emptied —
+is gone after a re-render** — its good now nets even, its direction emptied —
 the list closes rather than re-anchoring elsewhere (`trade_tab_list_anchor_gone`).
 
 The camps list: this band first, its direct links (rung as icon + word, link distance, rung facts off
@@ -7927,21 +7973,23 @@ faction's flag (#647) replaces.
 
 ### Frames
 
-`tools/band_panel_trade_tab.gd`, run last by `band_panel_preview`: `trade_tab_narrow_busy`,
-`trade_tab_hover_bone`, `trade_tab_camps`, `trade_tab_camps_food`, `trade_tab_folded`,
-`trade_tab_more_shipments`, `trade_tab_empty`, `trade_tab_wide` (asserts 1190, no Trade flank, the
-SHORT tier under Parties), `trade_tab_even_only` (only even-netting piles moved: the empty turn, no
-Local heading, no row), `trade_tab_pooling_only` (no Trade route heading), `trade_tab_shipments_only`
-(no Local exchange heading), `trade_tab_wide_route_list` (fifteen shipments do not fit below a bottom
-dock's row, so it opens ABOVE), `trade_tab_wide_short_below` (five camps off a row with more room
-above than below still fit below, so it opens BELOW), `trade_tab_wide_local_hover` (a hover card from
-a row inside the popover sits beside it) and
-`trade_tab_short` (the tabbed shell on a narrow bottom dock), then every list again at
-`ui_scale` 1.35 (`trade_tab_scaled_*`, side dock and wide canvas). Every list frame asserts the popover
+`tools/band_panel_trade_tab.gd`, run last by `band_panel_preview`: `trade_tab_narrow_busy` (asserts the
+three sections in order and the one scroll), `trade_tab_hover_bone`, `trade_tab_camps`,
+`trade_tab_camps_food`, `trade_tab_folded`, `trade_tab_more_shipments`, `trade_tab_empty` (the other two
+sections keep their heads and say `Nothing waiting` / `No trades yet`), `trade_tab_wide` (asserts 1190,
+no Trade flank, the FULL tier and the three sections under Parties), `trade_tab_even_only`,
+`trade_tab_pooling_only`, `trade_tab_shipments_only`, `trade_tab_wide_route_list` (the folded import row
+opens every import), `trade_tab_wide_camps`, `trade_tab_wide_hover`, `trade_tab_wide_sections` (dealings
+and history pushed: the waiting list holds the two trade items, the treaty proposal waits in the Peoples
+section, no Dealings section stands under Parties) and `trade_tab_short` (a narrow bottom dock: the full
+tier inside its one scroll, which overflows), then every list again at `ui_scale` 1.35
+(`trade_tab_scaled_*`, side dock and wide canvas). A row a list opens from is scrolled into view first
+(`_reveal`): the tab scrolls, so a fold row can sit below the fold. Every list frame asserts the popover
 is ADJACENT to its anchor row — one gap under it, or over it when opened upward, spanning the row —
 not merely visible, and that a list which fits its room is drawn at its full content height with
 nothing to scroll (one that does not fills the room and scrolls). `trade_tab_camps_bone` asserts a
-count of one reads singular.
+count of one reads singular. The merged tab's own frames are `ui_preview`'s `dealings_tab`,
+`dealings_reply`, `dealings_history`, `dealings_tab_empty` and `dealings_peoples_treaty`.
 
 ## THE CREW SPLIT — one mark per worker, under the stepper (`CrewSplitMarks`)
 
@@ -8056,3 +8104,236 @@ The labor-side contract is `labor-ui.md` -> "HUNTING BY NEED". The rows it adds 
   `band_panel_need_kit_short`, `band_panel_need_kit_short_inspector`.
 - **Heights.** The meter is a party line (`_work_row_party_lines`), so the row's height and the
   board's reservation pay for it without a second edit.
+
+## Waiting on an answer, the reply and the history (issue #233, `docs/plan_early_diplomacy.md` §7)
+
+**There is no Dealings tab** — it merged into the Trade tab (see "The Trade tab"). What it listed is
+split by KIND: a trade dealing waits in the Trade tab's first section; a treaty proposal waits in a
+block of the same head on the Peoples tab (below). Both are built by `DealingsRoster` from
+`HudBandLaborState.dealings_for_band(<band_id>)` (sender, receiver or the party's shipper).
+
+- **The data is held, never derived**: `HudBandLaborState` keeps `dealings`, `trade_history`, `goodwill`
+  and `treaties` (`set_dealings` / `set_trade_history` / `set_goodwill` / `set_treaties`, whole-section
+  replaces, cleared by `reset_diplomacy` at a world boundary). A turns-left, a kind, a leg and which
+  side is shipper are the sim's; the client restates none of them.
+- **A row is two lines of copy** and, where it is addressed to this band, an action strip.
+  *Incoming* (the band is the receiver): `← Brackfolk · Brackwater ……… 1 turn left` (the window in
+  `WARN` amber beside the number it explains: **`1` means answer this turn or silence refuses it**),
+  then what it says, then `Accept · Refuse · Counter`. *Outgoing*: `→ Brackfolk · Brackwater` with what
+  was sent clipped at the right end, then `Awaiting their answer · 1 turn left`, no actions.
+  **Incoming sorts first, ids ascending** (the sim's ids are monotonic, so the order is a pure function
+  of the rows).
+- **Who** is the other people's published name (`FactionMark.faction_name`) and the other band through
+  the roster's own naming rule (`HudBandLaborState.host_label_for_id`: the roster, else the name a tie
+  remembers, else where it was last seen); a raw id never reaches a label.
+- **What** is per account and per material with its readings, **never summed** (food and hay are two
+  larders, and two piles of one material at two ratings are two goods): `12.0 food · 4.0 hide (tough:
+  fair, supple: good)`. A proposal or counter is stated from the SHIPPER's point of view on the wire,
+  so the row reads it from the viewing band's seat (`You send X · you get Y` when the band is the
+  shipper, `They send X · they want Y from you` / `… · you send back Y` when it is the consignee). A
+  treaty proposal reads its terms in words (`Road rights · Open borders · Agreed trade: 5.0 flint for
+  10.0 food`) and says an envoy brought it on its hover.
+- **A GIFT** (an offer-kind dealing whose `terms` is `gift`, `DealingsRoster.is_gift`) reads `They send
+  <cargo> as a gift` (`You gave <cargo>` on the band's own, waiting one) and is accepted BARE, through the
+  reply's own path: no return sheet opens and `Accept` sends `answer_dealing <f> <id> accept`. Refuse is
+  unchanged. An offer keeps the accept-with-return sheet.
+- **An offer is accepted or refused, never countered** (it names nothing: the receiver names the return
+  in its accept). A proposal, counter and treaty proposal have all three.
+- **THE REPLY** (`DealingState.kind == "reply"`) is the other half of an accepted offer: when the
+  receiver names a return, nothing moves — a reply goes back to the ORIGINAL sender, who takes it or
+  walks home. On the wire the roles swap: `senderBand` is the band that NAMED the return and
+  `receiverBand` the original sender, the one who answers; `goodsSent` is the sender's cargo and
+  `goodsAsked` the named return. The row keeps `direction_of`'s rule (the receiver answers), so:
+  - *incoming*: `<band> would give back <return> for your <cargo>`, the turns-left text, and exactly
+    two buttons, **`Take it`** (sends `answer_dealing <f> <id> accept` with NO return list) and
+    **`Reject it`** (sends `refuse`). No counter and no return sheet: `_on_dealing_accept_pressed` sends
+    at once for every kind but an offer. The receipts differ (`Took the return.` / `Walked home with
+    the cargo.`, selected by the `reply` flag `_emit_dealing_answer` stamps on the payload);
+  - *outgoing* (the band that named the return): `Waiting on <band>'s party to take your return of
+    <return>`, with its turns left on line 1, no action.
+- **The tab badge** is how many TRADE items wait on this band's answer (hot) and otherwise how many it
+  waits on, nothing at none (`DealingsRoster.badge`).
+
+### The treaty proposals, on the Peoples tab
+
+A treaty proposal is not a trade, so it waits where the treaties are shown. `ConnectionsRoster._fill_rows`
+puts `DealingsRoster.build_treaty_block` FIRST in the tab's rows (and in its wide-shell section), under
+the same `Waiting on an answer` head, **only when one is pending** — same rows, same Accept / Refuse /
+Counter, the counter sheet unchanged. The handles ride `_peoples_diplomacy()["dealing_actions"]`. The
+Peoples badge counts the proposals awaiting this band's answer (hot) in place of the tie count while
+any wait, and is the tie count again otherwise (`_push_peoples_badge`); `refresh_dealings()` re-fills the
+Peoples block too, since its source includes the treaty rows. An orb row for a treaty proposal brings
+the Peoples tab forward (`focus_dealings`).
+
+### The history
+
+`TradeHistoryRoster` words `HudBandLaborState.trade_history_for_band(band_id)` — rows whose `own_band` is
+the band, plus same-people rows (`other_faction` the viewer's own) whose `other_band` is the band, newest
+first. **One record per people per trade, from that people's point of view**, so the row reads it from
+the band's seat: line 1 `Turn 12 · Ashfell · Brackwater · Traded` (the counterparty through the
+dealings rows' own `who_text_for`; the outcome word in its own ink — HEALTHY where goods moved, DANGER
+for declined / refused / failed, faint for lapsed / withdrawn); line 2 `gave 5.0 food · got 2.0 hide`,
+an empty side left out. **Where nothing moved** (declined, refused, expired, withdrawn, failed) it reads
+what was proposed: `offered 5.0 food for 2.0 hide`, `offered 5.0 food`, or `asked for 2.0 hide`. A
+same-people shipment writes ONE record (`ownBand` the sender's band), so its receiving band reads it
+swapped (`view_of`): what left is what came here, and gift given reads gift received. Both lines are
+single-line labels that ellipsise, with the whole of both on the hover.
+
+### The answer sheet
+
+A verb sheet of its own mission (`HudDealingsVocab.COMPOSE_MISSION_DEALING`), **off the action bar**, the
+station sheet's shape: opened by the row's own button (`_open_dealing_sheet`), in the receiving band's own
+drawer, closed with the verb. It reads the dealing LIVE by id, so a dealing answered or lapsed since the
+sheet opened closes it (`refresh_dealings`).
+
+- **Accept on an offer** opens it: `They offer …`, the SHIPMENT'S OWN cargo picker over this band's
+  holdings titled `What you send back`, bounded by the waiting party's carry (`partyWorkers` times the
+  cohort's `carry_per_worker`: `_send_expedition_count` is set to the dealing's party and the picker's
+  cap reads it), and `The party can carry N home`. **An empty return is allowed and the button reads
+  `Accept as a gift`**; with a return it reads `Accept`. Accept on a proposal, counter or treaty proposal
+  and Refuse on anything send at once, with no sheet.
+- **Counter on a proposal or counter** shows both legs prefilled from the dealing: the leg THIS band
+  holds is the picker, the other leg is **named, not drawn** (`_mount_leg_editor`: `−` / amount / `+` /
+  `✕` per good and `Add a good`, with no ceiling because the other people's holdings are theirs). `give` on
+  the wire is the shipper's leg whoever speaks, so `_answering_as_shipper` decides which leg is which.
+- **Counter on a treaty proposal** is one tick per proposed term (road rights, open borders, each
+  bundle), plus the **agreed-trade editor** the treaty sheet uses (`_mount_bundle_editor`) for bundles of
+  its own: kept published bundles first, then the added ones, in one `answer_dealing ... counter ...`.
+  An added bundle that carries nothing greys the send.
+
+### The trade sheet's three modes, and the scout sheet's pack
+
+- **Gift / Offer / Propose a trade** (`_build_trade_mode_row`, state `_trade_mode`, default gift). Gift
+  and offer ride `send_trade_expedition` (`offer` is the last word; a gift spells nothing, so a shipment
+  that never touched the toggle is byte-identical to before). **Propose is offered only where the sim
+  published a standing link between this band and the picked destination** (`treaties.standing_links`,
+  read through `HudBandLaborState.standing_link_between`): greyed with its reason otherwise, and dropped
+  back to a gift if the published row disappears (`_settle_trade_mode`). The link is never computed here.
+  Propose mode splits the sheet into `You give` (the shipment's own picker) and `You ask for` (the leg
+  editor) and sends `propose_trade`.
+- **The scout sheet** gains an optional pack (the shipment's own picker, `Pack for strangers`) and the
+  strangers order Keep / Give / Offer (`_build_strangers_row`, default keep). Give and offer with an empty
+  pack are refused on the sheet with their reason. `TargetingController.send_expedition_to` carries both on
+  the payload; `Main.format_send_expedition` spells `strangers <order>` (keep is unspelled) and `pack`
+  last.
+- **One manifest builder spells every goods list**: `Main.cargo_manifest(rows)` answers `{tail, note}` and
+  is shared by `send_trade_expedition`, the scout's pack, an offer's return and both legs of a counter or
+  proposal, so one flooring rule (`cargo_wire_amount`) covers them all.
+
+### The commands
+
+One signal for the diplomacy verbs: `BandPanelController.diplomacy_command_requested` → `HudLayer`
+→ `Main._on_hud_diplomacy_command` → `Main.format_diplomacy_command`, dispatching on
+`payload["command"]` (`answer_dealing`, `propose_trade`, `set_accept_own_gifts`, `propose_treaty`,
+`send_envoy`, `end_treaty`, `set_open_borders` toward one people). No optimistic write: the item leaves the
+next `dealings` section. `command_guard` drives every one of them through the real parser
+(`harness-band-panel.md`).
+
+### The gift setting (the top of the Waiting section)
+
+`Accept gifts from our own people`, a checkbox off `faction_policies[].accept_own_gifts` (default on) as the
+**first row under the `Waiting on an answer` head** (`DealingsRoster._build_gift_row`, emitting through
+`BandPanelController._emit_accept_own_gifts`). It is a setting of the whole people; its hover says
+only what turning it on does, and it lives on the tab it governs: it was on the faction page first, where a short bottom or top dock
+(`FACTION_BAND_FULL_MIN_HEIGHT`) dropped it, so the setting was unreachable on exactly those dock shapes.
+The tab exists on every dock shape and in the no-dock drawer, so the setting is reachable on all of them.
+The state is the snapshot's on every render; `update_faction_policies` re-fills the tab in place so a
+refused command puts the box back. The row is absent until a policy row has been published (never a
+guessed default).
+
+### The Trade tab's two new causes
+
+`TransferCause::ExchangeOut` / `ExchangeIn` (wire 9 / 10) are on the Route arm, so `HudTradeVocab` names
+them (`CAUSE_EXCHANGE_OUT` / `_IN`) and adds both to `TRADE_CAUSES` and `SHIPMENT_CAUSES`: the Food
+popover accounts for the WHOLE Route arm, and a cause left out would stop its ledger closing and drop a
+return that really crossed. `TradeLedger` keeps an exchange's half as its own group (it nets against
+nothing: the return is a different good going the other way, not an undo) and stamps its cause, and a
+Trade tab row wears a faint `(traded away)` / `(traded for)` from `HudTradeVocab.CAUSE_LABELS`.
+
+## The Peoples tab's diplomacy block, the treaty sheet and the border toggle (C2, issue #233)
+
+**Goodwill, treaties and borders ride the Peoples tab** (`ConnectionsRoster` hosts `PeoplesDiplomacy`'s
+block ABOVE the ties list, in the same scroll: it is bounded by the number of peoples, so it needs no tab of
+its own, and the ties list under its `Bands we know` label stays the unbounded one).
+
+- **Who is listed** is `HudBandLaborState.known_peoples`: every faction named by a goodwill row (either
+  direction), a treaty, a standing link or a dealing, plus the policy's border overrides and the foreign
+  bands in sight; ascending by faction id. A people the wire never mentioned is not a row.
+- **Line 1** is the people's published name then `They: friendly · We: wary`: what THEY think of us (the
+  last report) and what WE think of them (live). Each is a word cut from the PUBLISHED cuts
+  (`goodwill.cuts`: below `wary_below` wary, above `friendly_above` friendly), so the client restates no
+  threshold. **A people with no row has no word, never a default neutral.** Wary is amber beside the
+  sentence it explains. The hover gives the sentence (`as of turn N` for theirs) and the non-zero
+  components in words, signed, strongest first (`+0.8 gifts`, `-0.4 a broken treaty`, `+0.2 a road
+  between us`); numbers never stand on the row.
+- **Line 2** is the treaty in force in words (`Road rights · Open borders · Agreed trade: 2.0 flint for
+  5.0 food`) with `In force since turn N` on its hover, or `No treaty`. Then the strip.
+- **The strip**: `Propose a treaty` · `End treaty` (only where a treaty stands; it confirms, and the prompt
+  says it is a breach that costs their goodwill) · the border toggle. **The border state is the sim's,
+  never guessed**: an open-borders term of a treaty in force wins, else the people's override row, else
+  the general `open_borders` (`PeoplesDiplomacy.border_state`; the hover says which of the three is
+  speaking). **Closing to a people whose treaty holds open borders ends that treaty**, so it confirms with
+  the same breach warning; every other flip fires on the press. Sent `set_open_borders <f> open|closed
+  <other>`.
+- **The treaty sheet** (`HudDealingsVocab.COMPOSE_MISSION_TREATY`, off the action bar, the answer
+  sheet's shape) opens in the drawer of the band whose Peoples tab it was pressed from: tick road rights /
+  open borders, add **agreed-trade bundles** (`_mount_bundle_editor`: what a shipment carries, what the
+  receiver pays back, both named and neither drawn, since a treaty binds both peoples and moves no goods
+  until a shipment is made), then send it where it can go. **A bundle must carry something** (the sim
+  refuses an empty carried-side, which any cargo would cover); one that does not greys the send with the
+  reason in amber beside it. **Over the road** (`propose_treaty <f> <band> <dest_band> ...`) when a
+  published standing link joins this band to a band of theirs (`treaties.standing_links`, never computed
+  here; a choice row when several); otherwise **by an envoy** (`send_envoy <f> <band> <party> <dest_band>
+  ...`): the party stepper beside the trade party picker's, the destination one of the bands of theirs the
+  client can name (`known_bands_of_people`: foreign bands in sight, standing-link ends, dealing parties,
+  then the bands a LIVE tie remembers, filed under their people by the tie's `subject_faction` -- clock 1,
+  0 is a real people; a parked tie is refused by the sim and left out; a people met only through such a
+  tie is a Peoples row via `remembered_factions`), greyed with its reason where none is known. The sending band is the band whose page the sheet was opened
+  from.
+- **An envoy's row** in the Parties zone is `Brackwater · Road rights · Open borders` (its destination and
+  the terms it carries, from the cohort's `envoy_terms`), one line clipped by the row, with the whole
+  proposal on its hover, under the `✉` mark (mission `envoy`: no bundled art, the glyph branch).
+- **The tab bar holds five tabs.** The Dealings tab once made six and the bar overran the strip (the card widened
+  past its reserved edge, so the dock's border ran through the tab bar and the rows). Font 11, separation 2,
+  tab padding 2 and badge padding 3 hold it at 303px of the 354px interior as a band normally wears its
+  badges and 347px with all five at two digits; `treaties.gd` asserts both.
+
+### Frames
+
+`ui_preview`'s `treaties` chapter (`harness-ui-preview.md`): `treaties_peoples` (the regard words and
+treaty rows), `treaties_peoples_hover` (a real engine tooltip over a `They:` word), `treaties_end_confirm`,
+`treaties_borders_breach_confirm`, `treaties_sheet_road` / `_road_filled`, `treaties_sheet_envoy` /
+`_envoy_filled`, `treaties_sheet_no_target`, `treaties_counter` / `_counter_bundle` and
+`treaties_envoy_party`.
+
+`ui_preview`'s `dealings` chapter (`harness-ui-preview.md`): `dealings_tab`, `dealings_answer_offer` /
+`_offer_return`, `dealings_counter_proposal` / `_counter_edited`, `dealings_treaty_counter`,
+`dealings_trade_modes`, `dealings_trade_propose` / `_propose_ask`, `dealings_scout_sheet` /
+`_scout_give_empty` / `_scout_pack`, `dealings_faction_page` (no gift row on it), `dealings_gift_setting` /
+`_gift_setting_off`, `dealings_orb` and
+`dealings_event_dock`.
+
+## A Work row on a build another people owns names that people
+
+A forage patch publishes `has_owner` / `owner` (the presence bit first: faction 0 is real), and only the
+owner's crew moves its meters. A Work row for a patch whose owner is not `HudConst.PLAYER_FACTION_ID`
+therefore carries the owner's build, not ours: `RungQuotes.foreign_owner` answers the people (or
+`NO_FOREIGN_OWNER`), and `_work_source_models` stamps `foreign_build` -- `Lothari cultivating · 20%`
+(`HudWorkVocab.WORK_ROW_FOREIGN_BUILD_FORMAT`; the participle is `improvement_running_label`, the name
+`FactionMark.faction_name`) -- and clears the row's own `building_*` / `ready_*` keys so the ready slot
+draws no `20%` face and no `⌃`. Line two leads with that text in WARN ink
+(`WORK_ROW_FOREIGN_BUILD_META` on the label, ahead of the yield summary). A patch we own reads exactly as
+before. A herd row reads the same way (`HerdTelemetryState.hasOwner`/`owner`, decoded as `has_owner`/`owner` like the patch's; the same `foreign_owner` predicate, bare prefix): `Lothari taming · 30%`. Frames `band_panel_work_other_tame` / `_own_tame`.
+Frames: `band_panel_work_other_build` / `band_panel_work_own_build` (`_other_peoples_build_rows`, the pair).
+
+### The builder band is a link on the Work row
+
+`ForagePatchState` / `HerdTelemetryState` carry `builderBand` (decoded `builder_band`; `patch_builder_band` on
+`tile_info`; 0 = none or a rival patch out of sight). `RungQuotes.builder_band` reads it and
+`HudBandLaborState.builder_label` resolves it against the roster (ours, else a foreign band in sight). The
+Work row's foreign line shows the BAND NAME ONLY, as a flat button (`WORK_ROW_FOREIGN_BAND_META` holds the
+`BandId`), `Netherford cultivating · 86%`; pressing it calls `BandPanelController.jump_to_builder_band`
+(our band: `_select_band_on_map`; a foreign band: `alert_focus_requested` on its tile, then picked in the
+tile roster, never made the panel's subject). With no builder named, or one the roster does not hold, the
+line falls back to the people (`Lothari cultivating · 86%`) and draws no link. Frames
+`band_panel_work_other_builder`; the link press and the fallback are asserted in `_other_peoples_build_rows`.

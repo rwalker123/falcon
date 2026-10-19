@@ -31,8 +31,9 @@ server side, so the two ends of the wire have the same shape.
 | `snapshot/raster.rs` | `GridSize`, `OverlaySlices`, `TerrainSlices`, `OverlayChannelParams`, `packed_from_slice`, `insert_overlay_channel`, `normalize_overlay` |
 | `snapshot/delta.rs` | `DeltaAggregator` + `CrisisAnnotationRecord` — a delta carries only changed sections, so it accumulates them into full-snapshot shape and re-enters `snapshot_dict` |
 | `snapshot/cache.rs` | `WorldCache` — the world a delta is applied *to*: the last complete client dict, the pre-normalization `RasterCache` behind it, the `SectionCaches` (one complete array + identity index per diff-carried section, configured by the `KEYED_SECTIONS` registry), and the epoch/frame-sequence gate that says whether an incoming delta may be merged at all |
-| `dict/mod.rs` | ONLY the leaf helpers with consumers in two or more sections: `strings_to_variant_array`, `string_vector_to_packed`, the `u16/u32/u64_vector_to_packed_*` packers, `fixed64_to_f32` / `fixed64_to_f64` |
+| `dict/mod.rs` | ONLY the leaf helpers with consumers in two or more sections: `strings_to_variant_array`, `string_vector_to_packed`, the `u16/u32/u64_vector_to_packed_*` packers, `fixed64_to_f32` / `fixed64_to_f64`, and `material_batch_to_dict` (the cohort store's and the dealings' shared material row) |
 | `dict/{map,economy,population,subsistence,knowledge,governance,culture,campaign,connections}.rs` | The ~60 `*_to_dict` / `*_to_array` / `*_label` converters, one module per `snapshot.fbs` section |
+| `dict/dealings.rs` | The four **early-diplomacy** sections (issue #233), one module because they share the goods-list and treaty-terms shapes: `dealings_to_array`, `goodwill_to_dict`, `treaties_to_dict`, `trade_history_to_array` (the viewer's people's records, oldest first, key `trade_history`, a whole-section replace decoded on BOTH paths: `{turn, own_band, other_faction, other_band, dealing_id, outcome, goods_out, goods_in}`), plus `goods_to_dict` and `treaty_terms_to_dict` (reused by the cohort's `envoy_terms`). Whole-section replaces, decoded on BOTH paths (`insert_changed` on the delta). A goods list is `{food, fodder, materials}` and **never a summed value**; a material row is `dict::material_batch_to_dict`, hoisted into `dict/mod.rs` because the cohort store and the dealings now share it (a bundle's lines are unrated, so their `readings` are empty) |
 | `dict/{routes,deposits}.rs` | The two ARC-scoped converters that do not follow the section split. `routes.rs` holds `RouteState`; `deposits.rs` holds `DepositState`, which rides `SubsistenceSection`. The unified ladder catalog (`ladder_rungs_to_array`, `ladder_branches_to_array`, issue #175) and `tile_improvements_to_array` (`RouteSection.tileImprovements`) live in `dict/subsistence.rs` beside `build_legs_to_array`, which they share. Both are here rather than in `subsistence.rs` because the arc, not the section, is what a reader of either needs open — and because keeping them apart is what stops two concurrent worktrees editing one 1,600-line file |
 
 There is deliberately **no `dict/vision.rs`** — the vision section is only the
@@ -741,3 +742,27 @@ The fodder four are separate keys rather than a shared set because hay and grain
 on the same turn in different amounts. All eight are appended scalars, so the fixture's saturation
 reaches them and a golden re-record is the only step — each takes a distinct value there, which is
 what makes a swapped accessor show as a moved line rather than merely a different one.
+
+## Early diplomacy's decode (issue #233)
+
+Four top-level keys, each a whole-section replace: **`dealings`** (an array of `{id, kind, sender_faction,
+sender_band, receiver_faction, receiver_band, goods_sent, goods_asked, turns_left, shipper_band, party_band (the waiting party's band id == its cohort `band_id`, `0` when none), terms (`gift` | `offer` on an offer-kind dealing, `""` on every other kind),
+party_workers, treaty, carrier}`), **`goodwill`** (`{known, own, cuts: {wary_below, friendly_above}}`, each
+row carrying the six components, `total` and `reported_turn`) **`treaties`** (`{treaties, standing_links}`) and **`trade_history`**
+(`[{turn, own_band, other_faction, other_band, dealing_id, outcome, goods_out, goods_in}]`, the viewer's people's
+records oldest first, each `goods_*` the same goods dict a dealing carries; a delta carries it only when the
+list moved, and present-and-empty means no records now, so `insert_changed` with no gate).
+`faction_policies[]` gains `accept_own_gifts` and `border_overrides: [{other_faction, open}]`, and every
+cohort gains `envoy_terms` (the all-empty terms dict on every row but an envoy's). The delta path's
+`decoder.rs` carries the same four through `insert_changed` (`goodwill` and `treaties` merged part by part, below); **present-and-empty means "nothing pending /
+no treaty now"**, so no emptiness gate stands in front of `dealings`. The decode-guard golden gained exactly
+these keys and nothing else (see `harness-headless-guards.md` for the guard).
+
+**`goodwill` and `treaties` are the exception, and it is a delta-only trap.** Their section TABLES are
+always present on a delta (the codec requires them) and each part is its own "absent = unchanged"
+`Option` (`goodwill` / `own` / `cuts`; `treaties` / `standingLinks`), so the table's presence is no change
+signal. Reading it as one republished empty `known` / `own` rows and an empty `cuts` on EVERY delta and wiped
+the client's opinion of every people, and named both sections in `changed_sections` every turn. The delta
+path therefore merges part by part over the held dict (`goodwill_delta_dict` / `treaties_delta_dict` in
+`dict/dealings.rs`): `None` when no part rode the delta, otherwise the held dict with exactly the parts that
+did ride replaced. `decode_guard`'s diplomacy witnesses found it.

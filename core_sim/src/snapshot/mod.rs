@@ -15,29 +15,32 @@ use sim_runtime::{
     CraftKnowledgeState, CrisisGaugeState, CrisisMetricKind as SchemaCrisisMetricKind,
     CrisisOverlayState, CrisisSeverityBand as SchemaCrisisSeverityBand, CrisisTelemetryState,
     CrisisTrendSample as SchemaCrisisTrendSample, CultureLayerState, CultureTensionState,
-    CultureTraitEntry, DepositState, DiscoveredSiteState as SchemaDiscoveredSiteState,
+    CultureTraitEntry, DealingState, DepositState,
+    DiscoveredSiteState as SchemaDiscoveredSiteState,
     DiscoveredSitesState as SchemaDiscoveredSitesState, DiscoveryProgressEntry,
     ElevationOverlayState, FactionInventoryEntryState as SchemaFactionInventoryEntryState,
     FactionInventoryState as SchemaFactionInventoryState, FactionNameState, FactionPolicyState,
     FloatRasterState, FloraShareInfo, FoodModuleState, ForagePatchState, ForkChoiceState,
-    GenerationState, GlossEntryState, GreatDiscoveryDefinitionState, GreatDiscoveryProgressState,
-    GreatDiscoveryState, GreatDiscoveryTelemetryState, HerdTelemetryState,
-    InfluentialIndividualState, IntensificationKnowledgeState, KitOptionState,
-    KnowledgeLedgerEntryState, KnowledgeMetricsState, KnowledgeTimelineEventState,
-    LaborAssignmentState, LadderBranchState, LadderKnowledgeProgress, LadderKnowledgeState,
-    LadderRungState, LineageConstantsState, MaterialDefState, MobilityState as SchemaMobilityState,
-    MountainKind, OpeningKitDefaultState, OpeningLoadoutState, OpeningMaterialDefaultState,
-    PendingForkState, PendingForksState, PopulationCohortState,
-    PopulationDemographicsState as SchemaPopulationDemographicsState, PowerIncidentSeverity,
-    PowerIncidentState, PowerNodeState, PowerTelemetryState, RecipeDefState, RouteState,
-    ScalarRasterState, SedentarizationState as SchemaSedentarizationState, SentimentAxisTelemetry,
-    SentimentDriverCategory, SentimentDriverState, SentimentTelemetryState,
+    GenerationState, GlossEntryState, GoodwillCutsState, GoodwillState,
+    GreatDiscoveryDefinitionState, GreatDiscoveryProgressState, GreatDiscoveryState,
+    GreatDiscoveryTelemetryState, HerdTelemetryState, InfluentialIndividualState,
+    IntensificationKnowledgeState, KitOptionState, KnowledgeLedgerEntryState,
+    KnowledgeMetricsState, KnowledgeTimelineEventState, LaborAssignmentState, LadderBranchState,
+    LadderKnowledgeProgress, LadderKnowledgeState, LadderRungState, LineageConstantsState,
+    MaterialDefState, MobilityState as SchemaMobilityState, MountainKind, OpeningKitDefaultState,
+    OpeningLoadoutState, OpeningMaterialDefaultState, PendingForkState, PendingForksState,
+    PopulationCohortState, PopulationDemographicsState as SchemaPopulationDemographicsState,
+    PowerIncidentSeverity, PowerIncidentState, PowerNodeState, PowerTelemetryState, RecipeDefState,
+    RouteState, ScalarRasterState, SedentarizationState as SchemaSedentarizationState,
+    SentimentAxisTelemetry, SentimentDriverCategory, SentimentDriverState, SentimentTelemetryState,
     SettlementStageViewState, SnapshotHeader, SourcePriorityState, StanceAxisState, StanceState,
     StartMarkerState, TemperatureSurvivabilityState, TerrainOverlayState, TerrainSample,
     TileImprovementState, TileState, VictoryModeSnapshotState, VictoryResultState,
     VictorySnapshotState, VoiceLineState, VoiceMediumState, WorldDelta, WorldSnapshot,
     GRAZE_PHASE_COLLAPSING, GRAZE_PHASE_NONE, GRAZE_PHASE_STRESSED, GRAZE_PHASE_THRIVING,
 };
+
+use sim_runtime::{BorderOverrideState, StandingLinkState, TradeRecordState, TreatyState};
 
 use crate::{
     components::{
@@ -113,9 +116,11 @@ mod capture;
 mod connections;
 pub(crate) mod crafting;
 mod culture;
+mod dealings;
 mod deposits;
 mod economy;
 mod flora_quotes;
+mod goodwill;
 mod governance;
 mod knowledge;
 mod map;
@@ -123,6 +128,8 @@ pub(crate) mod population;
 mod publish;
 mod routes;
 mod subsistence;
+mod trade_history;
+mod treaties;
 mod vision;
 
 pub use campaign::*;
@@ -1171,6 +1178,13 @@ mod tests {
             contact_lessons: Vec::new(),
             connections: Vec::new(),
             routes: Vec::new(),
+            dealings: Vec::new(),
+            treaties: Vec::new(),
+            standing_links: Vec::new(),
+            trade_history: Vec::new(),
+            goodwill: Vec::new(),
+            own_goodwill: Vec::new(),
+            goodwill_cuts: Default::default(),
             tile_improvements: Vec::new(),
             deposits: Vec::new(),
             demographics: Vec::new(),
@@ -1258,6 +1272,13 @@ mod tests {
             contact_lessons: Vec::new(),
             connections: Vec::new(),
             routes: Vec::new(),
+            dealings: Vec::new(),
+            treaties: Vec::new(),
+            standing_links: Vec::new(),
+            trade_history: Vec::new(),
+            goodwill: Vec::new(),
+            own_goodwill: Vec::new(),
+            goodwill_cuts: Default::default(),
             tile_improvements: Vec::new(),
             deposits: Vec::new(),
             demographics: Vec::new(),
@@ -1340,6 +1361,13 @@ mod tests {
             contact_lessons: Vec::new(),
             connections: Vec::new(),
             routes: Vec::new(),
+            dealings: Vec::new(),
+            treaties: Vec::new(),
+            standing_links: Vec::new(),
+            trade_history: Vec::new(),
+            goodwill: Vec::new(),
+            own_goodwill: Vec::new(),
+            goodwill_cuts: Default::default(),
             tile_improvements: Vec::new(),
             deposits: Vec::new(),
             demographics: Vec::new(),

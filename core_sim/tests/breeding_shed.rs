@@ -162,7 +162,7 @@ fn tie(app: &mut App, a: Band, b: Band) {
         for _ in 0..contacts_to_full {
             ledger.record_contact(
                 key,
-                &Sighting::new(at, SEEDED_ON_TURN, ""),
+                &Sighting::new(at, SEEDED_ON_TURN, "", FactionId(0)),
                 SEEDED_ON_TURN,
                 &cfg,
             );

@@ -192,6 +192,32 @@ fn rows_of<T: Clone>(blank: T) -> Vec<T> {
     vec![blank; ROWS]
 }
 
+/// A treaty's terms with every nested list populated: each bundle carries two goods lists, and each
+/// list carries material batches with their readings — repeated fields inside repeated fields, so
+/// every level needs elements or the decode guard never reaches the inner ones.
+fn seeded_terms() -> crate::state::treaties::TreatyTermsState {
+    use crate::state::dealings::DealingGoodsState;
+    use crate::state::treaties::{TreatyBundleState, TreatyTermsState};
+    let goods = || DealingGoodsState {
+        materials: ["hide", "fibre"]
+            .iter()
+            .map(|material| MaterialBatchState {
+                material_id: (*material).to_string(),
+                readings: vec![CharacteristicReadingState::default(); 2],
+                ..Default::default()
+            })
+            .collect(),
+        ..Default::default()
+    };
+    TreatyTermsState {
+        bundles: rows_of(TreatyBundleState {
+            sent: goods(),
+            returned: goods(),
+        }),
+        ..Default::default()
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Blanks for the state structs that do not derive `Default`
 // ---------------------------------------------------------------------------
@@ -651,6 +677,7 @@ fn seed_snapshot() -> WorldSnapshot {
         cohort.breeding_members = rows();
         cohort.breeding_peoples = rows();
         cohort.hunt_meals = rows();
+        cohort.envoy_terms = seeded_terms();
         cohort.culture_pressures = rows();
         cohort.pending_reveal_x = vec![0u32; ROWS];
         cohort.pending_reveal_y = vec![0u32; ROWS];
@@ -931,6 +958,57 @@ fn seed_snapshot() -> WorldSnapshot {
         ..Default::default()
     });
 
+    // --- dealings --------------------------------------------------------
+    // The pending offers between peoples (`docs/plan_early_diplomacy.md` §1). Each row carries two
+    // goods lists, and each list carries material batches with their readings — repeated fields
+    // inside repeated fields, so both levels need elements or the decode guard never reaches the
+    // inner ones.
+    s.dealings = rows();
+    // --- treaties --------------------------------------------------------
+    // The treaties the viewer is party to and the standing links its bands hold; each treaty's
+    // terms nest bundles, and a dealing's proposal and an envoy's errand carry the same terms.
+    s.treaties = rows_of(crate::state::treaties::TreatyState {
+        terms: seeded_terms(),
+        ..Default::default()
+    });
+    s.standing_links = rows();
+
+    // --- trade history ---------------------------------------------------
+    // The viewer's people's past trades; each row carries two goods lists with material batches, so
+    // both levels need elements or the decode guard never reaches the inner ones.
+    s.trade_history = rows();
+    for record in &mut s.trade_history {
+        for goods in [&mut record.goods_out, &mut record.goods_in] {
+            goods.materials = ["hide", "fibre"]
+                .iter()
+                .map(|material| MaterialBatchState {
+                    material_id: (*material).to_string(),
+                    readings: vec![CharacteristicReadingState::default(); 2],
+                    ..Default::default()
+                })
+                .collect();
+        }
+    }
+
+    // --- goodwill --------------------------------------------------------
+    // What other peoples are known to think of the viewer's; the cuts are a single table, saturated
+    // with the rest.
+    s.goodwill = rows();
+    s.own_goodwill = rows();
+    for dealing in &mut s.dealings {
+        dealing.treaty = seeded_terms();
+        for goods in [&mut dealing.goods_sent, &mut dealing.goods_asked] {
+            goods.materials = ["hide", "fibre"]
+                .iter()
+                .map(|material| MaterialBatchState {
+                    material_id: (*material).to_string(),
+                    readings: vec![CharacteristicReadingState::default(); 2],
+                    ..Default::default()
+                })
+                .collect();
+        }
+    }
+
     // --- deposits --------------------------------------------------------
     // The live workings on deposits (arc #583), **one row per `(tile, material)`**. Seeded for
     // the same reason every repeated field here is: an empty vector is a field the decode guard
@@ -1073,6 +1151,9 @@ fn seed_snapshot() -> WorldSnapshot {
     }
     s.voice_medium = rows();
     s.faction_policies = rows();
+    for policy in &mut s.faction_policies {
+        policy.border_overrides = rows();
+    }
     s.faction_names = rows();
     s.opening_loadout.pickable_materials = rows();
     s.opening_loadout.material_defaults = rows();

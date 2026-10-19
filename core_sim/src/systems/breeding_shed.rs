@@ -91,6 +91,7 @@ pub struct ShedInputs<'w> {
     roads: Res<'w, RoadRegistry>,
     connections: Res<'w, ConnectionLedger>,
     borders: Res<'w, FactionBorderPolicies>,
+    rights: crate::routes::RoadRights<'w>,
     free: Res<'w, FreeBreedingPeoples>,
     tick: Res<'w, SimulationTick>,
 }
@@ -158,6 +159,7 @@ pub fn shed_breeding_excess(
         mig_cfg.base_reach,
         &inputs.supply.get(),
         &inputs.ladder.get(),
+        inputs.rights.foreign(&inputs.ladder.get()),
         inputs.tile_registry.width,
         inputs.tile_registry.height,
         inputs.sim_config.map_topology.wrap_horizontal,
@@ -243,6 +245,7 @@ pub fn shed_breeding_excess(
                 &inputs.roads,
                 &inputs.connections,
                 &inputs.borders,
+                inputs.rights.treaties(),
                 src,
                 dest_end,
             ) {

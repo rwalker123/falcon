@@ -194,6 +194,8 @@ const SHIPMENT_TOTAL := "total"
 const SHIPMENT_CARGO := "cargo"
 ## True for a shipment made of returned cargo with no export in the window to net against.
 const SHIPMENT_RETURNED := "returned"
+## The cause a group of crossings carries (`HudTradeVocab.CAUSE_*`).
+const SHIPMENT_CAUSE := "cause"
 ## The flag `net_shipment_crossings` stamps on a returned crossing it could not net away.
 const RETURNED_FLAG := "_returned"
 
@@ -217,7 +219,10 @@ static func net_shipment_crossings(band: Dictionary) -> Array[Dictionary]:
 				returned[key] = float(returned.get(key, 0.0)) + absf(float(crossing.get(HudTradeVocab.CROSSING_AMOUNT, 0.0)))
 			HudTradeVocab.CAUSE_SHIPMENT_OUT:
 				outs.append(crossing)
-			HudTradeVocab.CAUSE_SHIPMENT_IN:
+			HudTradeVocab.CAUSE_SHIPMENT_IN, HudTradeVocab.CAUSE_EXCHANGE_OUT, \
+					HudTradeVocab.CAUSE_EXCHANGE_IN:
+				# An exchange's halves net against nothing: the return is a different good going the
+				# other way, not an undo, so they pass through like an arrival.
 				rest.append(crossing)
 	var result: Array[Dictionary] = []
 	for crossing in outs:
@@ -269,9 +274,13 @@ static func shipments(band: Dictionary) -> Array[Dictionary]:
 		var party := int(crossing.get(HudTradeVocab.CROSSING_PARTY_ID, HudTradeVocab.NO_BAND))
 		var counterparty := int(crossing.get(HudTradeVocab.CROSSING_COUNTERPARTY_ID, HudTradeVocab.NO_BAND))
 		var direction := int(crossing.get(HudTradeVocab.CROSSING_DIRECTION, HudTradeVocab.DIRECTION_IN))
-		var key := "%d|%s|%s" % [direction,
+		# An exchange's half is its own group: the visiting party's delivery and the return paid for it
+		# cross in opposite directions, and a plain shipment must not absorb either.
+		var exchange_cause := cause_of(crossing)
+		var key := "%d|%s|%s|%s" % [direction,
 			("p%d" % party) if party != HudTradeVocab.NO_BAND else ("c%d" % counterparty),
-			"r" if bool(crossing.get(RETURNED_FLAG, false)) else ""]
+			"r" if bool(crossing.get(RETURNED_FLAG, false)) else "",
+			("x%d" % exchange_cause) if HudTradeVocab.EXCHANGE_CAUSES.has(exchange_cause) else ""]
 		if not groups.has(key):
 			var carried: Array[Dictionary] = []
 			groups[key] = {
@@ -282,6 +291,9 @@ static func shipments(band: Dictionary) -> Array[Dictionary]:
 				SHIPMENT_COUNTERPARTY_FACTION: int(crossing.get(HudTradeVocab.CROSSING_COUNTERPARTY_FACTION,
 					HudConst.PLAYER_FACTION_ID)),
 				SHIPMENT_RETURNED: bool(crossing.get(RETURNED_FLAG, false)),
+				# The cause this group carries (`HudTradeVocab.CAUSE_*`); a row words an exchange's
+				# half from `HudTradeVocab.CAUSE_LABELS`.
+				SHIPMENT_CAUSE: exchange_cause,
 				"_crossings": carried,
 			}
 			order.append(key)

@@ -10,6 +10,7 @@
 //! turn", and its middle token is the *class* the behaviour gate reads (`raid`, `trade`). The
 //! scripted fixture's intent is the bare `script`, exactly as slice 3 wrote it.
 
+pub mod dealings;
 pub mod food;
 pub mod land;
 pub mod scripted;
@@ -29,6 +30,10 @@ pub type SpecialistId = &'static str;
 pub const SPECIALIST_FOOD: SpecialistId = "food";
 pub const SPECIALIST_LAND: SpecialistId = "land";
 pub const SPECIALIST_SCRIPTED: SpecialistId = "scripted";
+/// The seat's answer to what other peoples send it. A duty rather than a bid — it is always on,
+/// and so is not in [`DISABLEABLE_SPECIALISTS`]: an AI that did not answer would leave a party
+/// standing in its camp until silence refused.
+pub const SPECIALIST_DEALINGS: SpecialistId = "dealings";
 /// Every specialist a `--disable` may name.
 pub const DISABLEABLE_SPECIALISTS: [SpecialistId; 2] = [SPECIALIST_FOOD, SPECIALIST_LAND];
 

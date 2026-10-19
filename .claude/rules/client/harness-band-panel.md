@@ -2906,10 +2906,15 @@ Its fixture is a five-camp network (one relay, one open-ground link) built off `
 its crossings off `BandFx.transfer_crossing` — the shared decoder-shaped row both harnesses stage.
 Three turns: the **busy** one (four goods, one foreign import, one export, plus a `party_home` and a
 `dowry_out` the tab must not show), the **fold** one (six imports) and the **busiest** one (eight
-goods, fifteen shipments), which is the one the wide shell's strip cannot hold at full height. The
-claims a frame cannot make: the causes that reached the tab, the badge's count, the tier the
-measurement chose, the relay's first hop, the friction row, the 1190 threshold with no Trade flank,
-and `_assert_scroll_only_where_sanctioned` across both shells. The frames are listed in
+goods, fifteen shipments), which is the longest the tab gets. The tab is ONE sanctioned scroll of three
+sections now (waiting on an answer, this turn, history) and has no SHORT tier, so a row a list opens
+from is scrolled into view first (`_reveal`) and the strip-height body (`trade_tab_short`) asserts the
+full tier inside a scroll that overflows. The claims a frame cannot make: which causes reached the tab,
+the badge rule (the dealings badge, so none with nothing waiting), the three sections in order, the
+relay's first hop, the friction row, the 1190 threshold with no Trade flank, the wide section carrying
+the merged sections with the treaty proposal in the Peoples section and no Dealings section under
+Parties, and `_assert_scroll_only_where_sanctioned` across both shells (`SANCTIONED_SCROLLS` pairs
+`TradeZoneController.TAB_SCROLL_NAME` with `ZONE_TRADE`, claimed IFF the tab is mounted). The frames are listed in
 `band-city-panel.md` → "The Trade tab".
 
 ## `band_panel_workings_overstaffed` measures the GEARED cap (issue #663)
@@ -3073,3 +3078,37 @@ fixture's followed row used to carry `workers: 2`, a state the sim cannot send, 
 asserts OFF sends an ordinary hunt at `min(hunt_useful_workers, idle)`. The pending overlay is cleared
 before the frames so an earlier toggle press does not mark a second herd's row. `command_guard` also
 round-trips the zero-count line (`ASSIGN_LABOR_GRAMMAR_DRIVES` 8, `ASSIGN_LABOR_EXPECTED` 14).
+
+## `command_guard`'s DIPLOMACY drives (issue #233)
+
+Seventeen commands in one `_drive_diplomacy` (run last; `EXPECTED_KINDS`: `answer_dealing` 7,
+`set_accept_own_gifts` 2, `propose_trade`, `propose_treaty`, `send_envoy`, `end_treaty` 1 each,
+`set_open_borders` 2, and a second `send_expedition` and `send_trade_expedition`). They replaced a throwaway
+test that fed the same lines to `parse_command_line` once. Every drive presses the control a player presses
+(a dealing's own `Accept` / `Refuse` / `Counter`, the sheets' commit buttons, the Peoples strip's links, the
+gift checkbox, the confirm dialogs) and **states what the line must say just before it presses**
+(`_expect`, merged into the emitted entry), because a line that merely parses proves nothing here.
+
+- **Seven answers**: a refusal, a bare accept, an offer's accept with a return drawn from the larder, a
+  trade counter (both legs), a treaty counter that keeps the proposal's terms and adds a bundle, and a
+  REPLY taken (`Take it`, a bare `accept`) and walked home from (`Reject it`, a bare `refuse`). The
+  proposals and replies are pressed on the Trade tab, the treaty proposal on the Peoples tab, and the gift
+  setting on the Trade tab.
+- **The Rust half checks what the parse recovered** (`faction_addressed_failures`,
+  `diplomacy_field_failures`): the dealing id and the kind of answer (`accept` / `refuse` / `counter` /
+  `counter_terms`), the people an end or a border names, the border's state, the gift setting, a treaty's
+  road rights, open borders and bundle COUNT, an offer's flag, a scout's strangers order and pack, and the
+  destination of a proposal, treaty proposal or envoy. **`BandHandle::FactionAddressed`** is keyed on the
+  parsed variant (like `PlaceAddressed`), so a band-addressed command cannot be opted out by being
+  relabelled, and **a drive that stated no expectation is itself a failure**: a comparison against nothing
+  passes everything.
+- **The destination is the exact substitution this gate exists for**: the fixture's destination band has an
+  entity (`DESTINATION_ENTITY`) that differs from its `BandId` (`DESTINATION_ID`) on purpose, and a line
+  carrying the entity parses perfectly and addresses a band that does not exist.
+- **The border drive covers both directions and the breach**: toward a people the player had closed to (one
+  press, no question) and against the treaty that holds them open (a confirm, then the line).
+- **Sabotage-verified**: ending the treaty with `other + 1` and proposing to the sending band instead of the
+  destination fail exactly those two lines, each naming what was sent against what was composed; unit tests
+  (`a_destination_entity_in_place_of_its_band_id_is_a_failure`,
+  `a_faction_addressed_line_is_compared_with_the_composed_answer`) pin both comparisons without launching
+  Godot. The gate reads **70 commands** on this tree.

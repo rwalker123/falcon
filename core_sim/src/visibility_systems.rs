@@ -148,7 +148,7 @@ struct VisionSource {
 /// would drift from this one silently.
 struct ContactSink<'a> {
     observer: BandId,
-    /// Which resident bands stand on which tile, each with the name it answers to. **Probed, never
+    /// Which resident bands stand on which tile, each with the name it answers to and its people. **Probed, never
     /// iterated**, so a hash map's order is not observable — the deterministic ordering that
     /// matters is [`crate::connections::ContactsThisTurn`]'s, which is keyed.
     occupancy: &'a Occupancy<'a>,
@@ -163,20 +163,21 @@ impl ContactSink<'_> {
         let Some(occupants) = self.occupancy.get(&pos) else {
             return;
         };
-        for (subject, name) in occupants {
+        for (subject, name, faction) in occupants {
             if *subject != self.observer {
                 self.contacts.record(
                     self.observer,
                     *subject,
-                    Sighting::new(pos, self.turn, *name),
+                    Sighting::new(pos, self.turn, *name, *faction),
                 );
             }
         }
     }
 }
 
-/// Which resident bands stand on which tile, each with the name a sighting of it records.
-type Occupancy<'a> = HashMap<UVec2, Vec<(BandId, &'a str)>>;
+/// Which resident bands stand on which tile, each with the name and the people a sighting of it
+/// records.
+type Occupancy<'a> = HashMap<UVec2, Vec<(BandId, &'a str, FactionId)>>;
 
 /// Which resident bands stand on which tile, built **once** per sweep — each beside the
 /// [`BandName`] a sighting of it records (empty when the band carries none), borrowed from the
@@ -199,7 +200,7 @@ fn resident_band_occupancy<'a>(
             occupancy
                 .entry(tile.position)
                 .or_default()
-                .push((*band, name));
+                .push((*band, name, cohort.faction));
             add_people(&mut people, tile.position, cohort.size);
         }
     }

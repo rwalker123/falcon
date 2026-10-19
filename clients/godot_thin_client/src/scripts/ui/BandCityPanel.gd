@@ -382,8 +382,8 @@ const HEADER_HEIGHT_FALLBACK := 44.0
 const ZONE_BAND := &"band"
 const ZONE_WORK := &"work"
 const ZONE_PARTIES := &"parties"
-## The band page's Trade zone (issue #731). A band declares it `ZONE_SPEC_NARROW_ONLY`: a tab in the
-## narrow shell, and no flank of its own in the wide one.
+## The band page's Trade zone (issue #731, merged with the retired Dealings zone). A band declares it
+## `ZONE_SPEC_NARROW_ONLY`: a tab in the narrow shell, and no flank of its own in the wide one.
 const ZONE_TRADE := &"trade"
 ## The band page's Peoples zone (issue #549) — the ties the band holds. NARROW-ONLY like Trade: a tab in
 ## the narrow shell, a section under Parties (after Trade's) in the wide one.
@@ -446,15 +446,21 @@ const DEFAULT_ZONE_LAYOUT: Array[Dictionary] = [
 ]
 ## The tab a fresh session opens on: work is the zone the player acts in.
 const DEFAULT_TAB := ZONE_WORK
-const TAB_FONT_SIZE := 12
+## 11, not 12: at 12 the five-badge worst case still overran (359px against the 354px interior).
+const TAB_FONT_SIZE := 11
 const TAB_BADGE_FONT_SIZE := 10
-const TAB_SEPARATION := 4
-const TAB_PADDING_H := 10
+## Six tabs on a band page (Dealings joined Band, Work, Parties, Trade and Peoples) overran the strip: 76px
+## at the old padding of 10, and still ~20px with four badges showing at 4. The separation (between tabs
+## and between a label and its badge), the tab padding and the badge padding are all tightened so the bar
+## fits the strip with EVERY badge showing: measured 347 of the 354px interior with all five badges at two
+## digits (303 with the badges a band normally wears), where the old padding read 454.
+const TAB_SEPARATION := 2
+const TAB_PADDING_H := 2
 const TAB_PADDING_V := 5
 ## Thickness of the active tab's underline (the prototype's SIGNAL rule under the selected tab).
 const TAB_UNDERLINE_THICKNESS := 2
 const TAB_BADGE_CORNER_RADIUS := 7
-const TAB_BADGE_PADDING_H := 5
+const TAB_BADGE_PADDING_H := 3
 const TAB_BADGE_PADDING_V := 1
 const CYCLE_PREV := -1
 const CYCLE_NEXT := 1

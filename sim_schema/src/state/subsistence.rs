@@ -894,6 +894,13 @@ pub struct HerdTelemetryState {
     /// See [`Self::pen_site_x`].
     #[serde(default = "no_pen_site")]
     pub pen_site_y: i32,
+    /// **The faction taming or keeping this herd** (`None` = an untouched herd). Rides the wire as the
+    /// `hasOwner`/`owner` pair, the forage patch's spelling of the same `Option`. Appended last.
+    #[serde(default)]
+    pub owner: Option<u32>,
+    /// The band whose work last advanced this herd's build meter (`0` = none). Appended last.
+    #[serde(default)]
+    pub builder_band: u64,
 }
 
 /// The `-1` "no Corral queued" sentinel of the pen-site pair.
@@ -1009,6 +1016,8 @@ impl Default for HerdTelemetryState {
             rung_quotes: Vec::new(),
             pen_site_x: no_pen_site(),
             pen_site_y: no_pen_site(),
+            owner: None,
+            builder_band: 0,
         }
     }
 }
@@ -1035,6 +1044,9 @@ pub struct ForagePatchState {
     pub y: u32,
     #[serde(default)]
     pub owner: Option<u32>,
+    /// The band whose work last advanced this patch's build meter (`0` = none). Appended last.
+    #[serde(default)]
+    pub builder_band: u64,
     #[serde(default)]
     pub biomass: f32,
     /// **WHAT THIS PATCH HOLDS NOW** — the ground's own `K` already multiplied by the **interpolated**

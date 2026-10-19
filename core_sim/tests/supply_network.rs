@@ -201,7 +201,7 @@ fn seed_directed_tie(app: &mut App, observer: Entity, subject: Entity) {
     for _ in 0..contacts_to_full {
         ledger.record_contact(
             key,
-            &Sighting::new(position, SEEDED_ON_TURN, ""),
+            &Sighting::new(position, SEEDED_ON_TURN, "", FactionId(0)),
             SEEDED_ON_TURN,
             &cfg,
         );

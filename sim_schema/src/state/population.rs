@@ -1845,6 +1845,10 @@ pub struct PopulationCohortState {
     /// faction ascending. Own bands only; a foreign row defaults to empty. Appended last.
     #[serde(default)]
     pub culture_pressures: Vec<CulturePressureState>,
+    /// **The terms an envoy party will post on arrival** (`expeditionMission` `"envoy"`;
+    /// `docs/plan_early_diplomacy.md` §3). Empty on every other row. Appended last.
+    #[serde(default)]
+    pub envoy_terms: crate::state::treaties::TreatyTermsState,
 }
 
 /// **An amount of one material** — a recipe input per pass ([`KitNeedRecipeState::inputs`], the

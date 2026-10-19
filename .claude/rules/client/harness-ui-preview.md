@@ -3890,3 +3890,101 @@ asserted PNG-less.
 The fixture catalog mirrors `core_sim/src/data/intensification_ladder.json` (Farm, Pen with `size_tiers`).
 The generic-step proof sits one step beyond it: `plant:terrace` (verb `terrace`) and `animal:stud` (verb
 `stud`) in `fourth_rung.gd`; the `farm` / `ranch` names that section used to stage are now shipped steps.
+
+## `chapters/dealings.gd` — early diplomacy's client half (issue #233, slice C1)
+
+**Appended LAST in `CHAPTERS`**, after `worked_land_ranch`, so no existing frame moves; it frees its panel, restores
+the world (`reset_world_state`, `FactionNames.reset`) and hands the reference band back. `EXPECTED_CHECKPOINTS`
+is the floor in the chapter. Every fixture is shaped as `dict/dealings.rs` writes it, and **every command
+is asserted by EQUALITY through the real `Main` builder**: a payload can be perfectly good and be spelled
+into a line the server's parser refuses (the same lines were also fed to `parse_command_line` once, in a
+throwaway test, and all parse).
+
+- **A GIFT TAKES NOTHING BACK** (`_gift_states`, frame `dealings_gift_rows`): an incoming gift reads
+  `They send 7.0 food as a gift` with Accept / Refuse and no Counter, its Accept sends the bare
+  `answer_dealing 0 18 accept` and opens no sheet, the band's own gift reads `You gave 2.0 hide` awaiting
+  their answer, and, as the pair, an incoming offer's Accept still opens the return sheet.
+- **A TRADE PARTY IS THE TRADE TAB'S, END TO END** (`_road_states`, frames `dealings_road` and
+  `dealings_road_waiting`). The chapter stages five parties of the home band (`_parties`): a shipment
+  standing in Brackwater's camp (the party of the pending offer we sent and of the reply addressed to us),
+  one heading out, one coming home, an **envoy** and a **scout**. Claims: the Parties head reads
+  `2 out · 5 workers` (the envoy and the scout) and its badge `2`, no shipment's band is named there, the
+  envoy reads `Waiting on an answer` and the scout `Awaiting orders`; the full set of five stays in
+  `band_parties` and the Workforce `away` clause; `On the road` sits between `Waiting on an answer` and
+  `This turn` with two rows (heading out, coming home) and not the camped party; each carries `Jump to
+  party` and `Recall`, as do the offer row and the reply row (the reply beside `Take it` / `Reject it`,
+  the offer row still two lines of copy); the offer addressed to us has no party links; pressing `Jump to
+  party` focuses that party's tile. A dealings-only frame withdrawing the offer and reply moves the party
+  onto a third road row in the SAME scroll, reading `Waiting on an answer`; restoring them takes it off
+  again; with no trade party at all the section is not drawn. The chapter's `EXPECTED_CHECKPOINTS` was
+  re-measured. The offer and the reply are between the same two bands but each names its own
+  camped party by `party_band`, and a claim asserts each row's links reach its own party.
+- **THE DEALINGS TAB IS GONE; THE CHAPTER KEEPS ITS NAME.** What it walks is the merged Trade tab
+  (`Waiting on an answer`, `This turn`, `History`, in one scroll) and the Peoples tab's treaty proposals.
+  `dealings_tab` asserts the three sections in order, the one sanctioned scroll, no SHORT tier, the six
+  TRADE rows (a treaty proposal is not among them) and the Trade badge counting the four trade items that
+  wait on the band, hot. `dealings_reply` drives the reply row: an incoming reply reads `<band> would give
+  back <return> for your <cargo>` with `Take it` / `Reject it` and no counter, pressing them sends the
+  bare `answer_dealing 0 16 accept` / `refuse` with their own receipts, and the outgoing one reads
+  `Waiting on <band>'s party to take your return of <return>` with no action. `dealings_history` scrolls
+  the tab to its foot and asserts every record of THIS band newest first (another band's is absent), the
+  outcome words and inks, `gave … · got …` against `offered … for …` with an empty side left out, the
+  same-people record read from both ends, and that a history-only frame refills the list in place (same
+  scroll node, same offset, one more row). `dealings_tab_empty` is both empty states (`Nothing waiting`,
+  `No trades yet`), each under its head, with the Trade badge gone. `dealings_peoples_treaty` is the
+  treaty proposal on the Peoples tab: first on the tab, under `Waiting on an answer`, the same three
+  actions, the Peoples badge counting it hot, and absent (the badge back to the tie count) once none
+  waits. The feed block asserts the Notable set (`offered`, `accepted`, `refused`, `declined`,
+  `expired`, `failed`, and a reply addressed to you) against the Routine one (`posted`, `withdrawn`,
+  `settled`).
+- **The gift setting is judged on the Trade tab** (`dealings_faction_page` asserts it is NOT on the
+  faction page; `dealings_gift_setting` / `_off` assert it is the first row under the waiting head, labelled in the
+  player's words, followed by the snapshot, with a hover that says what turning it on does, and that
+  turning it off emits `set_accept_own_gifts 0 off`).
+- **The dock is moved on purpose.** The harness's 1500px canvas clips the right dock, so the tab, the
+  faction page and the orb are judged with the dock LEFT, and the sheets (which live in the tile drawer,
+  covered by a left dock) with it RIGHT. `set_dock(SIDE_LEFT)` precedes everything: a panel built after
+  another chapter inherits that chapter's persisted edge, and `set_dock` on the edge it already holds emits
+  no reservation, so the HUD would not yield.
+- **Seven states, five kinds plus the reply**: an offer addressed to the player, a proposal, a counter to the
+  player's own proposal (the player is the shipper, so the legs swap seats), a treaty proposal carried by an
+  envoy, an outgoing offer, and a reply in each direction. Each is the others' control: the assertions are that incoming sorts first, that an offer
+  has no Counter, that the window is amber beside its number, that rows are two lines of copy, and that no
+  row prints a raw id.
+- **The answer sheet is driven through the row's own buttons and the picker's own `+`**, and ends in the
+  composed command: `answer_dealing 0 11 accept food 3.000000`, a counter's `give … ask …` (give is the
+  shipper's leg whoever speaks), and a treaty counter's `counter open_borders bundle give … ask …`. A sheet
+  open on a dealing that has since lapsed closes itself.
+- **Trade and scout** states pin the mode row's order (Gift, Offer, Propose), that Propose is greyed with its
+  reason until a destination with a PUBLISHED standing link is picked and falls back to a gift when the row
+  disappears, that an offer ends in ` offer` and a gift is the same line without it, the `propose_trade` line,
+  and the scout's `strangers give pack food …` line beside the unchanged plain line.
+- **The feed block** ingests the sim's own label and detail shapes for every status and asserts the rungs
+  (an offer addressed to you and a breach against you are Notable; the player's own breach and every other
+  status are Routine), that the sender band and the people are named by the tie's and the faction's published
+  names, and that no detail leaks a token.
+- **A section label is uppercased by its widget**, so the chapter matches needles case-insensitively (`_has`).
+
+## `chapters/treaties.gd` — early diplomacy's second half (issue #233, slice C2)
+
+**Appended after `dealings` in `CHAPTERS`**, reusing that chapter's fixtures (`DEALINGS.new()` for the home
+band, ties and dealings; the same three peoples) and handing the reference band back like it.
+`EXPECTED_CHECKPOINTS` is the floor in the chapter (re-measured by raising it and reading `reached`).
+Frames and what only each can say:
+
+| frame | claim |
+|---|---|
+| `treaties_peoples` | three people blocks ascending; `They: friendly` / `They: wary` (amber) / no `They:` at all for the people nobody reported on; the treaty in words; `End treaty` only where a treaty stands; the border toggle in its three sources (treaty, override, default); every block two lines of copy |
+| `treaties_peoples_hover` | a **real engine tooltip** over a `They:` word, with the reasons in words, strongest first. The harness freezes `Engine.time_scale` at 0, and the tooltip delay is a scaled timer, so the chapter thaws the clock for the hover on a timer that ignores the scale (a plain timer would hang the run) and freezes it again |
+| `treaties_end_confirm` / `_borders_breach_confirm` | the two confirms, each saying it is a breach that costs their goodwill; confirming sends `end_treaty 0 1` / `set_open_borders 0 closed 1`; cancelling sends nothing; a plain flip asks nothing |
+| `treaties_sheet_road` / `_road_filled` | the treaty sheet over a published standing link: Propose greyed with no term (the reason in amber beside it), a bundle that carries nothing greys it too, then `propose_treaty 0 <band> <dest> road_rights bundle give … ask …` |
+| `treaties_sheet_envoy` / `_envoy_filled` | no road: the sheet names the band the envoy walks to, the party stepper, `send_envoy 0 <band> 2 <dest> road_rights open_borders` |
+| `treaties_sheet_no_target` | no band of theirs known (Moorfolk's tie is parked): the send is greyed with its reason in amber |
+| `treaties_sheet_remembered` | a people met only through a live remembered tie (`subject_faction`): a Peoples row, and the envoy goes to that band |
+| `treaties_counter` / `_counter_bundle` | a treaty counter keeps the published terms ticked and adds a bundle: `answer_dealing 0 14 counter road_rights open_borders bundle … bundle …` |
+| `treaties_envoy_party` | an envoy's Parties row (destination and terms), its hover, its `✉` mark, and **the six-tab bar fitting the strip** as the badges stand and with all five at two digits |
+
+**Every command is asserted by EQUALITY through the real `Main` builder**, and the builders' refusals (no
+terms, no destination, no party, no people, no state) are asserted too. **Fixture destinations differ in
+`BandId` and entity**: the standing link's far end is the Brackwater tie, and the envoy people's band is
+known only through a dealing.

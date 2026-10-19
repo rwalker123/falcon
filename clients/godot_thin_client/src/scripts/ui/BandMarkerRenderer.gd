@@ -506,7 +506,9 @@ func _draw_expedition_body(unit: Dictionary, center: Vector2, marker_radius: flo
 ## glyph): the awaiting-orders pulse.
 func _draw_expedition_phase_marks(unit: Dictionary, center: Vector2, marker_radius: float) -> void:
 	# Awaiting-orders idle indicator (scout): a pulsing amber ring (needs a command).
-	if String(unit.get("expedition_phase", "")) == _view.EXPEDITION_PHASE_AWAITING:
+	# A shipment or envoy standing in a camp waits on an ANSWER and needs no command, so it pulses nothing.
+	if String(unit.get("expedition_phase", "")) == _view.EXPEDITION_PHASE_AWAITING \
+			and HudFormat.awaits_orders(unit):
 		var pulse: float = 0.5 + 0.5 * sin(_view._expedition_time * _view.EXPEDITION_AWAITING_PULSE_SPEED)
 		var ring_radius: float = marker_radius * (_view.EXPEDITION_AWAITING_RING_FACTOR + _view.EXPEDITION_AWAITING_PULSE_AMPLITUDE * pulse)
 		var ring_color := Color(HudStyle.WARN.r, HudStyle.WARN.g, HudStyle.WARN.b, 0.45 + 0.4 * pulse)

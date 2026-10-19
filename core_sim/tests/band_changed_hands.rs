@@ -135,7 +135,7 @@ fn stage_a_remnant_handover(app: &mut App) -> (Entity, BandId) {
     ] {
         ledger.record_contact(
             key,
-            &Sighting::new(UVec2::ZERO, SIGHTING_TURN, ""),
+            &Sighting::new(UVec2::ZERO, SIGHTING_TURN, "", FactionId(0)),
             SIGHTING_TURN,
             &config,
         );

@@ -59,13 +59,28 @@ const CAUSE_SHIPMENT_RETURNED := 7
 ## names the band the party was sent out from as counterparty. Not trade, and not the band's own
 ## party — the food and fodder popovers state it on its own row (`DisclosureController`).
 const CAUSE_PARTY_DEFECTED := 8
+## **AN EXCHANGE'S TWO HALVES** (early diplomacy, #233; `TransferCause::ExchangeOut` / `ExchangeIn`). The
+## receiver paying the return it named (Route/Out on the receiving band) and that return landing at the
+## party's home band (Route/In). Both are trade, and both are on the Route arm the Food popover accounts
+## for in full -- so they join `TRADE_CAUSES` and `SHIPMENT_CAUSES`, or the popover's ledger stops closing
+## and the Trade tab drops a return that really crossed.
+const CAUSE_EXCHANGE_OUT := 9
+const CAUSE_EXCHANGE_IN := 10
+## The words a row wears for them, in the tab's own register: what was GIVEN UP in a bargain, and what
+## was GOT in one. A plain shipment's rows say neither (its arrow is the whole story).
+const CAUSE_LABELS := {
+	CAUSE_EXCHANGE_OUT: "traded away",
+	CAUSE_EXCHANGE_IN: "traded for",
+}
+const EXCHANGE_CAUSES: Array[int] = [CAUSE_EXCHANGE_OUT, CAUSE_EXCHANGE_IN]
 
 ## **WHAT COUNTS AS TRADE.** The Local arm is `pooled`; the Route arm is a shipment either way. A
 ## band's own party coming home, a party's launch larder and a split's dowry are NEVER on the tab —
 ## they are the band's own hunting and foraging (the Food popover's rows) and the split's own event.
 const TRADE_CAUSES: Array[int] = [CAUSE_POOLED, CAUSE_SHIPMENT_IN, CAUSE_SHIPMENT_OUT,
-	CAUSE_SHIPMENT_RETURNED]
-const SHIPMENT_CAUSES: Array[int] = [CAUSE_SHIPMENT_IN, CAUSE_SHIPMENT_OUT, CAUSE_SHIPMENT_RETURNED]
+	CAUSE_SHIPMENT_RETURNED, CAUSE_EXCHANGE_OUT, CAUSE_EXCHANGE_IN]
+const SHIPMENT_CAUSES: Array[int] = [CAUSE_SHIPMENT_IN, CAUSE_SHIPMENT_OUT, CAUSE_SHIPMENT_RETURNED,
+	CAUSE_EXCHANGE_OUT, CAUSE_EXCHANGE_IN]
 
 ## The store keys of the two larders on a crossing. Food's is the sim's store key, `provisions`.
 const COMMODITY_FOOD := HudConst.STORE_ITEM_PROVISIONS
@@ -123,6 +138,8 @@ const SIGNED_AMOUNT_FORMAT := "%+.1f"
 ## A shipment's cargo clause: `12.0 food · 1.1 wood`.
 const CARGO_TERM_FORMAT := "%.1f %s"
 
+## The Trade tab's middle section: what crossed this band's store this turn.
+const THIS_TURN_HEAD := "This turn"
 const EMPTY_HEAD := "Nothing crossed this turn."
 const EMPTY_BODY := "Camps pool when one is short of what another holds; shipments appear here the turn they land or leave."
 
@@ -131,8 +148,6 @@ const CAMPS_TITLE := "The pooling network"
 const GOOD_SCOPE_TITLE_FORMAT := "%s across the network"
 ## `2 camps moved it; 2 sat even` — the first half is a `CAMP_WORDS` count.
 const GOOD_SCOPE_SUMMARY_FORMAT := "%s moved it; %d sat even"
-const LOCAL_TITLE := "Pooled this turn"
-const ROUTE_TITLE_BOTH := "Trade this turn"
 const ROUTE_TITLE_IN := "Imports this turn"
 const ROUTE_TITLE_OUT := "Exports this turn"
 const THIS_BAND_WORD := "this band"

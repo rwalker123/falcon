@@ -275,7 +275,7 @@ func _band_row_child(band_name: String, slot: String) -> Control:
 		if row == null or not row.has_meta("name_label") or not row.has_meta(slot):
 			continue
 		var name_label := row.get_meta("name_label") as Label
-		if name_label == null or name_label.text != band_name:
+		if name_label == null or not name_label.text.begins_with(band_name):
 			continue
 		return row.get_meta(slot) as Control
 	return null
