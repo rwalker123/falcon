@@ -720,3 +720,13 @@ card's forage block and Assign control show only where the server's quote admits
 where it answers `needs_lesson` the card carries one `Farming` row, `Learn Worked Land — work a farm`
 (two lines at most), built from the knowledge roster's name and the catalog's teaching rung. Barren tiles
 carry no patch quotes and `RungFx.stamp_source` conjures none for them.
+
+## A meter row for another people's build names the people
+
+On the tile card a rung row (`Cultivation` / `Field`) whose rung is unreached and whose patch is owned by
+another people (`patch_has_owner` and `patch_owner != PLAYER_FACTION_ID`) reads `⚑ Lothari · 20%`
+(`HudSelectionVocab.RUNG_FOREIGN_FORMAT`, composed by `DetailFormat.foreign_rung_value`) instead of the
+crew-dependent readings of `rung_row_value`, and takes WARN ink through the `RUNG_FOREIGN_MARK` needle in
+`rung_value_hex`. A rung already reached keeps its ordinary built row. Our own build on the same patch is
+unchanged. Herds carry no owner on the wire, so the Husbandry/Corral rows have no such state.
+Frame: `other_people_build_tile` (`chapters/worked_land_ranch.gd`, with the owned-by-us control by equality).

@@ -2145,6 +2145,21 @@ func _build_improvement_control(kind: String, source: Dictionary, prefix: String
     # back below its cost, and a build the player never re-declared.
     var source_kind := SourceForecast.source_kind_for_labor(kind)
     var running_verb := SourceForecast.build_verb(source, prefix, source_kind, composed)
+    # **ANOTHER PEOPLE'S SOURCE OFFERS THIS VIEWER NO BUILD CONTROL**: the sim refuses an ownership-gated
+    # rung there, so one line says whose it is instead of a control the server would refuse.
+    if RungQuotes.blocked_by_owner(source, prefix):
+        var owner_name := FactionMark.faction_name(RungQuotes.foreign_owner(source, prefix))
+        var owner_line := Label.new()
+        owner_line.text = (HudComposeVocab.IMPROVEMENT_FOREIGN_RUNNING_FORMAT % [owner_name,
+                HudComposeVocab.improvement_running_label(running_verb).to_lower()]) \
+            if running_verb != SourceForecast.IMPROVEMENT_NONE \
+            else HudComposeVocab.IMPROVEMENT_FOREIGN_HELD_FORMAT % owner_name
+        owner_line.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+        owner_line.add_theme_color_override("font_color", HudStyle.WARN)
+        owner_line.add_theme_font_size_override("font_size", HudWorkVocab.ALLOC_SECTION_FONT_SIZE)
+        owner_line.set_meta(HudWidgets.IMPROVEMENT_CONTROL_META, HudWidgets.IMPROVEMENT_STATE_FOREIGN)
+        target.add_child(owner_line)
+        return
     # **A DECLARATION IS NOT A BUILD, AND THE CONTROL MUST NOT RENDER ONE AS THE OTHER.** A build is
     # ACTUALLY in flight when there are builders on it or work banked on its meter; a rung with neither
     # has been *declared* and nothing more. Rendering that as RUNNING was a one-way door — a player who

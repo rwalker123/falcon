@@ -1890,6 +1890,9 @@ func _ready() -> void:
 	_assert_work_zone_readable()
 	_assert_zone_content_fits()
 
+	# ANOTHER PEOPLE'S BUILD ON A ROW WE WORK (playtest): the same 20% meter, owned by Lothari and then by us.
+	await _other_peoples_build_rows()
+
 	# MIGRATION MODE on the hunt rows: the three status lines, the toggle, and the resident control.
 	await _follow_row_states()
 
@@ -27101,3 +27104,70 @@ func _render_work_party_spoil_states() -> void:
 	_push_bands([_band_fixture()])
 	_panel.set_dock(SIDE_LEFT)
 	await _settle()
+
+# ---- ANOTHER PEOPLE'S BUILD ON A WORK ROW --------------------------------------------------------------
+
+const OTHER_PEOPLE_FACTION := 1
+const OTHER_PEOPLE_NAME := "Lothari"
+const OTHER_BUILD_METER := 0.2
+## What the row's second line leads with when the meter is another people's, as the player reads it.
+const OTHER_BUILD_LINE := "Lothari cultivating \u00b7 20%"
+
+## The wild tile of the rung board, carrying a 20% Cultivate meter owned by `owner_faction`.
+func _other_build_patches(owner_faction: int) -> Array:
+	var patches := _rung_patch_fixtures()
+	var wild: Dictionary = patches[0]
+	wild["cultivation_progress"] = OTHER_BUILD_METER
+	wild["has_owner"] = true
+	wild["owner"] = owner_faction
+	return RUNG_FX.stamp_patches([wild])
+
+func _wild_row_foreign_text() -> String:
+	for control in _collect_meta_controls(_panel, HudWorkVocab.WORK_ROW_FOREIGN_BUILD_META, []):
+		return String(control.get_meta(HudWorkVocab.WORK_ROW_FOREIGN_BUILD_META))
+	return ""
+
+func _wild_row_model() -> Dictionary:
+	for model in _hud._bandpanel._work_source_models(_hud._band_labor._panel_band, 0):
+		if String(model.get("key", "")) == "forage:%d,%d" % [RUNG_WILD_TILE.x, RUNG_WILD_TILE.y]:
+			return model
+	return {}
+
+func _other_peoples_build_rows() -> void:
+	FactionNames.update([{"faction": OTHER_PEOPLE_FACTION, "name": OTHER_PEOPLE_NAME}])
+	_hud.update_food_modules(_rung_forage_modules())
+	_set_world_herds(_rung_herd_fixtures())
+	_push_bands([_rung_band_fixture()])
+	_panel.set_dock(SIDE_LEFT)
+	_panel.set_active_tab(&"work")
+	# THEIRS: the row names the people and carries no ready or building face of ours.
+	var patches := _rung_patch_fixtures()
+	patches[0] = _other_build_patches(OTHER_PEOPLE_FACTION)[0]
+	_set_forage_patches(patches)
+	_push_bands([_rung_band_fixture()])
+	await _settle()
+	await _save("band_panel_work_other_build")
+	var theirs := _wild_row_model()
+	if String(theirs.get("foreign_build", "")) != OTHER_BUILD_LINE:
+		_fail("work row, another people's build: wanted `%s`, got `%s`" % [OTHER_BUILD_LINE, theirs.get("foreign_build", "")])
+	if String(theirs.get("building_glyph", "")) != "" or String(theirs.get("ready_glyph", "")) != "":
+		_fail("work row, another people's build: the row still wears OUR build or offer face")
+	if _wild_row_foreign_text() != OTHER_BUILD_LINE:
+		_fail("work row, another people's build: the rendered line two does not lead with `%s`" % OTHER_BUILD_LINE)
+	# OURS: the same patch owned by us reads unchanged -- the control.
+	patches = _rung_patch_fixtures()
+	patches[0] = _other_build_patches(HudConst.PLAYER_FACTION_ID)[0]
+	_set_forage_patches(patches)
+	_push_bands([_rung_band_fixture()])
+	await _settle()
+	await _save("band_panel_work_own_build")
+	var ours := _wild_row_model()
+	if String(ours.get("foreign_build", "")) != "":
+		_fail("work row, our own build: carries a foreign line `%s`" % ours.get("foreign_build", ""))
+	if String(ours.get("building_glyph", "")) == "":
+		_fail("work row, our own build: lost its own build face")
+	if _wild_row_foreign_text() != "":
+		_fail("work row, our own build: rendered a foreign line")
+	_set_forage_patches(_rung_patch_fixtures())
+	FactionNames.reset()
+

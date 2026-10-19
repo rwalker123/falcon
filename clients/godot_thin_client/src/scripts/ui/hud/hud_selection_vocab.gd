@@ -309,6 +309,10 @@ const RUNG_BUILT_FORMAT := "%s %d%%"
 # The mark itself. Shared with `DetailFormat.BUILD_UNSTARTED_VALUE`, `PEN_STARVING_LABEL` and the
 # overgrazing sentence, all of which already led with it.
 const RUNG_HAZARD_GLYPH := "⚠"
+## The tile card's meter row when ANOTHER people owns the build: `⚑ Lothari · 20%` (people, percent), in
+## WARN ink. The flag is the mark the row's ink is keyed off.
+const RUNG_FOREIGN_MARK := "⚑"
+const RUNG_FOREIGN_FORMAT := "⚑ %s · %d%%"
 
 # **A BUILT RUNG WHOSE KEEPING IS SHORT: the badge, the mark, and WHAT IS HAPPENING TO IT.**
 #

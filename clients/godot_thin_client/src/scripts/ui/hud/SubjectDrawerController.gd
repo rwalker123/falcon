@@ -715,6 +715,12 @@ func _tile_terrain_lines(tile_info: Dictionary,
         # (`docs/plan_standing_upkeep.md` section 4.6a): the crew is what `BUILD_METER_HOLDS` cannot carry.
         var crew := _band_labor.build_crew_forage(tile_x, tile_y)
         var row_key := DetailFormat.patch_rung_row_key(quote)
+        # Another people's build in progress: the row names whose it is, in warn ink, and carries none
+        # of this viewer's crew-dependent readings.
+        var foreign_owner := RungQuotes.foreign_owner(tile_info, prefix)
+        if foreign_owner != RungQuotes.NO_FOREIGN_OWNER and not reached:
+            lines.append("%s: %s" % [row_key, DetailFormat.foreign_rung_value(foreign_owner, progress)])
+            continue
         var value := DetailFormat.rung_row_value(tile_info, prefix, verb,
             SourceForecast.SOURCE_KIND_FORAGE, DetailFormat.rung_built_label(verb, tile_info, prefix),
             reached, progress, crew, unstaffed_rung)

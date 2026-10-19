@@ -8312,3 +8312,16 @@ treaty rows), `treaties_peoples_hover` (a real engine tooltip over a `They:` wor
 `_scout_give_empty` / `_scout_pack`, `dealings_faction_page` (no gift row on it), `dealings_gift_setting` /
 `_gift_setting_off`, `dealings_orb` and
 `dealings_event_dock`.
+
+## A Work row on a build another people owns names that people
+
+A forage patch publishes `has_owner` / `owner` (the presence bit first: faction 0 is real), and only the
+owner's crew moves its meters. A Work row for a patch whose owner is not `HudConst.PLAYER_FACTION_ID`
+therefore carries the owner's build, not ours: `RungQuotes.foreign_owner` answers the people (or
+`NO_FOREIGN_OWNER`), and `_work_source_models` stamps `foreign_build` -- `Lothari cultivating · 20%`
+(`HudWorkVocab.WORK_ROW_FOREIGN_BUILD_FORMAT`; the participle is `improvement_running_label`, the name
+`FactionMark.faction_name`) -- and clears the row's own `building_*` / `ready_*` keys so the ready slot
+draws no `20%` face and no `⌃`. Line two leads with that text in WARN ink
+(`WORK_ROW_FOREIGN_BUILD_META` on the label, ahead of the yield summary). A patch we own reads exactly as
+before. A herd row is unaffected: `HerdTelemetryState` carries no owner on the wire.
+Frames: `band_panel_work_other_build` / `band_panel_work_own_build` (`_other_peoples_build_rows`, the pair).

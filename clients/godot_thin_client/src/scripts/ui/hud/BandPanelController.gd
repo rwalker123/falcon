@@ -6524,6 +6524,15 @@ func _build_work_row_accounts(band: Dictionary, model: Dictionary) -> MarginCont
     accounts.mouse_filter = Control.MOUSE_FILTER_PASS
     accounts.set_meta(HudWorkVocab.WORK_ROW_ACCOUNTS_META, accounts.text)
     accounts.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    var foreign_build := String(model.get("foreign_build", ""))
+    if foreign_build != "":
+        var owner_label := Label.new()
+        owner_label.text = foreign_build + HudWorkVocab.WORK_INSPECT_SENTENCE_SEPARATOR
+        owner_label.add_theme_color_override("font_color", HudStyle.WARN)
+        owner_label.add_theme_font_size_override("font_size", HudWorkVocab.ALLOC_SECTION_FONT_SIZE)
+        owner_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+        owner_label.set_meta(HudWorkVocab.WORK_ROW_FOREIGN_BUILD_META, foreign_build)
+        line_two.add_child(owner_label)
     line_two.add_child(accounts)
     # **THE PARTY BLOCK HANGS UNDER THE ACCOUNTS, IN THEIR OWN INDENT** — one column, so the lines
     # sit under the row's NAME exactly as line two does and the block reads as part of this row
@@ -7762,6 +7771,18 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
         # map badge calls the same function on the same two inputs, so the two surfaces cannot come
         # apart again. A build merely PARKED with its keeping covered answers `false` and keeps its
         # number, because that number is honest.
+        # **ANOTHER PEOPLE'S BUILD IS NOT OURS**: only the owner's work moves the meter, so the row names
+        # whose it is (line two, warn ink) and the ready slot offers and reports nothing of ours.
+        var foreign_owner := RungQuotes.foreign_owner(rung_source, HudComposeVocab.BARE_FORECAST_PREFIX)
+        var foreign_build := ""
+        if foreign_owner != RungQuotes.NO_FOREIGN_OWNER:
+            if not building.is_empty():
+                foreign_build = HudWorkVocab.WORK_ROW_FOREIGN_BUILD_FORMAT % [
+                    FactionMark.faction_name(foreign_owner),
+                    HudComposeVocab.improvement_running_label(String(building.get("policy", ""))).to_lower(),
+                    HudFormat.progress_percent(float(building.get("progress", 0.0)))]
+            building = {}
+            ready = {}
         var build_stalled := not building.is_empty() and SourceForecast.build_is_stalled(
             rung_source, float(building.get("progress", 0.0)), builders)
         # …and the hover says the same thing the face does. A tooltip still quoting `45% done` beside
@@ -8092,6 +8113,7 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
             # off the same two `SourceForecast` seams the map badge forks on, and carried as a flag
             # so the row builder cannot ask the question a second way (see `build_stalled`).
             "build_stalled": build_stalled,
+            "foreign_build": foreign_build,
             "floor": floor, "improvement": improvement, "x": x, "y": y, "herd_id": herd_id,
             # **WHERE THE PLAYER PUT THIS ROW WHEN THE BAND RUNS SHORT** (`docs/plan_standing_upkeep.md`
             # §4.9 item 9b) — one of the three WORDS, normalized by `effective_worker_map`. It rides

@@ -2231,6 +2231,8 @@ const BUILD_PERCENT_EMPTY := 0
 static func rung_value_hex(value: String, built_needle: String) -> String:
     if value.contains(HudSelectionVocab.RUNG_ROTTING_PHRASE):
         return HudStyle.DANGER_HEX
+    if value.contains(HudSelectionVocab.RUNG_FOREIGN_MARK):
+        return HudStyle.WARN_HEX
     if value.contains(HudSelectionVocab.RUNG_HAZARD_GLYPH):
         return HudStyle.WARN_HEX
     if built_needle != "" and value.to_lower().contains(built_needle):
@@ -2246,6 +2248,12 @@ static func rung_value_hex(value: String, built_needle: String) -> String:
 ## empty for the caller that has no badge to match (see above).
 static func rung_value_color(value: String, built_needle: String = "") -> Color:
     return Color.html(rung_value_hex(value, built_needle))
+
+## **A METER ANOTHER PEOPLE OWNS**: `⚑ Lothari · 20%`. Only the owner's work moves it, so a bare percent
+## would read as the viewer's own build.
+static func foreign_rung_value(owner_faction: int, progress: float) -> String:
+    return HudSelectionVocab.RUNG_FOREIGN_FORMAT % [FactionMark.faction_name(owner_faction),
+        HudFormat.progress_percent(progress)]
 
 ## A quantity of WORK UNITS: whole numbers bare (`50`), fractions to one place (`17.6`). One unit is
 ## one worker-turn at the food peak with no gear, so a cost reads itself — and the shipped costs are

@@ -1257,6 +1257,7 @@ const IMPROVEMENT_STATE_DECLARED := "declared"
 ## …" with the reason on a second line beneath, which put an OFFER the player cannot accept directly
 ## above the sentence explaining that they cannot accept it — the card arguing with itself. The reason
 ## is the control's own text now, and the offer wording is GONE rather than greyed.
+const IMPROVEMENT_STATE_FOREIGN := "foreign"
 const IMPROVEMENT_STATE_GATED := "gated"
 
 static func build_improvement_control(improvement: String, state: String, face: String,

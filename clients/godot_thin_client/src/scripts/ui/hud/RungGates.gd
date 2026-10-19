@@ -536,8 +536,13 @@ static func _next_rung(kind: String, source: Dictionary, prefix: String, improve
     var admitted: Array[String] = []
     var verbs := RungQuotes.verbs(source, prefix)
     verbs.reverse()
+    var foreign := RungQuotes.foreign_owner(source, prefix) != RungQuotes.NO_FOREIGN_OWNER
     for verb in verbs:
         if verb == current or not rung_has_room(source, prefix, verb):
+            continue
+        # Another people's source: a rung that needs ownership is the sim's refusal (`validate_*`), so it
+        # is no rung on offer to this viewer.
+        if foreign and RungQuotes.requires_ownership(RungQuotes.quote_of_verb(source, prefix, verb)):
             continue
         if kind == SourceForecast.LABOR_KIND_FORAGE:
             if any_crop_allows(source, prefix, verb):

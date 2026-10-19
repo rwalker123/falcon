@@ -436,6 +436,10 @@ const IMPROVEMENT_RUNNING_LABELS := {
 #
 # `""` in and `""` out, because an entry with no verb has no participle and the callers' own bare
 # dated face is the right answer there (see `DetailFormat.build_completion_value`).
+# THE SHEET'S ONE LINE when ANOTHER people owns the source: the sim refuses an ownership-gated rung there, so
+# no live control is drawn. `%s` is the people's name, then the rung's participle (lowercased).
+const IMPROVEMENT_FOREIGN_RUNNING_FORMAT := "%s is %s this"
+const IMPROVEMENT_FOREIGN_HELD_FORMAT := "%s holds this ground"
 const IMPROVEMENT_RUNNING_SUFFIX := "ing"
 const IMPROVEMENT_RUNNING_SILENT_E := "e"
 

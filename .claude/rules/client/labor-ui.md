@@ -8407,3 +8407,13 @@ teaching lines, from the next rung's catalog label and `unlock_knowledge` and th
 and appends nothing once the lesson is known. `harness-ui-preview.md` -> `worked_land_ranch.gd` asserts
 the clause and that a tended patch with the lesson learned, on watered ground, is offered the Farm.
 
+## The improvement control offers nothing on another people's source
+
+The sim refuses an ownership-gated rung (`requires_ownership` on the catalog row, published as
+`RungQuotes.requires_ownership`) on a source another people owns. `_build_improvement_control` therefore
+mounts ONE WARN line -- `Lothari is cultivating this` (`HudComposeVocab.IMPROVEMENT_FOREIGN_RUNNING_FORMAT`),
+or `Lothari holds this ground` where nothing is in flight -- tagged `IMPROVEMENT_STATE_FOREIGN`, and
+`RungGates._next_rung` drops ownership-gated rungs from the offer (so the Work row's `⌃` is absent too).
+The test is `RungQuotes.blocked_by_owner`: the wire's owner read against the catalog's flag, never a
+re-derived rule; the quotes carry no per-rung owner refusal of their own (`site_refusal` is the sow site
+verdict only). Asserted in `chapters/worked_land_ranch.gd` by equality, with our own patch as the control.

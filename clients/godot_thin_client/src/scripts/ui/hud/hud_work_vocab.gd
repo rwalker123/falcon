@@ -1894,6 +1894,10 @@ const WORK_ROW_RING_META := &"work_row_ring"
 
 ## A rung UNDER WAY: the verb glyph and how far in. No chevron — `⌃` offers, this reports.
 const WORK_ROW_BUILDING_FORMAT := "%s%d%%"
+## A build meter that belongs to ANOTHER people: `Lothari cultivating · 20%` -- the people, the rung's
+## participle (lowercased) and the percent, in WARN ink at the head of line two. Not ours: nothing here moves it.
+const WORK_ROW_FOREIGN_BUILD_FORMAT := "%s %s · %d%%"
+const WORK_ROW_FOREIGN_BUILD_META := &"work_row_foreign_build"
 
 const WORK_ROW_BUILDING_TOOLTIP_FORMAT := "%s in progress — %d%% done."
 

@@ -61,6 +61,7 @@ func run(harness) -> void:
 	await _pen_states()
 	_tended_patch_offers_farm()
 	h._hud._drawercompose.close_compose_sheet()
+	await _another_peoples_build()
 
 ## **A TENDED PATCH MUST OFFER THE FARM** (playtest, #175): Seed Selection known, the ground watered
 ## (the server's `site_refusal` empty), and a crop in the basket that climbs to the farm. The same patch
@@ -278,3 +279,65 @@ func _row_value(lines: Array, key: String) -> String:
 		if String(line).begins_with(prefix):
 			return String(line).substr(prefix.length())
 	return ""
+
+# ---- ANOTHER PEOPLE'S BUILD (playtest: a Work row wore a 20% Cultivate meter that was Lothari's) --------
+
+const OTHER_PEOPLE := 1
+const OTHER_BUILD_PROGRESS := 0.2
+## The words, as the player reads them (never composed through the producers).
+const OTHER_TILE_ROW := "\u2691 Lothari \u00b7 20%"
+const OTHER_SHEET_LINE := "Lothari is cultivating this"
+
+## A wild patch with a 20% Cultivate meter, owned by `owner_faction`.
+func _owned_patch(owner_faction: int) -> Dictionary:
+	var tile := TileFx.three_role_tile_fixture()
+	tile["x"] = OFF_SITE_X
+	tile["y"] = OFF_SITE_Y
+	tile["patch_is_cultivated"] = false
+	tile["patch_cultivation_progress"] = OTHER_BUILD_PROGRESS
+	tile["patch_has_owner"] = true
+	tile["patch_owner"] = owner_faction
+	return RungFx.stamp_patch(tile, HudComposeVocab.FORAGE_FORECAST_PREFIX)
+
+func _sheet_state(tile: Dictionary) -> String:
+	var host := VBoxContainer.new()
+	h.add_child(host)
+	h._hud._drawercompose._build_improvement_control(SourceForecast.LABOR_KIND_FORAGE, tile,
+		HudComposeVocab.FORAGE_FORECAST_PREFIX, 0.5, "", BandFx.band_fixture(), 1, {}, false, host)
+	var out := ""
+	for child in host.get_children():
+		if child is Label:
+			out = (child as Label).text
+			if child.has_meta(HudWidgets.IMPROVEMENT_CONTROL_META):
+				out = "%s|%s" % [child.get_meta(HudWidgets.IMPROVEMENT_CONTROL_META), out]
+			break
+	host.queue_free()
+	return out
+
+func _another_peoples_build() -> void:
+	FactionNames.update([{"faction": OTHER_PEOPLE, "name": "Lothari"}])
+	_knowledge(UNKNOWN)
+	var theirs := _owned_patch(OTHER_PEOPLE)
+	var ours := _owned_patch(HudConst.PLAYER_FACTION_ID)
+	h._hud._compose.reset_forage_source()
+	h._show_tile(theirs)
+	await h._settle()
+	await h._save("other_people_build_tile")
+	var their_lines: Array = h._hud._drawer._tile_terrain_lines(theirs, DetailFormat.Context.new())
+	var our_lines: Array = h._hud._drawer._tile_terrain_lines(ours, DetailFormat.Context.new())
+	h._assert_hud("tile card: another people's 20% build names the people, in place of the bare meter",
+		_row_value(their_lines, DetailFormat.CULTIVATION_ROW) == OTHER_TILE_ROW)
+	h._assert_hud("...and our own build on the same patch reads as today (no flag, no name)",
+		not _row_value(our_lines, DetailFormat.CULTIVATION_ROW).contains("Lothari")
+			and _row_value(our_lines, DetailFormat.CULTIVATION_ROW) != "")
+	h._assert_hud("...in warn ink",
+		DetailFormat.rung_value_hex(OTHER_TILE_ROW, "") == HudStyle.WARN_HEX)
+	var their_sheet := _sheet_state(theirs)
+	h._assert_hud("compose sheet: another people's source gets ONE line, not a build control (got `%s`)" % their_sheet,
+		their_sheet == "%s|%s" % [HudWidgets.IMPROVEMENT_STATE_FOREIGN, OTHER_SHEET_LINE])
+	h._assert_hud("...and our own patch keeps its control (no foreign line)",
+		not _sheet_state(ours).begins_with(HudWidgets.IMPROVEMENT_STATE_FOREIGN))
+	h._assert_hud("...and the next-rung offer is withdrawn on their ground, kept on ours",
+		RungQuotes.blocked_by_owner(theirs, HudComposeVocab.FORAGE_FORECAST_PREFIX)
+			and not RungQuotes.blocked_by_owner(ours, HudComposeVocab.FORAGE_FORECAST_PREFIX))
+	FactionNames.reset()
