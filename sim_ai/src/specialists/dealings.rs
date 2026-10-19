@@ -11,6 +11,8 @@
 //!   runway is under `food_runway_floor_turns`; never more than the party can carry home
 //!   (`party_workers × carry_per_worker`) nor more than the band holds. A return nothing can fill
 //!   is an empty one: the gift is still accepted.
+//!   **A gift** (`terms == "gift"`: a shipment sent without `offer`, a scout's `give`) that clears the
+//!   floor is accepted with an empty return — a gift brings nothing back; only an offer is priced.
 //!   **A shipment it does not want is refused outright**: when the cargo's worth to the AI, as a
 //!   share of the cargo's full load (the same sum with nothing held), is under `dealings.want_floor`
 //!   — it already holds plenty of what is offered — or the cargo is empty, the answer is a refusal
@@ -53,6 +55,8 @@ pub const INTENT_ANSWER: &str = "answer";
 /// An answer is a duty and is weighed at face value; the score only orders the log.
 pub const ANSWER_SCORE: f32 = 1.0;
 
+/// `DealingState::terms` of a gift: the sender gave it away, so the answer takes nothing back.
+pub const TERMS_GIFT: &str = "gift";
 /// The dealing kinds on the wire (`DealingState::kind`).
 pub const KIND_OFFER: &str = "offer";
 pub const KIND_PROPOSAL: &str = "proposal";
@@ -354,6 +358,20 @@ impl Dealings {
                 dealing.id, cargo_worth, cargo_load, share, self.levers.want_floor,
             );
             return (DealingReply::Refuse, reason);
+        }
+        // **A gift takes nothing back**: accept it bare. Only an offer is priced.
+        if dealing.terms == TERMS_GIFT {
+            let reason = format!(
+                "offer {}: a gift, cargo worth {:.3} of load {:.3} (share {:.3} >= floor {:.3}): \
+                 accept, no return",
+                dealing.id, cargo_worth, cargo_load, share, self.levers.want_floor,
+            );
+            return (
+                DealingReply::Accept {
+                    returned: Vec::new(),
+                },
+                reason,
+            );
         }
         let target = self.levers.return_fairness * cargo_worth;
         let cap = dealing.party_workers as f32 * band.carry_per_worker;
@@ -1012,5 +1030,40 @@ mod tests {
         let items = returned(&proposals[0]);
         let expected = 3.0 * 3.0 / 33.0;
         assert!((load_of(items) - expected).abs() < 0.011, "{items:?}");
+    }
+
+    /// **A gift is accepted with NO return**, however much the AI holds to give back.
+    #[test]
+    fn a_gift_is_accepted_with_an_empty_return() {
+        let band = ai_band(40.0, 0.0, &[("bone", 20.0)], 30.0);
+        let mut gift = an_offer(5, goods(0.0, 0.0, &[("hide", 3.0)]), 3);
+        gift.terms = "gift".to_owned();
+        let proposals = propose(&view(band, vec![gift], 0.0));
+        assert!(returned(&proposals[0]).is_empty());
+        assert!(
+            proposals[0].reason.contains("a gift"),
+            "{}",
+            proposals[0].reason
+        );
+    }
+
+    /// An unwanted gift is still refused by the want floor.
+    #[test]
+    fn an_unwanted_gift_is_still_refused() {
+        let band = ai_band(40.0, 0.0, &[("hide", 30.0)], 30.0);
+        let mut gift = an_offer(5, goods(0.0, 0.0, &[("hide", 3.0)]), 3);
+        gift.terms = "gift".to_owned();
+        let proposals = propose(&view(band, vec![gift], 0.0));
+        assert_eq!(*reply_of(&proposals[0]), DealingReply::Refuse);
+    }
+
+    /// An offer (`terms == "offer"`) is still priced.
+    #[test]
+    fn an_offer_with_offer_terms_is_still_priced() {
+        let band = ai_band(40.0, 0.0, &[("bone", 20.0)], 30.0);
+        let mut offer = an_offer(5, goods(0.0, 0.0, &[("hide", 3.0)]), 3);
+        offer.terms = "offer".to_owned();
+        let proposals = propose(&view(band, vec![offer], 0.0));
+        assert!(!returned(&proposals[0]).is_empty());
     }
 }

@@ -4065,6 +4065,12 @@ pub fn capture_snapshot(
         );
         // **THE PENDING DEALINGS THE VIEWER IS PARTY TO** — addressed to their people or sent by
         // them; another pair's dealings are theirs to know.
+        let party_terms: HashMap<BandId, &'static str> = populations
+            .iter()
+            .filter_map(|(_, _, _, _, expedition, band_id, ..)| {
+                Some((*band_id?, crate::dealings::expedition_terms(expedition?)))
+            })
+            .collect();
         let dealing_states = pending_dealings
             .as_deref()
             .map(|pending| {
@@ -4073,6 +4079,7 @@ pub fn capture_snapshot(
                     viewer,
                     tick.0,
                     &materials_config,
+                    &party_terms,
                 )
             })
             .unwrap_or_default();

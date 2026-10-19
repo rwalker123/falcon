@@ -69,6 +69,7 @@ fn create_dealings<'a>(
             let goods_asked = create_goods(builder, &dealing.goods_asked);
             let treaty = create_terms(builder, &dealing.treaty);
             let carrier = builder.create_string(&dealing.carrier);
+            let terms = builder.create_string(&dealing.terms);
             fb::DealingState::create(
                 builder,
                 &fb::DealingStateArgs {
@@ -86,6 +87,7 @@ fn create_dealings<'a>(
                     treaty: Some(treaty),
                     carrier: Some(carrier),
                     partyBand: dealing.party_band,
+                    terms: Some(terms),
                 },
             )
         })
@@ -174,5 +176,6 @@ fn decode_dealing(dealing: fb::DealingState<'_>) -> DealingState {
         treaty: decode_terms(dealing.treaty()),
         carrier: text(dealing.carrier()),
         party_band: dealing.partyBand(),
+        terms: text(dealing.terms()),
     }
 }

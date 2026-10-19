@@ -19,14 +19,20 @@ pub(crate) fn dealing_states(
     viewer: FactionId,
     now: u64,
     materials: &MaterialsConfig,
+    party_terms: &std::collections::HashMap<crate::components::BandId, &'static str>,
 ) -> Vec<DealingState> {
     pending
         .visible_to(viewer)
-        .map(|dealing| dealing_state(dealing, now, materials))
+        .map(|dealing| dealing_state(dealing, now, materials, party_terms))
         .collect()
 }
 
-fn dealing_state(dealing: &Dealing, now: u64, materials: &MaterialsConfig) -> DealingState {
+fn dealing_state(
+    dealing: &Dealing,
+    now: u64,
+    materials: &MaterialsConfig,
+    party_terms: &std::collections::HashMap<crate::components::BandId, &'static str>,
+) -> DealingState {
     // An offer states its goods as the shipment's own rated store; a proposal or counter states its
     // two legs as unrated lines, from the shipper's point of view.
     // An offer's party is the one waiting in the camp; a proposal's or counter's is the shipper's.
@@ -64,6 +70,13 @@ fn dealing_state(dealing: &Dealing, now: u64, materials: &MaterialsConfig) -> De
             .map(|proposal| crate::snapshot::treaties::terms_state(&proposal.terms))
             .unwrap_or_default(),
         party_band: dealing.party.map_or(0, |party| party.0),
+        // Only an offer-kind dealing carries terms (a reply is already past the receiver's naming).
+        terms: match (dealing.kind, dealing.party) {
+            (crate::dealings::DealingKind::Offer, Some(party)) => {
+                party_terms.get(&party).copied().unwrap_or("").to_string()
+            }
+            _ => String::new(),
+        },
         carrier: dealing
             .treaty
             .as_ref()

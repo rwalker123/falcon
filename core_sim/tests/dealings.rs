@@ -1675,8 +1675,56 @@ fn the_receiver_spending_the_return_before_the_take_fails_it() {
     assert!((sum_rows(&rows, FOOD, TransferCause::ShipmentReturned) - CARGO_FOOD).abs() < EPSILON);
 }
 
-/// **A GIFT still settles at once** whatever return the receiver names: the sender gave it away, so
-/// it has no say and no reply is posted.
+/// **A gift takes nothing back**: answering one with a return list is refused with a reason and
+/// nothing moves; a bare accept then lands it.
+#[test]
+fn a_gift_answered_with_a_return_is_refused_and_nothing_moves() {
+    let mut scene = scene(RECEIVER_PEOPLE);
+    let party = launch(&mut scene, ShipmentTerms::Gift, food_cargo(CARGO_FOOD));
+    run_turn(&mut scene.app);
+    let id = only_dealing_id(&scene.app);
+    let before = band_food(&scene.app, scene.receiver);
+
+    let err = answer_dealing(
+        &mut scene.app.world,
+        RECEIVER_PEOPLE,
+        id,
+        &accept(vec![food_line(RETURN_FOOD)]),
+    )
+    .expect_err("a gift takes nothing back");
+    assert!(err.contains("a gift takes nothing back"), "{err}");
+    assert_eq!(pending(&scene.app).len(), 1, "the gift still waits");
+    assert_eq!(
+        party_phase(&scene.app, party),
+        Some(ExpeditionPhase::AwaitingOrders)
+    );
+    assert!((band_food(&scene.app, scene.receiver) - before).abs() < EPSILON);
+    assert!(history_seen_by(&mut scene.app, SENDER_PEOPLE).is_empty());
+
+    answer_dealing(
+        &mut scene.app.world,
+        RECEIVER_PEOPLE,
+        id,
+        &accept(Vec::new()),
+    )
+    .expect("a bare accept lands the gift");
+    assert!((band_food(&scene.app, scene.receiver) - (before + CARGO_FOOD)).abs() < EPSILON);
+    assert!(own_goodwill(&scene.app, RECEIVER_PEOPLE, SENDER_PEOPLE) > 0.0);
+    assert_eq!(
+        own_goodwill(&scene.app, SENDER_PEOPLE, RECEIVER_PEOPLE),
+        0.0
+    );
+    assert_eq!(
+        history_seen_by(&mut scene.app, SENDER_PEOPLE)[0].outcome,
+        "gift_given"
+    );
+    assert_eq!(
+        history_seen_by(&mut scene.app, RECEIVER_PEOPLE)[0].outcome,
+        "gift_received"
+    );
+}
+
+/// **A bare accept of a GIFT settles at once**: no reply is posted.
 #[test]
 fn an_accepted_gift_still_settles_at_once() {
     let mut scene = scene(RECEIVER_PEOPLE);
@@ -1689,24 +1737,81 @@ fn an_accepted_gift_still_settles_at_once() {
         &mut scene.app.world,
         RECEIVER_PEOPLE,
         id,
-        &accept(vec![food_line(RETURN_FOOD)]),
+        &accept(Vec::new()),
     )
-    .expect("the receiver holds what it named");
+    .expect("a bare accept");
 
     assert!(report.accepted && report.reply.is_none());
     assert!(pending(&scene.app).is_empty(), "no reply was posted");
-    assert!(
-        (band_food(&scene.app, scene.receiver) - (before + CARGO_FOOD - RETURN_FOOD)).abs()
-            < EPSILON
-    );
+    assert!((band_food(&scene.app, scene.receiver) - (before + CARGO_FOOD)).abs() < EPSILON);
     assert_eq!(
         party_phase(&scene.app, party),
         Some(ExpeditionPhase::Returning)
     );
     assert_eq!(
         history_seen_by(&mut scene.app, SENDER_PEOPLE)[0].outcome,
-        "exchanged"
+        "gift_given"
     );
+}
+
+/// **`terms` is on the ENCODED frame**: `"gift"` for a shipment sent as a gift, `"offer"` for an
+/// offer, `""` on a reply and on a proposal.
+#[test]
+fn a_dealings_terms_are_on_the_encoded_frame() {
+    use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
+    fn terms(app: &mut App) -> Vec<(String, String)> {
+        app.world.insert_resource(ViewerFaction(SENDER_PEOPLE));
+        recapture_snapshot_in_place(&mut app.world);
+        let snapshot = app
+            .world
+            .resource::<SnapshotHistory>()
+            .latest_entry()
+            .expect("a snapshot was captured")
+            .snapshot;
+        let bytes = sim_schema::encode_snapshot_flatbuffer(snapshot.as_ref());
+        let envelope = fb::root_as_envelope(bytes.as_ref()).expect("valid envelope");
+        envelope
+            .payload_as_snapshot()
+            .and_then(|s| s.dealings())
+            .and_then(|d| d.dealings())
+            .expect("dealings published")
+            .iter()
+            .map(|row| {
+                (
+                    row.kind().unwrap_or("").to_string(),
+                    row.terms().unwrap_or("").to_string(),
+                )
+            })
+            .collect()
+    }
+    let mut gift = scene(RECEIVER_PEOPLE);
+    launch(&mut gift, ShipmentTerms::Gift, food_cargo(CARGO_FOOD));
+    run_turn(&mut gift.app);
+    assert_eq!(terms(&mut gift.app), vec![("offer".into(), "gift".into())]);
+
+    let mut offer = scene(RECEIVER_PEOPLE);
+    launch(&mut offer, ShipmentTerms::Offer, food_cargo(CARGO_FOOD));
+    run_turn(&mut offer.app);
+    assert_eq!(
+        terms(&mut offer.app),
+        vec![("offer".into(), "offer".into())]
+    );
+    let id = only_dealing_id(&offer.app);
+    answer_dealing(
+        &mut offer.app.world,
+        RECEIVER_PEOPLE,
+        id,
+        &accept(vec![food_line(RETURN_FOOD)]),
+    )
+    .expect("held");
+    assert_eq!(terms(&mut offer.app), vec![("reply".into(), "".into())]);
+
+    let mut dealing = only_dealing(&offer.app);
+    dealing.kind = core_sim::DealingKind::Proposal;
+    let mut book = offer.app.world.resource_mut::<PendingDealings>();
+    book.remove(dealing.id);
+    book.post(dealing);
+    assert_eq!(terms(&mut offer.app), vec![("proposal".into(), "".into())]);
 }
 
 // ---------------------------------------------------------------------------------------------

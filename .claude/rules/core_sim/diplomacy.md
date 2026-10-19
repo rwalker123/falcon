@@ -88,7 +88,8 @@ never a summed value.
 - **The goods stay on the party.** `goods_sent` is a manifest; the physical cargo is still
   `Expedition::cargo`, so a recall, a lost destination or a refusal needs no goods-moving code: the
   party turns `Returning` and the existing fold-back carries the cargo home as `ShipmentReturned`.
-  `goods_asked` is empty on a stage-2 offer — the receiver names the return in its answer.
+  `goods_asked` is empty on a stage-2 offer — the receiver names the return in its answer (a gift: it
+  names none).
 - **`Dealing::turns_left(now)` counts the resolve the next turn runs at**, so a dealing that expires
   at `now` reads **1** ("answer this turn or silence refuses it"), never a `0` that reads as gone.
 
@@ -154,8 +155,11 @@ people's pack — travois included) must fit the party's `carry_capacity`; and t
 hold every line (food, hay, and each material's total). Duplicate lines sum per good. A refusal of the
 answer leaves both bands, the party and the book exactly as they stood.
 
-Then, **for a gift** (a shipment to another people, an own-people shipment with the standing answer off, a
-scout's `give`), settle at once, whatever return the receiver names — the sender gave it away. The
+**A gift takes nothing back.** On a dealing whose party carries gift terms (`dealings::expedition_terms`:
+`ShipmentTerms::Gift`, a scout's `give`) a non-empty return list fails closed — `"answer_dealing: a gift
+takes nothing back; accept dealing <id> bare, or refuse it."` — before anything moves; the dealing stays
+pending. Then, **for a gift** (a shipment to another people, an own-people shipment with the standing
+answer off, a scout's `give`), a bare accept settles at once — the sender gave it away. The
 settlement is `dealings::settle_accepted_offer`, the one routine a taken reply also calls: the cargo
 lands in the receiving band (`land_cargo_at_band`, booked `ShipmentIn`); the named return is drawn from
 that band into the party's cargo (food by class, hay, each material batch at its own rating) and booked
@@ -348,7 +352,11 @@ own standing answer is `FactionPolicyState.acceptOwnGifts` (appended; default on
 named return (unrated material lines), `shipperBand` the party's home band, `partyWorkers` the party's.
 `partyBand` (appended; decoded `party_band`) is the waiting party's `BandId` — the `bandId` of its
 `PopulationCohortState` row — on an offer, a reply or an envoy's proposal, `0` on a proposal, a counter
-and a road-carried treaty proposal; the client joins a dealing to its party on it. `TransferCrossingState.cause` gains `9` and `10`.
+and a road-carried treaty proposal; the client joins a dealing to its party on it. `terms` (appended; decoded
+`terms`) says what an **offer-kind** dealing's party carries its cargo as: `"gift"` (gift terms, a scout's
+`give` — the answer takes no return) or `"offer"` (offer terms, a scout's `offer` — the receiver names a
+return); `""` on every other kind, a reply included. It is derived from the waiting party in the capture
+(`dealings::expedition_terms`), the same function the answer's refusal reads. `TransferCrossingState.cause` gains `9` and `10`.
 
 ## Goodwill — one opinion per ordered pair, kept as its reasons
 
@@ -613,6 +621,7 @@ gains `treaty` (the proposal's full terms; empty on other kinds) and `carrier` (
 | `tests/ai_dealings_scenario.rs` | a real `server` and a real `sim_ai` over the sockets: a human-side scout posts an offer to the AI's people, the AI accepts it (posting a reply to the human), the human takes the reply, and the return lands at the sender's home as `ExchangeIn` with the human people's `own_goodwill` credited when the reply is taken — all read off the encoded frames the human seat is sent |
 | `tests/dealings.rs::an_accepted_offer_posts_a_reply_to_the_sender_and_moves_nothing` | the reply's legs, addressee and feed lines on the **encoded** frame; the cargo still on the party, the receiver's store unchanged, no goodwill |
 | `::taking_the_reply_settles_the_exchange_and_writes_a_record_per_people`, `::declining_a_reply_sends_the_cargo_home`, `::silence_on_a_reply_expires_it`, `::a_reply_whose_party_has_gone_is_withdrawn`, `::the_receiver_spending_the_return_before_the_take_fails_it`, `::a_reply_takes_no_return_list_and_cannot_be_countered` | the reply's take (settles as an accepted offer always did, goodwill credited then), decline (`ShipmentReturned`, `status=declined`), silence, withdrawal, `receiver_short`, and the answer's refusals — each with its history records |
+| `::a_gift_answered_with_a_return_is_refused_and_nothing_moves`, `::a_dealings_terms_are_on_the_encoded_frame`, `stages.rs` scout `give`/`offer` terms | a return on a gift is refused and nothing moves, a bare accept lands it (`gift_given` / `gift_received`); `terms` on the encoded frame for a gift, an offer, a scout `give` and `offer`, and `""` on a reply and a proposal |
 | `::an_accepted_gift_still_settles_at_once` and `stages.rs::{an_accepted_gift_is_a_gift_…, an_offer_scout_comes_home_with_the_receivers_return}` | a gift (and a scout's `give`) settles on accept with no reply; a scout's `offer` gets one |
 | `::a_refusal_and_a_gift_write_their_records`, `::a_same_people_delivery_writes_one_record`, `::the_cap_drops_the_oldest_record`, `::the_trade_history_round_trips_a_checkpoint`; `stages.rs`, `treaties.rs` history assertions | the history: a record per people from its own side with the right goods and outcome, one for a same-people delivery, the cap, the viewer's people's records only on the encoded frame (absent from a third people's), the checkpoint, and the stage-4 / bundle outcomes |
 | `tests/goodwill.rs` | a gift credits receiver → giver only; an exchange credits both by what each received; refusal and lapse credit nothing; no self-pair entry; a post of ten follows `0.5 × (1 − 0.98^n)` turn by turn and settles near `0.5`; news reaches `KnownGoodwill` only with the returning party, stamped with the sighting turn; the frame carries the viewer's own rows and the cuts; checkpoint round trip |

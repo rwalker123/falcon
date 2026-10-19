@@ -969,7 +969,10 @@ alternative; `core_sim::goodwill` and this specialist now call one function.
   with nothing held) is under `dealings.want_floor`, or the cargo is empty (gift or offer — the wire
   does not tell them apart, and one rule for unwanted goods is the intent). The reason carries the
   share and the floor: `offer 5: cargo worth 0.012 of load 1.000 (share 0.012 < floor 0.100): refuse`.
-  Otherwise it is **accepted** and the AI names a return: the target load is
+  **A gift** (`DealingState.terms == "gift"`: a shipment sent without `offer`, a scout's `give`) that
+  clears the floor is **accepted with an empty return** (the reason says it is a gift) — a gift brings
+  nothing back, and the sim refuses a return on one. Only an offer (`terms` `"offer"`, or empty) is priced:
+  it is **accepted** and the AI names a return: the target load is
   `dealings.return_fairness × worth(cargo)`, the return filled from the goods its band holds the most
   **load** of first (surplus by load, not by count, so 30 hay at half weight loses to 20 bone), each good
   taken `min(held, load still owed ÷ weight, party carry still free ÷ weight)` and rounded **down** to a

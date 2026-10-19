@@ -6503,6 +6503,9 @@ table DealingState {
   // The waiting party's band id (the `bandId` its `PopulationCohortState` row carries) on an offer or a
   // reply; 0 on a proposal, a counter and a road-carried treaty proposal. Appended.
   partyBand:ulong;
+  // What the waiting party carries it as, on an OFFER-kind dealing: "gift" (the receiver's accept lands it
+  // and takes no return) or "offer" (the receiver names a return). "" on every other kind. Appended.
+  terms:string;
 }
 
 table DealingsSection {

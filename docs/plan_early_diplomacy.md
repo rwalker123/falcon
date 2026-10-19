@@ -43,13 +43,15 @@ shipment takes, bounded by the party's carry) and a **standing order for strange
 `offer` or `keep` (the default). A **stranger** is a band of another people that the party sights and
 that its home band holds no live tie with. The first stranger the party sights while the order is
 `give` or `offer` becomes the pack's destination: the party turns toward it and hands over at the
-shipment arrival rule (comm-range proximity, destination seen). `give` lands as a gift. `offer`
+shipment arrival rule (comm-range proximity, destination seen). `give` lands as a gift (accepted bare; no return). `offer`
 becomes a pending offer that the receiver answers by naming a return, or by refusing. Then the party
 resumes the scouting aim it had, carrying any return. **One pack, one handover**: the order is spent
 once used. The player learns what happened when the scouts come home, with the contact news.
 
 **Stage 2 — the blind party.** `send_trade_expedition` gains `offer` beside today's gift form. The
-receiver answers the pending offer by naming a return from its own holdings, or by refusing. **The
+receiver answers the pending offer by naming a return from its own holdings, or by refusing. **A gift
+carries no return**: a receiver that accepts a gift accepts it bare, and the sim refuses a return named
+on one. **The
 sender then takes it or walks home**: when the receiver accepts an offer whose sender asked for
 something back (a trade party sent as `offer`, a scout's `offer`), nothing moves — a **reply** goes to
 the sender naming the return, and the sender accepts it (the exchange settles, goodwill is credited

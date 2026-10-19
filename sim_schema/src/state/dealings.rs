@@ -57,4 +57,7 @@ pub struct DealingState {
     /// The waiting party's band id (an offer, a reply, an envoy's treaty proposal); `0` when none.
     #[serde(default)]
     pub party_band: u64,
+    /// `"gift"` or `"offer"` on an offer-kind dealing (a gift takes no return); `""` otherwise.
+    #[serde(default)]
+    pub terms: String,
 }

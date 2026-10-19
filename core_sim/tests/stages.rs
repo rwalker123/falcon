@@ -458,6 +458,7 @@ struct PublishedDealing {
     receiver_band: u64,
     shipper_band: u64,
     party_workers: u32,
+    terms: String,
     sent_food: f32,
     asked_materials: Vec<(String, f32, usize)>,
 }
@@ -495,6 +496,7 @@ fn dealings_seen_by(app: &mut App, viewer: FactionId) -> Vec<PublishedDealing> {
                         receiver_band: row.receiverBand(),
                         shipper_band: row.shipperBand(),
                         party_workers: row.partyWorkers(),
+                        terms: row.terms().unwrap_or("").to_string(),
                         sent_food: sent.food(),
                         asked_materials: asked
                             .materials()
@@ -1239,6 +1241,20 @@ fn a_give_scout_meets_a_stranger_and_posts_a_pending_offer() {
         (dealing.goods_sent.get(FOOD).to_f32() - GIVE_FOOD).abs() < EPSILON,
         "the offer names the pack"
     );
+    // A `give` scout's pack is a gift on the ENCODED frame, and a return on it is refused.
+    let seen = dealings_seen_by(&mut scene.app, RECEIVER_PEOPLE);
+    assert_eq!(seen[0].terms, "gift");
+    let err = answer_dealing(
+        &mut scene.app.world,
+        RECEIVER_PEOPLE,
+        dealing.id,
+        &DealingAnswer::Accept {
+            returned: vec![material_line("hide", ASK_HIDE)],
+        },
+    )
+    .expect_err("a gift takes nothing back");
+    assert!(err.contains("a gift takes nothing back"), "{err}");
+    assert_eq!(pending(&scene.app).len(), 1);
     assert_eq!(
         scout_phase(&scene.app, scout),
         Some(ExpeditionPhase::AwaitingOrders),
@@ -1328,6 +1344,11 @@ fn an_offer_scout_comes_home_with_the_receivers_return() {
     let scout = launch_scout(&mut scene, StrangersOrder::Offer, GIVE_FOOD);
     assert!(run_until(&mut scene.app, |app| !pending(app).is_empty()));
     let id = only_dealing(&scene.app).id;
+    assert_eq!(
+        dealings_seen_by(&mut scene.app, RECEIVER_PEOPLE)[0].terms,
+        "offer",
+        "an `offer` scout's pack is an offer on the encoded frame"
+    );
     let sender_hide = band_hide(&scene.app, scene.sender);
 
     let report = answer_dealing(

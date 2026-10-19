@@ -1576,6 +1576,17 @@ pub fn answer_dealing(
     };
 
     // --- accept: every check, before anything moves ----------------------------------------
+    // **A gift takes nothing back**: the sender gave it away, so the receiver cannot name a return.
+    if !returned.is_empty()
+        && world
+            .get::<Expedition>(party)
+            .is_some_and(|expedition| expedition_terms(expedition) == TERMS_GIFT)
+    {
+        return Err(format!(
+            "{VERB}: a gift takes nothing back; accept dealing {} bare, or refuse it.",
+            id.0
+        ));
+    }
     let Some(receiver) = resident_band_entity(world, dealing.receiver_band) else {
         return Err(format!(
             "{VERB}: band {} is not there to answer.",
@@ -1655,12 +1666,30 @@ fn check_return_fits_party(
 /// away: the receiver's accept settles it whatever return it names. Decided from the party at answer
 /// time.
 fn sender_has_a_say(world: &World, party: Entity) -> bool {
-    world.get::<Expedition>(party).is_some_and(|expedition| {
-        match expedition.mission.shipment_terms() {
-            Some(terms) => *terms == ShipmentTerms::Offer,
-            None => expedition.scout_pack.order == StrangersOrder::Offer,
-        }
-    })
+    world
+        .get::<Expedition>(party)
+        .is_some_and(|expedition| expedition_terms(expedition) == TERMS_OFFER)
+}
+
+/// The wire's `terms` token for a gift: the receiver's accept lands it and it takes no return.
+pub const TERMS_GIFT: &str = "gift";
+/// The wire's `terms` token for an offer: the receiver names a return and the sender decides.
+pub const TERMS_OFFER: &str = "offer";
+
+/// **What a waiting party carries its cargo as**: [`TERMS_GIFT`] (a shipment with gift terms, a scout's
+/// `give`), [`TERMS_OFFER`] (offer terms, a scout's `offer`), else `""`. Decided from the party, so the
+/// answer and the frame cannot disagree.
+pub fn expedition_terms(expedition: &Expedition) -> &'static str {
+    match expedition.mission.shipment_terms() {
+        Some(ShipmentTerms::Gift) => TERMS_GIFT,
+        Some(ShipmentTerms::Offer) => TERMS_OFFER,
+        Some(_) => "",
+        None => match expedition.scout_pack.order {
+            StrangersOrder::Give => TERMS_GIFT,
+            StrangersOrder::Offer => TERMS_OFFER,
+            StrangersOrder::Keep => "",
+        },
+    }
 }
 
 /// **The receiver accepted an offer whose sender asked for something back: post the reply.** The
