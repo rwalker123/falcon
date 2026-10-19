@@ -1045,9 +1045,17 @@ exactly two things and both already have a phase.
 
 It takes the scout provisions arm **whole** rather than a trade-shaped copy: a launch draw of
 `party × distance × provision_draw_per_worker_per_tile`, `party × provision_upkeep_per_worker` per
-turn, and the same opportunistic replenish off the ground it crosses — **gathering before hunting**,
-on the `expedition` kit job like the scout. It is a walking party carrying no
-quarry, which is the same two facts about a scout.
+turn, and the same opportunistic replenish off the ground it crosses — **gathering before hunting**.
+It is a walking party carrying no quarry, which is the same two facts about a scout.
+
+> **⛔ A TRADE PARTY CARRIES NO KIT UNLESS THE COMMAND NAMES ONE.** A kit it does name is validated
+> against the `expedition` job as a scout's is, but an absent `kit` token resolves to the item-less
+> `none` kit (`server::resolve_trade_party_kit`, `NO_KIT_ID`), for every trade-mission launch — a
+> shipment, an envoy and an agreed party all go through `launch_trade_party`. The walk is already fed
+> from the band's store, and the trade sheet offers no kit choice, so defaulting to `ranging` silently
+> took a spear, a sled and a basket off a band's hunters and foragers for a one-worker gift. The
+> ranging kit (`default_kits.expedition`) stays the scout's. Pinned by
+> `server::tests::a_trade_party_carries_no_kit_unless_one_is_named`.
 
 **So there is deliberately no friction or loss lever on the `trade` block.** A farther destination
 already costs more, in food, and a percentage-lost-per-tile dial on top would price distance twice —

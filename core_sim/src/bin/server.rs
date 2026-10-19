@@ -6883,6 +6883,38 @@ fn resolve_expedition_job_kit(
 ) -> Option<KitChoice> {
     let equipment_cfg = app.world.resource::<EquipmentConfigHandle>().get();
     let absent = equipment_cfg.default_kit(KitJob::Expedition);
+    resolve_expedition_kit_or(app, faction, verb, kit_id, absent)
+}
+
+/// The roster's item-less kit: a party sent out with it takes nothing off its band.
+const NO_KIT_ID: &str = "none";
+
+/// **A trade party carries no kit unless the command names one.** Its walk is provisioned from the
+/// band's store, so it needs no gear to feed itself; the ranging kit stays the scout's. Absent
+/// resolves to the item-less [`NO_KIT_ID`] kit; a named kit still resolves against the `expedition`
+/// job and fails closed. The one resolution for every trade-mission launch (a shipment, an envoy, an
+/// agreed party).
+fn resolve_trade_party_kit(
+    app: &mut bevy::prelude::App,
+    faction: FactionId,
+    verb: &str,
+    kit_id: Option<&str>,
+) -> Option<KitChoice> {
+    let equipment_cfg = app.world.resource::<EquipmentConfigHandle>().get();
+    let absent = equipment_cfg
+        .kit(NO_KIT_ID)
+        .expect("the roster ships the item-less `none` kit");
+    resolve_expedition_kit_or(app, faction, verb, kit_id, absent)
+}
+
+fn resolve_expedition_kit_or(
+    app: &mut bevy::prelude::App,
+    faction: FactionId,
+    verb: &str,
+    kit_id: Option<&str>,
+    absent: KitChoice,
+) -> Option<KitChoice> {
+    let equipment_cfg = app.world.resource::<EquipmentConfigHandle>().get();
     match equipment_cfg.resolve_kit_or(kit_id, KitJob::Expedition, absent) {
         Ok(kit) => Some(kit),
         Err(reason) => {
@@ -7363,12 +7395,10 @@ fn launch_trade_party(
 ) -> bool {
     const VERB: &str = "send_trade_expedition";
     // **The kit fails closed**, resolved before anything is drawn — the rule both raiding verbs
-    // follow. A trade party is quoted at the **expedition** job for the reason a scout is: it is
-    // *provisioned*, so it is one of the two missions that has to replace what it eats while out of
-    // contact, by gathering and by hunting — which is exactly what [`KitJob::Expedition`] covers.
-    // (It read the **hunt** job until the ranging kit existed, which armed the roadside kill and
-    // left the party unable to gather at all.)
-    let Some(kit) = resolve_expedition_job_kit(app, faction, VERB, kit_id.as_deref()) else {
+    // follow. A named kit is validated against the **expedition** job, but a trade party carries
+    // NONE unless the command names one ([`resolve_trade_party_kit`]): its walk is provisioned from
+    // the band's store, and the ranging kit is the scout's.
+    let Some(kit) = resolve_trade_party_kit(app, faction, VERB, kit_id.as_deref()) else {
         return false;
     };
     // The resident-band gate, the party bound and the cohort template — the same seam both raiding
@@ -24949,6 +24979,69 @@ mod tests {
             Some(destination),
             "the party is bound for the band the order named"
         );
+    }
+
+    /// The ranging items (`spears`, `sled`, `baskets`, `wayfinding`) a ledger holds, summed.
+    fn ranging_units(app: &bevy::prelude::App, entity: Entity) -> u32 {
+        let Some(ledger) = app.world.get::<core_sim::BandEquipment>(entity) else {
+            return 0;
+        };
+        ["spears", "sled", "baskets", "wayfinding"]
+            .into_iter()
+            .map(|item| ledger.count_of(item))
+            .sum()
+    }
+
+    /// **A trade party carries no kit unless the command names one.** With no `kit` token the band's
+    /// ledger is untouched and the party holds no items; naming `ranging` still issues it.
+    #[test]
+    fn a_trade_party_carries_no_kit_unless_one_is_named() {
+        for (kit, takes_items) in [(None, false), (Some("ranging".to_string()), true)] {
+            let mut app = build_world_app();
+            let (sender, destination, faction) = two_bands_that_know_each_other(&mut app);
+            let sender_id = app.world.get::<core_sim::BandId>(sender).expect("an id").0;
+            // A spawning band owns no gear (`start_stock_fraction` ships 0), so stock it.
+            let stocked = core_sim::BandEquipment::start_stocked_for(
+                &app.world.resource::<EquipmentConfigHandle>().get(),
+                TRADE_PARTY as f32 * 2.0,
+            );
+            app.world.entity_mut(sender).insert(stocked);
+            let before = app
+                .world
+                .get::<core_sim::BandEquipment>(sender)
+                .cloned()
+                .expect("the sender keeps a ledger");
+            assert!(
+                ranging_units(&app, sender) > 0,
+                "**LIVENESS**: the band holds ranging gear to be issued"
+            );
+            handle_send_trade_expedition(
+                &mut app,
+                faction,
+                Some(sender_id),
+                TRADE_PARTY,
+                destination.0,
+                food_cargo(TRADE_CARGO_FOOD),
+                kit,
+                false,
+            );
+            let party = launched_party(&mut app).expect("the shipment left");
+            let after = app
+                .world
+                .get::<core_sim::BandEquipment>(sender)
+                .cloned()
+                .expect("the sender keeps a ledger");
+            if takes_items {
+                assert!(ranging_units(&app, party) > 0, "a named kit is issued");
+                assert_ne!(after, before, "and comes out of the band");
+            } else {
+                assert_eq!(
+                    after, before,
+                    "no kit named: the band's ledger is unchanged"
+                );
+                assert_eq!(ranging_units(&app, party), 0, "and the party carries none");
+            }
+        }
     }
 
     /// **The verb's `offer` word reaches the party's mission**, and its default is the gift the verb

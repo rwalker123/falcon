@@ -123,7 +123,7 @@ outfit (playtest: 5/5/7 split 6 → splinter 2/2/2, parent 3/3/5). The parent is
 trade shipment) — **takes** the party's kit from its home band's `BandEquipment` with `take_units`
 (freshest first), `ceil(party_workers ÷ workers_per_unit)` of each item the chosen kit uses. A band
 short of an item sends what it has; nothing is minted. The launch forecast prices the same issued
-counts, so the quote and the party agree.
+counts, so the quote and the party agree. **A trade party takes no kit unless the command names one** (`none` is its default, `expeditions.md` → "A trade party carries no kit"); the ranging default is the scout's.
 
 **The party takes its full issue even from gear the band's staffed rows are using** (Ray, 2026-10-04:
 keep it). People leaving take their tools; the home crews feel the shortage on their own rows until
