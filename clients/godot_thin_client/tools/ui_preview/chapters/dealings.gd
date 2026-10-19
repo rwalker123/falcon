@@ -15,7 +15,7 @@ extends RefCounted
 ## and be spelled into a line the server's parser refuses.
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
-const EXPECTED_CHECKPOINTS := 235
+const EXPECTED_CHECKPOINTS := 242
 
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 const Q := preload("res://tools/ui_preview/node_query.gd")
@@ -78,6 +78,12 @@ const COUNTER_IN := 15
 ## named (Thornwick's party waits on our return).
 const REPLY_IN := 16
 const REPLY_OUT := 17
+## A GIFT addressed to the home band (Gorsemoor sent it) and one the home band gave Gorsemoor: offer-kind
+## dealings whose `terms` is `gift`, which take nothing back.
+const GIFT_IN := 18
+const GIFT_OUT := 19
+const GIFT_FOOD := 7.0
+const GIFT_HIDE := 2.0
 
 ## What an offer carries, and the party that waits with it.
 const OFFER_FOOD := 12.0
@@ -161,6 +167,7 @@ func run(harness) -> void:
 	# live in the tile drawer, which the left dock covers, so they are judged with the dock on the right.
 	await _tab_states(panel)
 	await _road_states(panel)
+	await _gift_states(panel)
 	await _reply_states(panel)
 	await _history_states(panel)
 	await _peoples_treaty_states(panel)
@@ -375,6 +382,54 @@ func _road_states(panel: BandCityPanel) -> void:
 	h._assert_hud("road: no trade party anywhere -> no On the road section (an empty head is furniture)",
 		panel.find_child(HudDealingsVocab.ROAD_BLOCK_NAME, true, false) == null)
 	h._hud.update_band_alerts([_home_band()] + _parties())
+	await h._settle()
+
+
+# ---- (a1b) A GIFT TAKES NOTHING BACK ---------------------------------------------------------------------
+
+func _gift_states(panel: BandCityPanel) -> void:
+	var gift_in := _dealing(GIFT_IN, HudDealingsVocab.KIND_OFFER, MOOR_FACTION, MOOR_ENTITY, 0, HOME_ENTITY,
+		_goods(GIFT_FOOD), _goods(), 2, 0)
+	gift_in["terms"] = HudDealingsVocab.TERMS_GIFT
+	var gift_out := _dealing(GIFT_OUT, HudDealingsVocab.KIND_OFFER, 0, HOME_ENTITY, MOOR_FACTION, MOOR_ENTITY,
+		_goods(0.0, 0.0, [_flat_hide(GIFT_HIDE)]), _goods(), 2, 0)
+	gift_out["terms"] = HudDealingsVocab.TERMS_GIFT
+	h._hud.update_dealings(_dealings() + [gift_in, gift_out])
+	await h._settle()
+	var rows := _rows(_block(panel))
+	var incoming := _row(rows, GIFT_IN)
+	var in_text := _text_of(incoming)
+	h._assert_hud("gift: an incoming gift reads as a gift, not an offer (\"%s\")" % in_text.left(70),
+		in_text.contains("They send %.1f food as a gift" % GIFT_FOOD) and not in_text.contains("you name what comes back"))
+	var accept := _action(incoming, HudDealingsVocab.ANSWER_ACCEPT)
+	h._assert_hud("gift: …it offers Accept and Refuse and NO counter",
+		accept != null and _action(incoming, HudDealingsVocab.ANSWER_REFUSE) != null
+			and _action(incoming, HudDealingsVocab.ANSWER_COUNTER) == null
+			and accept.tooltip_text == HudDealingsVocab.ACCEPT_GIFT_TOOLTIP)
+	var outgoing := _row(rows, GIFT_OUT)
+	var out_text := _text_of(outgoing)
+	h._assert_hud("gift: the band's own waiting gift reads `You gave …`, awaiting their answer (\"%s\")" % out_text.left(70),
+		out_text.contains("You gave %.1f hide" % GIFT_HIDE) and out_text.contains("Awaiting their answer")
+			and not out_text.contains("they name what comes back"))
+	await h._save("dealings_gift_rows")
+	_commands.clear()
+	if accept != null:
+		accept.emit_signal("pressed")
+	h._assert_hud("gift: Accept sends ONE command and opens NO return sheet", _commands.size() == 1 and _form() == null)
+	if _commands.size() == 1:
+		var built := MAIN_SCRIPT.format_diplomacy_command(_commands[0])
+		h._assert_hud("gift: …the bare `answer_dealing 0 %d accept` (got `%s`)" % [GIFT_IN, built.get("line", "")],
+			String(built.get("line", "")) == "answer_dealing 0 %d accept" % GIFT_IN)
+	# The pair: an incoming OFFER still opens the return sheet.
+	_commands.clear()
+	var offer_accept := _action(_row(rows, OFFER_IN), HudDealingsVocab.ANSWER_ACCEPT)
+	if offer_accept != null:
+		offer_accept.emit_signal("pressed")
+	h._assert_hud("gift: …while an incoming OFFER still opens the return sheet and sends nothing yet",
+		_form() != null and _commands.is_empty())
+	h._hud._bandpanel.close_verb_form()
+	await h._settle()
+	h._hud.update_dealings(_dealings())
 	await h._settle()
 
 
@@ -1601,9 +1656,13 @@ func _dealings() -> Array:
 	for row in rows:
 		match int(row["id"]):
 			OFFER_OUT:
+				row["terms"] = HudDealingsVocab.TERMS_OFFER
 				row["party_band"] = BandFx.FIXTURE_BAND_ID_OFFSET + PARTY_WAITING
 			REPLY_IN:
 				row["party_band"] = BandFx.FIXTURE_BAND_ID_OFFSET + PARTY_WAITING_REPLY
+			OFFER_IN:
+				row["terms"] = HudDealingsVocab.TERMS_OFFER
+				row["party_band"] = 0
 			_:
 				row["party_band"] = 0
 	return rows

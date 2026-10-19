@@ -746,7 +746,7 @@ what makes a swapped accessor show as a moved line rather than merely a differen
 ## Early diplomacy's decode (issue #233)
 
 Four top-level keys, each a whole-section replace: **`dealings`** (an array of `{id, kind, sender_faction,
-sender_band, receiver_faction, receiver_band, goods_sent, goods_asked, turns_left, shipper_band, party_band (the waiting party's band id == its cohort `band_id`, `0` when none),
+sender_band, receiver_faction, receiver_band, goods_sent, goods_asked, turns_left, shipper_band, party_band (the waiting party's band id == its cohort `band_id`, `0` when none), terms (`gift` | `offer` on an offer-kind dealing, `""` on every other kind),
 party_workers, treaty, carrier}`), **`goodwill`** (`{known, own, cuts: {wary_below, friendly_above}}`, each
 row carrying the six components, `total` and `reported_turn`) **`treaties`** (`{treaties, standing_links}`) and **`trade_history`**
 (`[{turn, own_band, other_faction, other_band, dealing_id, outcome, goods_out, goods_in}]`, the viewer's people's

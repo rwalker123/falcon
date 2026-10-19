@@ -79,6 +79,8 @@ pub(crate) fn dealings_to_array(
         let _ = dict.insert("carrier", dealing.carrier().unwrap_or_default());
         // The waiting party's band id (== that party's cohort `band_id`), `0` when no party carries it.
         let _ = dict.insert("party_band", dealing.partyBand() as i64);
+        // "gift" | "offer" on an offer-kind dealing (a gift takes nothing back), "" on every other kind.
+        let _ = dict.insert("terms", dealing.terms().unwrap_or_default());
         array.push(&dict.to_variant());
     }
     array

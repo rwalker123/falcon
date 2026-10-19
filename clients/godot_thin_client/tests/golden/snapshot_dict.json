@@ -596,6 +596,7 @@
       "sender_band": 16,
       "sender_faction": 9,
       "shipper_band": 96,
+      "terms": "dealings[0].terms",
       "treaty": {
         "bundles": [
           {
@@ -941,6 +942,7 @@
       "sender_band": 111,
       "sender_faction": 84,
       "shipper_band": 105,
+      "terms": "dealings[1].terms",
       "treaty": {
         "bundles": [
           {
@@ -1286,6 +1288,7 @@
       "sender_band": 154,
       "sender_faction": 159,
       "shipper_band": 146,
+      "terms": "dealings[2].terms",
       "treaty": {
         "bundles": [
           {

@@ -3900,6 +3900,10 @@ is asserted by EQUALITY through the real `Main` builder**: a payload can be perf
 into a line the server's parser refuses (the same lines were also fed to `parse_command_line` once, in a
 throwaway test, and all parse).
 
+- **A GIFT TAKES NOTHING BACK** (`_gift_states`, frame `dealings_gift_rows`): an incoming gift reads
+  `They send 7.0 food as a gift` with Accept / Refuse and no Counter, its Accept sends the bare
+  `answer_dealing 0 18 accept` and opens no sheet, the band's own gift reads `You gave 2.0 hide` awaiting
+  their answer, and, as the pair, an incoming offer's Accept still opens the return sheet.
 - **A TRADE PARTY IS THE TRADE TAB'S, END TO END** (`_road_states`, frames `dealings_road` and
   `dealings_road_waiting`). The chapter stages five parties of the home band (`_parties`): a shipment
   standing in Brackwater's camp (the party of the pending offer we sent and of the reply addressed to us),

@@ -9997,7 +9997,8 @@ func _preload_cargo(band: Dictionary, goods: Dictionary) -> void:
         _write_cargo(band, _trade_cargo_rows(band), TRADE_GOOD_KEY_PREFIX + String(id), float(wanted[id]))
 
 func _on_dealing_accept_pressed(dealing: Dictionary) -> void:
-    if String(dealing.get("kind", "")) == HudDealingsVocab.KIND_OFFER:
+    # An OFFER names its return on the sheet; a GIFT (like a reply) takes nothing back and is accepted bare.
+    if String(dealing.get("kind", "")) == HudDealingsVocab.KIND_OFFER and not DealingsRoster.is_gift(dealing):
         _open_dealing_sheet(dealing, HudDealingsVocab.ANSWER_ACCEPT)
         return
     _emit_dealing_answer(dealing, {"answer": HudDealingsVocab.ANSWER_ACCEPT})

@@ -97,6 +97,12 @@ const OUTGOING_TOOLTIP := "Waiting on them. Nothing to do until they answer."
 const NOTHING := "nothing"
 const OFFER_IN_FORMAT := "Offers %s · you name what comes back"
 const OFFER_OUT_FORMAT := "You offered %s · they name what comes back"
+## A GIFT is an offer-kind dealing whose `terms` is `gift`: it takes nothing back, so it is accepted bare.
+const TERMS_GIFT := "gift"
+const TERMS_OFFER := "offer"
+const GIFT_IN_FORMAT := "They send %s as a gift"
+const GIFT_OUT_FORMAT := "You gave %s"
+const ACCEPT_GIFT_TOOLTIP := "Take the gift. It takes nothing back."
 ## A REPLY, from the seat of the band that answers it (the band that named the return, the return, the
 ## cargo it is for) and of the band that named the return (the party's band, the return).
 const REPLY_IN_FORMAT := "%s would give back %s for your %s"

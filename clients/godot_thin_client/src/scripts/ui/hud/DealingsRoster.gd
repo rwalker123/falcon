@@ -41,6 +41,12 @@ static func direction_of(dealing: Dictionary, band_id: int) -> int:
 static func is_treaty(dealing: Dictionary) -> bool:
 	return String(dealing.get("kind", "")) == HudDealingsVocab.KIND_TREATY_PROPOSAL
 
+## A gift: an offer-kind dealing the sender made with no return in mind (`terms == gift`). It is read as
+## a gift and accepted bare, like a reply -- there is nothing to name back.
+static func is_gift(dealing: Dictionary) -> bool:
+	return String(dealing.get("kind", "")) == HudDealingsVocab.KIND_OFFER \
+		and String(dealing.get("terms", "")) == HudDealingsVocab.TERMS_GIFT
+
 static func is_reply(dealing: Dictionary) -> bool:
 	return String(dealing.get("kind", "")) == HudDealingsVocab.KIND_REPLY
 
@@ -362,6 +368,8 @@ static func what_text(dealing: Dictionary, direction: int, band_id: int,
 		return (HudDealingsVocab.TREATY_IN_FORMAT if incoming \
 			else HudDealingsVocab.TREATY_OUT_FORMAT) % terms
 	var sent := HudDealingsVocab.goods_text(Dictionary(dealing.get("goods_sent", {})))
+	if is_gift(dealing):
+		return (HudDealingsVocab.GIFT_IN_FORMAT if incoming else HudDealingsVocab.GIFT_OUT_FORMAT) % sent
 	if kind == HudDealingsVocab.KIND_OFFER:
 		return (HudDealingsVocab.OFFER_IN_FORMAT if incoming \
 			else HudDealingsVocab.OFFER_OUT_FORMAT) % sent
@@ -473,6 +481,7 @@ static func _build_actions(dealing: Dictionary, actions: Dictionary,
 	strip.add_theme_constant_override("separation", HudWorkVocab.ZONE_HEAD_SEPARATION)
 	strip.set_meta(HudDealingsVocab.ACTION_META, int(dealing.get("id", 0)))
 	var is_offer := String(dealing.get("kind", "")) == HudDealingsVocab.KIND_OFFER
+	var gift := is_gift(dealing)
 	var entries: Array[Dictionary] = []
 	if is_reply(dealing):
 		entries = [
@@ -484,7 +493,8 @@ static func _build_actions(dealing: Dictionary, actions: Dictionary,
 	else:
 		entries = [
 			{"id": HudDealingsVocab.ANSWER_ACCEPT, "text": HudDealingsVocab.ACTION_ACCEPT,
-				"tip": HudDealingsVocab.ACCEPT_OFFER_TOOLTIP if is_offer else HudDealingsVocab.ACCEPT_TOOLTIP,
+				"tip": HudDealingsVocab.ACCEPT_GIFT_TOOLTIP if gift else (
+					HudDealingsVocab.ACCEPT_OFFER_TOOLTIP if is_offer else HudDealingsVocab.ACCEPT_TOOLTIP),
 				"ink": HudStyle.HEALTHY},
 			{"id": HudDealingsVocab.ANSWER_REFUSE, "text": HudDealingsVocab.ACTION_REFUSE,
 				"tip": HudDealingsVocab.REFUSE_TOOLTIP, "ink": HudStyle.DANGER},

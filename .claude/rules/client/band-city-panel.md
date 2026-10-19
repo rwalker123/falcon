@@ -8133,6 +8133,10 @@ block of the same head on the Peoples tab (below). Both are built by `DealingsRo
   shipper, `They send X · they want Y from you` / `… · you send back Y` when it is the consignee). A
   treaty proposal reads its terms in words (`Road rights · Open borders · Agreed trade: 5.0 flint for
   10.0 food`) and says an envoy brought it on its hover.
+- **A GIFT** (an offer-kind dealing whose `terms` is `gift`, `DealingsRoster.is_gift`) reads `They send
+  <cargo> as a gift` (`You gave <cargo>` on the band's own, waiting one) and is accepted BARE, through the
+  reply's own path: no return sheet opens and `Accept` sends `answer_dealing <f> <id> accept`. Refuse is
+  unchanged. An offer keeps the accept-with-return sheet.
 - **An offer is accepted or refused, never countered** (it names nothing: the receiver names the return
   in its accept). A proposal, counter and treaty proposal have all three.
 - **THE REPLY** (`DealingState.kind == "reply"`) is the other half of an accepted offer: when the
