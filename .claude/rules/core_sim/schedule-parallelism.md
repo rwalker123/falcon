@@ -36,12 +36,16 @@ provably behavior-preserving.
 `Commands` are the one hazard the gate cannot see, because `Deferred` access is not a conflict. Two
 systems that both use `Commands`, or one that spawns and one that reads the result, register as
 independent while their auto-inserted `apply_deferred` sync point depends on the edge between them.
-Only `advance_band_movement` and `advance_expeditions` take `Commands`, and both sit inside the
-`Population` chain. **A new `Commands`-using system needs its ordering reasoned about by hand** —
-and `commands_using_systems_are_the_reviewed_set` makes that happen, by pinning the set against
-`COMMANDS_SYSTEMS` so a third one fails the build instead of arriving unexamined. The test asks the
-built schedule (`System::has_deferred()`), not the source, so a system that picks up `Commands`
-through a nested `SystemParam` is caught too. `Startup` is out of scope for both the gate and the
+The reviewed set is `COMMANDS_SYSTEMS` — `follow_hunted_herds`, `advance_band_movement`,
+`advance_expeditions` and `advance_party_defection` in `Population`, plus
+`reconcile_band_culture_layers`. In `Population` each one has a direct edge to the system that
+follows it, declared in `build_headless_app`, and that edge is what places its sync point; the
+`follow_hunted_herds` → `advance_band_movement` one is pinned by a `MUST_BE_ORDERED` case.
+**A new `Commands`-using system needs its ordering reasoned about by hand** — and
+`commands_using_systems_are_the_reviewed_set` makes that happen, by pinning the set against
+`COMMANDS_SYSTEMS` so an unreviewed one fails the build instead of arriving unexamined. The test
+asks the built schedule (`System::has_deferred()`), not the source, so a system that picks up
+`Commands` through a nested `SystemParam` is caught too. `Startup` is out of scope for both the gate and the
 test: it is `.chain()`-ed wholesale, which is why `spawn_initial_world`, `reconcile_food_modules`
 and `place_wondrous_sites` take `Commands` without appearing in the set.
 
@@ -64,7 +68,7 @@ list would be the same total order written longhand:
 | `Knowledge` | fully serial *in effect* | the one free system must precede the rest anyway, so its freedom is already implied |
 | `Finalize` | fully serial | `CorruptionLedgers` |
 | `Snapshot` | fully serial | `SimulationTick` → `SimulationMetrics` |
-| `Population` | **20-chain + 3 ordered by edges** | every pair conflicts on `PopulationCohort`; `publish_trade_telemetry` is pure telemetry; `advance_culture_pressure` and `bill_and_stock_roads` declare their own edges |
+| `Population` | **edges, no chain: 21-spine + 2-step tail + 2 free** | `PopulationCohort` (critical path 23 of 25 — below) |
 | `Visibility` | 5-chain + 1 free | everything funnels through `VisibilityLedger`; `prune_sweep_tracker` touches only `VisibilitySweepTracker` |
 | `GreatDiscovery` | 6-chain + 1 free | `apply_capability_effects` writes `CapabilityFlags`, which nothing else in the stage reads |
 | `Logistics` | **7-chain + 5 free** | the fauna backbone shares `HerdRegistry`; the flora/pasture half is disjoint |
@@ -72,12 +76,22 @@ list would be the same total order written longhand:
 `Logistics` is the only stage with real intra-stage width: 12 systems, critical path 7. The
 flora/pasture systems (`ForageRegistry`/`GrazeRegistry`) run alongside the fauna run.
 
-**The `Population` chain is full.** Bevy 0.13 implements `IntoSystemConfigs` for tuples of at most
-20 elements, and the chain holds 20, so a 21st entry does not compile (the error is `E0599`, "the
-method `chain` exists for tuple … but its trait bounds were not satisfied"). A new system in this
-stage declares its edges, as `advance_culture_pressure` does — it runs `.after(advance_culture_splits)`,
-the last system that changes a band's people, and `.before(sedentarization_tick)`, with which it
-shares `CommandEventLog`.
+**The `Population` stage is declared by edges, so the tuple limit does not bound it.** Bevy 0.13
+implements `IntoSystemConfigs` for tuples of at most 20 elements, which is why the stage is split
+across three `add_systems` calls (sharing `population_stage_enabled()`) with no `.chain()` at any
+level — a nested sub-chain only moves the limit. Each system names its nearest required
+predecessor(s): the transitive reduction of the order the stage always had, with the rationale
+comment on the edge that encodes it. A new system declares the edges it has and joins whichever
+tuple is shortest; the gate rejects it at boot if it conflicts with a system it did not order
+against. The spine runs `simulate_population` → `rot_band_larders` → `outfit_opening_bands` →
+`follow_hunted_herds` → `advance_band_movement` → `advance_expeditions` → `advance_dealings` →
+`credit_stationed_goodwill` → `bill_and_stock_roads` → `advance_labor_allocation` → the bench trio
+→ `announce_bench_material_short` → `advance_predator_raids` → `advance_population_migration` →
+`shed_breeding_excess` → `break_off_breeding_excess` (EXCLUSIVE, so it pins its own position) →
+`advance_party_defection` → `advance_band_independence` → `advance_culture_splits`. After the split,
+`advance_culture_pressure` → `sedentarization_tick` (they share `CommandEventLog`) and
+`mobility_tick` run apart from each other; `publish_trade_telemetry` (pure telemetry) follows
+`break_off_breeding_excess` and nothing after it.
 
 **The 11-set `configure_sets(...).chain()` across stages is deliberate and stays.** `turn_profile`'s
 stage markers pin themselves between neighbouring stage sets (`.after(X).before(Y)`) so

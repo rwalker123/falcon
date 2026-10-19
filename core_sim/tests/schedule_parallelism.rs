@@ -28,7 +28,7 @@ use std::collections::{HashMap, HashSet};
 /// registries against the fauna run in `Logistics`, telemetry against the movement run in
 /// `Population`, and so on. If one of these starts reaching the other, a stage went back to being
 /// a chain.
-const MUST_BE_CONCURRENT: [(&str, &str); 6] = [
+const MUST_BE_CONCURRENT: [(&str, &str); 8] = [
     // Logistics: `ForageRegistry`/`GrazeRegistry` vs. the `HerdRegistry` backbone.
     ("advance_forage_regrowth", "advance_herds"),
     ("advance_graze_regrowth", "advance_predation"),
@@ -36,6 +36,10 @@ const MUST_BE_CONCURRENT: [(&str, &str); 6] = [
     // Population: pure telemetry vs. the tail of the movement/labor run. It is ordered after its
     // one writer, `advance_population_migration`, and nothing that follows it.
     ("publish_trade_telemetry", "sedentarization_tick"),
+    // Population: the roaming drain and the settling/pressure passes share nothing — each is
+    // ordered after the culture split and neither follows the other.
+    ("mobility_tick", "sedentarization_tick"),
+    ("mobility_tick", "advance_culture_pressure"),
     // GreatDiscovery: capability effects vs. the reporting tail.
     ("apply_capability_effects", "export_great_discovery_metrics"),
     // Visibility: the sweep tracker vs. the ledger clear.
@@ -45,14 +49,17 @@ const MUST_BE_CONCURRENT: [(&str, &str); 6] = [
 /// Orderings that must survive — the negative control.
 ///
 /// Without these the test above could pass by accident: a flattening bug that dropped every edge
-/// would make *everything* look concurrent. Two of the three deliberately cross a
+/// would make *everything* look concurrent. Several of them deliberately cross a
 /// `SystemTypeSet` boundary (`.after(some_system)` records its edge against the target's type set,
 /// not the system node), so they fail if set expansion regresses.
-const MUST_BE_ORDERED: [(&str, &str); 4] = [
+const MUST_BE_ORDERED: [(&str, &str); 5] = [
     // Documented in `lib.rs`: the band's `current_tile` must be fresh before labor reads it.
     ("advance_band_movement", "advance_labor_allocation"),
     // The mobility score drains the steps `advance_band_movement` records while following a herd.
     ("advance_band_movement", "mobility_tick"),
+    // The `Commands` edge: `follow_hunted_herds` defers a `BandTravel` insert/remove, and the sync
+    // point on this edge is what lets `advance_band_movement` read it the same turn.
+    ("follow_hunted_herds", "advance_band_movement"),
     // Declared via `.after(simulate_materials)` — an edge through a type set.
     ("simulate_materials", "advance_forage_regrowth"),
     // Declared via `.after(resolve_great_discovery)` — likewise.
@@ -69,13 +76,13 @@ const MUST_BE_ORDERED: [(&str, &str); 4] = [
 /// as independent while their auto-inserted `apply_deferred` sync point depends entirely on the
 /// edge between them. Bevy will happily run them in either order and nothing will complain.
 ///
-/// Today all four entries sit inside the fully-serial `Population` chain, so their sync points are
-/// pinned by edges that exist for other reasons. `follow_hunted_herds` only inserts or removes a
-/// band's `BandTravel`, which the very next system (`advance_band_movement`) reads; no other system
-/// reads it between the two. `advance_party_defection` despawns a party that
-/// joined another people; the only systems after it in the turn are `sedentarization_tick`
-/// (`With<ResidentBand>`, so never a party) and the later stages, which the chain's sync point
-/// already orders after the despawn. A third system taking `Commands` is not
+/// The four `Population` entries each have a direct edge to the system that follows them, declared
+/// in `build_headless_app`, and that edge is what places their sync point. `follow_hunted_herds`
+/// only inserts or removes a band's `BandTravel`, which the very next system
+/// (`advance_band_movement`) reads; no other system reads it between the two (the `MUST_BE_ORDERED`
+/// entry above pins that edge). `advance_party_defection` despawns a party that joined another
+/// people; every pass after it in the stage hangs off it through `advance_band_independence`, and
+/// the only Population system free of it, `publish_trade_telemetry`, reads resources alone. A third system taking `Commands` is not
 /// necessarily wrong — it just cannot be checked by the machinery, so it has to be checked by a
 /// person: does it spawn or despawn anything another system reads in the same turn, and is the
 /// edge that orders them declared? Answer that, then add it here.
