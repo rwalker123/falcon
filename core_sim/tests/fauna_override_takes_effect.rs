@@ -14,7 +14,14 @@ use core_sim::{
     build_test_app, config_override::clear_config_overrides,
     config_override::install_config_override, herd_engage_rate, FaunaConfigHandle, Herd,
 };
+use std::sync::{Mutex, PoisonError};
+
 use sim_runtime::commands::ConfigOverrideKind;
+
+/// The registry is process-global and BOTH tests here clear it, while cargo runs them on parallel
+/// threads — so one test's `clear_config_overrides` could land between the other's install and its
+/// `build_test_app`, booting the default config. They take turns on this lock.
+static REGISTRY: Mutex<()> = Mutex::new(());
 
 const SPECIES: &str = "Wild Reindeer";
 const STAGED_GAIN: f32 = 1.5;
@@ -23,6 +30,7 @@ const SAME: f32 = 1e-4;
 
 #[test]
 fn a_staged_fauna_override_changes_the_drive_reach_a_new_world_hunts_with() {
+    let _registry = REGISTRY.lock().unwrap_or_else(PoisonError::into_inner);
     let scratch = std::env::temp_dir().join("fauna_override_takes_effect");
     install_config_override(
         ConfigOverrideKind::Fauna,
@@ -67,6 +75,7 @@ fn a_staged_fauna_override_changes_the_drive_reach_a_new_world_hunts_with() {
 
 #[test]
 fn a_fauna_override_with_an_unusable_lever_is_refused() {
+    let _registry = REGISTRY.lock().unwrap_or_else(PoisonError::into_inner);
     let scratch = std::env::temp_dir().join("fauna_override_refused");
     let refused = install_config_override(
         ConfigOverrideKind::Fauna,
