@@ -313,7 +313,9 @@ list every band. It is the same panel, rows and work strip, rolled up:
   (`Road ▸`, and each storage branch the same way) open the same rung card with the same `Band:`
   picker; once there is a tribe, the tribe stands in that picker in place of its member bands, as it
   does in the band switcher, and is the default. A rung the tribe starts lands in its Shared works.
-- **A member band can still be picked**, listed under the tribe. A work that belongs to one band's
+- **A member band can still be picked**, folded under the tribe (`Reedwater tribe ▸`) so the list stays
+  one line per tribe until the player opens it. The default is the tribe, unless the card was opened
+  from one of its bands' own panel, which defaults to that band. A work that belongs to one band's
   camp is that band's: it sits on that band's line in the tribe view, and its own people are sent to
   it first, before anyone walks in from a neighbour. Assigning harvesters uses the same picker.
 - **One scouting range for the whole tribe**, counted out from the outer edge of all its bands' local
