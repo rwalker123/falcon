@@ -358,15 +358,24 @@ list every band. It is the same panel, rows and work strip, rolled up:
 - **The nation does not pool people.** Each member keeps its own pool; the nation moves goods, not
   people. **A national work** — a road between cities — is handed to the nearest member and shows in
   that member's works marked *for the nation*: the forced labour early states ran on.
-- **Tax:** one rate across the nation (None / Low / Normal / High), a share of each member's **spare**
-  food — what it grows beyond what it eats — so a member that only just feeds itself pays nothing, and
-  the stores never hand a member back what they just took. A member can be exempted. Tax costs
-  morale in every taxed member, more at the higher rates. It fills the nation's stores, which pay for
-  aid and national works.
+- **Tax is in kind, and Auto.** There is no money; the first states taxed grain, goods and labour, and
+  so does this one. Each turn the nation collects only what that turn's aid and national works need,
+  plus a step toward a reserve for a bad year — nothing beyond, so its stores never pile up unused. It
+  takes from each member's **spare** goods (food, hide, wood, stone — what the member has beyond its
+  own needs), never from what it needs to eat, so a member that only just feeds itself pays nothing
+  and the stores never hand a member back what they just took. The player's one control is a
+  **ceiling** (None / Low / Normal / High): the most it may take from any one member. A low ceiling is
+  easy on morale and may leave aid and works short, which the page says. A member can be exempted.
+  Tax costs morale in the members it is taken from, in proportion to how much of their spare it takes.
+  Labour is taxed too: that is the national works handed to members. Issue #853 builds it.
+- **What will raise what tax collects** are each their own design, filed: trade with other peoples
+  (#854), arming the defenders a battle calls up (#855), officials who stretch the leader's reach
+  (#856), and whether money ever replaces tax in kind (#857).
 - **Aid between members:** Auto by default — the nation sends from its stores to members whose own
   food falls short. The one setting is a **help-first order** for when there is not enough for all.
 - **The leader's reach is on the page** (*Queen Asha runs 4 of 5 members well*). Past it, orders are
-  carried out worse, never refused: tax collects less than is owed, and aid loses some on the way.
+  carried out worse, never refused: less of what tax takes reaches the stores, and aid loses some on
+  the way.
   Writing raises the reach.
 - **Not in the first nation page:** trade terms, tariffs, diplomacy and calling defenders. They wait on
   other peoples existing (#513) and on the battles design (#850).
