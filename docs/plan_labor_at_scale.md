@@ -196,12 +196,13 @@ the sim staffs the scouts that reach it. That is what adding
 scouts does today, and a range stays right as gear improves — a better wayfinding kit extends each
 scout's vantage, so fewer scouts are needed for the same range.
 
-**The range is counted from the edge of the work area, not from the camp.** The band's people already
-walk the ground they work (the work radius, 2 tiles), so a range counted from the camp spends its
-first tiles on ground nobody needs scouted. The setting reads **+N tiles past the work area**: +0 is
-no scouts, +2 is two tiles beyond where the band works. The work area is a fixed edge, so the number
+**The range is counted from the edge of the band's local range, not from the camp.** The local range
+is the band's own neighbourhood — `reach_tiles` in `supply_network_config.json`, 3 today, the reach
+within which nearby bands already pool — so a range counted from the camp spends its first tiles on
+ground the band already holds. The setting reads **+N tiles past the local range**: +0 is no scouts,
++2 is two tiles beyond it. The local range is a fixed edge read from that one setting, so the number
 means the same distance every turn — unlike the band's own sight, which moves with elevation, line of
-sight and size. A tribe counts from the outer edge of all its bands' work areas together (below).
+sight and size. A tribe counts from the outer edge of all its bands' local ranges together (below).
 
 ### Warriors: no standing count — defenders are chosen in the battle
 
@@ -308,8 +309,8 @@ list every band. It is the same panel, rows and work strip, rolled up:
 - **Crafting:** On hand is the network's pooled materials (each pile's tooltip names who holds it);
   Make next looks across the bands (*Spears ×5 — Greyfen 3, Pinewold 2*).
 - **People bar:** the one bar, totalled across the tribe, idle included.
-- **One scouting range for the whole tribe**, counted out from the outer edge of all its bands' work
-  areas together — the scouts ride the tribe's whole border, not a ring round each camp. It is set on the tribe's
+- **One scouting range for the whole tribe**, counted out from the outer edge of all its bands' local
+  ranges together — the scouts ride the tribe's whole border, not a ring round each camp. It is set on the tribe's
   panel; a member band's own panel shows it read-only ("set by the tribe"). Scouts are a standing duty
   from the one pool, drawn from the band nearest each stretch of the edge, so a longer border needs
   more scouts for the same range.
