@@ -104,10 +104,19 @@
       "h": 900,
       "title": "Nation page — tax, aid between members, national works, the leader's reach",
       "is_interactive": true
+    },
+    "BandOrders.dc.html": {
+      "x": 3120,
+      "y": 2480,
+      "w": 1480,
+      "h": 1180,
+      "title": "Band orders — the chief turns your goals into each row's settings",
+      "is_interactive": true
     }
   },
   "order": [
     "Main.dc.html",
+    "BandOrders.dc.html",
     "Tribe.dc.html",
     "SharedWork.dc.html",
     "City.dc.html",

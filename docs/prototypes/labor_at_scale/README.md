@@ -31,6 +31,7 @@ existing row, rung button, rung card and sheets.
 | Band | `Stone.dc.html` | Stone — keep on hand | #874 |
 | Band | `Crafting.dc.html` | Materials & Crafting — several orders at once, each with a crafter limit (and its "The tribe" mode) | #873 #864 |
 | Band | `Faction.dc.html` | Faction page — one People bar, idle across bands | #878 |
+| Band (chief) | `BandOrders.dc.html` | Band orders — the chief turns your goals (food turns, keep-on-hand, improve the land) into each row's settings; a Floor set by hand pins | #860 #859 |
 | Tribe | `Tribe.dc.html` | Tribe panel — the tribe replaces its bands; drill into one | #862 #863 |
 | Tribe | `SharedWork.dc.html` | Starting a shared work — the tribe on the Band: picker | #863 |
 | City | `City.dc.html` | City panel — quarters, trades (Auto), great works, rations | #865 #866 #867 #868 |
