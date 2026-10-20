@@ -99,11 +99,13 @@ extra hand finishes the head order sooner. They are staffed the same way.
   reach crew — some kitted workers are spared for the crafting the player asked for.
 - **A queue job has no hold crew.** It is staffed in pass 2 (and pass 3 where bare hands help), never
   pass 1.
-- **A queue job's useful crew finishes its head order in a set number of turns.** The crew that
-  finishes an order in ONE turn is 10+ crafters for most gear, which would swallow every spare hand.
-  So both queues size their crew to finish the head workable order in `queue_target_turns` turns — a
-  config lever, an opening value for playtest (5). An order short of an input is not workable and
-  takes nobody, exactly as the bench skips it today.
+- **A queue job takes every worker it can use, and no more.** Its useful crew is the crew that
+  finishes its head workable order in one turn — the order's remaining worker-turns (bench) or
+  remaining work (build). Where nothing else wants the hands, the queue fills up to that crew. An
+  order short of an input is not workable and takes nobody, exactly as the bench skips it today.
+- **A bare-handed builder builds**: build gear adds to what each builder delivers, it is not required
+  to deliver anything. A bare-handed crafter crafts too, at the material's hand-working rate. So both
+  queues are pass-3 destinations.
 - **"Kitted" for the bench means holding its bench tool** (the tanning frame, the awl, the billet);
   for the build queue, the build kit the entry's rung uses.
 
@@ -148,27 +150,36 @@ The player sets **how far the band sees**; the sim staffs the scouts that reach 
 scouts does today, and a range stays right as gear improves — a better wayfinding kit extends each
 scout's vantage, so fewer scouts are needed for the same range.
 
-### Warriors: the player chooses defend or flee when a raid comes
+### Warriors: muster enough to drive the pack off
 
-Warriors defend the camp against predator raids. A raid is a one-turn skirmish, resolved again every
-turn the pack stays within raid range: one representative of the pack against the band's armed
-warriors plus a few exposed, unarmed people. More armed defenders mean fewer deaths. There is no
-battle to win or lose and no stalemate — only how many people the raid costs.
+A predator raid kills and injures people; animals carry nothing off. The threat to defend against is
+lives, and the defence has to END the raid, not only soften it. Two failure modes bound the answer:
 
-So there is no headcount to set, and no "enough to match the pack" to compute. Proposal:
+- **Too few defenders**: the pack is not hurt enough to retreat, so it raids again next turn, and the
+  turn after — a stalemate the band pays for in lives every turn.
+- **Every armed worker, every time**: a single wolf raiding each turn pulls the whole armed band off
+  its work, and the band starves.
 
-- **The player is asked when a pack comes within raid range**, through the turn orb, before the turn
-  resolves: *defend* or *flee*. The choice stands until the pack leaves. Each answer shows its
-  forecast — the expected losses if the band defends, what the raiders would take if it flees.
-- **Defend: every armed worker in camp musters.** Only workers in camp — a work party past the camp's
-  range does not come back. Only workers who can be armed — clubs first, then other weapons. They lose
-  that turn's work and go back to their jobs afterwards.
-- **Flee: the raiders carry off goods instead of lives.** The player sees a panel like the trade
-  panel, and the raiding party picks what to carry off, up to its carry capacity.
-- **At scale, a standing answer replaces the prompt** — *always defend* / *always flee*, per band or for
-  the faction — so many bands do not mean many prompts.
-- A standing guard that gives up work every turn comes back when military gear creates real
-  trade-offs (#519).
+Proposal: **the sim musters the smallest armed crew that drives the pack off this turn**, from workers
+in camp only (a work party past the camp's range does not come back), clubs first, then other
+weapons. The muster is sized to the raid: one wolf draws a small muster, a big pack a big one. The
+musterers lose that turn's work and go back to their jobs afterwards.
+
+**When no muster in camp can drive the pack off**, the player is asked through the turn orb, with the
+forecast for each answer: muster everyone armed and take the losses of fighting, or keep working and
+take the losses of not fighting. The standing answer (per band, or for the faction) replaces the prompt
+at scale.
+
+**This needs a sim change.** Today a raid applies casualties to the band side only — the pack takes no
+losses and never retreats, so it raids every turn it stays within range. Defenders must be able to
+hurt the pack and make it break off, or no muster size means anything.
+
+The deeper threat from predators is that they compete for the band's food — they eat the same herds.
+That is answered by hunting the pack (the denial raid), not by the camp's defence.
+
+A standing guard that gives up work every turn comes back when military gear and human raiders create
+real trade-offs (#519). Fleeing, and raiders who carry goods off — the trade-panel choice — belong to
+human raiders too.
 
 ### What #465 becomes
 
@@ -179,10 +190,8 @@ first* — is the priority list. The player-facing **max** above is the survivin
 
 ## Open questions
 
-1. **What predators take.** Today's raiders are predators. What can a wolf pack carry off — meat from
-   the larder, animals from a pen? The trade-panel choice fits human raiders fully once they exist.
-2. **`queue_target_turns`.** Is "finish the head order in N turns" the right size for the bench and the
-   build queue, and is 5 a sensible opening value?
+1. **A raid that ends.** The pack needs losses and a retreat rule — how much damage breaks a pack off,
+   and does a beaten pack stay away for some turns?
 
 ## Related
 
