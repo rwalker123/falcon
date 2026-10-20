@@ -326,10 +326,21 @@ list every band. It is the same panel, rows and work strip, rolled up:
 
 **3. City orders — the ruler.**
 
-- **Trades:** a share of people working full time as crafters, traders and builders. This is where
-  idle people become traders and diplomats.
-- **Great works** — walls and monuments — fed from the granary.
-- **Rations:** handing out what the stores hold.
+- **A city grows out of a tribe and replaces it**, the way a tribe replaced its bands: when the
+  tribe's bands settle into one cluster that carries the *city* label and it runs its first
+  administered store, the city takes the tribe's place in the band switcher, its bands one click down.
+  A lone band can grow into a city the same way.
+- **Trades:** the player sets a share of working-age people (crafters, builders, traders) taken out of
+  the pool for good. A full-time trade is better at its work than whoever is spare — a full-time
+  crafter works faster and to a better result — and that is what pays for the hands the pool loses,
+  since they never forage. Full-time builders go to great works first, then to the city's other builds.
+  The people bar gains a Trades part.
+- **Great works** — walls, palisades, monuments — are ordinary builds with a far larger builder cap,
+  started from the same rung card. Their crew is fed from the granary: while it can feed them the work
+  runs, and when it is empty the work stops. The row states how many turns the granary can feed its crew.
+- **Rations:** a ration level on the city's food — Full, Short, Starvation. Short stretches the
+  granary at a cost in morale; Starvation stretches it further and costs health too. It is the choice
+  before a hard winter or during a great work.
 
 **4. Nation orders — the faction leader.** The work #598 describes:
 
