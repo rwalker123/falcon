@@ -273,16 +273,34 @@ Before a chief, the band runs on the per-source settings in "Decided" above.
 
 **2. Tribe orders — the paramount chief.**
 
-- **Shared workers.** Spare hands in one band work another member band's sites, bench and builds
-  within reach. A band staffs its own work first; only what is left over goes to the tribe, so shared
-  work never takes from a band's keeping or its food. Working another band's site is a walk there and
-  back, priced the way a far source is today.
-- **A tribe bench.** Materials & Crafting's band selector gets the tribe as an entry. Orders queued
-  there are worked by spare hands from any member band, drawn from the network's pooled materials, and
-  the gear goes to whichever band is short of it.
-- **Shared works** — a granary or a road serving several bands, built by hands from all of them.
+- **One pool of people.** Once bands form a tribe, all their working-age people are one pool and the
+  paramount chief distributes them — the same three passes, over one priority list holding every
+  member band's sources, builds, benches and the shared works. No band staffs "its own work first";
+  a worker sent to another band's site walks there and back, priced the way a far source is today, so
+  distance still keeps most people near home.
+- **No band refuses.** Under a tribal leader a band may push back (grievance, the governance axis), but
+  it never withholds its people; refusing outright is a band leaving the tribe. Whether a band can
+  refuse particular work is left to playtest.
+- **A tribe bench.** Orders queued there are worked by any member band's people, drawn from the
+  network's pooled materials, and the gear goes to whichever band is short of it ("→ Greyfen"). A
+  bench tool serves the tribe within reach the way goods do — one loom is still one weaver at a time.
+- **Shared works** — a granary or a road serving several bands — are rows on the tribe's one list,
+  kept and built from the one pool.
 - **Who comes first when the network runs short**, in place of today's automatic pooling.
 - **One set of band orders for every member band.**
+
+**The tribe on screen.** The tribe *replaces* its bands in the Band panel's band switcher and in
+Materials & Crafting's picker — one entry, "Reedwater tribe · 3 bands", so a grown people does not
+list every band. It is the same panel, rows and work strip, rolled up:
+
+- **Work tab:** one collapsed line per member band — its name, crew bar and idle count — then the
+  shared works. Opening a band's line shows its rows exactly as on the Band panel.
+- **Drilling into a band is one click.** A band's name on its line (or the band on the map) opens that
+  band's own panel, with a breadcrumb back (*Reedwater tribe › Greyfen*); while drilled in, the
+  switcher's ◀ ▶ step through the tribe's member bands.
+- **Crafting:** On hand is the network's pooled materials (each pile's tooltip names who holds it);
+  Make next looks across the bands (*Spears ×5 — Greyfen 3, Pinewold 2*).
+- **People bar:** the one bar, totalled across the tribe, idle included.
 
 **3. City orders — the ruler.**
 
