@@ -309,6 +309,10 @@ list every band. It is the same panel, rows and work strip, rolled up:
 - **Crafting:** On hand is the network's pooled materials (each pile's tooltip names who holds it);
   Make next looks across the bands (*Spears ×5 — Greyfen 3, Pinewold 2*).
 - **People bar:** the one bar, totalled across the tribe, idle included.
+- **Starting a shared work uses the card that already exists.** The tile card's branch actions
+  (`Road ▸`, and each storage branch the same way) open the same rung card with the same `Band:`
+  picker; once there is a tribe, the tribe stands in that picker in place of its member bands, as it
+  does in the band switcher. A rung the tribe starts lands in its Shared works.
 - **One scouting range for the whole tribe**, counted out from the outer edge of all its bands' local
   ranges together — the scouts ride the tribe's whole border, not a ring round each camp. It is set on the tribe's
   panel; a member band's own panel shows it read-only ("set by the tribe"). Scouts are a standing duty
