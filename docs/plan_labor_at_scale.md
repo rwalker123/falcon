@@ -62,9 +62,13 @@ already answers it.
 
 **A source's MAX caps every pass.** No pass puts more workers on a source than its max.
 
-**A source below its floor gets no workers.** It takes nothing until it regrows past the floor, so it
-is skipped until there is something above the floor to take. Staffing is re-evaluated every turn, so
-it is picked up the turn it crosses.
+**A source below its floor gets no takers.** It takes nothing until it regrows past the floor, so its
+take is skipped until there is something above the floor to take. Staffing is re-evaluated every turn,
+so it is picked up the turn it crosses.
+
+**Its keepers are still sent.** An improved source (a tended patch, a farm, a tamed herd, a pen)
+owes its keeping every turn, whether or not anything is harvested. Without keepers it rots back down
+the ladder and never grows back, so pass 1 staffs a below-floor source's keeping crew and nobody else.
 
 **Crews are re-evaluated every turn, and workers move freely.** A worker may be on a different source
 each turn; no smoothing holds a crew in place.
