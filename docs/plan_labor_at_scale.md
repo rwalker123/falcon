@@ -329,7 +329,9 @@ list every band. It is the same panel, rows and work strip, rolled up:
 - **A city grows out of a tribe and replaces it**, the way a tribe replaced its bands: when the
   tribe's bands settle into one cluster that carries the *city* label and it runs its first
   administered store, the city takes the tribe's place in the band switcher, its bands one click down.
-  A lone band can grow into a city the same way.
+  A lone band can grow into a city the same way. **Inside a city a band is called a quarter**
+  (*Greyfen quarter*, *3 quarters*) — the old word for a part of a city, each grown from the band that
+  settled there.
 - **Trades:** the player sets a share of working-age people (crafters, builders, traders) taken out of
   the pool for good. A full-time trade is better at its work than whoever is spare — a full-time
   crafter works faster and to a better result — and that is what pays for the hands the pool loses,
