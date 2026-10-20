@@ -95,7 +95,8 @@ parallel**.
 
 - **The player starts a build from the site's rung control** — the row's existing `⌃` button and the
   "Take it to…" rung card it opens. The site's sheet shows the **same control**, not a second one: one
-  widget, so the row and the sheet can never disagree. While a build runs the button becomes its
+  widget — the **work strip**: the rung mark, the `⌃` button and its card, the floor glyph, `⚠`, then
+  the crew number and its crew bar — so the row and the sheet can never disagree. While a build runs the button becomes its
   in-flight chip, filling with progress, with the builders and turns left in its tooltip.
 - **A rung caps its builders.** Each rung states how many hands can work on it at once (a per-rung
   config value beside its work cost — e.g. a farm takes up to 4 sowers). A build never takes more,
