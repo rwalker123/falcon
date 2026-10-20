@@ -400,7 +400,8 @@ people living on it is the settlement design's.
 
 - [#465](https://github.com/rwalker123/falcon/issues/465) — labor standing orders (absorbed, above)
 - [#709](https://github.com/rwalker123/falcon/issues/709) — the granary as a network node
-- [#598](https://github.com/rwalker123/falcon/issues/598) — the faction as central government (the nation level)
+- [#858](https://github.com/rwalker123/falcon/issues/858) — the arc that builds "Leaders: four levels of orders" (#859–#870)
+- [#598](https://github.com/rwalker123/falcon/issues/598) — the faction as central government (the nation level; its tax is #853)
 - [#176](https://github.com/rwalker123/falcon/issues/176) — settlements as derived clusters (the city label)
 - [#695](https://github.com/rwalker123/falcon/issues/695) — borders, absorption and the two routes to one polity (how a nation forms)
 - `docs/plan_civilization_steps.md` — the ladder the four levels follow: consent to direction, the
