@@ -314,6 +314,11 @@ and the event log, with a turn-orb message the way a discovery is announced. The
 command. The player causes it by moving bands, and learns it happened the way they learn anything
 else the world did.
 
+**A gathering place is where a tribe forms.** Bands linked by the supply network that share a
+gathering place become a tribe, with a paramount chief or a council of chiefs who take tribe orders
+— shared workers, a tribe bench, shared works (`docs/plan_labor_at_scale.md` → "Leaders: four levels
+of orders"). Migratory bands form one at a gathering place on their round, without settling.
+
 ### Gathering is where culture converges
 
 The culture module already has layer-drift meters, tension and schism (`culture.rs`;
@@ -437,6 +442,11 @@ surplus**:
   who cannot feed is mocked.
 - **Not modelled:** who within the band holds the granary. That is The Telling's to narrate; a second
   political layer inside a thirty-person band is more than the early game can carry.
+- **The chief comes before the granary.** A band accepts a chief (or, Egalitarian, an elders'
+  council) once directed work succeeds — a finished build, a big-game hunt that lands its kill, a
+  battle won, work on a gathering place's monument — so migratory peoples get one too. The axis above
+  decides which kind of leader the band has, never whether it has one. What the chief does is take
+  band orders from the player: `docs/plan_labor_at_scale.md` → "Leaders: four levels of orders".
 
 **Order for the arc (leaning):** spoilage with the storage lesson → the tile-source seam
 (settlement arc) with storage as its first branch → the granary as a tether → directed labor and the
@@ -550,7 +560,9 @@ payments — not people. A field or a pen needs no books: the band that eats fro
 - **A route counts** once traffic runs on it (a trail or better with hauls moving). A path nobody
   sends anything along is walked, not managed.
 - **A faction has a management capacity** — a small number to start, a config lever like `K` and
-  the cohesion ceiling — and writing lifts it.
+  the cohesion ceiling — and writing lifts it. It is also how far a city's ruler and a faction
+  leader reach: over it, their orders are carried out worse, the same lossy shape
+  (`docs/plan_labor_at_scale.md` → "A leader can only run so much well").
 
 ### Above the ceiling: lossy, never a refusal
 

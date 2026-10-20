@@ -76,16 +76,13 @@ each turn; no smoothing holds a crew in place.
 **A pen is hold work** — staffed in pass 1 at its hold count. **Roadwork is hold work** — staffed in
 pass 1 at the crew its keeping bill needs.
 
-### Hand placement is the bottom layer, and the layers above it come with growth
+### Per-source settings are the bottom layer, and leaders add the layers above
 
-| Population | What the player manages |
-|---|---|
-| A starting band | floors and priorities on a handful of sources |
-| A settled band | the same, over more sources — the sim staffs every one of them |
-| Several bands | each band's priorities (a band's list can be copied to others) |
-| A faction | policy above the bands — #598 |
-
-Nothing is taken away as the game grows. A lower layer stays reachable, a click or two deeper.
+The floors, priorities, maxes and rung builds above are what the player sets on each source. As the
+people grow they gain leaders — a band's chief, a tribe's, a city's ruler, a nation's — and each
+leader takes goals from the player and sets the layer below it. See "Leaders: four levels of
+orders". Nothing is taken away as the game grows: a lower layer stays reachable, a click or two
+deeper.
 
 ## Proposed — for review
 
@@ -194,6 +191,104 @@ staffed by the sim. This design absorbs it: its *min* and *max* are the floor's 
 the sim rather than set by the player, and its open question — *which source gets a newly-freed worker
 first* — is the priority list. The player-facing **max** above is the surviving half of its range.
 
+## Leaders: four levels of orders (decided)
+
+Per-source settings stop the player's work growing with each new worker, but not with each new band
+or settlement. Leaders do that. Each level of the people's organisation gets a leader, the player
+gives that leader goals, and the leader turns them into the settings one level down. The levels are
+the ones the civilization ladder (`docs/plan_civilization_steps.md`) already climbs, so each milestone
+that today only changes a label or an icon now changes what the player manages.
+
+### The four levels
+
+| Level | What it is | How it starts | Who leads it |
+|---|---|---|---|
+| **1. Band** | One band, as today | The band's people accept direction once directed work succeeds (below) | a **chief** (Hierarchical) or an **elders' council** (Egalitarian) |
+| **2. Tribe** | Bands linked by the supply network — those within reach that already pool goods | The linked bands share a **gathering place** they walk to and work on | a **paramount chief** or a **council of chiefs** |
+| **3. City** | A settled cluster large enough to carry the *city* label (#176), still independent | Its first administered store — a granary and the rations drawn from it | a **ruler** or an **assembly** |
+| **4. Nation** | Cities, tribes and bands united as one faction | Union by conquest or confederation (civilization steps 8–11, #695) | a **faction leader** — a king or a high council |
+
+- **Every people reaches every level.** Hierarchical or Egalitarian changes the kind of leader, not
+  whether there is one. A Hierarchical leader carries orders out fully and tolerates long stretches
+  of directed work that feeds no one; an Egalitarian council carries out the same orders and grows
+  restless sooner under unfed directed work — the existing step-5 rule. So there is no dead end, and
+  the culture still costs something.
+- **A leader is a named person.** The Telling narrates them (*a chief, then a line of chiefs*).
+  Leaders carry no stats yet.
+- **Before a nation, the player commands each city and tribe directly.** There are no orders above
+  them until level 4 exists.
+
+### How a chief emerges: directed work that succeeds
+
+A band comes to accept a chief by watching directed work succeed. Every way of playing has some:
+
+| Way of playing | Directed work that counts |
+|---|---|
+| Settled foragers and farmers | a finished build — the first Cultivate, Tame or Corral |
+| Migratory hunters | a big-game hunt that lands its kill — a party against an aurochs or a mammoth, through the hunt's fight |
+| Anyone | a battle won (`docs/plan_battles.md`), or work on a gathering place's monument |
+
+Each success adds to one practice count, the way the knowledge ledger teaches a lesson by doing.
+When it fills, the band has a chief or a council. A migratory people needs no settling for either
+level: its chief comes from its hunts, and its tribe forms at a gathering place on its round —
+which is what the gathering place was for foragers in the first place
+(`docs/plan_civilization_steps.md` → "The contact chain").
+
+### What each level's orders are
+
+The player gives orders at the highest level they have. A change made by hand at a lower level stays
+pinned until the player releases it.
+
+**1. Band orders — the chief.** The player sets goals; the chief sets each source's floor, priority
+and builds.
+
+- **Food:** *keep N turns of food.* Below it the chief draws food sources harder; above it, eases them
+  toward Best or Learning.
+- **Materials:** keep-on-hand targets — stone already works this way; wood and hide join it.
+- **Land:** *improve the land.* The chief starts rung builds where they pay best, within a share of the
+  workers the player sets.
+- **Scouting range** and the self-filling bench, which already exist.
+
+Before a chief, the band runs on the per-source settings in "Decided" above.
+
+**2. Tribe orders — the paramount chief.**
+
+- **Shared workers.** Spare hands in one band work another member band's sites, bench and builds
+  within reach. A band staffs its own work first; only what is left over goes to the tribe, so shared
+  work never takes from a band's keeping or its food. Working another band's site is a walk there and
+  back, priced the way a far source is today.
+- **A tribe bench.** Materials & Crafting's band selector gets the tribe as an entry. Orders queued
+  there are worked by spare hands from any member band, drawn from the network's pooled materials, and
+  the gear goes to whichever band is short of it.
+- **Shared works** — a granary or a road serving several bands, built by hands from all of them.
+- **Who comes first when the network runs short**, in place of today's automatic pooling.
+- **One set of band orders for every member band.**
+
+**3. City orders — the ruler.**
+
+- **Trades:** a share of people working full time as crafters, traders and builders. This is where
+  idle people become traders and diplomats.
+- **Great works** — walls and monuments — fed from the granary.
+- **Rations:** handing out what the stores hold.
+
+**4. Nation orders — the faction leader.** The work #598 describes:
+
+- **Tax:** a share of each city's and tribe's product flows up to the faction.
+- **Redistribution** from a full city to a hungry one.
+- **Works between cities** — the roads that link them.
+- **Trade terms, tariffs and diplomacy.**
+- **Calling defenders** to war.
+
+### A leader can only run so much well
+
+- A chief runs one band, up to the cohesion ceiling (~150 people).
+- A paramount chief runs so many bands — a config lever.
+- A ruler's and a faction leader's reach is the **management capacity** writing lifts
+  (`docs/plan_civilization_steps.md` → "Writing: the third ceiling caps management").
+
+Over its capacity a leader carries orders out worse — lossy, never a refusal — the same shape as
+writing's miscount and the other ceilings.
+
 ## Open questions
 
 None open in this doc. The battle flow that decides who defends is `docs/plan_battles.md`'s; a crew
@@ -204,7 +299,12 @@ on it is the settlement design's.
 
 - [#465](https://github.com/rwalker123/falcon/issues/465) — labor standing orders (absorbed, above)
 - [#709](https://github.com/rwalker123/falcon/issues/709) — the granary as a network node
-- [#598](https://github.com/rwalker123/falcon/issues/598) — the faction as central government (the top layer)
+- [#598](https://github.com/rwalker123/falcon/issues/598) — the faction as central government (the nation level)
+- [#176](https://github.com/rwalker123/falcon/issues/176) — settlements as derived clusters (the city label)
+- [#695](https://github.com/rwalker123/falcon/issues/695) — borders, absorption and the two routes to one polity (how a nation forms)
+- `docs/plan_civilization_steps.md` — the ladder the four levels follow: consent to direction, the
+  gathering place, writing's management capacity
+- `docs/plan_battles.md` — a battle won is directed work that succeeds
 - [#798](https://github.com/rwalker123/falcon/issues/798) — hunting by need: the one row type where the
   sim already sizes the crew itself
 - `docs/plan_harvest_floor.md` — the floor and the two crew targets
