@@ -52,10 +52,11 @@ working-age people are assigned in three passes:
 3. **Bare hands, where they help.** Workers who cannot be kitted are assigned, in priority order, only
    to jobs where a bare-handed worker actually adds value — see "Pass 3, and what is left over".
 
-**Scouts come before pass 1.** The scouting range (see "Scouts: a range, not a count") is a standing
-duty, staffed first each turn — scouts with wayfinding gear before bare-handed ones — and the passes
-share out the people left. Sight comes before food here on purpose: the scouts a range needs are few,
-and a band that stops watching walks into what it cannot see.
+**Scouts come right after pass 1.** The scouting range (see "Scouts: a range, not a count") is
+staffed once every source has its hold crew and its keepers, and before pass 2 — scouts with
+wayfinding gear before bare-handed ones. A band always feeds itself before it scouts, and a healthy
+band keeps its watch before it draws its sources down further. When people are short, the range comes
+up short and the Scouting range card says so.
 
 **Kitted first, across priorities.** A lower-priority source worked with gear is preferred to a
 higher-priority source worked bare-handed. Gear is what makes a worker productive, so a kit should
