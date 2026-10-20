@@ -62,6 +62,16 @@ already answers it.
 
 **A source's MAX caps every pass.** No pass puts more workers on a source than its max.
 
+**A source below its floor gets no workers.** It takes nothing until it regrows past the floor, so it
+is skipped until there is something above the floor to take. Staffing is re-evaluated every turn, so
+it is picked up the turn it crosses.
+
+**Crews are re-evaluated every turn, and workers move freely.** A worker may be on a different source
+each turn; no smoothing holds a crew in place.
+
+**A pen is hold work** — staffed in pass 1 at its hold count. **Roadwork is hold work** — staffed in
+pass 1 at the crew its keeping bill needs.
+
 ### Hand placement is the bottom layer, and the layers above it come with growth
 
 | Population | What the player manages |
@@ -75,17 +85,58 @@ Nothing is taken away as the game grows. A lower layer stays reachable, a click 
 
 ## Proposed — for review
 
-### Jobs with no floor
+### Un-kitted workers make the missing kits
 
-Some work has no floor to set. Proposed answer for each:
+Pass 3 sends un-kitted workers to the **bench** first, to craft the gear the band is short of, and only
+then to sources where a bare hand still contributes (foraging is the main one). The bench already
+picks what to make: when no order can progress, `auto_craft_fill` queues the snapshot's own craft
+suggestions — the gear the band's rows are short of. What changes is that the sim staffs the bench
+rather than the player (`bench_crew` today).
 
-| Job | Why no floor | Proposal |
-|---|---|---|
-| **A finite seam** (stone) | rock does not grow back, so the sheet offers no floor dial today | Its whole useful crew is *reach* work: it is staffed in pass 2, at its priority, up to its useful crew and its max. A quarry never takes hands from a source that is merely holding. |
-| **A pen** | a managed source pays managed production; it has no floor axis | Its whole useful crew is *hold* work: staffed in pass 1. A pen is steady-state by nature, and an under-kept pen sheds its animals. |
-| **Builders** | a build is a job, not a stock | The builders role is *reach* work: staffed in pass 2 at the build queue's priority, up to the role's max. A build is investment — it waits until the band is fed. |
-| **Roadwork** | a road's keeping is a standing bill | Staffed in pass 1, at the crew its keeping bill needs. |
-| **Scouts and warriors** | they take nothing; their size is a choice | The player sets a count (the role's max is its target). Staffed in pass 1, in priority order — a standing duty, like holding a source. |
+### Stone: a stock target, not a crew
+
+A deposit's useful crew is the crew that cuts the whole room above the floor in **one turn** — 958
+cutters on the Firbrook deadfall. That is meaningless as a target. Stone has no floor at all, so it
+needs a different "how much".
+
+Proposal: the player sets **how much to keep on hand** (e.g. *keep 60 stone*). That is the floor's
+counterpart for a store: the floor says how much to leave in the ground, the target says how much to
+keep in the pile.
+
+- **Hold** (pass 1): the crew whose take matches what the band draws per turn — its builds' and its
+  upkeep's draw on that material.
+- **Reach** (pass 2): the extra crew that refills the pile toward the target.
+- **At or above the target**: no workers.
+
+A **renewing** working (wood) keeps its floor, which protects the stand, and works like a forage
+patch: hold at the floor's regrowth, reach toward the floor — the 958 is *clear it now*, not the reach
+crew. Whether wood also takes a keep-on-hand target is open (question 4 below).
+
+### Builders: what is left over
+
+A build has no natural crew size: every extra builder finishes it sooner, up to the gear that arms
+them. Proposal: **builders take the workers left after passes 1 and 2**, while the build queue holds
+an entry, with no setting of their own. A band whose food and holding work take every hand does not
+build until it frees some — by lowering a floor, or a priority. A bare-handed builder still builds,
+so builders are also a pass-3 destination (question 5 below).
+
+### Scouts: a range, not a count
+
+The player sets **how far the band sees**; the sim staffs the scouts that reach it. That is what adding
+scouts does today, and a range stays right as gear improves — a better wayfinding kit extends each
+scout's vantage, so fewer scouts are needed for the same range.
+
+### Warriors: a response, not a standing role
+
+Warriors defend the camp against predator raids: the raid's defenders are the band's warriors, armed
+by the warrior kit, and the rest of its exposed workers take losses unarmed. A standing count is hard
+to reason about because nothing tells the player what one more warrior buys.
+
+Proposal: **warriors muster by need**, the way #798 musters hunters. The band keeps no standing guard.
+When a raid lands, workers who can be armed (clubs first) defend, pulled from their work in reverse
+priority, and go back afterwards. The player's setting, if any, is a stance — *defend* or *flee* —
+not a headcount. A standing guard that gives up work every turn comes back when military gear
+creates real trade-offs (#519).
 
 ### What #465 becomes
 
@@ -96,16 +147,16 @@ first* — is the priority list. The player-facing **max** above is the survivin
 
 ## Open questions
 
-1. **Pass 3's order.** Read as written, pass 3 assigns bare-handed workers wherever they contribute.
-   Does it follow the same two steps as the kitted passes — every source's *hold* first, then *reach*,
-   each in priority order?
-2. **A source below its floor.** A source standing below its floor takes nothing until it regrows past
-   it, while its *hold it after* crew is still positive. Does pass 1 staff it anyway (the hands are
-   there the turn it crosses), or skip it until there is something above the floor?
-3. **Reshuffling.** Crews now change size without a command. A worker freed by one source moving to
-   another every turn could read as jitter. Is per-turn reassignment acceptable, or should a crew only
-   be reshuffled when a source changes state (reaches its floor, runs out of gear, is added or
-   removed)?
+1. **Pass 3's order after the bench.** Once the bench is staffed, do the remaining bare-handed workers
+   follow the kitted passes' two steps — every source's *hold* first, then *reach*, each in priority
+   order?
+2. **The bench's size.** Does the bench take every un-kitted worker, or only as many as its queue can
+   use (a craft has its own worker-turns, so extra crafters can add nothing)?
+3. **Stone's keep-on-hand target.** Is a stock target the right "how much" for a finite seam?
+4. **Wood.** Does a renewing working keep only its floor, or also take a keep-on-hand target?
+5. **Builders in pass 3.** Do bare-handed workers go to the build queue, and in what order against the
+   bench and bare-handed foraging?
+6. **Warriors.** Is mustering by need the right abstraction, and is *defend / flee* the right setting?
 
 ## Related
 
