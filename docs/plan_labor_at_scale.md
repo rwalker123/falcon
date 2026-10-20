@@ -119,23 +119,36 @@ parallel**.
 - **Roads are built the same way**: a road build's builders join the road's own row, beside its
   keeping.
 
-### The bench: a queue of orders
+### The bench: several orders at once, each with a crafter limit
 
-The bench is not a site, so it stays a queue. The player adds orders, as today, and the bench also
-fills itself: when no order can progress, `auto_craft_fill` queues the snapshot's own craft
-suggestions — the gear the band's rows are short of. What changes is that the sim staffs it; the
-player no longer sets `bench_crew`.
+The bench is not a site, so it keeps its orders. The player adds them, as today. What changes is that
+**several orders run at once** and the sim staffs them; the player no longer sets `bench_crew`, and
+the Crafters stepper is retired like the Builders one.
 
+- **A recipe caps its crafters per item.** Each recipe states how many hands can work one item at once
+  (a spear 1, a sled 2 — a per-recipe config value). An order may take that many per item it still
+  has to make, so a batch (*Baskets ×2*) works its items side by side, and twenty crafters never land
+  on one spear. Issue #852 carries the recipe values.
+- **Orders are staffed the way builds are.** One crafter on every workable order first, at any
+  priority; then round-robin within High up to each order's cap, then Normal, then Low.
 - **Each order carries a priority**, and it ranks against sources on the one priority list. So a High
   craft order can take kitted workers ahead of a Normal source's reach crew — some kitted workers are
   spared for the crafting the player asked for.
-- **The bench has no hold crew.** It is staffed in pass 2 (and pass 3 where bare hands help), never
-  pass 1.
+- **An order's materials are set aside when it starts** — the turn it gets its first crafter. Two
+  orders drawing on the same fibre can then never both stall halfway; the ones still waiting show
+  what they are short of. The pile shows how much of it is set aside for the bench.
 - **An order short of an input is not workable and takes nobody**, exactly as the bench skips it
   today.
-- **A bare-handed crafter crafts**, at the material's hand-working rate, so the bench is a pass-3
-  destination.
+- **A bench tool is held by one crafter.** One loom means one weaver works at the loom's quality; a
+  second weaving order works by hand, at the material's hand-working rate and its lower result. The
+  loom goes to the higher priority.
+- **The bench fills itself only when crafters are free**, and only with the gear the band is shortest
+  of — `auto_craft_fill` must not flood a bench that can run several orders.
+- **The bench has no hold crew.** It is staffed in pass 2 (and pass 3 where bare hands help), never
+  pass 1. A bare-handed crafter crafts, so the bench is a pass-3 destination.
 - **"Kitted" for the bench means holding its bench tool** (the tanning frame, the awl, the billet).
+- **On screen, each running order shows the work strip's crew bar**: crafters at the bench tool, by
+  hand, and the room left under the order's cap. The work figures move into tooltips.
 
 ### Pass 3, and what is left over
 
@@ -294,9 +307,9 @@ writing's miscount and the other ceilings.
 
 ## Open questions
 
-None open in this doc. The battle flow that decides who defends is `docs/plan_battles.md`'s; a crew
-cap per craft order is the crafting arc's (#840); whether a tile's cap also counts the people living
-on it is the settlement design's.
+None open in this doc. The battle flow that decides who defends is `docs/plan_battles.md`'s; each
+recipe's crafter cap per item is #852's (crafting arc #840); whether a tile's cap also counts the
+people living on it is the settlement design's.
 
 ## Related
 
