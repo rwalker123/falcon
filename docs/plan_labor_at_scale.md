@@ -89,34 +89,54 @@ Nothing is taken away as the game grows. A lower layer stays reachable, a click 
 
 ## Proposed — for review
 
-### Queue jobs: the bench and the build queue
+### Builds join the site's crew — there is no build queue
 
-The bench and the build queue are both queues of orders, and neither has a natural crew size — every
-extra hand finishes the head order sooner. They are staffed the same way.
+A site's crew already keeps it and harvests it (`docs/plan_site_crews.md`). It builds it too: when
+the player starts an improvement on a site, its builders and their build kit join that site's crew.
+There is no separate build queue and no Builders role, so **builds on different sites run in
+parallel**.
 
-- **The player adds orders to both**, as today. The bench also fills itself: when no order can
-  progress, `auto_craft_fill` queues the snapshot's own craft suggestions — the gear the band's rows
-  are short of. What changes is that the sim staffs both queues; the player no longer sets
-  `bench_crew` or the Builders role.
-- **Each order carries a priority** (build queue entries already do), and it ranks against sources on
-  the one priority list. So a High craft order can take kitted workers ahead of a Normal source's
-  reach crew — some kitted workers are spared for the crafting the player asked for.
-- **A queue job has no hold crew.** It is staffed in pass 2 (and pass 3 where bare hands help), never
-  pass 1.
-- **A queue job takes every worker it can use, and no more.** Its useful crew is the crew that
-  finishes its head workable order in one turn — the order's remaining worker-turns (bench) or
-  remaining work (build). Where nothing else wants the hands, the queue fills up to that crew. An
-  order short of an input is not workable and takes nobody, exactly as the bench skips it today.
+- **The player starts a build from the site's rung buttons** — on the Work tab row or on the site's
+  sheet. Clicking the next rung starts it; clicking the rung being built stops it.
+- **A rung caps its builders.** Each rung states how many hands can work on it at once (a per-rung
+  config value beside its work cost — e.g. a farm takes up to 4 sowers). A build never takes more,
+  however much work is left.
+- **A tile caps everyone working it.** Keepers, builders and harvesters together never exceed what the
+  tile can hold.
+- **One builder on every build first.** After pass 1, every build that can make progress gets one
+  builder, at any priority: the player started it, so the game tries to staff it.
+- **Then builders round-robin within a priority.** In passes 2 and 3, High builds each take one more
+  builder in turn until every High build is at its cap; only then Normal, then Low. Within a priority
+  group, builds are staffed before sources reach toward their floor.
 - **A bare-handed builder builds**: build gear adds to what each builder delivers, it is not required
-  to deliver anything. A bare-handed crafter crafts too, at the material's hand-working rate. So both
-  queues are pass-3 destinations.
-- **"Kitted" for the bench means holding its bench tool** (the tanning frame, the awl, the billet);
-  for the build queue, the build kit the entry's rung uses.
+  to deliver anything. So builds are pass-3 destinations too, and "kitted" for a build means holding
+  the build kit its rung uses.
+- **A half-built rung nobody works rots**, as it does today.
+- **Roads are built the same way**: a road build's builders join the road's own row, beside its
+  keeping.
+
+### The bench: a queue of orders
+
+The bench is not a site, so it stays a queue. The player adds orders, as today, and the bench also
+fills itself: when no order can progress, `auto_craft_fill` queues the snapshot's own craft
+suggestions — the gear the band's rows are short of. What changes is that the sim staffs it; the
+player no longer sets `bench_crew`.
+
+- **Each order carries a priority**, and it ranks against sources on the one priority list. So a High
+  craft order can take kitted workers ahead of a Normal source's reach crew — some kitted workers are
+  spared for the crafting the player asked for.
+- **The bench has no hold crew.** It is staffed in pass 2 (and pass 3 where bare hands help), never
+  pass 1.
+- **An order short of an input is not workable and takes nobody**, exactly as the bench skips it
+  today.
+- **A bare-handed crafter crafts**, at the material's hand-working rate, so the bench is a pass-3
+  destination.
+- **"Kitted" for the bench means holding its bench tool** (the tanning frame, the awl, the billet).
 
 ### Pass 3, and what is left over
 
 Pass 3 is one pass, in priority order, over **every job where a bare-handed worker adds value** — the
-bench, the build queue and bare-handed sources (foraging is the main one), each up to its useful crew.
+bench, the builds and bare-handed sources (foraging is the main one), each up to its useful crew.
 "Adds value" is the sim's own answer for each job, the same test passes 1 and 2 use.
 
 **Workers left after pass 3 are idle, and the game must say so clearly.** Idle people are not waste:
@@ -132,7 +152,7 @@ every living resource, whatever it pays.
 
 **Anything mined — it runs out and does not come back — takes a keep-on-hand target** at band level
 (e.g. *keep 60 stone*): stone today, ore and gold later. The player never assigns workers to a mine;
-the game picks the sites.
+the game picks the sites. The target is set on the material's row on the Work tab, since it is work.
 
 - **Hold** (pass 1): the crew whose take matches what the band draws on that material per turn — its
   builds' and its upkeep's draw.
@@ -150,7 +170,8 @@ decides.
 
 ### Scouts: a range, not a count
 
-The player sets **how far the band sees**; the sim staffs the scouts that reach it. That is what adding
+The player sets the band's **scouting range** — how far it sees — on the band side of the Band panel;
+the sim staffs the scouts that reach it. That is what adding
 scouts does today, and a range stays right as gear improves — a better wayfinding kit extends each
 scout's vantage, so fewer scouts are needed for the same range.
 
@@ -171,7 +192,17 @@ first* — is the priority list. The player-facing **max** above is the survivin
 
 ## Open questions
 
-None open in this doc. The battle flow that decides who defends is `docs/plan_battles.md`'s.
+- **Does a build keep its own priority?** Today a build carries a Build mark apart from its site's
+  Priority (`docs/plan_site_crews.md` §2.4). With builders on the site's crew, the site's one Priority
+  could cover both.
+- **Where the one-builder-each step sits.** Drafted as after pass 1, so keepers and hold crews come
+  first, and builds ahead of reach within a priority group.
+- **Does the tile cap count residents as well as workers?** A tile holding only so many people at all
+  reaches into settlement and population density, beyond this doc.
+- **How many crafters can one order take?** Twenty crafters on one spear makes no sense; an order
+  needs a crew cap the way a rung does. To be settled with the crafting panel.
+
+The battle flow that decides who defends is `docs/plan_battles.md`'s.
 
 ## Related
 
