@@ -353,11 +353,23 @@ list every band. It is the same panel, rows and work strip, rolled up:
 
 **4. Nation orders — the faction leader.** The work #598 describes:
 
-- **Tax:** a share of each city's and tribe's product flows up to the faction.
-- **Redistribution** from a full city to a hungry one.
-- **Works between cities** — the roads that link them.
-- **Trade terms, tariffs and diplomacy.**
-- **Calling defenders** to war.
+- **The Faction page becomes the nation page.** Its rows are the nation's members — cities, tribes,
+  bands — each opening its own panel. The band switchers below it are unchanged.
+- **The nation does not pool people.** Each member keeps its own pool; the nation moves goods, not
+  people. **A national work** — a road between cities — is handed to the nearest member and shows in
+  that member's works marked *for the nation*: the forced labour early states ran on.
+- **Tax:** one rate across the nation (None / Low / Normal / High), a share of each member's **spare**
+  food — what it grows beyond what it eats — so a member that only just feeds itself pays nothing, and
+  the stores never hand a member back what they just took. A member can be exempted. Tax costs
+  morale in every taxed member, more at the higher rates. It fills the nation's stores, which pay for
+  aid and national works.
+- **Aid between members:** Auto by default — the nation sends from its stores to members whose own
+  food falls short. The one setting is a **help-first order** for when there is not enough for all.
+- **The leader's reach is on the page** (*Queen Asha runs 4 of 5 members well*). Past it, orders are
+  carried out worse, never refused: tax collects less than is owed, and aid loses some on the way.
+  Writing raises the reach.
+- **Not in the first nation page:** trade terms, tariffs, diplomacy and calling defenders. They wait on
+  other peoples existing (#513) and on the battles design (#850).
 
 ### A leader can only run so much well
 
