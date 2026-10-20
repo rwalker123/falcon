@@ -301,6 +301,11 @@ list every band. It is the same panel, rows and work strip, rolled up:
 - **Crafting:** On hand is the network's pooled materials (each pile's tooltip names who holds it);
   Make next looks across the bands (*Spears ×5 — Greyfen 3, Pinewold 2*).
 - **People bar:** the one bar, totalled across the tribe, idle included.
+- **One scouting range for the whole tribe**, measured out from the outer edge of all its bands' land
+  — the scouts ride the tribe's whole border, not a ring round each camp. It is set on the tribe's
+  panel; a member band's own panel shows it read-only ("set by the tribe"). Scouts are a standing duty
+  from the one pool, drawn from the band nearest each stretch of the edge, so a longer border needs
+  more scouts for the same range.
 
 **3. City orders — the ruler.**
 
