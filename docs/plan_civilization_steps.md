@@ -423,6 +423,12 @@ characteristic axes (`docs/plan_crafting_and_materials.md`). Not a per-species t
 | Pit / granary | fixed to a tile | large; dry goods only | its contents are on the ground, not on your backs, so leaving means leaving them — the stored-surplus tether `docs/plan_settlement_population.md` describes, finally existing |
 | Sealed pottery | later | everything | a crafting-arc material, not a storage rung |
 
+**Fixed storage is two branches, by what they hold.** Food storage holds dry food only and climbs
+**Storage pit → Granary → Silo**; goods storage holds everything else — hide, wood, gear — and climbs
+**Storehouse → Warehouse**. They are separate because a granary is the food tether this arc is about
+and a storehouse is not; folding them into one ladder would make "raise the granary" also mean "store
+hide". (Named with Ray; rung costs and capacities are not set.)
+
 **After the granary: directed labor and consent.** In a 4X the player is already the chief, so step 5
 cannot be "a leader emerges". What it models is the **band's consent to being directed, bought with
 surplus**:
