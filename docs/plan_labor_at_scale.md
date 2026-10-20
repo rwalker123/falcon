@@ -156,7 +156,7 @@ There is no standing warrior count for the sim to staff. Who defends is chosen w
 in the battle's own flow, and the defenders leave their work for as long as the battle runs and go back
 to their jobs afterwards. A work party past the camp's range is not in camp and cannot defend.
 
-How a battle runs — who chooses, in whose turn, how it ends — is the combat design's, not this doc's.
+How a battle runs — who chooses, in whose turn, how it ends — is `docs/plan_battles.md`.
 
 ### What #465 becomes
 
@@ -167,7 +167,7 @@ first* — is the priority list. The player-facing **max** above is the survivin
 
 ## Open questions
 
-None open in this doc. The battle flow that decides who defends is the combat design's.
+None open in this doc. The battle flow that decides who defends is `docs/plan_battles.md`'s.
 
 ## Related
 
