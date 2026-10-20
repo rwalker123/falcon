@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Assign hunters</title>
+<script src="./support.js"></script>
+<script src="./work-strip.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans:ital,wght@0,400;0,600;1,400&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#1a2629;font-family:"Noto Sans",system-ui,sans-serif;}
+button{font-family:inherit;cursor:pointer}
+.sheet{background:#221b15;border:1px solid #3a2f24;border-radius:6px;box-shadow:0 8px 24px rgba(0,0,0,.55);color:#f4ead7;padding:12px 14px;display:flex;flex-direction:column;gap:9px;font-size:13px}
+.head{display:flex;align-items:center;gap:8px}
+.eyebrow{font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:#bdab90}
+.x{margin-left:auto;width:30px;height:30px;border:1px solid #3a2f24;background:#2b221a;color:#f4ead7;border-radius:4px}
+.field{display:grid;grid-template-columns:54px 1fr;align-items:center;gap:8px}
+.sel{height:32px;border:1px solid #4a3c2e;background:#2b221a;color:#f4ead7;border-radius:4px;display:flex;align-items:center;justify-content:space-between;padding:0 10px}
+.seg{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px}
+.opt{height:26px;border:1px solid #4a3c2e;background:#2b221a;color:#bdab90;border-radius:4px;font-size:12px}
+.opt.on{background:#46372a;border-color:#a08d6d;color:#f4ead7}
+.lbl{font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:#8d7e68}
+.chart{background:#2b2419;border:1px solid #3a2f24;border-radius:3px}
+.crew{background:#1d1812;border:1px solid #2f261d;border-radius:4px;padding:8px 10px;display:flex;flex-direction:column;gap:4px}
+.big{font-size:16px}
+.dim{font-size:12px;color:#bdab90}
+.warn{font-size:12px;color:#e0a63c}
+.faint{font-size:11px;color:#8d7e68}
+.step{display:flex;align-items:center;gap:8px}
+.sb{width:28px;height:28px;border:1px solid #3a2f24;background:#2b221a;color:#f4ead7;border-radius:4px}
+.sv{min-width:60px;text-align:center}
+.readout{background:#1d1812;border:1px solid #2f261d;border-radius:4px;padding:8px 10px;display:flex;flex-direction:column;gap:5px}
+.num{font-size:15px}
+.acct{font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:#8d7e68}
+.ok{color:#94a361;font-size:10px;letter-spacing:.06em;text-transform:uppercase}
+.commit{height:34px;border:1px solid #6b5a46;background:#3d3226;color:#f4ead7;border-radius:4px;font-size:14px}
+.link{color:#f4ead7;text-decoration:underline}
+</style>
+</helmet>
+<div style="width:520px;padding:20px;box-sizing:border-box">
+<div class="sheet">
+  <div class="head"><span class="eyebrow">Assign hunters</span><span>Red Deer</span><button class="x" aria-label="Close">✕</button></div>
+  <div class="field"><span>Band:</span><div class="sel"><span>Kestrelwatch</span><span>⌄</span></div></div>
+
+  <div class="seg"><sc-for list="{{floors}}" as="f" hint-placeholder-count="3"><button class="opt {{f.cls}}" onClick="{{f.pick}}">{{f.label}}</button></sc-for></div>
+  <div class="lbl">Leave standing</div>
+  <svg class="chart" width="458" height="96" viewBox="0 0 458 96" role="img" aria-label="Herd against the floor">
+    <rect x="6" y="{{stockY}}" width="410" height="{{stockH}}" fill="#5f6b3c" opacity=".55"></rect>
+    <line x1="6" x2="416" y1="{{floorY}}" y2="{{floorY}}" stroke="#f4ead7" stroke-width="1.5"></line>
+    <rect x="10" y="{{flagY}}" width="120" height="14" fill="#221b15"></rect>
+    <text x="14" y="{{flagTextY}}" fill="#f4ead7" font-size="9" font-family="Noto Sans">{{floorFlag}}</text>
+    <rect x="428" y="6" width="8" height="84" fill="#46372a"></rect>
+    <text x="406" y="92" fill="#8d7e68" font-size="8" font-family="Noto Sans">60 turns</text>
+  </svg>
+
+  <div class="lbl">Hunters</div>
+  <div class="crew">
+    <div class="wstrip">
+      <div class="marks">
+        <span class="mk" title="{{rungMarkTip}}">{{rungMark}}</span>
+        <sc-if value="{{hasLadder}}" hint-placeholder-val="{{true}}"><button class="ladder {{ladderCls}}" onClick="{{ladderClick}}" title="{{ladderTip}}"><span class="lfill" style="width:{{ladderFill}}"></span><span class="ltxt">{{ladderFace}}</span></button></sc-if>
+        <sc-if value="{{cardOpen}}" hint-placeholder-val="{{false}}">
+          <div class="rcard left">
+            <span class="rclbl">Take it to…</span>
+            <sc-for list="{{card}}" as="r" hint-placeholder-count="3">
+              <sc-if value="{{r.isButton}}" hint-placeholder-val="{{true}}"><button class="rbtn {{r.cls}}" onClick="{{r.click}}" title="{{r.tip}}"><span class="rfill" style="width:{{r.fill}}"></span><span class="rl">{{r.glyph}} {{r.label}}</span><span class="rf">{{r.face}}</span></button></sc-if>
+              <sc-if value="{{r.isMarker}}" hint-placeholder-val="{{false}}"><div class="rmark {{r.cls}}"><span>{{r.glyph}} {{r.label}}</span><span class="rmf">{{r.face}}</span></div></sc-if>
+            </sc-for>
+          </div>
+        </sc-if>
+        <span class="mk" title="{{policyTip}}">{{policyMark}}</span>
+        <span class="mk warnmk" title="{{warnTip}}">{{warnMark}}</span>
+      </div>
+      <div class="crewbox">
+        <span class="crewnum {{zeroCls}}">{{crew}}</span>
+        <div class="cbar" title="{{tip}}" aria-label="{{tip}}"><span style="flex:{{keepN}} 1 0;background:{{keepC}}"></span><span style="flex:{{buildN}} 1 0;background:{{buildC}}"></span><span style="flex:{{gearN}} 1 0;background:{{gearC}}"></span><span style="flex:{{bareN}} 1 0;background:{{bareC}}"></span></div>
+      </div>
+    </div>
+    <sc-if value="{{spearShort}}" hint-placeholder-val="{{true}}"><span class="warn">{{splitLine}}</span></sc-if>
+  </div>
+
+  <div class="field"><span class="dim">Priority</span><div class="seg"><sc-for list="{{pris}}" as="p" hint-placeholder-count="3"><button class="opt {{p.cls}}" onClick="{{p.pick}}">{{p.label}}</button></sc-for></div></div>
+  <div class="field"><span class="dim">Max</span><div class="step"><button class="sb" onClick="{{decMax}}" aria-label="Lower the max">−</button><span class="sv">{{maxLabel}}</span><button class="sb" onClick="{{incMax}}" aria-label="Raise the max">+</button></div></div>
+
+  <div class="field"><span>Kit</span><div class="sel"><span>Stalking kit</span><span>⌄</span></div></div>
+  <div class="dim">Tame this herd from the <span class="link">Work tab</span>.</div>
+
+  <div class="readout">
+    <div class="acct">Next turn · at the likely take</div>
+    <div style="display:flex;gap:10px;align-items:baseline"><span class="num">{{food}}</span><span class="acct">food</span><span class="ok">renewable</span></div>
+    <div style="display:flex;gap:10px;align-items:baseline"><span class="acct">Once tamed</span><span>0.00 food</span></div>
+    <div class="faint">The herd breeds back ≈0.4 Red Deer a turn.</div>
+  </div>
+  <button class="commit">Hunt Here</button>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":520,"height":820}}'>
+class Component extends DCLogic {
+  constructor(props) { super(props); this.state = { floor: 1, pri: 1, max: 0 }; }
+  renderVals() {
+    const st = this.state;
+    const FL = ['Everything', 'Best', 'Learning'];
+    const PR = ['High', 'Normal', 'Low'];
+    const frac = [0, 0.5, 0.8][st.floor];
+    const crews = [[2, 5], [2, 3], [1, 2]];
+    const foods = ['0.55', '0.27', '0.12'];
+    let [hold, reach] = crews[st.floor];
+    if (st.max > 0) { hold = Math.min(hold, st.max); reach = Math.min(reach, st.max); }
+    const spears = 2;
+    const crew = Math.min(reach, spears);
+    const top = 6, h = 84, stock = 0.8;
+    const floorY = top + h * (1 - frac);
+    const animals = Math.round(frac * 14);
+    // The work strip (work-strip.js) — the same control the Work tab row and the farm sheet show.
+    const bq = st.build;
+    const builders = bq === undefined ? 0 : 1, kitB = bq === undefined ? 0 : 1;
+    const bRem = bq === undefined ? 0 : 50 * (1 - bq);
+    const bTurns = builders > 0 ? Math.ceil(bRem / 1.5) : 0;
+    const buildTip = builders + ' building (' + kitB + ' with a crook)';
+    const strip = WorkStrip.props({
+      rungs: WorkStrip.RUNGS.animal, at: 0, build: bq === undefined ? null : { q: bq, rem: bRem }, builders, turns: bTurns, buildTip, open: st.open,
+      toggle: () => this.setState({ open: !st.open }),
+      start: () => this.setState({ build: 0, open: false }),
+      stop: () => this.setState({ build: undefined, open: false }),
+      floor: st.floor, warn: '',
+      crew: { keep: 0, build: builders, gear: crew, bare: 0 }, color: '#efe3cd',
+      tip: (builders > 0 ? buildTip + ' · ' : '') + crew + ' with spears — ' + Math.min(hold, crew) + ' hold it at the floor' + (crew > hold ? ', ' + (crew - hold) + ' more draw it down to it' : '')
+    });
+    return {
+      ...strip,
+      floors: FL.map((label, i) => ({ label, cls: i === st.floor ? 'on' : '', pick: () => this.setState({ floor: i }) })),
+      pris: PR.map((label, i) => ({ label, cls: i === st.pri ? 'on' : '', pick: () => this.setState({ pri: i }) })),
+      stockY: top + h * (1 - stock), stockH: h * stock,
+      floorY, flagY: Math.min(floorY + 2, 74), flagTextY: Math.min(floorY + 12, 84),
+      floorFlag: 'leave ' + Math.round(frac * 100) + '% · ≈' + animals + ' Red Deer',
+      spearShort: crew < reach,
+      splitLine: crew < reach ? 'Only ' + spears + ' have spears — bare hands can’t bring down a Red Deer, so ' + (reach - crew) + ' more stay home' : 'All with spears',
+      maxLabel: st.max > 0 ? String(st.max) : 'No max',
+      incMax: () => this.setState({ max: Math.min(12, st.max + 1) }),
+      decMax: () => this.setState({ max: Math.max(0, st.max - 1) }),
+      food: foods[st.floor]
+    };
+  }
+}
+</script>
+</body>
+</html>

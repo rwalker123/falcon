@@ -1,0 +1,411 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Tribe panel — Work tab</title>
+<script src="./support.js"></script>
+<script src="./work-strip.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans:ital,wght@0,400;0,600;1,400&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#1a2629;font-family:"Noto Sans",system-ui,sans-serif;}
+button{font-family:inherit;cursor:pointer}
+.setup{background:#ecebe6;color:#26231f;border:2px dashed #8f8a80;border-radius:6px;padding:10px 14px;display:flex;flex-direction:column;gap:8px}
+.setup-title{font-size:12px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:#4d4840}
+.setup-row{display:flex;flex-wrap:wrap;gap:6px 18px;align-items:center;font-size:13px}
+.sgroup{display:flex;align-items:center;gap:6px}
+.sbtn{width:24px;height:24px;border:1px solid #8f8a80;background:#fff;border-radius:4px;font-size:14px;line-height:1;color:#26231f}
+.snum{min-width:22px;text-align:center;font-weight:600}
+.try{font-size:12px;color:#4d4840}
+.panel{background:#221b15;border:1px solid #3a2f24;border-radius:6px;box-shadow:0 6px 18px rgba(0,0,0,.5);color:#f4ead7;font-size:13px}
+.phead{display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid #2f261d}
+.pname{font-size:15px;font-weight:600}
+.psub{font-size:11px;color:#bdab90}
+.crumb{background:none;border:none;padding:0;color:#bdab90;font-size:11px;text-decoration:underline}
+.cycler{margin-left:auto;display:flex;align-items:center;gap:6px;color:#bdab90;font-size:12px}
+.cbtn{width:30px;height:30px;border:1px solid #3a2f24;background:#2b221a;color:#f4ead7;border-radius:4px}
+.tab{width:30px;height:30px;border:1px solid #3a2f24;background:#2b221a;border-radius:4px;display:flex;align-items:center;justify-content:center}
+.tab.on{background:#46372a;border-color:#a08d6d}
+.zones{display:grid;grid-template-columns:400px minmax(0,1fr) 330px}
+.zone{padding:12px 14px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.zone+.zone{border-left:1px solid #2f261d}
+.zhead{display:flex;justify-content:space-between;align-items:baseline;font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:#8d7e68}
+.zhead b{font-weight:400;text-transform:none;letter-spacing:0;color:#bdab90;font-size:12px}
+.vital{display:grid;grid-template-columns:96px 1fr;font-size:16px;line-height:26px}
+.vital u{color:#f4ead7}
+.good{color:#94a361}
+.bar{display:flex;height:9px;border-radius:2px;overflow:hidden;gap:2px}
+.key{display:flex;flex-wrap:wrap;gap:4px 12px;font-size:12px;color:#bdab90}
+.sw{display:inline-block;width:9px;height:9px;margin-right:4px;vertical-align:-1px}
+.card{background:#1d1812;border:1px solid #2f261d;border-radius:4px;padding:10px 12px;display:flex;flex-direction:column;gap:6px}
+.ctitle{font-size:13px;color:#f4ead7}
+.dim{color:#bdab90;font-size:12px}
+.faint{color:#8d7e68;font-size:12px}
+.idlecard{background:#2a2014;border:1px solid #e0a63c;border-radius:4px;padding:10px 12px;display:flex;flex-direction:column;gap:4px}
+.idlenum{font-size:20px;color:#e0a63c;font-weight:600}
+.sec{display:flex;flex-direction:column;gap:4px}
+.sechead{font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:#8d7e68;display:flex;gap:6px;align-items:center;margin-top:4px}
+.bline{display:grid;grid-template-columns:18px minmax(0,1fr) auto;column-gap:8px;align-items:center;padding:7px 8px;border-radius:3px;background:#262019;border:1px solid #2f261d}
+.fold{background:none;border:none;color:#bdab90;padding:0;font-size:12px}
+.bname{background:none;border:none;padding:0;color:#f4ead7;font-size:14px;font-weight:600;text-decoration:underline;text-align:left}
+.bsub{font-size:12px;color:#bdab90}
+.bcrew{display:flex;flex-direction:column;align-items:flex-end;gap:3px;min-width:84px}
+.bnum{font-size:18px}
+.bbar{display:flex;width:110px;height:7px;border-radius:2px;overflow:hidden;background:#2f261d;cursor:help}
+.bbar span+span{border-left:2px solid #262019}
+.inner{display:flex;flex-direction:column;gap:4px;padding-left:14px}
+.row{display:grid;grid-template-columns:4px minmax(0,1fr) auto;column-gap:10px;padding:7px 8px 7px 0;border-radius:3px;background:#1f1913}
+.stripe{border-radius:2px}
+.rname{font-size:14px;color:#f4ead7}
+.rdet{font-size:12px;color:#bdab90}
+.chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:4px}
+.chip{border:1px solid #4a3c2e;background:#2b221a;color:#bdab90;font-size:11px;border-radius:10px;padding:2px 8px}
+.chip:hover{border-color:#a08d6d;color:#f4ead7}
+.y-skip{color:#8d7e68}
+.ps{font-size:12px;color:#8d7e68}
+</style>
+</helmet>
+<div style="width:1480px;padding:20px;box-sizing:border-box;display:flex;flex-direction:column;gap:16px">
+
+<div class="setup">
+  <div class="setup-title">Prototype setup — not part of the game</div>
+  <div class="setup-row">
+    <span style="color:#8f8a80">Working-age people in each band:</span>
+    <sc-for list="{{peopleKnobs}}" as="k" hint-placeholder-count="3">
+      <div class="sgroup"><span>{{k.name}}</span><button class="sbtn" onClick="{{k.dec}}" aria-label="Fewer people">−</button><span class="snum">{{k.n}}</span><button class="sbtn" onClick="{{k.inc}}" aria-label="More people">+</button></div>
+    </sc-for>
+  </div>
+  <div class="try">Try: drop Greyfen to 2 — the tribe sends people from Pinewold and Saltmarch to keep Greyfen's work going (blue in each band's bar). Open a band with ▸, or click its name to drill in; ‹ Reedwater tribe goes back.</div>
+</div>
+
+<div class="panel">
+  <div class="phead">
+    <svg width="22" height="22" viewBox="0 0 22 22" aria-hidden="true"><path d="M3 18 L11 5 L19 18 Z" fill="none" stroke="#e0a63c" stroke-width="2"></path><path d="M9 18 L11 13 L13 18" fill="none" stroke="#e0a63c" stroke-width="1.6"></path></svg>
+    <div>
+      <div class="pname">{{title}}</div>
+      <sc-if value="{{drilled}}" hint-placeholder-val="{{false}}"><div class="psub"><button class="crumb" onClick="{{backToTribe}}">‹ Reedwater tribe</button> › {{title}}</div></sc-if>
+      <sc-if value="{{notDrilled}}" hint-placeholder-val="{{true}}"><div class="psub">Tribe · 3 bands · gathering place (70, 17)</div></sc-if>
+    </div>
+    <div class="cycler">
+      <button class="cbtn" onClick="{{prev}}" aria-label="{{prevLabel}}">◀</button><span>{{cyclePos}}</span><button class="cbtn" onClick="{{next}}" aria-label="{{nextLabel}}">▶</button>
+      <span style="width:12px"></span>
+      <span class="tab on" aria-label="Work"><svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><path d="M2 12 L12 2" stroke="#efe3cd" stroke-width="2"></path></svg></span>
+      <span class="tab" aria-label="People"><svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><circle cx="7" cy="4" r="2.5" fill="#bdab90"></circle><rect x="4" y="7.5" width="6" height="5" rx="2" fill="#bdab90"></rect></svg></span>
+      <span class="tab" aria-label="Crafting"><svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><path d="M3 11 L9 5 M8 3 L11 6" stroke="#bdab90" stroke-width="2"></path></svg></span>
+      <span class="tab" aria-label="Faction"><svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><circle cx="7" cy="7" r="5" fill="none" stroke="#bdab90" stroke-width="1.6"></circle></svg></span>
+    </div>
+  </div>
+
+  <div class="zones">
+    <div class="zone">
+      <div class="vital"><u>Food ›</u><span class="good">{{foodLine}}</span></div>
+      <div class="vital" style="margin-top:-10px"><span style="color:#bdab90">Fodder</span><span>{{fodder}}</span></div>
+      <div class="vital" style="margin-top:-10px"><u>Morale ›</u><span class="good">{{morale}}</span></div>
+      <div class="vital" style="margin-top:-10px"><u>Growth ›</u><span>{{growth}}</span></div>
+
+      <div class="zhead">People <b>{{people}}</b></div>
+      <div class="bar"><span style="flex:{{kids}} 1 0;background:#d0a468"></span><span style="flex:{{working}} 1 0;background:#bdab90"></span><span style="flex:{{idle}} 1 0;background:#e0a63c"></span><span style="flex:{{elders}} 1 0;background:#93a0a8"></span></div>
+      <div class="key"><span><i class="sw" style="background:#d0a468"></i>{{kids}} children</span><span><i class="sw" style="background:#bdab90"></i>{{working}} working</span><span><i class="sw" style="background:#e0a63c"></i>{{idle}} idle</span><span><i class="sw" style="background:#93a0a8"></i>{{elders}} elders</span></div>
+
+      <sc-if value="{{hasIdle}}" hint-placeholder-val="{{true}}">
+        <div class="idlecard">
+          <div class="idlenum">{{idle}} idle</div>
+          <div class="dim">{{idleLine}}</div>
+        </div>
+      </sc-if>
+
+      <div class="card">
+        <div class="ctitle">Scouting range</div>
+        <sc-if value="{{notDrilled}}" hint-placeholder-val="{{true}}">
+          <div style="display:flex;align-items:center;gap:8px"><button class="cbtn" onClick="{{decSight}}" aria-label="Scout less far">−</button><span style="min-width:56px;text-align:center;font-size:15px">+{{sight}} tiles</span><button class="cbtn" onClick="{{incSight}}" aria-label="Scout farther">+</button></div>
+        </sc-if>
+        <sc-if value="{{drilled}}" hint-placeholder-val="{{false}}"><span style="font-size:15px">+{{sight}} tiles · set by the tribe</span></sc-if>
+        <div class="dim" title="{{scoutTip}}">{{scoutLine}}</div>
+      </div>
+    </div>
+
+    <div class="zone">
+      <div class="zhead">Work <b>{{workHead}}</b></div>
+      <sc-if value="{{notDrilled}}" hint-placeholder-val="{{true}}">
+        <div class="sechead"><span>▾</span><span>Bands</span></div>
+        <sc-for list="{{bandLines}}" as="b" hint-placeholder-count="3">
+          <div class="sec">
+            <div class="bline">
+              <button class="fold" onClick="{{b.toggle}}" aria-label="Open or close this band">{{b.foldGlyph}}</button>
+              <div style="min-width:0"><button class="bname" onClick="{{b.drill}}">{{b.name}}</button><div class="bsub">{{b.sub}}</div></div>
+              <div class="bcrew"><span class="bnum">{{b.n}}</span><div class="bbar" title="{{b.tip}}" aria-label="{{b.tip}}"><span style="flex:{{b.home}} 1 0;background:#bdab90"></span><span style="flex:{{b.away}} 1 0;background:#6f9fc4"></span><span style="flex:{{b.idle}} 1 0;background:#e0a63c"></span></div></div>
+            </div>
+            <sc-if value="{{b.open}}" hint-placeholder-val="{{false}}">
+              <div class="inner">
+                <sc-for list="{{b.rows}}" as="row" hint-placeholder-count="2">
+<div class="row">
+  <span class="stripe" style="background:{{row.stripe}}"></span>
+  <div style="min-width:0">
+    <div class="rname">{{row.name}}</div>
+    <div class="rdet">{{row.rungName}}</div>
+    <div class="rdet {{row.yieldCls}}">{{row.yieldLine}}</div>
+    <div class="chips"><span class="chip">Priority: {{row.pri}}</span></div>
+  </div>
+  <div class="wstrip">
+    <div class="marks">
+      <span class="mk" title="{{row.rungMarkTip}}">{{row.rungMark}}</span>
+      <sc-if value="{{row.hasLadder}}" hint-placeholder-val="{{true}}"><button class="ladder {{row.ladderCls}}" onClick="{{row.ladderClick}}" title="{{row.ladderTip}}"><span class="lfill" style="width:{{row.ladderFill}}"></span><span class="ltxt">{{row.ladderFace}}</span></button></sc-if>
+      <sc-if value="{{row.cardOpen}}" hint-placeholder-val="{{false}}">
+        <div class="rcard">
+          <span class="rclbl">Take it to…</span>
+          <sc-for list="{{row.card}}" as="r" hint-placeholder-count="3">
+            <sc-if value="{{r.isButton}}" hint-placeholder-val="{{true}}"><button class="rbtn {{r.cls}}" onClick="{{r.click}}" title="{{r.tip}}"><span class="rfill" style="width:{{r.fill}}"></span><span class="rl">{{r.glyph}} {{r.label}}</span><span class="rf">{{r.face}}</span></button></sc-if>
+            <sc-if value="{{r.isMarker}}" hint-placeholder-val="{{false}}"><div class="rmark {{r.cls}}"><span>{{r.glyph}} {{r.label}}</span><span class="rmf">{{r.face}}</span></div></sc-if>
+          </sc-for>
+        </div>
+      </sc-if>
+      <span class="mk" title="{{row.policyTip}}">{{row.policyMark}}</span>
+      <span class="mk warnmk" title="{{row.warnTip}}">{{row.warnMark}}</span>
+    </div>
+    <div class="crewbox">
+      <span class="crewnum {{row.zeroCls}}">{{row.crew}}</span>
+      <div class="cbar" title="{{row.tip}}" aria-label="{{row.tip}}"><span style="flex:{{row.keepN}} 1 0;background:{{row.keepC}}"></span><span style="flex:{{row.buildN}} 1 0;background:{{row.buildC}}"></span><span style="flex:{{row.gearN}} 1 0;background:{{row.gearC}}"></span><span style="flex:{{row.bareN}} 1 0;background:{{row.bareC}}"></span></div>
+    </div>
+  </div>
+</div>
+                </sc-for>
+              </div>
+            </sc-if>
+          </div>
+        </sc-for>
+        <div class="sechead"><span>▾</span><span>Shared works</span></div>
+        <sc-for list="{{sharedRows}}" as="row" hint-placeholder-count="2">
+<div class="row">
+  <span class="stripe" style="background:{{row.stripe}}"></span>
+  <div style="min-width:0">
+    <div class="rname">{{row.name}}</div>
+    <div class="rdet">{{row.rungName}}</div>
+    <div class="rdet {{row.yieldCls}}">{{row.yieldLine}}</div>
+    <div class="chips"><span class="chip">Priority: {{row.pri}}</span></div>
+  </div>
+  <div class="wstrip">
+    <div class="marks">
+      <span class="mk" title="{{row.rungMarkTip}}">{{row.rungMark}}</span>
+      <sc-if value="{{row.hasLadder}}" hint-placeholder-val="{{true}}"><button class="ladder {{row.ladderCls}}" onClick="{{row.ladderClick}}" title="{{row.ladderTip}}"><span class="lfill" style="width:{{row.ladderFill}}"></span><span class="ltxt">{{row.ladderFace}}</span></button></sc-if>
+      <sc-if value="{{row.cardOpen}}" hint-placeholder-val="{{false}}">
+        <div class="rcard">
+          <span class="rclbl">Take it to…</span>
+          <sc-for list="{{row.card}}" as="r" hint-placeholder-count="3">
+            <sc-if value="{{r.isButton}}" hint-placeholder-val="{{true}}"><button class="rbtn {{r.cls}}" onClick="{{r.click}}" title="{{r.tip}}"><span class="rfill" style="width:{{r.fill}}"></span><span class="rl">{{r.glyph}} {{r.label}}</span><span class="rf">{{r.face}}</span></button></sc-if>
+            <sc-if value="{{r.isMarker}}" hint-placeholder-val="{{false}}"><div class="rmark {{r.cls}}"><span>{{r.glyph}} {{r.label}}</span><span class="rmf">{{r.face}}</span></div></sc-if>
+          </sc-for>
+        </div>
+      </sc-if>
+      <span class="mk" title="{{row.policyTip}}">{{row.policyMark}}</span>
+      <span class="mk warnmk" title="{{row.warnTip}}">{{row.warnMark}}</span>
+    </div>
+    <div class="crewbox">
+      <span class="crewnum {{row.zeroCls}}">{{row.crew}}</span>
+      <div class="cbar" title="{{row.tip}}" aria-label="{{row.tip}}"><span style="flex:{{row.keepN}} 1 0;background:{{row.keepC}}"></span><span style="flex:{{row.buildN}} 1 0;background:{{row.buildC}}"></span><span style="flex:{{row.gearN}} 1 0;background:{{row.gearC}}"></span><span style="flex:{{row.bareN}} 1 0;background:{{row.bareC}}"></span></div>
+    </div>
+  </div>
+</div>
+        </sc-for>
+      </sc-if>
+      <sc-if value="{{drilled}}" hint-placeholder-val="{{false}}">
+        <sc-for list="{{drillRows}}" as="row" hint-placeholder-count="3">
+<div class="row">
+  <span class="stripe" style="background:{{row.stripe}}"></span>
+  <div style="min-width:0">
+    <div class="rname">{{row.name}}</div>
+    <div class="rdet">{{row.rungName}}</div>
+    <div class="rdet {{row.yieldCls}}">{{row.yieldLine}}</div>
+    <div class="chips"><span class="chip">Priority: {{row.pri}}</span></div>
+  </div>
+  <div class="wstrip">
+    <div class="marks">
+      <span class="mk" title="{{row.rungMarkTip}}">{{row.rungMark}}</span>
+      <sc-if value="{{row.hasLadder}}" hint-placeholder-val="{{true}}"><button class="ladder {{row.ladderCls}}" onClick="{{row.ladderClick}}" title="{{row.ladderTip}}"><span class="lfill" style="width:{{row.ladderFill}}"></span><span class="ltxt">{{row.ladderFace}}</span></button></sc-if>
+      <sc-if value="{{row.cardOpen}}" hint-placeholder-val="{{false}}">
+        <div class="rcard">
+          <span class="rclbl">Take it to…</span>
+          <sc-for list="{{row.card}}" as="r" hint-placeholder-count="3">
+            <sc-if value="{{r.isButton}}" hint-placeholder-val="{{true}}"><button class="rbtn {{r.cls}}" onClick="{{r.click}}" title="{{r.tip}}"><span class="rfill" style="width:{{r.fill}}"></span><span class="rl">{{r.glyph}} {{r.label}}</span><span class="rf">{{r.face}}</span></button></sc-if>
+            <sc-if value="{{r.isMarker}}" hint-placeholder-val="{{false}}"><div class="rmark {{r.cls}}"><span>{{r.glyph}} {{r.label}}</span><span class="rmf">{{r.face}}</span></div></sc-if>
+          </sc-for>
+        </div>
+      </sc-if>
+      <span class="mk" title="{{row.policyTip}}">{{row.policyMark}}</span>
+      <span class="mk warnmk" title="{{row.warnTip}}">{{row.warnMark}}</span>
+    </div>
+    <div class="crewbox">
+      <span class="crewnum {{row.zeroCls}}">{{row.crew}}</span>
+      <div class="cbar" title="{{row.tip}}" aria-label="{{row.tip}}"><span style="flex:{{row.keepN}} 1 0;background:{{row.keepC}}"></span><span style="flex:{{row.buildN}} 1 0;background:{{row.buildC}}"></span><span style="flex:{{row.gearN}} 1 0;background:{{row.gearC}}"></span><span style="flex:{{row.bareN}} 1 0;background:{{row.bareC}}"></span></div>
+    </div>
+  </div>
+</div>
+        </sc-for>
+      </sc-if>
+    </div>
+
+    <div class="zone">
+      <div class="zhead">Parties <b>0 out · 0 workers</b></div>
+      <div class="ps">No parties in the field.</div>
+      <div class="zhead" style="margin-top:6px">Trade</div>
+      <div class="zhead">This turn</div>
+      <div class="card" style="flex-direction:row;gap:8px"><span class="faint">NETWORK</span><span>{{networkLine}}</span></div>
+      <div class="ps">The tribe's bands pool goods within reach, and its people work wherever the tribe sends them.</div>
+    </div>
+  </div>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1480,"height":1100}}'>
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.state = { people: { Pinewold: 9, Greyfen: 7, Saltmarch: 10 }, open: {}, drill: null, openCard: null, queued: {}, sight: 2 };
+  }
+  renderVals() {
+    const st = this.state;
+    const BANDS = ['Pinewold', 'Greyfen', 'Saltmarch'];
+    const KIDS = { Pinewold: 6, Greyfen: 5, Saltmarch: 8 }, ELDERS = { Pinewold: 3, Greyfen: 2, Saltmarch: 4 };
+    // Who is nearest whom: the order a band's people are sent elsewhere (shortest walk first).
+    const NEAR = { Pinewold: ['Greyfen', 'Saltmarch'], Greyfen: ['Pinewold', 'Saltmarch'], Saltmarch: ['Greyfen', 'Pinewold'] };
+    const PRI = ['High', 'Normal', 'Low'];
+    const R = WorkStrip.RUNGS;
+    const jobs = [
+      { id: 'p-emmer', band: 'Pinewold', name: 'Harvest (66, 14)', rung: 'Wild', yieldText: '+0.48 /turn · 50% left standing', cat: '#94a361', pri: 1, hold: 2, reach: 4, floor: 1, rungs: R.plant, at: 0 },
+      { id: 'p-aurochs', band: 'Pinewold', name: 'Hunt Aurochs', rung: 'Penned', yieldText: '+1.20 /turn · 50% left standing', cat: '#efe3cd', pri: 1, hold: 2, reach: 2, keep: 2, floor: 1, rungs: R.animal, at: 2 },
+      { id: 'g-hay', band: 'Greyfen', name: 'Harvest (72, 18)', rung: 'Tended Patch', yieldText: '+0.97 /turn · 50% left standing', cat: '#94a361', pri: 0, hold: 3, reach: 5, keep: 1, floor: 1, rungs: R.plant, at: 1 },
+      { id: 'g-wood', band: 'Greyfen', name: 'Fell (70, 17)', rung: 'Deadfall', yieldText: '+0.60 wood /turn · 50% left standing', cat: '#7d6a4f', pri: 1, hold: 1, reach: 3, floor: 1 },
+      { id: 's-emmer', band: 'Saltmarch', name: 'Harvest (71, 18)', rung: 'Wild', yieldText: '+0.48 /turn · 50% left standing', cat: '#94a361', pri: 1, hold: 2, reach: 5, floor: 1, rungs: R.plant, at: 0 },
+      { id: 's-deer', band: 'Saltmarch', name: 'Hunt Red Deer', rung: 'Wild', yieldText: '+0.20 /turn · 50% left standing', cat: '#efe3cd', pri: 2, hold: 2, reach: 3, floor: 1, rungs: R.animal, at: 0 },
+      { id: 's-stone', band: 'Saltmarch', name: 'Dig stone', rung: 'Karst Highland (21, 14) — the game picks the site', yieldText: '+0.40 stone /turn', cat: '#8d7e68', pri: 1, hold: 1, reach: 2 },
+      { id: 'x-store', band: null, near: 'Greyfen', name: 'Food storage (70, 18)', rung: 'Storage pit · serves all three bands', yieldText: '2 work a turn to keep', cat: '#a08d6d', pri: 0, hold: 2, reach: 2, keep: 2, rungs: R.foodStorage, at: 0 },
+      { id: 'x-trail', band: null, near: 'Pinewold', name: 'Road Pinewold – Greyfen', rung: 'Trail', yieldText: '1 work a turn to keep', cat: '#a08d6d', pri: 1, hold: 1, reach: 1, keep: 1, rungs: R.route, at: 1 }
+    ].map((j) => Object.assign({}, j, { from: {}, b: 0, build: st.queued[j.id] !== undefined ? { q: st.queued[j.id], rem: (j.rungs ? j.rungs[j.at + 1].work : 0) * (1 - st.queued[j.id]) } : null }));
+
+    // One pool: every member band's working-age people, distributed by the tribe over one priority list.
+    const free = Object.assign({}, st.people);
+    // A job takes its own band's people first; only then does the tribe send people from the nearest bands.
+    const take = (j, n, ownOnly) => {
+      const home = j.band || j.near;
+      const order = ownOnly ? [home] : [home].concat(NEAR[home]);
+      let got = 0;
+      for (const b of order) { while (got < n && free[b] > 0) { free[b]--; j.from[b] = (j.from[b] || 0) + 1; got++; } }
+      return got;
+    };
+    const crewOf = (j) => Object.values(j.from).reduce((s, n) => s + n, 0);
+    // Scouts: one range for the whole tribe, measured out from the outer edge of all its bands' land, so
+    // the watch circles the tribe, not each camp. Staffed right after pass 1, from the band nearest
+    // each stretch of the edge (here: round the bands in turn). Each scout with wayfinding gear covers
+    // 2 tiles of range along one stretch; the tribe's edge has EDGE_STRETCHES stretches.
+    const EDGE_STRETCHES = 3;
+    // Counted from the tribe's edge: the outer edge of all its bands' local ranges together.
+    const scoutsNeeded = Math.ceil(Math.max(0, st.sight) / 2) * EDGE_STRETCHES;
+    const scoutsFrom = {};
+    let scouts = 0;
+    const byPri = jobs.slice().sort((a, b) => a.pri - b.pri);
+    // Each pass runs twice — home hands first, then the shortfall from other bands — so nobody walks to a
+    // neighbour's site while the neighbour's own people walk the other way.
+    const pass = (fn) => { fn(true); fn(false); };
+    pass((own) => byPri.forEach((j) => take(j, Math.max(0, j.hold - crewOf(j)), own)));                 // pass 1: keepers and hold crews
+    // Scouts come right after pass 1: the tribe feeds itself before it scouts, and scouts before it
+    // draws any source down further.
+    for (let i = 0; scouts < scoutsNeeded && i < scoutsNeeded * 3; i++) {
+      const b = BANDS[i % 3];
+      if (free[b] > 0) { free[b]--; scoutsFrom[b] = (scoutsFrom[b] || 0) + 1; scouts++; }
+    }
+    pass((own) => byPri.forEach((j) => { if (j.build && j.b === 0 && take(j, 1, own)) j.b++; }));      // one builder on every build
+    [0, 1, 2].forEach((p) => pass((own) => byPri.filter((j) => j.pri === p).forEach((j) => {           // pass 2: builds to their cap, then reach
+      if (j.build) { const cap = j.rungs[j.at + 1].cap; while (j.b < cap && take(j, 1, own)) j.b++; }
+      take(j, Math.max(0, j.reach + j.b - crewOf(j)), own);
+    })));
+    const idleOf = (b) => free[b];
+
+    const rowFor = (j) => {
+      const crew = crewOf(j);
+      const keepN = Math.min(crew, j.keep || 0);
+      const takeN = crew - keepN - j.b;
+      const walked = Object.keys(j.from).filter((b) => b !== (j.band || j.near)).map((b) => j.from[b] + ' from ' + b);
+      const parts = [];
+      if (keepN) parts.push(keepN + ' keep it up');
+      if (j.b) parts.push(j.b + ' building');
+      if (takeN > 0) parts.push(takeN + (j.keep && !j.rungs ? '' : ' working'));
+      const tip = parts.join(' · ') + (walked.length ? ' — ' + walked.join(', ') + ' walk here' : '');
+      const strip = WorkStrip.props({
+        rungs: j.rungs || null, at: j.at || 0, build: j.build, builders: j.b, turns: j.b ? Math.ceil(j.build.rem / (j.b * 1.2)) : 0,
+        buildTip: j.b + ' building', open: st.openCard === j.id,
+        toggle: () => this.setState({ openCard: st.openCard === j.id ? null : j.id }),
+        start: () => this.setState({ queued: Object.assign({}, st.queued, { [j.id]: 0 }), openCard: null }),
+        stop: () => { const q = Object.assign({}, st.queued); delete q[j.id]; this.setState({ queued: q, openCard: null }); },
+        floor: j.floor === undefined ? null : j.floor, warn: crew < j.hold ? 'Short: ' + crew + ' of ' + j.hold + ' to hold it' : '',
+        crew: { keep: keepN, build: j.b, gear: Math.max(0, takeN), bare: 0 }, color: j.cat, tip
+      });
+      return Object.assign({ name: j.name, rungName: j.rung, yieldLine: j.yieldText, yieldCls: '', stripe: '#2f261d', pri: PRI[j.pri] }, strip);
+    };
+
+    const bandLines = BANDS.map((b) => {
+      const mine = jobs.filter((j) => j.band === b);
+      const total = st.people[b];
+      const scouting = scoutsFrom[b] || 0;
+      const away = jobs.reduce((s, j) => s + ((j.band || j.near) !== b ? (j.from[b] || 0) : 0), 0) + scouting;
+      const idle = idleOf(b);
+      const home = total - away - idle;
+      const inbound = mine.reduce((s, j) => s + Object.keys(j.from).filter((x) => x !== b).reduce((t, x) => t + j.from[x], 0), 0);
+      const tipParts = [total + ' people', home + ' at home'];
+      if (away) tipParts.push(away + ' working for the tribe elsewhere' + (scouting ? ' (' + scouting + ' scouting the edge)' : ''));
+      if (idle) tipParts.push(idle + ' idle');
+      if (inbound) tipParts.push(inbound + ' from other bands working here');
+      return {
+        name: b, n: String(total), home, away, idle, tip: tipParts.join(' · '),
+        sub: mine.length + ' jobs' + (inbound ? ' · ' + inbound + ' from other bands' : '') + (away ? ' · ' + away + ' working elsewhere' : '') + (idle ? ' · ' + idle + ' idle' : ''),
+        open: !!st.open[b], foldGlyph: st.open[b] ? '▾' : '▸',
+        toggle: () => this.setState({ open: Object.assign({}, st.open, { [b]: !st.open[b] }) }),
+        drill: () => this.setState({ drill: b, openCard: null }),
+        rows: mine.map(rowFor)
+      };
+    });
+    const sharedRows = jobs.filter((j) => !j.band).map(rowFor);
+
+    const drilled = !!st.drill;
+    const sum = (o) => Object.values(o).reduce((s, n) => s + n, 0);
+    const scope = drilled ? [st.drill] : BANDS;
+    const people = scope.reduce((s, b) => s + st.people[b], 0);
+    const idle = scope.reduce((s, b) => s + idleOf(b), 0);
+    const kids = scope.reduce((s, b) => s + KIDS[b], 0), elders = scope.reduce((s, b) => s + ELDERS[b], 0);
+    const bi = drilled ? BANDS.indexOf(st.drill) : 0;
+    const idleBands = BANDS.filter((b) => idleOf(b) > 0).map((b) => b + ' ' + idleOf(b));
+    const jobCount = drilled ? jobs.filter((j) => j.band === st.drill).length : jobs.length;
+    return {
+      title: drilled ? st.drill : 'Reedwater tribe', drilled, notDrilled: !drilled,
+      backToTribe: () => this.setState({ drill: null, openCard: null }),
+      cyclePos: drilled ? (bi + 1) + ' / 3' : '1 / 1',
+      prevLabel: drilled ? 'Previous band in the tribe' : 'Previous', nextLabel: drilled ? 'Next band in the tribe' : 'Next',
+      prev: () => { if (drilled) this.setState({ drill: BANDS[(bi + 2) % 3], openCard: null }); },
+      next: () => { if (drilled) this.setState({ drill: BANDS[(bi + 1) % 3], openCard: null }); },
+      foodLine: drilled ? '84 (22 turns) · +0.66 /turn' : '241 (26 turns) · +1.9 /turn',
+      fodder: drilled ? '—' : '18', morale: drilled ? '82%' : '79%', growth: drilled ? '188% of normal' : '161% of normal',
+      people: kids + elders + people, kids, elders, working: people - idle, idle, hasIdle: idle > 0,
+      idleLine: drilled ? 'No job in the tribe where their hands help. Open a source, or queue gear at the bench.' : idleBands.join(' · ') + '. No job anywhere in the tribe where their hands help.',
+      workHead: drilled
+        ? (() => { const here = jobs.filter((j) => j.band === st.drill).reduce((s, j) => s + crewOf(j), 0);
+                   const away = jobs.reduce((s, j) => s + ((j.band || j.near) !== st.drill ? (j.from[st.drill] || 0) : 0), 0);
+                   return jobCount + ' jobs · ' + here + ' working here' + (away ? ' · ' + away + ' of its people working elsewhere in the tribe' : ''); })()
+        : jobCount + ' jobs · ' + (people - idle) + ' of ' + people + ' working',
+      bandLines, sharedRows, drillRows: drilled ? jobs.filter((j) => j.band === st.drill).map(rowFor) : [],
+      networkLine: 'pooling across 3 bands',
+      sight: st.sight,
+      incSight: () => this.setState({ sight: Math.min(9, st.sight + 1) }),
+      decSight: () => this.setState({ sight: Math.max(0, st.sight - 1) }),
+      scoutLine: scoutsNeeded === 0 ? 'No scouts — the tribe sees its bands’ local ranges and no farther.'
+        : (scouts < scoutsNeeded ? 'Only ' + scouts + ' of ' + scoutsNeeded + ' scouts — part of the edge sees less far.' : scouts + ' scouts ride the whole edge of the tribe’s range'),
+      scoutTip: Object.keys(scoutsFrom).map((b) => scoutsFrom[b] + ' from ' + b).join(', ') + ' · the range is counted past the outer edge of its bands’ local ranges, all the way round',
+      peopleKnobs: BANDS.map((b) => ({ name: b, n: st.people[b],
+        inc: () => this.setState({ people: Object.assign({}, st.people, { [b]: st.people[b] + 1 }) }),
+        dec: () => this.setState({ people: Object.assign({}, st.people, { [b]: Math.max(0, st.people[b] - 1) }) }) }))
+    };
+  }
+}
+</script>
+</body>
+</html>

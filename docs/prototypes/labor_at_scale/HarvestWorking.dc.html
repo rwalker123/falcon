@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Harvesters — already working</title>
+<script src="./support.js"></script>
+<script src="./work-strip.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans:ital,wght@0,400;0,600;1,400&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#1a2629;font-family:"Noto Sans",system-ui,sans-serif;}
+button{font-family:inherit;cursor:pointer}
+.sheet{background:#221b15;border:1px solid #3a2f24;border-radius:6px;box-shadow:0 8px 24px rgba(0,0,0,.55);color:#f4ead7;padding:12px 14px;display:flex;flex-direction:column;gap:9px;font-size:13px}
+.head{display:flex;align-items:center;gap:8px}
+.eyebrow{font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:#bdab90}
+.x{margin-left:auto;width:30px;height:30px;border:1px solid #3a2f24;background:#2b221a;color:#f4ead7;border-radius:4px}
+.field{display:grid;grid-template-columns:54px 1fr;align-items:center;gap:8px}
+.sel{height:32px;border:1px solid #4a3c2e;background:#2b221a;color:#f4ead7;border-radius:4px;display:flex;align-items:center;justify-content:space-between;padding:0 10px}
+.seg{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px}
+.opt{height:26px;border:1px solid #4a3c2e;background:#2b221a;color:#bdab90;border-radius:4px;font-size:12px}
+.opt.on{background:#46372a;border-color:#a08d6d;color:#f4ead7}
+.lbl{font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:#8d7e68}
+.chart{background:#2b2419;border:1px solid #3a2f24;border-radius:3px}
+.crew{background:#1d1812;border:1px solid #2f261d;border-radius:4px;padding:8px 10px;display:flex;flex-direction:column;gap:4px}
+.big{font-size:16px}
+.dim{font-size:12px;color:#bdab90}
+.faint{font-size:11px;color:#8d7e68}
+.step{display:flex;align-items:center;gap:8px}
+.sb{width:28px;height:28px;border:1px solid #3a2f24;background:#2b221a;color:#f4ead7;border-radius:4px}
+.sv{min-width:60px;text-align:center}
+.chips{display:flex;gap:8px;flex-wrap:wrap}
+.chip{border:1px solid #a08d6d;background:#46372a;color:#f4ead7;border-radius:12px;padding:3px 10px;font-size:12px}
+.chip.off{border-color:transparent;background:transparent;color:#bdab90}
+.readout{background:#1d1812;border:1px solid #2f261d;border-radius:4px;padding:8px 10px;display:flex;flex-direction:column;gap:5px}
+.num{font-size:15px}
+.acct{font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:#8d7e68}
+.ok{color:#94a361;font-size:10px;letter-spacing:.06em;text-transform:uppercase}
+.actions{display:flex;justify-content:space-between;align-items:center}
+.link{background:none;border:none;color:#f4ead7;text-decoration:underline;font-size:13px;padding:0}
+.stop{height:34px;padding:0 14px;border:1px solid #c05a41;background:#2b1a14;color:#f4ead7;border-radius:4px;font-size:14px}
+.working{font-size:12px;color:#94a361}
+</style>
+</helmet>
+<div style="width:520px;padding:20px;box-sizing:border-box">
+<div class="sheet">
+  <div class="head"><span class="eyebrow">Harvesters</span><span>Savanna Grassland (71, 18)</span><button class="x" aria-label="Close">✕</button></div>
+  <div class="field"><span>Band:</span><div class="sel"><span>Greyfen</span><span>⌄</span></div></div>
+  <div class="seg"><sc-for list="{{floors}}" as="f" hint-placeholder-count="3"><button class="opt {{f.cls}}" onClick="{{f.pick}}">{{f.label}}</button></sc-for></div>
+  <div class="lbl">Leave standing</div>
+  <svg class="chart" width="458" height="96" viewBox="0 0 458 96" role="img" aria-label="Stock against the floor">
+    <rect x="6" y="{{stockY}}" width="410" height="{{stockH}}" fill="#5f6b3c" opacity=".55"></rect>
+    <line x1="6" x2="416" y1="{{floorY}}" y2="{{floorY}}" stroke="#f4ead7" stroke-width="1.5"></line>
+    <rect x="10" y="{{flagY}}" width="96" height="14" fill="#221b15"></rect>
+    <text x="14" y="{{flagTextY}}" fill="#f4ead7" font-size="9" font-family="Noto Sans">{{floorFlag}}</text>
+    <rect x="428" y="6" width="8" height="84" fill="#46372a"></rect>
+    <text x="406" y="92" fill="#8d7e68" font-size="8" font-family="Noto Sans">60 turns</text>
+  </svg>
+
+  <div class="lbl">Harvesters</div>
+  <div class="crew">
+    <div class="wstrip">
+      <div class="marks">
+        <span class="mk" title="{{rungMarkTip}}">{{rungMark}}</span>
+        <sc-if value="{{hasLadder}}" hint-placeholder-val="{{true}}"><button class="ladder {{ladderCls}}" onClick="{{ladderClick}}" title="{{ladderTip}}"><span class="lfill" style="width:{{ladderFill}}"></span><span class="ltxt">{{ladderFace}}</span></button></sc-if>
+        <sc-if value="{{cardOpen}}" hint-placeholder-val="{{false}}">
+          <div class="rcard left">
+            <span class="rclbl">Take it to…</span>
+            <sc-for list="{{card}}" as="r" hint-placeholder-count="3">
+              <sc-if value="{{r.isButton}}" hint-placeholder-val="{{true}}"><button class="rbtn {{r.cls}}" onClick="{{r.click}}" title="{{r.tip}}"><span class="rfill" style="width:{{r.fill}}"></span><span class="rl">{{r.glyph}} {{r.label}}</span><span class="rf">{{r.face}}</span></button></sc-if>
+              <sc-if value="{{r.isMarker}}" hint-placeholder-val="{{false}}"><div class="rmark {{r.cls}}"><span>{{r.glyph}} {{r.label}}</span><span class="rmf">{{r.face}}</span></div></sc-if>
+            </sc-for>
+          </div>
+        </sc-if>
+        <span class="mk" title="{{policyTip}}">{{policyMark}}</span>
+        <span class="mk warnmk" title="{{warnTip}}">{{warnMark}}</span>
+      </div>
+      <div class="crewbox">
+        <span class="crewnum {{zeroCls}}">{{crew}}</span>
+        <div class="cbar" title="{{tip}}" aria-label="{{tip}}"><span style="flex:{{keepN}} 1 0;background:{{keepC}}"></span><span style="flex:{{buildN}} 1 0;background:{{buildC}}"></span><span style="flex:{{gearN}} 1 0;background:{{gearC}}"></span><span style="flex:{{bareN}} 1 0;background:{{bareC}}"></span></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="field"><span class="dim">Priority</span><div class="seg"><sc-for list="{{pris}}" as="p" hint-placeholder-count="3"><button class="opt {{p.cls}}" onClick="{{p.pick}}">{{p.label}}</button></sc-for></div></div>
+  <div class="field"><span class="dim">Max</span><div class="step"><button class="sb" onClick="{{decMax}}" aria-label="Lower the max">−</button><span class="sv">{{maxLabel}}</span><button class="sb" onClick="{{incMax}}" aria-label="Raise the max">+</button></div></div>
+
+  <div class="field"><span>Kit</span><div class="sel"><span>Harvesting kit</span><span>⌄</span></div></div>
+  <div class="lbl">Crop</div>
+  <div class="chips"><span class="chip">Wild Emmer 70% (63)</span><span class="chip off">Hay Grass 30% (27)</span></div>
+
+  <div class="readout">
+    <div class="acct">Next turn</div>
+    <div style="display:flex;gap:10px;align-items:baseline"><span class="num">{{food}}</span><span class="acct">food</span><span class="ok">renewable</span></div>
+    <div style="display:flex;gap:10px;align-items:baseline"><span class="acct">Once tended</span><span>1.35 food</span></div>
+    <div class="faint">Above the food peak — you give up food to leave more standing, and your people learn faster from what they work.</div>
+  </div>
+  <div class="actions"><button class="link">Show on map</button><button class="stop">Stop working here</button></div>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":520,"height":920}}'>
+class Component extends DCLogic {
+  constructor(props) { super(props); this.state = { floor: 1, pri: 1, max: 0 }; }
+  renderVals() {
+    const st = this.state;
+    const FL = ['Everything', 'Best', 'Learning'];
+    const PR = ['High', 'Normal', 'Low'];
+    const frac = [0, 0.5, 0.8][st.floor];
+    const crews = [[2, 6], [3, 5], [2, 3]];
+    const foods = ['0.62', '0.48', '0.21'];
+    let [hold, reach] = crews[st.floor];
+    if (st.max > 0) { hold = Math.min(hold, st.max); reach = Math.min(reach, st.max); }
+    const baskets = 3;
+    const crew = reach;
+    const kitted = Math.min(crew, baskets);
+    const top = 6, h = 84;
+    const stock = 0.9;
+    const floorY = top + h * (1 - frac);
+    // The work strip (work-strip.js) — the same control the Work tab row and the farm sheet show.
+    const bq = st.build;
+    const builders = bq === undefined ? 0 : 2, kitB = bq === undefined ? 0 : 1;
+    const bRem = bq === undefined ? 0 : 50 * (1 - bq);
+    const bTurns = builders > 0 ? Math.ceil(bRem / (kitB * 1.5 + (builders - kitB))) : 0;
+    const buildTip = builders + ' building (' + kitB + ' with a tillage kit)';
+    const strip = WorkStrip.props({
+      rungs: WorkStrip.RUNGS.plant, at: 0, build: bq === undefined ? null : { q: bq, rem: bRem }, builders, turns: bTurns, buildTip, open: st.open,
+      toggle: () => this.setState({ open: !st.open }),
+      start: () => this.setState({ build: 0, open: false }),
+      stop: () => this.setState({ build: undefined, open: false }),
+      floor: st.floor, warn: '',
+      crew: { keep: 0, build: builders, gear: kitted, bare: crew - kitted }, color: '#94a361',
+      tip: (builders > 0 ? buildTip + ' · ' : '') + (kitted === crew ? crew + ' with baskets' : kitted + ' with baskets · ' + (crew - kitted) + ' bare-handed') +
+        ' — ' + hold + ' hold it at the floor' + (reach > hold ? ', ' + (reach - hold) + ' more draw it down to it' : '')
+    });
+    return {
+      ...strip,
+      floors: FL.map((label, i) => ({ label, cls: i === st.floor ? 'on' : '', pick: () => this.setState({ floor: i }) })),
+      pris: PR.map((label, i) => ({ label, cls: i === st.pri ? 'on' : '', pick: () => this.setState({ pri: i }) })),
+      stockY: top + h * (1 - stock), stockH: h * stock,
+      floorY, flagY: Math.min(floorY + 2, 74), flagTextY: Math.min(floorY + 12, 84),
+      floorFlag: 'leave ' + Math.round(frac * 100) + '% · ' + Math.round(frac * 100),
+      maxLabel: st.max > 0 ? String(st.max) : 'No max',
+      incMax: () => this.setState({ max: Math.min(12, st.max + 1) }),
+      decMax: () => this.setState({ max: Math.max(0, st.max - 1) }),
+      food: foods[st.floor]
+    };
+  }
+}
+</script>
+</body>
+</html>

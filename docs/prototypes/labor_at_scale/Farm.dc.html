@@ -1,0 +1,203 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Harvesters — a farm</title>
+<script src="./support.js"></script>
+<script src="./work-strip.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans:ital,wght@0,400;0,600;1,400&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#1a2629;font-family:"Noto Sans",system-ui,sans-serif;}
+button{font-family:inherit;cursor:pointer}
+.setup{background:#ecebe6;color:#26231f;border:2px dashed #8f8a80;border-radius:6px;padding:10px 14px;display:flex;flex-direction:column;gap:8px;font-size:13px}
+.setup-title{font-size:12px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:#4d4840}
+.srow{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.sbtn{min-width:24px;height:24px;border:1px solid #8f8a80;background:#fff;border-radius:4px;color:#26231f;padding:0 8px}
+.sbtn.on{background:#26231f;color:#fff}
+.sheet{background:#221b15;border:1px solid #3a2f24;border-radius:6px;box-shadow:0 8px 24px rgba(0,0,0,.55);color:#f4ead7;padding:12px 14px;display:flex;flex-direction:column;gap:9px;font-size:13px}
+.head{display:flex;align-items:center;gap:8px}
+.eyebrow{font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:#bdab90}
+.x{margin-left:auto;width:30px;height:30px;border:1px solid #3a2f24;background:#2b221a;color:#f4ead7;border-radius:4px}
+.field{display:grid;grid-template-columns:54px 1fr;align-items:center;gap:8px}
+.sel{height:32px;border:1px solid #4a3c2e;background:#2b221a;color:#f4ead7;border-radius:4px;display:flex;align-items:center;justify-content:space-between;padding:0 10px}
+.seg{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px}
+.opt{height:26px;border:1px solid #4a3c2e;background:#2b221a;color:#bdab90;border-radius:4px;font-size:12px}
+.opt.on{background:#46372a;border-color:#a08d6d;color:#f4ead7}
+.lbl{font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:#8d7e68}
+.chart{background:#2b2419;border:1px solid #3a2f24;border-radius:3px}
+.crew{background:#1d1812;border:1px solid #2f261d;border-radius:4px;padding:8px 10px;display:flex;flex-direction:column;gap:6px}
+.big{font-size:16px}
+.warn{font-size:12px;color:#e0a63c}
+.okc{font-size:12px;color:#94a361}
+.step{display:flex;align-items:center;gap:8px}
+.sb{width:28px;height:28px;border:1px solid #3a2f24;background:#2b221a;color:#f4ead7;border-radius:4px}
+.sv{min-width:60px;text-align:center}
+.chips{display:flex;gap:8px;flex-wrap:wrap}
+.chip{border:1px solid #a08d6d;background:#46372a;color:#f4ead7;border-radius:12px;padding:3px 10px;font-size:12px}
+.readout{background:#1d1812;border:1px solid #2f261d;border-radius:4px;padding:8px 10px;display:flex;flex-direction:column;gap:5px}
+.num{font-size:15px}
+.acct{font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:#8d7e68}
+.ok{color:#94a361;font-size:10px;letter-spacing:.06em;text-transform:uppercase}
+.actions{display:flex;justify-content:space-between;align-items:center}
+.link{background:none;border:none;color:#f4ead7;text-decoration:underline;font-size:13px;padding:0}
+.stop{height:34px;padding:0 14px;border:1px solid #c05a41;background:#2b1a14;color:#f4ead7;border-radius:4px;font-size:14px}
+</style>
+</helmet>
+<div style="width:520px;padding:20px;box-sizing:border-box;display:flex;flex-direction:column;gap:14px">
+<div class="setup">
+  <span class="setup-title">Prototype setup — not part of the game</span>
+  <div class="srow"><span>Ground</span><sc-for list="{{stages}}" as="s" hint-placeholder-count="3"><button class="sbtn {{s.cls}}" onClick="{{s.pick}}">{{s.label}}</button></sc-for></div>
+  <div class="srow"><span>Hoes</span><button class="sbtn" onClick="{{decHoes}}" aria-label="Fewer hoes">−</button><b>{{hoes}}</b><button class="sbtn" onClick="{{incHoes}}" aria-label="More hoes">+</button>
+    <span style="margin-left:12px">Spare hands for building</span><button class="sbtn" onClick="{{decSpare}}" aria-label="Fewer spare hands">−</button><b>{{spare}}</b><button class="sbtn" onClick="{{incSpare}}" aria-label="More spare hands">+</button></div>
+  <span style="color:#4d4840">Try: click ⌃▦ under Harvesters, then Field, hover the bars, set spare hands to 0, then set Max to 2.</span>
+</div>
+<div class="sheet">
+  <div class="head"><span class="eyebrow">Harvesters</span><span>Alluvial Plain (67, 11)</span><button class="x" aria-label="Close">✕</button></div>
+  <div class="field"><span>Band:</span><div class="sel"><span>Greyfen</span><span>⌄</span></div></div>
+
+  <div class="seg"><sc-for list="{{floors}}" as="f" hint-placeholder-count="3"><button class="opt {{f.cls}}" onClick="{{f.pick}}">{{f.label}}</button></sc-for></div>
+  <div class="lbl">Leave standing</div>
+  <svg class="chart" width="458" height="96" viewBox="0 0 458 96" role="img" aria-label="Stock against the floor">
+    <rect x="6" y="14.4" width="410" height="75.6" fill="#5f6b3c" opacity=".55"></rect>
+    <line x1="6" x2="416" y1="{{floorY}}" y2="{{floorY}}" stroke="#f4ead7" stroke-width="1.5"></line>
+    <rect x="10" y="{{flagY}}" width="96" height="14" fill="#221b15"></rect>
+    <text x="14" y="{{flagTextY}}" fill="#f4ead7" font-size="9" font-family="Noto Sans">{{floorFlag}}</text>
+    <rect x="428" y="6" width="8" height="84" fill="#46372a"></rect>
+    <text x="406" y="92" fill="#8d7e68" font-size="8" font-family="Noto Sans">60 turns</text>
+  </svg>
+
+  <div class="lbl">Harvesters</div>
+  <div class="crew">
+    <div class="wstrip">
+      <div class="marks">
+        <span class="mk" title="{{rungMarkTip}}">{{rungMark}}</span>
+        <sc-if value="{{hasLadder}}" hint-placeholder-val="{{true}}"><button class="ladder {{ladderCls}}" onClick="{{ladderClick}}" title="{{ladderTip}}"><span class="lfill" style="width:{{ladderFill}}"></span><span class="ltxt">{{ladderFace}}</span></button></sc-if>
+        <sc-if value="{{cardOpen}}" hint-placeholder-val="{{false}}">
+          <div class="rcard left">
+            <span class="rclbl">Take it to…</span>
+            <sc-for list="{{card}}" as="r" hint-placeholder-count="3">
+              <sc-if value="{{r.isButton}}" hint-placeholder-val="{{true}}"><button class="rbtn {{r.cls}}" onClick="{{r.click}}" title="{{r.tip}}"><span class="rfill" style="width:{{r.fill}}"></span><span class="rl">{{r.glyph}} {{r.label}}</span><span class="rf">{{r.face}}</span></button></sc-if>
+              <sc-if value="{{r.isMarker}}" hint-placeholder-val="{{false}}"><div class="rmark {{r.cls}}"><span>{{r.glyph}} {{r.label}}</span><span class="rmf">{{r.face}}</span></div></sc-if>
+            </sc-for>
+          </div>
+        </sc-if>
+        <span class="mk" title="{{policyTip}}">{{policyMark}}</span>
+        <span class="mk warnmk" title="{{warnTip}}">{{warnMark}}</span>
+      </div>
+      <div class="crewbox">
+        <span class="crewnum {{zeroCls}}">{{crew}}</span>
+        <div class="cbar" title="{{tip}}" aria-label="{{tip}}"><span style="flex:{{keepN}} 1 0;background:{{keepC}}"></span><span style="flex:{{buildN}} 1 0;background:{{buildC}}"></span><span style="flex:{{gearN}} 1 0;background:{{gearC}}"></span><span style="flex:{{bareN}} 1 0;background:{{bareC}}"></span></div>
+      </div>
+    </div>
+    <sc-if value="{{short}}" hint-placeholder-val="{{true}}"><span class="warn">{{shortLine}}</span></sc-if>
+    <sc-if value="{{noBuilders}}" hint-placeholder-val="{{true}}">
+      <span class="warn">No spare hands — sowing waits</span>
+    </sc-if>
+  </div>
+
+  <div class="field"><span style="font-size:12px;color:#bdab90">Priority</span><div class="seg"><sc-for list="{{pris}}" as="p" hint-placeholder-count="3"><button class="opt {{p.cls}}" onClick="{{p.pick}}">{{p.label}}</button></sc-for></div></div>
+  <div class="field"><span style="font-size:12px;color:#bdab90">Max</span><div class="step"><button class="sb" onClick="{{decMax}}" aria-label="Lower the max">−</button><span class="sv">{{maxLabel}}</span><button class="sb" onClick="{{incMax}}" aria-label="Raise the max">+</button></div></div>
+
+  <div class="field"><span>Kit</span><div class="sel"><span>Harvesting kit</span><span>⌄</span></div></div>
+  <div class="lbl">Crop</div>
+  <div class="chips"><span class="chip">Wild Emmer 100% (90)</span></div>
+
+
+  <div class="readout">
+    <div class="acct">Next turn</div>
+    <div style="display:flex;gap:10px;align-items:baseline"><span class="num">{{food}}</span><span class="acct">food</span><span class="ok">renewable</span></div>
+    <sc-if value="{{showOnce}}" hint-placeholder-val="{{true}}"><div style="display:flex;gap:10px;align-items:baseline"><span class="acct">Once a farm</span><span>{{farmFood}} food</span></div></sc-if>
+  </div>
+  <div class="actions"><button class="link">Show on map</button><button class="stop">Stop working here</button></div>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":520,"height":1100}}'>
+class Component extends DCLogic {
+  constructor(props) { super(props); this.state = { stage: 0, p: 0.45, hoes: 2, spare: 3, floor: 1, pri: 1, bpri: 1, max: 0 }; }
+  renderVals() {
+    const st = this.state;
+    const FL = ['Everything', 'Best', 'Learning'];
+    const PR = ['High', 'Normal', 'Low'];
+    // Setup stages: 0 Tended, nothing queued · 1 a farm being sown · 2 a finished farm
+    const STAGES = ['Tended', 'Farm half built', 'Farm'];
+    const FARM_WORK = 75, TENDED_KEEP = 2, FARM_KEEP = 4, HOED_KEEP = 2, BARE_KEEP = 1;
+    const KIT_BUILD = 3, BARE_BUILD = 1.5, TILLAGE_KITS = 1;
+    const isFarm = st.stage === 2;
+    const building = st.stage === 1;
+    const p = isFarm ? 1 : (building ? st.p : 0);
+    const ground = isFarm ? 'farm' : 'ground';
+
+    // Keeping is owed every turn and staffed first (pass 1). A hoed hand keeps more.
+    const demand = TENDED_KEEP + (FARM_KEEP - TENDED_KEEP) * p;
+    let left = demand, hoed = 0, bare = 0;
+    while (left > 1e-9 && hoed < st.hoes) { hoed++; left -= HOED_KEEP; }
+    while (left > 1e-9) { bare++; left -= BARE_KEEP; }
+    const keepers = hoed + bare;
+
+    const takeCrews = [[1, 4], [1, 3], [1, 2]][st.floor];
+    let crew = keepers + takeCrews[1];
+    if (st.max > 0) crew = Math.min(crew, st.max);
+    const keptHands = Math.min(crew, keepers);
+    const takers = crew - keptHands;
+    const baskets = 2;
+    const gearT = Math.min(takers, baskets), bareT = takers - gearT;
+    const keptHoed = Math.min(keptHands, hoed);
+    const keptWork = keptHoed * HOED_KEEP + (keptHands - keptHoed) * BARE_KEEP;
+    const short = keptWork + 1e-9 < demand;
+    const slip = Math.round((1 - keptWork / demand) * 3 * 10) / 10;
+    const keepTip = keptHands + ' keep the ' + ground + ' up (' + demand.toFixed(1) + ' work a turn' +
+      (keptHoed > 0 ? ', ' + keptHoed + ' with ' + (keptHoed === 1 ? 'a hoe' : 'hoes') : '') +
+      (keptHands - keptHoed > 0 ? ', ' + (keptHands - keptHoed) + ' bare-handed' : '') + ')';
+    const takeTip = takers + ' harvest' + (takers > 0 ? ' (' + (bareT === 0 ? 'all with baskets' : gearT + ' with baskets, ' + bareT + ' bare-handed') + ')' : '');
+
+    // Building: builders join this site's crew from spare hands, up to the rung's cap.
+    const SOW_CAP = 4;
+    const remaining = FARM_WORK * (1 - p);
+    let b = 0, delivered = 0, kitB = 0;
+    if (building) { while (b < Math.min(st.spare, SOW_CAP)) { const kit = kitB < TILLAGE_KITS; delivered += kit ? KIT_BUILD : BARE_BUILD; if (kit) kitB++; b++; } }
+    const turns = delivered > 0 ? Math.ceil(remaining / delivered) : 0;
+    const buildTip = b === 0 ? '' : b + ' building' + (kitB > 0 ? ' (' + kitB + ' with ' + (kitB === 1 ? 'a tillage kit' : 'tillage kits') + ')' : '');
+
+    // The work strip (work-strip.js) — the same control the Work tab row shows: rung mark, ⌃ and its
+    // rung card, the floor glyph, ⚠, then the crew number and bar.
+    const crewTip = keepTip + (b > 0 ? ' · ' + buildTip : '') + ' · ' + takeTip;
+    const strip = WorkStrip.props({
+      rungs: WorkStrip.RUNGS.plant, at: isFarm ? 2 : 1,
+      build: building ? { q: p, rem: remaining } : null, builders: b, turns, buildTip, open: st.open,
+      toggle: () => this.setState({ open: !st.open }),
+      start: () => this.setState({ stage: 1, p: 0, open: false }),
+      stop: () => this.setState({ stage: 0, open: false }),
+      floor: st.floor, warn: short ? 'Short of keepers — the ground slips' : '',
+      crew: { keep: keptHands, build: b, gear: gearT, bare: bareT }, color: '#94a361', tip: crewTip
+    });
+    const perTaker = 0.16 + 0.24 * p;
+    const top = 6, h = 84, frac = [0, 0.5, 0.8][st.floor];
+    const floorY = top + h * (1 - frac);
+    return {
+      stages: STAGES.map((label, i) => ({ label, cls: i === st.stage ? 'on' : '', pick: () => this.setState({ stage: i, p: i === 1 ? 0.45 : st.p }) })),
+      hoes: st.hoes, spare: st.spare,
+      incHoes: () => this.setState({ hoes: Math.min(6, st.hoes + 1) }), decHoes: () => this.setState({ hoes: Math.max(0, st.hoes - 1) }),
+      incSpare: () => this.setState({ spare: Math.min(10, st.spare + 1) }), decSpare: () => this.setState({ spare: Math.max(0, st.spare - 1) }),
+      floors: FL.map((label, i) => ({ label, cls: i === st.floor ? 'on' : '', pick: () => this.setState({ floor: i }) })),
+      pris: PR.map((label, i) => ({ label, cls: i === st.pri ? 'on' : '', pick: () => this.setState({ pri: i }) })),
+      floorY, flagY: Math.min(floorY + 2, 74), flagTextY: Math.min(floorY + 12, 84),
+      floorFlag: 'leave ' + Math.round(frac * 100) + '% · ' + Math.round(frac * 90),
+      short, shortLine: 'Max ' + st.max + ' can’t keep the ' + ground + ' up — it slips ≈' + slip + '% a turn',
+      maxLabel: st.max > 0 ? String(st.max) : 'No max',
+      incMax: () => this.setState({ max: Math.min(12, st.max + 1) }),
+      decMax: () => this.setState({ max: Math.max(0, st.max - 1) }),
+      ...strip,
+      noBuilders: building && b === 0,
+      food: (takers * perTaker).toFixed(2),
+      showOnce: !isFarm, farmFood: (takers * 0.40).toFixed(2)
+    };
+  }
+}
+</script>
+</body>
+</html>

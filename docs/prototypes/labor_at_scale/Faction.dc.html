@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Faction page</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans:ital,wght@0,400;0,600;1,400&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#1a2629;font-family:"Noto Sans",system-ui,sans-serif;}
+.panel{background:#221b15;border:1px solid #3a2f24;border-radius:6px;box-shadow:0 6px 18px rgba(0,0,0,.5);color:#f4ead7;font-size:13px}
+.phead{display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid #2f261d}
+.pname{font-size:15px;font-weight:600}
+.psub{font-size:11px;color:#bdab90}
+.zones{display:grid;grid-template-columns:400px minmax(0,1fr) 330px}
+.zone{padding:12px 14px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.zone+.zone{border-left:1px solid #2f261d}
+.zhead{display:flex;justify-content:space-between;align-items:baseline;font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:#8d7e68}
+.zhead b{font-weight:400;text-transform:none;letter-spacing:0;color:#bdab90;font-size:12px}
+.vital{display:grid;grid-template-columns:96px 1fr;font-size:16px;line-height:26px}
+.good{color:#94a361}
+.bar{display:flex;height:9px;border-radius:2px;overflow:hidden;gap:2px}
+.key{display:flex;flex-wrap:wrap;gap:4px 12px;font-size:12px;color:#bdab90}
+.sw{display:inline-block;width:9px;height:9px;margin-right:4px;vertical-align:-1px}
+.idlecard{background:#2a2014;border:1px solid #e0a63c;border-radius:4px;padding:10px 12px;display:flex;flex-direction:column;gap:4px}
+.idlenum{font-size:20px;color:#e0a63c;font-weight:600}
+.dim{color:#bdab90;font-size:12px}
+.brow{display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:14px;align-items:center;padding:8px 10px;background:#1f1913;border-radius:3px}
+.bname{font-size:14px;text-decoration:underline}
+.idle{color:#e0a63c;font-size:13px}
+.ok{color:#8d7e68;font-size:13px}
+.ps{font-size:12px;color:#8d7e68}
+</style>
+</helmet>
+<div style="width:1480px;padding:20px;box-sizing:border-box">
+<div class="panel">
+  <div class="phead">
+    <svg width="22" height="22" viewBox="0 0 22 22" aria-hidden="true"><circle cx="11" cy="11" r="8" fill="none" stroke="#e0a63c" stroke-width="2"></circle></svg>
+    <div><div class="pname">Veldari</div><div class="psub">Your people · 3 bands</div></div>
+  </div>
+  <div class="zones">
+    <div class="zone">
+      <div class="vital"><span>Food</span><span class="good">241 (26 turns) · +1.9 /turn</span></div>
+      <div class="vital" style="margin-top:-10px"><span style="color:#bdab90">Fodder</span><span>18</span></div>
+      <div class="vital" style="margin-top:-10px"><span>Morale</span><span class="good">79%</span></div>
+      <div class="vital" style="margin-top:-10px"><span>Growth</span><span>161% of normal</span></div>
+      <div class="zhead">People <b>84</b></div>
+      <div class="bar"><span style="flex:24 1 0;background:#d0a468"></span><span style="flex:39 1 0;background:#bdab90"></span><span style="flex:7 1 0;background:#e0a63c"></span><span style="flex:14 1 0;background:#93a0a8"></span></div>
+      <div class="key"><span><i class="sw" style="background:#d0a468"></i>24 children</span><span><i class="sw" style="background:#bdab90"></i>39 working</span><span><i class="sw" style="background:#e0a63c"></i>7 idle</span><span><i class="sw" style="background:#93a0a8"></i>14 elders</span></div>      <div class="idlecard">
+        <div class="idlenum">7 idle across your bands</div>
+        <div class="dim">Saltmarch 4 · Brackwater 3. No gear and no job where bare hands help.</div>
+      </div>
+    </div>
+    <div class="zone">
+      <div class="zhead">Work <b>3 bands · 17 jobs</b></div>
+      <div class="brow"><span class="bname">Saltmarch</span><span class="dim">7 jobs · 20 working</span><span class="idle">4 idle</span></div>
+      <div class="brow"><span class="bname">Brackwater</span><span class="dim">6 jobs · 11 working · 1 pen</span><span class="idle">3 idle</span></div>
+      <div class="brow"><span class="bname">Greyfen</span><span class="dim">4 jobs · 8 working</span><span class="ok">none idle</span></div>
+    </div>
+    <div class="zone">
+      <div class="zhead">Parties <b>1 out · 4 workers</b></div>
+      <div class="brow"><span>Saltmarch (Scout)</span><span class="dim">4 workers</span><span class="ok">walking out</span></div>
+      <div class="zhead" style="margin-top:6px">Settling</div>
+      <div class="ps">Rooted: 2 of 3 bands</div>
+    </div>
+  </div>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1480,"height":620}}'>
+class Component extends DCLogic {
+  renderVals() { return {}; }
+}
+</script>
+</body>
+</html>

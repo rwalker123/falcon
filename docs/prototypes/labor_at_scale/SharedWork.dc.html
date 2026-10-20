@@ -1,0 +1,247 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Starting a shared work</title>
+<script src="./support.js"></script>
+<script src="./work-strip.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans:ital,wght@0,400;0,600;1,400&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#1a2629;font-family:"Noto Sans",system-ui,sans-serif;}
+button{font-family:inherit;cursor:pointer}
+.setup{background:#ecebe6;color:#26231f;border:2px dashed #8f8a80;border-radius:6px;padding:10px 14px;display:flex;flex-direction:column;gap:8px;font-size:13px}
+.setup-title{font-size:12px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:#4d4840}
+.srow{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.sbtn{min-width:24px;height:24px;border:1px solid #8f8a80;background:#fff;border-radius:4px;color:#26231f;padding:0 8px}
+.sbtn.on{background:#26231f;color:#fff}
+.stage{display:grid;grid-template-columns:270px 290px minmax(0,1fr);gap:18px;align-items:start;background:#1a2629;padding:14px;border-radius:6px;min-height:520px}
+.card{background:#221b15;border:1px solid #3a2f24;border-radius:6px;box-shadow:0 8px 24px rgba(0,0,0,.55);color:#f4ead7;font-size:13px;padding:10px 12px;display:flex;flex-direction:column;gap:8px}
+.eyebrow{font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:#bdab90}
+.chips{display:flex;gap:4px;flex-wrap:wrap}
+.tchip{border:1px solid #6b5a46;border-radius:9px;padding:0 6px;font-size:10px;color:#f4ead7}
+.land{display:flex;align-items:center;gap:8px;border:1px solid #a08d6d;background:#2b221a;border-radius:4px;padding:5px 8px}
+.kv{display:grid;grid-template-columns:52px 1fr;gap:2px 8px;font-size:13px}
+.k{color:#bdab90}
+.act{height:28px;border:1px solid #3a2f24;background:#221b15;color:#f4ead7;border-radius:4px;font-size:12px}
+.act.on{border-color:#a08d6d;background:#2b221a}
+.pop{background:#221b15;border:1px solid #3a2f24;border-radius:6px;box-shadow:0 10px 28px rgba(0,0,0,.6);color:#f4ead7;padding:12px;display:flex;flex-direction:column;gap:5px;font-size:11px}
+.field{display:grid;grid-template-columns:48px 1fr;align-items:center;gap:8px;font-size:13px;position:relative;margin-bottom:4px}
+.dd{height:32px;border:1px solid #4a3c2e;background:#2b221a;color:#f4ead7;border-radius:4px;padding:0 10px;font-size:13px;display:flex;justify-content:space-between;align-items:center}
+.ddlist{position:absolute;left:56px;right:0;top:34px;z-index:5;background:#2b221a;border:1px solid #4a3c2e;border-radius:4px;display:flex;flex-direction:column;box-shadow:0 8px 20px rgba(0,0,0,.6)}
+.ddrow{display:flex}
+.ddfold{width:30px;border:none;border-left:1px solid #4a3c2e;background:none;color:#bdab90;font-size:12px}
+.ddfold:hover{background:#3d3226;color:#f4ead7}
+.ddopt{flex:1;height:28px;border:none;background:none;color:#f4ead7;text-align:left;padding:0 10px;font-size:13px}
+.ddopt:hover{background:#3d3226}
+.ddopt.on{background:#46372a}
+.ddopt.member{padding-left:26px;color:#bdab90}
+.ddopt.member.on{color:#f4ead7}
+.phd{display:flex;justify-content:space-between;align-items:center}
+.x{width:24px;height:24px;border:1px solid #3a2f24;background:#2b221a;color:#f4ead7;border-radius:4px}
+.seg{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px}
+.opt{height:24px;border:1px solid #4a3c2e;background:#2b221a;color:#bdab90;border-radius:4px;font-size:11px}
+.opt.on{background:#46372a;border-color:#a08d6d;color:#f4ead7}
+.commit{height:30px;border:1px solid #6b5a46;background:#3d3226;color:#f4ead7;border-radius:4px;font-size:13px}
+.lbl{font-size:8px;letter-spacing:.08em;text-transform:uppercase;color:#8d7e68}
+.mrow{display:flex;justify-content:space-between;padding:1px 4px}
+.mrow.banked{color:#8d7e68}
+.mrow .f{color:#bdab90}
+.mrow.banked .f{color:#8d7e68}
+.rbtn{display:flex;flex-direction:column;gap:1px;border:1px solid #4a3c2e;background:#2b221a;color:#f4ead7;border-radius:4px;padding:3px 5px;text-align:left;font-size:11px}
+.rbtn:hover{border-color:#a08d6d}
+.rbtn.locked{background:none;cursor:default}
+.rtop{display:flex;justify-content:space-between;gap:8px}
+.aside{font-size:9px;color:#bdab90}
+.lockface{color:#e0a63c}
+.panel{background:#221b15;border:1px solid #3a2f24;border-radius:6px;box-shadow:0 8px 24px rgba(0,0,0,.55);color:#f4ead7;font-size:13px;padding:10px 12px;display:flex;flex-direction:column;gap:6px}
+.zhead{display:flex;justify-content:space-between;font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:#8d7e68}
+.row{display:grid;grid-template-columns:4px minmax(0,1fr) auto;column-gap:10px;padding:7px 8px 7px 0;border-radius:3px;background:#1f1913}
+.row.fresh{outline:1px solid #94a361}
+.stripe{border-radius:2px}
+.rname{font-size:14px;color:#f4ead7}
+.rdet{font-size:12px;color:#bdab90}
+.chipsr{display:flex;gap:6px;margin-top:4px}
+.chip{border:1px solid #4a3c2e;background:#2b221a;color:#bdab90;font-size:11px;border-radius:10px;padding:2px 8px}
+</style>
+</helmet>
+<div style="width:1180px;padding:20px;box-sizing:border-box;display:flex;flex-direction:column;gap:14px">
+<div class="setup">
+  <span class="setup-title">Prototype setup — not part of the game</span>
+  <div class="srow"><span>Your people</span><sc-for list="{{tribeOpts}}" as="o" hint-placeholder-count="2"><button class="sbtn {{o.cls}}" onClick="{{o.pick}}">{{o.label}}</button></sc-for></div>
+  <span style="color:#4d4840">Try: open Food storage ▸ and pick Storage pit — it lands in the tribe’s Shared works. Then open the tribe's ▸ in the Band: list, pick Greyfen and start a storehouse — it lands on Greyfen’s line. Assign harvesters ▸ works the same way. ✕ closes a card.</span>
+</div>
+
+<div class="stage">
+  <div class="card">
+    <div style="display:flex;gap:6px;align-items:baseline"><span class="eyebrow">Tile</span><span>(70, 18)</span></div>
+    <div class="chips"><span class="tchip">In sight</span><span class="tchip">Fair</span><span class="tchip">Temperate · 15.0 °C</span></div>
+    <div class="land"><span style="color:#94a361">■</span><span style="flex:1">Alluvial Plain</span><span>0</span></div>
+    <div class="kv"><span class="k">Road</span><span>Trail</span><span></span><span>15% less loss</span></div>
+    <button class="act {{harvestCls}}" onClick="{{openHarvest}}">Assign harvesters ▸</button>
+    <sc-for list="{{actions}}" as="a" hint-placeholder-count="3"><button class="act {{a.cls}}" onClick="{{a.open}}">{{a.label}} ▸</button></sc-for>
+  </div>
+
+  <div>
+    <sc-if value="{{cardOpen}}" hint-placeholder-val="{{true}}">
+      <div class="pop">
+        <div class="phd"><span class="lbl" style="font-size:10px">{{cardTitle}}</span><button class="x" onClick="{{closeCard}}" aria-label="Close">✕</button></div>
+        <div class="field"><span>Band:</span>
+          <button class="dd" onClick="{{toggleBands}}" aria-label="Who builds and keeps it"><span>{{bandLabel}}</span><span>⌄</span></button>
+          <sc-if value="{{bandsOpen}}" hint-placeholder-val="{{false}}">
+            <div class="ddlist"><sc-for list="{{bandOpts}}" as="k" hint-placeholder-count="4"><div class="ddrow"><button class="ddopt {{k.cls}}" onClick="{{k.pick}}">{{k.label}}</button><sc-if value="{{k.hasFold}}" hint-placeholder-val="{{false}}"><button class="ddfold" onClick="{{k.fold}}" aria-label="Show or hide the tribe's bands">{{k.foldGlyph}}</button></sc-if></div></sc-for></div>
+          </sc-if>
+        </div>
+        <sc-if value="{{isHarvest}}" hint-placeholder-val="{{false}}">
+          <div class="seg"><sc-for list="{{floors}}" as="f" hint-placeholder-count="3"><button class="opt {{f.cls}}" onClick="{{f.pick}}">{{f.label}}</button></sc-for></div>
+          <span class="aside" style="font-size:10px">{{harvestAside}}</span>
+          <button class="commit" onClick="{{harvest}}">Harvest</button>
+        </sc-if>
+        <sc-if value="{{isLadder}}" hint-placeholder-val="{{true}}"><span class="lbl">Raise it to…</span></sc-if>
+        <sc-for list="{{rows}}" as="r" hint-placeholder-count="3">
+          <sc-if value="{{r.isMarker}}" hint-placeholder-val="{{false}}"><div class="mrow {{r.cls}}"><span>{{r.label}}</span><span class="f">{{r.face}}</span></div></sc-if>
+          <sc-if value="{{r.isButton}}" hint-placeholder-val="{{true}}">
+            <button class="rbtn {{r.cls}}" onClick="{{r.click}}" title="{{r.tip}}"><span class="rtop"><span>{{r.glyph}} {{r.label}}</span><span class="{{r.faceCls}}">{{r.face}}</span></span><span class="aside">{{r.aside}}</span></button>
+          </sc-if>
+        </sc-for>
+      </div>
+    </sc-if>
+  </div>
+
+  <div class="panel">
+    <div class="zhead"><span>{{landsTitle}}</span><span style="text-transform:none;letter-spacing:0">{{landsSub}}</span></div>
+    <sc-for list="{{landRows}}" as="row" hint-placeholder-count="2">
+<div class="row {{row.rowCls}}">
+  <span class="stripe" style="background:{{row.stripe}}"></span>
+  <div style="min-width:0">
+    <div class="rname">{{row.name}}</div>
+    <div class="rdet">{{row.rungName}}</div>
+    <div class="rdet {{row.yieldCls}}">{{row.yieldLine}}</div>
+    <div class="chipsr"><span class="chip">Priority: {{row.pri}}</span></div>
+  </div>
+  <div class="wstrip">
+    <div class="marks">
+      <span class="mk" title="{{row.rungMarkTip}}">{{row.rungMark}}</span>
+      <sc-if value="{{row.hasLadder}}" hint-placeholder-val="{{true}}"><button class="ladder {{row.ladderCls}}" onClick="{{row.ladderClick}}" title="{{row.ladderTip}}"><span class="lfill" style="width:{{row.ladderFill}}"></span><span class="ltxt">{{row.ladderFace}}</span></button></sc-if>
+      <sc-if value="{{row.cardOpen}}" hint-placeholder-val="{{false}}">
+        <div class="rcard">
+          <span class="rclbl">Take it to…</span>
+          <sc-for list="{{row.card}}" as="r" hint-placeholder-count="3">
+            <sc-if value="{{r.isButton}}" hint-placeholder-val="{{true}}"><button class="rbtn {{r.cls}}" onClick="{{r.click}}" title="{{r.tip}}"><span class="rfill" style="width:{{r.fill}}"></span><span class="rl">{{r.glyph}} {{r.label}}</span><span class="rf">{{r.face}}</span></button></sc-if>
+            <sc-if value="{{r.isMarker}}" hint-placeholder-val="{{false}}"><div class="rmark {{r.cls}}"><span>{{r.glyph}} {{r.label}}</span><span class="rmf">{{r.face}}</span></div></sc-if>
+          </sc-for>
+        </div>
+      </sc-if>
+      <span class="mk" title="{{row.policyTip}}">{{row.policyMark}}</span>
+      <span class="mk warnmk" title="{{row.warnTip}}">{{row.warnMark}}</span>
+    </div>
+    <div class="crewbox">
+      <span class="crewnum {{row.zeroCls}}">{{row.crew}}</span>
+      <div class="cbar" title="{{row.tip}}" aria-label="{{row.tip}}"><span style="flex:{{row.keepN}} 1 0;background:{{row.keepC}}"></span><span style="flex:{{row.buildN}} 1 0;background:{{row.buildC}}"></span><span style="flex:{{row.gearN}} 1 0;background:{{row.gearC}}"></span><span style="flex:{{row.bareN}} 1 0;background:{{row.bareC}}"></span></div>
+    </div>
+  </div>
+</div>
+    </sc-for>
+  </div>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1180,"height":720}}'>
+class Component extends DCLogic {
+  constructor(props) { super(props); this.state = { tribe: true, branch: null, band: null, bandsOpen: false, started: [], openCard: null }; }
+  renderVals() {
+    const st = this.state;
+    const R = WorkStrip.RUNGS;
+    const PIT = { label: 'Storage pit', mark: '◫', verb: 'Dig a storage pit', verbGlyph: '◫', work: 40, cap: 3, kit: 'earth' };
+    // Each branch is its own action on the tile card, as Road ▸ is today.
+    const BRANCHES = {
+      road: { name: 'Road', rungs: R.route, at: 1 },
+      food: { name: 'Food storage', rungs: [{ label: 'Bare ground', mark: '' }, PIT].concat(R.foodStorage.slice(1)), at: 0 },
+      goods: { name: 'Goods storage', rungs: R.goodsStorage, at: 0 }
+    };
+    // The Band: picker. Once there is a tribe, the tribe stands in for its three bands, exactly as in the
+    // Band panel's switcher — and its bands are listed under it, one click down, for a work that belongs to
+    // one band's camp. Ashfell is a band of yours outside the tribe, so it is listed on its own.
+    const MEMBERS = ['Pinewold', 'Greyfen', 'Saltmarch'];
+    const opts = st.tribe ? ['Reedwater tribe'].concat(MEMBERS).concat(['Ashfell']) : MEMBERS.concat(['Ashfell']);
+    // The tribe's bands are folded under it by default (▸); the list grows only when the player asks.
+    const shown = opts.filter((o) => !(st.tribe && MEMBERS.indexOf(o) >= 0) || st.membersOpen);
+    const band = st.band && opts.indexOf(st.band) >= 0 ? st.band : opts[0];
+    const isTribe = band === 'Reedwater tribe';
+    const inTribe = st.tribe && MEMBERS.indexOf(band) >= 0;
+    const dest = isTribe ? 'the tribe’s shared works' : (inTribe ? band + '’s work in the tribe' : 'this band’s work');
+    const destOf = (bd) => bd === 'Reedwater tribe' ? 'the tribe’s shared works' : bd + '’s work';
+
+    const b = st.branch && st.branch !== 'harvest' ? BRANCHES[st.branch] : null;
+    const already = b ? st.started.find((s) => s.branch === st.branch) : null;
+    const rows = !b ? [] : b.rungs.map((r, i) => {
+      if (i < b.at) return { isMarker: true, isButton: false, label: r.label, face: 'banked', cls: 'banked' };
+      if (i === b.at) return { isMarker: true, isButton: false, label: r.label, face: 'where you are', cls: '' };
+      if (i === b.at + 1) {
+        if (already) return { isMarker: false, isButton: true, glyph: r.verbGlyph, label: r.label, face: already.work + ' work · started', faceCls: '', cls: '', aside: 'in ' + already.dest, tip: '', click: () => {} };
+        return { isMarker: false, isButton: true, glyph: r.verbGlyph, label: r.label, face: r.work + ' work', faceCls: '', cls: '',
+          aside: 'joins ' + dest + ', and starts now', tip: r.verb,
+          click: () => this.setState({ branch: null, started: st.started.concat([{ branch: st.branch, label: r.label, band, dest: destOf(band), work: r.work }]) }) };
+      }
+      return { isMarker: false, isButton: true, glyph: r.verbGlyph, label: r.label, face: '🔒 ' + b.rungs[i - 1].label + ' first', faceCls: 'lockface', cls: 'locked', aside: '', tip: '', click: () => {} };
+    });
+
+    // Where the work lands: the tribe's Shared works on the Tribe panel, or that band's Work on the Band panel.
+    const last = st.started.length ? st.started[st.started.length - 1] : null;
+    const showBand = last ? last.band : band;
+    const showTribe = showBand === 'Reedwater tribe';
+    const showMember = st.tribe && MEMBERS.indexOf(showBand) >= 0;
+    const base = showTribe
+      ? [{ name: 'Road Pinewold – Greyfen', rung: 'Trail', rungs: R.route, at: 1, keep: 1 }]
+      : [{ name: 'Harvest (72, 18)', rung: 'Tended Patch', rungs: R.plant, at: 1, keep: 1, gear: 3 }];
+    const rowsData = base.concat(st.started.filter((s) => s.band === showBand).map((s) => {
+      if (s.branch === 'harvest') return { name: 'Harvest (70, 18)', rung: 'Wild', rungs: R.plant, at: 0, gear: 3, harvest: s };
+      const def = BRANCHES[s.branch];
+      return { name: def.name + ' (70, 18)', rung: def.rungs[def.at].label, rungs: def.rungs, at: def.at, building: s };
+    }));
+    const landRows = rowsData.map((d, ix) => {
+      const id = 'l' + ix;
+      const builders = d.building ? 2 : 0;
+      const from = showTribe && builders ? ' — 1 from Pinewold, 1 from Greyfen walk here' : '';
+      const strip = WorkStrip.props({
+        rungs: d.rungs, at: d.at, build: d.building ? { q: 0, rem: d.building.work } : null, builders,
+        turns: builders ? Math.ceil(d.building.work / (builders * 1.2)) : 0, buildTip: builders + ' building',
+        open: st.openCard === id, toggle: () => this.setState({ openCard: st.openCard === id ? null : id }),
+        start: () => {}, stop: () => this.setState({ started: st.started.filter((s) => s !== d.building), openCard: null }),
+        floor: d.harvest ? d.harvest.floorIx : (d.rungs === R.plant ? 1 : null), warn: '',
+        crew: { keep: d.keep || 0, build: builders, gear: d.gear || 0, bare: 0 }, color: d.rungs === R.plant ? '#94a361' : '#a08d6d',
+        tip: [d.keep ? d.keep + ' keep it up' : '', builders ? builders + ' building' + from : '', d.gear ? d.gear + ' with baskets' : ''].filter((x) => x).join(' · ')
+      });
+      const fresh = !!(d.building || d.harvest);
+      return Object.assign({ name: d.name, rungName: d.rung, yieldLine: d.harvest ? '+0.48 /turn · ' + d.harvest.floorPct + ' left standing' : (d.building ? 'Started this turn' : (d.rungs === R.plant ? '+0.97 /turn · 50% left standing' : '1 work a turn to keep')), yieldCls: '', stripe: fresh ? '#94a361' : '#2f261d', pri: 'Normal', rowCls: fresh ? 'fresh' : '' }, strip);
+    });
+
+    return {
+      tribeOpts: [{ label: 'A tribe of three bands', cls: st.tribe ? 'on' : '', pick: () => this.setState({ tribe: true, band: null, started: [] }) },
+                  { label: 'Separate bands', cls: st.tribe ? '' : 'on', pick: () => this.setState({ tribe: false, band: null, started: [] }) }],
+      actions: Object.keys(BRANCHES).filter((k) => k !== 'road').map((k) => ({ label: BRANCHES[k].name, cls: st.branch === k ? 'on' : '', open: () => this.setState({ branch: st.branch === k ? null : k, bandsOpen: false }) }))
+        .concat([{ label: 'Road', cls: st.branch === 'road' ? 'on' : '', open: () => this.setState({ branch: st.branch === 'road' ? null : 'road', bandsOpen: false }) }]),
+      cardOpen: !!st.branch, isLadder: !!b, isHarvest: st.branch === 'harvest', rows,
+      cardTitle: st.branch === 'harvest' ? 'Assign harvesters · Alluvial Plain' : (b ? b.name : ''),
+      closeCard: () => this.setState({ branch: null, bandsOpen: false }),
+      harvestCls: st.branch === 'harvest' ? 'on' : '',
+      openHarvest: () => this.setState({ branch: st.branch === 'harvest' ? null : 'harvest', bandsOpen: false }),
+      floors: ['Everything', 'Best', 'Learning'].map((label, i) => ({ label, cls: i === (st.floor === undefined ? 1 : st.floor) ? 'on' : '', pick: () => this.setState({ floor: i }) })),
+      harvestAside: 'Harvests the wild plants here · joins ' + dest,
+      harvest: () => this.setState({ branch: null, started: st.started.concat([{ branch: 'harvest', band, dest: destOf(band), floorPct: ['0%', '50%', '80%'][st.floor === undefined ? 1 : st.floor], floorIx: st.floor === undefined ? 1 : st.floor }]) }),
+      bandLabel: band, bandsOpen: st.bandsOpen, toggleBands: () => this.setState({ bandsOpen: !st.bandsOpen }),
+      bandOpts: shown.map((o) => ({ label: o, cls: (o === band ? 'on' : '') + (st.tribe && MEMBERS.indexOf(o) >= 0 ? ' member' : ''),
+        pick: () => this.setState({ band: o, bandsOpen: false }),
+        hasFold: o === 'Reedwater tribe', foldGlyph: st.membersOpen ? '▾' : '▸', fold: () => this.setState({ membersOpen: !st.membersOpen }) })),
+      landsTitle: showTribe ? 'Reedwater tribe · Shared works' : showBand + ' · Work',
+      landsSub: showTribe ? 'on the Tribe panel' : (showMember ? 'its line on the Tribe panel' : 'on the Band panel'),
+      landRows
+    };
+  }
+}
+</script>
+</body>
+</html>
