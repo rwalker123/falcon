@@ -64,8 +64,8 @@ Player-facing names come from the **manual** (authoritative), which already had 
 | **Plants** | wild forage patch | **Tended Patch** — verb `Cultivate` *(shipped)*, knowledge **Cultivation** *(2003, shipped)* | **Field** — verb **`Sow`** *(new)*, knowledge **Seed Selection** *(new, id 2005)*; **only on naturally food-bearing ground** | **Worked Land** — make unwilling ground farmable (irrigation / clearing / terracing). The true "arbitrary tiles" capability. |
 | **Animals** | wild herd | **Pastoral** herd — verb **`Tame`** *(new; replaces the `domesticate` early-claim)*, knowledge **Herding** *(2004, shipped)* | **Pen** (manual: "corrals") — verb `Corral` *(shipped)*, knowledge **Penning** *(new, id 2006)* | **Selective Breeding** |
 
-Next free discovery id is **2005** (existing: `nomadic_wayfinding` 2001, `portable_forge` 2002,
-`cultivation` 2003, `herding` 2004). New ids need a `data/start_profile_knowledge_tags.json` mapping and
+Next free discovery id is **2005** (existing: `cultivation` 2003, `herding` 2004; 2001 and 2002 were
+`nomadic_wayfinding` and `portable_forge`, retired by #789). New ids need a `data/start_profile_knowledge_tags.json` mapping and
 must **not** appear in any start profile's `starting_knowledge_tags` (nothing is start-granted).
 
 ---

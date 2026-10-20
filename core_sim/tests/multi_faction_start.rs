@@ -173,13 +173,16 @@ fn each_faction_gets_its_own_opening_loadout_window() {
 
 #[test]
 fn each_faction_gets_its_own_seeded_stockpile_and_knowledge() {
-    // The shipped profile ships an empty `inventory`, so the stockpile half needs a grant to exist
-    // at all — stated here rather than in the shipped config, which is not this test's subject.
+    // The shipped profile ships an empty `inventory` and grants no knowledge, so both halves need a
+    // grant to exist at all — stated here rather than in the shipped config, which is not this
+    // test's subject.
     let world = world_with(ONE_RIVAL, |config| {
-        config.start_profile_overrides.archetypes[0].inventory = vec![InventoryEntry {
+        let archetype = &mut config.start_profile_overrides.archetypes[0];
+        archetype.inventory = vec![InventoryEntry {
             item: "provisions".to_string(),
             quantity: 7,
         }];
+        archetype.starting_knowledge_tags = vec!["herd_lore".to_string()];
     });
 
     let inventory = world.world.resource::<FactionInventory>();
@@ -202,7 +205,7 @@ fn each_faction_gets_its_own_seeded_stockpile_and_knowledge() {
         .starting_knowledge_tags;
     assert!(
         !tags.is_empty(),
-        "the shipped profile seeds knowledge, or this assertion proves nothing"
+        "the fixture grants knowledge, or this assertion proves nothing"
     );
     let catalog = world
         .world

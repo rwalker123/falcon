@@ -103,7 +103,7 @@ use crate::{
 /// tended crop until the faction knows Cultivation. Declared as a start-profile knowledge tag
 /// (`cultivation` → this id in `data/start_profile_knowledge_tags.json`) purely so it is mappable;
 /// it is deliberately **not** listed in any start profile's `starting_knowledge_tags`, so no faction
-/// starts knowing it. Next free id after `nomadic_wayfinding` (2001) / `portable_forge` (2002).
+/// starts knowing it. Ids 2001 and 2002 are unassigned.
 pub const CULTIVATION_DISCOVERY_ID: u32 = 2003;
 
 /// Discovery id for the faction-level **Seed Selection** knowledge — the plant ladder's **rung-3**

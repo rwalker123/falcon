@@ -713,9 +713,9 @@ credit = max over channels( tie × channel_rate × observability_seen ) / lesson
 - **`/ lesson_cost`** — the cost from `intensification_ladder.json`'s `lesson_costs`, the same divisor
   practice is paid in, so a dear lesson is dear to learn by watching too. Watching and practising
   credit **one** ledger entry, and whichever gets there first wins: contact shortens the road, it
-  never replaces it. `nomadic_wayfinding` and `portable_forge`, which only a start profile grants,
-  had no lesson cost; contact is the first thing that can teach them, so they are priced like every
-  other lesson rather than defaulted.
+  never replaces it. Every tag contact can teach is priced, and none is defaulted. (#789 retired
+  `nomadic_wayfinding` and `portable_forge`, the two start-granted tags that were priced only so
+  contact could teach them: nothing read either one.)
 - **It is a rate, not a timer.** The ledger is already a continuous `0..1` per discovery, so the old
   leak timer (§As-built) reduces to a per-turn credit with no lump to schedule. `openness` became the
   tie's strength.

@@ -1,14 +1,4 @@
 {
-  "nomadic_wayfinding": {
-    "discovery_id": 2001,
-    "progress": 0.65,
-    "observability": 0.4
-  },
-  "portable_forge": {
-    "discovery_id": 2002,
-    "progress": 0.55,
-    "observability": 0.8
-  },
   "cultivation": {
     "discovery_id": 2003,
     "observability": 0.9
