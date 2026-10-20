@@ -103,8 +103,12 @@ parallel**.
   however much work is left.
 - **A tile caps everyone working it.** Keepers, builders and harvesters together never exceed what the
   tile can hold.
+- **A build ranks by its site's Priority.** There is no separate Build mark; the site's one Priority
+  covers its keeping, its build and its harvest (this retires `docs/plan_site_crews.md` §2.4's Build
+  mark).
 - **One builder on every build first.** After pass 1, every build that can make progress gets one
-  builder, at any priority: the player started it, so the game tries to staff it.
+  builder, at any priority: the player started it, so the game tries to staff it. Keepers and hold
+  crews still come first, so the ground the band already has never rots to pay for new ground.
 - **Then builders round-robin within a priority.** In passes 2 and 3, High builds each take one more
   builder in turn until every High build is at its cap; only then Normal, then Low. Within a priority
   group, builds are staffed before sources reach toward their floor.
@@ -192,17 +196,9 @@ first* — is the priority list. The player-facing **max** above is the survivin
 
 ## Open questions
 
-- **Does a build keep its own priority?** Today a build carries a Build mark apart from its site's
-  Priority (`docs/plan_site_crews.md` §2.4). With builders on the site's crew, the site's one Priority
-  could cover both.
-- **Where the one-builder-each step sits.** Drafted as after pass 1, so keepers and hold crews come
-  first, and builds ahead of reach within a priority group.
-- **Does the tile cap count residents as well as workers?** A tile holding only so many people at all
-  reaches into settlement and population density, beyond this doc.
-- **How many crafters can one order take?** Twenty crafters on one spear makes no sense; an order
-  needs a crew cap the way a rung does. To be settled with the crafting panel.
-
-The battle flow that decides who defends is `docs/plan_battles.md`'s.
+None open in this doc. The battle flow that decides who defends is `docs/plan_battles.md`'s; a crew
+cap per craft order is the crafting arc's (#840); whether a tile's cap also counts the people living
+on it is the settlement design's.
 
 ## Related
 
