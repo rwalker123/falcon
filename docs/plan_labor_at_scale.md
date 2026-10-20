@@ -366,6 +366,9 @@ list every band. It is the same panel, rows and work strip, rolled up:
 
 **4. Nation orders — the faction leader.** The work #598 describes:
 
+- **Your people become a nation by confederation:** once your members — at least a city and one other
+  member — share writing under a faction leader (`docs/plan_civilization_steps.md` → "Step 11 for
+  your own people"). Conquest of other peoples is a later route (#695).
 - **The Faction page becomes the nation page.** Its rows are the nation's members — cities, tribes,
   bands — each opening its own panel. The band switchers below it are unchanged.
 - **The nation does not pool people.** Each member keeps its own pool; the nation moves goods, not

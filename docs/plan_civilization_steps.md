@@ -33,7 +33,17 @@ same conversation.
 | 11 | Two routes | Egypt unified by conquest. The Indus Valley possibly by standard bricks, weights and guilds, with no palaces or armies. [17:20–19:30] | A confederation path (shared standards) beside a conquest path. |
 | 12 | Status → contract → nation | Everything after: sovereignty, print, conscription, lines drawn on maps. A nation is a story enough people believe for long enough (Renan, Anderson, Gellner). [19:31–29:09] | Beyond our horizon, but its framing is The Telling. |
 
-All twelve are in scope eventually. The rest of this doc is about steps 1–5.
+All twelve are in scope eventually. The rest of this doc is about steps 1–5, with one exception
+decided early because the nation level of orders needs it:
+
+**Step 11 for your own people: confederation by writing (decided).** Your own people become a nation
+by the confederation route, not by conquest: once your members — at least a city and one other city,
+tribe or band — share writing (the lesson in "Writing: the third ceiling caps management") under a
+faction leader, they are a nation, and the nation's orders open (`docs/plan_labor_at_scale.md` →
+"Leaders: four levels of orders"). Writing is the shared standard because it is already the lesson
+that lets one polity administer more than one place; no new lesson is needed. The conquest route —
+absorbing peoples you defeat, step 9's circumscription — stays with #695 and the battles design
+(#850).
 
 ## Where the game stands, in the ladder's terms
 
