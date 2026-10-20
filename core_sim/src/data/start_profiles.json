@@ -21,10 +21,7 @@
           "starting_units": [
             { "kind": "BandScout", "count": 1, "band_size": 30 }
           ],
-          "starting_knowledge_tags": [
-            "nomadic_wayfinding",
-            "portable_forge"
-          ],
+          "starting_knowledge_tags": [],
           "inventory": [],
           "opening_loadout": {
             "pickable_materials": ["bone", "fibre", "hide", "wood", "stone"],
@@ -41,10 +38,7 @@
           "starting_units": [
             { "kind": "BandScout", "count": 1, "band_size": 12 }
           ],
-          "starting_knowledge_tags": [
-            "nomadic_wayfinding",
-            "portable_forge"
-          ],
+          "starting_knowledge_tags": [],
           "inventory": [],
           "opening_loadout": {
             "pickable_materials": ["bone", "fibre", "hide", "wood", "stone"],

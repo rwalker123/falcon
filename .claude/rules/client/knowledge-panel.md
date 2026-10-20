@@ -675,8 +675,7 @@ channel, credit}`, naming the strongest source.
 **This screen is its home because it is where the player already reads progress toward a knowledge.**
 Every tag contact can teach is a ladder knowledge or a craft, which is to say a node here; the
 subsistence rows carry a `knowledge_id` too, but they speak about a SOURCE, and a lesson belongs to the
-people rather than to any hex. Tags that are not on the roster (`nomadic_wayfinding`,
-`portable_forge`) have no node and draw nothing.
+people rather than to any hex. A tag that is not on the roster has no node and draws nothing.
 
 - **The join is by knowledge id, on the node.** `KnowledgeRoster.contact_lesson_for` attaches the row
   as `NODE_CONTACT_LESSON`; a ladder node keys on its `knowledge_id`, a craft on its craft id, which

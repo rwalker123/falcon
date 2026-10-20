@@ -1332,6 +1332,11 @@ band-relative half is `craftOffers`) and `craftKnowledge` (per faction per craft
 `completionThreshold`). The first three are `Whole<…>` baselines like the kit roster and re-send only
 on a world rebuild; **`craftKnowledge` is not**, because a craft is *learned*.
 
+**`craftKnowledge` carries one row per craft for the viewer whether or not the ledger holds anything
+for it.** A people that has learned nothing has no `DiscoveryProgressLedger` entry, and its crafts
+read unknown at `0`. Keying the rows off the ledger's factions publishes no craft list at all on a
+fresh world, since no start profile grants knowledge.
+
 **The rating vocabulary rides ONCE, at the section, not per material** — a deliberate departure from
 the spec's sketch. It is one vocabulary, and every published reading already carries its own band
 *name*, so a copy per material row would be a second home for one fact and the row would never be

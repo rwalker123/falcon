@@ -1569,9 +1569,9 @@ ever open since the ledger clamps to `1.0`).
 > knowledge rider (`knowledge_contact.rs`, `connections.md` → "Knowledge is the third rider") can
 > teach **every tag in `start_profile_knowledge_tags.json`**, so `TeachableLessons::resolve` refuses a
 > tag the ladder does not price and `build_headless_app` panics on it — a cross-file check, because
-> the ladder's own `validate` cannot see the tag table. That is why `nomadic_wayfinding` and
-> `portable_forge` carry a cost although no rung and no bench teaches them: contact is the first
-> thing that can, and they are priced like every other lesson rather than defaulted.
+> the ladder's own `validate` cannot see the tag table. So a tag no rung and no bench teaches still
+> carries a cost: contact can teach it, and it is priced like every other lesson rather than
+> defaulted.
 >
 > **Rot is the fourth teacher, and `validate` checks it too.** Larder rot teaches `storage`, paced by
 > the sibling dial `storage_lesson_rot_turns`: rot equal to that many turns of the band's own need

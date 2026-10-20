@@ -734,14 +734,14 @@ mod tests {
     #[test]
     fn every_knowledge_tag_must_be_priced() {
         let mut ladder = (*LadderConfig::builtin()).clone();
-        ladder.knowledge.lesson_costs.remove("portable_forge");
+        ladder.knowledge.lesson_costs.remove(PENNING_TAG);
         let err =
             TeachableLessons::resolve(&StartProfileKnowledgeTags::builtin(), &ladder.knowledge)
                 .expect_err("an unpriced tag is a load failure, not a default");
         assert_eq!(
             err,
             KnowledgeContactError::UnpricedLesson {
-                tag: "portable_forge".to_string()
+                tag: PENNING_TAG.to_string()
             }
         );
     }

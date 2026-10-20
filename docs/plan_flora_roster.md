@@ -51,8 +51,8 @@ all.**
   `ForagePatch` carries both meters (`cultivation_progress`, `field_progress`, `forage.rs:145-161`).
   `Sow` is already gated to naturally food-bearing ground. **This arc adds no rungs** — it gives the
   existing rungs something specific to be about.
-- **Discovery ids 2001–2006 are taken** (`nomadic_wayfinding`, `portable_forge`, `cultivation`,
-  `herding`, `seed_selection`, `penning`). Next free is **2007**.
+- **Discovery ids 2003–2006 are taken** (`cultivation`, `herding`, `seed_selection`, `penning`;
+  2001–2002 were `nomadic_wayfinding` / `portable_forge`, retired by #789). Next free is **2007**.
 - **`fodder_per_biomass` is a herd's demand *rate*, not a crop** (`fauna.rs:218`). Nothing in the sim
   stores feed.
 - **The rung engine reads config, not code.** `RungDef` already drives verbs, gates,

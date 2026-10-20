@@ -23,10 +23,10 @@ use core_sim::{
     CommandEventKind, CommandEventLog, ConnectionKey, ConnectionLedger, ConnectionsConfigHandle,
     DiscoveryProgressLedger, Expedition, ExpeditionConfigHandle, ExpeditionMission,
     ExpeditionPhase, FactionBorderPolicies, FactionId, ForageRegistry, HerdRegistry,
-    LaborAllocation, LaborAssignment, LaborTarget, LadderConfigHandle, LocalStore, PartySightings,
-    PopulationCohort, ResidentBand, RoadKeeper, RoadRegistry, Scalar, SettleConfig, Sighting,
-    SimulationConfig, SourcePriority, StartingUnit, TakeSelection, Tile, TileRegistry,
-    TransferCause, WellbeingConfigHandle, DEFAULT_ESCAPEMENT_FLOOR, FOOD,
+    KnowledgeFragment, LaborAllocation, LaborAssignment, LaborTarget, LadderConfigHandle,
+    LocalStore, PartySightings, PopulationCohort, ResidentBand, RoadKeeper, RoadRegistry, Scalar,
+    SettleConfig, Sighting, SimulationConfig, SourcePriority, StartingUnit, TakeSelection, Tile,
+    TileRegistry, TransferCause, WellbeingConfigHandle, DEFAULT_ESCAPEMENT_FLOOR, FOOD,
 };
 use faction_support::{two_faction_world, HOME, RIVAL};
 
@@ -53,6 +53,10 @@ const PARTY_PACK_FOOD: f32 = 5.0;
 const MAX_PULL_TURNS: usize = 20;
 /// Fixed-point comparison tolerance, in raw units.
 const RAW_TOLERANCE: i64 = 2;
+/// The knowledge a staged band carries when the test is about knowledge crossing: Cultivation,
+/// part-learned, so neither people already holds it whole.
+const CARRIED_DISCOVERY: u32 = core_sim::CULTIVATION_DISCOVERY_ID;
+const CARRIED_PROGRESS: f32 = 0.6;
 /// The regression horizon: the old whole-band flip fired on turn 5 of an ordinary start.
 const REGRESSION_TURNS: usize = 20;
 
@@ -392,10 +396,17 @@ fn the_knowledge_that_crosses_is_the_share_of_the_band_that_left() {
     let mut app = two_faction_world();
     let s = stage(&mut app);
     tie(&mut app, s.home_id, s.rival_id);
+    // No shipped profile grants knowledge, so the leavers' knowledge is stated here.
+    with_cohort(&mut app, s.home, |c| {
+        c.knowledge.push(KnowledgeFragment::new(
+            CARRIED_DISCOVERY,
+            scalar_from_f32(CARRIED_PROGRESS),
+        ))
+    });
     let before = cohort(&app, s.home);
     assert!(
         !before.knowledge.is_empty(),
-        "fixture: the profile seeds every band with knowledge"
+        "fixture: the band carries knowledge"
     );
     let progress_before: Vec<Scalar> = before
         .knowledge

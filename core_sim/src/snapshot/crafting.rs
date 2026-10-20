@@ -1678,41 +1678,30 @@ pub(crate) fn recipe_catalogue(
         .collect()
 }
 
-/// **Per faction, per craft.** Every faction the ledger carries times every craft the materials
-/// table declares — the same shape `snapshot_intensification_knowledge` publishes the ladder's five
-/// in, and for the same reason: a client reads its own faction's rows off the list.
-/// **The viewer's own crafts.** Which crafts another people has learned, and how far along they are
-/// on the ones they have not, is not legible from outside — see `factions.md` → "Which frame sections
-/// are viewer-scoped".
+/// **The viewer's own crafts, one row per craft the materials table declares.** Which crafts another
+/// people has learned, and how far along they are on the ones they have not, is not legible from
+/// outside — see `factions.md` → "Which frame sections are viewer-scoped".
+///
+/// **A row per craft whether or not the ledger holds anything for the viewer.** A people that has
+/// learned nothing yet has no ledger entry at all, and every craft still reads unknown at `0` for it;
+/// keying the rows off the ledger's factions published no craft list on a fresh world.
 pub(crate) fn craft_knowledge_states(
     materials: &MaterialsConfig,
     discovery: &DiscoveryProgressLedger,
     threshold: f32,
     viewer: FactionId,
 ) -> Vec<CraftKnowledgeState> {
-    let mut factions: Vec<u32> = discovery
-        .progress
-        .keys()
-        .filter(|faction| **faction == viewer)
-        .map(|faction| faction.0)
-        .collect();
-    factions.sort_unstable();
-    factions.dedup();
-    let crafts = crate::crafting::crafts_declared_by(materials);
-    factions
+    crate::crafting::crafts_declared_by(materials)
         .into_iter()
-        .flat_map(|faction_id| {
-            let faction = FactionId(faction_id);
-            crafts.iter().filter_map(move |craft| {
-                let id = craft_discovery_id(craft)?;
-                Some(CraftKnowledgeState {
-                    faction: faction_id,
-                    craft_id: (*craft).to_string(),
-                    display_name: title_from_id(craft),
-                    known: knows(discovery, faction, id, threshold),
-                    progress: discovery.get_progress(faction, id).to_f32(),
-                    completion_threshold: threshold,
-                })
+        .filter_map(|craft| {
+            let id = craft_discovery_id(craft)?;
+            Some(CraftKnowledgeState {
+                faction: viewer.0,
+                craft_id: craft.to_string(),
+                display_name: title_from_id(craft),
+                known: knows(discovery, viewer, id, threshold),
+                progress: discovery.get_progress(viewer, id).to_f32(),
+                completion_threshold: threshold,
             })
         })
         .collect()
