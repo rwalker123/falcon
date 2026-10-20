@@ -3,6 +3,11 @@
 Status: **design.** The spec for [#842](https://github.com/rwalker123/falcon/issues/842). Parent arc:
 [#179](https://github.com/rwalker123/falcon/issues/179) (Early-Game Labor).
 
+It amends two earlier specs, and where they disagree this doc wins: `docs/plan_harvest_floor.md`
+(the crew stepper is retired — a source takes a floor and an optional max, and the sim staffs it) and
+`docs/plan_site_crews.md` §2.4 (the build queue and its Build mark are retired — builds join the
+site's crew and rank by the site's one Priority).
+
 ## Why this doc exists
 
 Every worker is placed by hand. Early that is the game: ~50 workers, a new one every few turns, and
@@ -47,6 +52,11 @@ working-age people are assigned in three passes:
 3. **Bare hands, where they help.** Workers who cannot be kitted are assigned, in priority order, only
    to jobs where a bare-handed worker actually adds value — see "Pass 3, and what is left over".
 
+**Scouts come before pass 1.** The scouting range (see "Scouts: a range, not a count") is a standing
+duty, staffed first each turn — scouts with wayfinding gear before bare-handed ones — and the passes
+share out the people left. Sight comes before food here on purpose: the scouts a range needs are few,
+and a band that stops watching walks into what it cannot see.
+
 **Kitted first, across priorities.** A lower-priority source worked with gear is preferred to a
 higher-priority source worked bare-handed. Gear is what makes a worker productive, so a kit should
 never sit unused in the band's pile while someone works bare-handed elsewhere.
@@ -84,7 +94,7 @@ leader takes goals from the player and sets the layer below it. See "Leaders: fo
 orders". Nothing is taken away as the game grows: a lower layer stays reachable, a click or two
 deeper.
 
-## Proposed — for review
+## Decided — builds, the bench, and what each kind of work takes
 
 ### Builds join the site's crew — there is no build queue
 
@@ -272,10 +282,12 @@ and builds.
 
 - **Food:** *keep N turns of food.* Below it the chief draws food sources harder; above it, eases them
   toward Best or Learning.
-- **Materials:** keep-on-hand targets — stone already works this way; wood and hide join it.
+- **Materials:** keep-on-hand targets — stone works this way (see "Two interfaces" above); wood and
+  hide join it.
 - **Land:** *improve the land.* The chief starts rung builds where they pay best, within a share of the
   workers the player sets.
-- **Scouting range** and the self-filling bench, which already exist.
+- **Scouting range** (see "Scouts" above) and the self-filling bench (`auto_craft_fill`, which ships
+  today).
 
 Before a chief, the band runs on the per-source settings in "Decided" above.
 

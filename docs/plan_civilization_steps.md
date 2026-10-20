@@ -429,9 +429,10 @@ characteristic axes (`docs/plan_crafting_and_materials.md`). Not a per-species t
 and a storehouse is not; folding them into one ladder would make "raise the granary" also mean "store
 hide". (Named with Ray; rung costs and capacities are not set.)
 
-**After the granary: directed labor and consent.** In a 4X the player is already the chief, so step 5
-cannot be "a leader emerges". What it models is the **band's consent to being directed, bought with
-surplus**:
+**After the granary: directed labor and consent.** The band's leader is not what step 5 adds — a
+chief (or an elders' council) comes earlier, from directed work that succeeds, granary or no granary
+(the last bullet below). What step 5 models is the **band's consent to labor that feeds no one,
+bought with surplus**:
 
 - **Labor that feeds no one is paid from the granary.** Workers on a monument or a wall eat and
   produce nothing; the work runs while the granary can carry them and ends when it empties. An empty
@@ -441,8 +442,9 @@ surplus**:
   egalitarian band bears a short stretch of non-food labor and then grievance climbs — the leveling
   mechanism in our vocabulary. A hierarchical band bears far more.
 - **Each fed completion pushes the axis toward Hierarchical.** Temporary prestige becoming rank is the
-  axis drifting until direction is simply accepted. The Telling narrates a chief, then a line of
-  chiefs. No king button, the same emergent shape as the settlement label.
+  axis drifting until direction is simply accepted — the band's leader ruling more and consulting
+  less. The axis decides which kind of leader the band has; The Telling narrates it, then a line of
+  them. No king button, the same emergent shape as the settlement label.
 - **The reserved `leadership` morale contributor** is positive while directed work is fed and
   completing, negative when the granary runs dry under it — a chief who delivers is followed, a chief
   who cannot feed is mocked.
@@ -456,7 +458,8 @@ surplus**:
 
 **Order for the arc (leaning):** spoilage with the storage lesson → the tile-source seam
 (settlement arc) with storage as its first branch → the granary as a tether → directed labor and the
-`leadership` term.
+`leadership` term. The chief itself is not on this line: it arrives with the first directed work that
+succeeds (#859), before any of it.
 **Measured (#705):** a starting band on its starting tiles runs **no** surplus — net ≈0 once its
 starting larder is spent, on every biome measured (see "The push is depletion" above). The storage
 lesson's pace therefore cannot be set against a starting band; it has to be set against whatever
