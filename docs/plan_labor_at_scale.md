@@ -150,36 +150,29 @@ The player sets **how far the band sees**; the sim staffs the scouts that reach 
 scouts does today, and a range stays right as gear improves — a better wayfinding kit extends each
 scout's vantage, so fewer scouts are needed for the same range.
 
-### Warriors: muster enough to drive the pack off
+### Warriors: the player picks the defenders when the camp is attacked
 
-A predator raid kills and injures people; animals carry nothing off. The threat to defend against is
-lives, and the defence has to END the raid, not only soften it. Two failure modes bound the answer:
+There is no standing warrior count. When a band's camp is attacked — by a predator pack today, by
+another faction's raiders later, through the same flow — the player is shown the attack and chooses
+the defence:
 
-- **Too few defenders**: the pack is not hurt enough to retreat, so it raids again next turn, and the
-  turn after — a stalemate the band pays for in lives every turn.
-- **Every armed worker, every time**: a single wolf raiding each turn pulls the whole armed band off
-  its work, and the band starves.
+- **Who is attacking**: the attacker, its count and its strength.
+- **What the band can field**: its workers in camp and the weapons they would carry. A work party past
+  the camp's range is not in camp and cannot defend.
+- **How many defend**: the player's choice. The defenders lose that turn's work and go back to their
+  jobs afterwards.
 
-Proposal: **the sim musters the smallest armed crew that drives the pack off this turn**, from workers
-in camp only (a work party past the camp's range does not come back), clubs first, then other
-weapons. The muster is sized to the raid: one wolf draws a small muster, a big pack a big one. The
-musterers lose that turn's work and go back to their jobs afterwards.
+The fight is ordinary combat, resolved by the combat system, and **both sides take casualties**. A raid
+ends when the attacker breaks off: too few defenders and it attacks again next turn; enough, and it
+retreats.
 
-**When no muster in camp can drive the pack off**, the player is asked through the turn orb, with the
-forecast for each answer: muster everyone armed and take the losses of fighting, or keep working and
-take the losses of not fighting. The standing answer (per band, or for the faction) replaces the prompt
-at scale.
-
-**This needs a sim change.** Today a raid applies casualties to the band side only — the pack takes no
-losses and never retreats, so it raids every turn it stays within range. Defenders must be able to
-hurt the pack and make it break off, or no muster size means anything.
+**This needs a sim change.** Today `advance_predator_raids` reads the herd registry without writing it:
+casualties are applied to the band side only, the pack takes no losses, and it raids every turn it
+stays within range. The pack must take its own casualties and break off when beaten.
 
 The deeper threat from predators is that they compete for the band's food — they eat the same herds.
-That is answered by hunting the pack (the denial raid), not by the camp's defence.
-
-A standing guard that gives up work every turn comes back when military gear and human raiders create
-real trade-offs (#519). Fleeing, and raiders who carry goods off — the trade-panel choice — belong to
-human raiders too.
+That is answered by hunting the pack (the denial raid), not by the camp's defence. Raiders who carry
+goods off are human raiders, and belong to the faction attack.
 
 ### What #465 becomes
 
@@ -190,8 +183,11 @@ first* — is the priority list. The player-facing **max** above is the survivin
 
 ## Open questions
 
-1. **A raid that ends.** The pack needs losses and a retreat rule — how much damage breaks a pack off,
-   and does a beaten pack stay away for some turns?
+1. **When the choice is made.** A turn resolves all at once, so the defence has to be chosen before the
+   attack resolves. Is the attack announced the turn before (the pack or party comes within range), with
+   the defence part of the player's next orders — and what is the default if the player does not answer?
+2. **Retreat.** How much loss makes an attacker break off, and does a beaten pack stay away for some
+   turns?
 
 ## Related
 
