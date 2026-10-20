@@ -99,11 +99,11 @@ extra hand finishes the head order sooner. They are staffed the same way.
   reach crew — some kitted workers are spared for the crafting the player asked for.
 - **A queue job has no hold crew.** It is staffed in pass 2 (and pass 3 where bare hands help), never
   pass 1.
-- **What limits it is the work its orders hold.** A queue job's useful crew is the crew that finishes
-  its workable orders this turn: their remaining worker-turns (bench) or remaining work (build). An
-  order short of an input is not workable and takes nobody, exactly as the bench skips it today. So
-  the bench is not a sink of unlimited size: it is bounded by the gear the band needs and the
-  materials it has to make it.
+- **A queue job's useful crew finishes its head order in a set number of turns.** The crew that
+  finishes an order in ONE turn is 10+ crafters for most gear, which would swallow every spare hand.
+  So both queues size their crew to finish the head workable order in `queue_target_turns` turns — a
+  config lever, an opening value for playtest (5). An order short of an input is not workable and
+  takes nobody, exactly as the bench skips it today.
 - **"Kitted" for the bench means holding its bench tool** (the tanning frame, the awl, the billet);
   for the build queue, the build kit the entry's rung uses.
 
@@ -113,29 +113,32 @@ Pass 3 is one pass, in priority order, over **every job where a bare-handed work
 bench, the build queue and bare-handed sources (foraging is the main one), each up to its useful crew.
 "Adds value" is the sim's own answer for each job, the same test passes 1 and 2 use.
 
-**Workers left after pass 3 are idle, and the game says so** — the existing `N idle workers` alert.
-That is the honest reading: the band has more people than it has gear and workable jobs for, and the
-remedy is the player's — open a source, queue gear the bench can make, find the inputs it is short of.
+**Workers left after pass 3 are idle, and the game must say so clearly.** Idle people are not waste:
+they are the band's spare capacity, and later they become traders, diplomats and other roles that
+need no gear. So the band's idle count is a first-class readout — on the band, on the faction page,
+and in the existing `N idle workers` alert — not a remainder the player has to work out.
 
-### Materials: a keep-on-hand target, and the game picks the site
+### Two interfaces: what grows back, and what is mined
 
-Every extracted material — wood, stone, later ore — takes a band-level **keep-on-hand target** (e.g.
-*keep 60 stone*) instead of crews on sites. The player does not assign workers to a working at all:
-the game picks which sites to work.
+**Anything that grows back is worked like a food source**: a floor per site, and the hold and reach
+passes. That covers foraging, hunting, pens — and **wood**, whose stands regrow. One interface for
+every living resource, whatever it pays.
+
+**Anything mined — it runs out and does not come back — takes a keep-on-hand target** at band level
+(e.g. *keep 60 stone*): stone today, ore and gold later. The player never assigns workers to a mine;
+the game picks the sites.
 
 - **Hold** (pass 1): the crew whose take matches what the band draws on that material per turn — its
   builds' and its upkeep's draw.
 - **Reach** (pass 2): the extra crew that refills the pile toward the target.
 - **At or above the target**: no workers.
 - **Which sites**: the ones that give the most per worker — the best-geared rung, the shortest walk.
-- **Wood grows back, so a wood site still keeps a floor** — otherwise the game strips the stand to
-  meet the target. Proposal: one floor per renewing material, set at band level, default *Best*.
 
 A deposit's current "useful crew" (the crew that cuts everything above the floor in one turn — 958
 cutters on the Firbrook deadfall) is not a target anywhere in this design.
 
 **No separate food-first rule is needed.** The passes already order the work: every food source's hold
-crew is in pass 1, and a material's pass-1 share is only what the band draws each turn. Refilling a
+crew is in pass 1, and a mine's pass-1 share is only what the band draws each turn. Refilling a
 stockpile is pass 2, so it never takes hands from food that is merely holding. Beyond that, priority
 decides.
 
@@ -145,24 +148,25 @@ The player sets **how far the band sees**; the sim staffs the scouts that reach 
 scouts does today, and a range stays right as gear improves — a better wayfinding kit extends each
 scout's vantage, so fewer scouts are needed for the same range.
 
-### Warriors: a muster when predators raid
+### Warriors: the player chooses defend or flee when a raid comes
 
-Warriors defend the camp against predator raids: the raid's defenders are the band's warriors, armed
-by the warrior kit, and the rest of its exposed workers take losses unarmed. A standing count is hard
-to reason about because nothing tells the player what one more warrior buys.
+Warriors defend the camp against predator raids. A raid is a one-turn skirmish, resolved again every
+turn the pack stays within raid range: one representative of the pack against the band's armed
+warriors plus a few exposed, unarmed people. More armed defenders mean fewer deaths. There is no
+battle to win or lose and no stalemate — only how many people the raid costs.
 
-Proposal: **the band keeps no standing guard; workers muster when a raid lands**, the way #798 musters
-hunters.
+So there is no headcount to set, and no "enough to match the pack" to compute. Proposal:
 
-- **Only workers in camp muster.** A work party out past the camp's range does not come back.
-- **Only workers who can be armed muster** — clubs first, then other weapons. Unarmed workers are the
-  people being protected, not defenders.
-- **How many: enough to match the raid.** The sim knows the raiding pack's strength, so it musters armed
-  workers until the defence matches it, and no more. If every armed worker in camp is not enough, all
-  of them muster.
-- **No prompt per raid.** Asking every raid does not scale. The player's one setting is a stance —
-  *defend* or *flee*.
-- **The cost is that turn's work** from the workers who mustered; they go back to their jobs afterwards.
+- **The player is asked when a pack comes within raid range**, through the turn orb, before the turn
+  resolves: *defend* or *flee*. The choice stands until the pack leaves. Each answer shows its
+  forecast — the expected losses if the band defends, what the raiders would take if it flees.
+- **Defend: every armed worker in camp musters.** Only workers in camp — a work party past the camp's
+  range does not come back. Only workers who can be armed — clubs first, then other weapons. They lose
+  that turn's work and go back to their jobs afterwards.
+- **Flee: the raiders carry off goods instead of lives.** The player sees a panel like the trade
+  panel, and the raiding party picks what to carry off, up to its carry capacity.
+- **At scale, a standing answer replaces the prompt** — *always defend* / *always flee*, per band or for
+  the faction — so many bands do not mean many prompts.
 - A standing guard that gives up work every turn comes back when military gear creates real
   trade-offs (#519).
 
@@ -175,10 +179,10 @@ first* — is the priority list. The player-facing **max** above is the survivin
 
 ## Open questions
 
-1. **Wood's floor.** One floor per renewing material at band level (default *Best*), or a floor per site?
-2. **Warriors: matching the raid.** Is "enough to match the pack" the right muster size?
-3. **Warriors: flee.** What does *flee* do — the band takes no fight and loses something else (food,
-   a turn of work, ground)?
+1. **What predators take.** Today's raiders are predators. What can a wolf pack carry off — meat from
+   the larder, animals from a pen? The trade-panel choice fits human raiders fully once they exist.
+2. **`queue_target_turns`.** Is "finish the head order in N turns" the right size for the bench and the
+   build queue, and is 5 a sensible opening value?
 
 ## Related
 
