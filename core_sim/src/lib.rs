@@ -1378,114 +1378,70 @@ pub fn build_headless_app() -> App {
                     CapabilityFlags::MEGAPROJECTS | CapabilityFlags::ALWAYS_ON,
                 )),
         )
+        // **The Population stage is declared by edges, not chained** (`schedule-parallelism.md`).
+        // Nearly every pair of its systems conflicts on `PopulationCohort`, so the edges below are
+        // close to a total order — but each one is written where it is needed, and a new system
+        // declares its own rather than joining a tuple (a tuple stops at twenty members). The
+        // ambiguity gate is what keeps this honest: a conflicting pair with no path between them
+        // is a boot panic.
+        //
+        // The four `Commands`-using systems (`follow_hunted_herds`, `advance_band_movement`,
+        // `advance_expeditions`, `advance_party_defection`) each have a DIRECT edge to the system
+        // that follows them, so the `apply_deferred` sync point sits between them exactly as it did
+        // in the chain — `follow_hunted_herds` needs one so `advance_band_movement` sees a freshly
+        // inserted `BandTravel` the same turn. The gate cannot see that hazard; these edges are
+        // the only thing that pins it.
+        //
+        // The opening of the stage: the meal, the larder, the outfit, then the movement run.
         .add_systems(
             Update,
             (
-                // This whole run is serial by data — every pair conflicts on `PopulationCohort`,
-                // and the three `Commands`-using systems (`follow_hunted_herds`,
-                // `advance_band_movement`, `advance_expeditions`) sit inside it, so the
-                // auto-inserted `apply_deferred` sync points between them are preserved —
-                // `follow_hunted_herds` needs one so `advance_band_movement` sees a freshly
-                // inserted `BandTravel` the same turn.
-                (
-                    systems::simulate_population,
-                    // The larder rots right after the meal and before the turn's take lands
-                    // (#706): what the band could not eat in time is measured against the food it
-                    // carried into the turn, and resets this turn's `last_food_spoiled`, which the
-                    // labor pass's caravan transit rot then adds to.
-                    spoilage::rot_band_larders,
-                    // **The opening band is outfitted on the world-build pass, after its meal** —
-                    // its fixed larder counts against its carry, and this is the larder the first
-                    // frame publishes (`starting_loadout::outfit_opening_bands`). A splinter's
-                    // default is the split's own rule (`split_default_outfit`).
-                    starting_loadout::outfit_opening_bands
-                        .run_if(starting_loadout::on_the_world_build_pass),
-                    // Move first so the band's `current_tile` is current before labor reads its
-                    // in-range sources, then resolve per-worker Forage/Hunt/Scout yields.
-                    //
-                    // **Migration mode re-aims the band at its herd first** — the herds moved this
-                    // turn in Logistics, so the band steps right after its herd and a band camped in
-                    // it never falls a hex behind (`follow_hunted_herds`).
-                    systems::follow_hunted_herds,
-                    systems::advance_band_movement,
-                    // Expedition per-turn logic (observe into the pending-reveal buffer, comm-range
-                    // flush-to-Discovered, return-retarget, arrival/fold-back). Runs right after
-                    // movement so it reads the party's fresh position, and before the Visibility stage's
-                    // `discover_sites` picks up any site on the newly-flushed Discovered tiles.
-                    systems::advance_expeditions,
-                    // Pending dealings: an offer `advance_expeditions` just posted is judged against
-                    // its deadline and its waiting party in the same turn; silence is a refusal.
-                    dealings::advance_dealings,
-                    systems::advance_labor_allocation,
-                    // The bench runs right after labor, for two reasons that both have to hold: it
-                    // draws on the materials THIS turn's take just delivered, and its crew came out
-                    // of the same worker pool the assignment loop above spends.
-                    // **Auto-craft fills an EMPTY queue** right before the bench works, and again
-                    // right after it (so an order that completes this turn has its successor in
-                    // the snapshot). See `auto_craft`.
-                    auto_craft::advance_auto_craft,
-                    systems::advance_crafting,
-                    auto_craft::advance_auto_craft_after_bench,
-                    // The bench-queue shortage notice reads the stock the draw just left, so it
-                    // follows the draw directly.
-                    systems::announce_bench_material_short,
-                    // Predator raids fire right after labor so warrior counts and band positions are
-                    // current: a carnivore with `aggression > 0` within `predators.raid_radius` of a band
-                    // raids its camp, the band defended by its Warriors (the role's first live consumer).
-                    systems::advance_predator_raids,
-                    // Wellbeing migration runs after demographics + this turn's yield payouts so
-                    // morale/discontent are current and productivity has already been applied at each
-                    // yield site; it then relocates discontented people (population conserved).
-                    systems::advance_population_migration,
-                    // A breeding population above its ceiling sheds the excess (#690): after
-                    // migration, which overwrites each band's `last_emigrated` / `last_immigrated`,
-                    // and before independence, which judges the roster the break-off may grow.
-                    systems::shed_breeding_excess,
-                    systems::break_off_breeding_excess,
-                    // The tail of the chain, nested only because a tuple of systems stops at
-                    // twenty members: still one `.chain()`, in the order written.
-                    (
-                        // A detached party defects whole (`docs/plan_band_fission.md` §Defection): it
-                        // reads its home band's morale, which demographics made current, and the
-                        // sightings `advance_expeditions` recorded this turn; it runs after the trickle
-                        // so a band that changed people this turn is judged as the people it now is.
-                        systems::advance_party_defection,
-                        // Independence (#284): every band's people is final for the turn and its
-                        // grievance is this turn's, so a cut-off, aggrieved group is judged as what it
-                        // now is — and a band that went over this turn is not judged by the people it
-                        // left.
-                        systems::advance_band_independence,
-                        // A purist band whose cultural strain held splits off (#702): after
-                        // independence, so every band's people is final and one independence took
-                        // this turn is skipped.
-                        systems::advance_culture_splits,
-                        sedentarization::sedentarization_tick,
-                        // The roaming counterpart: after `advance_band_movement` (in this chain, so
-                        // the order is declared), which records the turn's steps following a herd
-                        // (any roam state) and which this drains.
-                        mobility::mobility_tick,
-                    )
-                        .chain(),
-                )
-                    .chain(),
-                // Pure telemetry: reads `TradeTelemetry`, which two systems write (the cross-people
-                // knowledge credit): `advance_population_migration` and `shed_breeding_excess`
-                // (through `MigrationKnowledgeSinks`). Ordered after both and nothing else, so it
-                // stays free of the labor run the migration follows. The one other edge is
-                // `break_off_breeding_excess`, an EXCLUSIVE system (it spawns a band) and so in
-                // conflict with every system; the telemetry reads nothing it writes, so it simply
-                // takes its place after it.
-                systems::publish_trade_telemetry
-                    .after(systems::advance_population_migration)
-                    .after(systems::shed_breeding_excess)
-                    .after(systems::break_off_breeding_excess),
-                // Culture pressure (#820): read-only. After every band's people is final for the
-                // turn — the last system that changes a band's people is the culture split —
-                // measure each people's strength and each band's pull under another. It shares the
-                // event log with `sedentarization_tick`, so that edge is declared too.
-                systems::advance_culture_pressure
-                    .after(systems::advance_culture_splits)
-                    .before(sedentarization::sedentarization_tick),
+                systems::simulate_population,
+                // The larder rots right after the meal and before the turn's take lands
+                // (#706): what the band could not eat in time is measured against the food it
+                // carried into the turn, and resets this turn's `last_food_spoiled`, which the
+                // labor pass's caravan transit rot then adds to.
+                spoilage::rot_band_larders.after(systems::simulate_population),
+                // **The opening band is outfitted on the world-build pass, after its meal** —
+                // its fixed larder counts against its carry, and this is the larder the first
+                // frame publishes (`starting_loadout::outfit_opening_bands`). A splinter's
+                // default is the split's own rule (`split_default_outfit`).
+                starting_loadout::outfit_opening_bands
+                    .run_if(starting_loadout::on_the_world_build_pass)
+                    .after(spoilage::rot_band_larders),
+                // Move first so the band's `current_tile` is current before labor reads its
+                // in-range sources, then resolve per-worker Forage/Hunt/Scout yields.
+                //
+                // **Migration mode re-aims the band at its herd first** — the herds moved this
+                // turn in Logistics, so the band steps right after its herd and a band camped in
+                // it never falls a hex behind (`follow_hunted_herds`).
+                systems::follow_hunted_herds.after(starting_loadout::outfit_opening_bands),
+                // **`Commands`: the edge from `follow_hunted_herds` is what carries its deferred
+                // `BandTravel` insert/remove to this system** — it reads the component the same turn.
+                systems::advance_band_movement.after(systems::follow_hunted_herds),
+                // Expedition per-turn logic (observe into the pending-reveal buffer, comm-range
+                // flush-to-Discovered, return-retarget, arrival/fold-back). Runs right after
+                // movement so it reads the party's fresh position, and before the Visibility stage's
+                // `discover_sites` picks up any site on the newly-flushed Discovered tiles.
+                // **`Commands`**: it re-aims and despawns parties, and the edge to `advance_dealings`
+                // is the sync point that lands them.
+                systems::advance_expeditions.after(systems::advance_band_movement),
+                // Pending dealings: an offer `advance_expeditions` just posted is judged against
+                // its deadline and its waiting party in the same turn; silence is a refusal.
+                dealings::advance_dealings.after(systems::advance_expeditions),
+                // **A stationed party's standing in a foreign host's camp raises the host people's
+                // opinion of its own.** It reads every party's phase (settled by
+                // `advance_expeditions`) and `PopulationCohort`, which the rest of the stage
+                // writes, so it is declared after the dealings pass that follows the expeditions
+                // and before the road bill that opens the labour run.
+                goodwill::credit_stationed_goodwill.after(dealings::advance_dealings),
+            )
+                .in_set(TurnStage::Population)
+                .run_if(population_stage_enabled()),
+        )
+        .add_systems(
+            Update,
+            (
                 // **RETIRED: `settle_route_keeping`, the third keeping pool as a SYSTEM OF ITS
                 // OWN.** It ran `.after(advance_labor_allocation)` because the `roadwork` head count
                 // it divides has to be the one the shedding order left — and that put the payment a
@@ -1509,29 +1465,92 @@ pub fn build_headless_app() -> App {
                 //
                 // Both edges are declared rather than left to the ambiguity gate — it takes
                 // `PopulationCohort` mutably to spend the stone, so its order against the movement
-                // chain is not the scheduler's to guess:
-                //  - `.after(advance_expeditions)` — it slots into the chain immediately before
-                //    labor, so the bill is struck on the positions this turn's movement left.
+                // run is not the scheduler's to guess:
+                //  - after `credit_stationed_goodwill`, which itself follows `advance_expeditions`
+                //    and `advance_dealings` — it slots into the run immediately before labor, so
+                //    the bill is struck on the positions this turn's movement left.
                 //  - `.before(advance_labor_allocation)` — the ordering this system exists for.
-                // **A stationed party's standing in a foreign host's camp raises the host people's
-                // opinion of its own.** It reads every party's phase (settled by
-                // `advance_expeditions`) and `PopulationCohort`, which the rest of the chain
-                // writes, so both edges are declared: after the dealings pass that follows the
-                // expeditions, before the labour pass that opens the rest of the chain.
-                goodwill::credit_stationed_goodwill
-                    .after(dealings::advance_dealings)
-                    .before(systems::bill_and_stock_roads),
                 systems::bill_and_stock_roads
-                    .after(systems::advance_expeditions)
+                    .after(goodwill::credit_stationed_goodwill)
                     .before(systems::advance_labor_allocation),
+                systems::advance_labor_allocation,
+                // The bench runs right after labor, for two reasons that both have to hold: it
+                // draws on the materials THIS turn's take just delivered, and its crew came out
+                // of the same worker pool the assignment loop above spends.
+                // **Auto-craft fills an EMPTY queue** right before the bench works, and again
+                // right after it (so an order that completes this turn has its successor in
+                // the snapshot). See `auto_craft`.
+                auto_craft::advance_auto_craft.after(systems::advance_labor_allocation),
+                systems::advance_crafting.after(auto_craft::advance_auto_craft),
+                auto_craft::advance_auto_craft_after_bench.after(systems::advance_crafting),
+                // The bench-queue shortage notice reads the stock the draw just left, so it
+                // follows the draw directly.
+                systems::announce_bench_material_short
+                    .after(auto_craft::advance_auto_craft_after_bench),
+                // Predator raids fire right after labor so warrior counts and band positions are
+                // current: a carnivore with `aggression > 0` within `predators.raid_radius` of a band
+                // raids its camp, the band defended by its Warriors (the role's first live consumer).
+                systems::advance_predator_raids.after(systems::announce_bench_material_short),
+                // Wellbeing migration runs after demographics + this turn's yield payouts so
+                // morale/discontent are current and productivity has already been applied at each
+                // yield site; it then relocates discontented people (population conserved).
+                systems::advance_population_migration.after(systems::advance_predator_raids),
+                // A breeding population above its ceiling sheds the excess (#690): after
+                // migration, which overwrites each band's `last_emigrated` / `last_immigrated`,
+                // and before independence, which judges the roster the break-off may grow.
+                systems::shed_breeding_excess.after(systems::advance_population_migration),
+                // EXCLUSIVE (it spawns a band), so it conflicts with every system and takes its
+                // place in the order the stage always had: after the shed, before the defection
+                // and independence passes that judge the roster it may grow.
+                systems::break_off_breeding_excess.after(systems::shed_breeding_excess),
+                // Pure telemetry: reads `TradeTelemetry`, which two systems write (the cross-people
+                // knowledge credit): `advance_population_migration` and `shed_breeding_excess`
+                // (through `MigrationKnowledgeSinks`). Both precede `break_off_breeding_excess`, so
+                // that one edge orders it after both writers and nothing else — it stays free of
+                // the tail below. `break_off_breeding_excess` is an EXCLUSIVE system and so in
+                // conflict with every system; the telemetry reads nothing it writes, so it simply
+                // takes its place after it.
+                systems::publish_trade_telemetry.after(systems::break_off_breeding_excess),
             )
                 .in_set(TurnStage::Population)
-                .run_if(capability_enabled(
-                    CapabilityFlags::CONSTRUCTION
-                        | CapabilityFlags::INDUSTRY_T1
-                        | CapabilityFlags::INDUSTRY_T2
-                        | CapabilityFlags::ALWAYS_ON,
-                )),
+                .run_if(population_stage_enabled()),
+        )
+        .add_systems(
+            Update,
+            (
+                // A detached party defects whole (`docs/plan_band_fission.md` §Defection): it
+                // reads its home band's morale, which demographics made current, and the
+                // sightings `advance_expeditions` recorded this turn; it runs after the trickle
+                // so a band that changed people this turn is judged as the people it now is.
+                // **`Commands`**: it despawns a party that joined another people, and the edge to
+                // `advance_band_independence` is the sync point that lands the despawn before any
+                // later pass reads the roster.
+                systems::advance_party_defection.after(systems::break_off_breeding_excess),
+                // Independence (#284): every band's people is final for the turn and its
+                // grievance is this turn's, so a cut-off, aggrieved group is judged as what it
+                // now is — and a band that went over this turn is not judged by the people it
+                // left.
+                systems::advance_band_independence.after(systems::advance_party_defection),
+                // A purist band whose cultural strain held splits off (#702): after
+                // independence, so every band's people is final and one independence took
+                // this turn is skipped.
+                systems::advance_culture_splits.after(systems::advance_band_independence),
+                // Culture pressure (#820): read-only. After every band's people is final for the
+                // turn — the last system that changes a band's people is the culture split —
+                // measure each people's strength and each band's pull under another. It shares the
+                // event log with `sedentarization_tick`, so that edge is declared too.
+                systems::advance_culture_pressure
+                    .after(systems::advance_culture_splits)
+                    .before(sedentarization::sedentarization_tick),
+                sedentarization::sedentarization_tick,
+                // The roaming counterpart: after `advance_band_movement`, which records the turn's
+                // steps following a herd (any roam state) and which this drains — that order is
+                // carried by the whole run between them, and the one edge declared here is the
+                // culture split, the last pass that changes a band's people.
+                mobility::mobility_tick.after(systems::advance_culture_splits),
+            )
+                .in_set(TurnStage::Population)
+                .run_if(population_stage_enabled()),
         )
         .add_systems(
             Update,
@@ -1804,6 +1823,18 @@ pub fn disarm_the_builders(world: &mut World, band: Entity, rung: crate::intensi
 /// Callers are responsible for snapshot broadcasting and command handling.
 pub fn run_turn(app: &mut App) {
     app.update();
+}
+
+/// The capability gate every `TurnStage::Population` group shares. The stage is declared across
+/// several `add_systems` calls (a tuple stops at twenty members), and each needs the same
+/// condition; one function keeps them from drifting apart.
+fn population_stage_enabled() -> impl FnMut(Res<CapabilityFlags>) -> bool {
+    capability_enabled(
+        CapabilityFlags::CONSTRUCTION
+            | CapabilityFlags::INDUSTRY_T1
+            | CapabilityFlags::INDUSTRY_T2
+            | CapabilityFlags::ALWAYS_ON,
+    )
 }
 
 fn capability_enabled(flags: CapabilityFlags) -> impl FnMut(Res<CapabilityFlags>) -> bool {

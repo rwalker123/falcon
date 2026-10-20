@@ -110,8 +110,9 @@ fn skills_norm(
     total / ROAMING_SKILL_DISCOVERY_IDS.len() as f32
 }
 
-/// Per-turn mobility computation (`TurnStage::Population`, after `advance_band_movement` so the
-/// turn's steps are recorded - it follows `sedentarization_tick` in the one Population chain).
+/// Per-turn mobility computation (`TurnStage::Population`, after `advance_culture_splits` and so
+/// after `advance_band_movement`, whose recorded steps it drains; unordered against
+/// `sedentarization_tick` and `advance_culture_pressure`, with which it shares no data).
 /// Runs before the Snapshot stage so the score is captured the same turn.
 pub fn mobility_tick(
     mut score: ResMut<MobilityScore>,
