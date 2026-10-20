@@ -85,8 +85,9 @@ const MUST_BE_ORDERED: [(&str, &str); 5] = [
 /// people; every pass after it in the stage hangs off it through `advance_band_independence`, and
 /// the only Population system free of it, `publish_trade_telemetry`, reads resources alone.
 /// A new system taking `Commands` is not necessarily wrong — it just cannot be checked by the
-/// machinery, so it has to be checked by a person: does it spawn or despawn anything another system reads in the same turn, and is the
-/// edge that orders them declared? Answer that, then add it here.
+/// machinery, so it has to be checked by a person: does it spawn or despawn anything another
+/// system reads in the same turn, and is the edge that orders them declared? Answer that, then
+/// add it here.
 ///
 /// It matters beyond a lost core. A rollback rewound by replaying a command log reproduces the
 /// original run only if every turn is a pure function of its start state, and an undeclared
