@@ -134,9 +134,13 @@ the Crafters stepper is retired like the Builders one.
 - **Each order carries a priority**, and it ranks against sources on the one priority list. So a High
   craft order can take kitted workers ahead of a Normal source's reach crew — some kitted workers are
   spared for the crafting the player asked for.
-- **An order's materials are set aside when it starts** — the turn it gets its first crafter. Two
-  orders drawing on the same fibre can then never both stall halfway; the ones still waiting show
-  what they are short of. The pile shows how much of it is set aside for the bench.
+- **Materials are set aside per item, all or nothing.** An item's inputs are set aside the turn a
+  crafter starts it, and only when every one of them is on hand — never part of an item. A batch
+  starts the items it can supply and sets aside the next item's inputs when that item starts, so a
+  large order never waits on materials for items nobody is working yet. Because nothing is ever held
+  half-supplied, two orders can never each hold what the other needs and deadlock; an item that cannot
+  be supplied holds nothing and waits, showing what it is short of. Cancelling an order returns what
+  it holds. The pile shows how much of it is set aside for the bench.
 - **An order short of an input is not workable and takes nobody**, exactly as the bench skips it
   today.
 - **A bench tool is held by one crafter.** One loom means one weaver works at the loom's quality; a
