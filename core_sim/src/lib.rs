@@ -16,6 +16,7 @@ pub(crate) const BUILD_ID: &str = match option_env!("CORE_SIM_BUILD_ID") {
 };
 
 pub mod auto_craft;
+pub mod band_improvement;
 mod band_names;
 pub mod belief;
 mod belief_config;
@@ -357,6 +358,11 @@ pub use treaties::{
     BundleMatch, EnvoyOutcome, Treaties, Treaty, TreatyTerms, NO_TREATIES,
 };
 // The drainage-network measurement instrument (consumed by the `#[ignore]`d census test).
+pub use band_improvement::{
+    advance_band_improvements, band_rung_cost, band_rung_span, band_standing_at, is_band_branch,
+    BandImprovement, BandImprovementKey, BandImprovementRegistry, BAND_KEEPING_LOAD,
+    NO_HANDS_ON_THE_BAND_IMPROVEMENT,
+};
 pub use extraction::{
     advance_deposits, deposit_at_risk_rung, deposit_keeper_loads, deposit_keeping_basis,
     deposit_measure, deposit_meter_rot, deposit_rungs_in_climb_order, deposit_upkeep_demand,
@@ -889,6 +895,15 @@ pub fn build_headless_app() -> App {
     {
         panic!("flora config does not reconcile with the keeping classes: {err}");
     }
+    // **Every preservation names a rung the ladder defines** (#708) - the keeping table's
+    // cross-config half, run where the ladder and the class table are both in scope. A rung nobody
+    // defines would otherwise parse, validate and preserve nothing for ever.
+    if let Err(err) = demographics_config
+        .keeping
+        .validate_preservation(&ladder_for_reconcile)
+    {
+        panic!("keeping preservation does not reconcile with the intensification ladder: {err}");
+    }
     let demographics_handle =
         demographics_config::DemographicsConfigHandle::new(demographics_config);
     let (supply_network_config, supply_network_metadata) =
@@ -1329,6 +1344,10 @@ pub fn build_headless_app() -> App {
                 // tile kind's twin of `advance_deposits`. It announces a slip or a loss on the feed
                 // the passes above write, so it takes its place after the last of them.
                 tile_improvement::advance_tile_improvements.after(extraction::advance_deposits),
+                // **AND THE BAND KIND'S**, on the same registry resource, so it takes its place after
+                // the tile kind's pass rather than racing it for the write.
+                band_improvement::advance_band_improvements
+                    .after(tile_improvement::advance_tile_improvements),
             )
                 .in_set(TurnStage::Logistics)
                 .run_if(capability_enabled(

@@ -3223,6 +3223,16 @@ pub enum LaborTarget {
     /// several tile branches, and working one is not working another. It names no floor - there is
     /// no stock to leave standing.
     Tile { tile: UVec2, branch: BranchId },
+    /// **KEEP AN IMPROVEMENT THE BAND ITSELF HOLDS** - the band kind's crew row
+    /// (`core_sim/src/band_improvement.rs`), the tile row's twin with the tile taken away: the
+    /// improvement stands at the band's camp and moves with it, so there is no position, no
+    /// distance and never a work party.
+    ///
+    /// Stored as `(band, branch)`, the registry's own key. **The row carries its own band's id**,
+    /// redundant with the allocation it sits in, so a row is a pure value: [`BuildSource::of`],
+    /// [`Self::same_source`] and every registry lookup need no band argument, and two bands' racks
+    /// are two distinct sources in every map keyed by one. It names no floor - there is no stock.
+    Band { band: BandId, branch: BranchId },
 }
 
 /// The stable role key a **Forage** row publishes, and the one a plant-web build queue entry names
@@ -3245,6 +3255,9 @@ pub const EXTRACT_ROLE_KEY: &str = "extract";
 /// tile build-queue entry names its source with. One key for every tile-kind branch, for the reason
 /// there is one row kind: which branch it is, is the improvement's.
 pub const TILE_ROLE_KEY: &str = "tile";
+/// The **Band** twin of [`TILE_ROLE_KEY`] - the crew row on a band-kind improvement, and the row a
+/// band build-queue entry names its source with. One key for every band-kind branch.
+pub const BAND_ROLE_KEY: &str = "band";
 
 impl LaborTarget {
     /// The stable role key (also the snapshot `kind` string and the `activity` summary).
@@ -3258,6 +3271,7 @@ impl LaborTarget {
             LaborTarget::Builders => "builders",
             LaborTarget::Extract { .. } => EXTRACT_ROLE_KEY,
             LaborTarget::Tile { .. } => TILE_ROLE_KEY,
+            LaborTarget::Band { .. } => BAND_ROLE_KEY,
         }
     }
 
@@ -3288,7 +3302,9 @@ impl LaborTarget {
             // follow from the improvement's rung (`EquipmentConfig::pool_toe`), exactly as a
             // pool's do, and the command refuses a `kit` token on the row. `roadwork` is the job
             // whose default kit is the empty `none`, which is what a row that carries nothing wants.
-            LaborTarget::Tile { .. } => crate::equipment_config::KitJob::Roadwork,
+            LaborTarget::Tile { .. } | LaborTarget::Band { .. } => {
+                crate::equipment_config::KitJob::Roadwork
+            }
         }
     }
 
@@ -3332,6 +3348,17 @@ impl LaborTarget {
                     branch: right,
                 },
             ) => a == b && left == right,
+            // **Keyed by band AND branch**, the registry's own key.
+            (
+                LaborTarget::Band {
+                    band: a,
+                    branch: left,
+                },
+                LaborTarget::Band {
+                    band: b,
+                    branch: right,
+                },
+            ) => a == b && left == right,
             _ => false,
         }
     }
@@ -3369,8 +3396,10 @@ impl LaborTarget {
             // or the working loses its place in the build queue — and a row held at zero is a site
             // with no crew, so nothing keeps it.
             | LaborTarget::Extract { .. }
-            // **A tile improvement is ground the band holds**, a working's reading exactly.
-            | LaborTarget::Tile { .. } => true,
+            // **A tile improvement is ground the band holds**, a working's reading exactly - and a
+            // band improvement is a thing the band holds, so zeroing its crew is *stop keeping it*.
+            | LaborTarget::Tile { .. }
+            | LaborTarget::Band { .. } => true,
             LaborTarget::Scout
             | LaborTarget::Warrior
             | LaborTarget::Roadwork
@@ -3397,6 +3426,7 @@ impl LaborTarget {
             | LaborTarget::Hunt { .. }
             | LaborTarget::Extract { .. }
             | LaborTarget::Tile { .. }
+            | LaborTarget::Band { .. }
             | LaborTarget::Scout
             | LaborTarget::Warrior => false,
         }
@@ -6342,6 +6372,12 @@ pub enum BuildSource {
     /// reading ([`LaborTarget::Tile`]): the band's `builders` pool raises it and the crew on the row
     /// keeps it, so the entry is pruned exactly as a deposit's is - no row, no holding.
     Tile { tile: UVec2, branch: BranchId },
+    /// **AN IMPROVEMENT A BAND HOLDS AT ITS CAMP** - `(band, branch)`, the key of the band half of
+    /// [`crate::tile_improvement::TileImprovementRegistry`]. **Backed by a labor row**
+    /// ([`LaborTarget::Band`]), the tile kind's reading: the band's own `builders` pool raises it and
+    /// the crew on the row keeps it. The band id is part of the key so two bands' racks are two
+    /// sources in every map the whole world shares (the site-crew denominators, the estimate claims).
+    Band { band: BandId, branch: BranchId },
 }
 
 /// **THE ROAD-MEMBERSHIP ANSWER A CALLER WITH NO VIEW OF THE ROADS GIVES** — *"leave road entries
@@ -6372,6 +6408,10 @@ impl BuildSource {
                 tile: *tile,
                 branch: *branch,
             }),
+            LaborTarget::Band { band, branch } => Some(BuildSource::Band {
+                band: *band,
+                branch: *branch,
+            }),
             LaborTarget::Scout
             | LaborTarget::Warrior
             | LaborTarget::Roadwork
@@ -6396,6 +6436,7 @@ impl BuildSource {
             // **The crew row's own key**, a working's reading: a tile improvement has a row, so a
             // client joins its queued build to the crew that is standing on it.
             BuildSource::Tile { .. } => TILE_ROLE_KEY,
+            BuildSource::Band { .. } => BAND_ROLE_KEY,
         }
     }
 
@@ -6419,6 +6460,13 @@ impl BuildSource {
                     branch: worked,
                 },
             ) => tile == other && branch == worked,
+            (
+                BuildSource::Band { band, branch },
+                LaborTarget::Band {
+                    band: other,
+                    branch: worked,
+                },
+            ) => band == other && branch == worked,
             // **A road names no row.** `LaborTarget::Roadwork` is band-wide and covers every road
             // the band keeps, so it names no one of them — the same answer `Agriculture` gives a
             // patch.
@@ -7578,7 +7626,8 @@ impl LaborAllocation {
             BuildSource::Patch(_)
             | BuildSource::Herd(_)
             | BuildSource::Deposit { .. }
-            | BuildSource::Tile { .. } => self
+            | BuildSource::Tile { .. }
+            | BuildSource::Band { .. } => self
                 .assignments
                 .iter()
                 .any(|assignment| source.names(&assignment.target)),

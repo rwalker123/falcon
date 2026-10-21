@@ -503,7 +503,10 @@ pub fn calculate_visibility(
                         // **A band-wide role stands on no tile of its own**: the road keepers hold
                         // what the band keeps, and the builders work the queue head.
                         | LaborTarget::Roadwork
-                        | LaborTarget::Builders => None,
+                        | LaborTarget::Builders
+                        // **A band improvement stands at the camp**, which the band's own presence
+                        // already reveals.
+                        | LaborTarget::Band { .. } => None,
                     };
                     // A Forage assignment carries raw command-supplied coords (see
                     // `handle_assign_labor`), so guard the bounds before pushing — an OOB tile

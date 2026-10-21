@@ -1503,6 +1503,8 @@ mod tests {
             loadout_window: None,
             heart: None,
             culture_pressures: Vec::new(),
+            band_improvements: Vec::new(),
+            held_preservation: crate::spoilage::HeldPreservation::none(),
             cohort,
             allocation: Some(allocation),
             expedition: None,

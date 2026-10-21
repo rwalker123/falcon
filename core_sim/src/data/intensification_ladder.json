@@ -38,14 +38,16 @@
       "drives": 20.0
     }
   },
-  "_comment_branch_table": "THE BRANCH DESCRIPTOR TABLE, keyed by the branch token itself (docs/plan_knowledge_rows.md section 5). This is the FIRST RECORD A BRANCH HAS EVER HAD - until now `branch` was just a string repeated on each rung, with nothing anywhere that described the branch itself. It carries `area` today and is a RECORD rather than a bare string precisely so a second per-branch fact needs no second table beside this one. Every branch a rung names MUST have an entry here, because the entry is where the branch declares what KIND of source its rungs are raised on: `source` is one of patch | herd | road | deposit | tile, the bounded coded set the ladder is data over. A ladder declares exactly one patch branch, exactly one herd branch, exactly one road branch, at least one deposit branch (every extraction.json deposit names one) and any number of tile branches - validation COUNTS KINDS and never recognises a branch name, so a new branch that recombines an existing kind is a JSON edit. `keeping_job` is the KitJob whose roster entries equip a keeper on this branch's sites; `label` is the player-facing heading. A typo'd source or keeping_job fails the parse rather than resolving to a default nobody chose.",
+  "_comment_branch_table": "THE BRANCH DESCRIPTOR TABLE, keyed by the branch token itself (docs/plan_knowledge_rows.md section 5). This is the FIRST RECORD A BRANCH HAS EVER HAD - until now `branch` was just a string repeated on each rung, with nothing anywhere that described the branch itself. It carries `area` today and is a RECORD rather than a bare string precisely so a second per-branch fact needs no second table beside this one. Every branch a rung names MUST have an entry here, because the entry is where the branch declares what KIND of source its rungs are raised on: `source` is one of patch | herd | road | deposit | tile | band, the bounded coded set the ladder is data over. A ladder declares exactly one patch branch, exactly one herd branch, exactly one road branch, at least one deposit branch (every extraction.json deposit names one) and any number of tile and band branches - validation COUNTS KINDS and never recognises a branch name, so a new branch that recombines an existing kind is a JSON edit. `keeping_job` is the KitJob whose roster entries equip a keeper on this branch's sites; `label` is the player-facing heading. A typo'd source or keeping_job fails the parse rather than resolving to a default nobody chose.",
   "_comment_areas": "THE SUBJECT AREAS, IN DISPLAY ORDER - and the order is NOT OPTIONAL. The areas are peers, so first-seen order read off the rungs would reshuffle the whole knowledge screen whenever a rung was added, which is the same defect that made column order unstable before the roster carried it. `lore` and `war` have no branch today (`reach` holds the roaming skills, see standalone_knowledges) and are listed anyway, because the order must already be right on the day a branch lands in one; AN AREA WITH NO DOMAINS IS NEVER DRAWN. Areas answer 'what part of the game is this', which is a short and stable list, while domains grow without limit - that bound is the whole reason the level exists. The token is WIRE VOCABULARY, NOT PLAYER COPY: the client spells `food` as 'Food', exactly as it spells the branch tokens.",
   "branches": {
     "plant": { "area": "food", "source": "patch", "keeping_job": "agriculture", "label": "Plants" },
     "animal": { "area": "food", "source": "herd", "keeping_job": "husbandry", "label": "Herds" },
     "forestry": { "area": "making", "source": "deposit", "keeping_job": "quarrywork", "label": "Forestry" },
     "extraction": { "area": "making", "source": "deposit", "keeping_job": "quarrywork", "label": "Extraction" },
-    "route": { "area": "works", "source": "road", "keeping_job": "roadwork", "label": "Roads" }
+    "route": { "area": "works", "source": "road", "keeping_job": "roadwork", "label": "Roads" },
+    "camp_stores": { "area": "food", "source": "band", "keeping_job": "quarrywork", "label": "Camp stores" },
+    "food_stores": { "area": "food", "source": "tile", "keeping_job": "quarrywork", "label": "Food stores" }
   },
   "areas": ["food", "making", "works", "reach", "lore", "war"],
   "_comment_standalone_knowledges": "KNOWLEDGES NO RUNG TEACHES, FILED UNDER A BRANCH OF THEIR OWN (#799, docs/plan_roaming_bands.md, the roaming skills). A rung-taught knowledge is placed on the knowledge screen by the rung that earns it (its branch's area, its `order`); herd_lore, travois and drives are earned by a practice signal coded beside the system that teaches it (walking beside a migrating herd; what a long move sheds; a camp kill on a followed herd), so the placement is stated here instead. `branch` is a WIRE TOKEN, not a rung branch (no rung sits on it, so no coded enum is needed to draw it as a column): `roam`, the roaming branch, under the `reach` area. `area` must be a member of `areas`; `order` is the position in the column, bottom first. Each name must resolve to a discovery id (validate rejects one that does not) and be priced in knowledge.lesson_costs. They are NOT steps (no rung waits on them). They ride the roster after the rung-taught knowledges, in this order.",
@@ -625,6 +627,107 @@
         "recovery_fraction": 0.85,
         "regrowth_multiplier": 1.0
       },
+      "behavior": {
+        "movement": "fixed"
+      }
+    },
+    {
+      "id": "carried",
+      "branch": "camp_stores",
+      "order": 1,
+      "label": "Carried",
+      "label_fallback": "carried",
+      "_comment_rung": "THE ROOT OF THE BAND'S OWN STORE BRANCH (#708): nothing built, the food travels in the band's packs and keeps for its class's base shelf life. The branch's source kind is `band` - an improvement a band holds at its camp and carries with it - and its payoff is a shelf life, which lives in demographics_config.json keeping.preservation and not in this file.",
+      "verb": null,
+      "unlock_knowledge": null,
+      "earns_knowledge": null,
+      "requires_rung": null,
+      "ceiling_required": null,
+      "site_requirement": null,
+      "build": null,
+      "behavior": {
+        "movement": "fixed"
+      }
+    },
+    {
+      "id": "drying_rack",
+      "branch": "camp_stores",
+      "order": 2,
+      "label": "Drying rack",
+      "label_fallback": "a drying rack",
+      "feed_channel": "extraction",
+      "_comment_rung": "A DRYING RACK (#708) - the band's own, and it moves with it. Raised by the band's builders and kept by a crew row (`assign_labor <faction> <band> band camp_stores <n>`); gated on the `storage` lesson rot teaches (#707), so a people learns to dry meat by watching it spoil. WHAT IT BUYS IS A SHELF LIFE and nothing else: demographics_config.json keeping.preservation names the value flesh takes while a band holds this rung. Upkeep is a FIXED amount of work per turn whatever the band's size (`source_load` is a constant 1 on the band kind, as on the tile kind), and an unkept rack rots back to `carried` after its grace. 8 wood is the slats and cord, DRAWN AS THE METER CLIMBS like the pen's hurdles. partial_credit on_completion: a half-built rack dries nothing. OPENING VALUES CHOSEN FOR SHAPE, NOT BALANCE - playtest dials.",
+      "verb": "rack",
+      "unlock_knowledge": "storage",
+      "earns_knowledge": null,
+      "requires_rung": "carried",
+      "ceiling_required": null,
+      "site_requirement": null,
+      "build": {
+        "work_cost": 30.0,
+        "grace_turns": null,
+        "materials": {
+          "wood": 8.0
+        }
+      },
+      "upkeep": {
+        "work_per_turn": 0.5,
+        "scaled_by": "source_load",
+        "meter_decay": {
+          "per_turn": 2.0
+        },
+        "grace_turns": 3
+      },
+      "partial_credit": "on_completion",
+      "behavior": {
+        "movement": "fixed"
+      }
+    },
+    {
+      "id": "unstored",
+      "branch": "food_stores",
+      "order": 1,
+      "label": "No store",
+      "label_fallback": "no store",
+      "_comment_rung": "THE ROOT OF THE TILE STORE BRANCH (#708): no pit on the tile. The granary and the silo are later rungs of this branch (#709).",
+      "verb": null,
+      "unlock_knowledge": null,
+      "earns_knowledge": null,
+      "requires_rung": null,
+      "ceiling_required": null,
+      "site_requirement": null,
+      "build": null,
+      "behavior": {
+        "movement": "fixed"
+      }
+    },
+    {
+      "id": "storage_pit",
+      "branch": "food_stores",
+      "order": 2,
+      "label": "Storage pit",
+      "label_fallback": "a storage pit",
+      "feed_channel": "extraction",
+      "_comment_rung": "A STORAGE PIT (#708) - a lined hole in the ground a people dug, on ONE TILE. Placed and kept by a tile crew (`assign_labor <faction> <band> tile food_stores <x> <y> <n>`), gated on the `storage` lesson. Its payoff is a shelf life for the people's bands that camp within the supply network's reach of it (demographics_config.json keeping.preservation), and the pit is the people's, not the band's: any band of the faction near enough keeps its dry food longer. Work alone, like every tile rung (the tile kind settles no material). An unkept pit fills in after its grace. partial_credit on_completion: a half-dug pit stores nothing. OPENING VALUES CHOSEN FOR SHAPE, NOT BALANCE - playtest dials.",
+      "verb": "dig",
+      "unlock_knowledge": "storage",
+      "earns_knowledge": null,
+      "requires_rung": "unstored",
+      "ceiling_required": null,
+      "site_requirement": null,
+      "build": {
+        "work_cost": 40.0,
+        "grace_turns": null
+      },
+      "upkeep": {
+        "work_per_turn": 0.5,
+        "scaled_by": "source_load",
+        "meter_decay": {
+          "per_turn": 2.0
+        },
+        "grace_turns": 3
+      },
+      "partial_credit": "on_completion",
       "behavior": {
         "movement": "fixed"
       }

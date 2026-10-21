@@ -98,6 +98,7 @@ pub(crate) fn meals_by_class(
     cohort: &PopulationCohort,
     allocation: Option<&LaborAllocation>,
     demographics: &DemographicsConfig,
+    held: &crate::spoilage::HeldPreservation,
     is_expedition: bool,
 ) -> Vec<(String, f32)> {
     demographics
@@ -105,12 +106,19 @@ pub(crate) fn meals_by_class(
         .classes
         .iter()
         .map(|class| {
-            let terms = kill_food_terms(cohort, allocation, demographics, is_expedition, &class.id);
+            let terms = kill_food_terms(
+                cohort,
+                allocation,
+                demographics,
+                held,
+                is_expedition,
+                &class.id,
+            );
             (
                 class.id.clone(),
                 meal_food(
                     &terms,
-                    crate::spoilage::band_shelf_life(&demographics.keeping, &class.id),
+                    crate::spoilage::band_shelf_life(&demographics.keeping, held, &class.id),
                 ),
             )
         })
@@ -136,6 +144,7 @@ pub(crate) fn need_clock(
     cohort: &PopulationCohort,
     allocation: Option<&LaborAllocation>,
     demographics: &DemographicsConfig,
+    held: &crate::spoilage::HeldPreservation,
     is_expedition: bool,
     herd: &crate::fauna::Herd,
     fauna: &FaunaConfig,
@@ -144,13 +153,16 @@ pub(crate) fn need_clock(
     let class = fauna
         .keeping_for(&herd.species)
         .unwrap_or(&keeping.kill_fallback_class);
-    let terms = kill_food_terms(cohort, allocation, demographics, is_expedition, class);
+    let terms = kill_food_terms(cohort, allocation, demographics, held, is_expedition, class);
     NeedClock {
         meal: NeedMeal {
-            food: meal_food(&terms, crate::spoilage::band_shelf_life(keeping, class)),
+            food: meal_food(
+                &terms,
+                crate::spoilage::band_shelf_life(keeping, held, class),
+            ),
             food_per_animal: herd_food_per_animal(herd, fauna),
         },
-        runway: kill_turns_of_food(cohort, allocation, demographics, is_expedition, class),
+        runway: kill_turns_of_food(cohort, allocation, demographics, held, is_expedition, class),
     }
 }
 

@@ -1,4 +1,5 @@
-//! **THE TILE KIND, PROVED ON A TEST-ONLY BRANCH.** No tile branch ships: this file merges the
+//! **THE TILE KIND, PROVED ON A TEST-ONLY BRANCH.** The one tile branch that ships (`food_stores`,
+//! the storage pit) is driven in `storage_branches.rs`; this file merges the
 //! overlay in `tests/fixtures/orchard_tile_branch.json` (a root rung and one built rung, `graft`,
 //! on a branch the code has never heard of) onto the builtin ladder and drives the real turn.
 //!

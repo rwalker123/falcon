@@ -2471,10 +2471,11 @@ an unknown or non-per-tile branch is refused by name rather than read as the til
 
 `SourceKind::Tile` is a source that **yields nothing**: a **standing** on the ladder, a **standing
 bill**, a **neglect clock** and a **grace**, kept by a **crew row** exactly as a deposit's working is.
-**No tile branch ships.** A tile branch is a JSON edit, and the engine never names one:
+**One tile branch ships: `food_stores`** (`unstored` -> `storage_pit`, the storage pit - see "The band
+kind" below for what it buys). A tile branch is a JSON edit, and the engine never names one:
 `core_sim/tests/tile_improvement.rs` proves it on a test-only two-rung branch (`orchard`, overlay
-`core_sim/tests/fixtures/orchard_tile_branch.json`) merged onto the builtin ladder. Engine:
-`core_sim/src/tile_improvement.rs`.
+`core_sim/tests/fixtures/orchard_tile_branch.json`) merged onto the builtin ladder, and
+`core_sim/tests/storage_branches.rs` drives the shipped pit. Engine: `core_sim/src/tile_improvement.rs`.
 
 **The registry is its own, keyed `(tile, branch)`.** `TileImprovementRegistry` is modelled on
 `RoadRegistry` and deliberately **not merged with it**: a road is one per tile and its position is
@@ -2531,6 +2532,78 @@ improvement queued. Fog-gated on `Discovered`, the road's rule. **Who keeps it i
 band's `LaborAssignment` row for it has `kind = "tile"`, `targetX` / `targetY` and the new `branch`
 (the join key to the improvement row), and carries `partyWorkers` and the rest of the party block like
 any far row. The rungs above the one a row holds are priced by `ladderRungs` filtered to the branch.
+
+## The band kind — an improvement a BAND holds at its camp and carries with it
+
+`SourceKind::Band` (`"band"` on the wire) is the tile kind with the tile taken away: a **standing**
+on the ladder, a **standing bill**, a **neglect clock** and a **grace**, kept by a **crew row**, but
+keyed by the BAND - `(BandId, branch)` - so it moves with the band, is visible to and usable by no
+other band, and survives a save. **One band branch ships: `camp_stores`** (`carried` ->
+`drying_rack`). Engine: `core_sim/src/band_improvement.rs`; proof: `core_sim/tests/storage_branches.rs`.
+Validation counts kinds, so any number of band branches is a JSON edit.
+
+**The registry rides the tile registry.** `BandImprovementRegistry` is a field of
+`TileImprovementRegistry` (`bands()` / `bands_mut()`), so every pass that reads the per-tile
+improvements reads these beside them and the whole thing is one `SimState` field
+(`tile_improvements`), one coverage row and one build-scratch reset. `SAVE_FORMAT_VERSION` 48.
+
+**The crew is the keeper, and distance is always zero.** `assign_labor <faction> <band> band <branch>
+<workers>` (`LaborTarget::Band { band, branch }`, role key `band`; the branch rides the command's
+`species` slot as a tile row's does; the band is the one the command is addressed to). The improvement
+stands at the camp, so the row is never a work party: `party_source_position` names no tile. The first
+crew places it at the branch's root. The arm in `advance_labor_allocation` is the tile arm's twin
+(`band_head_gate`, `head_build_legs`, a `BuildQuote`, `charge_build_wear`). A `kit` token is refused.
+
+**Upkeep is a fixed amount of work per turn whatever the band's size**: `scaled_by: source_load`
+with the kind's load the constant `band_improvement::BAND_KEEPING_LOAD` (1.0), as the tile kind's is
+`TILE_KEEPING_LOAD`. An unkept rack is billed all the same (the bill is re-stamped at the end of
+`advance_band_improvements` for every record) and **decays back to `carried` after its at-risk rung's
+grace**, announced to the band's own people on the rung's feed channel. A record of a band that no
+longer exists is dropped at the top of the same system.
+
+**A band rung may carry a build pile** (the rack's 8 wood), drawn from the band's own store as the
+meter climbs exactly as the pen's hurdles are - the build settlement is source-kind blind, and
+`head_build_legs` lays a band improvement's legs off the ladder's own unpriced span. This is the one
+place the kinds differ on materials: `LadderConfig::validate` still refuses a material on a TILE rung
+(the keeping settles work, and nothing would pay a tile's stone), and a band rung is exempt because a
+band's builders work from the band's own store.
+
+**Building**: `build <verb> <faction> <band>` with a band-kind verb (`rack`) - the band is the
+improvement, so no tile and no second token. The text grammar cannot tell a band verb from a herd verb
+(a lone number parses as a herd id), so `handle_build_rung` reads the lone number as the band for a
+band-kind verb. It resolves to `LaborTarget::Band`, gates on the knowledge and on the rung beneath
+being held (`validate_band_verb`), then declares on every band of the faction that crews it
+(`queue_build_on_working_bands`): **a queue entry requires a row**, so with no crew the refusal is "No
+band of yours works ...". `BuildSource::Band { band, branch }` is the queue key.
+
+**Fission.** The registry is keyed by the band, so a split leaves the improvement on the parent and
+the new band - a fresh id - starts at the root with nothing placed. Bands do not merge today, so no
+merge rule exists.
+
+**The queue verbs.** A band improvement is named `branch=<id>` (the `build` line's own spelling; a
+bare word would read as a herd id). `abandon` and `unqueue` name the band beside it - `abandon <f>
+<band> branch=<id>` - because they take no band of their own; `build_order`, `build_priority` and
+`work_priority` already carry the band, so their source is `branch=<id>` alone (a second band naming
+a different one is refused). The parser puts the band in `herd_id` and the branch in `branch`, as
+`build rack <f> <band>` does; `BuildSourceRef::target` resolves them to `LaborTarget::Band`.
+`unqueue` drops the entry and keeps the crew; `abandon` drops the crew row and the entry through the
+same `drop_holding_and_cancel_ring` the tile kind uses and leaves the meter to decay.
+
+**What it buys is a shelf life, and it lives in the SPOILAGE config, not here.**
+`demographics_config.json` -> `keeping.preservation` names the value a food class's shelf life takes
+while a rung is held - see `campaign.md` -> "What a store buys". Neither shipped storage rung declares
+a payoff block: the ladder file says what a rung costs and what it needs, never what it keeps.
+
+**On the wire**: `PopulationCohortState.bandImprovements` (`BandImprovementState`, appended last) -
+`TileImprovementState`'s fields with the tile taken away: branch, the rung held, the stamped bill
+(`upkeepDemand - upkeepSupplied == upkeepShortfall`), neglect and grace, the keeping block
+(`upkeepWorkersNeeded`, `upkeepHands`, `upkeepToolsShort`, `upkeepToe`) and `isQueued`, plus the
+builder's scratch (`buildDestinationRung`, `buildLegs`, `buildTurnsRemaining`, `buildBlockedReason`),
+which publishes only while the band's own queue holds the entry. **Own bands only**: a foreign band's
+redacted row carries the default (empty). `ladderBranches` publishes `sourceKind` `"band"` - the
+native decoder passes `sourceKind` through as a string, so nothing breaks, but the client's
+`build_track` / command shaping (`HudRouteVocab.source_kind_of_verb`, `Main.format_improvement`) knows
+no `band` kind and shapes such a verb as a patch tile; the client half is its own issue (#711).
 
 ## The ladder catalog on the wire — `ladderRungs` / `ladderBranches`
 

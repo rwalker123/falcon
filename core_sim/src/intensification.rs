@@ -268,6 +268,15 @@ pub fn rung_decay_edges(
     edges
 }
 
+/// **THE WHOLE PERCENT A SLIPPING RUNG HAS LEFT**, `(now - base) / width`, floored and capped one
+/// short of full - a slip is by definition a rung that is not full. The one expression every decay
+/// announcement spells its `progress=` with.
+pub fn slip_percent(now: f32, base: f32, width: f32) -> u32 {
+    (((now - base) / width) * PERCENT)
+        .floor()
+        .clamp(0.0, SLIPPED_PERCENT_MAX as f32) as u32
+}
+
 /// **ANNOUNCE A DECAY'S EDGES** to `faction`'s feed, on `kind`'s channel — one Info line per slip
 /// (`Field at (44, 24) is slipping — 94%`) and one Alert line per loss (`Field at (44, 24) lost —
 /// back to a tended patch`). Tokens: `status=` ([`DECAY_SLIP_STATUS`] / [`DECAY_LOST_STATUS`]),
@@ -307,9 +316,7 @@ pub fn announce_rung_decay(
         ));
     }
     for (rung, (base, width)) in &edges.slipped {
-        let percent = (((now - base) / width) * PERCENT)
-            .floor()
-            .clamp(0.0, SLIPPED_PERCENT_MAX as f32) as u32;
+        let percent = slip_percent(now, *base, *width);
         let record = ladder.rung(*rung);
         event_log.push(crate::resources::CommandEventEntry::new(
             tick,
@@ -3752,16 +3759,22 @@ pub enum SourceKind {
     /// An improvement on one tile (`TileImprovementRegistry`) — the road's shape for a thing that is
     /// not a road: a standing, a keeper, an upkeep and a grace, with no crew row.
     Tile,
+    /// **An improvement a BAND holds at its camp, and carries with it** (`BandImprovementRegistry`,
+    /// `crate::band_improvement`) — the tile kind's twin, keyed by the band instead of a tile. A
+    /// standing, a bill, a neglect clock and a grace, kept by a crew row
+    /// ([`crate::components::LaborTarget::Band`]) with distance always zero.
+    Band,
 }
 
 impl SourceKind {
     /// Every kind, in declaration order.
-    pub const ALL: [SourceKind; 5] = [
+    pub const ALL: [SourceKind; 6] = [
         SourceKind::Patch,
         SourceKind::Herd,
         SourceKind::Road,
         SourceKind::Deposit,
         SourceKind::Tile,
+        SourceKind::Band,
     ];
 
     /// The kind's config / wire token.
@@ -3772,18 +3785,19 @@ impl SourceKind {
             SourceKind::Road => "road",
             SourceKind::Deposit => "deposit",
             SourceKind::Tile => "tile",
+            SourceKind::Band => "band",
         }
     }
 
     /// **HOW MANY BRANCHES OF THIS KIND A LADDER MUST DECLARE, at least** — and, for the three
     /// singleton kinds, at most. A patch, a herd and a road each have exactly one ladder because
     /// the sim holds one registry of each; a deposit ladder is named by every `extraction.json`
-    /// row (so there is at least one); a tile ladder is optional and unbounded.
+    /// row (so there is at least one); a tile or band ladder is optional and unbounded.
     pub fn branch_count_bounds(self) -> (usize, Option<usize>) {
         match self {
             SourceKind::Patch | SourceKind::Herd | SourceKind::Road => (1, Some(1)),
             SourceKind::Deposit => (1, None),
-            SourceKind::Tile => (0, None),
+            SourceKind::Tile | SourceKind::Band => (0, None),
         }
     }
 }
@@ -5499,10 +5513,16 @@ fn validate_tile_rung_is_work_only(
     source: SourceKind,
     where_: &str,
 ) -> Result<(), LadderConfigError> {
-    if source != SourceKind::Tile {
+    if !matches!(source, SourceKind::Tile | SourceKind::Band) {
         return Ok(());
     }
-    let build_materials = rung.build.as_ref().map_or(0, |build| build.materials.len());
+    // **A band rung may carry a BUILD pile** - the band's builders draw it from the band's own store
+    // as the meter climbs, the pen's hurdles exactly - but a standing material RATE is paid by
+    // nobody on either kind, so it is refused on both.
+    let build_materials = match source {
+        SourceKind::Band => 0,
+        _ => rung.build.as_ref().map_or(0, |build| build.materials.len()),
+    };
     let upkeep_materials = rung
         .upkeep
         .as_ref()
@@ -6700,6 +6720,10 @@ mod tests {
                 "surface gathering",
             ),
             ("extraction:quarry", "Quarry", "a quarry"),
+            ("camp_stores:carried", "Carried", "carried"),
+            ("camp_stores:drying_rack", "Drying rack", "a drying rack"),
+            ("food_stores:unstored", "No store", "no store"),
+            ("food_stores:storage_pit", "Storage pit", "a storage pit"),
         ];
         assert_eq!(words.len(), ladder.rungs.len());
         for (key, label, fallback) in words {
@@ -6804,9 +6828,10 @@ mod tests {
             .map(RungDef::rung_id);
         assert_eq!(above_root, Some(graft.rung_id()));
         assert!(graft.trait_set().has(RungTrait::Managed));
+        // The shipped `food_stores` branch is a tile branch too; the novel one joins it.
         assert_eq!(
             ladder.branches_of(SourceKind::Tile).collect::<Vec<_>>(),
-            [orchard]
+            [BranchId::new("food_stores"), orchard]
         );
     }
 
@@ -7146,18 +7171,22 @@ mod tests {
         // **The §4.3 invariant, stated as one assertion: every transition has its OWN knowledge.**
         // Herding gating both `tame` and `corral` was the pre-slice-4 defect; a future rung that
         // re-used a gate would be the same defect returning, and this catches it.
-        let unlocks: Vec<u32> = ladder
+        //
+        // **Per BRANCH**: the defect was two transitions of ONE ladder sharing a gate. The two
+        // storage branches' built rungs both unlock on `storage` (the one lesson rot teaches), and
+        // they are different branches' only transition each, so the gate is shared by design.
+        let mut unlocks: Vec<(BranchId, u32)> = ladder
             .rungs
             .iter()
-            .filter_map(|rung| rung.unlock_discovery_id())
+            .filter_map(|rung| Some((rung.branch, rung.unlock_discovery_id()?)))
             .collect();
-        let mut unique = unlocks.clone();
-        unique.sort_unstable();
-        unique.dedup();
+        let total = unlocks.len();
+        unlocks.sort_unstable_by_key(|(branch, id)| (branch.as_str().to_string(), *id));
+        unlocks.dedup();
         assert_eq!(
+            total,
             unlocks.len(),
-            unique.len(),
-            "one knowledge per transition — no two rungs may share an unlock gate"
+            "one knowledge per transition — no two rungs of one branch may share an unlock gate"
         );
     }
 

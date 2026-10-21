@@ -272,6 +272,9 @@ pub(crate) fn resolve_queued_build_sources<'a>(
                 crate::components::BuildSource::Tile { tile, branch } => {
                     resolved.tiles.insert((*tile, *branch));
                 }
+                // A band improvement publishes on its own band's row, which only its owner ever
+                // receives, so there is no shared source table to gate a rival's scratch on.
+                crate::components::BuildSource::Band { .. } => {}
             }
         }
     }

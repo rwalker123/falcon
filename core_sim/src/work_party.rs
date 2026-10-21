@@ -358,7 +358,7 @@ impl TransitRot<'_> {
                 **share > NOTHING_CARRIED
                     && crate::spoilage::rots_in_transit(class, walk_turns, self.keeping)
             })
-            .filter_map(|(class, _)| crate::spoilage::band_shelf_life(self.keeping, class))
+            .filter_map(|(class, _)| crate::spoilage::base_shelf_life(self.keeping, class))
             .fold(None, |shortest: Option<f32>, life| {
                 Some(shortest.map_or(life, |s| s.min(life)))
             })

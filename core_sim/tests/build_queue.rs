@@ -1625,7 +1625,18 @@ fn every_build_job_and_source_kind_is_stated() {
         tile: UVec2::new(4, 4),
         branch: shipped::plant(),
     };
-    for source in [&patch, &herd, &road, &deposit, &tile_improvement] {
+    let band_improvement = BuildSource::Band {
+        band: core_sim::BandId(5),
+        branch: shipped::plant(),
+    };
+    for source in [
+        &patch,
+        &herd,
+        &road,
+        &deposit,
+        &tile_improvement,
+        &band_improvement,
+    ] {
         match source {
             // A patch is named by its tile; a herd by an id that outlives its position; a ROAD by
             // its tile, because a road IS a tile (`docs/plan_standing_upkeep.md` §4.13b); and a
@@ -1642,6 +1653,12 @@ fn every_build_job_and_source_kind_is_stated() {
             // improvement of several branches.
             BuildSource::Tile { tile, branch } => {
                 assert_eq!(*tile, UVec2::new(4, 4));
+                assert_eq!(*branch, shipped::plant());
+            }
+            // A band improvement is named by its band AND its branch - it stands at the camp and
+            // moves with it.
+            BuildSource::Band { band, branch } => {
+                assert_eq!(*band, core_sim::BandId(5));
                 assert_eq!(*branch, shipped::plant());
             }
         }

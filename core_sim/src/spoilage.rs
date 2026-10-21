@@ -16,31 +16,148 @@
 //! [`rot_band_larders`] is the one system that rots a larder, once a turn right after the meal and
 //! before the turn's income lands. [`rot_ahead`] is the same rule walked forward for the forecasts.
 //!
+//! **A store lengthens a shelf life** (#708): a band that holds a drying rack, or that camps within
+//! reach of its people's storage pit, keeps a class longer than its base. That is
+//! [`HeldPreservation`] — resolved once per band — read through [`band_shelf_life`], the one seam.
+//!
 //! **Rot also teaches** (#707): a surplus that sat until it spoiled is the practice that teaches
 //! [`STORAGE_KNOWLEDGE`], paid through the same knowledge ledger the intensification ladder uses
 //! ([`storage_practice`]). Only the LARDER's rot teaches; a caravan pack lost on its walk is
 //! distance, not a surplus that sat.
 
-use bevy::prelude::{Query, Res, ResMut, With};
+use bevy::prelude::{Query, Res, ResMut, UVec2, With};
+use std::collections::BTreeMap;
 
-use crate::components::{FoodMix, PopulationCohort, ResidentBand};
+use crate::components::{BandId, FoodMix, PopulationCohort, ResidentBand, Tile};
 use crate::demographics_config::{DemographicsConfigHandle, KeepingConfig};
-use crate::intensification::{LadderConfigHandle, LadderKnowledge};
-use crate::resources::DiscoveryProgressLedger;
+use crate::intensification::{LadderConfig, LadderConfigHandle, LadderKnowledge, SourceKind};
+use crate::orders::FactionId;
+use crate::resources::{DiscoveryProgressLedger, SimulationConfig, TileRegistry};
 use crate::scalar::{scalar_from_f32, scalar_zero, Scalar};
+use crate::supply_network_config::SupplyNetworkConfigHandle;
+use crate::tile_improvement::TileImprovementRegistry;
+
+/// **THE PRESERVATIONS A BAND HOLDS RIGHT NOW** (#708) — per keeping class, the longest shelf life
+/// any rung it holds gives it. Empty for a band holding nothing, which is every band at the start
+/// and every caller that has no band to ask about.
+///
+/// It is resolved **once per band per system run** ([`PreservationScene::held_by`]) and handed to
+/// [`band_shelf_life`], so no per-lot lookup walks the improvements.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct HeldPreservation {
+    lives: BTreeMap<String, f32>,
+}
+
+impl HeldPreservation {
+    /// A band that holds nothing: every class keeps its base life.
+    pub fn none() -> Self {
+        Self::default()
+    }
+
+    /// The longest preserved life this band holds for `class`, or `None` where it holds none.
+    pub fn life_of(&self, class: &str) -> Option<f32> {
+        self.lives.get(class).copied()
+    }
+
+    /// Hold a preservation: the class keeps `turns` if that is longer than what is already held.
+    pub fn raise(&mut self, class: &str, turns: f32) {
+        let held = self.lives.entry(class.to_string()).or_insert(turns);
+        *held = held.max(turns);
+    }
+
+    /// Does this band hold no preservation at all?
+    pub fn is_empty(&self) -> bool {
+        self.lives.is_empty()
+    }
+}
+
+/// **EVERYTHING A PRESERVATION IS RESOLVED AGAINST** — the keeping table, the ladder, the
+/// improvements and the supply network's reach — so a caller builds it once and asks it per band.
+pub struct PreservationScene<'a> {
+    pub keeping: &'a KeepingConfig,
+    pub ladder: &'a LadderConfig,
+    pub improvements: &'a TileImprovementRegistry,
+    /// `supply_network_config.reach_tiles` - how near a tile improvement has to be to its people's
+    /// band for the band to keep its food there.
+    pub reach_tiles: u32,
+    /// The grid's width and whether it wraps horizontally, for the hex distance.
+    pub grid: (u32, bool),
+}
+
+impl PreservationScene<'_> {
+    /// **WHAT `band` PRESERVES WITH**, for the entries of the keeping table whose rung is held
+    /// (fully — an `on_completion` rung half built is not held):
+    ///
+    /// - a **band**-kind rung: the band itself holds it;
+    /// - a **tile**-kind rung: any improvement of `faction` — the band's own people, never another's —
+    ///   within `reach_tiles` hex steps of the band's tile at `at`.
+    ///
+    /// Which kind a rung is, is the ladder's declaration; nothing here names a branch.
+    pub fn held_by(
+        &self,
+        band: Option<BandId>,
+        faction: FactionId,
+        at: Option<UVec2>,
+    ) -> HeldPreservation {
+        let mut held = HeldPreservation::none();
+        let (width, wrap) = self.grid;
+        for entry in &self.keeping.preservation {
+            let rung = entry.rung;
+            let holds = match self.ladder.source_kind(rung.branch) {
+                Some(SourceKind::Band) => band.is_some_and(|band| {
+                    self.improvements
+                        .bands()
+                        .get(band, rung.branch)
+                        .is_some_and(|held| self.ladder.at_or_above(held.held_rung(), rung))
+                }),
+                Some(SourceKind::Tile) => at.is_some_and(|at| {
+                    self.improvements.iter().any(|held| {
+                        held.branch == rung.branch
+                            && held.faction == faction
+                            && self.ladder.at_or_above(held.held_rung(), rung)
+                            && crate::grid_utils::hex_distance_wrapped(at, held.tile, width, wrap)
+                                <= self.reach_tiles
+                    })
+                }),
+                _ => false,
+            };
+            if holds {
+                held.raise(&entry.class, entry.shelf_life_turns);
+            }
+        }
+        held
+    }
+}
 
 /// **HOW LONG FOOD OF `class` KEEPS FOR A BAND, in turns** — `None` for a class the table does not
-/// carry (it never rots). **THE ONE SEAM every reading of a shelf life goes through**: the larder's
-/// rot ([`rot_band_larders`]), the forecast walk ([`rot_ahead`]), a caravan pack's rot on the road
-/// ([`rots_in_transit`], `work_party::TransitRot`, the landing in `systems::labor`) and the hunting
-/// crew's meal (`hunt_by_need::hunt_meal`) all call it, so they cannot disagree about how long a
-/// kill lasts.
+/// carry (it never rots). **THE ONE SEAM every reading of a band's shelf life goes through**: the
+/// larder's rot ([`rot_band_larders`]), the forecast walk ([`rot_ahead`]) and the hunting crew's meal
+/// (`hunt_by_need::hunt_meal`, [`keeps_no_longer_than`]) all call it with the band's own
+/// [`HeldPreservation`], so they cannot disagree about how long a kill lasts.
 ///
-/// Today a shelf life is a property of the class alone (`keeping.shelf_life_turns`). **This is the
-/// function #708 extends**: a band that can dry meat keeps its `flesh` longer, or moves a kill into a
-/// longer class, and it does so *here* — one edit that lengthens the rot rule and the meal a hunting
-/// crew is sized to at the same time.
-pub fn band_shelf_life(keeping: &KeepingConfig, class: &str) -> Option<f32> {
+/// **The longest of the base and every preservation the band holds** (#708): a band with a drying
+/// rack keeps its `flesh` to the rack's life, one near its people's pit keeps its `dry` to the pit's,
+/// and the rot rule and the meal a hunting crew is sized to lengthen together.
+///
+/// ⛔ **A CARAVAN PACK ON THE WALK IS NOT A BAND'S FOOD, and uses [`base_shelf_life`] instead**
+/// ([`rots_in_transit`], `work_party::TransitRot`, the landing in `systems::labor`): it is away from
+/// the camp and from the pit, so neither can keep it. A lot the larder holds keeps counting its age
+/// when the band leaves a store behind, so dry food older than the base rots at once — intended.
+pub fn band_shelf_life(
+    keeping: &KeepingConfig,
+    held: &HeldPreservation,
+    class: &str,
+) -> Option<f32> {
+    let base = keeping.shelf_life(class)?;
+    Some(
+        held.life_of(class)
+            .map_or(base, |preserved| preserved.max(base)),
+    )
+}
+
+/// **HOW LONG FOOD OF `class` KEEPS BEFORE ANY STORE HELPS** — the class's own `shelf_life_turns`.
+/// What a caravan pack on the walk keeps for: it is away from the camp's rack and from the pit.
+pub fn base_shelf_life(keeping: &KeepingConfig, class: &str) -> Option<f32> {
     keeping.shelf_life(class)
 }
 
@@ -49,8 +166,13 @@ pub fn band_shelf_life(keeping: &KeepingConfig, class: &str) -> Option<f32> {
 /// the kill does not stand in for. Both lives are read through [`band_shelf_life`], so the answer
 /// moves with preservation; a class the table does not carry never rots and counts as keeping
 /// longest.
-pub fn keeps_no_longer_than(keeping: &KeepingConfig, class: &str, kill_class: &str) -> bool {
-    let life = |id: &str| band_shelf_life(keeping, id).unwrap_or(f32::INFINITY);
+pub fn keeps_no_longer_than(
+    keeping: &KeepingConfig,
+    held: &HeldPreservation,
+    class: &str,
+    kill_class: &str,
+) -> bool {
+    let life = |id: &str| band_shelf_life(keeping, held, id).unwrap_or(f32::INFINITY);
     life(class) <= life(kill_class)
 }
 
@@ -80,14 +202,20 @@ pub fn storage_practice(rotted: f32, need: f32, knowledge: &LadderKnowledge) -> 
 /// uneaten must not read a runway it cannot keep.
 ///
 /// The walk is bounded by the longest shelf life in the table (past it every aged lot has expired),
-/// and a class the table does not carry never rots.
-pub fn rot_ahead(food: &FoodMix, need: f32, keeping: &KeepingConfig) -> Scalar {
+/// and a class the table does not carry never rots. `held` is the band's own preservation, so the
+/// forecast rots what the turns will rot.
+pub fn rot_ahead(
+    food: &FoodMix,
+    need: f32,
+    keeping: &KeepingConfig,
+    held: &HeldPreservation,
+) -> Scalar {
     let ration = scalar_from_f32(need.max(0.0));
     let order = keeping.eat_order();
     let horizon = keeping
         .classes
         .iter()
-        .filter_map(|class| band_shelf_life(keeping, &class.id))
+        .filter_map(|class| band_shelf_life(keeping, held, &class.id))
         .map(|life| life.ceil() as u32)
         .max()
         .unwrap_or(0);
@@ -98,16 +226,17 @@ pub fn rot_ahead(food: &FoodMix, need: f32, keeping: &KeepingConfig) -> Scalar {
             break;
         }
         stock.eat(ration, &order);
-        rotted += stock.age_and_expire(|class| band_shelf_life(keeping, class));
+        rotted += stock.age_and_expire(|class| band_shelf_life(keeping, held, class));
     }
     rotted
 }
 
 /// **Does a pack of `class` rot on a walk of `walk_turns`?** — a shelf life no longer than the walk
 /// home (the larder expires a lot at `age >= shelf`, and a pack's walk is its age). A walk of no length (a local row, a road the whole way) never rots anything, and a class
-/// the table does not carry never rots.
+/// the table does not carry never rots. **The BASE shelf life**: a pack on the walk is away from the
+/// camp's rack and from the pit ([`band_shelf_life`]).
 pub fn rots_in_transit(class: &str, walk_turns: u32, keeping: &KeepingConfig) -> bool {
-    band_shelf_life(keeping, class).is_some_and(|shelf| shelf <= walk_turns as f32)
+    base_shelf_life(keeping, class).is_some_and(|shelf| shelf <= walk_turns as f32)
 }
 
 /// **THE LARDER ROT, ONCE A TURN** — right after `simulate_population`'s meal and before the turn's
@@ -120,21 +249,59 @@ pub fn rots_in_transit(class: &str, walk_turns: u32, keeping: &KeepingConfig) ->
 /// and their ages through every move and lands home in the band's larder, where they rot by this
 /// rule.
 ///
+/// **A band rots at ITS shelf life** (#708): its [`HeldPreservation`] is resolved once per band
+/// here, off the improvements as the turn found them, and handed to the one seam.
+///
 /// **Rot teaches storage** (#707): the larder rot this pass computes — and only that, before the
 /// labor pass adds caravan transit rot — is credited to the faction's [`STORAGE_KNOWLEDGE`] lesson
 /// once per band per turn ([`storage_practice`], priced by `LadderKnowledge::ledger_credit`).
+#[allow(clippy::too_many_arguments)] // a Bevy system: one parameter per resource it reads
 pub fn rot_band_larders(
     demographics: Res<DemographicsConfigHandle>,
     ladder: Res<LadderConfigHandle>,
     mut ledger: ResMut<DiscoveryProgressLedger>,
-    mut cohorts: Query<&mut PopulationCohort, With<ResidentBand>>,
+    improvements: Option<Res<TileImprovementRegistry>>,
+    supply: Option<Res<SupplyNetworkConfigHandle>>,
+    tile_registry: Option<Res<TileRegistry>>,
+    sim_config: Option<Res<SimulationConfig>>,
+    tiles: Query<&Tile>,
+    mut cohorts: Query<(&mut PopulationCohort, Option<&BandId>), With<ResidentBand>>,
 ) {
     let config = demographics.get();
     let ladder = ladder.get();
-    for mut cohort in cohorts.iter_mut() {
+    let supply = supply.map(|handle| handle.get());
+    // A hand-built world may lack a resource; with none of them there is nothing to preserve with,
+    // and every band rots at its base life.
+    let scene = match (
+        improvements.as_deref(),
+        supply.as_deref(),
+        tile_registry.as_deref(),
+    ) {
+        (Some(improvements), Some(supply), Some(tile_registry)) => Some(PreservationScene {
+            keeping: &config.keeping,
+            ladder: &ladder,
+            improvements,
+            reach_tiles: supply.reach_tiles,
+            grid: (
+                tile_registry.width,
+                sim_config
+                    .as_deref()
+                    .is_some_and(|config| config.map_topology.wrap_horizontal),
+            ),
+        }),
+        _ => None,
+    };
+    for (mut cohort, band_id) in cohorts.iter_mut() {
+        let held = scene.as_ref().map_or_else(HeldPreservation::none, |scene| {
+            let at = tiles
+                .get(cohort.current_tile)
+                .ok()
+                .map(|tile| tile.position);
+            scene.held_by(band_id.copied(), cohort.faction, at)
+        });
         let rotted = cohort
             .stores
-            .age_food(|class| band_shelf_life(&config.keeping, class));
+            .age_food(|class| band_shelf_life(&config.keeping, &held, class));
         cohort.last_food_spoiled = rotted.to_f32();
         let practice = storage_practice(rotted.to_f32(), cohort.last_food_need, &ladder.knowledge);
         if let Some(credit) = ladder.knowledge.ledger_credit(STORAGE_KNOWLEDGE, practice) {
@@ -182,6 +349,7 @@ mod tests {
             startup_class: DRY.to_string(),
             plant_fallback_class: FRESH.to_string(),
             kill_fallback_class: FLESH.to_string(),
+            preservation: Vec::new(),
         }
     }
 
@@ -330,7 +498,7 @@ mod tests {
         food.add(FRESH, scalar_from_f32(25.0));
         food.add(DRY, scalar_from_f32(40.0));
         for need in [0.0, 2.0, 5.0, 12.0, 60.0] {
-            let predicted = rot_ahead(&food, need, &keeping());
+            let predicted = rot_ahead(&food, need, &keeping(), &HeldPreservation::none());
             let mut store = crate::components::LocalStore::new();
             store.add_food_mix(&food);
             let mut actual = scalar_zero();

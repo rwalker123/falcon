@@ -827,7 +827,7 @@ Marsh Grazers (47 a head, ≈ 2.8 food an animal, 37 animals of room) priced a c
 
 ```text
 net_eat = max(0, food_demand − Σ realized)          // band_turns_of_food's own terms
-keeps   = spoilage::band_shelf_life(keeping, class) // the class the herd's meat lands in
+keeps   = spoilage::band_shelf_life(keeping, held, class) // the class the herd's meat lands in
 meal    = max(0, net_eat × keeps − usable_larder)   // usable = larder − rot_ahead, as the runway
 animals = max(1, ceil(meal / food_per_animal))      // food_per_animal = body_mass × provisions_per_biomass
 crew    = smallest curve row with likely ≥ animals  // CREW_TAKE_RISE_TOLERANCE slack; else the useful crew
@@ -842,9 +842,11 @@ crew    = smallest curve row with likely ≥ animals  // CREW_TAKE_RISE_TOLERANC
   falling back to `kill_fallback_class`; food per animal via `fauna::herd_food_per_animal`, the
   figure behind the wire's `foodPerAnimal`). The turn (labor pass) and the capture both call it, so
   the wire's `musterCrew` is what the turn musters. The `finishing` path sizes the crew the same way.
-- **Preservation moves the meal through `spoilage::band_shelf_life`** — the one place a shelf life is
-  read (`campaign.md` → "Food spoils by keeping class"). A longer `flesh` shelf life (drying, #708)
-  lengthens the rot rule and the meal together: a bigger meal, a bigger crew, a bigger haul.
+- **Preservation moves the meal through `spoilage::band_shelf_life`** — the one place a band's shelf
+  life is read (`campaign.md` → "Food spoils by keeping class" and "What a store buys"). A band
+  holding a drying rack keeps its `flesh` longer (`held`, resolved once per band per capture or
+  turn), which lengthens the rot rule and the meal together: a bigger meal, a bigger crew, a bigger
+  haul. A pack walking home is away from the rack and keeps only the base life.
 
 The meal's `usable_larder` is the same kill-class larder as the clock's (above), not the whole store.
 
