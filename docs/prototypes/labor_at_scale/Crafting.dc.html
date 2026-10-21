@@ -1,0 +1,238 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Materials and crafting</title>
+<script src="./support.js"></script>
+<script src="./work-strip.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans:ital,wght@0,400;0,600;1,400&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#1a2629;font-family:"Noto Sans",system-ui,sans-serif;}
+button{font-family:inherit;cursor:pointer}
+.setup{background:#ecebe6;color:#26231f;border:2px dashed #8f8a80;border-radius:6px;padding:10px 14px;display:flex;align-items:center;gap:12px;font-size:13px;flex-wrap:wrap}
+.setup-title{font-size:12px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:#4d4840}
+.sbtn{min-width:24px;height:24px;border:1px solid #8f8a80;background:#fff;border-radius:4px;color:#26231f;padding:0 8px}
+.sbtn.on{background:#26231f;color:#fff}
+.panel{background:#221b15;border:1px solid #3a2f24;border-radius:6px;box-shadow:0 8px 24px rgba(0,0,0,.55);color:#f4ead7;font-size:13px}
+.phead{display:flex;align-items:center;gap:10px;padding:10px 12px;border-bottom:1px solid #2f261d}
+.ptitle{font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:#f4ead7}
+.sel{height:30px;min-width:150px;border:1px solid #4a3c2e;background:#2b221a;color:#f4ead7;border-radius:4px;display:flex;align-items:center;justify-content:space-between;padding:0 10px}
+.cbtn{width:28px;height:28px;border:1px solid #3a2f24;background:#2b221a;color:#bdab90;border-radius:4px}
+.cols{display:grid;grid-template-columns:220px minmax(0,1fr)}
+.rail{padding:12px 14px;border-right:1px solid #2f261d;display:flex;flex-direction:column;gap:12px}
+.main{padding:12px 16px;display:flex;flex-direction:column;gap:8px;min-width:0}
+.lbl{font-size:9px;letter-spacing:.08em;text-transform:uppercase;color:#8d7e68}
+.mat{display:flex;flex-direction:column;gap:3px}
+.mhead{display:flex;justify-content:space-between;align-items:center}
+.learn{font-size:9px;color:#bdab90}
+.mrow{display:flex;gap:5px;align-items:center;font-size:12px}
+.pill{border:1px solid #4a3c2e;border-radius:9px;padding:0 5px;font-size:9px;color:#bdab90}
+.aside{font-size:10px;color:#8d7e68}
+.sug{display:flex;justify-content:space-between;align-items:center;padding:2px 0}
+.sugtxt{display:flex;flex-direction:column}
+.dim{font-size:11px;color:#bdab90}
+.faint{font-size:11px;color:#8d7e68}
+.warn{font-size:11px;color:#e0a63c}
+.red{color:#c05a41}
+.queue{height:28px;width:118px;border:1px solid #6b5a46;background:#3d3226;color:#f4ead7;border-radius:4px;font-size:12px}
+.benchhead{display:flex;justify-content:space-between;align-items:center}
+.toggle{display:flex;align-items:center;gap:6px;font-size:9px;letter-spacing:.06em;text-transform:uppercase;color:#8d7e68;background:none;border:none;padding:0}
+.sw{width:22px;height:12px;border-radius:6px;background:#4a3c2e;position:relative;display:inline-block}
+.sw i{position:absolute;top:2px;width:8px;height:8px;border-radius:4px;background:#bdab90}
+.order{background:#1d1812;border:1px solid #2f261d;border-radius:4px;padding:8px 10px;display:flex;flex-direction:column;gap:6px}
+.order.waiting{opacity:.85}
+.otop{display:grid;grid-template-columns:minmax(0,1fr) auto auto auto auto;gap:14px;align-items:center}
+.oname{font-size:14px}
+.prilink{font-size:10px;font-weight:600;color:#f4ead7;background:none;border:none;padding:0}
+.step{display:flex;flex-direction:column;align-items:center;gap:2px}
+.steprow{display:flex;align-items:center;gap:6px}
+.sb{width:24px;height:24px;border:1px solid #3a2f24;background:#2b221a;color:#f4ead7;border-radius:4px}
+.sv{min-width:30px;text-align:center;font-size:16px}
+.cap{font-size:8px;letter-spacing:.08em;text-transform:uppercase;color:#8d7e68}
+.xbtn{width:24px;height:24px;border:1px solid #6b3a2c;background:#3a2018;color:#e8b0a0;border-radius:4px}
+.prog{height:3px;background:#2f261d;border-radius:2px;position:relative;cursor:help}
+.prog span{position:absolute;left:0;top:0;bottom:0;background:#f4ead7;border-radius:2px}
+.seg3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px}
+.opt{height:22px;border:1px solid #4a3c2e;background:#2b221a;color:#bdab90;border-radius:4px;font-size:11px}
+.opt.on{background:#46372a;border-color:#a08d6d;color:#f4ead7}
+.tbl{display:grid;grid-template-columns:minmax(0,1.3fr) 110px minmax(0,1.1fr) 170px;column-gap:12px;align-items:start}
+.th{font-size:9px;letter-spacing:.08em;text-transform:uppercase;color:#8d7e68;padding:8px 0 4px;border-bottom:1px solid #2f261d}
+.grp{font-size:9px;letter-spacing:.08em;text-transform:uppercase;color:#8d7e68;padding:8px 0 2px}
+.cell{padding:7px 0}
+.iname{font-size:13px}
+.owned{font-size:12px}
+.badge{border:1px solid #6b5a46;border-radius:8px;padding:0 5px;font-size:9px;color:#bdab90}
+.badge.no{border-color:#c05a41;color:#c05a41}
+.make{height:26px;width:100%;border:1px solid #6b5a46;background:#3d3226;color:#f4ead7;border-radius:4px;font-size:12px}
+.note{font-size:10px;color:#bdab90;margin-top:3px}
+.note.red{color:#c05a41}
+</style>
+</helmet>
+<div style="width:1000px;padding:20px;box-sizing:border-box;display:flex;flex-direction:column;gap:14px">
+<div class="setup">
+  <span class="setup-title">Prototype setup — not part of the game</span>
+  <span>Spare hands for the bench</span>
+  <button class="sbtn" onClick="{{decSpare}}" aria-label="Fewer spare hands">−</button><b>{{spare}}</b><button class="sbtn" onClick="{{incSpare}}" aria-label="More spare hands">+</button>
+  <span>Looms</span>
+  <button class="sbtn" onClick="{{decLoom}}" aria-label="Fewer looms">−</button><b>{{looms}}</b><button class="sbtn" onClick="{{incLoom}}" aria-label="More looms">+</button>
+  <span>Bench for</span><sc-for list="{{scopes}}" as="s" hint-placeholder-count="2"><button class="sbtn {{s.cls}}" onClick="{{s.pick}}">{{s.label}}</button></sc-for>
+  <span style="color:#4d4840">Try 0, 2 and 8 spare hands; hover a crew bar or a progress line.</span>
+</div>
+
+<div class="panel">
+  <div class="phead">
+    <span class="ptitle">⚒ Materials &amp; crafting</span>
+    <span>Band:</span><button class="cbtn" aria-label="Previous band">◀</button><div class="sel"><span>{{scopeName}}</span><span>⌄</span></div><button class="cbtn" aria-label="Next band">▶</button><span class="faint">{{scopeCount}}</span>
+    <button class="cbtn" style="margin-left:auto" aria-label="Close">✕</button>
+  </div>
+  <div class="cols">
+    <div class="rail">
+      <span class="lbl">On hand</span>
+      <sc-for list="{{mats}}" as="m" hint-placeholder-count="6">
+        <div class="mat">
+          <div class="mhead" title="{{m.who}}"><span class="lbl" style="color:#bdab90">{{m.name}}</span><span class="learn">{{m.learn}}</span></div>
+          <sc-for list="{{m.piles}}" as="p" hint-placeholder-count="2"><div class="mrow"><b>{{p.n}}</b><span class="pill">{{p.a}}</span><span class="pill">{{p.b}}</span></div></sc-for>
+          <sc-if value="{{m.hasAside}}" hint-placeholder-val="{{true}}"><span class="aside">{{m.aside}}</span></sc-if>
+        </div>
+      </sc-for>
+    </div>
+
+    <div class="main">
+      <span class="lbl">Make next</span>
+      <div class="sug"><div class="sugtxt"><span>{{nextText}}</span><span class="warn">{{nextSub}}</span></div><button class="queue">Queue</button></div>
+      <span class="lbl">Coming up</span>
+      <div class="sug"><div class="sugtxt"><span>{{comingText}}</span><span class="faint">{{comingSub}}</span></div><button class="queue">Queue</button></div>
+
+      <div class="benchhead"><span class="lbl">The bench · {{benchLine}}</span><button class="toggle" title="The bench adds an order for the gear the band is shortest of, when crafters are free"><span class="sw"><i style="left:{{autoLeft}}"></i></span>Auto</button></div>
+      <sc-for list="{{orders}}" as="o" hint-placeholder-count="3">
+        <div class="order {{o.cls}}">
+          <div class="otop">
+            <div style="min-width:0"><div class="oname">{{o.name}}</div><div class="{{o.subCls}}">{{o.sub}}</div></div>
+            <button class="prilink" onClick="{{o.togglePri}}">Priority: {{o.pri}}</button>
+            <div class="step"><div class="steprow"><button class="sb" aria-label="Make fewer">−</button><span class="sv">{{o.made}}</span><button class="sb" aria-label="Make more">+</button></div><span class="cap">Made</span></div>
+            <button class="xbtn" aria-label="Cancel this order">✕</button>
+            <div class="crewbox">
+              <span class="crewnum {{o.zeroCls}}">{{o.crew}}</span>
+              <div class="cbar" title="{{o.tip}}" aria-label="{{o.tip}}"><span style="flex:{{o.toolN}} 1 0;background:#c58f5a"></span><span style="flex:{{o.handN}} 1 0;background:#c58f5a73"></span><span style="flex:{{o.roomN}} 1 0;background:transparent"></span></div>
+            </div>
+          </div>
+          <div class="prog" title="{{o.progTip}}"><span style="width:{{o.pct}}"></span></div>
+          <sc-if value="{{o.priOpen}}" hint-placeholder-val="{{false}}">
+            <div class="seg3"><sc-for list="{{o.pris}}" as="p" hint-placeholder-count="3"><button class="opt {{p.cls}}" onClick="{{p.pick}}">{{p.label}}</button></sc-for></div>
+          </sc-if>
+        </div>
+      </sc-for>
+
+      <div class="tbl">
+        <span class="th">Item</span><span class="th">Owned</span><span class="th">Rebuild costs</span><span class="th"></span>
+        <span class="grp" style="grid-column:1 / -1">▾ Gear</span>
+        <div class="cell"><div class="iname">Wayfinding gear</div><div class="faint">Weaving</div></div><div class="cell"><span class="badge no">Not made</span></div><span class="cell dim">6 fibre</span><div class="cell"><button class="make">Make</button><div class="note red">Scouts see 1 tile, not 2</div></div>
+        <div class="cell"><div class="iname">Baskets</div><div class="faint" style="text-decoration:underline">2 recipes</div></div><div class="cell owned">×4 <span class="badge">good</span></div><span class="cell dim">20 fibre</span><div class="cell"><button class="make">Make</button><div class="note">Reed, no loom → fair</div></div>
+        <div class="cell"><div class="iname">Spears</div><div class="faint" style="text-decoration:underline">2 recipes</div></div><div class="cell owned">×6 <span class="badge">good</span></div><span class="cell dim">1 stone · 2 wood · 1 fibre</span><div class="cell"><button class="make">Make</button><div class="note">Flint → good</div></div>
+        <div class="cell"><div class="iname">Crook</div><div class="faint">Bone-working</div></div><div class="cell owned">×2 <span class="badge">good</span></div><span class="cell dim">1 bone · 2 fibre</span><div class="cell"><button class="make">Make</button><div class="note">Long bone → good</div></div>
+        <div class="cell"><div class="iname">Sled</div><div class="faint">Tanning</div></div><div class="cell owned">×1 <span class="badge">fair</span></div><span class="cell dim">18 hide · 10 fibre</span><div class="cell"><button class="make">Make</button><div class="note">Mammoth hide → excellent</div></div>
+        <div class="cell"><div class="iname">Clubs</div><div class="faint">Bone-working</div></div><div class="cell owned">×5 <span class="badge">excellent</span></div><span class="cell red" style="font-size:12px">10 bone</span><div class="cell"><button class="make">Make</button><div class="note red">Short 6.9 bone</div></div>
+        <span class="grp" style="grid-column:1 / -1">▾ Bench tools</span>
+        <div class="cell"><div class="iname">Loom</div><div class="faint">Bench tool — fibre</div></div><div class="cell"><span class="badge no">Not made</span></div><span class="cell dim">14 hide</span><div class="cell"><button class="make">Make</button><div class="note">Unlocks excellent fibre work</div></div>
+        <div class="cell"><div class="iname">Bone awl</div><div class="faint">Bench tool — bone</div></div><div class="cell owned">×1 <span class="badge">poor</span></div><span class="cell dim">12 fibre · 6 hide</span><div class="cell"><button class="make">Make</button><div class="note">Bone costs −25%</div></div>
+      </div>
+    </div>
+  </div>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1000,"height":1180}}'>
+class Component extends DCLogic {
+  constructor(props) { super(props); this.state = { spare: 4, looms: 1, tribe: false, pri: { baskets: 1, sled: 0, spears: 1, clubs: 1 }, priOpen: null }; }
+  renderVals() {
+    const st = this.state;
+    const PR = ['High', 'Normal', 'Low'];
+    // Each order: work left, how many items are still to make, how many hands one item takes at once
+    // (a per-recipe value), the bench tool it wants, and one item's inputs (set aside per item, all or nothing).
+    const base = [
+      { id: 'baskets', name: 'Baskets (Reed) · Weaving', made: '1/2', left: 1, perItem: 2, work: 6, done: 3, tool: 'loom', toolName: 'the loom', skill: 'Weaving', pile: 'good', handPile: 'fair', dest: 'Greyfen', cost: { fibre: 10 }, workable: true },
+      { id: 'sled', name: 'Sled · Tanning', made: '0/1', left: 1, perItem: 2, work: 8, done: 1, tool: null, skill: 'Tanning', pile: 'fair', dest: 'Pinewold', cost: { hide: 18, fibre: 10 }, workable: true },
+      { id: 'spears', name: 'Spears ×3 · Knapping', made: '0/3', left: 3, perItem: 1, work: 9, done: 0, tool: null, skill: 'Knapping', pile: 'good', dest: 'Saltmarch', cost: { stone: 1, wood: 2, fibre: 1 }, workable: true },
+      { id: 'clubs', name: 'Clubs ×2 · Bone-working', made: '0/2', left: 2, perItem: 1, work: 6, done: 0, tool: 'awl', toolName: 'the bone awl', skill: 'Bone-working', pile: 'excellent', dest: 'Greyfen', short: 'Waiting — short 6.9 bone', workable: false }
+    ];
+    const tools = { loom: st.looms, awl: 1 };
+    const orders = base.map((o) => Object.assign({}, o, { p: st.pri[o.id], cap: o.left * o.perItem, tool_n: 0, hand_n: 0 }))
+      .sort((a, b) => a.p - b.p);
+    let left = st.spare;
+    const add = (o) => {
+      if (!o.workable || left <= 0 || o.tool_n + o.hand_n >= o.cap) return false;
+      if (o.tool && tools[o.tool] > 0) { tools[o.tool]--; o.tool_n++; } else { o.hand_n++; }
+      left--; return true;
+    };
+    // One crafter on every order that can make progress, then round-robin within each priority to the caps.
+    orders.forEach((o) => add(o));
+    [0, 1, 2].forEach((p) => { const g = orders.filter((o) => o.p === p); let more = true; while (more) { more = false; g.forEach((o) => { if (add(o)) more = true; }); } });
+    const asideTotal = {};
+    orders.forEach((o) => {
+      if (!o.workable) { o.held = ''; return; }
+      const crew = o.tool_n + o.hand_n;
+      const items = Math.min(o.left, Math.max(Math.ceil(crew / o.perItem), o.done > 0 ? 1 : 0));
+      o.items = items;
+      const parts = Object.keys(o.cost).map((m) => { asideTotal[m] = (asideTotal[m] || 0) + o.cost[m] * items; return o.cost[m] * items + ' ' + m; });
+      o.held = items === 0 ? '' : parts.join(' · ') + ' set aside (' + items + (items === 1 ? ' item' : ' items') + ')';
+    });
+    const bands = ['Pinewold', 'Greyfen', 'Saltmarch'];
+    let bandIx = 0;
+    const from = (n) => { const out = []; for (let i = 0; i < n; i++) { out.push(bands[bandIx % 3]); bandIx++; } return out; };
+    const rows = orders.map((o) => {
+      const crew = o.tool_n + o.hand_n;
+      const per = o.tool_n * 1.5 + o.hand_n;
+      const rem = o.work - o.done;
+      const t = per > 0 ? Math.ceil(rem / per) : 0;
+      let sub, subCls = 'faint';
+      if (!o.workable) { sub = o.short; subCls = 'warn'; }
+      else if (crew === 0) { sub = 'No spare hands this turn' + (o.held ? ' · ' + o.held : ''); subCls = 'warn'; }
+      else sub = (st.tribe ? 'for ' + o.dest + ' · ' : '') + '→ ' + (o.tool && o.tool_n === 0 ? o.handPile : o.pile) + ' · done in ≈' + t + (t === 1 ? ' turn' : ' turns') + ' · ' + o.held;
+      let tip = crew === 0 ? 'Nobody at this order — up to ' + o.cap : crew + ' of up to ' + o.cap + ' crafters (' + o.left + (o.left === 1 ? ' item' : ' items') + ' × ' + o.perItem + (o.perItem === 1 ? ' hand' : ' hands') + ')';
+      if (o.tool_n > 0) tip += ' · ' + o.tool_n + ' at ' + o.toolName;
+      if (o.hand_n > 0) tip += ' · ' + o.hand_n + ' by hand' + (o.tool ? ' (no ' + o.toolName.replace('the ', '') + ' free → ' + o.handPile + ')' : '');
+      if (st.tribe && crew > 0) {
+        const who = from(crew); const count = {}; who.forEach((b) => { count[b] = (count[b] || 0) + 1; });
+        tip += ' · from ' + Object.keys(count).map((b) => b + ' ' + count[b]).join(', ');
+      }
+      return {
+        name: o.name, sub, subCls, cls: o.workable ? '' : 'waiting', made: o.made, pri: PR[o.p],
+        crew: String(crew), zeroCls: crew === 0 ? 'zero' : '', toolN: o.tool_n, handN: o.hand_n, roomN: Math.max(0, o.cap - crew), tip,
+        pct: Math.round(o.done / o.work * 100) + '%',
+        progTip: o.done.toFixed(1) + ' of ' + o.work + ' work' + (per > 0 ? ' · +' + per.toFixed(1) + '/turn' : '') + ' · teaching ' + o.skill + ' — every one finished teaches it',
+        priOpen: st.priOpen === o.id,
+        togglePri: () => this.setState({ priOpen: st.priOpen === o.id ? null : o.id }),
+        pris: PR.map((label, i) => ({ label, cls: i === o.p ? 'on' : '', pick: () => this.setState({ pri: Object.assign({}, st.pri, { [o.id]: i }) }) }))
+      };
+    });
+    const working = rows.reduce((s, r) => s + Number(r.crew), 0);
+    const running = rows.filter((r) => r.crew !== '0').length;
+    const mats = [
+      { name: 'Fibre', who: 'Pinewold 12.8 · Greyfen 6.0 · Saltmarch 4.0',  learn: '▬▬▬ Weaving · known', piles: [{ n: '8.4', a: 'fine: excellent', b: 'strong: fair' }, { n: '14.4', a: 'fine: poor', b: 'strong: good' }], hasAside: !!asideTotal.fibre, aside: (asideTotal.fibre || 0) + ' set aside for the bench' },
+      { name: 'Hide', who: 'Pinewold 9.2 · Saltmarch 7.6',  learn: '▬▬ Tanning · 41%', piles: [{ n: '14.2', a: 'tough: fair', b: 'supple: good' }, { n: '2.6', a: 'tough: excellent', b: 'supple: poor' }], hasAside: !!asideTotal.hide, aside: (asideTotal.hide || 0) + ' set aside for the bench' },
+      { name: 'Bone', who: 'Greyfen 3.1',  learn: '▬ Bone-working · 12%', piles: [{ n: '3.1', a: 'dense: excellent', b: 'long: fair' }], hasAside: false, aside: '' },
+      { name: 'Cordage', who: 'Pinewold 9.3',  learn: '▬▬▬ Weaving · known', piles: [{ n: '6.5', a: 'stoutness: good', b: 'span: poor' }, { n: '2.8', a: 'stoutness: poor', b: 'span: good' }], hasAside: false, aside: '' },
+      { name: 'Wood', who: 'Greyfen 7.0 · Saltmarch 4.0',  learn: '', piles: [{ n: '11.0', a: 'hard: fair', b: 'pliant: good' }], hasAside: !!asideTotal.wood, aside: (asideTotal.wood || 0) + ' set aside for the bench' },
+      { name: 'Stone', who: 'Saltmarch 6.0',  learn: '', piles: [{ n: '6.0', a: 'hard: good', b: 'workable: fair' }], hasAside: !!asideTotal.stone, aside: (asideTotal.stone || 0) + ' set aside for the bench' }
+    ];
+    return {
+      spare: st.spare, looms: st.looms, orders: rows,
+      mats: mats.map((m) => Object.assign({}, m, { who: st.tribe ? m.who : '' })),
+      nextText: st.tribe ? 'Spears ×5' : 'Spears ×3', nextSub: st.tribe ? 'Greyfen 3 · Pinewold 2 hunters without' : '3 hunters without · +1 wearing out',
+      comingText: st.tribe ? 'Clubs ×3' : 'Clubs ×2', comingSub: st.tribe ? 'Saltmarch 2 · Greyfen 1 wear out in ~4 turns' : 'wear out in ~4 turns',
+      benchLine: running + ' of ' + rows.length + ' orders running · ' + working + (working === 1 ? ' crafter' : ' crafters') + (left > 0 ? ' · ' + left + ' spare' : ''),
+      autoLeft: '2px',
+      scopeName: st.tribe ? 'Reedwater tribe · 3 bands' : 'Pinewold', scopeCount: st.tribe ? 'tribe' : '1 / 1',
+      scopes: [{ label: 'Pinewold', cls: st.tribe ? '' : 'on', pick: () => this.setState({ tribe: false }) }, { label: 'The tribe', cls: st.tribe ? 'on' : '', pick: () => this.setState({ tribe: true }) }],
+      incSpare: () => this.setState({ spare: Math.min(12, st.spare + 1) }), decSpare: () => this.setState({ spare: Math.max(0, st.spare - 1) }),
+      incLoom: () => this.setState({ looms: Math.min(3, st.looms + 1) }), decLoom: () => this.setState({ looms: Math.max(0, st.looms - 1) })
+    };
+  }
+}
+</script>
+</body>
+</html>

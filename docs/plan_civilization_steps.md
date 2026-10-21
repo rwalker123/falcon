@@ -33,7 +33,17 @@ same conversation.
 | 11 | Two routes | Egypt unified by conquest. The Indus Valley possibly by standard bricks, weights and guilds, with no palaces or armies. [17:20–19:30] | A confederation path (shared standards) beside a conquest path. |
 | 12 | Status → contract → nation | Everything after: sovereignty, print, conscription, lines drawn on maps. A nation is a story enough people believe for long enough (Renan, Anderson, Gellner). [19:31–29:09] | Beyond our horizon, but its framing is The Telling. |
 
-All twelve are in scope eventually. The rest of this doc is about steps 1–5.
+All twelve are in scope eventually. The rest of this doc is about steps 1–5, with one exception
+decided early because the nation level of orders needs it:
+
+**Step 11 for your own people: confederation by writing (decided).** Your own people become a nation
+by the confederation route, not by conquest: once your members — at least a city and one other city,
+tribe or band — share writing (the lesson in "Writing: the third ceiling caps management") under a
+faction leader, they are a nation, and the nation's orders open (`docs/plan_labor_at_scale.md` →
+"Leaders: four levels of orders"). Writing is the shared standard because it is already the lesson
+that lets one polity administer more than one place; no new lesson is needed. The conquest route —
+absorbing peoples you defeat, step 9's circumscription — stays with #695 and the battles design
+(#850).
 
 ## Where the game stands, in the ladder's terms
 
@@ -314,6 +324,11 @@ and the event log, with a turn-orb message the way a discovery is announced. The
 command. The player causes it by moving bands, and learns it happened the way they learn anything
 else the world did.
 
+**A gathering place is where a tribe forms.** Bands linked by the supply network that share a
+gathering place become a tribe, with a paramount chief or a council of chiefs who take tribe orders
+— shared workers, a tribe bench, shared works (`docs/plan_labor_at_scale.md` → "Leaders: four levels
+of orders"). Migratory bands form one at a gathering place on their round, without settling.
+
 ### Gathering is where culture converges
 
 The culture module already has layer-drift meters, tension and schism (`culture.rs`;
@@ -418,9 +433,16 @@ characteristic axes (`docs/plan_crafting_and_materials.md`). Not a per-species t
 | Pit / granary | fixed to a tile | large; dry goods only | its contents are on the ground, not on your backs, so leaving means leaving them — the stored-surplus tether `docs/plan_settlement_population.md` describes, finally existing |
 | Sealed pottery | later | everything | a crafting-arc material, not a storage rung |
 
-**After the granary: directed labor and consent.** In a 4X the player is already the chief, so step 5
-cannot be "a leader emerges". What it models is the **band's consent to being directed, bought with
-surplus**:
+**Fixed storage is two branches, by what they hold.** Food storage holds dry food only and climbs
+**Storage pit → Granary → Silo**; goods storage holds everything else — hide, wood, gear — and climbs
+**Storehouse → Warehouse**. They are separate because a granary is the food tether this arc is about
+and a storehouse is not; folding them into one ladder would make "raise the granary" also mean "store
+hide". (Named with Ray; rung costs and capacities are not set.)
+
+**After the granary: directed labor and consent.** The band's leader is not what step 5 adds — a
+chief (or an elders' council) comes earlier, from directed work that succeeds, granary or no granary
+(the last bullet below). What step 5 models is the **band's consent to labor that feeds no one,
+bought with surplus**:
 
 - **Labor that feeds no one is paid from the granary.** Workers on a monument or a wall eat and
   produce nothing; the work runs while the granary can carry them and ends when it empties. An empty
@@ -430,17 +452,24 @@ surplus**:
   egalitarian band bears a short stretch of non-food labor and then grievance climbs — the leveling
   mechanism in our vocabulary. A hierarchical band bears far more.
 - **Each fed completion pushes the axis toward Hierarchical.** Temporary prestige becoming rank is the
-  axis drifting until direction is simply accepted. The Telling narrates a chief, then a line of
-  chiefs. No king button, the same emergent shape as the settlement label.
+  axis drifting until direction is simply accepted — the band's leader ruling more and consulting
+  less. The axis decides which kind of leader the band has; The Telling narrates it, then a line of
+  them. No king button, the same emergent shape as the settlement label.
 - **The reserved `leadership` morale contributor** is positive while directed work is fed and
   completing, negative when the granary runs dry under it — a chief who delivers is followed, a chief
   who cannot feed is mocked.
 - **Not modelled:** who within the band holds the granary. That is The Telling's to narrate; a second
   political layer inside a thirty-person band is more than the early game can carry.
+- **The chief comes before the granary.** A band accepts a chief (or, Egalitarian, an elders'
+  council) once directed work succeeds — a finished build, a big-game hunt that lands its kill, a
+  battle won, work on a gathering place's monument — so migratory peoples get one too. The axis above
+  decides which kind of leader the band has, never whether it has one. What the chief does is take
+  band orders from the player: `docs/plan_labor_at_scale.md` → "Leaders: four levels of orders".
 
 **Order for the arc (leaning):** spoilage with the storage lesson → the tile-source seam
 (settlement arc) with storage as its first branch → the granary as a tether → directed labor and the
-`leadership` term.
+`leadership` term. The chief itself is not on this line: it arrives with the first directed work that
+succeeds (#859), before any of it.
 **Measured (#705):** a starting band on its starting tiles runs **no** surplus — net ≈0 once its
 starting larder is spent, on every biome measured (see "The push is depletion" above). The storage
 lesson's pace therefore cannot be set against a starting band; it has to be set against whatever
@@ -550,7 +579,9 @@ payments — not people. A field or a pen needs no books: the band that eats fro
 - **A route counts** once traffic runs on it (a trail or better with hauls moving). A path nobody
   sends anything along is walked, not managed.
 - **A faction has a management capacity** — a small number to start, a config lever like `K` and
-  the cohesion ceiling — and writing lifts it.
+  the cohesion ceiling — and writing lifts it. It is also how far a city's ruler and a faction
+  leader reach: over it, their orders are carried out worse, the same lossy shape
+  (`docs/plan_labor_at_scale.md` → "A leader can only run so much well").
 
 ### Above the ceiling: lossy, never a refusal
 

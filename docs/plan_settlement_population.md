@@ -127,6 +127,13 @@ walk away and your granary rots, your patch goes feral. The discrete `found_sett
 `SedentarizationScore` is reframed as an emergent **readout of accumulated tether** from built
 improvements, rather than an input gate.
 
+**The city label does something.** A cluster that reaches *city* and runs its first administered
+store (a granary and its rations) gets a ruler — or, Egalitarian, an assembly — who takes city
+orders from the player: trades (people working full time as crafters, traders and builders), great
+works fed from the granary, and rations. It is the third of four levels of orders: band, tribe, city,
+nation (`docs/plan_labor_at_scale.md` → "Leaders: four levels of orders"). Whether a tile's
+capacity counts the people living on it, and not only those working it, is this design's to settle.
+
 ## Cross-cutting touchpoints
 
 - **ECS / turn loop** (`core_sim`): the demographic tick replaces/extends `simulate_population`

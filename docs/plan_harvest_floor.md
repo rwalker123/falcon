@@ -1,5 +1,9 @@
 # The Harvest Floor — one dial replaces the four-stance axis
 
+> **The crew stepper this document specifies is retired** (`docs/plan_labor_at_scale.md`, #842): the
+> player sets the floor and an optional max, and the sim staffs the crew from it every turn. The
+> floor, the chart and the two crew targets stand.
+
 > **The trade account this document weighs against food is RETIRED** (arc #527,
 > `docs/plan_contact_and_logistics.md`). The floor mechanism is untouched — what changed is that the
 > vector it pays into no longer has a trade component, so passages reasoning about a deeper floor

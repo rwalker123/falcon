@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Stone — keep on hand</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans:ital,wght@0,400;0,600;1,400&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#1a2629;font-family:"Noto Sans",system-ui,sans-serif;}
+button{font-family:inherit;cursor:pointer}
+.sheet{background:#221b15;border:1px solid #3a2f24;border-radius:6px;box-shadow:0 8px 24px rgba(0,0,0,.55);color:#f4ead7;padding:12px 14px;display:flex;flex-direction:column;gap:10px;font-size:13px}
+.head{display:flex;align-items:center;gap:8px}
+.eyebrow{font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:#bdab90}
+.x{margin-left:auto;width:30px;height:30px;border:1px solid #3a2f24;background:#2b221a;color:#f4ead7;border-radius:4px}
+.field{display:grid;grid-template-columns:54px 1fr;align-items:center;gap:8px}
+.sel{height:32px;border:1px solid #4a3c2e;background:#2b221a;color:#f4ead7;border-radius:4px;display:flex;align-items:center;justify-content:space-between;padding:0 10px}
+.lbl{font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:#8d7e68}
+.box{background:#1d1812;border:1px solid #2f261d;border-radius:4px;padding:8px 10px;display:flex;flex-direction:column;gap:6px}
+.dim{font-size:12px;color:#bdab90}
+.faint{font-size:11px;color:#8d7e68}
+.step{display:flex;align-items:center;gap:8px}
+.sb{width:30px;height:30px;border:1px solid #3a2f24;background:#2b221a;color:#f4ead7;border-radius:4px;font-size:15px}
+.sv{min-width:44px;text-align:center;font-size:15px}
+.meter{height:8px;background:#2f261d;border-radius:2px;position:relative;overflow:hidden}
+.num{font-size:15px}
+.acct{font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:#8d7e68}
+.big{font-size:15px}
+</style>
+</helmet>
+<div style="width:520px;padding:20px;box-sizing:border-box">
+<div class="sheet">
+  <div class="head"><span class="eyebrow">Stone</span><span>Karst Highland</span><button class="x" aria-label="Close">✕</button></div>
+  <div class="dim">2100 of 2200 stone left in this rock. Stone does not come back.</div>
+  <div class="field"><span>Band:</span><div class="sel"><span>Saltmarch</span><span>⌄</span></div></div>
+
+  <div class="lbl">Keep on hand</div>
+  <div class="box">
+    <div style="display:flex;align-items:center;gap:12px">
+      <span class="big">{{have}} on hand</span>
+      <span class="dim" style="margin-left:auto">keep</span>
+      <div class="step"><button class="sb" onClick="{{dec}}" aria-label="Keep less stone">−</button><span class="sv">{{target}}</span><button class="sb" onClick="{{inc}}" aria-label="Keep more stone">+</button></div>
+    </div>
+    <div class="meter"><span style="position:absolute;left:0;top:0;bottom:0;width:{{fillPct}};background:#8d7e68"></span><span style="position:absolute;top:0;bottom:0;width:2px;left:{{targetPct}};background:#f4ead7"></span></div>
+    <div class="dim">Saltmarch uses 1.0 stone a turn — its build queue and its road.</div>
+  </div>
+
+  <div class="lbl">Diggers</div>
+  <div class="box">
+    <span class="big">{{crewLine}}</span>
+    <span class="dim">{{siteLine}}</span>
+    <span class="faint">{{splitLine}}</span>
+  </div>
+
+  <div class="box">
+    <div class="acct">Next turn</div>
+    <div style="display:flex;gap:10px;align-items:baseline"><span class="num">{{take}}</span><span class="acct">stone</span></div>
+    <div class="faint">{{fullLine}}</div>
+  </div>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":520,"height":620}}'>
+class Component extends DCLogic {
+  constructor(props) { super(props); this.state = { target: 60 }; }
+  renderVals() {
+    const have = 42, t = this.state.target;
+    const below = have < t;
+    const crew = below ? 3 : 0;
+    const take = (crew * 0.4).toFixed(2);
+    const turns = below ? Math.ceil((t - have) / (crew * 0.4 - 1)) : 0;
+    const max = Math.max(t, have, 1) * 1.25;
+    return {
+      have, target: t,
+      fillPct: (have / max * 100) + '%', targetPct: (t / max * 100) + '%',
+      crewLine: below ? 'Saltmarch sends ' + crew + ' diggers this turn' : 'At target — nobody digs this turn',
+      siteLine: below ? 'Here, the closest rock in reach. 1 keeps up with what the band uses, 2 refill toward ' + t + '.' : 'Diggers go back to work the turn stone drops below ' + t + '.',
+      splitLine: below ? '1 with wedges · 2 bare-handed' : '',
+      take: below ? take : '0.00',
+      fullLine: below ? 'Back to ' + t + ' in ≈' + turns + ' turns.' : 'Nothing dug while the pile is full.',
+      inc: () => this.setState({ target: t + 10 }),
+      dec: () => this.setState({ target: Math.max(0, t - 10) })
+    };
+  }
+}
+</script>
+</body>
+</html>

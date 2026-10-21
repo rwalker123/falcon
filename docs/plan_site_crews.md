@@ -129,6 +129,10 @@ deficit. A site crew covers its own deficit first by construction.
 
 ### 2.4 Two priority marks per row
 
+> **Retired by `docs/plan_labor_at_scale.md` (#842).** The build queue and the Build mark go: a build's
+> builders join the site's own crew and rank by the site's one Priority. Kept below as the record of
+> the model it replaced.
+
 | Mark | Shown | Ranks |
 |---|---|---|
 | **Priority** | always | the site crew's claim on scarce tools and materials |

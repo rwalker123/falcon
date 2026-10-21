@@ -1,0 +1,504 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Band orders — the chief runs the rows</title>
+<script src="./support.js"></script>
+<script src="./work-strip.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans:ital,wght@0,400;0,600;1,400&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#1a2629;font-family:"Noto Sans",system-ui,sans-serif;}
+button{font-family:inherit;cursor:pointer}
+.setup{background:#ecebe6;color:#26231f;border:2px dashed #8f8a80;border-radius:6px;padding:10px 14px;display:flex;flex-direction:column;gap:8px}
+.setup-title{font-size:12px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:#4d4840}
+.setup-row{display:flex;flex-wrap:wrap;gap:6px 18px;align-items:center;font-size:13px}
+.sgroup{display:flex;align-items:center;gap:6px}
+.sbtn{width:24px;height:24px;border:1px solid #8f8a80;background:#fff;border-radius:4px;font-size:14px;line-height:1;color:#26231f}
+.snum{min-width:22px;text-align:center;font-weight:600}
+.try{font-size:12px;color:#4d4840}
+.panel{background:#221b15;border:1px solid #3a2f24;border-radius:6px;box-shadow:0 6px 18px rgba(0,0,0,.5);color:#f4ead7;font-size:13px}
+.phead{display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid #2f261d}
+.pname{font-size:15px;font-weight:600}
+.psub{font-size:11px;color:#bdab90}
+.cycler{margin-left:auto;display:flex;align-items:center;gap:6px;color:#bdab90;font-size:12px}
+.cbtn{width:30px;height:30px;border:1px solid #3a2f24;background:#2b221a;color:#f4ead7;border-radius:4px}
+.tab{width:30px;height:30px;border:1px solid #3a2f24;background:#2b221a;border-radius:4px;display:flex;align-items:center;justify-content:center}
+.tab.on{background:#46372a;border-color:#a08d6d}
+.zones{display:grid;grid-template-columns:400px minmax(0,1fr) 330px}
+.zone{padding:12px 14px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.zone+.zone{border-left:1px solid #2f261d}
+.zhead{display:flex;justify-content:space-between;align-items:baseline;font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:#8d7e68}
+.zhead b{font-weight:400;text-transform:none;letter-spacing:0;color:#bdab90;font-size:12px}
+.vital{display:grid;grid-template-columns:96px 1fr;font-size:16px;line-height:26px}
+.vital u{color:#f4ead7}
+.good{color:#94a361}
+.bar{display:flex;height:9px;border-radius:2px;overflow:hidden;gap:2px}
+.key{display:flex;flex-wrap:wrap;gap:4px 12px;font-size:12px;color:#bdab90}
+.sw{display:inline-block;width:9px;height:9px;margin-right:4px;vertical-align:-1px}
+.card{background:#1d1812;border:1px solid #2f261d;border-radius:4px;padding:10px 12px;display:flex;flex-direction:column;gap:6px}
+.ctitle{font-size:13px;color:#f4ead7}
+.dim{color:#bdab90;font-size:12px}
+.faint{color:#8d7e68;font-size:12px}
+.step{display:flex;align-items:center;gap:8px}
+.stepbtn{width:30px;height:30px;border:1px solid #3a2f24;background:#2b221a;color:#f4ead7;border-radius:4px;font-size:15px}
+.stepval{min-width:56px;text-align:center;font-size:15px}
+.idlecard{background:#2a2014;border:1px solid #e0a63c;border-radius:4px;padding:10px 12px;display:flex;flex-direction:column;gap:4px}
+.idlenum{font-size:20px;color:#e0a63c;font-weight:600}
+.sec{display:flex;flex-direction:column;gap:4px}
+.sechead{font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:#8d7e68;display:flex;gap:6px;align-items:center;margin-top:4px}
+.row{display:grid;grid-template-columns:4px minmax(0,1fr) auto;column-gap:10px;padding:7px 8px 7px 0;border-radius:3px;background:#1f1913}
+.stripe{border-radius:2px}
+.rname{font-size:14px;color:#f4ead7}
+.rdet{font-size:12px;color:#bdab90}
+.chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:4px}
+.chip{border:1px solid #4a3c2e;background:#2b221a;color:#bdab90;font-size:11px;border-radius:10px;padding:2px 8px}
+.chip:hover{border-color:#a08d6d;color:#f4ead7}
+.chip.pinned{border-color:#e0a63c;color:#f4ead7}
+.orders{border-color:#a08d6d}
+.orow{display:grid;grid-template-columns:96px minmax(0,1fr);gap:8px;align-items:center;font-size:13px}
+.ostep{display:flex;align-items:center;gap:6px}
+.osb{width:24px;height:24px;border:1px solid #3a2f24;background:#2b221a;color:#f4ead7;border-radius:4px}
+.oval{min-width:64px;text-align:center}
+.kchips{display:flex;gap:6px;flex-wrap:wrap}
+.kchip{border:1px solid #4a3c2e;background:#2b221a;color:#f4ead7;font-size:12px;border-radius:10px;padding:2px 9px}
+.kchip.short{border-color:#e0a63c}
+.oline{font-size:12px;color:#bdab90;grid-column:2}
+.autob{height:22px;border:1px solid #4a3c2e;background:#2b221a;color:#8d7e68;border-radius:11px;font-size:10px;padding:0 10px}
+.autob.on{border-color:#a08d6d;color:#f4ead7;background:#46372a}
+.octl{display:flex;align-items:center;gap:8px}
+.ochose{font-size:12px;color:#bdab90}
+.krow{display:grid;grid-template-columns:52px 44px 120px minmax(0,1fr);gap:8px;align-items:center;font-size:12px;grid-column:1 / -1;padding-left:104px}
+.short{color:#e0a63c}
+.y-warn{color:#e0a63c}
+.y-skip{color:#8d7e68}
+.split{font-size:11px;color:#bdab90}
+.status{font-size:12px}
+.s-ok{color:#94a361}
+.s-hold{color:#bdab90}
+.s-warn{color:#e0a63c}
+.s-skip{color:#8d7e68}
+.ps{font-size:12px;color:#8d7e68}
+</style>
+</helmet>
+<div style="width:1480px;padding:20px;box-sizing:border-box;display:flex;flex-direction:column;gap:16px">
+
+<div class="setup">
+  <div class="setup-title">Prototype setup — not part of the game</div>
+  <div class="setup-row">
+    <div class="sgroup"><span>Working-age people</span><button class="sbtn" onClick="{{decW}}" aria-label="Fewer people">−</button><span class="snum">{{workers}}</span><button class="sbtn" onClick="{{incW}}" aria-label="More people">+</button></div>
+    <button class="sbtn" style="width:auto;padding:0 10px" onClick="{{endTurn}}">End turn ▸</button><span style="color:#4d4840">turn {{turn}}</span>
+    <span style="color:#8f8a80">Gear the band owns:</span>
+    <sc-for list="{{kitList}}" as="k" hint-placeholder-count="8">
+      <div class="sgroup"><span>{{k.name}}</span><button class="sbtn" onClick="{{k.dec}}" aria-label="Less">−</button><span class="snum">{{k.n}}</span><button class="sbtn" onClick="{{k.inc}}" aria-label="More">+</button></div>
+    </sc-for>
+  </div>
+  <div class="try">Try: each order starts at the chief’s suggestion; None gives no order at all. Raise “keep … turns of food” above what the larder holds — the chief moves the food rows to Everything (☠) and the larder climbs as you press End turn; lower it and the rows ease to Best or Learning. Click a row's Floor chip to set it yourself — it pins (amber) and the chief leaves it alone until you release it. Raise “Improve the land” and the chief starts builds on the sites that pay best.</div>
+</div>
+
+<div class="panel">
+  <div class="phead">
+    <svg width="22" height="22" viewBox="0 0 22 22" aria-hidden="true"><path d="M3 18 L11 5 L19 18 Z" fill="none" stroke="#e0a63c" stroke-width="2"></path><path d="M9 18 L11 13 L13 18" fill="none" stroke="#e0a63c" stroke-width="1.6"></path></svg>
+    <div><div class="pname">Saltmarch</div><div class="psub">Camp (71, 18) · led by Chief {{chief}}</div></div>
+    <div class="cycler">
+      <button class="cbtn" aria-label="Previous band">◀</button><span>2 / 2</span><button class="cbtn" aria-label="Next band">▶</button>
+      <span style="width:12px"></span>
+      <span class="tab on" aria-label="Work"><svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><path d="M2 12 L12 2" stroke="#efe3cd" stroke-width="2"></path></svg></span>
+      <span class="tab" aria-label="People"><svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><circle cx="7" cy="4" r="2.5" fill="#bdab90"></circle><rect x="4" y="7.5" width="6" height="5" rx="2" fill="#bdab90"></rect></svg></span>
+      <span class="tab" aria-label="Crafting"><svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><path d="M3 11 L9 5 M8 3 L11 6" stroke="#bdab90" stroke-width="2"></path></svg></span>
+      <span class="tab" aria-label="Faction"><svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><circle cx="7" cy="7" r="5" fill="none" stroke="#bdab90" stroke-width="1.6"></circle></svg></span>
+    </div>
+  </div>
+
+  <div class="zones">
+    <!-- BAND ZONE -->
+    <div class="zone">
+      <div class="vital"><u>Food ›</u><span class="good">{{foodLine}}</span></div>
+      <div class="vital" style="margin-top:-10px"><span style="color:#bdab90">Fodder</span><span>—</span></div>
+      <div class="vital" style="margin-top:-10px"><u>Morale ›</u><span class="good">82%</span></div>
+      <div class="vital" style="margin-top:-10px"><u>Growth ›</u><span>188% of normal</span></div>
+
+      <div class="card orders">
+        <div class="ctitle">Band orders · Chief {{chief}}</div>
+        <div class="orow"><span>Food</span>
+          <div class="octl"><button class="autob {{foodNoneCls}}" onClick="{{toggleFoodNone}}" title="None: no food order — the chief aims for no particular store">None</button>
+            <sc-if value="{{foodSet}}" hint-placeholder-val="{{true}}"><div class="ostep"><span class="dim">keep</span><button class="osb" onClick="{{decFood}}" aria-label="Keep less food">−</button><span class="oval">{{foodTarget}} turns</span><button class="osb" onClick="{{incFood}}" aria-label="Keep more food">+</button></div></sc-if>
+            <sc-if value="{{foodNone}}" hint-placeholder-val="{{false}}"><span class="ochose">no order</span></sc-if></div>
+          <span class="oline">{{foodOrderLine}}</span></div>
+        <div class="orow"><span>Keep on hand</span><span></span></div>
+        <sc-for list="{{keepRows}}" as="k" hint-placeholder-count="3">
+          <div class="krow" title="{{k.tip}}">
+            <span>{{k.name}}</span>
+            <button class="autob {{k.noneCls}}" onClick="{{k.toggleNone}}">None</button>
+            <sc-if value="{{k.set}}" hint-placeholder-val="{{true}}"><div class="ostep"><button class="osb" onClick="{{k.dec}}" aria-label="Keep less">−</button><span class="oval">{{k.target}}</span><button class="osb" onClick="{{k.inc}}" aria-label="Keep more">+</button></div></sc-if>
+            <sc-if value="{{k.none}}" hint-placeholder-val="{{false}}"><span class="ochose">no order</span></sc-if>
+            <span class="{{k.haveCls}}">{{k.have}} on hand</span>
+          </div>
+        </sc-for>
+        <div class="orow"><span>Improve land</span>
+          <div class="octl"><button class="autob {{improveNoneCls}}" onClick="{{toggleImproveNone}}" title="None: no order — the chief starts no improvements">None</button>
+            <sc-if value="{{improveSet}}" hint-placeholder-val="{{true}}"><div class="ostep"><button class="osb" onClick="{{decImprove}}" aria-label="Fewer workers on improvements">−</button><span class="oval">{{improve}}% of workers</span><button class="osb" onClick="{{incImprove}}" aria-label="More workers on improvements">+</button></div></sc-if>
+            <sc-if value="{{improveNone}}" hint-placeholder-val="{{false}}"><span class="ochose">no order</span></sc-if></div>
+          <span class="oline">{{improveLine}}</span></div>
+      </div>
+
+      <div class="zhead">People <b>{{people}}</b></div>
+      <div class="bar"><span style="flex:9 1 0;background:#d0a468"></span><span style="flex:{{working}} 1 0;background:#bdab90"></span><span style="flex:{{idle}} 1 0;background:#e0a63c"></span><span style="flex:5 1 0;background:#93a0a8"></span></div>
+      <div class="key"><span><i class="sw" style="background:#d0a468"></i>9 children</span><span><i class="sw" style="background:#bdab90"></i>{{working}} working</span><span><i class="sw" style="background:#e0a63c"></i>{{idle}} idle</span><span><i class="sw" style="background:#93a0a8"></i>5 elders</span></div>
+
+      <sc-if value="{{hasIdle}}" hint-placeholder-val="{{true}}">
+        <div class="idlecard">
+          <div class="idlenum">{{idle}} idle</div>
+          <div class="dim">No gear and no job where bare hands help. Open a source, or queue gear at the bench.</div>
+        </div>
+      </sc-if>
+
+      <div class="card">
+        <div class="ctitle">Scouting range</div>
+        <div class="step"><button class="stepbtn" onClick="{{decSight}}" aria-label="Scout less far">−</button><span class="stepval">+{{sight}} tiles</span><button class="stepbtn" onClick="{{incSight}}" aria-label="Scout farther">+</button></div>
+        <div class="dim">{{scoutLine}}</div>
+      </div>
+    </div>
+
+    <!-- WORK ZONE -->
+    <div class="zone">
+      <div class="zhead">Work <b>{{jobCount}} jobs · {{working}} of {{workers}} working</b></div>
+      <sc-for list="{{sections}}" as="sec" hint-placeholder-count="5">
+        <div class="sec">
+          <div class="sechead"><span>▾</span><span>{{sec.title}}</span></div>
+          <sc-for list="{{sec.rows}}" as="row" hint-placeholder-count="2">
+            <div class="row">
+              <span class="stripe" style="background:{{row.stripe}}"></span>
+              <div style="min-width:0">
+                <div class="rname">{{row.name}}</div>
+                <div class="rdet">{{row.rungName}}</div>
+                <div class="rdet {{row.yieldCls}}">{{row.yieldLine}}</div>
+                <div class="chips">
+                  <button class="chip" onClick="{{row.cyclePri}}">Priority: {{row.pri}}</button>
+                  <sc-if value="{{row.hasFloorChip}}" hint-placeholder-val="{{true}}"><button class="chip {{row.floorChipCls}}" onClick="{{row.cycleFloor}}" title="{{row.floorChipTip}}">{{row.floorChip}}</button></sc-if>
+                  <sc-if value="{{row.isPinned}}" hint-placeholder-val="{{false}}"><button class="chip" onClick="{{row.release}}">Back to the chief</button></sc-if>
+                  <sc-if value="{{row.hasKeep}}" hint-placeholder-val="{{true}}"><span class="chip" title="{{row.keepTip}}">{{row.keepLabel}}</span></sc-if>
+                  <sc-if value="{{row.maxSet}}" hint-placeholder-val="{{true}}"><span class="chip">{{row.maxLabel}}</span></sc-if>
+                </div>
+              </div>
+              <div class="wstrip">
+                <div class="marks">
+                  <span class="mk" title="{{row.rungMarkTip}}">{{row.rungMark}}</span>
+                  <sc-if value="{{row.hasLadder}}" hint-placeholder-val="{{true}}"><button class="ladder {{row.ladderCls}}" onClick="{{row.ladderClick}}" title="{{row.ladderTip}}"><span class="lfill" style="width:{{row.ladderFill}}"></span><span class="ltxt">{{row.ladderFace}}</span></button></sc-if>
+                  <sc-if value="{{row.cardOpen}}" hint-placeholder-val="{{false}}">
+                    <div class="rcard">
+                      <span class="rclbl">Take it to…</span>
+                      <sc-for list="{{row.card}}" as="r" hint-placeholder-count="3">
+                        <sc-if value="{{r.isButton}}" hint-placeholder-val="{{true}}"><button class="rbtn {{r.cls}}" onClick="{{r.click}}" title="{{r.tip}}"><span class="rfill" style="width:{{r.fill}}"></span><span class="rl">{{r.glyph}} {{r.label}}</span><span class="rf">{{r.face}}</span></button></sc-if>
+                        <sc-if value="{{r.isMarker}}" hint-placeholder-val="{{false}}"><div class="rmark {{r.cls}}"><span>{{r.glyph}} {{r.label}}</span><span class="rmf">{{r.face}}</span></div></sc-if>
+                      </sc-for>
+                    </div>
+                  </sc-if>
+                  <span class="mk" title="{{row.policyTip}}">{{row.policyMark}}</span>
+                  <span class="mk warnmk" title="{{row.warnTip}}">{{row.warnMark}}</span>
+                </div>
+                <div class="crewbox">
+                  <span class="crewnum {{row.zeroCls}}">{{row.crew}}</span>
+                  <div class="cbar" title="{{row.tip}}" aria-label="{{row.tip}}"><span style="flex:{{row.keepN}} 1 0;background:{{row.keepC}}"></span><span style="flex:{{row.buildN}} 1 0;background:{{row.buildC}}"></span><span style="flex:{{row.gearN}} 1 0;background:{{row.gearC}}"></span><span style="flex:{{row.bareN}} 1 0;background:{{row.bareC}}"></span></div>
+                </div>
+              </div>
+            </div>
+          </sc-for>
+        </div>
+      </sc-for>
+    </div>
+
+    <!-- PARTIES ZONE -->
+    <div class="zone">
+      <div class="zhead">Parties <b>0 out · 0 workers</b></div>
+      <div class="ps">No parties in the field.</div>
+      <div class="zhead" style="margin-top:6px">Trade</div>
+      <div class="zhead">Waiting on an answer</div>
+      <label style="display:flex;gap:8px;align-items:center;font-size:13px"><input type="checkbox" checked="checked"><span>Accept gifts from our own people</span></label>
+      <div class="ps">Nothing waiting</div>
+      <div class="zhead">This turn</div>
+      <div class="card" style="flex-direction:row;gap:8px"><span class="faint">NETWORK</span><span>not pooling</span></div>
+      <div style="font-size:13px">Nothing crossed this turn.</div>
+      <div class="ps">Camps pool when one is short of what another holds; shipments appear here the turn they land or leave.</div>
+      <div class="zhead">History</div>
+      <div class="ps">No trades yet</div>
+      <div class="zhead">Peoples we know</div>
+      <div class="ps">None met yet</div>
+    </div>
+  </div>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1480,"height":1060}}'>
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.state = {
+      workers: 24,
+      kits: { baskets: 4, spears: 2, traps: 1, axes: 1, wedges: 1, hoes: 2, crooks: 1, loom: 1, wayfinding: 1, earth: 1 },
+      pri: {}, max: {}, floor: {},
+      sight: 2,
+      // A rung being built on a site: the fraction built so far. Clicking a row's next rung starts one.
+      queued: {},
+      // Band orders: the player's goals, which the chief turns into each row's settings.
+      chief: 'Orrin', turn: 1, larder: 84, foodTarget: 20, improve: 10,
+      keep: { stone: 40, wood: 30, hide: 10 }, have: { stone: 42, wood: 24, hide: 12 },
+      none: { food: false, improve: false, stone: false, wood: false, hide: false },
+      pinned: {}, chiefQ: {}
+    };
+  }
+  jobs() {
+    const st = this.state;
+    // Each rung: its work, and how many hands can work on it at once (a per-rung config value).
+    const RUNGS = WorkStrip.RUNGS;
+    const queued = Object.assign({}, this.chiefQueued || {}, st.queued);
+    const site = (id, kind, at) => {
+      const rungs = RUNGS[kind], q = queued[id];
+      let build = null;
+      if (q !== undefined) { const r = rungs[at + 1]; const rem = r.work * (1 - q); build = Object.assign({}, r, { q, rem, useful: Math.min(r.cap, Math.ceil(rem)) }); }
+      return { rungs, at, build };
+    };
+    return [
+      { id: 'bench', sec: 'Bench', kind: 'bench', cat: 'Bench', name: 'Baskets ×2 (Reed)', detail: 'Weaving', yieldText: '6 worker-turns left', item: 'loom', useful: 6, rem: 6, kitRate: 1.5, rate: 1, bare: true, pri: 0 },
+      { id: 'emmer', sec: 'Agriculture', kind: 'source', cat: 'Forage', name: 'Harvest (71, 18)', detail: 'Wild', yieldText: '+0.48 /turn', item: 'baskets', stock: 0.9, crews: [[2, 6], [3, 5], [2, 3]], bare: true, pri: 1, floor: 1, ladder: site('emmer', 'plant', 0) },
+      { id: 'hay', sec: 'Agriculture', kind: 'source', cat: 'Forage', name: 'Harvest (72, 18)', detail: 'Tended Patch', yieldText: '+0.20 /turn', item: 'baskets', stock: 0.4, crews: [[2, 4], [2, 3], [1, 2]], bare: true, pri: 2, floor: 1, ladder: site('hay', 'plant', 1), keep: 1 },
+      { id: 'deer', sec: 'Husbandry', kind: 'source', cat: 'Hunt', name: 'Hunt Red Deer', detail: 'Wild', yieldText: '+0.20 /turn', item: 'spears', stock: 0.8, crews: [[2, 5], [2, 3], [1, 2]], bare: false, pri: 1, floor: 1 },
+      { id: 'rabbit', sec: 'Husbandry', kind: 'source', cat: 'Hunt', name: 'Hunt Rabbit Warren', detail: 'Wild', yieldText: '+0.30 /turn', item: 'traps', stock: 0.7, crews: [[1, 3], [1, 2], [1, 1]], bare: true, pri: 1, floor: 1, ladder: site('rabbit', 'animal', 0) },
+      { id: 'wood', sec: 'Forestry', kind: 'source', cat: 'Wood', name: 'Fell (70, 17)', detail: 'Deadfall', yieldText: '+0.60 wood /turn', item: 'axes', stock: 0.9, crews: [[1, 5], [2, 4], [1, 2]], bare: true, pri: 1, floor: 1 },
+      { id: 'stone', sec: 'Mining', kind: 'stock', cat: 'Stone', name: 'Dig stone', detail: 'Karst Highland (21, 14) — the game picks the site', yieldText: '+0.40 stone /turn', item: 'wedges', bare: true, pri: 1 },
+      { id: 'road', sec: 'Roadwork', kind: 'upkeep', cat: 'Roads', name: 'Road (71, 18) – (74, 19)', detail: 'Trail', yieldText: '1 work a turn to keep', item: 'earth', hold: 1, bare: true, pri: 1, keep: 1, ladder: site('road', 'route', 1) }
+    ];
+  }
+  renderVals() {
+    const st = this.state;
+    const PRI = ['High', 'Normal', 'Low'];
+    const FLOORS = ['Everything', 'Best', 'Learning'];
+    const FLOOR_FRAC = [0, 0.5, 0.8];
+    const FLOOR_PCT = ['leave 0%', 'leave 50%', 'leave 80%'];
+    const STONE_HAVE = st.have.stone;
+    // The chief: the food order sets the food rows' floor — below the target the band draws its food
+    // sources hard (Everything), comfortably above it it eases to Learning, otherwise Best. Wood is held
+    // to its keep-on-hand target the same way. A row the player set by hand is pinned and left alone.
+    const EAT = 3.8;
+    const runway = Math.floor(st.larder / EAT);
+    // Each order is a number the player sets (starting at the chief's suggestion) or None — no order:
+    // the chief pursues nothing for it. Food None: no store to aim for, so the food rows keep their own
+    // floor (Best). Keep-on-hand None: no target, so nobody digs that material. Improve None: no builds.
+    const foodTargetNow = st.foodTarget;
+    const keepNow = {};
+    ['stone', 'wood', 'hide'].forEach((k) => { keepNow[k] = st.none[k] ? null : st.keep[k]; });
+    const improveNow = st.none.improve ? 0 : st.improve;
+    const foodFloor = st.none.food ? 1 : (runway < foodTargetNow ? 0 : (runway >= Math.round(foodTargetNow * 1.5) ? 2 : 1));
+    const woodFloor = keepNow.wood !== null && st.have.wood < keepNow.wood ? 0 : 1;
+    const FOOD_IDS = ['emmer', 'hay', 'deer', 'rabbit'];
+    const chiefFloor = (id) => FOOD_IDS.indexOf(id) >= 0 ? foodFloor : (id === 'wood' ? woodFloor : 1);
+    // Improve the land: a share of the workers the chief may put on builds, started where they pay best.
+    const budget = Math.round(st.workers * improveNow / 100);
+    const PAYOFF = [{ id: 'hay', verb: 'sowing a farm at (72, 18)' }, { id: 'emmer', verb: 'cultivating (71, 18)' }, { id: 'rabbit', verb: 'taming the rabbit warren' }];
+    const picks = budget > 0 ? PAYOFF.slice(0, Math.min(PAYOFF.length, budget)) : [];
+    this.chiefQueued = {};
+    picks.forEach((s) => { this.chiefQueued[s.id] = st.chiefQ[s.id] || 0; });
+    const chiefIds = Object.keys(this.chiefQueued);
+    let chiefBuilders = 0;
+    const avail = Object.assign({}, st.kits);
+    let left = st.workers;
+    const jobs = this.jobs().map((j) => {
+      const pri = st.pri[j.id] ?? j.pri;
+      const max = st.max[j.id] ?? 0;
+      const floor = st.pinned[j.id] !== undefined ? st.pinned[j.id] : (j.kind === 'source' ? chiefFloor(j.id) : (j.floor ?? 1));
+      let hold = 0, reach = 0, below = false;
+      if (j.kind === 'source') {
+        below = floor > 0 && j.stock <= FLOOR_FRAC[floor];
+        if (!below) { hold = j.crews[floor][0]; reach = j.crews[floor][1]; }
+        else if (j.keep) { hold = j.keep; reach = j.keep; } // the ground is still kept; nobody harvests
+      } else if (j.kind === 'stock') {
+        if (keepNow.stone !== null && STONE_HAVE < keepNow.stone) { hold = 1; reach = 3; }
+      } else if (j.kind === 'upkeep') { hold = j.hold; reach = j.hold; }
+      else { hold = 0; reach = j.useful; }
+      if (max > 0) { hold = Math.min(hold, max); reach = Math.min(reach, max); }
+      return Object.assign({}, j, { pri, max, floor, hold, reach, below, k: 0, b: 0, bk: 0, bb: 0 });
+    });
+    const order = jobs.slice().sort((a, b) => a.pri - b.pri);
+    const take = (j, target, kitted) => {
+      const have = j.k + j.b;
+      let n = Math.min(Math.max(0, target - have), left);
+      if (kitted) n = Math.min(n, avail[j.item]);
+      if (n <= 0) return;
+      left -= n;
+      if (kitted) { avail[j.item] -= n; j.k += n; } else { j.b += n; }
+    };
+    // Scouts are staffed right after pass 1, so the band feeds itself before it scouts. A kitted scout
+    // adds 2 tiles, a bare one 1. The range is counted from the edge of the band's local range (supply
+    // network reach_tiles, 3), so +0 means no scouts at all.
+    const need = Math.max(0, st.sight);
+    let scoutK = 0, scoutB = 0;
+    // A builder joins the site's crew, up to the rung's cap (and the site's Max).
+    const addBuilder = (j, kitted) => {
+      const bld = j.ladder && j.ladder.build;
+      if (!bld || left <= 0) return false;
+      const crew = j.k + j.b + j.bk + j.bb;
+      if (j.bk + j.bb >= bld.useful || (j.max > 0 && crew >= j.max)) return false;
+      const chiefs = chiefIds.indexOf(j.id) >= 0 && st.queued[j.id] === undefined;
+      if (chiefs && chiefBuilders >= budget) return false;
+      if (chiefs) chiefBuilders++;
+      if (kitted) { if (avail[bld.kit] <= 0) return false; avail[bld.kit]--; j.bk++; } else { j.bb++; }
+      left--; return true;
+    };
+    const roundRobin = (group, kitted) => { let more = true; while (more) { more = false; group.forEach((j) => { if (addBuilder(j, kitted)) more = true; }); } };
+    // Pass 1: hold, kitted — keepers and the crews that hold each source.
+    order.forEach((j) => { if (j.hold > 0) take(j, j.hold, true); });
+    // Then the scouts — gear first, then bare hands — before anything draws a source down further.
+    scoutK = Math.min(avail.wayfinding, Math.ceil(need / 2), left);
+    avail.wayfinding -= scoutK; left -= scoutK;
+    scoutB = Math.min(Math.max(0, need - scoutK * 2), left); left -= scoutB;
+    // Then one builder on every build that can make progress, at any priority.
+    order.forEach((j) => { addBuilder(j, true) || addBuilder(j, false); });
+    // Pass 2, priority group by group: builds round-robin to their caps, then sources reach. Kitted only.
+    [0, 1, 2].forEach((p) => {
+      const group = order.filter((j) => j.pri === p);
+      roundRobin(group, true);
+      group.forEach((j) => { if (j.reach > 0) take(j, j.reach, true); });
+    });
+    // Pass 3: bare hands where they help, in the same order.
+    [0, 1, 2].forEach((p) => {
+      const group = order.filter((j) => j.pri === p);
+      roundRobin(group, false);
+      group.forEach((j) => { if (j.bare && j.reach > 0) take(j, j.reach, false); });
+    });
+    const idle = left;
+
+    const rowFor = (j) => {
+      const builders = j.bk + j.bb;
+      const crew = j.k + j.b + builders;
+      let status = '', cls = 's-hold', stripe = '#2f261d';
+      if (j.kind === 'source') {
+        if (j.below) { status = j.keep ? 'Below its floor — kept, not harvested' : 'Below its floor — nobody sent'; cls = 's-skip'; }
+        else if (j.k + j.b < j.hold) { status = 'Short: ' + (j.k + j.b) + ' of ' + j.hold + ' to hold it'; cls = 's-warn'; stripe = '#e0a63c'; }
+        else if (j.k + j.b === j.hold && j.hold < j.reach) { status = 'Holding — takes what grows back'; cls = 's-hold'; }
+        else if (j.k + j.b > j.hold && j.k + j.b < j.reach) { status = 'Holding, +' + (j.k + j.b - j.hold) + ' drawing it down'; cls = 's-ok'; }
+        else { status = j.reach > j.hold ? 'Drawing it down to the floor' : 'Holding — takes what grows back'; cls = 's-ok'; }
+      } else if (j.kind === 'stock') {
+        if (j.reach === 0) { status = keepNow.stone === null ? 'No order — nobody digs' : 'At target — nobody digs'; cls = 's-skip'; }
+        else if (crew === 0) { status = 'Nobody free to dig'; cls = 's-warn'; stripe = '#e0a63c'; }
+        else { status = 'Refilling to ' + keepNow.stone; cls = 's-ok'; }
+      } else if (j.kind === 'upkeep') {
+        if (crew < j.hold) { status = 'Unkept — slipping'; cls = 's-warn'; stripe = '#e0a63c'; } else { status = 'Kept'; cls = 's-ok'; }
+      } else {
+        const per = j.k * j.kitRate + j.b * j.rate;
+        if (crew === 0) { status = 'Waiting for spare hands'; cls = 's-warn'; stripe = '#e0a63c'; }
+        else { const t = Math.ceil(j.rem / per); status = 'Done in ≈' + t + (t === 1 ? ' turn' : ' turns'); cls = 's-ok'; }
+      }
+      // The crew bar: keepers, builders, then workers with gear, then bare hands. The words live in its tooltip.
+      const takeCrew = j.k + j.b;
+      const keepN = Math.min(takeCrew, j.keep || 0);
+      const gearN = Math.min(j.k, takeCrew - keepN), bareN = takeCrew - keepN - gearN;
+      const gearWord = { baskets: 'baskets', spears: 'spears', traps: 'traps', axes: 'axes', wedges: 'wedges', hoes: 'tillage kits', crooks: 'crooks', loom: 'the loom', earth: 'earthmoving tools' };
+      const bld = j.ladder && j.ladder.build;
+      const tipParts = [];
+      if (keepN > 0) tipParts.push(keepN + ' keep it up');
+      const oneKit = { hoes: 'a tillage kit', crooks: 'a crook' };
+      if (builders > 0) tipParts.push(builders + ' building' + (j.bk > 0 ? ' (' + j.bk + ' with ' + (j.bk === 1 ? oneKit[bld.kit] : gearWord[bld.kit]) + ')' : ''));
+      if (gearN > 0) tipParts.push(gearN + ' with ' + gearWord[j.item]);
+      if (bareN > 0) tipParts.push(bareN + ' bare-handed');
+      const tip = crew === 0 ? 'Nobody here this turn' : tipParts.join(' · ');
+      const catColor = { Forage: '#94a361', Hunt: '#efe3cd', Wood: '#7d6a4f', Stone: '#8d7e68', Roads: '#a08d6d', Build: '#bdab90', Bench: '#c58f5a' }[j.cat];
+      // The row's right side is the shared work strip (work-strip.js) — the same control the source's
+      // sheet shows: rung mark, ⌃ and its rung card, the floor glyph, ⚠, then the crew number and bar.
+      const lad = j.ladder;
+      const per = j.bk * 1.5 + j.bb;
+      const strip = WorkStrip.props({
+        rungs: lad ? lad.rungs : null, at: lad ? lad.at : 0, build: bld, builders, turns: bld && per > 0 ? Math.ceil(bld.rem / per) : 0,
+        buildTip: tipParts.find((p) => p.indexOf(' building') > 0) || '', open: st.open === j.id,
+        toggle: () => this.setState({ open: st.open === j.id ? null : j.id }),
+        start: () => this.setState({ queued: Object.assign({}, st.queued, { [j.id]: 0 }), open: null }),
+        stop: () => { const nq = Object.assign({}, st.queued); delete nq[j.id]; this.setState({ queued: nq, open: null }); },
+        floor: j.kind === 'source' ? j.floor : null, warn: cls === 's-warn' ? status : '',
+        crew: { keep: keepN, build: builders, gear: gearN, bare: bareN }, color: catColor, tip
+      });
+      let yieldLine = j.yieldText, yieldCls = '';
+      if (j.kind === 'source') {
+        if (j.below) { yieldLine = j.keep ? 'Below its floor — kept, not harvested' : 'Below its floor — nobody sent'; yieldCls = 'y-skip'; }
+        else yieldLine = j.yieldText + ' · ' + FLOOR_PCT[j.floor].replace('leave ', '') + ' left standing';
+      } else if (j.kind === 'stock' && j.reach === 0) { yieldLine = 'At target — nobody digs'; yieldCls = 'y-skip'; }
+      return {
+        name: j.name, rungName: j.detail, yieldLine, yieldCls, stripe,
+        ...strip,
+        hasKeep: j.kind === 'stock', keepLabel: (keepNow.stone === null ? 'No order' : 'Keep ' + keepNow.stone) + ' · ' + STONE_HAVE + ' on hand',
+        keepTip: 'Set on the Band orders card',
+        hasFloorChip: j.kind === 'source', isPinned: st.pinned[j.id] !== undefined,
+        floorChip: 'Floor: ' + FLOORS[j.floor] + (st.pinned[j.id] !== undefined ? ' · yours'
+          : ((FOOD_IDS.indexOf(j.id) >= 0 && !st.none.food) || (j.id === 'wood' && !st.none.wood) ? ' · chief' : '')),
+        floorChipCls: st.pinned[j.id] !== undefined ? 'pinned' : '',
+        floorChipTip: st.pinned[j.id] !== undefined ? 'You set this; the chief leaves it alone until you hand it back.' : 'Set by the chief from the band orders. Click to set it yourself.',
+        cycleFloor: () => this.setState({ pinned: Object.assign({}, st.pinned, { [j.id]: (j.floor + 1) % 3 }) }),
+        release: () => { const pn = Object.assign({}, st.pinned); delete pn[j.id]; this.setState({ pinned: pn }); },
+        pri: PRI[j.pri],
+        maxSet: j.max > 0, maxLabel: 'Max ' + j.max,
+        cyclePri: () => this.setState({ pri: Object.assign({}, st.pri, { [j.id]: (j.pri + 1) % 3 }) })
+      };
+    };
+    const secOrder = ['Bench', 'Agriculture', 'Husbandry', 'Forestry', 'Mining', 'Roadwork'];
+    const sections = secOrder.map((title) => ({ title, rows: jobs.filter((j) => j.sec === title).map(rowFor) })).filter((s) => s.rows.length > 0);
+
+    const working = st.workers - idle;
+    const net = FOOD_IDS.reduce((s, id) => { const f = jobs.find((x) => x.id === id).floor; return s + [0.8, 0.2, -0.25][f]; }, 0);
+    const buildingNow = jobs.filter((j) => chiefIds.indexOf(j.id) >= 0);
+
+    const scouts = scoutK + scoutB;
+    const reached = scoutK * 2 + scoutB;
+    let scoutLine = scouts === 0 ? 'No scouts — the band sees its local range and no farther.' : scouts + (scouts === 1 ? ' scout' : ' scouts') + ' this turn, past the local range · ' + scoutK + ' with wayfinding gear';
+    if (reached < st.sight) scoutLine = 'Reaches +' + reached + ' of +' + st.sight + ' tiles — no one free to scout farther.';
+
+    const kitNames = { baskets: 'Baskets', spears: 'Spears', traps: 'Traps', axes: 'Axes', wedges: 'Wedges', hoes: 'Tillage kits', crooks: 'Crooks', loom: 'Loom', wayfinding: 'Wayfinding gear', earth: 'Earthmoving tools' };
+    const kitList = Object.keys(st.kits).map((id) => ({
+      name: kitNames[id], n: st.kits[id],
+      inc: () => this.setState({ kits: Object.assign({}, st.kits, { [id]: st.kits[id] + 1 }) }),
+      dec: () => this.setState({ kits: Object.assign({}, st.kits, { [id]: Math.max(0, st.kits[id] - 1) }) })
+    }));
+
+    return {
+      workers: st.workers, people: 9 + st.workers + 5, idle, working, hasIdle: idle > 0, sections, jobCount: jobs.length,
+      sight: st.sight, scoutLine, kitList,
+      chief: st.chief, turn: st.turn,
+      foodLine: st.larder + ' (' + runway + ' turns) · ' + (net >= 0 ? '+' : '') + net.toFixed(2) + ' /turn',
+      foodTarget: foodTargetNow,
+      foodNone: st.none.food, foodSet: !st.none.food, foodNoneCls: st.none.food ? 'on' : '',
+      toggleFoodNone: () => this.setState({ none: Object.assign({}, st.none, { food: !st.none.food }) }),
+      improveNone: st.none.improve, improveSet: !st.none.improve, improveNoneCls: st.none.improve ? 'on' : '',
+      toggleImproveNone: () => this.setState({ none: Object.assign({}, st.none, { improve: !st.none.improve }) }),
+      incFood: () => this.setState({ foodTarget: Math.min(60, st.foodTarget + 5) }),
+      decFood: () => this.setState({ foodTarget: Math.max(5, st.foodTarget - 5) }),
+      foodOrderLine: st.none.food ? runway + ' turns in the larder — no food order, so the food rows keep their own floor' : runway + ' turns in the larder — ' + (foodFloor === 0 ? 'below the order, so the chief draws food sources hard (Everything)' : foodFloor === 2 ? 'well above it, so the chief eases food sources to Learning' : 'at the order, so the chief holds food sources at Best'),
+      keepRows: ['stone', 'wood', 'hide'].map((k) => ({
+        name: k[0].toUpperCase() + k.slice(1), target: st.keep[k], have: st.have[k], haveCls: keepNow[k] !== null && st.have[k] < keepNow[k] ? 'short' : '',
+        none: st.none[k], set: !st.none[k], noneCls: st.none[k] ? 'on' : '',
+        tip: st.none[k] ? 'No order: the chief keeps no particular amount, and nobody is sent for it.' : 'Keep this much on hand; the chief sends people when it runs below.',
+        toggleNone: () => this.setState({ none: Object.assign({}, st.none, { [k]: !st.none[k] }) }),
+        inc: () => this.setState({ keep: Object.assign({}, st.keep, { [k]: st.keep[k] + 10 }) }),
+        dec: () => this.setState({ keep: Object.assign({}, st.keep, { [k]: Math.max(0, st.keep[k] - 10) }) }) })),
+      improve: improveNow,
+      incImprove: () => this.setState({ improve: Math.min(40, st.improve + 5) }),
+      decImprove: () => this.setState({ improve: Math.max(0, st.improve - 5) }),
+      improveLine: budget === 0 ? (st.none.improve ? 'No order — the chief starts no improvements.' : 'No workers for improvements — the chief starts nothing.') : 'Up to ' + budget + (budget === 1 ? ' worker' : ' workers') + ' · the chief is ' + picks.map((s) => s.verb).join(', '),
+      endTurn: () => {
+        const q = Object.assign({}, st.chiefQ);
+        buildingNow.forEach((j) => { const b = j.ladder.build; if (b) { const add = (j.bk * 1.5 + j.bb) / (b.work || 1); q[j.id] = Math.min(0.99, (q[j.id] || 0) + add); } });
+        const have = Object.assign({}, st.have);
+        if (keepNow.stone !== null && have.stone < keepNow.stone) have.stone += 1;
+        have.wood += woodFloor === 0 ? 2 : 1;
+        this.setState({ turn: st.turn + 1, larder: Math.max(0, Math.round(st.larder + net * 4)), chiefQ: q, have });
+      },
+      incW: () => this.setState({ workers: st.workers + 1 }),
+      decW: () => this.setState({ workers: Math.max(0, st.workers - 1) }),
+      incSight: () => this.setState({ sight: Math.min(9, st.sight + 1) }),
+      decSight: () => this.setState({ sight: Math.max(0, st.sight - 1) })
+    };
+  }
+}
+</script>
+</body>
+</html>

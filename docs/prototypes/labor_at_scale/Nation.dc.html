@@ -1,0 +1,303 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Nation page</title>
+<script src="./support.js"></script>
+<script src="./work-strip.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans:ital,wght@0,400;0,600;1,400&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#1a2629;font-family:"Noto Sans",system-ui,sans-serif;}
+button{font-family:inherit;cursor:pointer}
+.setup{background:#ecebe6;color:#26231f;border:2px dashed #8f8a80;border-radius:6px;padding:10px 14px;display:flex;flex-direction:column;gap:8px;font-size:13px}
+.setup-title{font-size:12px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:#4d4840}
+.srow{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.sbtn{min-width:24px;height:24px;border:1px solid #8f8a80;background:#fff;border-radius:4px;color:#26231f;padding:0 8px}
+.sbtn.on{background:#26231f;color:#fff}
+.panel{background:#221b15;border:1px solid #3a2f24;border-radius:6px;box-shadow:0 6px 18px rgba(0,0,0,.5);color:#f4ead7;font-size:13px}
+.phead{display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid #2f261d}
+.pname{font-size:15px;font-weight:600}
+.psub{font-size:11px;color:#bdab90}
+.reach{margin-left:auto;font-size:12px;color:#bdab90;cursor:help}
+.reach.over{color:#e0a63c}
+.zones{display:grid;grid-template-columns:400px minmax(0,1fr) 330px}
+.zone{padding:12px 14px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.zone+.zone{border-left:1px solid #2f261d}
+.zhead{display:flex;justify-content:space-between;align-items:baseline;font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:#8d7e68}
+.zhead b{font-weight:400;text-transform:none;letter-spacing:0;color:#bdab90;font-size:12px}
+.vital{display:grid;grid-template-columns:96px 1fr;font-size:16px;line-height:26px}
+.good{color:#94a361}
+.bar{display:flex;height:9px;border-radius:2px;overflow:hidden;gap:2px}
+.key{display:flex;flex-wrap:wrap;gap:4px 12px;font-size:12px;color:#bdab90}
+.sw{display:inline-block;width:9px;height:9px;margin-right:4px;vertical-align:-1px}
+.card{background:#1d1812;border:1px solid #2f261d;border-radius:4px;padding:10px 12px;display:flex;flex-direction:column;gap:6px}
+.ctitle{font-size:13px;color:#f4ead7;display:flex;justify-content:space-between;align-items:center}
+.dim{color:#bdab90;font-size:12px}
+.warn{color:#e0a63c;font-size:12px}
+.seg4{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px}
+.opt{height:26px;border:1px solid #4a3c2e;background:#2b221a;color:#bdab90;border-radius:4px;font-size:12px}
+.opt.on{background:#46372a;border-color:#a08d6d;color:#f4ead7}
+.autob{height:22px;border:1px solid #4a3c2e;background:#2b221a;color:#8d7e68;border-radius:11px;font-size:10px;padding:0 10px}
+.autob.on{border-color:#94a361;color:#f4ead7;background:#2f3320}
+.hrow{display:grid;grid-template-columns:18px minmax(0,1fr) 26px 26px;gap:6px;align-items:center;font-size:12px}
+.mini{width:24px;height:22px;border:1px solid #3a2f24;background:#2b221a;color:#f4ead7;border-radius:4px;font-size:11px}
+.mini.off{opacity:.3;cursor:default}
+.idlecard{background:#2a2014;border:1px solid #e0a63c;border-radius:4px;padding:10px 12px;display:flex;flex-direction:column;gap:4px}
+.idlenum{font-size:20px;color:#e0a63c;font-weight:600}
+.mrow{display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:14px;align-items:center;padding:8px 10px;background:#1f1913;border-radius:3px}
+.mname{background:none;border:none;padding:0;color:#f4ead7;font-size:14px;text-decoration:underline;text-align:left}
+.msub{font-size:12px;color:#bdab90}
+.mbar{display:flex;width:110px;height:7px;border-radius:2px;overflow:hidden;background:#2f261d;cursor:help}
+.mbar span+span{border-left:2px solid #1f1913}
+.taxchip{height:22px;border:1px solid #4a3c2e;background:#2b221a;color:#bdab90;border-radius:11px;font-size:11px;padding:0 10px}
+.taxchip.exempt{border-color:#e0a63c;color:#e0a63c}
+.sechead{font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:#8d7e68;margin-top:6px}
+.row{display:grid;grid-template-columns:4px minmax(0,1fr) auto;column-gap:10px;padding:7px 8px 7px 0;border-radius:3px;background:#1f1913}
+.stripe{border-radius:2px}
+.rname{font-size:14px;color:#f4ead7}
+.rdet{font-size:12px;color:#bdab90}
+.chipsr{display:flex;gap:6px;margin-top:4px}
+.chip{border:1px solid #4a3c2e;background:#2b221a;color:#bdab90;font-size:11px;border-radius:10px;padding:2px 8px}
+.ps{font-size:12px;color:#8d7e68}
+</style>
+</helmet>
+<div style="width:1480px;padding:20px;box-sizing:border-box;display:flex;flex-direction:column;gap:14px">
+<div class="setup">
+  <span class="setup-title">Prototype setup — not part of the game</span>
+  <div class="srow"><span>Members</span><sc-for list="{{memberOpts}}" as="o" hint-placeholder-count="2"><button class="sbtn {{o.cls}}" onClick="{{o.pick}}">{{o.label}}</button></sc-for>
+    <span style="margin-left:12px">National road</span><sc-for list="{{roadOpts}}" as="o" hint-placeholder-count="2"><button class="sbtn {{o.cls}}" onClick="{{o.pick}}">{{o.label}}</button></sc-for>
+    <span style="margin-left:12px">Writing learned</span><sc-for list="{{writingOpts}}" as="o" hint-placeholder-count="2"><button class="sbtn {{o.cls}}" onClick="{{o.pick}}">{{o.label}}</button></sc-for></div>
+  <span style="color:#4d4840">Try: lower the tax ceiling to Low — aid and the road come up short; raise the road's need with “Pave the road”; exempt Ashfell; set six members without writing — the queen is over her reach and tax and aid lose some on the way. Hover a member's bar.</span>
+</div>
+
+<div class="panel">
+  <div class="phead">
+    <svg width="22" height="22" viewBox="0 0 22 22" aria-hidden="true"><circle cx="11" cy="11" r="8" fill="none" stroke="#e0a63c" stroke-width="2"></circle><circle cx="11" cy="11" r="3" fill="#e0a63c"></circle></svg>
+    <div><div class="pname">Veldari</div><div class="psub">Nation · {{memberCount}} members · led by Queen Asha</div></div>
+    <span class="reach {{reachCls}}" title="{{reachTip}}">{{reachLine}}</span>
+  </div>
+  <div class="zones">
+    <div class="zone">
+      <div class="vital"><span>Food</span><span class="good">{{foodLine}}</span></div>
+      <div class="vital" style="margin-top:-10px"><span>Morale</span><span class="good">{{morale}}</span></div>
+      <div class="vital" style="margin-top:-10px"><span>Growth</span><span>158% of normal</span></div>
+      <div class="zhead">People <b>{{people}}</b></div>
+      <div class="bar"><span style="flex:{{kids}} 1 0;background:#d0a468"></span><span style="flex:{{working}} 1 0;background:#bdab90"></span><span style="flex:{{trades}} 1 0;background:#c58f5a"></span><span style="flex:{{idle}} 1 0;background:#e0a63c"></span><span style="flex:{{elders}} 1 0;background:#93a0a8"></span></div>
+      <div class="key"><span><i class="sw" style="background:#d0a468"></i>{{kids}} children</span><span><i class="sw" style="background:#bdab90"></i>{{working}} working</span><span><i class="sw" style="background:#c58f5a"></i>{{trades}} in trades</span><span><i class="sw" style="background:#e0a63c"></i>{{idle}} idle</span><span><i class="sw" style="background:#93a0a8"></i>{{elders}} elders</span></div>
+
+      <div class="card">
+        <div class="ctitle"><span>Tax</span><span class="autob on" title="Takes only what aid, national works and the reserve need this turn">Auto</span></div>
+        <span class="dim" style="font-size:11px;color:#8d7e68">Take at most, from any member’s spare goods:</span>
+        <div class="seg4"><sc-for list="{{taxOpts}}" as="o" hint-placeholder-count="4"><button class="opt {{o.cls}}" onClick="{{o.pick}}">{{o.label}}</button></sc-for></div>
+        <div class="dim" title="{{taxTip}}">{{taxLine}}</div>
+        <sc-if value="{{capped}}" hint-placeholder-val="{{false}}"><div class="warn">{{cappedLine}}</div></sc-if>
+        <sc-if value="{{taxLoss}}" hint-placeholder-val="{{false}}"><div class="warn">{{taxLossLine}}</div></sc-if>
+      </div>
+
+      <div class="card">
+        <div class="ctitle"><span>Aid between members</span><button class="autob {{aidCls}}" onClick="{{toggleAid}}">Auto</button></div>
+        <div class="dim">{{aidLine}}</div>
+        <span class="dim" style="font-size:11px;color:#8d7e68">Help first, when there is not enough for everyone:</span>
+        <sc-for list="{{helpRows}}" as="h" hint-placeholder-count="4">
+          <div class="hrow"><span class="dim">{{h.n}}</span><span>{{h.name}}</span><button class="mini {{h.upCls}}" onClick="{{h.up}}" aria-label="Help sooner">▲</button><button class="mini {{h.downCls}}" onClick="{{h.down}}" aria-label="Help later">▼</button></div>
+        </sc-for>
+      </div>
+    </div>
+
+    <div class="zone">
+      <div class="zhead">Members <b>{{membersHead}}</b></div>
+      <sc-for list="{{members}}" as="m" hint-placeholder-count="4">
+        <div class="mrow">
+          <div style="min-width:0"><button class="mname">{{m.name}}</button><div class="msub">{{m.sub}}</div><sc-if value="{{m.hasNote}}" hint-placeholder-val="{{false}}"><div class="{{m.noteCls}}" style="font-size:12px">{{m.note}}</div></sc-if></div>
+          <button class="taxchip {{m.taxCls}}" onClick="{{m.toggleTax}}" title="{{m.taxTip}}">{{m.taxLabel}}</button>
+          <div style="display:flex;flex-direction:column;align-items:flex-end;gap:3px"><span style="font-size:18px">{{m.n}}</span><div class="mbar" title="{{m.tip}}"><span style="flex:{{m.working}} 1 0;background:#bdab90"></span><span style="flex:{{m.trades}} 1 0;background:#c58f5a"></span><span style="flex:{{m.idle}} 1 0;background:#e0a63c"></span></div></div>
+        </div>
+      </sc-for>
+      <div class="sechead">▾ National works</div>
+      <sc-for list="{{workRows}}" as="row" hint-placeholder-count="1">
+<div class="row">
+  <span class="stripe" style="background:{{row.stripe}}"></span>
+  <div style="min-width:0">
+    <div class="rname">{{row.name}}</div>
+    <div class="rdet">{{row.rungName}}</div>
+    <div class="rdet {{row.yieldCls}}">{{row.yieldLine}}</div>
+    <div class="chips"><span class="chip">Priority: {{row.pri}}</span></div>
+  </div>
+  <div class="wstrip">
+    <div class="marks">
+      <span class="mk" title="{{row.rungMarkTip}}">{{row.rungMark}}</span>
+      <sc-if value="{{row.hasLadder}}" hint-placeholder-val="{{true}}"><button class="ladder {{row.ladderCls}}" onClick="{{row.ladderClick}}" title="{{row.ladderTip}}"><span class="lfill" style="width:{{row.ladderFill}}"></span><span class="ltxt">{{row.ladderFace}}</span></button></sc-if>
+      <sc-if value="{{row.cardOpen}}" hint-placeholder-val="{{false}}">
+        <div class="rcard">
+          <span class="rclbl">Take it to…</span>
+          <sc-for list="{{row.card}}" as="r" hint-placeholder-count="3">
+            <sc-if value="{{r.isButton}}" hint-placeholder-val="{{true}}"><button class="rbtn {{r.cls}}" onClick="{{r.click}}" title="{{r.tip}}"><span class="rfill" style="width:{{r.fill}}"></span><span class="rl">{{r.glyph}} {{r.label}}</span><span class="rf">{{r.face}}</span></button></sc-if>
+            <sc-if value="{{r.isMarker}}" hint-placeholder-val="{{false}}"><div class="rmark {{r.cls}}"><span>{{r.glyph}} {{r.label}}</span><span class="rmf">{{r.face}}</span></div></sc-if>
+          </sc-for>
+        </div>
+      </sc-if>
+      <span class="mk" title="{{row.policyTip}}">{{row.policyMark}}</span>
+      <span class="mk warnmk" title="{{row.warnTip}}">{{row.warnMark}}</span>
+    </div>
+    <div class="crewbox">
+      <span class="crewnum {{row.zeroCls}}">{{row.crew}}</span>
+      <div class="cbar" title="{{row.tip}}" aria-label="{{row.tip}}"><span style="flex:{{row.keepN}} 1 0;background:{{row.keepC}}"></span><span style="flex:{{row.buildN}} 1 0;background:{{row.buildC}}"></span><span style="flex:{{row.gearN}} 1 0;background:{{row.gearC}}"></span><span style="flex:{{row.bareN}} 1 0;background:{{row.bareC}}"></span></div>
+    </div>
+  </div>
+</div>
+      </sc-for>
+    </div>
+
+    <div class="zone">
+      <div class="zhead">Parties <b>1 out · 4 workers</b></div>
+      <div class="mrow"><span>Ashfell (Scout)</span><span class="dim">4 workers</span><span class="ps">walking out</span></div>
+      <div class="zhead" style="margin-top:6px">The nation's stores</div>
+      <div class="dim">{{storesLine}}</div>
+      <div class="ps">Paid for by tax; spent on aid between members and on national works.</div>
+    </div>
+  </div>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1480,"height":900}}'>
+class Component extends DCLogic {
+  constructor(props) { super(props); this.state = { six: false, writing: true, tax: 2, exempt: {}, aid: true, help: ['Ashfell', 'Saltholm', 'Kestrel tribe', 'Reedwater city'], openCard: null }; }
+  renderVals() {
+    const st = this.state;
+    // The nation's members. Each keeps its own pool of people; the nation moves goods, not people.
+    const ALL = [
+      { name: 'Reedwater city', kind: '3 quarters', working: 26, trades: 10, idle: 0, kids: 19, elders: 9, gross: 40, eats: 34 },
+      { name: 'Kestrel tribe', kind: '2 bands', working: 15, trades: 0, idle: 2, kids: 9, elders: 4, gross: 20, eats: 16 },
+      { name: 'Ashfell', kind: 'band', working: 8, trades: 0, idle: 0, kids: 5, elders: 2, gross: 8, eats: 11 },
+      { name: 'Saltholm', kind: 'band', working: 9, trades: 0, idle: 1, kids: 6, elders: 3, gross: 12, eats: 10 },
+      { name: 'Tarn', kind: 'band', working: 7, trades: 0, idle: 0, kids: 4, elders: 2, gross: 9, eats: 8 },
+      { name: 'Hollin', kind: 'band', working: 6, trades: 0, idle: 1, kids: 4, elders: 1, gross: 8, eats: 7 }
+    ];
+    const members = st.six ? ALL : ALL.slice(0, 4);
+    // The leader's reach: how many members she runs well. Writing raises it. Past it, orders are
+    // carried out worse — never refused.
+    const reach = st.writing ? 6 : 4;
+    const over = Math.max(0, members.length - reach);
+    const efficiency = over ? Math.max(0.6, 1 - 0.15 * over) : 1;
+    // Tax is Auto: each turn the nation collects only what this turn's aid and national works need, plus
+    // what it takes to keep a reserve for a bad year — and nothing beyond. It takes in kind, from each
+    // member's SPARE goods (what it has beyond its own needs), never from what it needs to eat. The
+    // player's control is a ceiling: the most it may take from any one member. An exempt member pays none.
+    const CEIL = [{ label: 'None', rate: 0 }, { label: 'Low', rate: 0.25 }, { label: 'Normal', rate: 0.5 }, { label: 'High', rate: 0.75 }];
+    const ceil = CEIL[st.tax];
+    const MORALE_PER_SHARE = 8; // morale lost in a member per whole share of its spare goods taken
+    const RESERVE_TARGET = 200, RESERVE_NOW = 140, RESERVE_STEP = 2;
+    const spareFood = (m) => Math.max(0, m.gross - m.eats);
+    const shortOf = (m) => Math.max(0, m.eats - m.gross);
+    // What this turn needs: food for members who are short, the road's stone, and a step toward the reserve.
+    const aidNeed = st.aid ? members.reduce((s, m) => s + shortOf(m), 0) / efficiency : 0;
+    const reserveNeed = RESERVE_NOW < RESERVE_TARGET ? RESERVE_STEP : 0;
+    const foodNeed = aidNeed + reserveNeed;
+    const stoneNeed = st.pave ? 1.0 : 0.2;   // the national road's draw this turn
+    const STONE_SPARE = { 'Reedwater city': 1.2, 'Kestrel tribe': 0.4, 'Ashfell': 0, 'Saltholm': 0.3, 'Tarn': 0.2, 'Hollin': 0.1 };
+    // Spread each need over the taxable members by their spare, never past the ceiling.
+    const levy = (spareOf, need) => {
+      const taxable = members.filter((m) => !st.exempt[m.name] && spareOf(m) > 0);
+      const room = taxable.reduce((s, m) => s + spareOf(m) * ceil.rate, 0);
+      const want = need / efficiency;
+      const share = room > 0 ? Math.min(1, want / room) : 0;
+      const took = {};
+      taxable.forEach((m) => { took[m.name] = spareOf(m) * ceil.rate * share; });
+      return { took, owed: Math.min(want, room), short: Math.max(0, want - room) * efficiency };
+    };
+    const foodLevy = levy(spareFood, foodNeed);
+    const stoneLevy = levy((m) => STONE_SPARE[m.name] || 0, stoneNeed);
+    const owed = foodLevy.owed;
+    const collected = owed * efficiency;
+    const paid = (m) => foodLevy.took[m.name] || 0;
+    const moraleHit = (m) => {
+      const f = spareFood(m) > 0 ? paid(m) / spareFood(m) : 0;
+      const s = (STONE_SPARE[m.name] || 0) > 0 ? (stoneLevy.took[m.name] || 0) / STONE_SPARE[m.name] : 0;
+      return Math.round(Math.max(f, s) * MORALE_PER_SHARE);
+    };
+    // Aid: a member short of food this turn is helped from what was collected, in the help order.
+    let pot = st.aid ? collected : 0;
+    const given = {};
+    st.help.filter((n) => members.some((m) => m.name === n)).forEach((n) => {
+      const m = members.find((x) => x.name === n); const want = shortOf(m) / efficiency;
+      const g = Math.min(want, pot); given[n] = g; pot -= g;
+    });
+    const aidSent = Object.values(given).reduce((s, g) => s + g, 0);
+    const aidArrives = aidSent * efficiency;
+    const kept = Math.max(0, collected - aidSent);
+    const r1 = (x) => Math.round(x * 10) / 10;
+
+    const memberRows = members.map((m) => {
+      const ex = !!st.exempt[m.name];
+      const short = shortOf(m);
+      const got = given[m.name] || 0;
+      let note = '', noteCls = 'dim';
+      const arrives = got * efficiency;
+      if (short > 0 && arrives >= short - 1e-9) { note = 'Short ' + r1(short) + ' food a turn — the nation makes it up'; noteCls = 'dim'; }
+      else if (short > 0 && got > 0) { note = 'Short ' + r1(short) + ' food a turn — aid covers ' + r1(arrives); noteCls = 'warn'; }
+      else if (short > 0) { note = 'Short ' + r1(short) + ' food a turn — no aid reaches it'; noteCls = 'warn'; }
+      const total = m.working + m.trades + m.idle;
+      return {
+        name: m.name, sub: m.kind + ' · ' + total + ' working age · ' + (ex ? 'exempt from tax' : (paid(m) > 0 || (stoneLevy.took[m.name] || 0) > 0 ? 'pays ' + [paid(m) > 0 ? r1(paid(m)) + ' food' : '', r1(stoneLevy.took[m.name] || 0) > 0 ? r1(stoneLevy.took[m.name]) + ' stone' : ''].filter((x) => x).join(' and ') + ' a turn' + (moraleHit(m) ? ' · morale −' + moraleHit(m) + '%' : '') : 'pays nothing this turn')),
+        n: String(total), working: m.working, trades: m.trades, idle: m.idle,
+        tip: m.working + ' working' + (m.trades ? ' · ' + m.trades + ' in trades' : '') + (m.idle ? ' · ' + m.idle + ' idle' : ''),
+        hasNote: !!note, note, noteCls,
+        taxLabel: ex ? 'Exempt' : 'Taxed', taxCls: ex ? 'exempt' : '', taxTip: ex ? 'Excused from tax — click to tax it again' : 'Click to excuse this member from tax',
+        toggleTax: () => this.setState({ exempt: Object.assign({}, st.exempt, { [m.name]: !ex }) })
+      };
+    });
+
+    // A national work: handed to the nearest member, shown in its works as "for the nation".
+    const R = WorkStrip.RUNGS;
+    const workRows = [{ name: 'Road Reedwater – Kestrel', sub: 'Trail · for the nation', by: 'Reedwater city', rungs: R.route, at: 1, q: 0.2, builders: 3 }].map((w, ix) => {
+      const id = 'nw' + ix;
+      const strip = WorkStrip.props({
+        rungs: w.rungs, at: w.at, build: { q: w.q, rem: 300 * (1 - w.q) }, builders: w.builders, turns: Math.ceil(300 * (1 - w.q) / (w.builders * 1.2)),
+        buildTip: w.builders + ' building', open: st.openCard === id, toggle: () => this.setState({ openCard: st.openCard === id ? null : id }),
+        start: () => {}, stop: () => {}, floor: null, warn: '',
+        crew: { keep: 1, build: w.builders, gear: 0, bare: 0 }, color: '#a08d6d',
+        tip: '1 keeps it up · ' + w.builders + ' grading — all from ' + w.by + ', its nearest member'
+      });
+      return Object.assign({ name: w.name, rungName: w.sub, yieldLine: 'Given to ' + w.by + ' · stone from the nation’s stores', yieldCls: '', stripe: '#a08d6d', pri: 'Normal' }, strip);
+    });
+
+    const people = members.reduce((s, m) => s + m.working + m.trades + m.idle + m.kids + m.elders, 0);
+    const sum = (k) => members.reduce((s, m) => s + m[k], 0);
+    const helpNames = st.help.filter((n) => members.some((m) => m.name === n)).concat(members.map((m) => m.name).filter((n) => st.help.indexOf(n) < 0));
+    const move = (i, d) => { const h = helpNames.slice(); const j = i + d; [h[i], h[j]] = [h[j], h[i]]; this.setState({ help: h }); };
+    return {
+      memberCount: members.length,
+      reachLine: 'Queen Asha runs ' + Math.min(reach, members.length) + ' of ' + members.length + ' members well',
+      reachCls: over ? 'over' : '',
+      reachTip: over ? 'Past her reach: tax and aid lose about ' + Math.round((1 - efficiency) * 100) + '% on the way. Writing raises how many members a leader runs well.' : 'Within her reach. Writing raises how many members a leader runs well.',
+      foodLine: '612 (24 turns) · +' + r1(members.reduce((s, m) => s + m.gross - m.eats, 0)) + ' /turn',
+      morale: (78 - Math.round(members.reduce((s, m) => s + moraleHit(m), 0) / members.length)) + '%',
+      people, kids: sum('kids'), elders: sum('elders'), working: sum('working'), trades: sum('trades'), idle: sum('idle'),
+      taxOpts: CEIL.map((c, i) => ({ label: c.label, cls: i === st.tax ? 'on' : '', pick: () => this.setState({ tax: i }) })),
+      taxLine: ceil.rate === 0 ? 'No tax — aid and national works get nothing from the members.'
+        : 'This turn: ' + r1(collected) + ' food and ' + r1(stoneNeed - stoneLevy.short) + ' stone — for aid, the road and the reserve',
+      taxTip: 'Auto takes only what this turn’s aid, the national works and the reserve need — nothing beyond — from the members’ spare goods, never from what they need. The ceiling is the most it may take from any one member.',
+      capped: ceil.rate > 0 && (foodLevy.short > 0.05 || stoneLevy.short > 0.05),
+      cappedLine: 'The ceiling leaves ' + [foodLevy.short > 0.05 ? r1(foodLevy.short) + ' food' : '', stoneLevy.short > 0.05 ? r1(stoneLevy.short) + ' stone' : ''].filter((x) => x).join(' and ') + ' a turn short — raise it, or aid and the road go without',
+      taxLoss: over > 0 && collected > 0, taxLossLine: 'Only ' + r1(collected) + ' of ' + r1(owed) + ' food reaches the stores — the queen is past her reach',
+      aidCls: st.aid ? 'on' : '', toggleAid: () => this.setState({ aid: !st.aid }),
+      aidLine: !st.aid ? 'Off — no member is helped from the stores.' : (aidSent > 0 ? 'This turn: ' + r1(aidSent) + ' food sent to members who are short' + (over ? ', ' + r1(aidArrives) + ' arrives' : '') : 'Nobody is short this turn.'),
+      helpRows: helpNames.map((n, i) => ({ n: (i + 1) + '.', name: n,
+        up: () => { if (i > 0) move(i, -1); }, down: () => { if (i < helpNames.length - 1) move(i, 1); },
+        upCls: i === 0 ? 'off' : '', downCls: i === helpNames.length - 1 ? 'off' : '' })),
+      members: memberRows, membersHead: members.length + ' members · each keeps its own people',
+      workRows,
+      storesLine: 'Food ' + RESERVE_NOW + ' of a ' + RESERVE_TARGET + ' reserve · +' + r1(kept) + ' a turn after aid · stone 32',
+      roadOpts: [{ label: 'Keep the trail', cls: st.pave ? '' : 'on', pick: () => this.setState({ pave: false }) }, { label: 'Pave the road', cls: st.pave ? 'on' : '', pick: () => this.setState({ pave: true }) }],
+      memberOpts: [{ label: 'Four', cls: st.six ? '' : 'on', pick: () => this.setState({ six: false }) }, { label: 'Six', cls: st.six ? 'on' : '', pick: () => this.setState({ six: true }) }],
+      writingOpts: [{ label: 'Yes', cls: st.writing ? 'on' : '', pick: () => this.setState({ writing: true }) }, { label: 'No', cls: st.writing ? '' : 'on', pick: () => this.setState({ writing: false }) }]
+    };
+  }
+}
+</script>
+</body>
+</html>

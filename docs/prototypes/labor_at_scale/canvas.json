@@ -1,0 +1,134 @@
+{
+  "v": 3,
+  "createdOnFiles": {
+    "v": 1,
+    "at": "2026-10-19T18:00:00Z"
+  },
+  "title": "Labor at Scale prototypes",
+  "launch": {
+    "view": "canvas"
+  },
+  "pages": [],
+  "boards": {
+    "Main.dc.html": {
+      "x": 0,
+      "y": 0,
+      "w": 1480,
+      "h": 1060,
+      "title": "Band panel — Work tab, staffed by the game",
+      "is_interactive": true
+    },
+    "HarvestWorking.dc.html": {
+      "x": 1560,
+      "y": 0,
+      "w": 520,
+      "h": 920,
+      "title": "Clicking a work row — the source's sheet, already working",
+      "is_interactive": true
+    },
+    "Faction.dc.html": {
+      "x": 2160,
+      "y": 0,
+      "w": 1480,
+      "h": 620,
+      "title": "Faction page — idle people"
+    },
+    "AssignHarvesters.dc.html": {
+      "x": 0,
+      "y": 1180,
+      "w": 520,
+      "h": 900,
+      "title": "Assign harvesters",
+      "is_interactive": true
+    },
+    "AssignHunters.dc.html": {
+      "x": 600,
+      "y": 1180,
+      "w": 520,
+      "h": 820,
+      "title": "Assign hunters",
+      "is_interactive": true
+    },
+    "Stone.dc.html": {
+      "x": 1200,
+      "y": 1180,
+      "w": 520,
+      "h": 620,
+      "title": "Stone — keep on hand",
+      "is_interactive": true
+    },
+    "Crafting.dc.html": {
+      "x": 1800,
+      "y": 1180,
+      "w": 1000,
+      "h": 1180,
+      "title": "Materials & Crafting — several orders at once, each with a crafter limit",
+      "is_interactive": true
+    },
+    "Farm.dc.html": {
+      "x": 2980,
+      "y": 1180,
+      "w": 520,
+      "h": 1180,
+      "title": "A farm — keeping it up, and sowing it",
+      "is_interactive": true
+    },
+    "Tribe.dc.html": {
+      "x": 0,
+      "y": 2480,
+      "w": 1480,
+      "h": 1100,
+      "title": "Tribe panel — the tribe replaces its bands; drill into one",
+      "is_interactive": true
+    },
+    "SharedWork.dc.html": {
+      "x": 1560,
+      "y": 2480,
+      "w": 1180,
+      "h": 720,
+      "title": "Starting a shared work — the tribe stands in for its bands on the Band: picker",
+      "is_interactive": true
+    },
+    "City.dc.html": {
+      "x": 0,
+      "y": 3700,
+      "w": 1480,
+      "h": 1300,
+      "title": "City panel — trades, great works and rations",
+      "is_interactive": true
+    },
+    "Nation.dc.html": {
+      "x": 1560,
+      "y": 3700,
+      "w": 1480,
+      "h": 900,
+      "title": "Nation page — tax, aid between members, national works, the leader's reach",
+      "is_interactive": true
+    },
+    "BandOrders.dc.html": {
+      "x": 3120,
+      "y": 2480,
+      "w": 1480,
+      "h": 1180,
+      "title": "Band orders — the chief turns your goals into each row's settings",
+      "is_interactive": true
+    }
+  },
+  "order": [
+    "Main.dc.html",
+    "BandOrders.dc.html",
+    "Tribe.dc.html",
+    "SharedWork.dc.html",
+    "City.dc.html",
+    "Nation.dc.html",
+    "HarvestWorking.dc.html",
+    "Faction.dc.html",
+    "AssignHarvesters.dc.html",
+    "AssignHunters.dc.html",
+    "Stone.dc.html",
+    "Crafting.dc.html",
+    "Farm.dc.html"
+  ],
+  "notes": {},
+  "designSystems": []
+}
