@@ -103,8 +103,8 @@ const KIND_CREW_HANDOFF := "crew_handoff"
 # than a glyph of its own.
 const KIND_KNOWLEDGE_LEARNED := "knowledge_learned"
 # Two peoples' bands met (issue #698). A NOTICE like `KIND_CREW_HANDOFF`, offering no affordance. Its
-# mark is the plain text glyph `⇄` (two sides meeting), NOT the `workers` palm — that one says "work"
-# and no bundled sprite says "contact" — so it has no `KIND_ICON_SPRITE` entry.
+# mark is the `gathering` campfire sprite (the shared fire two bands now sit at), NOT the `workers`
+# palm, which says "work"; the text glyph `⇄` (two sides meeting) is the fallback if the art fails.
 const KIND_GATHERING := "gathering_held"
 # The turn-one outfitting window, still holding an unspent budget (issue #629). Non-locating — it
 # opens the picker, not a hex — and it wears the same pennant the reopen pill does, which is line
@@ -152,6 +152,7 @@ const KIND_ICON_SPRITE := {
 	KIND_KNOWLEDGE_LEARNED: HudKnowledgeVocab.LAUNCH_MARK,
 	KIND_IDLE_WORKERS: "workers",
 	KIND_CREW_HANDOFF: "workers",
+	KIND_GATHERING: "gathering",
 	# **AN EMPTY BOWL, NOT THE 🍖 IT REPLACES.** A meat cut is the state this alert does NOT
 	# describe, and it collides with the hunted-herd art besides; the absence is the whole message.
 	# The mark is deliberately the weaker half of this row — an empty bowl and a full one are one
