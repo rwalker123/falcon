@@ -6061,6 +6061,11 @@ pub fn advance_labor_allocation(
                 tile_improvements: &tile_improvements,
                 roads: &roads,
                 band: band_id,
+                camp: band_pos.map(|position| crate::staffing::CampSite {
+                    position,
+                    grid_width,
+                    wrap_horizontal,
+                }),
             };
             let pool = crate::staffing::staffable_pool(
                 &allocation,

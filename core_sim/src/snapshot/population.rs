@@ -3180,6 +3180,7 @@ pub(crate) fn snapshot_demographics(
 /// A band with no window, or a closed one, gets no entry: absent is what a closed window reads as.
 pub(crate) fn band_loadout_windows<'a>(
     windows: &crate::starting_loadout::StartingLoadout,
+    work_wants: Option<&crate::staffing::WorkKitWants>,
     equipment_config: &crate::equipment_config::EquipmentConfig,
     carry: &crate::carry::CarryConfig,
     bands: impl Iterator<
@@ -3269,6 +3270,26 @@ pub(crate) fn band_loadout_windows<'a>(
                 food_share,
                 food_carried,
                 food_fixed: window.food_is_fixed(),
+                work_kit_wants: work_wants
+                    .map(|wants| wants.of(band))
+                    .unwrap_or_default()
+                    .iter()
+                    .map(|want| sim_schema::state::WorkKitWantState {
+                        kit: want.kit.clone(),
+                        count: want.count,
+                        priority: match want.priority {
+                            crate::components::SourcePriority::High => {
+                                sim_schema::state::SourcePriorityState::High
+                            }
+                            crate::components::SourcePriority::Normal => {
+                                sim_schema::state::SourcePriorityState::Normal
+                            }
+                            crate::components::SourcePriority::Low => {
+                                sim_schema::state::SourcePriorityState::Low
+                            }
+                        },
+                    })
+                    .collect(),
                 ..BandLoadoutWindowState::default()
             };
             match &window.supply {

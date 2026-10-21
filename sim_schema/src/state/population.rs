@@ -2703,6 +2703,22 @@ pub struct BandLoadoutWindowState {
     /// to goods (the opening band, a granting parent). `false` on a splinter. Appended last.
     #[serde(default)]
     pub food_fixed: bool,
+    /// **The outfit this band's work wants**, in kits: what the sim's staffing passes would arm
+    /// against an unlimited shelf. It does not move as the player picks an outfit. High to Low
+    /// priority, then nearest wanting row first, then kit id. Appended last.
+    #[serde(default)]
+    pub work_kit_wants: Vec<WorkKitWantState>,
+}
+
+/// One row of [`BandLoadoutWindowState::work_kit_wants`].
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct WorkKitWantState {
+    /// The `equipment.json` kit id the outfit picker orders in.
+    pub kit: String,
+    /// Whole kits the rows using it would arm.
+    pub count: u32,
+    /// The highest rank among the rows wanting it.
+    pub priority: SourcePriorityState,
 }
 
 /// One cap row of [`BandLoadoutWindowState`]: how many units of `id` this take may claim.

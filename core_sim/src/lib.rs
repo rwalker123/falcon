@@ -1081,6 +1081,7 @@ pub fn build_headless_app() -> App {
         // reading for a world that never ran worldgen — a load restores the saved window, and a
         // fresh world has `stamp_starting_loadout` open it.
         .init_resource::<starting_loadout::StartingLoadout>()
+        .init_resource::<staffing::WorkKitWants>()
         .insert_resource(snapshot_history)
         .insert_resource(snapshot::SnapshotCaptureMode::default())
         // **Who the world publishes a frame to.** Empty at boot: a world with no claimed seat

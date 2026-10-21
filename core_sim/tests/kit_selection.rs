@@ -2506,13 +2506,13 @@ fn two_hunt_rows_naming_one_kit_cannot_arm_more_hunters_than_the_band_owns() {
         "the two rows between them cannot outfit more hunters than the band owns traps: \
          {shared_rows:?}"
     );
-    // **The short stock is granted in row order at one rank** (#871): the first row is armed in
-    // full and the next gets what is left, which here is nothing - the passes serve rows one at a
-    // time, they do not split a tier pro rata.
+    // **The short stock is dealt one head at a time across a rank** (#871): two equal-priority
+    // rows take a trap in turn, so each is armed on half the stock rather than one taking it all.
+    let half = TRAPS_FOR_HALF_THE_BAND as f32 / 2.0;
     assert_eq!(
         shared_rows,
-        vec![(ROW_CREW, TRAPS_FOR_HALF_THE_BAND as f32), (ROW_CREW, 0.0)],
-        "the first row takes the traps in full and the second reads what is left"
+        vec![(ROW_CREW, half), (ROW_CREW, half)],
+        "the two rows split the traps round-robin"
     );
     assert!(
         shared_take < stocked_take,
@@ -2687,11 +2687,12 @@ fn two_rows_on_different_kits_cannot_each_sled_a_full_crew() {
          a kit-id grouping would have handed each row its own full set"
     );
     let rows = published_row_coverage(&app, band);
-    // **Granted in row order** (#871): the first row takes the sleds in full, and the second - whose
-    // COMPLETE kit is the min over its items - reads what is left, which is nothing.
+    // **Dealt round-robin** (#871): the two equal-priority rows take a sled in turn, so each reads
+    // half the shared item.
+    let half = SLEDS_FOR_HALF_THE_BAND as f32 / 2.0;
     assert_eq!(
         rows,
-        vec![(ROW_CREW, SLEDS_FOR_HALF_THE_BAND as f32), (ROW_CREW, 0.0)],
+        vec![(ROW_CREW, half), (ROW_CREW, half)],
         "…and each row is outfitted only as far as the shared item reaches: {rows:?}"
     );
 }

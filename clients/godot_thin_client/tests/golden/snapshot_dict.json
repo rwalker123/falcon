@@ -8906,6 +8906,23 @@
             "id": "fibre",
             "units": 125
           }
+        ],
+        "work_kit_wants": [
+          {
+            "count": 198,
+            "kit": "populations[0].loadout_window.work_kit_wants[0].kit",
+            "priority": "normal"
+          },
+          {
+            "count": 189,
+            "kit": "populations[0].loadout_window.work_kit_wants[1].kit",
+            "priority": "normal"
+          },
+          {
+            "count": 156,
+            "kit": "populations[0].loadout_window.work_kit_wants[2].kit",
+            "priority": "normal"
+          }
         ]
       },
       "long_move_leaves_food": 74.160004,
@@ -13764,6 +13781,23 @@
           {
             "id": "fibre",
             "units": 23
+          }
+        ],
+        "work_kit_wants": [
+          {
+            "count": 180,
+            "kit": "populations[2].loadout_window.work_kit_wants[0].kit",
+            "priority": "normal"
+          },
+          {
+            "count": 11,
+            "kit": "populations[2].loadout_window.work_kit_wants[1].kit",
+            "priority": "normal"
+          },
+          {
+            "count": 182,
+            "kit": "populations[2].loadout_window.work_kit_wants[2].kit",
+            "priority": "normal"
           }
         ]
       },

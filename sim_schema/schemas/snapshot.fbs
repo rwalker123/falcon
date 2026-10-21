@@ -1727,6 +1727,14 @@ table BandLoadoutWindowState {
   // splinter, whose food yields to its goods. `foodShare == foodCarried` is not a safe test - a
   // splinter whose goods leave room for its whole share carries all of it.
   foodFixed:bool = false;
+  // THE OUTFIT THE BAND'S WORK WANTS (appended last): for each kit the staffed rows would put to
+  // use, how many whole kits the band needs for those rows to be fully equipped. Derived by running
+  // the sim's own staffing passes over the band's real rows, pool, Maxes, floors and priorities
+  // against an UNLIMITED shelf, so it does not move as the player picks an outfit - only as the
+  // work changes. `count` is in the unit `set_starting_loadout` orders in (kits, which expand to
+  // items). Ordered High to Low priority, then by the nearest wanting row's distance from camp,
+  // then by kit id. Empty while no staffed row wants a kit, and on a closed window.
+  workKitWants:[WorkKitWant];
 }
 
 // One cap row: how many units of `id` this take may claim. `id` is an `equipment.json` item id on
@@ -1920,6 +1928,15 @@ enum SourcePriority : ubyte {
   Normal = 0,
   High = 1,
   Low = 2,
+}
+
+// One kit the band's work wants: `kit` is the equipment.json kit id the picker orders in, `count`
+// the whole kits the rows using it would arm in the unlimited-shelf run, `priority` the highest
+// rank among those rows (the same wire enum a labor row carries).
+table WorkKitWant {
+  kit:string;
+  count:uint = 0;
+  priority:SourcePriority;
 }
 
 table LaborAssignment {
@@ -2191,7 +2208,7 @@ table LaborAssignment {
   // `Normal` on every row that has never been marked, and on every band-wide role (scout, warrior,
   // agriculture, husbandry, builders): a role is not a worked source and has no rank to state.
   // Captured live from the allocation, like the other intent fields. Appended last (append-only).
-  priority:SourcePriority = Normal;
+  priority:SourcePriority;
 
   // --- THE WORK ROW'S PER-GOOD SHORTFALL (appended last) ----------------------------------------
   // WHAT THIS ROW'S SOURCE WAS BILLED IN GOODS, AND WHAT THE STORE PAID - the good-side twin of the
@@ -5032,7 +5049,7 @@ table BenchState {
   //
   // Captured LIVE off the bench, exactly as `LaborAssignment.priority` is, so an edit lands on the
   // command's own recapture and no optimistic overlay is needed. Appended last (append-only).
-  priority:SourcePriority = Normal;
+  priority:SourcePriority;
   // --- THE QUEUE (appended last) -----------------------------------------------------------------
   // Every order on the bench, HEAD FIRST. Empty on an idle bench. An order's index here is the
   // `order` the queue verbs (`bench_order_count`, `bench_remove`, `bench_raise`) address.

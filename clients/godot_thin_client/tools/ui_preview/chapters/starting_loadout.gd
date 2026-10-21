@@ -44,7 +44,7 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 190
+const EXPECTED_CHECKPOINTS := 210
 
 const Q := preload("res://tools/ui_preview/node_query.gd")
 ## The walk's shared band fixtures — `with_band_id` is what stamps a cohort's durable id and its name,
@@ -428,6 +428,7 @@ func run(harness) -> void:
 	await _the_card_prints_whole_numbers()
 	await _a_splinters_food_is_not_unspent_room()
 	await _kits_short_for_assigned_work()
+	await _outfit_for_my_work()
 	_assert_window_shuts()
 	h._hud.set_starting_loadout_requested.disconnect(_on_order)
 
@@ -2306,3 +2307,153 @@ func _kits_short_for_assigned_work() -> void:
 	await h._settle()
 	h._assert_hud("loadout/kit short — a shut window raises none even with a short row",
 		_kit_short_row().is_empty())
+
+# ---- what the work wants, and "Outfit for my work" -----------------------------------------------
+
+const WANTS_ENTITY := 6401
+## The work wants more `big_game` than the band holds (amber), exactly the `gathering` it holds
+## (calm) and no `trapping` at all (no line).
+const WANT_BIG_GAME := 5
+const WANT_GATHERING := 4
+## The over-carry wants: 20 + 8 + 6 items against the 32 the goods allowance leaves once the 28
+## material units are priced, so the last kit in the order gets the partial 2 of its 3.
+const WANT_OVER_BIG_GAME := 10
+const WANT_OVER_GATHERING := 8
+const WANT_OVER_TRAPPING := 3
+const WANT_OVER_TRAPPING_FILLED := 2
+## A take's wants, far above anything the home band can supply.
+const WANT_UNREACHABLE := 99
+
+func _want(kit: String, count: int, priority: String) -> Dictionary:
+	return {HudLoadoutVocab.WANT_KIT_KEY: kit, HudLoadoutVocab.WANT_COUNT_KEY: count,
+		"priority": priority}
+
+## The grant window on a band of its own, publishing the given wants and whatever this card last
+## ordered for it (else the profile's default outfit).
+func _wants_band(wants: Array) -> Dictionary:
+	var band := _grant_band()
+	band["entity"] = WANTS_ENTITY
+	band = BandFx.with_band_id(band)
+	var window: Dictionary = band[HudLoadoutVocab.WINDOW_KEY]
+	window[HudLoadoutVocab.WINDOW_KITS_KEY] = _held_kits(WANTS_ENTITY, [
+		{HudLoadoutVocab.KIT_DEFAULT_ID_KEY: KIT_STALKING,
+			HudLoadoutVocab.KIT_DEFAULT_COUNT_KEY: DEFAULT_STALKING},
+		{HudLoadoutVocab.KIT_DEFAULT_ID_KEY: "trapping",
+			HudLoadoutVocab.KIT_DEFAULT_COUNT_KEY: DEFAULT_TRAPPING},
+		{HudLoadoutVocab.KIT_DEFAULT_ID_KEY: KIT_GATHERING,
+			HudLoadoutVocab.KIT_DEFAULT_COUNT_KEY: DEFAULT_GATHERING},
+	])
+	window[HudLoadoutVocab.WORK_KIT_WANTS_KEY] = wants
+	return band
+
+func _want_line(kit_id: String) -> Label:
+	var row := _row_node(HudLoadoutVocab.KIT_ROW_META, kit_id)
+	return Q.find_meta_node(row, HudLoadoutVocab.WORK_WANT_META) as Label if row != null else null
+
+func _outfit_button() -> Button:
+	return Q.find_meta_node(_panel(), HudLoadoutVocab.OUTFIT_BUTTON_META) as Button
+
+func _outfit_short_line() -> Label:
+	return Q.find_meta_node(_panel(), HudLoadoutVocab.OUTFIT_SHORT_META) as Label
+
+func _show_wants(wants: Array) -> void:
+	h._hud.update_band_alerts([_wants_band(wants)])
+	_controller().open_band(_band_id(WANTS_ENTITY))
+	await h._settle()
+	await h._settle()
+
+func _outfit_for_my_work() -> void:
+	var wants: Array = [
+		_want(KIT_STALKING, WANT_BIG_GAME, "high"), _want(KIT_GATHERING, WANT_GATHERING, "normal"),
+	]
+	await _show_wants(wants)
+	var short_line := _want_line(KIT_STALKING)
+	var matched_line := _want_line(KIT_GATHERING)
+	h._assert_hud("loadout/wants — a kit under its want reads `work wants N` in warning ink",
+		short_line != null and short_line.text == HudLoadoutVocab.WORK_WANT_FORMAT % WANT_BIG_GAME
+			and short_line.get_theme_color("font_color") == HudStyle.WARN)
+	h._assert_hud("loadout/wants — a kit that matches reads in the calm ink",
+		matched_line != null and matched_line.text == HudLoadoutVocab.WORK_WANT_FORMAT % WANT_GATHERING
+			and matched_line.get_theme_color("font_color") != HudStyle.WARN)
+	h._assert_hud("loadout/wants — a kit the work does not want has no line",
+		_want_line("trapping") == null)
+	var button := _outfit_button()
+	h._assert_hud("loadout/wants — the button is up and enabled while picks differ from the wants",
+		button != null and not button.disabled and button.text == HudLoadoutVocab.OUTFIT_LABEL)
+	h._assert_hud("loadout/wants — no amber 'does not fit' line while everything fits",
+		_outfit_short_line() == null)
+	await _assert_no_dead_space("wants")
+	await h._save("starting_loadout_wants")
+
+	var before := _orders.size()
+	button.pressed.emit()
+	await h._settle()
+	h._assert_hud("loadout/wants — pressing it sends ONE order (%d)" % (_orders.size() - before),
+		_orders.size() - before == 1)
+	var order: Dictionary = _orders.back()
+	h._assert_hud("loadout/wants — every kit is set to its want, 0 for the unwanted (%s)"
+			% str(_order_rows(order, "kits", "count")),
+		_order_rows(order, "kits", "count") == {
+			KIT_STALKING: WANT_BIG_GAME, KIT_GATHERING: WANT_GATHERING})
+	h._assert_hud("loadout/wants — the materials are untouched (%s)"
+			% str(_order_rows(order, "materials", "units")),
+		_order_rows(order, "materials", "units") == {
+			"bone": DEFAULT_BONE, "fibre": DEFAULT_FIBRE, "hide": DEFAULT_HIDE})
+	h._assert_hud("loadout/wants — the order names this band",
+		int(order.get("band_id", HudConst.NO_BAND_ID)) == _band_id(WANTS_ENTITY))
+	h._assert_hud("loadout/wants — the button disables once the picks equal the wants",
+		_outfit_button() != null and _outfit_button().disabled)
+	h._assert_hud("loadout/wants — …and the want line goes calm",
+		_want_line(KIT_STALKING) != null
+			and _want_line(KIT_STALKING).get_theme_color("font_color") != HudStyle.WARN)
+	await h._save("starting_loadout_wants_filled")
+
+	# The work wants more than the carry holds: High first, the partial lands on the last kit.
+	var over: Array = [
+		_want(KIT_STALKING, WANT_OVER_BIG_GAME, "high"),
+		_want(KIT_GATHERING, WANT_OVER_GATHERING, "normal"),
+		_want("trapping", WANT_OVER_TRAPPING, "low"),
+	]
+	await _show_wants(over)
+	h._assert_hud("loadout/wants — wants over the carry raise the amber line",
+		_outfit_short_line() != null
+			and _outfit_short_line().text == HudLoadoutVocab.OUTFIT_SHORT_NOTE
+			and _outfit_short_line().get_theme_color("font_color") == HudStyle.WARN)
+	_outfit_button().pressed.emit()
+	await h._settle()
+	order = _orders.back()
+	h._assert_hud("loadout/wants — the fill runs in priority order and the last kit gets what fits (%s)"
+			% str(_order_rows(order, "kits", "count")),
+		_order_rows(order, "kits", "count") == {
+			KIT_STALKING: WANT_OVER_BIG_GAME, KIT_GATHERING: WANT_OVER_GATHERING,
+			"trapping": WANT_OVER_TRAPPING_FILLED})
+	h._assert_hud("loadout/wants — the fill never overfills the carry (%.1f of %.1f)"
+			% [_controller().carry_spent(), CARRY_CAPACITY],
+		_controller().carry_spent() <= CARRY_CAPACITY + HudLoadoutVocab.CARRY_EPSILON)
+	await h._save("starting_loadout_wants_short")
+
+	await _show_wants([])
+	h._assert_hud("loadout/wants — no wants: no kit has a line",
+		_want_line(KIT_STALKING) == null and _want_line(KIT_GATHERING) == null
+			and _want_line("trapping") == null)
+	h._assert_hud("loadout/wants — …and the button is disabled with its reason",
+		_outfit_button() != null and _outfit_button().disabled
+			and _outfit_button().tooltip_text == HudLoadoutVocab.OUTFIT_TOOLTIP_NO_WANTS)
+	h._assert_hud("loadout/wants — …and no amber line", _outfit_short_line() == null)
+	await h._save("starting_loadout_wants_empty")
+
+	# A TAKE: the same fill, held to the home band's supply as a manual press is.
+	var splinter := _splinter_band()
+	(splinter[HudLoadoutVocab.WINDOW_KEY] as Dictionary)[HudLoadoutVocab.WORK_KIT_WANTS_KEY] = [
+		_want(KIT_STALKING, WANT_UNREACHABLE, "high")]
+	h._hud.update_band_alerts([splinter])
+	_controller().open_band(_band_id(SPLINTER_BAND_ENTITY))
+	await h._settle()
+	h._assert_hud("loadout/wants — on a take the card is the take",
+		_controller().is_take() and _outfit_short_line() != null)
+	_outfit_button().pressed.emit()
+	await h._settle()
+	var take_count := int(_order_rows(_orders.back(), "kits", "count").get(KIT_STALKING, 0))
+	h._assert_hud("loadout/wants — a take's fill is held to the supply (%d, spears %d, sleds %d)"
+			% [take_count, TAKE_SPEARS, TAKE_SLED],
+		take_count > 0 and take_count <= mini(TAKE_SPEARS, TAKE_SLED))

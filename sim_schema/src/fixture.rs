@@ -724,6 +724,7 @@ fn seed_snapshot() -> WorldSnapshot {
                     ..Default::default()
                 })
                 .collect(),
+            work_kit_wants: rows(),
             ..Default::default()
         });
     }

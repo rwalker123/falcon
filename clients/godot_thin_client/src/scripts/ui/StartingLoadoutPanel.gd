@@ -64,6 +64,8 @@ signal band_selected(band_id: int)
 signal kit_count_changed(kit_id: String, count: int)
 ## A material's stepper moved, in units.
 signal material_units_changed(material_id: String, units: int)
+## "Outfit for my work" was pressed. The controller computes the fill and owns its clamp.
+signal outfit_requested
 
 # ---- the render payload's keys (this panel's contract with its controller) ----------------------
 
@@ -102,6 +104,12 @@ const PAYLOAD_CARRY := "carry"
 ## The line saying this band's last order was REFUSED, already composed — or `""`, which draws nothing.
 ## The controller owns when it shows and when it clears; the panel only puts it under the band's head.
 const PAYLOAD_REFUSAL := "refusal"
+## `{enabled, tooltip, short}` for the "Outfit for my work" button: whether it can act, why not when it
+## cannot, and whether the wants overrun the carry (the amber line under it).
+const PAYLOAD_OUTFIT := "outfit"
+const OUTFIT_ENABLED := "enabled"
+const OUTFIT_TOOLTIP := "tooltip"
+const OUTFIT_SHORT := "short"
 const BUDGET_SPENT := "spent"
 const BUDGET_TOTAL := "total"
 const CARRY_KIT_LOAD := "kit_load"
@@ -514,10 +522,33 @@ func _build_kits_column(payload: Dictionary) -> Control:
 		col.add_child(_caption(HudLoadoutVocab.EMPTY_NOTICE, HudStyle.INK_FAINT,
 			HudLoadoutVocab.ROW_NOTE_FONT_SIZE, true))
 		return col
+	_build_outfit_control(payload.get(PAYLOAD_OUTFIT, {}), col)
 	for row_variant in rows:
 		if row_variant is Dictionary:
 			col.add_child(_kit_row(row_variant as Dictionary))
 	return col
+
+## The "Outfit for my work" button heading the kit rows, and the one amber line under it while the
+## wants overrun the carry. Disabled (the tooltip says why) rather than hidden, so the card keeps one
+## shape.
+func _build_outfit_control(outfit: Dictionary, col: VBoxContainer) -> void:
+	if outfit.is_empty():
+		return
+	var button := Button.new()
+	button.text = HudLoadoutVocab.OUTFIT_LABEL
+	button.tooltip_text = String(outfit.get(OUTFIT_TOOLTIP, ""))
+	button.disabled = not bool(outfit.get(OUTFIT_ENABLED, false))
+	button.focus_mode = Control.FOCUS_NONE
+	button.set_meta(HudLoadoutVocab.OUTFIT_BUTTON_META, true)
+	button.add_theme_font_size_override("font_size", HudLoadoutVocab.ROW_NOTE_FONT_SIZE)
+	HudStyle.apply_button(button, "ghost")
+	button.pressed.connect(func() -> void: outfit_requested.emit())
+	col.add_child(button)
+	if bool(outfit.get(OUTFIT_SHORT, false)):
+		var line := _caption(HudLoadoutVocab.OUTFIT_SHORT_NOTE, HudStyle.WARN,
+			HudLoadoutVocab.ROW_NOTE_FONT_SIZE, true)
+		line.set_meta(HudLoadoutVocab.OUTFIT_SHORT_META, true)
+		col.add_child(line)
 
 ## **THE ROW CARRIES ITS OWN `can_add`** — see `PAYLOAD_KITS`. Reading it off the meter was right
 ## while every row shared one count budget; kits weigh what they expand to now, and a take caps them
@@ -539,6 +570,14 @@ func _kit_row(row: Dictionary) -> Control:
 		HudStyle.INK if count > 0 else HudStyle.INK_DIM)
 	name_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	line.add_child(name_label)
+	# The work's want, beside the stepper and only for a kit it wants: amber while the pick is under it.
+	var want := int(row.get("want", 0))
+	if want > 0:
+		var want_line := _caption(HudLoadoutVocab.WORK_WANT_FORMAT % want,
+			HudStyle.WARN if count < want else HudStyle.INK_DIM,
+			HudLoadoutVocab.ROW_NOTE_FONT_SIZE)
+		want_line.set_meta(HudLoadoutVocab.WORK_WANT_META, true)
+		line.add_child(want_line)
 	_add_stepper(line, count, can_add,
 		func(next: int) -> void: kit_count_changed.emit(kit_id, next))
 	block.add_child(line)

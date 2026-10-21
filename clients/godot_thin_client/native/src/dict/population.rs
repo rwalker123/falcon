@@ -2180,6 +2180,27 @@ fn loadout_window_to_dict(window: fb::BandLoadoutWindowState<'_>) -> VarDictiona
         "parent_material_supply",
         &loadout_supply_to_array(window.parentMaterialSupply()),
     );
+    // THE KITS THE BAND'S WORK WANTS, measured against an unlimited shelf so the list does not move
+    // as the player picks. `count` is whole kits (the unit `set_starting_loadout` orders in);
+    // `priority` is the same word a labor row carries. Already ordered High to Low, then nearest.
+    let mut wants = VarArray::new();
+    if let Some(rows) = window.workKitWants() {
+        for row in rows {
+            let mut want = VarDictionary::new();
+            let _ = want.insert("kit", row.kit().unwrap_or(""));
+            let _ = want.insert("count", i64::from(row.count()));
+            let _ = want.insert(
+                "priority",
+                match row.priority() {
+                    fb::SourcePriority::High => "high",
+                    fb::SourcePriority::Low => "low",
+                    _ => "normal",
+                },
+            );
+            wants.push(&want.to_variant());
+        }
+    }
+    let _ = dict.insert("work_kit_wants", &wants);
     dict
 }
 

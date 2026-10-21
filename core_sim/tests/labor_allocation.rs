@@ -2405,3 +2405,63 @@ fn a_staffed_row_squeezed_to_nobody_is_not_shed_and_keeps_its_declaration() {
         "nothing was shed, so nothing is announced"
     );
 }
+
+/// **TWO EQUAL WILD PATCHES, FOUR BARE HANDS: THE SIM DEALS THEM ONE AT A TIME, SO THE CREWS SPLIT**
+/// (#871). Each priority group's passes deal round-robin, nearest row to camp first, so the same
+/// four hands that a fill-one-row-first rule would put 4/0 come out 2/2 through the real turn.
+#[test]
+fn two_equal_priority_forage_rows_split_the_hands_evenly() {
+    const HANDS: u32 = 4;
+    let mut app = spawn_world();
+    let (first, first_tile) = food_tile(&mut app);
+    let seeded: Vec<UVec2> = app
+        .world
+        .resource::<ForageRegistry>()
+        .patches
+        .keys()
+        .copied()
+        .filter(|pos| *pos != first)
+        .collect();
+    let second = *seeded
+        .iter()
+        .min_by_key(|pos| {
+            (
+                pos.x.abs_diff(first.x) + pos.y.abs_diff(first.y),
+                pos.x,
+                pos.y,
+            )
+        })
+        .expect("a second patch");
+    for pos in [first, second] {
+        let mut registry = app.world.resource_mut::<ForageRegistry>();
+        let patch = registry.patch_mut(pos).expect("patch");
+        patch.biomass = patch.carrying_capacity * STOCKED_STANDING_CROP;
+    }
+    let mut allocation = forage_alloc(first, HANDS);
+    let mut other = forage_alloc(second, HANDS).assignments.remove(0);
+    other.max_workers = None;
+    allocation.assignments[0].max_workers = None;
+    allocation.assignments.push(other);
+    let band = spawn_band(&mut app, first_tile, HANDS, allocation);
+
+    app.world.run_system_once(advance_labor_allocation);
+
+    let crews: Vec<u32> = app
+        .world
+        .get::<LaborAllocation>(band)
+        .expect("allocation")
+        .assignments
+        .iter()
+        .map(|row| row.workers)
+        .collect();
+    assert_eq!(
+        crews.iter().sum::<u32>(),
+        HANDS,
+        "liveness: every hand is staffed, or the split proves nothing ({crews:?})"
+    );
+    assert_eq!(
+        crews,
+        vec![HANDS / 2, HANDS / 2],
+        "the hands are dealt round-robin"
+    );
+}

@@ -45,8 +45,21 @@ hands and refills them. `LaborTarget::is_staffed` names the kinds. Scout, Warrio
 need row keep the player's count.
 
 **The pool** is `staffable_pool`: the working people less the bench, the hands still walking home and
-every crew the player set by hand (the rows that are not staffed). Rows are served in
-`SourcePriority` order High to Low, ties to the earlier row.
+every crew the player set by hand (the rows that are not staffed). Rows are grouped by
+`SourcePriority`, High to Low.
+
+**Within a priority group every pass deals ONE head at a time, round-robin**, across the group's rows
+that still want a head in that pass, until no row in the group wants one, the pool is empty or (for a
+kitted head) the shelf cannot arm one more; only then does the next lower group get that pass. Pass 1
+runs over every group before pass 2 starts, and pass 2 before pass 3, so kitted heads still come
+before bare ones across priorities. A round deals **nearest row to camp first** (hex distance from
+the band's tile to the row's site, a hunt row's herd at its current tile, `StaffRowInput::distance`;
+Roadwork has no single site and reads 0), ties to the earlier row; distance orders a round and never
+excludes or demotes a row, so a far row is dealt every round just after the nearer ones. Two
+equal-priority bare rows with 4 heads staff 2 / 2, and with 3 heads the nearer row gets the odd one.
+Each step re-reads the row's want against the live shelf and armed count, so a row stops taking once
+one more head would pass its target; keepers are dealt round-robin before that group's kitted hold
+heads, and pass 3 deals the group's unspent-kit heads before its bare heads.
 
 **Three passes**, each capped by the row's Max:
 

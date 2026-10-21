@@ -8127,6 +8127,30 @@ fn handle_set_starting_loadout(
             band,
             reason.to_string(),
         );
+        return;
+    }
+    // **The outfit moved gear, so the crews are stale until restaffed**: the outfitted band's own
+    // kit changed and, on a take, so did the parent's.
+    let parent = app
+        .world
+        .resource::<core_sim::StartingLoadout>()
+        .window(band)
+        .and_then(|window| match &window.supply {
+            core_sim::LoadoutSupply::Parent { parent, .. } => Some(*parent),
+            core_sim::LoadoutSupply::Grant { .. } => None,
+        });
+    let mut query = app
+        .world
+        .query::<(Entity, &BandId, &core_sim::PopulationCohort)>();
+    let changed: Vec<Entity> = query
+        .iter(&app.world)
+        .filter(|(_, id, cohort)| {
+            cohort.faction == faction && (**id == band || Some(**id) == parent)
+        })
+        .map(|(entity, _, _)| entity)
+        .collect();
+    for entity in changed {
+        restaff_and_reseed(app, entity);
     }
 }
 
@@ -31755,6 +31779,299 @@ mod tests {
             published_loadout_refusals(&mut app).is_empty(),
             "an accepted loadout must not publish a starting_loadout line"
         );
+    }
+
+    /// **CHANGING THE OUTFIT RESTAFFS THE BAND AT ONCE** - the crews read the gear the band holds, so
+    /// an accepted order that moved the gear leaves them stale until the turn ends unless the handler
+    /// restaffs. Driven through the real handler: a forage row staffed on the opening outfit's baskets
+    /// loses its kitted hands the moment the outfit is emptied.
+    #[test]
+    fn an_accepted_starting_loadout_restaffs_the_band_at_once() {
+        let mut app = build_world_app();
+        let faction = FactionId(0);
+        let band = band_with_an_open_loadout_window(&app);
+        let entity = app
+            .world
+            .iter_entities()
+            .find(|entity| entity.get::<BandId>() == Some(&band))
+            .map(|entity| entity.id())
+            .expect("the band's entity");
+        let camp = {
+            let cohort = app
+                .world
+                .get::<core_sim::PopulationCohort>(entity)
+                .expect("the band's cohort");
+            app.world
+                .get::<Tile>(cohort.current_tile)
+                .expect("the band's tile")
+                .position
+        };
+        let patch = *app
+            .world
+            .resource::<ForageRegistry>()
+            .patches
+            .keys()
+            .min_by_key(|pos| {
+                (
+                    pos.x.abs_diff(camp.x) + pos.y.abs_diff(camp.y),
+                    pos.x,
+                    pos.y,
+                )
+            })
+            .expect("the world seeds forage patches");
+        const NO_MAX: u32 = 0;
+        handle_assign_labor(
+            &mut app,
+            faction,
+            Some(band.0),
+            "forage".to_string(),
+            NO_MAX,
+            Some(patch.x),
+            Some(patch.y),
+            None,
+            None,
+            None,
+            None,
+            Vec::new(),
+            false,
+        );
+        let kitted = |app: &bevy::prelude::App| -> u32 {
+            app.world
+                .get::<LaborAllocation>(entity)
+                .expect("the band's allocation")
+                .assignments
+                .iter()
+                .map(|row| row.staffing.kitted)
+                .sum()
+        };
+        let before = kitted(&app);
+        assert!(
+            before > 0,
+            "fixture: the opening outfit arms the forage row, or the restaff proves nothing"
+        );
+
+        handle_set_starting_loadout(&mut app, faction, band, &[], &[]);
+
+        assert_eq!(
+            kitted(&app),
+            0,
+            "an emptied outfit leaves no kit to arm, and the crews say so before the turn ends"
+        );
+    }
+
+    /// The opening band's entity, and a patch near it for each of the first `n` sources.
+    fn band_entity_and_patches(
+        app: &bevy::prelude::App,
+        band: BandId,
+        n: usize,
+    ) -> (Entity, Vec<UVec2>) {
+        let entity = app
+            .world
+            .iter_entities()
+            .find(|entity| entity.get::<BandId>() == Some(&band))
+            .map(|entity| entity.id())
+            .expect("the band's entity");
+        let camp = {
+            let cohort = app
+                .world
+                .get::<core_sim::PopulationCohort>(entity)
+                .expect("the band's cohort");
+            app.world
+                .get::<Tile>(cohort.current_tile)
+                .expect("the band's tile")
+                .position
+        };
+        let mut patches: Vec<UVec2> = app
+            .world
+            .resource::<ForageRegistry>()
+            .patches
+            .keys()
+            .copied()
+            .collect();
+        patches.sort_by_key(|pos| {
+            (
+                pos.x.abs_diff(camp.x) + pos.y.abs_diff(camp.y),
+                pos.x,
+                pos.y,
+            )
+        });
+        patches.truncate(n);
+        (entity, patches)
+    }
+
+    /// Stand a forage row on `patch` with a Max of `max` (`0` = no Max).
+    fn forage_row(app: &mut bevy::prelude::App, band: BandId, patch: UVec2, max: u32) {
+        handle_assign_labor(
+            app,
+            FactionId(0),
+            Some(band.0),
+            "forage".to_string(),
+            max,
+            Some(patch.x),
+            Some(patch.y),
+            None,
+            None,
+            None,
+            None,
+            Vec::new(),
+            false,
+        );
+    }
+
+    fn work_wants(app: &bevy::prelude::App, band: BandId) -> Vec<(String, u32)> {
+        app.world
+            .resource::<core_sim::staffing::WorkKitWants>()
+            .of(band)
+            .iter()
+            .map(|want| (want.kit.clone(), want.count))
+            .collect()
+    }
+
+    /// **THE OUTFIT THE WORK WANTS DOES NOT MOVE AS THE PLAYER PICKS** - it moves with the work. The
+    /// same run is read off the encoded frame, so the client sees the figure the sim holds.
+    #[test]
+    fn the_outfit_the_work_wants_ignores_the_picks_and_follows_the_work() {
+        let mut app = build_world_app();
+        let faction = FactionId(0);
+        let band = band_with_an_open_loadout_window(&app);
+        let (_, patches) = band_entity_and_patches(&app, band, 12);
+        // Every patch stand well above their floor, so each has a take for a crew to want a kit for.
+        for pos in &patches {
+            let mut registry = app.world.resource_mut::<ForageRegistry>();
+            let patch = registry.patch_mut(*pos).expect("a seeded patch");
+            patch.biomass = patch.carrying_capacity;
+        }
+
+        forage_row(&mut app, band, patches[0], 0);
+        let one_source = work_wants(&app, band);
+        assert!(
+            one_source.iter().any(|(_, count)| *count > 0),
+            "fixture: a forage row wants a kit, or the independence below proves nothing"
+        );
+
+        // Empty the outfit, then take a different one: the wants do not move.
+        handle_set_starting_loadout(&mut app, faction, band, &[], &[]);
+        assert_eq!(work_wants(&app, band), one_source, "an emptied outfit");
+        let (kit, _) = one_source[0].clone();
+        let picked = [sim_runtime::StartingKitAllocation {
+            kit_id: kit,
+            count: 1,
+        }];
+        handle_set_starting_loadout(&mut app, faction, band, &picked, &[]);
+        assert_eq!(work_wants(&app, band), one_source, "a one-kit outfit");
+
+        // A Max on the row changes what it wants; a second source adds to it.
+        forage_row(&mut app, band, patches[0], 1);
+        let capped = work_wants(&app, band);
+        assert_ne!(capped, one_source, "a Max of one hand lowers the wants");
+        // A second source the band can work: the nearest other patch the command accepts.
+        let rows_on_band = |app: &bevy::prelude::App| {
+            app.world
+                .iter_entities()
+                .filter(|entity| entity.get::<BandId>() == Some(&band))
+                .filter_map(|entity| entity.get::<LaborAllocation>())
+                .map(|allocation| allocation.assignments.len())
+                .sum::<usize>()
+        };
+        let before = rows_on_band(&app);
+        for patch in &patches[1..] {
+            forage_row(&mut app, band, *patch, 0);
+            if rows_on_band(&app) > before {
+                break;
+            }
+        }
+        assert!(
+            rows_on_band(&app) > before,
+            "fixture: the band can work a second patch"
+        );
+        assert_ne!(
+            work_wants(&app, band),
+            capped,
+            "a second source changes the wants"
+        );
+
+        // The frame carries the same figure.
+        recapture_snapshot_in_place(&mut app.world);
+        let snapshot = app
+            .world
+            .resource::<core_sim::SnapshotHistory>()
+            .latest_entry()
+            .expect("a snapshot was captured")
+            .snapshot;
+        let bytes = sim_schema::encode_snapshot_flatbuffer(snapshot.as_ref());
+        let envelope = shadow_scale_flatbuffers::generated::shadow_scale::sim::root_as_envelope(
+            bytes.as_ref(),
+        )
+        .expect("a valid envelope");
+        let published: Vec<(String, u32)> = envelope
+            .payload_as_snapshot()
+            .expect("a snapshot")
+            .population()
+            .and_then(|section| section.populations())
+            .expect("the cohorts")
+            .iter()
+            .find(|cohort| cohort.bandId() == band.0)
+            .and_then(|cohort| cohort.loadoutWindow())
+            .and_then(|window| window.workKitWants())
+            .map(|wants| {
+                wants
+                    .iter()
+                    .map(|want| (want.kit().unwrap_or_default().to_string(), want.count()))
+                    .collect()
+            })
+            .unwrap_or_default();
+        assert_eq!(
+            published,
+            work_wants(&app, band),
+            "the wire carries the sim's figure"
+        );
+    }
+
+    /// **OUTFIT THE BAND WITH EXACTLY WHAT ITS WORK WANTS AND THE REAL STAFFING IS THE UNLIMITED-SHELF
+    /// RUN** - the wants are a fixed point.
+    #[test]
+    fn outfitting_exactly_the_wanted_kits_reproduces_the_unlimited_shelf_crews() {
+        let mut app = build_world_app();
+        let faction = FactionId(0);
+        let band = band_with_an_open_loadout_window(&app);
+        let (entity, patches) = band_entity_and_patches(&app, band, 2);
+        forage_row(&mut app, band, patches[0], 0);
+        forage_row(&mut app, band, patches[1], 3);
+
+        let wanted: Vec<sim_runtime::StartingKitAllocation> = app
+            .world
+            .resource::<core_sim::staffing::WorkKitWants>()
+            .of(band)
+            .iter()
+            .map(|want| sim_runtime::StartingKitAllocation {
+                kit_id: want.kit.clone(),
+                count: want.count,
+            })
+            .collect();
+        assert!(!wanted.is_empty(), "fixture: the work wants a kit");
+        handle_set_starting_loadout(&mut app, faction, band, &wanted, &[]);
+
+        let unlimited =
+            core_sim::staffing::unlimited_shelf_crews(&app.world, entity).expect("the band staffs");
+        let real: Vec<(LaborTarget, (u32, u32, u32))> = app
+            .world
+            .get::<LaborAllocation>(entity)
+            .expect("the band's allocation")
+            .assignments
+            .iter()
+            .filter(|row| row.target.is_staffed())
+            .map(|row| {
+                (
+                    row.target.clone(),
+                    (row.staffing.keepers, row.staffing.kitted, row.staffing.bare),
+                )
+            })
+            .collect();
+        let expected: Vec<(LaborTarget, (u32, u32, u32))> = unlimited
+            .into_iter()
+            .map(|(target, crew)| (target, (crew.keepers, crew.kitted, crew.bare)))
+            .collect();
+        assert_eq!(real, expected, "keepers, kitted and bare per row");
     }
 }
 

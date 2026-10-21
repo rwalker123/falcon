@@ -246,7 +246,12 @@ const WORLD_STATIC_RESOURCES: [&str; 17] = [
 ];
 
 /// Infrastructure, session-scoped, or not understood. The last three are the honest ones.
-const NOT_SIM_STATE_RESOURCES: [(&str, &str); 11] = [
+const NOT_SIM_STATE_RESOURCES: [(&str, &str); 12] = [
+    (
+        "WorkKitWants",
+        "the kit an open outfitting window's work wants - re-derived from the band's rows at every \
+         restaff and every recapture, so a restore needs nothing saved",
+    ),
     (
         "FloraQuoteCache",
         "a memo of a pure function of ground + config; it re-derives on demand and its own \
