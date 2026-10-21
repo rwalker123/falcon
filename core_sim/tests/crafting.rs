@@ -711,6 +711,7 @@ const FIXTURE_RECIPES: &str = r#"{
     "ingot": {
       "craft": "tanning",
       "work": 4.0,
+      "crafters_per_item": 1,
       "inputs": [{ "material": "ore", "amount": 4.0, "reads": "hardness" }],
       "outputs": [{ "equipment": "spears", "amount": 1.0 }],
       "grades": { "poor": {} }
