@@ -83,6 +83,12 @@ impl HerdFollowSteps {
         *self.steps.entry(band).or_insert(0) += hexes;
     }
 
+    /// The hexes `band` has stepped following a herd so far this turn, without draining them
+    /// (`leadership::advance_leadership` reads the same measure the score does).
+    pub fn hexes_of(&self, band: BandId) -> u32 {
+        self.steps.get(&band).copied().unwrap_or(0)
+    }
+
     pub fn is_empty(&self) -> bool {
         self.steps.is_empty()
     }

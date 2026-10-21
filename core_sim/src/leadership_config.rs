@@ -26,12 +26,14 @@ pub const BUILTIN_LEADERSHIP_CONFIG: &str = include_str!("data/leadership_config
 pub struct LeadershipConfig {
     /// The practice a band must bank before it accepts a leader.
     pub practice_threshold: f64,
-    /// Practice one finished build of a directed-work rung adds
-    /// (`RungDef::directed_work`).
+    /// Practice one finished Cultivate or Tame build adds (`RungDef::directed_work`).
     pub practice_per_directed_build: f64,
-    /// Practice one big-game hunt that lands its kill adds (`SpeciesDef::big_game`). Per hunt, not
-    /// per animal.
-    pub practice_per_big_game_kill: f64,
+    /// Practice a commanded band split adds to EACH of the two bands.
+    pub practice_per_split: f64,
+    /// Practice added per hex a resident band steps while following a herd.
+    pub practice_per_herd_hex: f64,
+    /// Practice added the first time a band reaches each settlement stage above the first.
+    pub practice_per_stage_reached: f64,
 }
 
 /// The **only** `Default`: it parses the builtin JSON, so `default()` and the shipped tuning are
@@ -73,9 +75,11 @@ impl LeadershipConfig {
                 "practice_per_directed_build",
                 self.practice_per_directed_build,
             ),
+            ("practice_per_split", self.practice_per_split),
+            ("practice_per_herd_hex", self.practice_per_herd_hex),
             (
-                "practice_per_big_game_kill",
-                self.practice_per_big_game_kill,
+                "practice_per_stage_reached",
+                self.practice_per_stage_reached,
             ),
         ] {
             if !(value.is_finite() && value > 0.0) {
@@ -172,37 +176,51 @@ mod tests {
     #[test]
     fn builtin_loads_with_the_shipped_levers() {
         let config = LeadershipConfig::default();
-        assert!(config.practice_threshold > 0.0);
-        assert!(config.practice_per_directed_build > 0.0);
-        assert!(config.practice_per_big_game_kill > 0.0);
+        for lever in [
+            config.practice_threshold,
+            config.practice_per_directed_build,
+            config.practice_per_split,
+            config.practice_per_herd_hex,
+            config.practice_per_stage_reached,
+        ] {
+            assert!(lever > 0.0);
+        }
+    }
+
+    /// The shipped JSON with `key` replaced by `value`.
+    fn with(key: &str, value: f64) -> String {
+        let mut json: serde_json::Value =
+            serde_json::from_str(BUILTIN_LEADERSHIP_CONFIG).expect("builtin parses");
+        json[key] = serde_json::json!(value);
+        json.to_string()
     }
 
     #[test]
     fn a_zero_or_negative_lever_is_refused() {
-        for patch in [
-            r#"{"practice_threshold": 0.0, "practice_per_directed_build": 1.0, "practice_per_big_game_kill": 1.0}"#,
-            r#"{"practice_threshold": 3.0, "practice_per_directed_build": 0.0, "practice_per_big_game_kill": 1.0}"#,
-            r#"{"practice_threshold": 3.0, "practice_per_directed_build": 1.0, "practice_per_big_game_kill": -1.0}"#,
+        for key in [
+            "practice_threshold",
+            "practice_per_directed_build",
+            "practice_per_split",
+            "practice_per_herd_hex",
+            "practice_per_stage_reached",
         ] {
-            assert!(
-                matches!(
-                    LeadershipConfig::from_json_str(patch),
-                    Err(LeadershipConfigError::Invalid(_))
-                ),
-                "{patch} must be refused"
-            );
+            for bad in [0.0, -1.0] {
+                assert!(
+                    matches!(
+                        LeadershipConfig::from_json_str(&with(key, bad)),
+                        Err(LeadershipConfigError::Invalid(_))
+                    ),
+                    "{key} = {bad} must be refused"
+                );
+            }
         }
     }
 
     #[test]
     fn an_unknown_or_missing_key_is_refused() {
-        assert!(LeadershipConfig::from_json_str(
-            r#"{"practice_threshold": 3.0, "practice_per_directed_build": 1.0}"#
-        )
-        .is_err());
-        assert!(LeadershipConfig::from_json_str(
-            r#"{"practice_threshold": 3.0, "practice_per_directed_build": 1.0, "practice_per_big_game_kill": 1.0, "extra": 1}"#
-        )
-        .is_err());
+        assert!(LeadershipConfig::from_json_str(r#"{"practice_threshold": 3.0}"#).is_err());
+        let mut json: serde_json::Value = serde_json::from_str(BUILTIN_LEADERSHIP_CONFIG).unwrap();
+        json["extra"] = serde_json::json!(1);
+        assert!(LeadershipConfig::from_json_str(&json.to_string()).is_err());
     }
 }

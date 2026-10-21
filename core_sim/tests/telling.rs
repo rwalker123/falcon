@@ -162,12 +162,12 @@ fn give_a_band_a_leader(
             .expect("the world has a resident band of the faction")
     };
     app.world.entity_mut(band).insert(core_sim::BandLeadership {
-        practice: 0.0,
         leader: Some(core_sim::BandLeader {
             name: name.to_string(),
             kind,
             since_turn: 0,
         }),
+        ..core_sim::BandLeadership::default()
     });
 }
 

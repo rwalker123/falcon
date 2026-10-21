@@ -5285,15 +5285,6 @@ impl BeliefSink<'_> {
     }
 }
 
-/// **Where a hunt's success is credited toward a leader** -- the home band's practice and the
-/// quantum it banks (`crate::leadership`). Bundled, like [`BeliefSink`], so [`settle_hunt_band_side`]
-/// takes the one place the credit goes. Present for a resident band's own hunt and for a far work
-/// party alike: a party is the home band's people, so the credit is the home band's.
-struct LeadershipSink<'a> {
-    leadership: &'a mut crate::leadership::BandLeadership,
-    config: &'a crate::leadership_config::LeadershipConfig,
-}
-
 /// **THE BAND'S SIDE OF A HUNT, SETTLED — at every rung.** The animal side is already off the herd
 /// inside [`crate::systems::hunt_take`] (`take.killed_biomass()`); this is where what the animals did
 /// back lands.
@@ -5327,14 +5318,7 @@ fn settle_hunt_band_side(
     cohort: &mut PopulationCohort,
     event_log: &mut CommandEventLog,
     belief: Option<BeliefSink<'_>>,
-    leadership: Option<LeadershipSink<'_>>,
 ) {
-    // **A big-game hunt that lands its kill is directed work that succeeded** -- one quantum per
-    // hunt, whatever the head count (`BandLeadership::credit_big_game_hunt` holds the predicate).
-    if let Some(sink) = leadership {
-        sink.leadership
-            .credit_big_game_hunt(sink.config, fauna, species, &outcome.fight);
-    }
     // Human text names the SPECIES, never the internal herd id.
     let species_name = fauna
         .species_by_display(species)
@@ -8961,13 +8945,6 @@ pub fn advance_labor_allocation(
                                 registry: &mut belief,
                                 config: &belief_cfg,
                             }),
-                            // The credit is the HOME band's, a far party's included.
-                            band_leadership
-                                .as_deref_mut()
-                                .map(|leadership| LeadershipSink {
-                                    leadership,
-                                    config: &leadership_cfg,
-                                }),
                         );
                         continue;
                     }
@@ -9730,13 +9707,6 @@ pub fn advance_labor_allocation(
                             registry: &mut belief,
                             config: &belief_cfg,
                         }),
-                        // The credit is the HOME band's, a far party's included.
-                        band_leadership
-                            .as_deref_mut()
-                            .map(|leadership| LeadershipSink {
-                                leadership,
-                                config: &leadership_cfg,
-                            }),
                     );
                 }
                 LaborTarget::Extract {
@@ -15174,7 +15144,6 @@ mod labor_yield_tests {
                 registry: &mut belief,
                 config: &config,
             }),
-            None,
         );
         assert!(
             (belief.get(STANDING) - KILLED * config.belief_per_death).abs() < EPSILON,
@@ -15198,66 +15167,11 @@ mod labor_yield_tests {
                 registry: &mut belief,
                 config: &config,
             }),
-            None,
         );
         assert!(
             (belief.get(STANDING) - before - left * config.belief_per_death).abs() < EPSILON,
             "only the people actually lost are buried, not the casualties the fight asked for"
         );
-    }
-
-    /// **A hunt that lands a big-game kill banks a quantum on the band's leadership record**, through
-    /// the same seam that settles its dead -- a work party's hunt included, since the sink is the
-    /// home band's. One hunt is one quantum however many animals fall.
-    #[test]
-    fn a_hunt_that_lands_a_big_game_kill_banks_practice_through_the_settling_seam() {
-        use crate::fauna::{AnimalTake, FightCasualties, HuntFight, HuntTakeBound};
-        use crate::systems::expeditions::HuntOutcome;
-        /// The roster's flagged big game, by display name.
-        const BIG_GAME: &str = "Wild Aurochs";
-        /// Animals down in the one hunt.
-        const BROUGHT_DOWN: f32 = 3.0;
-
-        let outcome = HuntOutcome {
-            take: AnimalTake::default(),
-            fight: HuntFight {
-                brought_down: BROUGHT_DOWN,
-                expected_brought_down: BROUGHT_DOWN,
-                casualties: FightCasualties {
-                    killed: 0.0,
-                    wounded: 0.0,
-                },
-                fought: true,
-                wounds: Default::default(),
-                strike_charges: Vec::new(),
-            },
-            engaged: BROUGHT_DOWN,
-            fled: 0.0,
-            bound: HuntTakeBound::Engagement,
-        };
-        let (mut world, source_tile) = world_with_source(100.0);
-        let band = spawn_band(&mut world, source_tile, Vec::new());
-        let fauna = crate::fauna_config::FaunaConfig::builtin();
-        let config = crate::leadership_config::LeadershipConfig::default();
-        let mut leadership = crate::leadership::BandLeadership::default();
-        let mut log = CommandEventLog::default();
-        let mut cohort = world.get::<PopulationCohort>(band).unwrap().clone();
-
-        super::settle_hunt_band_side(
-            &outcome,
-            BIG_GAME,
-            &fauna,
-            0,
-            FactionId(0),
-            &mut cohort,
-            &mut log,
-            None,
-            Some(super::LeadershipSink {
-                leadership: &mut leadership,
-                config: &config,
-            }),
-        );
-        assert_eq!(leadership.practice, config.practice_per_big_game_kill);
     }
 
     /// (a) both a Forage and a Hunt source capture `actual > 0`; (b) the hunt's `sustainable` equals

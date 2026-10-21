@@ -4588,7 +4588,7 @@ fn finishing_a_directed_work_build_banks_one_quantum_of_practice() {
         app.world
             .get::<core_sim::BandLeadership>(band)
             .unwrap()
-            .practice
+            .practice()
     };
     let mut turns = 0;
     while !app
@@ -4637,7 +4637,7 @@ fn finishing_a_pen_ring_banks_no_practice() {
         app.world
             .get::<core_sim::BandLeadership>(band)
             .unwrap()
-            .practice,
+            .practice(),
         0.0,
         "a finished ring is not a directed-work rung"
     );

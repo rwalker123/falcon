@@ -1575,7 +1575,10 @@ pub fn build_headless_app() -> App {
                 // steps following a herd (any roam state) and which this drains — that order is
                 // carried by the whole run between them, and the one edge declared here is the
                 // culture split, the last pass that changes a band's people.
-                mobility::mobility_tick.after(systems::advance_culture_splits),
+                mobility::mobility_tick
+                    .after(systems::advance_culture_splits)
+                    // Leadership reads the herd-following steps this drains.
+                    .after(leadership::advance_leadership),
             )
                 .in_set(TurnStage::Population)
                 .run_if(population_stage_enabled()),

@@ -2076,6 +2076,23 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
         "leadership_threshold",
         f64::from(cohort.leadershipThreshold()),
     );
+    // `leadership_practice` split by source, for the split bar; they sum to it.
+    let _ = dict.insert(
+        "leadership_from_builds",
+        f64::from(cohort.leadershipFromBuilds()),
+    );
+    let _ = dict.insert(
+        "leadership_from_splits",
+        f64::from(cohort.leadershipFromSplits()),
+    );
+    let _ = dict.insert(
+        "leadership_from_herd",
+        f64::from(cohort.leadershipFromHerd()),
+    );
+    let _ = dict.insert(
+        "leadership_from_stages",
+        f64::from(cohort.leadershipFromStages()),
+    );
     let _ = dict.insert(
         "long_move_leaves_food",
         f64::from(cohort.longMoveLeavesFood()),

@@ -2896,8 +2896,12 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
             .map_or(crate::leadership::LEADER_KIND_NONE, |leader| {
                 leader.kind.wire_code()
             }),
-        leadership_practice: leadership.map_or(0.0, |l| l.practice as f32),
+        leadership_practice: leadership.map_or(0.0, |l| l.practice() as f32),
         leadership_threshold,
+        leadership_from_builds: leadership.map_or(0.0, |l| l.from_builds as f32),
+        leadership_from_splits: leadership.map_or(0.0, |l| l.from_splits as f32),
+        leadership_from_herd: leadership.map_or(0.0, |l| l.from_herd as f32),
+        leadership_from_stages: leadership.map_or(0.0, |l| l.from_stages as f32),
         // The treaty terms an envoy party will post on arrival; empty on every other row.
         envoy_terms: match expedition.and_then(|exp| exp.mission.shipment_terms()) {
             Some(crate::components::ShipmentTerms::Envoy { proposed, .. }) => {

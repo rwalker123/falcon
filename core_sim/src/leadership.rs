@@ -1,19 +1,16 @@
-//! **A chief emerges from directed work that succeeds** (`docs/plan_labor_at_scale.md` -> "How a
-//! chief emerges"). Rationale: `.claude/rules/core_sim/leadership.md`.
+//! **A chief emerges from work that needs an organiser** (`docs/plan_labor_at_scale.md` -> "How a
+//! chief emerges: work that needs an organiser"). Rationale: `.claude/rules/core_sim/leadership.md`.
 //!
-//! Every resident band carries a [`BandLeadership`]: a **practice** count and, once the band has
-//! accepted one, a [`BandLeader`]. Directed work that succeeds adds a config quantum to the
-//! practice; when it reaches `leadership_config.json -> practice_threshold` and the band has no
-//! leader, [`advance_leadership`] gives it one -- once, permanently.
+//! Every resident band carries a [`BandLeadership`]: practice banked **per source** and, once the
+//! band has accepted one, a [`BandLeader`]. A band banks points by doing things that logically need
+//! someone organising them -- finishing a Cultivate or a Tame, splitting in two on command, walking
+//! after a herd, growing into a larger settlement stage. When the sum reaches
+//! `leadership_config.json -> practice_threshold` and the band has no leader,
+//! [`advance_leadership`] gives it one -- once, permanently, and the bar then freezes.
 //!
 //! **The kind is fixed at emergence** by the sign of the band's own culture on the
 //! `HierarchicalEgalitarian` axis: below zero a [`LeaderKind::Chief`], at or above it (ties go
 //! egalitarian) an [`LeaderKind::ElderCouncil`]. The axis drifting afterwards does not flip it.
-//!
-//! **The sources are credited where they succeed**, through the helpers in this module so no seam
-//! restates the rule: a finished build of a rung flagged `directed_work`
-//! ([`BandLeadership::credit_directed_build`]) and a hunt that lands a big-game kill
-//! ([`BandLeadership::credit_big_game_hunt`]).
 
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -21,13 +18,15 @@ use serde::{Deserialize, Serialize};
 use crate::{
     components::{BandId, PopulationCohort, ResidentBand},
     culture::{CultureManager, CultureOwner, CultureTraitAxis},
-    fauna::HuntFight,
-    fauna_config::FaunaConfig,
     intensification::RungDef,
     leader_names::LeaderNameCatalogHandle,
     leadership_config::{LeadershipConfig, LeadershipConfigHandle},
+    mobility::HerdFollowSteps,
     resources::{
         CommandEventEntry, CommandEventKind, CommandEventLog, SimulationConfig, SimulationTick,
+    },
+    settlement_stage_config::{
+        resolve_settlement_stage, SettlementStageConfigHandle, SettlementStageInputs,
     },
 };
 
@@ -88,53 +87,69 @@ pub struct BandLeader {
     pub since_turn: u64,
 }
 
-/// **A band's practice at following a plan, and the leader it earned.** Spawned (default) on every
-/// resident band; a detached party credits its home band, never itself. State, not derived: the
-/// practice is banked across turns and the leader is permanent.
+/// **A band's need for a leader, banked per source, and the leader it earned.** Spawned (default)
+/// on every resident band. State, not derived: the practice is banked across turns and the leader is
+/// permanent. Nothing accrues once a leader exists (the bar freezes where it stood).
 #[derive(Component, Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct BandLeadership {
-    /// Practice banked so far. Stops accruing once a leader exists (the value is kept).
-    pub practice: f64,
+    /// From finished Cultivate and Tame builds (`RungDef::directed_work`).
+    pub from_builds: f64,
+    /// From commanded band splits, credited to both bands.
+    pub from_splits: f64,
+    /// From hexes walked following a herd.
+    pub from_herd: f64,
+    /// From settlement stages reached, each paid once.
+    pub from_stages: f64,
+    /// The highest settlement stage index already paid for (0 = the first stage, never paid). A band
+    /// that shrinks and regrows is not paid again.
+    pub stages_paid: u32,
     pub leader: Option<BandLeader>,
 }
 
 impl BandLeadership {
-    /// Bank `quantum` of practice. A band that already has a leader banks nothing: practice stops
-    /// mattering the moment it has done its work.
-    pub fn credit(&mut self, quantum: f64) {
-        if self.leader.is_none() {
-            self.practice += quantum;
-        }
+    /// Total banked, the figure compared with `practice_threshold`.
+    pub fn practice(&self) -> f64 {
+        self.from_builds + self.from_splits + self.from_herd + self.from_stages
+    }
+
+    fn open(&self) -> bool {
+        self.leader.is_none()
     }
 
     /// A finished build of `rung` counts if the rung is flagged `directed_work`.
     pub fn credit_directed_build(&mut self, config: &LeadershipConfig, rung: &RungDef) {
-        if rung.directed_work {
-            self.credit(config.practice_per_directed_build);
+        if self.open() && rung.directed_work {
+            self.from_builds += config.practice_per_directed_build;
         }
     }
 
-    /// A hunt counts **once per hunt** (not per animal) when it fought, brought at least one animal
-    /// down, and the quarry's species is `big_game`. `species` is the display name a `Herd` carries.
-    pub fn credit_big_game_hunt(
-        &mut self,
-        config: &LeadershipConfig,
-        fauna: &FaunaConfig,
-        species: &str,
-        fight: &HuntFight,
-    ) {
-        let landed_its_kill = fight.fought && fight.brought_down > 0.0;
-        let big_game = fauna
-            .species_by_display(species)
-            .is_some_and(|def| def.big_game);
-        if landed_its_kill && big_game {
-            self.credit(config.practice_per_big_game_kill);
+    /// A commanded split: called once for the parent and once for the new band.
+    pub fn credit_split(&mut self, config: &LeadershipConfig) {
+        if self.open() {
+            self.from_splits += config.practice_per_split;
+        }
+    }
+
+    /// `hexes` stepped this turn while following a herd.
+    pub fn credit_herd_hexes(&mut self, config: &LeadershipConfig, hexes: u32) {
+        if self.open() {
+            self.from_herd += f64::from(hexes) * config.practice_per_herd_hex;
+        }
+    }
+
+    /// The band now stands in settlement stage `stage_index`; each stage above the highest already
+    /// paid is paid, so reaching two at once pays both and regrowing pays nothing.
+    pub fn credit_stages(&mut self, config: &LeadershipConfig, stage_index: u32) {
+        if self.open() && stage_index > self.stages_paid {
+            self.from_stages +=
+                f64::from(stage_index - self.stages_paid) * config.practice_per_stage_reached;
+            self.stages_paid = stage_index;
         }
     }
 
     /// Whether the band has banked enough practice and has no leader yet.
     fn ready(&self, config: &LeadershipConfig) -> bool {
-        self.leader.is_none() && self.practice >= config.practice_threshold
+        self.open() && self.practice() >= config.practice_threshold
     }
 
     /// Give the band its leader if it is ready. `axis_value` is the band's own
@@ -187,28 +202,48 @@ pub fn emergence_entry(
     .with_band(band)
 }
 
-/// **Give every ready band its leader.** Runs after labor (which also follows the expeditions) in
-/// the same turn, so a success credited this turn can make a leader this turn.
+/// **Bank this turn's passive practice, then give every ready band its leader.** Runs right after
+/// `advance_labor_allocation` in the same turn, so a build finished this turn counts this turn.
 ///
-/// A band with no culture layer yet waits: the kind is fixed forever at emergence, so it is not
-/// read off a default. Bands are visited in id order so the feed order is deterministic.
+/// Two sources are read here off the band's state: the hexes it walked following a herd
+/// (`HerdFollowSteps`, which `advance_band_movement` filled earlier this turn and `mobility_tick`
+/// drains later -- this system is ordered between the two, so it reads the same measure the mobility
+/// score does without recomputing it) and the settlement stage its current size stands in.
+///
+/// A band with no culture layer yet banks but waits to emerge: the kind is fixed forever, so it is
+/// not read off a default. Bands are visited in id order so the feed order is deterministic.
 #[allow(clippy::too_many_arguments)] // Bevy system parameters require explicit resource access
 pub fn advance_leadership(
     tick: Res<SimulationTick>,
     config: Res<LeadershipConfigHandle>,
     names: Res<LeaderNameCatalogHandle>,
     sim_config: Res<SimulationConfig>,
+    stage_config: Res<SettlementStageConfigHandle>,
     culture: Res<CultureManager>,
+    follow_steps: Option<Res<HerdFollowSteps>>,
     mut event_log: ResMut<CommandEventLog>,
     mut bands: Query<(&BandId, &PopulationCohort, &mut BandLeadership), With<ResidentBand>>,
 ) {
     let config = config.get();
-    let mut ready: Vec<_> = bands
+    let stages = stage_config.get();
+    let mut open: Vec<_> = bands
         .iter_mut()
-        .filter(|(_, _, leadership)| leadership.ready(&config))
+        .filter(|(_, _, leadership)| leadership.leader.is_none())
         .collect();
-    ready.sort_by_key(|(band, _, _)| **band);
-    for (band, cohort, leadership) in ready.iter_mut() {
+    open.sort_by_key(|(band, _, _)| **band);
+    for (band, cohort, leadership) in open.iter_mut() {
+        if let Some(steps) = follow_steps.as_deref() {
+            leadership.credit_herd_hexes(&config, steps.hexes_of(**band));
+        }
+        let inputs = SettlementStageInputs { size: cohort.size };
+        if let Some(stage) = resolve_settlement_stage(&inputs, &stages.stages) {
+            if let Some(index) = stages.stages.iter().position(|def| def.id == stage.id) {
+                leadership.credit_stages(&config, index as u32);
+            }
+        }
+        if !leadership.ready(&config) {
+            continue;
+        }
         let Some(layer) = culture.band_layer_by_owner(CultureOwner::from_band(**band)) else {
             continue;
         };
@@ -238,6 +273,14 @@ mod tests {
         assert_eq!(LeaderKind::for_axis_value(0.4), LeaderKind::ElderCouncil);
     }
 
+    /// A leadership record with `practice` banked from builds.
+    fn banked(practice: f64) -> BandLeadership {
+        BandLeadership {
+            from_builds: practice,
+            ..BandLeadership::default()
+        }
+    }
+
     #[test]
     fn a_leader_emerges_once_at_the_threshold_and_never_again() {
         let config = config();
@@ -245,7 +288,7 @@ mod tests {
         assert!(leadership
             .emerge(&config, -1.0, 1, || "Orrin".into())
             .is_none());
-        leadership.credit(config.practice_threshold);
+        leadership = banked(config.practice_threshold);
         let leader = leadership
             .emerge(&config, -1.0, 5, || "Orrin".into())
             .expect("threshold reached");
@@ -258,43 +301,41 @@ mod tests {
         assert_eq!(leadership.leader, Some(leader));
     }
 
-    fn fight(fought: bool, brought_down: f32) -> HuntFight {
-        HuntFight {
-            brought_down,
-            expected_brought_down: brought_down,
-            casualties: Default::default(),
-            fought,
-            wounds: Default::default(),
-            strike_charges: Vec::new(),
-        }
-    }
-
-    /// A species the shipped roster flags `big_game`, and one it does not.
-    const BIG_GAME: &str = "Wild Aurochs";
-    const SMALL_GAME: &str = "Red Deer";
-
     #[test]
-    fn a_fought_big_game_kill_credits_one_quantum_per_hunt() {
-        let (config, fauna) = (config(), FaunaConfig::builtin());
+    fn the_sources_sum_to_the_practice() {
+        let config = config();
         let mut leadership = BandLeadership::default();
-        // Three animals down in one hunt is still ONE quantum.
-        leadership.credit_big_game_hunt(&config, &fauna, BIG_GAME, &fight(true, 3.0));
-        assert_eq!(leadership.practice, config.practice_per_big_game_kill);
+        leadership.credit_split(&config);
+        leadership.credit_herd_hexes(&config, 4);
+        leadership.credit_stages(&config, 1);
+        assert_eq!(leadership.from_splits, config.practice_per_split);
+        assert_eq!(leadership.from_herd, 4.0 * config.practice_per_herd_hex);
+        assert_eq!(leadership.from_stages, config.practice_per_stage_reached);
+        assert_eq!(
+            leadership.practice(),
+            leadership.from_builds
+                + leadership.from_splits
+                + leadership.from_herd
+                + leadership.from_stages
+        );
     }
 
     #[test]
-    fn a_hunt_that_is_not_a_fought_big_game_kill_credits_nothing() {
-        let (config, fauna) = (config(), FaunaConfig::builtin());
+    fn each_stage_pays_once_and_two_at_once_pay_both() {
+        let config = config();
         let mut leadership = BandLeadership::default();
-        // Not big game.
-        leadership.credit_big_game_hunt(&config, &fauna, SMALL_GAME, &fight(true, 2.0));
-        // A pen slaughter is not a fight.
-        leadership.credit_big_game_hunt(&config, &fauna, BIG_GAME, &fight(false, 2.0));
-        // A fight that brought nothing down has not landed its kill.
-        leadership.credit_big_game_hunt(&config, &fauna, BIG_GAME, &fight(true, 0.0));
-        // A species the table cannot resolve is not big game.
-        leadership.credit_big_game_hunt(&config, &fauna, "Unknown Beast", &fight(true, 1.0));
-        assert_eq!(leadership.practice, 0.0);
+        leadership.credit_stages(&config, 0);
+        assert_eq!(leadership.from_stages, 0.0, "the first stage is never paid");
+        leadership.credit_stages(&config, 1);
+        assert_eq!(leadership.from_stages, config.practice_per_stage_reached);
+        // Shrinking and regrowing into the same stage pays nothing more.
+        leadership.credit_stages(&config, 0);
+        leadership.credit_stages(&config, 1);
+        assert_eq!(leadership.from_stages, config.practice_per_stage_reached);
+        // Jumping two stages at once pays each.
+        let mut jumped = BandLeadership::default();
+        jumped.credit_stages(&config, 2);
+        assert_eq!(jumped.from_stages, 2.0 * config.practice_per_stage_reached);
     }
 
     #[test]
@@ -309,24 +350,25 @@ mod tests {
                 .unwrap_or_else(|| panic!("the shipped ladder has a {verb} rung"));
             let mut leadership = BandLeadership::default();
             leadership.credit_directed_build(&config, rung);
-            leadership.practice
+            leadership.practice()
         };
-        for verb in ["cultivate", "tame", "corral"] {
+        for verb in ["cultivate", "tame"] {
             assert_eq!(credited(verb), config.practice_per_directed_build, "{verb}");
         }
-        for verb in ["sow", "grade", "pave"] {
+        for verb in ["corral", "sow", "grade", "pave"] {
             assert_eq!(credited(verb), 0.0, "{verb} is not directed work");
         }
     }
 
     #[test]
-    fn practice_stops_accruing_once_there_is_a_leader() {
+    fn nothing_accrues_once_there_is_a_leader() {
         let config = config();
-        let mut leadership = BandLeadership::default();
-        leadership.credit(config.practice_threshold);
+        let mut leadership = banked(config.practice_threshold);
         leadership.emerge(&config, 0.0, 1, || "Orrin".into());
-        let banked = leadership.practice;
-        leadership.credit(1.0);
-        assert_eq!(leadership.practice, banked);
+        let frozen = leadership.clone();
+        leadership.credit_split(&config);
+        leadership.credit_herd_hexes(&config, 9);
+        leadership.credit_stages(&config, 2);
+        assert_eq!(leadership, frozen);
     }
 }

@@ -266,7 +266,6 @@
       "feed_channel": "corral",
       "completed_line": "Corralled {id} at ({x}, {y})",
       "verb": "corral",
-      "directed_work": true,
       "_comment_unlock_knowledge": "THE §4.3 RESHUFFLE (slice 4): `herding` -> `penning`. Rung 3 is gated on the knowledge rung 2 TEACHES, so you cannot pen a herd until you have kept tamed ones. Herding now gates `tame` alone. The `extend_pen` command rides this same rung record, so a fence ring is gated on Penning too — a ring is the same fencing labor at the same price, and it must never drift from the initial build.",
       "unlock_knowledge": "penning",
       "_comment_earns_knowledge": "FLORA ROSTER F3 (docs/plan_flora_roster.md §5.2), a config edit: working a PENNED herd teaches Foddering (FODDERING_DISCOVERY_ID 2007) — 'you learn to hay a herd by keeping one'. Foddering is NOT a new rung with a verb; it only unlocks a pen's ability to draw the band's FODDER store as delivered graze-flow (the feed term + the K_pen fodder term). Read through `RungDef::knowledge_accrual` off the rung the herd stands on, exactly like every other earned knowledge. A rung-3 source is TENDED rather than drawn from, so its keeper learns at the ladder's stated pace whatever floor the assignment names — the floor axis has collapsed there (intensification::MANAGED_SOURCE_FLOOR). (`selective_breeding`, rung 4's lesson, is still parked — one earn slot per rung, and F3 spends this one.)",

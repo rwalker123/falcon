@@ -1605,6 +1605,12 @@ table PopulationCohortState {
   // leader.
   leadershipPractice:float = 0;
   leadershipThreshold:float = 0;
+  // `leadershipPractice` split by source, so the client can draw the bar as a split bar. They sum to
+  // `leadershipPractice`.
+  leadershipFromBuilds:float = 0;
+  leadershipFromSplits:float = 0;
+  leadershipFromHerd:float = 0;
+  leadershipFromStages:float = 0;
 }
 
 // An amount of one material: a recipe input per PASS (the bench's material efficiency already

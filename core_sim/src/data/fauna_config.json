@@ -19,7 +19,6 @@
     "mammoth": {
       "keeping": "flesh",
       "display_name": "Thunder Mammoths",
-      "big_game": true,
       "plural": "mammoths",
       "adjective": "mammoth",
       "size_class": "migratory",
@@ -241,7 +240,6 @@
     "aurochs": {
       "keeping": "flesh",
       "display_name": "Wild Aurochs",
-      "big_game": true,
       "plural": "aurochs",
       "adjective": "aurochs",
       "size_class": "big",

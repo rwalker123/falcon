@@ -1249,6 +1249,10 @@ fn create_populations<'a>(
                     leaderKind: cohort.leader_kind,
                     leadershipPractice: cohort.leadership_practice,
                     leadershipThreshold: cohort.leadership_threshold,
+                    leadershipFromBuilds: cohort.leadership_from_builds,
+                    leadershipFromSplits: cohort.leadership_from_splits,
+                    leadershipFromHerd: cohort.leadership_from_herd,
+                    leadershipFromStages: cohort.leadership_from_stages,
                 },
             )
         })
@@ -2109,6 +2113,10 @@ fn decode_population(
         leader_kind: cohort.leaderKind(),
         leadership_practice: cohort.leadershipPractice(),
         leadership_threshold: cohort.leadershipThreshold(),
+        leadership_from_builds: cohort.leadershipFromBuilds(),
+        leadership_from_splits: cohort.leadershipFromSplits(),
+        leadership_from_herd: cohort.leadershipFromHerd(),
+        leadership_from_stages: cohort.leadershipFromStages(),
     })
 }
 

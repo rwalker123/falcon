@@ -1862,6 +1862,18 @@ pub struct PopulationCohortState {
     /// The practice a leader emerges at, so a client can say "N of M". Appended last.
     #[serde(default)]
     pub leadership_threshold: f32,
+    /// `leadership_practice` from finished Cultivate and Tame builds. Appended last.
+    #[serde(default)]
+    pub leadership_from_builds: f32,
+    /// ...from commanded band splits. Appended last.
+    #[serde(default)]
+    pub leadership_from_splits: f32,
+    /// ...from hexes walked following a herd. Appended last.
+    #[serde(default)]
+    pub leadership_from_herd: f32,
+    /// ...from settlement stages reached. Appended last.
+    #[serde(default)]
+    pub leadership_from_stages: f32,
 }
 
 /// **An amount of one material** — a recipe input per pass ([`KitNeedRecipeState::inputs`], the

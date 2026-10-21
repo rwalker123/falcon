@@ -148,7 +148,7 @@
     "id": "leadership.chief_rises",
     "tier": "beat",
     "soul": {
-      "question": "Work that goes well wants someone to answer for it, and one of us has begun to."
+      "question": "There came a size past which everyone just knowing what to do stopped working, and one of us has begun to keep track."
     },
     "when": {
       "all": [
@@ -172,8 +172,8 @@
           ]
         },
         "voice": {
-          "mythic": "The work went well enough, often enough, that {leader.name} stood up in the middle of it, and we found we had all been waiting for someone to.",
-          "warm": "The work's gone well enough, often enough, that {leader.name} started telling us where to stand, and none of us minded."
+          "mythic": "We had grown too many, and spread too wide, and walked too far for everyone to simply know what to do, so {leader.name} began to keep the count of us.",
+          "warm": "There got to be too many of us, too spread out and too far from where we started, for everyone to just know what to do, so {leader.name} started keeping track."
         }
       }
     ],
@@ -186,7 +186,7 @@
     "id": "leadership.council_forms",
     "tier": "beat",
     "soul": {
-      "question": "Work that goes well wants someone to answer for it, and we would rather it were several of us."
+      "question": "There came a size past which everyone just knowing what to do stopped working, and we would rather the keeping were shared."
     },
     "when": {
       "all": [
@@ -210,8 +210,8 @@
           ]
         },
         "voice": {
-          "mythic": "No one rose above the rest; the elders sat down together before the work, and {leader.name} is the one who speaks for them.",
-          "warm": "Nobody's in charge, exactly, but the elders sit down together before the work now, and {leader.name} is the one who speaks for them."
+          "mythic": "We had grown too many, and spread too wide, for everyone to simply know what to do, so the elders began to sit together, and {leader.name} is the one who speaks for them.",
+          "warm": "There got to be too many of us, too spread out, for everyone to just know what to do, so the elders started meeting, and {leader.name} speaks for them."
         }
       }
     ],
