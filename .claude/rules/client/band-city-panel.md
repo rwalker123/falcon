@@ -90,17 +90,25 @@ command center**: shown whenever ≥1 player band exists, always displaying a
   answers `""` when neither resolves, so both paths produce the identical header. That split is
   exactly what the harness pair `band_panel_people` (snapshot path) / `band_panel_people_map_path`
   (map path) exists to keep separable — a fixture reached only one way cannot see it.
-  **THE HEADER'S SECOND LINE ALSO NAMES WHO LEADS THE BAND** (#859): `(71, 18) · led by Chief Orrin`,
-  `· led by the elders' council — Orrin speaks`, or `· no chief yet`. The wire gives `leader_name`,
-  `leader_kind` (0 none / 1 chief / 2 elder council), `leadership_practice` and `leadership_threshold`;
-  `HudFormat.band_leader_phrase` / `band_header_line` compose the line and `BandPanelController` passes
-  it as the same preformatted `position_label`. A band with no leader AND no threshold (a foreign
-  cohort carries neither) adds nothing. `no chief yet` carries a hover through `set_header`'s
-  `position_tooltip` (`HudFormat.band_leader_tooltip`): "N of M" is practice floored (and capped at the
-  threshold) over the threshold rounded, both whole numbers. The label takes the mouse only while a
-  tooltip is set. Harness frames: `leader_chief`, `leader_council`, `leader_none` in `band_expedition`.
-  The event feed's `leader_emerged` is Notable in `hud_event_vocab.gd`; its `name=` is a hidden key
-  and `EventDockPanel.detail_phrase` drops the continuation words of any hidden value (`name=Orrin II`).
+  **THE HEADER ALSO SHOWS WHO LEADS THE BAND, AND HOW FAR IT IS FROM HAVING ONE** (#859). The wire gives
+  `leader_name`, `leader_kind` (0 none / 1 chief / 2 elder council), `leadership_threshold` (10),
+  `leadership_practice` and its four parts `leadership_from_builds` / `_splits` / `_herd` / `_stages`
+  (3 per finished Cultivate or Tame, 3 per player-ordered split credited to both bands, 1 per hex walked
+  following a herd, 5 the first time a settlement stage is reached; the sum freezes once a leader
+  exists). With a leader the sub line gains ` · led by Chief Orrin` or ` · led by the elders' council —
+  Orrin speaks` (`HudFormat.band_leader_phrase` / `band_header_line`) and the bar is hidden. With none, a
+  slim split bar sits under the sub line with the label `Chief 7 / 10` (practice floored and capped at
+  the threshold, whole numbers): four segments in order builds / splits / herd / stages (green / blue /
+  amber / cyan, `HudFormat.chief_source_colors`) filling toward the threshold, the remainder an empty
+  `LINE_SOFT` cell. A zero part draws no cell. `HudFormat.band_chief_progress` answers `{}` (row hidden)
+  for a band with a leader or a threshold of 0 (foreign cohort), and the faction page, which passes
+  none. `set_header`'s `chief_progress` argument carries it; the panel never reads a band dict. The row
+  hover is the headline "A band gains a leader once it does enough work that needs an organiser." and one
+  line of per-source points. There is no `no chief yet` text. Harness frames `leader_partial`,
+  `leader_empty`, `leader_chief`, `leader_council` in `band_expedition` assert the label and each cell's
+  points (`BandCityPanel.CHIEF_POINTS_META`). The event feed's `leader_emerged` is Notable in
+  `hud_event_vocab.gd`; its `name=` is a hidden key and `EventDockPanel.detail_phrase` drops the
+  continuation words of any hidden value (`name=Orrin II`).
   **THE MARKER IS A STRUCTURAL COPY OF THE COHORT — `entry.duplicate()` plus declared stamps.** It was
   a hand-listed literal naming 56 of the cohort's keys, and it leaked THREE times: `hunt_mode`, then
   `working_age`/`idle_workers`, then the Minimal TOE's six, which made a band's **`Kit` row disappear**

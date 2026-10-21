@@ -8,7 +8,7 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 164
+const EXPECTED_CHECKPOINTS := 168
 
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 const ForageFx := preload("res://tools/ui_preview/fixtures_forage.gd")
@@ -2057,9 +2057,10 @@ func _hay_ledger_states() -> void:
 	h._hud.clear_selection()
 	await h._settle()
 
-	# State leader-header -- **WHO SPEAKS FOR THE BAND, in the header's sub line** (#859): a chief, an
-	# elders' council with its speaker, and no leader (practice 2 of 3), each through the real
-	# selection path into a docked panel. A band with no threshold (foreign) must add nothing.
+	# State leader-header -- **WHO LEADS THE BAND, and how far it is from having one** (#859): a
+	# partial bar with mixed sources (Chief 7 / 10), an empty bar, a chief and an elders' council, each
+	# through the real selection path into a docked panel. The bar's label and its cells' points are
+	# read off the panel's own controls; the bar must be hidden once a leader exists.
 	var leader_panel: BandCityPanel = h.BAND_CITY_PANEL_SCENE.instantiate()
 	h.add_child(leader_panel)
 	await h.get_tree().process_frame
@@ -2069,14 +2070,25 @@ func _hay_ledger_states() -> void:
 	leader_panel.set_dock(SIDE_RIGHT)
 	leader_panel.set_active_tab(BandCityPanel.ZONE_BAND)
 	h._hud.set_band_city_panel(leader_panel)
+	# Per case: frame name, band fields, the header line's tail, the bar's label ("" = bar hidden), and
+	# the points of each drawn cell (builds / splits / herd / stages, then the remainder).
 	var leader_cases := [
-		["leader_chief", {"leader_name": "Orrin", "leader_kind": 1,
-			"leadership_practice": 3.0, "leadership_threshold": 3.0}, "led by Chief Orrin"],
-		["leader_council", {"leader_name": "Orrin", "leader_kind": 2,
-			"leadership_practice": 3.0, "leadership_threshold": 3.0},
-			"led by the elders' council — Orrin speaks"],
-		["leader_none", {"leader_name": "", "leader_kind": 0,
-			"leadership_practice": 2.0, "leadership_threshold": 3.0}, "no chief yet"],
+		["leader_partial", {"leader_name": "", "leader_kind": 0, "leadership_practice": 7.0,
+			"leadership_threshold": 10.0, "leadership_from_builds": 3.0,
+			"leadership_from_splits": 3.0, "leadership_from_herd": 1.0,
+			"leadership_from_stages": 0.0}, "", "Chief 7 / 10", [3.0, 3.0, 1.0, 3.0]],
+		["leader_empty", {"leader_name": "", "leader_kind": 0, "leadership_practice": 0.0,
+			"leadership_threshold": 10.0, "leadership_from_builds": 0.0,
+			"leadership_from_splits": 0.0, "leadership_from_herd": 0.0,
+			"leadership_from_stages": 0.0}, "", "Chief 0 / 10", [10.0]],
+		["leader_chief", {"leader_name": "Orrin", "leader_kind": 1, "leadership_practice": 10.0,
+			"leadership_threshold": 10.0, "leadership_from_builds": 6.0,
+			"leadership_from_splits": 3.0, "leadership_from_herd": 1.0,
+			"leadership_from_stages": 0.0}, "led by Chief Orrin", "", []],
+		["leader_council", {"leader_name": "Orrin", "leader_kind": 2, "leadership_practice": 10.0,
+			"leadership_threshold": 10.0, "leadership_from_builds": 0.0,
+			"leadership_from_splits": 0.0, "leadership_from_herd": 0.0,
+			"leadership_from_stages": 10.0}, "led by the elders' council — Orrin speaks", "", []],
 	]
 	for leader_case in leader_cases:
 		var leader_band := BandFx.band_fixture()
@@ -2085,12 +2097,24 @@ func _hay_ledger_states() -> void:
 		h._hud.show_unit_selection(leader_band)
 		await h._settle()
 		await h._save(String(leader_case[0]))
-		h._assert_hud("header sub line reads '%s'" % leader_case[2],
-			HudFormat.band_header_line("(1, 2)", leader_band).ends_with(String(leader_case[2])))
-	h._assert_hud("no-chief tooltip states N of M as whole numbers",
-		HudFormat.band_leader_tooltip(leader_cases[2][1]).contains("2 of 3"))
-	h._assert_hud("a band with no threshold (foreign) adds nothing to the header",
-		HudFormat.band_header_line("(1, 2)", {}) == "(1, 2)")
+		var tail := String(leader_case[2])
+		var header_line := HudFormat.band_header_line("(1, 2)", leader_band)
+		h._assert_hud("%s: sub line %s" % [leader_case[0], "ends '%s'" % tail if tail != "" else "is the bare position"],
+			header_line.ends_with(tail) if tail != "" else header_line == "(1, 2)")
+		var want_label := String(leader_case[3])
+		var drawn_points: Array = []
+		for cell in leader_panel._chief_bar.get_children():
+			drawn_points.append(float(cell.get_meta(BandCityPanel.CHIEF_POINTS_META)))
+		h._assert_hud("%s: chief bar %s" % [leader_case[0], "reads '%s' %s" % [want_label, leader_case[4]] if want_label != "" else "is hidden"],
+			(not leader_panel._chief_row.visible) if want_label == ""
+			else (leader_panel._chief_row.visible and leader_panel._chief_label.text == want_label
+				and drawn_points == leader_case[4]))
+	var tip: String = HudFormat.band_chief_progress(leader_cases[0][1]).get("tooltip", "")
+	h._assert_hud("the bar's tooltip names every source with its points",
+		tip.contains("Cultivate or Tame: 3") and tip.contains("Splits: 3")
+		and tip.contains("Following a herd: 1") and tip.contains("Settlement stages: 0"))
+	h._assert_hud("a band with no threshold (foreign) shows no bar and no leader text",
+		HudFormat.band_chief_progress({}).is_empty() and HudFormat.band_header_line("(1, 2)", {}) == "(1, 2)")
 	h._hud.set_band_city_panel(null)
 	leader_panel.queue_free()
 	h._hud._band_labor._player_bands = []

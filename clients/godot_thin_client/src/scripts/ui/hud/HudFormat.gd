@@ -102,8 +102,16 @@ const LEADER_KIND_ELDER_COUNCIL := 2
 const BAND_HEADER_LEADER_SEPARATOR := " · "
 const BAND_HEADER_CHIEF_FORMAT := "led by Chief %s"
 const BAND_HEADER_COUNCIL_FORMAT := "led by the elders' council — %s speaks"
-const BAND_HEADER_NO_CHIEF := "no chief yet"
-const BAND_HEADER_NO_CHIEF_TOOLTIP_FORMAT := "The band accepts a leader once directed work succeeds: %d of %d — finished Cultivate, Tame or Corral builds, and big-game hunts that land their kill."
+## **THE CHIEF-PROGRESS BAR** (#859) under the header's sub line, while a band has no leader. Four
+## sources in this order, each a distinct hue; the remainder to the threshold is the empty cell.
+const CHIEF_LABEL_FORMAT := "Chief %d / %d"
+const CHIEF_TOOLTIP_HEADLINE := "A band gains a leader once it does enough work that needs an organiser."
+const CHIEF_TOOLTIP_SOURCE_FORMAT := "%s: %d"
+const CHIEF_TOOLTIP_SOURCE_SEPARATOR := " · "
+## `{key, label, color}` per source: the wire key it reads, the words the tooltip uses.
+const CHIEF_SOURCE_KEYS := ["leadership_from_builds", "leadership_from_splits",
+    "leadership_from_herd", "leadership_from_stages"]
+const CHIEF_SOURCE_LABELS := ["Cultivate or Tame", "Splits", "Following a herd", "Settlement stages"]
 
 ## THE FACTION PAGE's header identity (issue #450), beside the band header vocabulary above because
 ## the two fill the SAME three header slots and must be read together. The panel's header takes a
@@ -205,30 +213,18 @@ static func band_name(entry: Dictionary) -> String:
         return name
     return HudExpeditionVocab.PARTY_NAME_FORMAT % [name, HudExpeditionVocab.PARTY_SHORT_LABELS[mission]]
 
-## The leader clause for the header sub line ("led by Chief Orrin"), `""` when there is nothing to
-## say. A band with no leader says "no chief yet" -- but only when it carries a practice threshold,
-## because a foreign band's cohort carries neither a leader nor a threshold (0) and must show nothing.
+## The leader clause for the header sub line ("led by Chief Orrin"), `""` when the band has no
+## leader (the chief-progress bar speaks for it, see `band_chief_progress`).
 static func band_leader_phrase(entry: Dictionary) -> String:
     var leader_name := String(entry.get("leader_name", "")).strip_edges()
+    if leader_name == "":
+        return ""
     match int(entry.get("leader_kind", LEADER_KIND_NONE)):
         LEADER_KIND_CHIEF:
-            return BAND_HEADER_CHIEF_FORMAT % leader_name if leader_name != "" else ""
+            return BAND_HEADER_CHIEF_FORMAT % leader_name
         LEADER_KIND_ELDER_COUNCIL:
-            return BAND_HEADER_COUNCIL_FORMAT % leader_name if leader_name != "" else ""
-    if float(entry.get("leadership_threshold", 0.0)) > 0.0:
-        return BAND_HEADER_NO_CHIEF
+            return BAND_HEADER_COUNCIL_FORMAT % leader_name
     return ""
-
-## The "no chief yet" hover: practice banked out of the threshold, whole numbers. `""` for a band
-## with a leader or without a threshold.
-static func band_leader_tooltip(entry: Dictionary) -> String:
-    if int(entry.get("leader_kind", LEADER_KIND_NONE)) != LEADER_KIND_NONE:
-        return ""
-    var threshold := float(entry.get("leadership_threshold", 0.0))
-    if threshold <= 0.0:
-        return ""
-    var practice := minf(float(entry.get("leadership_practice", 0.0)), threshold)
-    return BAND_HEADER_NO_CHIEF_TOOLTIP_FORMAT % [int(floor(practice)), int(round(threshold))]
 
 ## The header sub line's position clause joined to the leader clause.
 static func band_header_line(position_label: String, entry: Dictionary) -> String:
@@ -238,6 +234,38 @@ static func band_header_line(position_label: String, entry: Dictionary) -> Strin
     if position_label == "":
         return phrase
     return position_label + BAND_HEADER_LEADER_SEPARATOR + phrase
+
+## The segment hues, in `CHIEF_SOURCE_KEYS` order. Read at call time because `HudStyle`'s palette is
+## installed at runtime.
+static func chief_source_colors() -> Array:
+    return [HudStyle.HEALTHY, HudStyle.READY, HudStyle.WARN, HudStyle.SIGNAL]
+
+## **PROGRESS TOWARD A CHIEF**, or `{}` when there is nothing to draw: the band already has a leader,
+## or carries no threshold (a foreign cohort). Otherwise `{label, tooltip, segments, remainder,
+## total}`: `segments` is `[{key, points, color}]` in source order, `remainder` the points still to
+## go (the empty cell), `total` the threshold. The label's number is practice floored and capped at
+## the threshold, whole numbers.
+static func band_chief_progress(entry: Dictionary) -> Dictionary:
+    if int(entry.get("leader_kind", LEADER_KIND_NONE)) != LEADER_KIND_NONE:
+        return {}
+    var threshold := float(entry.get("leadership_threshold", 0.0))
+    if threshold <= 0.0:
+        return {}
+    var practice := minf(float(entry.get("leadership_practice", 0.0)), threshold)
+    var colors := chief_source_colors()
+    var segments: Array = []
+    var lines: Array[String] = []
+    for i in range(CHIEF_SOURCE_KEYS.size()):
+        var points := float(entry.get(CHIEF_SOURCE_KEYS[i], 0.0))
+        segments.append({"key": CHIEF_SOURCE_KEYS[i], "points": points, "color": colors[i]})
+        lines.append(CHIEF_TOOLTIP_SOURCE_FORMAT % [CHIEF_SOURCE_LABELS[i], int(round(points))])
+    return {
+        "label": CHIEF_LABEL_FORMAT % [int(floor(practice)), int(round(threshold))],
+        "tooltip": CHIEF_TOOLTIP_HEADLINE + "\n" + CHIEF_TOOLTIP_SOURCE_SEPARATOR.join(lines),
+        "segments": segments,
+        "remainder": maxf(threshold - practice, 0.0),
+        "total": threshold,
+    }
 
 ## **A BAND WITH ITS PEOPLE** -- `Netherford, Lothari` -- or the people alone when no band is named
 ## (a builder the roster does not hold, or the wire's 0).
