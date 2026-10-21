@@ -4395,8 +4395,8 @@ still netted by the band's total.
 `rejoining_food`, also in `ROW_HOMEWARD_KEYS`, per row only). A far hunt/forage row whose source
 drifted inside work range keeps its party's walkers as members and they rejoin on landing. The row's
 `workers` ALREADY holds them, so `effective_idle` (`working_age - sum(workers) - bench - homeward`)
-subtracts them exactly once and the WORKFORCE bar keeps them in the row's segment (Hunt 4), never a
-"Walking home" segment: the band's `homeward_workers` now means plain walkers only. Nothing in the
+subtracts them exactly once and the working breakdown keeps them in the row's part (Hunt 4), never a
+"Walking home" part: the band's `homeward_workers` now means plain walkers only. Nothing in the
 client nets `rejoining_*` out of anything. `HudWorkVocab.row_rejoining_line` says
 `3 walking back with 2.40 food — here in 1 turn` (food clause only when `rejoining_food > 0`),
 appended after the row's `homeward_line` in `_work_row_party_lines_text`; the map's source list
@@ -4432,16 +4432,17 @@ useful part:
 
 | consumer | what it was doing | now |
 |---|---|---|
-| `BandPanelController._build_workforce_block` | segments summed to `working_age − builders` | a **`Build`** segment (`HudWorkVocab.WORKFORCE_KEY_BUILD`, `SIGNAL_DEEP`) beside Forage and Hunt, counted off the band's **`builders` ROLE** since §2.5 |
-| `FactionRollup._build_workforce_block` | the same hole one scale up | the same segment, the two bars being one chart at two scales. **Its `Roles` segment was missing the KEEPING pair as well** — the band zone's twin has counted them since they landed — so a faction keeping anything lost those hands off a chart that partitions the same `working_age` its header sums |
+| `HudBandLaborState.working_breakdown` (was the Workforce block) | segments summed to `working_age − builders` | a **`Build`** part of the working tooltip (`HudWorkVocab.WORKING_PART_BUILD`) beside Forage and Hunt, counted off the band's **`builders` ROLE** since §2.5 |
+| `FactionRollup._build_people_block` | the same hole one scale up | the same segment, the two bars being one chart at two scales. **Its `Roles` segment was missing the KEEPING pair as well** — the band zone's twin has counted them since they landed — so a faction keeping anything lost those hands off a chart that partitions the same `working_age` its header sums |
 | `BandPanelController._work_source_models` | admitted a row on `workers > 0`, so a source with ONLY builders left the board | **back to the take crew**, §2.5: there is no per-source build crew to admit a row on, and the queue that spends the pool is a list of its own (slice 7). The inspector's `N building` clause went with it |
 | `HudBandLaborState._effort_on` | sums the take crew alone | **unchanged, deliberately** — its readers ask *"is anybody HARVESTING this"*, and a builder harvests nothing |
 
-**The builders are their own SEGMENT rather than folded into Forage/Hunt**, for the reason the bench's
-is its own: those two name what a crew TAKES, `effective_idle` nets a builder out, and a bar whose
-segments are supposed to partition `working_age` must account for every hand it removes from Idle.
-`band_panel_preview`'s `_assert_people_matches_workforce` is what catches a missing one — it sums the
-RENDERED chips against `working_age`, so a bar short of the build segment fails by exactly its count.
+**The builders are their own PART rather than folded into Forage/Hunt**, for the reason the bench's
+is its own: those two name what a crew TAKES, `effective_idle` nets a builder out, and the working
+breakdown must account for every hand it removes from Idle. `band_panel_preview`'s
+`_assert_people_bar_is_one_bar` is what catches a missing one — it sums `working_breakdown`'s parts
+against `working_age − people_idle`, so a breakdown short of the build part fails by exactly its count.
+The chips summing to `size` cannot catch it: `working` is derived as `working_age − idle`.
 
 ### ONE crew is readable, and the sheet opens on it
 
@@ -5483,7 +5484,7 @@ spelled and never a raw count.
     **Idle** counts optimistically (`_effective_idle` = working-age − effective
     assigned, overlaying pending). **Reconciliation is turn-based:** each pending entry is tagged with the
     snapshot `turn` (header tick, set in `update_overlay`); `_reconcile_pending` (called from
-    `update_band_alerts` each snapshot) drops entries issued on an OLDER turn — a newer-turn snapshot is
+    `update_band_alerts` each snapshot, before the attention build) drops entries issued on an OLDER turn — a newer-turn snapshot is
     authoritative confirmation and cleanly absorbs server-side clamping (the snapshot shows the real
     count). Pending is emitted to MapView via `labor_pending_changed` → `set_labor_pending`.
   - **Selected-band map highlights** (`BandOverlayRenderer.draw_band_work_highlights`, drawn when a player band
@@ -7115,8 +7116,8 @@ before the pen exists, while a patch owes nobody anything until it is managed. A
 improvement composed / under way?" test gets exactly this case wrong.
 
 **DISPLAY ONLY.** The command is still `assign_labor` with kind `forage`; `LABOR_KIND_FORAGE`, the
-work filter key, the `WORKFORCE` bar's `Forage` segment and every wire name are untouched. The two
-aggregate surfaces that span mixed rungs — the workforce bar and the work-board filter chip — keep
+work filter key, the working breakdown's `Forage` part and every wire name are untouched. The two
+aggregate surfaces that span mixed rungs — the working breakdown and the work-board filter chip — keep
 `Forage` for that reason: they name a category over both rungs, not a crew.
 
 **Frames + assertions.** `ui_preview` `plant_crew_wild` / `plant_crew_tended` / `plant_crew_field`

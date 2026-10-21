@@ -2334,11 +2334,11 @@ func _assert_bench_crew_is_not_idle() -> void:
 	# nets the bench out over a bar that never names it drops the crew off a chart whose segments are
 	# supposed to add up to the same workforce.
 	var hud_texts := _label_texts(h._hud)
-	h._assert_hud("crafting — the WORKFORCE head does not count the bench crew as idle",
-		hud_texts.has(HudWorkVocab.WORKFORCE_IDLE_FORMAT
-			% [BENCH_BOUND_WORKING_AGE - BENCH_CREW, BENCH_BOUND_WORKING_AGE]))
-	h._assert_hud("crafting — …and the bar names the crew it stopped counting",
-		hud_texts.has("%s %d" % [HudWorkVocab.WORKFORCE_KEY_BENCH, BENCH_CREW]))
+	h._assert_hud("crafting - the People bar's Idle chip does not count the bench crew as idle",
+		hud_texts.has("%s %d" % [HudWorkVocab.PEOPLE_KEY_IDLE, BENCH_BOUND_WORKING_AGE - BENCH_CREW]))
+	h._assert_hud("crafting - ...and the working segment's tooltip names the crew it counts",
+		_tooltips_contain(h._hud, HudWorkVocab.PEOPLE_WORKING_PART_FORMAT % [
+			HudWorkVocab.WORKING_PART_BENCH, BENCH_CREW]))
 
 ## The `disabled` state of the crew stepper's `−`/`+`, found by its face — the two are the only
 ## buttons in the panel wearing those single glyphs. `true` when no such button was found, which
@@ -2391,6 +2391,14 @@ func _label_with_text(node: Node, face: String) -> Label:
 		if found != null:
 			return found
 	return null
+
+func _tooltips_contain(node: Node, needle: String) -> bool:
+	if node is Control and (node as Control).tooltip_text.contains(needle):
+		return true
+	for child in node.get_children():
+		if _tooltips_contain(child, needle):
+			return true
+	return false
 
 func _label_texts(node: Node) -> Array:
 	var texts: Array = []

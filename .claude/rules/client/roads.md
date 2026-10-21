@@ -1750,7 +1750,7 @@ plant and animal webs resolve their steps, gates and knowledge off the same cata
 
 A `kind == "tile"` labor row (`HudConst.LABOR_KIND_TILE`, `branch` naming its ladder branch) is keyed per
 `(tile, branch)` through `HudBandLaborState.pending_key` (the branch rides the `material` slot) and
-reaches the Workforce bar's Groundwork slice. The Work tab draws it as a read-only row in the
+reaches the working breakdown's `Cutters` part. The Work tab draws it as a read-only row in the
 GROUNDWORK section (`BandPanelController._tile_source_models` / `_build_tile_row`): the branch's name
 from `ladder_branches`, the rung it stands on from `ladder_rungs` x `tile_improvements`
 (`HudRouteVocab.branch_name` / `rung_name_in`, humanised where the catalog has no word; with no
