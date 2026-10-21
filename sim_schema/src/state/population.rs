@@ -505,6 +505,27 @@ pub struct LaborAssignmentState {
     /// `LaborAssignment.branch`).
     #[serde(default)]
     pub branch: String,
+    /// **The player's Max on a staffed row** (#871), `0` = none. Appended last.
+    #[serde(default)]
+    pub max_workers: u32,
+    /// Hands needed to HOLD the source at the floor; `0` where nothing regrows. Appended last.
+    #[serde(default)]
+    pub hold_crew: u32,
+    /// Hands needed to REACH the floor; `0` at or under it. Appended last.
+    #[serde(default)]
+    pub reach_crew: u32,
+    /// The crew past which the take stops rising - pass 3's ceiling. Appended last.
+    #[serde(default)]
+    pub useful_crew: u32,
+    /// Of `workers`: keepers. `keepers + kitted + bare == workers` on a staffed row. Appended last.
+    #[serde(default)]
+    pub keepers_staffed: u32,
+    /// Of `workers`: hands holding a whole kit. Appended last.
+    #[serde(default)]
+    pub kitted_staffed: u32,
+    /// Of `workers`: bare hands. Appended last.
+    #[serde(default)]
+    pub bare_staffed: u32,
 }
 
 /// **ONE LINE OF ONE TAKE ROW'S TABLE OF EQUIPMENT** — a row of [`LaborAssignmentState::kit_toe`].

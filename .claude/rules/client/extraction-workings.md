@@ -761,13 +761,12 @@ not apply*) reads as `CUTTERS_UNCAPPED`. **There is no client quotient over the 
 `perWorkerBiomass` left anywhere**: `max_useful_cutters` is deleted, so a geared crew is measured
 against one ceiling on all three surfaces.
 
-⛔ **AND THE SHEET READS THE ROW'S FIGURE WHILE IT COMPOSES THAT ROW.** The curve's plateau and
-`useful_cutters` are the same rule but two evaluations, and they disagreed: a one-forester deadfall's
-Groundwork `+` greyed while the sheet on the same tile offered two. So where the sheet's floor and kit
-match the band's own `extract` row (`DrawerComposeController._composed_standing_row`), its cap is
-`published_useful_cutters` off that row; on any other composition the curve answers. The sheet's crew
-pool is the row's idle rule too — `source_crew_pool_extract` is `effective_idle` plus the effective
-crew here (`labor-ui.md` → "THE SHEET'S `+` AND THE ROW'S `+` READ ONE CEILING").
+⛔ **THE ROW'S `+` AND THE SHEET'S ARE RETIRED (#871).** A working's crew is the sim's (a read-only
+number and the keepers / kit / bare bar on the Groundwork row; the staffed snapshot row's `workers` on its
+sheet), so no control clamps a crew and `_composed_standing_row` and the row's `+` ceiling are gone. The
+sheet's forecast crew for a working the band does not yet cut is the curve's useful cutters
+(`curve_useful_cutters`) held to the pool and the player's Max; `source_crew_pool_extract` (`effective_idle`
+plus the crew already there) is that pool (`labor-ui.md` → "STAFFED SOURCES ON THE COMPOSE SHEETS").
 
 ⛔ **NEVER `workers_needed` FOR THE ROW'S `+`.** It was, for one release:
 `_workings_roster_max_useful` took `worked_crew_ceiling` (retired), which read `workers_needed`

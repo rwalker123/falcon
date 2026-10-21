@@ -1,6 +1,16 @@
 //! **THE CRAFTING BENCH IS A CANDIDATE IN THE SHEDDING ORDER** — the defect this file was opened
 //! for, and the rules that keep it one (`docs/plan_standing_upkeep.md` §2.9).
 //!
+//! # What #871 changed
+//!
+//! The bench is one of the crews the player sets **by hand**, and those are the only crews the shed
+//! walks now: a forage, hunt, extraction, tile or Roadwork row is staffed by the sim from what the
+//! hand-set crews leave (`core_sim::staffing`), so a source row is no longer a shed candidate at all.
+//! The bench therefore ranks beside the other hand-set roles - a spare scout goes first - and the
+//! three tests that ranked it against a SOURCE row (the bench thinned before the row that feeds the
+//! band, a `High` bench outliving a `Low` source, the bench's last hand going before a source was
+//! emptied) are deleted: there is no source row left for it to be ranked against.
+//!
 //! `BandBench` holds a crew out of the same pool `assign_labor` spends, but it is **not** a
 //! `LaborTarget` and not a row in `assignments` — deliberately, because *"make IS the assignment"*
 //! and a bench is not an in-range source. `LaborAllocation::normalize` walks `assignments`, so the
@@ -20,7 +30,7 @@ use core_sim::{
     advance_labor_allocation, build_test_app, scalar_from_f32, scalar_one, scalar_zero, BandBench,
     BandId, BenchOrder, DrawnInputs, DrawnMaterial, FactionId, GenerationId, LaborAllocation,
     LaborAssignment, LaborTarget, LocalStore, MoraleCause, PopulationCohort, ResidentBand, Scalar,
-    SourcePriority, StartingUnit, TileRegistry, DEFAULT_ESCAPEMENT_FLOOR,
+    SourcePriority, StartingUnit, TileRegistry,
 };
 
 const FACTION: FactionId = FactionId(0);
@@ -34,7 +44,7 @@ const CRAFTERS: u32 = 4;
 /// **The fixture's order count** — the shed never advances the bench, so any count would do; a long
 /// one says *"nothing here finishes an order"*.
 const ORDER_COUNT: u32 = 10;
-const GATHERERS: u32 = 3;
+const SCOUTS: u32 = 3;
 
 /// The tile the fixture band works and lives on.
 fn source_tile(app: &App) -> UVec2 {
@@ -47,7 +57,7 @@ fn source_tile(app: &App) -> UVec2 {
         .expect("worldgen seeded at least one forage patch")
 }
 
-/// A band with one worked Forage row and a staffed bench, sized to afford **exactly** both — so the
+/// A band with a standing scout crew and a staffed bench, sized to afford **exactly** both — so the
 /// pool it is holding is fully committed and any loss of people has to come off one of them.
 fn world_with_a_band_at_the_bench(bench_priority: SourcePriority) -> (App, Entity, UVec2) {
     let mut app = build_test_app();
@@ -66,7 +76,7 @@ fn world_with_a_band_at_the_bench(bench_priority: SourcePriority) -> (App, Entit
                 current_tile: tile,
                 size: 30,
                 children: scalar_zero(),
-                working: scalar_from_f32((GATHERERS + CRAFTERS) as f32),
+                working: scalar_from_f32((SCOUTS + CRAFTERS) as f32),
                 elders: scalar_zero(),
                 stores: LocalStore::new(),
                 morale: scalar_one(),
@@ -108,13 +118,10 @@ fn world_with_a_band_at_the_bench(bench_priority: SourcePriority) -> (App, Entit
                     party: None,
                     muster_crew: 0,
                     planned_crew: 0,
-                    target: LaborTarget::Forage {
-                        tile: source,
-                        floor: DEFAULT_ESCAPEMENT_FLOOR,
-                        species: None,
-                        take_species: core_sim::TakeSelection::EVERYTHING,
-                    },
-                    workers: GATHERERS,
+                    max_workers: Some(SCOUTS),
+                    staffing: Default::default(),
+                    target: LaborTarget::Scout,
+                    workers: SCOUTS,
                     kit: None,
                     priority: SourcePriority::default(),
                 }],
@@ -155,111 +162,60 @@ fn bench_crew(app: &App, band: Entity) -> u32 {
         .workers
 }
 
-fn gatherers(app: &App, band: Entity) -> u32 {
+fn scouts(app: &App, band: Entity) -> u32 {
     app.world
         .get::<LaborAllocation>(band)
         .expect("the fixture band keeps its allocation")
         .assignments
         .iter()
-        .find(|row| matches!(row.target, LaborTarget::Forage { .. }))
+        .find(|row| matches!(row.target, LaborTarget::Scout))
         .map_or(0, |row| row.workers)
 }
 
-/// **THE REPORTED DEFECT** — a band that loses people while it holds a staffed bench.
+/// **A BAND THAT LOSES PEOPLE SHEDS ITS SPARE SCOUTS BEFORE IT THINS ITS BENCH.**
 ///
-/// At equal priority the bench is the first thing thinned, and that is not a preference: a craft
-/// pays into **no** food, fodder or material account and carries no per-worker yield, so it ranks
-/// bottom on both of the levels the shed orders on. In a famine that is the right default, and it is
-/// exactly what the mark exists to override.
+/// Step 1 of the order is a scout - nothing is lost when the fog stops rolling back - and the bench
+/// is only a candidate at step 5, so the two hands the band lost come off the scouts and the crafters
+/// keep hammering. (The case the bench was made a candidate for - a starving band stripping every
+/// worked row while four crafters kept hammering - is the staffed rows' now: they are restaffed from
+/// the smaller pool, and the bench is a hand-set crew like a scout.)
 #[test]
-fn a_band_losing_people_thins_its_bench_before_the_row_that_feeds_it() {
+fn a_band_losing_people_sheds_a_spare_scout_before_it_thins_its_bench() {
     let (mut app, band, _source) = world_with_a_band_at_the_bench(SourcePriority::default());
     lose_people(&mut app, band, 2);
     app.world.run_system_once(advance_labor_allocation);
 
     assert_eq!(
-        bench_crew(&app, band),
-        CRAFTERS - 2,
-        "the two hands the band lost came off the bench — it was invisible to the shed, so a \
-         starving band used to strip every worked row while the crafters kept hammering"
+        scouts(&app, band),
+        SCOUTS - 2,
+        "the two hands the band lost came off the scouts"
     );
-    assert_eq!(
-        gatherers(&app, band),
-        GATHERERS,
-        "…and the row that feeds the band kept its crew"
-    );
-}
-
-/// **THE MARK IS WHAT DECIDES IT, NOT THE BENCH BEING A BENCH.** With the bench `High` and the row
-/// `Low`, the row gives instead — so the ranking above is an ordering the player controls and not a
-/// hard-wired preference for rows over crafts.
-#[test]
-fn a_high_marked_bench_outlives_a_low_marked_source_in_the_same_step() {
-    let (mut app, band, _source) = world_with_a_band_at_the_bench(SourcePriority::High);
-    {
-        let mut allocation = app
-            .world
-            .get_mut::<LaborAllocation>(band)
-            .expect("the fixture band keeps its allocation");
-        allocation.assignments[0].priority = SourcePriority::Low;
-    }
-    lose_people(&mut app, band, 1);
-    app.world.run_system_once(advance_labor_allocation);
-
     assert_eq!(
         bench_crew(&app, band),
         CRAFTERS,
-        "the bench the player marked High keeps its crew"
-    );
-    assert_eq!(
-        gatherers(&app, band),
-        GATHERERS - 1,
-        "…and the row they marked Low gives the hand, though it is the one that pays"
+        "…and the bench kept its crew"
     );
 }
 
-/// ⛔ **A `High` BENCH STILL STALLS BEFORE A `Low` SOURCE IS EMPTIED, AND THAT IS THE DESIGN.**
-///
-/// The bench's last hand is its own step, above the step that empties a source, because a stalled
-/// craft **ends nothing** — the recipe, the progress and the drawn pile all stand — where emptying a
-/// row drops it and takes its queued build with it. **The steps encode consequence; the mark orders
-/// candidates within a step.** It is the same rule already pinned for rows, where an unimproved
-/// `High` row is emptied before an improved `Normal` one is even a candidate.
-///
-/// Driven down to one hand each so neither is thinnable and the walk is past step 5 entirely.
+/// **A BENCH WITH NOTHING BESIDE IT IS THINNED, ONE HAND AT A TIME.**
 #[test]
-fn the_benchs_last_hand_goes_before_a_source_is_emptied_whatever_the_marks_say() {
-    let (mut app, band, _source) = world_with_a_band_at_the_bench(SourcePriority::High);
+fn a_bench_with_no_scouts_left_is_thinned_by_the_people_the_band_lost() {
+    let (mut app, band, _source) = world_with_a_band_at_the_bench(SourcePriority::default());
     {
-        let mut bench = app
-            .world
-            .get_mut::<BandBench>(band)
-            .expect("the fixture band keeps its bench");
-        bench.workers = 1;
         let mut allocation = app
             .world
             .get_mut::<LaborAllocation>(band)
             .expect("the fixture band keeps its allocation");
-        allocation.assignments[0].workers = 1;
-        allocation.assignments[0].priority = SourcePriority::Low;
-        let mut cohort = app
-            .world
-            .get_mut::<PopulationCohort>(band)
-            .expect("the fixture band keeps its cohort");
-        cohort.working = scalar_from_f32(2.0);
+        allocation.assignments.clear();
+        allocation.last_yields.clear();
     }
-    lose_people(&mut app, band, 1);
+    lose_people(&mut app, band, 1 + SCOUTS);
     app.world.run_system_once(advance_labor_allocation);
 
     assert_eq!(
         bench_crew(&app, band),
-        0,
-        "the bench stalls — its last hand goes at its own step, above the step that ends a row"
-    );
-    assert_eq!(
-        gatherers(&app, band),
-        1,
-        "…and the Low-marked source is untouched, because the step decided this and not the mark"
+        CRAFTERS - 1,
+        "the one hand the band lost beyond what the scouts held came off the bench"
     );
 }
 
@@ -292,18 +248,19 @@ fn a_stalled_bench_keeps_its_recipe_its_progress_and_the_pile_it_drew() {
             }],
         });
     }
-    // One row of one hand and a bench of one: the band can field one of them.
+    // A bench of one and nobody left to field it: the last hand goes and the job stalls.
     {
         let mut allocation = app
             .world
             .get_mut::<LaborAllocation>(band)
             .expect("the fixture band keeps its allocation");
-        allocation.assignments[0].workers = 1;
+        allocation.assignments.clear();
+        allocation.last_yields.clear();
         let mut cohort = app
             .world
             .get_mut::<PopulationCohort>(band)
             .expect("the fixture band keeps its cohort");
-        cohort.working = scalar_from_f32(1.0);
+        cohort.working = scalar_from_f32(0.0);
     }
     app.world.run_system_once(advance_labor_allocation);
 

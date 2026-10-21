@@ -326,6 +326,8 @@ fn spawn_the_farming_band(
                     party: None,
                     muster_crew: 0,
                     planned_crew: 0,
+                    max_workers: Some(gatherers + keepers),
+                    staffing: Default::default(),
                     target: LaborTarget::Forage {
                         tile: source,
                         floor: DEFAULT_ESCAPEMENT_FLOOR,
@@ -340,6 +342,8 @@ fn spawn_the_farming_band(
                     party: None,
                     muster_crew: 0,
                     planned_crew: 0,
+                    max_workers: Some(builders),
+                    staffing: Default::default(),
                     target: LaborTarget::Builders,
                     workers: builders,
                     kit: None,
@@ -774,6 +778,8 @@ fn spawn_the_herding_band(
                     party: None,
                     muster_crew: 0,
                     planned_crew: 0,
+                    max_workers: Some(hunters + keepers),
+                    staffing: Default::default(),
                     // **The food-peak floor, not the shipped default** — a `Tame` needs stock
                     // standing *above* the hunters' floor to accrue (`crew_is_working_the_source`),
                     // and the default floor sits high enough on this flock that the hunt holds it
@@ -792,6 +798,8 @@ fn spawn_the_herding_band(
                     party: None,
                     muster_crew: 0,
                     planned_crew: 0,
+                    max_workers: Some(A_STEADY_BUILD_POOL),
+                    staffing: Default::default(),
                     target: LaborTarget::Builders,
                     workers: A_STEADY_BUILD_POOL,
                     kit: None,

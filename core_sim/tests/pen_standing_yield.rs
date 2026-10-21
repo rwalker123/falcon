@@ -349,6 +349,8 @@ fn spawn_keeper(app: &mut App, herd_id: &str, tile: UVec2) -> Entity {
                         party: None,
                         muster_crew: 0,
                         planned_crew: 0,
+                        max_workers: Some(KEEPER_WORKERS + KEEPER_WORKERS),
+                        staffing: Default::default(),
                         target: LaborTarget::Hunt {
                             fauna_id: herd_id.to_string(),
                             floor: SUSTAIN_FLOOR,
@@ -365,6 +367,8 @@ fn spawn_keeper(app: &mut App, herd_id: &str, tile: UVec2) -> Entity {
                         party: None,
                         muster_crew: 0,
                         planned_crew: 0,
+                        max_workers: Some(BUILDERS),
+                        staffing: Default::default(),
                         target: LaborTarget::Builders,
                         workers: BUILDERS,
                         kit: None,
@@ -1143,7 +1147,20 @@ fn seed_the_hunt_row(app: &mut App, keeper: Entity, herd_id: &str) {
         &party,
         output_mult,
         workers,
-        core_sim::NO_HANDS,
+        // **The hands the herd's keeping leaves the cull** (#871): a staffed row's crew is sized to
+        // keep first, so the seed is quoted on the take hands left, exactly as the server's seed
+        // does - a quote that spent the whole crew on the cull would promise the keepers' share.
+        core_sim::crew_keep_hands(
+            core_sim::herd_crew_keeping_next_turn(
+                &herd,
+                &fauna,
+                &app.world.resource::<core_sim::LadderConfigHandle>().get(),
+                None,
+            ),
+            &equipment,
+            &band_kit,
+            workers,
+        ),
         floor,
         labor.yield_average_horizon_turns,
         labor.arrivals_horizon_turns,
@@ -1462,6 +1479,14 @@ fn a_far_pens_milk_and_fleece_are_in_its_caravan_forecast() {
             .default_kit(core_sim::KitJob::Hunt)
             .id()
             .to_string();
+        let staffed_crew = app
+            .world
+            .get::<LaborAllocation>(keeper)
+            .expect("the keeper keeps its allocation")
+            .assignments
+            .iter()
+            .find(|row| matches!(row.target, LaborTarget::Hunt { .. }))
+            .map_or(0, |row| row.workers);
         let answer = match core_sim::forecast_query::answer_forecast_query(
             &mut app.world,
             &sim_runtime::QueryPayload::WorkPartyForecast(sim_runtime::WorkPartyForecastQuery {
@@ -1471,7 +1496,9 @@ fn a_far_pens_milk_and_fleece_are_in_its_caravan_forecast() {
                     herd_id: id.clone(),
                 },
                 kit_id,
-                workers: KEEPER_WORKERS + KEEPER_WORKERS,
+                // **The crew the sim staffed on the row** (#871) - the quote is asked at the hands
+                // the row actually holds, which the staffing settles, not at a count the fixture names.
+                workers: staffed_crew,
                 floor: NOTHING_CULLED,
             }),
         ) {

@@ -1540,6 +1540,8 @@ mod tests {
                     party: None,
                     muster_crew: 0,
                     planned_crew: 0,
+                    max_workers: Some(10),
+                    staffing: Default::default(),
                     target: LaborTarget::Forage {
                         tile: UVec2::new(0, 0),
                         floor: 0.5,
@@ -1554,6 +1556,8 @@ mod tests {
                     party: None,
                     muster_crew: 0,
                     planned_crew: 0,
+                    max_workers: Some(5),
+                    staffing: Default::default(),
                     target: LaborTarget::Hunt {
                         fauna_id: "game_1".to_string(),
                         floor: 0.5,
@@ -1703,6 +1707,8 @@ mod tests {
                     party: None,
                     muster_crew: 0,
                     planned_crew: 0,
+                    max_workers: Some(10),
+                    staffing: Default::default(),
                     target: LaborTarget::Forage {
                         tile: UVec2::new(0, 0),
                         floor: 0.5,
@@ -1717,6 +1723,8 @@ mod tests {
                     party: None,
                     muster_crew: 0,
                     planned_crew: 0,
+                    max_workers: Some(5),
+                    staffing: Default::default(),
                     target: LaborTarget::Hunt {
                         fauna_id: "game_1".to_string(),
                         floor: 0.5,
@@ -1798,6 +1806,8 @@ mod tests {
                 party: None,
                 muster_crew: 0,
                 planned_crew: 0,
+                max_workers: Some(10),
+                staffing: Default::default(),
                 target: LaborTarget::Forage {
                     tile: UVec2::new(0, 0),
                     floor: 0.5,
@@ -1866,6 +1876,8 @@ mod tests {
             party: None,
             muster_crew: 0,
             planned_crew: 0,
+            max_workers: Some(6),
+            staffing: Default::default(),
             target,
             workers: 6,
             kit: None,
@@ -1905,6 +1917,8 @@ mod tests {
             party: None,
             muster_crew: 0,
             planned_crew: 0,
+            max_workers: Some(6),
+            staffing: Default::default(),
             target: LaborTarget::Forage {
                 tile: UVec2::new(7, 9),
                 floor: 0.15,

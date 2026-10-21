@@ -348,7 +348,7 @@ func run(harness) -> void:
 	# dip this frame was the control that proved the take had moved; it is now the control that proves
 	# it did NOT, which is the same pair asked the opposite question.
 	h._hud._compose.set_hunt_improvement(SourceForecast.IMPROVEMENT_NONE)
-	h._hud._compose.set_hunt_count(HERD_DIP_CREW)
+	h._hud._compose.set_hunt_max(HERD_DIP_CREW)
 	h._hud._drawercompose.open_herd_compose(dip_herd)
 	await h._settle()
 	await h._save("herd_build_crew_none")

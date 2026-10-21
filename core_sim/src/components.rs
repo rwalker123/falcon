@@ -3360,6 +3360,25 @@ impl LaborTarget {
         )
     }
 
+    /// **IS THIS ROW STAFFED BY THE SIM, FROM THE PLAYER'S FLOOR** (#871,
+    /// `docs/plan_labor_at_scale.md`) — the player states the source, its floor, its kit and an
+    /// optional Max, and [`crate::staffing::staff_band`] decides the crew every turn. A wild or kept
+    /// patch, a hunt that is not a need row, a working, a tile improvement and the Roadwork pool are;
+    /// Scout, Warrior and Builders keep the crew the player set, and a need row keeps its own
+    /// muster sizing.
+    ///
+    /// Stated exhaustively so a new target has to answer the question rather than inherit a default.
+    pub fn is_staffed(&self) -> bool {
+        match self {
+            LaborTarget::Forage { .. }
+            | LaborTarget::Extract { .. }
+            | LaborTarget::Tile { .. }
+            | LaborTarget::Roadwork => true,
+            LaborTarget::Hunt { move_with_herd, .. } => !move_with_herd,
+            LaborTarget::Scout | LaborTarget::Warrior | LaborTarget::Builders => false,
+        }
+    }
+
     pub fn is_source(&self) -> bool {
         match self {
             LaborTarget::Forage { .. }
@@ -3547,6 +3566,52 @@ pub struct LaborAssignment {
     ///
     /// ⛔ **OUTSIDE THIS TYPE'S EQUALITY**, for [`Self::muster_crew`]'s reason, and it rides the save.
     pub planned_crew: u32,
+    /// **THE PLAYER'S MAX — THE MOST WORKERS THE SIM MAY PUT ON THIS ROW** (#871,
+    /// `docs/plan_labor_at_scale.md` "The crew stepper is retired; a MAX replaces it"). `None` is no
+    /// max: the sim staffs the row to whatever the three passes allow
+    /// ([`crate::staffing::staff_band`]). Only a **staffed** row ([`LaborTarget::is_staffed`])
+    /// reads it; on Scout, Warrior and Builders the crew is still what the player set.
+    ///
+    /// It is **intent**, so it is inside this type's equality, and it caps **every** pass: no pass
+    /// puts the row's total (keepers + kitted + bare) above it.
+    pub max_workers: Option<u32>,
+    /// **WHO THE SIM PUT ON THIS ROW THIS TURN, AND WHY** — the keepers, the kitted heads, the bare
+    /// heads and the two published crew targets. Meaningful only on a staffed row; `workers` is
+    /// their sum there.
+    ///
+    /// ⛔ **OUTSIDE THIS TYPE'S EQUALITY**, for [`Self::muster_crew`]'s reason: it is a fact the
+    /// turn (or the command that just changed an input) restamps, and it rides the save because the
+    /// take-kit claim is struck from it ([`crate::take_claims::row_claims`]).
+    pub staffing: StaffedCrew,
+}
+
+/// **THE SIM'S STAFFING OF ONE ROW** — what [`crate::staffing::staff_band`] decided, kept on the
+/// row it decided it for so the walk, the take-kit claim and the wire all read one answer.
+///
+/// `keepers + kitted + bare` is the row's `workers`. `hold_crew` and `reach_crew` are the two crew
+/// sizes the passes aim at (after the row's Max), published for the client's tooltips.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StaffedCrew {
+    /// Hands the row owes its site's keeping — staffed first, whether or not the band has gear.
+    pub keepers: u32,
+    /// Heads armed with the row's whole take kit out of the band's pooled units.
+    pub kitted: u32,
+    /// Heads working bare-handed where a bare hand still helps.
+    pub bare: u32,
+    /// The crew that takes what regrows at the floor (keepers included), after the row's Max.
+    pub hold_crew: u32,
+    /// The crew that draws the stock down toward the floor (keepers included), after the row's Max.
+    pub reach_crew: u32,
+    /// The crew past which the take stops rising - pass 3's ceiling (keepers included), after the
+    /// row's Max.
+    pub useful_crew: u32,
+}
+
+impl StaffedCrew {
+    /// Every head the sim staffed on the row.
+    pub fn total(&self) -> u32 {
+        self.keepers + self.kitted + self.bare
+    }
 }
 
 /// ⛔ **EQUALITY IS THE ORDER THE PLAYER GAVE, AND THE PARTY IS NOT PART OF IT.**
@@ -3561,6 +3626,7 @@ impl PartialEq for LaborAssignment {
             && self.workers == other.workers
             && self.kit == other.kit
             && self.priority == other.priority
+            && self.max_workers == other.max_workers
     }
 }
 
@@ -7321,6 +7387,7 @@ impl LaborAllocation {
             }
         });
         if applied > 0 || keep_holding {
+            let target_is_staffed = target.is_staffed();
             self.assignments.push(LaborAssignment {
                 target,
                 workers: applied,
@@ -7344,11 +7411,104 @@ impl LaborAllocation {
                 party: standing_party,
                 muster_crew: if need_row { standing_muster } else { 0 },
                 planned_crew: if need_row { standing_planned } else { 0 },
+                // **A PINNED CREW IS A MAX** — `set_assignment` names an exact crew, which on a
+                // staffed row the sim reads as the most it may put there. The player-facing verb is
+                // [`Self::set_staffed_row`], whose count is the Max outright.
+                max_workers: target_is_staffed.then_some(applied),
+                staffing: StaffedCrew::default(),
             });
             self.last_yields.push(SourceYield::ZERO);
         }
         self.settle_rejoining(ExcessRejoining::WalkHomePlain);
         applied
+    }
+
+    /// **STATE A STAFFED ROW — THE PLAYER'S WHOLE ORDER ON A SOURCE** (#871): its floor and kit ride
+    /// `target` and `kit`, and `max` is the most the sim may put on it (`None` is no max). The row is
+    /// created or restated in place keeping everything the player did not state (priority, party,
+    /// muster), and its crew is left at whatever the last staffing wrote — the caller restaffs the
+    /// band ([`crate::staffing`]) so the snapshot shows the new crew the moment the player acts.
+    ///
+    /// Returns `false` for a target the sim does not staff.
+    pub fn set_staffed_row(
+        &mut self,
+        target: LaborTarget,
+        max: Option<u32>,
+        kit: Option<crate::equipment_config::KitChoice>,
+    ) -> bool {
+        if !target.is_staffed() {
+            return false;
+        }
+        self.align_yields();
+        if let Some(idx) = self
+            .assignments
+            .iter()
+            .position(|a| a.target.same_source(&target))
+        {
+            let row = &mut self.assignments[idx];
+            row.target = target;
+            row.max_workers = max;
+            if kit.is_some() {
+                row.kit = kit;
+            }
+            return true;
+        }
+        self.assignments.push(LaborAssignment {
+            target,
+            workers: NO_CREW_ON_THIS_ACTIVITY,
+            kit,
+            priority: SourcePriority::default(),
+            party: None,
+            muster_crew: 0,
+            planned_crew: 0,
+            max_workers: max,
+            staffing: StaffedCrew::default(),
+        });
+        self.last_yields.push(SourceYield::ZERO);
+        true
+    }
+
+    /// **WRITE WHAT THE STAFFING DECIDED ONTO ITS ROWS** (#871) — `workers` becomes the staffed
+    /// total, the breakdown rides the row, and a far party that shrank is cut through the same
+    /// stand-down path a player's cut takes, so its dropped hands walk home rather than vanish.
+    ///
+    /// `lost_people` is how many of the hands the staffed rows held the band no longer has (it lost
+    /// people since they were staffed): that many of the hands a far party loses are discarded where
+    /// they stand rather than walked home, because a walker the band does not have would be counted
+    /// against next turn's pool and cut again.
+    pub fn apply_staffing(&mut self, staffed: Vec<(LaborTarget, StaffedCrew)>, lost_people: u32) {
+        self.align_yields();
+        let mut lost_left = lost_people;
+        for (target, crew) in staffed {
+            let Some(idx) = self
+                .assignments
+                .iter()
+                .position(|a| a.target.same_source(&target))
+            else {
+                continue;
+            };
+            let applied = crew.total();
+            let rejoining_kept = self.rejoining_to(&target).min(applied);
+            let standing_party = self.assignments[idx].party.take();
+            let standing_party = standing_party.and_then(|mut party| {
+                if applied == 0 {
+                    let mut walks = party.walk_home(&target);
+                    discard_lost_hands(&mut walks, &mut lost_left);
+                    self.homeward.extend(walks);
+                    None
+                } else {
+                    let mut walks = party.cut_crew(applied - rejoining_kept, &target);
+                    discard_lost_hands(&mut walks, &mut lost_left);
+                    self.homeward.extend(walks);
+                    Some(party)
+                }
+            });
+            let row = &mut self.assignments[idx];
+            row.party = standing_party;
+            row.workers = applied;
+            row.staffing = crew;
+        }
+        self.settle_rejoining(ExcessRejoining::WalkHomePlain);
     }
 
     /// **Remove a source's row outright**, telemetry included — the deliberate end of a band's
@@ -8226,6 +8386,23 @@ impl BandTravel {
 /// playtest wants to move it off the peak.
 pub const DEFAULT_ESCAPEMENT_FLOOR: f32 = crate::fauna::MSY_BIOMASS_FRACTION;
 
+/// **DROP THE HANDS THE BAND NO LONGER HAS FROM THE WALKS A STAFFING CUT MADE** (#871) - `lost`
+/// counts down as people are discarded, group by group in the order the cut listed them, and a group
+/// emptied by it is removed. What is left walks home.
+fn discard_lost_hands(walks: &mut Vec<crate::work_party::HomewardWalk>, lost: &mut u32) {
+    if *lost == NO_CREW_ON_THIS_ACTIVITY {
+        return;
+    }
+    for walk in walks.iter_mut() {
+        let dropped = (*lost).min(walk.workers);
+        if dropped > NO_CREW_ON_THIS_ACTIVITY {
+            let _ = walk.split_off(dropped);
+            *lost -= dropped;
+        }
+    }
+    walks.retain(|walk| walk.workers > NO_CREW_ON_THIS_ACTIVITY);
+}
+
 /// **Is a floor a legal one?** Finite and in `0.0..=1.0` — a floor is a fraction of `K`, so anything
 /// outside that names a stock the source cannot have.
 ///
@@ -8685,6 +8862,8 @@ mod tests {
             party: None,
             muster_crew: 0,
             planned_crew: 0,
+            max_workers: Some(take),
+            staffing: Default::default(),
             target: LaborTarget::Forage {
                 tile,
                 floor: DEFAULT_ESCAPEMENT_FLOOR,
@@ -8717,6 +8896,8 @@ mod tests {
             party: None,
             muster_crew: 0,
             planned_crew: 0,
+            max_workers: Some(take),
+            staffing: Default::default(),
             target: LaborTarget::Hunt {
                 fauna_id: herd.to_string(),
                 floor: DEFAULT_ESCAPEMENT_FLOOR,
@@ -8744,6 +8925,8 @@ mod tests {
             party: None,
             muster_crew: 0,
             planned_crew: 0,
+            max_workers: Some(workers),
+            staffing: Default::default(),
             target,
             workers,
             kit: None,
@@ -9130,6 +9313,8 @@ mod tests {
             party: None,
             muster_crew: 0,
             planned_crew: 0,
+            max_workers: None,
+            staffing: Default::default(),
             priority,
             ..staffed_forage(tile, take)
         }
@@ -10561,6 +10746,8 @@ mod tests {
             party: None,
             muster_crew: 0,
             planned_crew: 0,
+            max_workers: Some(workers),
+            staffing: Default::default(),
         }
     }
 

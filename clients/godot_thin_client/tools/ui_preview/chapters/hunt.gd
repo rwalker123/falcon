@@ -478,7 +478,7 @@ func _floor_preset_tooltip(root: Node, preset: String) -> String:
 ## **THE CREW IS READ BACK, NEVER ASSUMED.** The sheet's own worker cap lands this frame at ONE
 ## hunter — `max_useful_workers` divides by the quantised FOOD axis, which an inedible quarry has
 ## none of — so a `PELT_FRAME_HUNTERS`-shaped expectation would assert against a crew the stepper
-## refuses. The claim is composed from `hunt_count()` at assertion time instead, which is also what
+## refuses. The claim is composed from `hunt_max()` at assertion time instead, which is also what
 ## keeps it true the day that cap learns about materials.
 const WOLF_BIOMASS := 240.0
 const WOLF_CAPACITY := 400.0
@@ -636,48 +636,59 @@ func run(harness) -> void:
 	# rename on the source it does work. These two frames are judged as a pair, exactly as the forage
 	# ones are.
 	#
-	# State hunt-unstaffed (A) — 0 hunters on a herd this band does NOT hunt. Pressing would send a
-	# no-op, so the button is DEAD and still wears the verb.
+	# State hunt-unstaffed (A) - a herd this band does NOT hunt, with no Max: the sim will staff it, so the
+	# sheet states a forecast crew and the commit is live (#871). The count is the player's MAX and `0`
+	# means no Max, never "nobody".
 	h._hud._compose.reset_hunt_source()
 	h._show_herd(HerdFx.investment_pair_boar_herd())
 	h._compose_herd(HerdFx.investment_pair_boar_herd(), ForageFx.ZERO_CREW)
 	await h._settle()
 	await h._save("herd_hunt_unstaffed")
-	var hunt_noop_btn = Q.find_button_by_text(h._hud._drawercompose._compose_sheet,
+	var hunt_new_btn = Q.find_button_by_text(h._hud._drawercompose._compose_sheet,
 		HudComposeVocab.ASSIGN_LOCAL_HUNT_BUTTON)
-	h._assert_hud("0 hunters on a herd this band does not hunt disables the submit (it would be a no-op)",
-		hunt_noop_btn != null and hunt_noop_btn.disabled)
+	h._assert_hud("a herd this band does not hunt, with no Max, offers its verb live",
+		hunt_new_btn != null and not hunt_new_btn.disabled)
+	h._assert_hud("…and its Max stepper reads \"%s\"" % HudWorkVocab.MAX_STEPPER_NO_MAX,
+		Readout.max_stepper_text(h._hud._drawercompose._compose_sheet) == HudWorkVocab.MAX_STEPPER_NO_MAX)
+	# …and capped: the same sheet with the player's Max at two. The crew the sim will staff is held to it,
+	# the Max stepper reads the number, and its `−` is live again (it was greyed at `No max`).
+	var uncapped_crew := Readout.stepper_value(h._hud._drawercompose._compose_sheet)
+	h._compose_herd(HerdFx.investment_pair_boar_herd(), HUNT_MAX_FRAME_CAP)
+	await h._settle()
+	await h._save("herd_hunt_max_set")
+	var capped_sheet_hunt: Control = h._hud._drawercompose._compose_sheet
+	h._assert_hud("a Max of %d reads `%d` on the stepper, not `No max`" % [HUNT_MAX_FRAME_CAP, HUNT_MAX_FRAME_CAP],
+		Readout.max_stepper_text(capped_sheet_hunt) == str(HUNT_MAX_FRAME_CAP)
+			and Readout.max_stepper_value(capped_sheet_hunt) == HUNT_MAX_FRAME_CAP)
+	h._assert_hud("…and holds the staffed crew to it (%d of %d uncapped)"
+			% [Readout.stepper_value(capped_sheet_hunt), uncapped_crew],
+		Readout.stepper_value(capped_sheet_hunt) <= HUNT_MAX_FRAME_CAP
+			and uncapped_crew > HUNT_MAX_FRAME_CAP)
+	h._assert_hud("…with the `Lower the max` button live and `Raise the max` named for it",
+		Q.find_max_button(capped_sheet_hunt, HudWorkVocab.MAX_STEPPER_LOWER_ARIA) != null
+			and not Q.find_max_button(capped_sheet_hunt, HudWorkVocab.MAX_STEPPER_LOWER_ARIA).disabled
+			and Q.find_max_button(capped_sheet_hunt, HudWorkVocab.MAX_STEPPER_RAISE_ARIA) != null)
 
-	# State hunt-unassign (B) — the SAME 0 on a herd this band DOES hunt (4 standing hunters on
-	# `game_deer_07`): that is the sim's unassign, not a no-op. The button stays live and is RENAMED,
-	# and the improvement control is GONE — what abandoning costs is already on the card in the rung's
-	# own hint, so offering to START a build in the act of abandoning the source says two opposite
-	# things at once. The positive-crew open below it is what makes that absence a CHANGE and not a
-	# sheet that simply never offers this herd a rung.
+	# State hunt-unassign (B) - a herd this band DOES hunt (4 standing hunters on `game_deer_07`): the
+	# sheet states the crew the sim staffed, keeps its improvement control, and ends the row with
+	# `Stop working here` (#871) - which is `stop_labor`, not a count of zero.
 	h._hud._compose.reset_hunt_source()
 	h._show_herd(HerdFx.taming_herd_fixture())
 	h._compose_herd(HerdFx.taming_herd_fixture())
 	await h._settle()
-	h._assert_hud("precondition: at its standing crew the same herd IS offered its next rung",
+	h._assert_hud("at its standing crew the same herd IS offered its next rung",
 		ForageFx.find_improvement_control(h._hud._drawercompose._compose_sheet,
 			HudConst.LABOR_POLICY_TAME) != null)
-	h._compose_herd(HerdFx.taming_herd_fixture(), ForageFx.ZERO_CREW)
-	await h._settle()
 	await h._save("herd_hunt_unassign")
 	var hunt_unassign_btn = Q.find_button_by_text(h._hud._drawercompose._compose_sheet,
-		HudComposeVocab.UNASSIGN_BUTTON)
-	h._assert_hud("0 hunters on a herd this band hunts stays live, renamed Unassign",
+		HudComposeVocab.STOP_WORKING_BUTTON)
+	h._assert_hud("a herd this band hunts offers `%s`, live" % HudComposeVocab.STOP_WORKING_BUTTON,
 		hunt_unassign_btn != null and not hunt_unassign_btn.disabled)
-	h._assert_hud("…and offers no improvement to start in the act of abandoning the source",
-		ForageFx.find_improvement_control(h._hud._drawercompose._compose_sheet,
-			HudConst.LABOR_POLICY_TAME) == null
-		and ForageFx.find_improvement_control(h._hud._drawercompose._compose_sheet,
-			SourceForecast.IMPROVEMENT_CORRAL) == null)
 
 	# Back to a plain Sustain compose for the band-picker / distance states below.
 	h._hud._band_labor._player_band = BandFx.band_fixture()
 	h._hud._band_labor._player_bands = []
-	h._hud._compose.set_hunt_count(1)
+	h._hud._compose.set_hunt_max(1)
 	h._hud._compose.set_hunt_floor(SourceForecast.FLOOR_FOOD_PEAK)
 	h._hud._compose.set_hunt_improvement("")
 	h._hud._compose.reset_hunt_source()
@@ -1050,12 +1061,6 @@ func run(harness) -> void:
 	var fowl_haul_crew := int(ceilf(fowl_peak_drop * fowl_fpa / FOWL_PER_WORKER_YIELD))
 	var fowl_engage_crew := int(ceilf(fowl_peak_drop / FOWL_ENGAGE_RATE))
 	var fowl_assignable := int(_delivered_oracle_band()["idle_workers"])
-	# The two notes, spelled through the SHIPPED formats so a reworded note fails loudly here rather
-	# than silently matching nothing.
-	var idle_advice: String = SourceForecast.MAX_USEFUL_NOTE_FORMAT % [fowl_haul_crew,
-		SourceForecast.MAX_USEFUL_NOUN_ONE if fowl_haul_crew == 1 \
-			else SourceForecast.MAX_USEFUL_NOUN_MANY]
-	var wanted_advice: String = SourceForecast.LABOR_BOUND_NOTE_FORMAT % fowl_assignable
 
 	var fowl_reaching := _engagement_fowl_herd(FOWL_ENGAGE_RATE)
 	h._hud._compose.reset_hunt_source()
@@ -1069,26 +1074,17 @@ func run(harness) -> void:
 		% [reach_face, carry_face],
 		Readout.yields_text(reaching_sheet).contains(reach_face)
 			and not Readout.yields_text(reaching_sheet).contains(carry_face))
-	# THE ADVICE, WHICH IS THE OTHER HALF OF THE DEFECT. With the reach bound live the herd can use far
-	# more hunters than this band HAS, so the stepper is labor-bound — but the labor note is shown ONLY
-	# at the band's cap, so the one-hunter sheet states neither sentence (the `+` still works), and the
-	# sentence claiming more hands would be idle must be nowhere on it.
-	h._assert_hud("below the band's cap (%d of %d) the sheet prints no labor note, and no idle claim"
-			% [FOWL_HUNTERS, fowl_assignable],
-		not Q.has_label_containing(reaching_sheet, wanted_advice)
-			and not Q.has_label_containing(reaching_sheet, "is all this band can send")
-			and not Q.has_label_containing(reaching_sheet, idle_advice))
-	# …and AT the cap the same sheet names the band's limit, with the greyed `+` carrying it on hover.
-	h._compose_herd(fowl_reaching, fowl_assignable, SourceForecast.FLOOR_FOOD_PEAK)
+	# THE STAFFED CREW IS THE SIM'S, NOT THE STEPPER'S (#871). With the reach bound live the herd can use
+	# far more hunters than this band HAS, so the crew the sheet states with no Max is the band's whole
+	# pool - and the cap-note sentences the retired stepper printed are nowhere on it.
+	h._compose_herd(fowl_reaching, 0, SourceForecast.FLOOR_FOOD_PEAK)
 	await h._settle()
 	await h._save("herd_hunt_labor_bound")
 	var capped_sheet: Control = h._hud._drawercompose._compose_sheet
-	var plus := Q.find_button_by_text(capped_sheet, HudWorkVocab.STEPPER_PLUS_FACE)
-	h._assert_hud("at the band's cap the sheet reads \"%s\", the useful figure nowhere" % wanted_advice,
-		Q.has_label_containing(capped_sheet, wanted_advice)
-			and not Q.has_label_containing(capped_sheet, " useful — free up"))
-	h._assert_hud("…and the greyed `+` carries the same sentence on hover",
-		plus != null and plus.disabled and plus.tooltip_text == wanted_advice)
+	h._assert_hud("with no Max the sheet states the crew the band can send (%d of %d)"
+			% [Readout.stepper_value(capped_sheet), fowl_assignable],
+		Readout.stepper_value(capped_sheet) == fowl_assignable
+			and not Q.has_label_containing(capped_sheet, "is all this band can send"))
 	h._compose_herd(fowl_reaching, FOWL_HUNTERS, SourceForecast.FLOOR_FOOD_PEAK)
 	await h._settle()
 	reaching_sheet = h._hud._drawercompose._compose_sheet
@@ -1108,7 +1104,7 @@ func run(harness) -> void:
 	h._assert_hud("the fixture separates the bounds — reaching the room takes %d hands, carrying it %d"
 		% [fowl_clear_by_reach, fowl_clear_by_carry],
 		fowl_clear_by_reach > fowl_clear_by_carry)
-	var fowl_clear := Readout.crew_target_count(reaching_sheet, HudWidgets.CREW_TARGET_CLEAR)
+	var fowl_clear := Readout.crew_target_count(h._hud._drawercompose, Readout.TARGET_CLEAR)
 	h._assert_hud("*clear it now* names the crew that can REACH the room in a turn (%d), not carry it (%d)"
 		% [fowl_clear_by_reach, fowl_clear_by_carry], fowl_clear == fowl_clear_by_reach)
 	# (1) **THE TARGET AND THE READOUT BESIDE IT AGREE**, which is the class of defect this pins: at the
@@ -1157,10 +1153,9 @@ func run(harness) -> void:
 		% carry_face,
 		Readout.yields_text(unreached_sheet).contains(carry_face)
 			and not Readout.yields_text(unreached_sheet).contains(reach_face))
-	h._assert_hud("…and the cap is the haul crew again, so \"%s\" is the honest advice here"
-		% idle_advice,
-		Q.has_label_containing(unreached_sheet, idle_advice)
-			and not Q.has_label_containing(unreached_sheet, wanted_advice))
+	h._assert_hud("…and the crew is the carry-bound one (%d), not the reach-bound crew's"
+			% Readout.stepper_value(unreached_sheet),
+		Readout.stepper_value(unreached_sheet) >= Readout.stepper_value(reaching_sheet))
 	# **THE CREW TARGETS AND THE VERDICT DROP THE ARM TOO, and this half is the regression that matters
 	# most**: a pen and the whole PLANT web publish exactly this value, so a target or a projection that
 	# read `NO_ENGAGEMENT_STAGE` as "reaches nothing" would move every forage sheet in the game. The
@@ -1168,7 +1163,7 @@ func run(harness) -> void:
 	# quotient and the verdict promises the floor — precisely as it did before the arm existed.
 	h._assert_hud("no engagement stage → *clear it now* is the carry quotient (%d) again"
 		% fowl_clear_by_carry,
-		Readout.crew_target_count(unreached_sheet, HudWidgets.CREW_TARGET_CLEAR) == fowl_clear_by_carry)
+		Readout.crew_target_count(h._hud._drawercompose, Readout.TARGET_CLEAR) == fowl_clear_by_carry)
 	h._assert_hud("…and the verdict reaches the floor again, so the arm DROPS rather than merely shrinking",
 		Readout.verdict_severity(unreached_sheet) == SourceForecast.VERDICT_OK)
 
@@ -1196,8 +1191,7 @@ func run(harness) -> void:
 	h._hud._compose.reset_hunt_source()
 	h._hud._compose.set_hunt_band(-1)
 	h._show_herd(oracle_automax)
-	h._compose_herd(oracle_automax, 1, SourceForecast.FLOOR_FOOD_PEAK)
-	h._hud._compose.arm_hunt_autofill()
+	h._compose_herd(oracle_automax, 0, SourceForecast.FLOOR_FOOD_PEAK)
 	h._compose_herd(oracle_automax)
 	await h._settle()
 	await h._save("herd_hunt_automax")
@@ -1209,8 +1203,7 @@ func run(harness) -> void:
 	h._hud._compose.reset_hunt_source()
 	h._hud._compose.set_hunt_band(-1)
 	h._show_herd(window_herd)
-	h._compose_herd(window_herd, 1, SourceForecast.FLOOR_FOOD_PEAK)
-	h._hud._compose.arm_hunt_autofill()
+	h._compose_herd(window_herd, 0, SourceForecast.FLOOR_FOOD_PEAK)
 	h._compose_herd(window_herd)
 	await h._settle()
 	await h._save("herd_hunt_big_game_window")
@@ -1247,7 +1240,7 @@ func run(harness) -> void:
 	# at the ceiling — see `WOLF_MATERIAL_TAKE` for why that distinction is what makes the claim bite.
 	# The unit is the material's own id, uppercased by the readout exactly as `FOOD` is, because the
 	# catalogue ships no display name and the id IS the display word.
-	var wolf_take := _wolf_material_take(h._hud._compose.hunt_count())
+	var wolf_take := _wolf_material_take(h._hud._compose.hunt_max())
 	h._assert_hud("the wolf's crew is one the sheet will actually compose", wolf_take > 0.0)
 	h._assert_hud("…and it QUOTES the hide, which is the whole of what the hunt pays",
 		wolf_yields.contains(SourceForecast.format_magnitude(wolf_take))
@@ -1299,7 +1292,7 @@ func run(harness) -> void:
 	h._assert_hud("a wolf's chart draws — a floor is biomass, and biomass is what this species has",
 		Q.find_meta_node(h._hud._drawercompose._compose_sheet, HudWidgets.FLOOR_CHART_META) != null)
 	h._assert_hud("…and its crew targets are priced off the biomass throughput, not the absent food one",
-		Readout.crew_target_count(h._hud._drawercompose._compose_sheet, HudWidgets.CREW_TARGET_CLEAR)
+		Readout.crew_target_count(h._hud._drawercompose, Readout.TARGET_CLEAR)
 			> Readout.CREW_TARGET_ABSENT)
 	# **A CLICKABLE TARGET THE STEPPER BESIDE IT CANNOT REACH IS THE PANEL ARGUING WITH ITSELF** (§7.2),
 	# and the wolf is where that was found: `5 hold it after` sat under `max 4 workers useful here`,
@@ -1309,11 +1302,12 @@ func run(harness) -> void:
 	# now floors on the hold crew, so the press below lands the stepper on exactly the number the button
 	# offered. Driven through the REAL button, since the clamp that used to swallow it lives in the press
 	# handler rather than in the arithmetic.
-	var wolf_hold = Readout.crew_target_count(h._hud._drawercompose._compose_sheet, HudWidgets.CREW_TARGET_HOLD)
+	var wolf_hold = Readout.crew_target_count(h._hud._drawercompose, Readout.TARGET_HOLD)
 	h._assert_hud("the wolf states a hold-it-after crew to click at all", wolf_hold > 0)
-	Q.find_crew_target(h._hud._drawercompose._compose_sheet, HudWidgets.CREW_TARGET_HOLD).pressed.emit()
-	h._assert_hud("…and the stepper reaches that crew instead of clamping it to a smaller cap",
-		h._hud._compose.hunt_count() == wolf_hold)
+	h._compose_herd(wolf, wolf_hold, SourceForecast.FLOOR_FOOD_PEAK)
+	await h._settle()
+	h._assert_hud("…and the crew the sheet staffs reaches that count instead of clamping it to a smaller cap",
+		Readout.stepper_value(h._hud._drawercompose._compose_sheet) == wolf_hold)
 
 	# State floor_chart_herd_allee — **THE HERD BELOW ITS ALLEE POINT, and the frame the whole sampled
 	# curve exists for.** Under `collapse_fraction` a herd's regrowth samples are NEGATIVE: it declines
@@ -1761,7 +1755,7 @@ func _tame_deal_reads_the_curve() -> void:
 	await h._settle()
 	await h._save("herd_tame_curve_deal")
 	var live: Dictionary = h._hud._selection.herd()
-	var animals := TAME_CURVE_ANIMALS_PER_HUNTER * float(h._hud._compose.hunt_count())
+	var animals := TAME_CURVE_ANIMALS_PER_HUNTER * float(h._hud._compose.hunt_max())
 	var food := animals * SourceForecast.body_quantum(live, "") \
 		* float(live.get(SourceForecast.FORECAST_PROVISIONS_PER_BIOMASS_KEY, 0.0))
 	var deal := Readout.improvement_deal_value(h._hud._drawercompose._compose_sheet)
@@ -1770,7 +1764,7 @@ func _tame_deal_reads_the_curve() -> void:
 		food > 0.0 and SourceForecast.PICKER_FOOD_PRODUCT_FORMAT
 			% SourceForecast.format_magnitude(food) != BOAR_TAME_PAYOFF_FACE)
 	h._assert_hud("…and ONCE TAMED is the curve row at crew %d (\"%s\")"
-			% [h._hud._compose.hunt_count(), deal],
+			% [h._hud._compose.hunt_max(), deal],
 		deal == SourceForecast.PICKER_FOOD_PRODUCT_FORMAT % SourceForecast.format_magnitude(food))
 	ForecastFx.install(h._hud)
 	query.reset()
@@ -1807,15 +1801,13 @@ func _hunt_crew_split_follows_the_stepper() -> void:
 		var marks := Readout.crew_split_marks(sheet)
 		var want := HUNT_SPLIT_KEEP_PER_HAND * float(crew)
 		var words := HUNT_SPLIT_WORDS if crew == HUNT_SPLIT_CREW else HUNT_SPLIT_STEPPED_WORDS
-		h._assert_hud("crew split, hunt sheet at %d — the marks are the curve row's (%s, want %d · %.2f)"
-				% [crew, "none" if marks == null else "%d · %.2f" % [marks.crew(), marks.keep_hands()],
-					crew, want],
-			marks != null and marks.crew() == crew and is_equal_approx(marks.keep_hands(), want))
-		h._assert_hud("…and the hover and the sentence under the figure both read \"%s\" (%s | %s)"
-				% [words, "" if marks == null else marks.tooltip_text,
-					Readout.crew_split_sentence(sheet)],
-			marks != null and marks.tooltip_text == words
-				and Readout.crew_split_sentence(sheet) == words)
+		h._assert_hud("crew split, hunt sheet at %d — the bar is the curve row's (%s, want %d · %d)"
+				% [crew, "none" if marks == null else "%d · %d" % [marks.crew(), marks.keepers()],
+					crew, roundi(want)],
+			marks != null and marks.crew() == crew and marks.keepers() == roundi(want))
+		h._assert_hud("…and the hover reads \"%s…\" (%s)"
+				% [words, "" if marks == null else marks.tooltip_text],
+			marks != null and marks.tooltip_text.begins_with(words))
 	ForecastFx.install(h._hud)
 	query.reset()
 	h._hud._drawercompose.close_compose_sheet()
@@ -1823,10 +1815,12 @@ func _hunt_crew_split_follows_the_stepper() -> void:
 
 ## The authored keeping on the hunt curve, and the two crews the sheet is read at, with their words.
 const HUNT_SPLIT_KEEP_PER_HAND := 0.5
+## The Max the `herd_hunt_max_set` frame caps the hunters at.
+const HUNT_MAX_FRAME_CAP := 2
 const HUNT_SPLIT_CREW := 3
 const HUNT_SPLIT_STEPPED_CREW := 2
-const HUNT_SPLIT_WORDS := "About 2 of 3 are tending the herd; 1 is free to hunt."
-const HUNT_SPLIT_STEPPED_WORDS := "1 of 2 is tending the herd; 1 is free to hunt."
+const HUNT_SPLIT_WORDS := "2 keep it up"
+const HUNT_SPLIT_STEPPED_WORDS := "1 keep it up"
 
 ## The authored hunt curve's next-rung take, animals a turn per hunter on the row — distinct at every
 ## crew, so a deal reading the wrong row cannot land on the right figure.
@@ -2231,7 +2225,7 @@ func _compose_band_states() -> void:
 	var panel_band_tile := BaseFx.food_tile_fixture()
 	h._show_tile(panel_band_tile)
 	h._compose_forage(panel_band_tile)
-	h._hud._compose.set_forage_count(PANEL_BAND_DIALED_CREW)
+	h._hud._compose.set_forage_max(PANEL_BAND_DIALED_CREW)
 	h._compose_forage(panel_band_tile)
 	await h._settle()
 	await h._save("compose_panel_band_forage")
@@ -2255,7 +2249,7 @@ func _compose_band_states() -> void:
 	await h._settle()
 	await h._save("compose_working_band_forage")
 	_assert_actor_band("compose_working_band_forage", ACTOR_FIRST_WORKER_INDEX,
-		ACTOR_FIRST_WORKER_CREW, ACTOR_FORAGE_VERB, ACTOR_FORAGE_RUNG)
+		ACTOR_FIRST_WORKER_CREW, ACTOR_FORAGE_RUNG)
 
 	# Drive the picker to the OTHER working band, whose standing crew differs — the composed count,
 	# the verb and the improvement control must all re-read from it. With the bare band write the
@@ -2264,19 +2258,12 @@ func _compose_band_states() -> void:
 	await h._settle()
 	await h._save("compose_band_switch_forage")
 	_assert_actor_band("compose_band_switch_forage", ACTOR_SECOND_WORKER_INDEX,
-		ACTOR_SECOND_WORKER_CREW, ACTOR_FORAGE_VERB, ACTOR_FORAGE_RUNG)
+		ACTOR_SECOND_WORKER_CREW, ACTOR_FORAGE_RUNG)
 
-	# The vacuity guard, then the played defect itself: dial this band's crew to 0 (a real unassign,
-	# which the sheet must SAY), then switch back to the first worker. Without the re-seed the composed
-	# 0 survives the switch and one press would strip that band's two foragers off the tile.
-	h._hud._compose.set_forage_count(0)
-	h._compose_forage(actor_tile)
-	await h._settle()
-	_assert_actor_unassign("compose_band_switch_forage", ACTOR_FORAGE_RUNG)
 	await _pick_actor_band(ACTOR_FIRST_WORKER_INDEX - 1)
 	await h._settle()
 	_assert_actor_band("compose_band_switch_forage (back)", ACTOR_FIRST_WORKER_INDEX,
-		ACTOR_FIRST_WORKER_CREW, ACTOR_FORAGE_VERB, ACTOR_FORAGE_RUNG)
+		ACTOR_FIRST_WORKER_CREW, ACTOR_FORAGE_RUNG)
 
 	# ---- THE HUNT TWINS — a SECOND compose builder, so the plant half says nothing about it -------
 	h._hud._compose.reset_hunt_source()
@@ -2287,22 +2274,18 @@ func _compose_band_states() -> void:
 	await h._settle()
 	await h._save("compose_working_band_hunt")
 	_assert_actor_band("compose_working_band_hunt", ACTOR_FIRST_WORKER_INDEX,
-		ACTOR_FIRST_WORKER_CREW, ACTOR_HUNT_VERB, ACTOR_HUNT_RUNG)
+		ACTOR_FIRST_WORKER_CREW, ACTOR_HUNT_RUNG)
 
 	await _pick_actor_band(ACTOR_SECOND_WORKER_INDEX - 1)
 	await h._settle()
 	await h._save("compose_band_switch_hunt")
 	_assert_actor_band("compose_band_switch_hunt", ACTOR_SECOND_WORKER_INDEX,
-		ACTOR_SECOND_WORKER_CREW, ACTOR_HUNT_VERB, ACTOR_HUNT_RUNG)
+		ACTOR_SECOND_WORKER_CREW, ACTOR_HUNT_RUNG)
 
-	h._hud._compose.set_hunt_count(0)
-	h._compose_herd(actor_herd)
-	await h._settle()
-	_assert_actor_unassign("compose_band_switch_hunt", ACTOR_HUNT_RUNG)
 	await _pick_actor_band(ACTOR_FIRST_WORKER_INDEX - 1)
 	await h._settle()
 	_assert_actor_band("compose_band_switch_hunt (back)", ACTOR_FIRST_WORKER_INDEX,
-		ACTOR_FIRST_WORKER_CREW, ACTOR_HUNT_VERB, ACTOR_HUNT_RUNG)
+		ACTOR_FIRST_WORKER_CREW, ACTOR_HUNT_RUNG)
 
 	# ---- …AND ONE FRAME OF THE ⚠, SO THE TWO HUD SURFACES CAN BE READ TOGETHER --------------------
 	await _overdraw_agreement_state()
@@ -3734,7 +3717,7 @@ func _actor_assignments(crew: int) -> Array:
 ## why they are four: the picker's FACE is what the player reads, the STEPPER is the composition the
 ## commit would send, the VERB is what one press would do, and the improvement CONTROL is the
 ## affordance the played defect took away.
-func _assert_actor_band(state: String, index: int, crew: int, verb: String, rung: String) -> void:
+func _assert_actor_band(state: String, index: int, crew: int, rung: String) -> void:
 	var sheet: Control = h._hud._drawercompose._compose_sheet
 	var want_face := HudFormat.band_name(_actor_band_roster()[index - 1])
 	var got_face := _band_picker_face(sheet)
@@ -3747,25 +3730,11 @@ func _assert_actor_band(state: String, index: int, crew: int, verb: String, rung
 		got_crew == crew)
 	var commit := Q.compose_commit_button(sheet)
 	var got_verb := "" if commit == null else commit.text
-	h._assert_hud("%s: the commit button is the ordinary verb, not %s (%s, got %s)"
-			% [state, HudComposeVocab.UNASSIGN_BUTTON, verb, got_verb],
-		got_verb == verb)
+	h._assert_hud("%s: a source this band works offers %s (got %s)"
+			% [state, HudComposeVocab.STOP_WORKING_BUTTON, got_verb],
+		got_verb == HudComposeVocab.STOP_WORKING_BUTTON)
 	h._assert_hud("%s: the improvement control is rendered (%s)" % [state, rung],
 		ForageFx.find_improvement_control(sheet, rung) != null)
-
-## The VACUITY GUARD for the "not Unassign" claims above: the same sheet, on the same band, with the
-## crew dialed to 0 — which really is an unassign, so the button really does change its face and the
-## improvement control really does go. Without it a sheet that had lost the ability to say `Unassign`
-## at all, or one that never renders an improvement control, would satisfy every claim above.
-func _assert_actor_unassign(state: String, rung: String) -> void:
-	var sheet: Control = h._hud._drawercompose._compose_sheet
-	var commit := Q.compose_commit_button(sheet)
-	var got_verb := "" if commit == null else commit.text
-	h._assert_hud("%s: a composed 0 against a standing crew really does read %s (got %s)"
-			% [state, HudComposeVocab.UNASSIGN_BUTTON, got_verb],
-		got_verb == HudComposeVocab.UNASSIGN_BUTTON)
-	h._assert_hud("%s: …and the improvement control is suppressed with it" % state,
-		ForageFx.find_improvement_control(sheet, rung) == null)
 
 ## Drive the open sheet's `Band:` picker to `entry` (0-based) with REAL POINTER INPUT — the face, then
 ## the popup row — rather than emitting `item_selected` by hand. A faked signal calls the connected
@@ -4205,15 +4174,6 @@ func _board_cap_matches_the_sheet(herd: Dictionary, band: Dictionary, floor_valu
 	var board := SourceForecast.with_published_useful_crew(board_base, row)
 	h._assert_hud("the Work board quotes the sheet's ceiling (%d), not the fightless crew (%d)"
 			% [plateau, quotient], SourceForecast.max_useful_workers(board) == plateau)
-	# …and the gate the player actually presses moves with it: dead AT the ceiling, live one below,
-	# with idle hands standing by either way so the source is the only thing that can be refusing.
-	var at_cap := SourceForecast.source_worker_cap_state(board, plateau, BOARD_IDLE_HANDS)
-	var under := SourceForecast.source_worker_cap_state(board, below_cap, BOARD_IDLE_HANDS)
-	h._assert_hud("…and the row's `+` is dead at %d and live at %d, idle hands to spare on both"
-			% [plateau, below_cap],
-		not bool(at_cap["can_add"]) and bool(under["can_add"])
-			and String(at_cap["note"]) != "")
-
 	# **A NON-HUNT ROW KEEPS ITS OWN ANSWER, and the `0` on it is not the hunt's `0`.** The wire
 	# publishes this field on every row — `0` meaning *no crew is useful here* on a hunt and *does not
 	# apply* everywhere else — so the two readings must not collapse. The forage row really does carry
@@ -4395,7 +4355,7 @@ func _subone_take_assertions() -> void:
 	# (6) ***CLEAR IT NOW* IS A LOOKUP IN THOSE ROWS.** The pill's crew takes at least the room, and the
 	#     crew below the first that does, does not — asserted against the CURVE, never against a
 	#     re-derived quotient, since re-deriving it is the defect.
-	var clear := Readout.crew_target_count(sheet, HudWidgets.CREW_TARGET_CLEAR)
+	var clear := Readout.crew_target_count(h._hud._drawercompose, Readout.TARGET_CLEAR)
 	var clear_by_curve := SourceForecast.crew_take_reaching(rows, room_animals)
 	h._assert_hud(("*clear it now* (%d) takes at least the room's %.2f animals, and the crew below the"
 			+ " curve's own answer (%d) does not")
@@ -4407,7 +4367,7 @@ func _subone_take_assertions() -> void:
 	# (7) …AND SO IS ***HOLD IT AFTER***, against what the herd breeds back at this floor.
 	var growth_animals := SourceForecast.regrowth_at(
 		SourceForecast.regrowth_samples(herd, ""), floor_value) / SUBONE_BODY_MASS
-	var hold := Readout.crew_target_count(sheet, HudWidgets.CREW_TARGET_HOLD)
+	var hold := Readout.crew_target_count(h._hud._drawercompose, Readout.TARGET_HOLD)
 	h._assert_hud(("*hold it after* (%d) takes at least the %.2f animals a turn this herd breeds back,"
 			+ " and one hand fewer does not") % [hold, growth_animals],
 		hold != Readout.CREW_TARGET_ABSENT and growth_animals > 0.0
@@ -4506,28 +4466,12 @@ func _unreachable_target_state() -> void:
 			and SourceForecast.crew_take_reaching(rows, room_animals)
 				== SourceForecast.NO_CREW_ANSWER
 			and SourceForecast.crew_take_curve_settled(rows))
-	# (1) …AND THE SENTINEL REACHES THE PILL. Read off the meta, which is the model's own answer
-	#     carried onto the control — the half that says the builder was asked the question at all.
-	h._assert_hud("…so the sheet's *clear it now* target is the unpriceable sentinel (%d)"
-			% Readout.crew_target_count(sheet, HudWidgets.CREW_TARGET_CLEAR),
-		Readout.crew_target_count(sheet, HudWidgets.CREW_TARGET_CLEAR)
+	# (1) …AND THE SENTINEL REACHES THE MODEL the verdict and the forecast crew are read from: no crew in the
+	#     pool reaches the room, so the chart prices the *clear it now* crew as the unpriceable sentinel.
+	h._assert_hud("…so the sheet's *clear it now* crew is the unpriceable sentinel (%d)"
+			% Readout.crew_target_count(h._hud._drawercompose, Readout.TARGET_CLEAR),
+		Readout.crew_target_count(h._hud._drawercompose, Readout.TARGET_CLEAR)
 			== SourceForecast.NO_CREW_ANSWER)
-	# (2) **THE CLAIM: THE PILL IS THERE AND IT SAYS `✕`.** The face, not the meta — a builder that
-	#     kept the sentinel on the meta and printed `-1` in the pill satisfies (1) on its own. `""` is
-	#     what an ABSENT pill answers, which is the state this whole block exists to rule out.
-	h._assert_hud("…and it renders a pill reading %s rather than vanishing (got \"%s\")"
-			% [Readout.CREW_TARGET_UNREACHABLE_FACE,
-				Readout.crew_target_face(sheet, HudWidgets.CREW_TARGET_CLEAR)],
-		Readout.crew_target_face(sheet, HudWidgets.CREW_TARGET_CLEAR)
-			== Readout.CREW_TARGET_UNREACHABLE_FACE)
-	# (3) …AND IT IS NOT CLICKABLE, BY BOTH HALVES. `disabled` is what the player meets; the handler
-	#     count is the half a driven press cannot see, since Godot swallows a click on a disabled
-	#     Button — a pill left connected reads as correct in every press assertion and is one
-	#     `disabled = false` from calling `on_pick` with `-1` as a worker count.
-	h._assert_hud("…disabled, and wired to nothing (%d handlers)"
-			% Readout.crew_target_press_handlers(sheet, HudWidgets.CREW_TARGET_CLEAR),
-		Readout.crew_target_is_disabled(sheet, HudWidgets.CREW_TARGET_CLEAR)
-			and Readout.crew_target_press_handlers(sheet, HudWidgets.CREW_TARGET_CLEAR) == 0)
 
 	h._hud.forecast_query().reset()
 	h._hud._compose.reset_hunt_source()
@@ -4864,17 +4808,6 @@ const SPEAR_SHORT_TAKE_PER_ARMED_HUNTER := 0.25
 ## `hunt_per_worker_provisions` so the herd and the band cannot describe two different hunters.
 const SPEAR_SHORT_PER_WORKER_YIELD := 0.8
 
-## **THE SENTENCE THIS ARC EXISTS TO PRODUCE, WRITTEN OUT.** Composed from
-## `MAX_USEFUL_NOTE_GEAR_FORMAT` it would only restate that constant against itself and would follow
-## any rewording of it — including back to blaming the herd — so the claim about what the wording SAYS
-## is made literally. The claim about its CONTENT (which crew, which weapon) is made against the
-## shipped format beside it, which is what ties this spelling to the fixture's own numbers.
-const SPEAR_SHORT_SENTENCE := "max 4 workers useful here — the rest have no spears"
-
-## The gear sentence's own clause, for the two states that must NOT carry it. Literal for the same
-## reason, and short enough to catch the sentence at any cap or any weapon.
-const SPEAR_SHORT_CLAUSE := "the rest have no"
-
 ## The stand-in's answer, held across a state's re-renders: how far its curve climbs before going
 ## flat, and the armed count it publishes beside it. Members rather than parameters because the sender
 ## is installed once and every claim is made against a re-render of it — the same shape
@@ -4968,66 +4901,47 @@ func _armed_crew_note_states() -> void:
 		query.deliver.call_deferred([_spear_short_reply(request_id, ask)])
 		return true)
 
-	# State a — FOUR SPEARS, TWENTY-SIX HANDS. The cap and the armed count are the same number, the
-	# pool is far above both, and the reply names the item that ran out.
+	# State a - FOUR SPEARS, TWENTY-SIX HANDS. The plateau and the armed count are the same number, the
+	# pool is far above both, and the reply names the item that ran out: the sim staffs four, and the
+	# sheet says why the rest stay home (#871).
 	var aurochs := _spear_short_aurochs()
 	_spear_short_plateau = SPEAR_SHORT_ARMED_CREW
 	_spear_short_armed = SPEAR_SHORT_ARMED_CREW
-	await _open_spear_short_sheet(aurochs, pool)
+	await _open_spear_short_sheet(aurochs, 0)
 	await h._save("herd_hunt_short_of_spears")
 	var sheet: Control = h._hud._drawercompose._compose_sheet
-	h._assert_hud("a cap that IS the armed crew names the missing gear — \"%s\"" % SPEAR_SHORT_SENTENCE,
-		Q.has_label_containing(sheet, SPEAR_SHORT_SENTENCE))
-	# …and that spelling is the SHIPPED format at this fixture's own terms, which is what stops the
-	# literal above drifting away from the constant it is quoting.
-	h._assert_hud("…and that is the shipped gear format at %d %s and \"%s\""
-			% [SPEAR_SHORT_ARMED_CREW, SourceForecast.MAX_USEFUL_NOUN_MANY, SPEAR_SHORT_WEAPON_ID],
-		SourceForecast.MAX_USEFUL_NOTE_GEAR_FORMAT % [SPEAR_SHORT_ARMED_CREW,
-			SourceForecast.MAX_USEFUL_NOUN_MANY, SPEAR_SHORT_WEAPON_ID] == SPEAR_SHORT_SENTENCE)
-	# **AND THE SENTENCE IT REPLACES IS GONE.** Both halves are the claim: a sheet that printed the
-	# gear note beside the old one would blame the herd and the spears in two lines for one cap.
-	h._assert_hud("…and no longer says the rest would be IDLE at the same cap",
-		not Q.has_label_containing(sheet, SourceForecast.MAX_USEFUL_NOTE_FORMAT % [
-			SPEAR_SHORT_ARMED_CREW, SourceForecast.MAX_USEFUL_NOUN_MANY]))
+	var short_line := Readout.gear_short_line(sheet)
+	h._assert_hud("a crew bounded by the armed count says who stays home - \"%s\"" % short_line,
+		short_line.begins_with("Only %d have %s" % [SPEAR_SHORT_ARMED_CREW, SPEAR_SHORT_WEAPON_ID])
+			and short_line.contains("bare hands can't bring down a Wild Aurochs")
+			and short_line.ends_with("more stay home"))
+	h._assert_hud("…and the sheet staffs exactly the armed %d, not the pool" % SPEAR_SHORT_ARMED_CREW,
+		Readout.stepper_value(sheet) == SPEAR_SHORT_ARMED_CREW)
 
-	# State b — THE SAME HERD, EVERY HAND ARMED. The curve stops at the herd's room instead, so the
-	# armed count sits ABOVE the cap and the gear sentence is not earned: the idle wording is the true
-	# one. **AND THIS STATE FALSIFIES `cap <= armed_crew` TOO** — the cap is the herd's plateau while
-	# the armed count is the whole pool, so `<=` HOLDS here, a gate written that way prints the gear
-	# note, and the assertion below is exactly the refusal of it. It falsifies the `<=` reading
-	# DIFFERENTLY from the pen, which is why both states are kept: here a fully armed band is held by
-	# the HERD's room, where state c's band is held by its pen's own production and its gear never
-	# entered the question at all. Two ways one wrong comparison goes wrong.
+	# State b - THE SAME HERD, EVERY HAND ARMED. The curve stops at the herd's room instead, so the armed
+	# count sits ABOVE the staffed crew and the gear sentence is not earned: nobody stays home for want of
+	# a weapon.
 	_spear_short_plateau = SPEAR_SHORT_HERD_PLATEAU
 	_spear_short_armed = pool
-	await _open_spear_short_sheet(aurochs, pool)
+	await _open_spear_short_sheet(aurochs, 0)
 	await h._save("herd_hunt_plateau_is_the_herd")
 	sheet = h._hud._drawercompose._compose_sheet
-	h._assert_hud("a fully armed band at a herd-bound plateau still reads \"more would be idle\"",
-		Q.has_label_containing(sheet, SourceForecast.MAX_USEFUL_NOTE_FORMAT % [
-			SPEAR_SHORT_HERD_PLATEAU, SourceForecast.MAX_USEFUL_NOUN_MANY])
-			and not Q.has_label_containing(sheet, SPEAR_SHORT_CLAUSE))
+	h._assert_hud("a fully armed band at a herd-bound plateau says nothing about gear",
+		Readout.gear_short_line(sheet) == ""
+			and Readout.stepper_value(sheet) == SPEAR_SHORT_HERD_PLATEAU)
 
-	# State c — THE PEN, AND THE TRAP THE EQUALITY EXISTS FOR. A corralled quarry has no
-	# attack-vs-defense gate, so the sim answers `armed_crew == max_workers` there — every keeper
-	# counts as armed — while the cap comes from the pen's own production. A gate written `cap <=
-	# armed_crew` fires HERE, telling a player whose pen cap is room-bound that the rest have no
-	# spears; equality is what refuses it.
+	# State c - THE PEN. A corralled quarry has no attack-vs-defense gate, so the sim answers
+	# `armed_crew == max_workers` there while the crew comes from the pen's own production; the gear
+	# sentence must not fire for a pen whose crew is room-bound.
 	var pen := HerdFx.domesticated_herd_fixture()
 	_spear_short_armed = pool
-	await _open_spear_short_sheet(pen, pool)
+	await _open_spear_short_sheet(pen, 0)
 	sheet = h._hud._drawercompose._compose_sheet
 	var pen_cap := Readout.stepper_value(sheet)
-	# The precondition, stated as a relation between the fixture and the render rather than restated
-	# from the line above: the pen really does answer more armed hands than its cap, which is the only
-	# arrangement in which the `<=` reading has something to get wrong.
-	h._assert_hud("precondition: the pen answers %d armed hands against a cap of %d"
+	h._assert_hud("precondition: the pen answers %d armed hands against a crew of %d"
 			% [pool, pen_cap], pool > pen_cap)
-	h._assert_hud("…and a pen whose cap is its OWN, not its keepers' gear, keeps the idle wording",
-		Q.has_label_containing(sheet, SourceForecast.MAX_USEFUL_NOTE_FORMAT % [pen_cap,
-			SourceForecast.MAX_USEFUL_NOUN_ONE if pen_cap == 1 \
-				else SourceForecast.MAX_USEFUL_NOUN_MANY])
-			and not Q.has_label_containing(sheet, SPEAR_SHORT_CLAUSE))
+	h._assert_hud("…and a pen whose crew is its OWN, not its keepers' gear, says nothing about gear",
+		Readout.gear_short_line(sheet) == "")
 
 	# Back to the seam every other chapter runs on: an empty seam with the canned answerer installed.
 	h._hud.forecast_query().reset()

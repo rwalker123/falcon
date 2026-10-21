@@ -944,7 +944,7 @@ func run(harness) -> void:
 	h._hud._band_labor._player_bands = []
 	h._hud._compose.reset_forage_source()
 	h._hud._compose.set_forage_band(-1)
-	h._hud._compose.set_forage_count(3)
+	h._hud._compose.set_forage_max(3)
 
 	# tile_panel_land — the LAND row lit: chips pinned above (In sight · Hospitable · Temperate ·
 	# Fertile · Verdant Basin), the land row leading the list with the tile's forage glyph + biome

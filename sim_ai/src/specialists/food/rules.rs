@@ -523,7 +523,7 @@ impl Food {
         drawn
             .reductions
             .iter()
-            .map(|(key, left)| self.assign(band, key, *left))
+            .filter_map(|(key, left)| self.release(band, key, *left))
             .chain(
                 drawn
                     .pool_cuts
@@ -970,10 +970,15 @@ impl Food {
                 && lands_well(next, placed, change.income_gained)
             {
                 out.push(Candidate {
-                    commands: vec![
-                        self.assign(band, &low_key, row.workers - leaving),
-                        self.assign(band, &next.key, existing + placed),
-                    ],
+                    commands: self
+                        .release(band, &low_key, row.workers - leaving)
+                        .into_iter()
+                        .chain(std::iter::once(self.assign(
+                            band,
+                            &next.key,
+                            existing + placed,
+                        )))
+                        .collect(),
                     hands: leaving,
                     change,
                     subject: format!("{why} -> {}", next.describe_for(existing + placed)),
@@ -1017,7 +1022,7 @@ impl Food {
                     && lands_well(best, both, change.income_gained)
                 {
                     let mut commands = self.reduction_commands(band, &free);
-                    commands.push(self.assign(band, &low_key, row.workers - moved));
+                    commands.extend(self.release(band, &low_key, row.workers - moved));
                     commands.push(self.assign(band, &best.key, existing + both));
                     out.push(Candidate {
                         commands,
@@ -2813,6 +2818,7 @@ mod tests {
         FORAGE_KIT, HERD_AT, HERD_ID, HERE, HUNT_KIT, HUNT_KIT_UNITS, NEAR_PATCH, PATCH_WINDOW,
         RICH_PATCH, STOCK, TICK, WORK_RANGE,
     };
+    use super::super::NO_MAX;
     use super::*;
     use crate::ground::{Classified, GroundReadings, PlannedBand, Reading, StartKind};
     use crate::oracle::curve_of;
@@ -2871,6 +2877,22 @@ mod tests {
         }
     }
 
+    /// What a `stop_labor` line ends: the patch's tile or the herd's id (#871).
+    fn stopped(command: &CommandPayload) -> (Option<Tile>, Option<String>) {
+        match command {
+            CommandPayload::StopLabor {
+                target_x,
+                target_y,
+                herd_id,
+                ..
+            } => (
+                target_x.zip(*target_y).map(|(x, y)| Tile::new(x, y)),
+                herd_id.clone(),
+            ),
+            other => panic!("not a stop: {other:?}"),
+        }
+    }
+
     // ---- rule 1: negative income ---------------------------------------------------------------
 
     #[test]
@@ -2901,7 +2923,7 @@ mod tests {
         let (role, workers, tile, _) = assigned_to(&proposal.commands[0]);
         assert_eq!(
             (role.as_str(), workers, tile),
-            (ROLE_FORAGE, 17, Some(RICH_PATCH))
+            (ROLE_FORAGE, NO_MAX, Some(RICH_PATCH))
         );
         match &proposal.commands[0] {
             CommandPayload::AssignLabor {
@@ -2926,7 +2948,7 @@ mod tests {
             )
             .expect("a capped proposal");
         assert_eq!(capped.cost.workers, 8);
-        assert_eq!(assigned_to(&capped.commands[0]).1, 8);
+        assert_eq!(assigned_to(&capped.commands[0]).1, NO_MAX);
         assert!(
             food()
                 .negative_income(&view, &Plan::pass_through(TICK), &memory(), own_band(&view))
@@ -2967,7 +2989,7 @@ mod tests {
             .expect("a proposal");
         assert_eq!(
             assigned_to(&proposal.commands[0]),
-            (ROLE_HUNT.to_owned(), 17, None, Some(HERD_ID.to_owned()))
+            (ROLE_HUNT.to_owned(), NO_MAX, None, Some(HERD_ID.to_owned()))
         );
         // One spear: a source for one hand — the second adds nothing, and is not sent.
         let one = spears(1);
@@ -2988,7 +3010,7 @@ mod tests {
             .expect("the one hand");
         assert_eq!(
             assigned_to(&proposal.commands[0]),
-            (ROLE_HUNT.to_owned(), 1, None, Some(HERD_ID.to_owned()))
+            (ROLE_HUNT.to_owned(), NO_MAX, None, Some(HERD_ID.to_owned()))
         );
         assert_eq!(proposal.cost.workers, 1);
         // The one spear already on this herd: a sibling herd under the same kit is not a source
@@ -3387,7 +3409,7 @@ mod tests {
         );
         assert_eq!(
             assigned_to(&proposal.commands[0]),
-            (ROLE_HUNT.to_owned(), NEEDED, None, Some(HERD_ID.to_owned())),
+            (ROLE_HUNT.to_owned(), NO_MAX, None, Some(HERD_ID.to_owned())),
             "the herd's own row is raised by the two missing hands"
         );
     }
@@ -3450,7 +3472,7 @@ mod tests {
         );
         assert_eq!(
             assigned_to(&proposal.commands[0]),
-            (ROLE_FORAGE.to_owned(), 19, Some(RICH_PATCH), None),
+            (ROLE_FORAGE.to_owned(), NO_MAX, Some(RICH_PATCH), None),
             "the patch's own row is raised by the two missing hands"
         );
         assert_eq!(proposal.cost.workers, 2);
@@ -3529,7 +3551,7 @@ mod tests {
         );
         assert_eq!(
             assigned_to(proposal.commands.last().unwrap()),
-            (ROLE_FORAGE.to_owned(), 1, Some(NEAR_PATCH), None)
+            (ROLE_FORAGE.to_owned(), NO_MAX, Some(NEAR_PATCH), None)
         );
         assert!(proposal.standing);
         // One hand already keeping the near patch and the patch still short: one more hand.
@@ -3552,7 +3574,7 @@ mod tests {
         assert_eq!(one_more.cost.workers, HOLD_MIN_HANDS);
         assert_eq!(
             assigned_to(one_more.commands.last().unwrap()),
-            (ROLE_FORAGE.to_owned(), 2, Some(NEAR_PATCH), None)
+            (ROLE_FORAGE.to_owned(), NO_MAX, Some(NEAR_PATCH), None)
         );
     }
 
@@ -3703,7 +3725,7 @@ mod tests {
             } => {
                 assert_eq!(
                     (role.as_str(), *workers, *target_x, *target_y),
-                    (ROLE_FORAGE, 17, Some(2), Some(3))
+                    (ROLE_FORAGE, NO_MAX, Some(2), Some(3))
                 );
                 assert!(
                     floor.is_some_and(|floor| (floor - 0.3).abs() < 1e-6),
@@ -3856,10 +3878,9 @@ mod tests {
                 other => panic!("not an assignment: {other:?}"),
             })
             .collect();
-        assert_eq!(
-            floors,
-            vec![(Some(RICH_PATCH), Some(0.2)), (Some(NEAR_PATCH), None)]
-        );
+        // The worked row is thinned, not ended, so nothing is re-sent for it and its floor stands;
+        // only the new row is asked for, on the sim's default floor.
+        assert_eq!(floors, vec![(Some(NEAR_PATCH), None)]);
     }
 
     /// A row drawn down to 0.2 on a stand that has recovered to its capacity: the projection
@@ -3904,7 +3925,7 @@ mod tests {
         assert!(matches!(
             &proposal.commands[0],
             CommandPayload::AssignLabor {
-                workers: 17,
+                workers: NO_MAX,
                 floor: None,
                 ..
             }
@@ -4033,13 +4054,10 @@ mod tests {
                 ..
             } if verb == VERB_CULTIVATE
         ));
+        // The patch's own row is thinned, which sends nothing; the builders are the one line.
+        assert_eq!(proposal.commands.len(), 2);
         assert_eq!(
             assigned_to(&proposal.commands[1]),
-            (ROLE_FORAGE.to_owned(), 8, Some(RICH_PATCH), None),
-            "the row keeps what its take needs"
-        );
-        assert_eq!(
-            assigned_to(&proposal.commands[2]),
             (ROLE_BUILDERS.to_owned(), 9, None, None)
         );
         assert_eq!(proposal.cost.workers, 9);
@@ -4148,12 +4166,13 @@ mod tests {
                 (workers, tile)
             })
             .collect();
+        // No Max on any row: the planned 6 / 4 / 2 is in the reason, the sim deals the hands.
         assert_eq!(
             dealt,
             vec![
-                (6, Some(RICH_PATCH)),
-                (4, Some(NEAR_PATCH)),
-                (2, Some(third))
+                (NO_MAX, Some(RICH_PATCH)),
+                (NO_MAX, Some(NEAR_PATCH)),
+                (NO_MAX, Some(third))
             ]
         );
         assert_eq!(proposal.cost.workers, 12);
@@ -4213,7 +4232,10 @@ mod tests {
             "{}",
             proposal.reason
         );
-        assert_eq!(dealt, vec![(7, Some(RICH_PATCH)), (2, Some(NEAR_PATCH))]);
+        assert_eq!(
+            dealt,
+            vec![(NO_MAX, Some(RICH_PATCH)), (NO_MAX, Some(NEAR_PATCH))]
+        );
         assert_eq!(proposal.cost.workers, 9);
         let above_floor = curves(16.0);
         let (proposal, dealt) = dealt_by(&above_floor);
@@ -4224,7 +4246,10 @@ mod tests {
             "{}",
             proposal.reason
         );
-        assert_eq!(dealt, vec![(7, Some(RICH_PATCH)), (8, Some(NEAR_PATCH))]);
+        assert_eq!(
+            dealt,
+            vec![(NO_MAX, Some(RICH_PATCH)), (NO_MAX, Some(NEAR_PATCH))]
+        );
     }
 
     /// A hand that would read surplus where it lands stays where it is: seventeen on a site
@@ -4304,13 +4329,11 @@ mod tests {
             "{}",
             proposal.reason
         );
+        // The rich row is thinned (nothing re-sent); only the second site is asked for.
+        assert_eq!(proposal.commands.len(), 1);
         assert_eq!(
             assigned_to(&proposal.commands[0]),
-            (ROLE_FORAGE.to_owned(), 8, Some(RICH_PATCH), None)
-        );
-        assert_eq!(
-            assigned_to(&proposal.commands[1]),
-            (ROLE_FORAGE.to_owned(), 9, Some(NEAR_PATCH), None)
+            (ROLE_FORAGE.to_owned(), NO_MAX, Some(NEAR_PATCH), None)
         );
         assert_eq!(proposal.cost.workers, 9);
         // With the near patch gone there is nowhere to put them, and the rule is silent.
@@ -4431,13 +4454,10 @@ mod tests {
             )
             .expect("a proposal");
         assert_eq!(proposal.commands.len(), 2, "one assign_labor pair");
-        assert_eq!(
-            assigned_to(&proposal.commands[0]),
-            (ROLE_FORAGE.to_owned(), 0, Some(NEAR_PATCH), None)
-        );
+        assert_eq!(stopped(&proposal.commands[0]), (Some(NEAR_PATCH), None));
         assert_eq!(
             assigned_to(&proposal.commands[1]),
-            (ROLE_FORAGE.to_owned(), 4, Some(RICH_PATCH), None)
+            (ROLE_FORAGE.to_owned(), NO_MAX, Some(RICH_PATCH), None)
         );
         assert!(
             proposal.reason.contains(WHY_LOWEST_ROW),
@@ -4485,7 +4505,7 @@ mod tests {
             "no row is emptied: {:?}",
             proposal.commands
         );
-        assert_eq!(assigned_to(&proposal.commands[0]).1, 4 + 5);
+        assert_eq!(assigned_to(&proposal.commands[0]).1, NO_MAX);
         assert_eq!(proposal.cost.workers, 5);
         // A row that really does pay more is still moved onto — and the idle hands go with it.
         let view = a_view_with(|view| {
@@ -4504,7 +4524,7 @@ mod tests {
         assert_eq!(proposal.commands.len(), 2);
         assert_eq!(
             assigned_to(&proposal.commands[1]),
-            (ROLE_FORAGE.to_owned(), 9, Some(RICH_PATCH), None)
+            (ROLE_FORAGE.to_owned(), NO_MAX, Some(RICH_PATCH), None)
         );
         assert_eq!(proposal.cost.workers, 9);
     }
@@ -4561,12 +4581,13 @@ mod tests {
             proposal.reason
         );
         assert_eq!(
-            assigned_to(&proposal.commands[0]),
-            (ROLE_HUNT.to_owned(), 0, None, Some(HERD_ID.to_owned()))
+            stopped(&proposal.commands[0]),
+            (None, Some(HERD_ID.to_owned())),
+            "the dead row is ended, not zeroed: a 0 count is no Max now"
         );
         assert_eq!(
             assigned_to(&proposal.commands[1]),
-            (ROLE_FORAGE.to_owned(), 17, Some(RICH_PATCH), None)
+            (ROLE_FORAGE.to_owned(), NO_MAX, Some(RICH_PATCH), None)
         );
         // A second herd it has never worked is no source either: the seat has measured what
         // hunting pays it. Only the stands in reach draw the idle hands.
@@ -4617,7 +4638,7 @@ mod tests {
         );
         assert_eq!(
             assigned_to(&proposal.commands[1]),
-            (ROLE_FORAGE.to_owned(), 14, Some(RICH_PATCH), None)
+            (ROLE_FORAGE.to_owned(), NO_MAX, Some(RICH_PATCH), None)
         );
     }
 
@@ -4688,7 +4709,7 @@ mod tests {
         );
         assert_eq!(
             assigned_to(&proposal.commands[1]),
-            (ROLE_FORAGE.to_owned(), 12, Some(RICH_PATCH), None)
+            (ROLE_FORAGE.to_owned(), NO_MAX, Some(RICH_PATCH), None)
         );
         view.snapshot.populations[0].labor_assignments[0].hunt_useful_workers = 4;
         let proposal = food()
@@ -4740,7 +4761,7 @@ mod tests {
         let (role, workers, _, herd) = assigned_to(proposal.commands.last().unwrap());
         assert_eq!(
             (role.as_str(), workers, herd.as_deref()),
-            (ROLE_HUNT, 17, Some(sibling)),
+            (ROLE_HUNT, NO_MAX, Some(sibling)),
             "the failed row and the idle hands, all onto the sibling"
         );
     }
@@ -4796,7 +4817,7 @@ mod tests {
         );
         assert_eq!(
             assigned_to(&proposal.commands[1]),
-            (ROLE_FORAGE.to_owned(), 6, Some(RICH_PATCH), None)
+            (ROLE_FORAGE.to_owned(), NO_MAX, Some(RICH_PATCH), None)
         );
     }
 
@@ -4891,7 +4912,7 @@ mod tests {
         assert!(proposal.reason.contains("6,2"), "{}", proposal.reason);
         assert_eq!(
             assigned_to(proposal.commands.last().unwrap()),
-            (ROLE_FORAGE.to_owned(), 17, Some(WEST_PATCH), None),
+            (ROLE_FORAGE.to_owned(), NO_MAX, Some(WEST_PATCH), None),
             "the richest of the sources the move leaves behind"
         );
         assert_eq!(proposal.cost.workers, 17);
@@ -5509,7 +5530,7 @@ mod tests {
             .expect("five a turn for five does");
         assert_eq!(
             assigned_to(proposal.commands.last().unwrap()),
-            (ROLE_HUNT.to_owned(), HANDS, None, Some(HERD_ID.to_owned()))
+            (ROLE_HUNT.to_owned(), NO_MAX, None, Some(HERD_ID.to_owned()))
         );
         assert!(
             proposal.reason.contains(
@@ -5654,7 +5675,7 @@ mod tests {
         );
         assert_eq!(
             assigned_to(proposal.commands.last().unwrap()),
-            (ROLE_FORAGE.to_owned(), 9, Some(RICH_PATCH), None)
+            (ROLE_FORAGE.to_owned(), NO_MAX, Some(RICH_PATCH), None)
         );
     }
 
@@ -5786,16 +5807,16 @@ mod tests {
             pool_lines(&proposal.commands),
             vec![(ROLE_BUILDERS.to_owned(), 0)]
         );
-        let placed: u32 = proposal
+        let rows_asked = proposal
             .commands
             .iter()
-            .map(assigned_to)
-            .filter(|(role, _, _, _)| role == ROLE_FORAGE)
-            .map(|(_, workers, tile, _)| {
-                workers - Food::workers_on(band, &SourceKey::Patch(tile.unwrap()))
-            })
-            .sum();
-        assert_eq!(placed, 3, "every released hand lands: {}", proposal.reason);
+            .filter(|command| matches!(command, CommandPayload::AssignLabor { role, .. } if role == ROLE_FORAGE))
+            .count();
+        assert!(
+            rows_asked > 0,
+            "the released hands land: {}",
+            proposal.reason
+        );
     }
 
     /// **A blocked head idles the whole pool**: the queue's head names the rich patch and the
@@ -5916,14 +5937,14 @@ mod tests {
             proposal.reason
         );
         assert_eq!(
-            assigned_to(&proposal.commands[0]),
-            (ROLE_FORAGE.to_owned(), 0, Some(NEAR_PATCH), None),
-            "the spare row is emptied first"
+            stopped(&proposal.commands[0]),
+            (Some(NEAR_PATCH), None),
+            "the spare row is ended first"
         );
         assert_eq!(
             assigned_to(&proposal.commands[1]),
-            (ROLE_FORAGE.to_owned(), 5, Some(RICH_PATCH), None),
-            "and the tended row carries the two keeping hands on top of its three"
+            (ROLE_FORAGE.to_owned(), NO_MAX, Some(RICH_PATCH), None),
+            "and the tended row is asked for with no Max: the sim staffs the two keeping hands"
         );
     }
 
@@ -6018,12 +6039,10 @@ mod tests {
         assert_eq!(proposal.cost.workers, 1);
         assert_eq!(
             assigned_to(&proposal.commands[0]),
-            (ROLE_FORAGE.to_owned(), 3, Some(NEAR_PATCH), None)
+            (ROLE_HUNT.to_owned(), NO_MAX, None, Some(HERD_ID.to_owned())),
+            "the near patch is thinned, so only the herd is asked for"
         );
-        assert_eq!(
-            assigned_to(&proposal.commands[1]),
-            (ROLE_HUNT.to_owned(), 1, None, Some(HERD_ID.to_owned()))
-        );
+        assert_eq!(proposal.commands.len(), 1);
         assert!(
             proposal
                 .reason
@@ -6160,15 +6179,12 @@ mod tests {
                 ..
             } if verb == VERB_CULTIVATE
         ));
-        // The hands come off the near patch, and the pool is staffed after the row is reduced.
+        // The near patch is thinned, which sends nothing; the builders pool is the player-set count.
         assert_eq!(
             assigned_to(&proposal.commands[1]),
-            (ROLE_FORAGE.to_owned(), 2, Some(NEAR_PATCH), None)
-        );
-        assert_eq!(
-            assigned_to(&proposal.commands[2]),
             (ROLE_BUILDERS.to_owned(), 2, None, None)
         );
+        assert_eq!(proposal.commands.len(), 2);
         assert_eq!(proposal.cost.workers, 2);
         // A thin larder cannot carry any crew to the payoff.
         let thin = a_working_band(30.0);

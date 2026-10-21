@@ -57,7 +57,6 @@ const CHAPTERS := [
 	"res://tools/ui_preview/chapters/supply_network.gd",
 	"res://tools/ui_preview/chapters/starting_loadout.gd",
 	"res://tools/ui_preview/chapters/workings.gd",
-	"res://tools/ui_preview/chapters/crew_cap_parity.gd",
 	"res://tools/ui_preview/chapters/opening_card.gd",
 	"res://tools/ui_preview/chapters/migration_mode.gd",
 	"res://tools/ui_preview/chapters/station.gd",
@@ -758,7 +757,7 @@ func _compose_forage(tile_info: Dictionary) -> void:
 ## `count` / `policy` are applied AFTER the first open, and that ordering is the whole point:
 ## opening the compose on a DIFFERENT herd re-seeds both off the band's standing staffing
 ## (`DrawerComposeController._build_herd_assign_controls`'s `source_changed` branch → `seed_hunt`),
-## so a `set_hunt_count`/`set_hunt_policy` made BEFORE the first open is silently thrown away —
+## so a `set_hunt_max`/`set_hunt_policy` made BEFORE the first open is silently thrown away —
 ## the bug that rendered the documented 6-hunter local-hunt frames with 1 hunter (#357). The
 ## second open re-renders with `hunt_key` unchanged, so `source_changed` is false and the dialed
 ## values survive into the render (still subject to the stepper's own cap clamp, as in the game).
@@ -777,7 +776,7 @@ func _compose_herd(herd: Dictionary, count: int = Spine.COMPOSE_COUNT_UNSET,
 	if count == Spine.COMPOSE_COUNT_UNSET and floor == ForageFx.COMPOSE_FLOOR_UNSET and improvement == "":
 		return
 	if count != Spine.COMPOSE_COUNT_UNSET:
-		_hud._compose.set_hunt_count(count)
+		_hud._compose.set_hunt_max(count)
 	if floor != ForageFx.COMPOSE_FLOOR_UNSET:
 		_hud._compose.set_hunt_floor(floor)
 	if improvement != "":

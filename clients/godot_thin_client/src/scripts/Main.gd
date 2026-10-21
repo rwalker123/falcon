@@ -423,6 +423,8 @@ func _ready() -> void:
             hud.connect("build_order_requested", Callable(self, "_on_hud_build_order"))
         if hud.has_signal("work_priority_requested") and not hud.is_connected("work_priority_requested", Callable(self, "_on_hud_work_priority")):
             hud.connect("work_priority_requested", Callable(self, "_on_hud_work_priority"))
+        if hud.has_signal("stop_labor_requested") and not hud.is_connected("stop_labor_requested", Callable(self, "_on_hud_stop_labor")):
+            hud.connect("stop_labor_requested", Callable(self, "_on_hud_stop_labor"))
         if hud.has_signal("build_priority_requested") and not hud.is_connected("build_priority_requested", Callable(self, "_on_hud_build_priority")):
             hud.connect("build_priority_requested", Callable(self, "_on_hud_build_priority"))
         if hud.has_signal("bench_enqueue_requested") and not hud.is_connected("bench_enqueue_requested", Callable(self, "_on_hud_bench_enqueue")):
@@ -2080,6 +2082,10 @@ static func site_address(payload: Dictionary, allow_road: bool = true) -> String
     var y := int(payload.get("y", -1))
     if x < 0 or y < 0:
         return ""
+    # A tile-kind improvement's crew row is addressed by its branch, which leads: `<branch> <x> <y>`.
+    var branch := String(payload.get("branch", "")).strip_edges().to_lower()
+    if branch != "":
+        return "%s %d %d" % [branch, x, y]
     if bool(payload.get("road", false)):
         return ("%s %d %d" % [SITE_ADDRESS_ROAD_TOKEN, x, y]) if allow_road else ""
     var material := String(payload.get("material", "")).strip_edges()
@@ -2178,6 +2184,32 @@ static func format_work_priority(payload: Dictionary) -> Dictionary:
     return {
         "line": "work_priority %d %d %s %s" % [faction, band_id, site, level],
         "message": "%s is now %s priority for this band." % [site_label(payload), face.to_lower()],
+    }
+
+## **`stop_labor <faction> <band> <x> <y> | <herd_id> | <x> <y> <material> | <branch> <x> <y> |
+## roadwork` — STOP A STAFFED ROW** (#871), emitted by a source sheet's `Stop working here` and the
+## work inspector's `Unassign`. A staffed row's count is the sim's now, so a count of zero is a Max of
+## "none" and no longer an unassign; this verb is the only way a staffed row ends.
+##
+## `work_priority`'s band handle and source addressing (`site_address`) with no trailing level, plus the
+## lone token `roadwork` for the Roadwork pool (`payload.roadwork`), which is a pool and not a source.
+## No road-build form: a road BUILD has no crew row to stop.
+static func format_stop_labor(payload: Dictionary) -> Dictionary:
+    var band_id := int(payload.get("band_id", HudConst.NO_BAND_ID))
+    if band_id == HudConst.NO_BAND_ID:
+        return {}
+    var faction := int(payload.get("faction", HudConst.PLAYER_FACTION_ID))
+    if bool(payload.get("roadwork", false)):
+        return {
+            "line": "stop_labor %d %d roadwork" % [faction, band_id],
+            "message": "Stop the road crew.",
+        }
+    var site := site_address(payload, false)
+    if site == "":
+        return {}
+    return {
+        "line": "stop_labor %d %d %s" % [faction, band_id, site],
+        "message": "Stop working %s." % site_label(payload),
     }
 
 ## **`build_priority <faction> <band> <x> <y> <level>` | `build_priority <faction> <band> <herd_id>
@@ -2817,6 +2849,12 @@ func _on_hud_build_order(payload: Dictionary) -> void:
 ## client-side copy would be a second statement of one value, which is the drift §4.9 forbids.
 func _on_hud_work_priority(payload: Dictionary) -> void:
     _send_formatted_command(format_work_priority(payload))
+
+## Stop a staffed row (#871). **No rollback, for `_on_hud_work_priority`'s reason**: the row is captured
+## live and the server restaffs the band at once, so the next snapshot carries the crew without it and
+## the client keeps no optimistic copy of a row that is about to go.
+func _on_hud_stop_labor(payload: Dictionary) -> void:
+    _send_formatted_command(format_stop_labor(payload))
 
 ## Mark one queued build with the player's rank. **No rollback, for `_on_hud_work_priority`'s reason**:
 ## `BuildQueueEntryState.buildPriority` is captured live off the band's queue, so the new mark arrives

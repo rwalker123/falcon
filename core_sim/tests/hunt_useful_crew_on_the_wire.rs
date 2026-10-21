@@ -176,6 +176,8 @@ fn world_hunting_at(
                 party: None,
                 muster_crew: 0,
                 planned_crew: 0,
+                max_workers: Some(CREW_ON_THE_ROW),
+                staffing: Default::default(),
                 target: LaborTarget::Hunt {
                     fauna_id: HERD_ID.to_string(),
                     floor,
@@ -1529,6 +1531,20 @@ fn a_pens_quote_is_its_payout_at_every_keeper_count() {
             .hold_wariness_at_zero();
         let band = the_band(&mut app);
         staff_the_row(&mut app, band, keepers);
+        // **The keepers the sim staffs** (#871): the count the sweep names is the row's Max, and the
+        // quote is struck at the hands the staffing settles on - the crew the turn then pays.
+        app.world
+            .get_mut::<LaborAllocation>(band)
+            .expect("the fixture band carries its allocation")
+            .assignments[0]
+            .max_workers = Some(keepers);
+        core_sim::staffing::restaff_band(&mut app.world, band);
+        let keepers = app
+            .world
+            .get::<LaborAllocation>(band)
+            .expect("the fixture band carries its allocation")
+            .assignments[0]
+            .workers;
 
         // **Which arm binds, composed from the take's own terms** — the whole bodies the floor
         // leaves sparable against the whole bodies the crew's load seats.
@@ -1569,9 +1585,13 @@ fn a_pens_quote_is_its_payout_at_every_keeper_count() {
              {carry_animals})"
         );
     }
+    // **Only the carry bound is reachable since the sim staffs the pen** (#871): it adds keepers while
+    // another hand still takes something, and stops at the crew the carry seats - the room is never
+    // the first term to bind a staffed pen, so a sweep demanding the room-bound arm would be
+    // demanding a crew the staffing never settles on.
     assert!(
-        saw_room_bound && saw_carry_bound,
-        "the sweep must exercise both of the bounds the pen already had: room-bound={saw_room_bound} \
+        saw_carry_bound,
+        "the sweep must exercise the carry bound: room-bound={saw_room_bound} \
          carry-bound={saw_carry_bound}"
     );
 }

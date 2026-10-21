@@ -12,6 +12,9 @@ use super::*;
 // Every term past the assignment itself is one the ROW cannot resolve for itself — each needs a
 // registry, both webs, or the band's whole allocation — so they are handed in rather than derived
 // here. A bundle struct would only move that list one line up.
+/// The wire's reading of "the player set no Max on this row" (`LaborAssignment.maxWorkers`).
+const NO_MAX_WORKERS: u32 = 0;
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn labor_assignment_to_state(
     assignment: &LaborAssignment,
@@ -169,6 +172,15 @@ pub(crate) fn labor_assignment_to_state(
                     .collect()
             })
             .unwrap_or_default(),
+        // **THE SIM'S STAFFING OF THIS ROW** (#871) - straight off the assignment, which the
+        // labor pass (or the command's own restaff) stamped. Zero on a row the passes do not staff.
+        max_workers: assignment.max_workers.unwrap_or(NO_MAX_WORKERS),
+        hold_crew: assignment.staffing.hold_crew,
+        reach_crew: assignment.staffing.reach_crew,
+        useful_crew: assignment.staffing.useful_crew,
+        keepers_staffed: assignment.staffing.keepers,
+        kitted_staffed: assignment.staffing.kitted,
+        bare_staffed: assignment.staffing.bare,
         ..Default::default()
     };
     match &assignment.target {
@@ -550,6 +562,9 @@ pub(crate) fn mustered_take_gear(
             mustered.assignments[need_idx].workers,
         );
         claims.claims[need_idx] = split.claim;
+        if let Some(ask) = claims.asks.get_mut(need_idx) {
+            *ask = split.claim;
+        }
         claims.keep_hands[need_idx] = split.keep_hands;
     }
     // The same settled gear the capture and auto-craft read (`take_row_gear`), now for the mustered
@@ -3513,6 +3528,8 @@ mod tests {
                 party: None,
                 muster_crew: 0,
                 planned_crew: 0,
+                max_workers: Some(4),
+                staffing: Default::default(),
                 target: LaborTarget::Hunt {
                     fauna_id: "test-herd".to_string(),
                     floor: 0.5,
@@ -3835,6 +3852,8 @@ mod tests {
                 party: None,
                 muster_crew: 0,
                 planned_crew: 0,
+                max_workers: Some(4),
+                staffing: Default::default(),
                 target: LaborTarget::Scout,
                 workers: 4,
                 kit: None,
@@ -3933,6 +3952,8 @@ mod tests {
                     party: None,
                     muster_crew: 0,
                     planned_crew: 0,
+                    max_workers: Some(1),
+                    staffing: Default::default(),
                     target: match source {
                         BuildSource::Patch(tile) => LaborTarget::Forage {
                             tile: *tile,

@@ -519,6 +519,8 @@ fn spawn_forager_of(
                         party: None,
                         muster_crew: 0,
                         planned_crew: 0,
+                        max_workers: Some(foragers + keepers),
+                        staffing: Default::default(),
                         target: LaborTarget::Forage {
                             tile: patch,
                             floor: policy,
@@ -535,6 +537,8 @@ fn spawn_forager_of(
                         party: None,
                         muster_crew: 0,
                         planned_crew: 0,
+                        max_workers: Some(foragers),
+                        staffing: Default::default(),
                         target: LaborTarget::Builders,
                         workers: foragers,
                         kit: None,
@@ -1107,7 +1111,7 @@ fn a_bare_ground_sow_pays_almost_nothing_while_it_builds_then_pays_the_field() {
         .get_mut::<LaborAllocation>(band)
         .expect("band exists")
         .assignments[0]
-        .workers = FORAGE_WORKERS;
+        .set_hands_and_max(FORAGE_WORKERS);
     let before = provisions_f32(&mut app);
     run_turns_with_forage(&mut app, 1);
     let field_yield = provisions_f32(&mut app) - before;
@@ -1268,9 +1272,13 @@ fn the_plant_ladder_climbs_wild_then_tended_then_field() {
     assert!(wild > 0.0, "baseline wild skim must be positive");
     // **One forager carries one load off wild and tended ground alike** — the take is carry-capped,
     // so what tending bought has to be read on the production side below.
+    //
+    // **No longer equal since the sim staffs the crew** (#871): a tended patch regrows faster, so
+    // reaching its take needs more hands than the wild one, and the sim sends them. What survives is
+    // the direction - tending never takes less than wild.
     assert!(
-        (tended - wild).abs() < 1e-3,
-        "one forager carries the same load off a wild and a tended patch: {tended} vs {wild}"
+        tended >= wild - 1e-3,
+        "tending never takes less than the wild patch beneath it: {tended} vs {wild}"
     );
     // **RUNG 3 IS THE SAME SKIM, ON RICHER AND FASTER LAND.** The managed rate is retired — a rung
     // may change production, no rung changes the draw — so a Field is drawn down like everything else
@@ -1280,10 +1288,11 @@ fn the_plant_ladder_climbs_wild_then_tended_then_field() {
     // at the same carry.** That equality is itself the new model working: a Field holds far more
     // standing crop, so realizing it genuinely needs more hands, and one gatherer brings home a
     // gatherer's load off any of them.
+    // (#871) the sim sizes each rung's crew to what it can use, so a Field - holding far more crop -
+    // is sent more hands, and never fewer than the tended rung beneath it.
     assert!(
-        (field - tended).abs() < 1e-3,
-        "one forager carries the same load off any rung — the collection cap binds, which is the \
-         Field's new cost: {field} vs {tended}"
+        field >= tended - 1e-3,
+        "a Field takes no less than the tended rung it was built on: {field} vs {tended}"
     );
     let ladder_climbs = |rung| {
         let labor = LaborConfig::builtin();
@@ -1536,6 +1545,8 @@ fn a_field_worked_by(crew: u32, ledger: core_sim::BandEquipment) -> (App, Entity
                     party: None,
                     muster_crew: 0,
                     planned_crew: 0,
+                    max_workers: Some(crew),
+                    staffing: Default::default(),
                     target: LaborTarget::Forage {
                         tile: coord,
                         floor: FIELD_CREW_FLOOR,
@@ -1839,9 +1850,12 @@ fn a_completed_field_retires_the_sow_verb_onto_the_harvest_rung() {
         "completion edits the source's row, it never adds or drops one"
     );
     let assignment = sources[0];
-    assert_eq!(
-        assignment.workers, staffed,
-        "the crew stays on the ground it sowed"
+    // **Restaffed for the Field, never sent away** (#871): the row's crew is the sim's, sized to what
+    // the ground it now is can use, so a finished Field asks for the same hands or more.
+    assert!(
+        assignment.workers >= staffed,
+        "the crew stays on the ground it sowed: {} against {staffed}",
+        assignment.workers
     );
     assert_eq!(
         queued_job(&app, band, coord),
@@ -2097,7 +2111,7 @@ fn a_completed_field_clears_the_sow_verb_for_every_band_that_was_building_it() {
         .get_mut::<LaborAllocation>(second)
         .expect("the second band forages")
         .assignments[0]
-        .workers = TOKEN_SECOND_CREW;
+        .set_hands_and_max(TOKEN_SECOND_CREW);
 
     // Long enough for the meter to fill however the two crews' accruals interleave, plus the turn a
     // band that did not finish it needs to notice (its clear is decided at the top of its own
@@ -2526,4 +2540,17 @@ fn a_cultivate_on_a_field_is_handed_back_rather_than_stalling_forever() {
         "…and the position never moved — a handed-back verb banks nothing, and the source is still \
          exactly where the fixture seated it"
     );
+}
+
+/// **A fixture writes a staffed row's hands and its Max together** (#871): the sim zeroes the hands and
+/// restaffs from the Max every turn, so editing `workers` alone is undone by the next pass.
+trait SetHandsAndMax {
+    fn set_hands_and_max(&mut self, hands: u32);
+}
+
+impl SetHandsAndMax for LaborAssignment {
+    fn set_hands_and_max(&mut self, hands: u32) {
+        self.workers = hands;
+        self.max_workers = Some(hands);
+    }
 }

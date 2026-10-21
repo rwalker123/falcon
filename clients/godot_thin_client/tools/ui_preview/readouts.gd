@@ -7,17 +7,19 @@
 const Spine := preload("res://tools/ui_preview/compose_vocab.gd")
 const Q := preload("res://tools/ui_preview/node_query.gd")
 
-## What `crew_target_count` answers when the pill is not rendered AT ALL.
-##
-## **IT IS DELIBERATELY NOT `-1`.** `SourceForecast.NO_CREW_ANSWER` is `-1` and now rides the meta of
-## a pill that IS rendered — the disabled `✕` one — so a sentinel of `-1` here would make "no pill"
-## and "a pill saying nobody can do this" the same reading, and every `== CREW_TARGET_ABSENT`
-## assertion would pass on the pill it was written to prove was gone.
-const CREW_TARGET_ABSENT := -2
+## What `crew_target_count` answers when the open sheet drew no chart model at all. It is deliberately not
+## `-1`: `SourceForecast.NO_CREW_ANSWER` is `-1` and rides the model of a chart that IS drawn - the source
+## no crew reaches - so the two stay two readings.
+const CREW_TARGET_ABSENT := DrawerComposeController.CHART_TARGET_ABSENT
 
-## The glyph an unreachable target's pill leads with, for assertions that want to name it without
-## reaching into the HUD's vocab module twice.
-const CREW_TARGET_UNREACHABLE_FACE := HudComposeVocab.CREW_TARGET_UNREACHABLE_FACE
+## The chart model's two crew targets, by key. They are no longer pills (the sim staffs the crew from the
+## floor, #871) but the arithmetic is the sheet's verdict and forecast, and these name it.
+const TARGET_CLEAR := "crew_to_clear"
+const TARGET_HOLD := "crew_to_hold"
+
+## One of the open sheet's chart-model crew targets - `drawer` is `h._hud._drawercompose`.
+static func crew_target_count(drawer: DrawerComposeController, key: String) -> int:
+	return drawer.chart_crew_target(key)
 
 ## The needle for the aside's teaching line — a lesson still being earned leads with the verb.
 const TEACHING_LESSON_NEEDLE := "Teaching"
@@ -40,60 +42,6 @@ static func rung_is_selected(btn: Button) -> bool:
 	var box := btn.get_theme_stylebox("normal")
 	return box is StyleBoxFlat \
 		and (box as StyleBoxFlat).bg_color.is_equal_approx(HudStyle.BUTTON_PRIMARY_BG)
-
-## The COUNT a crew target is offering, read off the face it renders — or `CREW_TARGET_ABSENT` when
-## that target is not rendered at all. The two answers are different claims: `0` says "nothing needs
-## clearing", absent says "this source's crew cannot be priced".
-static func crew_target_count(root: Node, key: String) -> int:
-	var button := Q.find_crew_target(root, key)
-	if button == null:
-		return CREW_TARGET_ABSENT
-	# **READ OFF THE META, NEVER THE FACE.** The pill's face is a two-Label stack over an
-	# empty-`text` Button (a count and its label at one size are one undifferentiated phrase), so the
-	# old `button.text.split(" ")[0]` finds an empty string here — and `int("")` is 0, which is a REAL
-	# reading of this control ("nothing needs clearing"). It would have passed silently.
-	return int(button.get_meta(HudWidgets.CREW_TARGET_COUNT_META, CREW_TARGET_ABSENT))
-
-## **THE PILL'S LEAD LINE AS IT IS DRAWN** — the count, or `CREW_TARGET_UNREACHABLE_FACE` on the
-## target no crew reaches. `""` when the pill is not rendered, which fails an equality claim rather
-## than satisfying it.
-##
-## Read off the FACE rather than the meta, because the face is the half the meta cannot testify to: a
-## builder that carried the sentinel on the meta and still printed `-1` in the pill would satisfy
-## every `crew_target_count` claim ever written about it.
-static func crew_target_face(root: Node, key: String) -> String:
-	var button := Q.find_crew_target(root, key)
-	if button == null:
-		return ""
-	return _first_label_text(button.get_parent())
-
-## The text of the first `Label` under `root` in draw order, `""` when there is none. The pill's face
-## is a two-Label stack beside an empty-`text` Button, so the LEAD line is what a reader sees first
-## and is what every claim about the face is about.
-static func _first_label_text(root: Node) -> String:
-	if root == null:
-		return ""
-	if root is Label:
-		return (root as Label).text
-	for child in root.get_children():
-		var found := _first_label_text(child)
-		if found != "":
-			return found
-	return ""
-
-## Is this pill refusing the press — `disabled` on the Button the face sits over? `false` when the
-## pill is absent, so a claim of non-interactivity cannot be satisfied by a pill that is not there.
-static func crew_target_is_disabled(root: Node, key: String) -> bool:
-	var button := Q.find_crew_target(root, key)
-	return button != null and button.disabled
-
-## How many handlers are listening to this pill's `pressed`. **The wiring half of "non-interactive"**:
-## Godot swallows a click on a `disabled` Button, so a pill left connected still reads as correct in
-## every driven-press assertion — and one `disabled = false` away from calling `on_pick` with the
-## `NO_CREW_ANSWER` sentinel as a worker count.
-static func crew_target_press_handlers(root: Node, key: String) -> int:
-	var button := Q.find_crew_target(root, key)
-	return -1 if button == null else button.get_signal_connection_list("pressed").size()
 
 ## The READOUT's yields row as one string — every Label in it, joined. The row is found by
 ## `HudWidgets.YIELDS_ROW_META`, its identity: its face is a flow of Labels at three sizes (the
@@ -310,27 +258,38 @@ static func face_lines(root: Node) -> Array[String]:
 # The two webs legitimately say different things in different places; what must match is the order in
 # which the controls come.
 
-## The crew a stepper is SHOWING — the value Label `HudWidgets.add_stepper_controls` lays between the
-## `−` and the `+`. Structural, like the spine walk: a stepper carries no meta, so it is found by that
-## `−` face and the value is its next sibling.
+## The crew a compose sheet is SHOWING - the read-only crew number `_mount_staffed_crew` draws above the
+## keepers / gear / bare bar (#871), found by its meta. It stood for the stepper's value while the crew was
+## the player's; the crew is the sim's now (a snapshot row's `workers` on a working source, the forecast on
+## a new one) and the player's say is the Max stepper, read by `max_stepper_value`.
 ##
-## It exists because "the frame renders the N-worker crew" was being asserted against
-## `ComposeState.hunt_count()` — the model the harness itself had just dialed. That is a real test of
-## the CLAMP (the render writes the clamped count back), but it is not a test of the readout, and a
-## stepper drawing any other number would pass it. `STEPPER_VALUE_ABSENT` on a missing stepper, so a
-## sheet that never opened fails an equality claim rather than satisfying it.
+## It exists because "the frame renders the N-worker crew" was being asserted against the model the
+## harness itself had just dialed, which would pass for any number drawn. `STEPPER_VALUE_ABSENT` on a sheet
+## that draws no crew, so a sheet that never opened fails an equality claim rather than satisfying it.
 const STEPPER_VALUE_ABSENT := -1
 
 static func stepper_value(root: Node) -> int:
-	var minus := Q.find_button_by_text(root, Spine.COMPOSE_STEPPER_MINUS_FACE)
-	if minus == null or minus.get_parent() == null:
-		return STEPPER_VALUE_ABSENT
-	var siblings := minus.get_parent().get_children()
-	var index := siblings.find(minus)
-	if index < 0 or index + 1 >= siblings.size():
-		return STEPPER_VALUE_ABSENT
-	var value: Node = siblings[index + 1]
-	return int((value as Label).text) if value is Label else STEPPER_VALUE_ABSENT
+	var number := Q.find_live_meta_node(root, HudComposeVocab.SHEET_CREW_NUMBER_META)
+	return STEPPER_VALUE_ABSENT if number == null \
+		else int(number.get_meta(HudComposeVocab.SHEET_CREW_NUMBER_META))
+
+## **THE MAX STEPPER'S VALUE AS DRAWN** (#871) - the number on the sheet's `Max` stepper, `0` for `No max`,
+## `STEPPER_VALUE_ABSENT` where the sheet draws none. Read off the value Label's meta, and asserted against
+## its text by `max_stepper_text`.
+static func max_stepper_value(root: Node) -> int:
+	var value := Q.find_live_meta_node(root, HudWorkVocab.MAX_STEPPER_VALUE_META)
+	return STEPPER_VALUE_ABSENT if value == null \
+		else int(value.get_meta(HudWorkVocab.MAX_STEPPER_VALUE_META))
+
+## The Max stepper's FACE - `No max` or the number - `""` where the sheet draws none.
+static func max_stepper_text(root: Node) -> String:
+	var value := Q.find_live_meta_node(root, HudWorkVocab.MAX_STEPPER_VALUE_META)
+	return "" if not (value is Label) else (value as Label).text
+
+## The hunt sheet's gear-short sentence, `""` where it draws none.
+static func gear_short_line(root: Node) -> String:
+	var line := Q.find_live_meta_node(root, HudComposeVocab.GEAR_SHORT_LINE_META)
+	return "" if line == null else String(line.get_meta(HudComposeVocab.GEAR_SHORT_LINE_META))
 
 ## **RETIRED — `build_crew_value` / `build_crew_can_add` / `build_crew_plus` / `_build_crew_minus`,
 ## the BUILDERS stepper's own readers** (`docs/plan_standing_upkeep.md` §2.5). They existed because a
@@ -338,8 +297,9 @@ static func stepper_value(root: Node) -> int:
 ## it finds. A verb declares and names no crew now, so there is one stepper again — and the claim that
 ## replaced theirs is `stepper_count` below, which is an assertion about there being no second one.
 
-## **HOW MANY STEPPERS THIS SHEET MOUNTS**, counted by the `−` faces `HudWidgets.add_stepper_controls`
-## builds. The answer is ONE on every compose sheet in the game (`COMPOSE_STEPPERS_PER_SHEET`), and
+## **HOW MANY STEPPERS THIS SHEET MOUNTS**, counted by the `−` faces `HudWidgets.add_max_stepper`
+## builds. The answer is ONE on every compose sheet in the game (`COMPOSE_STEPPERS_PER_SHEET`) - the
+## sheet's MAX stepper (#871), the crew itself being the sim's - and
 ## asserting the COUNT rather than the absence of a named row is what catches a per-source build
 ## control re-added under any meta, any label or none at all (§3.1).
 const COMPOSE_STEPPERS_PER_SHEET := 1
@@ -477,20 +437,21 @@ static func crew_split_marks(sheet: Node) -> CrewSplitMarks:
 	if sheet == null:
 		return null
 	for node in sheet.find_children("*", "Control", true, false):
-		if node is CrewSplitMarks and not (node as Node).is_queued_for_deletion():
+		if node is CrewSplitMarks and not _is_being_freed(node):
 			return node as CrewSplitMarks
 	return null
 
-## The crew split's muted sentence under the readout's figure, `""` where none is drawn.
-static func crew_split_sentence(sheet: Node) -> String:
-	if sheet == null:
-		return ""
-	for node in sheet.find_children("*", "Label", true, false):
-		if (node as Node).has_meta(HudWorkVocab.CREW_SPLIT_SENTENCE_META) \
-				and not (node as Node).is_queued_for_deletion():
-			return String((node as Node).get_meta(HudWorkVocab.CREW_SPLIT_SENTENCE_META))
-	return ""
-
+## Is this node, or any ancestor, queued for deletion? A control edit rebuilds the compose block and
+## `queue_free`s the PREVIOUS generation's root, which leaves its descendants individually un-flagged
+## and still in the tree until the frame ends - so a finder that asks only about the node itself reads
+## the generation that was just replaced.
+static func _is_being_freed(node: Node) -> bool:
+	var cursor: Node = node
+	while cursor != null:
+		if cursor.is_queued_for_deletion():
+			return true
+		cursor = cursor.get_parent()
+	return false
 
 ## The compose sheet's rot bullet under the PER TURN numbers (`HudWidgets.WORK_PARTY_ROT_META`), as
 ## `[text, severity]`, or `["", ""]` when none is drawn.

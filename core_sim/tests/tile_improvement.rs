@@ -306,6 +306,16 @@ fn a_far_crew_goes_as_a_work_party() {
     app.world
         .resource_mut::<TileImprovementRegistry>()
         .place(far, branch(), faction, &ladder);
+    // **Raised to the grafted rung, so it owes a keeping bill** (#871): the sim staffs a tile crew
+    // with the keepers the bill calls for, and a bare improvement at its floor owes none.
+    {
+        let (base, width) = core_sim::tile_improvement::tile_rung_span(rung(BUILT_RUNG), &ladder);
+        app.world
+            .resource_mut::<TileImprovementRegistry>()
+            .get_mut(far, branch())
+            .expect("the improvement was placed")
+            .set_position(base + width, &ladder);
+    }
     let mut allocation = LaborAllocation::default();
     allocation.set_assignment(tile_row(far), CREW, ALL_HANDS, None);
     app.world.entity_mut(band).insert(allocation);
@@ -456,7 +466,9 @@ fn a_kept_improvement_reaches_the_wire_with_its_crew_and_its_bill() {
         .expect("the crew's row is on the wire");
     assert_eq!(crew_row.branch().unwrap_or_default(), BRANCH);
     assert_eq!((crew_row.targetX(), crew_row.targetY()), (tile.x, tile.y));
-    assert_eq!(crew_row.workers(), CREW);
+    // **The crew is the bill's keepers** (#871): the count named is only the most the sim may staff.
+    assert_eq!(crew_row.workers(), upkeep_workers_needed);
+    assert!(crew_row.workers() <= CREW);
 }
 
 /// **FOG**: an improvement on ground the viewer has never explored is not published.

@@ -545,6 +545,8 @@ fn begin_a_ring(app: &mut App, band: Entity) {
         party: None,
         muster_crew: 0,
         planned_crew: 0,
+        max_workers: Some(RING_BUILDERS),
+        staffing: Default::default(),
         target: LaborTarget::Hunt {
             fauna_id: CORRALLED_HERD.to_string(),
             floor: KEEPER_FLOOR,
@@ -558,6 +560,8 @@ fn begin_a_ring(app: &mut App, band: Entity) {
         party: None,
         muster_crew: 0,
         planned_crew: 0,
+        max_workers: Some(RING_BUILDERS),
+        staffing: Default::default(),
         target: LaborTarget::Builders,
         workers: RING_BUILDERS,
         kit: None,

@@ -2913,6 +2913,8 @@ mod food_flow_tests {
             party: None,
             muster_crew: 0,
             planned_crew: 0,
+            max_workers: Some(4),
+            staffing: Default::default(),
             target: LaborTarget::Forage {
                 tile: UVec2::new(0, 0),
                 floor: 0.5,

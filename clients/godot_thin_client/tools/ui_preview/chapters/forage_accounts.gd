@@ -8,7 +8,7 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 234
+const EXPECTED_CHECKPOINTS := 228
 
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 const BaseFx := preload("res://tools/ui_preview/fixtures_base.gd")
@@ -1090,7 +1090,7 @@ func _assert_readout_names_both_rates() -> void:
 ##
 ## Reported from play as *"in the forage image you say nothing"*: a Harvesting kit, one harvester, no
 ## line at all. The producer was shared with the hunt sheet and correct; the two webs diverged at the
-## MOUNT. `DrawerComposeController` handed `_compose.hunt_count()` to the hunt kit row and handed the
+## MOUNT. `DrawerComposeController` handed `_compose.hunt_max()` to the hunt kit row and handed the
 ## forage row NOTHING, so `crew` defaulted to `KIT_CREW_UNCOMPOSED`, `shortfall_line` fell back to the
 ## published `workersOnQuotedJob` — which is `0` before anyone is assigned — and returned `""` on every
 ## forage sheet however short the band was.
@@ -1160,7 +1160,7 @@ func _forage_kit_line(tile: Dictionary, held: float) -> String:
 	h._hud._compose.reset_forage_source()
 	h._show_tile(tile)
 	h._compose_forage(tile)
-	h._hud._compose.set_forage_count(FORAGE_COVER_CREW)
+	h._hud._compose.set_forage_max(FORAGE_COVER_CREW)
 	h._compose_forage(tile)
 	await h._settle()
 	return Readout.kit_hint_line(h._hud._drawercompose._compose_sheet)
@@ -1182,7 +1182,7 @@ func _forage_kit_line_unstaffed(tile: Dictionary) -> String:
 	h._hud._compose.reset_forage_source()
 	h._show_tile(tile)
 	h._compose_forage(tile)
-	h._hud._compose.set_forage_count(FORAGE_COVER_CREW)
+	h._hud._compose.set_forage_max(FORAGE_COVER_CREW)
 	h._compose_forage(tile)
 	await h._settle()
 	return Readout.kit_hint_line(h._hud._drawercompose._compose_sheet)
@@ -1241,7 +1241,7 @@ func run(harness) -> void:
 	await h._settle()
 	await h._save("forage_stale_verb")
 	var stale_sheet = h._hud._drawercompose._compose_sheet
-	var stale_hold = Readout.crew_target_count(stale_sheet, HudWidgets.CREW_TARGET_HOLD)
+	var stale_hold = Readout.crew_target_count(h._hud._drawercompose, Readout.TARGET_HOLD)
 	# (1) THE CREW TARGETS DIVIDE BY THE THROUGHPUT THE WIRE PUBLISHED. Compared against the crew terms
 	# recomposed here from the source's own fields at NO dip — the answer a patch with nothing left to
 	# build must give. With the stale verb pricing the crew this reads 6 against 2.
@@ -1251,7 +1251,7 @@ func run(harness) -> void:
 			PLANT_NO_BODY, SourceForecast.NO_ENGAGEMENT_STAGE,
 			SourceForecast.STAY_FRACTION_NONE_BREAKS_OFF))
 	h._assert_hud("…and so does CLEAR, the other half of the same division",
-		Readout.crew_target_count(stale_sheet, HudWidgets.CREW_TARGET_CLEAR)
+		Readout.crew_target_count(h._hud._drawercompose, Readout.TARGET_CLEAR)
 			== SourceForecast.crew_to_clear(SourceForecast.escapement_room(stale_tile,
 				HudComposeVocab.FORAGE_FORECAST_PREFIX, ForageFx.STALE_VERB_FLOOR), stale_carry,
 				SourceForecast.crew_that_reaches(stale_samples, ForageFx.STALE_VERB_STOCK,
@@ -1315,7 +1315,7 @@ func run(harness) -> void:
 	h._compose_forage(building_tile)
 	h._hud._compose.set_forage_floor(BUILD_DIP_FLOOR)
 	h._hud._compose.set_forage_improvement("cultivate")
-	h._hud._compose.set_forage_count(BUILD_DIP_CREW)
+	h._hud._compose.set_forage_max(BUILD_DIP_CREW)
 	h._compose_forage(building_tile)
 	await h._settle()
 	await h._save("forage_build_crew")
@@ -1324,7 +1324,7 @@ func run(harness) -> void:
 	# Captured while a build IS composed, so the no-build frame below can compare against it rather
 	# than against a recomposition of the same oracle.
 	var build_yields_before := Readout.yields_text(build_sheet)
-	var build_clear = Readout.crew_target_count(build_sheet, HudWidgets.CREW_TARGET_CLEAR)
+	var build_clear = Readout.crew_target_count(h._hud._drawercompose, Readout.TARGET_CLEAR)
 	# (0) THE FRAME REALLY IS THE REGIME. Without this every assertion below is about an ordinary
 	# patch: the whole point is a crew that CANNOT out-take the regrowth, so the crew that can must be
 	# strictly larger than the one-turn quotient the target used to state.
@@ -1340,15 +1340,9 @@ func run(harness) -> void:
 	h._assert_hud("clear-it-now (%d) is never below the crew the verdict names as reaching the floor (%d)"
 		% [build_clear, build_reaching],
 		build_clear >= build_reaching and build_reaching > 0)
-	# (2) …AND THE STEPPER CAN REACH IT (§7.6). Flooring the target without flooring the cap trades one
-	# contradiction for another — a pill naming a crew the `+` refuses. Driven through the REAL button,
-	# because the clamp lives in the press handler and not in the arithmetic.
-	Q.find_crew_target(build_sheet, HudWidgets.CREW_TARGET_CLEAR).pressed.emit()
-	h._assert_hud("…and the stepper reaches that crew rather than clamping it to a smaller cap",
-		h._hud._compose.forage_count() == build_clear)
-	h._hud._compose.set_forage_count(BUILD_DIP_CREW)
+	h._hud._compose.set_forage_max(BUILD_DIP_CREW)
 	h._compose_forage(building_tile)
-	# (3) **THE ⚠ IS THE SIM'S, AND THIS PATCH IS WORKED BY NOBODY.** The sheet used to derive the flag
+	# (2) **THE ⚠ IS THE SIM'S, AND THIS PATCH IS WORKED BY NOBODY.** The sheet used to derive the flag
 	# here — a take against the food-peak ceiling (zero on a patch standing at the peak, so the test
 	# degenerated into "the floor is below 0.5") gated on a client-side drawdown walk. Both are gone:
 	# `LaborAssignment.overdraws` carries the whole verdict, and a patch with no standing row has no
@@ -1376,7 +1370,7 @@ func run(harness) -> void:
 	# the line. **The ⚠ must NOT come back**, and that is the claim now: the flag answers for the crew
 	# the sim resolved, not for the one being dialled, so a projection that has flipped between two
 	# renders of an UNWORKED patch may not move it. Sabotage that re-derives the flag fails HERE.
-	h._hud._compose.set_forage_count(BUILD_DIP_DECLINE_CREW)
+	h._hud._compose.set_forage_max(BUILD_DIP_DECLINE_CREW)
 	h._compose_forage(building_tile)
 	await h._settle()
 	await h._save("forage_build_crew_decline")
@@ -1389,15 +1383,13 @@ func run(harness) -> void:
 		not h._hud._drawercompose._local_forage_preview_bbcode(h._hud._band_labor.player_band(),
 			building_tile, BUILD_DIP_FLOOR, BUILD_DIP_DECLINE_CREW, "cultivate")
 			.contains(HudStyle.WARN_HEX))
-	h._assert_hud("…and the verdict agrees with it — this crew reaches the floor",
-		Readout.verdict_severity(h._hud._drawercompose._compose_sheet) == SourceForecast.VERDICT_OK)
 
 	# State forage_build_crew_none — THE SAME PATCH WITH NO BUILD IN FLIGHT, which is the only way to
 	# read the build crew row as a CLAIM: a row that renders on every sheet says nothing. It must be
 	# absent here — there is no build to staff — while every take-side number is unmoved, which is the
 	# retired dip's absence made visible.
 	h._hud._compose.set_forage_improvement(SourceForecast.IMPROVEMENT_NONE)
-	h._hud._compose.set_forage_count(BUILD_DIP_CREW)
+	h._hud._compose.set_forage_max(BUILD_DIP_CREW)
 	h._compose_forage(building_tile)
 	await h._settle()
 	await h._save("forage_build_crew_none")
@@ -1613,7 +1605,7 @@ func run(harness) -> void:
 	# not warn at floor 0* one. The crew size is load-bearing and deliberately not the auto-max — below
 	# ~7 foragers LABOR binds under every ceiling, so a small-crew frame would move no number at all.
 	h._hud._compose.set_forage_floor(SourceForecast.FLOOR_MIN)
-	h._hud._compose.set_forage_count(HAY_OVERDRAW_FORAGERS)
+	h._hud._compose.set_forage_max(HAY_OVERDRAW_FORAGERS)
 	h._compose_forage(hay_meadow)
 	await h._settle()
 	await h._save("forage_three_accounts_overdraw")
@@ -1679,16 +1671,8 @@ func run(harness) -> void:
 	# really did answer the unpriceable sentinel — and the FACE is the claim, since a pill carrying
 	# the sentinel on its meta while printing `-1` would satisfy the first alone.
 	h._assert_hud("a dead-season patch prices no crew target rather than dividing by a zero throughput",
-		Readout.crew_target_count(h._hud._drawercompose._compose_sheet, HudWidgets.CREW_TARGET_CLEAR)
+		Readout.crew_target_count(h._hud._drawercompose, Readout.TARGET_CLEAR)
 			== SourceForecast.NO_CREW_ANSWER)
-	h._assert_hud("…and says so on a DISABLED pill reading %s, rather than vanishing (got \"%s\")"
-			% [Readout.CREW_TARGET_UNREACHABLE_FACE,
-				Readout.crew_target_face(h._hud._drawercompose._compose_sheet,
-					HudWidgets.CREW_TARGET_CLEAR)],
-		Readout.crew_target_face(h._hud._drawercompose._compose_sheet,
-				HudWidgets.CREW_TARGET_CLEAR) == Readout.CREW_TARGET_UNREACHABLE_FACE
-			and Readout.crew_target_is_disabled(h._hud._drawercompose._compose_sheet,
-				HudWidgets.CREW_TARGET_CLEAR))
 	h._assert_hud("…and still draws its chart, the stock and the curve being facts about the ground",
 		Q.find_meta_node(h._hud._drawercompose._compose_sheet, HudWidgets.FLOOR_CHART_META) != null)
 
@@ -1722,7 +1706,7 @@ func run(harness) -> void:
 	h._show_tile(full_patch)
 	h._compose_forage(full_patch)
 	h._hud._compose.set_forage_floor(FLOOR_CHART_ABOVE_STOCK)
-	h._hud._compose.set_forage_count(ForageFx.FLOOR_CHART_CREW)
+	h._hud._compose.set_forage_max(ForageFx.FLOOR_CHART_CREW)
 	h._compose_forage(full_patch)
 	await h._settle()
 	await h._save("floor_chart_full")
@@ -1730,11 +1714,11 @@ func run(harness) -> void:
 	h._assert_hud("a floor above the stock is BLOCKED — the source binds, not the crew",
 		Readout.verdict_severity(h._hud._drawercompose._compose_sheet) == SourceForecast.VERDICT_BLOCKED)
 	h._assert_hud("…and there is nothing to clear, so that target reads zero rather than a crew",
-		Readout.crew_target_count(h._hud._drawercompose._compose_sheet, HudWidgets.CREW_TARGET_CLEAR) == 0)
+		Readout.crew_target_count(h._hud._drawercompose, Readout.TARGET_CLEAR) == 0)
 	# THE HALF A PNG CANNOT SHOW: the chart, the targets and the verdict are read against the SAME
 	# crew the stepper renders. They were composed before the cap clamped it once, so the panel stated
 	# a verdict for a crew it then refused to staff; this is what pins the order that fixed it.
-	var full_hold = Readout.crew_target_count(h._hud._drawercompose._compose_sheet, HudWidgets.CREW_TARGET_HOLD)
+	var full_hold = Readout.crew_target_count(h._hud._drawercompose, Readout.TARGET_HOLD)
 	h._assert_hud("a source with no room still admits the crew that HOLDS it — the cap floors on the hold number",
 		full_hold > 0)
 	h._assert_hud("the verdict reads the crew the stepper shows, not one the cap is about to clamp away",
@@ -1762,12 +1746,12 @@ func run(harness) -> void:
 	# reading — the whole contrast with the herd frame `floor_chart_herd_allee` (`chapters/hunt.gd`) —
 	# is indistinguishable from the axis.
 	h._hud._compose.set_forage_floor(FLOOR_CHART_HELD_FLOOR)
-	h._hud._compose.set_forage_count(ForageFx.FLOOR_CHART_CREW)
+	h._hud._compose.set_forage_max(ForageFx.FLOOR_CHART_CREW)
 	h._compose_forage(h._floor_chart_drawn_patch)
 	await h._settle()
 	await h._save("floor_chart_drawn_down")
 	h._assert_hud("a patch drawn toward a reachable floor states a HOLD crew, not just a clearing one",
-		Readout.crew_target_count(h._hud._drawercompose._compose_sheet, HudWidgets.CREW_TARGET_HOLD)
+		Readout.crew_target_count(h._hud._drawercompose, Readout.TARGET_HOLD)
 			!= Readout.CREW_TARGET_ABSENT)
 	# **THE BURST AND THE STEADY RATE, ON THE SAME READING.** The headline take is capped by the ROOM
 	# above the floor, so a crew big enough to clear that room in a turn or two had its one-off burst
@@ -1794,7 +1778,7 @@ func run(harness) -> void:
 	# The idle needle is the whole rendered clause, not the bare count: `1` appears in the crew targets
 	# and in the stepper, so a digit search would pass with the line restored.
 	h._assert_hud("the aside does not narrate the idle count the crew row already states twice",
-		Readout.crew_target_count(h._hud._drawercompose._compose_sheet, HudWidgets.CREW_TARGET_HOLD) == 1
+		Readout.crew_target_count(h._hud._drawercompose, Readout.TARGET_HOLD) == 1
 			and not Readout.readout_aside_text(h._hud._drawercompose._compose_sheet).contains("go idle"))
 	# **THE UNIT IS SAID ONCE, IN THE HEADER, AND THE HEADER KEYS THE ARROW.** Three `/TURN`s were the
 	# widest thing on the row and it could not afford them once each account stated two numbers; the
@@ -1902,7 +1886,7 @@ func run(harness) -> void:
 	h._show_tile(wild_hay)
 	h._compose_forage(wild_hay)   # settle the source key first (it changed)
 	h._hud._compose.set_forage_floor(SourceForecast.FLOOR_FOOD_PEAK)
-	h._hud._compose.set_forage_count(FODDER_LOCK_FORAGERS)
+	h._hud._compose.set_forage_max(FODDER_LOCK_FORAGERS)
 	h._compose_forage(wild_hay)
 	await h._settle()
 	await h._save("forage_fodder_locked")
@@ -2185,7 +2169,7 @@ func run(harness) -> void:
 	h._show_tile(no_food)
 	h._compose_forage(no_food)
 	h._hud._compose.set_forage_floor(SourceForecast.FLOOR_FOOD_PEAK)
-	h._hud._compose.set_forage_count(NO_FOOD_BASKET_QUOTE_CREW)
+	h._hud._compose.set_forage_max(NO_FOOD_BASKET_QUOTE_CREW)
 	h._compose_forage(no_food)
 	await h._settle()
 	await h._save("forage_no_food_basket")
@@ -2218,8 +2202,8 @@ func run(harness) -> void:
 	# (3) **THE CAP REACHES THE CREW THE SHEET'S OWN TARGETS NAME** (§7.6) — read off the rendered
 	# pills, not recomputed, since the defect was the panel disagreeing with itself. Both must be
 	# PRESENT: an absent target passes a `>=` for free.
-	var no_food_clear := Readout.crew_target_count(no_food_sheet, HudWidgets.CREW_TARGET_CLEAR)
-	var no_food_hold := Readout.crew_target_count(no_food_sheet, HudWidgets.CREW_TARGET_HOLD)
+	var no_food_clear := Readout.crew_target_count(h._hud._drawercompose, Readout.TARGET_CLEAR)
+	var no_food_hold := Readout.crew_target_count(h._hud._drawercompose, Readout.TARGET_HOLD)
 	h._assert_hud("the sheet prices a crew at all — both targets render (%d / %d)"
 		% [no_food_clear, no_food_hold],
 		no_food_clear > 0 and no_food_hold > 0)
@@ -2229,7 +2213,7 @@ func run(harness) -> void:
 	# `— FODDER` and no material row at all on a tile 56% tobacco. Each material as its OWN row, never
 	# summed, and the FODDER row still reading beside them.
 	var no_food_yields := Readout.yields_text(no_food_sheet)
-	var no_food_crew: int = h._hud._compose.forage_count()
+	var no_food_crew: int = h._hud._compose.forage_max()
 	# **THE CREW ARM OF THE `min` IS WHAT THIS FRAME READS**, which is why the composed crew sits below
 	# the saturating one: at the clearing crew the two arms are equal by construction, and a producer
 	# that never read the per-worker rate would render the same string. The band's own
@@ -2263,9 +2247,11 @@ func run(harness) -> void:
 	# lives in the press handler rather than in the arithmetic. This is the claim the reported
 	# screenshot fails: the press landed on 1. Taken LAST, after the frame is saved, since it moves the
 	# crew off the one the readout claims above were composed at.
-	Q.find_crew_target(no_food_sheet, HudWidgets.CREW_TARGET_CLEAR).pressed.emit()
-	h._assert_hud("…so pressing *clear it now* lands the stepper on the crew it names",
-		h._hud._compose.forage_count() == no_food_clear)
+	h._hud._compose.set_forage_max(no_food_clear)
+	h._compose_forage(no_food)
+	await h._settle()
+	h._assert_hud("…so the sheet staffs the crew *clear it now* names",
+		Readout.stepper_value(h._hud._drawercompose._compose_sheet) == no_food_clear)
 
 	# State forage_cash_crop_field — **THE SAME BASKET ONE RUNG UP, and the reported 2026-08-22
 	# defect.** A completed 100%-tobacco Field with TWO tenders committed read `TENDERS 0` and
@@ -2281,7 +2267,7 @@ func run(harness) -> void:
 	# (`forage.rs`, "RETIRED: the whole rung-3 MANAGED HARVEST"), and the client now follows.
 	#
 	# ⛔ **THE DANGEROUS HALF IS THE STAGED COUNT, NOT THE NOTE.** The cap clamps
-	# `ComposeState.clamp_forage_count`, so the sheet staged `0` while two tenders were committed —
+	# `ComposeState.clamp_forage_max`, so the sheet staged `0` while two tenders were committed —
 	# and confirming it sends `assign_labor` with `0`, silently dropping both, from a panel that never
 	# showed the player a `2`.
 	var field_tile := _cash_crop_field_tile_fixture()
@@ -2320,13 +2306,13 @@ func run(harness) -> void:
 	# (3) ⛔ **AND THE STAGED COUNT NEVER FALLS BELOW THE COMMITTED ONE** — the assertion the silent
 	# drop needs, and the one thing a frame of this sheet cannot show, a `TENDERS 0` stepper being a
 	# perfectly ordinary control. Read off the compose model the COMMIT sends rather than off the
-	# arithmetic above it, because `clamp_forage_count` sits between the two and is where the drop
+	# arithmetic above it, because `clamp_forage_max` sits between the two and is where the drop
 	# happened. **It is an assertion rather than a runtime clamp on purpose** — see
 	# `DrawerComposeController._forecast_worker_cap`, which records the floor that was tried here and
 	# the legitimate cap-fall it broke.
-	h._assert_hud("the sheet stages at least the %d tenders already committed (staged %d)"
-		% [FIELD_TENDERS, h._hud._compose.forage_count()],
-		h._hud._compose.forage_count() >= FIELD_TENDERS)
+	h._assert_hud("the sheet states at least the %d tenders already staffed (states %d)"
+		% [FIELD_TENDERS, Readout.stepper_value(h._hud._drawercompose._compose_sheet)],
+		Readout.stepper_value(h._hud._drawercompose._compose_sheet) >= FIELD_TENDERS)
 	# (4) **THE SCOPE, and it is what stops (3) reading as *never cap anything*.** The claim is made
 	# of a source that PAYS — `pays_any_account`, the predicate it is worded in terms of — and the
 	# pairing is a patch that pays into nothing at all, which must still cap at one worker however
@@ -2384,21 +2370,9 @@ func run(harness) -> void:
 	# (1) **THE TAKE STEPPER OPENED ON THE BAND'S OWN CREW.** Its build twin went with the per-source
 	# build allocation (§2.5), and the two counts are still deliberately unlike, so a seed that read
 	# some other field lands on a number this assertion names.
-	h._assert_hud("the take stepper opened on the band's take crew (%d)" % REOPEN_TAKE_CREW,
-		h._hud._compose.forage_count() == REOPEN_TAKE_CREW)
-	# (2) **AND IT CAN STILL BE RESTATED AT ZERO IDLE**, which is the whole point: the ceiling is
-	# `idle + this source's own take crew`, so a band that has committed everything can be taken DOWN
-	# and back UP to what it already has. Driven through the model the stepper writes — down one hand,
-	# then back — because a clamp at `idle` alone would refuse the return and strand the crew at 3.
-	h._hud._compose.set_forage_count(REOPEN_TAKE_CREW - 1)
-	h._compose_forage(reopened_tile)
-	await h._settle()
-	h._hud._compose.set_forage_count(REOPEN_TAKE_CREW)
-	h._compose_forage(reopened_tile)
-	await h._settle()
-	h._assert_hud("the take stepper returns to its seeded crew on a band with 0 idle",
-		h._hud._compose.forage_count() == REOPEN_TAKE_CREW)
-	# (3) **AND THE SHEET COMPOSES NEITHER A KEEPING NOR A BUILD CREW** (§2.5). This patch is short of
+	h._assert_hud("the sheet states the band's take crew (%d)" % REOPEN_TAKE_CREW,
+		Readout.stepper_value(reopened_sheet) == REOPEN_TAKE_CREW)
+	# (2) **AND THE SHEET COMPOSES NEITHER A KEEPING NOR A BUILD CREW** (§2.5). This patch is short of
 	# its keeping — the fixture states a live shortfall — and its rung is being built, so a sheet that
 	# still mounted either stepper would mount it HERE if anywhere; both levers are band-level role
 	# cards, and a stepper on the sheet would point the player at a command the sim no longer accepts.
@@ -2413,7 +2387,7 @@ func run(harness) -> void:
 			SourceForecast.IMPROVEMENT_CULTIVATE))
 	# It COUNTS the steppers rather than looking for a retired tag: both rows' metas went with the
 	# rows, so a restored one would carry no tag and a tag search would pass vacuously. A count cannot.
-	h._assert_hud("…and the sheet still offers exactly ONE stepper — the take crew's",
+	h._assert_hud("…and the sheet still offers exactly ONE stepper — the Max's",
 		Readout.stepper_count(reopened_sheet) == Readout.COMPOSE_STEPPERS_PER_SHEET)
 	# (4) **THE CROP SURVIVED THE REOPEN, over ground nobody has worked.** The patch carries no
 	# `committed_species` — there is nothing for the ground to be committed to yet — so the
@@ -2457,7 +2431,7 @@ func run(harness) -> void:
 		* float(at_floor["patch_carrying_capacity"])
 	h._hud._compose.reset_forage_source()
 	h._hud._compose.set_forage_floor(SourceForecast.FLOOR_FOOD_PEAK)
-	h._hud._compose.set_forage_count(AT_FLOOR_FORAGERS)
+	h._hud._compose.set_forage_max(AT_FLOOR_FORAGERS)
 	# SHOWN as well as composed: a kept patch's take is the crew curve's answer, and the sheet that
 	# answer rebuilds is the SELECTED tile's — the live game's only shape.
 	h._show_tile(at_floor)
@@ -2542,7 +2516,7 @@ func run(harness) -> void:
 		* float(below_floor["patch_carrying_capacity"])
 	h._hud._compose.reset_forage_source()
 	h._hud._compose.set_forage_floor(SourceForecast.FLOOR_FOOD_PEAK)
-	h._hud._compose.set_forage_count(AT_FLOOR_FORAGERS)
+	h._hud._compose.set_forage_max(AT_FLOOR_FORAGERS)
 	# SHOWN as well as composed: a kept patch's take is the crew curve's answer, and the sheet that
 	# answer rebuilds is the SELECTED tile's — the live game's only shape.
 	h._show_tile(below_floor)
@@ -2577,7 +2551,7 @@ func run(harness) -> void:
 	var descending := BaseFx.food_tile_fixture()
 	h._hud._compose.reset_forage_source()
 	h._hud._compose.set_forage_floor(SourceForecast.FLOOR_FOOD_PEAK)
-	h._hud._compose.set_forage_count(AT_FLOOR_FORAGERS)
+	h._hud._compose.set_forage_max(AT_FLOOR_FORAGERS)
 	h._show_tile(descending)
 	h._compose_forage(descending)
 	await h._settle()
@@ -2614,12 +2588,12 @@ func run(harness) -> void:
 	h._compose_forage(kept)
 	await h._settle()
 	# The crew is dialed AFTER the first open, which re-seeds it off the band's standing row.
-	h._hud._compose.set_forage_count(KEPT_CURVE_CREW)
+	h._hud._compose.set_forage_max(KEPT_CURVE_CREW)
 	h._compose_forage(kept)
 	await h._settle()
 	h._assert_hud("precondition: the sheet stands at the dialed crew of %d (got %d)"
-			% [KEPT_CURVE_CREW, h._hud._compose.forage_count()],
-		h._hud._compose.forage_count() == KEPT_CURVE_CREW)
+			% [KEPT_CURVE_CREW, h._hud._compose.forage_max()],
+		h._hud._compose.forage_max() == KEPT_CURVE_CREW)
 	await h._save("forage_kept_curve")
 	var kept_text = Readout.yields_text(h._hud._drawercompose._compose_sheet)
 	var kept_priced := ForageFx.floorify(kept, HudComposeVocab.FORAGE_FORECAST_PREFIX)
@@ -2649,27 +2623,28 @@ func run(harness) -> void:
 		SourceForecast.SOURCE_KIND_FORAGE, HudComposeVocab.FORAGE_FORECAST_PREFIX,
 		SourceForecast.FLOOR_FOOD_PEAK, KEPT_CURVE_CREW, "harvesters", false)
 	var keep_whole := int(ceilf(KEPT_CURVE_KEEP_HANDS))
-	for pill in [[HudWidgets.CREW_TARGET_CLEAR, "crew_to_clear"], [HudWidgets.CREW_TARGET_HOLD, "crew_to_hold"]]:
+	for pill in [[Readout.TARGET_CLEAR, "crew_to_clear"], [Readout.TARGET_HOLD, "crew_to_hold"]]:
 		var take_target := int(take_model.get(pill[1], SourceForecast.NO_CREW_ANSWER))
-		var shown := Readout.crew_target_count(sheet, String(pill[0]))
-		h._assert_hud("the `%s` pill names the whole crew — take %d + keeping %d (got %d)"
+		var shown := Readout.crew_target_count(h._hud._drawercompose, String(pill[0]))
+		h._assert_hud("the `%s` crew names the whole crew — take %d + keeping %d (got %d)"
 				% [pill[0], take_target, keep_whole, shown],
 			take_target > 0 and shown == take_target + keep_whole)
 	var take_useful := SourceForecast.max_useful_workers(SourceForecast.forecast_inputs(
 		h._hud._drawercompose._forage_priced_patch(kept_priced, h._hud._band_labor.player_band()),
 		SourceForecast.SOURCE_KIND_FORAGE, HudComposeVocab.FORAGE_FORECAST_PREFIX,
 		SourceForecast.FLOOR_FOOD_PEAK))
-	var cap_want := SourceForecast.MAX_USEFUL_NOTE_FORMAT % [take_useful + keep_whole,
-		SourceForecast.MAX_USEFUL_NOUN_MANY]
-	h._assert_hud("…and the cap note names the same whole crew, `%s`" % cap_want,
-		_sheet_has_text(sheet, cap_want))
+	h._hud._compose.set_forage_max(0)
+	h._compose_forage(kept)
+	await h._settle()
+	h._assert_hud("…and with no Max the sheet staffs the same whole crew (%d)" % (take_useful + keep_whole),
+		Readout.stepper_value(h._hud._drawercompose._compose_sheet) == take_useful + keep_whole)
 
 	# ⛔ **AND THE VERDICT'S CREW COUNT IS THE WHOLE CREW TOO.** A crew all of whom the keeping takes
 	# gathers nothing, so it cannot draw the patch down and the verdict states the crew that WOULD reach
 	# the floor — take hands plus the 2 keeping. (The walk itself is drawn by the gatherers the curve
 	# names, so a crew of 3 here — 1 gatherer — honestly reaches the floor in its own time.)
 	h._hud._compose.set_forage_floor(KEPT_CURVE_DEEP_FLOOR)
-	h._hud._compose.set_forage_count(keep_whole)
+	h._hud._compose.set_forage_max(keep_whole)
 	h._compose_forage(kept)
 	await h._settle()
 	await h._save("forage_kept_curve_verdict")
@@ -2712,66 +2687,67 @@ func _crew_split_sheet_states() -> void:
 	var query: ForecastQuery = h._hud.forecast_query()
 	query.reset()
 	h._hud._drawercompose.close_compose_sheet()
+	# A band that works NO patch, so the bar is the FORECAST's split of a new source (a worked one states
+	# the snapshot row's own).
+	var prior_split_band = h._hud._band_labor.player_band()
+	var prior_split_bands = h._hud._band_labor._player_bands
+	h._hud._band_labor._player_band = BandFx.forage_range_bands()[0]
+	h._hud._band_labor._player_bands = [h._hud._band_labor.player_band()]
 	h._hud._compose.reset_forage_source()
 	h._hud._compose.set_forage_floor(SourceForecast.FLOOR_FOOD_PEAK)
 	h._show_tile(tile)
 	await h._settle()
 	h._compose_forage(tile)
 	await h._settle()
-	# Dial the crew on the open sheet (a close would reset the composition), then forget the curve so
+	# Set the Max on the open sheet (a close would reset the composition), then forget the curve so
 	# the next render is read before the stand-in has answered.
-	h._hud._compose.set_forage_count(CREW_SPLIT_SHEET_CREW)
+	h._hud._compose.set_forage_max(CREW_SPLIT_SHEET_CREW)
 	query.reset()
 	h._compose_forage(tile)
-	h._assert_hud("crew split, sheet — while the curve is in flight there are no marks",
-		_crew_split_on_sheet() == null)
+	h._assert_hud("crew split, sheet — while the curve is in flight no keeper is drawn (%s)"
+			% ("none" if _crew_split_on_sheet() == null else str(_crew_split_on_sheet().keepers())),
+		_crew_split_on_sheet() != null and _crew_split_on_sheet().keepers() == 0)
 	await h._settle()
 	h._compose_forage(tile)
 	await h._settle()
 	await h._save("forage_crew_split_sheet")
 	h._assert_hud("crew split, sheet — precondition: the stepper stands at %d (got %d)"
-			% [CREW_SPLIT_SHEET_CREW, h._hud._compose.forage_count()],
-		h._hud._compose.forage_count() == CREW_SPLIT_SHEET_CREW)
+			% [CREW_SPLIT_SHEET_CREW, h._hud._compose.forage_max()],
+		h._hud._compose.forage_max() == CREW_SPLIT_SHEET_CREW)
 	var marks := _crew_split_on_sheet()
 	var want_keep := CREW_SPLIT_KEEP_PER_HAND * float(CREW_SPLIT_SHEET_CREW)
-	h._assert_hud("crew split, sheet — the marks count the stepper's crew (%s)"
+	h._assert_hud("crew split, sheet — the bar counts the staffed crew (%s)"
 			% ("none" if marks == null else str(marks.crew())),
 		marks != null and marks.crew() == CREW_SPLIT_SHEET_CREW)
-	h._assert_hud("crew split, sheet — the tending share is the curve row's `keep_hands` at that crew (%s, want %.2f)"
-			% [("none" if marks == null else "%.2f" % marks.keep_hands()), want_keep],
-		marks != null and is_equal_approx(marks.keep_hands(), want_keep))
-	h._assert_hud("crew split, sheet — the hover says it in whole people (\"%s\")"
+	h._assert_hud("crew split, sheet — the keepers are the curve row's `keep_hands` at that crew, in whole people (%s, want %d)"
+			% [("none" if marks == null else "%d" % marks.keepers()), roundi(want_keep)],
+		marks != null and marks.keepers() == roundi(want_keep))
+	h._assert_hud("crew split, sheet — the hover says it (\"%s\")"
 			% ("" if marks == null else marks.tooltip_text),
-		marks != null and marks.tooltip_text == CREW_SPLIT_SHEET_WORDS)
-	h._assert_hud("crew split, sheet — the same sentence reads under the next-turn figure",
-		_crew_split_sentence() == CREW_SPLIT_SHEET_WORDS)
+		marks != null and marks.tooltip_text.begins_with(CREW_SPLIT_SHEET_WORDS))
 	# The stepper moves, and the marks follow it through the curve rather than staying put.
-	h._hud._compose.set_forage_count(CREW_SPLIT_STEPPED_CREW)
+	h._hud._compose.set_forage_max(CREW_SPLIT_STEPPED_CREW)
 	h._compose_forage(tile)
 	await h._settle()
 	await h._save("forage_crew_split_sheet_stepped")
 	var stepped := _crew_split_on_sheet()
 	var stepped_keep := CREW_SPLIT_KEEP_PER_HAND * float(CREW_SPLIT_STEPPED_CREW)
-	h._assert_hud("crew split, sheet — stepped to %d, the marks follow the crew and its curve row (%s)"
+	h._assert_hud("crew split, sheet — with the Max at %d, the bar follows the crew and its curve row (%s)"
 			% [CREW_SPLIT_STEPPED_CREW, "none" if stepped == null
-				else "%d · %.2f" % [stepped.crew(), stepped.keep_hands()]],
+				else "%d · %d" % [stepped.crew(), stepped.keepers()]],
 		stepped != null and stepped.crew() == CREW_SPLIT_STEPPED_CREW
-			and is_equal_approx(stepped.keep_hands(), stepped_keep))
-	h._assert_hud("crew split, sheet — …and the sentence follows, a whole person needing no `About` (\"%s\")"
-			% _crew_split_sentence(),
-		_crew_split_sentence() == CREW_SPLIT_STEPPED_WORDS)
+			and stepped.keepers() == roundi(stepped_keep)
+			and stepped.tooltip_text.begins_with(CREW_SPLIT_STEPPED_WORDS))
 	h._hud._drawercompose.close_compose_sheet()
 	h._hud._compose.reset_forage_source()
 	query.reset()
+	h._hud._band_labor._player_band = prior_split_band
+	h._hud._band_labor._player_bands = prior_split_bands
 	await h._settle()
 
 ## The crew-split marks on the open compose sheet, or `null` where it draws none.
 func _crew_split_on_sheet() -> CrewSplitMarks:
 	return Readout.crew_split_marks(h._hud._drawercompose._compose_sheet)
-
-## The muted sentence under the sheet's next-turn figure, `""` where none is drawn.
-func _crew_split_sentence() -> String:
-	return Readout.crew_split_sentence(h._hud._drawercompose._compose_sheet)
 
 ## The authored curve's keeping: half a hand per worker, so every crew's row differs.
 const CREW_SPLIT_KEEP_PER_HAND := 0.5
@@ -2781,8 +2757,8 @@ const CREW_SPLIT_TAKE_PER_GATHERER := 0.2
 ## The two crews the sheet is read at, and the sentences each must state — spelled out.
 const CREW_SPLIT_SHEET_CREW := 3
 const CREW_SPLIT_STEPPED_CREW := 2
-const CREW_SPLIT_SHEET_WORDS := "About 2 of 3 are tending the patch; 1 is free to harvest."
-const CREW_SPLIT_STEPPED_WORDS := "1 of 2 is tending the patch; 1 is free to harvest."
+const CREW_SPLIT_SHEET_WORDS := "2 keep it up"
+const CREW_SPLIT_STEPPED_WORDS := "1 keep it up"
 
 ## Any Label or RichTextLabel under `root` whose text contains `needle`.
 func _sheet_has_text(root: Node, needle: String) -> bool:

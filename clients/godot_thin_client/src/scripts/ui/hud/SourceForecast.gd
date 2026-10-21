@@ -1400,42 +1400,6 @@ const MAX_USEFUL_BARREN := 1
 # when it holds a full body. Worst case the turn's rate lands with just under one body already banked,
 # so one extra whole animal drops that turn beyond floor(rate / body) — this is that +1.
 const HUNT_PEAK_DROP_BANK_BONUS := 1
-# A tended patch / corralled herd collapses max-useful to exactly 1, so this note has to read
-# "max 1 worker" — pluralize the noun rather than shipping "max 1 workers".
-const MAX_USEFUL_NOTE_FORMAT := "max %d %s useful here — more would be idle"
-const MAX_USEFUL_NOUN_ONE := "worker"
-const MAX_USEFUL_NOUN_MANY := "workers"
-# **THE SAME CAP, WHEN THE WEAPONS ARE WHAT BINDS IT.** A plateau has two causes and the curve cannot
-# tell them apart — the herd ran out of room, or the band ran out of spears — so on a band armed for
-# four "more would be idle" blames the herd for a shortage of gear while thirteen hands stand idle.
-# The reply's `armed_crew` is what separates the two, and this wording is earned only where the cap
-# EQUALS it (see `DrawerComposeController._forecast_worker_cap`, which holds the whole gate).
-# The third `%s` is the reply's `weapon_item_id` VERBATIM. `DetailFormat.kit_item_label` would name
-# it — that table is real and already carries `spears` and `traps` — and it is deliberately not read
-# here, because it answers in a kit ROW's voice ("Spears", capitalised) while this position is
-# mid-sentence, where a capital reads as a proper noun. The ids the hunt kits name their weapon by
-# are lowercase English plurals, so raw is the spelling that finishes "the rest have no …" as
-# English.
-# **WHAT THAT COSTS, STATED RATHER THAN DENIED**: a hunt weapon whose id is not a lowercase plural
-# would reach the player exactly as the wire spells it. Three items on the roster already carry ids
-# of that shape — `stone_dressing`, `tanning_frame`, `bone_awl` — and none of them is the attack item
-# of any hunt kit, so it is the CURRENT roster, not this format, that keeps the sentence English.
-const MAX_USEFUL_NOTE_GEAR_FORMAT := "max %d %s useful here — the rest have no %s"
-# The CONFIRMED-row twin of MAX_USEFUL_NOTE_FORMAT: a worked source's `+` explaining why it is dead
-# (see `source_worker_cap_state`). Worded from the row's point of view ("fully staffed") rather than
-# the compose stepper's ("max N useful here"), because the player is looking at a running assignment.
-const MAX_USEFUL_CAPPED_TOOLTIP := "Full: %d %s max"
-# The OTHER binding cap: idle workers run out BELOW the usefulness ceiling, so the `+` caps at the band's
-# hands, not usefulness. The sentence names only the band's limit (the one arg: the crew pool) and is
-# shown ONLY once the composed crew is at it — the useful figure is deliberately not quoted: past the
-# crew curve's asked rows it was a rough estimate that disagreed with the "clear it now" pill.
-const LABOR_BOUND_NOTE_FORMAT := "%d is all this band can send — free up workers to send more"
-# RETIRED — **`BUILD_BOUND_NOTE_FORMAT`**, the same cap worded to name the sheet's OWN builders
-# stepper (`docs/plan_standing_upkeep.md` §2.5). It existed because the take and the build shared one
-# source pool, so the nearer lever for freeing a hand was sometimes two rows down on the same sheet.
-# A verb states no crew now: the sheet has one stepper, so there is one remedy and
-# `LABOR_BOUND_NOTE_FORMAT` is it.
-
 # A herd past the apron is an ordinary hunt whose crew posts a caravan (`docs/plan_civilization_steps.md`
 # §One work party); the only raid the client composes is the DENIAL raid.
 #
@@ -5613,54 +5577,6 @@ static func max_useful_workers(forecast: Dictionary) -> int:
         float(forecast.get(FORECAST_COVERAGE_BARE_KEY, COVERAGE_ABSENT)),
         int(forecast.get(FORECAST_COVERAGE_SATURATING_CREW_KEY, 0)),
         float(forecast.get(FORECAST_COVERAGE_APPLIED_KEY, COVERAGE_ABSENT))), hold)
-
-## Per-SOURCE `+`-gate for a CONFIRMED Current-actions Forage/Hunt row — the worked-row twin of the
-## compose stepper's `max_useful_workers` cap (`DrawerComposeController._forecast_worker_cap`), and
-## beside it so the two can never disagree. A source's `+` may add a worker only while the band has an
-## idle worker AND this source is below its own max-useful ceiling, so a single source can't absorb
-## workers past the point they help. An unknown forecast (MAX_USEFUL_UNBOUNDED — no wire data) falls
-## back to the plain `idle > 0` gate. Returns `{can_add, note}`; `note` is set ONLY when max-useful (not
-## idle) is what stopped the `+`, so the row tooltip explains a dead button rather than leaving it
-## mysterious. Scout/Warrior are band-wide roles with no ceiling — they keep the plain gate and never
-## call this.
-##
-## **`blocked_reason` IS THE GREYED `+`'s HOVER, AND IT NAMES WHICHEVER CONDITION FAILED** — no free
-## hands, or the source's ceiling (`selection-card.md` → "A DISABLED CONTROL SAYS WHY"); `""` while the
-## `+` can add. It is returned by the gate itself, so the face and the sentence are one test.
-##
-## **`useful_floor` IS RETIRED, AND WITH IT `herd_crew_floor`** (`docs/plan_standing_upkeep.md` §2.2).
-## Both twins used to RAISE this ceiling to a managed herd's `herdersNeeded`, because one crew both
-## hunted and held the animals: a cap sized on the take alone went dead below the count the sim was
-## asking for, while the same row rendered the under-herded ⚠. **Those keepers are the MAINTAIN
-## allocation now.** Flooring the TAKE cap on them made the hunt stepper demand hands that belong to
-## another crew — and the crew that answers `herdersNeeded` has its own stepper, its own ceiling
-## (`idle + this source's keepers`) and its own command.
-##
-## **THE *HOLD* CREW IS STILL FOLDED IN, and it is a different thing** — the hands that take what the
-## source REGROWS, a fact about this take at this floor rather than a demand a kind of source makes.
-## It lives inside `max_useful_workers`, where both twins pick it up without either caller being
-## trusted to remember it.
-static func source_worker_cap_state(forecast: Dictionary, workers: int, idle: int) -> Dictionary:
-    return crew_cap_state(max_useful_workers(forecast), workers, idle)
-
-## **THE SAME GATE, HANDED THE CEILING RATHER THAN A FORECAST** — what a worked row calls with
-## `worked_row_ceiling`'s answer, so the row's `+` and the compose sheet's (which caps at that same
-## number on the row's own composition) are struck at one ceiling by construction.
-static func crew_cap_state(useful: int, workers: int, idle: int) -> Dictionary:
-    var no_idle := "" if idle > 0 else HudWorkVocab.STEPPER_NO_IDLE_REASON
-    if useful == MAX_USEFUL_UNBOUNDED or workers < useful:
-        return {"can_add": idle > 0, "note": "", "blocked_reason": no_idle}
-    # At/over this source's max-useful: the `+` is capped by the source, not by idle. The ROW note
-    # explains only when idle workers remain (else the idle-exhausted gate is the binding one); the
-    # `+`'s own hover names both when both hold.
-    var noun := MAX_USEFUL_NOUN_ONE if useful == 1 else MAX_USEFUL_NOUN_MANY
-    var full := MAX_USEFUL_CAPPED_TOOLTIP % [useful, noun]
-    var note := full if idle > 0 else ""
-    var reasons := PackedStringArray([full])
-    if no_idle != "":
-        reasons.insert(0, no_idle)
-    return {"can_add": false, "note": note,
-        "blocked_reason": HudWorkVocab.DISABLED_REASON_SEPARATOR.join(reasons)}
 
 ## **IS THIS CREW BIGGER THAN ITS SOURCE CAN USE?** — hands standing on a job that has nothing left
 ## for them, which is the one question every web asks and only two of them used to answer. It is the

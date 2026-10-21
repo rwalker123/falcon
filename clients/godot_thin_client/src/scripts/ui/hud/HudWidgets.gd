@@ -450,6 +450,71 @@ static func add_stepper_controls(row: HBoxContainer, count: int, plus_enabled: b
                 HudWorkVocab.WORK_STEPPER_PADDING_V, padding_h)
     return value
 
+## **THE MAX STEPPER** (#871) — `−`, the value, `+`, for the most hands the sim may put on a staffed
+## source. `0` is "no max" and reads `No max`; the `−` is greyed there (there is nothing lower) and the
+## `+` greys at `upper`, the band's working-age people. `on_change` fires with the new Max. The buttons
+## carry the aria names `Lower the max` / `Raise the max`. Returns the value `Label`.
+static func add_max_stepper(row: HBoxContainer, max_workers: int, upper: int,
+        on_change: Callable, compact_chrome: bool = false) -> Label:
+    var minus := Button.new()
+    minus.text = HudWorkVocab.STEPPER_MINUS_FACE
+    minus.custom_minimum_size = Vector2(HudWorkVocab.WORKER_STEPPER_BUTTON_WIDTH, 0)
+    HudStyle.apply_button(minus, "ghost")
+    minus.disabled = max_workers <= 0
+    minus.tooltip_text = HudWorkVocab.MAX_STEPPER_LOWER_ARIA
+    if "accessibility_name" in minus:
+        minus.set("accessibility_name", HudWorkVocab.MAX_STEPPER_LOWER_ARIA)
+    minus.pressed.connect(func() -> void: on_change.call(maxi(max_workers - HudConst.WORKER_STEP, 0)))
+    row.add_child(minus)
+    var value := Label.new()
+    value.text = str(max_workers) if max_workers > 0 else HudWorkVocab.MAX_STEPPER_NO_MAX
+    value.custom_minimum_size = Vector2(HudWorkVocab.MAX_STEPPER_VALUE_WIDTH, 0)
+    value.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+    value.add_theme_color_override("font_color", HudStyle.INK if max_workers > 0 else HudStyle.INK_FAINT)
+    value.set_meta(HudWorkVocab.MAX_STEPPER_VALUE_META, max_workers)
+    row.add_child(value)
+    var plus := Button.new()
+    plus.text = HudWorkVocab.STEPPER_PLUS_FACE
+    plus.custom_minimum_size = Vector2(HudWorkVocab.WORKER_STEPPER_BUTTON_WIDTH, 0)
+    HudStyle.apply_button(plus, "ghost")
+    plus.disabled = max_workers >= upper
+    plus.tooltip_text = HudWorkVocab.MAX_STEPPER_RAISE_ARIA
+    if "accessibility_name" in plus:
+        plus.set("accessibility_name", HudWorkVocab.MAX_STEPPER_RAISE_ARIA)
+    plus.pressed.connect(func() -> void:
+        on_change.call(mini(max_workers + HudConst.WORKER_STEP, maxi(upper, 0))))
+    row.add_child(plus)
+    row.set_meta(HudWorkVocab.MAX_STEPPER_META, true)
+    if compact_chrome:
+        for control in [minus, value, plus]:
+            compact(control, HudWorkVocab.WORK_STEPPER_FONT_SIZE,
+                HudWorkVocab.WORK_STEPPER_PADDING_V)
+    return value
+
+## **A STAFFED ROW'S CREW NUMBER** — the read-only stand-in for the stepper the row used to carry: the
+## sim's crew, in the stepper's value column so every row's number lines up. Faint at zero.
+static func build_crew_number(workers: int) -> Label:
+    var value := Label.new()
+    value.text = str(workers)
+    value.custom_minimum_size = Vector2(HudWorkVocab.CREW_NUMBER_WIDTH, 0)
+    value.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+    value.add_theme_color_override("font_color", HudStyle.INK if workers > 0 else HudStyle.INK_FAINT)
+    value.add_theme_font_size_override("font_size", HudWorkVocab.WORK_STEPPER_FONT_SIZE)
+    value.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    value.set_meta(HudWorkVocab.CREW_NUMBER_META, workers)
+    return value
+
+## **THE STATIC `Max N` CHIP** beside a row's Priority pill — a quiet label, not a control.
+static func build_max_chip(max_workers: int) -> Label:
+    var chip := Label.new()
+    chip.text = HudWorkVocab.MAX_CHIP_FORMAT % max_workers
+    chip.add_theme_color_override("font_color", HudStyle.INK_DIM)
+    chip.add_theme_font_size_override("font_size", HudWorkVocab.ALLOC_SECTION_FONT_SIZE)
+    chip.tooltip_text = HudWorkVocab.MAX_CHIP_TOOLTIP
+    chip.mouse_filter = Control.MOUSE_FILTER_PASS
+    chip.set_meta(HudWorkVocab.MAX_CHIP_META, max_workers)
+    return chip
+
 ## The three keys a `metric` may carry. **Named**, because producer and reader are different scripts
 ## and a typo in a `get` here is a silent fallback to the shared width — which is precisely the
 ## overflow the metric exists to prevent, reappearing with nothing to show it.
@@ -943,17 +1008,6 @@ const POLICY_RUNG_META := "policy"
 ## than most: the chart carries no text at all, so a harness has nothing else to find it by. (It
 ## replaced `FLOOR_SLIDER_META`, whose plain `HSlider` the chart's draggable floor line supersedes.)
 const FLOOR_CHART_META := "floor_chart"
-
-## The two CREW TARGETS, as `Button` meta — value `CREW_TARGET_CLEAR` or `CREW_TARGET_HOLD`, so a
-## harness can tell which target it found without matching a face that carries a live number.
-const CREW_TARGET_META := "crew_target"
-const CREW_TARGET_CLEAR := "clear"
-const CREW_TARGET_HOLD := "hold"
-## …and the COUNT it offers, as a second meta. The pill's face is a two-Label stack over an
-## empty-`text` Button (see `_crew_target_pill`), so the number a harness has to read is not in
-## `btn.text` and a `text.split(" ")[0]` on one finds nothing — silently, which is the failure the
-## meta-as-handle idiom exists to prevent.
-const CREW_TARGET_COUNT_META := "crew_target_count"
 
 ## The READOUT's yields row, as `Control` meta — the same stable-handle reasoning as the three above.
 ## Its face is a flow of Labels at three sizes carrying live numbers, so there is no single `text` to
@@ -1628,101 +1682,6 @@ static func build_floor_chart(model: Dictionary, on_change: Callable) -> VBoxCon
 # tags are untouched: a fight the party cannot make at all still says so. What was removed is the
 # CLEARED-gate half. `SourceForecast.hunt_crew_split_model` went with the mount, and
 # `labor-ui.md` → "RETIRED — the hunt crew-split sentence" records what the removal costs.
-
-## **THE TWO CREW TARGETS** (`docs/plan_harvest_floor.md` §7.6) — the distinction the rate model never
-## had. A floor and a crew are independent statements, so there are two different worker numbers and
-## the player is owed both:
-##
-##   • ***clear it now*** — the hands that take everything above the floor in one turn;
-##   • ***hold it after*** — the hands that take exactly what grows back, once it is there.
-##
-## Both are exact, both are stated, and each is a TARGET you can click to staff. Neither is a hidden
-## rule the player has to infer from a stepper going dead.
-##
-## **A TARGET NO CREW REACHES (`NO_CREW_ANSWER`) STILL RENDERS — DISABLED, WEARING `✕`.** It used to
-## be dropped, and a missing pill reads as the sheet having nothing to say about clearing at all,
-## when the answer it has is a definite *no*. Never a zero, which would read as "nobody is needed".
-## The reason rides the tooltip (`CREW_TARGET_*_UNREACHABLE_TOOLTIP`), so the sheet stays quiet and
-## the why stays reachable. `disabled` is set BEFORE `apply_pill_button`, and no `pressed` handler is
-## connected at all — the tint below reads `btn.disabled`, and a disabled Button emits nothing, so
-## the pill is non-interactive by both its look and its wiring.
-## **THEY ARE PILLS ON THE CREW'S OWN LINE, not full-width boxes on a row of their own.** A target is
-## a VALUE you can jump to, while the stepper beside it is a control you operate, and the two shapes
-## have to say which is which: two boxed buttons spanning the panel read as the primary action of the
-## whole sheet, which is the Assign button's job. `CREW_TARGET_COUNT_META` carries the count, because
-## the face is two Labels over an empty-`text` Button (a count and its label at one size are one
-## undifferentiated phrase) and `btn.text` is therefore empty.
-static func build_crew_targets(model: Dictionary, workers: int, on_pick: Callable) -> HBoxContainer:
-    var row := HBoxContainer.new()
-    row.add_theme_constant_override("separation", HudComposeVocab.CREW_ROW_SEPARATION)
-    for spec in [
-        [CREW_TARGET_CLEAR, int(model.get("crew_to_clear", SourceForecast.NO_CREW_ANSWER)),
-            HudComposeVocab.CREW_TARGET_CLEAR_LABEL, HudComposeVocab.CREW_TARGET_CLEAR_TOOLTIP,
-            HudComposeVocab.CREW_TARGET_CLEAR_UNREACHABLE_TOOLTIP],
-        [CREW_TARGET_HOLD, int(model.get("crew_to_hold", SourceForecast.NO_CREW_ANSWER)),
-            HudComposeVocab.CREW_TARGET_HOLD_LABEL, HudComposeVocab.CREW_TARGET_HOLD_TOOLTIP,
-            HudComposeVocab.CREW_TARGET_HOLD_UNREACHABLE_TOOLTIP],
-    ]:
-        var count := int(spec[1])
-        var unreachable := count == SourceForecast.NO_CREW_ANSWER
-        var btn := Button.new()
-        btn.tooltip_text = String(spec[4]) if unreachable else String(spec[3]) % count
-        btn.set_meta(CREW_TARGET_META, String(spec[0]))
-        btn.set_meta(CREW_TARGET_COUNT_META, count)
-        # The target the crew is ALREADY on wears the selected fill, so the two numbers double as a
-        # readout of where the current staffing sits between them. An unreachable target is nobody's
-        # current staffing, and `workers == NO_CREW_ANSWER` cannot arise, but it is stated rather than
-        # relied on: a pill the player can never be standing on must never light.
-        var selected := not unreachable and workers == count
-        btn.disabled = unreachable
-        HudStyle.apply_pill_button(btn, selected)
-        if not unreachable:
-            btn.pressed.connect(func() -> void: on_pick.call(count))
-        # The tint is the SHARED TABLE's answer for this button's own state — `btn.disabled` included,
-        # exactly as `build_floor_picker` asks it. `apply_pill_button` already writes a `disabled`
-        # stylebox, so the box can fade; a face built from child Labels cannot follow it through the
-        # theme (see `_crew_target_pill`), so the state has to reach the tint here or the box would
-        # fade under two lines still at full brightness.
-        row.add_child(_crew_target_pill(btn,
-            HudComposeVocab.CREW_TARGET_UNREACHABLE_FACE if unreachable else str(count),
-            String(spec[2]),
-            HudStyle.button_font_color("primary" if selected else "ghost", btn.disabled)))
-    return row
-
-
-## ONE crew-target pill: an empty-`text` Button under a two-Label face, the horizontal twin of
-## `_policy_rung_cell` and for the same structural reason — two font sizes cannot live in one
-## `Button.text`. The LEAD line leads at the pill's own size in full ink (it is what the player
-## compares against the stepper); the label naming which answer it is follows, one step down and one
-## step quieter. Both tints derive from the ONE colour the caller resolved, so a selected pill moves
-## as a unit; never give the label a colour of its own.
-##
-## **`count_face` IS A STRING, and that is the point**: the lead line is a count on every reachable
-## target and `CREW_TARGET_UNREACHABLE_FACE` on the one no crew reaches, and this layer must not have
-## to know which. An `int` parameter would force the caller to smuggle the sentinel through as a
-## number and this function to re-decide what it meant.
-static func _crew_target_pill(btn: Button, count_face: String, label_text: String,
-        tint: Color) -> MarginContainer:
-    var cell := MarginContainer.new()
-    cell.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-    cell.add_child(btn)
-    var pad := MarginContainer.new()
-    pad.mouse_filter = Control.MOUSE_FILTER_IGNORE
-    pad.add_theme_constant_override("margin_left", HudStyle.PILL_PADDING_H)
-    pad.add_theme_constant_override("margin_right", HudStyle.PILL_PADDING_H)
-    pad.add_theme_constant_override("margin_top", HudStyle.PILL_PADDING_V)
-    pad.add_theme_constant_override("margin_bottom", HudStyle.PILL_PADDING_V)
-    var face := HBoxContainer.new()
-    face.mouse_filter = Control.MOUSE_FILTER_IGNORE
-    face.add_theme_constant_override("separation", HudComposeVocab.CREW_TARGET_FACE_SEPARATION)
-    face.add_child(_pill_face_line(count_face, tint,
-        HudComposeVocab.CREW_TARGET_COUNT_FONT_SIZE))
-    face.add_child(_pill_face_line(label_text,
-        Color(tint, tint.a * HudWorkVocab.POLICY_PICKER_METRIC_ALPHA),
-        HudComposeVocab.CREW_TARGET_LABEL_FONT_SIZE))
-    pad.add_child(face)
-    cell.add_child(pad)
-    return cell
 
 ## The three handles a stacked action button's parts are found by — the CELL a caller mounts, the
 ## first line whose text a patch rewrites, and the second line a patch hands to the summary's own

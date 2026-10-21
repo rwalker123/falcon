@@ -278,6 +278,8 @@ fn spawn_hunting_band(
                     party: None,
                     muster_crew: 0,
                     planned_crew: 0,
+                    max_workers: Some(CREW),
+                    staffing: Default::default(),
                     target: LaborTarget::Hunt {
                         fauna_id: fauna_id.to_string(),
                         floor: DEFAULT_ESCAPEMENT_FLOOR,
@@ -550,6 +552,8 @@ fn a_gather_crew_wears_only_the_baskets_and_a_kitless_one_wears_nothing() {
                         party: None,
                         muster_crew: 0,
                         planned_crew: 0,
+                        max_workers: Some(CREW),
+                        staffing: Default::default(),
                         target: LaborTarget::Forage {
                             tile: tile_pos,
                             floor: DEFAULT_ESCAPEMENT_FLOOR,
@@ -1468,6 +1472,8 @@ fn every_labor_row_publishes_the_kit_it_is_priced_at() {
                         party: None,
                         muster_crew: 0,
                         planned_crew: 0,
+                        max_workers: Some(CREW),
+                        staffing: Default::default(),
                         target: LaborTarget::Hunt {
                             fauna_id: id.clone(),
                             floor: DEFAULT_ESCAPEMENT_FLOOR,
@@ -1482,6 +1488,8 @@ fn every_labor_row_publishes_the_kit_it_is_priced_at() {
                         party: None,
                         muster_crew: 0,
                         planned_crew: 0,
+                        max_workers: Some(CREW),
+                        staffing: Default::default(),
                         target: LaborTarget::Scout,
                         workers: CREW,
                         kit: None,
@@ -1877,6 +1885,8 @@ fn spawn_gathering_band(app: &mut App, baskets_owned: u32) -> (bevy::prelude::En
                     party: None,
                     muster_crew: 0,
                     planned_crew: 0,
+                    max_workers: Some(CREW),
+                    staffing: Default::default(),
                     target: LaborTarget::Forage {
                         tile: tile_pos,
                         floor: DEFAULT_ESCAPEMENT_FLOOR,
@@ -2392,6 +2402,8 @@ fn spawn_band_hunting(
             party: None,
             muster_crew: 0,
             planned_crew: 0,
+            max_workers: Some(ROW_CREW),
+            staffing: Default::default(),
             target: LaborTarget::Hunt {
                 fauna_id: (*herd).to_string(),
                 floor: DEFAULT_ESCAPEMENT_FLOOR,
@@ -2494,13 +2506,14 @@ fn two_hunt_rows_naming_one_kit_cannot_arm_more_hunters_than_the_band_owns() {
         "the two rows between them cannot outfit more hunters than the band owns traps: \
          {shared_rows:?}"
     );
-    for (workers, held) in &shared_rows {
-        assert_eq!(
-            (*workers, *held),
-            (ROW_CREW, (TRAPS_FOR_HALF_THE_BAND / 2) as f32),
-            "…and the short stock is split pro-rata, so each row reads '2 of 4': {shared_rows:?}"
-        );
-    }
+    // **The short stock is granted in row order at one rank** (#871): the first row is armed in
+    // full and the next gets what is left, which here is nothing - the passes serve rows one at a
+    // time, they do not split a tier pro rata.
+    assert_eq!(
+        shared_rows,
+        vec![(ROW_CREW, TRAPS_FOR_HALF_THE_BAND as f32), (ROW_CREW, 0.0)],
+        "the first row takes the traps in full and the second reads what is left"
+    );
     assert!(
         shared_take < stocked_take,
         "half the hunters are bare-handed, so the band brings home less than the same two rows \
@@ -2558,6 +2571,8 @@ fn a_high_row_is_armed_in_full_before_a_normal_row_whichever_comes_first() {
                 .expect("the fixture spawned an allocation");
             for (assignment, (_, crew, rank)) in allocation.assignments.iter_mut().zip(rows) {
                 assignment.workers = crew;
+                // **The crew is the sim's now** (#871): the Max is what pins the row to `crew`.
+                assignment.max_workers = Some(crew);
                 assignment.priority = rank;
             }
         }
@@ -2614,8 +2629,10 @@ fn a_high_party_beats_a_normal_local_row_for_a_scarce_kit() {
             .get_mut::<LaborAllocation>(band)
             .expect("the fixture spawned an allocation");
         allocation.assignments[0].workers = LOCAL_CREW;
+        allocation.assignments[0].max_workers = Some(LOCAL_CREW);
         allocation.assignments[0].priority = SourcePriority::Normal;
         allocation.assignments[1].workers = PARTY_CREW;
+        allocation.assignments[1].max_workers = Some(PARTY_CREW);
         allocation.assignments[1].priority = SourcePriority::High;
     }
     drive_local_turn(&mut app);
@@ -2670,14 +2687,13 @@ fn two_rows_on_different_kits_cannot_each_sled_a_full_crew() {
          a kit-id grouping would have handed each row its own full set"
     );
     let rows = published_row_coverage(&app, band);
-    for (workers, held) in &rows {
-        assert_eq!(
-            (*workers, *held),
-            (ROW_CREW, (SLEDS_FOR_HALF_THE_BAND / 2) as f32),
-            "…and each row is outfitted only as far as the shared item reaches, because a COMPLETE \
-             kit is the min over its items: {rows:?}"
-        );
-    }
+    // **Granted in row order** (#871): the first row takes the sleds in full, and the second - whose
+    // COMPLETE kit is the min over its items - reads what is left, which is nothing.
+    assert_eq!(
+        rows,
+        vec![(ROW_CREW, SLEDS_FOR_HALF_THE_BAND as f32), (ROW_CREW, 0.0)],
+        "…and each row is outfitted only as far as the shared item reaches: {rows:?}"
+    );
 }
 
 /// **⛔ A BAND THAT IS NOT SHORT TAKES EXACTLY WHAT EACH ROW WOULD TAKE ALONE.**
@@ -2744,10 +2760,10 @@ fn a_band_that_is_not_short_takes_exactly_what_each_row_would_take_alone() {
         TRAPS_FOR_HALF_THE_BAND,
     );
     assert!(
-        shared[0].actual < first_alone[0].actual,
-        "liveness: a band short of traps must NOT match the row's solo reading — {:?} against {:?}",
-        shared[0],
-        first_alone[0]
+        shared[1].actual < second_alone[0].actual,
+        "liveness: a band short of traps must NOT match the later row's solo reading - {:?} against {:?}",
+        shared[1],
+        second_alone[0]
     );
 }
 

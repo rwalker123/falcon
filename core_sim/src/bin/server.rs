@@ -1677,6 +1677,14 @@ enum Command {
         source: BuildSourceRef,
         level: String,
     },
+    /// **Stop a staffed row** (#871) — remove the band's row for one source, or its Roadwork pool.
+    /// See `handle_stop_labor`.
+    StopLabor {
+        faction: FactionId,
+        band_id: u64,
+        source: BuildSourceRef,
+        roadwork: bool,
+    },
     /// **Mark one queued build with the player's Build mark** — `high`, `normal` or `low`, on the
     /// named band's queue entry for this source (`docs/plan_site_crews.md` §2.4). The builders' tool
     /// claim and the build's pile rank at the head entry's mark. See `handle_build_priority`.
@@ -3506,6 +3514,37 @@ fn band_allocation_mut(
 /// patch, a vanished herd) keeps its zero row, and a genuinely barren source seeds `0.0` — `+0.00`
 /// stays reachable, and correct, there. A source past the band's work range is not skipped: it posts
 /// a work party, and is seeded by stepping that caravan.
+/// **RE-DECIDE A BAND'S STAFFED CREWS AND RE-QUOTE THEM** (#871) - after a command moved an input
+/// the sim staffs from (a Max, a floor, a kit, a rank, a stopped row), every staffed row's crew may
+/// have changed, not just the one the player touched (the pool is shared), so each is re-seeded from
+/// its pre-commit forecast exactly as the touched row always was, and a row left with nobody reads
+/// nothing rather than the reading of the crew it used to have.
+fn restaff_and_reseed(app: &mut bevy::prelude::App, band: Entity) {
+    core_sim::staffing::restaff_band(&mut app.world, band);
+    let rows: Vec<(LaborTarget, u32)> = app
+        .world
+        .get::<LaborAllocation>(band)
+        .map(|allocation| {
+            allocation
+                .assignments
+                .iter()
+                .filter(|row| row.target.is_staffed())
+                .map(|row| (row.target.clone(), row.workers))
+                .collect()
+        })
+        .unwrap_or_default();
+    for (target, workers) in rows {
+        if workers == core_sim::NO_CREW_ON_THIS_ACTIVITY {
+            if let Some(mut allocation) = app.world.get_mut::<LaborAllocation>(band) {
+                allocation.set_source_yield(&target, core_sim::SourceYield::ZERO);
+            }
+            continue;
+        }
+        let improvement = build_rung_on_source_at(app, band, &target);
+        seed_source_yield(app, band, &target, improvement, workers);
+    }
+}
+
 fn seed_source_yield(
     app: &mut bevy::prelude::App,
     band: Entity,
@@ -5494,7 +5533,7 @@ fn handle_assign_labor(
     let mut pruned_take: Vec<String> = Vec::new();
     // **A NEED ROW IS VALIDATED AT ZERO TOO**: it holds no standing workers whatever count is sent,
     // so `workers == 0` is its ordinary shape and the migratory check must still run.
-    if workers > 0 || target.is_need_row() {
+    if workers > 0 || target.is_need_row() || target.is_staffed() {
         if let Err(reason) = validate_labor_policy(app, faction, &target) {
             emit_command_failure(app, event_kind, faction, reason);
             return;
@@ -5552,7 +5591,9 @@ fn handle_assign_labor(
     // The fork is **here and not in `default_kit_for_target`**, because the question it answers is
     // *"what does this command STORE"*, not *"which kit is the absent one"*: that helper returns a
     // resolved `KitChoice` for the raid path too.
-    let unstaffing = workers == 0 && !target.is_need_row();
+    // **A STAFFED ROW IS NEVER UNSTAFFED BY A COUNT** (#871): its count is the player's Max and `0`
+    // means no Max; `stop_labor` ends the row.
+    let unstaffing = workers == 0 && !target.is_need_row() && !target.is_staffed();
     let staffing_a_standing_pool = matches!(
         target,
         LaborTarget::Builders | LaborTarget::Roadwork | LaborTarget::Tile { .. }
@@ -5627,7 +5668,9 @@ fn handle_assign_labor(
 
     // **THE FIRST CREW PLACES THE IMPROVEMENT** at its branch's floor, so the row, the wire and a
     // `build` all see ground something stands on. Another people's improvement is refused.
-    if let (true, LaborTarget::Tile { tile, branch }) = (workers > 0, &target) {
+    if let (true, LaborTarget::Tile { tile, branch }) =
+        (workers > 0 || target.is_staffed(), &target)
+    {
         let ladder = app.world.resource::<LadderConfigHandle>().get();
         let theirs = app
             .world
@@ -5655,7 +5698,7 @@ fn handle_assign_labor(
     // **AN OFF-SITE CREW IS A SOWING CREW**: the root rung's rule refuses the ground and the placing
     // rung admits it, so the crew exists to raise the farm - the sow is declared with it.
     let off_site_sow = match &target {
-        LaborTarget::Forage { tile, .. } if workers > 0 => {
+        LaborTarget::Forage { tile, .. } if workers > 0 || target.is_staffed() => {
             off_site_placing_rung(app, faction, *tile)
         }
         _ => None,
@@ -5666,7 +5709,14 @@ fn handle_assign_labor(
         // The row's staffing BEFORE this order: `set_assignment`'s headroom counts these hands as
         // free (it replaces them), so the clamp note must net them back out.
         prior_staffing = allocation.workers_on(&target);
-        let applied = allocation.set_assignment(target.clone(), workers, available, crew_kit);
+        // **A STAFFED ROW TAKES THE COUNT AS ITS MAX** (#871); the crew is the sim's to decide and
+        // is restaffed immediately below. Every other kind keeps the crew the player named.
+        let applied = if target.is_staffed() {
+            allocation.set_staffed_row(target.clone(), (workers > 0).then_some(workers), crew_kit);
+            allocation.workers_on(&target)
+        } else {
+            allocation.set_assignment(target.clone(), workers, available, crew_kit)
+        };
         // **ONE HERD AT A TIME** — migration mode on this hunt row turns it off on the band's others.
         if let LaborTarget::Hunt {
             fauna_id,
@@ -5685,20 +5735,32 @@ fn handle_assign_labor(
             .is_some_and(|source| allocation.build_queue_position(&source).is_some());
         // **A NEED ROW IS KEPT BY ITS FLAG**, so a zero head count never drops it: it exists at zero
         // by design (`docs/plan_roaming_bands.md` §Hunting by need).
-        let dropped_row =
-            if applied == 0 && !source_holds_something && !queued && !target.is_need_row() {
-                allocation.drop_source_row(&target)
-            } else {
-                None
-            };
+        let dropped_row = if applied == 0
+            && !source_holds_something
+            && !queued
+            && !target.is_need_row()
+            && !target.is_staffed()
+        {
+            allocation.drop_source_row(&target)
+        } else {
+            None
+        };
         (applied, allocation.assigned_total(), dropped_row)
+    };
+    // **THE SNAPSHOT SHOWS THE NEW CREW THE MOMENT THE PLAYER ACTS** (#871): a staffed row's crew is
+    // the sim's, so the order restaffs the band here instead of waiting for the turn.
+    let applied = if target.is_staffed() {
+        restaff_and_reseed(app, band.entity);
+        band_allocation_mut(app, band.entity).workers_on(&target)
+    } else {
+        applied
     };
     // **An unassigned far row sends its whole caravan walking home** — the load and every walker's pack —
     // rather than losing what was on the road with the row.
     if let Some(row) = dropped_row.as_ref() {
         core_sim::bring_the_dropped_party_home(&mut app.world, band.entity, row);
     }
-    if let (Some(rung), true) = (off_site_sow, applied > 0) {
+    if let (Some(rung), true) = (off_site_sow, applied > 0 || target.is_staffed()) {
         let ladder = app.world.resource::<LadderConfigHandle>().get();
         let farmed = match &target {
             LaborTarget::Forage { tile, .. } => app
@@ -5759,7 +5821,15 @@ fn handle_assign_labor(
         );
     }
     // A need row takes no standing hands, so there is nothing to clamp: the count sent is ignored.
-    let clamp_note = if applied < workers && !target.is_need_row() {
+    let clamp_note = if target.is_staffed() {
+        // **A staffed row's count is the Max and the crew is the sim's** (#871): the line states
+        // both rather than a clamp that is not one.
+        if workers > core_sim::NO_CREW_ON_THIS_ACTIVITY {
+            format!(" (max {workers})")
+        } else {
+            " (no max)".to_string()
+        }
+    } else if applied < workers && !target.is_need_row() {
         // **`applied` IS THE HEADROOM when clamped**: the hands free for THIS source after the bench,
         // the walkers and every other row — but it includes the hands already on this row, which
         // were not idle. The idle count is the growth over the row's prior staffing.
@@ -10779,6 +10849,93 @@ fn handle_build_priority(
     );
 }
 
+/// **STOP A STAFFED ROW** (#871) - `stop_labor <faction> <band> <source>` removes the band's row for
+/// the source (its work party is stood down and walks home, its queue entry goes with it), or its
+/// Roadwork pool for the lone token `roadwork`. It exists because `assign_labor`'s count is the
+/// player's Max now and `0` means *no Max*, so a count can no longer end a staffed row.
+fn handle_stop_labor(
+    app: &mut bevy::prelude::App,
+    faction: FactionId,
+    band_id: u64,
+    source: BuildSourceRef,
+    roadwork: bool,
+) {
+    let target = if roadwork {
+        Some(LaborTarget::Roadwork)
+    } else {
+        let Some(ladder) = source_ladder(app, faction, &source) else {
+            return;
+        };
+        if source.is_road(&ladder) {
+            emit_command_failure(
+                app,
+                CommandEventKind::CancelOrder,
+                faction,
+                "a road has no row to stop - stop the Roadwork pool with `stop_labor <faction> \
+                 <band> roadwork`."
+                    .to_string(),
+            );
+            return;
+        }
+        source.target(&ladder)
+    };
+    let Some(target) = target else {
+        emit_command_failure(
+            app,
+            CommandEventKind::CancelOrder,
+            faction,
+            format!("stop_labor needs a source: {SITE_SOURCE_GRAMMAR}, or `roadwork`."),
+        );
+        return;
+    };
+    let label = if roadwork {
+        "the Roadwork pool".to_string()
+    } else {
+        let ladder = app.world.resource::<LadderConfigHandle>().get();
+        source.label(&ladder)
+    };
+    let Some(band) = select_starting_band(
+        app,
+        faction,
+        Some(band_id),
+        "stop_labor",
+        CommandEventKind::CancelOrder,
+    ) else {
+        return;
+    };
+    let stopped = core_sim::drop_holding_and_cancel_ring(&mut app.world, band.entity, &target);
+    if !stopped {
+        emit_command_failure(
+            app,
+            CommandEventKind::CancelOrder,
+            faction,
+            format!("{} works nothing at {label} to stop.", band.label),
+        );
+        return;
+    }
+    // The hands the row held are free for the other rows at once.
+    restaff_and_reseed(app, band.entity);
+    let tick = app.world.resource::<SimulationTick>().0;
+    info!(
+        target: "shadow_scale::command",
+        command = "stop_labor",
+        faction = %faction.0,
+        band = band_id,
+        source = %label,
+        "command.stop_labor.applied"
+    );
+    push_command_event(
+        app,
+        tick,
+        CommandEventKind::CancelOrder,
+        faction,
+        format!("{}: stopped working {label}", band.label),
+        Some(format!(
+            "status=applied action=stop_labor source={label} band={band_id}"
+        )),
+    );
+}
+
 /// **MARK ONE WORKED ROW WITH THE PLAYER'S OWN RANK** — `work_priority <faction> <band> <x> <y>
 /// <level>` / `work_priority <faction> <band> <herd_id> <level>` / `work_priority <faction> <band>
 /// <x> <y> <material> <level>` for a working's extract row (`docs/plan_standing_upkeep.md` §4.9
@@ -10860,6 +11017,8 @@ fn handle_work_priority(
         return;
     };
     let marked = band_allocation_mut(app, band.entity).set_source_priority(&target, priority);
+    // **A rank decides who the sim arms first** (#871), so the crews are re-decided at once.
+    restaff_and_reseed(app, band.entity);
     if !marked {
         emit_command_failure(
             app,
@@ -10978,7 +11137,13 @@ fn queue_build_on_working_bands(
             allocation
                 .assignments
                 .iter()
-                .find(|assignment| assignment.target.same_source(target) && assignment.workers > 0)
+                .find(|assignment| {
+                    // **A staffed row is the band's holding at any crew** (#871): the sim staffs it
+                    // from the floor, so a stand at its floor reads nobody on it while the band
+                    // still works the source.
+                    assignment.target.same_source(target)
+                        && (assignment.workers > 0 || assignment.target.is_staffed())
+                })
                 .map(|assignment| (entity, assignment.workers, assignment.target.clone()))
         })
         .collect();
@@ -12048,6 +12213,27 @@ fn command_from_payload(
             },
             position,
         }),
+        ProtoCommandPayload::StopLabor {
+            faction_id,
+            band_id,
+            target_x,
+            target_y,
+            herd_id,
+            material,
+            branch,
+            roadwork,
+        } => Some(Command::StopLabor {
+            faction: FactionId(faction_id),
+            band_id,
+            source: BuildSourceRef {
+                target_x,
+                target_y,
+                herd_id,
+                material,
+                branch,
+            },
+            roadwork,
+        }),
         ProtoCommandPayload::WorkPriority {
             faction_id,
             band_id,
@@ -12994,6 +13180,7 @@ fn commanding_faction(command: &Command) -> Option<(FactionId, &'static str)> {
         Command::Abandon { faction, .. } => Some((*faction, "abandon")),
         Command::Unqueue { faction, .. } => Some((*faction, "unqueue")),
         Command::BuildOrder { faction, .. } => Some((*faction, "build_order")),
+        Command::StopLabor { faction, .. } => Some((*faction, "stop_labor")),
         Command::WorkPriority { faction, .. } => Some((*faction, "work_priority")),
         Command::BuildPriority { faction, .. } => Some((*faction, "build_priority")),
         Command::BenchPriority { faction, .. } => Some((*faction, "bench_priority")),
@@ -13473,6 +13660,14 @@ fn apply_command(app: &mut bevy::prelude::App, command: Command) {
             position,
         } => {
             handle_build_order(app, faction, band_id, source, position);
+        }
+        Command::StopLabor {
+            faction,
+            band_id,
+            source,
+            roadwork,
+        } => {
+            handle_stop_labor(app, faction, band_id, source, roadwork);
         }
         Command::WorkPriority {
             faction,
@@ -14789,6 +14984,8 @@ mod tests {
                         party: None,
                         muster_crew: 0,
                         planned_crew: 0,
+                        max_workers: Some(BAND_WORKERS),
+                        staffing: Default::default(),
                         target,
                         workers: BAND_WORKERS,
                         kit: None,
@@ -16674,10 +16871,12 @@ mod tests {
             Vec::new(),
             false,
         );
-        assert_eq!(
-            row(&mut app, holds_stone),
-            CREW,
-            "a crew may be put on ground that holds the material"
+        // **The count is the Max and the sim staffs the crew** (#871): stone never renews, so its
+        // reach is the Max in heads, and the band's gear and bare cut decide how many of them work.
+        let on_stone = row(&mut app, holds_stone);
+        assert!(
+            (1..=CREW).contains(&on_stone),
+            "a crew may be put on ground that holds the material: {on_stone} of at most {CREW}"
         );
 
         handle_assign_labor(
@@ -16792,7 +16991,11 @@ mod tests {
         assert_eq!(crew_on(&mut app), 0, "a tile crew names no kit");
 
         assign(&mut app, CREW, None);
-        assert_eq!(crew_on(&mut app), CREW, "the crew is on the improvement");
+        // **The crew of a tile improvement is its keepers** (#871): the count is only the Max.
+        assert!(
+            crew_on(&mut app) <= CREW,
+            "the sim never staffs a tile crew past the Max"
+        );
         assert!(
             app.world
                 .resource::<core_sim::TileImprovementRegistry>()
@@ -16868,29 +17071,27 @@ mod tests {
             Vec::new(),
             false,
         );
+        let roadwork_max = |app: &mut bevy::prelude::App| {
+            app.world
+                .query::<(&PopulationCohort, &LaborAllocation)>()
+                .iter(&app.world)
+                .filter(|(cohort, _)| cohort.faction == faction)
+                .find_map(|(_, allocation)| {
+                    allocation
+                        .assignments
+                        .iter()
+                        .find(|row| row.target == LaborTarget::Roadwork)
+                        .map(|row| row.max_workers)
+                })
+        };
+        // **The count is the Max** (#871): the sim staffs the keepers the roads' bill needs.
+        assert_eq!(roadwork_max(&mut app), Some(Some(KEEPERS)));
+        handle_stop_labor(&mut app, faction, band, BuildSourceRef::default(), true);
         assert_eq!(
-            role_crew(&mut app, faction, &LaborTarget::Roadwork),
-            KEEPERS
-        );
-        handle_assign_labor(
-            &mut app,
-            faction,
-            Some(band),
-            "roadwork".to_string(),
-            NO_CREW_ON_THIS_ACTIVITY,
+            roadwork_max(&mut app),
             None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            Vec::new(),
-            false,
-        );
-        assert_eq!(
-            role_crew(&mut app, faction, &LaborTarget::Roadwork),
-            NO_CREW_ON_THIS_ACTIVITY,
-            "…and zero takes them off again — that is the whole of 'stop keeping roads'"
+            "…and `stop_labor roadwork` takes the pool off again - that is the whole of 'stop \
+             keeping roads'"
         );
     }
 
@@ -16918,6 +17119,9 @@ mod tests {
     }
 
     /// The hands this faction has on one band-wide role, summed across its bands.
+    /// The durable id the stop test gives its fixture band.
+    const STOP_BAND_ID: u64 = 7_100;
+
     fn role_crew(app: &mut bevy::prelude::App, faction: FactionId, role: &LaborTarget) -> u32 {
         app.world
             .query::<(&PopulationCohort, &LaborAllocation)>()
@@ -17183,10 +17387,26 @@ mod tests {
 
         hunt_with(&mut app, band, "wanderer", 0, true);
         hunt_with(&mut app, band, "wanderer", 0, false);
+        // **A count of 0 is "no Max" now** (#871), so unfollowing restores an ordinary staffed hunt
+        // and `stop_labor` is what ends it.
+        assert!(
+            hunters_on(&mut app, "wanderer").is_some(),
+            "unfollowing at zero restores an ordinary hunt row"
+        );
+        handle_stop_labor(
+            &mut app,
+            FactionId(0),
+            band,
+            BuildSourceRef {
+                herd_id: Some("wanderer".to_string()),
+                ..BuildSourceRef::default()
+            },
+            false,
+        );
         assert_eq!(
             hunters_on(&mut app, "wanderer"),
             None,
-            "unfollowing at zero ends the hunt"
+            "`stop_labor` ends the hunt"
         );
     }
 
@@ -17231,10 +17451,11 @@ mod tests {
             &mut app.world,
             core_sim::advance_labor_allocation,
         );
-        assert_eq!(
-            hunters_on(&mut app, "wanderer"),
-            None,
-            "an ordinary row at zero holding nothing is dropped: the hunt has ended"
+        // **A staffed row is held until `stop_labor` ends it** (#871): the move order cleared the
+        // flag and the row is an ordinary hunt the sim staffs from now on.
+        assert!(
+            hunters_on(&mut app, "wanderer").is_some(),
+            "the row stays as an ordinary staffed hunt once the flag is gone"
         );
     }
 
@@ -21249,10 +21470,6 @@ mod tests {
     /// unassign that found nothing there would pass this test with the defect intact.
     #[test]
     fn an_unassign_is_not_blocked_by_a_kit_id_that_no_longer_exists() {
-        /// A roster id `equipment.json` does not carry — what a kit removed by a config edit looks
-        /// like to a command composed against the old roster.
-        const RETIRED_KIT: &str = "obsidian_spears";
-
         let mut app = build_test_app();
         let faction = FactionId(0);
         let herd_id = seed_herd(&mut app, UVec2::new(1, 1), Some(faction));
@@ -21273,19 +21490,16 @@ mod tests {
             staffed(&mut app),
             "the fixture must actually staff a hunt crew first"
         );
-        handle_assign_labor(
+        // **`stop_labor` names no kit**, so a kit the roster no longer carries cannot lock the
+        // band into the row (#871: a count of 0 is "no Max" and no longer ends a staffed row).
+        handle_stop_labor(
             &mut app,
             faction,
-            Some(FIXTURE_BAND_ID),
-            "hunt".to_string(),
-            0,
-            Some(1),
-            Some(1),
-            Some(herd_id.clone()),
-            None,
-            None,
-            Some(RETIRED_KIT.to_string()),
-            Vec::new(),
+            FIXTURE_BAND_ID,
+            BuildSourceRef {
+                herd_id: Some(herd_id.clone()),
+                ..BuildSourceRef::default()
+            },
             false,
         );
         assert!(
@@ -21348,10 +21562,22 @@ mod tests {
             } else {
                 LaborTarget::Builders
             };
-            app.world
+            let allocation = app
+                .world
                 .get::<LaborAllocation>(band)
-                .expect("the fixture band carries an allocation")
-                .workers_on(&target)
+                .expect("the fixture band carries an allocation");
+            if role == "roadwork" {
+                // **The Roadwork count is the Max, and the sim staffs the keepers** (#871): the row
+                // is what the command created, so it is the Max that says it landed.
+                allocation
+                    .assignments
+                    .iter()
+                    .find(|row| row.target == target)
+                    .and_then(|row| row.max_workers)
+                    .unwrap_or(NO_CREW_ON_THIS_ACTIVITY)
+            } else {
+                allocation.workers_on(&target)
+            }
         };
 
         for role in ["roadwork", "builders"] {
@@ -21770,9 +21996,6 @@ mod tests {
     /// use whenever the *floor* is not what they are varying.
     const SUSTAIN_FLOOR: f32 = DEFAULT_ESCAPEMENT_FLOOR;
 
-    /// *"Take everything"* — the floor-`0` end of the dial.
-    const STRIP_FLOOR: f32 = 0.0;
-
     /// Drive the real command handler (band resolved by the default resident-band picker).
     fn assign_forage(
         app: &mut bevy::prelude::App,
@@ -21861,6 +22084,123 @@ mod tests {
         );
     }
 
+    /// [`assign_hunt`] addressed to the fixture band by its durable id, so the row lands on the band
+    /// under test and not on whichever band the default picker finds first.
+    fn assign_hunt_to_fixture_band(
+        app: &mut bevy::prelude::App,
+        faction: FactionId,
+        fauna_id: &str,
+        workers: u32,
+    ) {
+        handle_assign_labor(
+            app,
+            faction,
+            Some(FIXTURE_BAND_ID),
+            "hunt".to_string(),
+            workers,
+            None,
+            None,
+            Some(fauna_id.to_string()),
+            None,
+            Some(0.5),
+            None,
+            Vec::new(),
+            false,
+        );
+    }
+
+    /// The band's hunt row on `herd_id`, after whatever the commands and the turn have done to it.
+    fn hunt_row(
+        app: &mut bevy::prelude::App,
+        band: Entity,
+        herd_id: &str,
+    ) -> Option<core_sim::LaborAssignment> {
+        app.world
+            .get::<LaborAllocation>(band)?
+            .assignments
+            .iter()
+            .find(|row| {
+                matches!(&row.target, LaborTarget::Hunt { fauna_id, .. } if fauna_id == herd_id)
+            })
+            .cloned()
+    }
+
+    /// **THE COUNT ON A STAFFED KIND IS THE MAX, AND THE ROW IS STAFFED AT ONCE** (#871). The player
+    /// states how many hands the row may take; the sim fills it from the pool by its passes, so the
+    /// row never holds more than the Max, what it holds is the sum of the three segments it is drawn
+    /// from, and the turn that follows restaffs it from the same cap.
+    #[test]
+    fn a_hunt_count_is_the_max_and_the_row_is_staffed_within_it_at_once_and_each_turn() {
+        const MAX: u32 = 2;
+        let mut app = build_test_app();
+        app.update();
+        let faction = FactionId(0);
+        let herd_id = seed_herd(&mut app, UVec2::new(1, 1), Some(faction));
+        let band = spawn_addressable_band(&mut app, faction, &herd_id);
+
+        assign_hunt_to_fixture_band(&mut app, faction, &herd_id, MAX);
+        let after_command =
+            hunt_row(&mut app, band, &herd_id).expect("the hunt row is on the band");
+        assert_eq!(
+            after_command.max_workers,
+            Some(MAX),
+            "the count on a staffed kind is the Max"
+        );
+        assert!(
+            after_command.workers <= MAX,
+            "the command's restaff never holds more than the Max: {}",
+            after_command.workers
+        );
+        let crew = after_command.staffing;
+        assert_eq!(
+            crew.keepers + crew.kitted + crew.bare,
+            after_command.workers,
+            "the three segments are the row's whole crew, so a client draws them with no arithmetic"
+        );
+
+        resolve_labor(&mut app);
+        let after_turn =
+            hunt_row(&mut app, band, &herd_id).expect("the hunt row survives the turn");
+        assert_eq!(
+            after_turn.max_workers,
+            Some(MAX),
+            "the turn leaves the Max alone"
+        );
+        assert!(
+            after_turn.workers <= MAX,
+            "the turn restaffs within the Max"
+        );
+    }
+
+    /// **A COUNT OF ZERO IS NO MAX, NEVER AN UNASSIGN** (#871): the row is kept and the sim staffs as
+    /// many hands as help; ending a row is `stop_labor`'s job alone, and it removes the row.
+    #[test]
+    fn a_zero_count_is_no_max_and_stop_labor_is_what_ends_the_row() {
+        let mut app = build_test_app();
+        let faction = FactionId(0);
+        let herd_id = seed_herd(&mut app, UVec2::new(1, 1), Some(faction));
+        let band = spawn_addressable_band(&mut app, faction, &herd_id);
+
+        assign_hunt_to_fixture_band(&mut app, faction, &herd_id, 0);
+        let row = hunt_row(&mut app, band, &herd_id).expect("a zero count does not end the row");
+        assert_eq!(row.max_workers, None, "zero is no Max");
+
+        handle_stop_labor(
+            &mut app,
+            faction,
+            FIXTURE_BAND_ID,
+            BuildSourceRef {
+                herd_id: Some(herd_id.clone()),
+                ..BuildSourceRef::default()
+            },
+            false,
+        );
+        assert!(
+            hunt_row(&mut app, band, &herd_id).is_none(),
+            "stop_labor removes the band's row on the source"
+        );
+    }
+
     /// The single source's seeded/resolved `actual` yield.
     fn source_actual(app: &bevy::prelude::App, band: Entity) -> f32 {
         app.world
@@ -21918,6 +22258,10 @@ mod tests {
         let band = spawn_idle_band(&mut app, faction, tile);
 
         assign_forage(&mut app, faction, coord, SUSTAIN_FLOOR, BAND_WORKERS);
+        // **The sim decides the crew** (#871): the count is the Max, and the seed is struck at the
+        // hands the command's own restaff put on the row.
+        let crewed = app.world.get::<LaborAllocation>(band).unwrap().assignments[0].workers;
+        assert!((1..=BAND_WORKERS).contains(&crewed));
 
         let seeded = source_actual(&app, band);
         assert!(
@@ -21942,7 +22286,7 @@ mod tests {
             equipped_gather_reference(),
             1.0,
             1.0,
-            BAND_WORKERS,
+            crewed,
             // A wild patch owes no keeping, so the whole crew gathers.
             core_sim::NO_HANDS,
             0.5,
@@ -22364,8 +22708,11 @@ mod tests {
     fn a_lapsed_fields_quote_is_what_the_turn_pays_and_once_sown_nets_the_fields_keeping() {
         /// Float slack on hand counts and the fixed-point food store.
         const QUOTE_EPSILON: f32 = 1e-3;
-        let crew = LAPSED_CREW as usize - 1;
         let (mut app, band, coord) = lapsed_field_scene(LAPSED_FIELD_FRACTION);
+        // **The sim decides the crew** (#871): the quote is read at the crew the command's own
+        // restaff put on the row, which the turn then pays.
+        let crew =
+            app.world.get::<LaborAllocation>(band).unwrap().assignments[0].workers as usize - 1;
         let quote = lapsed_field_curve(&mut app, coord)[crew].clone();
         resolve_labor(&mut app);
         let (kept_with, tools_short) = {
@@ -22741,24 +23088,33 @@ mod tests {
         seed_patch_with_biomass(&mut app, coord, stocked, EcologyPhase::Thriving);
         let band = spawn_idle_band(&mut app, faction, tile);
 
-        // Shallow → deep. Each step must re-seed at least as much as the last, and the ends must
-        // differ, or the "it re-seeds" claim is satisfied by a row that never moves.
-        let mut seeded = Vec::new();
-        for floor in [SUSTAIN_FLOOR, 0.42, 0.3, 0.15, STRIP_FLOOR] {
-            assign_forage(&mut app, faction, coord, floor, BAND_WORKERS);
-            seeded.push((floor, source_actual(&app, band)));
-        }
-        for pair in seeded.windows(2) {
-            assert!(
-                pair[1].1 >= pair[0].1 - SEED_EPSILON,
-                "dragging the floor from {} to {} must not LOWER the seeded expectation: {seeded:?}",
-                pair[0].0,
-                pair[1].0
-            );
-        }
+        // **The sim staffs the crew that reaches the floor** (#871), so a stand above the peak is
+        // taken by the same crew at every floor beneath it - what a floor change re-seeds is
+        // WHETHER there is anything above the floor to take. Dragging the floor up past today's
+        // stock empties the expectation, and dragging it back restores the first reading.
+        const ABOVE_THE_STAND_FLOOR: f32 = 1.0;
+        assign_forage(&mut app, faction, coord, SUSTAIN_FLOOR, BAND_WORKERS);
+        let at_the_peak = source_actual(&app, band);
         assert!(
-            seeded[seeded.len() - 1].1 > seeded[0].1,
-            "stripping the patch must re-seed a higher expectation than holding it at the food              peak: {seeded:?}"
+            at_the_peak > 0.0,
+            "a stocked stand pays at the food peak: {at_the_peak}"
+        );
+        assign_forage(
+            &mut app,
+            faction,
+            coord,
+            ABOVE_THE_STAND_FLOOR,
+            BAND_WORKERS,
+        );
+        assert_eq!(
+            source_actual(&app, band),
+            0.0,
+            "a floor above the stand leaves nothing to take, and the seed says so at once"
+        );
+        assign_forage(&mut app, faction, coord, SUSTAIN_FLOOR, BAND_WORKERS);
+        assert!(
+            (source_actual(&app, band) - at_the_peak).abs() < SEED_EPSILON,
+            "…and dragging it back restores the reading"
         );
     }
 
@@ -22863,7 +23219,20 @@ mod tests {
         let band = spawn_idle_band(&mut app, faction, tile);
 
         assign_forage(&mut app, faction, coord, SUSTAIN_FLOOR, BAND_WORKERS);
-        assign_forage(&mut app, faction, coord, SUSTAIN_FLOOR, 0);
+        // **`stop_labor` ends a staffed row** (#871); a count of 0 is "no Max".
+        app.world.entity_mut(band).insert(BandId(STOP_BAND_ID));
+        let band_id = STOP_BAND_ID;
+        handle_stop_labor(
+            &mut app,
+            faction,
+            band_id,
+            BuildSourceRef {
+                target_x: Some(coord.x),
+                target_y: Some(coord.y),
+                ..BuildSourceRef::default()
+            },
+            false,
+        );
 
         let allocation = app.world.get::<LaborAllocation>(band).unwrap();
         assert!(allocation.assignments.is_empty(), "the source is unstaffed");
@@ -23120,7 +23489,6 @@ mod tests {
     #[test]
     fn a_forecast_a_seed_and_a_take_are_cut_from_one_share_of_the_bands_gear() {
         let shared = shortfall_arm(ONE_COMPETING_ROW, OUTFITS_FOR_HALF_THE_BAND);
-        let owns_only_its_share = shortfall_arm(NO_COMPETING_ROW, ONE_ROWS_SHARE_OF_HALF);
         let stocked = shortfall_arm(ONE_COMPETING_ROW, OUTFITS_FOR_THE_WHOLE_BAND);
         let stocked_alone = shortfall_arm(NO_COMPETING_ROW, OUTFITS_FOR_THE_WHOLE_BAND);
 
@@ -23130,19 +23498,10 @@ mod tests {
             shared.seeded,
             shared.resolved
         );
-        assert_eq!(
-            shared.seeded, owns_only_its_share.seeded,
-            "the SEED prices the row at its share of the shared stock — the same reading a band \
-             owning only that share gets"
-        );
-        assert_eq!(
-            shared.resolved, owns_only_its_share.resolved,
-            "…and so does the TAKE"
-        );
-        assert_eq!(
-            shared.forecast, owns_only_its_share.forecast,
-            "…and so does the FORECAST, which is the surface the player commits from"
-        );
+        // **RETIRED (#871): "the row reads exactly what a band owning only its share reads."** Gear
+        // is no longer split pro rata between rows: the staffing passes grant kits by rank and then
+        // by row order, so a row's reading is its grant's, not its share's
+        // (`kit_selection.rs` pins the grant order).
 
         assert!(
             shared.resolved < stocked.resolved,
@@ -28376,6 +28735,7 @@ mod tests {
 
         // Re-seed the row through the seam the assign command calls, then resolve the turn it
         // quotes.
+        let crew_now = staffed_crew(&app, band);
         seed_source_yield(
             &mut app,
             band,
@@ -28385,7 +28745,7 @@ mod tests {
                 floor: DEFAULT_ESCAPEMENT_FLOOR,
             },
             None,
-            BAND_WORKERS + KEEPERS,
+            crew_now,
         );
         let seeded = source_materials(&app, band)
             .first()
@@ -28488,6 +28848,16 @@ mod tests {
     /// **The crew's CUTTERS** — `crew` less the hands the turn just spent keeping the wood
     /// working. A take kit is carried by the take hands (`docs/plan_site_crews.md` §2.3), so no more
     /// than these can hold one.
+    /// **The crew the sim staffed on the band's first row** (#871) - the count a command names is
+    /// only its Max, so a fixture that compares a quote with what the turn pays reads the crew here.
+    fn staffed_crew(app: &bevy::prelude::App, band: Entity) -> u32 {
+        app.world
+            .get::<LaborAllocation>(band)
+            .expect("the band has an allocation")
+            .assignments[0]
+            .workers
+    }
+
     fn wood_cutters(app: &bevy::prelude::App, crew: u32) -> f32 {
         crew as f32
             - app
@@ -28552,14 +28922,24 @@ mod tests {
             "axes without sleds are no complete woodcutting kit either"
         );
         let felling_with_sleds = arm(true, 5, 3);
-        assert_eq!(
-            felling_with_sleds.kit_workers_holding, 3.0,
-            "three axes and five sleds outfit three"
+        // **Three at most, and as many as the sim staffed cutters** (#871): the crew is the sim's.
+        assert!(
+            felling_with_sleds.kit_workers_holding <= 3.0,
+            "three axes and five sleds outfit three at most: {}",
+            felling_with_sleds.kit_workers_holding
+        );
+        assert!(
+            felling_with_sleds.kit_workers_holding > 0.0,
+            "liveness: the axes and sleds arm somebody"
         );
         let deadfall_with_both = arm(false, 5, 3);
-        assert_eq!(
-            deadfall_with_both.kit_workers_holding, felling_with_sleds.kit_workers_holding,
-            "the count is the kit's, not the rung's"
+        // **Both rungs hold the kit's own count, bounded by their cutters** (#871): felling spends
+        // part of its crew keeping the working, so its cutters are fewer than the deadfall's.
+        assert!(
+            deadfall_with_both.kit_workers_holding <= 3.0
+                && deadfall_with_both.kit_workers_holding > 0.0,
+            "the count is the kit's, not the rung's: {}",
+            deadfall_with_both.kit_workers_holding
         );
     }
 
@@ -28701,19 +29081,26 @@ mod tests {
                 DEFAULT_ESCAPEMENT_FLOOR,
                 arm.crew + 1,
             );
-            let row = curve
-                .per_crew
-                .iter()
-                .find(|row| row.workers == arm.crew)
-                .cloned()
-                .expect("the curve carries the crew asked about");
 
             assign_extract_with_kit(&mut app, "wood", arm.crew, arm.kit);
             resolve_deposit_turn(&mut app);
+            // **The sim decides the crew** (#871): the sheet's row for the crew the turn staffed.
+            let staffed = staffed_crew(&app, band);
+            assert!(
+                staffed >= 1 && staffed <= arm.crew,
+                "staffed {staffed} of at most {}",
+                arm.crew
+            );
+            let row = curve
+                .per_crew
+                .iter()
+                .find(|row| row.workers == staffed)
+                .cloned()
+                .expect("the curve carries the crew staffed");
             // **Whole kits, held only by the cutters** — the keepers carry the keeping tools.
             assert_eq!(
                 row.armed_workers,
-                arm.armed.min(wood_cutters(&app, arm.crew)),
+                arm.armed.min(wood_cutters(&app, staffed)),
                 "{}: the crew's whole-kit count",
                 arm.kit
             );
@@ -28769,23 +29156,25 @@ mod tests {
             let mut ledger = BandEquipment::default();
             ledger.stock("sled", sleds, "plain", None);
             ledger.stock("axe", axes, "flint", None);
-            deposit_band_holding(&mut app, tile, ledger);
+            let band = deposit_band_holding(&mut app, tile, ledger);
             let curve = deposit_crew_curve(&mut app, "wood", kit, DEFAULT_ESCAPEMENT_FLOOR, crew);
-            let quoted = curve
-                .per_crew
-                .iter()
-                .find(|row| row.workers == crew)
-                .expect("the curve carries the crew asked about")
-                .armed_workers;
             assign_extract_with_kit(&mut app, "wood", crew, kit);
             // One turn, so the row's budget strikes the keeping issue the settlement parked.
             resolve_deposit_turn(&mut app);
             let committed = published_wood_row(&mut app);
+            // **The sim decides the crew** (#871): the sheet's row for the crew the turn staffed.
+            let staffed = staffed_crew(&app, band);
+            let quoted = curve
+                .per_crew
+                .iter()
+                .find(|row| row.workers == staffed)
+                .expect("the curve carries the crew staffed")
+                .armed_workers;
             // **Held only by the cutters** — a take kit is carried by the take hands, so a felling
             // crew's keepers hold none of it (`docs/plan_site_crews.md` §2.3).
             assert_eq!(
                 committed.kit_workers_holding,
-                f32::min(expected, wood_cutters(&app, crew)),
+                f32::min(expected, wood_cutters(&app, staffed)),
                 "fixture {kit} felling={felling} sleds={sleds} axes={axes}: the row's count"
             );
             assert_eq!(
@@ -28819,11 +29208,13 @@ mod tests {
         assert_eq!(curve.next_rung, "forestry:felling");
         assert!(curve.in_range);
         assert_eq!(curve.per_crew.len(), CREW as usize);
-        let quoted = curve.per_crew[CREW as usize - 1].next_rung_take;
 
         assign_extract_with_kit(&mut app, "wood", CREW, "woodcutting");
         seat_a_felling_working(&mut app, tile);
         resolve_deposit_turn(&mut app);
+        // **The sim decides the crew** (#871): the sheet's once-felled figure for the staffed crew.
+        let staffed = staffed_crew(&app, band);
+        let quoted = curve.per_crew[staffed as usize - 1].next_rung_take;
         let paid = app
             .world
             .get::<LaborAllocation>(band)
@@ -29034,6 +29425,7 @@ mod tests {
             keep_hands > 0.0 && keep_hands < BAND_WORKERS as f32,
             "fixture: the felling working's keeping takes part of the crew — {keep_hands}"
         );
+        let crew_now = staffed_crew(&app, band);
         seed_source_yield(
             &mut app,
             band,
@@ -29043,14 +29435,14 @@ mod tests {
                 floor: DEFAULT_ESCAPEMENT_FLOOR,
             },
             None,
-            BAND_WORKERS,
+            crew_now,
         );
         let seeded = source_materials(&app, band)
             .first()
             .expect("a staffed working publishes the material it will cut")
             .amount;
         assert!(
-            seeded > bare_rate * (BAND_WORKERS as f32 - keep_hands),
+            seeded > bare_rate * (staffed_crew(&app, band) as f32 - keep_hands),
             "the axes left to the cutters lift the seed above their bare rate: {seeded}"
         );
 

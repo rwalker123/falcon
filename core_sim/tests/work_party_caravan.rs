@@ -164,6 +164,8 @@ fn spawn_band_camped_at(
                     party: None,
                     muster_crew: 0,
                     planned_crew: 0,
+                    max_workers: Some(CREW),
+                    staffing: Default::default(),
                     target,
                     workers: CREW,
                     kit,
@@ -1728,6 +1730,21 @@ fn a_far_workings_crew_curve_quotes_the_cut_the_turn_makes_at_the_source() {
 
 /// The work-party query for the fixture's far wood, asked at `kit`, over [`CREW`].
 fn ask_about_the_wood(app: &mut App, distance: u32, kit: &str) -> WorkPartyForecastReply {
+    // **The sim decides the crew** (#871): the sheet is asked about the crew the wood row has, which
+    // is the number the row's own rate was struck at.
+    let crew = app
+        .world
+        .query::<&LaborAllocation>()
+        .iter(&app.world)
+        .find_map(|allocation| {
+            allocation
+                .assignments
+                .iter()
+                .find(|row| matches!(row.target, LaborTarget::Extract { .. }))
+                .map(|row| row.workers)
+        })
+        .filter(|workers| *workers > 0)
+        .unwrap_or(CREW);
     let reply = core_sim::forecast_query::answer_forecast_query(
         &mut app.world,
         &QueryPayload::WorkPartyForecast(WorkPartyForecastQuery {
@@ -1739,7 +1756,7 @@ fn ask_about_the_wood(app: &mut App, distance: u32, kit: &str) -> WorkPartyForec
                 material: WOOD.to_string(),
             },
             kit_id: kit.to_string(),
-            workers: CREW,
+            workers: crew,
             floor: FLOOR,
         }),
     );
@@ -1831,6 +1848,8 @@ fn a_far_workings_rate_home_on_the_turn_it_completes_a_rung_is_the_querys() {
             party: None,
             muster_crew: 0,
             planned_crew: 0,
+            max_workers: Some(BUILDERS),
+            staffing: Default::default(),
             target: LaborTarget::Builders,
             workers: BUILDERS,
             kit: None,
@@ -2541,10 +2560,13 @@ fn rays_band() -> (App, Entity) {
             .get_mut::<LaborAllocation>(band)
             .expect("the band keeps its allocation");
         allocation.assignments[0].workers = RAY_ROW;
+        allocation.assignments[0].max_workers = Some(RAY_ROW);
         allocation.assignments.push(LaborAssignment {
             party: None,
             muster_crew: 0,
             planned_crew: 0,
+            max_workers: Some(RAY_ROW),
+            staffing: Default::default(),
             target: LaborTarget::Scout,
             workers: RAY_ROW,
             kit: None,
@@ -2731,12 +2753,15 @@ fn a_re_entered_rows_take_is_priced_on_the_hands_present() {
     let control = |crew: u32| {
         let (mut control, band) = world_hunting_at(INSIDE_THE_APRON);
         *control.world.resource_mut::<HerdRegistry>() = herds_at_the_start.clone();
-        control
-            .world
-            .get_mut::<LaborAllocation>(band)
-            .expect("the control keeps its allocation")
-            .assignments[0]
-            .workers = crew;
+        {
+            let mut allocation = control
+                .world
+                .get_mut::<LaborAllocation>(band)
+                .expect("the control keeps its allocation");
+            allocation.assignments[0].workers = crew;
+            // **The crew is the sim's now** (#871): the control's Max is what pins it to `crew`.
+            allocation.assignments[0].max_workers = Some(crew);
+        }
         resolve_a_turn(&mut control);
         published_hunt_row(&control).actual_yield
     };

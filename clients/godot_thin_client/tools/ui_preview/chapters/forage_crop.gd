@@ -8,7 +8,7 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 71
+const EXPECTED_CHECKPOINTS := 69
 
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 const BaseFx := preload("res://tools/ui_preview/fixtures_base.gd")
@@ -313,7 +313,7 @@ func run(harness) -> void:
 	# has STARTED, which is what a zero meter says.
 	var locked_tile := BaseFx.unbuilt(BaseFx.food_tile_fixture())
 	h._hud._compose.reset_forage_source()
-	h._hud._compose.set_forage_count(1)
+	h._hud._compose.set_forage_max(1)
 	h._show_tile(locked_tile)
 	h._compose_forage(locked_tile)
 	await h._settle()
@@ -432,7 +432,7 @@ func run(harness) -> void:
 		return true)
 	# A curve an earlier frame already holds would be answered from the seam without an ask.
 	query.reset()
-	h._hud._compose.set_forage_count(1)
+	h._hud._compose.set_forage_max(1)
 	h._hud._compose.set_forage_species("wild_emmer")
 	h._compose_forage(_long_basket_tile_fixture())
 	await h._settle()
@@ -508,47 +508,23 @@ func run(harness) -> void:
 	# source change re-seeds both from the band's standing assignment and would overwrite them.
 	h._compose_forage(BaseFx.food_tile_fixture())
 	h._hud._compose.set_forage_improvement("cultivate")
-	h._hud._compose.set_forage_count(0)
+	h._hud._compose.set_forage_max(0)
 	h._compose_forage(BaseFx.food_tile_fixture())
 	await h._settle()
 	await h._save("forage_unstaffed")
-	# By META — the commit verb follows the patch's rung now, and a bare "Forage" literal here would
+	# By META - the commit verb follows the patch's rung now, and a bare "Forage" literal here would
 	# be a second, silent spelling of that rule.
 	var unstaffed_btn = Q.compose_commit_button(h._hud._drawercompose._compose_sheet)
-	h._assert_hud("0 workers on an unassigned tile disables the submit (it would be a no-op)",
-		unstaffed_btn != null and unstaffed_btn.disabled)
-	# **THE PAYOFF'S TWO HALVES, ASSERTED AS A PAIR.** Absence from the face alone is vacuous —
-	# deleting the payoff outright would satisfy it — so the same frame asserts it reads in the PER
-	# TURN readout, which is how the player decides the tile is worth staffing at all.
+	h._assert_hud("a tile this band does not work, with no Max, offers its verb live (the sim staffs it)",
+		unstaffed_btn != null and not unstaffed_btn.disabled
+			and unstaffed_btn.text != HudComposeVocab.STOP_WORKING_BUTTON)
+	h._assert_hud("…its Max stepper reads \"%s\"" % HudWorkVocab.MAX_STEPPER_NO_MAX,
+		Readout.max_stepper_text(h._hud._drawercompose._compose_sheet) == HudWorkVocab.MAX_STEPPER_NO_MAX)
 	h._assert_hud("no payoff is restated on the improvement box's face",
 		not ForageFx.improvement_face(h._hud._drawercompose._compose_sheet, SourceForecast.IMPROVEMENT_CULTIVATE)
 			.contains(ForageFx.IMPROVEMENT_PAYOFF_NEEDLE))
-	# **A CREW OF NONE QUOTES NO PAYOFF.** The `ONCE TENDED` figure is the crew curve's — what THIS
-	# crew takes once the rung stands — and the curve has no row for a crew of nobody, so the readout
-	# states none rather than a crew-blind figure. The liveness half is at the end of this block: the
-	# same sheet at one forager quotes it again.
-	h._assert_hud("…and a crew of none quotes no payoff — the figure is a crew's, and there is none",
-		Readout.improvement_deal_rows(h._hud._drawercompose._compose_sheet) == 0)
-	# **THE BUILDING CAPTION AT A CREW THAT REACHES NOTHING — two reasons for one answer.** A composed
-	# build suppresses the floor walk outright, and a zero crew reaches no holding rate either, so a
-	# caption composing the arrow's key unconditionally fails here whichever of the two it read.
-	# `improvement_running_plant` is where the SUPPRESSION alone is pinned, against a crew that does
-	# reach its floor.
-	h._assert_hud("…under the plain per-turn caption, this crew reaching no holding rate",
-		Readout.yields_header(h._hud._drawercompose._compose_sheet)
-			== SourceForecast.YIELD_ROW_HEADER.to_upper())
-	# **A CREW OF ZERO IS BUILDING NOTHING, AND THE ASIDE MAY NOT SAY OTHERWISE.** `learn_multiplier`
-	# is a function of the FLOOR alone, so at the food peak it reads ×1.00 no matter who is assigned —
-	# and this frame has a composed Cultivate with NOBODY on it. **The aside states the LESSON's rate
-	# and no build rate at all**: the two meters stopped sharing a multiplier when the build crew left
-	# the tile (`docs/plan_standing_upkeep.md` §2.2), so a build half here would quote a rate the sim
-	# does not compute. Asserted on this frame because it is the only one that pairs a live build with
-	# an empty crew — the shape a build-rate line would have read most confidently on.
-	h._assert_hud("an unstaffed build claims no build rate — nobody is building it",
-		not Readout.teaching_line(h._hud._drawercompose._compose_sheet).to_lower().contains("building at"))
-	# LIVENESS for the crew-of-none claim above: the same sheet at one forager states the payoff row
-	# again, so the absence there is about the crew rather than a sheet that lost the row outright.
-	h._hud._compose.set_forage_count(1)
+	# …and with a Max of one forager the same sheet states the payoff row again.
+	h._hud._compose.set_forage_max(1)
 	h._compose_forage(BaseFx.food_tile_fixture())
 	await h._settle()
 	h._assert_hud("…while one forager on the same sheet reads the payoff row again",
@@ -565,24 +541,25 @@ func run(harness) -> void:
 	h._show_tile(BaseFx.food_tile_fixture())
 	h._compose_forage(BaseFx.food_tile_fixture())
 	h._hud._compose.set_forage_improvement("cultivate")
-	h._hud._compose.set_forage_count(0)
+	h._hud._compose.set_forage_max(0)
 	h._compose_forage(BaseFx.food_tile_fixture())
 	await h._settle()
 	await h._save("forage_unassign")
-	var unassign_btn = Q.find_button_by_text(h._hud._drawercompose._compose_sheet, "Unassign")
-	h._assert_hud("0 workers on a tile this band works stays live, renamed Unassign",
+	var unassign_btn = Q.find_button_by_text(h._hud._drawercompose._compose_sheet,
+		HudComposeVocab.STOP_WORKING_BUTTON)
+	h._assert_hud("a tile this band works offers `%s`, live" % HudComposeVocab.STOP_WORKING_BUTTON,
 		unassign_btn != null and not unassign_btn.disabled)
-	# …and the improvement control is SUPPRESSED here, which is the other half of the same judgement:
-	# offering to START a build in the act of abandoning the source says two opposite things at once.
-	# Asked of the whole control family, so a rung merely spelled differently cannot satisfy it.
-	h._assert_hud("…and offers no rung to start while it is handing the source back",
+	# …and the improvement control is STILL OFFERED: the crew is the sim's, so a worked source has a rung
+	# to take it to (#871). Asked of the whole control family, so a rung merely spelled differently
+	# cannot satisfy it.
+	h._assert_hud("…and keeps its rung control",
 		Q.find_meta_node(h._hud._drawercompose._compose_sheet,
-			HudWidgets.IMPROVEMENT_CONTROL_META) == null)
+			HudWidgets.IMPROVEMENT_CONTROL_META) != null)
 
 	# Restore the unassigned near band for the frames that follow.
 	h._hud._band_labor._player_band = BandFx.forage_range_bands()[0]
 	h._hud._compose.reset_forage_source()
-	h._hud._compose.set_forage_count(1)
+	h._hud._compose.set_forage_max(1)
 
 	# State 2-crop-committed — the patch has already committed. The commitment is one-way until it
 	# lapses, so the picker becomes a LOCKED READOUT — but a readout OF THE WHOLE BASKET, with the
@@ -686,7 +663,7 @@ func run(harness) -> void:
 	# Restore the unstaffed near band + the 3-species tile for the frames that follow.
 	h._hud._band_labor._player_band = BandFx.forage_range_bands()[0]
 	h._hud._compose.reset_forage_source()
-	h._hud._compose.set_forage_count(1)
+	h._hud._compose.set_forage_max(1)
 
 	h._hud._compose.set_forage_improvement("cultivate")
 	h._show_tile(BaseFx.food_tile_fixture())
@@ -753,8 +730,8 @@ func run(harness) -> void:
 	# `[url]`, so `improvement_face` reads the parsed text a player actually sees.
 	var stressed_face := ForageFx.improvement_face(
 		h._hud._drawercompose._compose_sheet, SourceForecast.IMPROVEMENT_CULTIVATE)
-	h._assert_hud("the sheet composes a crew here, which is what makes this the worked half",
-		h._hud._compose.forage_count() > 0)
+	h._assert_hud("the sheet staffs a crew here, which is what makes this the worked half",
+		Readout.stepper_value(h._hud._drawercompose._compose_sheet) > 0)
 	h._assert_hud("…so the offer is ONE line pointing at the Work tab (got \"%s\")" % stressed_face,
 		stressed_face == HudComposeVocab.IMPROVEMENT_OFFER_BARE_FORMAT % [
 			FoodIcons.for_policy(SourceForecast.IMPROVEMENT_CULTIVATE),
@@ -932,7 +909,7 @@ func run(harness) -> void:
 	# **DIALLED AFTER THE FIRST OPEN, THEN RE-OPENED — the plant twin of `_compose_herd`'s contract.**
 	# `_show_tile` closes any open sheet, and a close now ENDS the composition
 	# (`DrawerComposeController._on_compose_sheet_closed`), so a rung dialled before the first open is
-	# re-seeded away by the source-changed branch exactly as a pre-open `set_hunt_count` always was.
+	# re-seeded away by the source-changed branch exactly as a pre-open `set_hunt_max` always was.
 	h._show_tile(_sowable_long_basket_tile_fixture())
 	h._compose_forage(_sowable_long_basket_tile_fixture())
 	h._hud._compose.set_forage_improvement("sow")
@@ -1019,7 +996,7 @@ func run(harness) -> void:
 	# pass against a producer that summed the vector — their SUM must not, and the FOOD row must still
 	# read, or "quote the materials" is satisfied by a sheet that stopped quoting the food.
 	var cash_yields := Readout.yields_text(h._hud._drawercompose._compose_sheet)
-	var cash_crew: int = h._hud._compose.forage_count()
+	var cash_crew: int = Readout.stepper_value(h._hud._drawercompose._compose_sheet)
 	var fibre := float(cash_crew) * ForageFx.CASH_PATCH_FIBRE_PER_WORKER
 	var tobacco := float(cash_crew) * ForageFx.CASH_PATCH_TOBACCO_PER_WORKER
 	h._assert_hud("the cash-crop gather composes a crew at all", cash_crew > 0)

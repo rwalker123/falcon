@@ -386,7 +386,16 @@ decision log's specialist names.
 ### `Food` (`specialists/food/`: `mod.rs` the plumbing, `rules.rs` the seven rules, `ledger.rs` the projection, `sources.rs` the source vocabulary)
 
 Owns `runway_turns`; alarms `food_short` when the minimum own-band `turns_of_food` is below
-`food.runway_floor_turns`. Every assignment is `assign_labor` with kit and floor left `None` (the
+`food.runway_floor_turns`. **The AI asks for a source and the sim staffs it (#871).** A forage or
+hunt `assign_labor` carries `workers: 0` (`NO_MAX`, `Food::assign`) - the count on a staffed row is
+the player's Max and `0` means none, so the sim staffs the row from the pool its priority order
+leaves (`.claude/rules/core_sim/work-party.md`, *Three staffing passes*). The count a rule PLANS
+(`Cost::workers`, the ledger projection, the reason's `x6`) is the ledger's, never on the wire; the
+row's `workers` read back next frame is the sim's crew. A rule that empties a row sends `stop_labor`
+(`Food::release`), never `assign_labor ... 0`; a rule that only thins one sends nothing, so the
+"donor reduction" lines are gone from every rule's commands. The `builders` pool (and the other
+band-wide roles) stays a count - `assign_labor ... builders <n>` is player-set and sized by the rule.
+Every assignment is `assign_labor` with kit and floor left `None` (the
 job's default on the wire) — except *draw down to survive*'s, which states the floor; `policy` is
 left `None` too, because the field is **retired** —
 *"a labor assignment carries a `floor`, not a stance … the server ignores it"*

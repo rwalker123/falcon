@@ -230,7 +230,11 @@ it, the band's stood-down-party walk home (#706): `homeward_workers` / `homeward
 `homeward_all_home_in` (`uint`, `as i64`) and `homeward_food` / `homeward_food_spoils` (`float`,
 `f64`), all 0 while nobody walks home. Each work row also carries `rejoining_workers` /
 `rejoining_all_home_in` (`as i64`) and `rejoining_food` (`f64`): its own hands walking back to it,
-already inside the row's `workers`. Each work row carries `spoiled_rate_home` and
+already inside the row's `workers`. Each work row also carries the sim's staffing (#871, appended last
+in `labor_assignments`): `max_workers` (the player's Max, `0` = none), `hold_crew`, `reach_crew`,
+`keepers_staffed` / `kitted_staffed` / `bare_staffed` (they sum to `workers` on a staffed row) and
+`useful_crew`, all `uint` as `i64`, always inserted so the entry shape is stable. `workers` itself is the
+sim's crew on a staffed row. Each work row carries `spoiled_rate_home` and
 `transit_keeps_turns` (`float`) beside `net_rate_home`, which is NET of that rot; the
 `WorkPartyForecastReply` decode (`bridge/query.rs`) carries the same pair beside `rate_home`. Each
 row also carries `fodder_rate_home` (`float`) and `materials_rate_home` (`material_yield`'s

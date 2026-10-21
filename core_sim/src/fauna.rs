@@ -10259,6 +10259,31 @@ pub fn hunt_useful_take_hands(
     carry_and_reach.max(fight) as f32
 }
 
+/// **THE ARMED HANDS THE FIGHT NEEDS TO BRING DOWN `room` OF MEAT A TURN** — the fight half of
+/// [`hunt_useful_take_hands`], asked of any party (#871, the staffing passes ask it of a partly
+/// armed one). `Some(0.0)` where the quarry stages no fight at all; `None` where the party's best
+/// hunter cannot wound it, so no headcount of that party takes anything.
+pub fn hunt_fight_hands(
+    herd: &Herd,
+    fauna: &FaunaConfig,
+    room: f32,
+    party: &HuntingParty,
+) -> Option<f32> {
+    let Some(quarry) = herd_fight_stage(herd, fauna) else {
+        return Some(NO_HANDS);
+    };
+    let hunter = party.crews.first()?.hunter;
+    let tuning = &party.tuning;
+    let bodies_per_hunter = crate::combat::strike_damage(hunter.attack, quarry.profile.defense)
+        * tuning.lethality
+        * tuning.hit_chance
+        / quarry.profile.durability;
+    if !bodies_per_hunter.is_finite() || bodies_per_hunter <= NO_HANDS {
+        return None;
+    }
+    Some((peak_animal_drop(room, herd.body_mass) / bodies_per_hunter).ceil())
+}
+
 /// ⛔ **A HUNT ROW'S TAKE CREW, CREW-INDEPENDENT** (`docs/plan_site_crews.md` §4) — the haul half
 /// walked over the row's own coverage best-equipped first
 /// ([`crate::equipment_config::KitCoverage::hands_to_reach`]), so hands the row's units do not reach

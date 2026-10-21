@@ -1,6 +1,8 @@
 ---
 paths:
   - "core_sim/src/work_party.rs"
+  - "core_sim/src/staffing.rs"
+  - "core_sim/src/take_claims.rs"
   - "core_sim/src/systems/labor.rs"
   - "core_sim/src/supply.rs"
   - "core_sim/src/labor_config.rs"
@@ -29,6 +31,73 @@ see "The deposit web: the cargo is the material".
 fourth row kind and posts a party by the same rule**: `party_source_position` names its tile, a far
 crew is a party, and the party carries no cargo (the row takes nothing; it only keeps). Nothing forks
 for it.
+
+## The sim staffs every source from the player's floor (#871)
+
+Design: `docs/plan_labor_at_scale.md` ("Decided"). Engine: `core_sim/src/staffing.rs`, applied at the
+head of each band's labor pass in `systems/labor.rs`, restated by the command path through
+`staffing::restaff_band`.
+
+**A forage, hunt (not a need row), extraction, tile-improvement or Roadwork row's `workers` is the
+sim's answer**, not the player's. The player states a **Max** (`LaborAssignment::max_workers`;
+`None` = no Max) and the **floor** the row already carries; each turn the sim zeroes those rows'
+hands and refills them. `LaborTarget::is_staffed` names the kinds. Scout, Warrior, Builders and a
+need row keep the player's count.
+
+**The pool** is `staffable_pool`: the working people less the bench, the hands still walking home and
+every crew the player set by hand (the rows that are not staffed). Rows are served in
+`SourcePriority` order High to Low, ties to the earlier row.
+
+**Three passes**, each capped by the row's Max:
+
+| pass | what it hands out |
+|---|---|
+| 1 | the site's **keepers** (`planned_keep_hands`, ceiled), then **kitted** hands up to the row's **hold crew** |
+| 2 | **kitted** hands up to the row's **reach crew** |
+| 3 | every row up to its **useful crew** (the room above the floor, clear-it-now; the crew past which the take stops rising): the kit's units still unspent first, then **bare** hands, only on a web where a bare hand takes something (never on a hunt that needs a weapon) |
+
+A kitted hand holds the whole of its row's live kit items, drawn from one shelf per item shared by
+every row (so two rows cannot arm one spear twice). **Hold crew** is the hands that take the
+regrowth at the floor; **reach crew** is the hands whose take is strictly above the peak regrowth
+between the floor and today's stock (`REACH_STRICTLY_ABOVE_PEAK`), so they draw the stock down
+toward the floor. Stone has no regrowth and takes `ReachTarget::Heads(Max - keepers)`. A source
+already at or under its floor staffs its keepers only. Each web builds its own take-per-hand
+(`forage_input`, `hunt_input`, `extract_input`; a tile improvement and Roadwork size by their
+keeping bill alone) and at least one hand is asked of a take that rounds to nothing
+(`AT_LEAST_ONE_HAND`).
+
+**What is written on the row** is `workers` plus `StaffedCrew { keepers, kitted, bare, hold_crew,
+reach_crew, useful_crew }` (`staffing`), applied by `LaborAllocation::apply_staffing(staffed, lost_people)`. A far
+row that loses hands hands them to its party (`cut_crew` / `walk_home`); hands lost to people the band
+no longer has are discarded where they stand (`discard_lost_hands`), not walked home, so the loss is
+not counted against next turn's pool and cut again.
+
+**Kit claims follow the staffing.** `take_claims::row_claims` settles a staffed row on exactly the
+hands the passes armed (plus the keeping remainder: the leftover fraction of a keeper the bill asks
+for), so the band's item budget grants a staffed row its `kitted` units and no more. `RowClaims::asks`
+keeps the planned claim (what the row would ask for if armed as planned) beside the granted
+`claims`; a row's published `kitToe` states `required` from the ask and `filled` from the grant, so a
+shortfall the staffing left stays visible by item.
+
+**Commands.** For a staffed kind the count on `assign_labor` is the **Max** (`0` = no Max, never an
+unassign); `stop_labor <faction> <band> <source>` ends the row
+(`x y` | `herd_id` | `x y material` | `branch x y` | `roadwork`, `StopLaborCommand`, proto field 95).
+Both restaff the band immediately (`staffing::restaff_band`, then the assign-time seed), so the row
+reads its staffed crew before the next turn.
+
+**Wire** (`LaborAssignment`, appended): `maxWorkers` (`0` = no Max), `holdCrew`, `reachCrew`,
+`usefulCrew` (pass 3's ceiling, keepers included, after the Max), `keepersStaffed`, `kittedStaffed`, `bareStaffed` (the last three sum to `workers` on a staffed row).
+`SAVE_FORMAT_VERSION` 48.
+
+**Approximations to know.** The command-time restaff reads the world before the coming turn's
+regrowth, while the turn staffs after it, so a row's crew can move by a hand between the seed and the
+turn. Several bands working one source each staff their share of the keeping bill. A band's gear that
+the turn settles after staffing (the pools' and the keeping's issue) is not in the staffing's shelf.
+
+Pinned by `staffing::tests` (the passes, in order, against a shelf), `labor_allocation` (the
+re-staff on a smaller pool and the turn's staffed rows), `shedding_order::a_smaller_pool_restaffs_the_rows_and_sheds_nothing`,
+`take_kit_claims` (granted claims against asks) and `server::tests` (`stop_labor`, the Max on
+`assign_labor`).
 
 ## Config files
 
@@ -535,7 +604,10 @@ them; they rejoin only as they arrive) and `work_party::tests::a_deep_cut_turns_
 > included — down to the people it still has, so every hand it removes is one the band **no longer
 > has**. Sending those hands home would list them on `homeward`, count them against the pool next
 > turn and fire the shed again on the hands it had just shed: a far row of six losing two people
-> would go 6 → 4 → 2 → 0. So a row the shed **trims** reaches `post_a_party` below its party's crew
+> would go 6 → 4 → 2 → 0. **A staffed row is not shed at all** (#871): its hands are zeroed before the
+> shed walks and refilled from the smaller pool after it, so only the hand-set crews (Scout, Warrior,
+> Builders, a need row's muster) are trimmed; the hands a staffed row's party loses to the smaller pool
+> are discarded the same way (`apply_staffing`'s `lost_people`). So a row the shed **trims** reaches `post_a_party` below its party's crew
 > (the only way it can, a player's cut having already matched them), and the party sheds the
 > difference through `cut_crew`'s own order — the hands at the source first, then porters nearest
 > home, whose packs go with them — with its walks discarded. A row the shed **drops** goes through

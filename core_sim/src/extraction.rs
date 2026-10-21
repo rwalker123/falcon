@@ -408,7 +408,7 @@ impl DepositSource {
 
     /// **RECORD THE FLOOR THIS TURN'S CREW WORKED TO**, keeping the deepest — see
     /// [`DepositSource::last_floor`] for why the aggregate is a minimum where the take's is a sum.
-    fn note_escapement_floor(&mut self, escapement: f32) {
+    pub(crate) fn note_escapement_floor(&mut self, escapement: f32) {
         self.last_floor = Some(match self.last_floor {
             Some(deepest) => deepest.min(escapement),
             None => escapement,

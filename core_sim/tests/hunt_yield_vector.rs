@@ -268,6 +268,8 @@ fn spawn_hunters(
                     party: None,
                     muster_crew: 0,
                     planned_crew: 0,
+                    max_workers: Some(workers),
+                    staffing: Default::default(),
                     target: LaborTarget::Hunt {
                         fauna_id: fauna_id.to_string(),
                         floor,
@@ -744,6 +746,8 @@ fn spawn_resident_crew(
                     party: None,
                     muster_crew: 0,
                     planned_crew: 0,
+                    max_workers: Some(workers),
+                    staffing: Default::default(),
                     target: LaborTarget::Hunt {
                         fauna_id: fauna_id.to_string(),
                         floor,
@@ -762,6 +766,8 @@ fn spawn_resident_crew(
                     party: None,
                     muster_crew: 0,
                     planned_crew: 0,
+                    max_workers: Some(build_crew),
+                    staffing: Default::default(),
                     target: LaborTarget::Builders,
                     workers: build_crew,
                     kit: None,
@@ -782,6 +788,20 @@ fn spawn_resident_crew(
             },
         ))
         .id()
+}
+
+/// **The crew the sim staffed on the band's hunt row** (#871): the command path restaffs the band the
+/// instant a row is written (`core_sim::restaff_band`), and the hands it settles on are what the
+/// pre-commit forecast must be quoted at - the count a test names is only the row's Max.
+fn staffed_hunters(app: &mut App, band: bevy::prelude::Entity) -> u32 {
+    core_sim::staffing::restaff_band(&mut app.world, band);
+    app.world
+        .get::<LaborAllocation>(band)
+        .expect("the band keeps its allocation")
+        .assignments
+        .iter()
+        .find(|row| matches!(row.target, LaborTarget::Hunt { .. }))
+        .map_or(0, |row| row.workers)
 }
 
 /// The **pre-commit forecast** for this herd/staffing/policy — the assign-time seed
@@ -979,8 +999,9 @@ fn the_forecast_equals_the_paid_take_on_the_wire() {
                         saw_escapement_bound = true;
                     }
                 }
-                let forecast = precommit_food(&app, &id, policy, crew);
                 let band = spawn_resident_hunters(&mut app, pos, &id, policy, crew);
+                let staffed = staffed_hunters(&mut app, band);
+                let forecast = precommit_food(&app, &id, policy, staffed);
 
                 app.world.run_system_once(advance_labor_allocation);
                 recapture_snapshot_in_place(&mut app.world);
@@ -1142,8 +1163,9 @@ fn the_forecast_equals_the_paid_take_with_a_build_in_flight_at_every_floor() {
                             saw_escapement_bound = true;
                         }
                     }
-                    let forecast = precommit_food_building(&app, &id, floor, crew, improvement);
                     let band = spawn_resident_crew(&mut app, pos, &id, floor, crew, improvement);
+                    let staffed = staffed_hunters(&mut app, band);
+                    let forecast = precommit_food_building(&app, &id, floor, staffed, improvement);
 
                     app.world.run_system_once(advance_labor_allocation);
                     recapture_snapshot_in_place(&mut app.world);

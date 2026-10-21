@@ -101,6 +101,7 @@ mod sites_config;
 mod snapshot;
 mod snapshot_overlays_config;
 pub mod spoilage;
+pub mod staffing;
 mod start_profile;
 pub mod starting_loadout;
 mod supply;
@@ -160,8 +161,8 @@ pub use components::{
     LaborAllocation, LaborAssignment, LaborTarget, LocalStore, MaterialBatch, MaterialDraw,
     MoraleCause, MusterBench, MusterKit, MusterPlan, PoolToeLine, PopulationCohort, PowerNode,
     QueuedBuildToe, ResidentBand, ScoutPack, Settlement, ShedCrew, ShedFacts, ShedStep,
-    ShedSubject, ShipmentTerms, SourcePriority, SourceShedFacts, SourceYield, StartingUnit,
-    StationReport, StrangersOrder, TakeSelection, Tile, TownCenter, TransferCause,
+    ShedSubject, ShipmentTerms, SourcePriority, SourceShedFacts, SourceYield, StaffedCrew,
+    StartingUnit, StationReport, StrangersOrder, TakeSelection, Tile, TownCenter, TransferCause,
     TransferCounterparty, TransferCrossing, TransferDirection, TransferLedger, TransferLink,
     YieldRange, DEFAULT_ESCAPEMENT_FLOOR, FODDER, FOOD, HEAD_ORDER, MIN_ORDER_COUNT,
     NO_IMPROVEMENT_UNDERWAY, STRIP_IT_BARE,

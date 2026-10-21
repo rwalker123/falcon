@@ -385,6 +385,26 @@ is dismissible with ESC and leaves the last frame standing behind it.
 has become false does not outlive the fact. The message says the world is *gone* rather than that the
 client is still trying, because after a server restart it is.
 
+## `stop_labor` ends a staffed row, and it is a seated, band-addressed verb with no rollback (#871)
+
+A staffed row's count is the player's **Max** (`assign_labor`'s count slot, `0` = no Max), so a count of
+zero no longer removes it. `stop_labor <faction> <band> <source>` does. The client reaches it from a source
+sheet's `Stop working here` and the work inspector's `Unassign` (`BandPanelController._commit_stop_labor` /
+`DrawerComposeController._emit_stop_labor` → `stop_labor_requested` → `HudLayer` → `Main._on_hud_stop_labor`
+→ `Main.format_stop_labor`).
+
+- **It names its band by `BandId`** (`faction`, `band_id` in the payload), like `work_priority` and
+  `build_order`, and rides the one seated link every faction-bearing command does.
+- **The source is `Main.site_address`'s**: `<x> <y>` for a patch, a herd id, `<x> <y> <material>` for a
+  working, and `<branch> <x> <y>` for a tile-improvement keeper row (the branch word leads, from the
+  payload's `branch`). The Roadwork pool is the lone token `roadwork` (`payload.roadwork`), never a tile.
+  A road BUILD has no crew row and builds no line.
+- **No optimistic overlay and no rollback.** The row is captured live and the server restaffs the band at
+  once, so the next snapshot carries the row's absence; `_on_hud_stop_labor` is `_on_hud_work_priority`'s
+  shape. A client copy of a row that is about to go would be a second statement of one value.
+- **`command_guard` drives all five forms** (`_drive_stop_labor`, expected count `5`) through the real server
+  parser, so the grammar cannot drift from `sim_runtime/src/command_text.rs`.
+
 ## Key scripts
 
 | Script | Holds |
@@ -399,4 +419,4 @@ client is still trying, because after a server restart it is.
 | `GameLaunch.gd` | `pending_landing_notice` — the one message a failed pre-reveal session leaves for the landing screen, in the same handoff direction the launch parameters travel the other way. Written by `Main`, read AND CLEARED by `LandingScreen`, so it is reported exactly once |
 | `ui/MenuShell.gd` | `NOTICE_NO_SERVER` and `set_notice(text)` — the rail notice above the nav: ONE sentence in a `DANGER`-bordered box, no eyebrow and no heading, hidden when there is nothing to say (every healthy path). `_notice_line` resolves the owner's text over the shell's own unreachable latch, so the two paths can never stack. Built with the RAIL, not with a pane, because what it reports is a fact about the SESSION and has to survive every pane change |
 | `SeatClaim.gd` | The seat seam: one reserved request id, the refusal tokens and their prose, `seated(faction_id, seat_token)` / `refused`. Asked once — the link re-claims by itself, and each re-grant carries a new token |
-| `Main.gd` | Builds the seam and claims at boot, pumps the drain into it, reports a refusal — pre-reveal by returning to the landing screen with the reason (`_return_to_landing`, `MenuShell.NOTICE_NO_SERVER`, `_seat_bounce_taken`), post-reveal on the two standing surfaces above — opens/replaces the snapshot stream from the grant (`_open_snapshot_stream`), gates the world request on `_snapshot_stream_ready`, and sends `order <faction> ready` for End Turn. It also owns the baseline chase — `_tick_resync`, the one `_ask_for_resync` sender, `RESYNC_ANSWER_TIMEOUT` / `RESYNC_UNANSWERED_ATTEMPT_BUDGET`, and `_abandon_resync`. `_exit_tree` releases the seat, since every way a run ends frees this node |
+| `Main.gd` | Builds the seam and claims at boot, pumps the drain into it, reports a refusal — pre-reveal by returning to the landing screen with the reason (`_return_to_landing`, `MenuShell.NOTICE_NO_SERVER`, `_seat_bounce_taken`), post-reveal on the two standing surfaces above — opens/replaces the snapshot stream from the grant (`_open_snapshot_stream`), gates the world request on `_snapshot_stream_ready`, and sends `order <faction> ready` for End Turn. It also owns the baseline chase — `_tick_resync`, the one `_ask_for_resync` sender, `RESYNC_ANSWER_TIMEOUT` / `RESYNC_UNANSWERED_ATTEMPT_BUDGET`, and `_abandon_resync`. `_exit_tree` releases the seat, since every way a run ends frees this node | **`format_stop_labor` / `_on_hud_stop_labor` (#871)** build and send the verb that ends a staffed row; see "`stop_labor` ends a staffed row".

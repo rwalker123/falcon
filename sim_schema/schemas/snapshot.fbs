@@ -2417,6 +2417,29 @@ table LaborAssignment {
   // so (targetX, targetY, branch) is what joins this row to its `TileImprovementState`. "" on every
   // other row. A tile row has no floor, species or material; its crew is the improvement's keeper.
   branch:string;
+  // --- THE SIM STAFFS THE ROW FROM THE PLAYER'S FLOOR (appended last; #871) ----------------------
+  // docs/plan_labor_at_scale.md. A forage, hunt (non-need), extract, tile or roadwork row's `workers`
+  // is the SIM's answer now, struck by three passes (hold-kitted + keepers, reach-kitted, bare where
+  // it helps). The player states a MAX; the sim fills the row up to it.
+  //
+  // The player's Max on this row. 0 = no Max (the sim staffs as many as help). Always 0 on a
+  // need row, a scout, a warrior and the builders, whose count is still the player's crew.
+  maxWorkers:uint = 0;
+  // Hands needed to HOLD the source at the player's floor (regrowth at the floor over one hand's
+  // take). 0 where nothing regrows or the row is not staffed by the passes.
+  holdCrew:uint = 0;
+  // Hands needed to REACH the floor (peak regrowth between the floor and the stock, plus one).
+  // 0 where the stock is at or under the floor, or the row is not staffed by the passes.
+  reachCrew:uint = 0;
+  // Of `workers`: keepers (the site's keeping hands), kitted hands (each holding a whole kit) and
+  // bare hands. keepersStaffed + kittedStaffed + bareStaffed == workers on a staffed row, so the
+  // work-strip can draw three segments with no client arithmetic.
+  keepersStaffed:uint = 0;
+  kittedStaffed:uint = 0;
+  bareStaffed:uint = 0;
+  // The crew past which the take stops rising (the room above the floor, clear-it-now), keepers
+  // included, after the Max: the ceiling pass 3 staffs a row up to. 0 where the row is not staffed.
+  usefulCrew:uint = 0;
 }
 
 // One commodity entry in a band's local goods store (fixed-point quantity, `Scalar::SCALE` = 1.0).

@@ -216,6 +216,12 @@ pub const COMMAND_VERBS: &[CommandVerbHelp] = &[
         usage: "work_priority <faction_id> <band_id> <x> <y> high|normal|low | work_priority <faction_id> <band_id> <herd_id> high|normal|low | work_priority <faction_id> <band_id> <x> <y> <material> high|normal|low",
     },
     CommandVerbHelp {
+        verb: "stop_labor",
+        aliases: &[],
+        summary: "STOP A STAFFED ROW: remove the band's row for one source. The sim staffs every forage, hunt, extraction, tile-improvement and Roadwork row from your floor, kit and priority, so the count on `assign_labor` for those kinds is your MAX (0 = no max) and no longer ends the row - this does. Two integer tokens name a TILE's forage patch; one token names a HERD id; `<x> <y> <material>` names a WORKING; `<branch> <x> <y>` names a tile improvement; the lone token `roadwork` names the band's Roadwork pool.",
+        usage: "stop_labor <faction_id> <band_id> <x> <y> | stop_labor <faction_id> <band_id> <herd_id> | stop_labor <faction_id> <band_id> <x> <y> <material> | stop_labor <faction_id> <band_id> <branch> <x> <y> | stop_labor <faction_id> <band_id> roadwork",
+    },
+    CommandVerbHelp {
         verb: "build_priority",
         aliases: &[],
         summary: "MARK ONE QUEUED BUILD WITH YOUR OWN BUILD MARK, on one band: 'high', 'normal' (the default) or 'low'. It is the ENTRY'S rank, not its site row's: when tools or materials run short, the builders' claim and the build's pile rank at the HEAD entry's mark - High first, then Normal, then Low, and inside one tier a site crew keeping what it holds is served before the build. The site row's own `work_priority` ranks that site's crew, so marking a Field's crew 'high' no longer pushes its queued Sow ahead of other builds. Only a queued build can be marked. Two integer tokens name a TILE; one token names a HERD id; `<x> <y> <material>` names a queued WORKING build (one hex can hold two); `<branch> <x> <y>` names a queued ROAD build; the trailing token is the level.",
@@ -1173,6 +1179,50 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
                 level: level_str.to_ascii_lowercase(),
                 material,
                 branch,
+            })
+        }
+        // **STOP A STAFFED ROW** (#871) - `work_priority`'s band handle and source addressing with no
+        // trailing level, and the lone token `roadwork` for the Roadwork pool (a herd id is never
+        // spelled that).
+        "stop_labor" => {
+            let faction_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("faction_id"))?;
+            let band_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("band_id"))?;
+            let tail: Vec<&str> = parts.collect();
+            let faction_id = parse_u32(faction_str, "stop_labor faction")?;
+            let band_id = parse_u64(band_str, "stop_labor band")?;
+            if tail.len() == 1 && tail[0].eq_ignore_ascii_case("roadwork") {
+                return Ok(CommandPayload::StopLabor {
+                    faction_id,
+                    band_id,
+                    target_x: None,
+                    target_y: None,
+                    herd_id: None,
+                    material: None,
+                    branch: None,
+                    roadwork: true,
+                });
+            }
+            if tail.is_empty() {
+                return Err(CommandParseError::MissingArgument("source"));
+            }
+            let SiteSourceTokens {
+                tile_or_herd: source,
+                material,
+                branch,
+            } = parse_site_source(&tail)?;
+            Ok(CommandPayload::StopLabor {
+                faction_id,
+                band_id,
+                target_x: source.target_x,
+                target_y: source.target_y,
+                herd_id: source.herd_id,
+                material,
+                branch,
+                roadwork: false,
             })
         }
         // **THE QUEUED BUILD'S MARK** (`docs/plan_site_crews.md` §2.4), in `work_priority`'s exact
@@ -4650,6 +4700,50 @@ mod tests {
                 material: None,
                 branch: None,
             }
+        );
+    }
+
+    /// **`stop_labor` reads the band and any of the five source shapes** (#871): a tile, a herd, a
+    /// working (`<x> <y> <material>`), a tile improvement (`<branch> <x> <y>`) and the Roadwork pool
+    /// (the lone token `roadwork`), with no trailing level and a refusal when no source is named.
+    #[test]
+    fn parse_stop_labor_reads_every_source_shape() {
+        let stop =
+            |x, y, herd: Option<&str>, material: Option<&str>, branch: Option<&str>, roadwork| {
+                CommandPayload::StopLabor {
+                    faction_id: 1,
+                    band_id: 7,
+                    target_x: x,
+                    target_y: y,
+                    herd_id: herd.map(str::to_string),
+                    material: material.map(str::to_string),
+                    branch: branch.map(str::to_string),
+                    roadwork,
+                }
+            };
+        assert_eq!(
+            parse_command_line("stop_labor 1 7 4 9").unwrap(),
+            stop(Some(4), Some(9), None, None, None, false)
+        );
+        assert_eq!(
+            parse_command_line("stop_labor 1 7 game_deer_3").unwrap(),
+            stop(None, None, Some("game_deer_3"), None, None, false)
+        );
+        assert_eq!(
+            parse_command_line("stop_labor 1 7 4 9 wood").unwrap(),
+            stop(Some(4), Some(9), None, Some("wood"), None, false)
+        );
+        assert_eq!(
+            parse_command_line("stop_labor 1 7 route 4 9").unwrap(),
+            stop(Some(4), Some(9), None, None, Some("route"), false)
+        );
+        assert_eq!(
+            parse_command_line("stop_labor 1 7 roadwork").unwrap(),
+            stop(None, None, None, None, None, true)
+        );
+        assert!(
+            parse_command_line("stop_labor 1 7").is_err(),
+            "a stop with no source names nothing to stop"
         );
     }
 

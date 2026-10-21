@@ -103,39 +103,6 @@ const FLOOR_VALUE_FORMAT := "%d%% left standing"
 # them saying "standing" twice. The flag names the value, this names what the value is OF.
 const FLOOR_CONTROL_LABEL := "Leave standing"
 
-# ---- THE TWO CREW TARGETS (docs/plan_harvest_floor.md §7.6) -------------------------------------
-# A floor and a crew are INDEPENDENT statements, so "how many workers" has two answers and the panel
-# owes the player both — the rate model had only one and so never had to name either. Both are exact
-# and both are clickable; neither is a hidden rule. The face is `<N> clear it now`, the count leading
-# because it is what the player compares against the stepper beside it.
-const CREW_TARGET_CLEAR_LABEL := "clear it now"
-const CREW_TARGET_HOLD_LABEL := "hold it after"
-const CREW_TARGET_CLEAR_TOOLTIP := "Clear: %d hands, all spare stock in 1 turn"
-const CREW_TARGET_HOLD_TOOLTIP := "Hold: %d hands, regrowth only"
-
-# **A TARGET NO CREW REACHES STILL SHOWS — DISABLED, WITH A ✕ WHERE THE COUNT GOES.** It used to
-# vanish, which reads as the sheet having nothing to say about clearing at all; the pill is the one
-# place that question is answered, so it stays and answers it in the negative.
-#
-# **✕ AND DELIBERATELY NOT ∞.** An infinity is a QUANTITY — it says "an infinite crew would do it" and
-# invites the player to keep adding hunters. They do not help: the take curve plateaus, and a quarry
-# that scatters can never be cleared in one turn by anybody. `✕` says *this cannot be done*, which is
-# the true statement and the only one the model supports.
-const CREW_TARGET_UNREACHABLE_FACE := "✕"
-
-# …and the REASON, on the hover, because the sheet stays quiet while the why stays reachable. One
-# sentence each, because the two targets fail differently: a clear that no crew reaches is often
-# permanent rather than a matter of pool size — wary prey breaks off and retreats, so the last of
-# it is never standing there to be taken — while a hold that no crew reaches is the take flattening
-# out below what the source puts back.
-#
-# **EACH LEADS WITH WHAT IS TRUE ON EVERY SOURCE AND QUALIFIES THE REST.** The same `✕` renders for a
-# second reason — a source with no throughput to divide by, a patch in deep winter — and there is no
-# prey on a forage tile to break off and retreat. So the retreat rides a CONDITIONAL clause rather
-# than an assertion, and the flat-take half says only that more hands do not lift it.
-const CREW_TARGET_CLEAR_UNREACHABLE_TOOLTIP := "⚠ No crew clears it in 1 turn"
-const CREW_TARGET_HOLD_UNREACHABLE_TOOLTIP := "⚠ No crew takes the full regrowth"
-
 # ---- THE CREW ROW: ONE LINE, NOT A HEADING WITH A CONTROL PUSHED OFF THE OTHER EDGE -------------
 # The crew is ONE statement — *this many hands, and here are the two numbers worth matching* — so the
 # stepper and both targets ride a single wrapping line under a quiet row-label. It used to render as a
@@ -146,6 +113,17 @@ const CREW_TARGET_HOLD_UNREACHABLE_TOOLTIP := "⚠ No crew takes the full regrow
 # The label gets the SAME treatment every other section label in this HUD gets
 # (`HudWidgets.alloc_section_label` — small, uppercase, `INK_FAINT`), because that is what it is: a
 # row-label, not a heading.
+## The hunt sheet's gear-short sentence (#871): the staffed crew, the weapon the band holds, the quarry,
+## and the hands that would reach the floor but stay home because bare hands cannot bring the animal down.
+const HUNT_GEAR_SHORT_FORMAT := "Only %d have %s — bare hands can't bring down a %s, so %d more stay home"
+const HUNT_GEAR_SHORT_FALLBACK_NOUN := "animal"
+const GEAR_SHORT_LINE_META := &"gear_short_line"
+## The compose sheet's read-only crew number, valued the crew it states.
+const SHEET_CREW_NUMBER_META := &"sheet_crew_number"
+## The commit button of a source the band already works (#871): the count slot is a Max, so the only way
+## to end a staffed row is `stop_labor`.
+const STOP_WORKING_BUTTON := "Stop working here"
+
 const CREW_ROW_LABEL_SEPARATION := 4
 const CREW_ROW_SEPARATION := 6
 
@@ -183,14 +161,6 @@ const CREW_ROW_NOTE_SEPARATION := 5
 # names no crew now: declaring APPENDS a queue entry, which is legal and free whether or not anybody
 # is on the `builders` role. What says nobody is on it is the DECLARED state's *not started* warning.
 # (The offer stopped being a control at all in §4.7a — the `⌃` on the Work board declares.)
-
-# A crew TARGET is a PILL, and the shape is the point: the stepper beside it is a boxed control you
-# operate, a target is a value you can jump to. Its face carries two registers — the COUNT (what you
-# compare against the stepper) over the label naming which of the two answers it is — so, like the
-# preset rung's two-line face, it cannot live in one `Button.text`.
-const CREW_TARGET_COUNT_FONT_SIZE := 13
-const CREW_TARGET_LABEL_FONT_SIZE := 11
-const CREW_TARGET_FACE_SEPARATION := 5
 
 # ---- THE READOUT: ONE BOX, FOUR REGISTERS (docs/plan_harvest_floor.md §7.1/§7.2) ----------------
 # The take, the verdict and the asides answer three different questions, and the panel's bottom half

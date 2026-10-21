@@ -37,7 +37,7 @@ paths:
 | `ui/hud/TradeLedger.gd` | **All-`static`** arithmetic for the Trade tab and the Food/Fodder popovers: which crossings are trade, one good's net across its ratings, shipments grouped by party, the network's camps and relays, one good across the network |
 | `ui/hud/TradeHoverCard.gd` | The Trade tab's hover card: a row's rating piles or a shipment's cargo, placed beside the row and never under the list panel |
 | `ui/hud/FactionMark.gd` | **The one faction mark** — a flag glyph in `MapView.faction_color`, on every counterparty; the slot a faction's flag (#647) fills |
-| `ui/hud/CrewSplitMarks.gd` | One small square per worker, **drawn** (a custom-draw `Control`, not glyphs): how a site's crew divides between tending it and taking from it — see "THE CREW SPLIT" below. Mounted on every Work-tab site row and under the forage compose sheet's stepper |
+| `ui/hud/CrewSplitMarks.gd` | One small square per worker THE SIM STAFFED, **drawn** (a custom-draw `Control`, not glyphs): how a staffed row's crew divides into keepers, hands holding a whole kit and bare hands (`keepers_staffed` / `kitted_staffed` / `bare_staffed`) — see "THE CREW BAR" below. Mounted under the crew number of every staffed Work-tab row and under the crew number of the compose sheets |
 | `ui/hud/RungLinkIcon.gd` | A pooling link's rung as a glyph (path dotted, trail dashed, dirt road solid pigment, paved road double; open ground a faint dot) |
 | `ui/hud/hud_trade_vocab.gd` | `HudTradeVocab` — the crossing codes (direction / link / cause), the tab's thresholds, words and sizes |
 | `ui/PenStatus.gd` | Single source of truth for **"is this pen's herd starving?"** — `FULLY_FED` / `FED_EPSILON` + `fed_fraction(herd)` / `is_starving(fed)`, reading `HerdTelemetryState.penFedFraction` (`< 1` ⇒ the pen's own pasture plus the fodder carried in did not cover its demand, so the herd is SHRINKING every turn — it is never a bill the keeper failed to pay, human food not being animal feed). Plus `herd_is_starving(herd)` for a caller holding only the herd dict. The ONE test all three surfaces ask — the herd drawer's **`Fed:`** row (`DetailFormat.pen_feed_value`, which carries the mark, the fed share, the pasture/fodder split and the shortfall; the CORRAL row states the rung alone, see `herd-readouts.md`), the map's distress badge (`MapView._draw_herd`) and the turn orb's `starving_pen` producer — so they can never disagree about which pen is dying |
@@ -7991,40 +7991,64 @@ nothing to scroll (one that does not fills the room and scrolls). `trade_tab_cam
 count of one reads singular. The merged tab's own frames are `ui_preview`'s `dealings_tab`,
 `dealings_reply`, `dealings_history`, `dealings_tab_empty` and `dealings_peoples_treaty`.
 
-## THE CREW SPLIT — one mark per worker, under the stepper (`CrewSplitMarks`)
+## STAFFED WORK ROWS — the sim strikes the crew, the player states a Max (#871)
 
-A site's crew tends it before it takes, and nothing on the row said how the hands divide. Every
-Work-tab site row whose site has a tending bill now carries one small square per worker at the end of
-its second line, under the stepper: the tending share fills from the left in a muted earth, the takers
-are bright, and a person split between the two is one square shaded in part.
+`docs/plan_labor_at_scale.md`: the sim staffs every forage, hunt, extract (wood and stone),
+tile-improvement keeper and Roadwork row from the player's floor, in three passes over the band's
+priority list. A staffed row's `workers` is the SIM's answer, so the Work tab draws no stepper on it.
+**Builders, Scout, Warrior, the bench and a hunting-by-need row keep their player-set steppers.**
 
-- **The tending figure is the ROW's own `keep_hands`** (`LaborAssignment.keepHands`), the hands this
-  band's crew spent keeping the site. Every row reads it, harvest, hunt and groundwork alike. Nothing
-  is derived.
-- ⛔ **NEVER the site's `upkeep_hands`.** That figure sums every band keeping the site, so with two
-  bands on one patch each row would draw the other band's tenders as its own.
-- **The key must be on the merged row.** `keep_hands` is in `HudBandLaborState.OPTIONAL_YIELD_KEYS`.
-  A key missing from that allowlist never reaches the Work tab.
-- **A pending row draws no marks.** The pending overlay replaces the merged row and carries no
-  `keep_hands`, so the marks appear with the next snapshot.
-- **Only where there is a bill.** `HudWorkVocab.crew_split_shown` (a crew, and at least
-  `CREW_SPLIT_MIN_KEEP_HANDS` tending) gates both surfaces. A wild patch owes nothing and draws nothing.
-- **Information, not an alert.** No warning ink and no ⚠. The two inks are `HudStyle.CREW_TEND` /
-  `CREW_TAKE` (and their `_LINE` edges), DERIVED in `apply_palette` from `VOICE_PIGMENT` darkened and
-  `HEALTHY` lightened, so every theme gets them without a palette entry.
-- **The words are `HudWorkVocab.crew_split_words`**: whole people, `About` where the figure falls more
-  than `CREW_SPLIT_WHOLE_PERSON_SLACK` from a whole person, the verb and the thing kept per web
-  (harvest / hunt / cut; the patch / the herd / the working). All tending reads `All 3 are tending the
-  patch — nobody is free to harvest.` The sentence is the native hover, and a keyboard focus floats the
-  same sentence in a small card under the marks, because Godot shows no tooltip on focus.
-- **It rides the rung line, so the row's reserved height does not move.** The rung word and the marks
-  both expand and share the line; the marks are right-aligned under the stepper.
-- **A wide crew never widens its row.** The control's minimum width is one floor-sized mark plus a
-  `+N`, and at draw time it fits the crew to the width it was actually given: the squares shrink toward
-  `CREW_SPLIT_MARK_SIZE_FLOOR`, then the first N are drawn and the rest counted as `+M`.
-  `layout_for(width)` is that arithmetic, pure, so a harness asks the question the draw answers.
+- **The row's number is read-only.** `HudWidgets.build_crew_number(workers)` stands in the stepper's old
+  value column (`HudWorkVocab.CREW_NUMBER_WIDTH`), so the numbers line up down the board. A crew of zero
+  is real and stays on the board: the sim sent nobody (under its floor, no hands free) and only
+  `stop_labor` removes a staffed row, so `_work_source_models` admits staffed rows at crew 0.
+- **The wire fields.** `LaborAssignment.maxWorkers` (the player's Max, `0` = none), `holdCrew`, `reachCrew`,
+  `keepersStaffed` / `kittedStaffed` / `bareStaffed` (they sum to `workers`) and `usefulCrew` decode to
+  `max_workers`, `hold_crew`, `reach_crew`, `keepers_staffed`, `kitted_staffed`, `bare_staffed`,
+  `useful_crew`. **They reach the board only through `HudBandLaborState.STAFFED_KEYS`**, the merged row's
+  allowlist; `_put_staffed_fields` copies them onto the work, groundwork and tile models once.
+- **THE CREW BAR (`CrewSplitMarks`)** is one square per worker under the number: keepers first, in the muted
+  earth (`HudStyle.CREW_TEND`), then the hands holding a whole kit (`CREW_KITTED`), then the bare hands
+  (`CREW_BARE`), all derived in `apply_palette`. Information, not an alert: no warning ink, no ⚠.
+  - **The words are `HudWorkVocab.crew_bar_words`**: `N keep it up · N with <kit items> · N bare-handed — N
+    hold it at the floor, N more draw it down to it`; a zero clause is dropped, an empty crew reads `Nobody
+    here this turn`. The kit items are the row's own `kit_toe` lines by on-screen item name
+    (`HudWorkVocab.toe_item_names`), else `gear`. The hold clause reads `hold_crew` against the hands that
+    TAKE (the crew less its keepers).
+  - **It is the native hover, and a keyboard focus floats the same sentence** in a small card under the
+    bar, because Godot shows no tooltip on focus. It rides the rung line, so the row's reserved height does
+    not move.
+  - **A wide crew never widens its row.** The control's minimum width is one floor-sized mark plus a `+N`,
+    and at draw time it fits the crew to the width it was given: the squares shrink toward
+    `CREW_SPLIT_MARK_SIZE_FLOOR`, then the first N are drawn and the rest counted as `+M`. `layout_for(width)`
+    is that arithmetic, pure, so a harness asks the question the draw answers.
+  - A need row (hunting by need) draws no bar; its count slot is unchanged.
+- **THE MAX CHIP.** A static `Max N` label (`HudWidgets.build_max_chip`, `MAX_CHIP_META`) sits beside the
+  Priority pill on the row's pill line, only while the row's `max_workers` is above zero. It is not a
+  control: the Max is set on the source's sheet or the inspector.
+- **THE INSPECTOR.** A staffed row's card draws a MAX section after Priority: the Max stepper
+  (`HudWidgets.add_max_stepper`, `No max` at 0, `Lower the max` / `Raise the max`, bounded above by the band's
+  working-age people), live. `WORK_INSPECTOR_MAX_SECTION_HEIGHT` is a term in `_work_inspector_height` and
+  `_working_inspector_height`, gated by `_work_inspector_has_max`, the builder's own predicate.
+  **`Unassign` sends `stop_labor`** (`_commit_stop_labor` → `stop_labor_requested` → `Hud` →
+  `Main.format_stop_labor`), never `assign_labor … 0`: on a staffed row a count of zero is a Max of none.
+- ⛔ **A RESTATE MUST SEND THE MAX, NEVER THE CREW.** `_emit_work_assign` takes `RESTATE_STANDING_COUNT`
+  (the default for the crop pick, the kit pick, the floor pick and the rung track's crop step) and resolves
+  it to the row's `max_workers`. Restating the row's `workers` would turn the sim's staffing into a Max the
+  player never set, on every unrelated edit.
+- **THE PENDING OVERLAY RECORDS THE MAX.** `record_pending_assign`'s count is a Max on a staffed kind
+  (`HudBandLaborState.is_staffed_row`); `effective_worker_map` keeps the settled row's `workers` and split
+  until the recapture answers (the server restaffs at once) and states the Max in `max_workers`.
+  `effective_{forage,hunt,extract}_max` read it; `has_{hunt,forage,extract}_row` are the "this band works it"
+  tests (a staffed row can read a crew of zero).
+- **ROADWORK** is a staffed row drawn through `_build_pool_line`: a read-only number and the bar from the
+  roadwork row's own staffed fields, no stepper. The tile-improvement row draws the same pair.
+- **The retired stepper machinery.** `SourceForecast.crew_cap_state` / `source_worker_cap_state`, the row's
+  `can_add` / `add_blocked_reason`, the cap note on the hover, `STEPPER_WORKING_FULL_REASON_FORMAT` and the
+  `+` ceiling that read the sim's useful crew are gone: no control clamps a crew any more. The keepers' own
+  figure is the sim's, never derived here.
 
-The compose sheet's half is `labor-ui.md` → "THE CREW SPLIT ON THE SHEET".
+The compose sheet's half is `labor-ui.md` → "STAFFED SOURCES ON THE COMPOSE SHEETS".
 
 ## The faction page's Family limit row (issue #691)
 

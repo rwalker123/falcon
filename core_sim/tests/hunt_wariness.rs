@@ -302,6 +302,8 @@ fn spawn_hunters(app: &mut App, pos: UVec2, fauna_id: &str, floor: f32) -> bevy:
                     party: None,
                     muster_crew: 0,
                     planned_crew: 0,
+                    max_workers: Some(CREW),
+                    staffing: Default::default(),
                     target: LaborTarget::Hunt {
                         fauna_id: fauna_id.to_string(),
                         floor,

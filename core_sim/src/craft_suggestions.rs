@@ -481,7 +481,8 @@ pub fn take_row_gear(
             // claimed (its take hands that would take something with the kit, never its head
             // count) beside the units the settlement handed it. A row that claims nothing writes
             // no line.
-            let claim = claims.claims[i];
+            // **`required` is the ask, `filled` what the passes granted** (#871).
+            let claim = claims.asks.get(i).copied().unwrap_or(claims.claims[i]);
             let toe = row_kit
                 .uses()
                 .filter_map(|item| {

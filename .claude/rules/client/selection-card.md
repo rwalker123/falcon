@@ -336,10 +336,9 @@ the hover with the control's ordinary tooltip after (`HudWidgets.disabled_toolti
 - **The reason comes from the gate that greys the control, never from a second test.** The band verbs
   ask `BandPanelController.verb_block_reasons`, and `verb_enabled` is that list being empty;
   `verb_tooltip` composes the hover for both the drawer's verb row and the panel's action bar. The
-  work-row cap (`SourceForecast.source_worker_cap_state`) returns its `blocked_reason` beside
-  `can_add`, the compose sheets' crew `+` reads `DrawerComposeController._crew_cap_reason` off the
-  same cap and note the sheet already prints, and the queue arrows and cargo steppers take a
-  `blocked_reason` whose emptiness IS the enabled state.
+  queue arrows and cargo steppers take a `blocked_reason` whose emptiness IS the enabled state. (The work
+  row's crew `+` and the compose sheets' crew `+` that used to carry one are retired with the crew stepper,
+  #871: the crew is the sim's and the Max stepper is bounded only by the band's working-age people.)
 - **The panel's action bar carries a live hover.** `BandCityPanel.register_action` takes an optional
   `live_tooltip` Callable re-asked wherever `enabled` is (`refresh_actions`), because the reason moves
   with the band the predicate reads. It changes text only, never geometry.

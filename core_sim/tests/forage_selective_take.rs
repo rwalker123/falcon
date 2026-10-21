@@ -1255,6 +1255,8 @@ fn build_rows(
         party: None,
         muster_crew: 0,
         planned_crew: 0,
+        max_workers: Some(workers),
+        staffing: Default::default(),
         target: LaborTarget::Forage {
             tile: patch,
             floor: DEEP_DRAW_FLOOR,
@@ -1270,6 +1272,8 @@ fn build_rows(
             party: None,
             muster_crew: 0,
             planned_crew: 0,
+            max_workers: Some(builders),
+            staffing: Default::default(),
             target: LaborTarget::Builders,
             workers: builders,
             kit: None,

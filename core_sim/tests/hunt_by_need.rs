@@ -39,6 +39,10 @@ const CAMP: UVec2 = UVec2::new(24, ROW);
 const FAR_HERD_AT: UVec2 = UVec2::new(32, ROW);
 const FODDER_PER_BIOMASS: f32 = 0.0;
 const REGROWTH_RATE: f32 = 0.04;
+/// **The donors' herds regrow fast enough to need every hand the fixture puts on them** (#871): the
+/// sim staffs a row with the crew that reaches its floor, capped by the row's Max, so a donor whose
+/// herd barely regrows would be staffed with fewer hands than the muster is being tested over.
+const DONOR_REGROWTH_RATE: f32 = 0.5;
 const MAMMOTH_BODY_MASS: f32 = 800.0;
 const DONOR_BODY_MASS: f32 = 60.0;
 const STANDING_STOCK: f32 = 12_000.0;
@@ -125,6 +129,7 @@ fn resident_herd(
     at: UVec2,
     body: f32,
     stock: f32,
+    regrowth: f32,
 ) -> Herd {
     let mut herd = Herd::new(
         id.to_string(),
@@ -134,7 +139,7 @@ fn resident_herd(
         stock,
         stock,
         FODDER_PER_BIOMASS,
-        REGROWTH_RATE,
+        regrowth,
         body,
         shipped::root_standing(shipped::animal()),
     );
@@ -207,6 +212,7 @@ fn world_hunting(stock: Stock, quarry: Quarry) -> (App, Entity) {
             stock.herd_at,
             quarry.body_mass,
             quarry.stock,
+            REGROWTH_RATE,
         ));
         registry.herds.push(resident_herd(
             LOW_DONOR_HERD,
@@ -215,6 +221,7 @@ fn world_hunting(stock: Stock, quarry: Quarry) -> (App, Entity) {
             stock.band_at,
             DONOR_BODY_MASS,
             DONOR_STOCK,
+            DONOR_REGROWTH_RATE,
         ));
         registry.herds.push(resident_herd(
             NORMAL_DONOR_HERD,
@@ -223,6 +230,7 @@ fn world_hunting(stock: Stock, quarry: Quarry) -> (App, Entity) {
             stock.band_at,
             DONOR_BODY_MASS,
             DONOR_STOCK,
+            DONOR_REGROWTH_RATE,
         ));
     }
     let band = spawn_band(&mut app, stock);
@@ -234,6 +242,8 @@ fn hunt_row(herd: &str, workers: u32, priority: SourcePriority, follow: bool) ->
         party: None,
         muster_crew: 0,
         planned_crew: 0,
+        max_workers: Some(workers),
+        staffing: Default::default(),
         target: LaborTarget::Hunt {
             fauna_id: herd.to_string(),
             floor: FLOOR,
@@ -513,11 +523,13 @@ fn set_muster(app: &mut App, band: Entity, crew: u32) {
 
 fn set_hands(app: &mut App, band: Entity, herd: &str, workers: u32) {
     let idx = index_of(app, band, herd);
-    app.world
+    let mut allocation = app
+        .world
         .get_mut::<LaborAllocation>(band)
-        .expect("the band keeps its allocation")
-        .assignments[idx]
-        .workers = workers;
+        .expect("the band keeps its allocation");
+    allocation.assignments[idx].workers = workers;
+    // **The crew is the sim's now** (#871): the Max is what pins a donor to the hands stated.
+    allocation.assignments[idx].max_workers = Some(workers);
 }
 
 /// ⛔ **A FULL LARDER SENDS NOBODY, AND THE DONORS ARE NEVER TOUCHED.** The sentinel runway never
@@ -738,6 +750,8 @@ fn a_far_row_with_no_party_yet_is_not_a_donor() {
             party: None,
             muster_crew: 0,
             planned_crew: 0,
+            max_workers: Some(FAR_ROW_HANDS),
+            staffing: Default::default(),
             target: LaborTarget::Forage {
                 tile: FAR_HERD_AT,
                 floor: FLOOR,
@@ -900,6 +914,9 @@ fn a_herd_beyond_work_range_is_not_hunted_and_posts_no_party() {
     // The band walks off the camp its donors stand in, so the gear it can equip a crew with must be
     // in hand: a mammoth crew is only sent when it can be armed.
     arm_the_band(&mut app, band, ENOUGH_UNITS);
+    // **The board is read after the sim has staffed the rows** (#871): the Low donor's gathering kit
+    // cannot wound a deer, so the passes put nobody on it, and that is where it starts.
+    core_sim::staffing::restaff_band(&mut app.world, band);
     let width = app.world.resource::<TileRegistry>().width;
     let wrap = app
         .world

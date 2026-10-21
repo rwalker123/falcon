@@ -149,6 +149,8 @@ fn hunting_band(
         party: None,
         muster_crew: 0,
         planned_crew: 0,
+        max_workers: Some(hunters),
+        staffing: Default::default(),
         target: LaborTarget::Hunt {
             fauna_id: fauna_id.to_string(),
             floor: 0.3,

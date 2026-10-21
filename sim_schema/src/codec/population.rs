@@ -472,6 +472,13 @@ fn create_populations<'a>(
                                 rejoiningAllHomeIn: assignment.rejoining_all_home_in,
                                 rejoiningFood: assignment.rejoining_food,
                                 branch: Some(branch),
+                                maxWorkers: assignment.max_workers,
+                                holdCrew: assignment.hold_crew,
+                                reachCrew: assignment.reach_crew,
+                                usefulCrew: assignment.useful_crew,
+                                keepersStaffed: assignment.keepers_staffed,
+                                kittedStaffed: assignment.kitted_staffed,
+                                bareStaffed: assignment.bare_staffed,
                             },
                         )
                     })
@@ -1639,6 +1646,13 @@ fn decode_labor_assignment(
         rejoining_all_home_in: assignment.rejoiningAllHomeIn(),
         rejoining_food: assignment.rejoiningFood(),
         branch: text(assignment.branch()),
+        max_workers: assignment.maxWorkers(),
+        hold_crew: assignment.holdCrew(),
+        reach_crew: assignment.reachCrew(),
+        useful_crew: assignment.usefulCrew(),
+        keepers_staffed: assignment.keepersStaffed(),
+        kitted_staffed: assignment.kittedStaffed(),
+        bare_staffed: assignment.bareStaffed(),
     })
 }
 

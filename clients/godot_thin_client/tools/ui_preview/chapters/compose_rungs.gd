@@ -585,15 +585,15 @@ func _assert_a_partly_armed_crew_prices_a_weighted_stay() -> void:
 		OFFER_RABBIT_BODY_MASS, OFFER_RABBIT_DEFENSE, SourceForecast.HUSBANDRY_CEILING_PEN)
 	warren[SourceForecast.FORECAST_STAY_FRACTION_KEY] = WEIGHTED_STAY_WIRE
 	var kit_before: String = h._hud._compose.hunt_kit_id()
-	var count_before: int = h._hud._compose.hunt_count()
-	h._hud._compose.set_hunt_count(WEIGHTED_STAY_CREW)
+	var count_before: int = h._hud._compose.hunt_max()
+	h._hud._compose.set_hunt_max(WEIGHTED_STAY_CREW)
 	h._hud._compose.set_hunt_kit_id(KIT_ID_TRAPPING)
 	var short_stay := _weighted_stay_reading(warren, WEIGHTED_STAY_ARMED)
 	var full_stay := _weighted_stay_reading(warren, WEIGHTED_STAY_CREW)
 	h._hud._compose.set_hunt_kit_id(KitRoster.NO_KIT_ID)
 	var bare_stay := _weighted_stay_reading(warren, 0)
 	h._hud._compose.set_hunt_kit_id(kit_before)
-	h._hud._compose.set_hunt_count(count_before)
+	h._hud._compose.set_hunt_max(count_before)
 	h._assert_hud("precondition: the band is SHORT of the kit (%d of %d) and the quiet kit reads above the bare hand (%s over %s)"
 			% [WEIGHTED_STAY_ARMED, WEIGHTED_STAY_CREW, str(full_stay), str(bare_stay)],
 		WEIGHTED_STAY_ARMED < WEIGHTED_STAY_CREW and full_stay > bare_stay

@@ -700,7 +700,7 @@ func run(harness) -> void:
 	# take is `min(crew x per_worker x dip, ceiling)`, and the dip multiplies the CREW — so this crew
 	# binds under both floors' ceilings and the take is the same at either. That is the deep-floor
 	# frame's whole point: a deeper draw buys this crew nothing today and still stalls its meter.
-	h._hud._compose.set_forage_count(ForageFx.IMPROVEMENT_STANCE_FRAME_FORAGERS)
+	h._hud._compose.set_forage_max(ForageFx.IMPROVEMENT_STANCE_FRAME_FORAGERS)
 	h._compose_forage(BaseFx.food_tile_fixture())
 	await h._settle()
 	await h._save("improvement_running_plant")
@@ -801,7 +801,7 @@ func run(harness) -> void:
 	h._hud._band_labor._player_bands = [idle_band]
 	h._hud._compose.reset_forage_source()
 	h._compose_forage(BaseFx.unbuilt(BaseFx.food_tile_fixture()))
-	h._hud._compose.set_forage_count(ForageFx.IMPROVEMENT_STANCE_FRAME_FORAGERS)
+	h._hud._compose.set_forage_max(ForageFx.IMPROVEMENT_STANCE_FRAME_FORAGERS)
 	h._compose_forage(BaseFx.unbuilt(BaseFx.food_tile_fixture()))
 	await h._settle()
 	h._assert_hud("…while the SAME crew on a patch nobody is building walks to its floor and says so",
@@ -812,7 +812,7 @@ func run(harness) -> void:
 	h._hud._band_labor._player_bands = prior_build_bands
 	h._hud._compose.reset_forage_source()
 	h._compose_forage(BaseFx.food_tile_fixture())
-	h._hud._compose.set_forage_count(ForageFx.IMPROVEMENT_STANCE_FRAME_FORAGERS)
+	h._hud._compose.set_forage_max(ForageFx.IMPROVEMENT_STANCE_FRAME_FORAGERS)
 	h._compose_forage(BaseFx.food_tile_fixture())
 	await h._settle()
 
@@ -823,7 +823,7 @@ func run(harness) -> void:
 	# decimal — while the lesson the same crew is building at slows with the floor. That is the trap
 	# stated at its sharpest: you drive the patch out of Thriving and stall your own meter for nothing.
 	h._hud._compose.set_forage_floor(ForageFx.DEEP_DRAW_FLOOR)
-	h._hud._compose.set_forage_count(ForageFx.IMPROVEMENT_STANCE_FRAME_FORAGERS)
+	h._hud._compose.set_forage_max(ForageFx.IMPROVEMENT_STANCE_FRAME_FORAGERS)
 	h._compose_forage(BaseFx.food_tile_fixture())
 	await h._settle()
 	await h._save("improvement_deplete_while_building")
@@ -893,7 +893,7 @@ func run(harness) -> void:
 	# to a 25-turn Cultivate quadrupled the hands the panel asked for. Both terms are retired: this is
 	# `ceil(ceiling / per_worker)` and a build in flight does not move it.
 	h._hud._compose.set_forage_floor(SourceForecast.FLOOR_FOOD_PEAK)
-	h._hud._compose.set_forage_count(BUILD_CREW_DIALED_FORAGERS)
+	h._hud._compose.set_forage_max(BUILD_CREW_DIALED_FORAGERS)
 	h._compose_forage(BaseFx.food_tile_fixture())
 	await h._settle()
 	await h._save("improvement_build_crew")
@@ -902,20 +902,9 @@ func run(harness) -> void:
 	var rendered_cap = Readout.stepper_value(h._hud._drawercompose._compose_sheet)
 	print("ui_preview: build crew  sim workers_needed=%d  rendered cap=%d" % [
 		sim_workers_needed, rendered_cap])
-	h._assert_hud("the compose stepper caps at the crew the SIM asks for (%d)"
-		% sim_workers_needed, rendered_cap == sim_workers_needed)
-	# THE WORKED-ROW TWIN, on the SAME forecast. `source_worker_cap_state` is the Band panel's gate, and
-	# the two are only genuinely one ceiling if it goes dead at exactly that count — asserted on either
-	# side of it so "always false" cannot pass.
-	var build_forecast := SourceForecast.forecast_inputs(_seeded_food_tile(),
-		SourceForecast.SOURCE_KIND_FORAGE, HudComposeVocab.FORAGE_FORECAST_PREFIX,
-		SourceForecast.FLOOR_FOOD_PEAK)
-	var row_below: bool = bool(SourceForecast.source_worker_cap_state(build_forecast,
-		sim_workers_needed - 1, BUILD_CREW_IDLE_ON_HAND)["can_add"])
-	var row_at: bool = bool(SourceForecast.source_worker_cap_state(build_forecast,
-		sim_workers_needed, BUILD_CREW_IDLE_ON_HAND)["can_add"])
-	h._assert_hud("…and the WORK BOARD's `+` gates at the same count — live below it, dead at it",
-		row_below and not row_at)
+	h._assert_hud("the sheet states the crew the SIM staffed on the band's row (%d)"
+		% sim_workers_needed, rendered_cap == int((HudBandLaborState.labor_assignments_of(
+			h._hud._band_labor.player_band())[0] as Dictionary)["workers"]))
 	# THE READOUT'S TAKE, read off the RENDERED sheet: `min(w × per_worker, ceiling)`, with no build
 	# term anywhere in it. A Cultivate is running on this very patch, which is what makes the claim
 	# worth making — the crew building it is a different crew.
@@ -1828,7 +1817,7 @@ func run(harness) -> void:
 	# The take crew no longer prices a build at all — it was never doing the work — so the A/B is run
 	# on the improvement control's own crew row, which is where the player now answers *how many hands
 	# on this job*. The take crew is held at a plain 1 throughout, so nothing but the builders moves.
-	h._hud._compose.set_forage_count(1)
+	h._hud._compose.set_forage_max(1)
 	# **THE PATCH IS SHORT-KEPT, WHICH IS WHAT MAKES EITHER `∞` REACHABLE AT ALL** — see
 	# `_short_kept_food_tile`. The reference patch itself rots at nothing, and on a kept meter every
 	# staffed builder climbs.
@@ -2009,7 +1998,7 @@ func run(harness) -> void:
 	h._hud._band_labor._player_band = BandFx.forage_range_bands()[0]
 	h._hud._band_labor._player_bands = []
 	h._hud._compose.reset_forage_source()
-	h._hud._compose.set_forage_count(1)
+	h._hud._compose.set_forage_max(1)
 	h._hud._compose.set_forage_floor(SourceForecast.FLOOR_FOOD_PEAK)
 
 	_arrow_is_gated_on_what_is_SHOWN()
@@ -2048,8 +2037,9 @@ func run(harness) -> void:
 ## `_on_compose_sheet_closed`), because the reset rides that signal; poking `ComposeState` here would
 ## assert the harness's own write.
 ##
-## The PAIR is the claim: the edit must be visible while the sheet is open, or "it shows 4 on reopen"
-## passes on a sheet that never took the edit at all.
+## The PAIR is the claim: the Max edit must be visible while the sheet is open, or "it shows the row's
+## Max on reopen" passes on a sheet that never took the edit at all. The CREW beside it is the sim's and
+## does not move with a Max the band has not yet been sent (#871).
 func _a_reopened_sheet_shows_the_LIVE_crew() -> void:
 	var tile := BaseFx.food_tile_fixture()
 	var band := _fully_committed_forage_band(tile, POOL_TAKE_CREW, SourceForecast.BUILD_CREW_NONE)
@@ -2058,17 +2048,19 @@ func _a_reopened_sheet_shows_the_LIVE_crew() -> void:
 	h._hud._compose.reset_forage_source()
 	h._show_tile(tile)
 	h._compose_forage(tile)
-	h._hud._compose.set_forage_count(POOL_REDUCED_TAKE)
+	h._hud._compose.set_forage_max(POOL_REDUCED_TAKE)
 	h._compose_forage(tile)
 	await h._settle()
-	h._assert_hud("the uncommitted edit really is on the open sheet — %d" % POOL_REDUCED_TAKE,
-		Readout.stepper_value(h._hud._drawercompose._compose_sheet) == POOL_REDUCED_TAKE)
+	h._assert_hud("the uncommitted Max really is on the open sheet - %d" % POOL_REDUCED_TAKE,
+		Readout.max_stepper_value(h._hud._drawercompose._compose_sheet) == POOL_REDUCED_TAKE)
+	h._assert_hud("…while the crew beside it stays the sim's %d" % POOL_TAKE_CREW,
+		Readout.stepper_value(h._hud._drawercompose._compose_sheet) == POOL_TAKE_CREW)
 	h._hud._drawercompose.close_compose_sheet()
 	h._compose_forage(tile)
 	await h._settle()
 	await h._save("compose_reopen_reseeds")
-	h._assert_hud("…and reopening seeds from the band's own row again — %d" % POOL_TAKE_CREW,
-		Readout.stepper_value(h._hud._drawercompose._compose_sheet) == POOL_TAKE_CREW)
+	h._assert_hud("…and reopening seeds the Max from the band's own row again - none",
+		Readout.max_stepper_value(h._hud._drawercompose._compose_sheet) == 0)
 
 ## **A DECLARED BUILD WITH NOBODY ON IT LOOKED EXACTLY LIKE ONE THAT HAD JUST STARTED.** The sim
 ## publishes `buildTurnsRemaining = -1` for an unstaffed source — correctly, nobody having promised
@@ -2772,7 +2764,7 @@ func _a_band_with_no_free_hands_is_offered_a_dead_box() -> void:
 	# The other half (a crew on the ground, so the one-step remedy) is `forage_cultivate_stressed`.
 	# **The PAIR is the claim** — a builder that always printed one sentence passes either alone.
 	h._assert_hud("the band composes no crew here, which is what makes this the unworked half",
-		h._hud._compose.forage_count() == 0)
+		h._hud._compose.forage_max() == 0)
 	#
 	# Read off the FACE, since the remedy is not a note beneath the offer any more — it IS the offer,
 	# one line, with the `Work tab` in it as a live `[url]`.

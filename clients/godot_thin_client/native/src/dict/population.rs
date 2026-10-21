@@ -1178,6 +1178,17 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
             // The turns the food the kill replaces (the meat on hand) will last; the figure
             // `turns_until_hunt` counts down from. 999 = not food-limited; 0 off a need row.
             let _ = entry.insert("need_runway", f64::from(assignment.needRunway()));
+            // THE SIM STAFFS THE ROW FROM THE PLAYER'S FLOOR (#871): `workers` above is the sim's
+            // crew; `max_workers` is the player's Max (0 = no Max), `hold_crew` / `reach_crew` the
+            // hands to hold / reach the floor, the three `*_staffed` counts split `workers` into
+            // keepers / kitted / bare (they sum to it), and `useful_crew` is the pass-3 ceiling.
+            let _ = entry.insert("max_workers", i64::from(assignment.maxWorkers()));
+            let _ = entry.insert("hold_crew", i64::from(assignment.holdCrew()));
+            let _ = entry.insert("reach_crew", i64::from(assignment.reachCrew()));
+            let _ = entry.insert("keepers_staffed", i64::from(assignment.keepersStaffed()));
+            let _ = entry.insert("kitted_staffed", i64::from(assignment.kittedStaffed()));
+            let _ = entry.insert("bare_staffed", i64::from(assignment.bareStaffed()));
+            let _ = entry.insert("useful_crew", i64::from(assignment.usefulCrew()));
             array.push(&entry.to_variant());
         }
     }
