@@ -224,9 +224,9 @@ const ATTENTION_LEADER_CHIEF_LABEL_FORMAT := "%s has a chief"
 
 const ATTENTION_LEADER_COUNCIL_LABEL_FORMAT := "%s has an elders' council"
 
-const ATTENTION_LEADER_CHIEF_DETAIL_FORMAT := "Chief %s — see the Work tab"
+const ATTENTION_LEADER_CHIEF_DETAIL_FORMAT := "Chief %s — see the Band tab"
 
-const ATTENTION_LEADER_COUNCIL_DETAIL_FORMAT := "%s speaks for them — Work tab"
+const ATTENTION_LEADER_COUNCIL_DETAIL_FORMAT := "%s speaks for them — Band tab"
 
 ## The event kind this producer ingests, and the tokens its detail carries (`kind=chief name=Ash`;
 ## the council's kind token is `elder_council`). The name is everything after `name=` -- it may hold

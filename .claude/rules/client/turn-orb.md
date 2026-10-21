@@ -205,8 +205,8 @@ paths:
     `AttentionController.ingest_command_events`, windowed on the event's own `tick` == the turn and
     de-duplicated on `seq` (0 admitted), so a full snapshot's re-shipped ring adds no row. Own-faction
     events only. One row per band, found in THIS snapshot's roster. Label `"<Band> has a chief"` /
-    `"<Band> has an elders' council"`; detail `"Chief <Name> — see the Work tab"` /
-    `"<Name> speaks for them — Work tab"` (the council's is shorter because orb rows clip at
+    `"<Band> has an elders' council"`; detail `"Chief <Name> — see the Band tab"` /
+    `"<Name> speaks for them — Band tab"` (the council's is shorter because orb rows clip at
     `POPOVER_WIDTH`). When the event names no leader the band's cohort `leader_kind` / `leader_name`
     supply them. **Jump → the band's current tile** (plain recenter). A load produces no event for an
     existing leader, so no row after a load. Icon `★`. ui_preview `turn_orb_leader_emerged`.

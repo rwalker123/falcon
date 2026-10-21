@@ -1149,12 +1149,12 @@ func _leader_emerged_frame() -> void:
 	var council_label := HudAttentionVocab.ATTENTION_LEADER_COUNCIL_LABEL_FORMAT % LEADER_COUNCIL_BAND_NAME
 	var chief_row: Variant = _orb_row_with(rows, chief_label)
 	var council_row: Variant = _orb_row_with(rows, council_label)
-	h._assert_hud("a new chief raises `%s | Chief %s — see the Work tab`" % [chief_label, LEADER_CHIEF_NAME],
-		chief_row != null and String(chief_row["detail"]) == "Chief %s — see the Work tab" % LEADER_CHIEF_NAME)
-	h._assert_hud("a new council raises `%s | %s speaks for them — Work tab`"
+	h._assert_hud("a new chief raises `%s | Chief %s — see the Band tab`" % [chief_label, LEADER_CHIEF_NAME],
+		chief_row != null and String(chief_row["detail"]) == "Chief %s — see the Band tab" % LEADER_CHIEF_NAME)
+	h._assert_hud("a new council raises `%s | %s speaks for them — Band tab`"
 		% [council_label, LEADER_COUNCIL_NAME],
 		council_row != null and String(council_row["detail"])
-			== "%s speaks for them — Work tab" % LEADER_COUNCIL_NAME)
+			== "%s speaks for them — Band tab" % LEADER_COUNCIL_NAME)
 	h._assert_hud("a full ring's OLD-tick leader raises no row (%d rows, want %d)"
 		% [rows.size(), LEADER_ROWS_EXPECTED], rows.size() == LEADER_ROWS_EXPECTED)
 	# A full-ring RE-ingest (resync) and an old-tick-only ring add nothing.

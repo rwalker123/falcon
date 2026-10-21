@@ -1348,9 +1348,12 @@ func _build_vitals_label(band: Dictionary) -> RichTextLabel:
     # No Position row either: the coordinates are IDENTITY and the panel HEADER states them
     # (`_panel_position_label`), so a vitals row would be a second telling — and one this zone pays
     # for in height. The drawer host keeps it (it has no header and renders foreign bands).
-    detail_label.text = DetailFormat.detail_bbcode(
-        _banddetail.unit_summary_lines(band, _selectioncard.selected_terrain_label(), ctx,
-            _band_zone_tier == HudWorkVocab.BAND_ZONE_TIER_SHORT, false), ctx)
+    var vitals_lines := _banddetail.unit_summary_lines(band, _selectioncard.selected_terrain_label(), ctx,
+        _band_zone_tier == HudWorkVocab.BAND_ZONE_TIER_SHORT, false)
+    # The chief / leader row is one more vitals row (#859), last in the table.
+    vitals_lines.append_array(HudFormat.band_leader_row_lines(band, ctx.row_tooltips))
+    detail_label.set_meta(HudWorkVocab.BAND_VITALS_LABEL_META, true)
+    detail_label.text = DetailFormat.detail_bbcode(vitals_lines, ctx)
     # **A ROW'S HOVER SHOWS OVER THAT ROW ALONE** (`DetailFormat.wire_row_hovers`).
     DetailFormat.wire_row_hovers(detail_label, ctx)
     return detail_label
@@ -2493,82 +2496,11 @@ func _flow_work_sections(items: Array) -> Control:
     scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
     scroll.custom_minimum_size = Vector2(0.0, room)
     board.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
-    # The chief block rides INSIDE the scroll, above the board, so it scrolls with the sections and
-    # can never overflow the clipping zone or change a height reservation.
-    var chief_block := _build_work_chief_block(_band_labor.panel_band())
-    if chief_block == null:
-        scroll.add_child(board)
-    else:
-        var content := VBoxContainer.new()
-        content.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-        content.add_theme_constant_override("separation", HudWorkVocab.WORK_CHIEF_BLOCK_BOTTOM_GAP)
-        content.add_child(chief_block)
-        content.add_child(board)
-        scroll.add_child(content)
+    scroll.add_child(board)
     _work_sections_scroll = scroll
     _restore_scroll_offset(scroll, _work_sections_scroll_offset,
         func() -> bool: return _work_sections_scroll == scroll)
     return scroll
-
-## **THE CHIEF BLOCK** (#859): the progress-toward-a-chief row while the band has no leader, the
-## `Led by ...` line once it has one, `null` for a foreign band / faction page / no threshold.
-func _build_work_chief_block(band: Dictionary) -> Control:
-    var leader_line := HudFormat.band_leader_phrase(band)
-    if not leader_line.is_empty():
-        var leader := Label.new()
-        leader.text = leader_line
-        leader.add_theme_font_size_override("font_size", HudWorkVocab.WORK_CHIEF_FONT_SIZE)
-        leader.add_theme_color_override("font_color", HudStyle.INK_DIM)
-        # Wraps rather than trims: an autowrapped Label asks no width of its own.
-        leader.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-        leader.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-        leader.mouse_filter = Control.MOUSE_FILTER_IGNORE
-        leader.set_meta(HudWorkVocab.WORK_LEADER_LINE_META, true)
-        return leader
-    var progress := HudFormat.band_chief_progress(band)
-    if progress.is_empty():
-        return null
-    var row := HBoxContainer.new()
-    row.add_theme_constant_override("separation", HudWorkVocab.WORK_CHIEF_ROW_SEPARATION)
-    row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-    row.mouse_filter = Control.MOUSE_FILTER_STOP
-    row.tooltip_text = String(progress.get("tooltip", ""))
-    row.set_meta(HudWorkVocab.WORK_CHIEF_ROW_META, true)
-    var bar := HBoxContainer.new()
-    bar.add_theme_constant_override("separation", HudWorkVocab.WORK_CHIEF_BAR_CELL_GAP)
-    bar.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-    bar.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-    bar.custom_minimum_size = Vector2(HudWorkVocab.WORK_CHIEF_BAR_MIN_WIDTH,
-        HudWorkVocab.WORK_CHIEF_BAR_HEIGHT)
-    bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
-    bar.set_meta(HudWorkVocab.WORK_CHIEF_BAR_META, true)
-    var cells: Array = []
-    for segment in progress.get("segments", []):
-        cells.append([float(segment.get("points", 0.0)), segment.get("color", HudStyle.INK_FAINT),
-            String(segment.get("key", ""))])
-    cells.append([float(progress.get("remainder", 0.0)), HudStyle.LINE_SOFT,
-        HudWorkVocab.WORK_CHIEF_REMAINDER_KEY])
-    for cell_spec in cells:
-        if cell_spec[0] <= 0.0:
-            continue
-        var cell := ColorRect.new()
-        cell.color = cell_spec[1]
-        cell.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-        cell.size_flags_stretch_ratio = cell_spec[0]
-        cell.custom_minimum_size = Vector2(0.0, HudWorkVocab.WORK_CHIEF_BAR_HEIGHT)
-        cell.mouse_filter = Control.MOUSE_FILTER_IGNORE
-        cell.set_meta(HudWorkVocab.WORK_CHIEF_SEGMENT_META, cell_spec[2])
-        cell.set_meta(HudWorkVocab.WORK_CHIEF_POINTS_META, cell_spec[0])
-        bar.add_child(cell)
-    var label := Label.new()
-    label.text = String(progress.get("label", ""))
-    label.add_theme_font_size_override("font_size", HudWorkVocab.WORK_CHIEF_FONT_SIZE)
-    label.add_theme_color_override("font_color", HudStyle.INK_DIM)
-    label.mouse_filter = Control.MOUSE_FILTER_IGNORE
-    label.set_meta(HudWorkVocab.WORK_CHIEF_LABEL_META, true)
-    row.add_child(bar)
-    row.add_child(label)
-    return row
 
 ## How many board columns the sections want, declared to the panel so the card is drawn that wide
 ## (issue #377), and the panel's ANSWER back — the grant, never the want, since a list built to an

@@ -100,11 +100,19 @@ const BAND_HEADER_POSITION_FORMAT := "(%d, %d)"
 const LEADER_KIND_NONE := 0
 const LEADER_KIND_CHIEF := 1
 const LEADER_KIND_ELDER_COUNCIL := 2
-const BAND_HEADER_CHIEF_FORMAT := "Led by Chief %s"
-const BAND_HEADER_COUNCIL_FORMAT := "Led by the elders' council — %s speaks"
+const BAND_HEADER_CHIEF_FORMAT := "Chief %s"
+const BAND_HEADER_COUNCIL_FORMAT := "Elders' council — %s speaks"
 ## **THE CHIEF-PROGRESS BAR** (#859) under the header's sub line, while a band has no leader. Four
 ## sources in this order, each a distinct hue; the remainder to the threshold is the empty cell.
-const CHIEF_LABEL_FORMAT := "Chief %d / %d"
+const CHIEF_LABEL_FORMAT := "%d / %d"
+## The two vitals-row keys the Band tab shows (#859): `Chief` while the band has no leader (value = a
+## compact glyph bar and `7 / 10`), `Leader` once it has one. Both are `Key: value` lines of the vitals
+## table, so they take the same key column, type size and inks as Food / Morale / Growth.
+const CHIEF_ROW_KEY := "Chief"
+const LEADER_ROW_KEY := "Leader"
+## The compact bar's filled and empty cell glyphs -- the block glyphs `meter_bar` draws.
+const CHIEF_BAR_FILLED_GLYPH := "▰"
+const CHIEF_BAR_EMPTY_GLYPH := "▱"
 const CHIEF_TOOLTIP_HEADLINE := "A band gains a leader once it does enough work that needs an organiser."
 const CHIEF_TOOLTIP_SOURCE_FORMAT := "%s: %d"
 const CHIEF_TOOLTIP_SOURCE_SEPARATOR := " · "
@@ -257,6 +265,40 @@ static func band_chief_progress(entry: Dictionary) -> Dictionary:
         "remainder": maxf(threshold - practice, 0.0),
         "total": threshold,
     }
+
+## The compact four-source bar as BBCode: one coloured `▰` per point, each source in its own hue, then
+## the remainder as `▱`. One cell per point of the threshold, so it is as wide as the threshold (10).
+static func chief_bar_bbcode(progress: Dictionary) -> String:
+    var cells := int(round(float(progress.get("total", 0.0))))
+    var out := ""
+    var used := 0
+    for segment in progress.get("segments", []):
+        var count := mini(int(round(float(segment.get("points", 0.0)))), cells - used)
+        if count <= 0:
+            continue
+        used += count
+        out += "[color=#%s]%s[/color]" % [(segment.get("color", HudStyle.INK_FAINT) as Color).to_html(false),
+            CHIEF_BAR_FILLED_GLYPH.repeat(count)]
+    if cells > used:
+        out += "[color=#%s]%s[/color]" % [HudStyle.INK_FAINT.to_html(false),
+            CHIEF_BAR_EMPTY_GLYPH.repeat(cells - used)]
+    return out
+
+## **THE LEADER ROW OF THE BAND TAB'S VITALS** (#859): `[]` for a foreign band or no threshold, else one
+## `Key: value` line -- `Leader: Chief Orrin` / `Chief: <bar> 7 / 10` -- for the vitals table to render.
+## The per-source tooltip is stored into `row_tooltips` under the row's key (the vitals' own hover path).
+static func band_leader_row_lines(entry: Dictionary, row_tooltips: Dictionary) -> Array[String]:
+    var lines: Array[String] = []
+    var phrase := band_leader_phrase(entry)
+    if phrase != "":
+        lines.append("%s: %s" % [LEADER_ROW_KEY, phrase])
+        return lines
+    var progress := band_chief_progress(entry)
+    if progress.is_empty():
+        return lines
+    row_tooltips[CHIEF_ROW_KEY] = String(progress.get("tooltip", ""))
+    lines.append("%s: %s %s" % [CHIEF_ROW_KEY, chief_bar_bbcode(progress), String(progress.get("label", ""))])
+    return lines
 
 ## **A BAND WITH ITS PEOPLE** -- `Netherford, Lothari` -- or the people alone when no band is named
 ## (a builder the roster does not hold, or the wire's 0).

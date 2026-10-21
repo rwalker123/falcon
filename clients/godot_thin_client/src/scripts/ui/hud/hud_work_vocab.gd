@@ -4079,28 +4079,10 @@ const WORK_SECTION_COLLAPSED_META := &"work_section_collapsed"
 ## sections hold never reaches the panel's fixed cross-axis reservation.
 const WORK_SECTIONS_SCROLL_NAME := "WorkSections"
 
-## **THE CHIEF BLOCK** (#859) -- the first item inside the sections scroll, above BUILD QUEUE: either
-## the progress-toward-a-chief row (a slim four-source split bar and its `Chief 6 / 10` label) or, once
-## the band has a leader, one wrapping `Led by ...` line. It sits here because the chief's band orders
-## will live at the top of this tab. Quiet text, not a section head.
-const WORK_CHIEF_FONT_SIZE := 10
-const WORK_CHIEF_BAR_HEIGHT := 5.0
-## Kept small on purpose: the bar stretches to the column, and a larger floor would make the row the
-## widest thing in the zone, which widens the card.
-const WORK_CHIEF_BAR_MIN_WIDTH := 24.0
-const WORK_CHIEF_BAR_CELL_GAP := 1
-const WORK_CHIEF_ROW_SEPARATION := 6
-## Breathing room under the block, before the first section head.
-const WORK_CHIEF_BLOCK_BOTTOM_GAP := 6
-const WORK_CHIEF_REMAINDER_KEY := "remainder"
-## Harness handles: the progress row, the leader line, which source a bar cell is, and the points it
-## was given (its stretch ratio).
-const WORK_CHIEF_ROW_META := &"work_chief_row"
-const WORK_LEADER_LINE_META := &"work_leader_line"
-const WORK_CHIEF_BAR_META := &"work_chief_bar"
-const WORK_CHIEF_LABEL_META := &"work_chief_label"
-const WORK_CHIEF_SEGMENT_META := &"work_chief_segment"
-const WORK_CHIEF_POINTS_META := &"work_chief_points"
+## **THE CHIEF / LEADER ROW** (#859) is a row of the Band tab's vitals table (`HudFormat.
+## band_leader_row_lines`), so it needs no sizing of its own; this is the harness handle on the vitals
+## label that holds it.
+const BAND_VITALS_LABEL_META := &"band_vitals_label"
 
 ## A section head's reserved height: `ZONE_HEAD_HEIGHT` grown to the compact chevron button (and, on
 ## the queue and the roads, the `+N more` door), which is what sets the row.
