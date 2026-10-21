@@ -1911,6 +1911,8 @@ pub struct KitNeedItemState {
     pub claimed: f32,
     /// Whole units still missing on those claims, before the bench's queue nets them.
     pub short: u32,
+    /// Whole units parked on the bench's finished list (stocked next turn); `queued` includes them.
+    pub finished: u32,
 }
 
 /// **One recipe that makes a kit item** — its output per pass and its per-pass inputs.

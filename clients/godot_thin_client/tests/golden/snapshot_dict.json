@@ -7755,6 +7755,7 @@
           "items": [
             {
               "claimed": 84.040001,
+              "finished": 64,
               "have": 16,
               "item_id": "populations[0].kit_needs[0].items[0].item_id",
               "queued": 1,
@@ -7819,6 +7820,7 @@
             },
             {
               "claimed": 82.389999,
+              "finished": 101,
               "have": 141,
               "item_id": "populations[0].kit_needs[0].items[1].item_id",
               "queued": 156,
@@ -7883,6 +7885,7 @@
             },
             {
               "claimed": 51.110001,
+              "finished": 26,
               "have": 162,
               "item_id": "populations[0].kit_needs[0].items[2].item_id",
               "queued": 103,
@@ -7958,6 +7961,7 @@
           "items": [
             {
               "claimed": 79.800003,
+              "finished": 39,
               "have": 55,
               "item_id": "populations[0].kit_needs[1].items[0].item_id",
               "queued": 2,
@@ -8022,6 +8026,7 @@
             },
             {
               "claimed": 33.970001,
+              "finished": 154,
               "have": 26,
               "item_id": "populations[0].kit_needs[1].items[1].item_id",
               "queued": 15,
@@ -8086,6 +8091,7 @@
             },
             {
               "claimed": 59.630001,
+              "finished": 109,
               "have": 29,
               "item_id": "populations[0].kit_needs[1].items[2].item_id",
               "queued": 60,
@@ -8161,6 +8167,7 @@
           "items": [
             {
               "claimed": 80.720001,
+              "finished": 54,
               "have": 198,
               "item_id": "populations[0].kit_needs[2].items[0].item_id",
               "queued": 99,
@@ -8225,6 +8232,7 @@
             },
             {
               "claimed": 64.0,
+              "finished": 115,
               "have": 107,
               "item_id": "populations[0].kit_needs[2].items[1].item_id",
               "queued": 14,
@@ -8289,6 +8297,7 @@
             },
             {
               "claimed": 2.23,
+              "finished": 84,
               "have": 140,
               "item_id": "populations[0].kit_needs[2].items[2].item_id",
               "queued": 149,
@@ -10191,6 +10200,7 @@
           "items": [
             {
               "claimed": 76.629997,
+              "finished": 105,
               "have": 113,
               "item_id": "populations[1].kit_needs[0].items[0].item_id",
               "queued": 56,
@@ -10255,6 +10265,7 @@
             },
             {
               "claimed": 103.849998,
+              "finished": 172,
               "have": 188,
               "item_id": "populations[1].kit_needs[0].items[1].item_id",
               "queued": 197,
@@ -10319,6 +10330,7 @@
             },
             {
               "claimed": 44.240002,
+              "finished": 75,
               "have": 59,
               "item_id": "populations[1].kit_needs[0].items[2].item_id",
               "queued": 94,
@@ -10394,6 +10406,7 @@
           "items": [
             {
               "claimed": 58.77,
+              "finished": 42,
               "have": 82,
               "item_id": "populations[1].kit_needs[1].items[0].item_id",
               "queued": 183,
@@ -10458,6 +10471,7 @@
             },
             {
               "claimed": 57.16,
+              "finished": 127,
               "have": 39,
               "item_id": "populations[1].kit_needs[1].items[1].item_id",
               "queued": 146,
@@ -10522,6 +10536,7 @@
             },
             {
               "claimed": 93.82,
+              "finished": 56,
               "have": 128,
               "item_id": "populations[1].kit_needs[1].items[2].item_id",
               "queued": 129,
@@ -10597,6 +10612,7 @@
           "items": [
             {
               "claimed": 95.889999,
+              "finished": 83,
               "have": 67,
               "item_id": "populations[1].kit_needs[2].items[0].item_id",
               "queued": 166,
@@ -10661,6 +10677,7 @@
             },
             {
               "claimed": 78.010002,
+              "finished": 46,
               "have": 158,
               "item_id": "populations[1].kit_needs[2].items[1].item_id",
               "queued": 11,
@@ -10725,6 +10742,7 @@
             },
             {
               "claimed": 77.540001,
+              "finished": 9,
               "have": 17,
               "item_id": "populations[1].kit_needs[2].items[2].item_id",
               "queued": 176,
@@ -12588,6 +12606,7 @@
           "items": [
             {
               "claimed": 84.290001,
+              "finished": 138,
               "have": 66,
               "item_id": "populations[2].kit_needs[0].items[0].item_id",
               "queued": 15,
@@ -12652,6 +12671,7 @@
             },
             {
               "claimed": 93.059998,
+              "finished": 135,
               "have": 39,
               "item_id": "populations[2].kit_needs[0].items[1].item_id",
               "queued": 146,
@@ -12716,6 +12736,7 @@
             },
             {
               "claimed": 31.74,
+              "finished": 176,
               "have": 104,
               "item_id": "populations[2].kit_needs[0].items[2].item_id",
               "queued": 113,
@@ -12791,6 +12812,7 @@
           "items": [
             {
               "claimed": 0.07,
+              "finished": 185,
               "have": 161,
               "item_id": "populations[2].kit_needs[1].items[0].item_id",
               "queued": 136,
@@ -12855,6 +12877,7 @@
             },
             {
               "claimed": 70.870003,
+              "finished": 68,
               "have": 76,
               "item_id": "populations[2].kit_needs[1].items[1].item_id",
               "queued": 85,
@@ -12919,6 +12942,7 @@
             },
             {
               "claimed": 10.02,
+              "finished": 163,
               "have": 11,
               "item_id": "populations[2].kit_needs[1].items[2].item_id",
               "queued": 22,
@@ -12994,6 +13018,7 @@
           "items": [
             {
               "claimed": 99.300003,
+              "finished": 84,
               "have": 76,
               "item_id": "populations[2].kit_needs[2].items[0].item_id",
               "queued": 53,
@@ -13058,6 +13083,7 @@
             },
             {
               "claimed": 43.459999,
+              "finished": 9,
               "have": 25,
               "item_id": "populations[2].kit_needs[2].items[1].item_id",
               "queued": 104,
@@ -13122,6 +13148,7 @@
             },
             {
               "claimed": 17.209999,
+              "finished": 198,
               "have": 30,
               "item_id": "populations[2].kit_needs[2].items[2].item_id",
               "queued": 139,

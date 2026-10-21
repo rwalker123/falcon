@@ -755,6 +755,7 @@ pub(crate) fn kit_need_states(
                         queued: item.queued,
                         claimed: item.claimed,
                         short: item.short,
+                        finished: item.finished,
                         recipes,
                     }
                 })

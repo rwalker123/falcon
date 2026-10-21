@@ -1650,6 +1650,10 @@ table KitNeedItem {
   // Whole units still missing on those lines BEFORE the bench's queue nets them - the same figure
   // Make Next starts its count from. The reader nets `queued`. Appended last.
   short:uint;
+  // Whole units of the item parked on the bench's finished list - made this turn, stocked at the top
+  // of the next. A pure readout: `queued` already INCLUDES them (the netting figure is unchanged), so
+  // the reader subtracts to tell "still to make" from "arriving next turn". Appended last.
+  finished:uint;
 }
 
 table KitNeedRecipe {

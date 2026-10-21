@@ -2435,9 +2435,14 @@ func _build_kit_row(need: Dictionary, rows: Dictionary) -> Control:
 		if short > 0:
 			var queued := int(item.get(HudCraftingVocab.KIT_ITEM_QUEUED_KEY, 0))
 			var part := HudCraftingVocab.KIT_REASON_SHORT_FORMAT % [item_name, short]
-			if queued > 0:
-				part += HudCraftingVocab.KIT_REASON_COMING_FORMAT % queued
+			var finished := clampi(int(item.get(HudCraftingVocab.KIT_ITEM_FINISHED_KEY, 0)), 0, queued)
+			var still_to_make := queued - finished
+			if still_to_make > 0:
+				part += HudCraftingVocab.KIT_REASON_COMING_FORMAT % still_to_make
+			if finished > 0:
+				part += HudCraftingVocab.KIT_REASON_FINISHED_FORMAT % finished
 			short_parts.append(part)
+			# A finished unit covers the gap too, so the ink rule reads the TOTAL `queued`.
 			if queued < short:
 				any_uncovered = true
 

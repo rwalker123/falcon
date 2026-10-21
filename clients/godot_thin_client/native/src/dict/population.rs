@@ -1713,6 +1713,9 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
                     let _ = entry.insert("workers_per_unit", i64::from(item.workersPerUnit()));
                     let _ = entry.insert("have", i64::from(item.have()));
                     let _ = entry.insert("queued", i64::from(item.queued()));
+                    // `queued` INCLUDES these: whole units finished at the bench and parked until the
+                    // top of next turn, so the still-to-make count is `queued - finished`.
+                    let _ = entry.insert("finished", i64::from(item.finished()));
                     // `claimed` units the claims on THIS kit asked for; `short` whole units missing on
                     // them before `queued` nets them (Make Next's own pre-netting count).
                     let _ = entry.insert("claimed", f64::from(item.claimed()));
