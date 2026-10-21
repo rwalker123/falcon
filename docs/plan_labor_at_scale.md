@@ -289,10 +289,11 @@ and builds.
   workers the player sets.
 - **Scouting range** (see "Scouts" above) and the self-filling bench (`auto_craft_fill`, which ships
   today).
-- **Every order starts on Auto** — the chief decides it: about a season of food, keep-on-hand targets
-  sized to what the band's builds and upkeep will draw, and a share of workers on improvements only
-  while food is holding. Switching an order's Auto off shows its stepper and keeps the value the player
-  sets; switching it back hands it to the chief again.
+- **Each order is a number or None.** A number starts at the chief's suggestion — about a season of
+  food, keep-on-hand targets sized to what the band's builds and upkeep will draw, a modest share of
+  workers on improvements — and the player moves it from there. **None** gives no order at all: the
+  chief pursues nothing for it. Food None aims for no particular store, so the food rows keep their own
+  floor; a keep-on-hand None sends nobody for that material; Improve None starts no builds.
 - **Each number is set with the game's ordinary − / + stepper**, never by clicking a chip to cycle it.
   The stone row's keep-on-hand chip on the Work tab is a label; the target is set on the Band orders
   card (or, before a chief, on the Stone sheet).
