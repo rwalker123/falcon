@@ -445,6 +445,11 @@ const HANDOFF_TURN := 61
 
 const HANDOFF_OLD_TURN := HANDOFF_TURN - 9
 
+## **THE TICK A TURN-RESOLUTION EVENT CARRIES ON THE FRAME FOR `HANDOFF_TURN`** — one behind, exactly as
+## the sim stamps it (it pushes before `advance_tick`; see `AttentionController.RESOLUTION_TICK_LAG`).
+## The fixtures once stamped `tick == turn`, which is the filter that matched nothing live.
+const HANDOFF_STAMP := HANDOFF_TURN - AttentionController.RESOLUTION_TICK_LAG
+
 ## Two hand-offs really did happen this turn, and they are DIFFERENT rows (one crew carried onto the
 ## rung's keeping, one freed), so a producer that de-duplicated on the wrong thing collapses them.
 const HANDOFF_ROWS_THIS_TURN := 2
@@ -468,10 +473,10 @@ func _handoff_ring_fixture() -> Array:
 		{"tick": HANDOFF_OLD_TURN + 3, "seq": 402, "kind": "corral",
 			"label": "1 of your corral crew are free — Red Deer keeps itself",
 			"detail": HANDOFF_DETAIL_FREED},
-		{"tick": HANDOFF_TURN, "seq": 403, "kind": "cultivate",
+		{"tick": HANDOFF_STAMP, "seq": 403, "kind": "cultivate",
 			"label": "3 of your cultivate crew stay on (31, 18) to keep it",
 			"detail": HANDOFF_DETAIL_CARRIED},
-		{"tick": HANDOFF_TURN, "seq": 404, "kind": "corral",
+		{"tick": HANDOFF_STAMP, "seq": 404, "kind": "corral",
 			"label": "2 of your corral crew are free — Wild Boar keeps itself",
 			"detail": HANDOFF_DETAIL_FREED},
 	]
@@ -524,7 +529,7 @@ func _assert_handoff_ingest_windows_on_one_turn() -> void:
 	h._hud._band_labor.set_turn(HANDOFF_TURN + 1)
 	var re_stamped := _handoff_recapture_fixture()
 	for row_variant in re_stamped:
-		(row_variant as Dictionary)["tick"] = HANDOFF_TURN + 1
+		(row_variant as Dictionary)["tick"] = HANDOFF_STAMP + 1
 	h._hud._attention.ingest_command_events(re_stamped, HANDOFF_TURN + 1)
 	var after_next_turn := _handoff_row_count()
 	h._assert_hud("…and the next turn's own hand-offs are still announced (got %d, want %d)"
@@ -1112,7 +1117,7 @@ func _assert_gathering_row() -> void:
 	var prior_turn: int = h._hud._band_labor.current_turn()
 	h._hud._band_labor.set_turn(GATHERING_TURN)
 	h._hud._attention.ingest_command_events([{
-		"tick": GATHERING_TURN, "seq": GATHERING_SEQ, "kind": "gathering_held",
+		"tick": GATHERING_TURN - AttentionController.RESOLUTION_TICK_LAG, "seq": GATHERING_SEQ, "kind": "gathering_held",
 		"label": GATHERING_LABEL, "detail": GATHERING_DETAIL}], GATHERING_TURN)
 	h._hud.turn_orb.set_attention(h._hud._attention.build_band_attention([], []))
 	h._hud.turn_orb.open_popover()

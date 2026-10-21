@@ -458,7 +458,16 @@ struct Attendee {
     size: u32,
     tile: Entity,
     name: String,
+    /// Turns the band has been simulated; see [`FOUNDING_AGE_TURNS`].
+    age_turns: u32,
 }
+
+/// A band whose `age_turns` is at most this has not yet lived past the turn it came into being.
+/// `simulate_population` (Population) bumps `age_turns` before this Visibility pass, so a band
+/// founded between turns (worldgen, a split command) reads `1` here on its first turn, and one
+/// founded mid-turn after the Population pass reads `0`. What such a band sees is where it started,
+/// not a meeting: it holds no gathering that turn.
+const FOUNDING_AGE_TURNS: u32 = 1;
 
 /// The label of a gathering's event line.
 const GATHERING_LABEL: &str = "A gathering";
@@ -520,6 +529,7 @@ pub fn advance_connections(
                     faction: cohort.faction,
                     size: cohort.size,
                     tile: cohort.current_tile,
+                    age_turns: cohort.age_turns,
                     name: name.map_or_else(|| band_label(*id), |name| name.0.clone()),
                 })
         };
@@ -527,6 +537,9 @@ pub fn advance_connections(
             let (Some(low), Some(high)) = (attendee(low), attendee(high)) else {
                 continue;
             };
+            if low.age_turns <= FOUNDING_AGE_TURNS || high.age_turns <= FOUNDING_AGE_TURNS {
+                continue;
+            }
             // The larger band hosts; a tie goes to the lower band id (`low` is the lower id).
             let host = if high.size > low.size { &high } else { &low };
             let Ok(place) = tiles.get(host.tile) else {

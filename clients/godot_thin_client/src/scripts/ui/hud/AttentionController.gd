@@ -133,6 +133,14 @@ const HANDOFF_SEQ_UNSEQUENCED := 0
 ## row that will not say which turn it belongs to is not evidence about this one.
 const HANDOFF_TICK_NONE := -1
 
+## **A RESOLUTION EVENT IS STAMPED ONE TURN BEHIND THE FRAME THAT CARRIES IT.** The sim pushes the
+## events of a turn's resolution (a gathering in `TurnStage::Visibility`, a build hand-off in the
+## Population stage) with the `SimulationTick` it holds BEFORE it advances, and `advance_tick` runs in
+## `TurnStage::Snapshot` right before the snapshot is captured, whose header turn is the post-advance
+## value. So an event raised by resolving turn N rides the frame whose turn is N + 1 and says `tick == N`.
+## Filtering on `tick == turn` matched nothing live (the harness stamped `tick == turn`, which is why it
+## passed). The turn a row must name is `turn - RESOLUTION_TICK_LAG`.
+const RESOLUTION_TICK_LAG := 1
 ## **INGEST THE TURN'S BUILD HAND-OFFS** (`docs/plan_standing_upkeep.md` §2.3) — the completions whose
 ## crew moved, off the same `command_events` array the Telling and the event dock read.
 ##
@@ -150,7 +158,9 @@ const HANDOFF_TICK_NONE := -1
 ## `command_events_retention_turns` of them, so an initial connect or a resync after a dropped delta
 ## re-delivers every hand-off of the last twenty turns. Taking the array as "what happened this turn"
 ## re-dated all of them to now and flooded the orb with builds the player finished long ago. So a row
-## joins `_handoffs` only if its own `tick` IS `_handoff_turn`; the backfill still reaches the surfaces
+## joins `_handoffs` only if its own `tick` IS the turn just RESOLVED (`_handoff_turn -
+## RESOLUTION_TICK_LAG`, see that constant: the sim stamps resolution events before it advances the
+## tick, so they ride the NEXT frame); the backfill still reaches the surfaces
 ## that want history (the Telling, the event dock) and reaches this one as nothing at all, which is
 ## correct — a hand-off is a decision about hands that moved THIS turn.
 ##
@@ -172,7 +182,7 @@ func ingest_command_events(events_variant: Variant, turn: int) -> void:
         var entry: Dictionary = entry_variant
         var detail := String(entry.get("detail", ""))
         if String(entry.get("kind", "")) == HudAttentionVocab.GATHERING_EVENT_KIND:
-            if int(entry.get(HANDOFF_TICK_KEY, HANDOFF_TICK_NONE)) != _handoff_turn:
+            if int(entry.get(HANDOFF_TICK_KEY, HANDOFF_TICK_NONE)) != _handoff_turn - RESOLUTION_TICK_LAG:
                 continue
             var gather_seq := int(entry.get(HANDOFF_SEQ_KEY, HANDOFF_SEQ_UNSEQUENCED))
             if gather_seq != HANDOFF_SEQ_UNSEQUENCED:
@@ -189,7 +199,7 @@ func ingest_command_events(events_variant: Variant, turn: int) -> void:
         var carried := detail.contains(HANDOFF_STATUS_CARRIED)
         if not carried and not detail.contains(HANDOFF_STATUS_FREED):
             continue
-        if int(entry.get(HANDOFF_TICK_KEY, HANDOFF_TICK_NONE)) != _handoff_turn:
+        if int(entry.get(HANDOFF_TICK_KEY, HANDOFF_TICK_NONE)) != _handoff_turn - RESOLUTION_TICK_LAG:
             continue
         var seq := int(entry.get(HANDOFF_SEQ_KEY, HANDOFF_SEQ_UNSEQUENCED))
         if seq != HANDOFF_SEQ_UNSEQUENCED:

@@ -161,7 +161,7 @@ paths:
 
   - **`gathering_held`** (**info**, NON-locating, `AttentionController._gathering_attention`, #698) —
     two peoples' bands met this turn. Raised by `ingest_command_events` keyed on the event KIND alone
-    (never parsing the detail), under the same own-`tick` and `seq` filters as `crew_handoff`; the row's
+    (never parsing the detail), under the same own-`tick` and `seq` filters as `crew_handoff` (a row's `tick` is the turn just RESOLVED, `turn - RESOLUTION_TICK_LAG`: the sim stamps resolution events before `advance_tick` runs, so the event for turn N rides the frame for N + 1 and says `tick == N`; both producers matched nothing live while this filtered on `tick == turn`, and the harness fixtures stamp the server's `turn - 1` for that reason); the row's
     label is the event's label ("A gathering") and its detail the sim's own sentence, verbatim. It is a
     notice with no `Open ▸` (not on `ATTENTION_KINDS_WITH_A_PANEL`), wears the `gathering` campfire sprite (the `workers` palm says "work"; `⇄` is the text fallback in `KIND_ICON`), and is
     capped at `ATTENTION_HANDOFF_MAX_ROWS`. The feed line rides the Notable rung (`hud_event_vocab.gd`).
@@ -190,7 +190,7 @@ paths:
     dropped delta — carries the whole `command_events_retention_turns` ring, which re-dated twenty
     turns of hand-offs to now and flooded the orb; and a **mid-tick recapture delta** re-ships every
     row since the turn baseline, announcing this turn's hand-offs twice. So a row joins the window
-    only if its own `tick` is the turn the window describes, and only if its `seq` has not been taken
+    only if its own `tick` is the turn just RESOLVED (`turn - RESOLUTION_TICK_LAG`), and only if its `seq` has not been taken
     for that turn (`0` being the unsequenced sentinel, admitted rather than dropped — the tick filter
     already bounds the set). **The two filters answer different questions** — WHICH TURN, and SEEN
     ALREADY — and neither substitutes for the other. `Main`'s dispatch comment said re-ingesting a

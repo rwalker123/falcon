@@ -35,6 +35,11 @@ const TURNS_AFTER: usize = 8;
 /// The Telling's beat for a gathering.
 const GATHERING_BEAT: &str = "belief.gathering_held";
 
+/// A band's age once it has lived past its founding turn.
+const ESTABLISHED_AGE: u32 = 5;
+/// A band's age on the turn it comes into being, as `advance_connections` reads it.
+const FOUNDING_AGE: u32 = 1;
+
 /// One band of the world, by its place in the roster.
 struct Band {
     entity: Entity,
@@ -68,6 +73,11 @@ fn pair(app: &mut App, first: FactionId, second: FactionId) -> (Band, Band) {
             .unwrap()
             .current_tile;
         let tile = app.world.get::<Tile>(tile_entity).unwrap().position;
+        // Past the founding turn, so a meeting here is a real one.
+        app.world
+            .get_mut::<PopulationCohort>(entity)
+            .unwrap()
+            .age_turns = ESTABLISHED_AGE;
         out.push(Band { entity, id, tile });
     }
     assert_ne!(out[0].tile, out[1].tile, "fixture: the bands stand apart");
@@ -408,4 +418,45 @@ fn the_telling_hears_a_gathering_once() {
         telling_support::run_turn(&mut app);
     }
     assert_eq!(told(&app), 1, "an unchanged total is not a new gathering");
+}
+
+/// What a band sees on the turn it comes into being is where it started, not a meeting - a
+/// world-start neighbour, a split's child beside its parent, or a foreign band in sight of the child.
+#[test]
+fn a_band_holds_no_gathering_on_the_turn_it_is_founded() {
+    for (founded_a, founded_b) in [(true, true), (true, false), (false, true)] {
+        let mut app = two_faction_world();
+        let (a, b) = pair(&mut app, HOME, RIVAL);
+        set_size(&mut app, &a, SMALL);
+        set_size(&mut app, &b, BIG);
+        for (founded, band) in [(founded_a, &a), (founded_b, &b)] {
+            if founded {
+                app.world
+                    .get_mut::<PopulationCohort>(band.entity)
+                    .unwrap()
+                    .age_turns = FOUNDING_AGE;
+            }
+        }
+
+        meet(&mut app, FIRST_TURN, &a, &b);
+
+        assert!(app.world.resource::<BeliefRegistry>().is_empty());
+        assert!(gathering_events(&app).is_empty());
+        assert!(
+            app.world
+                .resource::<ConnectionLedger>()
+                .tie_is_live(a.id, b.id),
+            "liveness: the tie still forms on the founding turn"
+        );
+
+        // Both established now, still in sight: the live tie means no gathering later either.
+        for band in [&a, &b] {
+            app.world
+                .get_mut::<PopulationCohort>(band.entity)
+                .unwrap()
+                .age_turns = ESTABLISHED_AGE;
+        }
+        meet(&mut app, FIRST_TURN + 1, &a, &b);
+        assert!(gathering_events(&app).is_empty());
+    }
 }

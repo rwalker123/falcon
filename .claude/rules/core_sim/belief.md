@@ -97,6 +97,13 @@ tied to the second. Edges are directed, so the pair is deduplicated on its UNORD
 is at most one gathering a turn. A pair that camps together stays tied and never re-fires. Bands of
 one people count as well as bands of different peoples. `metrics.connections_formed` is untouched.
 
+**A band holds no gathering on the turn it comes into being.** A pair with either band in its first
+turn (`age_turns <= 1` at the Visibility pass, since `simulate_population` bumps it first) is skipped:
+what a new band sees is where it started — world-start neighbours, a split's child beside its parent
+and whatever else is in sight — not a meeting. The ties still form that turn, so they are live
+afterwards and do not fire later while the bands stay in contact; a re-meeting after the tie parks
+fires as usual. `age_turns` is existing cohort state, so no new checkpoint field.
+
 **Only a live sighting counts.** `ContactsThisTurn::record` is the sight sweep's entry and marks the
 edge as a live sighting; an expedition's report goes through `record_report`, which refreshes the tie
 the same way but never marks it. A report can be about a band nowhere near the reader, so it is
