@@ -60,6 +60,10 @@ const FIRST_GRADE_BAND_INDEX: usize = 0;
 /// [`RecipeDef::label`]; at it, a label is rejected — see `RecipesConfig::validate_labels`.
 const SOLE_RECIPE: usize = 1;
 
+/// **The fewest crafters one item can be worked by.** An item nobody can work can never be made, so
+/// [`RecipeDef::crafters_per_item`] below this is rejected.
+const MIN_CRAFTERS_PER_ITEM: u32 = 1;
+
 /// Bench dials shared by every recipe.
 #[derive(Debug, Clone, Copy, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -211,6 +215,13 @@ pub struct RecipeDef {
     pub craft: String,
     /// **Worker-turns for one output pass** at `progress_per_worker_turn × 1.0`.
     pub work: f32,
+    /// **How many crafters can work ONE item of this recipe at once.** An order may take this many
+    /// per item it still has to make, so a batch works its items side by side and twenty crafters
+    /// never land on one spear; more crafters only help when there are more items or orders. It is
+    /// a property of the object (a spear is one person's work, a sled or a loom takes two), not of
+    /// the band. Spec: `docs/plan_labor_at_scale.md` -> "The bench: several orders at once, each
+    /// with a crafter limit". Read by the bench's staffing (#873).
+    pub crafters_per_item: u32,
     /// **The crafts a faction must already know to put this on a bench.** Empty on an ordinary kit
     /// recipe — you can craft a sled by hand from day one, and doing it is what teaches Tanning.
     ///
@@ -564,6 +575,11 @@ impl RecipesConfig {
                              would complete on the turn it is chosen, forever"
                         .to_string(),
                 value: recipe.work.to_string(),
+            });
+        }
+        if recipe.crafters_per_item < MIN_CRAFTERS_PER_ITEM {
+            return Err(RecipesConfigError::ZeroCraftersPerItem {
+                recipe: id.to_string(),
             });
         }
         if recipe.inputs.is_empty() {
@@ -1143,6 +1159,10 @@ pub enum RecipesConfigError {
     UnknownMaterial { recipe: String, material: String },
     #[error("recipe '{recipe}' names '{item}', which is not an equipment item")]
     UnknownItem { recipe: String, item: String },
+    #[error(
+        "recipe '{recipe}' has crafters_per_item 0 - an item nobody can work can never be made"
+    )]
+    ZeroCraftersPerItem { recipe: String },
 }
 
 impl ConfigLoadError for RecipesConfigError {
@@ -1420,6 +1440,7 @@ mod tests {
                     "spears": {
                         "craft": "bone_working",
                         "work": 6.0,
+                        "crafters_per_item": 1,
                         "inputs": [ { "material": "bone", "amount": 1.0, "reads": "density" } ],
                         "outputs": [
                             { "equipment": "spears", "amount": 1.0, "tier": "plain" }
@@ -1482,6 +1503,43 @@ mod tests {
             matches!(&err, RecipesConfigError::Invalid { field, .. } if field == "recipes.sled.work"),
             "got {err}"
         );
+    }
+
+    #[test]
+    fn validate_rejects_zero_crafters_per_item() {
+        let err =
+            mutated(|json| json["recipes"]["sled"]["crafters_per_item"] = serde_json::json!(0));
+        assert!(
+            matches!(&err, RecipesConfigError::ZeroCraftersPerItem { recipe } if recipe == "sled"),
+            "got {err}"
+        );
+    }
+
+    #[test]
+    fn a_missing_crafters_per_item_fails_to_parse() {
+        let err = mutated(|json| {
+            json["recipes"]["sled"]
+                .as_object_mut()
+                .expect("sled is an object")
+                .remove("crafters_per_item");
+        });
+        assert!(matches!(err, RecipesConfigError::Parse(_)), "got {err}");
+    }
+
+    #[test]
+    fn shipped_recipes_read_their_crafters_per_item() {
+        let book = builtin();
+        assert!(
+            book.recipes
+                .values()
+                .all(|r| r.crafters_per_item >= MIN_CRAFTERS_PER_ITEM),
+            "every shipped recipe names at least one crafter"
+        );
+        // Pinned values so a field defaulted everywhere cannot pass.
+        assert_eq!(book.recipes["sled"].crafters_per_item, 2);
+        assert_eq!(book.recipes["loom"].crafters_per_item, 2);
+        assert_eq!(book.recipes["spears"].crafters_per_item, 1);
+        assert_eq!(book.recipes["spears_flint"].crafters_per_item, 1);
     }
 
     #[test]
@@ -2078,6 +2136,7 @@ mod tests {
                     "bronze": {
                         "craft": "smithing",
                         "work": 4.0,
+                        "crafters_per_item": 1,
                         "inputs": [
                             { "material": "metal", "variety": "copper", "amount": 9.0 }
                         ],

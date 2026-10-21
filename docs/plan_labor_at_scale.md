@@ -139,7 +139,10 @@ the Crafters stepper is retired like the Builders one.
 - **A recipe caps its crafters per item.** Each recipe states how many hands can work one item at once
   (a spear 1, a sled 2 — a per-recipe config value). An order may take that many per item it still
   has to make, so a batch (*Baskets ×2*) works its items side by side, and twenty crafters never land
-  on one spear. Issue #852 carries the recipe values.
+  on one spear. The value is each recipe's `crafters_per_item` in `core_sim/src/data/recipes.json`
+  (#852): 1 for a thing one person holds and shapes (spears, clubs, hoes, snares, the awl), 2 for a
+  thing a second pair of hands holds while the first lashes or weaves (the sled, baskets, hurdles, the
+  tanning frame, the loom, the road tool sets).
 - **Orders are staffed the way builds are.** One crafter on every workable order first, at any
   priority; then round-robin within High up to each order's cap, then Normal, then Low.
 - **Each order carries a priority**, and it ranks against sources on the one priority list. So a High
@@ -418,9 +421,8 @@ writing's miscount and the other ceilings.
 
 ## Open questions
 
-None open in this doc. The battle flow that decides who defends is `docs/plan_battles.md`'s; each
-recipe's crafter cap per item is #852's (crafting arc #840); whether a tile's cap also counts the
-people living on it is the settlement design's.
+None open in this doc. The battle flow that decides who defends is `docs/plan_battles.md`'s; whether
+a tile's cap also counts the people living on it is the settlement design's.
 
 ## Related
 
