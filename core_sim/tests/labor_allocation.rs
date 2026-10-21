@@ -1267,7 +1267,15 @@ fn assignment_sum_clamps_to_working_age() {
     let mut alloc = LaborAllocation::default();
     let available = 5;
 
-    // Forage 3 workers (fits).
+    // Warrior 3 workers (fits). A player-set crew; a sim-staffed row would not count against it.
+    let applied = alloc.set_assignment(LaborTarget::Warrior, 3, available, None);
+    assert_eq!(applied, 3);
+
+    // Scout 4 workers requested, but only 2 headroom left → clamped to 2.
+    let applied = alloc.set_assignment(LaborTarget::Scout, 4, available, None);
+    assert_eq!(applied, 2, "over-budget assignment clamps to free headroom");
+    assert_eq!(alloc.assigned_total(), available);
+    alloc.set_assignment(LaborTarget::Warrior, 0, available, None);
     let applied = alloc.set_assignment(
         LaborTarget::Forage {
             tile: UVec2::new(1, 1),
@@ -1280,11 +1288,6 @@ fn assignment_sum_clamps_to_working_age() {
         None,
     );
     assert_eq!(applied, 3);
-
-    // Scout 4 workers requested, but only 2 headroom left → clamped to 2.
-    let applied = alloc.set_assignment(LaborTarget::Scout, 4, available, None);
-    assert_eq!(applied, 2, "over-budget assignment clamps to free headroom");
-    assert_eq!(alloc.assigned_total(), available);
 
     // Zero-worker unassign removes the forage source.
     let applied = alloc.set_assignment(

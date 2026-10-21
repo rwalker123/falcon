@@ -8475,3 +8475,30 @@ A herd source takes the same line (`Lothari is taming this`): `has_owner`/`owner
 
 The sheet's foreign line names the builder band the same way: `Netherford, Lothari is cultivating this`,
 falling back to `Lothari is cultivating this` when no builder is named or the roster lacks it.
+
+## PLAYER-SET CREWS CEILING AT `orderable_hands`, NOT `effective_idle`
+
+The sim staffs sources from what the player's own orders leave, so a sim-staffed crew never blocks a
+player-set one. `HudBandLaborState.orderable_hands(band)` = `effective_idle` + Σ crews on the staffed
+rows (`staffed_crews_total`: `STAFFED_KINDS`, a `move_with_herd` hunt row excluded) is the ONE sum behind
+every such ceiling. A band reading "0 idle of 18" with every hand on staffed rows still has 18 orderable.
+
+- **Routed through it:** the bench crafters ceiling (`benchable_workers` = `orderable_hands` plus the bench's
+  own crew, counted once), the Scout and Warrior role cards, and the Builders pool card `+` gate
+  (`BandPanelController._build_workforce_block`, `_build_pool_line`), **and the party verbs**: the
+  verb gates (`_verb_blocked_reasons`, the bar faces), the compose sheet's party ceiling
+  (`_build_compose_sheet`'s `idle` argument, which also feeds the Deny short-handed test and its
+  "has only N to send" sentence) and the station link (`ConnectionsRoster`). The sim clamps `send_scout`,
+  `send_expedition`, `send_denial_raid`, `station_expedition` and `send_trade_expedition` to
+  pool − player-set crews − bench − walkers and re-staffs at once, so a staffed crew never blocks a party.
+- **Left on `effective_idle`:** the idle displays (WORKFORCE head, `FactionRollup`), `hunt_muster_out`
+  and the source-crew pools (`source_crew_pool_*`, including a hunting-by-need row's crew). A staffed
+  row's own display is unchanged.
+- **Fixtures:** `tile_panel.gd` (drawer verbs enabled on a forage-staffed band, greyed on a builders-spent
+  one) and `band_panel_preview.gd` (bar faces both ways; the deep denial herd needs 17, past the band's
+  16 hands).
+- **No local double count:** staffed rows' `workers` are the wire's; a player-set edit's pending crew is
+  already inside `effective_idle`'s subtraction, so raising a stepper lowers `orderable_hands` by exactly
+  that and the staffed rows shrink on the next snapshot.
+- Fixtures: `crafting_bench.gd` `_staffed_hands_state` (all hands on two hunt rows: crafters `+` enabled and
+  sends `bench_crew`); `band_panel_preview.gd` builders-segment state (idle 0: Scout `+` enabled).

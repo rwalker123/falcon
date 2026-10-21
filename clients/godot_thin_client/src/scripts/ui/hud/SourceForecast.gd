@@ -3052,7 +3052,7 @@ const DENIAL_PARTY_NEEDED_NONE := 0
 const DENIAL_SHORT_HANDED_BUTTON := "Not Enough Hunters"
 # …and the reason beneath it, in the sheet's own hint register, stating BOTH numbers: what the herd
 # requires and what the band actually has. The stepper above it is already sitting at the second.
-const DENIAL_SHORT_HANDED_REASON_FORMAT := "%s needs %d hunters and this band has only %d idle. Free up workers before this raid can break the herd."
+const DENIAL_SHORT_HANDED_REASON_FORMAT := "%s needs %d hunters and this band has only %d to send. Free up workers before this raid can break the herd."
 # **`0` MEANS "NOT WITHIN THE HORIZON" ON THAT END, never "immediately".** `Low` is the FEWEST turns
 # — the optimistic draw, where more animals stay and more strikes land — so a positive `low` beside a
 # `0` `high` reads "only on a good run".

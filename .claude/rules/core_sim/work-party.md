@@ -61,6 +61,17 @@ Each step re-reads the row's want against the live shelf and armed count, so a r
 one more head would pass its target; keepers are dealt round-robin before that group's kitted hold
 heads, and pass 3 deals the group's unspent-kit heads before its bare heads.
 
+**Sim-staffed crews never block a player-set order.** They are what is left after the player's own
+orders, so every ceiling a player-set crew clamps against counts them as available:
+`BandWorkforce::benchable` (the bench crew and `bench_enqueue`) is `pool − (assigned − sim_staffed) −
+walking_home`, and `LaborAllocation::set_assignment` nets only the other **player-set** rows (Scout,
+Warrior, Builders, a need row) out of the headroom. `assignable` (the pool less the bench and the
+walkers) and the published `idleWorkers` (what pass 3 left over) keep their meaning. `bench_crew`,
+`bench_enqueue` and every `assign_labor` restaff the band, so the sources give up the hands at once.
+The party verbs (`send_scout`, `send_expedition`, `send_denial_raid`, `station_expedition`,
+`send_trade_expedition`) draw from `BandWorkforce::partyable` (pool less the player-set crews, the
+bench and the walkers) and restaff the band after the launch. A hunting-by-need muster is unchanged.
+
 **Three passes**, each capped by the row's Max:
 
 | pass | what it hands out |

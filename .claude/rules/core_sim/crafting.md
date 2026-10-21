@@ -646,7 +646,7 @@ components and answers the three questions anyone asks:
 |---|---|---|
 | `idle()` | `pool − assigned − benched` | **the published `PopulationCohortState.idleWorkers`**, and every "n idle of m" readout downstream of it |
 | `assignable()` | `pool − benched` | `handle_assign_labor`, as the ceiling `LaborAllocation::set_assignment` clamps against (that helper nets out the other assignments itself) |
-| `benchable()` | `pool − assigned` | `bench_enqueue` / `bench_crew` — a band's own crew stays put through every queue edit, so it is idle **plus** the crew already there |
+| `benchable()` | `pool − (assigned − sim_staffed) − walking_home` | `bench_enqueue` / `bench_crew` — the bench crew is not netted (it stays put through every queue edit), and the sim-staffed source rows count as available: they are what is left after the player's orders, so they never block one and give the hands up at once (both commands restaff the band) |
 
 **The bench is netted out exactly once, and that is the point.** It was subtracted at each command
 site and *not* at the publish site, so a band with four hands at the bench published them as idle:

@@ -1567,15 +1567,18 @@ func _build_workforce_block(band: Dictionary) -> VBoxContainer:
     # row gives each card ~82px, which clips the kit face and the role name alike. The pairing is
     # the split the roles already have — the two EXPEDITIONARY roles above, the two KEEPING roles
     # below — so the second row reads as its own family rather than as an overflow of the first.
+    # A role card's `+` gates on the hands the player can still ORDER, not on the idle count (sim-staffed
+    # crews never block a player-set one — `HudBandLaborState.orderable_hands`).
+    var orderable := _band_labor.orderable_hands(band)
     var scout_row := _build_role_card_row()
-    scout_row.add_child(_build_role_card(band, HudWorkVocab.ROLE_NAME_SCOUT, HudWorkVocab.SCOUT_ROLE_HINT, HudConst.LABOR_KIND_SCOUT, scout_eff, idle))
+    scout_row.add_child(_build_role_card(band, HudWorkVocab.ROLE_NAME_SCOUT, HudWorkVocab.SCOUT_ROLE_HINT, HudConst.LABOR_KIND_SCOUT, scout_eff, orderable))
     # A visible predator within raid range turns the Warrior card's static hint into a live crimson
     # alert naming the on-guard count — the guarding role is only legible when the threat it answers is.
     var warrior_threat := _band_predator_threat_present(band)
     var warrior_hint := HudWorkVocab.WARRIOR_ROLE_HINT
     if warrior_threat:
         warrior_hint = HudWorkVocab.WARRIOR_THREAT_ALERT_FORMAT % int(warrior_eff.get("workers", 0))
-    scout_row.add_child(_build_role_card(band, HudWorkVocab.ROLE_NAME_WARRIOR, warrior_hint, HudConst.LABOR_KIND_WARRIOR, warrior_eff, idle, warrior_threat))
+    scout_row.add_child(_build_role_card(band, HudWorkVocab.ROLE_NAME_WARRIOR, warrior_hint, HudConst.LABOR_KIND_WARRIOR, warrior_eff, orderable, warrior_threat))
     block.add_child(scout_row)
     return block
 
@@ -2737,7 +2740,7 @@ func _build_pool_line(band: Dictionary, role_name: String, hint: String, kind: S
             _band_labor.pending_key(kind, -1, -1, ""), {})
         line.add_child(HudWidgets.build_crew_number(workers))
     else:
-        HudWidgets.add_stepper_controls(line, workers, _band_labor.effective_idle(band) > 0,
+        HudWidgets.add_stepper_controls(line, workers, _band_labor.orderable_hands(band) > 0,
             func(n: int) -> void: _emit_assign_labor(
                 band, kind, n, -1, -1, "", SourceForecast.DEFAULT_HARVEST_FLOOR,
                 "", SourceForecast.IMPROVEMENT_NONE, commanded_kit_id), true, {},
@@ -10643,7 +10646,7 @@ func _on_station_link_pressed(band_id: int, host_id: int) -> void:
     var band := _band_labor.player_band_by_band_id(band_id)
     if band.is_empty() or host_id == HudConst.NO_BAND_ID:
         return
-    if _band_labor.effective_idle(band) <= 0:
+    if _band_labor.orderable_hands(band) <= 0:
         return
     _reset_verb_state()
     _targeting.disarm_verb_picks()
@@ -11700,7 +11703,7 @@ func verb_block_reasons(mission: String, band: Dictionary) -> PackedStringArray:
             if _split_worker_pool(band) <= 0:
                 reasons.append(HudComposeVocab.VERB_BLOCKED_SPLIT_NO_WORKERS)
         _:
-            if _band_labor.effective_idle(band) <= 0:
+            if _band_labor.orderable_hands(band) <= 0:
                 var verb := HudComposeVocab.verb_for_mission(mission)
                 reasons.append(HudComposeVocab.VERB_BLOCKED_NO_IDLE_FORMAT
                     % String(verb.get(HudComposeVocab.VERB_KEY_ACTION, mission)))
@@ -11825,7 +11828,7 @@ func build_verb_form() -> Control:
         verb_name = HudDealingsVocab.TREATY_SHEET_NAME
     form.add_child(HudWidgets.alloc_section_label(HudComposeVocab.VERB_FORM_HEADER_FORMAT % [
         String(verb.get(HudComposeVocab.VERB_KEY_TOOLTIP, verb_name)), HudFormat.band_name(band)]))
-    form.add_child(_build_compose_sheet(band, _band_labor.effective_idle(band)))
+    form.add_child(_build_compose_sheet(band, _band_labor.orderable_hands(band)))
     _verb_form_node = form
     # **THE SHEET SCROLLS INSIDE THE DRAWER, so it keeps a gutter the scrollbar's width on its right**,
     # reserved unconditionally (as `StartingLoadoutPanel._scroll_gutter` does) so a sheet that grows

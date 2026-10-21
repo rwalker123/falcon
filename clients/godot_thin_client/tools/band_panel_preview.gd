@@ -219,9 +219,9 @@ const DENIAL_KILLS_ROW := [26, 42, 55, 66, 74, 82, 88, 94]
 ## turn rows are all `0`, the wire's "not within the horizon on that end".
 const DENIAL_REPELLED_KILLS_ROW := [3, 5, 7, 9, 10, 11, 12, 13]
 ## The party the sim quotes for the deep quarry (`denialPartyNeeded`): the smallest one whose kills
-## outpace the herd's regrowth — well past the reference band's three idle workers, so the Deny click
-## on it is the short-handed refusal.
-const DENIAL_DEEP_PARTY_NEEDED := 11
+## outpace the herd's regrowth — past ALL the reference band's sixteen hands (the ceiling is the hands the
+## player can still order, staffed rows included), so the Deny click on it is the short-handed refusal.
+const DENIAL_DEEP_PARTY_NEEDED := 17
 ## **THE REPORTED SHAPE — a bounded expectation, a bounded good run, and a BAD run that never
 ## finishes.** `high == 0` is the wire's "not within the horizon on that end", and no other denial
 ## fixture in this file stages it: every table above bounds all three, so the frames could not show
@@ -2167,6 +2167,20 @@ func _ready() -> void:
 	await _settle()
 	await _save("band_panel_no_idle")
 	_assert_verbs_gate_on_idle()
+	# ⛔ **THE SAME BAND WITH ITS HANDS ON A SIM-STAFFED ROW KEEPS THE EXPEDITION VERBS LIVE** — the sim
+	# re-staffs from what a party leaves, so a staffed crew never blocks a party.
+	var staffed_band := _band_fixture()
+	staffed_band["idle_workers"] = 0
+	staffed_band["labor_assignments"] = [
+		{"kind": "forage", "workers": 16, "workers_needed": 16, "floor": 0.5,
+			"target_x": 71, "target_y": 18, "actual_yield": 0.48, "sustainable_yield": 0.48},
+	]
+	_push_bands([staffed_band])
+	await _settle()
+	for id in [HudComposeVocab.VERB_SCOUT, HudComposeVocab.VERB_DENY, HudComposeVocab.VERB_TRADE]:
+		var staffed_button: Button = _panel._action_buttons.get(id)
+		_assert_band_panel("hands all on a staffed row: %s stays live on the bar" % String(id),
+			staffed_button != null and not staffed_button.disabled)
 
 	_assert_scroll_only_where_sanctioned()
 	_assert_zones_within_bounds()
@@ -13798,10 +13812,9 @@ func _many_sources_band_fixture() -> Dictionary:
 func _no_idle_band_fixture() -> Dictionary:
 	var band := _band_fixture()
 	band["idle_workers"] = 0
-	band["labor_assignments"] = [
-		{"kind": "forage", "workers": 16, "workers_needed": 16, "floor": 0.5,
-			"target_x": 71, "target_y": 18, "actual_yield": 0.48, "sustainable_yield": 0.48},
-	]
+	# Every hand on a PLAYER-SET row (the builders pool): hands on a sim-staffed row would still be
+	# orderable (asserted just below on the staffed fixture).
+	band["labor_assignments"] = [{"kind": "builders", "workers": 16}]
 	return band
 
 ## Pin the CANVAS (`content_scale_size`) as well as the window, and keep the two equal so the stretch
@@ -15116,7 +15129,7 @@ func _assert_denial_turn_clause_shapes() -> void:
 ## pick staying armed. Composed from the VOCABULARY.
 func _assert_denial_short_handed(herd: Dictionary) -> void:
 	var quarry := "Wild Boar"
-	var idle := _hud._band_labor.effective_idle(_hud._band_labor.panel_band())
+	var idle := _hud._band_labor.orderable_hands(_hud._band_labor.panel_band())
 	_assert_band_panel("the band can field %d of the %d hunters this herd needs — the precondition"
 			% [idle, DENIAL_DEEP_PARTY_NEEDED],
 		idle < DENIAL_DEEP_PARTY_NEEDED)
@@ -15260,7 +15273,7 @@ func _assert_denial_sheet_viable() -> void:
 ## Send: a rule that disabled every raid would pass the disable claim alone.
 func _assert_denial_sheet_short_handed() -> void:
 	var quarry := "Wild Boar"
-	var idle := _hud._band_labor.effective_idle(_hud._band_labor.panel_band())
+	var idle := _hud._band_labor.orderable_hands(_hud._band_labor.panel_band())
 	_assert_band_panel("the band can field %d of the %d hunters this herd needs — the precondition"
 			% [idle, DENIAL_DEEP_PARTY_NEEDED],
 		idle < DENIAL_DEEP_PARTY_NEEDED)
@@ -16772,6 +16785,16 @@ func _render_builders_segment_state() -> void:
 			BUILDERS_SEGMENT_CREW,
 			int(segments.get(HudWorkVocab.WORKFORCE_KEY_BUILD, -1))],
 		int(segments.get(HudWorkVocab.WORKFORCE_KEY_BUILD, -1)) == BUILDERS_SEGMENT_CREW)
+	# ⛔ **SIM-STAFFED CREWS NEVER BLOCK A PLAYER-SET ONE.** Every hand is spent (idle 0), and the
+	# rows holding them include forage and hunt rows the sim staffs, so the Scout `+` is live anyway:
+	# its ceiling is `orderable_hands`, not `effective_idle`.
+	var scout_card := _find_role_card(HudWorkVocab.ROLE_NAME_SCOUT)
+	var scout_plus := _find_button_with_text(scout_card, HudWorkVocab.STEPPER_PLUS_FACE) \
+		if scout_card != null else null
+	_assert_band_panel(
+		"band_panel_builders_segment: with idle 0 and hands on staffed rows, the Scout `+` is enabled",
+		scout_plus != null and not scout_plus.disabled
+			and _hud._band_labor.orderable_hands(band) > _hud._band_labor.effective_idle(band))
 	# …and the NEGATIVE that keeps the segment a reading rather than livery: the reference band has no
 	# builders and must grow no such segment, the bar's own render-only-when-non-zero rule.
 	_push_bands([_band_fixture()])

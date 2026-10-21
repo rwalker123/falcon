@@ -1954,13 +1954,13 @@ fn cutting_a_far_crew_walks_the_dropped_hands_home() {
         "from the source, over the whole walk"
     );
     assert_eq!(workforce(&app).assignable(), CREW - (CREW - KEPT));
-    let assignable = workforce(&app).assignable();
-    let given = app
-        .world
-        .get_mut::<LaborAllocation>(band)
-        .expect("the band keeps its allocation")
-        .set_assignment(LaborTarget::Scout, CREW - KEPT, assignable, None);
-    assert_eq!(given, 0, "the walkers cannot be given to another row");
+    // The ceiling a player-set order clamps against excludes the walkers: only the hands still with
+    // the band (the sim-staffed hunt gives up its own) can be ordered elsewhere.
+    assert_eq!(
+        workforce(&app).assignable(),
+        KEPT,
+        "the walkers are not the band's to give"
+    );
     for turn in 1..=WALK {
         resolve_a_turn(&mut app);
         let now = published_homeward(&app);
@@ -2689,8 +2689,8 @@ fn a_herd_back_inside_the_apron_does_not_count_its_walkers_twice() {
         None,
     );
     assert!(
-        workforce.benchable().min(1) == 1 && workforce.benchable() == RAY_IDLE,
-        "a bench crew of one is within what the bench clamps against: idle {}, benchable {}",
+        workforce.benchable().min(1) == 1 && workforce.benchable() == RAY_POOL - RAY_ROW,
+        "the sim-staffed hunt is benchable, the player-set Scout is not: idle {}, benchable {}",
         read.band_idle,
         workforce.benchable()
     );

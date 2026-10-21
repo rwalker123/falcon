@@ -401,6 +401,20 @@ left `None` too, because the field is **retired** —
 *"a labor assignment carries a `floor`, not a stance … the server ignores it"*
 (`CommandPayload::AssignLabor::policy`), so the balanced take is the default floor.
 
+**Only a NEW source is an `assign_labor`** (`Food::open`, `Food::holds_row`). A row the band already
+holds is staffed by the sim from the pool whatever count or floor-less order is sent, so a rule's
+`assign` onto a held row is dropped from its commands: *negative income*'s dealt hands, the single
+best source, a row emptied onto a source, *feed while moving*, *spare hands into hunts* and *hold the
+ground*'s raise all go through `open`. The hands dealt onto held rows still price the change (the pool
+they leave is real), and the donor side stays real - `stop_labor` for an emptied row, `builders <n>`
+for a pool cut - so a candidate whose commands are all dropped is discarded (`reassignments` retains
+only candidates with a command), and *hold the ground* answers nothing when the sim already keeps the
+row first. Idle hands beside rows at their floor therefore produce no *negative income* order; they
+are *draw down to survive*'s case, which now also considers a forage row the sim staffed with nobody
+while the band has idle hands (`workers == 0 && idle_workers > 0`), pricing it at the idle crew, and
+lowers its floor. The no-op "N idle hands -> forage X" order used to win arbitration every turn
+(score about 0.7 against about 0.08) and starved the drawdown on bench seed 3.
+
 **No kit, no hunt.** `equipment.json`: *"A SPAWNING BAND OWNS NO EQUIPMENT AT ALL … HUNTING YIELDS
 NOTHING AT ANY CREW SIZE until a spear is crafted"*; a seat that sends no loadout plays bare-handed
 (the opening window closes with nothing applied, `starting_loadout::close_opening_window`), which

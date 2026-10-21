@@ -1766,7 +1766,31 @@ func bench_workers(band: Dictionary) -> int:
 ## between `BandWorkforce::idle()` and `benchable()`, and capping the stepper at `effective_idle`
 ## would pin it to the crew already on it.
 func benchable_workers(band: Dictionary) -> int:
-	return effective_idle(band) + bench_workers(band)
+	return orderable_hands(band) + bench_workers(band)
+
+## **THE HANDS THE PLAYER CAN STILL ORDER ONTO A PLAYER-SET CREW — the ONE sum every such ceiling
+## reads** (bench crafters, Scout, Warrior, Builders, a party's crew). Sim-staffed crews are what is
+## left AFTER the player's own orders, so they never block one: the ceiling is `effective_idle` plus the
+## crews standing on the staffed rows (`STAFFED_KINDS`, a hunting-by-need row excluded as its count is
+## the player's), which the sim re-staffs from whatever remains. With every hand on a staffed row
+## `effective_idle` is 0 and a ceiling built on it alone pins every stepper at zero.
+##
+## **NO DOUBLE COUNT**: the staffed rows' `workers` are the wire's (a staffed row carries no pending
+## crew), and a player-set edit's own pending crew sits in `effective_idle`'s subtraction, so raising a
+## stepper lowers this by exactly what it raised and the staffed rows shrink on the next snapshot,
+## never locally. A staffed row's OWN display is untouched — it still reads `workers`.
+func orderable_hands(band: Dictionary) -> int:
+	return effective_idle(band) + staffed_crews_total(band)
+
+## Σ crews on the sim-staffed rows (`is_staffed_row`), read off the same merged map `effective_idle` nets.
+func staffed_crews_total(band: Dictionary) -> int:
+	var total := 0
+	var merged := effective_worker_map(band)
+	for key in merged:
+		var row: Dictionary = merged[key]
+		if is_staffed_row(String(row.get("kind", "")), bool(row.get("move_with_herd", false))):
+			total += staffed_total(row)
+	return total
 
 ## **DOES THIS BAND HOLD A ROW ON THIS SOURCE?** (#871) - pending-aware, and the test `Work` and the
 ## compose sheets use for "the band works it". A staffed row can read a crew of ZERO (nobody free, or the

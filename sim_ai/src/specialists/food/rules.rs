@@ -766,6 +766,21 @@ impl Food {
         sources: &[Source],
         budget: u32,
     ) -> Vec<Candidate> {
+        // A candidate with no command to send is not a change (#871): the hands it would "place" on
+        // rows the band holds are staffed by the sim whatever the AI says.
+        let mut out = self.reassignments_priced(view, memory, band, sources, budget);
+        out.retain(|candidate| !candidate.commands.is_empty());
+        out
+    }
+
+    fn reassignments_priced(
+        &self,
+        view: &SeatView,
+        memory: &SeatMemory,
+        band: &PopulationCohortState,
+        sources: &[Source],
+        budget: u32,
+    ) -> Vec<Candidate> {
         let mut out = Vec::new();
         let idle = band.idle_workers.min(budget);
         let released = self.pool_releases(view, band);
@@ -802,6 +817,8 @@ impl Food {
                 },
                 &improves,
             );
+            // The hands dealt onto a row the band holds are staffed by the sim whatever is sent: they
+            // price the change (the pool they leave is real) but only a NEW source is a command.
             let dealt: u32 = sites.iter().map(DealtSite::hands).sum();
             if dealt > 0 {
                 let placed_hands = self.draw(
@@ -819,7 +836,7 @@ impl Food {
                 let mut placed = Vec::new();
                 for site in &sites {
                     let key = SourceKey::Patch(site.tile);
-                    commands.push(self.assign(
+                    commands.extend(self.open(
                         band,
                         &key,
                         Self::workers_on(band, &key) + site.hands(),
@@ -888,7 +905,7 @@ impl Food {
                 idle,
             );
             let mut commands = self.reduction_commands(band, &sent);
-            commands.push(self.assign(band, &best.key, existing + sent.hands));
+            commands.extend(self.open(band, &best.key, existing + sent.hands));
             out.push(Candidate {
                 commands,
                 hands: sent.hands,
@@ -973,11 +990,7 @@ impl Food {
                     commands: self
                         .release(band, &low_key, row.workers - leaving)
                         .into_iter()
-                        .chain(std::iter::once(self.assign(
-                            band,
-                            &next.key,
-                            existing + placed,
-                        )))
+                        .chain(self.open(band, &next.key, existing + placed))
                         .collect(),
                     hands: leaving,
                     change,
@@ -1023,7 +1036,7 @@ impl Food {
                 {
                     let mut commands = self.reduction_commands(band, &free);
                     commands.extend(self.release(band, &low_key, row.workers - moved));
-                    commands.push(self.assign(band, &best.key, existing + both));
+                    commands.extend(self.open(band, &best.key, existing + both));
                     out.push(Candidate {
                         commands,
                         hands: both,
@@ -1244,7 +1257,10 @@ impl Food {
         let (drawn, source, after, progress, change) = best?;
         let existing = Self::workers_on(band, &source.key);
         let mut commands = self.reduction_commands(band, &drawn);
-        commands.push(self.assign(band, &source.key, existing + drawn.hands));
+        commands.extend(self.open(band, &source.key, existing + drawn.hands));
+        if commands.is_empty() {
+            return None;
+        }
         let proposal = Proposal {
             cost: Cost::claimed(drawn.hands, band.band_id, &commands),
             commands,
@@ -1677,7 +1693,10 @@ impl Food {
         let (drawn, herd, projection, change) = best?;
         let existing = Self::workers_on(band, &herd.key);
         let mut commands = self.reduction_commands(band, &drawn);
-        commands.push(self.assign(band, &herd.key, existing + drawn.hands));
+        commands.extend(self.open(band, &herd.key, existing + drawn.hands));
+        if commands.is_empty() {
+            return None;
+        }
         let proposal = Proposal {
             cost: Cost::claimed(drawn.hands, band.band_id, &commands),
             commands,
@@ -2596,7 +2615,12 @@ impl Food {
                 continue;
             }
             to_hand_out -= given;
-            commands.push(self.assign(band, &key, row.workers + given));
+            // A kept row is a held row: the sim staffs its keepers first, so the only command that
+            // frees hands for it is the draw's own release (#871).
+            commands.extend(self.open(band, &key, row.workers + given));
+        }
+        if commands.is_empty() {
+            return None;
         }
         let flat = Reassignment {
             income_lost: drawn.income_lost,
@@ -2638,11 +2662,12 @@ impl Food {
     /// floor's series comes in ([`floor_income`]).
     fn floor_change(
         row: &LaborAssignmentState,
+        crew: u32,
         patch: &ForagePatchState,
         floor: f32,
         horizon: u32,
     ) -> (Change, Option<u32>) {
-        let income = floor_income(&Self::patch_book(patch, row.workers), floor, horizon);
+        let income = floor_income(&Self::patch_book(patch, crew), floor, horizon);
         (
             Change::Series {
                 income_lost: row.actual_yield,
@@ -2704,12 +2729,21 @@ impl Food {
         let rows: Vec<(&LaborAssignmentState, Tile, &ForagePatchState)> = band
             .labor_assignments
             .iter()
-            .filter(|row| row.kind == ROLE_FORAGE && row.workers > 0)
+            // A forage row the sim staffed with nobody while the band has idle hands is the row whose
+            // floor is the limit (#871): lowering it is what puts those hands to work.
+            .filter(|row| row.kind == ROLE_FORAGE && (row.workers > 0 || band.idle_workers > 0))
             .filter_map(|row| {
                 let tile = Tile::new(row.target_x, row.target_y);
                 workable_patch_at(view, tile).map(|patch| (row, tile, patch))
             })
             .collect();
+        let crew_of = |row: &LaborAssignmentState| {
+            if row.workers > 0 {
+                row.workers
+            } else {
+                band.idle_workers
+            }
+        };
         let with = |change: Change| {
             let mut changes = in_force.clone();
             changes.push(change);
@@ -2725,7 +2759,8 @@ impl Food {
                 .iter()
                 .filter(|(row, _, _)| row.floor < BEST_FLOOR - FLOOR_TOLERANCE)
                 .find_map(|(row, tile, patch)| {
-                    let (change, _) = Self::floor_change(row, patch, BEST_FLOOR, horizon);
+                    let (change, _) =
+                        Self::floor_change(row, crew_of(row), patch, BEST_FLOOR, horizon);
                     let after = with(change);
                     survives(&after).then(|| {
                         let commands = vec![self.assign_at_floor(band, *tile, row.workers, None)];
@@ -2761,7 +2796,7 @@ impl Food {
                 .copied()
                 .filter(|floor| *floor < row.floor - FLOOR_TOLERANCE)
             {
-                let (change, spent) = Self::floor_change(row, patch, floor, horizon);
+                let (change, spent) = Self::floor_change(row, crew_of(row), patch, floor, horizon);
                 let after = with(change);
                 if !worth_a_turn(&after) {
                     continue;
@@ -3362,7 +3397,7 @@ mod tests {
     /// §2.2): the herd's own row gets the hands its keeping is missing, out of the idle hands, and
     /// the hold is a standing bill because the herd is tamed.
     #[test]
-    fn a_tamed_herd_short_of_upkeep_gets_its_missing_hands_on_its_hunt_row() {
+    fn a_tamed_herd_short_of_upkeep_is_kept_by_the_sim_and_the_hold_sends_nothing() {
         /// The hunters on the herd's row, all of them keeping.
         const HUNTERS: u32 = 2;
         /// The bill in whole bare keepers.
@@ -3390,27 +3425,19 @@ mod tests {
             herd.upkeep_workers_needed = NEEDED;
             herd.upkeep_hands = HUNTERS as f32;
         });
-        let proposal = food()
-            .hold_the_ground(
-                &view,
-                &plan_with_food_share(1.0),
-                &memory(),
-                own_band(&view),
-                &Reassignment::NONE,
-            )
-            .expect("the herd's upkeep is paid");
-        assert!(proposal.standing, "a tamed herd's hold is a bill");
+        // The sim staffs a row's keepers first from the pool, so with idle hands to cover the
+        // missing two there is nothing to send (#871).
         assert!(
-            proposal.reason.starts_with(&format!(
-                "hold the ground: 2 hands keeping {HERD_ID} short 2.00 ["
-            )),
-            "{}",
-            proposal.reason
-        );
-        assert_eq!(
-            assigned_to(&proposal.commands[0]),
-            (ROLE_HUNT.to_owned(), NO_MAX, None, Some(HERD_ID.to_owned())),
-            "the herd's own row is raised by the two missing hands"
+            food()
+                .hold_the_ground(
+                    &view,
+                    &plan_with_food_share(1.0),
+                    &memory(),
+                    own_band(&view),
+                    &Reassignment::NONE,
+                )
+                .is_none(),
+            "a held row is kept by the sim: the hold sends nothing"
         );
     }
 
@@ -3419,7 +3446,7 @@ mod tests {
     /// its keeping is missing (`docs/plan_site_crews.md` §2.1), out of the band's two idle hands;
     /// with nothing short, nothing is proposed.
     #[test]
-    fn an_owned_patch_short_of_upkeep_gets_its_missing_hands_on_its_own_row() {
+    fn an_owned_patch_short_of_upkeep_with_idle_hands_is_kept_by_the_sim() {
         let held = |shortfall: f32| {
             a_view_with(|view| {
                 let band = &mut view.snapshot.populations[0];
@@ -3446,7 +3473,8 @@ mod tests {
             })
         };
         let view = held(1.92);
-        let proposal = food()
+        // Idle hands cover the missing keepers and the sim staffs them first: nothing to send.
+        assert!(food()
             .hold_the_ground(
                 &view,
                 &plan_with_food_share(1.0),
@@ -3454,29 +3482,7 @@ mod tests {
                 own_band(&view),
                 &Reassignment::NONE,
             )
-            .expect("the upkeep is paid");
-        assert_eq!(proposal.intent, format!("food:hold:{BAND}"));
-        assert!(proposal.standing, "a completed rung's hold is a bill");
-        assert!(
-            proposal
-                .reason
-                .starts_with("hold the ground: 2 hands keeping 2,3 short 1.92 ["),
-            "{}",
-            proposal.reason
-        );
-        assert_eq!(
-            proposal.commands.len(),
-            1,
-            "the idle hands go straight onto the row: {:?}",
-            proposal.commands
-        );
-        assert_eq!(
-            assigned_to(&proposal.commands[0]),
-            (ROLE_FORAGE.to_owned(), NO_MAX, Some(RICH_PATCH), None),
-            "the patch's own row is raised by the two missing hands"
-        );
-        assert_eq!(proposal.cost.workers, 2);
-        assert!(proposal.score > 0.0);
+            .is_none());
         let paid = held(0.0);
         assert!(food()
             .hold_the_ground(
@@ -3495,7 +3501,7 @@ mod tests {
     /// rich row's surplus, and names only the short patch. With one hand already keeping the near
     /// patch and the patch still short, it asks for one more rather than none.
     #[test]
-    fn each_short_patch_is_raised_on_its_own_row() {
+    fn each_short_patch_is_kept_by_the_sim_on_its_own_row() {
         let mut view = a_view_with(|view| {
             let band = &mut view.snapshot.populations[0];
             band.idle_workers = 0;
@@ -3532,7 +3538,9 @@ mod tests {
                 }
             }
         });
-        let proposal = food()
+        // The near patch's keeper is the sim's to staff (keepers come first), and the rich row's
+        // surplus is thinned by the sim too: nothing is sent for either (#871).
+        assert!(food()
             .hold_the_ground(
                 &view,
                 &plan_with_food_share(1.0),
@@ -3540,21 +3548,7 @@ mod tests {
                 own_band(&view),
                 &Reassignment::NONE,
             )
-            .expect("the near patch's bill");
-        assert_eq!(proposal.cost.workers, 1, "{}", proposal.reason);
-        assert!(
-            proposal
-                .reason
-                .starts_with("hold the ground: 1 hands keeping 4,2 short 0.96 ["),
-            "{}",
-            proposal.reason
-        );
-        assert_eq!(
-            assigned_to(proposal.commands.last().unwrap()),
-            (ROLE_FORAGE.to_owned(), NO_MAX, Some(NEAR_PATCH), None)
-        );
-        assert!(proposal.standing);
-        // One hand already keeping the near patch and the patch still short: one more hand.
+            .is_none());
         view.snapshot.populations[0].labor_assignments[1].workers = 1;
         for patch in &mut view.snapshot.forage_patches {
             if Tile::new(patch.x, patch.y) == NEAR_PATCH {
@@ -3562,7 +3556,7 @@ mod tests {
                 patch.upkeep_shortfall = 0.02;
             }
         }
-        let one_more = food()
+        assert!(food()
             .hold_the_ground(
                 &view,
                 &plan_with_food_share(1.0),
@@ -3570,12 +3564,7 @@ mod tests {
                 own_band(&view),
                 &Reassignment::NONE,
             )
-            .expect("one more hand");
-        assert_eq!(one_more.cost.workers, HOLD_MIN_HANDS);
-        assert_eq!(
-            assigned_to(one_more.commands.last().unwrap()),
-            (ROLE_FORAGE.to_owned(), NO_MAX, Some(NEAR_PATCH), None)
-        );
+            .is_none());
     }
 
     /// A take above a fresh patch's regrowth is the room above the floor being taken, not
@@ -3686,6 +3675,65 @@ mod tests {
                 }
             }
         })
+    }
+
+    /// **Idle hands beside a row the sim staffed with nobody are a floor problem, not an assignment
+    /// problem** (#871): the row stands at its floor, so the sim has nothing above it to put the
+    /// hands on. The action that changes that is lowering the floor - never a count on the row - and
+    /// *negative income* sends nothing, since every source in reach is a row the band holds.
+    #[test]
+    fn idle_hands_beside_a_row_at_its_floor_lower_the_floor_and_never_assign_a_count() {
+        const IDLE: u32 = 17;
+        let mut view = a_band_on_a_fresh_stand(2.0, BEST_FLOOR);
+        {
+            let band = &mut view.snapshot.populations[0];
+            band.idle_workers = IDLE;
+            band.labor_assignments[0].workers = 0;
+            band.labor_assignments[0].actual_yield = 0.0;
+        }
+        for patch in &mut view.snapshot.forage_patches {
+            if Tile::new(patch.x, patch.y) == RICH_PATCH {
+                patch.biomass = BEST_FLOOR * patch.carrying_capacity;
+            }
+        }
+        let build = Reassignment {
+            income_lost: 4.0,
+            income_gained: 6.0,
+            payoff_turn: 5,
+        };
+        let proposal = food()
+            .draw_down_to_survive(
+                &view,
+                &plan_with_food_share(1.0),
+                &memory(),
+                own_band(&view),
+                &[build],
+            )
+            .expect("the unstaffed row's floor is what the idle hands wait on");
+        assert!(
+            proposal
+                .reason
+                .starts_with("draw down to survive: forage 2,3 to floor"),
+            "{}",
+            proposal.reason
+        );
+        assert!(matches!(
+            &proposal.commands[0],
+            CommandPayload::AssignLabor { workers, floor: Some(_), .. } if *workers == NO_MAX
+        ));
+        // Every source in reach is held: nothing for *negative income* to open.
+        view.snapshot.herds.clear();
+        view.snapshot
+            .forage_patches
+            .retain(|patch| Tile::new(patch.x, patch.y) == RICH_PATCH);
+        assert!(food()
+            .negative_income(
+                &view,
+                &plan_with_food_share(1.0),
+                &memory(),
+                own_band(&view)
+            )
+            .is_none());
     }
 
     /// An upgrade in force takes 4 a turn off the book for five turns: with two in the larder the
@@ -4491,22 +4539,15 @@ mod tests {
                 ..hunt_row(6, 6.0, 6)
             },
         ];
-        let proposal = food()
-            .negative_income(
-                &view,
-                &plan_with_food_share(1.0),
-                &memory(),
-                own_band(&view),
-            )
-            .expect("the idle hands");
-        assert_eq!(
-            proposal.commands.len(),
-            1,
-            "no row is emptied: {:?}",
-            proposal.commands
+        let proposal = food().negative_income(
+            &view,
+            &plan_with_food_share(1.0),
+            &memory(),
+            own_band(&view),
         );
-        assert_eq!(assigned_to(&proposal.commands[0]).1, NO_MAX);
-        assert_eq!(proposal.cost.workers, 5);
+        // Every source in reach is a row the band holds, so the sim staffs the idle hands onto them
+        // whatever is sent: nothing is a change (#871).
+        assert!(proposal.is_none(), "{proposal:?}");
         // A row that really does pay more is still moved onto — and the idle hands go with it.
         let view = a_view_with(|view| {
             let band = &mut view.snapshot.populations[0];
@@ -5673,10 +5714,16 @@ mod tests {
             "{}",
             proposal.reason
         );
+        // The hunter's row is ended; the rich patch is a row the band holds, so the sim staffs it
+        // from the freed hand and nothing is sent for it (#871).
         assert_eq!(
-            assigned_to(proposal.commands.last().unwrap()),
-            (ROLE_FORAGE.to_owned(), NO_MAX, Some(RICH_PATCH), None)
+            stopped(proposal.commands.last().unwrap()),
+            (None, Some(HERD_ID.to_owned()))
         );
+        assert!(proposal
+            .commands
+            .iter()
+            .all(|command| matches!(command, CommandPayload::StopLabor { .. })));
     }
 
     /// **Seed 23's t45–t52 shuffle is held by the marginal test alone.** Two patches at their
@@ -5807,16 +5854,11 @@ mod tests {
             pool_lines(&proposal.commands),
             vec![(ROLE_BUILDERS.to_owned(), 0)]
         );
-        let rows_asked = proposal
-            .commands
-            .iter()
-            .filter(|command| matches!(command, CommandPayload::AssignLabor { role, .. } if role == ROLE_FORAGE))
-            .count();
-        assert!(
-            rows_asked > 0,
-            "the released hands land: {}",
-            proposal.reason
-        );
+        // The released hands return to the pool; the sim staffs the rows, so no row is sent a count.
+        assert!(proposal.commands.iter().all(|command| !matches!(
+            command,
+            CommandPayload::AssignLabor { role, workers, .. } if role == ROLE_FORAGE && *workers != NO_MAX
+        )));
     }
 
     /// **A blocked head idles the whole pool**: the queue's head names the rich patch and the
@@ -5942,9 +5984,9 @@ mod tests {
             "the spare row is ended first"
         );
         assert_eq!(
-            assigned_to(&proposal.commands[1]),
-            (ROLE_FORAGE.to_owned(), NO_MAX, Some(RICH_PATCH), None),
-            "and the tended row is asked for with no Max: the sim staffs the two keeping hands"
+            proposal.commands.len(),
+            1,
+            "the tended row is a held row: the sim staffs its keepers from the pool the end frees"
         );
     }
 

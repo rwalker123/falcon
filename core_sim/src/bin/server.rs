@@ -5749,8 +5749,10 @@ fn handle_assign_labor(
     };
     // **THE SNAPSHOT SHOWS THE NEW CREW THE MOMENT THE PLAYER ACTS** (#871): a staffed row's crew is
     // the sim's, so the order restaffs the band here instead of waiting for the turn.
+    // A player-set crew (Scout, Warrior, Builders) shrinks the pool the sim staffs from, so it
+    // restaffs too and the sources give up those hands at once.
+    restaff_and_reseed(app, band.entity);
     let applied = if target.is_staffed() {
-        restaff_and_reseed(app, band.entity);
         band_allocation_mut(app, band.entity).workers_on(&target)
     } else {
         applied
@@ -6060,7 +6062,10 @@ fn handle_send_scout(
     // **The band is the bound, and the only one** (`docs/plan_denial_raid.md` §3.1). The config's
     // party lever is a *sampling* bound on the pre-launch estimate tables, never a rule about what
     // may be sent: you cannot detach workers you do not have, and you may detach all the ones you do.
-    let max_party = available_workers(band_working);
+    // The hands the player's own orders (and the walkers) leave; the sim-staffed rows give theirs up.
+    let max_party = band_workforce(app, band.entity)
+        .partyable()
+        .min(available_workers(band_working));
     if party_workers < 1 || party_workers > max_party {
         emit_command_failure(
             app,
@@ -6230,6 +6235,8 @@ fn handle_send_scout(
             BandTravel::to(target),
         ))
         .id();
+    // The party's hands left the pool: the sources give them up in the next snapshot.
+    restaff_and_reseed(app, band.entity);
 
     let tick = app.world.resource::<SimulationTick>().0;
     push_band_event(
@@ -6315,7 +6322,10 @@ fn outfit_detached_party(
     };
     // **The band is the bound, and the only one** — see `handle_send_expedition`, and
     // `ExpeditionConfig::estimate_party_sizes` for the lever that used to also live here.
-    let max_party = available_workers(cohort.working);
+    // The hands the player's own orders (and the walkers) leave; the sim-staffed rows give theirs up.
+    let max_party = band_workforce(app, band.entity)
+        .partyable()
+        .min(available_workers(cohort.working));
     if party_workers < 1 || party_workers > max_party {
         emit_command_failure(
             app,
@@ -6753,6 +6763,8 @@ fn launch_party_from_band(
             BandTravel::to(orders.target),
         ))
         .id();
+    // The party's hands left the pool: the sources give them up in the next snapshot.
+    restaff_and_reseed(app, band.entity);
     Some(expedition_entity)
 }
 
@@ -9422,6 +9434,7 @@ fn handle_bench_enqueue(
         }
         bench.orders.len() - ONE_ORDER
     };
+    restaff_and_reseed(app, band.entity);
     let tick = app.world.resource::<SimulationTick>().0;
     let clamp_note = if applied < workers {
         format!(" (clamped from {workers} — the band has only {benchable} hands off other work)")
@@ -10062,6 +10075,8 @@ fn handle_bench_crew(
         bench.workers = applied;
         bench.head_recipe().unwrap_or_default().to_string()
     };
+    // The bench's crew leaves the pool the sim staffs from: sources give those hands up at once.
+    restaff_and_reseed(app, band.entity);
     let tick = app.world.resource::<SimulationTick>().0;
     let clamp_note = if applied < workers {
         format!(" (clamped from {workers} — the band has only {benchable} hands off other work)")
@@ -32025,6 +32040,121 @@ mod tests {
             work_wants(&app, band),
             "the wire carries the sim's figure"
         );
+    }
+
+    /// A band whose every hand the sim has staffed onto sources, and its entity.
+    fn fully_staffed_band(app: &mut bevy::prelude::App) -> (BandId, Entity) {
+        let band = band_with_an_open_loadout_window(app);
+        let (entity, patches) = band_entity_and_patches(app, band, 12);
+        for pos in &patches {
+            let mut registry = app.world.resource_mut::<ForageRegistry>();
+            let patch = registry.patch_mut(*pos).expect("a seeded patch");
+            patch.biomass = patch.carrying_capacity;
+        }
+        for patch in &patches {
+            forage_row(app, band, *patch, 0);
+        }
+        let staffed = staffed_hands(app, entity);
+        let pool = band_workforce(app, entity).pool;
+        assert_eq!(
+            staffed, pool,
+            "fixture: the sim staffed every hand onto a source"
+        );
+        (band, entity)
+    }
+
+    fn staffed_hands(app: &bevy::prelude::App, entity: Entity) -> u32 {
+        app.world
+            .get::<LaborAllocation>(entity)
+            .expect("the band's allocation")
+            .assignments
+            .iter()
+            .filter(|row| row.target.is_staffed())
+            .map(|row| row.workers)
+            .sum()
+    }
+
+    /// **SIM-STAFFED CREWS NEVER BLOCK A PLAYER ORDER**: with every hand on a source, a bench crew of
+    /// three applies three and the staffed rows give up three hands at once. A bench larger than the
+    /// pool still clamps to the pool.
+    #[test]
+    fn a_fully_staffed_band_can_still_staff_the_bench() {
+        const CREW: u32 = 3;
+        let mut app = build_world_app();
+        let (band, entity) = fully_staffed_band(&mut app);
+        let pool = band_workforce(&app, entity).pool;
+
+        handle_bench_crew(&mut app, FactionId(0), Some(band.0), CREW);
+        assert_eq!(app.world.get::<BandBench>(entity).unwrap().workers, CREW);
+        assert_eq!(staffed_hands(&app, entity), pool - CREW);
+
+        handle_bench_crew(&mut app, FactionId(0), Some(band.0), pool + 5);
+        assert_eq!(app.world.get::<BandBench>(entity).unwrap().workers, pool);
+        assert_eq!(staffed_hands(&app, entity), 0);
+    }
+
+    /// **A PARTY VERB GETS ITS HANDS FROM THE SIM-STAFFED ROWS**: with every hand on a source, a
+    /// scouting party of three launches and the staffed rows are three smaller at once.
+    #[test]
+    fn a_fully_staffed_band_can_still_send_a_scouting_party() {
+        const PARTY: u32 = 3;
+        let mut app = build_world_app();
+        let (band, entity) = fully_staffed_band(&mut app);
+        let pool = band_workforce(&app, entity).pool;
+        let camp = {
+            let cohort = app.world.get::<PopulationCohort>(entity).unwrap();
+            app.world.get::<Tile>(cohort.current_tile).unwrap().position
+        };
+        handle_send_scout(
+            &mut app,
+            FactionId(0),
+            Some(band.0),
+            PARTY,
+            camp.x + 2,
+            camp.y,
+            None,
+            Vec::new(),
+            sim_runtime::StrangersKind::default(),
+        );
+        assert!(
+            launched_party(&mut app).is_some(),
+            "the scouting party launched"
+        );
+        assert_eq!(staffed_hands(&app, entity), pool - PARTY);
+    }
+
+    /// The same for a player-set Scout crew.
+    #[test]
+    fn a_fully_staffed_band_can_still_send_scouts() {
+        const SCOUTS: u32 = 2;
+        let mut app = build_world_app();
+        let (band, entity) = fully_staffed_band(&mut app);
+        let pool = band_workforce(&app, entity).pool;
+        handle_assign_labor(
+            &mut app,
+            FactionId(0),
+            Some(band.0),
+            "scout".to_string(),
+            SCOUTS,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Vec::new(),
+            false,
+        );
+        let scouts = app
+            .world
+            .get::<LaborAllocation>(entity)
+            .unwrap()
+            .assignments
+            .iter()
+            .find(|row| matches!(row.target, LaborTarget::Scout))
+            .map(|row| row.workers);
+        assert_eq!(scouts, Some(SCOUTS));
+        assert_eq!(staffed_hands(&app, entity), pool - SCOUTS);
     }
 
     /// **OUTFIT THE BAND WITH EXACTLY WHAT ITS WORK WANTS AND THE REAL STAFFING IS THE UNLIMITED-SHELF

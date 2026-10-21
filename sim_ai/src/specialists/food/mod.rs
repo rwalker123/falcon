@@ -371,6 +371,26 @@ impl Food {
         self.assign_role(band, role, workers, target_x, target_y, fauna_id, floor)
     }
 
+    /// Whether the band already holds a row on `key` (staffed or not).
+    fn holds_row(band: &PopulationCohortState, key: &SourceKey) -> bool {
+        band.labor_assignments
+            .iter()
+            .any(|row| SourceKey::of_row(row).as_ref() == Some(key))
+    }
+
+    /// **Open a source the band does not work yet** (#871). An `assign_labor` with no Max onto a row
+    /// the band already holds changes nothing - the sim staffs that row from the pool whatever the
+    /// AI says - so only a NEW source is a command; for a held row this answers nothing and the hands
+    /// simply stay in the pool for the sim to staff.
+    fn open(
+        &self,
+        band: &PopulationCohortState,
+        key: &SourceKey,
+        planned_workers: u32,
+    ) -> Option<CommandPayload> {
+        (!Self::holds_row(band, key)).then(|| self.assign(band, key, planned_workers))
+    }
+
     /// **Give a source up** (#871): a rule that empties a row stops it - `assign_labor … 0` is "no
     /// Max" now, never an unassign. A rule that only THINS a row (`left > 0`) sends nothing: the
     /// sim staffs every row from the pool the others leave, so there is no donor to reduce.

@@ -647,7 +647,7 @@ the same subtraction over its optimistic overlay, so the WORKFORCE zone's three 
 `FactionRollup`'s faction total report hands that are actually free.
 
 **The stepper asks a different question and so takes a different number**
-(`HudBandLaborState.benchable_workers` = `effective_idle + bench.workers`, the sim's
+(`HudBandLaborState.benchable_workers` = `orderable_hands + bench.workers` (`labor-ui.md` "PLAYER-SET CREWS CEILING AT `orderable_hands`": sim-staffed crews never block a player-set one), the sim's
 `BandWorkforce::benchable()`). Re-crewing a bench does not require freeing its crew first — those
 hands stay put while the job is swapped — so a ceiling of `idle` alone would pin the stepper to the
 crew already standing there and make `+` dead on every running bench.

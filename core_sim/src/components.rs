@@ -5794,6 +5794,10 @@ pub struct BandWorkforce {
     /// on no row and at no bench, but not with the band either, so they are netted out of every
     /// ceiling until their walk ends.
     pub walking_home: u32,
+    /// **Hands the sim staffed onto sources** (a forage, hunt, extraction, tile or Roadwork row's
+    /// `workers`) - the part of `assigned` that is what is left after the player's own orders, so it
+    /// never blocks one.
+    pub sim_staffed: u32,
 }
 
 impl BandWorkforce {
@@ -5813,6 +5817,13 @@ impl BandWorkforce {
             assigned: allocation.map(|a| a.assigned_total()).unwrap_or(0),
             benched: bench.map(|b| b.workers).unwrap_or(0),
             walking_home: allocation.map(|a| a.walking_home()).unwrap_or(0),
+            sim_staffed: allocation.map_or(0, |a| {
+                a.assignments
+                    .iter()
+                    .filter(|row| row.target.is_staffed())
+                    .map(|row| row.staffed_total())
+                    .sum()
+            }),
         }
     }
 
@@ -5836,11 +5847,23 @@ impl BandWorkforce {
             .saturating_sub(self.walking_home)
     }
 
-    /// **The ceiling a bench command clamps against** — `idle` plus the crew already at the bench,
-    /// because a band's own crew stays put while its job is swapped and must not be counted twice.
+    /// **The most hands a detached party may draw** - the pool less every player-set crew (the bench
+    /// included) and the walkers. Sim-staffed source rows count as available: they are what is left
+    /// after the player's orders and give the hands up at once.
+    pub fn partyable(&self) -> u32 {
+        self.pool
+            .saturating_sub(self.assigned.saturating_sub(self.sim_staffed))
+            .saturating_sub(self.benched)
+            .saturating_sub(self.walking_home)
+    }
+
+    /// **The ceiling a bench command clamps against** — the pool less the player-set crews and the
+    /// hands walking home. The sim-staffed rows count as available (they are what is left after the
+    /// player's orders and give the hands up at once), and the bench's own crew is not subtracted, so
+    /// it is not counted twice while its job is swapped.
     pub fn benchable(&self) -> u32 {
         self.pool
-            .saturating_sub(self.assigned)
+            .saturating_sub(self.assigned.saturating_sub(self.sim_staffed))
             .saturating_sub(self.walking_home)
     }
 }
@@ -7314,7 +7337,7 @@ impl LaborAllocation {
         let others: u32 = self
             .assignments
             .iter()
-            .filter(|a| !a.target.same_source(&target))
+            .filter(|a| !a.target.same_source(&target) && !a.target.is_staffed())
             .map(|a| a.staffed_total())
             .sum();
         let headroom = available.saturating_sub(others);
