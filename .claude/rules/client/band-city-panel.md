@@ -671,7 +671,7 @@ stretch, and widening it into that gap would put it over a live HUD column.
   `N out · M workers`, its `⋯` menu's recall-all, its tab badge and the faction page's Parties zone all
   list and count `HudBandLaborState.band_zone_parties` / `faction_zone_parties`, which drop the parties
   `is_trade_party` names (mission `trade`). Scouts, work parties, stations and **envoys** stay. The whole
-  set (`band_parties`) is kept for the Workforce bar's `away` clause, since a shipment's hands really are
+  set (`band_parties`) is kept for the People head's `away` clause, since a shipment's hands really are
   gone from the band. A parked envoy or shipment reads `Waiting on an answer` rather than `Awaiting
   orders` (`HudFormat.expedition_phase_label(phase, mission)`, `HudExpeditionVocab.MISSIONS_WAITING_ON_AN_ANSWER`):
   it is waiting for the people it came to answer, so it wears no amber and does not turn the Parties
@@ -2343,7 +2343,7 @@ emptiness sits. (With the role cards' pickers the CHARTED flank no longer has em
 OVERFLOWS its box and the zone's own scroll carries the remainder.)
 
 Blocks are emitted in **build** order for one column and by **column** field for two, so the flat stack
-stays vitals · PEOPLE · outlook · WORKFORCE.
+stays vitals · PEOPLE · outlook · roles (the homeward lines and the role cards).
 
 **The fill assertion measures the WHOLE FLANK against the WHOLE room, plus a separate balance claim.**
 Measuring only the deepest column passed the 130/263 flank at 88% — the short column was invisible to
@@ -3172,9 +3172,9 @@ the same `_build_role_card`; nothing about the keeping is a parallel surface.
   takes the row to 0 at once, and hiding the row the player acted on read as the unassign failing.
   `band_panel_work_row_homeward` asserts the crew-0 row's line and ink, the plural food-less line
   closing a posted row's block, and no line on a row nobody walks home from.
-- **The keeping roles are in the WORKFORCE bar's `Roles` SEGMENT even though their cards are not in
-  that block.** The segments partition `working_age`, `effective_idle` already nets these hands out
-  of Idle, and a segment that omitted them would stop the key adding up to the head the zone states.
+- **The keeping roles are in the working breakdown's `Roles` PART even though their cards are not in
+  the roles block.** The parts sum to `working_age − idle`, `effective_idle` already nets these hands
+  out of Idle, and a breakdown that omitted them would lose those hands from the working tooltip.
 - **THE KEEPING PAIR MOUNTS NO KIT PICKER, and two independent facts say so.** The wire names no
   default kit for either job — there is no `defaultAgricultureKitId` twin of `defaultScoutKitId`, so
   `(default)` would be a guess and `HudBandLaborState.default_kit_id` falls through to the HUNT
@@ -8086,14 +8086,15 @@ The labor-side contract is `labor-ui.md` -> "HUNTING BY NEED". The rows it adds 
   `min(hunt_useful_workers, effective idle)`; ON sends 0 with `follow`.
 - **DONOR ROWS.** A row that lends hands (`lent_to_hunt` > 0) reads `4 -> 3` in its count slot and, on
   its own line in WARN, `N out hunting · back after the kill`. Workings carry the same count and line.
-- **THE WORKFORCE BAR MOVES EVERY LENT HAND.** `HudBandLaborState.hunt_muster_out(band)` returns the
-  idle hands the muster takes, each kind's `lent_to_hunt` and the bench's. The bar (band zone in
-  `BandPanelController`, faction total in `FactionRollup._build_people_block`) subtracts each from
-  its home segment (Forage / Hunt / `Cutters` / Bench / Idle) and draws one WARN `Out hunting` segment
-  (`WORKING_PART_OUT_HUNTING`, a part of the working tooltip) of idle-taken + row-lent + bench-lent, so the segments still partition
-  `working_age`. The header reads `I idle · M out hunting` with the same M
-  (no header clause any more: the hands count as working); with nothing lent there is no part. Each term
-  is clamped to the segment it leaves. Role-card ceilings still use the unmustered idle count.
+- **THE WORKING BREAKDOWN MOVES EVERY LENT HAND.** `HudBandLaborState.hunt_muster_out(band)` returns
+  the idle hands the muster takes, each kind's `lent_to_hunt` and the bench's. `working_breakdown`
+  (read by the band zone in `BandPanelController` and summed by `FactionRollup._build_people_block`)
+  subtracts each from its home part (Forage / Hunt / `Cutters` / Bench) or from Idle, and adds one
+  `Out hunting` part (`WORKING_PART_OUT_HUNTING`) of idle-taken + row-lent + bench-lent, so the parts
+  still sum to `working_age − idle`. Mustered hands count as WORKING, so the idle segment and the idle
+  card leave them out and the People head carries no hunting clause; with nothing lent there is no
+  part. Each term is clamped to the part it leaves. Role-card ceilings still use the unmustered idle
+  count.
 - **A NEED ROW SHORT OF ITS HUNT-TURN KIT** goes through the same `_work_row_kit_note` as any take row
   (the model's `kit_note` and the `◆` in `marks`, and the inspector's KITS section): it has no
   special path. Frames `band_panel_people_out_hunting`, `band_panel_people_no_lending`,

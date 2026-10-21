@@ -268,6 +268,39 @@ static func knowledge_attention(nodes: Array) -> Array:
         })
     return items
 
+## Producer 3's row for one band, or `{}` when nobody is idle. Its own function because the orb must be
+## able to refresh JUST these rows when a pending edit moves `people_idle` between snapshots
+## (`refresh_idle_rows`) without re-running producers that read pre-ingest state.
+func _idle_workers_row(entry: Dictionary) -> Dictionary:
+    var idle_workers := _band_labor.people_idle(entry)
+    if idle_workers <= 0:
+        return {}
+    return {
+        "kind": HudAttentionVocab.ATTENTION_KIND_IDLE_WORKERS,
+        "owner": int(entry.get("entity", -1)),
+        "severity": HudAttentionVocab.ATTENTION_SEVERITY_WARN,
+        "label": "%d idle worker%s" % [idle_workers, "" if idle_workers == 1 else "s"],
+        "detail": HudFormat.band_name(entry),
+        "x": int(entry.get("current_x", -1)), "y": int(entry.get("current_y", -1)),
+    }
+
+## The band half with every idle-workers row recomputed against the CURRENT pending overlay. A stepper
+## press changes `people_idle` but not the snapshot, and a full `build_band_attention` then would run
+## the losing-population producer against `prev_band_sizes` that ingest has already overwritten and so
+## drop those rows. Every row that is not an idle row passes through untouched.
+func refresh_idle_rows(attention: Array, player_bands: Array) -> Array:
+    var out: Array = []
+    for row_variant in attention:
+        if row_variant is Dictionary and String((row_variant as Dictionary).get("kind", "")) == HudAttentionVocab.ATTENTION_KIND_IDLE_WORKERS:
+            continue
+        out.append(row_variant)
+    for band_variant in player_bands:
+        if band_variant is Dictionary:
+            var row := _idle_workers_row(band_variant)
+            if not row.is_empty():
+                out.append(row)
+    return out
+
 func build_band_attention(player_bands: Array, player_expeditions: Array) -> Array:
     var attention: Array = []
     for i in player_bands.size():
@@ -317,16 +350,9 @@ func build_band_attention(player_bands: Array, player_expeditions: Array) -> Arr
         # The SAME idle the People bar and its idle card state (`HudBandLaborState.people_idle`:
         # pending-aware, net of the hands the next hunting-by-need muster takes), so the orb, the bar
         # and the card cannot disagree.
-        var idle_workers := _band_labor.people_idle(entry)
-        if idle_workers > 0:
-            attention.append({
-                "kind": HudAttentionVocab.ATTENTION_KIND_IDLE_WORKERS,
-                "owner": entity,
-                "severity": HudAttentionVocab.ATTENTION_SEVERITY_WARN,
-                "label": "%d idle worker%s" % [idle_workers, "" if idle_workers == 1 else "s"],
-                "detail": band_name,
-                "x": x, "y": y,
-            })
+        var idle_row := _idle_workers_row(entry)
+        if not idle_row.is_empty():
+            attention.append(idle_row)
         # Producer 5 — a starving pen this band keeps (amber/warn; see HudAttentionVocab.ATTENTION_KIND_STARVING_PEN
         # for why it is not critical). Keyed off the band's OWN Corral assignments, never a scan of
         # every herd on the wire: that is what makes it the PLAYER's pen (a herd carries no owner

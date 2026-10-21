@@ -431,8 +431,8 @@ fork fails **exactly one**, naming `assign_labor 0 4904 builders 1 kit none`; re
 have no label to read — and leaves the stepper pair green.)
 
 (It was 240 / 341 / 94 before **`band_panel_builders_segment`** — the BUILDERS segment
-state, whose two `assert OK`s are its own bounds/content-fits pair and whose seven `PASS`es are
-`_assert_people_bar_is_one_bar`'s four plus three of its own. **Its fixture IS the claim**: the
+state, whose two `assert OK`s are its own bounds/content-fits pair and whose `PASS`es are
+`_assert_people_bar_is_one_bar`'s plus three of its own. **Its fixture IS the claim**: the
 reference band's four assignments spend 13 of 16 workers, so putting THREE builders on its forage row
 takes it to exactly `working_age` — before the fix the zone read `3 idle of 16` over segments summing
 to 13, and after it `0 idle of 16` over segments summing to 16. **A band with slack could not say

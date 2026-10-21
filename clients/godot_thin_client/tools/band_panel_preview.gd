@@ -7585,6 +7585,15 @@ func _assert_people_bar_is_one_bar(state_name: String) -> void:
 	var tip := _composition_chip_tooltip(band_zone, HudWorkVocab.ZONE_HEADER_PEOPLE,
 		HudWorkVocab.PEOPLE_GLYPH_WORKING)
 	var parts: Dictionary = _hud._band_labor.working_breakdown(band)
+	# THE PARTITION GUARD: the breakdown's parts account for EVERY working hand and nobody else. The
+	# tooltip check below only asks the breakdown whether it contains itself; this asks it whether it
+	# adds up, so a labor kind `working_breakdown` forgot to count fails here by exactly its hands.
+	var parts_total := 0
+	for part_label in parts:
+		parts_total += int(parts[part_label])
+	_assert_band_panel("%s: working_breakdown's parts sum to working_age - idle (%d, want %d: %s)" % [
+		state_name, parts_total, int(band.get("working_age", 0)) - idle, str(parts)],
+		parts_total == int(band.get("working_age", 0)) - idle)
 	var missing: Array[String] = []
 	for label in parts:
 		if not tip.contains(HudWorkVocab.PEOPLE_WORKING_PART_FORMAT % [label, int(parts[label])]):
@@ -8984,6 +8993,54 @@ func _render_people_idle_states() -> void:
 	_assert_idle_card_reason_list()
 	_push_bands([_band_fixture()])
 	await _settle()
+	await _assert_orb_idle_follows_pending()
+
+## The orb's idle count, read off the registry the orb was handed (`0` when it carries no row).
+func _orb_idle_count() -> int:
+	for item_variant in _hud.turn_orb._entries:
+		var item: Dictionary = item_variant
+		if String(item.get("kind", "")) == HudAttentionVocab.ATTENTION_KIND_IDLE_WORKERS:
+			return int(String(item.get("label", "0")).split(" ")[0])
+	return 0
+
+const ORB_PENDING_FORAGE_WORKERS := 8
+const ORB_PENDING_TURN_STEP := 1
+
+## **THE ORB'S IDLE ALERT AND THE BAR CANNOT DISAGREE, ACROSS A TURN OR A STEPPER PRESS** (PNG-less).
+## Both read the pending-aware `people_idle`, so (1) the first snapshot of a new turn must drop the
+## stale pending overlay BEFORE the attention is built, and (2) a stepper press must refresh the orb on
+## the frame it changes the bar. Chain: a stale pending forage edit (8 on the forage row, which the
+## band's own row holds at 5, so idle reads 0) is left behind a turn; the next snapshot contradicts it
+## and idle must read the band's real 3 on the orb, `people_idle` and the card alike. Then a fresh
+## press moves all three together without a snapshot.
+func _assert_orb_idle_follows_pending() -> void:
+	_panel.set_active_tab(&"band")
+	var labor: HudBandLaborState = _hud._band_labor
+	var turn := labor.current_turn()
+	_push_bands([_band_fixture()])
+	await _settle()
+	labor.record_pending_assign(904, SourceForecast.LABOR_KIND_FORAGE, ORB_PENDING_FORAGE_WORKERS, 71, 18,
+		"", 0.5)
+	_hud._after_pending_change()
+	var pending_idle: int = labor.people_idle(labor.panel_band())
+	_assert_band_panel("orb idle follows a stepper press: bar idle %d, orb idle %d, same frame, no snapshot"
+		% [pending_idle, _orb_idle_count()], _orb_idle_count() == pending_idle)
+	# The next turn's snapshot contradicts the stale pending edit (the sim clamped it back to 5).
+	labor.set_turn(turn + ORB_PENDING_TURN_STEP)
+	_push_bands([_band_fixture()])
+	await _settle()
+	var band: Dictionary = labor.panel_band()
+	var idle: int = labor.people_idle(band)
+	var band_zone: Node = _panel._zones.get(BandCityPanel.ZONE_BAND)
+	var cards := _collect_meta_controls(band_zone, HudWorkVocab.IDLE_CARD_META, [])
+	var card_number := ""
+	if cards.size() == 1:
+		card_number = String(_label_children(cards[0])[0].text)
+	_assert_band_panel("a stale pending entry the next snapshot contradicts: orb idle %d == people_idle %d == card `%s`"
+		% [_orb_idle_count(), idle, card_number],
+		idle > 0 and _orb_idle_count() == idle and card_number == HudWorkVocab.IDLE_CARD_NUMBER_FORMAT % idle)
+	_assert_band_panel("...and the pending overlay really was dropped by the snapshot (%s)"
+		% str(labor.pending_assigns_for(904)), labor.pending_assigns_for(904).is_empty())
 
 func _label_children(card: Control) -> Array[Label]:
 	var found: Array[Label] = []
