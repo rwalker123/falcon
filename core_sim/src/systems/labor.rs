@@ -317,6 +317,10 @@ pub struct LaborConfigs<'w> {
     pub demographics: Option<Res<'w, DemographicsConfigHandle>>,
     /// What a death adds to the place it happens on (`crate::belief`).
     pub belief: Res<'w, BeliefConfigHandle>,
+    /// How much practice a finished directed-work build and a big-game kill bank toward a band's
+    /// leader (`crate::leadership`). `Option`, like `demographics`: a hand-built test world that
+    /// never installed it reads the builtin, which is the very file `include_str!` baked in.
+    pub leadership: Option<Res<'w, crate::leadership_config::LeadershipConfigHandle>>,
 }
 
 /// **WHAT THE BAND'S BUILDERS' TOOLS ADD TO WHAT THEY DELIVER, RESOLVED PER BUILD.**
@@ -5281,6 +5285,15 @@ impl BeliefSink<'_> {
     }
 }
 
+/// **Where a hunt's success is credited toward a leader** -- the home band's practice and the
+/// quantum it banks (`crate::leadership`). Bundled, like [`BeliefSink`], so [`settle_hunt_band_side`]
+/// takes the one place the credit goes. Present for a resident band's own hunt and for a far work
+/// party alike: a party is the home band's people, so the credit is the home band's.
+struct LeadershipSink<'a> {
+    leadership: &'a mut crate::leadership::BandLeadership,
+    config: &'a crate::leadership_config::LeadershipConfig,
+}
+
 /// **THE BAND'S SIDE OF A HUNT, SETTLED — at every rung.** The animal side is already off the herd
 /// inside [`crate::systems::hunt_take`] (`take.killed_biomass()`); this is where what the animals did
 /// back lands.
@@ -5314,7 +5327,14 @@ fn settle_hunt_band_side(
     cohort: &mut PopulationCohort,
     event_log: &mut CommandEventLog,
     belief: Option<BeliefSink<'_>>,
+    leadership: Option<LeadershipSink<'_>>,
 ) {
+    // **A big-game hunt that lands its kill is directed work that succeeded** -- one quantum per
+    // hunt, whatever the head count (`BandLeadership::credit_big_game_hunt` holds the predicate).
+    if let Some(sink) = leadership {
+        sink.leadership
+            .credit_big_game_hunt(sink.config, fauna, species, &outcome.fight);
+    }
     // Human text names the SPECIES, never the internal herd id.
     let species_name = fauna
         .species_by_display(species)
@@ -5515,6 +5535,10 @@ type LaborBandParts = (
     Option<&'static mut BandEquipment>,
     Option<&'static BandId>,
     Option<&'static mut BandBench>,
+    // **The band's leadership practice** (`crate::leadership`): a finished directed-work build and a
+    // big-game hunt that lands its kill each bank a quantum on it. In the tuple rather than a new
+    // system parameter because this pass is at Bevy's 16-parameter limit.
+    Option<&'static mut crate::leadership::BandLeadership>,
 );
 
 #[allow(clippy::too_many_arguments)] // Bevy system parameters require explicit resource access
@@ -5615,6 +5639,11 @@ pub fn advance_labor_allocation(
     // durability dials, resolved once. What varies per band is only its `BandEquipment` *wear*.
     let equipment_cfg = configs.equipment.get();
     let belief_cfg = configs.belief.get();
+    // The practice quanta a finished directed build and a big-game kill bank toward a leader.
+    let leadership_cfg = configs.leadership.as_ref().map_or_else(
+        crate::leadership_config::LeadershipConfig::builtin,
+        |handle| handle.get(),
+    );
     // **The materials table** (`docs/plan_crafting_and_materials.md` §1) — resolved once, because it
     // decides only how a stated reading BANDS. What each source yields is that source's own config.
     let materials_cfg = configs.materials.get();
@@ -5753,7 +5782,9 @@ pub fn advance_labor_allocation(
     // **EVERY BAND'S CREW ON EVERY SOURCE, READ ONCE BEFORE ANY BAND IS PAID** — the denominator a
     // source's keeping bill is shared by when several bands work it ([`SiteCrews`]).
     let site_crews = SiteCrews::of(cohorts.iter().map(|parts| parts.1));
-    for (mut cohort, mut allocation, mut band_equipment, band_id, mut bench) in cohorts.iter_mut() {
+    for (mut cohort, mut allocation, mut band_equipment, band_id, mut bench, mut band_leadership) in
+        cohorts.iter_mut()
+    {
         // **WHOSE WORK BOARD THIS TURN'S LOSSES BELONG TO** — the `band=` token appended to every
         // line below that reports a row the band did not ask to lose. Copied out of the query up
         // front because the announcements are written from several arms of the loop.
@@ -8930,6 +8961,13 @@ pub fn advance_labor_allocation(
                                 registry: &mut belief,
                                 config: &belief_cfg,
                             }),
+                            // The credit is the HOME band's, a far party's included.
+                            band_leadership
+                                .as_deref_mut()
+                                .map(|leadership| LeadershipSink {
+                                    leadership,
+                                    config: &leadership_cfg,
+                                }),
                         );
                         continue;
                     }
@@ -9692,6 +9730,13 @@ pub fn advance_labor_allocation(
                             registry: &mut belief,
                             config: &belief_cfg,
                         }),
+                        // The credit is the HOME band's, a far party's included.
+                        band_leadership
+                            .as_deref_mut()
+                            .map(|leadership| LeadershipSink {
+                                leadership,
+                                config: &leadership_cfg,
+                            }),
                     );
                 }
                 LaborTarget::Extract {
@@ -10747,6 +10792,16 @@ pub fn advance_labor_allocation(
             // band never had the entry.
             if !allocation.unqueue_build(source) {
                 continue;
+            }
+            // **A finished build of a directed-work rung is work that succeeded**: it banks a
+            // quantum of practice toward a leader. A rung flag, not a test of which rung it is
+            // (`RungDef::directed_work`); the pen's ring and a herd's output commitment are not
+            // rung builds and bank nothing.
+            if let (BuildJob::Climb(rung), Some(leadership)) = (job, band_leadership.as_deref_mut())
+            {
+                if let Some(def) = ladder.rung_by_id(*rung) {
+                    leadership.credit_directed_build(&leadership_cfg, def);
+                }
             }
             let (channel, verb) = match job {
                 BuildJob::Climb(rung) => (
@@ -15119,6 +15174,7 @@ mod labor_yield_tests {
                 registry: &mut belief,
                 config: &config,
             }),
+            None,
         );
         assert!(
             (belief.get(STANDING) - KILLED * config.belief_per_death).abs() < EPSILON,
@@ -15142,11 +15198,66 @@ mod labor_yield_tests {
                 registry: &mut belief,
                 config: &config,
             }),
+            None,
         );
         assert!(
             (belief.get(STANDING) - before - left * config.belief_per_death).abs() < EPSILON,
             "only the people actually lost are buried, not the casualties the fight asked for"
         );
+    }
+
+    /// **A hunt that lands a big-game kill banks a quantum on the band's leadership record**, through
+    /// the same seam that settles its dead -- a work party's hunt included, since the sink is the
+    /// home band's. One hunt is one quantum however many animals fall.
+    #[test]
+    fn a_hunt_that_lands_a_big_game_kill_banks_practice_through_the_settling_seam() {
+        use crate::fauna::{AnimalTake, FightCasualties, HuntFight, HuntTakeBound};
+        use crate::systems::expeditions::HuntOutcome;
+        /// The roster's flagged big game, by display name.
+        const BIG_GAME: &str = "Wild Aurochs";
+        /// Animals down in the one hunt.
+        const BROUGHT_DOWN: f32 = 3.0;
+
+        let outcome = HuntOutcome {
+            take: AnimalTake::default(),
+            fight: HuntFight {
+                brought_down: BROUGHT_DOWN,
+                expected_brought_down: BROUGHT_DOWN,
+                casualties: FightCasualties {
+                    killed: 0.0,
+                    wounded: 0.0,
+                },
+                fought: true,
+                wounds: Default::default(),
+                strike_charges: Vec::new(),
+            },
+            engaged: BROUGHT_DOWN,
+            fled: 0.0,
+            bound: HuntTakeBound::Engagement,
+        };
+        let (mut world, source_tile) = world_with_source(100.0);
+        let band = spawn_band(&mut world, source_tile, Vec::new());
+        let fauna = crate::fauna_config::FaunaConfig::builtin();
+        let config = crate::leadership_config::LeadershipConfig::default();
+        let mut leadership = crate::leadership::BandLeadership::default();
+        let mut log = CommandEventLog::default();
+        let mut cohort = world.get::<PopulationCohort>(band).unwrap().clone();
+
+        super::settle_hunt_band_side(
+            &outcome,
+            BIG_GAME,
+            &fauna,
+            0,
+            FactionId(0),
+            &mut cohort,
+            &mut log,
+            None,
+            Some(super::LeadershipSink {
+                leadership: &mut leadership,
+                config: &config,
+            }),
+        );
+        assert_eq!(leadership.practice, config.practice_per_big_game_kill);
     }
 
     /// (a) both a Forage and a Hunt source capture `actual > 0`; (b) the hunt's `sustainable` equals

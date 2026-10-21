@@ -1499,6 +1499,8 @@ mod tests {
             // This fixture asserts on the derived readouts, not on band identity.
             band_id: None,
             band_name: None,
+            leadership: None,
+            leadership_threshold: 0.0,
             // No world, so no outfitting window either.
             loadout_window: None,
             heart: None,

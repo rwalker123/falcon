@@ -1,0 +1,5 @@
+{
+  "practice_threshold": 3.0,
+  "practice_per_directed_build": 1.0,
+  "practice_per_big_game_kill": 1.0
+}

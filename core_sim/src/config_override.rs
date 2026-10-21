@@ -31,6 +31,7 @@ use crate::{
     expedition_config::{ExpeditionConfig, BUILTIN_EXPEDITION_CONFIG},
     fauna_config::{FaunaConfig, BUILTIN_FAUNA_CONFIG},
     labor_config::{LaborConfig, BUILTIN_LABOR_CONFIG},
+    leadership_config::{LeadershipConfig, BUILTIN_LEADERSHIP_CONFIG},
     materials_config::{MaterialsConfig, BUILTIN_MATERIALS_CONFIG},
     mobility_config::{MobilityConfig, BUILTIN_MOBILITY_CONFIG},
     recipes_config::{RecipesConfig, BUILTIN_RECIPES_CONFIG},
@@ -138,6 +139,13 @@ pub fn spec_for(kind: ConfigOverrideKind) -> ConfigKindSpec {
             default_rel_path: "src/data/mobility_config.json",
             builtin_json: BUILTIN_MOBILITY_CONFIG,
             validate: |json| erase(MobilityConfig::from_json_str(json)),
+        },
+        ConfigOverrideKind::Leadership => ConfigKindSpec {
+            kind,
+            env_var: "LEADERSHIP_CONFIG_PATH",
+            default_rel_path: "src/data/leadership_config.json",
+            builtin_json: BUILTIN_LEADERSHIP_CONFIG,
+            validate: |json| erase(LeadershipConfig::from_json_str(json)),
         },
     }
 }

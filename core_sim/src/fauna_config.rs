@@ -156,6 +156,12 @@ pub struct SpeciesDef {
     pub size_class: SizeClass,
     #[serde(default)]
     pub migratory: bool,
+    /// **WHETHER A HUNT THAT LANDS A KILL OF THIS SPECIES COUNTS AS DIRECTED WORK THAT SUCCEEDED**
+    /// toward a band's leadership practice (`crate::leadership`). A flag on the species rather than
+    /// a size test, so which quarry takes a plan and a chief to bring down is config: the aurochs
+    /// and the mammoth. Absent = `false`.
+    #[serde(default)]
+    pub big_game: bool,
     /// Inclusive `[min, max]` route length in tiles = roaming range.
     pub route_len: [u32; 2],
     /// Inclusive `[min, max]` group biomass.

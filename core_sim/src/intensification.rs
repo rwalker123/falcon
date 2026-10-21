@@ -2552,6 +2552,12 @@ pub struct RungDef {
     /// the kind does not have would price every source at the unscaled cost without saying so.
     #[serde(default)]
     pub cost_scale: CostScale,
+    /// **WHETHER FINISHING THIS RUNG'S BUILD COUNTS AS DIRECTED WORK THAT SUCCEEDED** - the band
+    /// that raises it adds `practice_per_directed_build` to its leadership practice
+    /// (`crate::leadership`). A flag on the rung rather than a test of its identity, so which
+    /// builds teach a band to follow a chief is config. Absent = `false`.
+    #[serde(default)]
+    pub directed_work: bool,
     /// **THE RUNG'S GATE WANTS ROOM TO WORK** — something must stand above the crew's floor
     /// (`systems::labor::crew_is_working_the_source`) for the build to bank. The Cultivate and Tame
     /// gates carry it; Sow and Corral deliberately do not (bare ground stands below every floor, and

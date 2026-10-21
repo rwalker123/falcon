@@ -147,7 +147,7 @@ type ExpeditionHomeBands = (
 /// stays under Bevy's 16-parameter ceiling once the combat + creatures handles join it (Predators
 /// Phase 0 — the expedition-hunt danger adapter).
 #[derive(bevy::ecs::system::SystemParam)]
-pub struct ExpeditionConfigs<'w> {
+pub struct ExpeditionConfigs<'w, 's> {
     pub expedition: Res<'w, crate::expedition_config::ExpeditionConfigHandle>,
     pub visibility: Res<'w, crate::visibility_config::VisibilityConfigHandle>,
     pub fauna: Res<'w, FaunaConfigHandle>,
@@ -181,6 +181,13 @@ pub struct ExpeditionConfigs<'w> {
     /// **The pending-dealing book and its wait** — a shipment its receiver's standing answer does not
     /// cover is posted here instead of landing. In the bundle for the 16-parameter reason.
     pub dealings: ExpeditionDealings<'w>,
+    /// **The practice quanta, and each resident band's practice** (`crate::leadership`): a hunting
+    /// party that lands a big-game kill banks a quantum on its HOME band, never on itself. In the
+    /// bundle for the 16-parameter reason; `Without<Expedition>` is the same filter the `bands`
+    /// query takes, so a party is never the one credited.
+    pub leadership_config: Option<Res<'w, crate::leadership_config::LeadershipConfigHandle>>,
+    pub leadership:
+        Query<'w, 's, &'static mut crate::leadership::BandLeadership, Without<Expedition>>,
 }
 
 /// What [`advance_expeditions`] needs to post a pending dealing. Both optional, for the hand-rolled
@@ -1347,6 +1354,10 @@ pub fn advance_expeditions(
     // `CombatConfig::expedition_tuning`.
     let combat_tuning = combat_config.expedition_tuning();
     let materials_cfg = configs.materials.get();
+    let leadership_cfg = configs.leadership_config.as_ref().map_or_else(
+        crate::leadership_config::LeadershipConfig::builtin,
+        |handle| handle.get(),
+    );
     let flora = configs.flora.get();
     let ladder = configs.ladder.get();
     let demographics_cfg = demographics_or_builtin(configs.demographics.as_deref());
@@ -2148,6 +2159,18 @@ pub fn advance_expeditions(
                             outcome.fight.casualties.killed,
                         ));
                     }
+                    // **A fought big-game kill counts toward the HOME band's leader**, the same rule
+                    // as a resident hunt (`BandLeadership::credit_big_game_hunt`).
+                    if let Ok(mut home_leadership) =
+                        configs.leadership.get_mut(expedition.home_band)
+                    {
+                        home_leadership.credit_big_game_hunt(
+                            &leadership_cfg,
+                            &fauna,
+                            &herds.herds[idx].species,
+                            &outcome.fight,
+                        );
+                    }
                     // **A roadside kill is a hunt and reports as one** (§6.6) — it engages animals,
                     // wastes what one scout cannot haul, and hurts people, and none of that was
                     // visible anywhere before the report existed.
@@ -2942,6 +2965,18 @@ pub fn advance_expeditions(
                                     killed_f, wounded_f, species_name
                                 )),
                             ));
+                        }
+                        // **A fought big-game kill counts toward the HOME band's leader** -- the
+                        // rule a resident hunt follows, credited to the band that sent the party.
+                        if let Ok(mut home_leadership) =
+                            configs.leadership.get_mut(expedition.home_band)
+                        {
+                            home_leadership.credit_big_game_hunt(
+                                &leadership_cfg,
+                                &fauna,
+                                &herds.herds[idx].species,
+                                &outcome.fight,
+                            );
                         }
                         // **The raid's own hunt report** (§6.6) — the same facts a resident band
                         // publishes, so a consumer reads one shape whichever way the hunt was run.

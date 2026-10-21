@@ -634,6 +634,9 @@ pub fn split_band_from_parent_with(
             // **Every resident band carries a flow accumulator** or its births and deaths are
             // unreportable (`demographic_events::every_resident_band_carries_a_flow_accumulator`).
             DemographicFlowAccumulator::default(),
+            // **A splinter starts with no leader and no practice**: it carries nothing of the
+            // parent's standing (`crate::leadership`).
+            crate::leadership::BandLeadership::default(),
             // Labor assignments are the parent's intent about the parent's sources; the new band
             // starts idle and the player staffs it. The **receiving** half of the food ledger's
             // transfer terms opens on it, though: the dowry is food that crossed between larders, and

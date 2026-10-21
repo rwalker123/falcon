@@ -2063,6 +2063,19 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
     // The band's messenger reach in tiles (global config, echoed on every row): a station host
     // within it reports the same turn.
     let _ = dict.insert("comm_range_tiles", i64::from(cohort.commRangeTiles()));
+    // The band's leader (#859): the chief's name, or the council speaker's; `leader_kind` is 0 none,
+    // 1 chief, 2 elders' council. `leadership_practice` / `leadership_threshold` are the "N of M" of
+    // the practice toward one. Own bands only - a foreign row carries the defaults.
+    let _ = dict.insert("leader_name", cohort.leaderName().unwrap_or(""));
+    let _ = dict.insert("leader_kind", i64::from(cohort.leaderKind()));
+    let _ = dict.insert(
+        "leadership_practice",
+        f64::from(cohort.leadershipPractice()),
+    );
+    let _ = dict.insert(
+        "leadership_threshold",
+        f64::from(cohort.leadershipThreshold()),
+    );
     let _ = dict.insert(
         "long_move_leaves_food",
         f64::from(cohort.longMoveLeavesFood()),

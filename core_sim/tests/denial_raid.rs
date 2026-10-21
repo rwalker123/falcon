@@ -2310,3 +2310,75 @@ fn a_denial_raid_and_a_resident_band_reach_the_same_animals() {
          {band_killed}"
     );
 }
+
+// ---------------------------------------------------------------------------------------------------
+// A raid that lands a big-game kill is practice toward its HOME band's leader (#859)
+// ---------------------------------------------------------------------------------------------------
+
+/// A quarry that fights back, so a kill on it is a *fought* one (`HuntFight::fought`).
+const FIGHTING_QUARRY: &str = "Wild Boar";
+
+/// Run a raid on [`FIGHTING_QUARRY`] and read the practice the HOME band banked, with
+/// `big_game` set (or not) on that species in the fauna table. Also returns how much of the herd the
+/// party killed, so a caller can tell a raid that killed nothing from one that was not credited.
+fn raid_practice(big_game: bool) -> (f64, f32) {
+    let mut app = placid_world();
+    {
+        let mut handle = app.world.resource_mut::<FaunaConfigHandle>();
+        let mut config = (*handle.get()).clone();
+        for def in config.species.values_mut() {
+            if def.display_name == FIGHTING_QUARRY {
+                def.big_game = big_game;
+            }
+        }
+        handle.replace(std::sync::Arc::new(config));
+    }
+    let (id, herd_pos) = pin_raid_herd_of(&mut app, FIGHTING_QUARRY, PLACID_HERD);
+    let before = herd_biomass(&app, &id).expect("the herd is seated");
+    let home = spawn_home_band(&mut app, herd_pos);
+    app.world
+        .entity_mut(home)
+        .insert(core_sim::BandLeadership::default());
+    let party = spawn_party(&mut app, home, herd_pos, PARTY_WORKERS, deny(&id));
+    // The party is not the one credited: it carries a record of its own only to prove it.
+    app.world
+        .entity_mut(party)
+        .insert(core_sim::BandLeadership::default());
+
+    let horizon = expedition_cfg(&app).hunt.forecast_horizon_turns;
+    drive_raid(&mut app, party, horizon);
+
+    let killed = before - herd_biomass(&app, &id).unwrap_or(0.0);
+    let practice = app
+        .world
+        .get::<core_sim::BandLeadership>(home)
+        .expect("the home band keeps its record")
+        .practice;
+    assert_eq!(
+        app.world
+            .get::<core_sim::BandLeadership>(party)
+            .map(|leadership| leadership.practice),
+        Some(0.0),
+        "a detached party credits its home band, never itself"
+    );
+    (practice, killed)
+}
+
+/// **A fought kill on a `big_game` species credits the HOME band**, and the same raid on the same
+/// species without the flag credits nobody -- so it is the flag, not the animal, that counts.
+#[test]
+fn a_raid_that_lands_a_big_game_kill_credits_its_home_band() {
+    let (flagged, killed) = raid_practice(true);
+    assert!(killed > 0.0, "fixture: the raid must bring animals down");
+    assert!(
+        flagged > 0.0,
+        "a fought big-game kill banks practice on the home band"
+    );
+
+    let (unflagged, killed) = raid_practice(false);
+    assert!(
+        killed > 0.0,
+        "fixture: the control raid kills too, or its zero proves nothing"
+    );
+    assert_eq!(unflagged, 0.0, "a kill on ordinary game banks nothing");
+}

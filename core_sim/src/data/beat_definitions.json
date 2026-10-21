@@ -145,6 +145,82 @@
     ]
   },
   {
+    "id": "leadership.chief_rises",
+    "tier": "beat",
+    "soul": {
+      "question": "Work that goes well wants someone to answer for it, and one of us has begun to."
+    },
+    "when": {
+      "all": [
+        {
+          "signal": "leadership.chiefs_emerged_this_turn",
+          "gte": 1
+        }
+      ]
+    },
+    "nouns": {
+      "leader": {
+        "from": "leadership.newest_leader"
+      }
+    },
+    "wardrobe": [
+      {
+        "id": "chief_rises.stood_up",
+        "fit": {
+          "requires_noun": [
+            "leader"
+          ]
+        },
+        "voice": {
+          "mythic": "The work went well enough, often enough, that {leader.name} stood up in the middle of it, and we found we had all been waiting for someone to.",
+          "warm": "The work's gone well enough, often enough, that {leader.name} started telling us where to stand, and none of us minded."
+        }
+      }
+    ],
+    "gloss": [
+      "leadership.chiefs_emerged_this_turn"
+    ],
+    "cooldown_turns": 3
+  },
+  {
+    "id": "leadership.council_forms",
+    "tier": "beat",
+    "soul": {
+      "question": "Work that goes well wants someone to answer for it, and we would rather it were several of us."
+    },
+    "when": {
+      "all": [
+        {
+          "signal": "leadership.councils_emerged_this_turn",
+          "gte": 1
+        }
+      ]
+    },
+    "nouns": {
+      "leader": {
+        "from": "leadership.newest_leader"
+      }
+    },
+    "wardrobe": [
+      {
+        "id": "council_forms.sat_together",
+        "fit": {
+          "requires_noun": [
+            "leader"
+          ]
+        },
+        "voice": {
+          "mythic": "No one rose above the rest; the elders sat down together before the work, and {leader.name} is the one who speaks for them.",
+          "warm": "Nobody's in charge, exactly, but the elders sit down together before the work now, and {leader.name} is the one who speaks for them."
+        }
+      }
+    ],
+    "gloss": [
+      "leadership.councils_emerged_this_turn"
+    ],
+    "cooldown_turns": 3
+  },
+  {
     "id": "knowledge.cultivation_learned",
     "tier": "beat",
     "soul": {

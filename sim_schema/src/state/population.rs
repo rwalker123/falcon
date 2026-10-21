@@ -1849,6 +1849,19 @@ pub struct PopulationCohortState {
     /// `docs/plan_early_diplomacy.md` §3). Empty on every other row. Appended last.
     #[serde(default)]
     pub envoy_terms: crate::state::treaties::TreatyTermsState,
+    /// **The leader a band accepted** (`core_sim::leadership`, #859): the chief's name, or the
+    /// speaker's for a council; empty with no leader. Own bands only. Appended last.
+    #[serde(default)]
+    pub leader_name: String,
+    /// `0` no leader, `1` chief, `2` elders' council. Appended last.
+    #[serde(default)]
+    pub leader_kind: u8,
+    /// Practice banked toward a leader. Appended last.
+    #[serde(default)]
+    pub leadership_practice: f32,
+    /// The practice a leader emerges at, so a client can say "N of M". Appended last.
+    #[serde(default)]
+    pub leadership_threshold: f32,
 }
 
 /// **An amount of one material** — a recipe input per pass ([`KitNeedRecipeState::inputs`], the

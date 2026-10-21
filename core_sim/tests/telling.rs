@@ -140,3 +140,118 @@ fn a_beat_with_no_dressable_wardrobe_does_not_fire() {
         "an undressable beat must not be marked fired"
     );
 }
+
+// --- leadership (#859) -----------------------------------------------------------------------
+
+/// Hand the faction's first resident band a leader of `kind` named `name`, the way
+/// `advance_leadership` leaves one, and return its entity.
+fn give_a_band_a_leader(
+    app: &mut bevy::app::App,
+    faction: FactionId,
+    kind: core_sim::LeaderKind,
+    name: &str,
+) {
+    let band = {
+        let mut query = app
+            .world
+            .query_filtered::<(bevy::prelude::Entity, &core_sim::PopulationCohort), bevy::prelude::With<core_sim::ResidentBand>>();
+        query
+            .iter(&app.world)
+            .find(|(_, cohort)| cohort.faction == faction)
+            .map(|(entity, _)| entity)
+            .expect("the world has a resident band of the faction")
+    };
+    app.world.entity_mut(band).insert(core_sim::BandLeadership {
+        practice: 0.0,
+        leader: Some(core_sim::BandLeader {
+            name: name.to_string(),
+            kind,
+            since_turn: 0,
+        }),
+    });
+}
+
+/// **A chief emerging fires the chief beat the turn it appears, dressed in the leader's name** --
+/// and only that turn: the signal is a diff of a cumulative count, so a standing leader is not news.
+#[test]
+fn a_chief_emerging_fires_the_chief_beat_with_the_leaders_name() {
+    let mut app = spawn_world();
+    spawn_band(&mut app, FactionId(0), 31);
+    for _ in 0..3 {
+        run_turn(&mut app);
+    }
+    assert!(
+        !app.world
+            .resource::<BeatLedger>()
+            .has_fired("leadership.chief_rises"),
+        "fixture: no chief yet, no chief beat"
+    );
+
+    give_a_band_a_leader(&mut app, FactionId(0), core_sim::LeaderKind::Chief, "Orrin");
+    run_turn(&mut app);
+
+    assert!(app
+        .world
+        .resource::<BeatLedger>()
+        .has_fired("leadership.chief_rises"));
+    assert!(
+        !app.world
+            .resource::<BeatLedger>()
+            .has_fired("leadership.council_forms"),
+        "a chief is not a council"
+    );
+    let lines: Vec<_> = beats(&app)
+        .into_iter()
+        .filter(|e| e.label.contains("Orrin"))
+        .collect();
+    assert_eq!(lines.len(), 1, "one line, naming the leader: {lines:?}");
+    assert!(
+        !lines[0].label.contains('{'),
+        "no unrendered placeholder: {:?}",
+        lines[0].label
+    );
+
+    for _ in 0..6 {
+        run_turn(&mut app);
+    }
+    assert_eq!(
+        beats(&app)
+            .iter()
+            .filter(|e| e.label.contains("Orrin"))
+            .count(),
+        1,
+        "a standing leader is not news the turn after"
+    );
+}
+
+/// The council twin: an elders' council fires the council beat, naming its speaker.
+#[test]
+fn a_council_forming_fires_the_council_beat_with_the_speakers_name() {
+    let mut app = spawn_world();
+    spawn_band(&mut app, FactionId(0), 31);
+    for _ in 0..3 {
+        run_turn(&mut app);
+    }
+    give_a_band_a_leader(
+        &mut app,
+        FactionId(0),
+        core_sim::LeaderKind::ElderCouncil,
+        "Hale",
+    );
+    run_turn(&mut app);
+
+    assert!(app
+        .world
+        .resource::<BeatLedger>()
+        .has_fired("leadership.council_forms"));
+    assert!(
+        !app.world
+            .resource::<BeatLedger>()
+            .has_fired("leadership.chief_rises"),
+        "a council is not a chief"
+    );
+    assert!(
+        beats(&app).iter().any(|e| e.label.contains("Hale")),
+        "the speaker is named"
+    );
+}

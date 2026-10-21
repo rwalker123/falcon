@@ -1592,6 +1592,19 @@ table PopulationCohortState {
   // The treaty terms an envoy party (`expeditionMission` "envoy") will post on arrival. Empty on
   // every other row.
   envoyTerms:TreatyTermsState;
+
+  // --- A BAND'S LEADER (appended last, #859) ---------------------------------------------------
+  // The leader a band accepted after directed work succeeded often enough (`core_sim::leadership`).
+  // Own bands only: a foreign (redacted) row carries the defaults. `leaderName` is the chief's name,
+  // or the speaker's name for a council; empty with no leader.
+  leaderName:string;
+  // 0 = no leader yet, 1 = chief, 2 = elders' council.
+  leaderKind:ubyte = 0;
+  // Practice banked toward a leader, and the practice a leader emerges at (`practice_threshold`), so
+  // the client can say "N of M" without a config of its own. Practice stops growing once there is a
+  // leader.
+  leadershipPractice:float = 0;
+  leadershipThreshold:float = 0;
 }
 
 // An amount of one material: a recipe input per PASS (the bench's material efficiency already
