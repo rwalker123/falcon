@@ -2109,6 +2109,12 @@ func _hay_ledger_states() -> void:
 			(not leader_panel._chief_row.visible) if want_label == ""
 			else (leader_panel._chief_row.visible and leader_panel._chief_label.text == want_label
 				and drawn_points == leader_case[4]))
+		# The bar row sits in the header's subject column, so a wide bar widens the docked card past
+		# the strip the dock reserves.
+		var card_min := leader_panel._panel.get_combined_minimum_size().x
+		var reserved := leader_panel.current_reservation_size()
+		h._assert_hud("%s: the card's minimum width (%.0fpx) fits the docked strip (%.0fpx)"
+			% [leader_case[0], card_min, reserved], card_min <= reserved)
 	var tip: String = HudFormat.band_chief_progress(leader_cases[0][1]).get("tooltip", "")
 	h._assert_hud("the bar's tooltip names every source with its points",
 		tip.contains("Cultivate or Tame: 3") and tip.contains("Splits: 3")

@@ -104,7 +104,12 @@ command center**: shown whenever ≥1 player band exists, always displaying a
   for a band with a leader or a threshold of 0 (foreign cohort), and the faction page, which passes
   none. `set_header`'s `chief_progress` argument carries it; the panel never reads a band dict. The row
   hover is the headline "A band gains a leader once it does enough work that needs an organiser." and one
-  line of per-source points. There is no `no chief yet` text. Harness frames `leader_partial`,
+  line of per-source points. There is no `no chief yet` text. **Neither line may widen the panel**:
+  the bar's floor is `CHIEF_BAR_MIN_WIDTH` (24, it stretches to the column the name and sub line
+  set — at 90 it pushed the card to 410px in the 380px strip), and the sub line trims with an
+  ellipsis and carries its whole text on its tooltip (`MOUSE_FILTER_PASS`, so a click still reaches
+  the subject's jump); the council clause alone took the card to 506px. Each leader frame asserts
+  the card's minimum width fits `current_reservation_size()`. Harness frames `leader_partial`,
   `leader_empty`, `leader_chief`, `leader_council` in `band_expedition` assert the label and each cell's
   points (`BandCityPanel.CHIEF_POINTS_META`). The event feed's `leader_emerged` is Notable in
   `hud_event_vocab.gd`; its `name=` is a hidden key and `EventDockPanel.detail_phrase` drops the

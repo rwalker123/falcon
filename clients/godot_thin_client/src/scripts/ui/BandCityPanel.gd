@@ -158,7 +158,9 @@ const STAGE_LABEL_FONT_SIZE := 10
 const STAGE_ROW_SEPARATION := 6
 ## The chief-progress row (#859): a slim split bar and its "Chief 6 / 10" label under the sub line.
 const CHIEF_BAR_HEIGHT := 5.0
-const CHIEF_BAR_MIN_WIDTH := 90.0
+## Kept small on purpose: the bar stretches to the column the name and sub line already set, and a
+## larger floor makes the row the widest thing in the header, which widens the whole panel.
+const CHIEF_BAR_MIN_WIDTH := 24.0
 const CHIEF_BAR_CELL_GAP := 1
 const CHIEF_ROW_SEPARATION := 6
 const CHIEF_REMAINDER_KEY := "remainder"
@@ -823,6 +825,7 @@ func set_header(stage_id: String, glyph: String, subject_name: String, stage_lab
 		_stage_label.text = stage_label
 	if _position_label != null:
 		_position_label.text = position_label
+		_position_label.tooltip_text = position_label
 		_position_label.visible = not position_label.is_empty()
 	_apply_chief_progress(chief_progress)
 
@@ -1350,7 +1353,12 @@ func _build_header_full() -> HBoxContainer:
 	_position_label.add_theme_color_override("font_color", HudStyle.INK_FAINT)
 	_position_label.text = ""
 	_position_label.visible = false
-	_position_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	# The line can carry the leader clause ("· led by the elders' council — Orrin speaks"), which is
+	# wider than the docked strip: it trims with an ellipsis instead of widening the panel, and the
+	# full line rides the tooltip. PASS keeps a click reaching the subject cluster's jump.
+	_position_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_position_label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	_position_label.mouse_filter = Control.MOUSE_FILTER_PASS
 	stage_row.add_child(_stage_label)
 	stage_row.add_child(_position_label)
 	subject.add_child(_name_label)
