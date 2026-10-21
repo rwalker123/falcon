@@ -42,6 +42,7 @@ use tracing::info;
 use crate::components::BandId;
 use crate::{
     components::{LaborAllocation, PopulationCohort, ResidentBand, Tile},
+    connections::GatheringLedger,
     culture::CultureManager,
     fauna::HerdRegistry,
     fauna_config::FaunaConfigHandle,
@@ -76,8 +77,8 @@ pub use signals::{registered_signals, SignalId, SignalSample};
 use nouns::NounContext;
 use predicate::EvalContext;
 use signals::{
-    discovered_total_from, format_gloss_value, sample_signals, BandView, SignalSources,
-    SITES_DISCOVERED_TOTAL_KEY,
+    discovered_total_from, format_gloss_value, gatherings_total_from, sample_signals, BandView,
+    SignalSources, GATHERINGS_HELD_TOTAL_KEY, SITES_DISCOVERED_TOTAL_KEY,
 };
 
 /// Persistent narrative memory: what has fired, what the signals read last turn, and which
@@ -514,7 +515,12 @@ impl BeatLedger {
 
     /// Store this turn's samples as *next* turn's `prev`. Called **after** evaluation, so the
     /// edge machinery always compares against the previous turn.
-    fn commit_edge_state(&mut self, sample: &SignalSample, discovered_total: f64) {
+    fn commit_edge_state(
+        &mut self,
+        sample: &SignalSample,
+        discovered_total: f64,
+        gatherings_total: f64,
+    ) {
         for (signal, value) in sample.iter() {
             self.edge_state
                 .insert(signal.clone(), Scalar::from_f32(*value as f32));
@@ -522,6 +528,10 @@ impl BeatLedger {
         self.edge_state.insert(
             SITES_DISCOVERED_TOTAL_KEY.to_string(),
             Scalar::from_f32(discovered_total as f32),
+        );
+        self.edge_state.insert(
+            GATHERINGS_HELD_TOTAL_KEY.to_string(),
+            Scalar::from_f32(gatherings_total as f32),
         );
     }
 
@@ -795,6 +805,7 @@ pub struct TellingSources<'w, 's> {
     pub factions: Res<'w, FactionRegistry>,
     pub sedentarization: Res<'w, SedentarizationScore>,
     pub discovered_sites: Res<'w, DiscoveredSites>,
+    pub gatherings: Res<'w, GatheringLedger>,
     pub discovery_progress: Res<'w, DiscoveryProgressLedger>,
     pub herds: Res<'w, HerdRegistry>,
     pub fauna_config: Res<'w, FaunaConfigHandle>,
@@ -891,16 +902,19 @@ pub fn telling_tick(
 
     // 1. Sample every signal once, into a consistent snapshot.
     let previous_discovered_total = discovered_total_from(&ledger.edge_state);
-    let (sample, discovered_total) = sample_signals(&SignalSources {
+    let previous_gatherings_total = gatherings_total_from(&ledger.edge_state);
+    let (sample, discovered_total, gatherings_total) = sample_signals(&SignalSources {
         faction,
         tick: &sources.tick,
         sedentarization: &sources.sedentarization,
         discovered_sites: &sources.discovered_sites,
+        gatherings: &sources.gatherings,
         discovery_progress: &sources.discovery_progress,
         herds: &sources.herds,
         culture: &sources.culture,
         bands: &bands,
         previous_discovered_total,
+        previous_gatherings_total,
     });
 
     // The stance axes are readable signals too (`stance.<axis>`), so they must be in the sample
@@ -1214,7 +1228,7 @@ pub fn telling_tick(
 
     // Store this turn's samples as next turn's `prev` — **after** evaluation, so `crosses`
     // always compares against the previous turn.
-    ledger.commit_edge_state(&sample, discovered_total);
+    ledger.commit_edge_state(&sample, discovered_total, gatherings_total);
 }
 
 #[cfg(test)]
@@ -1237,7 +1251,7 @@ mod tests {
             ("provisions.total".to_string(), 120.5),
         ]);
         ledger.push_history(&sample, 16);
-        ledger.commit_edge_state(&sample, 2.0);
+        ledger.commit_edge_state(&sample, 2.0, 0.0);
 
         // The fork tier's half: what is on the table, what was decided, and what re-arms.
         ledger.push_pending_fork(PendingFork {
@@ -1355,7 +1369,7 @@ mod tests {
     #[test]
     fn edge_state_carries_the_cumulative_discovery_total_but_not_as_a_signal() {
         let mut ledger = BeatLedger::default();
-        ledger.commit_edge_state(&SignalSample::default(), 4.0);
+        ledger.commit_edge_state(&SignalSample::default(), 4.0, 0.0);
         assert_eq!(discovered_total_from(&ledger.edge_state), 4.0);
         assert!(!signals::is_registered_signal(SITES_DISCOVERED_TOTAL_KEY));
     }

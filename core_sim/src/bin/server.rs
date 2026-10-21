@@ -12714,6 +12714,7 @@ fn command_kind_display(kind: CommandEventKind) -> &'static str {
         CommandEventKind::CancelOrder => "Cancel order",
         CommandEventKind::SedentarizationPrompt => "Sedentarization",
         CommandEventKind::SiteDiscovered => "Site discovered",
+        CommandEventKind::GatheringHeld => "Gathering",
         CommandEventKind::NarrativeBeat => "The Telling",
         CommandEventKind::NarrativeFork => "The Telling",
         CommandEventKind::ExpeditionSent => "Expedition sent",

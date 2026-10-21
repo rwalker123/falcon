@@ -159,6 +159,13 @@ paths:
   `turn_orb_unworked_rung`, whose fixture carries a WORKED patch as a negative control precisely so a
   roster read that sees no crews fails the row COUNT.
 
+  - **`gathering_held`** (**info**, NON-locating, `AttentionController._gathering_attention`, #698) —
+    two peoples' bands met this turn. Raised by `ingest_command_events` keyed on the event KIND alone
+    (never parsing the detail), under the same own-`tick` and `seq` filters as `crew_handoff`; the row's
+    label is the event's label ("A gathering") and its detail the sim's own sentence, verbatim. It is a
+    notice with no `Open ▸` (not on `ATTENTION_KINDS_WITH_A_PANEL`), wears the `workers` mark, and is
+    capped at `ATTENTION_HANDOFF_MAX_ROWS`. The feed line rides the Notable rung (`hud_event_vocab.gd`).
+
   - **`crew_handoff`** (**info**, NON-locating, `_crew_handoff_attention`) — a build finished this turn
     and its crew MOVED: onto the finished rung's keeping if that rung declares an upkeep, back to the
     idle pool if it does not (`docs/plan_standing_upkeep.md` §2.3). **It is an attention row because of

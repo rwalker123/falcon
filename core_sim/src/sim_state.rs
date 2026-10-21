@@ -57,7 +57,7 @@ use crate::{
         Expedition, LaborAllocation, PopulationCohort, PowerNode, ResidentBand, Settlement,
         StartingUnit, Tile, TownCenter,
     },
-    connections::ConnectionLedger,
+    connections::{ConnectionLedger, GatheringLedger},
     crisis::{
         ActiveCrisisLedger, ActiveCrisisLedgerCheckpoint, CrisisOverlayCache, CrisisTelemetry,
     },
@@ -191,6 +191,11 @@ pub struct SimState {
     /// checkpoint that dropped it would restore a world that had forgotten everyone it had met.
     /// Its `ContactsThisTurn` twin is genuinely derived and is deliberately not here.
     pub connections: ConnectionLedger,
+    /// How many gatherings each people has held (`connections::GatheringLedger`), the cumulative
+    /// total the Telling diffs into `gatherings.held_this_turn`. **State, not derived**: nothing
+    /// rebuilds a count of past meetings, and a restore that dropped it would read the whole
+    /// history as one turn of new gatherings.
+    pub gatherings: GatheringLedger,
     /// Every road in the world, one record per tile, with its keeper and its position on the route
     /// branch. **State, not derived** — for a stronger reason than the ties above it: a road is *in
     /// the ground* and outlives the bands that wore it in, so there is nothing to rebuild one
@@ -468,6 +473,7 @@ pub fn capture_sim_state(world: &World) -> SimState {
         capability_flags: *world.resource::<CapabilityFlags>(),
         command_events: world.resource::<CommandEventLog>().clone(),
         connections: world.resource::<ConnectionLedger>().clone(),
+        gatherings: world.resource::<GatheringLedger>().clone(),
         roads: world.resource::<RoadRegistry>().clone(),
         tile_improvements: world.resource::<TileImprovementRegistry>().clone(),
         corruption: world.resource::<CorruptionLedgers>().clone(),
@@ -706,6 +712,7 @@ pub fn restore_sim_state(world: &mut World, state: &SimState) {
     // copy is a prefix of the live one and everything appended after the checkpoint goes away.
     world.insert_resource(state.command_events.clone());
     world.insert_resource(state.connections.clone());
+    world.insert_resource(state.gatherings.clone());
     world.insert_resource(state.roads.clone());
     world
         .resource_mut::<crate::routes::RoadRegistry>()

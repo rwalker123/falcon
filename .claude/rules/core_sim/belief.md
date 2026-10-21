@@ -2,6 +2,8 @@
 paths:
   - "core_sim/src/belief.rs"
   - "core_sim/src/belief_config.rs"
+  - "core_sim/src/connections.rs"
+  - "core_sim/tests/gathering.rs"
   - "core_sim/src/data/belief_config.json"
   - "core_sim/src/systems/population.rs"
   - "core_sim/src/systems/labor.rs"
@@ -37,6 +39,7 @@ consumers (issue #701) are "The ancestor pull" and "Belief feeds the tether".
 | | `min_anchor_belief` (**1.0**) — the least belief a place must hold before a band adopts it as its anchor: one whole death's worth. Gates adoption only. PLAYTEST DIAL; validated finite and `>= 0` |
 | | `relay_per_hop` (**0.5**) — how much of the reach each hop of kin relays: a band tied in through `n` bands of its own people is near at `relay_per_hop ^ n`. PLAYTEST DIAL; validated finite and in `[0, 1]`; `0` turns relaying off and reproduces the unrelayed term exactly |
 | `src/data/belief_config.json` | `belief_per_death` (**1.0**) — belief added to the tile a band stands on, per person who dies there. At `1.0` the unit of belief **is** the dead-equivalent: a place reading `12` holds twelve people's worth of ancestors, and later sources are priced in that unit. Loader `belief_config.rs` on the shared boot seam (`config-loading.md`), env override `BELIEF_CONFIG_PATH`. No hot-reload kind. **There is deliberately no decay lever** |
+| | `belief_per_gathering` (**1.0**) — belief added to the tile a gathering is held on, in the same dead-equivalents: one gathering is worth one death's ancestors. Validated finite and `>= 0` at parse (`0` switches the source off). PLAYTEST DIAL |
 | | `ancestor_pull` (**`{ secular_devout: 0.3, traditionalist_revisionist: -0.3 }`**) — the signed offset each named culture axis takes at full tie (`s → 1`, `r = 1`). Keys are the `culture.axis.*` snake_case keys (`culture::culture_axis_key`, the one mapping); an unknown key or a non-finite value is a parse error; an axis not named takes no pull, so `{}` turns the pull off. PLAYTEST DIAL: at `0.3` a band stays under the `0.6` band soft divergence threshold on the pull alone |
 | `src/data/sedentarization_config.json` | `weights.belief` (**0.10**) and `references.belief` (**20.0** dead-equivalents) — the tether's belief input (see "Belief feeds the tether"); `weights.resource_density` went `0.20 → 0.10` to keep the weights summing to `1.0` |
 
@@ -51,12 +54,14 @@ holding belief has an entry, so an untouched map checkpoints an empty map.
 - **It is monotone.** Nothing subtracts from it and nothing decays it: an abandoned place keeps its
   dead, and a band that walks away leaves the stock where it accrued. The registry has no `remove` or
   `set`.
-- **`add(position, amount)` is THE seam every source writes through** — deaths now; gatherings
-  (#698) and the monument (#692) are further sources on the same seam. An `amount <= 0` is ignored,
+- **`add(position, amount)` is THE seam every source writes through** — deaths, gatherings, and
+  (#692) the monument later, all on the same seam. An `amount <= 0` is ignored,
   which is what keeps the stock monotone and the map sparse. `get(position)` answers `NO_BELIEF`
   (`0.0`) where nothing has accrued.
 - **`credit_deaths(position, deaths, config)`** is the deaths source's one expression,
   `deaths × belief_per_death`, so no call site restates it.
+- **`credit_gathering(position, config)`** is the gatherings source's, `belief_per_gathering`
+  once, for the same reason.
 
 ## The deaths source: where the band STANDS, never its home
 
@@ -76,6 +81,50 @@ accrue a cemetery at a place it has left.
 bracket that was there. A fight asking for more dead than the band holds credits only the bracket.
 The two labor sites pass `systems::labor::BeliefSink` — the band's position, the registry and the
 config — so the hunt seam names one place its dead go rather than taking three loose arguments.
+
+## The gatherings source: two bands meeting after having no live tie
+
+Design of record: `docs/plan_civilization_steps.md` §"The gathering is detected, not commanded"
+(issue #698). Nobody commands a gathering; `connections::advance_connections` detects one and the
+place it happened on gains belief.
+
+**What a gathering is.** A band-to-band sighting this turn between two bands whose pair held **no
+live tie** before it: no edge at all (a first meeting), or only a parked edge (strength at or below
+`NO_TIE` — the tie faded and the bands have found each other again). It is read off
+`ConnectionLedger::tie_is_live` for the pair, in either direction, **before** any of the turn's
+contacts is folded in, so the first directed edge of a pair to be refreshed cannot make the pair look
+tied to the second. Edges are directed, so the pair is deduplicated on its UNORDERED bands: one pair
+is at most one gathering a turn. A pair that camps together stays tied and never re-fires. Bands of
+one people count as well as bands of different peoples. `metrics.connections_formed` is untouched.
+
+**Only a live sighting counts.** `ContactsThisTurn::record` is the sight sweep's entry and marks the
+edge as a live sighting; an expedition's report goes through `record_report`, which refreshes the tie
+the same way but never marks it. A report can be about a band nowhere near the reader, so it is
+never two bands meeting.
+
+**Where it is credited: the larger band's standing tile.** The gathering is held at the
+`current_tile` — never `home` — of the band with the greater `cohort.size`; equal sizes go to the
+lower `BandId` (a stable id, never entity order). The larger band is the one the smaller came to: a
+big camp is a place people can gather, and the smaller band walking up to it is the visit. The
+credit is `BeliefRegistry::credit_gathering`, `belief_per_gathering` once, through the same `add`
+seam as the dead.
+
+**Who is told.** One `CommandEventKind::GatheringHeld` (`"gathering_held"`) line per participating
+people — one line when both bands are of one people — filed under that people, tagged `.with_band`
+with its own band, label `A gathering`, detail `<own band's name> met <other band's name> at (x, y).`
+(the pair is named from each people's own side; a band with no `BandName` reads as `Band <id>`). Both
+sides were in contact, so each is told; fog does not gate it.
+
+**The Telling.** `GatheringLedger` (`connections.rs`) holds a cumulative per-people count of
+gatherings; it is checkpoint state (`SimState::gatherings`, `SAVE_FORMAT_VERSION` 48, classified in
+`sim_state_coverage.rs`). The signal `gatherings.held_this_turn` is its diff against last turn's total
+(`telling.md`), and the `belief.gathering_held` beat rides it.
+
+Pinned by `tests/gathering.rs`: a first meeting credits the larger band's tile once; a gathering is
+held where the band stands, not its home; a pair that stays in contact does not re-fire; a pair whose
+tie parked and re-meets fires again; a same-people pair fires and is told once; an expedition report
+does not fire; a size tie goes to the lower band id; each people's line carries its own band and its
+own wording; `belief_per_gathering` scales the credit; the Telling's beat lands once.
 
 ## The culture morale term — near / far from the ancestors
 
@@ -226,7 +275,7 @@ no channel of their own for that) — so the band layer's target is `parent + mo
 accumulates: a band that walks away from its dead (`r → 0`) relaxes back to its province at the band
 scope's elasticity, and a band that returns is pulled again. An accumulating drift would need its own
 state, its own checkpoint, and its own decay lever. (What IS stored is only the map the last reconcile
-applied, `CultureManager::applied_band_pull` — a record for the wire, never read back into the layer.) Gatherings (#698) and the monument (#692) add
+applied, `CultureManager::applied_band_pull` — a record for the wire, never read back into the layer.) Gatherings and the monument (#692) add
 belief through `BeliefRegistry::add`; they raise `s`, and so the pull, with no further code.
 
 **Where it shows.** The faction's `culture.axis.secular_devout` / `…traditionalist_revisionist`

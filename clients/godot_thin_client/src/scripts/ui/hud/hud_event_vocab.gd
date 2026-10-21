@@ -249,6 +249,9 @@ const RUNG_BY_KIND := {
 	"died": RUNG_NOTABLE,
 	"migrated": RUNG_NOTABLE,
 	"site_discovered": RUNG_NOTABLE,
+	# **A GATHERING IS NOTABLE, NOT AN ALERT** (#698) -- two peoples met and the faction's belief shared;
+	# announced the way a discovery is (this line plus a turn-orb row), and good news, not a danger.
+	"gathering_held": RUNG_NOTABLE,
 	"found_settlement": RUNG_NOTABLE,
 	"campaign_milestone": RUNG_NOTABLE,
 	"campaign_victory": RUNG_NOTABLE,

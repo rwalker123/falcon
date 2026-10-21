@@ -168,6 +168,16 @@ const UNANSWERED_FORK_DETAIL := "The turn advanced past a pending fork — it wi
 ## to hand back a decision rather than to report a loss. It sorts below every real problem.
 const ATTENTION_KIND_CREW_HANDOFF := "crew_handoff"
 
+## **A GATHERING WAS HELD THIS TURN** (#698) -- two peoples' bands met. A NOTICE, `info`, NON-LOCATING
+## and deliberately NOT on `ATTENTION_KINDS_WITH_A_PANEL`, `crew_handoff`'s argument exactly: nothing
+## is wrong, and the row's text is the sim's own sentence (`Elk Band met River Band at (12, 7).`),
+## shown verbatim rather than recomposed. Keyed on the event kind alone; the detail is never parsed.
+const ATTENTION_KIND_GATHERING := "gathering_held"
+
+## The event kind on the command-event stream that raises it, and the row's fallback label.
+const GATHERING_EVENT_KIND := "gathering_held"
+const ATTENTION_GATHERING_LABEL := "A gathering"
+
 ## The row's label — the sim's own sentence, verbatim (*"3 of your cultivate crew stay on (31, 18) to
 ## keep it"*). Not recomposed here: the sim knows which rung finished, how many hands moved and where
 ## they went, and a second phrasing of one event is how two surfaces come to describe it differently.

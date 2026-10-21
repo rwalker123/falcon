@@ -13,6 +13,7 @@ use std::collections::BTreeMap;
 use crate::components::BandId;
 use crate::{
     components::{LaborAllocation, PopulationCohort, FOOD},
+    connections::GatheringLedger,
     culture::{
         culture_axis_from_key, culture_axis_key, CultureManager, CultureOwner, CultureTraitAxis,
     },
@@ -37,6 +38,11 @@ const CULTURE_AXIS_PREFIX: &str = "culture.axis.";
 /// through the rollback snapshot for free and a rollback cannot invent a phantom discovery.
 pub const SITES_DISCOVERED_TOTAL_KEY: &str = "internal.sites.discovered_total";
 
+/// The **cumulative** gathering count for the player faction, retained in the ledger's edge state
+/// so `gatherings.held_this_turn` is a per-turn diff, exactly as [`SITES_DISCOVERED_TOTAL_KEY`] is
+/// for sites. Not a registered signal; it round-trips through the rollback snapshot for free.
+pub const GATHERINGS_HELD_TOTAL_KEY: &str = "internal.gatherings.held_total";
+
 /// The narrator's attained medium, as a 0-based index into `voice.mediums`. **Set by
 /// `telling_tick`, not by [`sample_signals`]** — it is derived from the ledger's attained rung plus
 /// this turn's sample, so it is injected after the base sample exists (the `stance.*` idiom). It is
@@ -44,13 +50,14 @@ pub const SITES_DISCOVERED_TOTAL_KEY: &str = "internal.sites.discovered_total";
 pub const VOICE_MEDIUM_INDEX: &str = "voice.medium_index";
 
 /// Every signal id content may reference, other than the per-axis culture family.
-const BASE_SIGNALS: [&str; 9] = [
+const BASE_SIGNALS: [&str; 10] = [
     VOICE_MEDIUM_INDEX,
     "turn.index",
     "band.count",
     "provisions.total",
     "sedentarization.score",
     "sites.discovered_this_turn",
+    "gatherings.held_this_turn",
     "discovery.progress.cultivation",
     "discovery.progress.herding",
     "fauna.collapsing_group_count",
@@ -116,6 +123,7 @@ pub struct SignalSources<'a> {
     pub tick: &'a SimulationTick,
     pub sedentarization: &'a SedentarizationScore,
     pub discovered_sites: &'a DiscoveredSites,
+    pub gatherings: &'a GatheringLedger,
     pub discovery_progress: &'a DiscoveryProgressLedger,
     pub herds: &'a HerdRegistry,
     pub culture: &'a CultureManager,
@@ -124,6 +132,8 @@ pub struct SignalSources<'a> {
     pub bands: &'a [BandView<'a>],
     /// Last turn's cumulative discovered-site count, for the `sites.discovered_this_turn` diff.
     pub previous_discovered_total: f64,
+    /// Last turn's cumulative gathering count, for the `gatherings.held_this_turn` diff.
+    pub previous_gatherings_total: f64,
 }
 
 /// One resident band, as the signal sampler and the noun resolvers see it.
@@ -138,7 +148,9 @@ pub struct BandView<'a> {
 }
 
 /// Sample every registered signal for the player faction. Called once per turn.
-pub fn sample_signals(sources: &SignalSources<'_>) -> (SignalSample, f64) {
+/// Returns the sample and the two cumulative totals (sites discovered, gatherings held) the ledger
+/// retains for next turn's diffs.
+pub fn sample_signals(sources: &SignalSources<'_>) -> (SignalSample, f64, f64) {
     let mut sample = SignalSample::default();
 
     sample.set("turn.index", sources.tick.0 as f64);
@@ -164,6 +176,13 @@ pub fn sample_signals(sources: &SignalSources<'_>) -> (SignalSample, f64) {
     sample.set(
         "sites.discovered_this_turn",
         (discovered_total - sources.previous_discovered_total).max(0.0),
+    );
+
+    // Gatherings are a cumulative per-people count too, so "this turn" is the same kind of diff.
+    let gatherings_total = sources.gatherings.held_by(sources.faction) as f64;
+    sample.set(
+        "gatherings.held_this_turn",
+        (gatherings_total - sources.previous_gatherings_total).max(0.0),
     );
 
     for (signal, discovery_id) in [
@@ -200,7 +219,7 @@ pub fn sample_signals(sources: &SignalSources<'_>) -> (SignalSample, f64) {
         );
     }
 
-    (sample, discovered_total)
+    (sample, discovered_total, gatherings_total)
 }
 
 /// Format a sampled value for the gloss line — "the voice never lies", so this shows the real
@@ -213,6 +232,14 @@ pub fn format_gloss_value(value: f64) -> String {
     } else {
         format!("{value:.2}")
     }
+}
+
+/// Cumulative-gathering bookkeeping key helper, the twin of [`discovered_total_from`].
+pub fn gatherings_total_from(edge_state: &BTreeMap<String, Scalar>) -> f64 {
+    edge_state
+        .get(GATHERINGS_HELD_TOTAL_KEY)
+        .map(|s| s.to_f32() as f64)
+        .unwrap_or(0.0)
 }
 
 /// Cumulative-discovery bookkeeping key helper, so callers never spell the constant twice.

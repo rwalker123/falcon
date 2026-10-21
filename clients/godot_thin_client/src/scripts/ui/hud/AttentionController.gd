@@ -56,6 +56,10 @@ var _herd_label_for_id_fn: Callable
 ## exactly when the player is deciding what to do with those hands.
 var _handoffs: Array[Dictionary] = []
 
+## This turn's `gathering_held` rows (label + detail), under the same tick/seq filters as `_handoffs`
+## and cleared on the same turn change.
+var _gatherings: Array[Dictionary] = []
+
 ## The turn `_handoffs` describes. A hand-off is news about ONE turn, so the list is dropped whole
 ## when the turn changes rather than accumulating a session's worth of finished builds.
 var _handoff_turn: int = -1
@@ -159,6 +163,7 @@ func ingest_command_events(events_variant: Variant, turn: int) -> void:
         return
     if turn != _handoff_turn:
         _handoffs.clear()
+        _gatherings.clear()
         _handoff_seqs.clear()
         _handoff_turn = turn
     for entry_variant in events_variant:
@@ -166,6 +171,19 @@ func ingest_command_events(events_variant: Variant, turn: int) -> void:
             continue
         var entry: Dictionary = entry_variant
         var detail := String(entry.get("detail", ""))
+        if String(entry.get("kind", "")) == HudAttentionVocab.GATHERING_EVENT_KIND:
+            if int(entry.get(HANDOFF_TICK_KEY, HANDOFF_TICK_NONE)) != _handoff_turn:
+                continue
+            var gather_seq := int(entry.get(HANDOFF_SEQ_KEY, HANDOFF_SEQ_UNSEQUENCED))
+            if gather_seq != HANDOFF_SEQ_UNSEQUENCED:
+                if _handoff_seqs.has(gather_seq):
+                    continue
+                _handoff_seqs[gather_seq] = true
+            _gatherings.append({
+                "label": String(entry.get("label", "")).strip_edges(),
+                "detail": detail.strip_edges(),
+            })
+            continue
         if not detail.contains(HANDOFF_ACTION_TOKEN):
             continue
         var carried := detail.contains(HANDOFF_STATUS_CARRIED)
@@ -182,6 +200,25 @@ func ingest_command_events(events_variant: Variant, turn: int) -> void:
             "label": String(entry.get("label", "")).strip_edges(),
             "carried": carried,
         })
+
+## Turn-orb items for the gatherings held this turn (#698). Non-locating notices, capped like the
+## hand-offs; the sim's own sentence is the row's detail.
+func _gathering_attention() -> Array:
+    var items: Array = []
+    for i in _gatherings.size():
+        var gathering: Dictionary = _gatherings[i]
+        if i >= HudAttentionVocab.ATTENTION_HANDOFF_MAX_ROWS:
+            break
+        var label := String(gathering["label"])
+        items.append({
+            "kind": HudAttentionVocab.ATTENTION_KIND_GATHERING,
+            "severity": HudAttentionVocab.ATTENTION_SEVERITY_INFO,
+            "label": label if label != "" else HudAttentionVocab.ATTENTION_GATHERING_LABEL,
+            "detail": String(gathering["detail"]),
+            "x": HudAttentionVocab.ATTENTION_NON_LOCATING,
+            "y": HudAttentionVocab.ATTENTION_NON_LOCATING,
+        })
+    return items
 
 ## Turn-orb items for the builds that finished this turn and moved their crew (Producer 8) — the
 ## next-turn attention half of §2.3's *"either way it is announced"*.
@@ -351,6 +388,7 @@ func build_band_attention(player_bands: Array, player_expeditions: Array) -> Arr
     # stream rather than by the roster: a hand-off is an EVENT, and no band field records that it
     # happened.
     attention.append_array(_crew_handoff_attention())
+    attention.append_array(_gathering_attention())
     return attention
 
 ## **THE DEALINGS HALF OF THE REGISTRY** (early diplomacy) -- one row per band with an item addressed to

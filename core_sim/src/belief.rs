@@ -2,8 +2,8 @@
 //! §"Belief is a property of a place", §"The first pulls are not productive").
 //!
 //! A tile accrues belief from the things that happen *there*: deaths while a band stands on it (the
-//! cemetery — evidence of returning), gatherings held on it, and a monument raised on it. Only the
-//! first is wired; every source writes through the one seam, [`BeliefRegistry::add`].
+//! cemetery — evidence of returning), gatherings held on it, and a monument raised on it. Deaths and
+//! gatherings are wired; every source writes through the one seam, [`BeliefRegistry::add`].
 //!
 //! # Belief is monotone
 //!
@@ -38,8 +38,9 @@ pub struct BeliefRegistry {
 }
 
 impl BeliefRegistry {
-    /// **THE SEAM EVERY BELIEF SOURCE WRITES THROUGH** — deaths now
-    /// ([`BeliefRegistry::credit_deaths`]); gatherings (#698) and the monument (#692) later. Adds
+    /// **THE SEAM EVERY BELIEF SOURCE WRITES THROUGH** — deaths
+    /// ([`BeliefRegistry::credit_deaths`]) and gatherings ([`BeliefRegistry::credit_gathering`]); the
+    /// monument (#692) later. Adds
     /// `amount` to the tile at `position`. An `amount` at or below [`NO_BELIEF`] is ignored, which
     /// is what keeps belief monotone and the registry sparse: no caller can draw a place down, and
     /// a zero accrual never mints an entry.
@@ -70,6 +71,13 @@ impl BeliefRegistry {
     /// posted past `band_work_range`) are not where the band stands, and credit nothing.
     pub fn credit_deaths(&mut self, position: UVec2, deaths: f32, config: &BeliefConfig) {
         self.add(position, deaths * config.belief_per_death);
+    }
+
+    /// **The gatherings source.** One gathering was held on `position` — credit the place at
+    /// `belief_per_gathering`. The caller decides *where*: the standing tile of the larger of the
+    /// two bands that met, never a home.
+    pub fn credit_gathering(&mut self, position: UVec2, config: &BeliefConfig) {
+        self.add(position, config.belief_per_gathering);
     }
 
     /// Every place holding belief, in row-major order.

@@ -102,6 +102,10 @@ const KIND_CREW_HANDOFF := "crew_handoff"
 # turn. Non-locating, and it opens that screen, so it wears the screen's launcher's own mark rather
 # than a glyph of its own.
 const KIND_KNOWLEDGE_LEARNED := "knowledge_learned"
+# Two peoples' bands met (issue #698). A NOTICE like `KIND_CREW_HANDOFF`, offering no affordance. Its
+# mark is the plain text glyph `⇄` (two sides meeting), NOT the `workers` palm — that one says "work"
+# and no bundled sprite says "contact" — so it has no `KIND_ICON_SPRITE` entry.
+const KIND_GATHERING := "gathering_held"
 # The turn-one outfitting window, still holding an unspent budget (issue #629). Non-locating — it
 # opens the picker, not a hex — and it wears the same pennant the reopen pill does, which is line
 # art rather than an emoji for `KIND_DECISION`'s reason: emoji presentation rasterizes to a blob at
@@ -124,6 +128,7 @@ const KIND_ICON := {
 	KIND_UNDER_KEPT_RUNG: FoodIcons.POLICY_ICONS[FoodIcons.POLICY_SOW],
 	KIND_UNDER_KEPT_HERD: FoodIcons.POLICY_ICONS[FoodIcons.POLICY_TAME],
 	KIND_CREW_HANDOFF: "🛠",
+	KIND_GATHERING: "⇄",
 	# A question put to the people, awaiting their answer. Line art, NOT the ❔ emoji: emoji
 	# presentation renders as tofu/a blob at row size (the hazard that forced MagnifierButton and
 	# the policy icons to hand-draw). Verified at true size in `turn_orb_fork_blocks.png`.

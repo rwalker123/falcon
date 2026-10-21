@@ -42,7 +42,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 /// Mutated across turns, and a later turn reads it. A checkpoint that omits any of these produces
 /// a world that diverges from the one it claims to restore.
-const SIM_STATE_RESOURCES: [&str; 58] = [
+const SIM_STATE_RESOURCES: [&str; 59] = [
     "ActiveCrisisLedger",
     // Belief on every place. Only ever grows and outlives the bands whose dead put it there, so
     // nothing rebuilds it — the roads' reason exactly.
@@ -60,6 +60,9 @@ const SIM_STATE_RESOURCES: [&str; 58] = [
     // The directed ties contact leaves behind, with their three clocks. Nothing rebuilds them —
     // a restore that dropped this would hand back a world that had forgotten everyone it had met.
     "ConnectionLedger",
+    // The cumulative per-people count of gatherings held; the Telling diffs it every turn, so a
+    // restore that dropped it would read the whole history as one turn of new gatherings.
+    "GatheringLedger",
     "CorruptionLedgers",
     // Splits: `exposures_this_turn` is cleared per turn (derived), `exposures_total` is a
     // cumulative counter (state). Carried whole because the cheap half is small.

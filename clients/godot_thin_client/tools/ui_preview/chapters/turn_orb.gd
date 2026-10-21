@@ -1101,6 +1101,31 @@ func _hand_to_mouth_band(entity: int, shortfall: float) -> Dictionary:
 		"current_x": 60 + entity - HAND_TO_MOUTH_ENTITY, "current_y": 12, "idle_workers": 0,
 		"food_need": 3.6, "food_consumption": 3.6 - shortfall, "food_shortfall": shortfall}
 
+## **THE GATHERING NOTICE** (#698) — one `gathering_held` command event for THIS tick raises one
+## non-locating info row whose detail is the sim's own sentence, verbatim.
+const GATHERING_TURN := 62
+const GATHERING_LABEL := "A gathering"
+const GATHERING_DETAIL := "Elk Band met River Band at (12, 7)."
+const GATHERING_SEQ := 777
+
+func _assert_gathering_row() -> void:
+	var prior_turn: int = h._hud._band_labor.current_turn()
+	h._hud._band_labor.set_turn(GATHERING_TURN)
+	h._hud._attention.ingest_command_events([{
+		"tick": GATHERING_TURN, "seq": GATHERING_SEQ, "kind": "gathering_held",
+		"label": GATHERING_LABEL, "detail": GATHERING_DETAIL}], GATHERING_TURN)
+	h._hud.turn_orb.set_attention(h._hud._attention.build_band_attention([], []))
+	h._hud.turn_orb.open_popover()
+	await h._settle()
+	await h._save("turn_orb_gathering")
+	var row: Variant = _orb_row_with(_orb_rows(), GATHERING_LABEL)
+	h._assert_hud("a gathering raises an orb row naming the sim's own sentence",
+		row != null and String((row as Dictionary)["detail"]) == GATHERING_DETAIL)
+	h._hud.turn_orb.toggle_popover()
+	h._hud.turn_orb.set_attention([])
+	h._hud._attention.ingest_command_events([], GATHERING_TURN + 1)
+	h._hud._band_labor.set_turn(prior_turn)
+
 ## **THE KNOWLEDGE SCREEN'S ORB ROW** (`docs/plan_knowledge_screen.md` §5, slice C) — one row per
 ## discovery that finished this turn, **and nothing else at all**.
 ##
@@ -1259,3 +1284,4 @@ func _assert_knowledge_producers(inherited_tracks: Dictionary) -> void:
 	h._hud.turn_orb.toggle_popover()   # the orb's only close seam; leaves the walk as it found it
 	h._hud.turn_orb.set_attention([])
 	h._hud._band_labor.set_tile_temperatures({})
+	await _assert_gathering_row()
