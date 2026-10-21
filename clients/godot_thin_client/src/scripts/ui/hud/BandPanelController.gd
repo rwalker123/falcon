@@ -11937,7 +11937,9 @@ func render_band(unit: Dictionary) -> void:
     var stage_label := String(_band_labor.panel_band().get("settlement_stage_label", "")).strip_edges()
     var index := _index_of_player_band(int(_band_labor.panel_band().get("entity", -1)))
     _panel.set_header(stage_id, glyph, HudFormat.band_name(_band_labor.panel_band()), stage_label,
-        _panel_position_label(_band_labor.panel_band()))
+        HudFormat.band_header_line(_panel_position_label(_band_labor.panel_band()),
+            _band_labor.panel_band()),
+        HudFormat.band_leader_tooltip(_band_labor.panel_band()))
     _panel.set_cycler(_cycler_index_of_band(index), _cycler_count())
     # A band HAS a tile, and its `band` zone is a band's, so both header affordances come back on. Both
     # setters early-out on an unchanged value, so a band-to-band cycle costs nothing.

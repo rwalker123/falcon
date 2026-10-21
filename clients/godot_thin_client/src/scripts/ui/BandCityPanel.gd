@@ -800,7 +800,7 @@ func _ready() -> void:
 ## `position_label` is a preformatted `String` the CALLER resolves (the panel never reads a band
 ## dict), and `""` renders nothing — the caller could not resolve the coordinates.
 func set_header(stage_id: String, glyph: String, subject_name: String, stage_label: String,
-		position_label: String = "") -> void:
+		position_label: String = "", position_tooltip: String = "") -> void:
 	var resolved_glyph := glyph if not glyph.is_empty() else DEFAULT_STAGE_GLYPH
 	var sprite := StageSprites.for_stage(stage_id)
 	_apply_stage_visual(_stage_glyph_label, _stage_glyph_sprite, sprite, resolved_glyph)
@@ -812,6 +812,10 @@ func set_header(stage_id: String, glyph: String, subject_name: String, stage_lab
 	if _position_label != null:
 		_position_label.text = position_label
 		_position_label.visible = not position_label.is_empty()
+		# A hover needs the label to take the mouse; with none it stays click-through like its siblings.
+		_position_label.tooltip_text = position_tooltip
+		_position_label.mouse_filter = Control.MOUSE_FILTER_STOP if not position_tooltip.is_empty() \
+			else Control.MOUSE_FILTER_IGNORE
 
 ## Update the cycler readout ("index+1 / count"). count <= 0 blanks it.
 func set_cycler(index: int, count: int) -> void:

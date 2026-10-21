@@ -90,6 +90,17 @@ command center**: shown whenever ≥1 player band exists, always displaying a
   answers `""` when neither resolves, so both paths produce the identical header. That split is
   exactly what the harness pair `band_panel_people` (snapshot path) / `band_panel_people_map_path`
   (map path) exists to keep separable — a fixture reached only one way cannot see it.
+  **THE HEADER'S SECOND LINE ALSO NAMES WHO LEADS THE BAND** (#859): `(71, 18) · led by Chief Orrin`,
+  `· led by the elders' council — Orrin speaks`, or `· no chief yet`. The wire gives `leader_name`,
+  `leader_kind` (0 none / 1 chief / 2 elder council), `leadership_practice` and `leadership_threshold`;
+  `HudFormat.band_leader_phrase` / `band_header_line` compose the line and `BandPanelController` passes
+  it as the same preformatted `position_label`. A band with no leader AND no threshold (a foreign
+  cohort carries neither) adds nothing. `no chief yet` carries a hover through `set_header`'s
+  `position_tooltip` (`HudFormat.band_leader_tooltip`): "N of M" is practice floored (and capped at the
+  threshold) over the threshold rounded, both whole numbers. The label takes the mouse only while a
+  tooltip is set. Harness frames: `leader_chief`, `leader_council`, `leader_none` in `band_expedition`.
+  The event feed's `leader_emerged` is Notable in `hud_event_vocab.gd`; its `name=` is a hidden key
+  and `EventDockPanel.detail_phrase` drops the continuation words of any hidden value (`name=Orrin II`).
   **THE MARKER IS A STRUCTURAL COPY OF THE COHORT — `entry.duplicate()` plus declared stamps.** It was
   a hand-listed literal naming 56 of the cohort's keys, and it leaked THREE times: `hunt_mode`, then
   `working_age`/`idle_workers`, then the Minimal TOE's six, which made a band's **`Kit` row disappear**

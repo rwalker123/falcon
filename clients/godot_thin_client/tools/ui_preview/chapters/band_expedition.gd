@@ -8,7 +8,7 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 154
+const EXPECTED_CHECKPOINTS := 164
 
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 const ForageFx := preload("res://tools/ui_preview/fixtures_forage.gd")
@@ -2052,6 +2052,47 @@ func _hay_ledger_states() -> void:
 	# stranded reserved edge moves frames in later chapters for a reason unrelated to hay.
 	h._hud.set_band_city_panel(null)
 	hay_panel.queue_free()
+	h._hud._band_labor._player_bands = []
+	h._hud._band_labor._player_band = BandFx.band_fixture()
+	h._hud.clear_selection()
+	await h._settle()
+
+	# State leader-header -- **WHO SPEAKS FOR THE BAND, in the header's sub line** (#859): a chief, an
+	# elders' council with its speaker, and no leader (practice 2 of 3), each through the real
+	# selection path into a docked panel. A band with no threshold (foreign) must add nothing.
+	var leader_panel: BandCityPanel = h.BAND_CITY_PANEL_SCENE.instantiate()
+	h.add_child(leader_panel)
+	await h.get_tree().process_frame
+	leader_panel.reservation_changed.connect(func(edge: int, size: float) -> void:
+		MAIN_SCRIPT.push_hud_strip(h._hud, BAND_PANEL_RESERVER, edge, size,
+			MAIN_SCRIPT.band_dock_overlays_hud(edge, size, h._hud, leader_panel)))
+	leader_panel.set_dock(SIDE_RIGHT)
+	leader_panel.set_active_tab(BandCityPanel.ZONE_BAND)
+	h._hud.set_band_city_panel(leader_panel)
+	var leader_cases := [
+		["leader_chief", {"leader_name": "Orrin", "leader_kind": 1,
+			"leadership_practice": 3.0, "leadership_threshold": 3.0}, "led by Chief Orrin"],
+		["leader_council", {"leader_name": "Orrin", "leader_kind": 2,
+			"leadership_practice": 3.0, "leadership_threshold": 3.0},
+			"led by the elders' council — Orrin speaks"],
+		["leader_none", {"leader_name": "", "leader_kind": 0,
+			"leadership_practice": 2.0, "leadership_threshold": 3.0}, "no chief yet"],
+	]
+	for leader_case in leader_cases:
+		var leader_band := BandFx.band_fixture()
+		leader_band.merge(leader_case[1], true)
+		h._hud.update_band_alerts([leader_band])
+		h._hud.show_unit_selection(leader_band)
+		await h._settle()
+		await h._save(String(leader_case[0]))
+		h._assert_hud("header sub line reads '%s'" % leader_case[2],
+			HudFormat.band_header_line("(1, 2)", leader_band).ends_with(String(leader_case[2])))
+	h._assert_hud("no-chief tooltip states N of M as whole numbers",
+		HudFormat.band_leader_tooltip(leader_cases[2][1]).contains("2 of 3"))
+	h._assert_hud("a band with no threshold (foreign) adds nothing to the header",
+		HudFormat.band_header_line("(1, 2)", {}) == "(1, 2)")
+	h._hud.set_band_city_panel(null)
+	leader_panel.queue_free()
 	h._hud._band_labor._player_bands = []
 	h._hud._band_labor._player_band = BandFx.band_fixture()
 	h._hud.clear_selection()

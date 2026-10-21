@@ -222,6 +222,11 @@ const RUNG_BY_KIND := {
 	# and the band's Beliefs row carries the standing reading. Both ids are named on screen
 	# (`BAND_ID_TOKEN_LABELS`, `PEOPLE_ID_TOKEN_KEYS`).
 	"culture_pull": RUNG_NOTABLE,
+	# **A BAND ACCEPTING A LEADER** (#859, detail `kind=chief|elder_council name=<name>`). Notable: it
+	# is a one-time change in who speaks for a band, nothing is lost, and the label ("Orrin is chief" /
+	# "The elders' council forms; Orrin speaks for it") already names the person and the form, so
+	# `kind` (hidden below) and `name` add nothing as raw tokens.
+	"leader_emerged": RUNG_NOTABLE,
 	# **A MATERIAL THE STANDING BILLS EAT FASTER THAN IT ARRIVES** (`docs/plan_standing_upkeep.md`
 	# §4.9 item 12). Alert, and it NAMES THE BAND — this line is what replaced the faction `Gear`
 	# row's `⚠ 1 band` → *which band* drill-down, and a faction-level warning that says something is
@@ -761,6 +766,8 @@ const DETAIL_KEY_HIDDEN := {
 	"reported": true,
 	# `culture_pull`'s `faction=` is the pulling people, named in the label the same way as `from=`/`to=`.
 	"faction": true,
+	# `leader_emerged`'s `name=` is the leader, already in the label.
+	"name": true,
 }
 
 ## **KEYS HIDDEN ONLY ON LINES CARRYING ONE `status=` TOKEN** — the rung-decay pair

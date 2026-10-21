@@ -94,6 +94,17 @@ const BAND_ID_FALLBACK_NAME_FORMAT := "Band #%d"
 ## parenthesised pair here rather than as a labelled `Position:` row in the band zone's vitals.
 const BAND_HEADER_POSITION_FORMAT := "(%d, %d)"
 
+## **THE LEADER, as the header's sub line carries it** (issue #859). `leader_kind` is the wire's
+## enum: 0 none, 1 chief, 2 elder council. A council has a named person too -- its speaker.
+const LEADER_KIND_NONE := 0
+const LEADER_KIND_CHIEF := 1
+const LEADER_KIND_ELDER_COUNCIL := 2
+const BAND_HEADER_LEADER_SEPARATOR := " · "
+const BAND_HEADER_CHIEF_FORMAT := "led by Chief %s"
+const BAND_HEADER_COUNCIL_FORMAT := "led by the elders' council — %s speaks"
+const BAND_HEADER_NO_CHIEF := "no chief yet"
+const BAND_HEADER_NO_CHIEF_TOOLTIP_FORMAT := "The band accepts a leader once directed work succeeds: %d of %d — finished Cultivate, Tame or Corral builds, and big-game hunts that land their kill."
+
 ## THE FACTION PAGE's header identity (issue #450), beside the band header vocabulary above because
 ## the two fill the SAME three header slots and must be read together. The panel's header takes a
 ## stage id, a glyph, a name and a stage word; a faction has no settlement stage and no tile, so it
@@ -193,6 +204,40 @@ static func band_name(entry: Dictionary) -> String:
     if not HudExpeditionVocab.PARTY_SHORT_LABELS.has(mission):
         return name
     return HudExpeditionVocab.PARTY_NAME_FORMAT % [name, HudExpeditionVocab.PARTY_SHORT_LABELS[mission]]
+
+## The leader clause for the header sub line ("led by Chief Orrin"), `""` when there is nothing to
+## say. A band with no leader says "no chief yet" -- but only when it carries a practice threshold,
+## because a foreign band's cohort carries neither a leader nor a threshold (0) and must show nothing.
+static func band_leader_phrase(entry: Dictionary) -> String:
+    var leader_name := String(entry.get("leader_name", "")).strip_edges()
+    match int(entry.get("leader_kind", LEADER_KIND_NONE)):
+        LEADER_KIND_CHIEF:
+            return BAND_HEADER_CHIEF_FORMAT % leader_name if leader_name != "" else ""
+        LEADER_KIND_ELDER_COUNCIL:
+            return BAND_HEADER_COUNCIL_FORMAT % leader_name if leader_name != "" else ""
+    if float(entry.get("leadership_threshold", 0.0)) > 0.0:
+        return BAND_HEADER_NO_CHIEF
+    return ""
+
+## The "no chief yet" hover: practice banked out of the threshold, whole numbers. `""` for a band
+## with a leader or without a threshold.
+static func band_leader_tooltip(entry: Dictionary) -> String:
+    if int(entry.get("leader_kind", LEADER_KIND_NONE)) != LEADER_KIND_NONE:
+        return ""
+    var threshold := float(entry.get("leadership_threshold", 0.0))
+    if threshold <= 0.0:
+        return ""
+    var practice := minf(float(entry.get("leadership_practice", 0.0)), threshold)
+    return BAND_HEADER_NO_CHIEF_TOOLTIP_FORMAT % [int(floor(practice)), int(round(threshold))]
+
+## The header sub line's position clause joined to the leader clause.
+static func band_header_line(position_label: String, entry: Dictionary) -> String:
+    var phrase := band_leader_phrase(entry)
+    if phrase == "":
+        return position_label
+    if position_label == "":
+        return phrase
+    return position_label + BAND_HEADER_LEADER_SEPARATOR + phrase
 
 ## **A BAND WITH ITS PEOPLE** -- `Netherford, Lothari` -- or the people alone when no band is named
 ## (a builder the roster does not hold, or the wire's 0).
