@@ -749,7 +749,7 @@ func run(harness) -> void:
 	advance_hits[0] = 0
 	h._hud.update_band_alerts([
 		{"faction": 0, "entity": 511, "size": 40, "turns_of_food": 999.0, "activity": "forage",
-			"current_x": 30, "current_y": 20, "idle_workers": 5},
+			"current_x": 30, "current_y": 20, "working_age": 5, "idle_workers": 5},
 	])
 	h._hud.turn_orb._on_face_pressed()
 	await h._settle()
@@ -841,7 +841,7 @@ func run(harness) -> void:
 		# Idle labor: 4 working-age workers unassigned.
 		{"faction": 0, "entity": 603, "band_id": 4603, "name": ORB_IDLE_BAND_NAME,
 			"size": 60, "turns_of_food": 999.0, "activity": "forage",
-			"current_x": 12, "current_y": 9, "idle_workers": 4},
+			"current_x": 12, "current_y": 9, "working_age": 4, "idle_workers": 4},
 	])
 	h._hud.turn_orb.open_popover()
 	await h._settle()
@@ -858,7 +858,7 @@ func run(harness) -> void:
 	h._hud.update_band_alerts([
 		{"faction": 0, "entity": 701, "band_id": 4701, "name": ORB_AWAITING_HOME_BAND_NAME,
 			"size": 60, "turns_of_food": 999.0, "activity": "forage",
-			"current_x": 12, "current_y": 9, "idle_workers": 4},
+			"current_x": 12, "current_y": 9, "working_age": 4, "idle_workers": 4},
 		{"faction": 0, "entity": 751, "size": 6, "turns_of_food": 9.0, "is_expedition": true,
 			"expedition_mission": "scout", "expedition_phase": "awaiting", "home_band_entity": 701,
 			"current_x": 39, "current_y": 26},

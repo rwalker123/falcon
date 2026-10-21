@@ -442,6 +442,24 @@ static func role_card_stylebox() -> StyleBoxFlat:
 	sb.content_margin_bottom = ROLE_CARD_PADDING
 	return sb
 
+## The IDLE CARD under the People block: the role card's chrome (bordered, rounded) in the WARN amber
+## the idle segment wears, over a ground wash tinted a little toward that amber.
+const IDLE_CARD_PADDING := 8
+const IDLE_CARD_BORDER_WIDTH := 1
+const IDLE_CARD_CORNER_RADIUS := 4
+const IDLE_CARD_FILL_MIX := 0.12
+static func idle_card_stylebox() -> StyleBoxFlat:
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = GROUND_2.lerp(WARN, IDLE_CARD_FILL_MIX)
+	sb.set_border_width_all(IDLE_CARD_BORDER_WIDTH)
+	sb.border_color = WARN
+	sb.set_corner_radius_all(IDLE_CARD_CORNER_RADIUS)
+	sb.content_margin_left = IDLE_CARD_PADDING
+	sb.content_margin_right = IDLE_CARD_PADDING
+	sb.content_margin_top = IDLE_CARD_PADDING
+	sb.content_margin_bottom = IDLE_CARD_PADDING
+	return sb
+
 ## The work board's row backing: a SIGNAL wash while the row's inspector is open, fully transparent at
 ## rest. Padding only — a row must draw at exactly `WORK_ROW_HEIGHT` or the page overflows its zone.
 static func work_row_stylebox(open: bool) -> StyleBoxFlat:

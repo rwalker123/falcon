@@ -4432,15 +4432,15 @@ useful part:
 
 | consumer | what it was doing | now |
 |---|---|---|
-| `BandPanelController._build_workforce_block` | segments summed to `working_age − builders` | a **`Build`** segment (`HudWorkVocab.WORKFORCE_KEY_BUILD`, `SIGNAL_DEEP`) beside Forage and Hunt, counted off the band's **`builders` ROLE** since §2.5 |
-| `FactionRollup._build_workforce_block` | the same hole one scale up | the same segment, the two bars being one chart at two scales. **Its `Roles` segment was missing the KEEPING pair as well** — the band zone's twin has counted them since they landed — so a faction keeping anything lost those hands off a chart that partitions the same `working_age` its header sums |
+| `HudBandLaborState.working_breakdown` (was the Workforce block) | segments summed to `working_age − builders` | a **`Build`** segment (`HudWorkVocab.WORKFORCE_KEY_BUILD`, `SIGNAL_DEEP`) beside Forage and Hunt, counted off the band's **`builders` ROLE** since §2.5 |
+| `FactionRollup._build_people_block` | the same hole one scale up | the same segment, the two bars being one chart at two scales. **Its `Roles` segment was missing the KEEPING pair as well** — the band zone's twin has counted them since they landed — so a faction keeping anything lost those hands off a chart that partitions the same `working_age` its header sums |
 | `BandPanelController._work_source_models` | admitted a row on `workers > 0`, so a source with ONLY builders left the board | **back to the take crew**, §2.5: there is no per-source build crew to admit a row on, and the queue that spends the pool is a list of its own (slice 7). The inspector's `N building` clause went with it |
 | `HudBandLaborState._effort_on` | sums the take crew alone | **unchanged, deliberately** — its readers ask *"is anybody HARVESTING this"*, and a builder harvests nothing |
 
 **The builders are their own SEGMENT rather than folded into Forage/Hunt**, for the reason the bench's
 is its own: those two name what a crew TAKES, `effective_idle` nets a builder out, and a bar whose
 segments are supposed to partition `working_age` must account for every hand it removes from Idle.
-`band_panel_preview`'s `_assert_people_matches_workforce` is what catches a missing one — it sums the
+`band_panel_preview`'s `_assert_people_bar_is_one_bar` is what catches a missing one — it sums the
 RENDERED chips against `working_age`, so a bar short of the build segment fails by exactly its count.
 
 ### ONE crew is readable, and the sheet opens on it
