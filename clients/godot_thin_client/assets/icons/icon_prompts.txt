@@ -1805,6 +1805,27 @@ workers: Flat vector interface mark of a single open human hand seen palm-on fro
 starving: Flat vector interface mark of a single empty eating bowl seen straight on from the front in a symmetrical upright pose, one thick heavy solid crescent forming the bowl's body with a plain flat rim across its top and nothing at all resting in it or above it, no food, no meat, no bone, no grain, no spoon, no steam, no hand, no table, no stand, no pedestal, drawn as a single bold solid shape with NO outline of any kind and no dark border and NOT as a hollow ring or a thin outlined vessel, filled in a cool pale grey and a light bone tone in two flat tones so the fill alone carries the silhouette against a very dark near-black interface panel, the crescent drawn thick and heavy through its whole width so it holds its mass at small size, at most one interior division line marking the rim, no ground, no shadow, no background scenery, no text, centered with even padding on a plain solid magenta background, no rounded square, no tile, no card, no badge, no frame, no border, the flat magenta touching the bowl on every side, an extremely simple graphic shape that stays clearly readable when scaled down to 13 pixels, strategy game interface icon
 
 
+# gathering.png — the turn orb's `gathering_held` row (issue #698): two bands met after time apart
+# and the place gained belief. The row's label says "A gathering" and its detail names both bands.
+# STATUS: NOT YET GENERATED. The row draws the `⇄` text glyph until this lands
+# (`TurnOrb.KIND_ICON[KIND_GATHERING]`, no `KIND_ICON_SPRITE` entry). Key at `--hi 200` first, per
+# the ramp note above, and confirm on the alpha histogram — a fire is warm, and warm keyed half-way
+# on `trade`.
+# Judged at 30px, the turn orb's `ROW_ICON_SIZE` — see `workers.png` for why this family's judging
+# size is per-surface — so a second piece (the logs under the flame) is affordable here.
+# THE READ IS THE SHARED FIRE. The Telling's own line for this event is "Two fires that burned apart
+# now burn together", and one campfire is ONE mass that says *people sat here* without drawing them.
+# Like `starving.png`, the mark says what the row is about and lets the label say the rest.
+# ⚠ IT MUST NOT BE FIGURES. Two people facing each other is the obvious subject and it collides with
+# the PEOPLE trio below — the same bone-cream standing silhouettes, on the band page beside this very
+# orb — and it is two separate pieces besides, the budget `scout` v1 died of.
+# ⚠ IT MUST NOT BE A RING OF STONES. That is the obvious "gathering place" and it is `cairn.png`'s
+# stones laid flat; the two would read as one subject at row size.
+# HUE: a pale ember orange and a light flame-yellow. `hunt` owns amber-ochre, so this is separated
+# from it by SILHOUETTE (a flame against a bow), not by hue.
+gathering: Flat vector interface mark of a single small campfire seen straight on from the front in a symmetrical upright pose, one bold teardrop flame rising from the centre with two short rounded tongues of flame curling inward on either side so the whole fire reads as one merged flame, resting on two short thick logs crossed in a low X beneath it, the logs no thinner than one sixth of the icon width, no sparks, no smoke, no embers flying, no stones, no ring, no pot, no spit, no figures, no people, no hands, no ground line, drawn as a single bold solid shape with NO outline of any kind and no dark border, the flame filled in a pale ember orange and a light flame-yellow in two flat tones and the logs in a warm mid tan, so the fill alone carries the silhouette against a very dark near-black interface panel, at most one interior division line inside the flame, no ground, no shadow, no glow, no background scenery, no text, centered with even padding on a plain solid magenta background, no rounded square, no tile, no card, no badge, no frame, no border, the flat magenta touching the fire and the logs on every side, an extremely simple graphic shape that stays clearly readable when scaled down to 16 pixels, strategy game interface icon
+
+
 # ---------------------------------------------------------------------------------------------
 # THE PEOPLE TRIO — children / working_age / elders, and they are JUDGED TOGETHER OR NOT AT ALL.
 #
