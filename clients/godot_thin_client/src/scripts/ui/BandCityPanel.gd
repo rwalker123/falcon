@@ -680,6 +680,8 @@ var _position_label: Label
 var _chief_row: HBoxContainer
 var _chief_bar: HBoxContainer
 var _chief_label: Label
+## Who leads the band, on the line the chief bar holds until there is a leader.
+var _leader_label: Label
 var _count_label: Label
 var _collapse_button: Button
 var _rail_expand_button: Button
@@ -814,7 +816,7 @@ func _ready() -> void:
 ## `position_label` is a preformatted `String` the CALLER resolves (the panel never reads a band
 ## dict), and `""` renders nothing — the caller could not resolve the coordinates.
 func set_header(stage_id: String, glyph: String, subject_name: String, stage_label: String,
-		position_label: String = "", chief_progress: Dictionary = {}) -> void:
+		position_label: String = "", chief_progress: Dictionary = {}, leader_line: String = "") -> void:
 	var resolved_glyph := glyph if not glyph.is_empty() else DEFAULT_STAGE_GLYPH
 	var sprite := StageSprites.for_stage(stage_id)
 	_apply_stage_visual(_stage_glyph_label, _stage_glyph_sprite, sprite, resolved_glyph)
@@ -828,6 +830,9 @@ func set_header(stage_id: String, glyph: String, subject_name: String, stage_lab
 		_position_label.tooltip_text = position_label
 		_position_label.visible = not position_label.is_empty()
 	_apply_chief_progress(chief_progress)
+	if _leader_label != null:
+		_leader_label.text = leader_line
+		_leader_label.visible = not leader_line.is_empty()
 
 ## Draw (or hide) the chief-progress row under the sub line. `progress` is
 ## `HudFormat.band_chief_progress`'s answer; `{}` hides the row, which is the faction page, a foreign
@@ -1353,9 +1358,9 @@ func _build_header_full() -> HBoxContainer:
 	_position_label.add_theme_color_override("font_color", HudStyle.INK_FAINT)
 	_position_label.text = ""
 	_position_label.visible = false
-	# The line can carry the leader clause ("· led by the elders' council — Orrin speaks"), which is
-	# wider than the docked strip: it trims with an ellipsis instead of widening the panel, and the
-	# full line rides the tooltip. PASS keeps a click reaching the subject cluster's jump.
+	# A long stage word plus coordinates must not widen the docked card either: the line trims with
+	# an ellipsis and carries its whole text on the tooltip. PASS keeps a click reaching the subject
+	# cluster's jump.
 	_position_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_position_label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	_position_label.mouse_filter = Control.MOUSE_FILTER_PASS
@@ -1381,6 +1386,15 @@ func _build_header_full() -> HBoxContainer:
 	_chief_row.add_child(_chief_bar)
 	_chief_row.add_child(_chief_label)
 	subject.add_child(_chief_row)
+	# The leader line WRAPS rather than trims: it is the only place the header names who leads, and
+	# an autowrapped Label asks no width of its own, so it cannot widen the docked card.
+	_leader_label = Label.new()
+	_leader_label.add_theme_font_size_override("font_size", STAGE_LABEL_FONT_SIZE)
+	_leader_label.add_theme_color_override("font_color", HudStyle.INK_FAINT)
+	_leader_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_leader_label.visible = false
+	_leader_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	subject.add_child(_leader_label)
 	cluster_row.add_child(subject)
 
 	header.add_child(_subject_cluster)

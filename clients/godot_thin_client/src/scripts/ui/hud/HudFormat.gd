@@ -94,14 +94,14 @@ const BAND_ID_FALLBACK_NAME_FORMAT := "Band #%d"
 ## parenthesised pair here rather than as a labelled `Position:` row in the band zone's vitals.
 const BAND_HEADER_POSITION_FORMAT := "(%d, %d)"
 
-## **THE LEADER, as the header's sub line carries it** (issue #859). `leader_kind` is the wire's
+## **THE LEADER, on the header's third line** (issue #859) -- the line the chief-progress bar holds
+## until there is a leader, so the two never draw together. `leader_kind` is the wire's
 ## enum: 0 none, 1 chief, 2 elder council. A council has a named person too -- its speaker.
 const LEADER_KIND_NONE := 0
 const LEADER_KIND_CHIEF := 1
 const LEADER_KIND_ELDER_COUNCIL := 2
-const BAND_HEADER_LEADER_SEPARATOR := " · "
-const BAND_HEADER_CHIEF_FORMAT := "led by Chief %s"
-const BAND_HEADER_COUNCIL_FORMAT := "led by the elders' council — %s speaks"
+const BAND_HEADER_CHIEF_FORMAT := "Led by Chief %s"
+const BAND_HEADER_COUNCIL_FORMAT := "Led by the elders' council — %s speaks"
 ## **THE CHIEF-PROGRESS BAR** (#859) under the header's sub line, while a band has no leader. Four
 ## sources in this order, each a distinct hue; the remainder to the threshold is the empty cell.
 const CHIEF_LABEL_FORMAT := "Chief %d / %d"
@@ -213,8 +213,8 @@ static func band_name(entry: Dictionary) -> String:
         return name
     return HudExpeditionVocab.PARTY_NAME_FORMAT % [name, HudExpeditionVocab.PARTY_SHORT_LABELS[mission]]
 
-## The leader clause for the header sub line ("led by Chief Orrin"), `""` when the band has no
-## leader (the chief-progress bar speaks for it, see `band_chief_progress`).
+## The header's leader line ("Led by Chief Orrin"), `""` when the band has no leader (the
+## chief-progress bar holds that line instead, see `band_chief_progress`).
 static func band_leader_phrase(entry: Dictionary) -> String:
     var leader_name := String(entry.get("leader_name", "")).strip_edges()
     if leader_name == "":
@@ -225,15 +225,6 @@ static func band_leader_phrase(entry: Dictionary) -> String:
         LEADER_KIND_ELDER_COUNCIL:
             return BAND_HEADER_COUNCIL_FORMAT % leader_name
     return ""
-
-## The header sub line's position clause joined to the leader clause.
-static func band_header_line(position_label: String, entry: Dictionary) -> String:
-    var phrase := band_leader_phrase(entry)
-    if phrase == "":
-        return position_label
-    if position_label == "":
-        return phrase
-    return position_label + BAND_HEADER_LEADER_SEPARATOR + phrase
 
 ## The segment hues, in `CHIEF_SOURCE_KEYS` order. Read at call time because `HudStyle`'s palette is
 ## installed at runtime.

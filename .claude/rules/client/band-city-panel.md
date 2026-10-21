@@ -95,8 +95,10 @@ command center**: shown whenever ≥1 player band exists, always displaying a
   `leadership_practice` and its four parts `leadership_from_builds` / `_splits` / `_herd` / `_stages`
   (3 per finished Cultivate or Tame, 3 per player-ordered split credited to both bands, 1 per hex walked
   following a herd, 5 the first time a settlement stage is reached; the sum freezes once a leader
-  exists). With a leader the sub line gains ` · led by Chief Orrin` or ` · led by the elders' council —
-  Orrin speaks` (`HudFormat.band_leader_phrase` / `band_header_line`) and the bar is hidden. With none, a
+  exists). With a leader the bar's line becomes `_leader_label`, its own line under the sub line:
+  `Led by Chief Orrin` or `Led by the elders' council — Orrin speaks` (`HudFormat.band_leader_phrase`,
+  passed as `set_header`'s `leader_line`). It WRAPS rather than trims, being the only place the
+  header names who leads; the sub line carries the position alone. With none, a
   slim split bar sits under the sub line with the label `Chief 7 / 10` (practice floored and capped at
   the threshold, whole numbers): four segments in order builds / splits / herd / stages (green / blue /
   amber / cyan, `HudFormat.chief_source_colors`) filling toward the threshold, the remainder an empty
@@ -106,10 +108,12 @@ command center**: shown whenever ≥1 player band exists, always displaying a
   hover is the headline "A band gains a leader once it does enough work that needs an organiser." and one
   line of per-source points. There is no `no chief yet` text. **Neither line may widen the panel**:
   the bar's floor is `CHIEF_BAR_MIN_WIDTH` (24, it stretches to the column the name and sub line
-  set — at 90 it pushed the card to 410px in the 380px strip), and the sub line trims with an
-  ellipsis and carries its whole text on its tooltip (`MOUSE_FILTER_PASS`, so a click still reaches
-  the subject's jump); the council clause alone took the card to 506px. Each leader frame asserts
-  the card's minimum width fits `current_reservation_size()`. Harness frames `leader_partial`,
+  set — at 90 it pushed the card to 410px in the 380px strip), an autowrapped leader line asks
+  no width (the council line on the sub line took the card to 506px); the sub line itself trims with
+  an ellipsis and carries its whole text on its tooltip (`MOUSE_FILTER_PASS`, so a click still reaches
+  the subject's jump). Each leader frame asserts the card's minimum width fits
+  `current_reservation_size()`, the leader line drawn whole, no leader clause on the sub line, and
+  the bar and leader line never together. Harness frames `leader_partial`,
   `leader_empty`, `leader_chief`, `leader_council` in `band_expedition` assert the label and each cell's
   points (`BandCityPanel.CHIEF_POINTS_META`). The event feed's `leader_emerged` is Notable in
   `hud_event_vocab.gd`; its `name=` is a hidden key and `EventDockPanel.detail_phrase` drops the

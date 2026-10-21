@@ -2084,11 +2084,11 @@ func _hay_ledger_states() -> void:
 		["leader_chief", {"leader_name": "Orrin", "leader_kind": 1, "leadership_practice": 10.0,
 			"leadership_threshold": 10.0, "leadership_from_builds": 6.0,
 			"leadership_from_splits": 3.0, "leadership_from_herd": 1.0,
-			"leadership_from_stages": 0.0}, "led by Chief Orrin", "", []],
+			"leadership_from_stages": 0.0}, "Led by Chief Orrin", "", []],
 		["leader_council", {"leader_name": "Orrin", "leader_kind": 2, "leadership_practice": 10.0,
 			"leadership_threshold": 10.0, "leadership_from_builds": 0.0,
 			"leadership_from_splits": 0.0, "leadership_from_herd": 0.0,
-			"leadership_from_stages": 10.0}, "led by the elders' council — Orrin speaks", "", []],
+			"leadership_from_stages": 10.0}, "Led by the elders' council — Orrin speaks", "", []],
 	]
 	for leader_case in leader_cases:
 		var leader_band := BandFx.band_fixture()
@@ -2097,10 +2097,18 @@ func _hay_ledger_states() -> void:
 		h._hud.show_unit_selection(leader_band)
 		await h._settle()
 		await h._save(String(leader_case[0]))
-		var tail := String(leader_case[2])
-		var header_line := HudFormat.band_header_line("(1, 2)", leader_band)
-		h._assert_hud("%s: sub line %s" % [leader_case[0], "ends '%s'" % tail if tail != "" else "is the bare position"],
-			header_line.ends_with(tail) if tail != "" else header_line == "(1, 2)")
+		# The leader is its OWN line, in the bar's slot: whole (every wrapped line visible, never an
+		# ellipsis), and never on the sub line beside the coordinates.
+		var want_leader := String(leader_case[2])
+		var leader_label: Label = leader_panel._leader_label
+		h._assert_hud("%s: leader line %s" % [leader_case[0], "reads '%s' in full" % want_leader if want_leader != "" else "is hidden"],
+			(not leader_label.visible) if want_leader == ""
+			else (leader_label.visible and leader_label.text == want_leader
+				and leader_label.get_visible_line_count() == leader_label.get_line_count()))
+		h._assert_hud("%s: the sub line carries no leader clause (%s)" % [leader_case[0], leader_panel._position_label.text],
+			not leader_panel._position_label.text.to_lower().contains("led by"))
+		h._assert_hud("%s: the bar and the leader line never draw together" % leader_case[0],
+			not (leader_panel._chief_row.visible and leader_label.visible))
 		var want_label := String(leader_case[3])
 		var drawn_points: Array = []
 		for cell in leader_panel._chief_bar.get_children():
@@ -2109,7 +2117,7 @@ func _hay_ledger_states() -> void:
 			(not leader_panel._chief_row.visible) if want_label == ""
 			else (leader_panel._chief_row.visible and leader_panel._chief_label.text == want_label
 				and drawn_points == leader_case[4]))
-		# The bar row sits in the header's subject column, so a wide bar widens the docked card past
+		# Both lines sit in the header's subject column, so a wide one widens the docked card past
 		# the strip the dock reserves.
 		var card_min := leader_panel._panel.get_combined_minimum_size().x
 		var reserved := leader_panel.current_reservation_size()
@@ -2120,7 +2128,7 @@ func _hay_ledger_states() -> void:
 		tip.contains("Cultivate or Tame: 3") and tip.contains("Splits: 3")
 		and tip.contains("Following a herd: 1") and tip.contains("Settlement stages: 0"))
 	h._assert_hud("a band with no threshold (foreign) shows no bar and no leader text",
-		HudFormat.band_chief_progress({}).is_empty() and HudFormat.band_header_line("(1, 2)", {}) == "(1, 2)")
+		HudFormat.band_chief_progress({}).is_empty() and HudFormat.band_leader_phrase({}) == "")
 	h._hud.set_band_city_panel(null)
 	leader_panel.queue_free()
 	h._hud._band_labor._player_bands = []
