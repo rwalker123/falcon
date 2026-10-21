@@ -138,7 +138,7 @@ button{font-family:inherit;cursor:pointer}
                 <div class="rdet {{row.yieldCls}}">{{row.yieldLine}}</div>
                 <div class="chips">
                   <button class="chip" onClick="{{row.cyclePri}}">Priority: {{row.pri}}</button>
-                  <sc-if value="{{row.hasKeep}}" hint-placeholder-val="{{true}}"><button class="chip" onClick="{{row.cycleKeep}}">{{row.keepLabel}}</button></sc-if>
+                  <sc-if value="{{row.hasKeep}}" hint-placeholder-val="{{true}}"><span class="chip" title="{{row.keepTip}}">{{row.keepLabel}}</span></sc-if>
                   <sc-if value="{{row.maxSet}}" hint-placeholder-val="{{true}}"><span class="chip">{{row.maxLabel}}</span></sc-if>
                 </div>
               </div>
@@ -352,7 +352,7 @@ class Component extends DCLogic {
         name: j.name, rungName: j.detail, yieldLine, yieldCls, stripe,
         ...strip,
         hasKeep: j.kind === 'stock', keepLabel: 'Keep ' + st.stoneTarget + ' · ' + STONE_HAVE + ' on hand',
-        cycleKeep: () => this.setState({ stoneTarget: st.stoneTarget >= 80 ? 40 : st.stoneTarget + 20 }),
+        keepTip: 'Set on the Stone sheet (click the row)',
         pri: PRI[j.pri],
         maxSet: j.max > 0, maxLabel: 'Max ' + j.max,
         cyclePri: () => this.setState({ pri: Object.assign({}, st.pri, { [j.id]: (j.pri + 1) % 3 }) })

@@ -68,6 +68,12 @@ button{font-family:inherit;cursor:pointer}
 .kchip{border:1px solid #4a3c2e;background:#2b221a;color:#f4ead7;font-size:12px;border-radius:10px;padding:2px 9px}
 .kchip.short{border-color:#e0a63c}
 .oline{font-size:12px;color:#bdab90;grid-column:2}
+.autob{height:22px;border:1px solid #4a3c2e;background:#2b221a;color:#8d7e68;border-radius:11px;font-size:10px;padding:0 10px}
+.autob.on{border-color:#94a361;color:#f4ead7;background:#2f3320}
+.octl{display:flex;align-items:center;gap:8px}
+.ochose{font-size:12px;color:#bdab90}
+.krow{display:grid;grid-template-columns:52px 44px 120px minmax(0,1fr);gap:8px;align-items:center;font-size:12px;grid-column:1 / -1;padding-left:104px}
+.short{color:#e0a63c}
 .y-warn{color:#e0a63c}
 .y-skip{color:#8d7e68}
 .split{font-size:11px;color:#bdab90}
@@ -91,7 +97,7 @@ button{font-family:inherit;cursor:pointer}
       <div class="sgroup"><span>{{k.name}}</span><button class="sbtn" onClick="{{k.dec}}" aria-label="Less">−</button><span class="snum">{{k.n}}</span><button class="sbtn" onClick="{{k.inc}}" aria-label="More">+</button></div>
     </sc-for>
   </div>
-  <div class="try">Try: raise “Keep … turns of food” above what the larder holds — the chief moves the food rows to Everything (☠) and the larder climbs as you press End turn; lower it and the rows ease to Best or Learning. Click a row's Floor chip to set it yourself — it pins (amber) and the chief leaves it alone until you release it. Raise “Improve the land” and the chief starts builds on the sites that pay best.</div>
+  <div class="try">Try: every order starts on Auto (the chief decides). Switch Food’s Auto off and raise “keep … turns of food” above what the larder holds — the chief moves the food rows to Everything (☠) and the larder climbs as you press End turn; lower it and the rows ease to Best or Learning. Click a row's Floor chip to set it yourself — it pins (amber) and the chief leaves it alone until you release it. Raise “Improve the land” and the chief starts builds on the sites that pay best.</div>
 </div>
 
 <div class="panel">
@@ -118,10 +124,25 @@ button{font-family:inherit;cursor:pointer}
 
       <div class="card orders">
         <div class="ctitle">Band orders · Chief {{chief}}</div>
-        <div class="orow"><span>Food</span><div class="ostep"><span class="dim">keep</span><button class="osb" onClick="{{decFood}}" aria-label="Keep less food">−</button><span class="oval">{{foodTarget}} turns</span><button class="osb" onClick="{{incFood}}" aria-label="Keep more food">+</button></div>
+        <div class="orow"><span>Food</span>
+          <div class="octl"><button class="autob {{foodAutoCls}}" onClick="{{toggleFoodAuto}}" title="On: the chief decides how much food to keep">Auto</button>
+            <sc-if value="{{foodManual}}" hint-placeholder-val="{{false}}"><div class="ostep"><span class="dim">keep</span><button class="osb" onClick="{{decFood}}" aria-label="Keep less food">−</button><span class="oval">{{foodTarget}} turns</span><button class="osb" onClick="{{incFood}}" aria-label="Keep more food">+</button></div></sc-if>
+            <sc-if value="{{foodAuto}}" hint-placeholder-val="{{true}}"><span class="ochose">the chief keeps {{foodTarget}} turns</span></sc-if></div>
           <span class="oline">{{foodOrderLine}}</span></div>
-        <div class="orow"><span>Keep on hand</span><div class="kchips"><sc-for list="{{keepChips}}" as="k" hint-placeholder-count="3"><button class="kchip {{k.cls}}" onClick="{{k.cycle}}" title="{{k.tip}}">{{k.label}}</button></sc-for></div></div>
-        <div class="orow"><span>Improve land</span><div class="ostep"><button class="osb" onClick="{{decImprove}}" aria-label="Fewer workers on improvements">−</button><span class="oval">{{improve}}% of workers</span><button class="osb" onClick="{{incImprove}}" aria-label="More workers on improvements">+</button></div>
+        <div class="orow"><span>Keep on hand</span><span></span></div>
+        <sc-for list="{{keepRows}}" as="k" hint-placeholder-count="3">
+          <div class="krow" title="{{k.tip}}">
+            <span>{{k.name}}</span>
+            <button class="autob {{k.autoCls}}" onClick="{{k.toggleAuto}}">Auto</button>
+            <sc-if value="{{k.manual}}" hint-placeholder-val="{{false}}"><div class="ostep"><button class="osb" onClick="{{k.dec}}" aria-label="Keep less">−</button><span class="oval">{{k.target}}</span><button class="osb" onClick="{{k.inc}}" aria-label="Keep more">+</button></div></sc-if>
+            <sc-if value="{{k.auto}}" hint-placeholder-val="{{true}}"><span class="ochose">keeps {{k.target}}</span></sc-if>
+            <span class="{{k.haveCls}}">{{k.have}} on hand</span>
+          </div>
+        </sc-for>
+        <div class="orow"><span>Improve land</span>
+          <div class="octl"><button class="autob {{improveAutoCls}}" onClick="{{toggleImproveAuto}}" title="On: the chief decides how many workers to put on improvements">Auto</button>
+            <sc-if value="{{improveManual}}" hint-placeholder-val="{{false}}"><div class="ostep"><button class="osb" onClick="{{decImprove}}" aria-label="Fewer workers on improvements">−</button><span class="oval">{{improve}}% of workers</span><button class="osb" onClick="{{incImprove}}" aria-label="More workers on improvements">+</button></div></sc-if>
+            <sc-if value="{{improveAuto}}" hint-placeholder-val="{{true}}"><span class="ochose">the chief uses {{improve}}% of workers</span></sc-if></div>
           <span class="oline">{{improveLine}}</span></div>
       </div>
 
@@ -160,7 +181,7 @@ button{font-family:inherit;cursor:pointer}
                   <button class="chip" onClick="{{row.cyclePri}}">Priority: {{row.pri}}</button>
                   <sc-if value="{{row.hasFloorChip}}" hint-placeholder-val="{{true}}"><button class="chip {{row.floorChipCls}}" onClick="{{row.cycleFloor}}" title="{{row.floorChipTip}}">{{row.floorChip}}</button></sc-if>
                   <sc-if value="{{row.isPinned}}" hint-placeholder-val="{{false}}"><button class="chip" onClick="{{row.release}}">Back to the chief</button></sc-if>
-                  <sc-if value="{{row.hasKeep}}" hint-placeholder-val="{{true}}"><button class="chip" onClick="{{row.cycleKeep}}">{{row.keepLabel}}</button></sc-if>
+                  <sc-if value="{{row.hasKeep}}" hint-placeholder-val="{{true}}"><span class="chip" title="{{row.keepTip}}">{{row.keepLabel}}</span></sc-if>
                   <sc-if value="{{row.maxSet}}" hint-placeholder-val="{{true}}"><span class="chip">{{row.maxLabel}}</span></sc-if>
                 </div>
               </div>
@@ -226,6 +247,7 @@ class Component extends DCLogic {
       // Band orders: the player's goals, which the chief turns into each row's settings.
       chief: 'Orrin', turn: 1, larder: 84, foodTarget: 20, improve: 10,
       keep: { stone: 60, wood: 30, hide: 10 }, have: { stone: 42, wood: 24, hide: 12 },
+      auto: { food: true, improve: true, stone: true, wood: true, hide: true },
       pinned: {}, chiefQ: {}
     };
   }
@@ -263,12 +285,19 @@ class Component extends DCLogic {
     // to its keep-on-hand target the same way. A row the player set by hand is pinned and left alone.
     const EAT = 3.8;
     const runway = Math.floor(st.larder / EAT);
-    const foodFloor = runway < st.foodTarget ? 0 : (runway >= Math.round(st.foodTarget * 1.5) ? 2 : 1);
-    const woodFloor = st.have.wood < st.keep.wood ? 0 : 1;
+    // Auto: the chief decides. Food: about a season's worth. Keep on hand: what the band's builds and
+    // upkeep will draw. Improve the land: a share of workers only while food is holding.
+    const AUTO_FOOD = 20, AUTO_KEEP = { stone: 40, wood: 30, hide: 10 };
+    const foodTargetNow = st.auto.food ? AUTO_FOOD : st.foodTarget;
+    const keepNow = {};
+    ['stone', 'wood', 'hide'].forEach((k) => { keepNow[k] = st.auto[k] ? AUTO_KEEP[k] : st.keep[k]; });
+    const improveNow = st.auto.improve ? (runway >= foodTargetNow ? 10 : 0) : st.improve;
+    const foodFloor = runway < foodTargetNow ? 0 : (runway >= Math.round(foodTargetNow * 1.5) ? 2 : 1);
+    const woodFloor = st.have.wood < keepNow.wood ? 0 : 1;
     const FOOD_IDS = ['emmer', 'hay', 'deer', 'rabbit'];
     const chiefFloor = (id) => FOOD_IDS.indexOf(id) >= 0 ? foodFloor : (id === 'wood' ? woodFloor : 1);
     // Improve the land: a share of the workers the chief may put on builds, started where they pay best.
-    const budget = Math.round(st.workers * st.improve / 100);
+    const budget = Math.round(st.workers * improveNow / 100);
     const PAYOFF = [{ id: 'hay', verb: 'sowing a farm at (72, 18)' }, { id: 'emmer', verb: 'cultivating (71, 18)' }, { id: 'rabbit', verb: 'taming the rabbit warren' }];
     const picks = budget > 0 ? PAYOFF.slice(0, Math.min(PAYOFF.length, budget)) : [];
     this.chiefQueued = {};
@@ -287,7 +316,7 @@ class Component extends DCLogic {
         if (!below) { hold = j.crews[floor][0]; reach = j.crews[floor][1]; }
         else if (j.keep) { hold = j.keep; reach = j.keep; } // the ground is still kept; nobody harvests
       } else if (j.kind === 'stock') {
-        if (STONE_HAVE < st.keep.stone) { hold = 1; reach = 3; }
+        if (STONE_HAVE < keepNow.stone) { hold = 1; reach = 3; }
       } else if (j.kind === 'upkeep') { hold = j.hold; reach = j.hold; }
       else { hold = 0; reach = j.useful; }
       if (max > 0) { hold = Math.min(hold, max); reach = Math.min(reach, max); }
@@ -355,7 +384,7 @@ class Component extends DCLogic {
       } else if (j.kind === 'stock') {
         if (j.reach === 0) { status = 'At target — nobody digs'; cls = 's-skip'; }
         else if (crew === 0) { status = 'Nobody free to dig'; cls = 's-warn'; stripe = '#e0a63c'; }
-        else { status = 'Refilling to ' + st.keep.stone; cls = 's-ok'; }
+        else { status = 'Refilling to ' + keepNow.stone; cls = 's-ok'; }
       } else if (j.kind === 'upkeep') {
         if (crew < j.hold) { status = 'Unkept — slipping'; cls = 's-warn'; stripe = '#e0a63c'; } else { status = 'Kept'; cls = 's-ok'; }
       } else {
@@ -398,8 +427,8 @@ class Component extends DCLogic {
       return {
         name: j.name, rungName: j.detail, yieldLine, yieldCls, stripe,
         ...strip,
-        hasKeep: j.kind === 'stock', keepLabel: 'Keep ' + st.keep.stone + ' · ' + STONE_HAVE + ' on hand',
-        cycleKeep: () => this.setState({ keep: Object.assign({}, st.keep, { stone: st.keep.stone >= 80 ? 40 : st.keep.stone + 20 }) }),
+        hasKeep: j.kind === 'stock', keepLabel: 'Keep ' + keepNow.stone + ' · ' + STONE_HAVE + ' on hand',
+        keepTip: 'Set on the Band orders card' + (st.auto.stone ? ' — the chief decides it (Auto)' : ''),
         hasFloorChip: j.kind === 'source', isPinned: st.pinned[j.id] !== undefined,
         floorChip: 'Floor: ' + FLOORS[j.floor] + (st.pinned[j.id] !== undefined ? ' · yours' : ' · chief'),
         floorChipCls: st.pinned[j.id] !== undefined ? 'pinned' : '',
@@ -435,24 +464,30 @@ class Component extends DCLogic {
       sight: st.sight, scoutLine, kitList,
       chief: st.chief, turn: st.turn,
       foodLine: st.larder + ' (' + runway + ' turns) · ' + (net >= 0 ? '+' : '') + net.toFixed(2) + ' /turn',
-      foodTarget: st.foodTarget,
+      foodTarget: foodTargetNow,
+      foodAuto: st.auto.food, foodManual: !st.auto.food, foodAutoCls: st.auto.food ? 'on' : '',
+      toggleFoodAuto: () => this.setState({ auto: Object.assign({}, st.auto, { food: !st.auto.food }), foodTarget: foodTargetNow }),
+      improveAuto: st.auto.improve, improveManual: !st.auto.improve, improveAutoCls: st.auto.improve ? 'on' : '',
+      toggleImproveAuto: () => this.setState({ auto: Object.assign({}, st.auto, { improve: !st.auto.improve }), improve: improveNow }),
       incFood: () => this.setState({ foodTarget: Math.min(60, st.foodTarget + 5) }),
       decFood: () => this.setState({ foodTarget: Math.max(5, st.foodTarget - 5) }),
       foodOrderLine: runway + ' turns in the larder — ' + (foodFloor === 0 ? 'below the order, so the chief draws food sources hard (Everything)' : foodFloor === 2 ? 'well above it, so the chief eases food sources to Learning' : 'at the order, so the chief holds food sources at Best'),
-      keepChips: ['stone', 'wood', 'hide'].map((k) => ({
-        label: k[0].toUpperCase() + k.slice(1) + ' ' + st.keep[k] + ' · ' + st.have[k],
-        cls: st.have[k] < st.keep[k] ? 'short' : '',
-        tip: 'Keep ' + st.keep[k] + ' ' + k + ' on hand; ' + st.have[k] + ' now. Click to change the target.',
-        cycle: () => this.setState({ keep: Object.assign({}, st.keep, { [k]: st.keep[k] >= 80 ? 10 : st.keep[k] + 10 }) }) })),
-      improve: st.improve,
+      keepRows: ['stone', 'wood', 'hide'].map((k) => ({
+        name: k[0].toUpperCase() + k.slice(1), target: keepNow[k], have: st.have[k], haveCls: st.have[k] < keepNow[k] ? 'short' : '',
+        auto: st.auto[k], manual: !st.auto[k], autoCls: st.auto[k] ? 'on' : '',
+        tip: st.auto[k] ? 'Auto: the chief keeps what the band\u2019s builds and upkeep will draw.' : 'You set this target.',
+        toggleAuto: () => this.setState({ auto: Object.assign({}, st.auto, { [k]: !st.auto[k] }), keep: Object.assign({}, st.keep, { [k]: keepNow[k] }) }),
+        inc: () => this.setState({ keep: Object.assign({}, st.keep, { [k]: st.keep[k] + 10 }) }),
+        dec: () => this.setState({ keep: Object.assign({}, st.keep, { [k]: Math.max(0, st.keep[k] - 10) }) }) })),
+      improve: improveNow,
       incImprove: () => this.setState({ improve: Math.min(40, st.improve + 5) }),
       decImprove: () => this.setState({ improve: Math.max(0, st.improve - 5) }),
-      improveLine: budget === 0 ? 'No workers for improvements — the chief starts nothing.' : 'Up to ' + budget + (budget === 1 ? ' worker' : ' workers') + ' · the chief is ' + picks.map((s) => s.verb).join(', '),
+      improveLine: budget === 0 ? (st.auto.improve ? 'Food is below the order, so the chief starts nothing new.' : 'No workers for improvements — the chief starts nothing.') : 'Up to ' + budget + (budget === 1 ? ' worker' : ' workers') + ' · the chief is ' + picks.map((s) => s.verb).join(', '),
       endTurn: () => {
         const q = Object.assign({}, st.chiefQ);
         buildingNow.forEach((j) => { const b = j.ladder.build; if (b) { const add = (j.bk * 1.5 + j.bb) / (b.work || 1); q[j.id] = Math.min(0.99, (q[j.id] || 0) + add); } });
         const have = Object.assign({}, st.have);
-        if (have.stone < st.keep.stone) have.stone += 1;
+        if (have.stone < keepNow.stone) have.stone += 1;
         have.wood += woodFloor === 0 ? 2 : 1;
         this.setState({ turn: st.turn + 1, larder: Math.max(0, Math.round(st.larder + net * 4)), chiefQ: q, have });
       },

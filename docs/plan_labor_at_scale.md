@@ -289,6 +289,15 @@ and builds.
   workers the player sets.
 - **Scouting range** (see "Scouts" above) and the self-filling bench (`auto_craft_fill`, which ships
   today).
+- **Every order starts on Auto** — the chief decides it: about a season of food, keep-on-hand targets
+  sized to what the band's builds and upkeep will draw, and a share of workers on improvements only
+  while food is holding. Switching an order's Auto off shows its stepper and keeps the value the player
+  sets; switching it back hands it to the chief again.
+- **Each number is set with the game's ordinary − / + stepper**, never by clicking a chip to cycle it.
+  The stone row's keep-on-hand chip on the Work tab is a label; the target is set on the Band orders
+  card (or, before a chief, on the Stone sheet).
+- **A row the player sets by hand is pinned**: its Floor chip reads *yours*, the chief leaves it alone,
+  and *Back to the chief* releases it.
 
 Before a chief, the band runs on the per-source settings in "Decided" above.
 
