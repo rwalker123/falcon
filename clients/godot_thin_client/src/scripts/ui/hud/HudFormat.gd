@@ -111,7 +111,7 @@ const CHIEF_TOOLTIP_SOURCE_SEPARATOR := " · "
 ## `{key, label, color}` per source: the wire key it reads, the words the tooltip uses.
 const CHIEF_SOURCE_KEYS := ["leadership_from_builds", "leadership_from_splits",
     "leadership_from_herd", "leadership_from_stages"]
-const CHIEF_SOURCE_LABELS := ["Cultivate or Tame", "Splits", "Following a herd", "Settlement stages"]
+const CHIEF_SOURCE_LABELS := ["Cultivate, Farm, Tame or Corral", "Splits", "Following a herd", "Settlement stages"]
 
 ## THE FACTION PAGE's header identity (issue #450), beside the band header vocabulary above because
 ## the two fill the SAME three header slots and must be read together. The panel's header takes a

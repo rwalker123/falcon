@@ -92,7 +92,7 @@ pub struct BandLeader {
 /// permanent. Nothing accrues once a leader exists (the bar freezes where it stood).
 #[derive(Component, Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct BandLeadership {
-    /// From finished Cultivate and Tame builds (`RungDef::directed_work`).
+    /// From finished Cultivate, Farm, Tame and Corral builds (`RungDef::directed_work`).
     pub from_builds: f64,
     /// From commanded band splits, credited to both bands.
     pub from_splits: f64,
@@ -352,10 +352,10 @@ mod tests {
             leadership.credit_directed_build(&config, rung);
             leadership.practice()
         };
-        for verb in ["cultivate", "tame"] {
+        for verb in ["cultivate", "sow", "tame", "corral"] {
             assert_eq!(credited(verb), config.practice_per_directed_build, "{verb}");
         }
-        for verb in ["corral", "sow", "grade", "pave"] {
+        for verb in ["grade", "pave", "fell", "coppice", "quarry"] {
             assert_eq!(credited(verb), 0.0, "{verb} is not directed work");
         }
     }

@@ -449,7 +449,7 @@
         },
         {
           "pointer": "/practice_per_directed_build",
-          "label": "Cultivate or Tame finished",
+          "label": "Cultivate, Farm, Tame or Corral finished",
           "type": "float",
           "min": 0.5,
           "max": 10,

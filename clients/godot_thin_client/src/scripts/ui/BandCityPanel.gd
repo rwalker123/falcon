@@ -156,17 +156,6 @@ const STAGE_LABEL_FONT_SIZE := 10
 ## CLUSTERS (subject / cycler / dock chooser / collapse), and this spaces two words inside one of
 ## them, which reads too loose at the cluster gap.
 const STAGE_ROW_SEPARATION := 6
-## The chief-progress row (#859): a slim split bar and its "Chief 6 / 10" label under the sub line.
-const CHIEF_BAR_HEIGHT := 5.0
-## Kept small on purpose: the bar stretches to the column the name and sub line already set, and a
-## larger floor makes the row the widest thing in the header, which widens the whole panel.
-const CHIEF_BAR_MIN_WIDTH := 24.0
-const CHIEF_BAR_CELL_GAP := 1
-const CHIEF_ROW_SEPARATION := 6
-const CHIEF_REMAINDER_KEY := "remainder"
-## Harness handles: which source a cell is, and the points it was given (its stretch ratio).
-const CHIEF_SEGMENT_META := &"chief_segment"
-const CHIEF_POINTS_META := &"chief_points"
 const CYCLER_FONT_SIZE := 13
 const COUNT_FONT_SIZE := 11
 const ICON_BUTTON_FONT_SIZE := 13
@@ -677,11 +666,6 @@ var _stage_label: Label
 ## height-capped zone a row it could not spare, and rendered only on the map-click path). Hidden when
 ## the caller passes no coordinates, so an empty value costs no gap.
 var _position_label: Label
-var _chief_row: HBoxContainer
-var _chief_bar: HBoxContainer
-var _chief_label: Label
-## Who leads the band, on the line the chief bar holds until there is a leader.
-var _leader_label: Label
 var _count_label: Label
 var _collapse_button: Button
 var _rail_expand_button: Button
@@ -816,7 +800,7 @@ func _ready() -> void:
 ## `position_label` is a preformatted `String` the CALLER resolves (the panel never reads a band
 ## dict), and `""` renders nothing — the caller could not resolve the coordinates.
 func set_header(stage_id: String, glyph: String, subject_name: String, stage_label: String,
-		position_label: String = "", chief_progress: Dictionary = {}, leader_line: String = "") -> void:
+		position_label: String = "") -> void:
 	var resolved_glyph := glyph if not glyph.is_empty() else DEFAULT_STAGE_GLYPH
 	var sprite := StageSprites.for_stage(stage_id)
 	_apply_stage_visual(_stage_glyph_label, _stage_glyph_sprite, sprite, resolved_glyph)
@@ -829,43 +813,6 @@ func set_header(stage_id: String, glyph: String, subject_name: String, stage_lab
 		_position_label.text = position_label
 		_position_label.tooltip_text = position_label
 		_position_label.visible = not position_label.is_empty()
-	_apply_chief_progress(chief_progress)
-	if _leader_label != null:
-		_leader_label.text = leader_line
-		_leader_label.visible = not leader_line.is_empty()
-
-## Draw (or hide) the chief-progress row under the sub line. `progress` is
-## `HudFormat.band_chief_progress`'s answer; `{}` hides the row, which is the faction page, a foreign
-## band and a band that already has a leader.
-func _apply_chief_progress(progress: Dictionary) -> void:
-	if _chief_row == null:
-		return
-	for child in _chief_bar.get_children():
-		_chief_bar.remove_child(child)
-		child.queue_free()
-	_chief_row.visible = not progress.is_empty()
-	if progress.is_empty():
-		return
-	_chief_label.text = String(progress.get("label", ""))
-	var tooltip := String(progress.get("tooltip", ""))
-	_chief_row.tooltip_text = tooltip
-	var cells: Array = []
-	for segment in progress.get("segments", []):
-		cells.append([float(segment.get("points", 0.0)), segment.get("color", HudStyle.INK_FAINT),
-			String(segment.get("key", ""))])
-	cells.append([float(progress.get("remainder", 0.0)), HudStyle.LINE_SOFT, CHIEF_REMAINDER_KEY])
-	for cell_spec in cells:
-		if cell_spec[0] <= 0.0:
-			continue
-		var cell := ColorRect.new()
-		cell.color = cell_spec[1]
-		cell.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		cell.size_flags_stretch_ratio = cell_spec[0]
-		cell.custom_minimum_size = Vector2(0.0, CHIEF_BAR_HEIGHT)
-		cell.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		cell.set_meta(CHIEF_SEGMENT_META, cell_spec[2])
-		cell.set_meta(CHIEF_POINTS_META, cell_spec[0])
-		_chief_bar.add_child(cell)
 
 ## Update the cycler readout ("index+1 / count"). count <= 0 blanks it.
 func set_cycler(index: int, count: int) -> void:
@@ -1368,33 +1315,6 @@ func _build_header_full() -> HBoxContainer:
 	stage_row.add_child(_position_label)
 	subject.add_child(_name_label)
 	subject.add_child(stage_row)
-	# Progress toward a chief: hidden until `set_header` hands it a progress record.
-	_chief_row = HBoxContainer.new()
-	_chief_row.add_theme_constant_override("separation", CHIEF_ROW_SEPARATION)
-	_chief_row.visible = false
-	_chief_row.mouse_filter = Control.MOUSE_FILTER_STOP
-	_chief_bar = HBoxContainer.new()
-	_chief_bar.add_theme_constant_override("separation", CHIEF_BAR_CELL_GAP)
-	_chief_bar.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_chief_bar.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	_chief_bar.custom_minimum_size = Vector2(CHIEF_BAR_MIN_WIDTH, CHIEF_BAR_HEIGHT)
-	_chief_bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_chief_label = Label.new()
-	_chief_label.add_theme_font_size_override("font_size", STAGE_LABEL_FONT_SIZE)
-	_chief_label.add_theme_color_override("font_color", HudStyle.INK_FAINT)
-	_chief_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_chief_row.add_child(_chief_bar)
-	_chief_row.add_child(_chief_label)
-	subject.add_child(_chief_row)
-	# The leader line WRAPS rather than trims: it is the only place the header names who leads, and
-	# an autowrapped Label asks no width of its own, so it cannot widen the docked card.
-	_leader_label = Label.new()
-	_leader_label.add_theme_font_size_override("font_size", STAGE_LABEL_FONT_SIZE)
-	_leader_label.add_theme_color_override("font_color", HudStyle.INK_FAINT)
-	_leader_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	_leader_label.visible = false
-	_leader_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	subject.add_child(_leader_label)
 	cluster_row.add_child(subject)
 
 	header.add_child(_subject_cluster)

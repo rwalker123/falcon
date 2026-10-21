@@ -266,7 +266,7 @@ beside has organised nothing.
 
 | What the band does | Why it needs an organiser | Points |
 |---|---|---|
-| Finishes a Cultivate or a Tame | someone sets who works the patch or the herd, and when | **3** each |
+| Finishes a Cultivate, a Farm, a Tame or a Corral | someone sets who works the patch or the herd, and when | **3** each |
 | Splits — the player orders it | someone decides who goes and what they take; the leavers need someone to lead them away | **3**, to **both** bands |
 | Walks with a followed herd | moving the whole band and its gear after a herd — every hex counts, the walk to reach the herd included | **1** per hex |
 | Reaches a settlement stage (Seasonal camp at 50, Village at 100) | more people, more to manage | **5**, the first time each stage is reached |
@@ -277,8 +277,9 @@ Workbench; these are opening values for playtest.
 - **No single act makes a chief.** The largest single award is a stage, at 5.
 - **The count is the band's own, not the people's.** Leadership as a learned skill belongs to the
   nation level, where it is a people's knowledge; a band's chief comes from what that band does.
-- **Corral does not count.** Tame always comes first, so Corral could only ever be a second award for
-  the same herd.
+- **Every finished intensification build counts, Farm and Corral included.** A pen's extension ring is
+  fencing, not a new rung, and pays nothing; roads, felling, coppicing and quarrying are not directed
+  work and pay nothing.
 - **A stage pays once.** A band that shrinks below a stage and grows back is not paid again.
 - **What it takes in play** (opening values): a band that splits twice on its first turn holds 6 and
   needs two builds; each splinter holds 3 and needs three builds or seven hexes of herd. A band that

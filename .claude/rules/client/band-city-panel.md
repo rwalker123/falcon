@@ -90,32 +90,39 @@ command center**: shown whenever ≥1 player band exists, always displaying a
   answers `""` when neither resolves, so both paths produce the identical header. That split is
   exactly what the harness pair `band_panel_people` (snapshot path) / `band_panel_people_map_path`
   (map path) exists to keep separable — a fixture reached only one way cannot see it.
-  **THE HEADER ALSO SHOWS WHO LEADS THE BAND, AND HOW FAR IT IS FROM HAVING ONE** (#859). The wire gives
+  **THE WORK TAB SHOWS WHO LEADS THE BAND, AND HOW FAR IT IS FROM HAVING ONE** (#859). The header is
+  the name and the sub line only (stage + position); the chief lines are the FIRST item inside the Work
+  tab's one sanctioned sections scroll (`HudWorkVocab.WORK_SECTIONS_SCROLL_NAME`), above BUILD QUEUE,
+  built by `BandPanelController._build_work_chief_block`. They live there because the chief's band
+  orders will live at the top of the Work tab; inside the scroll they scroll with the sections and can
+  never overflow the clipping zone or change a height reservation. The wire gives
   `leader_name`, `leader_kind` (0 none / 1 chief / 2 elder council), `leadership_threshold` (10),
   `leadership_practice` and its four parts `leadership_from_builds` / `_splits` / `_herd` / `_stages`
-  (3 per finished Cultivate or Tame, 3 per player-ordered split credited to both bands, 1 per hex walked
-  following a herd, 5 the first time a settlement stage is reached; the sum freezes once a leader
-  exists). With a leader the bar's line becomes `_leader_label`, its own line under the sub line:
-  `Led by Chief Orrin` or `Led by the elders' council — Orrin speaks` (`HudFormat.band_leader_phrase`,
-  passed as `set_header`'s `leader_line`). It WRAPS rather than trims, being the only place the
-  header names who leads; the sub line carries the position alone. With none, a
-  slim split bar sits under the sub line with the label `Chief 7 / 10` (practice floored and capped at
+  (3 per finished Cultivate, Farm, Tame or Corral, 3 per player-ordered split credited to both
+  bands, 1 per hex walked following a herd, 5 the first time a settlement stage is reached; the sum
+  freezes once a leader
+  exists). With a leader the block is ONE autowrapping label, `Led by Chief Orrin` or
+  `Led by the elders' council — Orrin speaks` (`HudFormat.band_leader_phrase`), never ellipsized. With
+  none, it is one row: a slim split bar and the label `Chief 7 / 10` (practice floored and capped at
   the threshold, whole numbers): four segments in order builds / splits / herd / stages (green / blue /
   amber / cyan, `HudFormat.chief_source_colors`) filling toward the threshold, the remainder an empty
-  `LINE_SOFT` cell. A zero part draws no cell. `HudFormat.band_chief_progress` answers `{}` (row hidden)
-  for a band with a leader or a threshold of 0 (foreign cohort), and the faction page, which passes
-  none. `set_header`'s `chief_progress` argument carries it; the panel never reads a band dict. The row
-  hover is the headline "A band gains a leader once it does enough work that needs an organiser." and one
-  line of per-source points. There is no `no chief yet` text. **Neither line may widen the panel**:
-  the bar's floor is `CHIEF_BAR_MIN_WIDTH` (24, it stretches to the column the name and sub line
-  set — at 90 it pushed the card to 410px in the 380px strip), an autowrapped leader line asks
-  no width (the council line on the sub line took the card to 506px); the sub line itself trims with
-  an ellipsis and carries its whole text on its tooltip (`MOUSE_FILTER_PASS`, so a click still reaches
-  the subject's jump). Each leader frame asserts the card's minimum width fits
-  `current_reservation_size()`, the leader line drawn whole, no leader clause on the sub line, and
-  the bar and leader line never together. Harness frames `leader_partial`,
-  `leader_empty`, `leader_chief`, `leader_council` in `band_expedition` assert the label and each cell's
-  points (`BandCityPanel.CHIEF_POINTS_META`). The event feed's `leader_emerged` is Notable in
+  `LINE_SOFT` cell, each cell's stretch ratio its points; a zero part draws no cell.
+  `HudFormat.band_chief_progress` answers `{}` (no block) for a band with a leader or a threshold of 0
+  (foreign cohort), and the faction page has no band to ask. The row hover is the headline "A band
+  gains a leader once it does enough work that needs an organiser." and one line of per-source points
+  (row `MOUSE_FILTER_STOP`). There is no `no chief yet` text. Bar and leader line are never both
+  present. Type is `WORK_CHIEF_FONT_SIZE` (10) in `INK_DIM`, a quiet line and not a section head. The bar
+  floor is `WORK_CHIEF_BAR_MIN_WIDTH` (24): it stretches to the column, and a larger floor would make it
+  the widest thing in the zone and widen the card. The header's sub line trims with an ellipsis and
+  carries its whole text on its tooltip (`MOUSE_FILTER_PASS`, so a click still reaches the subject's
+  jump), so a long stage word cannot widen the panel either. Harness frames `leader_partial`,
+  `leader_empty`, `leader_chief`, `leader_council` in `band_expedition` dock the panel RIGHT on the
+  WORK tab and, finding nodes by meta (`WORK_CHIEF_ROW_META`, `WORK_LEADER_LINE_META`,
+  `WORK_CHIEF_LABEL_META`, `WORK_CHIEF_POINTS_META`) inside the sections scroll, assert the bar label
+  and each drawn cell's points or its absence, the leader line by equality and drawn whole, the bar and
+  line never together, no chief/leader node outside the scroll, no leader clause on the sub line, and
+  the card's minimum width within `current_reservation_size()`.
+  The event feed's `leader_emerged` is Notable in
   `hud_event_vocab.gd`; its `name=` is a hidden key and `EventDockPanel.detail_phrase` drops the
   continuation words of any hidden value (`name=Orrin II`).
   **THE MARKER IS A STRUCTURAL COPY OF THE COHORT — `entry.duplicate()` plus declared stamps.** It was

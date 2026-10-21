@@ -110,6 +110,19 @@ const DENIAL_CARRIED_DETAIL_KEY := "Carried"
 ## Drive a Food/Morale disclosure the way a CLICK does: emit `meta_clicked` on the live drawer label
 ## with the very `[url]` meta its own text carries, so the bound handler + anchor run exactly as they
 ## do in the game. Toggling: a second call on the same key dismisses the popover.
+## The node named `node_name` under `root`, or null.
+func _find_named(root: Node, node_name: StringName) -> Node:
+	return root.find_child(String(node_name), true, false)
+
+## Every node under (and including) `root` carrying `meta`.
+func _find_all_meta(root: Node, meta: StringName) -> Array:
+	var found: Array = []
+	if root.has_meta(meta):
+		found.append(root)
+	for child in root.get_children():
+		found.append_array(_find_all_meta(child, meta))
+	return found
+
 func _click_disclosure(key: String) -> void:
 	var meta := HudDisclosureVocab.BREAKDOWN_TOGGLE_META_PREFIX + key
 	var label = _find_meta_label(h._hud, meta)
@@ -2068,7 +2081,7 @@ func _hay_ledger_states() -> void:
 		MAIN_SCRIPT.push_hud_strip(h._hud, BAND_PANEL_RESERVER, edge, size,
 			MAIN_SCRIPT.band_dock_overlays_hud(edge, size, h._hud, leader_panel)))
 	leader_panel.set_dock(SIDE_RIGHT)
-	leader_panel.set_active_tab(BandCityPanel.ZONE_BAND)
+	leader_panel.set_active_tab(BandCityPanel.ZONE_WORK)
 	h._hud.set_band_city_panel(leader_panel)
 	# Per case: frame name, band fields, the header line's tail, the bar's label ("" = bar hidden), and
 	# the points of each drawn cell (builds / splits / herd / stages, then the remainder).
@@ -2097,35 +2110,46 @@ func _hay_ledger_states() -> void:
 		h._hud.show_unit_selection(leader_band)
 		await h._settle()
 		await h._save(String(leader_case[0]))
-		# The leader is its OWN line, in the bar's slot: whole (every wrapped line visible, never an
-		# ellipsis), and never on the sub line beside the coordinates.
+		# The chief lines are the FIRST item of the Work tab's sections scroll, found by meta there; the
+		# header carries none of them.
+		var work_scroll := _find_named(leader_panel, HudWorkVocab.WORK_SECTIONS_SCROLL_NAME)
+		var in_work := func(meta: StringName) -> Array:
+			return _find_all_meta(work_scroll, meta) if work_scroll != null else []
+		var in_panel := func(meta: StringName) -> Array: return _find_all_meta(leader_panel, meta)
 		var want_leader := String(leader_case[2])
-		var leader_label: Label = leader_panel._leader_label
-		h._assert_hud("%s: leader line %s" % [leader_case[0], "reads '%s' in full" % want_leader if want_leader != "" else "is hidden"],
-			(not leader_label.visible) if want_leader == ""
-			else (leader_label.visible and leader_label.text == want_leader
+		var leader_nodes: Array = in_work.call(HudWorkVocab.WORK_LEADER_LINE_META)
+		var leader_label: Label = leader_nodes[0] if not leader_nodes.is_empty() else null
+		h._assert_hud("%s: leader line %s" % [leader_case[0], "reads '%s' in full" % want_leader if want_leader != "" else "is absent"],
+			leader_nodes.is_empty() if want_leader == ""
+			else (leader_label != null and leader_label.visible and leader_label.text == want_leader
 				and leader_label.get_visible_line_count() == leader_label.get_line_count()))
 		h._assert_hud("%s: the sub line carries no leader clause (%s)" % [leader_case[0], leader_panel._position_label.text],
 			not leader_panel._position_label.text.to_lower().contains("led by"))
+		var chief_rows: Array = in_work.call(HudWorkVocab.WORK_CHIEF_ROW_META)
 		h._assert_hud("%s: the bar and the leader line never draw together" % leader_case[0],
-			not (leader_panel._chief_row.visible and leader_label.visible))
+			not (not chief_rows.is_empty() and not leader_nodes.is_empty()))
+		h._assert_hud("%s: the header holds no chief or leader node (all live in the Work scroll)" % leader_case[0],
+			in_panel.call(HudWorkVocab.WORK_CHIEF_ROW_META).size() == chief_rows.size()
+			and in_panel.call(HudWorkVocab.WORK_LEADER_LINE_META).size() == leader_nodes.size())
 		var want_label := String(leader_case[3])
 		var drawn_points: Array = []
-		for cell in leader_panel._chief_bar.get_children():
-			drawn_points.append(float(cell.get_meta(BandCityPanel.CHIEF_POINTS_META)))
-		h._assert_hud("%s: chief bar %s" % [leader_case[0], "reads '%s' %s" % [want_label, leader_case[4]] if want_label != "" else "is hidden"],
-			(not leader_panel._chief_row.visible) if want_label == ""
-			else (leader_panel._chief_row.visible and leader_panel._chief_label.text == want_label
-				and drawn_points == leader_case[4]))
-		# Both lines sit in the header's subject column, so a wide one widens the docked card past
-		# the strip the dock reserves.
+		var bar_label_text := ""
+		if not chief_rows.is_empty():
+			for cell in _find_all_meta(chief_rows[0], HudWorkVocab.WORK_CHIEF_POINTS_META):
+				drawn_points.append(float(cell.get_meta(HudWorkVocab.WORK_CHIEF_POINTS_META)))
+			var label_nodes := _find_all_meta(chief_rows[0], HudWorkVocab.WORK_CHIEF_LABEL_META)
+			bar_label_text = (label_nodes[0] as Label).text if not label_nodes.is_empty() else ""
+		h._assert_hud("%s: chief bar %s" % [leader_case[0], "reads '%s' %s" % [want_label, leader_case[4]] if want_label != "" else "is absent"],
+			chief_rows.is_empty() if want_label == ""
+			else (bar_label_text == want_label and drawn_points == leader_case[4]))
+		# A wide line in the zone must not widen the docked card past the strip the dock reserves.
 		var card_min := leader_panel._panel.get_combined_minimum_size().x
 		var reserved := leader_panel.current_reservation_size()
 		h._assert_hud("%s: the card's minimum width (%.0fpx) fits the docked strip (%.0fpx)"
 			% [leader_case[0], card_min, reserved], card_min <= reserved)
 	var tip: String = HudFormat.band_chief_progress(leader_cases[0][1]).get("tooltip", "")
 	h._assert_hud("the bar's tooltip names every source with its points",
-		tip.contains("Cultivate or Tame: 3") and tip.contains("Splits: 3")
+		tip.contains("Cultivate, Farm, Tame or Corral: 3") and tip.contains("Splits: 3")
 		and tip.contains("Following a herd: 1") and tip.contains("Settlement stages: 0"))
 	h._assert_hud("a band with no threshold (foreign) shows no bar and no leader text",
 		HudFormat.band_chief_progress({}).is_empty() and HudFormat.band_leader_phrase({}) == "")
