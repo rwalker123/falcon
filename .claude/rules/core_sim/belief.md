@@ -97,12 +97,15 @@ tied to the second. Edges are directed, so the pair is deduplicated on its UNORD
 is at most one gathering a turn. A pair that camps together stays tied and never re-fires. Bands of
 one people count as well as bands of different peoples. `metrics.connections_formed` is untouched.
 
-**A band holds no gathering on the turn it comes into being.** A pair with either band in its first
-turn (`age_turns <= 1` at the Visibility pass, since `simulate_population` bumps it first) is skipped:
-what a new band sees is where it started — world-start neighbours, a split's child beside its parent
-and whatever else is in sight — not a meeting. The ties still form that turn, so they are live
-afterwards and do not fire later while the bands stay in contact; a re-meeting after the tie parks
-fires as usual. `age_turns` is existing cohort state, so no new checkpoint field.
+**The world's opening sightings are a gathering; a later-founded band's first turn is not.** Bands
+in sight of each other when the game starts met "at turn 0": on the world's first resolved turn
+(`SimulationTick` reads `0`, the `OPENING_TURN` constant in `connections.rs`; `advance_tick` runs in
+`Snapshot`, behind the turn) the founding-age skip does not apply, so those pairs hold a gathering.
+On any later turn a pair with either band in its first turn (`age_turns <= 1` at the Visibility pass,
+since `simulate_population` bumps it first) is skipped: a band founded later — a split's child —
+sees only where it started, not a meeting. The ties still form that turn, so they are live afterwards
+and do not fire later while the bands stay in contact; a re-meeting after the tie parks fires as
+usual. `age_turns` is existing cohort state, so no new checkpoint field.
 
 **Only a live sighting counts.** `ContactsThisTurn::record` is the sight sweep's entry and marks the
 edge as a live sighting; an expedition's report goes through `record_report`, which refreshes the tie
@@ -127,8 +130,10 @@ gatherings; it is checkpoint state (`SimState::gatherings`, `SAVE_FORMAT_VERSION
 `sim_state_coverage.rs`). The signal `gatherings.held_this_turn` is its diff against last turn's total
 (`telling.md`), and the `belief.gathering_held` beat rides it.
 
-Pinned by `tests/gathering.rs`: a first meeting credits the larger band's tile once; a gathering is
-held where the band stands, not its home; a pair that stays in contact does not re-fire; a pair whose
+Pinned by `tests/gathering.rs`: a first meeting credits the larger band's tile once; bands in sight
+at world start hold a gathering on the opening turn (tick `0`, founding ages and all); a band
+founded after the opening turn holds none on its founding turn; a gathering is held where the band
+stands, not its home; a pair that stays in contact does not re-fire; a pair whose
 tie parked and re-meets fires again; a same-people pair fires and is told once; an expedition report
 does not fire; a size tie goes to the lower band id; each people's line carries its own band and its
 own wording; `belief_per_gathering` scales the credit; the Telling's beat lands once.

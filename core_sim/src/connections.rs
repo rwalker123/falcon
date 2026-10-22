@@ -465,9 +465,15 @@ struct Attendee {
 /// A band whose `age_turns` is at most this has not yet lived past the turn it came into being.
 /// `simulate_population` (Population) bumps `age_turns` before this Visibility pass, so a band
 /// founded between turns (worldgen, a split command) reads `1` here on its first turn, and one
-/// founded mid-turn after the Population pass reads `0`. What such a band sees is where it started,
-/// not a meeting: it holds no gathering that turn.
+/// founded mid-turn after the Population pass reads `0`. A band founded later (a split's child)
+/// holds no gathering on that turn: what it sees is where it started, not a meeting. The world's
+/// opening sightings are the exception: they count as a meeting at turn 0 (see [`OPENING_TURN`]).
 const FOUNDING_AGE_TURNS: u32 = 1;
+
+/// The `SimulationTick` read while the world's first turn resolves (`advance_tick` runs in
+/// `Snapshot`, after the turn). Bands in sight of each other when the game starts met "at turn 0",
+/// so the founding-turn skip does not apply on this turn.
+const OPENING_TURN: u64 = 0;
 
 /// The label of a gathering's event line.
 const GATHERING_LABEL: &str = "A gathering";
@@ -537,7 +543,11 @@ pub fn advance_connections(
             let (Some(low), Some(high)) = (attendee(low), attendee(high)) else {
                 continue;
             };
-            if low.age_turns <= FOUNDING_AGE_TURNS || high.age_turns <= FOUNDING_AGE_TURNS {
+            // The world's opening sightings count as a meeting at turn 0; a band founded later (a
+            // split) holds none on its founding turn, because what it sees is where it started.
+            let founding =
+                low.age_turns <= FOUNDING_AGE_TURNS || high.age_turns <= FOUNDING_AGE_TURNS;
+            if founding && turn != OPENING_TURN {
                 continue;
             }
             // The larger band hosts; a tie goes to the lower band id (`low` is the lower id).

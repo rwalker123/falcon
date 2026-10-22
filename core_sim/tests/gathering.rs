@@ -27,6 +27,8 @@ const BIG: u32 = 40;
 const SMALL: u32 = 12;
 /// A turn on which the first meeting happens.
 const FIRST_TURN: u64 = 5;
+/// The tick the world's first turn resolves on.
+const OPENING_TURN: u64 = 0;
 /// Quiet turns run after a meeting, enough to drain a fresh tie (`0.25` at `0.02` a turn) to
 /// parked and still well inside `forget_turns`.
 const QUIET_TURNS: u64 = 20;
@@ -420,10 +422,10 @@ fn the_telling_hears_a_gathering_once() {
     assert_eq!(told(&app), 1, "an unchanged total is not a new gathering");
 }
 
-/// What a band sees on the turn it comes into being is where it started, not a meeting - a
-/// world-start neighbour, a split's child beside its parent, or a foreign band in sight of the child.
+/// What a band founded after the opening turn sees on the turn it comes into being is where it
+/// started, not a meeting - a split's child beside its parent, or a foreign band in sight of it.
 #[test]
-fn a_band_holds_no_gathering_on_the_turn_it_is_founded() {
+fn a_band_founded_after_the_opening_turn_holds_no_gathering_on_its_founding_turn() {
     for (founded_a, founded_b) in [(true, true), (true, false), (false, true)] {
         let mut app = two_faction_world();
         let (a, b) = pair(&mut app, HOME, RIVAL);
@@ -459,4 +461,45 @@ fn a_band_holds_no_gathering_on_the_turn_it_is_founded() {
         meet(&mut app, FIRST_TURN + 1, &a, &b);
         assert!(gathering_events(&app).is_empty());
     }
+}
+
+/// The world's first resolved turn reads the opening tick: constructing the world runs one update
+/// (Startup, then the first turn), and `advance_tick` bumps the tick behind it.
+#[test]
+fn the_first_resolved_turn_reads_the_opening_tick() {
+    let app = two_faction_world();
+    assert_eq!(
+        app.world.resource::<SimulationTick>().0,
+        OPENING_TURN + 1,
+        "one turn has resolved and advance_tick has run behind it"
+    );
+}
+
+/// Bands in sight of each other when the game starts met "at turn 0": the opening turn holds the
+/// gathering although both bands carry founding ages.
+#[test]
+fn bands_in_sight_at_world_start_hold_a_gathering_on_the_opening_turn() {
+    let mut app = two_faction_world();
+    let (a, b) = pair(&mut app, HOME, RIVAL);
+    set_size(&mut app, &a, SMALL);
+    set_size(&mut app, &b, BIG);
+    for band in [&a, &b] {
+        app.world
+            .get_mut::<PopulationCohort>(band.entity)
+            .unwrap()
+            .age_turns = FOUNDING_AGE;
+    }
+
+    meet(&mut app, OPENING_TURN, &a, &b);
+
+    assert_eq!(
+        belief_at(&app, b.tile),
+        per_gathering(&app),
+        "the larger band's tile is credited"
+    );
+    assert_eq!(belief_at(&app, a.tile), NO_BELIEF);
+    let events = gathering_events(&app);
+    assert_eq!(events.len(), 2, "one line per people");
+    assert!(events.iter().any(|e| e.faction == HOME));
+    assert!(events.iter().any(|e| e.faction == RIVAL));
 }
