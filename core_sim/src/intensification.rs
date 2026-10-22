@@ -4358,14 +4358,15 @@ impl LadderConfig {
             }
         }
         // The knowledges no rung teaches but the config files under a branch of their own — the
-        // roaming skills. Appended after the rung-taught ones, in the config's declared order.
+        // roaming skills and the rot-taught `storage`. Appended after the rung-taught ones, in the
+        // config's declared order; a step exactly when a rung waits on it, as above.
         for standalone in &self.standalone_knowledges {
             roster.push(LadderKnowledgeEntry {
                 knowledge: standalone.knowledge.as_str(),
                 branch: standalone.branch.as_str(),
                 area: standalone.area.as_str(),
                 order: standalone.order,
-                is_step: false,
+                is_step: self.knowledge_gates_a_rung(&standalone.knowledge),
                 discovery_id: discovery_id_for(&standalone.knowledge)
                     .expect("a standalone knowledge resolves to a discovery (validated at load)"),
             });
@@ -4779,6 +4780,9 @@ impl LadderConfig {
                 }
             }
         }
+        // **Every priced lesson must be PLACED on the knowledge roster.** Last, so a structural
+        // fault (a missing rung) is reported as itself rather than as the knowledge it orphans.
+        self.validate_priced_lessons_are_placed()?;
         Ok(())
     }
 
@@ -4970,6 +4974,43 @@ impl LadderConfig {
                                  lesson off a default nobody chose"
                         .to_string(),
                     value: "missing".to_string(),
+                });
+            }
+        }
+        Ok(())
+    }
+
+    /// **Every knowledge priced in `knowledge.lesson_costs` is PLACED on the roster** - some rung's
+    /// taught lessons name it, or a `standalone_knowledges` entry lists it. The crafts
+    /// ([`crate::crafting::CRAFTS_WITH_A_DISCOVERY`]) are the one exemption: they ride their own
+    /// `CraftKnowledgeState` list.
+    ///
+    /// **A priced but unplaced knowledge is learnable and invisible**: `storage` was priced and gated
+    /// two rungs, but rot teaches it, so no rung's `earns_knowledge` named it and it never reached
+    /// [`Self::knowledge_roster`] - the knowledge panel could not show it. A load failure here names
+    /// the knowledge rather than shipping a lesson nobody can see.
+    fn validate_priced_lessons_are_placed(&self) -> Result<(), LadderConfigError> {
+        for name in self.knowledge.lesson_costs.keys() {
+            let name = name.as_str();
+            let placed = self
+                .rungs
+                .iter()
+                .flat_map(|rung| rung.taught_lessons())
+                .any(|taught| taught == name)
+                || self
+                    .standalone_knowledges
+                    .iter()
+                    .any(|standalone| standalone.knowledge == name)
+                || crate::crafting::CRAFTS_WITH_A_DISCOVERY.contains(&name);
+            if !placed {
+                return Err(LadderConfigError::Invalid {
+                    field: format!("knowledge.lesson_costs[{name}]"),
+                    constraint: "place every priced knowledge on the roster - a rung's \
+                                 `earns_knowledge`, or a `standalone_knowledges` entry. A priced \
+                                 knowledge nobody places is learnable and invisible on the \
+                                 knowledge panel"
+                        .to_string(),
+                    value: "unplaced".to_string(),
                 });
             }
         }
@@ -8869,6 +8910,35 @@ mod tests {
                 .remove(crate::spoilage::STORAGE_KNOWLEDGE);
         });
         assert_rejects(err, "knowledge.lesson_costs[storage]");
+    }
+
+    /// **Every PRICED knowledge must be PLACED on the roster** - a rung teaches it or the config
+    /// files it as a standalone. The failure this closes: `storage` was priced and gated two rungs
+    /// but never placed, so it was learnable and invisible on the knowledge panel.
+    #[test]
+    fn rejects_a_priced_knowledge_that_is_not_placed_on_the_roster() {
+        // Priced, but the standalone entry that places it is removed.
+        let err = reject(|json| {
+            json["standalone_knowledges"]
+                .as_array_mut()
+                .expect("standalone_knowledges is a list")
+                .retain(|entry| entry["knowledge"] != crate::spoilage::STORAGE_KNOWLEDGE);
+        });
+        assert_rejects(err, "knowledge.lesson_costs[storage]");
+    }
+
+    /// The shipped ladder places every knowledge it prices.
+    #[test]
+    fn the_shipped_ladder_places_every_priced_knowledge() {
+        let ladder = LadderConfig::builtin();
+        let roster = ladder.knowledge_roster();
+        for name in ladder.knowledge.lesson_costs.keys() {
+            assert!(
+                roster.iter().any(|entry| entry.knowledge == name)
+                    || crate::crafting::CRAFTS_WITH_A_DISCOVERY.contains(&name.as_str()),
+                "{name} is priced but not on the roster"
+            );
+        }
     }
 
     /// **The rot that counts as a full turn of storage practice must be a positive, finite number

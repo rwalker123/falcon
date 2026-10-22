@@ -1034,8 +1034,8 @@ nothing.
 
 **The roster carries them as a branch of their own.** `LadderConfig::standalone_knowledges` (required)
 files a knowledge no rung teaches under a wire `branch` token and an `area` (here `roam` / `reach`,
-orders 1–3); `knowledge_roster()` appends them after the rung-taught ones with `is_step: false`, so
-`ladderKnowledge` and `intensificationKnowledge` publish them with no client list. See
+orders 1–3); `knowledge_roster()` appends them after the rung-taught ones with `is_step` read off
+the rungs (false for these, since no rung waits on them), so `ladderKnowledge` and `intensificationKnowledge` publish them with no client list. See
 `intensification.md` → "Knowledge no rung teaches".
 
 ## The tests that carry the arc

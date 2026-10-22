@@ -2681,18 +2681,26 @@ fourth step by that JSON edit (`rung_quotes_generic.rs` lifts the roster to `pla
 ## Knowledge no rung teaches — `standalone_knowledges`
 
 `knowledge_roster()` derives from the rungs' `earns_knowledge`, so a knowledge taught by a practice
-signal instead of a rung (`storage` by rot, the crafts by a bench) is absent from it. The three
-roaming skills (`herd_lore`, `travois`, `drives`; `work-party.md` → "The roaming skills") are the ones
-that must be on the wire, so the config files them: **`standalone_knowledges`** is a required list of
-`{ knowledge, branch, area, order }` records.
+signal instead of a rung (`storage` by rot, the roaming skills by what a band does) is absent from it
+unless the config files it. The three roaming skills (`herd_lore`, `travois`, `drives`;
+`work-party.md` → "The roaming skills") and `storage` are on the wire, so the config files them:
+**`standalone_knowledges`** is a required list of `{ knowledge, branch, area, order }` records. (The
+crafts are a bench's, and ride their own `craftKnowledge`, not this roster.)
 
-- `branch` is a **wire token, not a ladder branch** (`roam` today) — no rung sits on it, so it needs no
+- `branch` is a **wire token, not a ladder branch** (`roam`, and `stores` under `food` for `storage`,
+  which gates both the drying rack and the storage pit and so belongs to neither branch) — no rung sits on it, so it needs no
   enum variant and no ladder machinery to draw as a column. `LadderKnowledgeEntry::branch` is a `&str`
   for this reason (a rung-taught entry's is its branch id).
 - `area` must name a member of `areas` (`reach` for the roaming branch, which is why that area is no
   longer empty); `order` is the position in the column, bottom first.
-- The roster appends them after the rung-taught knowledges in the config's order, with
-  `is_step: false` (nothing waits on them) and the `discovery_id` that `discovery_id_for` resolves.
+- The roster appends them after the rung-taught knowledges in the config's order, with the
+  `discovery_id` that `discovery_id_for` resolves. **`is_step` is read off the rungs exactly as for a
+  rung-taught knowledge** (`knowledge_gates_a_rung`): `storage` is a step (it gates `drying_rack` and
+  `storage_pit`), the roaming skills are not (no rung waits on them). Pinned on the encoded
+  `ladderKnowledge` by `storage_branches::the_published_roster_carries_storage_as_a_step_and_the_roaming_skills_as_capabilities`.
+- `validate` rejects a knowledge priced in `knowledge.lesson_costs` that is placed nowhere on the
+  roster (no rung teaches it and no standalone entry lists it; the crafts, which ride their own
+  `CraftKnowledgeState` list, are exempt), naming it in the load error.
 - `validate` rejects an entry whose name resolves to no discovery id, an empty branch, or an area
   outside `areas`; `validate_lesson_cost_coverage` requires a `lesson_costs` entry for every name in
   `roaming_skills::ROAMING_SKILLS`.

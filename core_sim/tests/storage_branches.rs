@@ -867,3 +867,44 @@ fn a_bands_rack_rides_its_own_row_on_the_wire() {
         "the bill calls for whole hands"
     );
 }
+
+/// **THE KNOWLEDGE ROSTER ON THE WIRE**: `storage` is taught by rot, not by a rung, so it reaches
+/// `ladderKnowledge` through `standalone_knowledges` - on the `stores` row under `food`, and a STEP
+/// because it gates both stores. The roaming skills gate no rung and stay capabilities.
+#[test]
+fn the_published_roster_carries_storage_as_a_step_and_the_roaming_skills_as_capabilities() {
+    use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
+
+    let mut app = campaign_world();
+    app.update();
+    let snapshot = app
+        .world
+        .resource::<SnapshotHistory>()
+        .latest_entry()
+        .expect("a snapshot was captured")
+        .snapshot;
+    let bytes = sim_schema::encode_snapshot_flatbuffer(snapshot.as_ref());
+    let envelope = fb::root_as_envelope(bytes.as_ref()).expect("a valid envelope");
+    let roster = envelope
+        .payload_as_snapshot()
+        .expect("a snapshot")
+        .subsistence()
+        .and_then(|section| section.ladderKnowledge())
+        .expect("the roster is published");
+    let row = |id: &str| {
+        roster
+            .iter()
+            .find(|row| row.knowledgeId() == Some(id))
+            .unwrap_or_else(|| panic!("the roster carries {id}"))
+    };
+
+    let storage = row("storage");
+    assert_eq!(storage.branch().unwrap_or_default(), "stores");
+    assert_eq!(storage.area().unwrap_or_default(), "food");
+    assert!(storage.isStep(), "storage gates the rack and the pit");
+    for skill in ["herd_lore", "travois", "drives"] {
+        let skill = row(skill);
+        assert_eq!(skill.branch().unwrap_or_default(), "roam");
+        assert!(!skill.isStep(), "a roaming skill gates no rung");
+    }
+}

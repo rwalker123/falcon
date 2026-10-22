@@ -50,6 +50,11 @@ const BRANCH_ROAM := "roam"
 const KNOWLEDGE_HERD_LORE := "herd_lore"
 const KNOWLEDGE_TRAVOIS := "travois"
 const KNOWLEDGE_DRIVES := "drives"
+## The standalone stores row (#707/#708): one step knowledge under `food`, taught by rot. Like `roam`
+## it is a wire token with no rung; it has no `DOMAIN_BRANCH_LABELS` entry and reads "Stores" off the
+## capitalized fallback.
+const BRANCH_STORES := "stores"
+const KNOWLEDGE_STORAGE := "storage"
 
 ## **THE DISPLAY ORDER THE SIM PUBLISHES** — the config's `areas` list verbatim
 ## (`SubsistenceSection.ladderAreas`), including the three areas no branch teaches under yet. Those
@@ -104,6 +109,7 @@ static func ladder_roster() -> Array:
 		_row(KNOWLEDGE_HERD_LORE, "Herd Lore", BRANCH_ROAM, 1, false, AREA_REACH),
 		_row(KNOWLEDGE_TRAVOIS, "Travois", BRANCH_ROAM, 2, false, AREA_REACH),
 		_row(KNOWLEDGE_DRIVES, "Drives", BRANCH_ROAM, 3, false, AREA_REACH),
+		_row(KNOWLEDGE_STORAGE, "Storage", BRANCH_STORES, 1, true, AREA_FOOD),
 	]
 
 ## **THE LADDER CATALOG's verb-bearing rows for the shipped branches** (`ladder_rungs`, issue #175):
