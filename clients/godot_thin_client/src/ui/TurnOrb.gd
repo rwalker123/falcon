@@ -102,8 +102,8 @@ const KIND_CREW_HANDOFF := "crew_handoff"
 # turn. Non-locating, and it opens that screen, so it wears the screen's launcher's own mark rather
 # than a glyph of its own.
 const KIND_KNOWLEDGE_LEARNED := "knowledge_learned"
-# Two peoples' bands met (issue #698). A NOTICE like `KIND_CREW_HANDOFF`, offering no affordance. Its
-# mark is the `gathering` campfire sprite (the shared fire two bands now sit at), NOT the `workers`
+# Two bands met (issue #698). A NOTICE that LOCATES: it jumps to the band met, when that band
+# resolves. Its mark is the `gathering` campfire sprite (the shared fire two bands now sit at), NOT the `workers`
 # palm, which says "work"; the text glyph `⇄` (two sides meeting) is the fallback if the art fails.
 const KIND_GATHERING := "gathering_held"
 # The turn-one outfitting window, still holding an unspent budget (issue #629). Non-locating — it
