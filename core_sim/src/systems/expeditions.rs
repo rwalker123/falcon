@@ -1864,7 +1864,7 @@ pub fn advance_expeditions(
                         map.discover(pos.x, pos.y, current_turn);
                     }
                     for (subject, sighting) in report.sightings {
-                        contacts.record(observer, subject, sighting);
+                        contacts.record_report(observer, subject, sighting);
                     }
                     if let Some(known) = configs.dealings.known_goodwill.as_deref_mut() {
                         for (other, news) in report.goodwill {
@@ -1886,7 +1886,7 @@ pub fn advance_expeditions(
             let reports = std::mem::take(&mut expedition.pending_contacts);
             if let Some(observer) = home_band_id {
                 for (subject, sighting) in reports {
-                    contacts.record(observer, subject, sighting);
+                    contacts.record_report(observer, subject, sighting);
                 }
                 // The opinions it carried home land with the sightings, to the people that sent it.
                 let news = std::mem::take(&mut expedition.goodwill_news);

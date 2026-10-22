@@ -43,6 +43,7 @@ use crate::components::BandId;
 use crate::leadership::BandLeadership;
 use crate::{
     components::{LaborAllocation, PopulationCohort, ResidentBand, Tile},
+    connections::GatheringLedger,
     culture::CultureManager,
     fauna::HerdRegistry,
     fauna_config::FaunaConfigHandle,
@@ -790,6 +791,7 @@ pub struct TellingSources<'w, 's> {
     pub factions: Res<'w, FactionRegistry>,
     pub sedentarization: Res<'w, SedentarizationScore>,
     pub discovered_sites: Res<'w, DiscoveredSites>,
+    pub gatherings: Res<'w, GatheringLedger>,
     pub discovery_progress: Res<'w, DiscoveryProgressLedger>,
     pub herds: Res<'w, HerdRegistry>,
     pub fauna_config: Res<'w, FaunaConfigHandle>,
@@ -891,6 +893,7 @@ pub fn telling_tick(
         tick: &sources.tick,
         sedentarization: &sources.sedentarization,
         discovered_sites: &sources.discovered_sites,
+        gatherings: &sources.gatherings,
         discovery_progress: &sources.discovery_progress,
         herds: &sources.herds,
         culture: &sources.culture,
@@ -1236,6 +1239,7 @@ mod tests {
             &sample,
             &CumulativeTotals {
                 discovered_sites: 2.0,
+                gatherings_held: 3.0,
             },
         );
 
@@ -1357,6 +1361,7 @@ mod tests {
         let mut ledger = BeatLedger::default();
         let totals = CumulativeTotals {
             discovered_sites: 4.0,
+            gatherings_held: 3.0,
         };
         ledger.commit_edge_state(&SignalSample::default(), &totals);
         assert_eq!(

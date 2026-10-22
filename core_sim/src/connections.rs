@@ -51,17 +51,20 @@
 //! rather than a duplicate of the second.
 
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use bevy::prelude::*;
 
 use crate::{
-    components::BandId,
+    belief::BeliefRegistry,
+    belief_config::BeliefConfigHandle,
+    components::{BandId, BandName, PopulationCohort, ResidentBand, Tile},
     connections_config::{ConnectionsConfig, ConnectionsConfigHandle},
     metrics::SimulationMetrics,
     orders::FactionId,
-    resources::SimulationTick,
+    resources::{CommandEventEntry, CommandEventKind, CommandEventLog, SimulationTick},
     scalar::Scalar,
+    systems::band_label,
 };
 
 /// **A full tie.** Strength is a `0..=1` fraction by definition, so its ceiling is what the number
@@ -359,12 +362,35 @@ impl ConnectionLedger {
 #[derive(Resource, Default, Debug, Clone)]
 pub struct ContactsThisTurn {
     sightings: BTreeMap<ConnectionKey, Sighting>,
+    /// The edges at least one **live sighting** found this turn — one band standing on a tile and
+    /// seeing another band on its tile. An edge only an expedition's report named is NOT here, so a
+    /// report landing (which may be about a band far away) can never be read as two bands meeting.
+    /// Read by [`advance_connections`] to detect a gathering.
+    live: BTreeSet<ConnectionKey>,
 }
 
 impl ContactsThisTurn {
-    /// Record `observer` finding `subject` as `sighting` describes. A staler observation of an edge
-    /// already recorded this turn is dropped rather than overwriting it.
+    /// Record `observer` finding `subject` as `sighting` describes — a **live sighting** from the
+    /// sight sweep, which also marks the edge as a band-to-band meeting (see
+    /// [`Self::is_live_sighting`]). A staler observation of an edge already recorded this turn is
+    /// dropped rather than overwriting it.
     pub fn record(&mut self, observer: BandId, subject: BandId, sighting: Sighting) {
+        self.live.insert(ConnectionKey::new(observer, subject));
+        self.insert(observer, subject, sighting);
+    }
+
+    /// Record a contact an expedition's **report** carried home. It refreshes the tie exactly as a
+    /// sighting does, but it is not two bands meeting, so it never marks the edge live.
+    pub fn record_report(&mut self, observer: BandId, subject: BandId, sighting: Sighting) {
+        self.insert(observer, subject, sighting);
+    }
+
+    /// Did a live band-to-band sighting (not only a report) find this edge this turn?
+    pub fn is_live_sighting(&self, key: &ConnectionKey) -> bool {
+        self.live.contains(key)
+    }
+
+    fn insert(&mut self, observer: BandId, subject: BandId, sighting: Sighting) {
         match self.sightings.entry(ConnectionKey::new(observer, subject)) {
             std::collections::btree_map::Entry::Vacant(slot) => {
                 slot.insert(sighting);
@@ -392,8 +418,65 @@ impl ContactsThisTurn {
 
     pub fn clear(&mut self) {
         self.sightings.clear();
+        self.live.clear();
     }
 }
+
+/// **How many gatherings each people has held** — a cumulative per-faction count, the total the
+/// Telling diffs into `gatherings.held_this_turn` (the `sites.discovered_this_turn` pattern).
+/// Checkpoint state: nothing rebuilds a count of past meetings.
+#[derive(Resource, Default, Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GatheringLedger {
+    held: BTreeMap<FactionId, u64>,
+}
+
+impl GatheringLedger {
+    /// Count one more gathering for `faction`.
+    pub fn record(&mut self, faction: FactionId) {
+        *self.held.entry(faction).or_insert(0) += 1;
+    }
+
+    /// Every gathering `faction` has held, cumulative.
+    pub fn held_by(&self, faction: FactionId) -> u64 {
+        self.held.get(&faction).copied().unwrap_or(0)
+    }
+}
+
+/// An unordered pair of bands, lower id first — the unit a gathering is deduplicated on.
+fn band_pair(a: BandId, b: BandId) -> (BandId, BandId) {
+    if a <= b {
+        (a, b)
+    } else {
+        (b, a)
+    }
+}
+
+/// One band of a pair, as a gathering reads it.
+struct Attendee {
+    band: BandId,
+    faction: FactionId,
+    size: u32,
+    tile: Entity,
+    name: String,
+    /// Turns the band has been simulated; see [`FOUNDING_AGE_TURNS`].
+    age_turns: u32,
+}
+
+/// A band whose `age_turns` is at most this has not yet lived past the turn it came into being.
+/// `simulate_population` (Population) bumps `age_turns` before this Visibility pass, so a band
+/// founded between turns (worldgen, a split command) reads `1` here on its first turn, and one
+/// founded mid-turn after the Population pass reads `0`. A band founded later (a split's child)
+/// holds no gathering on that turn: what it sees is where it started, not a meeting. The world's
+/// opening sightings are the exception: they count as a meeting at turn 0 (see [`OPENING_TURN`]).
+const FOUNDING_AGE_TURNS: u32 = 1;
+
+/// The `SimulationTick` read while the world's first turn resolves (`advance_tick` runs in
+/// `Snapshot`, after the turn). Bands in sight of each other when the game starts met "at turn 0",
+/// so the founding-turn skip does not apply on this turn.
+const OPENING_TURN: u64 = 0;
+
+/// The label of a gathering's event line.
+const GATHERING_LABEL: &str = "A gathering";
 
 /// Advance the three clocks: raise every tie contacted this turn, drain every tie that was not, and
 /// reap the ones nobody has seen in `forget_turns`.
@@ -401,15 +484,33 @@ impl ContactsThisTurn {
 /// Chained after `calculate_visibility` (which is what *finds* the contacts) and before
 /// `apply_visibility_decay`, inside the serial `TurnStage::Visibility` chain. It consumes
 /// [`ContactsThisTurn`] and clears it, so the set is rebuilt from scratch every turn.
+#[allow(clippy::too_many_arguments)]
 pub fn advance_connections(
     mut ledger: ResMut<ConnectionLedger>,
     mut contacts: ResMut<ContactsThisTurn>,
     config: Res<ConnectionsConfigHandle>,
     tick: Res<SimulationTick>,
     mut metrics: ResMut<SimulationMetrics>,
+    residents: Query<(&BandId, &PopulationCohort, Option<&BandName>), With<ResidentBand>>,
+    tiles: Query<&Tile>,
+    belief_config: Res<BeliefConfigHandle>,
+    mut belief: ResMut<BeliefRegistry>,
+    mut gatherings: ResMut<GatheringLedger>,
+    mut event_log: ResMut<CommandEventLog>,
 ) {
     let cfg = config.get();
     let turn = tick.0;
+
+    // **A gathering is two bands meeting after having no live tie.** Read before any of this
+    // turn's contacts is folded in, so the first directed edge of a pair to be refreshed cannot make
+    // the pair look tied to the second. Deduplicated per UNORDERED pair: edges are directed.
+    let meetings: BTreeSet<(BandId, BandId)> = contacts
+        .iter()
+        .map(|(key, _)| key)
+        .filter(|key| contacts.is_live_sighting(key))
+        .filter(|key| !ledger.tie_is_live(key.observer, key.subject))
+        .map(|key| band_pair(key.observer, key.subject))
+        .collect();
 
     let mut formed = 0u32;
     for (key, sighting) in contacts.iter() {
@@ -422,6 +523,61 @@ pub fn advance_connections(
     }
     let reaped = ledger.decay_all(turn, &cfg);
     contacts.clear();
+
+    if !meetings.is_empty() {
+        let belief_cfg = belief_config.get();
+        let attendee = |band: BandId| -> Option<Attendee> {
+            residents
+                .iter()
+                .find(|(id, _, _)| **id == band)
+                .map(|(id, cohort, name)| Attendee {
+                    band: *id,
+                    faction: cohort.faction,
+                    size: cohort.size,
+                    tile: cohort.current_tile,
+                    age_turns: cohort.age_turns,
+                    name: name.map_or_else(|| band_label(*id), |name| name.0.clone()),
+                })
+        };
+        for (low, high) in meetings {
+            let (Some(low), Some(high)) = (attendee(low), attendee(high)) else {
+                continue;
+            };
+            // The world's opening sightings count as a meeting at turn 0; a band founded later (a
+            // split) holds none on its founding turn, because what it sees is where it started.
+            let founding =
+                low.age_turns <= FOUNDING_AGE_TURNS || high.age_turns <= FOUNDING_AGE_TURNS;
+            if founding && turn != OPENING_TURN {
+                continue;
+            }
+            // The larger band hosts; a tie goes to the lower band id (`low` is the lower id).
+            let host = if high.size > low.size { &high } else { &low };
+            let Ok(place) = tiles.get(host.tile) else {
+                continue;
+            };
+            belief.credit_gathering(place.position, &belief_cfg);
+            for (own, other) in [(&low, &high), (&high, &low)] {
+                // One line per people: a pair of one people is told once, from its lower band.
+                if own.faction == other.faction && own.band != low.band {
+                    continue;
+                }
+                gatherings.record(own.faction);
+                event_log.push(
+                    CommandEventEntry::new(
+                        turn,
+                        CommandEventKind::GatheringHeld,
+                        own.faction,
+                        GATHERING_LABEL,
+                        Some(format!(
+                            "{} met {} at ({}, {}).",
+                            own.name, other.name, place.position.x, place.position.y
+                        )),
+                    )
+                    .with_band(other.band),
+                );
+            }
+        }
+    }
 
     metrics.connections_live = ledger.len() as u32;
     metrics.connections_formed = formed;

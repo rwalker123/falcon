@@ -39,9 +39,10 @@
 #
 # THE SEVENTH IS `hud/`, AND IT IS COMPLETE FOR WHAT IT SHIPS. A family is a table plus a
 # resolver, and `hud/` has both: `ui/HudSprites.gd` resolves `for_mark(mark_id)` against a
-# table now holding all SIXTEEN committed PNGs — `cairn` (issue #581), the twelve wired by
+# table now holding all SEVENTEEN committed PNGs — `cairn` (issue #581), the twelve wired by
 # issue #249 (`forage`, `hunt`, `scout`, `warrior`, `deny`, `trade`, `workers`, `starving`,
 # `children`, `working_age`, `elders`, `kit_fallback`), `move` / `split` (the band verb row) and
+# `gathering` (the turn orb's `gathering_held` campfire, #698) and
 # `station` (the stationed party's mission mark; `scout` / `deny` / `trade` double as the party
 # mission marks on the Parties rows and the selection card's party rows). Every path in it has a call site, which
 # is the condition that lets it take `IconSprites.texture_for`'s `warn: true` honestly.
@@ -1268,14 +1269,14 @@ cave_fungi: Flat vector game icon of a single mushroom seen from the side, one s
 # HUD / ACTIVITY MARKS  ->  assets/icons/hud/   (ui/HudSprites.gd)
 # ============================================================================
 #
-# ALL SIXTEEN MARKS EXIST AND ALL SIXTEEN ARE WIRED — every mark this directory SHIPS has a call
+# ALL SEVENTEEN MARKS EXIST AND ALL SEVENTEEN ARE WIRED — every mark this directory SHIPS has a call
 # site, which is the completeness claim `warn: true` rests on. It is NOT the claim that the HUD has
 # run out of pictographic emoji: ⛔ the turn orb's STARVING-PEN row still draws the 🐄 text glyph
 # (`TurnOrb.KIND_ICON[KIND_STARVING_PEN]` = `FoodIcons.POLICY_ICONS[POLICY_CORRAL]`), in the very
 # same row column that `cairn` / `workers` / `starving` draw art into. It is held by the ladder
 # vocabulary question in THE #249 GAP LIST at the end of this file, not by a missing file.
 # `assets/icons/hud/{cairn,forage,hunt,scout,warrior,deny,trade,workers,starving,children,
-# working_age,elders,kit_fallback}.png` are keyed, imported, committed and listed in
+# working_age,elders,kit_fallback,gathering}.png` are keyed, imported, committed and listed in
 # `ui/HudSprites.gd`, this directory's lookup script. The cairn came first (#581) on the two
 # surfaces that need different mechanisms — a `Button.icon` on the action-bar launcher, a
 # `TextureRect` swapped for a `Label` on the turn orb's row — and #249 wired the other twelve
@@ -1305,7 +1306,7 @@ cave_fungi: Flat vector game icon of a single mushroom seen from the side, one s
 # predicted every outcome in this batch: forage 32% read instantly; hunt survives at 6.8% only
 # because its ink is ONE continuous bar; scout v1 at 7.7-10% did not survive at all. The
 # cheapest test there is: key it, resize to 13x13, and composite it on #111A1E.
-# THE DIRECTORY IS `hud/`, AND ALL SIXTEEN SHARE IT. The cairn briefly had an `ui/` of its own —
+# THE DIRECTORY IS `hud/`, AND ALL SEVENTEEN SHARE IT. The cairn briefly had an `ui/` of its own —
 # #581 says only "beside `stages/` and `fauna/`" — and it was folded in here rather than left
 # as a second one-file directory. One home for every mark drawn against the dark HUD panel is
 # also what makes the sub-style below a property of the DIRECTORY rather than a coincidence:
@@ -1803,6 +1804,25 @@ workers: Flat vector interface mark of a single open human hand seen palm-on fro
 # crescent — the vessel itself is the ink, and what is empty is the space above its rim, which is
 # panel and costs nothing.
 starving: Flat vector interface mark of a single empty eating bowl seen straight on from the front in a symmetrical upright pose, one thick heavy solid crescent forming the bowl's body with a plain flat rim across its top and nothing at all resting in it or above it, no food, no meat, no bone, no grain, no spoon, no steam, no hand, no table, no stand, no pedestal, drawn as a single bold solid shape with NO outline of any kind and no dark border and NOT as a hollow ring or a thin outlined vessel, filled in a cool pale grey and a light bone tone in two flat tones so the fill alone carries the silhouette against a very dark near-black interface panel, the crescent drawn thick and heavy through its whole width so it holds its mass at small size, at most one interior division line marking the rim, no ground, no shadow, no background scenery, no text, centered with even padding on a plain solid magenta background, no rounded square, no tile, no card, no badge, no frame, no border, the flat magenta touching the bowl on every side, an extremely simple graphic shape that stays clearly readable when scaled down to 13 pixels, strategy game interface icon
+
+
+# gathering.png — the turn orb's `gathering_held` row (issue #698): two bands met after time apart
+# and the place gained belief. The row's label says "A gathering" and its detail names both bands.
+# STATUS: SHIPPED at `assets/icons/hud/gathering.png` and WIRED on the turn orb's `gathering_held` row. Keyed `--size 256 --lo 85 --hi 130`; alpha 0.5% at 180-230 / 29.8% at 230-255
+# ⛔ `--hi 200` HALF-KEYED it (13.6% at 180-230): the flame orange sits near the key's red. The ramp plateaus from 130.
+# Judged at 30px, the turn orb's `ROW_ICON_SIZE` — see `workers.png` for why this family's judging
+# size is per-surface — so a second piece (the logs under the flame) is affordable here.
+# THE READ IS THE SHARED FIRE. The Telling's own line for this event is "Two fires that burned apart
+# now burn together", and one campfire is ONE mass that says *people sat here* without drawing them.
+# Like `starving.png`, the mark says what the row is about and lets the label say the rest.
+# ⚠ IT MUST NOT BE FIGURES. Two people facing each other is the obvious subject and it collides with
+# the PEOPLE trio below — the same bone-cream standing silhouettes, on the band page beside this very
+# orb — and it is two separate pieces besides, the budget `scout` v1 died of.
+# ⚠ IT MUST NOT BE A RING OF STONES. That is the obvious "gathering place" and it is `cairn.png`'s
+# stones laid flat; the two would read as one subject at row size.
+# HUE: a pale ember orange and a light flame-yellow. `hunt` owns amber-ochre, so this is separated
+# from it by SILHOUETTE (a flame against a bow), not by hue.
+gathering: Flat vector interface mark of a single small campfire seen straight on from the front in a symmetrical upright pose, one bold teardrop flame rising from the centre with two short rounded tongues of flame curling inward on either side so the whole fire reads as one merged flame, resting on two short thick logs crossed in a low X beneath it, the logs no thinner than one sixth of the icon width, no sparks, no smoke, no embers flying, no stones, no ring, no pot, no spit, no figures, no people, no hands, no ground line, drawn as a single bold solid shape with NO outline of any kind and no dark border, the flame filled in a pale ember orange and a light flame-yellow in two flat tones and the logs in a warm mid tan, so the fill alone carries the silhouette against a very dark near-black interface panel, at most one interior division line inside the flame, no ground, no shadow, no glow, no background scenery, no text, centered with even padding on a plain solid magenta background, no rounded square, no tile, no card, no badge, no frame, no border, the flat magenta touching the fire and the logs on every side, an extremely simple graphic shape that stays clearly readable when scaled down to 16 pixels, strategy game interface icon
 
 
 # ---------------------------------------------------------------------------------------------

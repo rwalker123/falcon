@@ -317,6 +317,13 @@ subject was observed**, which is not always this turn — an expedition's report
 on the march — and when two reports name the same edge the **fresher observation wins, whole**:
 position, name and people are one observation, so they never come from two different reports.
 
+**A first or revived edge is a gathering's trigger.** `ContactsThisTurn` also remembers which edges
+a live band-to-band sighting found (`record`), as against a contact only an expedition's report
+carried (`record_report`). `advance_connections` reads, before folding the turn in, which of the
+live-sighted pairs held no live tie (no edge, or a parked one) and treats each as a gathering —
+`belief.md` → "The gatherings source". The set is derived and cleared with the sightings, never
+checkpointed; `record_contact` and `connections_formed` are unchanged.
+
 ## THE KEYSTONE — a connection can only ever grant `Discovered`
 
 > **Only presence makes a tile `Seen` (`VisibilityState::Active`). A connection can only ever grant

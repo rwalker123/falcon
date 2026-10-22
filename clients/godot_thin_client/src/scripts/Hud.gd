@@ -2515,8 +2515,10 @@ func ingest_command_events(events_variant: Variant) -> void:
     # keeping, or back to the idle pool — and the player has to re-task around it BEFORE ending the
     # turn, which a feed line read after the fact cannot deliver. It is a THIRD reader of one stream
     # rather than a fourth surface: the row it produces lands in the turn orb's registry beside every
-    # other demand on the player.
+    # other demand on the player. The rows are the registry's EVENT half, pushed here as they are
+    # ingested — `Main` runs `update_band_alerts` first, so the band build cannot carry them.
     _attention.ingest_command_events(events_variant, _band_labor.current_turn())
+    _turnorb.set_event_attention(_attention.event_attention())
     # …and the outfitting card takes its REFUSALS off it: a refused `set_starting_loadout` moves no
     # band row, so this row is the only word the card gets that its optimistic picks were turned down.
     _loadout.ingest_command_events(events_variant, _band_labor.current_turn())

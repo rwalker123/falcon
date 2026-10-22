@@ -445,6 +445,11 @@ const HANDOFF_TURN := 61
 
 const HANDOFF_OLD_TURN := HANDOFF_TURN - 9
 
+## **THE TICK A TURN-RESOLUTION EVENT CARRIES ON THE FRAME FOR `HANDOFF_TURN`** — one behind, exactly as
+## the sim stamps it (it pushes before `advance_tick`; see `AttentionController.RESOLUTION_TICK_LAG`).
+## The fixtures once stamped `tick == turn`, which is the filter that matched nothing live.
+const HANDOFF_STAMP := HANDOFF_TURN - AttentionController.RESOLUTION_TICK_LAG
+
 ## Two hand-offs really did happen this turn, and they are DIFFERENT rows (one crew carried onto the
 ## rung's keeping, one freed), so a producer that de-duplicated on the wrong thing collapses them.
 const HANDOFF_ROWS_THIS_TURN := 2
@@ -468,10 +473,10 @@ func _handoff_ring_fixture() -> Array:
 		{"tick": HANDOFF_OLD_TURN + 3, "seq": 402, "kind": "corral",
 			"label": "1 of your corral crew are free — Red Deer keeps itself",
 			"detail": HANDOFF_DETAIL_FREED},
-		{"tick": HANDOFF_TURN, "seq": 403, "kind": "cultivate",
+		{"tick": HANDOFF_STAMP, "seq": 403, "kind": "cultivate",
 			"label": "3 of your cultivate crew stay on (31, 18) to keep it",
 			"detail": HANDOFF_DETAIL_CARRIED},
-		{"tick": HANDOFF_TURN, "seq": 404, "kind": "corral",
+		{"tick": HANDOFF_STAMP, "seq": 404, "kind": "corral",
 			"label": "2 of your corral crew are free — Wild Boar keeps itself",
 			"detail": HANDOFF_DETAIL_FREED},
 	]
@@ -485,7 +490,7 @@ func _handoff_recapture_fixture() -> Array:
 ## How many hand-off rows the producer would put on the orb right now.
 func _handoff_row_count() -> int:
 	var rows := 0
-	for item_variant in h._hud._attention.build_band_attention([], []):
+	for item_variant in h._hud._attention.event_attention():
 		var item: Dictionary = item_variant
 		if String(item.get("kind", "")) == HudAttentionVocab.ATTENTION_KIND_CREW_HANDOFF:
 			rows += 1
@@ -524,7 +529,7 @@ func _assert_handoff_ingest_windows_on_one_turn() -> void:
 	h._hud._band_labor.set_turn(HANDOFF_TURN + 1)
 	var re_stamped := _handoff_recapture_fixture()
 	for row_variant in re_stamped:
-		(row_variant as Dictionary)["tick"] = HANDOFF_TURN + 1
+		(row_variant as Dictionary)["tick"] = HANDOFF_STAMP + 1
 	h._hud._attention.ingest_command_events(re_stamped, HANDOFF_TURN + 1)
 	var after_next_turn := _handoff_row_count()
 	h._assert_hud("…and the next turn's own hand-offs are still announced (got %d, want %d)"
@@ -1089,7 +1094,9 @@ func run(harness) -> void:
 
 # ---- LEADER EMERGED (#859) ---------------------------------------------------------------------
 # A band gained a chief or an elders' council: the sim's `leader_emerged` command event, held for the
-# turn and windowed on the event's own tick exactly as the crew hand-offs are.
+# turn and windowed on the event's own tick exactly as the crew hand-offs are (stamped one turn behind
+# the frame that carries it), and delivered through the event half in `Main`'s order: populations first,
+# then events, one frame.
 
 const LEADER_TURN := 620
 const LEADER_OLD_TURN := 590
@@ -1110,13 +1117,13 @@ func _leader_band(band_id: int, band_name: String, tile: Vector2i) -> Dictionary
 		"current_x": tile.x, "current_y": tile.y, "idle_workers": 0}
 
 func _leader_event(tick: int, seq: int, band_id: int, kind_token: String, leader_name: String) -> Dictionary:
-	return {"tick": tick, "seq": seq, "kind": "leader_emerged", "faction": 0, "band": band_id,
+	return {"tick": tick - AttentionController.RESOLUTION_TICK_LAG, "seq": seq, "kind": "leader_emerged", "faction": 0, "band": band_id,
 		"label": "%s is chief" % leader_name,
 		"detail": "kind=%s name=%s" % [kind_token, leader_name]}
 
 func _leader_rows_in(bands: Array) -> Array:
 	var rows: Array = []
-	for item_variant in h._hud._attention.build_band_attention(bands, []):
+	for item_variant in h._hud._attention.event_attention():
 		var item: Dictionary = item_variant
 		if String(item.get("kind", "")) == HudAttentionVocab.ATTENTION_KIND_LEADER_EMERGED:
 			rows.append(item)
@@ -1137,8 +1144,8 @@ func _leader_emerged_frame() -> void:
 		_leader_event(LEADER_TURN, 703, LEADER_COUNCIL_BAND_ID, "elder_council", LEADER_COUNCIL_NAME),
 	]
 	h._hud.turn_orb.set_attention([])
-	h._hud._attention.ingest_command_events(ring, LEADER_TURN)
 	h._hud.update_band_alerts(bands)
+	h._hud.ingest_command_events(ring)
 	h._hud.turn_orb.open_popover()
 	await h._settle()
 	await h._save("turn_orb_leader_emerged")
@@ -1158,9 +1165,9 @@ func _leader_emerged_frame() -> void:
 	h._assert_hud("a full ring's OLD-tick leader raises no row (%d rows, want %d)"
 		% [rows.size(), LEADER_ROWS_EXPECTED], rows.size() == LEADER_ROWS_EXPECTED)
 	# A full-ring RE-ingest (resync) and an old-tick-only ring add nothing.
-	h._hud._attention.ingest_command_events(ring, LEADER_TURN)
-	h._hud._attention.ingest_command_events(
-		[_leader_event(LEADER_OLD_TURN, 704, LEADER_OLD_BAND_ID, "chief", LEADER_OLD_NAME)], LEADER_TURN)
+	h._hud.ingest_command_events(ring)
+	h._hud.ingest_command_events(
+		[_leader_event(LEADER_OLD_TURN, 704, LEADER_OLD_BAND_ID, "chief", LEADER_OLD_NAME)])
 	var after_reingest := _leader_rows_in(bands).size()
 	h._assert_hud("…and a full-ring re-ingest adds no row (%d, want %d)"
 		% [after_reingest, LEADER_ROWS_EXPECTED], after_reingest == LEADER_ROWS_EXPECTED)
@@ -1168,7 +1175,7 @@ func _leader_emerged_frame() -> void:
 	h._hud.turn_orb.set_attention([])
 	# RESTORE: advancing the turn drops the window, so no leader row leaks into later states.
 	h._hud._band_labor.set_turn(prior_turn)
-	h._hud._attention.ingest_command_events([], prior_turn)
+	h._hud.ingest_command_events([])
 
 # ---- HERD THINNING (#859) ----------------------------------------------------------------------
 # A herd the player's bands hunt has dropped into the stressed / collapsing band. Controls:
@@ -1290,6 +1297,90 @@ func _hand_to_mouth_band(entity: int, shortfall: float) -> Dictionary:
 		"size": 30, "turns_of_food": HAND_TO_MOUTH_TURNS, "activity": "forage",
 		"current_x": 60 + entity - HAND_TO_MOUTH_ENTITY, "current_y": 12, "idle_workers": 0,
 		"food_need": 3.6, "food_consumption": 3.6 - shortfall, "food_shortfall": shortfall}
+
+## **THE GATHERING NOTICE** (#698) — one `gathering_held` command event for THIS tick raises one
+## non-locating info row whose detail is the sim's own sentence, verbatim.
+const GATHERING_TURN := 62
+const GATHERING_LABEL := "A gathering"
+const GATHERING_DETAIL := "Elk Band met River Band at (12, 7)."
+const GATHERING_SEQ := 777
+## A durable band id no roster in this walk holds.
+const GATHERING_UNKNOWN_BAND := 99999
+## The foreign band the gathering met: in sight this frame, on a tile unlike the player band's (60, 12).
+const GATHERING_MET_BAND := 5151
+const GATHERING_MET_TILE := Vector2i(70, 15)
+## A met band out of sight, known only by the connections section's remembered position.
+const GATHERING_REMEMBERED_BAND := 6161
+const GATHERING_REMEMBERED_TILE := Vector2i(33, 44)
+
+## The turn the opening frame carries: the sim stamps the first resolution at tick 0.
+const GATHERING_OPENING_TURN := 1
+
+## **DRIVEN IN `Main._apply_snapshot`'S OWN ORDER** — `update_band_alerts` (the populations section) FIRST,
+## then `ingest_command_events`, both for the SAME frame, the event stamped `turn - RESOLUTION_TICK_LAG`.
+## Seeding the attention controller directly and pushing a hand-built band build is what let the orb
+## miss every gathering live: the rows arrive after the band build runs, so only the event half's own
+## push can put them on the orb. No second populations frame is sent.
+func _gathering_frame(turn: int, seq: int, event_band: int = GATHERING_MET_BAND) -> void:
+	h._hud._band_labor.set_turn(turn)
+	# The player's own band plus the foreign band it met, in sight this frame at a different tile.
+	h._hud.update_band_alerts([_hand_to_mouth_band(HAND_TO_MOUTH_ENTITY, 0.0), {
+		"faction": 1, "entity": GATHERING_MET_BAND, "band_id": GATHERING_MET_BAND, "name": "River Band",
+		"size": 20, "current_x": GATHERING_MET_TILE.x, "current_y": GATHERING_MET_TILE.y}])
+	h._hud.ingest_command_events([{
+		"tick": turn - AttentionController.RESOLUTION_TICK_LAG, "seq": seq, "kind": "gathering_held",
+		"label": GATHERING_LABEL, "detail": GATHERING_DETAIL, "band": event_band}])
+
+## The gathering row's locating target, read off the producer: the event's band's own tile, or the
+## non-locating sentinel.
+func _gathering_target() -> Vector2i:
+	for item_variant in h._hud._attention.event_attention():
+		var item: Dictionary = item_variant
+		if String(item.get("kind", "")) == HudAttentionVocab.ATTENTION_KIND_GATHERING:
+			return Vector2i(int(item["x"]), int(item["y"]))
+	return Vector2i(-99, -99)
+
+func _assert_gathering_row() -> void:
+	var prior_turn: int = h._hud._band_labor.current_turn()
+	# The opening frame: turn 1, event at tick 0.
+	_gathering_frame(GATHERING_OPENING_TURN, GATHERING_SEQ)
+	h._hud.turn_orb.open_popover()
+	await h._settle()
+	var opening_row: Variant = _orb_row_with(_orb_rows(), GATHERING_LABEL)
+	h._assert_hud("the opening frame's gathering is on the orb that same frame",
+		opening_row != null and String((opening_row as Dictionary)["detail"]) == GATHERING_DETAIL)
+	# A later turn, still one frame.
+	_gathering_frame(GATHERING_TURN, GATHERING_SEQ + 1)
+	await h._settle()
+	await h._save("turn_orb_gathering")
+	var row: Variant = _orb_row_with(_orb_rows(), GATHERING_LABEL)
+	h._assert_hud("a gathering raises an orb row naming the sim's own sentence, the frame it arrives",
+		row != null and String((row as Dictionary)["detail"]) == GATHERING_DETAIL)
+	h._assert_hud("the gathering row locates the band MET, not the player's own: Jump, tile %s"
+		% str(_gathering_target()),
+		row != null and String((row as Dictionary)["jump"]).contains("Jump")
+		and _gathering_target() == GATHERING_MET_TILE)
+	h._hud.turn_orb.toggle_popover()
+	# A met band out of sight resolves through the connections section's remembered position.
+	h._hud.update_connections([{"subject_band_id": GATHERING_REMEMBERED_BAND,
+		"last_seen_x": GATHERING_REMEMBERED_TILE.x, "last_seen_y": GATHERING_REMEMBERED_TILE.y}])
+	_gathering_frame(GATHERING_TURN + 1, GATHERING_SEQ + 3, GATHERING_REMEMBERED_BAND)
+	h._assert_hud("a met band out of sight is located by its remembered connection position (%s)"
+		% str(_gathering_target()), _gathering_target() == GATHERING_REMEMBERED_TILE)
+	h._hud.update_connections([])
+	h._hud._band_labor.set_turn(GATHERING_TURN + 2)
+	h._hud.ingest_command_events([])
+	# A band the roster does not hold: the row falls back to non-locating, same label and detail.
+	_gathering_frame(GATHERING_TURN + 3, GATHERING_SEQ + 2, GATHERING_UNKNOWN_BAND)
+	h._assert_hud("a gathering whose band is not on the roster stays on the orb, non-locating",
+		_gathering_target() == Vector2i(HudAttentionVocab.ATTENTION_NON_LOCATING, HudAttentionVocab.ATTENTION_NON_LOCATING))
+	# The next turn brings no gathering: the event half is replaced wholesale and the row goes.
+	h._hud._band_labor.set_turn(GATHERING_TURN + 4)
+	h._hud.ingest_command_events([])
+	h._assert_hud("the next turn without a gathering clears the row",
+		_gathering_target() == Vector2i(-99, -99))
+	h._hud._band_labor.set_turn(prior_turn)
+	h._hud.ingest_command_events([])
 
 ## **THE KNOWLEDGE SCREEN'S ORB ROW** (`docs/plan_knowledge_screen.md` §5, slice C) — one row per
 ## discovery that finished this turn, **and nothing else at all**.
@@ -1449,3 +1540,4 @@ func _assert_knowledge_producers(inherited_tracks: Dictionary) -> void:
 	h._hud.turn_orb.toggle_popover()   # the orb's only close seam; leaves the walk as it found it
 	h._hud.turn_orb.set_attention([])
 	h._hud._band_labor.set_tile_temperatures({})
+	await _assert_gathering_row()

@@ -14,6 +14,7 @@ use crate::components::BandId;
 use crate::leadership::{BandLeadership, LeaderKind};
 use crate::{
     components::{LaborAllocation, PopulationCohort, FOOD},
+    connections::GatheringLedger,
     culture::{
         culture_axis_from_key, culture_axis_key, CultureManager, CultureOwner, CultureTraitAxis,
     },
@@ -38,6 +39,11 @@ const CULTURE_AXIS_PREFIX: &str = "culture.axis.";
 /// through the rollback snapshot for free and a rollback cannot invent a phantom discovery.
 pub const SITES_DISCOVERED_TOTAL_KEY: &str = "internal.sites.discovered_total";
 
+/// The **cumulative** gathering count for the player faction, retained in the ledger's edge state
+/// so `gatherings.held_this_turn` is a per-turn diff, exactly as [`SITES_DISCOVERED_TOTAL_KEY`] is
+/// for sites. Not a registered signal; it round-trips through the rollback snapshot for free.
+pub const GATHERINGS_HELD_TOTAL_KEY: &str = "internal.gatherings.held_total";
+
 /// The narrator's attained medium, as a 0-based index into `voice.mediums`. **Set by
 /// `telling_tick`, not by [`sample_signals`]** — it is derived from the ledger's attained rung plus
 /// this turn's sample, so it is injected after the base sample exists (the `stance.*` idiom). It is
@@ -45,13 +51,14 @@ pub const SITES_DISCOVERED_TOTAL_KEY: &str = "internal.sites.discovered_total";
 pub const VOICE_MEDIUM_INDEX: &str = "voice.medium_index";
 
 /// Every signal id content may reference, other than the per-axis culture family.
-const BASE_SIGNALS: [&str; 11] = [
+const BASE_SIGNALS: [&str; 12] = [
     VOICE_MEDIUM_INDEX,
     "turn.index",
     "band.count",
     "provisions.total",
     "sedentarization.score",
     "sites.discovered_this_turn",
+    "gatherings.held_this_turn",
     "leadership.chiefs_emerged_this_turn",
     "leadership.councils_emerged_this_turn",
     "discovery.progress.cultivation",
@@ -119,13 +126,15 @@ pub struct SignalSources<'a> {
     pub tick: &'a SimulationTick,
     pub sedentarization: &'a SedentarizationScore,
     pub discovered_sites: &'a DiscoveredSites,
+    pub gatherings: &'a GatheringLedger,
     pub discovery_progress: &'a DiscoveryProgressLedger,
     pub herds: &'a HerdRegistry,
     pub culture: &'a CultureManager,
     /// Resident bands of `faction`: `(cohort, its labor allocation)`. Also the noun resolvers'
     /// view of the band layer, so the query is walked once for both.
     pub bands: &'a [BandView<'a>],
-    /// Last turn's cumulative totals, for the `sites.discovered_this_turn` diff.
+    /// Last turn's cumulative totals, for the `sites.discovered_this_turn` and
+    /// `gatherings.held_this_turn` diffs.
     pub previous: CumulativeTotals,
 }
 
@@ -135,6 +144,7 @@ pub struct SignalSources<'a> {
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct CumulativeTotals {
     pub discovered_sites: f64,
+    pub gatherings_held: f64,
 }
 
 impl CumulativeTotals {
@@ -148,6 +158,7 @@ impl CumulativeTotals {
         };
         Self {
             discovered_sites: read(SITES_DISCOVERED_TOTAL_KEY),
+            gatherings_held: read(GATHERINGS_HELD_TOTAL_KEY),
         }
     }
 
@@ -156,6 +167,10 @@ impl CumulativeTotals {
         edge_state.insert(
             SITES_DISCOVERED_TOTAL_KEY.to_string(),
             Scalar::from_f32(self.discovered_sites as f32),
+        );
+        edge_state.insert(
+            GATHERINGS_HELD_TOTAL_KEY.to_string(),
+            Scalar::from_f32(self.gatherings_held as f32),
         );
     }
 }
@@ -224,6 +239,13 @@ pub fn sample_signals(sources: &SignalSources<'_>) -> (SignalSample, CumulativeT
         emerged_this_turn(sources, LeaderKind::ElderCouncil),
     );
 
+    // Gatherings are a cumulative per-people count too, so "this turn" is the same kind of diff.
+    let gatherings_total = sources.gatherings.held_by(sources.faction) as f64;
+    sample.set(
+        "gatherings.held_this_turn",
+        (gatherings_total - sources.previous.gatherings_held).max(0.0),
+    );
+
     for (signal, discovery_id) in [
         ("discovery.progress.cultivation", CULTIVATION_DISCOVERY_ID),
         ("discovery.progress.herding", HERDING_DISCOVERY_ID),
@@ -262,6 +284,7 @@ pub fn sample_signals(sources: &SignalSources<'_>) -> (SignalSample, CumulativeT
         sample,
         CumulativeTotals {
             discovered_sites: discovered_total,
+            gatherings_held: gatherings_total,
         },
     )
 }
