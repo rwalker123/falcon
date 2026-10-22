@@ -221,6 +221,11 @@ pub(crate) fn labor_assignment_to_state(
             state.target_y = tile.y;
             state.branch = branch.as_str().to_string();
         }
+        // **A BAND IMPROVEMENT'S CREW ROW** - the branch is the key that joins it to the band's own
+        // `BandImprovementState`; it stands at the camp, so it names no tile.
+        LaborTarget::Band { branch, .. } => {
+            state.branch = branch.as_str().to_string();
+        }
         // The seven band-wide roles carry no source and no floor: their whole content is the head
         // count already on the row.
         LaborTarget::Scout
@@ -381,6 +386,7 @@ fn need_row_assessment(
     pool: u32,
     cohort: &PopulationCohort,
     demographics: &DemographicsConfig,
+    held: &crate::spoilage::HeldPreservation,
     is_expedition: bool,
     band_position: Option<bevy::math::UVec2>,
     gear: &HuntCrewGear<'_>,
@@ -404,6 +410,7 @@ fn need_row_assessment(
         cohort,
         Some(gear.allocation),
         demographics,
+        held,
         is_expedition,
         herd,
         hunt_crew_levers.fauna,
@@ -613,12 +620,13 @@ pub(crate) fn band_turns_of_food(
     cohort: &PopulationCohort,
     allocation: Option<&LaborAllocation>,
     demographics: &DemographicsConfig,
+    held: &crate::spoilage::HeldPreservation,
     is_expedition: bool,
 ) -> f32 {
     runway_over(
         cohort,
         allocation,
-        &band_food_terms(cohort, allocation, demographics, is_expedition),
+        &band_food_terms(cohort, allocation, demographics, held, is_expedition),
     )
 }
 
@@ -631,13 +639,21 @@ pub(crate) fn kill_turns_of_food(
     cohort: &PopulationCohort,
     allocation: Option<&LaborAllocation>,
     demographics: &DemographicsConfig,
+    held: &crate::spoilage::HeldPreservation,
     is_expedition: bool,
     kill_class: &str,
 ) -> f32 {
     runway_over(
         cohort,
         allocation,
-        &kill_food_terms(cohort, allocation, demographics, is_expedition, kill_class),
+        &kill_food_terms(
+            cohort,
+            allocation,
+            demographics,
+            held,
+            is_expedition,
+            kill_class,
+        ),
     )
 }
 
@@ -677,9 +693,17 @@ pub(crate) fn band_food_terms(
     cohort: &PopulationCohort,
     allocation: Option<&LaborAllocation>,
     demographics: &DemographicsConfig,
+    held: &crate::spoilage::HeldPreservation,
     is_expedition: bool,
 ) -> BandFoodTerms {
-    food_terms_over(cohort, allocation, demographics, is_expedition, &|_| true)
+    food_terms_over(
+        cohort,
+        allocation,
+        demographics,
+        held,
+        is_expedition,
+        &|_| true,
+    )
 }
 
 /// [`band_food_terms`] over only the larder classes that keep no longer than `kill_class`.
@@ -687,12 +711,20 @@ pub(crate) fn kill_food_terms(
     cohort: &PopulationCohort,
     allocation: Option<&LaborAllocation>,
     demographics: &DemographicsConfig,
+    held: &crate::spoilage::HeldPreservation,
     is_expedition: bool,
     kill_class: &str,
 ) -> BandFoodTerms {
-    food_terms_over(cohort, allocation, demographics, is_expedition, &|class| {
-        crate::spoilage::keeps_no_longer_than(&demographics.keeping, class, kill_class)
-    })
+    food_terms_over(
+        cohort,
+        allocation,
+        demographics,
+        held,
+        is_expedition,
+        &|class| {
+            crate::spoilage::keeps_no_longer_than(&demographics.keeping, held, class, kill_class)
+        },
+    )
 }
 
 /// **THE ROWS' YIELDS THAT ARE STANDING INCOME** - every row's retained yield but a need row's.
@@ -718,6 +750,7 @@ fn food_terms_over(
     cohort: &PopulationCohort,
     allocation: Option<&LaborAllocation>,
     demographics: &DemographicsConfig,
+    held: &crate::spoilage::HeldPreservation,
     is_expedition: bool,
     counts: &dyn Fn(&str) -> bool,
 ) -> BandFoodTerms {
@@ -735,7 +768,8 @@ fn food_terms_over(
     let usable_larder = if is_expedition {
         larder.total()
     } else {
-        larder.total() - crate::spoilage::rot_ahead(&larder, demand.to_f32(), &demographics.keeping)
+        larder.total()
+            - crate::spoilage::rot_ahead(&larder, demand.to_f32(), &demographics.keeping, held)
     };
     BandFoodTerms {
         demand,
@@ -1127,6 +1161,13 @@ pub(crate) struct PopulationStateInputs<'a> {
     /// [`crate::systems::CulturePressureLedger`]. Empty for a detached party and for a world no
     /// turn has judged.
     pub(crate) culture_pressures: Vec<sim_schema::CulturePressureState>,
+    /// **The improvements this band holds at its camp** (#708), one row per band-kind branch - see
+    /// [`band_improvement_rows`]. Empty for a detached party.
+    pub(crate) band_improvements: Vec<sim_schema::BandImprovementState>,
+    /// **What this band's stores preserve** (#708) - its drying rack and its people's nearby pit -
+    /// resolved once per band at capture by [`crate::spoilage::PreservationScene::held_by`], so the
+    /// runway, the rot forecast and the hunt meal all read the shelf lives the turn's rot did.
+    pub(crate) held_preservation: crate::spoilage::HeldPreservation,
 }
 
 /// The two webs' registries, for resolving a queue entry's **live** rung. No ladder: both
@@ -1258,7 +1299,9 @@ fn resolved_build_job(
         // and the entry's own `declared` is that statement.
         (
             crate::components::BuildJob::Climb(rung),
-            crate::components::BuildSource::Road(_) | crate::components::BuildSource::Tile { .. },
+            crate::components::BuildSource::Road(_)
+            | crate::components::BuildSource::Tile { .. }
+            | crate::components::BuildSource::Band { .. },
         ) => sources
             .ladder
             .rung_by_id(*rung)
@@ -1430,6 +1473,7 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
     let PopulationStateInputs {
         belief_reach,
         belief_relay_region,
+        held_preservation,
         culture_traits,
         culture_ancestor_pull,
         culture_drift,
@@ -1463,6 +1507,7 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         loadout_window,
         heart,
         culture_pressures,
+        band_improvements,
     } = inputs;
     let homeward: &[crate::work_party::HomewardWalk] =
         allocation.map_or(&[], |allocation| allocation.homeward.as_slice());
@@ -1853,7 +1898,13 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
     let turns_of_food = if expedition.is_some_and(|exp| exp.mission.fed_by_home_band()) {
         NOT_FOOD_LIMITED_TURNS
     } else {
-        band_turns_of_food(cohort, allocation, demographics, expedition.is_some())
+        band_turns_of_food(
+            cohort,
+            allocation,
+            demographics,
+            &held_preservation,
+            expedition.is_some(),
+        )
     };
     // **THE MUSTER THE NEXT TURN WILL APPLY**, from the one function the labor pass applies
     // (`LaborAllocation::muster_donors`), so a donor row's `lentToHunt` and the band's
@@ -1972,6 +2023,7 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
                             crew_pool,
                             cohort,
                             demographics,
+                            &held_preservation,
                             expedition.is_some(),
                             current_position,
                             &hunt_gear,
@@ -2860,6 +2912,7 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
             cohort,
             allocation,
             demographics,
+            &held_preservation,
             expedition.is_some(),
         )
         .into_iter()
@@ -2929,6 +2982,7 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
             .map_or(sim_schema::state::NO_HEART_CONTACT, |turn| turn as i64),
         independence_grievance_threshold: wellbeing.independence.grievance_threshold,
         culture_pressures,
+        band_improvements,
         culture_traits,
         culture_ancestor_pull,
         culture_drift_source_band: culture_drift.map_or(0, |pull| pull.source),
@@ -3048,6 +3102,10 @@ fn build_queue_entry_to_state(
         BuildSource::Tile { tile, branch } => {
             state.target_x = tile.x;
             state.target_y = tile.y;
+            state.branch = branch.as_str().to_string();
+        }
+        // A band improvement names its branch and no tile: it stands where the band does.
+        BuildSource::Band { branch, .. } => {
             state.branch = branch.as_str().to_string();
         }
     }
@@ -3436,6 +3494,7 @@ mod tests {
             last_food_need: 0.0,
             fed_party_workers: Default::default(),
             last_food_spoiled: 0.0,
+            last_food_kept: 0.0,
             last_turn_food_transfers: Default::default(),
             last_turn_fodder_transfers: Default::default(),
             last_turn_transfer_crossings: Vec::new(),
@@ -3493,6 +3552,8 @@ mod tests {
             loadout_window: None,
             heart: None,
             culture_pressures: Vec::new(),
+            band_improvements: Vec::new(),
+            held_preservation: crate::spoilage::HeldPreservation::none(),
             cohort,
             allocation,
             expedition,
@@ -3974,9 +4035,11 @@ mod tests {
                         // A road carries no take row at all — its keeper is on the road, not on a
                         // labor target — so a fixture that queued one would be describing a band
                         // this helper cannot build.
-                        BuildSource::Road(_) | BuildSource::Tile { .. } => unreachable!(
-                            "a road or a tile improvement has no labor row, so it cannot be a source in this fixture"
-                        ),
+                        BuildSource::Road(_) | BuildSource::Tile { .. } | BuildSource::Band { .. } => {
+                            unreachable!(
+                                "a road, a tile improvement or a band improvement has no take row, so it cannot be a source in this fixture"
+                            )
+                        }
                         BuildSource::Deposit { tile, material } => LaborTarget::Extract {
                             tile: *tile,
                             material: material.clone(),
@@ -4118,6 +4181,97 @@ mod tests {
         assert!(captured(&cohort, None, None).build_queue.is_empty());
     }
 }
+
+/// **ONE BAND'S IMPROVEMENTS ON THE WIRE** (#708) - a row per band-kind branch the band holds, in
+/// branch order, [`crate::snapshot::routes::tile_improvement_states`]' shape with the tile taken
+/// away. Own bands only (the caller passes nothing for a foreign one), so there is no fog or builder
+/// gate here: everything described is the viewer's own.
+///
+/// Every number comes off the stamped bill ([`crate::band_improvement::BandImprovement::keeping_basis`]),
+/// so `demand - supplied == shortfall` holds verbatim, and the builder's scratch (`destination`,
+/// legs, countdown, blocked reason) publishes only while the band's own queue holds the entry.
+pub(crate) fn band_improvement_rows(
+    registry: &crate::band_improvement::BandImprovementRegistry,
+    band: BandId,
+    allocation: Option<&LaborAllocation>,
+    viewer: FactionId,
+    ladder: &LadderConfig,
+) -> Vec<sim_schema::BandImprovementState> {
+    registry
+        .held_by(band)
+        .map(|improvement| {
+            let demand = improvement.keeping_basis(ladder);
+            let at_risk = ladder.rung(improvement.at_risk_rung());
+            let grace = at_risk.upkeep.as_ref().map(|_| {
+                crate::intensification::neglect_grace_remaining(
+                    improvement.neglect_turns,
+                    at_risk.upkeep_grace_turns(),
+                )
+            });
+            let source = BuildSource::Band {
+                band,
+                branch: improvement.branch,
+            };
+            let queued = allocation
+                .and_then(|allocation| allocation.build_queue_entry(&source))
+                .is_some();
+            sim_schema::BandImprovementState {
+                branch: improvement.branch.as_str().to_string(),
+                current_rung: improvement.held_rung().wire_key(),
+                build_destination_rung: if queued {
+                    improvement
+                        .build_destination
+                        .map_or_else(String::new, |rung| rung.wire_key())
+                } else {
+                    String::new()
+                },
+                build_legs: if queued {
+                    crate::snapshot::subsistence::published_build_legs(&improvement.build_legs)
+                } else {
+                    Vec::new()
+                },
+                build_turns_remaining: if queued {
+                    crate::snapshot::subsistence::published_build_countdown(
+                        improvement.build_turns_remaining,
+                        improvement.build_queue_position,
+                        queued,
+                    )
+                } else {
+                    sim_schema::NO_BUILD_TURNS_ESTIMATE
+                },
+                build_blocked_reason: if queued {
+                    improvement.build_blocked_reason.key().to_string()
+                } else {
+                    String::new()
+                },
+                upkeep_demand: demand,
+                upkeep_supplied: improvement.upkeep_supplied,
+                upkeep_shortfall: crate::intensification::upkeep_shortfall(
+                    demand,
+                    improvement.upkeep_supplied,
+                ),
+                neglect_turns: u32::from(improvement.neglect_turns),
+                has_neglect_grace: grace.is_some(),
+                neglect_grace_remaining: grace.unwrap_or(NO_GRACE_REMAINING),
+                upkeep_workers_needed: improvement.upkeep_workers_needed(ladder),
+                upkeep_hands: improvement.upkeep_hands,
+                upkeep_tools_short: crate::snapshot::subsistence::viewer_keeping_tools_short(
+                    &improvement.upkeep_toe,
+                    viewer,
+                ),
+                upkeep_toe: crate::snapshot::subsistence::upkeep_toe_lines(
+                    &improvement.upkeep_toe,
+                    viewer,
+                ),
+                is_queued: queued,
+            }
+        })
+        .collect()
+}
+
+/// **The grace a row with nothing at risk publishes**, paired with `has_neglect_grace: false` - the
+/// field a reader checks first (the tile row's convention).
+const NO_GRACE_REMAINING: u32 = 0;
 
 /// **One band's culture-pressure rows for the wire** (#820): every people pulling it, pressure
 /// descending, faction ascending as the tie-break. `turnsToNext` is the clock toward the next

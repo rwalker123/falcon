@@ -405,20 +405,31 @@ that is wrong; it should drop at the end.)*
 - **Preservation is a longer shelf life, nothing else.** A drying rack lengthens `flesh`'s, a pit
   `dry`'s; "build storage" means exactly "food keeps longer before it rots".
 - **A work party's pack rots by its walk.** Cargo whose walk home is longer than its class's shelf
-  life rots on the way, which gives a far hunt a natural range that drying extends; a pack that
-  arrives lands already as old as its walk.
+  life rots on the way, which gives a far hunt a natural range; a pack that arrives lands already
+  as old as its walk. The rack is at the camp, so it does not dry a pack on the road.
 - The rot is its own term on the Food line (`Spoiled`) and in the larder ledger identity.
 
-**Rot teaches storage — one signal, not two.** The intensification ladder's knowledge ledger already
-teaches the next rung by practice, over ~20-turn lessons (`.claude/rules/core_sim/intensification.md`).
-The storage lesson's practice signal is **food lost to spoilage while a surplus sat**. A band with no
-excess never learns storage; a band whose excess rots learns it fast. "Excess makes you want storage"
-and "spoilage makes you need it" are the same accrual read off one number.
+**Keeping food teaches storage, and rot teaches it fastest (decided, #708).** The intensification
+ladder's knowledge ledger already teaches the next rung by practice, over ~20-turn lessons
+(`.claude/rules/core_sim/intensification.md`). The storage lesson reads the larder's aged batches. Two
+signals feed one accrual:
+- **Rot is the fast teacher.** Food lost to spoilage while a surplus sat pays full practice.
+- **Kept food is the slow teacher.** Food eaten after it sat a few turns (`storage_kept_age_turns`)
+  pays a fraction of rot's practice (`storage_kept_weight`).
 
-**Workers build storage, and storage is a ladder branch.** The improvement catalog is the
-intensification ladder (see "The improvement catalog is the intensification ladder" below); storage
-is a branch whose source is a tile, before the monument. It is blocked only on the tile-source seam,
-which belongs to the settlement arc, not this one.
+A band living hand to mouth never learns storage; a band that keeps food learns it slowly; a band whose
+excess rots learns it fast. *(The first version taught by rot alone. Playtesting showed a band can
+easily never rot anything, so it never reached storage. Ray: spoilage should be by far the biggest
+contributor, but a band should get there without it, just more slowly.)*
+
+**Workers build storage, and storage is two ladder branches (decided, #708).** The improvement
+catalog is the intensification ladder (see "The improvement catalog is the intensification ladder"
+below). **Camp stores** (carried → drying rack) is held by the band: the rack stands at the camp
+and moves with it, so a split leaves it with the parent band and a merge keeps the better one.
+**Food stores** (storage pit, then the granary and silo) is held on a tile. Neither is a step up
+from the other — they keep different food — so the one rot-taught `storage` lesson unlocks both. A
+pit lengthens dry food's shelf life for any band of its people within `reach_tiles`; the food stays
+in the band's larder until #709 puts the contents on the tile.
 
 **Split by how food keeps, not plant vs animal.** The video's step 4 property is the one that
 matters: grain is legible because it keeps dry and can be counted. A food kind carries one property —
@@ -429,8 +440,8 @@ characteristic axes (`docs/plan_crafting_and_materials.md`). Not a per-species t
 
 | Improvement | Where it lives | Holds | What it is |
 |---|---|---|---|
-| Drying rack | travels with the band | small; cures meat and fish | a nomad's storage — slows rot without rooting anyone |
-| Pit / granary | fixed to a tile | large; dry goods only | its contents are on the ground, not on your backs, so leaving means leaving them — the stored-surplus tether `docs/plan_settlement_population.md` describes, finally existing |
+| Drying rack | at the camp, moves with the band | cures meat and fish | a nomad's storage — slows rot without rooting anyone |
+| Storage pit (granary #709) | fixed to a tile | dry goods only | its contents are on the ground, not on your backs, so leaving means leaving them — the stored-surplus tether `docs/plan_settlement_population.md` describes, finally existing |
 | Sealed pottery | later | everything | a crafting-arc material, not a storage rung |
 
 **Fixed storage is two branches, by what they hold.** Food storage holds dry food only and climbs
@@ -524,7 +535,8 @@ a branch key its standing to a tile. Then:
 
 | Branch | Rungs | Learned by | Payoff lives in |
 |---|---|---|---|
-| Storage | carried → drying rack → pit/granary | rot teaches the first rung; holding a rack teaches the next | the spoilage config: rate, and what keeps |
+| Camp stores (on the band) | carried → drying rack | rot teaches `storage` | the spoilage config: the shelf life a rung gives a class |
+| Food stores | storage pit → granary → silo | rot teaches `storage` | the spoilage config: the shelf life a rung gives a class |
 | Belief | gathering ground → monument | gatherings | the belief config |
 | Defense | walls (arc #693, later) | — | — |
 | Dwellings | settlement arc | — | occupancy |
@@ -575,8 +587,8 @@ payments — not people. A field or a pen needs no books: the band that eats fro
 **store** and a **route** are different: they hold goods that are in nobody's hands right now.
 **Writing tracks goods in storage or in transit, and nothing else.**
 
-- **A store counts** once it is a fixed rung (a pit or granary). A rack on your back is watched by
-  the people carrying it.
+- **A store counts** once it is a fixed rung (a pit or granary). A rack at the camp is watched by
+  the people who live beside it.
 - **A route counts** once traffic runs on it (a trail or better with hauls moving). A path nobody
   sends anything along is walked, not managed.
 - **A faction has a management capacity** — a small number to start, a config lever like `K` and

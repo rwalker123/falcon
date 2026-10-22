@@ -188,38 +188,38 @@ pub const COMMAND_VERBS: &[CommandVerbHelp] = &[
     CommandVerbHelp {
         verb: "build",
         aliases: &[],
-        summary: "DECLARE A BUILD - the one verb for every rung of the intensification ladder. `<verb>` is the ladder's own word for the rung (`tame`, `cultivate`, `sow`, `corral`, `grade`, `pave`, `fell`, `coppice`, `quarry`, ... - whatever the loaded ladder defines; an unknown verb is refused). The declaration is appended to the build queue of every band working the source and raised by the band's `builders` pool when it reaches the HEAD of that queue - so this names no workers. Staff the pool with `assign_labor <faction> <band> builders <n>`, re-order it with `build_order`, withdraw the declaration with `unqueue`, and put the whole source down with `abandon`. WHAT THE SOURCE LOOKS LIKE FOLLOWS THE VERB: two numbers name a TILE (a patch); one token names a HERD; `<x> <y> <material>` names a WORKING (one hex can hold two). A road has no work row for its keeper to be read off, so a verb on a road names the BAND that will keep it - `build grade <faction> <band> <x> <y>` - and ONE KEEPER PER TILE, never a share; a band is refused on a verb whose source already has keepers. A trailing `branch=<id>` names the ladder branch when a verb is ambiguous.",
+        summary: "DECLARE A BUILD - the one verb for every rung of the intensification ladder. `<verb>` is the ladder's own word for the rung (`tame`, `cultivate`, `sow`, `corral`, `grade`, `pave`, `fell`, `coppice`, `quarry`, ... - whatever the loaded ladder defines; an unknown verb is refused). The declaration is appended to the build queue of every band working the source and raised by the band's `builders` pool when it reaches the HEAD of that queue - so this names no workers. Staff the pool with `assign_labor <faction> <band> builders <n>`, re-order it with `build_order`, withdraw the declaration with `unqueue`, and put the whole source down with `abandon`. WHAT THE SOURCE LOOKS LIKE FOLLOWS THE VERB: two numbers name a TILE (a patch); one token names a HERD; `<x> <y> <material>` names a WORKING (one hex can hold two). A road has no work row for its keeper to be read off, so a verb on a road names the BAND that will keep it - `build grade <faction> <band> <x> <y>` - and ONE KEEPER PER TILE, never a share; a band is refused on a verb whose source already has keepers. A verb on a BAND improvement (a drying rack) names the band alone - `build rack <faction> <band>` - because the improvement is the band's own and moves with it. A trailing `branch=<id>` names the ladder branch when a verb is ambiguous.",
         usage: "build <verb> <faction_id> <x> <y> | build <verb> <faction_id> <herd_id> | build <verb> <faction_id> <x> <y> <material> | build <verb> <faction_id> <band_id> <x> <y> [branch=<id>]",
     },
     CommandVerbHelp {
         verb: "abandon",
         aliases: &[],
-        summary: "PUT A SOURCE DOWN: drop your bands' holding of it - the labor row AND its build-queue entry - on every band of the faction working it. THE METERS ARE UNTOUCHED: the ground keeps whatever is on it and, with nobody holding it, rots back down at the rung's own rate over the following turns exactly as an unkept improvement does. It exists because a meter is billed to the keeping pool from the first work banked, so a half-built patch you have lost interest in otherwise draws keepers forever. ONE BIT PER SOURCE, never a number - this is disposal, not a smaller share. Nothing is destroyed on the spot, so it needs no confirmation. Two integer tokens name a TILE; one token names a HERD id. A BARE TILE IS A PLACE: it may carry a road as well as a patch, and this puts down both - the road stops being your band's job, its build-queue entry goes with it, and with nobody keeping it the roadbed rots back down at the rung's own rate. `<branch> <x> <y>` (e.g. `route <x> <y>`) puts down that branch's source on the tile alone - the ROAD - and leaves the patch; that is the per-road choice the band-wide `roadwork` pool needs - the pool covers every road the band keeps, so 'pay for this one and not that one' is said here. `<x> <y> <material>` puts down one WORKING and nothing else on the hex - it is `abandon_working` exactly.",
-        usage: "abandon <faction_id> <x> <y> | abandon <faction_id> <herd_id> | abandon <faction_id> <x> <y> <material> | abandon <faction_id> <branch> <x> <y>",
+        summary: "PUT A SOURCE DOWN: drop your bands' holding of it - the labor row AND its build-queue entry - on every band of the faction working it. THE METERS ARE UNTOUCHED: the ground keeps whatever is on it and, with nobody holding it, rots back down at the rung's own rate over the following turns exactly as an unkept improvement does. It exists because a meter is billed to the keeping pool from the first work banked, so a half-built patch you have lost interest in otherwise draws keepers forever. ONE BIT PER SOURCE, never a number - this is disposal, not a smaller share. Nothing is destroyed on the spot, so it needs no confirmation. Two integer tokens name a TILE; one token names a HERD id. A BARE TILE IS A PLACE: it may carry a road as well as a patch, and this puts down both - the road stops being your band's job, its build-queue entry goes with it, and with nobody keeping it the roadbed rots back down at the rung's own rate. `<branch> <x> <y>` (e.g. `route <x> <y>`) puts down that branch's source on the tile alone - the ROAD - and leaves the patch; that is the per-road choice the band-wide `roadwork` pool needs - the pool covers every road the band keeps, so 'pay for this one and not that one' is said here. `<x> <y> <material>` puts down one WORKING and nothing else on the hex - it is `abandon_working` exactly. `<band_id> branch=<id>` (e.g. `3 branch=camp_stores`) puts down a BAND's improvement - a drying rack: the band's crew row and its queue entry go, and the rack is left to decay.",
+        usage: "abandon <faction_id> <x> <y> | abandon <faction_id> <herd_id> | abandon <faction_id> <x> <y> <material> | abandon <faction_id> <branch> <x> <y> | abandon <faction_id> <band_id> branch=<id>",
     },
     CommandVerbHelp {
         verb: "unqueue",
         aliases: &[],
-        summary: "WITHDRAW A DECLARATION: drop a source's build-queue entry only, on every band of the faction working it. The row, its take crew, its kit and the meter are all left exactly as they are - this is the undo for `build`/`extend_pen`, and with the working and branch forms for the deposit and road verbs. Use `abandon` instead to put down a source with work already banked on it. Two integer tokens name a TILE's patch; one token names a HERD id; `<x> <y> <material>` names a WORKING (one hex can hold two); `<branch> <x> <y>` (e.g. `route <x> <y>`) names the tile's ROAD, whose keeper stays its keeper.",
-        usage: "unqueue <faction_id> <x> <y> | unqueue <faction_id> <herd_id> | unqueue <faction_id> <x> <y> <material> | unqueue <faction_id> <branch> <x> <y>",
+        summary: "WITHDRAW A DECLARATION: drop a source's build-queue entry only, on every band of the faction working it. The row, its take crew, its kit and the meter are all left exactly as they are - this is the undo for `build`/`extend_pen`, and with the working and branch forms for the deposit and road verbs. Use `abandon` instead to put down a source with work already banked on it. Two integer tokens name a TILE's patch; one token names a HERD id; `<x> <y> <material>` names a WORKING (one hex can hold two); `<branch> <x> <y>` (e.g. `route <x> <y>`) names the tile's ROAD, whose keeper stays its keeper; `<band_id> branch=<id>` names a BAND's improvement (a drying rack).",
+        usage: "unqueue <faction_id> <x> <y> | unqueue <faction_id> <herd_id> | unqueue <faction_id> <x> <y> <material> | unqueue <faction_id> <branch> <x> <y> | unqueue <faction_id> <band_id> branch=<id>",
     },
     CommandVerbHelp {
         verb: "build_order",
         aliases: &[],
-        summary: "RE-ORDER ONE BAND'S BUILD QUEUE: move its entry for the named source to a 0-based position, clamped to the queue's length. THE ORDER IS THE FUNDING DECISION - the whole `builders` pool goes on the HEAD entry until that one's meter fills, then on the next, so putting a job first is how you say 'do this one'. Two integer tokens name a TILE; one token names a HERD id; `<x> <y> <material>` names a WORKING (one hex can hold two); `<branch> <x> <y>` names the ROAD on a tile; the trailing number is the position.",
-        usage: "build_order <faction_id> <band_id> <x> <y> <position> | build_order <faction_id> <band_id> <herd_id> <position> | build_order <faction_id> <band_id> <x> <y> <material> <position> | build_order <faction_id> <band_id> <branch> <x> <y> <position>",
+        summary: "RE-ORDER ONE BAND'S BUILD QUEUE: move its entry for the named source to a 0-based position, clamped to the queue's length. THE ORDER IS THE FUNDING DECISION - the whole `builders` pool goes on the HEAD entry until that one's meter fills, then on the next, so putting a job first is how you say 'do this one'. Two integer tokens name a TILE; one token names a HERD id; `<x> <y> <material>` names a WORKING (one hex can hold two); `<branch> <x> <y>` names the ROAD on a tile; `branch=<id>` alone names the band's own improvement (a drying rack); the trailing number is the position.",
+        usage: "build_order <faction_id> <band_id> <x> <y> <position> | build_order <faction_id> <band_id> <herd_id> <position> | build_order <faction_id> <band_id> <x> <y> <material> <position> | build_order <faction_id> <band_id> <branch> <x> <y> <position> | build_order <faction_id> <band_id> branch=<id> <position>",
     },
     CommandVerbHelp {
         verb: "work_priority",
         aliases: &[],
-        summary: "MARK ONE WORKED ROW WITH YOUR OWN RANK, on one band: 'high', 'normal' (the default) or 'low'. THE BAND'S SCARCITY HANDLERS READ IT FIRST. When the band loses a worker, the shedding walk still picks the step it would have picked - a spare scout before a spare builder, an unimproved source before an improved one - and then takes the hand off the LOWEST-RANKED candidate in that step, so a rank orders candidates and never moves a row between steps. When the band cannot feed every pen it keeps, a short FODDER store serves 'high' pens in full, then 'normal', then 'low', and pens on the same rank split what is left in proportion to what they asked for. THERE IS NO SECOND STORE BEHIND IT - the larder is what the PEOPLE eat, never feed, so a pen the hay does not reach is simply short and starves for it. With every row at 'normal' nothing changes at all. It is a value on the row, NOT a place in a list: it survives editing the row's crew. Two integer tokens name a TILE; one token names a HERD id; `<x> <y> <material>` names a WORKING's extract row (one hex can hold two); the trailing token is the level. A ROAD has no crew and so no row to rank - `<branch> <x> <y>` (a road) is refused here; its only mark is `build_priority`, while a road build is queued.",
-        usage: "work_priority <faction_id> <band_id> <x> <y> high|normal|low | work_priority <faction_id> <band_id> <herd_id> high|normal|low | work_priority <faction_id> <band_id> <x> <y> <material> high|normal|low",
+        summary: "MARK ONE WORKED ROW WITH YOUR OWN RANK, on one band: 'high', 'normal' (the default) or 'low'. THE BAND'S SCARCITY HANDLERS READ IT FIRST. When the band loses a worker, the shedding walk still picks the step it would have picked - a spare scout before a spare builder, an unimproved source before an improved one - and then takes the hand off the LOWEST-RANKED candidate in that step, so a rank orders candidates and never moves a row between steps. When the band cannot feed every pen it keeps, a short FODDER store serves 'high' pens in full, then 'normal', then 'low', and pens on the same rank split what is left in proportion to what they asked for. THERE IS NO SECOND STORE BEHIND IT - the larder is what the PEOPLE eat, never feed, so a pen the hay does not reach is simply short and starves for it. With every row at 'normal' nothing changes at all. It is a value on the row, NOT a place in a list: it survives editing the row's crew. Two integer tokens name a TILE; one token names a HERD id; `<x> <y> <material>` names a WORKING's extract row (one hex can hold two); the trailing token is the level. A ROAD has no crew and so no row to rank - `<branch> <x> <y>` (a road) is refused here; its only mark is `build_priority`, while a road build is queued. `branch=<id>` alone names the band's own improvement (a drying rack), whose crew row is the band's.",
+        usage: "work_priority <faction_id> <band_id> <x> <y> high|normal|low | work_priority <faction_id> <band_id> <herd_id> high|normal|low | work_priority <faction_id> <band_id> <x> <y> <material> high|normal|low | work_priority <faction_id> <band_id> branch=<id> high|normal|low",
     },
     CommandVerbHelp {
         verb: "build_priority",
         aliases: &[],
-        summary: "MARK ONE QUEUED BUILD WITH YOUR OWN BUILD MARK, on one band: 'high', 'normal' (the default) or 'low'. It is the ENTRY'S rank, not its site row's: when tools or materials run short, the builders' claim and the build's pile rank at the HEAD entry's mark - High first, then Normal, then Low, and inside one tier a site crew keeping what it holds is served before the build. The site row's own `work_priority` ranks that site's crew, so marking a Field's crew 'high' no longer pushes its queued Sow ahead of other builds. Only a queued build can be marked. Two integer tokens name a TILE; one token names a HERD id; `<x> <y> <material>` names a queued WORKING build (one hex can hold two); `<branch> <x> <y>` names a queued ROAD build; the trailing token is the level.",
-        usage: "build_priority <faction_id> <band_id> <x> <y> high|normal|low | build_priority <faction_id> <band_id> <herd_id> high|normal|low | build_priority <faction_id> <band_id> <x> <y> <material> high|normal|low | build_priority <faction_id> <band_id> <branch> <x> <y> high|normal|low",
+        summary: "MARK ONE QUEUED BUILD WITH YOUR OWN BUILD MARK, on one band: 'high', 'normal' (the default) or 'low'. It is the ENTRY'S rank, not its site row's: when tools or materials run short, the builders' claim and the build's pile rank at the HEAD entry's mark - High first, then Normal, then Low, and inside one tier a site crew keeping what it holds is served before the build. The site row's own `work_priority` ranks that site's crew, so marking a Field's crew 'high' no longer pushes its queued Sow ahead of other builds. Only a queued build can be marked. Two integer tokens name a TILE; one token names a HERD id; `<x> <y> <material>` names a queued WORKING build (one hex can hold two); `<branch> <x> <y>` names a queued ROAD build; `branch=<id>` alone names the band's own queued improvement (a drying rack); the trailing token is the level.",
+        usage: "build_priority <faction_id> <band_id> <x> <y> high|normal|low | build_priority <faction_id> <band_id> <herd_id> high|normal|low | build_priority <faction_id> <band_id> <x> <y> <material> high|normal|low | build_priority <faction_id> <band_id> <branch> <x> <y> high|normal|low | build_priority <faction_id> <band_id> branch=<id> high|normal|low",
     },
     CommandVerbHelp {
         verb: "upkeep_mode",
@@ -332,8 +332,8 @@ pub const COMMAND_VERBS: &[CommandVerbHelp] = &[
     CommandVerbHelp {
         verb: "assign_labor",
         aliases: &[],
-        summary: "Set the worker count for one labor target on a band (0 unassigns; clamps to idle). A worked source's crew (forage/hunt/extract/tile) KEEPS ITS SITE FIRST and collects with what is left: a tended patch, Field, tamed herd, pen or raised working owes work every turn, the crew pays it before it takes, and a crew short of it keeps what it can and collects nothing. A site with 0 crew is not kept at all. 'roadwork' is the one keeping POOL: it keeps every road the band keeps, measured against their SUM, and short of the sum the split follows the band's upkeep_mode; zero stops keeping roads. 'builders' is the other band-wide pool: its whole output goes on the head of the band's build queue, so zero stops building altogether. A `kit` token may sit anywhere after the role, and it is REFUSED on 'builders', 'roadwork' and 'tile' — a pool (or a tile improvement's crew) is HOW MANY hands, never what they carry: what a build and a site are worked with follows from the rung they stand on. The worked sources (forage/hunt/extract) and the two standing roles (scout/warrior) do take one, and an absent token means the job's default. The retired 'agriculture', 'husbandry' and 'quarrywork' pools are refused.",
-        usage: "assign_labor <faction_id> <band> forage <x> <y> [floor] [species] [take:<a>,<b>] <workers> [kit <id>] | hunt <herd_id> [floor] <workers> [kit <id>] | extract <x> <y> <material> [floor] <workers> [kit <id>] | tile <branch> <x> <y> <workers> | scout <workers> | warrior <workers> | roadwork <workers> | builders <workers>",
+        summary: "Set the worker count for one labor target on a band (0 unassigns; clamps to idle). A worked source's crew (forage/hunt/extract/tile/band) KEEPS ITS SITE FIRST and collects with what is left: a tended patch, Field, tamed herd, pen or raised working owes work every turn, the crew pays it before it takes, and a crew short of it keeps what it can and collects nothing. A site with 0 crew is not kept at all. 'roadwork' is the one keeping POOL: it keeps every road the band keeps, measured against their SUM, and short of the sum the split follows the band's upkeep_mode; zero stops keeping roads. 'builders' is the other band-wide pool: its whole output goes on the head of the band's build queue, so zero stops building altogether. A `kit` token may sit anywhere after the role, and it is REFUSED on 'builders', 'roadwork', 'tile' and 'band' — a pool (or a tile or band improvement's crew) is HOW MANY hands, never what they carry: what a build and a site are worked with follows from the rung they stand on. The worked sources (forage/hunt/extract) and the two standing roles (scout/warrior) do take one, and an absent token means the job's default. The retired 'agriculture', 'husbandry' and 'quarrywork' pools are refused.",
+        usage: "assign_labor <faction_id> <band> forage <x> <y> [floor] [species] [take:<a>,<b>] <workers> [kit <id>] | hunt <herd_id> [floor] <workers> [kit <id>] | extract <x> <y> <material> [floor] <workers> [kit <id>] | tile <branch> <x> <y> <workers> | band <branch> <workers> | scout <workers> | warrior <workers> | roadwork <workers> | builders <workers>",
     },
     CommandVerbHelp {
         verb: "move_band",
@@ -1797,6 +1797,29 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
                         Some(branch.to_ascii_lowercase()),
                     )
                 }
+                // **A BAND IMPROVEMENT'S CREW** - `band <branch> <workers>`: the tile row's twin for an
+                // improvement a band holds at its camp (a drying rack). The band is the one the
+                // command is addressed to, so only the branch is named; it rides the `species` slot
+                // as a tile row's does. It takes no floor: there is no stock to leave anything of.
+                "band" => {
+                    let branch = parts
+                        .next()
+                        .ok_or(CommandParseError::MissingArgument("branch"))?;
+                    let workers_tok = parts
+                        .next()
+                        .ok_or(CommandParseError::MissingArgument("workers"))?;
+                    if let Some(extra) = parts.next() {
+                        return Err(CommandParseError::UnexpectedToken(extra.to_string()));
+                    }
+                    (
+                        parse_u32(workers_tok, "assign_labor workers")?,
+                        None,
+                        None,
+                        None,
+                        None,
+                        Some(branch.to_ascii_lowercase()),
+                    )
+                }
                 // **A role passes TWO gates: this grammar and the sim's own `handle_assign_labor`.**
                 // They are separate enumerations in separate crates, and `builders` sat in the sim's
                 // one alone from `docs/plan_standing_upkeep.md` §2.5 — so the client's native bridge,
@@ -2448,6 +2471,9 @@ const BRANCH_TOKEN_PREFIX: &str = "branch=";
 /// word leads a branch. Every other shape falls to [`parse_build_source`], so the tile and herd
 /// forms are unchanged.
 fn parse_site_source(tokens: &[&str]) -> Result<SiteSourceTokens, CommandParseError> {
+    if let Some(band_improvement) = parse_band_improvement_source(tokens)? {
+        return Ok(band_improvement);
+    }
     match tokens {
         [first, x, y] if first.parse::<u32>().is_err() => Ok(SiteSourceTokens {
             tile_or_herd: BuildSourceTokens {
@@ -2475,6 +2501,50 @@ fn parse_site_source(tokens: &[&str]) -> Result<SiteSourceTokens, CommandParseEr
             branch: None,
         }),
     }
+}
+
+/// **A BAND IMPROVEMENT'S SOURCE** - `branch=<id>`, with the band before it where the command does
+/// not already name one: `abandon <faction> <band> branch=<id>` / `unqueue <faction> <band>
+/// branch=<id>`, and `branch=<id>` alone for `build_order` / `build_priority` / `work_priority`,
+/// whose band is the command's own. It is the `build` line's own `branch=` spelling
+/// ([`BRANCH_TOKEN_PREFIX`]) and not a bare word, because a herd id is a free-form word and a lone
+/// word cannot be told from one. The band rides `herd_id`, as `build rack <faction> <band>` carries
+/// it; the server resolves the branch against the ladder and refuses an id that is not a band's.
+/// `None` when no token carries the prefix, so every other source reads as it always has.
+fn parse_band_improvement_source(
+    tokens: &[&str],
+) -> Result<Option<SiteSourceTokens>, CommandParseError> {
+    let Some(at) = tokens
+        .iter()
+        .position(|token| token.starts_with(BRANCH_TOKEN_PREFIX))
+    else {
+        return Ok(None);
+    };
+    let id = &tokens[at][BRANCH_TOKEN_PREFIX.len()..];
+    if id.is_empty() {
+        return Err(CommandParseError::UnexpectedToken(tokens[at].to_string()));
+    }
+    let band = match (at, tokens) {
+        (0, [_]) => None,
+        (1, [band, _]) => Some(parse_u64(band, "band improvement band")?.to_string()),
+        _ => {
+            let stray = tokens
+                .iter()
+                .enumerate()
+                .find(|(index, _)| *index != at)
+                .map_or(tokens[at], |(_, token)| *token);
+            return Err(CommandParseError::UnexpectedToken(stray.to_string()));
+        }
+    };
+    Ok(Some(SiteSourceTokens {
+        tile_or_herd: BuildSourceTokens {
+            target_x: None,
+            target_y: None,
+            herd_id: band,
+        },
+        material: None,
+        branch: Some(id.to_ascii_lowercase()),
+    }))
 }
 
 /// What `build <verb> <faction>` is followed by, read by token shape.
@@ -3618,6 +3688,130 @@ mod tests {
             parse_command_line("assign_labor 0 904 tile orchard 3 4 6 7").is_err(),
             "a tile row has no floor to name"
         );
+    }
+
+    /// **A BAND IMPROVEMENT'S CREW NAMES ITS BRANCH ONLY** - `band <branch> <workers>`, the branch
+    /// riding the `species` slot as a tile row's does. The band is the command's own, so there is no
+    /// tile, and a build verb on the same improvement reads a lone number as the band.
+    #[test]
+    fn assign_labor_band_carries_the_branch_in_the_species_slot() {
+        assert_eq!(
+            parse_command_line("assign_labor 0 904 band Camp_Stores 3").unwrap(),
+            CommandPayload::AssignLabor {
+                faction_id: 0,
+                band_id: Some(904),
+                role: "band".to_string(),
+                workers: 3,
+                target_x: None,
+                target_y: None,
+                fauna_id: None,
+                policy: None,
+                species: Some("camp_stores".to_string()),
+                floor: None,
+                kit_id: None,
+                take_species: Vec::new(),
+                move_with_herd: false,
+            },
+        );
+        assert!(
+            parse_command_line("assign_labor 0 904 band camp_stores").is_err(),
+            "the head count is not optional"
+        );
+        assert!(
+            parse_command_line("assign_labor 0 904 band camp_stores 3 4").is_err(),
+            "a band row names no tile and no floor"
+        );
+        assert_eq!(
+            parse_command_line("build rack 0 904").unwrap(),
+            CommandPayload::BuildRung {
+                faction_id: 0,
+                band_id: None,
+                verb: "rack".to_string(),
+                target_x: None,
+                target_y: None,
+                herd_id: Some("904".to_string()),
+                material: None,
+                branch: None,
+            },
+            "the grammar cannot tell a band verb from a herd verb, so the server reads the lone number"
+        );
+    }
+
+    /// **A BAND IMPROVEMENT IS NAMED BY `branch=<id>`** on every queue verb: beside the band for
+    /// `abandon` / `unqueue`, alone for the three verbs whose band is the command's own. A bare
+    /// word would be read as a herd id, so the prefix is what tells them apart.
+    #[test]
+    fn the_queue_verbs_name_a_band_improvement_by_branch() {
+        assert_eq!(
+            parse_command_line("abandon 0 904 branch=Camp_Stores").unwrap(),
+            CommandPayload::Abandon {
+                faction_id: 0,
+                target_x: None,
+                target_y: None,
+                herd_id: Some("904".to_string()),
+                material: None,
+                branch: Some("camp_stores".to_string()),
+            }
+        );
+        assert_eq!(
+            parse_command_line("unqueue 0 904 branch=camp_stores").unwrap(),
+            CommandPayload::Unqueue {
+                faction_id: 0,
+                target_x: None,
+                target_y: None,
+                herd_id: Some("904".to_string()),
+                material: None,
+                branch: Some("camp_stores".to_string()),
+            }
+        );
+        assert_eq!(
+            parse_command_line("build_order 0 904 branch=camp_stores 1").unwrap(),
+            CommandPayload::BuildOrder {
+                faction_id: 0,
+                band_id: 904,
+                target_x: None,
+                target_y: None,
+                herd_id: None,
+                position: 1,
+                material: None,
+                branch: Some("camp_stores".to_string()),
+            }
+        );
+        assert_eq!(
+            parse_command_line("work_priority 0 904 branch=camp_stores HIGH").unwrap(),
+            CommandPayload::WorkPriority {
+                faction_id: 0,
+                band_id: 904,
+                target_x: None,
+                target_y: None,
+                herd_id: None,
+                level: "high".to_string(),
+                material: None,
+                branch: Some("camp_stores".to_string()),
+            }
+        );
+        assert_eq!(
+            parse_command_line("build_priority 0 904 branch=camp_stores low").unwrap(),
+            CommandPayload::BuildPriority {
+                faction_id: 0,
+                band_id: 904,
+                target_x: None,
+                target_y: None,
+                herd_id: None,
+                level: "low".to_string(),
+                material: None,
+                branch: Some("camp_stores".to_string()),
+            }
+        );
+        assert!(
+            parse_command_line("abandon 0 3 4 branch=camp_stores").is_err(),
+            "a band improvement names no tile"
+        );
+        assert!(
+            parse_command_line("abandon 0 herd_aurochs branch=camp_stores").is_err(),
+            "the band before the branch is a number"
+        );
+        assert!(parse_command_line("abandon 0 branch=").is_err());
     }
 
     /// **THE EXTRACT TAIL CARRIES AN OPTIONAL FLOOR, DISAMBIGUATED BY LENGTH** (issue #650) —

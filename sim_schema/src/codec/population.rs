@@ -1,23 +1,25 @@
 //! Population-section FlatBuffers serialization.
 
-use crate::codec::subsistence::decode_material_payoffs;
+use crate::codec::subsistence::{create_upkeep_toe, decode_material_payoffs, decode_upkeep_toe};
 use crate::codec::{
     create_known_fragments, decode_known_fragments, decode_rows, decode_scalars, decode_strings,
     map_rows, map_rows_if_present, text, unknown_enum, DecodeError, FbBuilder,
 };
 use crate::state::campaign::{OpeningKitDefaultState, OpeningMaterialDefaultState};
 use crate::state::population::{
-    AccessibleStockpileEntryState, AccessibleStockpileState, BandKitCrewState, BandKitTiersState,
-    BandLoadoutSupplyRowState, BandLoadoutWindowState, BenchKitOrderState, BenchOrderState,
-    BenchState, BreedingMemberState, BreedingPeopleState, BuildQueueEntryState,
-    CharacteristicReadingState, CohortStoreState, CraftOfferState, CraftSuggestionSourceState,
-    CraftSuggestionState, CulturePressureState, DrawnInputState, EquipmentBatchState,
-    GenerationState, HarvestTaskState, KeepingMealState, KitItemConditionState, KitNeedItemState,
-    KitNeedRecipeState, KitNeedState, KitToeLineState, LaborAssignmentState, MaterialAmountState,
-    MaterialBatchState, MaterialShortfallState, PoolCrewLineState, PoolToeLineState,
-    PoolingLinkState, PopulationCohortState, PopulationDemographicsState, ScoutTaskState,
-    SettlementStageViewState, SourcePriorityState, TransferCrossingState,
+    AccessibleStockpileEntryState, AccessibleStockpileState, BandImprovementState,
+    BandKitCrewState, BandKitTiersState, BandLoadoutSupplyRowState, BandLoadoutWindowState,
+    BenchKitOrderState, BenchOrderState, BenchState, BreedingMemberState, BreedingPeopleState,
+    BuildQueueEntryState, CharacteristicReadingState, CohortStoreState, CraftOfferState,
+    CraftSuggestionSourceState, CraftSuggestionState, CulturePressureState, DrawnInputState,
+    EquipmentBatchState, GenerationState, HarvestTaskState, KeepingMealState,
+    KitItemConditionState, KitNeedItemState, KitNeedRecipeState, KitNeedState, KitToeLineState,
+    LaborAssignmentState, MaterialAmountState, MaterialBatchState, MaterialShortfallState,
+    PoolCrewLineState, PoolToeLineState, PoolingLinkState, PopulationCohortState,
+    PopulationDemographicsState, ScoutTaskState, SettlementStageViewState, SourcePriorityState,
+    TransferCrossingState,
 };
+use crate::state::subsistence::BuildLegState;
 use crate::world::{WorldDelta, WorldSnapshot};
 use flatbuffers::{ForwardsUOffset, WIPOffset};
 use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
@@ -955,6 +957,7 @@ fn create_populations<'a>(
             let culture_pressures = create_culture_pressures(builder, &cohort.culture_pressures);
             let envoy_terms = crate::codec::treaties::create_terms(builder, &cohort.envoy_terms);
             let leader_name = builder.create_string(&cohort.leader_name);
+            let band_improvements = create_band_improvements(builder, &cohort.band_improvements);
             let culture_ancestor_pull = (!cohort.culture_ancestor_pull.is_empty())
                 .then(|| builder.create_vector(&cohort.culture_ancestor_pull));
             let belief_reach_y = if cohort.belief_reach_y.is_empty() {
@@ -1253,6 +1256,7 @@ fn create_populations<'a>(
                     leadershipFromSplits: cohort.leadership_from_splits,
                     leadershipFromHerd: cohort.leadership_from_herd,
                     leadershipFromStages: cohort.leadership_from_stages,
+                    bandImprovements: Some(band_improvements),
                 },
             )
         })
@@ -2119,6 +2123,29 @@ fn decode_population(
         leadership_from_splits: cohort.leadershipFromSplits(),
         leadership_from_herd: cohort.leadershipFromHerd(),
         leadership_from_stages: cohort.leadershipFromStages(),
+        band_improvements: map_rows(cohort.bandImprovements(), |row| BandImprovementState {
+            branch: text(row.branch()),
+            current_rung: text(row.currentRung()),
+            build_destination_rung: text(row.buildDestinationRung()),
+            build_legs: map_rows(row.buildLegs(), |leg| BuildLegState {
+                rung: text(leg.rung()),
+                work_remaining: leg.workRemaining(),
+                turns_remaining: leg.turnsRemaining(),
+            }),
+            build_turns_remaining: row.buildTurnsRemaining(),
+            build_blocked_reason: text(row.buildBlockedReason()),
+            upkeep_demand: row.upkeepDemand(),
+            upkeep_supplied: row.upkeepSupplied(),
+            upkeep_shortfall: row.upkeepShortfall(),
+            neglect_turns: row.neglectTurns(),
+            has_neglect_grace: row.hasNeglectGrace(),
+            neglect_grace_remaining: row.neglectGraceRemaining(),
+            upkeep_workers_needed: row.upkeepWorkersNeeded(),
+            upkeep_hands: row.upkeepHands(),
+            upkeep_tools_short: row.upkeepToolsShort(),
+            upkeep_toe: decode_upkeep_toe(row.upkeepToe()),
+            is_queued: row.isQueued(),
+        }),
     })
 }
 
@@ -2211,6 +2238,62 @@ fn create_breeding_peoples<'a>(
         })
         .collect();
     builder.create_vector(&rows)
+}
+
+/// `PopulationCohortState.bandImprovements`.
+fn create_band_improvements<'a>(
+    builder: &mut FbBuilder<'a>,
+    rows: &[BandImprovementState],
+) -> WIPOffset<flatbuffers::Vector<'a, ForwardsUOffset<fb::BandImprovementState<'a>>>> {
+    let offsets: Vec<_> = rows
+        .iter()
+        .map(|row| {
+            let branch = builder.create_string(&row.branch);
+            let current_rung = builder.create_string(&row.current_rung);
+            let build_destination_rung = builder.create_string(&row.build_destination_rung);
+            let leg_offsets: Vec<_> = row
+                .build_legs
+                .iter()
+                .map(|leg: &BuildLegState| {
+                    let rung = builder.create_string(&leg.rung);
+                    fb::BuildLegState::create(
+                        builder,
+                        &fb::BuildLegStateArgs {
+                            rung: Some(rung),
+                            workRemaining: leg.work_remaining,
+                            turnsRemaining: leg.turns_remaining,
+                        },
+                    )
+                })
+                .collect();
+            let build_legs = builder.create_vector(&leg_offsets);
+            let build_blocked_reason = builder.create_string(&row.build_blocked_reason);
+            let upkeep_toe = create_upkeep_toe(builder, &row.upkeep_toe);
+            fb::BandImprovementState::create(
+                builder,
+                &fb::BandImprovementStateArgs {
+                    branch: Some(branch),
+                    currentRung: Some(current_rung),
+                    buildDestinationRung: Some(build_destination_rung),
+                    buildLegs: Some(build_legs),
+                    buildTurnsRemaining: row.build_turns_remaining,
+                    buildBlockedReason: Some(build_blocked_reason),
+                    upkeepDemand: row.upkeep_demand,
+                    upkeepSupplied: row.upkeep_supplied,
+                    upkeepShortfall: row.upkeep_shortfall,
+                    neglectTurns: row.neglect_turns,
+                    hasNeglectGrace: row.has_neglect_grace,
+                    neglectGraceRemaining: row.neglect_grace_remaining,
+                    upkeepWorkersNeeded: row.upkeep_workers_needed,
+                    upkeepHands: row.upkeep_hands,
+                    upkeepToolsShort: row.upkeep_tools_short,
+                    upkeepToe: upkeep_toe,
+                    isQueued: row.is_queued,
+                },
+            )
+        })
+        .collect();
+    builder.create_vector(&offsets)
 }
 
 /// `PopulationCohortState.culturePressures`.

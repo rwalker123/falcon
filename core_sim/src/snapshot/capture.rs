@@ -3109,6 +3109,15 @@ pub fn capture_snapshot(
             .as_deref()
             .map(|handle| handle.get())
             .unwrap_or_else(crate::supply_network_config::SupplyNetworkConfig::builtin);
+        // **What a band's stores preserve** (#708) - one scene for the capture, asked per band, so the
+        // runway and the hunt meal read the shelf lives the turn's rot used.
+        let preservation_scene = crate::spoilage::PreservationScene {
+            keeping: &demographics_config.keeping,
+            ladder: &ladder_config,
+            improvements: &tile_improvements,
+            reach_tiles: supply_network_cfg.reach_tiles,
+            grid: (tile_registry.width, config.map_topology.wrap_horizontal),
+        };
         // **How far a band's people walk** — the one `WalkReach` the culture morale term and
         // migration read, built here from the same levers so each band's published anchor reach
         // region is exactly the set of tiles that term would call near.
@@ -3425,6 +3434,11 @@ pub fn capture_snapshot(
                     Some(population_state(PopulationStateInputs {
                         belief_reach,
                         belief_relay_region,
+                        held_preservation: preservation_scene.held_by(
+                            band_id.copied(),
+                            cohort.faction,
+                            current_pos,
+                        ),
                         culture_traits,
                         culture_ancestor_pull,
                         culture_drift: band_owner
@@ -3478,6 +3492,17 @@ pub fn capture_snapshot(
                         heart: band_id.and_then(|band| {
                             hearts.as_deref().and_then(|ledger| ledger.reading(*band))
                         }),
+                        band_improvements: band_id
+                            .map(|band| {
+                                crate::snapshot::population::band_improvement_rows(
+                                    tile_improvements.bands(),
+                                    *band,
+                                    allocation,
+                                    viewer_faction.0,
+                                    &ladder_config,
+                                )
+                            })
+                            .unwrap_or_default(),
                         culture_pressures: band_id
                             .zip(culture_pressure.as_deref())
                             .map(|(band, ledger)| {

@@ -679,6 +679,13 @@ fn seed_snapshot() -> WorldSnapshot {
         cohort.hunt_meals = rows();
         cohort.envoy_terms = seeded_terms();
         cohort.culture_pressures = rows();
+        // A band improvement's own `build_legs` and `upkeep_toe` are nested repeated fields, so
+        // both levels are seeded, as the tile improvement's are.
+        cohort.band_improvements = rows_of(BandImprovementState {
+            build_legs: vec![crate::state::subsistence::BuildLegState::default()],
+            upkeep_toe: vec![KitToeLineState::default()],
+            ..Default::default()
+        });
         cohort.pending_reveal_x = vec![0u32; ROWS];
         cohort.pending_reveal_y = vec![0u32; ROWS];
         cohort.belief_reach_x = vec![0u32; ROWS];

@@ -254,7 +254,9 @@ fn site_keeping_jobs(source: &BuildSource) -> &'static [KitJob] {
     match source {
         BuildSource::Patch(_) => &[KitJob::Agriculture],
         BuildSource::Herd(_) => &[KitJob::Husbandry],
-        BuildSource::Road(_) | BuildSource::Tile { .. } => &[KitJob::Roadwork],
+        BuildSource::Road(_) | BuildSource::Tile { .. } | BuildSource::Band { .. } => {
+            &[KitJob::Roadwork]
+        }
         BuildSource::Deposit { .. } => &[KitJob::Quarrywork, KitJob::Extraction],
     }
 }
