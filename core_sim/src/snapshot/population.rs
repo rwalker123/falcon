@@ -1085,6 +1085,11 @@ pub(crate) struct PopulationStateInputs<'a> {
     /// `None` is a hand-built fixture with no name component; it publishes empty, which the client
     /// renders as its `Band #<id>` fallback. An expedition party carries its *home band's* name.
     pub(crate) band_name: Option<&'a BandName>,
+    /// The band's banked practice and its leader, if it has accepted one (`crate::leadership`).
+    /// `None` is a hand-built fixture with no component; it publishes as no leader and no practice.
+    pub(crate) leadership: Option<&'a crate::leadership::BandLeadership>,
+    /// `leadership_config.json -> practice_threshold`, echoed on every own row.
+    pub(crate) leadership_threshold: f32,
     pub(crate) cohort: &'a PopulationCohort,
     pub(crate) allocation: Option<&'a LaborAllocation>,
     pub(crate) expedition: Option<&'a Expedition>,
@@ -1476,6 +1481,8 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         entity,
         band_id,
         band_name,
+        leadership,
+        leadership_threshold,
         cohort,
         allocation,
         expedition,
@@ -2931,6 +2938,23 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         homeward_all_home_in: homeward_totals.all_home_in,
         move_ferry_reach_tiles: expedition_levers.move_ferry_reach_tiles,
         comm_range_tiles: expedition_levers.comm_range_tiles,
+        // **The band's leader and the practice toward one** (`crate::leadership`). The kind is the
+        // wire code; a council publishes its speaker's name like a chief does.
+        leader_name: leadership
+            .and_then(|l| l.leader.as_ref())
+            .map(|leader| leader.name.clone())
+            .unwrap_or_default(),
+        leader_kind: leadership
+            .and_then(|l| l.leader.as_ref())
+            .map_or(crate::leadership::LEADER_KIND_NONE, |leader| {
+                leader.kind.wire_code()
+            }),
+        leadership_practice: leadership.map_or(0.0, |l| l.practice() as f32),
+        leadership_threshold,
+        leadership_from_builds: leadership.map_or(0.0, |l| l.from_builds as f32),
+        leadership_from_splits: leadership.map_or(0.0, |l| l.from_splits as f32),
+        leadership_from_herd: leadership.map_or(0.0, |l| l.from_herd as f32),
+        leadership_from_stages: leadership.map_or(0.0, |l| l.from_stages as f32),
         // The treaty terms an envoy party will post on arrival; empty on every other row.
         envoy_terms: match expedition.and_then(|exp| exp.mission.shipment_terms()) {
             Some(crate::components::ShipmentTerms::Envoy { proposed, .. }) => {
@@ -3522,6 +3546,8 @@ mod tests {
             // These fixtures assert on the derived readouts, not on band identity.
             band_id: None,
             band_name: None,
+            leadership: None,
+            leadership_threshold: 0.0,
             // No world, so no outfitting window either.
             loadout_window: None,
             heart: None,

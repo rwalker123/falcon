@@ -2155,6 +2155,9 @@ func _band(entity: int, window: Dictionary) -> Dictionary:
 		"current_x": BAND_FIXTURE_X,
 		"current_y": BAND_FIXTURE_Y,
 		"idle_workers": 0,
+		# Every hand is on a standing role, so the band really has no idle hands (the idle alert reads
+		# the labor rows, not the wire's `idle_workers`) and the orb lists only the window rows.
+		"labor_assignments": [{"kind": "scout", "workers": WORKING_AGE}],
 		HudLoadoutVocab.WINDOW_KEY: window,
 	})
 

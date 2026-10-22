@@ -1710,6 +1710,59 @@ func hunt_muster_out(band: Dictionary) -> Dictionary:
 			HudCraftingVocab.BENCH_LENT_TO_HUNT_KEY, 0)), 0), bench_workers(band))
 	return {"idle": idle_out, "by_kind": by_kind, "bench": bench_out, "total": total + bench_out}
 
+## **THE IDLE COUNT THE PLAYER IS TOLD, in ONE place** (the People bar's Idle segment, the idle card,
+## the faction page's totals and rows, the orb's "N idle workers" alert all read this). It is
+## `effective_idle` (pending-aware, net of every row, the bench and hands walking home) less the idle
+## hands the next hunting-by-need muster takes, which read as out hunting, i.e. as working.
+func people_idle(band: Dictionary) -> int:
+	return maxi(effective_idle(band) - int(hunt_muster_out(band)["idle"]), 0)
+
+## `{working, idle}` over a band's working-age people: `idle` is `people_idle`, `working` is the rest of
+## `working_age`. With the children and the elders they sum to the band's `size`.
+func people_split(band: Dictionary) -> Dictionary:
+	var idle := people_idle(band)
+	return {"working": maxi(int(band.get("working_age", 0)) - idle, 0), "idle": idle}
+
+## What the working people are doing: `{part label: count}`, non-zero parts only, in a fixed order
+## (`HudWorkVocab.WORKING_PART_*`). The hands the next hunt muster takes move from their row (or the
+## bench) to Out hunting. The parts are the working segment's tooltip; the bar does not draw them.
+func working_breakdown(band: Dictionary) -> Dictionary:
+	var forage_workers := 0
+	var hunt_workers := 0
+	var extract_workers := 0
+	var merged := effective_worker_map(band)
+	for key in merged:
+		var m: Dictionary = merged[key]
+		var workers := int(m.get("workers", 0))
+		match String(m.get("kind", "")):
+			SourceForecast.LABOR_KIND_FORAGE: forage_workers += workers
+			SourceForecast.LABOR_KIND_HUNT: hunt_workers += workers
+			HudConst.LABOR_KIND_EXTRACT, HudConst.LABOR_KIND_TILE: extract_workers += workers
+	var muster_out := hunt_muster_out(band)
+	var out_by_kind: Dictionary = muster_out["by_kind"]
+	forage_workers -= int(out_by_kind.get(SourceForecast.LABOR_KIND_FORAGE, 0))
+	hunt_workers -= int(out_by_kind.get(SourceForecast.LABOR_KIND_HUNT, 0))
+	extract_workers -= int(out_by_kind.get(HudConst.LABOR_KIND_EXTRACT, 0))
+	# The builders are the band's `builders` ROLE; scout, warrior and the roadwork pool are Roles.
+	var build_workers := int(effective_role_workers(band, HudConst.LABOR_KIND_BUILDERS).get("workers", 0))
+	var role_workers := int(effective_role_workers(band, HudConst.LABOR_KIND_SCOUT).get("workers", 0)) \
+		+ int(effective_role_workers(band, HudConst.LABOR_KIND_WARRIOR).get("workers", 0)) \
+		+ int(effective_role_workers(band, HudConst.LABOR_KIND_ROADWORK).get("workers", 0))
+	var parts: Dictionary = {}
+	for spec in [
+		[HudWorkVocab.WORKING_PART_FORAGE, forage_workers],
+		[HudWorkVocab.WORKING_PART_HUNT, hunt_workers],
+		[HudWorkVocab.WORKING_PART_EXTRACT, extract_workers],
+		[HudWorkVocab.WORKING_PART_BUILD, build_workers],
+		[HudWorkVocab.WORKING_PART_ROLES, role_workers],
+		[HudWorkVocab.WORKING_PART_BENCH, bench_workers(band) - int(muster_out["bench"])],
+		[HudWorkVocab.WORKING_PART_HOMEWARD, homeward_workers(band)],
+		[HudWorkVocab.WORKING_PART_OUT_HUNTING, int(muster_out["total"])],
+	]:
+		if int(spec[1]) > 0:
+			parts[String(spec[0])] = int(spec[1])
+	return parts
+
 ## Hands of a stood-down far party still walking home (`PopulationCohortState.homewardWorkers`) —
 ## out of the idle pool until they arrive. 0 = nobody walking home.
 func homeward_workers(band: Dictionary) -> int:

@@ -956,6 +956,7 @@ fn create_populations<'a>(
             let materials_free = create_material_amounts(builder, &cohort.materials_free);
             let culture_pressures = create_culture_pressures(builder, &cohort.culture_pressures);
             let envoy_terms = crate::codec::treaties::create_terms(builder, &cohort.envoy_terms);
+            let leader_name = builder.create_string(&cohort.leader_name);
             let band_improvements = create_band_improvements(builder, &cohort.band_improvements);
             let culture_ancestor_pull = (!cohort.culture_ancestor_pull.is_empty())
                 .then(|| builder.create_vector(&cohort.culture_ancestor_pull));
@@ -1247,6 +1248,14 @@ fn create_populations<'a>(
                     materialsFree: Some(materials_free),
                     culturePressures: Some(culture_pressures),
                     envoyTerms: Some(envoy_terms),
+                    leaderName: Some(leader_name),
+                    leaderKind: cohort.leader_kind,
+                    leadershipPractice: cohort.leadership_practice,
+                    leadershipThreshold: cohort.leadership_threshold,
+                    leadershipFromBuilds: cohort.leadership_from_builds,
+                    leadershipFromSplits: cohort.leadership_from_splits,
+                    leadershipFromHerd: cohort.leadership_from_herd,
+                    leadershipFromStages: cohort.leadership_from_stages,
                     bandImprovements: Some(band_improvements),
                 },
             )
@@ -1379,6 +1388,7 @@ fn create_kit_needs<'a>(
                             recipes: Some(recipes),
                             claimed: item.claimed,
                             short: item.short,
+                            finished: item.finished,
                         },
                     )
                 })
@@ -2088,6 +2098,7 @@ fn decode_population(
                 queued: item.queued(),
                 claimed: item.claimed(),
                 short: item.short(),
+                finished: item.finished(),
                 recipes: map_rows(item.recipes(), |recipe| KitNeedRecipeState {
                     recipe_id: text(recipe.recipeId()),
                     output_per_pass: recipe.outputPerPass(),
@@ -2104,6 +2115,14 @@ fn decode_population(
             turns_to_next: row.turnsToNext(),
         }),
         envoy_terms: crate::codec::treaties::decode_terms(cohort.envoyTerms()),
+        leader_name: text(cohort.leaderName()),
+        leader_kind: cohort.leaderKind(),
+        leadership_practice: cohort.leadershipPractice(),
+        leadership_threshold: cohort.leadershipThreshold(),
+        leadership_from_builds: cohort.leadershipFromBuilds(),
+        leadership_from_splits: cohort.leadershipFromSplits(),
+        leadership_from_herd: cohort.leadershipFromHerd(),
+        leadership_from_stages: cohort.leadershipFromStages(),
         band_improvements: map_rows(cohort.bandImprovements(), |row| BandImprovementState {
             branch: text(row.branch()),
             current_rung: text(row.currentRung()),

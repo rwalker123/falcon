@@ -324,6 +324,11 @@ pub struct LaborConfigs<'w> {
     pub demographics: Option<Res<'w, DemographicsConfigHandle>>,
     /// What a death adds to the place it happens on (`crate::belief`).
     pub belief: Res<'w, BeliefConfigHandle>,
+    /// The practice quanta toward a band's leader: a finished directed-work build (Cultivate,
+    /// Sow, Tame or Corral), a commanded split, each hex walked following a herd, and each
+    /// settlement stage reached (`crate::leadership`). `Option`, like `demographics`: a hand-built test world that
+    /// never installed it reads the builtin, which is the very file `include_str!` baked in.
+    pub leadership: Option<Res<'w, crate::leadership_config::LeadershipConfigHandle>>,
 }
 
 /// **WHAT THE BAND'S BUILDERS' TOOLS ADD TO WHAT THEY DELIVER, RESOLVED PER BUILD.**
@@ -5602,6 +5607,11 @@ type LaborBandParts = (
     Option<&'static mut BandEquipment>,
     Option<&'static BandId>,
     Option<&'static mut BandBench>,
+    // **The band's leadership practice** (`crate::leadership`): a finished directed-work build
+    // (Cultivate, Sow, Tame, Corral) banks a quantum on it, as do a split, herd-following hexes and
+    // settlement stages (those last three are credited elsewhere). In the tuple rather than a new
+    // system parameter because this pass is at Bevy's 16-parameter limit.
+    Option<&'static mut crate::leadership::BandLeadership>,
 );
 
 #[allow(clippy::too_many_arguments)] // Bevy system parameters require explicit resource access
@@ -5702,6 +5712,11 @@ pub fn advance_labor_allocation(
     // durability dials, resolved once. What varies per band is only its `BandEquipment` *wear*.
     let equipment_cfg = configs.equipment.get();
     let belief_cfg = configs.belief.get();
+    // The practice quantum a finished directed-work build (Cultivate, Sow, Tame, Corral) banks toward a leader.
+    let leadership_cfg = configs.leadership.as_ref().map_or_else(
+        crate::leadership_config::LeadershipConfig::builtin,
+        |handle| handle.get(),
+    );
     // **The materials table** (`docs/plan_crafting_and_materials.md` §1) — resolved once, because it
     // decides only how a stated reading BANDS. What each source yields is that source's own config.
     let materials_cfg = configs.materials.get();
@@ -5840,7 +5855,9 @@ pub fn advance_labor_allocation(
     // **EVERY BAND'S CREW ON EVERY SOURCE, READ ONCE BEFORE ANY BAND IS PAID** — the denominator a
     // source's keeping bill is shared by when several bands work it ([`SiteCrews`]).
     let site_crews = SiteCrews::of(cohorts.iter().map(|parts| parts.1));
-    for (mut cohort, mut allocation, mut band_equipment, band_id, mut bench) in cohorts.iter_mut() {
+    for (mut cohort, mut allocation, mut band_equipment, band_id, mut bench, mut band_leadership) in
+        cohorts.iter_mut()
+    {
         // **WHOSE WORK BOARD THIS TURN'S LOSSES BELONG TO** — the `band=` token appended to every
         // line below that reports a row the band did not ask to lose. Copied out of the query up
         // front because the announcements are written from several arms of the loop.
@@ -10989,6 +11006,16 @@ pub fn advance_labor_allocation(
             // band never had the entry.
             if !allocation.unqueue_build(source) {
                 continue;
+            }
+            // **A finished build of a directed-work rung is work that succeeded**: it banks a
+            // quantum of practice toward a leader. A rung flag, not a test of which rung it is
+            // (`RungDef::directed_work`); the pen's ring and a herd's output commitment are not
+            // rung builds and bank nothing.
+            if let (BuildJob::Climb(rung), Some(leadership)) = (job, band_leadership.as_deref_mut())
+            {
+                if let Some(def) = ladder.rung_by_id(*rung) {
+                    leadership.credit_directed_build(&leadership_cfg, def);
+                }
             }
             let (channel, verb) = match job {
                 BuildJob::Climb(rung) => (

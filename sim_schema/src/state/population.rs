@@ -1849,6 +1849,31 @@ pub struct PopulationCohortState {
     /// `docs/plan_early_diplomacy.md` §3). Empty on every other row. Appended last.
     #[serde(default)]
     pub envoy_terms: crate::state::treaties::TreatyTermsState,
+    /// **The leader a band accepted** (`core_sim::leadership`, #859): the chief's name, or the
+    /// speaker's for a council; empty with no leader. Own bands only. Appended last.
+    #[serde(default)]
+    pub leader_name: String,
+    /// `0` no leader, `1` chief, `2` elders' council. Appended last.
+    #[serde(default)]
+    pub leader_kind: u8,
+    /// Practice banked toward a leader. Appended last.
+    #[serde(default)]
+    pub leadership_practice: f32,
+    /// The practice a leader emerges at, so a client can say "N of M". Appended last.
+    #[serde(default)]
+    pub leadership_threshold: f32,
+    /// `leadership_practice` from finished Cultivate, Sow, Tame and Corral builds. Appended last.
+    #[serde(default)]
+    pub leadership_from_builds: f32,
+    /// ...from commanded band splits. Appended last.
+    #[serde(default)]
+    pub leadership_from_splits: f32,
+    /// ...from hexes walked following a herd. Appended last.
+    #[serde(default)]
+    pub leadership_from_herd: f32,
+    /// ...from settlement stages reached. Appended last.
+    #[serde(default)]
+    pub leadership_from_stages: f32,
     /// **The improvements this band holds at its camp** (#708) — one row per band-kind branch, in
     /// branch order. Own bands only; a foreign row defaults to empty. Appended last.
     #[serde(default)]
@@ -1958,6 +1983,8 @@ pub struct KitNeedItemState {
     pub claimed: f32,
     /// Whole units still missing on those claims, before the bench's queue nets them.
     pub short: u32,
+    /// Whole units parked on the bench's finished list (stocked next turn); `queued` includes them.
+    pub finished: u32,
 }
 
 /// **One recipe that makes a kit item** — its output per pass and its per-pass inputs.

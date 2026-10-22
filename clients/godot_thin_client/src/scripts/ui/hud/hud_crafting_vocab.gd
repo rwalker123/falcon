@@ -990,6 +990,9 @@ const KIT_ITEM_ID_KEY := "item_id"
 const KIT_ITEM_WORKERS_PER_UNIT_KEY := "workers_per_unit"
 const KIT_ITEM_HAVE_KEY := "have"
 const KIT_ITEM_QUEUED_KEY := "queued"
+## Whole units of the item FINISHED at the bench and parked until the top of next turn. `queued`
+## INCLUDES them (queued = still-to-make + finished), so the still-to-make count is `queued - finished`.
+const KIT_ITEM_FINISHED_KEY := "finished"
 ## Units actually claimed by rows, pools, sites and queued builds on this kit (a float), and the whole
 ## units missing on those claims before the bench's queue is netted off (an int).
 const KIT_ITEM_CLAIMED_KEY := "claimed"
@@ -1057,8 +1060,10 @@ const KIT_COST_EACH := "each"
 ## The item's OWN name is a label (`Sled 5 short`), never a noun to be counted: display names are
 ## mixed singular and plural (Sled, Crook, Baskets, Hoes) and no pluraliser is built.
 const KIT_REASON_SHORT_FORMAT := "%s %d short"
-## `, 3 coming` — the units the bench's queue already owes of a short item.
+## `, 3 coming` — the units the bench's queue STILL OWES of a short item (`queued - finished`).
 const KIT_REASON_COMING_FORMAT := ", %d coming"
+## `, 1 finished, arrives next turn` — units already made and parked until the top of next turn.
+const KIT_REASON_FINISHED_FORMAT := ", %d finished, arrives next turn"
 const KIT_REASON_SHORT_SEPARATOR := " · "
 const KIT_REASON_ALL_FORMAT := "All %d %s equipped"
 ## Nothing claims any item of the kit: it costs nobody anything yet, so it says so quietly.

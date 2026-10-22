@@ -206,7 +206,34 @@ pub fn split_band_from_parent(
     asked: u32,
     settle: &SettleConfig,
 ) -> Result<SplitBand, SplitRefusals> {
-    split_band_from_parent_with(world, parent, asked, settle, LineDivision::Partition)
+    let split = split_band_from_parent_with(world, parent, asked, settle, LineDivision::Partition)?;
+    credit_commanded_split(world, parent, split.band);
+    Ok(split)
+}
+
+/// **A commanded split is work that needs an organiser, for BOTH bands**
+/// (`crate::leadership`): one organises what the leavers take, the other needs someone to lead it
+/// away. Credited here, in the wrapper the player's `split_band` verb runs, and not in
+/// [`split_band_from_parent_with`] -- the breeding break-off and the independence break-away call
+/// that one, and nobody ordered them. The splinter was spawned with a default record, so it is
+/// credited after, and starts with the split's points and no leader.
+fn credit_commanded_split(world: &mut World, parent: Entity, child: BandId) {
+    let config = world
+        .get_resource::<crate::leadership_config::LeadershipConfigHandle>()
+        .map_or_else(
+            crate::leadership_config::LeadershipConfig::builtin,
+            |handle| handle.get(),
+        );
+    let child_entity = world
+        .query::<(Entity, &BandId)>()
+        .iter(world)
+        .find(|(_, id)| **id == child)
+        .map(|(entity, _)| entity);
+    for entity in [Some(parent), child_entity].into_iter().flatten() {
+        if let Some(mut leadership) = world.get_mut::<crate::leadership::BandLeadership>(entity) {
+            leadership.credit_split(&config);
+        }
+    }
 }
 
 /// **How a split divides the founding lines.**
@@ -635,6 +662,9 @@ pub fn split_band_from_parent_with(
             // **Every resident band carries a flow accumulator** or its births and deaths are
             // unreportable (`demographic_events::every_resident_band_carries_a_flow_accumulator`).
             DemographicFlowAccumulator::default(),
+            // **A splinter starts with no leader and no practice**: it carries nothing of the
+            // parent's standing (`crate::leadership`).
+            crate::leadership::BandLeadership::default(),
             // Labor assignments are the parent's intent about the parent's sources; the new band
             // starts idle and the player staffs it. The **receiving** half of the food ledger's
             // transfer terms opens on it, though: the dowry is food that crossed between larders, and

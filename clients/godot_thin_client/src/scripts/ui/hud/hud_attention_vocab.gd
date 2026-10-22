@@ -214,6 +214,57 @@ const ATTENTION_KNOWLEDGE_LEARNED_LABEL_FORMAT := "%s learned"
 ## do"* head, which is what the row's `Open ▸` reaches.
 const ATTENTION_KNOWLEDGE_LEARNED_DETAIL := "see what it lets your hands do"
 
+## **A BAND GAINED A LEADER THIS TURN** (#859) -- the sim's `leader_emerged` command event. News, so
+## `info`; it locates on the band's tile (`Jump →`). One row per band; the detail points at the Band
+## tab, where the leader block lives. Both details are kept short because orb rows CLIP at
+## `POPOVER_WIDTH`.
+const ATTENTION_KIND_LEADER_EMERGED := "leader_emerged"
+
+const ATTENTION_LEADER_CHIEF_LABEL_FORMAT := "%s has a chief"
+
+const ATTENTION_LEADER_COUNCIL_LABEL_FORMAT := "%s has an elders' council"
+
+const ATTENTION_LEADER_CHIEF_DETAIL_FORMAT := "Chief %s — see the Band tab"
+
+const ATTENTION_LEADER_COUNCIL_DETAIL_FORMAT := "%s speaks for them — Band tab"
+
+## The event kind this producer ingests, and the tokens its detail carries (`kind=chief name=Ash`;
+## the council's kind token is `elder_council`). The name is everything after `name=` -- it may hold
+## spaces.
+const LEADER_EVENT_KIND := "leader_emerged"
+
+const LEADER_DETAIL_KIND_TOKEN := "kind="
+
+const LEADER_DETAIL_NAME_TOKEN := "name="
+
+const LEADER_DETAIL_KIND_COUNCIL := "elder_council"
+
+## The cohort's own `leader_kind` codes (`native/src/dict/population.rs`): 0 none, 1 chief, 2 council.
+const LEADER_KIND_CHIEF := 1
+
+const LEADER_KIND_COUNCIL := 2
+
+## **A HERD YOUR BANDS HUNT HAS DROPPED INTO THE DANGER BANDS** -- warns BEFORE the point of no return.
+## `stressed` is below the herd's stressed fraction of its carrying capacity; `collapsing` is below the
+## Allee point, where it keeps declining even if hunting stops. Both are `warn`; a STANDING condition
+## (the row stays while the herd is in either band). Found through the bands' own Hunt assignments
+## (a herd carries no owner), so a herd nobody of ours hunts never alarms.
+const ATTENTION_KIND_HERD_THINNING := "herd_thinning"
+
+const ATTENTION_HERD_THINNING_LABEL_FORMAT := "%s herd thinning"
+
+const ATTENTION_HERD_COLLAPSING_LABEL_FORMAT := "%s herd collapsing"
+
+const ATTENTION_HERD_THINNING_DETAIL_FORMAT := "down to %d%% — ease the hunt"
+
+const ATTENTION_HERD_COLLAPSING_DETAIL_FORMAT := "down to %d%% — dying out even if left alone"
+
+const ATTENTION_HERD_THINNING_MAX_ROWS := ATTENTION_AWAITING_MAX_ROWS
+
+const ATTENTION_HERD_THINNING_OVERFLOW_LABEL_FORMAT := "+%d more herds thinning"
+
+const ATTENTION_HERD_THINNING_OVERFLOW_DETAIL := "Jump to the next one"
+
 
 ## **THE OPENING LOADOUT IS STILL UNSPENT** (issue #629) — the turn-one outfitting window is open and
 ## something in it has not been committed. NON-LOCATING (an opening loadout is a faction fact and no

@@ -70,6 +70,9 @@ mod knowledge_contact_config;
 mod knowledge_ledger;
 mod labor_config;
 pub mod ladder_ids;
+mod leader_names;
+mod leadership;
+mod leadership_config;
 mod lineage;
 pub mod log_stream;
 mod map_preset;
@@ -403,6 +406,18 @@ pub use labor_config::{
     BUILTIN_LABOR_CONFIG, NO_FORAGE_CAPACITY,
 };
 pub use ladder_ids::{shipped, BranchId, RungId, Sym, VerbId};
+pub use leader_names::{
+    load_leader_names_from_env, LeaderNameCatalog, LeaderNameCatalogHandle,
+    LeaderNameCatalogMetadata, LeaderNamesError, BUILTIN_LEADER_NAMES, LEADER_NAME_SALT,
+};
+pub use leadership::{
+    advance_leadership, BandLeader, BandLeadership, LeaderKind, LEADER_KIND_CHIEF,
+    LEADER_KIND_ELDER_COUNCIL, LEADER_KIND_NONE,
+};
+pub use leadership_config::{
+    load_leadership_config_from_env, LeadershipConfig, LeadershipConfigHandle,
+    LeadershipConfigMetadata, BUILTIN_LEADERSHIP_CONFIG,
+};
 pub use map_preset::{ErosionConfig, MapPreset, MapPresets, MapPresetsHandle, BUILTIN_MAP_PRESETS};
 pub use mapgen::WorldGenSeed;
 pub use materials_config::{
@@ -809,6 +824,11 @@ pub fn build_headless_app() -> App {
         sedentarization_config::load_sedentarization_config_from_env();
     let sedentarization_handle =
         sedentarization_config::SedentarizationConfigHandle::new(sedentarization_config);
+    let (leadership_config, leadership_metadata) =
+        leadership_config::load_leadership_config_from_env();
+    let leadership_handle = leadership_config::LeadershipConfigHandle::new(leadership_config);
+    let (leader_names_catalog, leader_names_metadata) = leader_names::load_leader_names_from_env();
+    let leader_names_handle = leader_names::LeaderNameCatalogHandle::new(leader_names_catalog);
     let (mobility_config, mobility_metadata) = mobility_config::load_mobility_config_from_env();
     let mobility_handle = mobility_config::MobilityConfigHandle::new(mobility_config);
     let (settlement_stage_config, settlement_stage_metadata) =
@@ -1021,6 +1041,10 @@ pub fn build_headless_app() -> App {
         .insert_resource(sedentarization_handle)
         .insert_resource(sedentarization_metadata)
         .insert_resource(sedentarization::SedentarizationScore::default())
+        .insert_resource(leadership_handle)
+        .insert_resource(leadership_metadata)
+        .insert_resource(leader_names_handle)
+        .insert_resource(leader_names_metadata)
         .insert_resource(mobility_handle)
         .insert_resource(mobility_metadata)
         .insert_resource(mobility::MobilityScore::default())
@@ -1499,7 +1523,11 @@ pub fn build_headless_app() -> App {
                 // **Auto-craft fills an EMPTY queue** right before the bench works, and again
                 // right after it (so an order that completes this turn has its successor in
                 // the snapshot). See `auto_craft`.
-                auto_craft::advance_auto_craft.after(systems::advance_labor_allocation),
+                // **A chief emerges from the practice this turn's labour and expeditions banked**
+                // (`leadership`): after labor, which follows the expeditions, and before anything
+                // that reads the event log after it.
+                leadership::advance_leadership.after(systems::advance_labor_allocation),
+                auto_craft::advance_auto_craft.after(leadership::advance_leadership),
                 systems::advance_crafting.after(auto_craft::advance_auto_craft),
                 auto_craft::advance_auto_craft_after_bench.after(systems::advance_crafting),
                 // The bench-queue shortage notice reads the stock the draw just left, so it
@@ -1566,7 +1594,10 @@ pub fn build_headless_app() -> App {
                 // steps following a herd (any roam state) and which this drains — that order is
                 // carried by the whole run between them, and the one edge declared here is the
                 // culture split, the last pass that changes a band's people.
-                mobility::mobility_tick.after(systems::advance_culture_splits),
+                mobility::mobility_tick
+                    .after(systems::advance_culture_splits)
+                    // Leadership reads the herd-following steps this drains.
+                    .after(leadership::advance_leadership),
             )
                 .in_set(TurnStage::Population)
                 .run_if(population_stage_enabled()),
