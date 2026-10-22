@@ -511,6 +511,50 @@ impl FoodMix {
         eaten
     }
 
+    /// **The meal, measuring the KEPT share** - [`Self::eat`], also returning how much of what was
+    /// eaten came from lots of at least `kept_from_age` (the lot's stored `age` at the meal).
+    /// Ages are read BEFORE the meal's rot pass ages them, so a lot landed on turn `T` has age `0`
+    /// at meal `T+1`; callers map "kept N turns" to `kept_from_age = N - 1`.
+    pub fn eat_measuring_kept(
+        &mut self,
+        amount: Scalar,
+        order: &[String],
+        kept_from_age: u32,
+    ) -> (Scalar, Scalar) {
+        let mut kept = scalar_zero();
+        let mut remaining = amount.max(scalar_zero());
+        let mut eaten = scalar_zero();
+        let unnamed: Vec<String> = self
+            .classes
+            .keys()
+            .filter(|class| !order.contains(class))
+            .cloned()
+            .collect();
+        for class in order.iter().chain(unnamed.iter()) {
+            if remaining <= scalar_zero() {
+                break;
+            }
+            // Oldest lot first, as `remove` takes them, so the kept share is read off the same lots.
+            if let Some(batches) = self.classes.get(class) {
+                let mut want = remaining;
+                for batch in batches {
+                    if want <= scalar_zero() {
+                        break;
+                    }
+                    let part = min(want, batch.amount);
+                    want -= part;
+                    if batch.age >= kept_from_age {
+                        kept += part;
+                    }
+                }
+            }
+            let taken = self.remove(class, remaining);
+            remaining -= taken;
+            eaten += taken;
+        }
+        (eaten, kept)
+    }
+
     /// **One rot pass** — every lot of a class `shelf_life` knows ages by one turn, and a lot whose
     /// age has reached its class's shelf life rots **whole**. Returns what rotted. A class with no
     /// shelf life never ages or rots.
@@ -805,6 +849,16 @@ impl LocalStore {
             self.food.remove(class, qty);
         }
         taken
+    }
+
+    /// **The meal, measuring the kept share** - see [`FoodMix::eat_measuring_kept`].
+    pub fn eat_food_measuring_kept(
+        &mut self,
+        amount: Scalar,
+        order: &[String],
+        kept_from_age: u32,
+    ) -> (Scalar, Scalar) {
+        self.food.eat_measuring_kept(amount, order, kept_from_age)
     }
 
     /// **One rot pass over the larder** — see [`FoodMix::age_and_expire`]. Returns what rotted.
@@ -1641,6 +1695,11 @@ pub struct PopulationCohort {
     /// pack is credited as income when it lands and debited here the same turn, so income stays the
     /// one producer it always was. On the wire as `PopulationCohortState.foodSpoiled`.
     pub last_food_spoiled: f32,
+    /// **The food the band's meal ate from lots it had KEPT a while** (#708) - what
+    /// `spoilage::rot_band_larders` reads, right after the meal that wrote it, to pay the storage
+    /// lesson's kept half (`spoilage::storage_practice`). Rewritten every turn by
+    /// `simulate_population`; a caravan pack and a party's own meals never write it.
+    pub last_food_kept: f32,
     /// **THE FOOD THAT CROSSED BETWEEN THIS BAND AND ANOTHER, AS OF THIS TURN'S FRAME** — the
     /// per-turn twin of the accumulator [`LaborAllocation::last_food_transfers`], split by
     /// [`TransferLink`], and the reading a client renders.

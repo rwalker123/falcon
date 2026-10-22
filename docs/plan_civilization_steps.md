@@ -409,11 +409,18 @@ that is wrong; it should drop at the end.)*
   as old as its walk. The rack is at the camp, so it does not dry a pack on the road.
 - The rot is its own term on the Food line (`Spoiled`) and in the larder ledger identity.
 
-**Rot teaches storage — one signal, not two.** The intensification ladder's knowledge ledger already
-teaches the next rung by practice, over ~20-turn lessons (`.claude/rules/core_sim/intensification.md`).
-The storage lesson's practice signal is **food lost to spoilage while a surplus sat**. A band with no
-excess never learns storage; a band whose excess rots learns it fast. "Excess makes you want storage"
-and "spoilage makes you need it" are the same accrual read off one number.
+**Keeping food teaches storage, and rot teaches it fastest (decided, #708).** The intensification
+ladder's knowledge ledger already teaches the next rung by practice, over ~20-turn lessons
+(`.claude/rules/core_sim/intensification.md`). The storage lesson reads the larder's aged batches. Two
+signals feed one accrual:
+- **Rot is the fast teacher.** Food lost to spoilage while a surplus sat pays full practice.
+- **Kept food is the slow teacher.** Food eaten after it sat a few turns (`storage_kept_age_turns`)
+  pays a fraction of rot's practice (`storage_kept_weight`).
+
+A band living hand to mouth never learns storage; a band that keeps food learns it slowly; a band whose
+excess rots learns it fast. *(The first version taught by rot alone. Playtesting showed a band can
+easily never rot anything, so it never reached storage. Ray: spoilage should be by far the biggest
+contributor, but a band should get there without it, just more slowly.)*
 
 **Workers build storage, and storage is two ladder branches (decided, #708).** The improvement
 catalog is the intensification ladder (see "The improvement catalog is the intensification ladder"

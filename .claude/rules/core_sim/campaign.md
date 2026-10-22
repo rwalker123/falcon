@@ -497,14 +497,17 @@ pins the walk against the turns.
 
 #### Rot teaches storage (#707)
 
-Food rotting in a band's larder teaches the faction **`storage`** (`spoilage::STORAGE_KNOWLEDGE`,
+Food rotting in a band's larder, and food eaten after it had been kept a while, teach the faction **`storage`** (`spoilage::STORAGE_KNOWLEDGE`,
 discovery `STORAGE_DISCOVERY_ID` = 2018), on the knowledge ledger and in the ladder's practice
 currency (`intensification.md` → "A LESSON COSTS PRACTICE"). Design of record:
 `docs/plan_civilization_steps.md` §Step 5, "Rot teaches storage — one signal, not two".
 
 ```text
-practice = learn_rate × min(1, rotted / (need × storage_lesson_rot_turns))   // per band, per turn
-credit   = practice / lesson_costs["storage"]                                // LadderKnowledge::ledger_credit
+full_turn     = need × storage_lesson_rot_turns
+rot_practice  = learn_rate × min(1, rotted / full_turn)                        // per band, per turn
+kept_practice = learn_rate × storage_kept_weight × min(1, kept / full_turn)
+practice      = min(rot_practice + kept_practice, learn_rate)                  // spoilage::storage_practice
+credit        = practice / lesson_costs["storage"]                             // LadderKnowledge::ledger_credit
 ```
 
 - **Larder rot is surplus by definition.** A lot rots only when it has gone uneaten for its whole
@@ -518,6 +521,20 @@ credit   = practice / lesson_costs["storage"]                                // 
   turn, not a year of practice. That makes the lesson the ladder's ~20 turns at full rate, the same
   as `cultivation` and `herding`, which open the rung-2 step on their branches as `storage` opens the
   drying rack.
+- **Kept food teaches too, at `storage_kept_weight` (0.25) of rot's pace.** `kept` is the food the
+  band's meal ate from lots that had been in the larder at least `storage_kept_age_turns` (2) turns
+  since they landed. `simulate_population` measures it as it eats (`FoodMix::eat_measuring_kept`,
+  parked on `PopulationCohort::last_food_kept`) and `rot_band_larders` pays it beside the rot, so
+  storage practice is computed in one place (`spoilage::storage_practice`). The meal comes before
+  the rot pass that ages a lot, so a lot landed on turn *T* has stored age 0 at meal *T+1* (fresh)
+  and age 1 at meal *T+2* (kept at the shipped threshold): `spoilage::kept_from_age` maps the
+  threshold to a stored age, `storage_kept_age_turns - 1`. The weight is validated at most 1, so
+  kept food never teaches faster than rot, and the rot + kept total is capped at one full turn.
+  Only the band's own larder meal counts: a caravan pack and a detached party's own meals do not.
+  The opening reserve is eaten after it has aged, so it pays kept practice too: at most
+  `food_reserve_days × weight` practice units in all (about a quarter of the lesson on the shipped
+  numbers). Levers: `knowledge.storage_kept_age_turns` / `storage_kept_weight` in
+  `intensification_ladder.json`, both PLAYTEST DIALS.
 - **Transit rot never teaches.** `rot_band_larders` credits before the labor pass adds a caravan
   pack's transit rot to `last_food_spoiled`. A pack lost on a long walk is distance, and the band
   that lost it may have had no excess at all.
@@ -527,9 +544,10 @@ credit   = practice / lesson_costs["storage"]                                // 
   `validate_lesson_cost_coverage` beside the rung and craft names. `storage` is also a contact tag in
   `start_profile_knowledge_tags.json`, so a people can learn it from a tied people who knows it. No
   start profile grants it.
-- **Not on the knowledge wire.** `knowledge_roster` lists what a rung *teaches*, and no rung teaches
-  `storage`, so it rides no `ladderKnowledge` / `intensificationKnowledge` row. It gates no rung
-  today.
+- **On the knowledge wire as a step.** No rung teaches `storage`, so the ladder files it under
+  `standalone_knowledges` (branch `stores`, area `food`); it gates the drying rack and the storage
+  pit, so it is a step on `ladderKnowledge` and its progress rides `intensificationKnowledge`
+  (`intensification.md` → "Knowledge no rung teaches").
 
 > #### THE WIRE CARRIES WHOLE PEOPLE — the fraction is an accumulator, and it stays sim-side
 >

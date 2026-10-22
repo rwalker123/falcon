@@ -1512,6 +1512,16 @@ fn stationed_party_workers(
     fed
 }
 
+/// `simulate_population`'s last parameter: the detached parties it feeds and the ladder it reads
+/// the kept-food age off.
+type PartiesAndLadder<'w, 's> = (
+    Query<'w, 's, (&'static PopulationCohort, &'static Expedition), Without<ResidentBand>>,
+    Option<Res<'w, LadderConfigHandle>>,
+);
+
+/// The lot age no lot reaches: a world with no ladder counts no food as kept.
+const NO_KEPT_FOOD_AGE: u32 = u32::MAX;
+
 #[allow(clippy::too_many_arguments)] // Bevy system parameters require explicit resource access
 pub fn simulate_population(
     config: Res<SimulationConfig>,
@@ -1538,9 +1548,15 @@ pub fn simulate_population(
     walk_inputs: WalkReachInputs,
     // **The parties each band feeds** — a stationed party carries no larder, so its rations are
     // charged to its home band's meal (`DemographicState::party_working`).
-    parties: Query<(&PopulationCohort, &Expedition), Without<ResidentBand>>,
+    // **What counts as kept food** (#708) - the ladder's `storage_kept_age_turns`; a world with no
+    // ladder teaches nothing from kept food. Bundled with the parties query, since a Bevy system
+    // takes at most sixteen parameters.
+    (parties, ladder): PartiesAndLadder,
 ) {
     let party_working = stationed_party_workers(&parties);
+    let kept_from_age = ladder.map_or(NO_KEPT_FOOD_AGE, |ladder| {
+        crate::spoilage::kept_from_age(&ladder.get().knowledge)
+    });
     let population_cfg = pipeline_config.config().population();
     let belief_cfg = belief_config.get();
     let demo = demographics.get();
@@ -1656,10 +1672,14 @@ pub fn simulate_population(
         // its greens and its greens before its grain, which is what makes the larder rot a line
         // rather than a share (`crate::spoilage`). `advance_demographics` says how much; the store
         // says which.
-        cohort.stores.eat_food(
+        let (_, kept) = cohort.stores.eat_food_measuring_kept(
             food_before - outcome.state.food_store,
             &demo.keeping.eat_order(),
+            kept_from_age,
         );
+        // **The kept share of the meal teaches storage** (#708), paid by `spoilage::rot_band_larders`
+        // beside rot's half so storage practice is computed in exactly one place.
+        cohort.last_food_kept = kept.to_f32();
         // The three factors behind this turn's births, parked for the snapshot exactly as
         // `last_morale_contributions` is: the player sees the inputs (larder, Food /turn) and the
         // effect (population), and this is the attribution between them.
@@ -3374,6 +3394,7 @@ mod wellbeing_tests {
             last_food_need: 0.0,
             fed_party_workers: Default::default(),
             last_food_spoiled: 0.0,
+            last_food_kept: 0.0,
             last_turn_food_transfers: Default::default(),
             last_turn_fodder_transfers: Default::default(),
             last_turn_transfer_crossings: Vec::new(),

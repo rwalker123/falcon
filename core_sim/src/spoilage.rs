@@ -185,15 +185,35 @@ pub const STORAGE_DISCOVERY_ID: u32 = 2018;
 /// in `start_profile_knowledge_tags.json`.
 pub const STORAGE_KNOWLEDGE: &str = "storage";
 
-/// **Practice one band's rot is worth this turn**, in the ladder's practice units: `learn_rate`
-/// times the share of a full turn's need that rotted, capped at one full turn. Zero when nothing
-/// rotted or the band needs nothing. Measured against the band's OWN need, so band size cancels.
-pub fn storage_practice(rotted: f32, need: f32, knowledge: &LadderKnowledge) -> f32 {
-    if rotted <= 0.0 || need <= 0.0 {
+/// **The lot age at which eating a lot counts as KEPT** (#708): `storage_kept_age_turns` turns since
+/// it landed. A lot landing on turn `T` has age `0` at meal `T+1` (the meal comes before the rot
+/// pass that ages it), age `1` at meal `T+2`: so "kept N turns" is a stored age of `N - 1`. The
+/// ladder validates `storage_kept_age_turns >= 1`, so this never underflows.
+pub fn kept_from_age(knowledge: &LadderKnowledge) -> u32 {
+    knowledge.storage_kept_age_turns.saturating_sub(1)
+}
+
+/// **Practice one band's larder is worth this turn**, in the ladder's practice units - the ONE place
+/// storage practice is computed. Both terms are measured against the band's OWN need, so band size
+/// cancels, over the same `full_turn = need x storage_lesson_rot_turns`:
+///
+/// ```text
+/// rot_practice  = learn_rate x min(rotted / full_turn, 1)
+/// kept_practice = learn_rate x storage_kept_weight x min(kept / full_turn, 1)
+/// total         = min(rot_practice + kept_practice, learn_rate)
+/// ```
+///
+/// `kept` is the food the meal ate from lots kept at least `storage_kept_age_turns`
+/// ([`kept_from_age`]). Zero when the band needs nothing or neither term has anything.
+pub fn storage_practice(rotted: f32, kept: f32, need: f32, knowledge: &LadderKnowledge) -> f32 {
+    if need <= 0.0 {
         return 0.0;
     }
     let full_turn = need * knowledge.storage_lesson_rot_turns;
-    knowledge.learn_rate * (rotted / full_turn).min(1.0)
+    let share = |amount: f32| (amount.max(0.0) / full_turn).min(1.0);
+    let rot_practice = knowledge.learn_rate * share(rotted);
+    let kept_practice = knowledge.learn_rate * knowledge.storage_kept_weight * share(kept);
+    (rot_practice + kept_practice).min(knowledge.learn_rate)
 }
 
 /// **How much of `food` will rot before it is eaten**, on a band that eats `need` a turn and takes
@@ -303,7 +323,12 @@ pub fn rot_band_larders(
             .stores
             .age_food(|class| band_shelf_life(&config.keeping, &held, class));
         cohort.last_food_spoiled = rotted.to_f32();
-        let practice = storage_practice(rotted.to_f32(), cohort.last_food_need, &ladder.knowledge);
+        let practice = storage_practice(
+            rotted.to_f32(),
+            cohort.last_food_kept,
+            cohort.last_food_need,
+            &ladder.knowledge,
+        );
         if let Some(credit) = ladder.knowledge.ledger_credit(STORAGE_KNOWLEDGE, practice) {
             if credit > 0.0 {
                 ledger.add_progress(
@@ -319,6 +344,7 @@ pub fn rot_band_larders(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::components::LocalStore;
     use crate::demographics_config::{DemographicsConfig, KeepingClass};
 
     const FLESH: &str = "flesh";
@@ -583,32 +609,48 @@ mod tests {
         knowledge
     }
 
+    /// Rot's practice alone: no kept food.
+    fn rot_only(rotted: f32, need: f32, knowledge: &LadderKnowledge) -> f32 {
+        storage_practice(rotted, NOTHING_KEPT, need, knowledge)
+    }
+
+    /// Kept food's practice alone: nothing rotted.
+    fn kept_only(kept: f32, need: f32, knowledge: &LadderKnowledge) -> f32 {
+        storage_practice(NOTHING_ROTTED, kept, need, knowledge)
+    }
+
+    const NOTHING_KEPT: f32 = 0.0;
+    const NOTHING_ROTTED: f32 = 0.0;
+    /// The shipped weight, stated so a re-tune of the shipped table cannot move the arithmetic.
+    const KEPT_WEIGHT: f32 = 0.25;
+    /// The shipped threshold, stated for the same reason.
+    const KEPT_AGE_TURNS: u32 = 2;
+    /// Rot this share of a full turn, with a full turn of kept food beside it: past the cap.
+    const NINE_TENTHS: f32 = 0.9;
+
     #[test]
     fn no_rot_teaches_nothing() {
-        assert_eq!(storage_practice(0.0, SMALL_NEED, &knowledge()), 0.0);
+        assert_eq!(rot_only(0.0, SMALL_NEED, &knowledge()), 0.0);
     }
 
     #[test]
     fn a_band_that_needs_nothing_learns_nothing_from_its_rot() {
-        assert_eq!(storage_practice(SMALL_NEED, 0.0, &knowledge()), 0.0);
+        assert_eq!(rot_only(SMALL_NEED, 0.0, &knowledge()), 0.0);
     }
 
     #[test]
     fn a_turns_need_rotting_is_a_full_turn_of_practice_and_more_is_capped() {
         let k = knowledge();
+        assert_eq!(rot_only(SMALL_NEED * ROT_TURNS, SMALL_NEED, &k), LEARN_RATE);
         assert_eq!(
-            storage_practice(SMALL_NEED * ROT_TURNS, SMALL_NEED, &k),
-            LEARN_RATE
-        );
-        assert_eq!(
-            storage_practice(SMALL_NEED * MANY_TURNS_OF_NEED, SMALL_NEED, &k),
+            rot_only(SMALL_NEED * MANY_TURNS_OF_NEED, SMALL_NEED, &k),
             LEARN_RATE
         );
     }
 
     #[test]
     fn half_a_turns_need_rotting_is_half_the_practice() {
-        let practice = storage_practice(SMALL_NEED * HALF * ROT_TURNS, SMALL_NEED, &knowledge());
+        let practice = rot_only(SMALL_NEED * HALF * ROT_TURNS, SMALL_NEED, &knowledge());
         assert!((practice - LEARN_RATE * HALF).abs() < 1e-6, "{practice}");
     }
 
@@ -616,8 +658,99 @@ mod tests {
     fn band_size_cancels() {
         let k = knowledge();
         assert_eq!(
-            storage_practice(SMALL_NEED * HALF, SMALL_NEED, &k),
-            storage_practice(BIG_NEED * HALF, BIG_NEED, &k)
+            rot_only(SMALL_NEED * HALF, SMALL_NEED, &k),
+            rot_only(BIG_NEED * HALF, BIG_NEED, &k)
         );
+        assert_eq!(
+            kept_only(SMALL_NEED * HALF, SMALL_NEED, &k),
+            kept_only(BIG_NEED * HALF, BIG_NEED, &k)
+        );
+    }
+
+    /// **Kept food pays the weight's share of rot's practice** - a full turn of need eaten kept is
+    /// `weight x learn_rate`, and more is capped there.
+    #[test]
+    fn a_turns_need_of_kept_food_pays_the_weight_of_a_full_turn() {
+        let k = knowledge();
+        let full = SMALL_NEED * ROT_TURNS;
+        assert!((kept_only(full, SMALL_NEED, &k) - LEARN_RATE * KEPT_WEIGHT).abs() < 1e-6);
+        assert!(
+            (kept_only(full * MANY_TURNS_OF_NEED, SMALL_NEED, &k) - LEARN_RATE * KEPT_WEIGHT).abs()
+                < 1e-6,
+            "kept food past a full turn adds nothing"
+        );
+        assert!(kept_only(full, SMALL_NEED, &k) < rot_only(full, SMALL_NEED, &k));
+    }
+
+    /// **Rot and kept food co-occurring are capped at ONE full turn** of practice.
+    #[test]
+    fn rot_and_kept_food_together_cap_at_one_full_turn() {
+        let k = knowledge();
+        let full = SMALL_NEED * ROT_TURNS;
+        // Rot alone is already a full turn: kept food adds nothing.
+        assert_eq!(storage_practice(full, full, SMALL_NEED, &k), LEARN_RATE);
+        // Half a turn of rot and a full turn of kept food: the sum, under the cap.
+        let sum = storage_practice(full * HALF, full, SMALL_NEED, &k);
+        assert!(
+            (sum - LEARN_RATE * (HALF + KEPT_WEIGHT)).abs() < 1e-6,
+            "{sum}"
+        );
+        // Nine tenths of rot and a full turn of kept food would sum past the cap.
+        let capped = storage_practice(full * NINE_TENTHS, full, SMALL_NEED, &k);
+        assert_eq!(capped, LEARN_RATE);
+    }
+
+    /// **THE BOUNDARY, THROUGH THE REAL MEAL-THEN-AGE ORDER.** A lot landed on turn `T` has stored
+    /// age 0 at meal `T+1` (fresh), and age 1 at meal `T+2` (kept at the shipped threshold of 2).
+    #[test]
+    fn a_lot_is_kept_from_the_second_meal_after_it_landed() {
+        let k = knowledge();
+        assert_eq!(k.storage_kept_age_turns, KEPT_AGE_TURNS);
+        let from_age = kept_from_age(&k);
+        let order = keeping().eat_order();
+        let ration = scalar_from_f32(1.0);
+        let mut store = LocalStore::default();
+        // Landed on turn T (after that turn's meal and rot).
+        store.add_food("dry", scalar_from_f32(10.0));
+
+        // Meal T+1: the lot has not aged yet.
+        let (eaten, kept) = store.eat_food_measuring_kept(ration, &order, from_age);
+        assert_eq!(eaten, ration);
+        assert_eq!(kept, scalar_zero(), "eaten at the first meal: fresh");
+        store.age_food(|_| Some(f32::INFINITY));
+
+        // Meal T+2: one turn of age.
+        let (_, kept) = store.eat_food_measuring_kept(ration, &order, from_age);
+        assert_eq!(kept, ration, "eaten at the second meal: kept");
+    }
+
+    /// **Food eaten fresh teaches nothing**, however much of it there is.
+    #[test]
+    fn food_eaten_fresh_pays_no_practice() {
+        let k = knowledge();
+        let order = keeping().eat_order();
+        let mut store = LocalStore::default();
+        store.add_food("flesh", scalar_from_f32(10.0));
+        let (_, kept) =
+            store.eat_food_measuring_kept(scalar_from_f32(5.0), &order, kept_from_age(&k));
+        assert_eq!(
+            storage_practice(NOTHING_ROTTED, kept.to_f32(), SMALL_NEED, &k),
+            0.0
+        );
+    }
+
+    /// **The meal reads the oldest lot first**, so the kept share is the old lot's, not a share of
+    /// the class.
+    #[test]
+    fn a_mixed_age_meal_counts_only_the_old_lots_as_kept() {
+        let k = knowledge();
+        let order = keeping().eat_order();
+        let mut store = LocalStore::default();
+        store.add_food_aged("dry", scalar_from_f32(2.0), 3);
+        store.add_food("dry", scalar_from_f32(5.0));
+        let (eaten, kept) =
+            store.eat_food_measuring_kept(scalar_from_f32(4.0), &order, kept_from_age(&k));
+        assert_eq!(eaten, scalar_from_f32(4.0));
+        assert_eq!(kept, scalar_from_f32(2.0));
     }
 }

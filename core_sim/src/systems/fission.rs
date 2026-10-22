@@ -348,6 +348,7 @@ pub fn split_band_from_parent_with(
     // a meal of nothing, and a fresh splinter with a full larder read "people are starving".
     child.last_food_need = 0.0;
     child.last_food_spoiled = 0.0;
+    child.last_food_kept = 0.0;
     // The dowry is booked on the *allocation's* accumulator below, which is what the next turn
     // capture copies here; carrying the parent's published pair over would have the new band open by
     // reporting a transfer it was not party to.

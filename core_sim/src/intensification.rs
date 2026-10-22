@@ -3521,7 +3521,24 @@ pub struct LadderKnowledge {
     /// crew-blind because rot is measured against the band's own need, so band size cancels.
     /// See `spoilage::storage_practice`.
     pub storage_lesson_rot_turns: f32,
+    /// **How long food must have been KEPT before eating it teaches storage** (#708): the turns
+    /// since a lot landed in the larder, counting the turn it lands as turn zero, at the meal that
+    /// eats it. A lot landing on turn `T` is eaten fresh at meal `T+1` and kept from meal `T+2` at
+    /// the shipped `2`. At least [`MIN_STORAGE_KEPT_AGE_TURNS`]. A playtest dial.
+    pub storage_kept_age_turns: u32,
+    /// **How much of rot's practice a full turn of KEPT food pays** (#708): kept practice is
+    /// `learn_rate x storage_kept_weight x min(kept / full_turn, 1)` against the same `full_turn` as
+    /// rot, and the two are summed and capped at one full turn. Finite, `> 0` and at most
+    /// [`MAX_STORAGE_KEPT_WEIGHT`], so kept food never teaches faster than rot. A playtest dial.
+    pub storage_kept_weight: f32,
 }
+
+/// The shortest kept age that is not "eaten the moment it landed" - a threshold of zero would count
+/// every meal as kept.
+pub const MIN_STORAGE_KEPT_AGE_TURNS: u32 = 1;
+
+/// The ceiling on [`LadderKnowledge::storage_kept_weight`]: kept food teaches at most as fast as rot.
+pub const MAX_STORAGE_KEPT_WEIGHT: f32 = 1.0;
 
 impl LadderKnowledge {
     /// **THE one place practice units become LEDGER progress** — `practice / lesson_cost` — so the
@@ -5450,6 +5467,32 @@ fn validate_knowledge(knowledge: &LadderKnowledge) -> Result<(), LadderConfigErr
                 "storage_lesson_rot_turns = {}",
                 knowledge.storage_lesson_rot_turns
             ),
+        });
+    }
+    if knowledge.storage_kept_age_turns < MIN_STORAGE_KEPT_AGE_TURNS {
+        return Err(LadderConfigError::Invalid {
+            field: "knowledge".to_string(),
+            constraint: format!(
+                "make food count as kept only after at least {MIN_STORAGE_KEPT_AGE_TURNS} turn(s) \
+                 in the larder - at 0 every meal would teach storage"
+            ),
+            value: format!(
+                "storage_kept_age_turns = {}",
+                knowledge.storage_kept_age_turns
+            ),
+        });
+    }
+    if !knowledge.storage_kept_weight.is_finite()
+        || knowledge.storage_kept_weight <= 0.0
+        || knowledge.storage_kept_weight > MAX_STORAGE_KEPT_WEIGHT
+    {
+        return Err(LadderConfigError::Invalid {
+            field: "knowledge".to_string(),
+            constraint: format!(
+                "weigh kept food above 0 and at most {MAX_STORAGE_KEPT_WEIGHT} of rot's practice \
+                 - kept food must never teach faster than rot"
+            ),
+            value: format!("storage_kept_weight = {}", knowledge.storage_kept_weight),
         });
     }
     Ok(())
@@ -8966,6 +9009,41 @@ mod tests {
                 "{bad}: {err}"
             );
         }
+    }
+
+    /// **Kept food must never teach faster than rot, and must teach at all**: the weight is finite,
+    /// above zero and at most one; the age is at least one turn.
+    #[test]
+    fn rejects_a_kept_food_lesson_that_could_outpace_rot_or_never_pay() {
+        /// Just past the ceiling: kept food would teach faster than rot.
+        const PAST_THE_CEILING: f32 = 1.0001;
+        /// A negative weight, to pin the sign check apart from the zero check.
+        const NEGATIVE_WEIGHT: f32 = -0.25;
+        for bad in [
+            0.0,
+            NEGATIVE_WEIGHT,
+            PAST_THE_CEILING,
+            f32::NAN,
+            f32::INFINITY,
+        ] {
+            let mut knowledge = LadderConfig::builtin().knowledge.clone();
+            knowledge.storage_kept_weight = bad;
+            let err = validate_knowledge(&knowledge)
+                .expect_err(&format!("storage_kept_weight = {bad} must be rejected"));
+            assert!(
+                err.to_string().contains("storage_kept_weight"),
+                "{bad}: {err}"
+            );
+        }
+        // The ceiling itself is legal: kept food may teach exactly as fast as rot.
+        let mut knowledge = LadderConfig::builtin().knowledge.clone();
+        knowledge.storage_kept_weight = MAX_STORAGE_KEPT_WEIGHT;
+        assert!(validate_knowledge(&knowledge).is_ok());
+
+        let mut knowledge = LadderConfig::builtin().knowledge.clone();
+        knowledge.storage_kept_age_turns = MIN_STORAGE_KEPT_AGE_TURNS - 1;
+        let err = validate_knowledge(&knowledge).expect_err("a kept age of 0 must be rejected");
+        assert!(err.to_string().contains("storage_kept_age_turns"), "{err}");
     }
 
     #[test]
