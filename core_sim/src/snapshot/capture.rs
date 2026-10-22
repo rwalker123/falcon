@@ -161,6 +161,10 @@ pub struct SnapshotContext<'w> {
     pub materials: Res<'w, crate::materials_config::MaterialsConfigHandle>,
     pub recipes: Res<'w, crate::recipes_config::RecipesConfigHandle>,
     pub settlement_stage: Res<'w, crate::settlement_stage_config::SettlementStageConfigHandle>,
+    /// The practice threshold a band's leader emerges at (`crate::leadership`), echoed on each
+    /// cohort row so the client can say "N of M". `Option` so a hand-rolled capture world that never
+    /// installed it reads the builtin.
+    pub leadership_config: Option<Res<'w, crate::leadership_config::LeadershipConfigHandle>>,
     pub supply_membership: Res<'w, SupplyNetworkMembership>,
     /// The supply-network tuning — read for the base of a band's **ferry reach**
     /// ([`crate::carry::move_ferry_reach_tiles`]), echoed on every cohort. `Option` so a
@@ -2634,6 +2638,8 @@ pub(crate) type PopulationSnapshotQuery<'w, 's> = Query<
         Option<&'static BandName>,
         Option<&'static BandEquipment>,
         Option<&'static crate::components::BandBench>,
+        // The band's leader and banked practice (`crate::leadership`), published on its own row.
+        Option<&'static crate::leadership::BandLeadership>,
     ),
 >;
 
@@ -2809,6 +2815,7 @@ pub fn capture_snapshot(
         materials,
         recipes,
         settlement_stage,
+        leadership_config,
         supply_membership,
         supply_network,
         hearts,
@@ -3082,6 +3089,15 @@ pub fn capture_snapshot(
         let demographics_config = demographics.get();
         let wellbeing_config = wellbeing.get();
         let settlement_stage_config = settlement_stage.get();
+        // The practice a leader emerges at, echoed per cohort (global config, the `band_work_range`
+        // idiom). A hand-rolled capture world with no handle reads the builtin.
+        let leadership_threshold = leadership_config
+            .as_ref()
+            .map_or_else(
+                crate::leadership_config::LeadershipConfig::builtin,
+                |handle| handle.get(),
+            )
+            .practice_threshold as f32;
         // Global labor config today (identical for every band); the work-range ring is surfaced
         // per-band so the client reads it off the selected band (future-proof if bands diverge).
         let band_work_range = labor_config.band_work_range;
@@ -3114,7 +3130,7 @@ pub fn capture_snapshot(
             let mut input: Vec<((u64, u64), Entity, crate::belief_relay::RelayBand)> = populations
                 .iter()
                 .filter(|(entity, ..)| resident_bands.contains(*entity))
-                .filter_map(|(entity, cohort, _, _, _, band_id, _, _, _)| {
+                .filter_map(|(entity, cohort, _, _, _, band_id, _, _, _, _)| {
                     let standing = tile_positions
                         .get(&cohort.current_tile.to_bits())
                         .copied()?;
@@ -3175,7 +3191,7 @@ pub fn capture_snapshot(
             std::collections::BTreeMap<String, bool>,
         > = populations
             .iter()
-            .map(|(_, cohort, _, _, _, _, _, _, _)| cohort.faction)
+            .map(|(_, cohort, _, _, _, _, _, _, _, _)| cohort.faction)
             .collect::<std::collections::BTreeSet<_>>()
             .into_iter()
             .map(|faction| {
@@ -3244,15 +3260,15 @@ pub fn capture_snapshot(
                     &equipment_config,
                     &viewer_carry,
                     populations.iter().filter_map(
-                        |(entity, cohort, _, _, _, band_id, _, equipment, _)| {
+                        |(entity, cohort, _, _, _, band_id, _, equipment, _, _)| {
                             band_id.map(|band| (entity, *band, equipment, cohort))
                         },
                     ),
-                    populations
-                        .iter()
-                        .filter_map(|(_, cohort, _, _, expedition, _, _, _, _)| {
+                    populations.iter().filter_map(
+                        |(_, cohort, _, _, expedition, _, _, _, _, _)| {
                             expedition.map(|expedition| (expedition.home_band, cohort))
-                        }),
+                        },
+                    ),
                 )
             })
             .unwrap_or_default();
@@ -3278,7 +3294,7 @@ pub fn capture_snapshot(
         // shipment's counterparty may be a band the viewer holds no row for.
         let band_names: crate::snapshot::population::BandNameLookup = populations
             .iter()
-            .filter_map(|(_, _, _, _, _, band_id, band_name, _, _)| {
+            .filter_map(|(_, _, _, _, _, band_id, band_name, _, _, _)| {
                 Some((
                     *band_id?,
                     band_name.map(|name| name.0.clone()).unwrap_or_default(),
@@ -3314,6 +3330,7 @@ pub fn capture_snapshot(
                     band_name,
                     equipment,
                     bench,
+                    leadership,
                 )| {
                     let current_pos = tile_positions.get(&cohort.current_tile.to_bits()).copied();
                     // ⛔ **THE THREE TIERS — resolved FIRST, so nothing below it is even computed for a
@@ -3418,6 +3435,8 @@ pub fn capture_snapshot(
                         entity,
                         band_id,
                         band_name,
+                        leadership,
+                        leadership_threshold,
                         cohort,
                         allocation,
                         expedition,
@@ -3994,7 +4013,7 @@ pub fn capture_snapshot(
         // filtered out rather than published against a guessed faction.
         let band_factions: HashMap<BandId, FactionId> = populations
             .iter()
-            .filter_map(|(_, cohort, _, _, _, band_id, _, _, _)| {
+            .filter_map(|(_, cohort, _, _, _, band_id, _, _, _, _)| {
                 band_id.map(|band| (*band, cohort.faction))
             })
             .collect();
@@ -4008,7 +4027,7 @@ pub fn capture_snapshot(
             &crate::snapshot::knowledge::ContactLessonInputs {
                 bands: populations
                     .iter()
-                    .filter_map(|(_, cohort, _, _, _, band_id, _, _, _)| {
+                    .filter_map(|(_, cohort, _, _, _, band_id, _, _, _, _)| {
                         band_id.map(|band| crate::knowledge_contact::ContactBand {
                             band: *band,
                             faction: cohort.faction,
@@ -4021,7 +4040,7 @@ pub fn capture_snapshot(
                     .collect(),
                 landings: populations
                     .iter()
-                    .flat_map(|(_, cohort, _, _, _, band_id, _, _, _)| {
+                    .flat_map(|(_, cohort, _, _, _, band_id, _, _, _, _)| {
                         band_id.into_iter().flat_map(|band| {
                             crate::knowledge_contact::trade_landings(
                                 *band,
@@ -4105,7 +4124,7 @@ pub fn capture_snapshot(
             let bands: Vec<(BandId, FactionId, UVec2)> = populations
                 .iter()
                 .filter(|(entity, ..)| resident_bands.contains(*entity))
-                .filter_map(|(_, cohort, _, _, _, band_id, _, _, _)| {
+                .filter_map(|(_, cohort, _, _, _, band_id, _, _, _, _)| {
                     let standing = tile_positions
                         .get(&cohort.current_tile.to_bits())
                         .copied()?;

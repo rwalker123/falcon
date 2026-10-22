@@ -12738,6 +12738,7 @@ fn command_kind_display(kind: CommandEventKind) -> &'static str {
         CommandEventKind::CulturePull => "Culture pull",
         CommandEventKind::Dealing => "Dealing",
         CommandEventKind::Treaty => "Treaty",
+        CommandEventKind::LeaderEmerged => "Leader emerged",
     }
 }
 

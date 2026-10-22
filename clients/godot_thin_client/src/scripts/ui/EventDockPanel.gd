@@ -638,6 +638,9 @@ static func detail_phrase(detail: String) -> String:
 	var open_key: String = ""
 	var open_value: String = ""
 	var open_index := -1
+	# True while the last fragment opened was a HIDDEN key: its value's continuation words ("Orrin II"
+	# after `name=`) are the hidden value's own and must not surface as bare words.
+	var in_hidden_value := false
 	var tokens := detail.split(" ", false)
 	# The status-scoped hidden keys, if this line carries one of their `status=` tokens.
 	var status_hidden: Dictionary = {}
@@ -650,9 +653,11 @@ static func detail_phrase(detail: String) -> String:
 		if coordinate != "":
 			fragments.append(coordinate)
 			open_index = -1
+			in_hidden_value = false
 			continue
 		if HudEventVocab.DETAIL_FRAGMENT_HIDDEN.has(token):
 			open_index = -1
+			in_hidden_value = false
 			continue
 		var split := token.find("=")
 		if split > 0:
@@ -660,11 +665,13 @@ static func detail_phrase(detail: String) -> String:
 			open_value = token.substr(split + 1)
 			if HudEventVocab.DETAIL_KEY_HIDDEN.has(open_key) or status_hidden.has(open_key):
 				open_index = -1
+				in_hidden_value = true
 				continue
+			in_hidden_value = false
 			fragments.append(_key_value_phrase(open_key, open_value))
 			open_index = fragments.size() - 1
 			continue
-		if HudEventVocab.DETAIL_FILLER_WORDS.has(token):
+		if HudEventVocab.DETAIL_FILLER_WORDS.has(token) or in_hidden_value:
 			continue
 		if open_index >= 0:
 			# A continuation of the previous value — `species=Grey` then `Wolf`.

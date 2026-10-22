@@ -145,6 +145,82 @@
     ]
   },
   {
+    "id": "leadership.chief_rises",
+    "tier": "beat",
+    "soul": {
+      "question": "There came a size past which everyone just knowing what to do stopped working, and one of us has begun to keep track."
+    },
+    "when": {
+      "all": [
+        {
+          "signal": "leadership.chiefs_emerged_this_turn",
+          "gte": 1
+        }
+      ]
+    },
+    "nouns": {
+      "leader": {
+        "from": "leadership.newest_chief"
+      }
+    },
+    "wardrobe": [
+      {
+        "id": "chief_rises.stood_up",
+        "fit": {
+          "requires_noun": [
+            "leader"
+          ]
+        },
+        "voice": {
+          "mythic": "We had grown too many, and spread too wide, and walked too far for everyone to simply know what to do, so {leader.name} began to keep the count of us.",
+          "warm": "There got to be too many of us, too spread out and too far from where we started, for everyone to just know what to do, so {leader.name} started keeping track."
+        }
+      }
+    ],
+    "gloss": [
+      "leadership.chiefs_emerged_this_turn"
+    ],
+    "cooldown_turns": 3
+  },
+  {
+    "id": "leadership.council_forms",
+    "tier": "beat",
+    "soul": {
+      "question": "There came a size past which everyone just knowing what to do stopped working, and we would rather the keeping were shared."
+    },
+    "when": {
+      "all": [
+        {
+          "signal": "leadership.councils_emerged_this_turn",
+          "gte": 1
+        }
+      ]
+    },
+    "nouns": {
+      "leader": {
+        "from": "leadership.newest_council"
+      }
+    },
+    "wardrobe": [
+      {
+        "id": "council_forms.sat_together",
+        "fit": {
+          "requires_noun": [
+            "leader"
+          ]
+        },
+        "voice": {
+          "mythic": "We had grown too many, and spread too wide, for everyone to simply know what to do, so the elders began to sit together, and {leader.name} is the one who speaks for them.",
+          "warm": "There got to be too many of us, too spread out, for everyone to just know what to do, so the elders started meeting, and {leader.name} speaks for them."
+        }
+      }
+    ],
+    "gloss": [
+      "leadership.councils_emerged_this_turn"
+    ],
+    "cooldown_turns": 3
+  },
+  {
     "id": "knowledge.cultivation_learned",
     "tier": "beat",
     "soul": {

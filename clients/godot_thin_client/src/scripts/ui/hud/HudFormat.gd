@@ -94,6 +94,30 @@ const BAND_ID_FALLBACK_NAME_FORMAT := "Band #%d"
 ## parenthesised pair here rather than as a labelled `Position:` row in the band zone's vitals.
 const BAND_HEADER_POSITION_FORMAT := "(%d, %d)"
 
+## **THE LEADER, in the Band tab's leader block** (issue #859) -- the block at the top of the tab
+## that holds the chief-progress bar until there is a leader, so the two never draw together. `leader_kind` is the wire's
+## enum: 0 none, 1 chief, 2 elder council. A council has a named person too -- its speaker.
+const LEADER_KIND_NONE := 0
+const LEADER_KIND_CHIEF := 1
+const LEADER_KIND_ELDER_COUNCIL := 2
+const BAND_LEADER_CHIEF_FORMAT := "Chief %s"
+const BAND_LEADER_COUNCIL_FORMAT := "Elders' council — %s speaks"
+## **THE CHIEF-PROGRESS BAR** (#859) under the header's sub line, while a band has no leader. Four
+## sources in this order, each a distinct hue; the remainder to the threshold is the empty cell.
+const CHIEF_LABEL_FORMAT := "%d / %d"
+## The word before the progress bar in the Band tab's leader block (#859): `Chief <bar> 7 / 10`.
+const CHIEF_ROW_LABEL := "Chief"
+## The compact bar's filled and empty cell glyphs -- the block glyphs `meter_bar` draws.
+const CHIEF_BAR_FILLED_GLYPH := "▰"
+const CHIEF_BAR_EMPTY_GLYPH := "▱"
+const CHIEF_TOOLTIP_HEADLINE := "A band gains a leader once it does enough work that needs an organiser."
+const CHIEF_TOOLTIP_SOURCE_FORMAT := "%s: %d"
+const CHIEF_TOOLTIP_SOURCE_SEPARATOR := " · "
+## `{key, label, color}` per source: the wire key it reads, the words the tooltip uses.
+const CHIEF_SOURCE_KEYS := ["leadership_from_builds", "leadership_from_splits",
+    "leadership_from_herd", "leadership_from_stages"]
+const CHIEF_SOURCE_LABELS := ["Cultivate, Farm, Tame or Corral", "Splits", "Following a herd", "Settlement stages"]
+
 ## THE FACTION PAGE's header identity (issue #450), beside the band header vocabulary above because
 ## the two fill the SAME three header slots and must be read together. The panel's header takes a
 ## stage id, a glyph, a name and a stage word; a faction has no settlement stage and no tile, so it
@@ -193,6 +217,69 @@ static func band_name(entry: Dictionary) -> String:
     if not HudExpeditionVocab.PARTY_SHORT_LABELS.has(mission):
         return name
     return HudExpeditionVocab.PARTY_NAME_FORMAT % [name, HudExpeditionVocab.PARTY_SHORT_LABELS[mission]]
+
+## The leader block's text line ("Chief Orrin" or "Elders' council — Orrin speaks"), `""` when the
+## band has no leader (the chief-progress bar fills the block instead, see `band_chief_progress`).
+static func band_leader_phrase(entry: Dictionary) -> String:
+    var leader_name := String(entry.get("leader_name", "")).strip_edges()
+    if leader_name == "":
+        return ""
+    match int(entry.get("leader_kind", LEADER_KIND_NONE)):
+        LEADER_KIND_CHIEF:
+            return BAND_LEADER_CHIEF_FORMAT % leader_name
+        LEADER_KIND_ELDER_COUNCIL:
+            return BAND_LEADER_COUNCIL_FORMAT % leader_name
+    return ""
+
+## The segment hues, in `CHIEF_SOURCE_KEYS` order. Read at call time because `HudStyle`'s palette is
+## installed at runtime.
+static func chief_source_colors() -> Array:
+    return [HudStyle.HEALTHY, HudStyle.READY, HudStyle.WARN, HudStyle.SIGNAL]
+
+## **PROGRESS TOWARD A CHIEF**, or `{}` when there is nothing to draw: the band already has a leader,
+## or carries no threshold (a foreign cohort). Otherwise `{label, tooltip, segments, remainder,
+## total}`: `segments` is `[{key, points, color}]` in source order, `remainder` the points still to
+## go (the empty cell), `total` the threshold. The label's number is practice floored and capped at
+## the threshold, whole numbers.
+static func band_chief_progress(entry: Dictionary) -> Dictionary:
+    if int(entry.get("leader_kind", LEADER_KIND_NONE)) != LEADER_KIND_NONE:
+        return {}
+    var threshold := float(entry.get("leadership_threshold", 0.0))
+    if threshold <= 0.0:
+        return {}
+    var practice := minf(float(entry.get("leadership_practice", 0.0)), threshold)
+    var colors := chief_source_colors()
+    var segments: Array = []
+    var lines: Array[String] = []
+    for i in range(CHIEF_SOURCE_KEYS.size()):
+        var points := float(entry.get(CHIEF_SOURCE_KEYS[i], 0.0))
+        segments.append({"key": CHIEF_SOURCE_KEYS[i], "points": points, "color": colors[i]})
+        lines.append(CHIEF_TOOLTIP_SOURCE_FORMAT % [CHIEF_SOURCE_LABELS[i], int(round(points))])
+    return {
+        "label": CHIEF_LABEL_FORMAT % [int(floor(practice)), int(round(threshold))],
+        "tooltip": CHIEF_TOOLTIP_HEADLINE + "\n" + CHIEF_TOOLTIP_SOURCE_SEPARATOR.join(lines),
+        "segments": segments,
+        "remainder": maxf(threshold - practice, 0.0),
+        "total": threshold,
+    }
+
+## The compact four-source bar as BBCode: one coloured `▰` per point, each source in its own hue, then
+## the remainder as `▱`. One cell per point of the threshold, so it is as wide as the threshold (10).
+static func chief_bar_bbcode(progress: Dictionary) -> String:
+    var cells := int(round(float(progress.get("total", 0.0))))
+    var out := ""
+    var used := 0
+    for segment in progress.get("segments", []):
+        var count := mini(int(round(float(segment.get("points", 0.0)))), cells - used)
+        if count <= 0:
+            continue
+        used += count
+        out += "[color=#%s]%s[/color]" % [(segment.get("color", HudStyle.INK_FAINT) as Color).to_html(false),
+            CHIEF_BAR_FILLED_GLYPH.repeat(count)]
+    if cells > used:
+        out += "[color=#%s]%s[/color]" % [HudStyle.INK_FAINT.to_html(false),
+            CHIEF_BAR_EMPTY_GLYPH.repeat(cells - used)]
+    return out
 
 ## **A BAND WITH ITS PEOPLE** -- `Netherford, Lothari` -- or the people alone when no band is named
 ## (a builder the roster does not hold, or the wire's 0).

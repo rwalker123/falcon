@@ -440,7 +440,7 @@ and a storehouse is not; folding them into one ladder would make "raise the gran
 hide". (Named with Ray; rung costs and capacities are not set.)
 
 **After the granary: directed labor and consent.** The band's leader is not what step 5 adds — a
-chief (or an elders' council) comes earlier, from directed work that succeeds, granary or no granary
+chief (or an elders' council) comes earlier, from work that needs an organiser, granary or no granary
 (the last bullet below). What step 5 models is the **band's consent to labor that feeds no one,
 bought with surplus**:
 
@@ -460,16 +460,17 @@ bought with surplus**:
   who cannot feed is mocked.
 - **Not modelled:** who within the band holds the granary. That is The Telling's to narrate; a second
   political layer inside a thirty-person band is more than the early game can carry.
-- **The chief comes before the granary.** A band accepts a chief (or, Egalitarian, an elders'
-  council) once directed work succeeds — a finished build, a big-game hunt that lands its kill, a
-  battle won, work on a gathering place's monument — so migratory peoples get one too. The axis above
+- **The chief comes before the granary.** A band gains a chief (or, Egalitarian, an elders'
+  council) once it has done enough that needs an organiser — finished Cultivates and Tames, a split,
+  the hexes it walks following a herd, reaching a settlement stage — so migratory peoples get one
+  too. The axis above
   decides which kind of leader the band has, never whether it has one. What the chief does is take
   band orders from the player: `docs/plan_labor_at_scale.md` → "Leaders: four levels of orders".
 
 **Order for the arc (leaning):** spoilage with the storage lesson → the tile-source seam
 (settlement arc) with storage as its first branch → the granary as a tether → directed labor and the
-`leadership` term. The chief itself is not on this line: it arrives with the first directed work that
-succeeds (#859), before any of it.
+`leadership` term. The chief itself is not on this line: it arrives once a band has done enough work
+that needs an organiser (#859), before any of it.
 **Measured (#705):** a starting band on its starting tiles runs **no** surplus — net ≈0 once its
 starting larder is spent, on every biome measured (see "The push is depletion" above). The storage
 lesson's pace therefore cannot be set against a starting band; it has to be set against whatever

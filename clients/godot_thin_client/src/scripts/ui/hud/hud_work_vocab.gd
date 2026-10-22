@@ -4106,6 +4106,18 @@ const WORK_SECTION_COLLAPSED_META := &"work_section_collapsed"
 ## sections hold never reaches the panel's fixed cross-axis reservation.
 const WORK_SECTIONS_SCROLL_NAME := "WorkSections"
 
+## **THE LEADER BLOCK** (#859) is the first block of the Band tab's zone
+## (`BandPanelController._build_leader_block`): a portrait square and the chief line, or the
+## chief-progress bar before a leader. `BAND_LEADER_BLOCK_META` is the harness handle on the block and
+## `BAND_LEADER_TEXT_NAME` names its text label; `BAND_VITALS_LABEL_META` stays the handle on the vitals
+## label beside it.
+const BAND_VITALS_LABEL_META := &"band_vitals_label"
+const BAND_LEADER_BLOCK_META := &"band_leader_block"
+const BAND_LEADER_BLOCK_NAME := "BandLeaderBlock"
+const BAND_LEADER_TEXT_NAME := "BandLeaderText"
+## Gap between the portrait and the text beside it.
+const BAND_LEADER_BLOCK_SEPARATION := 8
+
 ## A section head's reserved height: `ZONE_HEAD_HEIGHT` grown to the compact chevron button (and, on
 ## the queue and the roads, the `+N more` door), which is what sets the row.
 const WORK_SECTION_HEAD_HEIGHT := 22.0

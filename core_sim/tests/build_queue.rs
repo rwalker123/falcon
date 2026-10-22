@@ -4564,3 +4564,81 @@ fn a_load_clears_a_corral_heads_stale_date_and_the_next_turn_blocks_it() {
     );
     assert_eq!(reason, "materials");
 }
+
+// ---------------------------------------------------------------------------------------------
+// A finished build of a directed-work rung is practice toward a leader (#859)
+// ---------------------------------------------------------------------------------------------
+
+/// **FINISHING A CULTIVATE BANKS EXACTLY ONE QUANTUM OF LEADERSHIP PRACTICE** -- once, on the turn
+/// the entry retires, and nothing before. `Cultivate` is a `directed_work` rung on the shipped
+/// ladder; the credit rides the rung flag, not the rung's identity.
+#[test]
+fn finishing_a_directed_work_build_banks_one_quantum_of_practice() {
+    let (mut app, band, sources) = world_with_a_queue(THE_WHOLE_QUEUE, BUILDERS);
+    app.world
+        .entity_mut(band)
+        .insert(core_sim::BandLeadership::default());
+    let quantum = app
+        .world
+        .resource::<core_sim::LeadershipConfigHandle>()
+        .get()
+        .practice_per_directed_build;
+
+    let practice = |app: &App| {
+        app.world
+            .get::<core_sim::BandLeadership>(band)
+            .unwrap()
+            .practice()
+    };
+    let mut turns = 0;
+    while !app
+        .world
+        .resource::<core_sim::ForageRegistry>()
+        .patch(sources[0])
+        .expect("the head's patch survives")
+        .is_cultivated()
+    {
+        assert_eq!(practice(&app), 0.0, "no practice before the build finishes");
+        resolve_a_turn(&mut app);
+        turns += 1;
+        assert!(turns < 200, "fixture: the head must finish");
+    }
+    assert_eq!(
+        practice(&app),
+        quantum,
+        "the finished Cultivate banks one quantum, once"
+    );
+}
+
+/// **A pen's ring is fencing work, not a rung build, and banks nothing** -- the credit is the
+/// `BuildJob::Climb` arm's alone.
+#[test]
+fn finishing_a_pen_ring_banks_no_practice() {
+    let (mut app, band, _herd, _source) = world_with_a_ring_at_the_head(BUILDERS);
+    app.world
+        .entity_mut(band)
+        .insert(core_sim::BandLeadership::default());
+
+    let ring_is_queued = |app: &App| {
+        app.world
+            .get::<LaborAllocation>(band)
+            .unwrap()
+            .build_queue
+            .iter()
+            .any(|entry| entry.declared == BuildJob::ExtendPen)
+    };
+    let mut turns = 0;
+    while ring_is_queued(&app) {
+        resolve_a_pen_turn(&mut app);
+        turns += 1;
+        assert!(turns < 200, "fixture: the ring must finish");
+    }
+    assert_eq!(
+        app.world
+            .get::<core_sim::BandLeadership>(band)
+            .unwrap()
+            .practice(),
+        0.0,
+        "a finished ring is not a directed-work rung"
+    );
+}

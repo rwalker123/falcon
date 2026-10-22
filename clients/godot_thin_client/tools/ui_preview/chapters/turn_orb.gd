@@ -8,7 +8,7 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 56
+const EXPECTED_CHECKPOINTS := 64
 
 ## **THE BANDS' NAMES, ONE PER PRODUCER.** The sim sends every cohort a name (issue #615) and every
 ## attention row is composed from it, so a fixture without one renders `HudFormat`'s `Band #<id>` tell
@@ -1059,6 +1059,9 @@ func run(harness) -> void:
 	# directly, over an events array in each of the two shapes the wire really delivers.
 	_assert_handoff_ingest_windows_on_one_turn()
 
+	await _leader_emerged_frame()
+	await _herd_thinning_frame()
+
 	# ---- THE HAND-TO-MOUTH BAND (the live-playtest bug) ---------------------------------------
 	# A band whose income beats its need on average and starves every turn anyway: the sim eats
 	# `min(need, larder)` BEFORE the take lands. Its runway sits ABOVE the critical line here on
@@ -1083,6 +1086,193 @@ func run(harness) -> void:
 	h._assert_hud("…while its fed twin on the same runway raises nothing", not fed_starving)
 	h._hud.turn_orb.toggle_popover()
 	h._hud.turn_orb.set_attention([])
+
+# ---- LEADER EMERGED (#859) ---------------------------------------------------------------------
+# A band gained a chief or an elders' council: the sim's `leader_emerged` command event, held for the
+# turn and windowed on the event's own tick exactly as the crew hand-offs are.
+
+const LEADER_TURN := 620
+const LEADER_OLD_TURN := 590
+const LEADER_CHIEF_BAND_ID := 931
+const LEADER_COUNCIL_BAND_ID := 932
+const LEADER_OLD_BAND_ID := 933
+const LEADER_CHIEF_BAND_NAME := "Ashfell"
+const LEADER_COUNCIL_BAND_NAME := "Brackwater"
+const LEADER_OLD_BAND_NAME := "Thornhollow"
+const LEADER_CHIEF_NAME := "Harn Oakfist"
+const LEADER_COUNCIL_NAME := "Mara Quill"
+const LEADER_OLD_NAME := "Dov"
+const LEADER_ROWS_EXPECTED := 2
+
+func _leader_band(band_id: int, band_name: String, tile: Vector2i) -> Dictionary:
+	return {"faction": 0, "entity": band_id, "band_id": band_id, "name": band_name,
+		"size": 30, "turns_of_food": 99.0, "activity": "forage",
+		"current_x": tile.x, "current_y": tile.y, "idle_workers": 0}
+
+func _leader_event(tick: int, seq: int, band_id: int, kind_token: String, leader_name: String) -> Dictionary:
+	return {"tick": tick, "seq": seq, "kind": "leader_emerged", "faction": 0, "band": band_id,
+		"label": "%s is chief" % leader_name,
+		"detail": "kind=%s name=%s" % [kind_token, leader_name]}
+
+func _leader_rows_in(bands: Array) -> Array:
+	var rows: Array = []
+	for item_variant in h._hud._attention.build_band_attention(bands, []):
+		var item: Dictionary = item_variant
+		if String(item.get("kind", "")) == HudAttentionVocab.ATTENTION_KIND_LEADER_EMERGED:
+			rows.append(item)
+	return rows
+
+func _leader_emerged_frame() -> void:
+	var prior_turn: int = h._hud._band_labor.current_turn()
+	h._hud._band_labor.set_turn(LEADER_TURN)
+	var bands := [
+		_leader_band(LEADER_CHIEF_BAND_ID, LEADER_CHIEF_BAND_NAME, Vector2i(30, 20)),
+		_leader_band(LEADER_COUNCIL_BAND_ID, LEADER_COUNCIL_BAND_NAME, Vector2i(34, 22)),
+		_leader_band(LEADER_OLD_BAND_ID, LEADER_OLD_BAND_NAME, Vector2i(38, 24)),
+	]
+	var ring := [
+		# An OLD leader the retained ring still holds, ahead of this turn's two.
+		_leader_event(LEADER_OLD_TURN, 701, LEADER_OLD_BAND_ID, "chief", LEADER_OLD_NAME),
+		_leader_event(LEADER_TURN, 702, LEADER_CHIEF_BAND_ID, "chief", LEADER_CHIEF_NAME),
+		_leader_event(LEADER_TURN, 703, LEADER_COUNCIL_BAND_ID, "elder_council", LEADER_COUNCIL_NAME),
+	]
+	h._hud.turn_orb.set_attention([])
+	h._hud._attention.ingest_command_events(ring, LEADER_TURN)
+	h._hud.update_band_alerts(bands)
+	h._hud.turn_orb.open_popover()
+	await h._settle()
+	await h._save("turn_orb_leader_emerged")
+	var rows := _orb_rows()
+	for row in rows:
+		print("ui_preview: orb row  %s | %s" % [String(row["label"]), String(row["detail"])])
+	var chief_label := HudAttentionVocab.ATTENTION_LEADER_CHIEF_LABEL_FORMAT % LEADER_CHIEF_BAND_NAME
+	var council_label := HudAttentionVocab.ATTENTION_LEADER_COUNCIL_LABEL_FORMAT % LEADER_COUNCIL_BAND_NAME
+	var chief_row: Variant = _orb_row_with(rows, chief_label)
+	var council_row: Variant = _orb_row_with(rows, council_label)
+	h._assert_hud("a new chief raises `%s | Chief %s — see the Band tab`" % [chief_label, LEADER_CHIEF_NAME],
+		chief_row != null and String(chief_row["detail"]) == "Chief %s — see the Band tab" % LEADER_CHIEF_NAME)
+	h._assert_hud("a new council raises `%s | %s speaks for them — Band tab`"
+		% [council_label, LEADER_COUNCIL_NAME],
+		council_row != null and String(council_row["detail"])
+			== "%s speaks for them — Band tab" % LEADER_COUNCIL_NAME)
+	h._assert_hud("a full ring's OLD-tick leader raises no row (%d rows, want %d)"
+		% [rows.size(), LEADER_ROWS_EXPECTED], rows.size() == LEADER_ROWS_EXPECTED)
+	# A full-ring RE-ingest (resync) and an old-tick-only ring add nothing.
+	h._hud._attention.ingest_command_events(ring, LEADER_TURN)
+	h._hud._attention.ingest_command_events(
+		[_leader_event(LEADER_OLD_TURN, 704, LEADER_OLD_BAND_ID, "chief", LEADER_OLD_NAME)], LEADER_TURN)
+	var after_reingest := _leader_rows_in(bands).size()
+	h._assert_hud("…and a full-ring re-ingest adds no row (%d, want %d)"
+		% [after_reingest, LEADER_ROWS_EXPECTED], after_reingest == LEADER_ROWS_EXPECTED)
+	h._hud.turn_orb.toggle_popover()
+	h._hud.turn_orb.set_attention([])
+	# RESTORE: advancing the turn drops the window, so no leader row leaks into later states.
+	h._hud._band_labor.set_turn(prior_turn)
+	h._hud._attention.ingest_command_events([], prior_turn)
+
+# ---- HERD THINNING (#859) ----------------------------------------------------------------------
+# A herd the player's bands hunt has dropped into the stressed / collapsing band. Controls:
+#   deer   stressed   hunted by TWO bands → ONE row            "Red Deer herd thinning"
+#   boar   collapsing hunted              → a row, sorted first "Wild Boar herd collapsing"
+#   elk    stressed   NOT hunted by us    → no row
+#   moose  thriving   hunted              → no row
+#   ox     stressed   hunted, CORRALLED   → no row (the pen producers' herd)
+
+const THINNING_DEER_ID := "game_deer_07"
+const THINNING_BOAR_ID := "game_boar_11"
+const THINNING_ELK_ID := "game_elk_21"
+const THINNING_MOOSE_ID := "game_moose_31"
+const THINNING_OX_ID := "game_ox_41"
+const THINNING_CAPACITY := 2000.0
+const THINNING_DEER_BIOMASS := 700.0      # 35 %
+const THINNING_BOAR_BIOMASS := 140.0      # 7 %
+const THINNING_ROWS_EXPECTED := 2
+
+func _thinning_herd(base: Dictionary, id: String, species: String, phase: String,
+		biomass: float, tile: Vector2i) -> Dictionary:
+	var herd := base.duplicate(true)
+	herd["id"] = id
+	herd["species"] = species
+	herd["label"] = "%s (%s)" % [species, id]
+	herd["ecology_phase"] = phase
+	herd["carrying_capacity"] = THINNING_CAPACITY
+	herd["biomass"] = biomass
+	herd["x"] = tile.x
+	herd["y"] = tile.y
+	return herd
+
+func _thinning_hunt(herd_id: String, tile: Vector2i, improvement: String = "") -> Dictionary:
+	return {"kind": "hunt", "workers": 2, "fauna_id": herd_id, "floor": 0.5,
+		"improvement": improvement, "target_x": tile.x, "target_y": tile.y,
+		"actual_yield": 0.5, "sustainable_yield": 0.5}
+
+func _thinning_band(entity: int, band_name: String, assignments: Array) -> Dictionary:
+	var band := _leader_band(entity, band_name, Vector2i(60, 12))
+	band["labor_assignments"] = assignments
+	return band
+
+func _herd_thinning_frame() -> void:
+	var deer_tile := Vector2i(66, 10)
+	var boar_tile := Vector2i(67, 12)
+	var elk_tile := Vector2i(68, 12)
+	var moose_tile := Vector2i(69, 12)
+	var ox_tile := Vector2i(70, 12)
+	var base := HerdFx.herd_fixture()
+	var herds := [
+		_thinning_herd(base, THINNING_DEER_ID, "Red Deer", "stressed", THINNING_DEER_BIOMASS, deer_tile),
+		_thinning_herd(base, THINNING_BOAR_ID, "Wild Boar", "collapsing", THINNING_BOAR_BIOMASS, boar_tile),
+		_thinning_herd(base, THINNING_ELK_ID, "Elk", "stressed", THINNING_DEER_BIOMASS, elk_tile),
+		_thinning_herd(base, THINNING_MOOSE_ID, "Moose", "thriving", THINNING_CAPACITY, moose_tile),
+		_thinning_herd(HerdFx.domesticated_herd_fixture(), THINNING_OX_ID, "Ox", "stressed",
+			THINNING_DEER_BIOMASS, ox_tile),
+	]
+	# Straight to the HUD, NOT through `h._set_world_herds`: its `floorify` re-seeds the biomass of any
+	# herd standing below the harvest-floor peak, which is exactly the band these herds are staged in.
+	h._hud.update_herds(herds)
+	h._hud.turn_orb.set_attention([])
+	var bands := [
+		_thinning_band(941, "Stonereach", [
+			_thinning_hunt(THINNING_DEER_ID, deer_tile), _thinning_hunt(THINNING_BOAR_ID, boar_tile),
+			_thinning_hunt(THINNING_MOOSE_ID, moose_tile)]),
+		# A second band on the SAME deer: still one row.
+		_thinning_band(942, "Windmere", [
+			_thinning_hunt(THINNING_DEER_ID, deer_tile),
+			_thinning_hunt(THINNING_OX_ID, ox_tile, "corral")]),
+	]
+	h._hud.update_band_alerts(bands)
+	h._hud.turn_orb.open_popover()
+	await h._settle()
+	await h._save("turn_orb_herd_thinning")
+	var rows := _orb_rows()
+	for row in rows:
+		print("ui_preview: orb row  %s | %s" % [String(row["label"]), String(row["detail"])])
+	var thinning: Array = []
+	for item_variant in h._hud._attention.build_band_attention(bands, []):
+		var item: Dictionary = item_variant
+		if String(item.get("kind", "")) == HudAttentionVocab.ATTENTION_KIND_HERD_THINNING:
+			thinning.append(item)
+	var deer_label := HudAttentionVocab.ATTENTION_HERD_THINNING_LABEL_FORMAT % "Red Deer"
+	var boar_label := HudAttentionVocab.ATTENTION_HERD_COLLAPSING_LABEL_FORMAT % "Wild Boar"
+	var deer_row: Variant = _orb_row_with(rows, deer_label)
+	var boar_row: Variant = _orb_row_with(rows, boar_label)
+	h._assert_hud("a stressed hunted herd raises `%s | down to 35%% — ease the hunt`" % deer_label,
+		deer_row != null and String(deer_row["detail"]) == "down to 35% — ease the hunt")
+	h._assert_hud("a collapsing hunted herd raises `%s | down to 7%% — dying out even if left alone`"
+		% boar_label,
+		boar_row != null and String(boar_row["detail"]) == "down to 7% — dying out even if left alone")
+	h._assert_hud("…collapsing sorts above stressed",
+		thinning.size() == THINNING_ROWS_EXPECTED
+		and String(thinning[0]["label"]) == boar_label and String(thinning[1]["label"]) == deer_label)
+	h._assert_hud("a stressed herd NOT hunted by us, a healthy hunted herd and a corralled herd raise "
+		+ "nothing, and two bands on one herd give one row (%d rows, want %d)"
+		% [thinning.size(), THINNING_ROWS_EXPECTED],
+		thinning.size() == THINNING_ROWS_EXPECTED
+		and _orb_row_with(rows, HudAttentionVocab.ATTENTION_HERD_THINNING_LABEL_FORMAT % "Elk") == null
+		and _orb_row_with(rows, HudAttentionVocab.ATTENTION_HERD_THINNING_LABEL_FORMAT % "Moose") == null
+		and _orb_row_with(rows, HudAttentionVocab.ATTENTION_HERD_THINNING_LABEL_FORMAT % "Ox") == null)
+	h._hud.turn_orb.toggle_popover()
+	h._hud.turn_orb.set_attention([])
+	h._set_world_herds(HerdFx.world_herds_fixture())   # restore the shared world-herd list
 
 ## The hand-to-mouth pair for the orb: one band short `shortfall` food this turn, one fed. Their
 ## runway is well clear of the critical line, so only the shortfall can raise `starving`.

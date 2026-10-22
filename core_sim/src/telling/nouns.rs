@@ -17,6 +17,7 @@ use crate::{
     fauna::{EcologyPhase, HerdRegistry},
     fauna_config::FaunaConfig,
     intensification::LadderConfig,
+    leadership::LeaderKind,
     orders::FactionId,
     sites::DiscoveredSiteRecord,
     sites_config::SitesConfig,
@@ -106,10 +107,12 @@ impl NounField {
 }
 
 /// Every noun resolver content may bind a slot to.
-const NOUN_RESOLVERS: [&str; 6] = [
+const NOUN_RESOLVERS: [&str; 8] = [
     "band.count",
     "biome.current_dominant",
     "site.last_discovered",
+    "leadership.newest_chief",
+    "leadership.newest_council",
     "fauna.most_hunted",
     "fauna.most_domesticated",
     "fauna.most_collapsed",
@@ -242,6 +245,10 @@ pub fn resolve(resolver: &str, ctx: &NounContext<'_>) -> Option<Noun> {
                 .unwrap_or_else(|| record.site_id.clone());
             Noun::named(name.clone(), name.clone(), name)
         }),
+        "leadership.newest_chief" => newest_leader_name(ctx.bands, LeaderKind::Chief)
+            .map(|name| Noun::named(name.clone(), name.clone(), name)),
+        "leadership.newest_council" => newest_leader_name(ctx.bands, LeaderKind::ElderCouncil)
+            .map(|name| Noun::named(name.clone(), name.clone(), name)),
         "fauna.most_hunted" => most_hunted_species(ctx).map(|species| species_noun(&species, ctx)),
         "fauna.most_domesticated" => {
             most_domesticated_species(ctx).map(|species| species_noun(&species, ctx))
@@ -265,6 +272,28 @@ fn species_noun(species: &str, ctx: &NounContext<'_>) -> Noun {
         Some(def) => Noun::named(species, def.plural_or_name(), def.adjective_or_name()),
         None => Noun::named(species, species, species),
     }
+}
+
+/// The name of the newest leader of `kind` among the faction's bands -- the one that emerged last,
+/// ties broken by the lower band id so the answer does not depend on query order. Scoped by kind so
+/// a chief and a council emerging on the same turn each name their own leader.
+fn newest_leader_name(bands: &[BandView<'_>], kind: LeaderKind) -> Option<String> {
+    bands
+        .iter()
+        .filter_map(|view| {
+            view.leadership
+                .and_then(|l| l.leader.as_ref())
+                .filter(|leader| leader.kind == kind)
+                .map(|leader| {
+                    (
+                        leader.since_turn,
+                        std::cmp::Reverse(view.band),
+                        &leader.name,
+                    )
+                })
+        })
+        .max()
+        .map(|(_, _, name)| name.clone())
 }
 
 /// The species most assigned as a `LaborTarget::Hunt` target, ties broken by species name
