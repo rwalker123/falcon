@@ -3538,24 +3538,6 @@ fn band_allocation_mut(
         .expect("labor allocation inserted above")
 }
 
-/// Seed the touched source's **yield telemetry** (`LaborAllocation.last_yields`) from its
-/// **pre-commit forecast**, right after the allocation is mutated.
-///
-/// Without this, telemetry is only ever written during turn resolution (`advance_labor_allocation`),
-/// so between "player assigns workers" and "player advances the turn" a brand-new source has no row
-/// and the display snapshot serializes `actual_yield = 0.0` — the client cannot tell "0 because not
-/// computed yet" from "0 because the source is barren", and every fresh assignment reads `+0.00`.
-///
-/// The seeded row is exactly what the turn will pay under unchanged conditions: it reuses the same
-/// forecast helpers the take path reads (`forecast == actual` — see "Pre-commit Yield Forecast" in
-/// `core_sim/CLAUDE.md`), and it is the same number the client's compose-time "Expected yield" row
-/// promises — so there is no jump when the turn lands, and it is overwritten by the resolved take.
-///
-/// Only the **one source the command touched** is seeded (other sources keep their real actuals), and
-/// only where the resolution path would actually pay: a source the turn would skip (an unseeded
-/// patch, a vanished herd) keeps its zero row, and a genuinely barren source seeds `0.0` — `+0.00`
-/// stays reachable, and correct, there. A source past the band's work range is not skipped: it posts
-/// a work party, and is seeded by stepping that caravan.
 /// **RE-DECIDE A BAND'S STAFFED CREWS AND RE-QUOTE THEM** (#871) - after a command moved an input
 /// the sim staffs from (a Max, a floor, a kit, a rank, a stopped row), every staffed row's crew may
 /// have changed, not just the one the player touched (the pool is shared), so each is re-seeded from
@@ -3587,6 +3569,24 @@ fn restaff_and_reseed(app: &mut bevy::prelude::App, band: Entity) {
     }
 }
 
+/// Seed the touched source's **yield telemetry** (`LaborAllocation.last_yields`) from its
+/// **pre-commit forecast**, right after the allocation is mutated.
+///
+/// Without this, telemetry is only ever written during turn resolution (`advance_labor_allocation`),
+/// so between "player assigns workers" and "player advances the turn" a brand-new source has no row
+/// and the display snapshot serializes `actual_yield = 0.0` — the client cannot tell "0 because not
+/// computed yet" from "0 because the source is barren", and every fresh assignment reads `+0.00`.
+///
+/// The seeded row is exactly what the turn will pay under unchanged conditions: it reuses the same
+/// forecast helpers the take path reads (`forecast == actual` — see "Pre-commit Yield Forecast" in
+/// `core_sim/CLAUDE.md`), and it is the same number the client's compose-time "Expected yield" row
+/// promises — so there is no jump when the turn lands, and it is overwritten by the resolved take.
+///
+/// Only the **one source the command touched** is seeded (other sources keep their real actuals), and
+/// only where the resolution path would actually pay: a source the turn would skip (an unseeded
+/// patch, a vanished herd) keeps its zero row, and a genuinely barren source seeds `0.0` — `+0.00`
+/// stays reachable, and correct, there. A source past the band's work range is not skipped: it posts
+/// a work party, and is seeded by stepping that caravan.
 fn seed_source_yield(
     app: &mut bevy::prelude::App,
     band: Entity,
@@ -5321,6 +5321,35 @@ fn working_as_it_stands(
     ))
 }
 
+/// **A SEAM THAT NEVER RENEWS HAS NO REGROWTH TO STAFF AGAINST, SO IT NEEDS THE PLAYER'S COUNT.**
+/// The sim sizes a staffed extract row's crew from what the deposit regrows; stone on a rock body
+/// never does (`extraction_config::NEVER_RENEWS`), so its crew is the Max in heads and a row with no
+/// Max would staff nobody forever while reading "(no max)". Refused at the command, by name, until
+/// a stock-draw sizing replaces it. `None` for every other row, and for a count of one or more.
+fn never_renewing_dig_without_a_count(
+    app: &bevy::prelude::App,
+    target: &LaborTarget,
+    workers: u32,
+) -> Option<String> {
+    let LaborTarget::Extract { tile, material, .. } = target else {
+        return None;
+    };
+    if workers > core_sim::NO_CREW_ON_THIS_ACTIVITY {
+        return None;
+    }
+    let extraction = app.world.resource::<ExtractionConfigHandle>().get();
+    let entity = app.world.resource::<TileRegistry>().index(tile.x, tile.y)?;
+    let ground = app.world.get::<Tile>(entity)?;
+    (core_sim::extraction::tile_deposit_regrowth(&extraction, material, ground)
+        <= core_sim::NEVER_RENEWS)
+        .then(|| {
+            format!(
+                "A {material} dig needs a digger count - this seam never renews, so the count you \
+                 give is how many people dig it."
+            )
+        })
+}
+
 /// **What this row runs on when the player names no kit** — the herd's own default for a Hunt on a
 /// resolvable quarry, the job's default for everything else.
 ///
@@ -5618,6 +5647,10 @@ fn handle_assign_labor(
     // so `workers == 0` is its ordinary shape and the migratory check must still run.
     if workers > 0 || target.is_need_row() || target.is_staffed() {
         if let Err(reason) = validate_labor_policy(app, faction, &target) {
+            emit_command_failure(app, event_kind, faction, reason);
+            return;
+        }
+        if let Some(reason) = never_renewing_dig_without_a_count(app, &target, workers) {
             emit_command_failure(app, event_kind, faction, reason);
             return;
         }
@@ -30105,6 +30138,42 @@ mod tests {
                 .is_empty(),
             "the row must not exist at all — a refusal, not a clamped assignment"
         );
+    }
+
+    /// **A SEAM THAT NEVER RENEWS IS DUG BY A COUNT, AND NO COUNT IS REFUSED BY NAME.** Stone on a
+    /// rock body regrows nothing, so the sim has no regrowth to size its crew against and a row with
+    /// no Max would staff nobody forever while reading "(no max)". The command refuses it; a Max of
+    /// one or more lands.
+    ///
+    /// Falsified by removing the refusal: the `0` command then lands a row and this fails.
+    #[test]
+    fn a_never_renewing_dig_with_no_count_is_refused_and_a_count_is_not() {
+        let mut app = build_test_app();
+        let faction = FactionId(0);
+        let tile = seed_deposit_grid(&mut app, sim_runtime::TerrainType::AlpineMountain);
+        let band = spawn_idle_band(&mut app, faction, tile);
+        let rows = |app: &bevy::prelude::App| {
+            app.world
+                .get::<LaborAllocation>(band)
+                .expect("band has an allocation")
+                .assignments
+                .len()
+        };
+
+        assign_extract(&mut app, faction, WORKING, "stone", None, 0);
+        assert_eq!(
+            rows(&app),
+            0,
+            "no count on a seam that never renews lands no row"
+        );
+        assert!(
+            extraction_failure_contains(&app, "needs a digger count"),
+            "the refusal says what is missing: {:?}",
+            extraction_failure_reasons(&app)
+        );
+
+        assign_extract(&mut app, faction, WORKING, "stone", None, 1);
+        assert_eq!(rows(&app), 1, "a Max of one lands the row");
     }
 
     /// **STONE TAKES A FLOOR AT THE COMMAND BOUNDARY, AND ON A RATE-0 BODY IT IS INERT**

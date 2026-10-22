@@ -25,6 +25,11 @@ use crate::ground::GroundReadings;
 use crate::orchestrator::{Alarm, Plan};
 use crate::view::{row_key, SeatMemory, SeatView};
 
+/// The `assign_labor` role of the Roadwork pool, which a `stop_labor roadwork` ends.
+const ROLE_ROADWORK: &str = "roadwork";
+/// The `assign_labor` role of a deposit working, which a `stop_labor <x> <y> <material>` ends.
+const ROLE_EXTRACT: &str = "extract";
+
 /// A specialist's name, as the plan's budgets and the decision log key it.
 pub type SpecialistId = &'static str;
 pub const SPECIALIST_FOOD: SpecialistId = "food";
@@ -110,6 +115,42 @@ impl Cost {
                     target_y.unwrap_or_default(),
                     fauna_id.as_deref().unwrap_or_default(),
                 )),
+                // **A `stop_labor` ends the row it names, so it claims that row** under the key the
+                // `assign_labor` that sets the same row claims: a stop of row X and an assign on X
+                // in one turn would otherwise both pass arbitration and the later would silently
+                // undo the earlier. The shapes the roles above can name: the Roadwork pool, a
+                // herd (`hunt`), a working (`extract`) and a patch (`forage`).
+                CommandPayload::StopLabor {
+                    band_id: on,
+                    target_x,
+                    target_y,
+                    herd_id,
+                    material,
+                    branch: None,
+                    roadwork,
+                    ..
+                } => {
+                    let (kind, x, y, fauna) = if *roadwork {
+                        (ROLE_ROADWORK, 0, 0, "")
+                    } else if let Some(herd) = herd_id {
+                        (food::ROLE_HUNT, 0, 0, herd.as_str())
+                    } else if material.is_some() {
+                        (
+                            ROLE_EXTRACT,
+                            target_x.unwrap_or_default(),
+                            target_y.unwrap_or_default(),
+                            "",
+                        )
+                    } else {
+                        (
+                            food::ROLE_FORAGE,
+                            target_x.unwrap_or_default(),
+                            target_y.unwrap_or_default(),
+                            "",
+                        )
+                    };
+                    rows.push(row_key(*on, kind, x, y, fauna));
+                }
                 // A `build` on a bare tile declares on the patch the band forages there.
                 CommandPayload::BuildRung {
                     target_x: Some(target_x),
@@ -264,6 +305,35 @@ mod tests {
             },
             CommandPayload::Resync,
         ];
+        let stop = |target: Option<(u32, u32)>, herd: Option<&str>| CommandPayload::StopLabor {
+            faction_id: 1,
+            band_id: BAND,
+            target_x: target.map(|(x, _)| x),
+            target_y: target.map(|(_, y)| y),
+            herd_id: herd.map(str::to_owned),
+            material: None,
+            branch: None,
+            roadwork: false,
+        };
+        // **A stop claims the row an assign on the same source claims** (the arbitration key).
+        let stopped = Cost::claimed(
+            0,
+            BAND,
+            &[stop(Some((4, 2)), None), stop(None, Some("herd_1"))],
+        );
+        let assigned = Cost::claimed(
+            0,
+            BAND,
+            &[
+                labor("forage", Some(4), Some(2), None),
+                labor("hunt", None, None, Some("herd_1")),
+            ],
+        );
+        assert_eq!(stopped.rows, assigned.rows);
+        assert!(
+            !stopped.rows.is_empty(),
+            "liveness: a stop claims something"
+        );
         let cost = Cost::claimed(5, BAND, &commands);
         assert_eq!(cost.workers, 5);
         assert_eq!(cost.moves, vec![BAND]);

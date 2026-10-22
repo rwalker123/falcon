@@ -558,6 +558,72 @@ pub fn staff_rows<'a>(
     inputs.targets.into_iter().zip(staffed).collect()
 }
 
+/// **STAFF THE ROWS, THEN MAKE SURE NO HAND IS COMMITTED TWICE** - [`staff_rows`] sizes the pool as if
+/// every hand a staffed row holds were free, but the hands a far party loses (and the rejoining
+/// walkers a smaller row can no longer take back) leave the row and WALK HOME, and a walking hand is
+/// not free for the near row that was just given it. Applying the crews to a copy shows what is left
+/// committed once the walks exist; while that is more than the band has, one hand comes off the
+/// lowest-priority row that can lose it without shrinking a standing party (which would only cut
+/// more hands loose). The near row waits for the hands to arrive, and nothing is committed twice.
+///
+/// `lost_people` is the head count the band no longer has (discarded off the cut walks, never walked
+/// home), exactly as [`LaborAllocation::apply_staffing`] takes it.
+pub fn staff_rows_settled<'a>(
+    world: &'a StaffingWorld<'a>,
+    allocation: &LaborAllocation,
+    band_kit: &'a BandEquipment,
+    pool: u32,
+    available: u32,
+    bench_workers: u32,
+    lost_people: u32,
+) -> Vec<(LaborTarget, StaffedCrew)> {
+    let mut staffed = staff_rows(world, allocation, band_kit, pool, available);
+    loop {
+        let mut after = allocation.clone();
+        after.apply_staffing(staffed.clone(), lost_people);
+        let committed = after.assigned_total() + bench_workers + after.walking_home();
+        if committed <= available {
+            return staffed;
+        }
+        let standing = |target: &LaborTarget| -> u32 {
+            allocation
+                .assignments
+                .iter()
+                .find(|row| row.target.same_source(target))
+                .map_or(NOBODY, |row| {
+                    row.party
+                        .as_ref()
+                        .map_or(NOBODY, |party| party.workers)
+                        .max(allocation.rejoining_to(target))
+                })
+        };
+        let priority_of = |target: &LaborTarget| {
+            allocation
+                .assignments
+                .iter()
+                .find(|row| row.target.same_source(target))
+                .map_or(SourcePriority::default(), |row| row.priority)
+        };
+        let Some(at) = staffed
+            .iter()
+            .enumerate()
+            .filter(|(_, (target, crew))| crew.total() > standing(target))
+            .min_by_key(|(index, (target, _))| (priority_of(target), std::cmp::Reverse(*index)))
+            .map(|(index, _)| index)
+        else {
+            return staffed;
+        };
+        let crew = &mut staffed[at].1;
+        if crew.bare > NOBODY {
+            crew.bare -= 1;
+        } else if crew.kitted > NOBODY {
+            crew.kitted -= 1;
+        } else {
+            crew.keepers -= 1;
+        }
+    }
+}
+
 /// **THE NUMBER OF UNITS OF EACH ITEM ON THE SHELF WHEN THE BAND'S WORK IS PRICED AT "AS MANY AS IT
 /// WANTS"** — far above any crew a band fields, so no row is ever short of kit in that run, yet small
 /// enough that unit and head arithmetic in `u32` and `f32` stays exact.
@@ -1091,11 +1157,22 @@ fn with_band_staffing<R>(
 /// restaffs from the live state and is the authority. While the band's outfitting window is open it
 /// also refreshes the kit its work wants ([`WorkKitWants`]).
 pub fn restaff_band(world: &mut bevy::prelude::World, band: bevy::prelude::Entity) {
+    let bench_workers = world
+        .get::<crate::components::BandBench>(band)
+        .map_or(NOBODY, |bench| bench.workers);
     let Some(staffed) = with_band_staffing(
         world,
         band,
         |staffing_world, allocation, kit, pool, available| {
-            staff_rows(staffing_world, allocation, kit, pool, available)
+            staff_rows_settled(
+                staffing_world,
+                allocation,
+                kit,
+                pool,
+                available,
+                bench_workers,
+                NOBODY,
+            )
         },
     ) else {
         return;

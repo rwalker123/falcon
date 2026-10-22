@@ -6178,19 +6178,21 @@ pub fn advance_labor_allocation(
                     .as_deref()
                     .map_or(NO_CREW_ON_THIS_ACTIVITY, |bench| bench.workers),
             );
-            let staffed = crate::staffing::staff_rows(
-                &staffing_world,
-                &allocation,
-                &band_kit,
-                pool,
-                available,
-            );
             let hand_set_after =
                 allocation.assigned_total() + bench_hands(&bench) + allocation.walking_home();
             let shed_from_hand_set = hand_set_before.saturating_sub(hand_set_after);
             let lost_to_staffed = committed_before
                 .saturating_sub(available)
                 .saturating_sub(shed_from_hand_set);
+            let staffed = crate::staffing::staff_rows_settled(
+                &staffing_world,
+                &allocation,
+                &band_kit,
+                pool,
+                available,
+                bench_hands(&bench),
+                lost_to_staffed,
+            );
             allocation.apply_staffing(staffed, lost_to_staffed);
             site_crews.restate(&hands_before, &staffed_hands_by_source(&allocation));
         }

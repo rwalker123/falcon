@@ -48,6 +48,15 @@ need row keep the player's count.
 every crew the player set by hand (the rows that are not staffed). Rows are grouped by
 `SourcePriority`, High to Low.
 
+**No hand is committed twice** (`staffing::staff_rows_settled`, used by the turn and by
+`restaff_band`). A staffed row that loses hands to the staffing hands them to its party
+(`cut_crew` / `walk_home`), so they land on `homeward` after the pool was struck, and a walking hand
+is not free for the row that was just given it. The crews are applied to a copy and, while the
+hands committed (rows, bench, walkers) exceed the people the band has, one hand comes off the
+lowest-priority row whose crew is above the party already standing (a row cannot be shrunk below its
+party without cutting more hands loose). The near row waits for the walkers to arrive. Pinned by
+`work_party_caravan::a_far_party_the_staffing_shrinks_walks_its_cut_hands_home_and_commits_no_hand_twice`.
+
 **Within a priority group every pass deals ONE head at a time, round-robin**, across the group's rows
 that still want a head in that pass, until no row in the group wants one, the pool is empty or (for a
 kitted head) the shelf cannot arm one more; only then does the next lower group get that pass. Pass 1
@@ -122,7 +131,16 @@ shortfall the staffing left stays visible by item.
 unassign); `stop_labor <faction> <band> <source>` ends the row
 (`x y` | `herd_id` | `x y material` | `branch x y` | `roadwork`, `StopLaborCommand`, proto field 95).
 Both restaff the band immediately (`staffing::restaff_band`, then the assign-time seed), so the row
-reads its staffed crew before the next turn.
+reads its staffed crew before the next turn. `render_command_line` writes `stop_labor` in the
+parser's own shapes (a seat's `decisions.jsonl` / `commands.jsonl` line parses back), and the AI's
+`Cost::claimed` gives a stop the row key of the `assign_labor` that sets the same row, so a stop and
+an assign on one row cannot both pass arbitration in a turn.
+
+**A seam that never renews needs the player's count.** The sim sizes a staffed extract row from the
+deposit's regrowth; stone on a rock body regrows nothing, so its crew is the Max in heads and
+`assign_labor` with no Max on it is refused by name (`never_renewing_dig_without_a_count`: *a stone
+dig needs a digger count*) rather than landing a row that staffs nobody. A Max of one or more
+lands. Pinned by `server::tests::a_never_renewing_dig_with_no_count_is_refused_and_a_count_is_not`.
 
 **Wire** (`LaborAssignment`, appended): `maxWorkers` (`0` = no Max), `holdCrew`, `reachCrew`,
 `usefulCrew` (pass 3's ceiling, keepers included, after the Max), `keepersStaffed`, `kittedStaffed`, `bareStaffed` (the last three sum to `workers` on a staffed row).
@@ -660,7 +678,10 @@ them; they rejoin only as they arrive) and `work_party::tests::a_deep_cut_turns_
 > included — down to the people it still has, so every hand it removes is one the band **no longer
 > has**. Sending those hands home would list them on `homeward`, count them against the pool next
 > turn and fire the shed again on the hands it had just shed: a far row of six losing two people
-> would go 6 → 4 → 2 → 0. **A staffed row is not shed at all** (#871): its hands are zeroed before the
+> would go 6 → 4 → 2 → 0. **Each hand the shed takes settles only the row it came off**
+> (`settle_rejoining_on`): a staffed row is zeroed ahead of the shed, so a sweep over every source
+> would read its rejoining walkers as excess and discard them, cargo and all, for a hand taken off a
+> scout. **A staffed row is not shed at all** (#871): its hands are zeroed before the
 > shed walks and refilled from the smaller pool after it, so only the hand-set crews (Scout, Warrior,
 > Builders, a need row's muster) are trimmed; the hands a staffed row's party loses to the smaller pool
 > are discarded the same way (`apply_staffing`'s `lost_people`). So a row the shed **trims** reaches `post_a_party` below its party's crew

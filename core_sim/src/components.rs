@@ -6928,35 +6928,43 @@ impl LaborAllocation {
             }
         }
         for source in sources {
-            let held = self
-                .assignments
+            self.settle_rejoining_on(&source, excess);
+        }
+    }
+
+    /// [`Self::settle_rejoining`] for ONE source - the starvation shed's step, which takes a hand off
+    /// one row and must settle that row's walkers and nobody else's: a staffed row is zeroed ahead of
+    /// the shed and refilled after it, so a sweep over every source would read each staffed row's
+    /// walkers as excess and discard them (with their cargo) for a hand taken off another row.
+    pub fn settle_rejoining_on(&mut self, source: &LaborTarget, excess: ExcessRejoining) {
+        let held = self
+            .assignments
+            .iter()
+            .find(|row| row.target.same_source(source))
+            .map_or(NO_CREW_ON_THIS_ACTIVITY, |row| row.workers);
+        loop {
+            let rejoining = self.rejoining_to(source);
+            if rejoining <= held {
+                break;
+            }
+            let over = rejoining - held;
+            let Some(at) = self
+                .homeward
                 .iter()
-                .find(|row| row.target.same_source(&source))
-                .map_or(NO_CREW_ON_THIS_ACTIVITY, |row| row.workers);
-            loop {
-                let rejoining = self.rejoining_to(&source);
-                if rejoining <= held {
-                    break;
-                }
-                let over = rejoining - held;
-                let Some(at) = self
-                    .homeward
-                    .iter()
-                    .enumerate()
-                    .filter(|(_, walk)| walk.rejoins_row && walk.target.same_source(&source))
-                    .max_by_key(|(_, walk)| walk.turns_left)
-                    .map(|(at, _)| at)
-                else {
-                    break;
-                };
-                let mut cut = self.homeward[at].split_off(over);
-                if self.homeward[at].workers == NO_CREW_ON_THIS_ACTIVITY {
-                    self.homeward.remove(at);
-                }
-                if excess == ExcessRejoining::WalkHomePlain {
-                    cut.rejoins_row = crate::work_party::WALKS_PLAIN;
-                    self.homeward.push(cut);
-                }
+                .enumerate()
+                .filter(|(_, walk)| walk.rejoins_row && walk.target.same_source(source))
+                .max_by_key(|(_, walk)| walk.turns_left)
+                .map(|(at, _)| at)
+            else {
+                break;
+            };
+            let mut cut = self.homeward[at].split_off(over);
+            if self.homeward[at].workers == NO_CREW_ON_THIS_ACTIVITY {
+                self.homeward.remove(at);
+            }
+            if excess == ExcessRejoining::WalkHomePlain {
+                cut.rejoins_row = crate::work_party::WALKS_PLAIN;
+                self.homeward.push(cut);
             }
         }
     }
@@ -8066,7 +8074,7 @@ impl LaborAllocation {
                     }
                     // ⛔ Present hands go first, then rejoining walkers (the most `turns_left`
                     // first); a shed walker is discarded, as every hand the shed removes is.
-                    self.settle_rejoining(ExcessRejoining::Discard);
+                    self.settle_rejoining_on(&target, ExcessRejoining::Discard);
                     (ShedSubject::Row(target), remaining)
                 }
                 // ⛔ **NEVER `remove_order`** — that forfeits the drawn pile. The queue, every
@@ -9182,6 +9190,44 @@ mod tests {
         );
         assert_eq!(allocation.workers_on(&LaborTarget::Warrior), 2);
         assert_eq!(allocation.assignments[0].workers, 3, "the gathering stands");
+    }
+
+    /// **SHEDDING ONE HAND TOUCHES ONLY THE ROW IT CAME OFF.** A staffed row is zeroed ahead of the
+    /// shed (it is refilled after), so its rejoining walkers read as excess to any sweep over every
+    /// source; the shed settles the shed row's walkers alone, and a staffed row's walk, with its
+    /// cargo, survives a hand taken off a scout.
+    #[test]
+    fn shedding_a_hand_leaves_a_staffed_rows_rejoining_walkers_alone() {
+        const WALKERS: u32 = 2;
+        const CARGO: f32 = 5.0;
+        let mut staffed = staffed_forage(PATCH_A, 3);
+        staffed.workers = NO_CREW_ON_THIS_ACTIVITY;
+        let mut allocation = LaborAllocation {
+            assignments: vec![staffed, staffed_role(LaborTarget::Scout, 2)],
+            ..Default::default()
+        };
+        allocation.homeward.push(crate::work_party::HomewardWalk {
+            target: allocation.assignments[0].target.clone(),
+            workers: WALKERS,
+            turns_left: 3,
+            walk_turns: 3,
+            cargo: CARGO,
+            classes: Default::default(),
+            goods: Default::default(),
+            rejoins_row: crate::work_party::WALKS_BACK_TO_ITS_ROW,
+        });
+        let shed = allocation.normalize(None, 1, ShedFacts::default());
+        assert_eq!(
+            shed_targets(&shed),
+            vec![LaborTarget::Scout],
+            "liveness: the scout gave a hand"
+        );
+        assert_eq!(
+            allocation.rejoining_to(&allocation.assignments[0].target.clone()),
+            WALKERS,
+            "the staffed row's walkers were not discarded by a hand taken off the scout"
+        );
+        assert_eq!(allocation.homeward[0].cargo, CARGO, "...nor their cargo");
     }
 
     /// **STEP 2 — A WARRIOR GIVES WHILE NOTHING THREATENS THE BAND**, ahead of a keeper the bill does

@@ -3214,3 +3214,90 @@ fn a_slow_stone_dig_is_conserved_and_lands_only_when_a_pack_fills() {
         "liveness: {DIG_TURNS} turns of digging fill a pack and land it"
     );
 }
+
+// ---------------------------------------------------------------------------------------------
+// A STAFFING THAT SHRINKS A FAR PARTY NEVER COMMITS A HAND TWICE
+// ---------------------------------------------------------------------------------------------
+
+/// The near row's Max in the shrink scenario.
+const NEAR_ROW_MAX: u32 = 3;
+
+/// **A far party the staffing shrinks walks the hands it loses home, and those hands are not handed
+/// to the row that caused the cut.** A band of six works a far wood with all six; the player then
+/// adds a `High` near wood. Staffing shrinks the far party, the cut hands WALK HOME with their share
+/// of the load, and the near row waits for them: committed hands (rows, bench, walkers) never pass
+/// the people the band has, and next turn nothing is discarded as "lost".
+#[test]
+fn a_far_party_the_staffing_shrinks_walks_its_cut_hands_home_and_commits_no_hand_twice() {
+    let (mut app, band) = world_extracting_at(8, None);
+    // Staff the far row at the whole band.
+    resolve_a_turn(&mut app);
+    resolve_a_turn(&mut app);
+    let far_before = extract_party(&app, band)
+        .expect("a far working posts a party")
+        .workers;
+    assert_eq!(
+        far_before, CREW,
+        "precondition: the far party holds the whole band"
+    );
+
+    // The near, High-ranked wood the player adds.
+    let near_tile = UVec2::new(CAMP.x + INSIDE_THE_APRON, CAMP.y);
+    let entity = app
+        .world
+        .resource::<TileRegistry>()
+        .index(near_tile.x, near_tile.y)
+        .expect("the near tile is on the map");
+    app.world
+        .get_mut::<core_sim::Tile>(entity)
+        .expect("a map tile carries terrain")
+        .terrain = WOODED;
+    {
+        let mut allocation = app
+            .world
+            .get_mut::<LaborAllocation>(band)
+            .expect("the band keeps its allocation");
+        allocation.assignments.push(LaborAssignment {
+            party: None,
+            muster_crew: 0,
+            planned_crew: 0,
+            max_workers: Some(NEAR_ROW_MAX),
+            staffing: Default::default(),
+            target: LaborTarget::Extract {
+                tile: near_tile,
+                material: WOOD.to_string(),
+                floor: FLOOR,
+            },
+            workers: 0,
+            kit: None,
+            priority: SourcePriority::High,
+        });
+        // The far row is capped below the band so the staffing has to cut it.
+        allocation.assignments[0].max_workers = Some(CREW - NEAR_ROW_MAX);
+    }
+    core_sim::staffing::restaff_band(&mut app.world, band);
+
+    let committed = |app: &App| {
+        let allocation = app.world.get::<LaborAllocation>(band).unwrap();
+        allocation.assigned_total() + allocation.walking_home()
+    };
+    let allocation = app.world.get::<LaborAllocation>(band).unwrap();
+    assert!(
+        allocation.walking_home() > 0,
+        "liveness: the shrunk party's cut hands are walking home"
+    );
+    assert!(
+        committed(&app) <= CREW,
+        "{} hands committed (rows {} + walking {}) for {CREW} people",
+        committed(&app),
+        allocation.assigned_total(),
+        allocation.walking_home()
+    );
+    // Next turn nothing is discarded: the walkers are still accounted for.
+    resolve_a_turn(&mut app);
+    assert!(
+        committed(&app) <= CREW,
+        "after the turn: {} committed for {CREW}",
+        committed(&app)
+    );
+}

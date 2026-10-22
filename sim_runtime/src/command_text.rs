@@ -1194,7 +1194,7 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
             let tail: Vec<&str> = parts.collect();
             let faction_id = parse_u32(faction_str, "stop_labor faction")?;
             let band_id = parse_u64(band_str, "stop_labor band")?;
-            if tail.len() == 1 && tail[0].eq_ignore_ascii_case("roadwork") {
+            if tail.len() == 1 && tail[0].eq_ignore_ascii_case(ROADWORK_TOKEN) {
                 return Ok(CommandPayload::StopLabor {
                     faction_id,
                     band_id,
@@ -2506,6 +2506,9 @@ struct SiteSourceTokens {
 /// The prefix of the `branch=<id>` token a `build` line may end with.
 const BRANCH_TOKEN_PREFIX: &str = "branch=";
 
+/// The lone `stop_labor` token naming the Roadwork pool (a herd id is never spelled that).
+const ROADWORK_TOKEN: &str = "roadwork";
+
 /// ⛔ **WHICH SOURCE A QUEUE VERB NAMES** (`docs/plan_site_crews.md` §2.4) - every one of them:
 /// `abandon`, `unqueue`, `build_order`, `work_priority`, `build_priority`. The tile-or-herd grammar
 /// ([`parse_build_source`]) widened by the two sources a tile alone cannot name:
@@ -2848,6 +2851,41 @@ pub fn render_command_line(payload: &CommandPayload) -> String {
             }
             if *move_with_herd {
                 line.push_str(&format!(" {FOLLOW_HERD_TOKEN}"));
+            }
+            line
+        }
+        // **`stop_labor` in the parser's own source shapes** (#871): `roadwork`, `branch=<id>` (a band
+        // improvement, the band riding `herd_id` ahead of it where it is named), `<branch> x y`, `x y
+        // material`, `x y` or a herd id - the exact inverse of the `stop_labor` arm of
+        // [`parse_command_line`], so the run records read it as an operator would type it.
+        CommandPayload::StopLabor {
+            faction_id,
+            band_id,
+            target_x,
+            target_y,
+            herd_id,
+            material,
+            branch,
+            roadwork,
+        } => {
+            let mut line = format!("stop_labor {faction_id} {band_id}");
+            let tile = target_x.zip(*target_y);
+            if *roadwork {
+                line.push_str(&format!(" {ROADWORK_TOKEN}"));
+            } else if let (Some(branch), Some((x, y))) = (branch, tile) {
+                line.push_str(&format!(" {branch} {x} {y}"));
+            } else if let Some(branch) = branch {
+                if let Some(band) = herd_id {
+                    line.push_str(&format!(" {band}"));
+                }
+                line.push_str(&format!(" {BRANCH_TOKEN_PREFIX}{branch}"));
+            } else if let Some((x, y)) = tile {
+                line.push_str(&format!(" {x} {y}"));
+                if let Some(material) = material {
+                    line.push_str(&format!(" {material}"));
+                }
+            } else if let Some(herd) = herd_id {
+                line.push_str(&format!(" {herd}"));
             }
             line
         }
@@ -3639,6 +3677,60 @@ mod tests {
             parse_command_line("extend_pen 0 7"),
             Err(CommandParseError::MissingArgument("target_y"))
         ));
+    }
+
+    /// **`stop_labor` renders in the grammar the parser reads, for every source shape**, so a seat's
+    /// `decisions.jsonl` / `commands.jsonl` line is not the `Debug` fallback.
+    #[test]
+    fn stop_labor_renders_to_the_line_that_parses_back_for_every_source_shape() {
+        let stop = |target: Option<(u32, u32)>,
+                    herd: Option<&str>,
+                    material: Option<&str>,
+                    branch: Option<&str>,
+                    roadwork: bool| CommandPayload::StopLabor {
+            faction_id: 1,
+            band_id: 7,
+            target_x: target.map(|(x, _)| x),
+            target_y: target.map(|(_, y)| y),
+            herd_id: herd.map(str::to_owned),
+            material: material.map(str::to_owned),
+            branch: branch.map(str::to_owned),
+            roadwork,
+        };
+        for (payload, expected) in [
+            (
+                stop(Some((4, 9)), None, None, None, false),
+                "stop_labor 1 7 4 9",
+            ),
+            (
+                stop(None, Some("game_deer_3"), None, None, false),
+                "stop_labor 1 7 game_deer_3",
+            ),
+            (
+                stop(Some((4, 9)), None, Some("wood"), None, false),
+                "stop_labor 1 7 4 9 wood",
+            ),
+            (
+                stop(Some((4, 9)), None, None, Some("route"), false),
+                "stop_labor 1 7 route 4 9",
+            ),
+            (
+                stop(None, None, None, None, true),
+                "stop_labor 1 7 roadwork",
+            ),
+            (
+                stop(None, None, None, Some("rack"), false),
+                "stop_labor 1 7 branch=rack",
+            ),
+        ] {
+            let line = render_command_line(&payload);
+            assert_eq!(line, expected);
+            assert_eq!(
+                parse_command_line(&line).unwrap_or_else(|err| panic!("`{line}`: {err}")),
+                payload,
+                "`{line}`"
+            );
+        }
     }
 
     #[test]
