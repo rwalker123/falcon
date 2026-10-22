@@ -121,6 +121,7 @@ command center**: shown whenever ≥1 player band exists, always displaying a
   it, it draws a head-and-shoulders silhouette (circle head, half-ellipse shoulders) in the band's
   faction map colour (`MapView.faction_color`, as `FactionMark` does) on a `GROUND_2` ground with a thin
   `LINE` frame; `empty` drops the silhouette to `EMPTY_ALPHA` and the frame to `EMPTY_FRAME_ALPHA`.
+  The art's generation prompt and post-processing steps are in `assets/portraits/portrait_prompts.txt`.
   Harness frames `leader_partial`, `leader_empty`, `leader_chief`, `leader_council`
   in `band_expedition` dock the panel RIGHT on the BAND tab and assert, per frame: the block exists once,
   is the first child of the vitals' own container and precedes the vitals, the vitals label holds no
