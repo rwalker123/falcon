@@ -503,7 +503,10 @@ pub fn calculate_visibility(
                         // **A band-wide role stands on no tile of its own**: the road keepers hold
                         // what the band keeps, and the builders work the queue head.
                         | LaborTarget::Roadwork
-                        | LaborTarget::Builders => None,
+                        | LaborTarget::Builders
+                        // **A band improvement stands at the camp**, which the band's own presence
+                        // already reveals.
+                        | LaborTarget::Band { .. } => None,
                     };
                     // A Forage assignment carries raw command-supplied coords (see
                     // `handle_assign_labor`), so guard the bounds before pushing — an OOB tile
@@ -1403,6 +1406,7 @@ mod tests {
                     last_food_need: 0.0,
                     fed_party_workers: Default::default(),
                     last_food_spoiled: 0.0,
+                    last_food_kept: 0.0,
                     last_turn_food_transfers: Default::default(),
                     last_turn_fodder_transfers: Default::default(),
                     last_turn_transfer_crossings: Vec::new(),
@@ -1513,6 +1517,7 @@ mod tests {
                 last_food_need: 0.0,
                 fed_party_workers: Default::default(),
                 last_food_spoiled: 0.0,
+                last_food_kept: 0.0,
                 last_turn_food_transfers: Default::default(),
                 last_turn_fodder_transfers: Default::default(),
                 last_turn_transfer_crossings: Vec::new(),
@@ -2203,6 +2208,7 @@ mod hex_sight_range_tests {
             last_food_need: 0.0,
             fed_party_workers: Default::default(),
             last_food_spoiled: 0.0,
+            last_food_kept: 0.0,
             last_turn_food_transfers: Default::default(),
             last_turn_fodder_transfers: Default::default(),
             last_turn_transfer_crossings: Vec::new(),

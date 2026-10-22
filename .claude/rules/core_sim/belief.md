@@ -127,7 +127,7 @@ higher), because that is the band the turn orb's row jumps to; label `A gatherin
 sides were in contact, so each is told; fog does not gate it.
 
 **The Telling.** `GatheringLedger` (`connections.rs`) holds a cumulative per-people count of
-gatherings; it is checkpoint state (`SimState::gatherings`, `SAVE_FORMAT_VERSION` 48, classified in
+gatherings; it is checkpoint state (`SimState::gatherings`, `SAVE_FORMAT_VERSION` 52, classified in
 `sim_state_coverage.rs`). The signal `gatherings.held_this_turn` is its diff against last turn's total
 (`telling.md`), and the `belief.gathering_held` beat rides it.
 

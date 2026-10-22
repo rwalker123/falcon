@@ -1592,6 +1592,66 @@ table PopulationCohortState {
   // The treaty terms an envoy party (`expeditionMission` "envoy") will post on arrival. Empty on
   // every other row.
   envoyTerms:TreatyTermsState;
+
+  // --- A BAND'S LEADER (appended last, #859) ---------------------------------------------------
+  // The leader a band accepted after directed work succeeded often enough (`core_sim::leadership`).
+  // Own bands only: a foreign (redacted) row carries the defaults. `leaderName` is the chief's name,
+  // or the speaker's name for a council; empty with no leader.
+  leaderName:string;
+  // 0 = no leader yet, 1 = chief, 2 = elders' council.
+  leaderKind:ubyte = 0;
+  // Practice banked toward a leader, and the practice a leader emerges at (`practice_threshold`), so
+  // the client can say "N of M" without a config of its own. Practice stops growing once there is a
+  // leader.
+  leadershipPractice:float = 0;
+  leadershipThreshold:float = 0;
+  // `leadershipPractice` split by source, so the client can draw the bar as a split bar. They sum to
+  // `leadershipPractice`.
+  leadershipFromBuilds:float = 0;
+  leadershipFromSplits:float = 0;
+  leadershipFromHerd:float = 0;
+  leadershipFromStages:float = 0;
+  // --- BAND IMPROVEMENTS (appended last, #708) --------------------------------------------------
+  // The improvements THIS BAND holds at its camp and carries with it (a `band`-kind branch's rung:
+  // the drying rack). One row per branch the band has a crew row on or holds a rung of, in branch
+  // order. Own bands only: a foreign (redacted) row carries the default (empty).
+  bandImprovements:[BandImprovementState];
+}
+
+// ONE IMPROVEMENT A BAND HOLDS ON A BAND-KIND BRANCH - a row of `PopulationCohortState.bandImprovements`,
+// `TileImprovementState`'s shape with the tile taken away (the band IS the key). Appended last.
+table BandImprovementState {
+  // The band-kind branch id the improvement is on.
+  branch:string;
+  // The rung it HOLDS, `<branch>:<id>`. Read this string, not a threshold on a meter.
+  currentRung:string;
+  // The rung the builders' head entry is raising it to, `<branch>:<id>`, "" where nothing is queued.
+  buildDestinationRung:string;
+  // The legs still to lay on the way to `buildDestinationRung`, in climb order - `BuildLegState`.
+  buildLegs:[BuildLegState];
+  // The head build's countdown, the same vocabulary as `RouteState.buildTurnsRemaining`
+  // (-1 no estimate, -2 holding, -3 rotting, -4 blocked, -5 not yet estimated).
+  buildTurnsRemaining:int = -1;
+  // Why the head build is stuck ("" when it is not) - a `BuildGate` key.
+  buildBlockedReason:string;
+  // THIS TURN'S KEEPING BILL, STAMPED: `upkeepDemand - upkeepSupplied == upkeepShortfall` verbatim.
+  upkeepDemand:float = 0;
+  upkeepSupplied:float = 0;
+  upkeepShortfall:float = 0;
+  // Consecutive turns the bill went short, and what is left of the at-risk rung's grace (read
+  // `hasNeglectGrace` first: a rung that declares no upkeep has no grace to run down).
+  neglectTurns:uint = 0;
+  hasNeglectGrace:bool = false;
+  neglectGraceRemaining:uint = 0;
+  // Whole hands the stamped bill calls for at the bare rate, and how many of the crew's hands the
+  // keeping took this turn (fractional).
+  upkeepWorkersNeeded:uint = 0;
+  upkeepHands:float = 0;
+  // Whether the keeping crew's tool claim was filled less than in full, and the tools it claimed.
+  upkeepToolsShort:bool = false;
+  upkeepToe:[KitToeLine];
+  // Whether this band has a build queued on this improvement.
+  isQueued:bool = false;
 }
 
 // An amount of one material: a recipe input per PASS (the bench's material efficiency already
@@ -1631,6 +1691,10 @@ table KitNeedItem {
   // Whole units still missing on those lines BEFORE the bench's queue nets them - the same figure
   // Make Next starts its count from. The reader nets `queued`. Appended last.
   short:uint;
+  // Whole units of the item parked on the bench's finished list - made this turn, stocked at the top
+  // of the next. A pure readout: `queued` already INCLUDES them (the netting figure is unchanged), so
+  // the reader subtracts to tell "still to make" from "arriving next turn". Appended last.
+  finished:uint;
 }
 
 table KitNeedRecipe {

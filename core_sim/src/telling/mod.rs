@@ -40,6 +40,7 @@ use bevy::{ecs::system::SystemParam, prelude::*};
 use tracing::info;
 
 use crate::components::BandId;
+use crate::leadership::BandLeadership;
 use crate::{
     components::{LaborAllocation, PopulationCohort, ResidentBand, Tile},
     connections::GatheringLedger,
@@ -76,10 +77,7 @@ pub use signals::{registered_signals, SignalId, SignalSample};
 
 use nouns::NounContext;
 use predicate::EvalContext;
-use signals::{
-    discovered_total_from, format_gloss_value, gatherings_total_from, sample_signals, BandView,
-    SignalSources, GATHERINGS_HELD_TOTAL_KEY, SITES_DISCOVERED_TOTAL_KEY,
-};
+use signals::{format_gloss_value, sample_signals, BandView, CumulativeTotals, SignalSources};
 
 /// Persistent narrative memory: what has fired, what the signals read last turn, and which
 /// dressings are stale. `BTreeMap`/`BTreeSet` throughout for deterministic iteration and stable
@@ -515,24 +513,12 @@ impl BeatLedger {
 
     /// Store this turn's samples as *next* turn's `prev`. Called **after** evaluation, so the
     /// edge machinery always compares against the previous turn.
-    fn commit_edge_state(
-        &mut self,
-        sample: &SignalSample,
-        discovered_total: f64,
-        gatherings_total: f64,
-    ) {
+    fn commit_edge_state(&mut self, sample: &SignalSample, totals: &CumulativeTotals) {
         for (signal, value) in sample.iter() {
             self.edge_state
                 .insert(signal.clone(), Scalar::from_f32(*value as f32));
         }
-        self.edge_state.insert(
-            SITES_DISCOVERED_TOTAL_KEY.to_string(),
-            Scalar::from_f32(discovered_total as f32),
-        );
-        self.edge_state.insert(
-            GATHERINGS_HELD_TOTAL_KEY.to_string(),
-            Scalar::from_f32(gatherings_total as f32),
-        );
+        totals.commit(&mut self.edge_state);
     }
 
     // --- snapshot round-trip -------------------------------------------------------------
@@ -814,18 +800,17 @@ pub struct TellingSources<'w, 's> {
     pub sites_config: Res<'w, SitesConfigHandle>,
     pub culture: Res<'w, CultureManager>,
     /// Resident bands only — a detached expedition's larder is not the people's larder.
-    pub cohorts: Query<
-        'w,
-        's,
-        (
-            &'static BandId,
-            &'static PopulationCohort,
-            Option<&'static LaborAllocation>,
-        ),
-        With<ResidentBand>,
-    >,
+    pub cohorts: Query<'w, 's, TellingBandParts, With<ResidentBand>>,
     pub tiles: Query<'w, 's, &'static Tile>,
 }
+
+/// What the Telling reads of each resident band: its id, people, labor orders and leadership.
+type TellingBandParts = (
+    &'static BandId,
+    &'static PopulationCohort,
+    Option<&'static LaborAllocation>,
+    Option<&'static BandLeadership>,
+);
 
 /// Render one register-keyed copy block for **every** configured register, falling back to
 /// `fallback` for a register the content omits (validated present for the default register; a
@@ -892,18 +877,18 @@ pub fn telling_tick(
     let bands: Vec<BandView<'_>> = sources
         .cohorts
         .iter()
-        .filter(|(_, cohort, _)| cohort.faction == faction)
-        .map(|(band, cohort, labor)| BandView {
+        .filter(|(_, cohort, _, _)| cohort.faction == faction)
+        .map(|(band, cohort, labor, leadership)| BandView {
             band: *band,
             cohort,
             labor,
+            leadership,
         })
         .collect();
 
     // 1. Sample every signal once, into a consistent snapshot.
-    let previous_discovered_total = discovered_total_from(&ledger.edge_state);
-    let previous_gatherings_total = gatherings_total_from(&ledger.edge_state);
-    let (sample, discovered_total, gatherings_total) = sample_signals(&SignalSources {
+    let previous = CumulativeTotals::from_edge_state(&ledger.edge_state);
+    let (sample, totals) = sample_signals(&SignalSources {
         faction,
         tick: &sources.tick,
         sedentarization: &sources.sedentarization,
@@ -913,8 +898,7 @@ pub fn telling_tick(
         herds: &sources.herds,
         culture: &sources.culture,
         bands: &bands,
-        previous_discovered_total,
-        previous_gatherings_total,
+        previous,
     });
 
     // The stance axes are readable signals too (`stance.<axis>`), so they must be in the sample
@@ -1228,7 +1212,7 @@ pub fn telling_tick(
 
     // Store this turn's samples as next turn's `prev` — **after** evaluation, so `crosses`
     // always compares against the previous turn.
-    ledger.commit_edge_state(&sample, discovered_total, gatherings_total);
+    ledger.commit_edge_state(&sample, &totals);
 }
 
 #[cfg(test)]
@@ -1251,7 +1235,13 @@ mod tests {
             ("provisions.total".to_string(), 120.5),
         ]);
         ledger.push_history(&sample, 16);
-        ledger.commit_edge_state(&sample, 2.0, 0.0);
+        ledger.commit_edge_state(
+            &sample,
+            &CumulativeTotals {
+                discovered_sites: 2.0,
+                gatherings_held: 3.0,
+            },
+        );
 
         // The fork tier's half: what is on the table, what was decided, and what re-arms.
         ledger.push_pending_fork(PendingFork {
@@ -1369,8 +1359,17 @@ mod tests {
     #[test]
     fn edge_state_carries_the_cumulative_discovery_total_but_not_as_a_signal() {
         let mut ledger = BeatLedger::default();
-        ledger.commit_edge_state(&SignalSample::default(), 4.0, 0.0);
-        assert_eq!(discovered_total_from(&ledger.edge_state), 4.0);
-        assert!(!signals::is_registered_signal(SITES_DISCOVERED_TOTAL_KEY));
+        let totals = CumulativeTotals {
+            discovered_sites: 4.0,
+            gatherings_held: 3.0,
+        };
+        ledger.commit_edge_state(&SignalSample::default(), &totals);
+        assert_eq!(
+            CumulativeTotals::from_edge_state(&ledger.edge_state),
+            totals
+        );
+        assert!(!signals::is_registered_signal(
+            signals::SITES_DISCOVERED_TOTAL_KEY
+        ));
     }
 }

@@ -113,6 +113,10 @@ const KIND_GATHERING := "gathering_held"
 const KIND_OPENING_LOADOUT := "opening_loadout"
 # The same window, warning that the kits held do not cover the assigned work. Same pennant.
 const KIND_LOADOUT_KIT_SHORT := "loadout_kit_short"
+# A band gained a chief or an elders' council this turn (#859).
+const KIND_LEADER_EMERGED := "leader_emerged"
+# A herd the player's bands hunt has dropped into the stressed / collapsing band.
+const KIND_HERD_THINNING := "herd_thinning"
 const KIND_ICON := {
 	KIND_IDLE_WORKERS: "🛠",
 	KIND_STARVING: "🍖",
@@ -136,6 +140,8 @@ const KIND_ICON := {
 	KIND_KNOWLEDGE_LEARNED: HudKnowledgeVocab.LAUNCH_GLYPH,
 	KIND_OPENING_LOADOUT: "⚑",
 	KIND_LOADOUT_KIT_SHORT: "⚑",
+	KIND_LEADER_EMERGED: "★",
+	KIND_HERD_THINNING: "▽",
 }
 const KIND_ICON_FALLBACK := "●"
 ## Kind → BUNDLED-ART mark id, resolved through `HudSprites`. A kind listed here draws a `TextureRect`

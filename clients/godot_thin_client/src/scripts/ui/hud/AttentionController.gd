@@ -73,6 +73,12 @@ var _handoff_turn: int = -1
 ## silently collapse two bands that finished the same rung with the same crew size on the same tile.
 var _handoff_seqs: Dictionary = {}
 
+## **THE LEADERS THAT EMERGED THIS TURN** (#859) -- `{band_id, kind, name}`, ingested off the same
+## command stream and held under the SAME rules as `_handoffs`: windowed on the event's own `tick`,
+## de-duplicated on `seq` (the set above -- `seq` is global, so one set serves both), dropped whole
+## when the turn changes. ONE per band. After a load there is no event for an old chief, so no row.
+var _leaders: Array[Dictionary] = []
+
 func _init(band_labor: HudBandLaborState, bandpanel: BandPanelController,
         herd_label_for_id: Callable) -> void:
     _band_labor = band_labor
@@ -178,6 +184,7 @@ func ingest_command_events(events_variant: Variant, turn: int) -> void:
     if turn != _handoff_turn:
         _handoffs.clear()
         _gatherings.clear()
+        _leaders.clear()
         _handoff_seqs.clear()
         _handoff_turn = turn
     for entry_variant in events_variant:
@@ -198,6 +205,9 @@ func ingest_command_events(events_variant: Variant, turn: int) -> void:
                 "detail": detail.strip_edges(),
                 "band_id": int(entry.get(EVENT_BAND_KEY, HudConst.NO_BAND_ID)),
             })
+            continue
+        if String(entry.get("kind", "")) == HudAttentionVocab.LEADER_EVENT_KIND:
+            _ingest_leader_event(entry, detail)
             continue
         if not detail.contains(HANDOFF_ACTION_TOKEN):
             continue
@@ -258,6 +268,73 @@ func _gathering_attention() -> Array:
             "detail": String(gathering["detail"]),
             "x": x, "y": y,
         })
+    return items
+
+## Hold one `leader_emerged` event for the turn (#859). The tick filter and the `seq` de-dup are the
+## hand-off's, for the same reasons (a full snapshot re-ships the whole ring; a recapture delta
+## re-ships the turn). A row carrying a faction must be the player's. The kind and name come off the
+## detail (`kind=chief name=Ash`); a band is held once.
+func _ingest_leader_event(entry: Dictionary, detail: String) -> void:
+    if int(entry.get(HANDOFF_TICK_KEY, HANDOFF_TICK_NONE)) != _handoff_turn - RESOLUTION_TICK_LAG:
+        return
+    if entry.has("faction") and int(entry["faction"]) != HudConst.PLAYER_FACTION_ID:
+        return
+    var band_id := int(entry.get("band", HudConst.NO_BAND_ID))
+    if band_id == HudConst.NO_BAND_ID:
+        return
+    var seq := int(entry.get(HANDOFF_SEQ_KEY, HANDOFF_SEQ_UNSEQUENCED))
+    if seq != HANDOFF_SEQ_UNSEQUENCED:
+        if _handoff_seqs.has(seq):
+            return
+        _handoff_seqs[seq] = true
+    for held in _leaders:
+        if int(held["band_id"]) == band_id:
+            return
+    var kind := HudAttentionVocab.LEADER_KIND_CHIEF
+    var kind_at := detail.find(HudAttentionVocab.LEADER_DETAIL_KIND_TOKEN)
+    if kind_at >= 0:
+        var kind_word := detail.substr(
+            kind_at + HudAttentionVocab.LEADER_DETAIL_KIND_TOKEN.length()).get_slice(" ", 0)
+        if kind_word == HudAttentionVocab.LEADER_DETAIL_KIND_COUNCIL:
+            kind = HudAttentionVocab.LEADER_KIND_COUNCIL
+    var leader_name := ""
+    var name_at := detail.find(HudAttentionVocab.LEADER_DETAIL_NAME_TOKEN)
+    if name_at >= 0:
+        leader_name = detail.substr(
+            name_at + HudAttentionVocab.LEADER_DETAIL_NAME_TOKEN.length()).strip_edges()
+    _leaders.append({"band_id": band_id, "kind": kind, "name": leader_name})
+
+## Turn-orb items for the bands that gained a leader this turn (#859). `info` news, located on the
+## band's CURRENT tile (so it wears `Jump →`). The band is found in THIS snapshot's roster; a band
+## not in it (not ours, or gone) raises nothing. When the event named no leader, the band's own
+## cohort (`leader_kind` / `leader_name`) supplies the kind and name.
+func _leader_emerged_attention(player_bands: Array) -> Array:
+    var items: Array = []
+    for held in _leaders:
+        for band_variant in player_bands:
+            if not (band_variant is Dictionary):
+                continue
+            var band: Dictionary = band_variant
+            if int(band.get("band_id", HudConst.NO_BAND_ID)) != int(held["band_id"]):
+                continue
+            var kind := int(held["kind"])
+            var leader_name := String(held["name"])
+            if leader_name == "":
+                leader_name = String(band.get("leader_name", ""))
+                kind = int(band.get("leader_kind", kind))
+            var council := kind == HudAttentionVocab.LEADER_KIND_COUNCIL
+            var band_name := HudFormat.band_name(band)
+            items.append({
+                "kind": HudAttentionVocab.ATTENTION_KIND_LEADER_EMERGED,
+                "owner": int(band.get("entity", OWNER_NONE)),
+                "severity": HudAttentionVocab.ATTENTION_SEVERITY_INFO,
+                "label": (HudAttentionVocab.ATTENTION_LEADER_COUNCIL_LABEL_FORMAT if council
+                    else HudAttentionVocab.ATTENTION_LEADER_CHIEF_LABEL_FORMAT) % band_name,
+                "detail": (HudAttentionVocab.ATTENTION_LEADER_COUNCIL_DETAIL_FORMAT if council
+                    else HudAttentionVocab.ATTENTION_LEADER_CHIEF_DETAIL_FORMAT) % leader_name,
+                "x": int(band.get("current_x", -1)), "y": int(band.get("current_y", -1)),
+            })
+            break
     return items
 
 ## Turn-orb items for the builds that finished this turn and moved their crew (Producer 8) — the
@@ -345,6 +422,39 @@ static func knowledge_attention(nodes: Array) -> Array:
         })
     return items
 
+## Producer 3's row for one band, or `{}` when nobody is idle. Its own function because the orb must be
+## able to refresh JUST these rows when a pending edit moves `people_idle` between snapshots
+## (`refresh_idle_rows`) without re-running producers that read pre-ingest state.
+func _idle_workers_row(entry: Dictionary) -> Dictionary:
+    var idle_workers := _band_labor.people_idle(entry)
+    if idle_workers <= 0:
+        return {}
+    return {
+        "kind": HudAttentionVocab.ATTENTION_KIND_IDLE_WORKERS,
+        "owner": int(entry.get("entity", -1)),
+        "severity": HudAttentionVocab.ATTENTION_SEVERITY_WARN,
+        "label": "%d idle worker%s" % [idle_workers, "" if idle_workers == 1 else "s"],
+        "detail": HudFormat.band_name(entry),
+        "x": int(entry.get("current_x", -1)), "y": int(entry.get("current_y", -1)),
+    }
+
+## The band half with every idle-workers row recomputed against the CURRENT pending overlay. A stepper
+## press changes `people_idle` but not the snapshot, and a full `build_band_attention` then would run
+## the losing-population producer against `prev_band_sizes` that ingest has already overwritten and so
+## drop those rows. Every row that is not an idle row passes through untouched.
+func refresh_idle_rows(attention: Array, player_bands: Array) -> Array:
+    var out: Array = []
+    for row_variant in attention:
+        if row_variant is Dictionary and String((row_variant as Dictionary).get("kind", "")) == HudAttentionVocab.ATTENTION_KIND_IDLE_WORKERS:
+            continue
+        out.append(row_variant)
+    for band_variant in player_bands:
+        if band_variant is Dictionary:
+            var row := _idle_workers_row(band_variant)
+            if not row.is_empty():
+                out.append(row)
+    return out
+
 func build_band_attention(player_bands: Array, player_expeditions: Array) -> Array:
     var attention: Array = []
     for i in player_bands.size():
@@ -391,19 +501,12 @@ func build_band_attention(player_bands: Array, player_expeditions: Array) -> Arr
             })
         # Producer 3 — idle labor: working-age workers unassigned (amber/warn). Supersedes
         # the old activity==idle alert (a worker count is more actionable than a state flag).
-        # Hands the next hunting-by-need muster takes are going out hunting, not idle: the band
-        # panel's Workforce head counts them as "out hunting", so the orb nets them out too.
-        var idle_workers := maxi(int(entry.get("idle_workers", 0))
-            - int(_band_labor.hunt_muster_out(entry)["idle"]), 0)
-        if idle_workers > 0:
-            attention.append({
-                "kind": HudAttentionVocab.ATTENTION_KIND_IDLE_WORKERS,
-                "owner": entity,
-                "severity": HudAttentionVocab.ATTENTION_SEVERITY_WARN,
-                "label": "%d idle worker%s" % [idle_workers, "" if idle_workers == 1 else "s"],
-                "detail": band_name,
-                "x": x, "y": y,
-            })
+        # The SAME idle the People bar and its idle card state (`HudBandLaborState.people_idle`:
+        # pending-aware, net of the hands the next hunting-by-need muster takes), so the orb, the bar
+        # and the card cannot disagree.
+        var idle_row := _idle_workers_row(entry)
+        if not idle_row.is_empty():
+            attention.append(idle_row)
         # Producer 5 — a starving pen this band keeps (amber/warn; see HudAttentionVocab.ATTENTION_KIND_STARVING_PEN
         # for why it is not critical). Keyed off the band's OWN Corral assignments, never a scan of
         # every herd on the wire: that is what makes it the PLAYER's pen (a herd carries no owner
@@ -428,16 +531,21 @@ func build_band_attention(player_bands: Array, player_expeditions: Array) -> Arr
     # stream rather than by the roster: a hand-off is an EVENT, and no band field records that it
     # happened.
     # (The hand-off and gathering rows are NOT built here — see `event_attention`.)
+    # (Producer 9, leader-emerged, is an event row too — see `event_attention`.)
+    # Producer 10 — a herd our bands hunt is stressed / collapsing. After the band loop because one
+    # herd is hunted by several bands and gets ONE row.
+    attention.append_array(_herd_thinning_attention(player_bands))
     return attention
 
-## **THE EVENT HALF OF THE ORB REGISTRY** — the crew hand-off rows then the gathering rows, in that
-## order. They are derived from the command-event stream, which `Main` ingests AFTER `update_band_alerts`
+## **THE EVENT HALF OF THE ORB REGISTRY** — the crew hand-off rows, the gathering rows, then the leader-emerged rows,
+## in that order. They are derived from the command-event stream, which `Main` ingests AFTER `update_band_alerts`
 ## within a frame, so folding them into `build_band_attention` delivered them a frame late (or, on the
 ## opening frame, never). `HudLayer.ingest_command_events` pushes this array to the orb as its own half
 ## the moment the rows are ingested, so they land the frame they arrive whatever order Main runs in.
 func event_attention() -> Array:
     var rows: Array = _crew_handoff_attention()
     rows.append_array(_gathering_attention())
+    rows.append_array(_leader_emerged_attention(_band_labor.player_bands()))
     return rows
 
 ## **THE DEALINGS HALF OF THE REGISTRY** (early diplomacy) -- one row per band with an item addressed to
@@ -788,6 +896,79 @@ func _under_kept_herd_attention(band: Dictionary) -> Array:
 func _herd_is_under_kept(herd: Dictionary) -> bool:
     return SourceForecast.is_under_kept(herd, HudComposeVocab.BARE_FORECAST_PREFIX)
 
+## **THE DANGER-BAND PHASE OF A HUNTED HERD, or `""`.** A corralled herd is the pen producers' (it
+## has `starving_pen`), never this one's.
+func _thinning_phase_of(herd: Dictionary) -> String:
+    if RungQuotes.is_enclosed(herd):
+        return ""
+    var phase := String(herd.get("ecology_phase", ""))
+    if phase == SourceForecast.ECOLOGY_PHASE_COLLAPSING or phase == SourceForecast.ECOLOGY_PHASE_STRESSED:
+        return phase
+    return ""
+
+## Turn-orb items for the herds the player's bands hunt that have dropped into the `stressed` or
+## `collapsing` band (Producer 10). Found through the bands' own Hunt assignments (`_hunted_herds_of`)
+## over THIS snapshot's roster, de-duplicated across bands. Warn for both phases; sorted collapsing
+## first then by remaining percentage ascending; capped with an overflow row. A herd with no
+## carrying capacity has no percentage to quote and raises nothing.
+func _herd_thinning_attention(player_bands: Array) -> Array:
+    var found: Dictionary = {}
+    for band_variant in player_bands:
+        if not (band_variant is Dictionary):
+            continue
+        var band: Dictionary = band_variant
+        for entry in _hunted_herds_of(band):
+            var herd_id: String = entry["herd_id"]
+            if found.has(herd_id):
+                continue
+            var herd: Dictionary = entry["herd"]
+            var phase := _thinning_phase_of(herd)
+            var capacity := float(herd.get("carrying_capacity", 0.0))
+            if phase == "" or capacity <= 0.0:
+                continue
+            found[herd_id] = {
+                "herd_id": herd_id, "herd": herd, "phase": phase,
+                "owner": int(band.get("entity", OWNER_NONE)),
+                "percent": int(round(float(herd.get("biomass", 0.0)) / capacity
+                    * HudConst.PROGRESS_PERCENT_SCALE)),
+            }
+    var candidates: Array = found.values()
+    candidates.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
+        var a_collapsing: bool = a["phase"] == SourceForecast.ECOLOGY_PHASE_COLLAPSING
+        var b_collapsing: bool = b["phase"] == SourceForecast.ECOLOGY_PHASE_COLLAPSING
+        if a_collapsing != b_collapsing:
+            return a_collapsing
+        return int(a["percent"]) < int(b["percent"]))
+    var items: Array = []
+    for i in candidates.size():
+        var c: Dictionary = candidates[i]
+        var herd: Dictionary = c["herd"]
+        var x := int(herd.get("x", -1))
+        var y := int(herd.get("y", -1))
+        if i >= HudAttentionVocab.ATTENTION_HERD_THINNING_MAX_ROWS:
+            items.append({
+                "kind": HudAttentionVocab.ATTENTION_KIND_HERD_THINNING,
+                "severity": HudAttentionVocab.ATTENTION_SEVERITY_WARN,
+                "label": HudAttentionVocab.ATTENTION_HERD_THINNING_OVERFLOW_LABEL_FORMAT
+                    % (candidates.size() - i),
+                "detail": HudAttentionVocab.ATTENTION_HERD_THINNING_OVERFLOW_DETAIL,
+                "x": x, "y": y,
+            })
+            break
+        var collapsing: bool = c["phase"] == SourceForecast.ECOLOGY_PHASE_COLLAPSING
+        items.append({
+            "kind": HudAttentionVocab.ATTENTION_KIND_HERD_THINNING,
+            "owner": int(c["owner"]),
+            "severity": HudAttentionVocab.ATTENTION_SEVERITY_WARN,
+            "label": (HudAttentionVocab.ATTENTION_HERD_COLLAPSING_LABEL_FORMAT if collapsing
+                else HudAttentionVocab.ATTENTION_HERD_THINNING_LABEL_FORMAT)
+                % _herd_label_for_id(String(c["herd_id"])),
+            "detail": (HudAttentionVocab.ATTENTION_HERD_COLLAPSING_DETAIL_FORMAT if collapsing
+                else HudAttentionVocab.ATTENTION_HERD_THINNING_DETAIL_FORMAT) % int(c["percent"]),
+            "x": x, "y": y,
+        })
+    return items
+
 ## The alerting herd (if any) standing on `(x, y)`, for the orb's jump routing — the herd twin of
 ## `_awaiting_expedition_at`. Only herds the player's own bands work, via the same `_hunted_herds_of`
 ## walk the producers use, so a row can never route to a herd no producer would have alerted on.
@@ -802,7 +983,8 @@ func _alerted_herd_at(x: int, y: int) -> String:
             var herd: Dictionary = entry["herd"]
             if int(herd.get("x", -1)) != x or int(herd.get("y", -1)) != y:
                 continue
-            if PenStatus.herd_is_starving(herd) or _herd_is_under_kept(herd):
+            if PenStatus.herd_is_starving(herd) or _herd_is_under_kept(herd) \
+                    or _thinning_phase_of(herd) != "":
                 return herd_id
     return ""
 

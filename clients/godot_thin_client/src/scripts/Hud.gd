@@ -1804,6 +1804,11 @@ func _after_pending_change() -> void:
     if not _selection.tile_info().is_empty() or not _selection.unit().is_empty() or not _selection.herd().is_empty():
         _render_selection_panel(_selection.tile_info(), _selection.unit(), _selection.herd())
     _bandpanel.rerender()
+    # The orb's idle alert reads the same pending-aware `people_idle` the bar does, so a stepper press
+    # moves it on the same frame (only the idle rows are rebuilt; see `refresh_idle_rows`).
+    if _turnorb != null:
+        _turnorb.set_band_attention(_attention.refresh_idle_rows(
+            _turnorb.band_attention(), _band_labor.player_bands()))
     emit_signal("labor_pending_changed", _band_labor.pending_labor())
 
 ## **A WITHDRAWAL FROM THE BUILD QUEUE, AND ITS OPTIMISTIC HALF** (`docs/plan_standing_upkeep.md`
@@ -2535,6 +2540,11 @@ func update_band_alerts(populations_variant: Variant) -> void:
             player_band = entry
         player_bands.append(entry)
         new_sizes[int(entry.get("entity", -1))] = int(entry.get("size", 0))
+    # 1a. This snapshot is authoritative: drop optimistic pending actions the server has now processed
+    # (issued on an older turn) BEFORE attention is built, because the idle producer reads the
+    # pending-aware `people_idle` — against last turn's overlay the orb would disagree with the bar for
+    # the whole turn. It depends only on the turn `update_overlay` already set.
+    _reconcile_pending()
     # 2. Attention BEFORE ingest — a load-bearing ordering. Producer 2 (losing-population) reads
     # `_band_labor.prev_band_sizes()`, which `ingest_snapshot_bands` OVERWRITES for next turn, so the
     # build must run against the PRE-INGEST sizes or every band silently stops reporting decline.
@@ -2584,9 +2594,7 @@ func update_band_alerts(populations_variant: Variant) -> void:
     # registry (bands + the fork producer) as ONE replace — set_attention is wholesale, so a separate
     # call would wipe these rows.
     _turnorb.set_band_attention(attention)
-    # This snapshot is authoritative: drop optimistic pending actions the server has now
-    # processed (issued on an older turn), then let the panels render the confirmed state.
-    _reconcile_pending()
+    # Pending was reconciled at step 1a; the panels now render the confirmed state.
     # Keep the dockable Band/City panel a persistent, live command center: shown whenever ≥1
     # player band exists, re-rendering the current _band_labor.panel_band() so its steppers/idle stay current.
     _bandpanel.refresh_snapshot()

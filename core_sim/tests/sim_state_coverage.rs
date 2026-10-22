@@ -362,9 +362,13 @@ const CONFIG_RESOURCES: [&str; 50] = [
 
 /// The remaining config handles, split out only because Rust array consts need a fixed length and
 /// one 50-entry literal reads worse than two.
-const CONFIG_RESOURCES_CONT: [&str; 29] = [
+const CONFIG_RESOURCES_CONT: [&str; 33] = [
     "DiplomacyConfigHandle",
     "DiplomacyConfigMetadata",
+    "LeaderNameCatalogHandle",
+    "LeaderNameCatalogMetadata",
+    "LeadershipConfigHandle",
+    "LeadershipConfigMetadata",
     "BeliefConfigHandle",
     "BeliefConfigMetadata",
     "ConnectionsConfigHandle",
@@ -397,7 +401,7 @@ const CONFIG_RESOURCES_CONT: [&str; 29] = [
 /// Component state on entities. Omitting one of these is exactly the failure `PowerNode`'s missing
 /// `base_generation` / `base_demand` already is, which is why this table exists alongside the
 /// resource one: a resource-only guard would have missed the bug that motivated the guard.
-const SIM_STATE_COMPONENTS: [&str; 17] = [
+const SIM_STATE_COMPONENTS: [&str; 18] = [
     "Tile",
     // A band's durable identity — the thing `Entity` could not be across a restore.
     "BandId",
@@ -426,6 +430,10 @@ const SIM_STATE_COMPONENTS: [&str; 17] = [
     // fixes an output's grade, and the design says that grade never moves, so a rollback that
     // dropped it would re-fix it against different stock.
     "BandBench",
+    // A band's banked practice at following a plan, and the leader it earned (`leadership`). The
+    // leader is permanent, so a checkpoint that dropped it would let a band emerge a second one
+    // under a different name on rollback.
+    "BandLeadership",
     "Expedition",
     // Carries `base_generation` / `base_demand`, which no checkpoint has ever recorded.
     "PowerNode",

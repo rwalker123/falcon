@@ -1811,6 +1811,11 @@ pub enum CommandEventKind {
     /// when a people is no more. Pushed once per people, [`Self::Dealing`]'s shape; the detail's
     /// `status=` carries the stage and `with=<faction>` names the other people. Appended last.
     Treaty,
+    /// **A band accepted a leader** (`crate::leadership`) -- directed work that succeeded often
+    /// enough made a chief, or an elders' council, emerge. Fired once per band, ever. Filed under
+    /// the band's own people; detail `kind=chief|elder_council name=<name>`, and the entry carries
+    /// the band (`with_band`). Appended last, after [`Self::Treaty`].
+    LeaderEmerged,
 }
 
 impl CommandEventKind {
@@ -1863,6 +1868,7 @@ impl CommandEventKind {
             CommandEventKind::CulturePull => "culture_pull",
             CommandEventKind::Dealing => "dealing",
             CommandEventKind::Treaty => "treaty",
+            CommandEventKind::LeaderEmerged => "leader_emerged",
         }
     }
 }

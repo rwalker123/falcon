@@ -1849,6 +1849,103 @@ pub struct PopulationCohortState {
     /// `docs/plan_early_diplomacy.md` §3). Empty on every other row. Appended last.
     #[serde(default)]
     pub envoy_terms: crate::state::treaties::TreatyTermsState,
+    /// **The leader a band accepted** (`core_sim::leadership`, #859): the chief's name, or the
+    /// speaker's for a council; empty with no leader. Own bands only. Appended last.
+    #[serde(default)]
+    pub leader_name: String,
+    /// `0` no leader, `1` chief, `2` elders' council. Appended last.
+    #[serde(default)]
+    pub leader_kind: u8,
+    /// Practice banked toward a leader. Appended last.
+    #[serde(default)]
+    pub leadership_practice: f32,
+    /// The practice a leader emerges at, so a client can say "N of M". Appended last.
+    #[serde(default)]
+    pub leadership_threshold: f32,
+    /// `leadership_practice` from finished Cultivate, Sow, Tame and Corral builds. Appended last.
+    #[serde(default)]
+    pub leadership_from_builds: f32,
+    /// ...from commanded band splits. Appended last.
+    #[serde(default)]
+    pub leadership_from_splits: f32,
+    /// ...from hexes walked following a herd. Appended last.
+    #[serde(default)]
+    pub leadership_from_herd: f32,
+    /// ...from settlement stages reached. Appended last.
+    #[serde(default)]
+    pub leadership_from_stages: f32,
+    /// **The improvements this band holds at its camp** (#708) — one row per band-kind branch, in
+    /// branch order. Own bands only; a foreign row defaults to empty. Appended last.
+    #[serde(default)]
+    pub band_improvements: Vec<BandImprovementState>,
+}
+
+/// **ONE IMPROVEMENT A BAND HOLDS ON A BAND-KIND BRANCH** — a row of
+/// [`PopulationCohortState::band_improvements`], [`crate::TileImprovementState`]'s shape with the
+/// tile taken away (the band is the key). See `snapshot.fbs`'s `BandImprovementState` for each
+/// field's contract.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct BandImprovementState {
+    /// The band-kind branch id.
+    pub branch: String,
+    /// The rung held, `<branch>:<id>`.
+    pub current_rung: String,
+    /// The rung the head build is raising it to, `""` where nothing is queued.
+    pub build_destination_rung: String,
+    /// The legs still to lay, in climb order.
+    pub build_legs: Vec<crate::state::subsistence::BuildLegState>,
+    /// The head build's countdown (`NO_BUILD_TURNS_ESTIMATE` where there is none).
+    #[serde(default = "no_build_turns_estimate")]
+    pub build_turns_remaining: i32,
+    /// Why the head build is stuck, `""` when it is not.
+    pub build_blocked_reason: String,
+    pub upkeep_demand: f32,
+    pub upkeep_supplied: f32,
+    pub upkeep_shortfall: f32,
+    pub neglect_turns: u32,
+    pub has_neglect_grace: bool,
+    pub neglect_grace_remaining: u32,
+    /// Whole hands the stamped bill calls for at the bare rate.
+    pub upkeep_workers_needed: u32,
+    /// How many of the crew's hands the keeping took this turn.
+    pub upkeep_hands: f32,
+    /// Whether the keeping crew's tool claim was filled less than in full.
+    pub upkeep_tools_short: bool,
+    /// The keeping tools, one line per item the crew claimed.
+    pub upkeep_toe: Vec<KitToeLineState>,
+    /// Whether this band has a build queued on this improvement.
+    pub is_queued: bool,
+}
+
+impl Default for BandImprovementState {
+    fn default() -> Self {
+        Self {
+            branch: String::new(),
+            current_rung: String::new(),
+            build_destination_rung: String::new(),
+            build_legs: Vec::new(),
+            build_turns_remaining: no_build_turns_estimate(),
+            build_blocked_reason: String::new(),
+            upkeep_demand: 0.0,
+            upkeep_supplied: 0.0,
+            upkeep_shortfall: 0.0,
+            neglect_turns: 0,
+            has_neglect_grace: false,
+            neglect_grace_remaining: 0,
+            upkeep_workers_needed: 0,
+            upkeep_hands: 0.0,
+            upkeep_tools_short: false,
+            upkeep_toe: Vec::new(),
+            is_queued: false,
+        }
+    }
+}
+
+/// The serde default of [`BandImprovementState::build_turns_remaining`] — the *no estimate*
+/// sentinel, so a row decoded from a document that predates the field reads *"the sim has no
+/// number"* rather than the `0` a derived default would give, which renders as a finished build.
+fn no_build_turns_estimate() -> i32 {
+    crate::NO_BUILD_TURNS_ESTIMATE
 }
 
 /// **An amount of one material** — a recipe input per pass ([`KitNeedRecipeState::inputs`], the
@@ -1886,6 +1983,8 @@ pub struct KitNeedItemState {
     pub claimed: f32,
     /// Whole units still missing on those claims, before the bench's queue nets them.
     pub short: u32,
+    /// Whole units parked on the bench's finished list (stocked next turn); `queued` includes them.
+    pub finished: u32,
 }
 
 /// **One recipe that makes a kit item** — its output per pass and its per-pass inputs.

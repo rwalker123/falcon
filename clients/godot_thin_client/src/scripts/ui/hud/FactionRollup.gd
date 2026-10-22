@@ -59,7 +59,7 @@ const HudStyle = preload("res://src/scripts/ui/HudStyle.gd")
 ## step" and a 10pt head over a 16pt row a defect. Against the vitals rows two tabs away, 13 simply
 ## reads SMALL: the page's own reference is not the board, it is the other three zones of the same
 ## page. A small-caps section head over larger rows is this panel's ordinary idiom (`PEOPLE`,
-## `WORKFORCE`), so the head→row step being wide is not a hierarchy fault.
+## `WORK`), so the head→row step being wide is not a hierarchy fault.
 ##
 ## The vitals label carries NO size override — it is a bare `RichTextLabel` at Godot's stock default —
 ## so this const is that default written down. `band_panel_preview._assert_faction_type_scale` reads
@@ -124,7 +124,7 @@ static func build_band_zone(labor: HudBandLaborState, disclosures: DisclosureCon
     var col := HudWidgets.make_zone_column()
     var bands := labor.player_bands()
     col.add_child(_build_vitals_label(bands, disclosures))
-    var people := _build_people_block(bands)
+    var people := _build_people_block(labor, bands)
     if people != null:
         col.add_child(people)
     var settling := _build_settling_block(sedentarization, mobility)
@@ -506,7 +506,8 @@ static func _growth_line(bands: Array, disclosures: DisclosureController) -> Str
 ## which is exactly how it shipped. The Work tab passes the same entity twice, a row about a band
 ## jumping to that band.
 static func _summary_row(name: String, summary: String, severity: String, owner: int,
-        jump_owner: int, on_toggle: Callable, on_jump: Callable, mark: Control = null) -> Control:
+        jump_owner: int, on_toggle: Callable, on_jump: Callable, mark: Control = null,
+        trailing: Control = null) -> Control:
     var row := HBoxContainer.new()
     row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     row.add_theme_constant_override("separation", SUMMARY_ROW_SEPARATION)
@@ -528,7 +529,13 @@ static func _summary_row(name: String, summary: String, severity: String, owner:
     var body := HudWidgets.build_inline_link(summary, HudStyle.INK_DIM, on_toggle.bind(owner))
     body.add_theme_font_size_override("font_size", STAT_ROW_FONT_SIZE)
     body.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    # The summary yields to the name and the trailing label: it clips, and its whole text rides the hover.
+    body.clip_text = true
+    body.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+    body.tooltip_text = summary
     row.add_child(body)
+    if trailing != null:
+        row.add_child(trailing)
     return row
 
 ## A summary row's expanded detail: its own lines first, then its alerts. The ALERTS come last because
@@ -590,8 +597,8 @@ static func _trend_glyph(delta: float) -> String:
         HudStyle.HEALTHY_HEX if delta > 0.0 else HudStyle.DANGER_HEX,
         BandDetailLines.MORALE_TREND_RISING_GLYPH if delta > 0.0 else BandDetailLines.MORALE_TREND_FALLING_GLYPH]
 
-## Zone `work` — WHERE THE HANDS ARE AND WHAT WANTS ATTENTION: the whole workforce as one bar, then
-## one row per band carrying its work summary and its alert flag, expandable to the detail.
+## Zone `work` — WHERE THE HANDS ARE AND WHAT WANTS ATTENTION: one row per band carrying its work
+## summary, its idle count and its alert flag, expandable to the detail.
 ##
 ## **THE ALERTS ARE READ, NEVER RE-DERIVED.** `AttentionController.build_band_attention` is already the
 ## faction's one answer to "which band needs you", and the turn orb already renders it — so this page
@@ -610,7 +617,6 @@ static func _trend_glyph(delta: float) -> String:
 static func build_work_zone(labor: HudBandLaborState, attention: Array,
         open_owner: int, on_toggle: Callable, on_jump: Callable) -> VBoxContainer:
     var col := HudWidgets.make_zone_column()
-    col.add_child(_build_workforce_block(labor))
     col.add_child(_build_bands_block(labor, attention, open_owner, on_toggle, on_jump))
     return col
 
@@ -712,54 +718,81 @@ static func _party_detail_lines(party: Dictionary) -> Array:
 
 # ---- band zone blocks -------------------------------------------------------
 
-## The faction's PEOPLE bar: the same children/working/elders stack a band's own zone draws, summed
-## across every band.
+## The faction's PEOPLE bar: the same ONE bar a band's own zone draws, children | working | idle | elders,
+## summed across every band, with the idle card under it when anyone is idle.
 ##
-## **THE BRACKETS ARE WHOLE PEOPLE ON THE WIRE, so this is a plain sum of integers.** It used to sum
-## the raw fixed-point Scalars and apportion the total once at the end, because rounding each band
-## first and adding the results lost a person per `.5` remainder. That whole problem left with the
-## fractions: the sim rounds once and guarantees `children + working_age + elders == size` per band,
-## so adding whole numbers is exact and the faction total is just the sum of the bands' head counts.
+## **THE BRACKETS ARE WHOLE PEOPLE ON THE WIRE, so this is a plain sum of integers**: the sim rounds
+## once and guarantees `children + working_age + elders == size` per band, so adding whole numbers is
+## exact. `idle` is the sum of each band's `HudBandLaborState.people_idle` and `working` is each band's
+## `working_age` less that, so the four segments sum to the faction's head count.
 ##
 ## Returns null when no band carries an age structure at all, so the block is OMITTED rather than
 ## rendered from a fabricated split — the band zone's own rule.
-static func _build_people_block(bands: Array) -> VBoxContainer:
+static func _build_people_block(labor: HudBandLaborState, bands: Array) -> VBoxContainer:
     var children := 0
-    var working_whole := 0
+    var working := 0
+    var idle := 0
     var elders := 0
     var total := 0
+    var away := 0
+    var parts: Dictionary = {}
+    var idle_by_band: Array = []
     for band_variant in bands:
         if not (band_variant is Dictionary):
             continue
         var band: Dictionary = band_variant
         children += int(band.get("children", 0))
-        working_whole += int(band.get("working_age", 0))
         elders += int(band.get("elders", 0))
         total += int(band.get("size", 0))
+        var split := labor.people_split(band)
+        working += int(split["working"])
+        idle += int(split["idle"])
+        away += labor.band_party_workers(band)
+        var band_parts := labor.working_breakdown(band)
+        for label in band_parts:
+            parts[label] = int(parts.get(label, 0)) + int(band_parts[label])
+        if int(split["idle"]) > 0:
+            idle_by_band.append({"name": HudFormat.band_name(band), "idle": int(split["idle"])})
     if total <= 0:
         return null
-    var segments: Array = []
-    if children > 0:
-        segments.append({"key": HudWorkVocab.PEOPLE_GLYPH_CHILDREN, "count": children,
-            "color": HudStyle.VOICE_PIGMENT,
-            "tooltip": "%d %s" % [children, HudWorkVocab.PEOPLE_LABEL_CHILDREN]})
-    if working_whole > 0:
-        segments.append({"key": HudWorkVocab.PEOPLE_GLYPH_WORKING, "count": working_whole,
-            "color": HudStyle.INK_DIM,
-            "tooltip": "%d %s" % [working_whole, HudWorkVocab.PEOPLE_LABEL_WORKING]})
-    if elders > 0:
-        segments.append({"key": HudWorkVocab.PEOPLE_GLYPH_ELDERS, "count": elders,
-            "color": HudStyle.VOICE_INK,
-            "tooltip": "%d %s" % [elders, HudWorkVocab.PEOPLE_LABEL_ELDERS]})
+    var card_reason := idle_card_reason(idle_by_band)
+    var segments := HudWidgets.people_segments(children, working, idle, elders, parts,
+        "%s\n%s" % [HudWorkVocab.IDLE_CARD_NUMBER_FACTION_FORMAT % idle, card_reason])
     var block := HudWidgets.make_zone_block()
-    block.add_child(HudWidgets.zone_head(HudWorkVocab.ZONE_HEADER_PEOPLE, str(total)))
+    block.add_child(HudWidgets.zone_head(HudWorkVocab.ZONE_HEADER_PEOPLE,
+        HudWidgets.people_head_readout(total, away), null, HudStyle.INK_DIM,
+        HudWorkVocab.PEOPLE_AWAY_TOOLTIP_FORMAT % away if away > 0 else ""))
     block.add_child(HudWidgets.build_composition_bar(segments))
     # The band's page spends this trailing slot on its dependency count. **The faction's dependency
     # ratio is deliberately NOT restated here**: dependents are fed per BAND, so a faction average
     # hides the band that is in trouble — the same reasoning that took the figure off the top bar.
     # What the slot carries instead is the one thing a TOTAL needs, which is how many bands it spans.
     block.add_child(HudWidgets.build_composition_key(segments, _bands_chip(bands.size())))
+    if idle > 0:
+        block.add_child(HudWidgets.build_idle_card(
+            HudWorkVocab.IDLE_CARD_NUMBER_FACTION_FORMAT % idle, card_reason))
     return block
+
+## The faction idle card's second line: the bands that have idle people, most idle first, capped at
+## `IDLE_CARD_BANDS_MAX` with `· +N more`, then `. Not on any job.` `idle_by_band` is
+## `[{name, idle}]` for the bands with idle > 0, in any order. A faction with no idle people reads `""`.
+static func idle_card_reason(idle_by_band: Array) -> String:
+    if idle_by_band.is_empty():
+        return ""
+    var ordered := idle_by_band.duplicate()
+    # Most idle first; the sort is stable on the band's name so equal counts keep a fixed order.
+    ordered.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
+        if int(a["idle"]) != int(b["idle"]):
+            return int(a["idle"]) > int(b["idle"])
+        return String(a["name"]) < String(b["name"]))
+    var shown: int = mini(ordered.size(), HudWorkVocab.IDLE_CARD_BANDS_MAX)
+    var pieces: Array[String] = []
+    for i in range(shown):
+        pieces.append(HudWorkVocab.IDLE_CARD_BAND_FORMAT % [String(ordered[i]["name"]), int(ordered[i]["idle"])])
+    var text := HudWorkVocab.IDLE_CARD_BAND_SEPARATOR.join(pieces)
+    if ordered.size() > shown:
+        text += HudWorkVocab.IDLE_CARD_MORE_FORMAT % (ordered.size() - shown)
+    return text + HudWorkVocab.IDLE_CARD_REASON_FACTION_TAIL
 
 # ---- knowledge zone blocks --------------------------------------------------
 
@@ -976,97 +1009,10 @@ static func _discovery_tooltip(category: String, found_at: Array) -> String:
 
 # ---- work zone blocks -------------------------------------------------------
 
-## The whole faction's workforce as ONE stacked bar — the band zone's WORKFORCE block summed, in the
-## same saturated palette and the same segment order, so the two read as one chart at two scales.
+## WHERE those hands are: one row per band, its work summary and its idle count.
 ##
-## It carries no role CARDS: those are the steppers this page deliberately does not have.
-static func _build_workforce_block(labor: HudBandLaborState) -> VBoxContainer:
-    var idle := 0
-    var forage_workers := 0
-    var extract_workers := 0
-    var hunt_workers := 0
-    # The BUILD crews, for the reason the band zone's own bar carries them: `effective_idle` nets a
-    # builder out, so a faction total without this segment loses those hands off a bar that partitions
-    # the same `working_age` the header sums.
-    var build_workers := 0
-    var role_workers := 0
-    var party_workers := 0
-    var bench_workers := 0
-    var out_hunting := 0
-    var working_age := 0
-    for band_variant in labor.player_bands():
-        if not (band_variant is Dictionary):
-            continue
-        var band: Dictionary = band_variant
-        # HUNTING BY NEED: each lent hand moves from its home segment to "Out hunting".
-        var muster_out := labor.hunt_muster_out(band)
-        idle += labor.effective_idle(band) - int(muster_out["idle"])
-        out_hunting += int(muster_out["total"])
-        working_age += int(band.get("working_age", 0))
-        # The PENDING-AWARE worker map, exactly as the band zone reads it — a just-issued assign must
-        # count here too, or cycling to this page would undo the optimistic feedback the dock gives.
-        var merged := labor.effective_worker_map(band)
-        for key in merged:
-            var model: Dictionary = merged[key]
-            var workers := int(model.get("workers", 0))
-            match String(model.get("kind", "")):
-                SourceForecast.LABOR_KIND_FORAGE: forage_workers += workers
-                SourceForecast.LABOR_KIND_HUNT: hunt_workers += workers
-                HudConst.LABOR_KIND_EXTRACT, HudConst.LABOR_KIND_TILE: extract_workers += workers
-        extract_workers -= int((muster_out["by_kind"] as Dictionary).get(HudConst.LABOR_KIND_EXTRACT, 0))
-        forage_workers -= int((muster_out["by_kind"] as Dictionary).get(SourceForecast.LABOR_KIND_FORAGE, 0))
-        hunt_workers -= int((muster_out["by_kind"] as Dictionary).get(SourceForecast.LABOR_KIND_HUNT, 0))
-        # **THE BUILD SEGMENT IS THE `builders` ROLE**, the band zone's own reading one scale up
-        # (`docs/plan_standing_upkeep.md` §2.5): there is no per-source build crew to sum any more.
-        build_workers += int(labor.effective_role_workers(
-            band, HudConst.LABOR_KIND_BUILDERS).get("workers", 0))
-        # **ALL THREE NON-BUILD ROLES** — scout, warrior and the roadwork pool, the band zone's own
-        # Roles segment one scale up. A site's keepers are part of that site's crew now
-        # (`docs/plan_site_crews.md`), so they are already in the Forage / Hunt sums above.
-        role_workers += int(labor.effective_role_workers(band, HudConst.LABOR_KIND_SCOUT).get("workers", 0)) \
-            + int(labor.effective_role_workers(band, HudConst.LABOR_KIND_WARRIOR).get("workers", 0)) \
-            + int(labor.effective_role_workers(band, HudConst.LABOR_KIND_ROADWORK).get("workers", 0))
-        party_workers += labor.band_party_workers(band)
-        bench_workers += labor.bench_workers(band) - int(muster_out["bench"])
-    var segments: Array = []
-    for spec in [
-        [HudWorkVocab.WORKFORCE_KEY_FORAGE, forage_workers, HudStyle.HEALTHY],
-        [HudWorkVocab.WORKFORCE_KEY_HUNT, hunt_workers, HudStyle.SIGNAL],
-        [HudWorkVocab.WORKFORCE_KEY_EXTRACT, extract_workers, HudStyle.READY],
-        [HudWorkVocab.WORKFORCE_KEY_BUILD, build_workers, HudStyle.SIGNAL_DEEP],
-        [HudWorkVocab.WORKFORCE_KEY_ROLES, role_workers, HudStyle.VOICE_INK],
-        # Party crews are NOT a segment here either — the sim removes them from the parent band's
-        # `working_age` on launch, so they sit outside the denominator these segments partition.
-        # They read as the header's "away" clause (`WORKFORCE_AWAY_FORMAT`).
-        # The bench's crew, for the reason the band zone's own bar carries one: `effective_idle` nets
-        # it out, so a faction total without this segment loses those hands off a bar that is supposed
-        # to partition the same `working_age` the header sums.
-        [HudWorkVocab.WORKFORCE_KEY_BENCH, bench_workers, HudStyle.VOICE_PIGMENT],
-        [HudWorkVocab.WORKFORCE_KEY_OUT_HUNTING, out_hunting, HudStyle.WARN],
-        [HudWorkVocab.WORKFORCE_KEY_IDLE, idle, HudStyle.INK_FAINT],
-    ]:
-        if int(spec[1]) > 0:
-            segments.append({"key": String(spec[0]), "count": int(spec[1]), "color": spec[2],
-                "tooltip": "%s: %d" % [String(spec[0]), int(spec[1])]})
-    var readout := HudWorkVocab.WORKFORCE_IDLE_FORMAT % [idle, working_age]
-    if out_hunting > 0:
-        readout = HudWorkVocab.WORKFORCE_IDLE_OUT_FORMAT % [idle, out_hunting]
-    if party_workers > 0:
-        readout += HudWorkVocab.WORKFORCE_AWAY_FORMAT % party_workers
-    var block := HudWidgets.make_zone_block()
-    block.add_child(HudWidgets.zone_head(HudWorkVocab.ZONE_HEADER_WORKFORCE, readout,
-        null, HudStyle.SIGNAL if idle > 0 else HudStyle.INK_DIM,
-        HudWorkVocab.WORKFORCE_AWAY_TOOLTIP_FORMAT % party_workers if party_workers > 0 else ""))
-    if not segments.is_empty():
-        block.add_child(HudWidgets.build_composition_bar(segments))
-        block.add_child(HudWidgets.build_composition_key(segments))
-    return block
-
-## WHERE those hands are: one row per band, its workforce and its idle count.
-##
-## Idle is tinted SIGNAL on a band with hands to spend, exactly as the WORKFORCE head above it tints
-## its own idle readout — this row is the reason the player cycles to that band, so it must be
-## findable at a glance rather than read row by row.
+## Idle is the row's trailing label, amber on a band with hands to spend — this row is the reason the
+## player cycles to that band, so it must be findable at a glance rather than read row by row.
 static func _build_bands_block(labor: HudBandLaborState, attention: Array, open_owner: int,
         on_toggle: Callable, on_jump: Callable) -> VBoxContainer:
     var bands := labor.player_bands()
@@ -1085,7 +1031,8 @@ static func _build_bands_block(labor: HudBandLaborState, attention: Array, open_
         var entity := int(band.get("entity", -1))
         var alerts: Array = by_owner.get(entity, [])
         block.add_child(_summary_row(HudFormat.band_name(band),
-            _work_summary(labor, band), worst_severity(alerts), entity, entity, on_toggle, on_jump))
+            _work_summary(labor, band), worst_severity(alerts), entity, entity, on_toggle, on_jump,
+            null, _band_idle_label(labor.people_idle(band))))
         if entity == open_owner:
             block.add_child(_summary_detail(_work_detail_lines(labor, band), alerts))
     _append_more_row(block, bands.size() - shown)
@@ -1123,7 +1070,19 @@ static func _work_summary(labor: HudBandLaborState, band: Dictionary) -> String:
     if pens > 0:
         parts.append(HudWorkVocab.FACTION_PENS_ONE if pens == 1 \
             else HudWorkVocab.FACTION_PENS_FORMAT % pens)
+    parts.append(HudWorkVocab.FACTION_ROW_WORKING_FORMAT % int(labor.people_split(band)["working"]))
     return HudWorkVocab.FACTION_SUMMARY_SEPARATOR.join(parts)
+
+## A band row's trailing idle count: amber `4 idle`, or faint `none idle` when nobody is. This is the
+## row the player cycles to a band by, so the band with hands to spend is findable at a glance.
+static func _band_idle_label(idle: int) -> Label:
+    var label := Label.new()
+    label.text = HudWorkVocab.FACTION_ROW_IDLE_FORMAT % idle if idle > 0 \
+        else HudWorkVocab.FACTION_ROW_NONE_IDLE
+    label.add_theme_font_size_override("font_size", STAT_ROW_FONT_SIZE)
+    label.add_theme_color_override("font_color", HudStyle.WARN if idle > 0 else HudStyle.INK_FAINT)
+    label.set_meta(HudWorkVocab.FACTION_ROW_IDLE_META, idle)
+    return label
 
 ## A band's expanded WORK detail: one line per worked source, and its pens and herds — which is where
 ## the pen and herd alerts sit, beside the thing they are about rather than as a floating warning.
@@ -1153,7 +1112,7 @@ static func _work_detail_lines(labor: HudBandLaborState, band: Dictionary) -> Ar
 ## One `key ……… value` readout row: a dim key, an expanding spacer, then the value in its own tint.
 ##
 ## The same shape `HudWidgets.zone_head` gives a section head, several type sizes UP — a small-caps
-## head over larger rows is this panel's ordinary idiom (`PEOPLE`, `WORKFORCE`), and the rows are what
+## head over larger rows is this panel's ordinary idiom (`PEOPLE`, `WORK`), and the rows are what
 ## the player is here to read.
 ## Both labels route their tooltip through `HudWidgets.set_label_tooltip`, since a bare `tooltip_text`
 ## on a `Label` is a SILENT no-op at Godot's `MOUSE_FILTER_IGNORE` default.

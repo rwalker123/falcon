@@ -3646,6 +3646,7 @@ fn spawn_population_entity(
         last_food_need: 0.0,
         fed_party_workers: Default::default(),
         last_food_spoiled: 0.0,
+        last_food_kept: 0.0,
         last_turn_food_transfers: Default::default(),
         last_turn_fodder_transfers: Default::default(),
         last_turn_transfer_crossings: Vec::new(),
@@ -3690,6 +3691,9 @@ fn spawn_population_entity(
     // (`docs/plan_crafting_and_materials.md` §5). Inserted here rather than on first use so the
     // bench's crew comes out of the same worker pool the assignment loop reads, on turn one.
     entity.insert(crate::components::BandBench::default());
+    // **No leader yet, and no practice**: a band earns one from directed work that succeeds
+    // (`crate::leadership`), it does not start with one.
+    entity.insert(crate::leadership::BandLeadership::default());
     entity.insert(band_id);
     // ...and the band's NAME, minted from the same source in the same breath — see `BandName`. It is
     // minted rather than derived for the same reason the id is: nothing about a band's identity may

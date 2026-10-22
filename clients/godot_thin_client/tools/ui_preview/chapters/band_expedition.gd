@@ -8,7 +8,7 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 154
+const EXPECTED_CHECKPOINTS := 168
 
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 const ForageFx := preload("res://tools/ui_preview/fixtures_forage.gd")
@@ -110,6 +110,30 @@ const DENIAL_CARRIED_DETAIL_KEY := "Carried"
 ## Drive a Food/Morale disclosure the way a CLICK does: emit `meta_clicked` on the live drawer label
 ## with the very `[url]` meta its own text carries, so the bound handler + anchor run exactly as they
 ## do in the game. Toggling: a second call on the same key dismisses the popover.
+## The node named `node_name` under `root`, or null.
+func _find_named(root: Node, node_name: StringName) -> Node:
+	return root.find_child(String(node_name), true, false)
+
+## Every node under (and including) `root` carrying `meta`.
+## Does any Label / RichTextLabel under `root` carry `needle` in its text?
+func _scroll_text_has(root: Node, needle: String) -> bool:
+	if root is Label and (root as Label).text.contains(needle):
+		return true
+	if root is RichTextLabel and (root as RichTextLabel).get_parsed_text().contains(needle):
+		return true
+	for child in root.get_children():
+		if _scroll_text_has(child, needle):
+			return true
+	return false
+
+func _find_all_meta(root: Node, meta: StringName) -> Array:
+	var found: Array = []
+	if root.has_meta(meta):
+		found.append(root)
+	for child in root.get_children():
+		found.append_array(_find_all_meta(child, meta))
+	return found
+
 func _click_disclosure(key: String) -> void:
 	var meta := HudDisclosureVocab.BREAKDOWN_TOGGLE_META_PREFIX + key
 	var label = _find_meta_label(h._hud, meta)
@@ -2052,6 +2076,114 @@ func _hay_ledger_states() -> void:
 	# stranded reserved edge moves frames in later chapters for a reason unrelated to hay.
 	h._hud.set_band_city_panel(null)
 	hay_panel.queue_free()
+	h._hud._band_labor._player_bands = []
+	h._hud._band_labor._player_band = BandFx.band_fixture()
+	h._hud.clear_selection()
+	await h._settle()
+
+	# State leader-header -- **WHO LEADS THE BAND, and how far it is from having one** (#859): a
+	# partial bar with mixed sources (Chief 7 / 10), an empty bar, a chief and an elders' council, each
+	# through the real selection path into a docked panel. The bar's label and its cells' points are
+	# read off the panel's own controls; the bar must be hidden once a leader exists.
+	var leader_panel: BandCityPanel = h.BAND_CITY_PANEL_SCENE.instantiate()
+	h.add_child(leader_panel)
+	await h.get_tree().process_frame
+	leader_panel.reservation_changed.connect(func(edge: int, size: float) -> void:
+		MAIN_SCRIPT.push_hud_strip(h._hud, BAND_PANEL_RESERVER, edge, size,
+			MAIN_SCRIPT.band_dock_overlays_hud(edge, size, h._hud, leader_panel)))
+	leader_panel.set_dock(SIDE_RIGHT)
+	leader_panel.set_active_tab(BandCityPanel.ZONE_BAND)
+	h._hud.set_band_city_panel(leader_panel)
+	# Per case: frame name, band fields, the header line's tail, the bar's label ("" = bar hidden), and
+	# the points of each drawn cell (builds / splits / herd / stages, then the remainder).
+	var leader_cases := [
+		["leader_partial", {"leader_name": "", "leader_kind": 0, "leadership_practice": 7.0,
+			"leadership_threshold": 10.0, "leadership_from_builds": 3.0,
+			"leadership_from_splits": 3.0, "leadership_from_herd": 1.0,
+			"leadership_from_stages": 0.0}, "", "7 / 10", [3.0, 3.0, 1.0, 3.0]],
+		["leader_empty", {"leader_name": "", "leader_kind": 0, "leadership_practice": 0.0,
+			"leadership_threshold": 10.0, "leadership_from_builds": 0.0,
+			"leadership_from_splits": 0.0, "leadership_from_herd": 0.0,
+			"leadership_from_stages": 0.0}, "", "0 / 10", [10.0]],
+		["leader_chief", {"leader_name": "Orrin", "leader_kind": 1, "leadership_practice": 10.0,
+			"leadership_threshold": 10.0, "leadership_from_builds": 6.0,
+			"leadership_from_splits": 3.0, "leadership_from_herd": 1.0,
+			"leadership_from_stages": 0.0}, "Chief Orrin", "", []],
+		["leader_council", {"leader_name": "Orrin", "leader_kind": 2, "leadership_practice": 10.0,
+			"leadership_threshold": 10.0, "leadership_from_builds": 0.0,
+			"leadership_from_splits": 0.0, "leadership_from_herd": 0.0,
+			"leadership_from_stages": 10.0}, "Elders' council — Orrin speaks", "", []],
+	]
+	for leader_case in leader_cases:
+		var leader_band := BandFx.band_fixture()
+		leader_band.merge(leader_case[1], true)
+		h._hud.update_band_alerts([leader_band])
+		h._hud.show_unit_selection(leader_band)
+		await h._settle()
+		await h._save(String(leader_case[0]))
+		# The chief / leader row is one more row of the Band tab's VITALS table (`Chief:` bar + `7 / 10`
+		# before a leader, `Leader:` + the name after), so it is read off the vitals label's own text.
+		var vitals_nodes := _find_all_meta(leader_panel, HudWorkVocab.BAND_VITALS_LABEL_META)
+		var vitals: RichTextLabel = vitals_nodes[0] if not vitals_nodes.is_empty() else null
+		var vitals_plain := vitals.get_parsed_text() if vitals != null else ""
+		var work_scroll := _find_named(leader_panel, HudWorkVocab.WORK_SECTIONS_SCROLL_NAME)
+		var want_leader := String(leader_case[2])
+		# The leader is its OWN BLOCK at the head of the Band tab's zone (#859), not a vitals row.
+		var block_nodes := _find_all_meta(leader_panel, HudWorkVocab.BAND_LEADER_BLOCK_META)
+		var block: Node = block_nodes[0] if not block_nodes.is_empty() else null
+		var text_label: RichTextLabel = null
+		var portrait: LeaderPortrait = null
+		if block != null:
+			text_label = block.find_child(HudWorkVocab.BAND_LEADER_TEXT_NAME, true, false) as RichTextLabel
+			for child in block.get_children():
+				if child is LeaderPortrait:
+					portrait = child
+		var block_raw := text_label.text if text_label != null else ""
+		var block_plain := text_label.get_parsed_text() if text_label != null else ""
+		h._assert_hud("%s: the leader block exists on the Band tab, once" % leader_case[0], block_nodes.size() == 1)
+		h._assert_hud("%s: the leader block is the FIRST block of the zone" % leader_case[0],
+			block != null and block.get_parent().get_child(0) == block
+			and vitals != null and block.get_parent() == vitals.get_parent()
+			and block.get_index() < vitals.get_index())
+		h._assert_hud("%s: the vitals table holds no leader or chief row" % leader_case[0],
+			not vitals_plain.contains("Leader") and not vitals_plain.contains("Chief")
+			and not vitals.text.contains(HudFormat.CHIEF_BAR_FILLED_GLYPH))
+		h._assert_hud("%s: leader block %s" % [leader_case[0], "reads '%s'" % want_leader if want_leader != "" else "shows the progress bar"],
+			block_plain.contains(want_leader) if want_leader != ""
+			else block_plain.contains(HudFormat.CHIEF_ROW_LABEL))
+		h._assert_hud("%s: portrait is %s%s" % [leader_case[0], "empty" if want_leader == "" else "filled",
+			" with the council badge" if String(leader_case[0]) == "leader_council" else ""],
+			portrait != null and portrait.is_empty_slot() == (want_leader == "")
+			and portrait.is_council() == (String(leader_case[0]) == "leader_council")
+			and portrait.size.x >= LeaderPortrait.PORTRAIT_SIZE - 0.5)
+		h._assert_hud("%s: the sub line carries no leader clause (%s)" % [leader_case[0], leader_panel._position_label.text],
+			not leader_panel._position_label.text.to_lower().contains("led by"))
+		var want_label := String(leader_case[3])
+		var filled := 0
+		for pts in (leader_case[4] as Array).slice(0, maxi((leader_case[4] as Array).size() - 1, 0)):
+			filled += int(pts)
+		var empty_cells := int((leader_case[4] as Array).back()) if not (leader_case[4] as Array).is_empty() else 0
+		h._assert_hud("%s: Chief bar %s" % [leader_case[0], "reads '%s' with %d filled / %d empty cells" % [want_label, filled, empty_cells] if want_label != "" else "is absent"],
+			(not block_raw.contains(HudFormat.CHIEF_BAR_FILLED_GLYPH) and not block_raw.contains(HudFormat.CHIEF_BAR_EMPTY_GLYPH)) if want_label == ""
+			else (block_plain.contains(want_label)
+				and block_raw.count(HudFormat.CHIEF_BAR_FILLED_GLYPH) == filled
+				and block_raw.count(HudFormat.CHIEF_BAR_EMPTY_GLYPH) == empty_cells
+				and block != null and (block as Control).tooltip_text.contains("Splits: ")))
+		h._assert_hud("%s: the Work tab's sections hold no chief or leader row" % leader_case[0],
+			work_scroll == null or (not _scroll_text_has(work_scroll, "Leader:") and not _scroll_text_has(work_scroll, "Chief:")))
+		# A wide line in the zone must not widen the docked card past the strip the dock reserves.
+		var card_min := leader_panel._panel.get_combined_minimum_size().x
+		var reserved := leader_panel.current_reservation_size()
+		h._assert_hud("%s: the card's minimum width (%.0fpx) fits the docked strip (%.0fpx)"
+			% [leader_case[0], card_min, reserved], card_min <= reserved)
+	var tip: String = HudFormat.band_chief_progress(leader_cases[0][1]).get("tooltip", "")
+	h._assert_hud("the bar's tooltip names every source with its points",
+		tip.contains("Cultivate, Farm, Tame or Corral: 3") and tip.contains("Splits: 3")
+		and tip.contains("Following a herd: 1") and tip.contains("Settlement stages: 0"))
+	h._assert_hud("a band with no threshold (foreign) shows no bar and no leader text",
+		HudFormat.band_chief_progress({}).is_empty() and HudFormat.band_leader_phrase({}) == "")
+	h._hud.set_band_city_panel(null)
+	leader_panel.queue_free()
 	h._hud._band_labor._player_bands = []
 	h._hud._band_labor._player_band = BandFx.band_fixture()
 	h._hud.clear_selection()

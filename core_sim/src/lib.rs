@@ -16,6 +16,7 @@ pub(crate) const BUILD_ID: &str = match option_env!("CORE_SIM_BUILD_ID") {
 };
 
 pub mod auto_craft;
+pub mod band_improvement;
 mod band_names;
 pub mod belief;
 mod belief_config;
@@ -69,6 +70,9 @@ mod knowledge_contact_config;
 mod knowledge_ledger;
 mod labor_config;
 pub mod ladder_ids;
+mod leader_names;
+mod leadership;
+mod leadership_config;
 mod lineage;
 pub mod log_stream;
 mod map_preset;
@@ -357,6 +361,11 @@ pub use treaties::{
     BundleMatch, EnvoyOutcome, Treaties, Treaty, TreatyTerms, NO_TREATIES,
 };
 // The drainage-network measurement instrument (consumed by the `#[ignore]`d census test).
+pub use band_improvement::{
+    advance_band_improvements, band_rung_cost, band_rung_span, band_standing_at, is_band_branch,
+    BandImprovement, BandImprovementKey, BandImprovementRegistry, BAND_KEEPING_LOAD,
+    NO_HANDS_ON_THE_BAND_IMPROVEMENT,
+};
 pub use extraction::{
     advance_deposits, deposit_at_risk_rung, deposit_keeper_loads, deposit_keeping_basis,
     deposit_measure, deposit_meter_rot, deposit_rungs_in_climb_order, deposit_upkeep_demand,
@@ -397,6 +406,18 @@ pub use labor_config::{
     BUILTIN_LABOR_CONFIG, NO_FORAGE_CAPACITY,
 };
 pub use ladder_ids::{shipped, BranchId, RungId, Sym, VerbId};
+pub use leader_names::{
+    load_leader_names_from_env, LeaderNameCatalog, LeaderNameCatalogHandle,
+    LeaderNameCatalogMetadata, LeaderNamesError, BUILTIN_LEADER_NAMES, LEADER_NAME_SALT,
+};
+pub use leadership::{
+    advance_leadership, BandLeader, BandLeadership, LeaderKind, LEADER_KIND_CHIEF,
+    LEADER_KIND_ELDER_COUNCIL, LEADER_KIND_NONE,
+};
+pub use leadership_config::{
+    load_leadership_config_from_env, LeadershipConfig, LeadershipConfigHandle,
+    LeadershipConfigMetadata, BUILTIN_LEADERSHIP_CONFIG,
+};
 pub use map_preset::{ErosionConfig, MapPreset, MapPresets, MapPresetsHandle, BUILTIN_MAP_PRESETS};
 pub use mapgen::WorldGenSeed;
 pub use materials_config::{
@@ -803,6 +824,11 @@ pub fn build_headless_app() -> App {
         sedentarization_config::load_sedentarization_config_from_env();
     let sedentarization_handle =
         sedentarization_config::SedentarizationConfigHandle::new(sedentarization_config);
+    let (leadership_config, leadership_metadata) =
+        leadership_config::load_leadership_config_from_env();
+    let leadership_handle = leadership_config::LeadershipConfigHandle::new(leadership_config);
+    let (leader_names_catalog, leader_names_metadata) = leader_names::load_leader_names_from_env();
+    let leader_names_handle = leader_names::LeaderNameCatalogHandle::new(leader_names_catalog);
     let (mobility_config, mobility_metadata) = mobility_config::load_mobility_config_from_env();
     let mobility_handle = mobility_config::MobilityConfigHandle::new(mobility_config);
     let (settlement_stage_config, settlement_stage_metadata) =
@@ -888,6 +914,15 @@ pub fn build_headless_app() -> App {
         .validate_keeping(&demographics_config.keeping)
     {
         panic!("flora config does not reconcile with the keeping classes: {err}");
+    }
+    // **Every preservation names a rung the ladder defines** (#708) - the keeping table's
+    // cross-config half, run where the ladder and the class table are both in scope. A rung nobody
+    // defines would otherwise parse, validate and preserve nothing for ever.
+    if let Err(err) = demographics_config
+        .keeping
+        .validate_preservation(&ladder_for_reconcile)
+    {
+        panic!("keeping preservation does not reconcile with the intensification ladder: {err}");
     }
     let demographics_handle =
         demographics_config::DemographicsConfigHandle::new(demographics_config);
@@ -1006,6 +1041,10 @@ pub fn build_headless_app() -> App {
         .insert_resource(sedentarization_handle)
         .insert_resource(sedentarization_metadata)
         .insert_resource(sedentarization::SedentarizationScore::default())
+        .insert_resource(leadership_handle)
+        .insert_resource(leadership_metadata)
+        .insert_resource(leader_names_handle)
+        .insert_resource(leader_names_metadata)
         .insert_resource(mobility_handle)
         .insert_resource(mobility_metadata)
         .insert_resource(mobility::MobilityScore::default())
@@ -1330,6 +1369,10 @@ pub fn build_headless_app() -> App {
                 // tile kind's twin of `advance_deposits`. It announces a slip or a loss on the feed
                 // the passes above write, so it takes its place after the last of them.
                 tile_improvement::advance_tile_improvements.after(extraction::advance_deposits),
+                // **AND THE BAND KIND'S**, on the same registry resource, so it takes its place after
+                // the tile kind's pass rather than racing it for the write.
+                band_improvement::advance_band_improvements
+                    .after(tile_improvement::advance_tile_improvements),
             )
                 .in_set(TurnStage::Logistics)
                 .run_if(capability_enabled(
@@ -1481,7 +1524,11 @@ pub fn build_headless_app() -> App {
                 // **Auto-craft fills an EMPTY queue** right before the bench works, and again
                 // right after it (so an order that completes this turn has its successor in
                 // the snapshot). See `auto_craft`.
-                auto_craft::advance_auto_craft.after(systems::advance_labor_allocation),
+                // **A chief emerges from the practice this turn's labour and expeditions banked**
+                // (`leadership`): after labor, which follows the expeditions, and before anything
+                // that reads the event log after it.
+                leadership::advance_leadership.after(systems::advance_labor_allocation),
+                auto_craft::advance_auto_craft.after(leadership::advance_leadership),
                 systems::advance_crafting.after(auto_craft::advance_auto_craft),
                 auto_craft::advance_auto_craft_after_bench.after(systems::advance_crafting),
                 // The bench-queue shortage notice reads the stock the draw just left, so it
@@ -1548,7 +1595,10 @@ pub fn build_headless_app() -> App {
                 // steps following a herd (any roam state) and which this drains — that order is
                 // carried by the whole run between them, and the one edge declared here is the
                 // culture split, the last pass that changes a band's people.
-                mobility::mobility_tick.after(systems::advance_culture_splits),
+                mobility::mobility_tick
+                    .after(systems::advance_culture_splits)
+                    // Leadership reads the herd-following steps this drains.
+                    .after(leadership::advance_leadership),
             )
                 .in_set(TurnStage::Population)
                 .run_if(population_stage_enabled()),

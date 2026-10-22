@@ -228,6 +228,35 @@ pub struct KeepingConfig {
     /// The class a **kill** lands in where no species is known (a herd the fauna table cannot
     /// resolve — an isolated fixture).
     pub kill_fallback_class: String,
+    /// **WHAT A STORE BUYS** (#708) - the shelf life a class takes while a band holds a rung. See
+    /// [`Preservation`]. Required, and empty means no rung preserves anything.
+    pub preservation: Vec<Preservation>,
+}
+
+/// **ONE PRESERVATION - the VALUE a class's shelf life takes while a rung is held** (#708,
+/// `docs/plan_civilization_steps.md` §Step 5). It names the number, never a multiplier: a drying rack
+/// does not make flesh keep "5 times longer", it makes flesh keep *20 turns*, so a retune of the base
+/// class cannot silently drag the preserved life with it.
+///
+/// **Which holder counts follows from the rung's source kind**, not from anything written here: a
+/// `band`-kind rung is held by the band itself, a `tile`-kind rung by any improvement of the band's
+/// own people within the supply network's reach of the band
+/// ([`crate::spoilage::HeldPreservation`]). A band's shelf life for a class is the longest of the base
+/// and every preservation it holds.
+///
+/// **Both life values are OPENING VALUES, PLAYTEST DIALS**: flesh 4 -> 20 and dry 60 -> 180.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Preservation {
+    /// The rung that has to be held, `branch:id`. Resolved against the ladder at boot
+    /// ([`KeepingConfig::validate_preservation`]); an unknown rung is a boot panic, not a lever that
+    /// does nothing.
+    pub rung: crate::ladder_ids::RungId,
+    /// The keeping class it lengthens.
+    pub class: String,
+    /// The class's shelf life while the rung is held, in turns. Finite and strictly greater than the
+    /// class's base - a preservation that shortens or equals the base is a lever that does nothing.
+    pub shelf_life_turns: f32,
 }
 
 impl KeepingConfig {
@@ -289,6 +318,74 @@ impl KeepingConfig {
         ] {
             if !self.has_class(id) {
                 return Err(format!("keeping.{key} names unknown class '{id}'"));
+            }
+        }
+        self.validate_preservation_table()
+    }
+
+    /// **THE PRESERVATION TABLE IS COHERENT ON ITS OWN**: every entry names a configured class, a
+    /// finite shelf life strictly above that class's base, and no `(rung, class)` pair is stated twice.
+    /// Whether the rung exists is [`Self::validate_preservation`]'s, which needs the ladder.
+    fn validate_preservation_table(&self) -> Result<(), String> {
+        let mut seen = std::collections::BTreeSet::new();
+        for entry in &self.preservation {
+            let Some(base) = self.shelf_life(&entry.class) else {
+                return Err(format!(
+                    "keeping.preservation names unknown class '{}'",
+                    entry.class
+                ));
+            };
+            if !(entry.shelf_life_turns.is_finite() && entry.shelf_life_turns > base) {
+                return Err(format!(
+                    "keeping.preservation for {} on '{}' needs a finite shelf_life_turns above the \
+                     class's base of {base}, got {} - a preservation that does not lengthen the \
+                     shelf life does nothing",
+                    entry.rung, entry.class, entry.shelf_life_turns
+                ));
+            }
+            if !seen.insert((entry.rung, entry.class.as_str())) {
+                return Err(format!(
+                    "keeping.preservation states {} on '{}' twice",
+                    entry.rung, entry.class
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// **EVERY PRESERVATION NAMES A RUNG THE LADDER DEFINES, AND ONE A HOLDER CAN STAND ON** - the
+    /// cross-config half of the table, run at boot where both configs are in scope (`validate` runs
+    /// inside `from_json_str`, which holds no ladder). A rung nobody defines, one nothing raises (a
+    /// root every source stands on), or one on a branch whose kind has no holder a band can read
+    /// (a plant, a herd, a road, a deposit) would be a preservation that parses and never applies.
+    pub fn validate_preservation(
+        &self,
+        ladder: &crate::intensification::LadderConfig,
+    ) -> Result<(), String> {
+        use crate::intensification::SourceKind;
+        for entry in &self.preservation {
+            let Some(rung) = ladder.rung_by_id(entry.rung) else {
+                return Err(format!(
+                    "keeping.preservation names unknown rung '{}'",
+                    entry.rung
+                ));
+            };
+            if rung.build.is_none() {
+                return Err(format!(
+                    "keeping.preservation names '{}', a rung nothing raises - every source stands \
+                     on it, so it would preserve for everyone",
+                    entry.rung
+                ));
+            }
+            if !matches!(
+                ladder.source_kind(rung.branch),
+                Some(SourceKind::Band | SourceKind::Tile)
+            ) {
+                return Err(format!(
+                    "keeping.preservation names '{}', which is not on a band or tile branch - only \
+                     a band's own improvement or its people's nearby tile improvement is a store",
+                    entry.rung
+                ));
             }
         }
         Ok(())
@@ -652,6 +749,87 @@ mod tests {
                 DemographicsConfig::from_json_str(&value.to_string()).is_err(),
                 "a broken keeping table must fail to load: {}",
                 value["keeping"]
+            );
+        }
+    }
+
+    /// **A PRESERVATION THAT DOES NOTHING IS REFUSED AT LOAD** (#708): an unknown class, a life that
+    /// equals or undercuts the class's base (the lever would do nothing), a life that is not finite,
+    /// and the same `(rung, class)` stated twice. Each breaker is paired with the shipped table
+    /// loading, so a gate that refuses everything cannot pass.
+    #[test]
+    fn a_preservation_that_does_nothing_is_rejected_at_load() {
+        assert!(
+            DemographicsConfig::from_json_str(&builtin_value().to_string()).is_ok(),
+            "control: the shipped table loads"
+        );
+        let base_of_flesh = DemographicsConfig::builtin()
+            .keeping
+            .shelf_life("flesh")
+            .expect("the shipped table keeps flesh");
+        /// One way to break the table: what it is, and how it edits the shipped JSON given the
+        /// base life of the first entry's class.
+        type Breaker = (&'static str, fn(&mut serde_json::Value, f32));
+        let breakers: [Breaker; 4] = [
+            ("an unknown class", |v, _| {
+                v["keeping"]["preservation"][0]["class"] = serde_json::json!("ambrosia");
+            }),
+            ("a life equal to the base", |v, base| {
+                v["keeping"]["preservation"][0]["shelf_life_turns"] = serde_json::json!(base);
+            }),
+            ("a life below the base", |v, base| {
+                v["keeping"]["preservation"][0]["shelf_life_turns"] = serde_json::json!(base * 0.5);
+            }),
+            ("the same rung and class twice", |v, _| {
+                let first = v["keeping"]["preservation"][0].clone();
+                v["keeping"]["preservation"]
+                    .as_array_mut()
+                    .expect("preservation is an array")
+                    .push(first);
+            }),
+        ];
+        for (what, breaker) in breakers {
+            let mut value = builtin_value();
+            breaker(&mut value, base_of_flesh);
+            assert!(
+                DemographicsConfig::from_json_str(&value.to_string()).is_err(),
+                "{what} must fail to load: {}",
+                value["keeping"]["preservation"]
+            );
+        }
+    }
+
+    /// **A PRESERVATION NAMES A RUNG THE LADDER DEFINES, AND ONE A STORE CAN STAND ON** (#708) - the
+    /// cross-config half, run at boot. The shipped table reconciles with the shipped ladder; a rung
+    /// that does not exist, one nothing raises (a root), and one on a branch whose kind no band can
+    /// hold (a plant) are each refused, loudly, rather than parsing into a lever that never applies.
+    #[test]
+    fn a_preservation_must_name_a_rung_a_store_can_stand_on() {
+        let ladder = crate::intensification::LadderConfig::builtin();
+        let keeping = DemographicsConfig::builtin().keeping.clone();
+        keeping
+            .validate_preservation(&ladder)
+            .expect("control: the shipped table reconciles with the shipped ladder");
+
+        let with_rung = |rung: &str| {
+            let mut keeping = keeping.clone();
+            keeping.preservation[0].rung = rung
+                .parse()
+                .unwrap_or_else(|_| panic!("'{rung}' is a well-formed rung key"));
+            keeping
+        };
+        for (what, rung) in [
+            ("a rung the ladder does not define", "camp_stores:granary"),
+            ("a root nothing raises", "camp_stores:carried"),
+            ("a rung on a plant branch", "plant:tended"),
+            ("a rung on a road branch", "route:dirt_road"),
+        ] {
+            let refusal = with_rung(rung)
+                .validate_preservation(&ladder)
+                .expect_err(what);
+            assert!(
+                refusal.contains(rung),
+                "{what}: the refusal names the rung: {refusal}"
             );
         }
     }

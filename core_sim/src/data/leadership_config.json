@@ -1,0 +1,7 @@
+{
+  "practice_threshold": 10.0,
+  "practice_per_directed_build": 3.0,
+  "practice_per_split": 3.0,
+  "practice_per_herd_hex": 1.0,
+  "practice_per_stage_reached": 5.0
+}

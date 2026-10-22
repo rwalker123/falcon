@@ -180,6 +180,11 @@ func set_event_attention(attention: Array) -> void:
 	_event_attention = attention
 	_push_attention()
 
+## The band/expedition half as last stored — read by `HudLayer._after_pending_change`, which refreshes
+## the idle rows in it when a pending edit moves the idle count between snapshots.
+func band_attention() -> Array:
+	return _band_attention
+
 ## Store the KNOWLEDGE half of the registry and push the whole thing — the `set_band_attention` seam,
 ## one field over.
 ##

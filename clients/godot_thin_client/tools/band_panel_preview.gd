@@ -1347,8 +1347,8 @@ func _ready() -> void:
 	await _settle()
 
 	# ---- Zone content (docs/band_panel_ux_proposal.html) ----------------------
-	# PEOPLE + WORKFORCE bars and the two role CARDS, in the TALL (L dock) shell where the band zone
-	# gets its full height: both bars, their keys, the dependency ratio, and the hinted cards.
+	# the ONE People bar (and its idle card) and the two role CARDS, in the TALL (L dock) shell where the band zone
+	# gets its full height: the bar, its key, the dependency count, and the hinted cards.
 	_panel.set_dock(SIDE_LEFT)
 	_panel.set_active_tab(&"band")
 	await _settle()
@@ -1356,9 +1356,9 @@ func _ready() -> void:
 	_assert_zones_within_bounds()
 	_assert_work_zone_readable()
 	_assert_zone_content_fits()
-	# The two bars cross-checked on a band with NO party out — the negative arm of the away clause,
+	# The People bar cross-checked on a band with NO party out — the negative arm of the away clause,
 	# which is what stops the fix growing a permanent "0 away" on every band in the game.
-	_assert_people_matches_workforce("band_panel_people")
+	_assert_people_bar_is_one_bar("band_panel_people")
 
 	# band_panel_people_map_path — THE SAME PEOPLE BLOCK, reached the OTHER way: by clicking the band
 	# ON THE MAP. `band_panel_people` above drives the SNAPSHOT path (`update_band_alerts` re-resolves
@@ -1415,8 +1415,8 @@ func _ready() -> void:
 	_push_bands([_scout_expedition_fixture(), _band_fixture(), _raid_party_fixture()])
 	_panel.set_active_tab(&"band")
 	await _settle()
-	await _save("band_panel_workforce_away")
-	_assert_people_matches_workforce("the reference band with two parties out")
+	await _save("band_panel_people_away")
+	_assert_people_bar_is_one_bar("the reference band with two parties out")
 	# PUT THE ROSTER BACK — `update_band_alerts` diffs against the LAST roster pushed, so a lingering
 	# pair of expeditions would follow every band state below this one.
 	_push_bands([_band_fixture()])
@@ -2383,6 +2383,7 @@ func _ready() -> void:
 	_assert_zone_content_fits()
 	_report_zone_content_extent("band_panel_faction")
 	_assert_faction_page()
+	await _assert_faction_idle_card()
 	# **THE BAND ZONE'S SETTLING AND DISCOVERIES BLOCKS**, which came here when the Know tab was
 	# deleted. Asserted on the `band` tab because the narrow shell parents ONLY the active tab's zone
 	# (`BandCityPanel._reparent_zones` DETACHES the rest), so a zone read from another tab has never
@@ -2401,6 +2402,7 @@ func _ready() -> void:
 	await _save("band_panel_faction_work")
 	_assert_zones_within_bounds()
 	_assert_zone_content_fits()
+	_assert_faction_work_idle_labels()
 
 	# WIDE: all THREE zones abreast, which is the only layout in which the page can be read as a whole.
 	_panel.set_dock(SIDE_BOTTOM)
@@ -2584,6 +2586,7 @@ func _ready() -> void:
 
 	# The band dock's Trade tab (issue #731) — its own file, appended last so no frame above moves.
 	await TRADE_TAB_STATES.new().run(self)
+	await _render_people_idle_states()
 
 	# The breeding ceiling's Band-tab row and split-sheet block (issue #691), appended last.
 	await FAMILY_LIMIT_STATES.new().run(self)
@@ -7532,54 +7535,80 @@ func _assert_people_sum_matches_size(band: Dictionary, state_name: String) -> vo
 	else:
 		print("band_panel_preview: assert OK — %s PEOPLE brackets sum to the band's %d people" % [state_name, size])
 
-## GUARD: **the PEOPLE bar and the WORKFORCE bar are ONE band counted two ways**, and the number they
-## share must be one number. Asserted on the RENDERED chips rather than on the fixture, because both
-## defects it guards were in the rendering and neither is visible in a thumbnail.
+## GUARD: **THE PEOPLE BAR IS ONE BAR — children | working | idle | elders — and its four chips ARE
+## the band.** Asserted on the RENDERED chips rather than on the fixture, because the defects it guards
+## were in the rendering and neither is visible in a thumbnail.
 ##
-## 1. **The worker bracket is the join.** `working_age` IS the working bracket, so PEOPLE's 🛠 chip
-##    must equal the denominator in WORKFORCE's "N idle of M". The client used to apportion the raw
-##    fixed-point brackets for itself and could round a 16.6-worker band UP: "17" in the PEOPLE bar,
-##    directly above "0 idle of 16", the same band on the same frame.
-## 2. **WORKFORCE's segments PARTITION that denominator.** Party crews are the trap — the sim removes
-##    them from the parent cohort the turn a party launches, so they are not in `working_age` at all,
-##    and a Parties SEGMENT made the bar sum to 26 over a band of 16. They read as the header's
-##    "away" clause instead, which is asserted too so the fact cannot quietly vanish in the fix.
-func _assert_people_matches_workforce(state_name: String) -> void:
+## 1. **The four chips sum to `size`.** A dropped bracket, a party crew leaking in (the sim removes a
+##    party's members from `working_age` on launch, so they are the header's `away` clause and not a
+##    segment) or a double-counted idle hand all break it by exactly their count.
+## 2. **`idle` IS the shared helper's answer** (`HudBandLaborState.people_idle`), and `working` is
+##    `working_age` less it. The bar, the card, the faction page and the orb all read that one number.
+## 3. **The idle card exists exactly when idle > 0** — a liveness pair, since "no card" is also what a
+##    broken builder renders.
+## 4. **The working chip's tooltip carries the breakdown the Workforce bar used to draw**, every
+##    non-zero part, so it stays reachable.
+func _assert_people_bar_is_one_bar(state_name: String) -> void:
 	var band: Dictionary = _hud._band_labor._panel_band
 	var band_zone: Node = _panel._zones.get(BandCityPanel.ZONE_BAND)
 	if band_zone == null:
-		_fail("%s has no band zone to read the PEOPLE and WORKFORCE bars from" % state_name)
+		_fail("%s has no band zone to read the People bar from" % state_name)
 		return
-	var working_age := int(band.get("working_age", 0))
-	var people := _composition_counts(band_zone, HudWorkVocab.ZONE_HEADER_PEOPLE)
-	var workforce := _composition_counts(band_zone, HudWorkVocab.ZONE_HEADER_WORKFORCE)
+	var counts := _composition_counts(band_zone, HudWorkVocab.ZONE_HEADER_PEOPLE)
+	var total := 0
+	for key in counts:
+		total += int(counts[key])
 	_assert_band_panel(
-		"%s: PEOPLE's worker chip (%d) IS the WORKFORCE denominator (%d)" % [
-			state_name, int(people.get(HudWorkVocab.PEOPLE_GLYPH_WORKING, -1)), working_age],
-		int(people.get(HudWorkVocab.PEOPLE_GLYPH_WORKING, -1)) == working_age)
-	var people_total := 0
-	for key in people:
-		people_total += int(people[key])
+		"%s: the four People chips account for the band's whole %d people (read %d: %s)" % [
+			state_name, int(band.get("size", 0)), total, str(counts)],
+		total == int(band.get("size", 0)))
+	var idle: int = _hud._band_labor.people_idle(band)
 	_assert_band_panel(
-		"%s: the PEOPLE chips account for the band's whole %d people (read %d)" % [
-			state_name, int(band.get("size", 0)), people_total],
-		people_total == int(band.get("size", 0)))
-	var segment_total := 0
-	for key in workforce:
-		segment_total += int(workforce[key])
+		"%s: the Idle chip IS the shared helper's idle (%d, read %d)" % [
+			state_name, idle, int(counts.get(HudWorkVocab.PEOPLE_KEY_IDLE, 0))],
+		int(counts.get(HudWorkVocab.PEOPLE_KEY_IDLE, 0)) == idle)
 	_assert_band_panel(
-		"%s: the WORKFORCE segments partition its %d workers (read %d — a party crew leaking in?)" % [
-			state_name, working_age, segment_total],
-		segment_total == working_age)
-	# The away clause is the ONLY place a party crew is stated on this zone now, so a band with one in
-	# the field must carry it — and a band with none must not grow a "0 away".
-	var away := _hud._band_labor.band_party_workers(band)
-	var readout := _zone_head_readout(band_zone, HudWorkVocab.ZONE_HEADER_WORKFORCE)
-	var away_clause := HudWorkVocab.WORKFORCE_AWAY_FORMAT % away
+		"%s: …and the working chip is working_age less idle (%d, read %d)" % [
+			state_name, int(band.get("working_age", 0)) - idle,
+			int(counts.get(HudWorkVocab.PEOPLE_GLYPH_WORKING, 0))],
+		int(counts.get(HudWorkVocab.PEOPLE_GLYPH_WORKING, 0)) == int(band.get("working_age", 0)) - idle)
+	var cards := _collect_meta_controls(band_zone, HudWorkVocab.IDLE_CARD_META, [])
 	_assert_band_panel(
-		"%s: the WORKFORCE header states its %d away ('%s')" % [state_name, away, readout],
+		"%s: the idle card is drawn exactly when someone is idle (idle %d, %d cards)" % [
+			state_name, idle, cards.size()],
+		cards.size() == (1 if idle > 0 else 0))
+	if idle > 0 and cards.size() == 1:
+		var number := _collect_meta_controls(cards[0], HudWorkVocab.IDLE_CARD_NUMBER_META, [])
+		_assert_band_panel("%s: …and it states `%s`" % [state_name, HudWorkVocab.IDLE_CARD_NUMBER_FORMAT % idle],
+			number.size() == 1 and (number[0] as Label).text == HudWorkVocab.IDLE_CARD_NUMBER_FORMAT % idle)
+	# The working chip's tooltip names every non-zero part.
+	var tip := _composition_chip_tooltip(band_zone, HudWorkVocab.ZONE_HEADER_PEOPLE,
+		HudWorkVocab.PEOPLE_GLYPH_WORKING)
+	var parts: Dictionary = _hud._band_labor.working_breakdown(band)
+	# THE PARTITION GUARD: the breakdown's parts account for EVERY working hand and nobody else. The
+	# tooltip check below only asks the breakdown whether it contains itself; this asks it whether it
+	# adds up, so a labor kind `working_breakdown` forgot to count fails here by exactly its hands.
+	var parts_total := 0
+	for part_label in parts:
+		parts_total += int(parts[part_label])
+	_assert_band_panel("%s: working_breakdown's parts sum to working_age - idle (%d, want %d: %s)" % [
+		state_name, parts_total, int(band.get("working_age", 0)) - idle, str(parts)],
+		parts_total == int(band.get("working_age", 0)) - idle)
+	var missing: Array[String] = []
+	for label in parts:
+		if not tip.contains(HudWorkVocab.PEOPLE_WORKING_PART_FORMAT % [label, int(parts[label])]):
+			missing.append(String(label))
+	_assert_band_panel("%s: the working chip's tooltip carries every part %s (missing %s, tip `%s`)" % [
+		state_name, str(parts), str(missing), tip], missing.is_empty())
+	# The away clause is the ONLY place a party crew is stated on this zone, so a band with one in
+	# the field must carry it - and a band with none must not grow a "0 away".
+	var away: int = _hud._band_labor.band_party_workers(band)
+	var readout := _zone_head_readout(band_zone, HudWorkVocab.ZONE_HEADER_PEOPLE)
+	var away_clause: String = HudWorkVocab.PEOPLE_AWAY_FORMAT % away
+	_assert_band_panel(
+		"%s: the People header states its %d away ('%s')" % [state_name, away, readout],
 		readout.ends_with(away_clause) if away > 0 else not readout.contains(
-			HudWorkVocab.WORKFORCE_AWAY_FORMAT % 0))
+			HudWorkVocab.PEOPLE_AWAY_FORMAT % 0))
 
 ## **THE MAP-CLICK PATH CARRIES THE KIT, and it is this harness's THIRD instance of one bug class.**
 ## The marker copy is a hand-listed allowlist, so a field the decoder ships and the panel reads goes
@@ -8912,6 +8941,204 @@ func _faction_discoveries_fixture() -> Dictionary:
 ##
 ## The two bands share `_band_fixture`'s age brackets deliberately — see `_assert_faction_page`, where
 ## that is what makes the apportionment claim a real discriminator rather than an arithmetic identity.
+## **THE IDLE CARD, ON THE BAND PAGE: PRESENT EXACTLY WHEN SOMEONE IS IDLE.** Two frames of one
+## claim: the reference band (13 of 16 hands on a job, so 3 idle) draws the card and the card states
+## `3 idle` and the reason; the builders band (every hand spent) draws NO card. Either alone passes on
+## a card that is always drawn, or never. `_assert_people_bar_is_one_bar` carries the presence rule
+## and the chips-sum-to-size rule on both, so a card tied to the wrong number fails there.
+func _render_people_idle_states() -> void:
+	_panel.set_dock(SIDE_LEFT)
+	_panel.set_active_tab(&"band")
+	_push_bands([_band_fixture()])
+	await _settle()
+	await _save("band_panel_people_idle")
+	_assert_zones_within_bounds()
+	_assert_zone_content_fits()
+	_assert_people_bar_is_one_bar("band_panel_people_idle")
+	var band_zone: Node = _panel._zones.get(BandCityPanel.ZONE_BAND)
+	var idle: int = _hud._band_labor.people_idle(_hud._band_labor._panel_band)
+	_assert_band_panel("band_panel_people_idle: this band really has idle hands (%d)" % idle, idle > 0)
+	var cards := _collect_meta_controls(band_zone, HudWorkVocab.IDLE_CARD_META, [])
+	if cards.size() == 1:
+		var texts: Array[String] = []
+		for label in _label_children(cards[0]):
+			texts.append(label.text)
+		_assert_band_panel("band_panel_people_idle: the card reads `%d idle` over the reason line (%s)"
+			% [idle, str(texts)], texts == [HudWorkVocab.IDLE_CARD_NUMBER_FORMAT % idle,
+				HudWorkVocab.IDLE_CARD_REASON_BAND])
+		_assert_band_panel("band_panel_people_idle: the card's number is amber (WARN)",
+			((cards[0].get_child(0).get_child(0)) as Label).get_theme_color("font_color") == HudStyle.WARN)
+		_assert_band_panel("band_panel_people_idle: the card says idle people are spare capacity",
+			cards[0].tooltip_text == HudWorkVocab.IDLE_CARD_TOOLTIP)
+		_assert_band_panel("band_panel_people_idle: the card sits INSIDE the People block, under its key",
+			cards[0].get_parent() is VBoxContainer
+				and cards[0].get_index() == cards[0].get_parent().get_child_count() - 1)
+	var idle_tip := _composition_chip_tooltip(band_zone, HudWorkVocab.ZONE_HEADER_PEOPLE,
+		HudWorkVocab.PEOPLE_KEY_IDLE)
+	_assert_band_panel("band_panel_people_idle: the Idle segment's tooltip is the card's reason line",
+		idle_tip == HudWorkVocab.IDLE_CARD_REASON_BAND)
+	# The paired negative: nobody idle, so no card and no Idle chip.
+	_push_bands([_builders_band_fixture()])
+	await _settle()
+	await _save("band_panel_people_no_idle")
+	_assert_zones_within_bounds()
+	_assert_zone_content_fits()
+	_assert_people_bar_is_one_bar("band_panel_people_no_idle")
+	band_zone = _panel._zones.get(BandCityPanel.ZONE_BAND)
+	_assert_band_panel("band_panel_people_no_idle: no one is idle, so there is no card and no Idle chip",
+		_hud._band_labor.people_idle(_hud._band_labor._panel_band) == 0
+			and _collect_meta_controls(band_zone, HudWorkVocab.IDLE_CARD_META, []).is_empty()
+			and not _composition_counts(band_zone, HudWorkVocab.ZONE_HEADER_PEOPLE).has(
+				HudWorkVocab.PEOPLE_KEY_IDLE))
+	_assert_idle_card_reason_list()
+	_push_bands([_band_fixture()])
+	await _settle()
+	await _assert_orb_idle_follows_pending()
+
+## The orb's idle count, read off the registry the orb was handed (`0` when it carries no row).
+func _orb_idle_count() -> int:
+	for item_variant in _hud.turn_orb._entries:
+		var item: Dictionary = item_variant
+		if String(item.get("kind", "")) == HudAttentionVocab.ATTENTION_KIND_IDLE_WORKERS:
+			return int(String(item.get("label", "0")).split(" ")[0])
+	return 0
+
+const ORB_PENDING_FORAGE_WORKERS := 8
+const ORB_PENDING_TURN_STEP := 1
+
+## **THE ORB'S IDLE ALERT AND THE BAR CANNOT DISAGREE, ACROSS A TURN OR A STEPPER PRESS** (PNG-less).
+## Both read the pending-aware `people_idle`, so (1) the first snapshot of a new turn must drop the
+## stale pending overlay BEFORE the attention is built, and (2) a stepper press must refresh the orb on
+## the frame it changes the bar. Chain: a stale pending forage edit (8 on the forage row, which the
+## band's own row holds at 5, so idle reads 0) is left behind a turn; the next snapshot contradicts it
+## and idle must read the band's real 3 on the orb, `people_idle` and the card alike. Then a fresh
+## press moves all three together without a snapshot.
+func _assert_orb_idle_follows_pending() -> void:
+	_panel.set_active_tab(&"band")
+	var labor: HudBandLaborState = _hud._band_labor
+	var turn := labor.current_turn()
+	_push_bands([_band_fixture()])
+	await _settle()
+	labor.record_pending_assign(904, SourceForecast.LABOR_KIND_FORAGE, ORB_PENDING_FORAGE_WORKERS, 71, 18,
+		"", 0.5)
+	_hud._after_pending_change()
+	var pending_idle: int = labor.people_idle(labor.panel_band())
+	_assert_band_panel("orb idle follows a stepper press: bar idle %d, orb idle %d, same frame, no snapshot"
+		% [pending_idle, _orb_idle_count()], _orb_idle_count() == pending_idle)
+	# The next turn's snapshot contradicts the stale pending edit (the sim clamped it back to 5).
+	labor.set_turn(turn + ORB_PENDING_TURN_STEP)
+	_push_bands([_band_fixture()])
+	await _settle()
+	var band: Dictionary = labor.panel_band()
+	var idle: int = labor.people_idle(band)
+	var band_zone: Node = _panel._zones.get(BandCityPanel.ZONE_BAND)
+	var cards := _collect_meta_controls(band_zone, HudWorkVocab.IDLE_CARD_META, [])
+	var card_number := ""
+	if cards.size() == 1:
+		card_number = String(_label_children(cards[0])[0].text)
+	_assert_band_panel("a stale pending entry the next snapshot contradicts: orb idle %d == people_idle %d == card `%s`"
+		% [_orb_idle_count(), idle, card_number],
+		idle > 0 and _orb_idle_count() == idle and card_number == HudWorkVocab.IDLE_CARD_NUMBER_FORMAT % idle)
+	_assert_band_panel("...and the pending overlay really was dropped by the snapshot (%s)"
+		% str(labor.pending_assigns_for(904)), labor.pending_assigns_for(904).is_empty())
+
+func _label_children(card: Control) -> Array[Label]:
+	var found: Array[Label] = []
+	for child in card.get_child(0).get_children():
+		if child is Label:
+			found.append(child)
+	return found
+
+## The faction card's second line, driven over constructed bands (PNG-less - a string): most idle
+## first, capped at `IDLE_CARD_BANDS_MAX` with `+N more`, equal counts in name order, and the
+## empty case saying nothing.
+func _assert_idle_card_reason_list() -> void:
+	var four := [{"name": "Brackwater", "idle": 3}, {"name": "Saltmarch", "idle": 5},
+		{"name": "Greyfen", "idle": 3}, {"name": "Aldermoor", "idle": 1}]
+	_assert_band_panel("the faction idle card names the most idle first, three of four, and counts the rest (%s)"
+		% FactionRollup.idle_card_reason(four),
+		FactionRollup.idle_card_reason(four) == "Saltmarch 5 · Brackwater 3 · Greyfen 3 · +1 more. Not on any job.")
+	_assert_band_panel("...and a single band still reads the same shape",
+		FactionRollup.idle_card_reason([{"name": "Saltmarch", "idle": 4}]) == "Saltmarch 4. Not on any job.")
+	_assert_band_panel("...and a faction with nobody idle says nothing",
+		FactionRollup.idle_card_reason([]) == "")
+
+## **THE FACTION PAGE'S IDLE CARD**: `N idle across your bands`, the bands that have idle people, most
+## idle first. The roster is two bands that BOTH have idle hands, so the list names two and a card
+## that named only the first (or summed one band) fails.
+func _assert_faction_idle_card() -> void:
+	var bands: Array = _hud._band_labor.player_bands()
+	var by_band: Array = []
+	var total_idle := 0
+	for band_variant in bands:
+		var band: Dictionary = band_variant
+		var idle: int = _hud._band_labor.people_idle(band)
+		total_idle += idle
+		if idle > 0:
+			by_band.append({"name": HudFormat.band_name(band), "idle": idle})
+	_assert_band_panel("faction idle card: both roster bands have idle hands (%s)" % str(by_band),
+		by_band.size() == 2)
+	var band_zone: Node = _panel._zones.get(BandCityPanel.ZONE_BAND)
+	var cards := _collect_meta_controls(band_zone, HudWorkVocab.IDLE_CARD_META, [])
+	_assert_band_panel("faction idle card: exactly one card on the page (got %d)" % cards.size(),
+		cards.size() == 1)
+	if cards.size() != 1:
+		return
+	var texts: Array[String] = []
+	for label in _label_children(cards[0]):
+		texts.append(label.text)
+	var want_reason := FactionRollup.idle_card_reason(by_band)
+	_assert_band_panel("faction idle card: reads `%d idle across your bands` over the bands list (%s)"
+		% [total_idle, str(texts)], texts == [
+			HudWorkVocab.IDLE_CARD_NUMBER_FACTION_FORMAT % total_idle, want_reason])
+	var counts := _composition_counts(band_zone, HudWorkVocab.ZONE_HEADER_PEOPLE)
+	var size_total := 0
+	for band_variant in bands:
+		size_total += int((band_variant as Dictionary).get("size", 0))
+	_assert_band_panel("faction idle card: the Idle chip is the same %d and the four chips sum to %d (%s)"
+		% [total_idle, size_total, str(counts)],
+		int(counts.get(HudWorkVocab.PEOPLE_KEY_IDLE, 0)) == total_idle and _sum_counts(counts) == size_total)
+
+## The faction page's WORK zone: no Workforce bar, each band row ends in its idle count (amber) and
+## its summary ends in `N working`.
+func _assert_faction_work_idle_labels() -> void:
+	var work_zone: Node = _panel._zones.get(BandCityPanel.ZONE_WORK)
+	var labels := _collect_meta_controls(work_zone, HudWorkVocab.FACTION_ROW_IDLE_META, [])
+	var bands: Array = _hud._band_labor.player_bands()
+	_assert_band_panel("faction work zone: one idle label per band (%d of %d)" % [labels.size(), bands.size()],
+		labels.size() == bands.size())
+	var want: Array[String] = []
+	for band_variant in bands:
+		var idle: int = _hud._band_labor.people_idle(band_variant)
+		want.append(HudWorkVocab.FACTION_ROW_IDLE_FORMAT % idle if idle > 0 else HudWorkVocab.FACTION_ROW_NONE_IDLE)
+	var got: Array[String] = []
+	for label in labels:
+		got.append((label as Label).text)
+	_assert_band_panel("faction work zone: the idle labels read %s (got %s)" % [str(want), str(got)],
+		got == want)
+	var amber_ok := true
+	for label in labels:
+		var idle_count := int(label.get_meta(HudWorkVocab.FACTION_ROW_IDLE_META))
+		var colour: Color = (label as Label).get_theme_color("font_color")
+		amber_ok = amber_ok and (colour == HudStyle.WARN if idle_count > 0 else colour == HudStyle.INK_FAINT)
+	_assert_band_panel("faction work zone: amber when someone is idle, faint when none", amber_ok)
+	_assert_band_panel("faction work zone: the Workforce bar is gone (no composition key in the zone)",
+		_composition_counts(work_zone, HudWorkVocab.ZONE_HEADER_PEOPLE).is_empty())
+	var summary_ok := true
+	for band_variant in bands:
+		var split: Dictionary = _hud._band_labor.people_split(band_variant)
+		summary_ok = summary_ok and _has_button_containing(work_zone,
+			HudWorkVocab.FACTION_ROW_WORKING_FORMAT % int(split["working"]))
+	_assert_band_panel("faction work zone: every band's summary carries `N working`", summary_ok)
+
+func _has_button_containing(node: Node, text: String) -> bool:
+	if node is Button and (node as Button).text.contains(text):
+		return true
+	for child in node.get_children():
+		if _has_button_containing(child, text):
+			return true
+	return false
+
 func _faction_roster() -> Array:
 	var second := _concerning_food_band_fixture()
 	# **THE SECOND BAND KEEPS A HERD**, the corralled aurochs `_under_herded_work_herd_fixtures` stages.
@@ -9003,10 +9230,13 @@ func _assert_faction_page() -> void:
 	var band_zone: Node = _panel._zones.get(BandCityPanel.ZONE_BAND)
 	var work_zone: Node = _panel._zones.get(BandCityPanel.ZONE_WORK)
 	var people := _zone_head_readout(band_zone, HudWorkVocab.ZONE_HEADER_PEOPLE) if band_zone != null else ""
+	var faction_away := 0
+	for band_variant in bands:
+		faction_away += _hud._band_labor.band_party_workers(band_variant)
 	_assert_band_panel(
-		"faction page: PEOPLE reads the whole faction (%d) — not one band's (%d)" % [
+		"faction page: PEOPLE reads the whole faction (%d, plus its away clause) — not one band's (%d)" % [
 			expected, largest_band],
-		people == str(expected))
+		people == HudWidgets.people_head_readout(expected, faction_away))
 
 	# **THE VITALS ARE THE BAND PAGE'S FIVE ROWS, ONE SCALE UP.** Asserted on the rendered BBCode rather
 	# than on a frame: the rows are a `RichTextLabel`'s text, and a picture cannot tell a row that is
@@ -10187,6 +10417,22 @@ func _composition_counts(node: Node, title: String) -> Dictionary:
 		if not found.is_empty():
 			return found
 	return {}
+
+## The tooltip of ONE chip (by segment key) under a zone block's composition key; `""` when absent.
+func _composition_chip_tooltip(node: Node, title: String, key: String) -> String:
+	if node is VBoxContainer and _zone_block_head_matches(node, title):
+		for child in node.get_children():
+			if child is HFlowContainer:
+				for chip in child.get_children():
+					if chip.has_meta(HudWidgets.COMPOSITION_SEGMENT_META) \
+							and String(chip.get_meta(HudWidgets.COMPOSITION_SEGMENT_META)) == key:
+						return (chip as Control).tooltip_text
+		return ""
+	for child in node.get_children():
+		var found := _composition_chip_tooltip(child, title, key)
+		if found != "":
+			return found
+	return ""
 
 ## Is this zone block's OWN head the named one? Its direct children only — a nested block's head must
 ## not claim its parent's chips, which is the one way the walk above could read the wrong bar.
@@ -12970,15 +13216,16 @@ func _need_row_states() -> void:
 		_need_band_fixture(0, HudWorkVocab.NO_HUNT_NEEDED, 0, 0, 0, NEED_FOOD_TURNS),
 		FOLLOW_BEHIND_TILE, HudWorkVocab.WORK_ROW_NEED_WAITING, HudWorkVocab.WORK_ROW_NEED_BEHIND,
 		[HudWorkVocab.WORK_ROW_FOLLOW_BEHIND_FORMAT % FOLLOW_BEHIND_HEXES], false)
-	# The Workforce head: idle hands the muster takes read as out hunting.
+	# The People bar: idle hands the muster takes read as working, as `Out hunting` in the tooltip.
 	_push_bands([_need_band_fixture(NEED_CREW_OUT, HudWorkVocab.NO_HUNT_NEEDED, NEED_FORAGE_LENT,
 		NEED_DONOR_HUNT_LENT, NEED_IDLE_MUSTERED, NEED_FOOD_TURNS)])
 	_panel.set_active_tab(&"band")
 	await _settle()
-	if not _has_label_containing(_panel, "%d out hunting" % NEED_CREW_OUT):
-		_fail("the Workforce head does not state the %d hands out hunting (idle + lent)" % NEED_CREW_OUT)
-	else:
-		print("band_panel_preview: assert OK — the Workforce head reads idle · N out hunting")
+	var out_tip := _composition_chip_tooltip(_panel, HudWorkVocab.ZONE_HEADER_PEOPLE,
+		HudWorkVocab.PEOPLE_GLYPH_WORKING)
+	_assert_band_panel("the People bar's working tooltip states the %d hands out hunting (idle + lent): `%s`"
+		% [NEED_CREW_OUT, out_tip], out_tip.contains(
+			HudWorkVocab.PEOPLE_WORKING_PART_FORMAT % [HudWorkVocab.WORKING_PART_OUT_HUNTING, NEED_CREW_OUT]))
 	await _need_workforce_states()
 	await _need_extract_workforce_states()
 	await _need_row_kit_short_state()
@@ -12997,67 +13244,75 @@ func _need_workforce_fixture(lending: bool) -> Dictionary:
 		NEED_FORAGE_LENT if lending else 0, NEED_DONOR_HUNT_LENT if lending else 0,
 		NEED_IDLE_MUSTERED if lending else 0, NEED_FOOD_TURNS)
 	band["working_age"] = NEED_WF_WORKING_AGE
+	# Keep the brackets summing to `size`, as the sim guarantees.
+	band["size"] = int(band.get("children", 0)) + NEED_WF_WORKING_AGE + int(band.get("elders", 0))
 	band["bench"] = {"workers": NEED_WF_BENCH_STANDING,
 		"lent_to_hunt": NEED_WF_BENCH_LENT if lending else 0}
 	return band
 
-## **THE BAR MOVES EVERY LENT HAND OUT OF ITS HOME SEGMENT INTO ONE `Out hunting` SEGMENT**, and the
-## segments still partition `working_age`. Counts are asserted by EQUALITY off the rendered key.
+## **THE WORKING TOOLTIP MOVES EVERY LENT HAND OUT OF ITS HOME PART INTO ONE `Out hunting` PART**, and
+## the one bar still sums to `size`. The parts are asserted by EQUALITY off the shared helper's
+## breakdown AND by the rendered tooltip; the chips by the band's own brackets.
 func _need_workforce_states() -> void:
 	_set_world_herds(_follow_herd_fixtures(FOLLOW_BAND_TILE, FOLLOW_NO_NEXT))
 	_push_bands([_need_workforce_fixture(true)])
 	_panel.set_active_tab(&"band")
 	await _settle()
-	await _save("band_panel_workforce_out_hunting")
-	var counts := _composition_counts(_panel, HudWorkVocab.ZONE_HEADER_WORKFORCE)
+	await _save("band_panel_people_out_hunting")
 	var out_total := NEED_IDLE_MUSTERED + NEED_FORAGE_LENT + NEED_DONOR_HUNT_LENT + NEED_WF_BENCH_LENT
 	var idle_total := NEED_WF_WORKING_AGE - (NEED_FORAGE_STANDING + NEED_DONOR_HUNT_STANDING \
 		+ FOLLOW_CREW + NEED_WF_BENCH_STANDING) - NEED_IDLE_MUSTERED
 	var want := {
-		HudWorkVocab.WORKFORCE_KEY_FORAGE: NEED_FORAGE_STANDING - NEED_FORAGE_LENT,
-		HudWorkVocab.WORKFORCE_KEY_HUNT: NEED_DONOR_HUNT_STANDING + FOLLOW_CREW - NEED_DONOR_HUNT_LENT,
-		HudWorkVocab.WORKFORCE_KEY_BENCH: NEED_WF_BENCH_STANDING - NEED_WF_BENCH_LENT,
-		HudWorkVocab.WORKFORCE_KEY_OUT_HUNTING: out_total,
-		HudWorkVocab.WORKFORCE_KEY_IDLE: idle_total,
+		HudWorkVocab.WORKING_PART_FORAGE: NEED_FORAGE_STANDING - NEED_FORAGE_LENT,
+		HudWorkVocab.WORKING_PART_HUNT: NEED_DONOR_HUNT_STANDING + FOLLOW_CREW - NEED_DONOR_HUNT_LENT,
+		HudWorkVocab.WORKING_PART_BENCH: NEED_WF_BENCH_STANDING - NEED_WF_BENCH_LENT,
+		HudWorkVocab.WORKING_PART_OUT_HUNTING: out_total,
 	}
-	_assert_band_panel("workforce bar — segments are %s (got %s)" % [str(want), str(counts)],
-		counts == want)
-	var sum := 0
-	for key in counts:
-		sum += int(counts[key])
-	_assert_band_panel("workforce bar — the segments partition working_age (%d of %d)"
-		% [sum, NEED_WF_WORKING_AGE], sum == NEED_WF_WORKING_AGE)
-	var head := HudWorkVocab.WORKFORCE_IDLE_OUT_FORMAT % [idle_total, out_total]
-	_assert_band_panel("workforce bar — the header reads `%s`" % head, _has_label_containing(_panel, head))
-	# CONTROL: nothing lent draws no segment and the plain header.
+	var band: Dictionary = _hud._band_labor._panel_band
+	_assert_band_panel("people bar - the working breakdown is %s (got %s)" % [
+		str(want), str(_hud._band_labor.working_breakdown(band))],
+		_hud._band_labor.working_breakdown(band) == want)
+	var counts := _composition_counts(_panel, HudWorkVocab.ZONE_HEADER_PEOPLE)
+	_assert_band_panel("people bar - the Idle chip is %d (out-hunting hands count as working; got %s)" % [
+		idle_total, str(counts)], int(counts.get(HudWorkVocab.PEOPLE_KEY_IDLE, 0)) == maxi(idle_total, 0))
+	var tip := _composition_chip_tooltip(_panel, HudWorkVocab.ZONE_HEADER_PEOPLE, HudWorkVocab.PEOPLE_GLYPH_WORKING)
+	_assert_band_panel("people bar - the working tooltip names `%s %d` (got `%s`)" % [
+		HudWorkVocab.WORKING_PART_OUT_HUNTING, out_total, tip],
+		tip.contains(HudWorkVocab.PEOPLE_WORKING_PART_FORMAT % [HudWorkVocab.WORKING_PART_OUT_HUNTING, out_total]))
+	_assert_people_bar_is_one_bar("people bar - lending")
+	# CONTROL: nothing lent names no `Out hunting` part.
 	_push_bands([_need_workforce_fixture(false)])
 	await _settle()
-	await _save("band_panel_workforce_no_lending")
-	var plain := _composition_counts(_panel, HudWorkVocab.ZONE_HEADER_WORKFORCE)
-	_assert_band_panel("workforce bar — no lending draws no `Out hunting` segment (%s)" % str(plain),
-		not plain.has(HudWorkVocab.WORKFORCE_KEY_OUT_HUNTING))
-	_assert_band_panel("workforce bar — …and the header does not say out hunting",
-		not _has_label_containing(_panel, "out hunting"))
+	await _save("band_panel_people_no_lending")
+	var plain_tip := _composition_chip_tooltip(_panel, HudWorkVocab.ZONE_HEADER_PEOPLE, HudWorkVocab.PEOPLE_GLYPH_WORKING)
+	_assert_band_panel("people bar - no lending names no `Out hunting` part (`%s`)" % plain_tip,
+		not plain_tip.contains(HudWorkVocab.WORKING_PART_OUT_HUNTING))
+	_assert_people_bar_is_one_bar("people bar - no lending")
 	_assert_idle_attention_nets_the_muster()
 
-## **THE TURN ORB'S IDLE ROW NETS OUT THE IDLE HANDS THE MUSTER TAKES**, matching the Workforce head.
-## A pair: the same wire `idle_workers` raises the row when nothing is mustered and raises none when
-## the muster takes every one of them.
+## **THE TURN ORB'S IDLE ROW READS THE SAME IDLE AS THE BAR** (`HudBandLaborState.people_idle`): the
+## idle hands the muster takes are out hunting, i.e. working, so they leave the count. A pair: the
+## orb's count equals the fixture's own arithmetic in both states, and the lending one is smaller.
 func _assert_idle_attention_nets_the_muster() -> void:
 	var lending := _need_workforce_fixture(true)
-	lending["idle_workers"] = NEED_IDLE_MUSTERED
 	var plain := _need_workforce_fixture(false)
-	plain["idle_workers"] = NEED_IDLE_MUSTERED
 	var idle_rows := func(band: Dictionary) -> Array:
 		return _hud._attention.build_band_attention([band], []).filter(func(a):
 			return String(a.get("kind", "")) == HudAttentionVocab.ATTENTION_KIND_IDLE_WORKERS)
+	var standing := NEED_FORAGE_STANDING + NEED_DONOR_HUNT_STANDING + FOLLOW_CREW + NEED_WF_BENCH_STANDING
+	var lent_idle := maxi(NEED_WF_WORKING_AGE - standing - NEED_IDLE_MUSTERED, 0)
+	var plain_idle := maxi(NEED_WF_WORKING_AGE - standing, 0)
 	var lent_rows: Array = idle_rows.call(lending)
 	var plain_rows: Array = idle_rows.call(plain)
-	_assert_band_panel("turn orb — idle hands the muster takes raise no idle-workers row (got %d)"
-		% lent_rows.size(), lent_rows.is_empty())
-	_assert_band_panel("turn orb — …the same idle count with nothing mustered does (got %s)"
-		% str(plain_rows), plain_rows.size() == 1
-		and String(plain_rows[0].get("label", "")) == "%d idle workers" % NEED_IDLE_MUSTERED)
+	_assert_band_panel("turn orb - the lending band's idle row states %d (got %s)" % [lent_idle, str(lent_rows)],
+		lent_rows.size() == (1 if lent_idle > 0 else 0)
+			and (lent_idle == 0 or String(lent_rows[0].get("label", "")) == "%d idle workers" % lent_idle))
+	_assert_band_panel("turn orb - ...and the same band with nothing mustered states %d (got %s)" % [
+		plain_idle, str(plain_rows)],
+		plain_rows.size() == (1 if plain_idle > 0 else 0)
+			and (plain_idle == 0 or String(plain_rows[0].get("label", "")) == "%d idle workers" % plain_idle))
+	_assert_band_panel("turn orb - the muster takes hands off the count (%d < %d)" % [lent_idle, plain_idle],
+		lent_idle < plain_idle)
 
 ## An extraction crew on the need band: three cutters on a wood working, one of them lent.
 const NEED_EXTRACT_TILE := Vector2i(68, 22)
@@ -13073,45 +13328,50 @@ func _need_extract_fixture(lending: bool, with_extract: bool) -> Dictionary:
 			"lent_to_hunt": NEED_EXTRACT_LENT if lending else 0})
 	return band
 
-## **A WORKING'S CUTTERS ARE A SEGMENT, AND A LENT CUTTER LEAVES IT FOR `Out hunting`** — so the bar
-## partitions `working_age` on a band with an extraction crew. Band bar, faction bar, and a no-extract
-## control; counts by equality, and the sum.
+## **A WORKING'S CUTTERS ARE A PART OF THE WORKING TOOLTIP, AND A LENT CUTTER LEAVES IT FOR `Out
+## hunting`** - on a band with an extraction crew. Band bar, faction bar, and a no-extract control.
 func _need_extract_workforce_states() -> void:
 	_set_world_herds(_follow_herd_fixtures(FOLLOW_BAND_TILE, FOLLOW_NO_NEXT))
 	_push_bands([_need_extract_fixture(true, true)])
 	_panel.set_active_tab(&"band")
 	await _settle()
-	await _save("band_panel_workforce_cutters")
+	await _save("band_panel_people_cutters")
 	var out_total := NEED_IDLE_MUSTERED + NEED_FORAGE_LENT + NEED_DONOR_HUNT_LENT \
 		+ NEED_EXTRACT_LENT + NEED_WF_BENCH_LENT
-	var idle_total := NEED_WF_WORKING_AGE - (NEED_FORAGE_STANDING + NEED_DONOR_HUNT_STANDING \
-		+ FOLLOW_CREW + NEED_EXTRACT_STANDING + NEED_WF_BENCH_STANDING) - NEED_IDLE_MUSTERED
 	var want := {
-		HudWorkVocab.WORKFORCE_KEY_FORAGE: NEED_FORAGE_STANDING - NEED_FORAGE_LENT,
-		HudWorkVocab.WORKFORCE_KEY_HUNT: NEED_DONOR_HUNT_STANDING + FOLLOW_CREW - NEED_DONOR_HUNT_LENT,
-		HudWorkVocab.WORKFORCE_KEY_EXTRACT: NEED_EXTRACT_STANDING - NEED_EXTRACT_LENT,
-		HudWorkVocab.WORKFORCE_KEY_BENCH: NEED_WF_BENCH_STANDING - NEED_WF_BENCH_LENT,
-		HudWorkVocab.WORKFORCE_KEY_OUT_HUNTING: out_total,
-		HudWorkVocab.WORKFORCE_KEY_IDLE: idle_total,
+		HudWorkVocab.WORKING_PART_FORAGE: NEED_FORAGE_STANDING - NEED_FORAGE_LENT,
+		HudWorkVocab.WORKING_PART_HUNT: NEED_DONOR_HUNT_STANDING + FOLLOW_CREW - NEED_DONOR_HUNT_LENT,
+		HudWorkVocab.WORKING_PART_EXTRACT: NEED_EXTRACT_STANDING - NEED_EXTRACT_LENT,
+		HudWorkVocab.WORKING_PART_BENCH: NEED_WF_BENCH_STANDING - NEED_WF_BENCH_LENT,
+		HudWorkVocab.WORKING_PART_OUT_HUNTING: out_total,
 	}
-	var counts := _composition_counts(_panel, HudWorkVocab.ZONE_HEADER_WORKFORCE)
-	_assert_band_panel("workforce cutters — band bar segments are %s (got %s)" % [str(want), str(counts)],
-		counts == want)
-	_assert_band_panel("workforce cutters — the band bar partitions working_age (%d)"
-		% NEED_WF_WORKING_AGE, _sum_counts(counts) == NEED_WF_WORKING_AGE)
-	# The FACTION bar, from the same labor state.
-	var faction_block := FactionRollup._build_workforce_block(_hud._band_labor)
-	var faction_counts := _composition_counts(faction_block, HudWorkVocab.ZONE_HEADER_WORKFORCE)
+	var band: Dictionary = _hud._band_labor._panel_band
+	_assert_band_panel("people cutters - band breakdown is %s (got %s)" % [
+		str(want), str(_hud._band_labor.working_breakdown(band))],
+		_hud._band_labor.working_breakdown(band) == want)
+	_assert_people_bar_is_one_bar("people cutters")
+	# The FACTION bar, from the same labor state: same parts, same idle, same sum.
+	var faction_block := FactionRollup._build_people_block(_hud._band_labor, _hud._band_labor.player_bands())
+	var faction_counts := _composition_counts(faction_block, HudWorkVocab.ZONE_HEADER_PEOPLE)
+	var faction_tip := _composition_chip_tooltip(faction_block, HudWorkVocab.ZONE_HEADER_PEOPLE,
+		HudWorkVocab.PEOPLE_GLYPH_WORKING)
 	faction_block.free()
-	_assert_band_panel("workforce cutters — the FACTION bar matches with lending (%s)" % str(faction_counts),
-		faction_counts == want and _sum_counts(faction_counts) == NEED_WF_WORKING_AGE)
-	# CONTROL: no extraction crew draws no Cutters segment, and the bar still partitions.
+	var parts_ok := true
+	for label in want:
+		parts_ok = parts_ok and faction_tip.contains(
+			HudWorkVocab.PEOPLE_WORKING_PART_FORMAT % [label, int(want[label])])
+	_assert_band_panel("people cutters - the FACTION working tooltip names the same parts (`%s`)" % faction_tip,
+		parts_ok)
+	_assert_band_panel("people cutters - the FACTION bar sums to the faction's people (%s)" % str(faction_counts),
+		_sum_counts(faction_counts) == int(band.get("size", 0))
+			and int(faction_counts.get(HudWorkVocab.PEOPLE_KEY_IDLE, 0)) == _hud._band_labor.people_idle(band))
+	# CONTROL: no extraction crew names no Cutters part.
 	_push_bands([_need_extract_fixture(true, false)])
 	await _settle()
-	var plain := _composition_counts(_panel, HudWorkVocab.ZONE_HEADER_WORKFORCE)
-	_assert_band_panel("workforce cutters — no extract rows, no Cutters segment, still partitions (%s)"
-			% str(plain),
-		not plain.has(HudWorkVocab.WORKFORCE_KEY_EXTRACT) and _sum_counts(plain) == NEED_WF_WORKING_AGE)
+	var plain_tip := _composition_chip_tooltip(_panel, HudWorkVocab.ZONE_HEADER_PEOPLE,
+		HudWorkVocab.PEOPLE_GLYPH_WORKING)
+	_assert_band_panel("people cutters - no extract rows, no Cutters part (`%s`)" % plain_tip,
+		not plain_tip.contains(HudWorkVocab.WORKING_PART_EXTRACT))
 
 func _sum_counts(counts: Dictionary) -> int:
 	var total := 0
@@ -16763,27 +17023,28 @@ func _render_builders_segment_state() -> void:
 	# `working_age`, so a bar missing the builders fails it by exactly their count, and it asserts the
 	# PEOPLE join in the same breath. Its idle half is asserted beside it, since a bar that partitions
 	# correctly with a wrong idle segment is a different (and reachable) failure.
-	_assert_people_matches_workforce("band_panel_builders_segment")
+	_assert_people_bar_is_one_bar("band_panel_builders_segment")
 	var band: Dictionary = _hud._band_labor._panel_band
 	_assert_band_panel(
 		"band_panel_builders_segment: every hand is spent, so the band reports NO idle workers",
 		_hud._band_labor.effective_idle(band) == 0)
 	var band_zone: Node = _panel._zones.get(BandCityPanel.ZONE_BAND)
-	var segments := _composition_counts(band_zone, HudWorkVocab.ZONE_HEADER_WORKFORCE)
+	var tip := _composition_chip_tooltip(band_zone, HudWorkVocab.ZONE_HEADER_PEOPLE,
+		HudWorkVocab.PEOPLE_GLYPH_WORKING)
 	_assert_band_panel(
-		"band_panel_builders_segment: the BUILD segment states its %d builders (read %d)" % [
-			BUILDERS_SEGMENT_CREW,
-			int(segments.get(HudWorkVocab.WORKFORCE_KEY_BUILD, -1))],
-		int(segments.get(HudWorkVocab.WORKFORCE_KEY_BUILD, -1)) == BUILDERS_SEGMENT_CREW)
+		"band_panel_builders_segment: the working tooltip states its %d builders (`%s`)" % [
+			BUILDERS_SEGMENT_CREW, tip],
+		tip.contains(HudWorkVocab.PEOPLE_WORKING_PART_FORMAT % [
+			HudWorkVocab.WORKING_PART_BUILD, BUILDERS_SEGMENT_CREW]))
 	# …and the NEGATIVE that keeps the segment a reading rather than livery: the reference band has no
 	# builders and must grow no such segment, the bar's own render-only-when-non-zero rule.
 	_push_bands([_band_fixture()])
 	await _settle()
 	band_zone = _panel._zones.get(BandCityPanel.ZONE_BAND)
 	_assert_band_panel(
-		"…while a band with no build in flight renders no BUILD segment at all",
-		not _composition_counts(band_zone, HudWorkVocab.ZONE_HEADER_WORKFORCE).has(
-			HudWorkVocab.WORKFORCE_KEY_BUILD))
+		"...while a band with no build in flight names no BUILD part at all",
+		not _composition_chip_tooltip(band_zone, HudWorkVocab.ZONE_HEADER_PEOPLE,
+			HudWorkVocab.PEOPLE_GLYPH_WORKING).contains(HudWorkVocab.WORKING_PART_BUILD))
 
 ## The reference band with its `builders` POOL staffed. Only three things move: the forage row gains
 ## its `improvement` (the declaration the sim derives from the band's queue entry), the band gains a
@@ -27070,16 +27331,17 @@ func _render_work_party_spoil_states() -> void:
 	await _save("band_panel_homeward")
 	_assert_zones_within_bounds()
 	_assert_zone_content_fits()
-	_assert_people_matches_workforce("band_panel_homeward")
+	_assert_people_bar_is_one_bar("band_panel_homeward")
 	var band: Dictionary = _hud._band_labor._panel_band
 	_assert_band_panel("band_panel_homeward: hands walking home are NOT idle (idle %d)"
 			% _hud._band_labor.effective_idle(band),
 		_hud._band_labor.effective_idle(band) == 0)
 	var band_zone: Node = _panel._zones.get(BandCityPanel.ZONE_BAND)
-	var segments := _composition_counts(band_zone, HudWorkVocab.ZONE_HEADER_WORKFORCE)
-	_assert_band_panel("…the bar counts them as their own segment (read %d)"
-			% int(segments.get(HudWorkVocab.WORKFORCE_KEY_HOMEWARD, -1)),
-		int(segments.get(HudWorkVocab.WORKFORCE_KEY_HOMEWARD, -1)) == HOMEWARD_WORKERS)
+	var tip := _composition_chip_tooltip(band_zone, HudWorkVocab.ZONE_HEADER_PEOPLE,
+		HudWorkVocab.PEOPLE_GLYPH_WORKING)
+	_assert_band_panel("...the working tooltip counts them as their own part (`%s`)" % tip,
+		tip.contains(HudWorkVocab.PEOPLE_WORKING_PART_FORMAT % [
+			HudWorkVocab.WORKING_PART_HOMEWARD, HOMEWARD_WORKERS]))
 	var drawn: Array[String] = []
 	for control in _collect_meta_controls(band_zone, HudWorkVocab.HOMEWARD_LINE_META, []):
 		drawn.append(String(control.get_meta(HudWorkVocab.HOMEWARD_LINE_META)))

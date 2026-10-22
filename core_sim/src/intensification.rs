@@ -268,6 +268,15 @@ pub fn rung_decay_edges(
     edges
 }
 
+/// **THE WHOLE PERCENT A SLIPPING RUNG HAS LEFT**, `(now - base) / width`, floored and capped one
+/// short of full - a slip is by definition a rung that is not full. The one expression every decay
+/// announcement spells its `progress=` with.
+pub fn slip_percent(now: f32, base: f32, width: f32) -> u32 {
+    (((now - base) / width) * PERCENT)
+        .floor()
+        .clamp(0.0, SLIPPED_PERCENT_MAX as f32) as u32
+}
+
 /// **ANNOUNCE A DECAY'S EDGES** to `faction`'s feed, on `kind`'s channel — one Info line per slip
 /// (`Field at (44, 24) is slipping — 94%`) and one Alert line per loss (`Field at (44, 24) lost —
 /// back to a tended patch`). Tokens: `status=` ([`DECAY_SLIP_STATUS`] / [`DECAY_LOST_STATUS`]),
@@ -307,9 +316,7 @@ pub fn announce_rung_decay(
         ));
     }
     for (rung, (base, width)) in &edges.slipped {
-        let percent = (((now - base) / width) * PERCENT)
-            .floor()
-            .clamp(0.0, SLIPPED_PERCENT_MAX as f32) as u32;
+        let percent = slip_percent(now, *base, *width);
         let record = ladder.rung(*rung);
         event_log.push(crate::resources::CommandEventEntry::new(
             tick,
@@ -2552,6 +2559,12 @@ pub struct RungDef {
     /// the kind does not have would price every source at the unscaled cost without saying so.
     #[serde(default)]
     pub cost_scale: CostScale,
+    /// **WHETHER FINISHING THIS RUNG'S BUILD COUNTS AS DIRECTED WORK THAT SUCCEEDED** - the band
+    /// that raises it adds `practice_per_directed_build` to its leadership practice
+    /// (`crate::leadership`). A flag on the rung rather than a test of its identity, so which
+    /// builds teach a band to follow a chief is config. Absent = `false`.
+    #[serde(default)]
+    pub directed_work: bool,
     /// **THE RUNG'S GATE WANTS ROOM TO WORK** — something must stand above the crew's floor
     /// (`systems::labor::crew_is_working_the_source`) for the build to bank. The Cultivate and Tame
     /// gates carry it; Sow and Corral deliberately do not (bare ground stands below every floor, and
@@ -3514,7 +3527,24 @@ pub struct LadderKnowledge {
     /// crew-blind because rot is measured against the band's own need, so band size cancels.
     /// See `spoilage::storage_practice`.
     pub storage_lesson_rot_turns: f32,
+    /// **How long food must have been KEPT before eating it teaches storage** (#708): the turns
+    /// since a lot landed in the larder, counting the turn it lands as turn zero, at the meal that
+    /// eats it. A lot landing on turn `T` is eaten fresh at meal `T+1` and kept from meal `T+2` at
+    /// the shipped `2`. At least [`MIN_STORAGE_KEPT_AGE_TURNS`]. A playtest dial.
+    pub storage_kept_age_turns: u32,
+    /// **How much of rot's practice a full turn of KEPT food pays** (#708): kept practice is
+    /// `learn_rate x storage_kept_weight x min(kept / full_turn, 1)` against the same `full_turn` as
+    /// rot, and the two are summed and capped at one full turn. Finite, `> 0` and at most
+    /// [`MAX_STORAGE_KEPT_WEIGHT`], so kept food never teaches faster than rot. A playtest dial.
+    pub storage_kept_weight: f32,
 }
+
+/// The shortest kept age that is not "eaten the moment it landed" - a threshold of zero would count
+/// every meal as kept.
+pub const MIN_STORAGE_KEPT_AGE_TURNS: u32 = 1;
+
+/// The ceiling on [`LadderKnowledge::storage_kept_weight`]: kept food teaches at most as fast as rot.
+pub const MAX_STORAGE_KEPT_WEIGHT: f32 = 1.0;
 
 impl LadderKnowledge {
     /// **THE one place practice units become LEDGER progress** — `practice / lesson_cost` — so the
@@ -3752,16 +3782,22 @@ pub enum SourceKind {
     /// An improvement on one tile (`TileImprovementRegistry`) — the road's shape for a thing that is
     /// not a road: a standing, a keeper, an upkeep and a grace, with no crew row.
     Tile,
+    /// **An improvement a BAND holds at its camp, and carries with it** (`BandImprovementRegistry`,
+    /// `crate::band_improvement`) — the tile kind's twin, keyed by the band instead of a tile. A
+    /// standing, a bill, a neglect clock and a grace, kept by a crew row
+    /// ([`crate::components::LaborTarget::Band`]) with distance always zero.
+    Band,
 }
 
 impl SourceKind {
     /// Every kind, in declaration order.
-    pub const ALL: [SourceKind; 5] = [
+    pub const ALL: [SourceKind; 6] = [
         SourceKind::Patch,
         SourceKind::Herd,
         SourceKind::Road,
         SourceKind::Deposit,
         SourceKind::Tile,
+        SourceKind::Band,
     ];
 
     /// The kind's config / wire token.
@@ -3772,18 +3808,19 @@ impl SourceKind {
             SourceKind::Road => "road",
             SourceKind::Deposit => "deposit",
             SourceKind::Tile => "tile",
+            SourceKind::Band => "band",
         }
     }
 
     /// **HOW MANY BRANCHES OF THIS KIND A LADDER MUST DECLARE, at least** — and, for the three
     /// singleton kinds, at most. A patch, a herd and a road each have exactly one ladder because
     /// the sim holds one registry of each; a deposit ladder is named by every `extraction.json`
-    /// row (so there is at least one); a tile ladder is optional and unbounded.
+    /// row (so there is at least one); a tile or band ladder is optional and unbounded.
     pub fn branch_count_bounds(self) -> (usize, Option<usize>) {
         match self {
             SourceKind::Patch | SourceKind::Herd | SourceKind::Road => (1, Some(1)),
             SourceKind::Deposit => (1, None),
-            SourceKind::Tile => (0, None),
+            SourceKind::Tile | SourceKind::Band => (0, None),
         }
     }
 }
@@ -4344,14 +4381,15 @@ impl LadderConfig {
             }
         }
         // The knowledges no rung teaches but the config files under a branch of their own — the
-        // roaming skills. Appended after the rung-taught ones, in the config's declared order.
+        // roaming skills and the rot-taught `storage`. Appended after the rung-taught ones, in the
+        // config's declared order; a step exactly when a rung waits on it, as above.
         for standalone in &self.standalone_knowledges {
             roster.push(LadderKnowledgeEntry {
                 knowledge: standalone.knowledge.as_str(),
                 branch: standalone.branch.as_str(),
                 area: standalone.area.as_str(),
                 order: standalone.order,
-                is_step: false,
+                is_step: self.knowledge_gates_a_rung(&standalone.knowledge),
                 discovery_id: discovery_id_for(&standalone.knowledge)
                     .expect("a standalone knowledge resolves to a discovery (validated at load)"),
             });
@@ -4765,6 +4803,9 @@ impl LadderConfig {
                 }
             }
         }
+        // **Every priced lesson must be PLACED on the knowledge roster.** Last, so a structural
+        // fault (a missing rung) is reported as itself rather than as the knowledge it orphans.
+        self.validate_priced_lessons_are_placed()?;
         Ok(())
     }
 
@@ -4956,6 +4997,43 @@ impl LadderConfig {
                                  lesson off a default nobody chose"
                         .to_string(),
                     value: "missing".to_string(),
+                });
+            }
+        }
+        Ok(())
+    }
+
+    /// **Every knowledge priced in `knowledge.lesson_costs` is PLACED on the roster** - some rung's
+    /// taught lessons name it, or a `standalone_knowledges` entry lists it. The crafts
+    /// ([`crate::crafting::CRAFTS_WITH_A_DISCOVERY`]) are the one exemption: they ride their own
+    /// `CraftKnowledgeState` list.
+    ///
+    /// **A priced but unplaced knowledge is learnable and invisible**: `storage` was priced and gated
+    /// two rungs, but rot teaches it, so no rung's `earns_knowledge` named it and it never reached
+    /// [`Self::knowledge_roster`] - the knowledge panel could not show it. A load failure here names
+    /// the knowledge rather than shipping a lesson nobody can see.
+    fn validate_priced_lessons_are_placed(&self) -> Result<(), LadderConfigError> {
+        for name in self.knowledge.lesson_costs.keys() {
+            let name = name.as_str();
+            let placed = self
+                .rungs
+                .iter()
+                .flat_map(|rung| rung.taught_lessons())
+                .any(|taught| taught == name)
+                || self
+                    .standalone_knowledges
+                    .iter()
+                    .any(|standalone| standalone.knowledge == name)
+                || crate::crafting::CRAFTS_WITH_A_DISCOVERY.contains(&name);
+            if !placed {
+                return Err(LadderConfigError::Invalid {
+                    field: format!("knowledge.lesson_costs[{name}]"),
+                    constraint: "place every priced knowledge on the roster - a rung's \
+                                 `earns_knowledge`, or a `standalone_knowledges` entry. A priced \
+                                 knowledge nobody places is learnable and invisible on the \
+                                 knowledge panel"
+                        .to_string(),
+                    value: "unplaced".to_string(),
                 });
             }
         }
@@ -5397,6 +5475,32 @@ fn validate_knowledge(knowledge: &LadderKnowledge) -> Result<(), LadderConfigErr
             ),
         });
     }
+    if knowledge.storage_kept_age_turns < MIN_STORAGE_KEPT_AGE_TURNS {
+        return Err(LadderConfigError::Invalid {
+            field: "knowledge".to_string(),
+            constraint: format!(
+                "make food count as kept only after at least {MIN_STORAGE_KEPT_AGE_TURNS} turn(s) \
+                 in the larder - at 0 every meal would teach storage"
+            ),
+            value: format!(
+                "storage_kept_age_turns = {}",
+                knowledge.storage_kept_age_turns
+            ),
+        });
+    }
+    if !knowledge.storage_kept_weight.is_finite()
+        || knowledge.storage_kept_weight <= 0.0
+        || knowledge.storage_kept_weight > MAX_STORAGE_KEPT_WEIGHT
+    {
+        return Err(LadderConfigError::Invalid {
+            field: "knowledge".to_string(),
+            constraint: format!(
+                "weigh kept food above 0 and at most {MAX_STORAGE_KEPT_WEIGHT} of rot's practice \
+                 - kept food must never teach faster than rot"
+            ),
+            value: format!("storage_kept_weight = {}", knowledge.storage_kept_weight),
+        });
+    }
     Ok(())
 }
 
@@ -5499,10 +5603,16 @@ fn validate_tile_rung_is_work_only(
     source: SourceKind,
     where_: &str,
 ) -> Result<(), LadderConfigError> {
-    if source != SourceKind::Tile {
+    if !matches!(source, SourceKind::Tile | SourceKind::Band) {
         return Ok(());
     }
-    let build_materials = rung.build.as_ref().map_or(0, |build| build.materials.len());
+    // **A band rung may carry a BUILD pile** - the band's builders draw it from the band's own store
+    // as the meter climbs, the pen's hurdles exactly - but a standing material RATE is paid by
+    // nobody on either kind, so it is refused on both.
+    let build_materials = match source {
+        SourceKind::Band => 0,
+        _ => rung.build.as_ref().map_or(0, |build| build.materials.len()),
+    };
     let upkeep_materials = rung
         .upkeep
         .as_ref()
@@ -6700,6 +6810,10 @@ mod tests {
                 "surface gathering",
             ),
             ("extraction:quarry", "Quarry", "a quarry"),
+            ("camp_stores:carried", "Carried", "carried"),
+            ("camp_stores:drying_rack", "Drying rack", "a drying rack"),
+            ("food_stores:unstored", "No store", "no store"),
+            ("food_stores:storage_pit", "Storage pit", "a storage pit"),
         ];
         assert_eq!(words.len(), ladder.rungs.len());
         for (key, label, fallback) in words {
@@ -6804,9 +6918,10 @@ mod tests {
             .map(RungDef::rung_id);
         assert_eq!(above_root, Some(graft.rung_id()));
         assert!(graft.trait_set().has(RungTrait::Managed));
+        // The shipped `food_stores` branch is a tile branch too; the novel one joins it.
         assert_eq!(
             ladder.branches_of(SourceKind::Tile).collect::<Vec<_>>(),
-            [orchard]
+            [BranchId::new("food_stores"), orchard]
         );
     }
 
@@ -7146,18 +7261,22 @@ mod tests {
         // **The §4.3 invariant, stated as one assertion: every transition has its OWN knowledge.**
         // Herding gating both `tame` and `corral` was the pre-slice-4 defect; a future rung that
         // re-used a gate would be the same defect returning, and this catches it.
-        let unlocks: Vec<u32> = ladder
+        //
+        // **Per BRANCH**: the defect was two transitions of ONE ladder sharing a gate. The two
+        // storage branches' built rungs both unlock on `storage` (the one lesson rot teaches), and
+        // they are different branches' only transition each, so the gate is shared by design.
+        let mut unlocks: Vec<(BranchId, u32)> = ladder
             .rungs
             .iter()
-            .filter_map(|rung| rung.unlock_discovery_id())
+            .filter_map(|rung| Some((rung.branch, rung.unlock_discovery_id()?)))
             .collect();
-        let mut unique = unlocks.clone();
-        unique.sort_unstable();
-        unique.dedup();
+        let total = unlocks.len();
+        unlocks.sort_unstable_by_key(|(branch, id)| (branch.as_str().to_string(), *id));
+        unlocks.dedup();
         assert_eq!(
+            total,
             unlocks.len(),
-            unique.len(),
-            "one knowledge per transition — no two rungs may share an unlock gate"
+            "one knowledge per transition — no two rungs of one branch may share an unlock gate"
         );
     }
 
@@ -8842,6 +8961,35 @@ mod tests {
         assert_rejects(err, "knowledge.lesson_costs[storage]");
     }
 
+    /// **Every PRICED knowledge must be PLACED on the roster** - a rung teaches it or the config
+    /// files it as a standalone. The failure this closes: `storage` was priced and gated two rungs
+    /// but never placed, so it was learnable and invisible on the knowledge panel.
+    #[test]
+    fn rejects_a_priced_knowledge_that_is_not_placed_on_the_roster() {
+        // Priced, but the standalone entry that places it is removed.
+        let err = reject(|json| {
+            json["standalone_knowledges"]
+                .as_array_mut()
+                .expect("standalone_knowledges is a list")
+                .retain(|entry| entry["knowledge"] != crate::spoilage::STORAGE_KNOWLEDGE);
+        });
+        assert_rejects(err, "knowledge.lesson_costs[storage]");
+    }
+
+    /// The shipped ladder places every knowledge it prices.
+    #[test]
+    fn the_shipped_ladder_places_every_priced_knowledge() {
+        let ladder = LadderConfig::builtin();
+        let roster = ladder.knowledge_roster();
+        for name in ladder.knowledge.lesson_costs.keys() {
+            assert!(
+                roster.iter().any(|entry| entry.knowledge == name)
+                    || crate::crafting::CRAFTS_WITH_A_DISCOVERY.contains(&name.as_str()),
+                "{name} is priced but not on the roster"
+            );
+        }
+    }
+
     /// **The rot that counts as a full turn of storage practice must be a positive, finite number
     /// of turns of need.** `0` divides by zero (infinite practice for any rot, NaN for none), a
     /// negative flips the sign, and a non-finite value poisons the ratio — each would silently
@@ -8867,6 +9015,41 @@ mod tests {
                 "{bad}: {err}"
             );
         }
+    }
+
+    /// **Kept food must never teach faster than rot, and must teach at all**: the weight is finite,
+    /// above zero and at most one; the age is at least one turn.
+    #[test]
+    fn rejects_a_kept_food_lesson_that_could_outpace_rot_or_never_pay() {
+        /// Just past the ceiling: kept food would teach faster than rot.
+        const PAST_THE_CEILING: f32 = 1.0001;
+        /// A negative weight, to pin the sign check apart from the zero check.
+        const NEGATIVE_WEIGHT: f32 = -0.25;
+        for bad in [
+            0.0,
+            NEGATIVE_WEIGHT,
+            PAST_THE_CEILING,
+            f32::NAN,
+            f32::INFINITY,
+        ] {
+            let mut knowledge = LadderConfig::builtin().knowledge.clone();
+            knowledge.storage_kept_weight = bad;
+            let err = validate_knowledge(&knowledge)
+                .expect_err(&format!("storage_kept_weight = {bad} must be rejected"));
+            assert!(
+                err.to_string().contains("storage_kept_weight"),
+                "{bad}: {err}"
+            );
+        }
+        // The ceiling itself is legal: kept food may teach exactly as fast as rot.
+        let mut knowledge = LadderConfig::builtin().knowledge.clone();
+        knowledge.storage_kept_weight = MAX_STORAGE_KEPT_WEIGHT;
+        assert!(validate_knowledge(&knowledge).is_ok());
+
+        let mut knowledge = LadderConfig::builtin().knowledge.clone();
+        knowledge.storage_kept_age_turns = MIN_STORAGE_KEPT_AGE_TURNS - 1;
+        let err = validate_knowledge(&knowledge).expect_err("a kept age of 0 must be rejected");
+        assert!(err.to_string().contains("storage_kept_age_turns"), "{err}");
     }
 
     #[test]

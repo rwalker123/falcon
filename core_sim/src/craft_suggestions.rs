@@ -254,7 +254,9 @@ fn site_keeping_jobs(source: &BuildSource) -> &'static [KitJob] {
     match source {
         BuildSource::Patch(_) => &[KitJob::Agriculture],
         BuildSource::Herd(_) => &[KitJob::Husbandry],
-        BuildSource::Road(_) | BuildSource::Tile { .. } => &[KitJob::Roadwork],
+        BuildSource::Road(_) | BuildSource::Tile { .. } | BuildSource::Band { .. } => {
+            &[KitJob::Roadwork]
+        }
         BuildSource::Deposit { .. } => &[KitJob::Quarrywork, KitJob::Extraction],
     }
 }
@@ -302,6 +304,9 @@ pub struct KitNeedItem {
     pub have: u32,
     /// Units the bench's queue already owes (and the finished ones parked for delivery).
     pub queued: u32,
+    /// Whole units of this item parked on the bench's finished list (made this turn, stocked at
+    /// the top of the next). A pure readout: `queued` already includes them.
+    pub finished: u32,
     /// Units the claims ON THIS KIT asked for: `Σ required` over the shortfall lines
     /// [`SupplySource::is_on_kit`] attributes to it (a kit nobody's row chose claims `0`).
     pub claimed: f32,
@@ -410,6 +415,7 @@ pub fn band_kit_needs(
                             .map_or(ONE_WORKER_PER_UNIT, |def| def.workers_per_unit),
                         have: whole_units(to_these_jobs).saturating_add(spare),
                         queued: whole_units(queued_units(bench, recipes, item)),
+                        finished: whole_units(parked_units(bench, item)),
                     }
                 })
                 .collect();
@@ -802,13 +808,21 @@ pub fn queued_units(bench: Option<&BandBench>, recipes: &RecipesConfig, item: &s
             Some(order.remaining() as f32 * per_pass)
         })
         .sum();
-    let parked: f32 = bench
-        .finished
-        .iter()
-        .filter(|batch| batch.item == item)
-        .map(|batch| batch.count as f32)
-        .sum();
-    owed + parked
+    owed + parked_units(Some(bench), item)
+}
+
+/// **UNITS OF `item` THE BENCH HAS FINISHED AND PARKED** on [`BandBench::finished`], stocked at the
+/// top of the next turn. The one sum [`queued_units`] adds to what the queue owes and the readout
+/// [`KitNeedItem::finished`] publishes, so the two cannot drift.
+pub fn parked_units(bench: Option<&BandBench>, item: &str) -> f32 {
+    bench.map_or(NOTHING_TO_MAKE, |bench| {
+        bench
+            .finished
+            .iter()
+            .filter(|batch| batch.item == item)
+            .map(|batch| batch.count as f32)
+            .sum()
+    })
 }
 
 /// **WHAT THE CAPTURE KNOWS ABOUT A QUEUED BUILD THAT THIS MODULE CANNOT** - the goods it still has to

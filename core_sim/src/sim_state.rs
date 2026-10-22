@@ -74,6 +74,7 @@ use crate::{
     great_discovery::{GreatDiscoveryLedger, GreatDiscoveryReadiness, GreatDiscoveryTelemetry},
     influencers::{InfluencerImpacts, InfluentialRoster, InfluentialRosterCheckpoint},
     knowledge_ledger::{KnowledgeLedger, KnowledgeLedgerCheckpoint},
+    leadership::BandLeadership,
     mobility::MobilityScore,
     resources::{
         BandIdAllocator, BandNameAllocator, CapabilityFlags, CommandEventLog, CorruptionLedgers,
@@ -160,6 +161,10 @@ pub struct BandRecord {
     /// as network 0 with no links. Carried here rather than as a resource because the resource is
     /// keyed by `Entity`; every link names its far end by [`BandId`] already.
     pub supply: BandSupplyMembership,
+    /// **The band's practice at following a plan, and the leader it earned**
+    /// (`crate::leadership`). Carried unconditionally: the leader is permanent, so a checkpoint that
+    /// forgot it would let a band emerge a second one on rollback, under a different name.
+    pub leadership: BandLeadership,
 }
 
 /// A settlement and its town centre.
@@ -431,6 +436,7 @@ pub fn capture_sim_state(world: &World) -> SimState {
                     .copied()
                     .unwrap_or_default(),
                 supply: supply.membership_of(entity.id()),
+                leadership: entity.get::<BandLeadership>().cloned().unwrap_or_default(),
             })
         })
         .collect();
@@ -617,6 +623,7 @@ pub fn restore_sim_state(world: &mut World, state: &SimState) {
             record.flow_accumulator,
             record.equipment.clone(),
             record.bench.clone(),
+            record.leadership.clone(),
         ));
         if let Some(labor) = &record.labor {
             entity.insert(labor.clone());

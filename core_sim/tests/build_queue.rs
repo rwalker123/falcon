@@ -243,6 +243,7 @@ fn world_with_a_queue_knowing(
                 last_food_need: 0.0,
                 fed_party_workers: Default::default(),
                 last_food_spoiled: 0.0,
+                last_food_kept: 0.0,
                 last_turn_food_transfers: Default::default(),
                 last_turn_fodder_transfers: Default::default(),
                 last_turn_transfer_crossings: Vec::new(),
@@ -1007,6 +1008,7 @@ fn world_with_a_half_tamed_herd(crew: u32, floor: f32) -> (App, Entity, String) 
                 last_food_need: 0.0,
                 fed_party_workers: Default::default(),
                 last_food_spoiled: 0.0,
+                last_food_kept: 0.0,
                 last_turn_food_transfers: Default::default(),
                 last_turn_fodder_transfers: Default::default(),
                 last_turn_transfer_crossings: Vec::new(),
@@ -1625,7 +1627,18 @@ fn every_build_job_and_source_kind_is_stated() {
         tile: UVec2::new(4, 4),
         branch: shipped::plant(),
     };
-    for source in [&patch, &herd, &road, &deposit, &tile_improvement] {
+    let band_improvement = BuildSource::Band {
+        band: core_sim::BandId(5),
+        branch: shipped::plant(),
+    };
+    for source in [
+        &patch,
+        &herd,
+        &road,
+        &deposit,
+        &tile_improvement,
+        &band_improvement,
+    ] {
         match source {
             // A patch is named by its tile; a herd by an id that outlives its position; a ROAD by
             // its tile, because a road IS a tile (`docs/plan_standing_upkeep.md` §4.13b); and a
@@ -1642,6 +1655,12 @@ fn every_build_job_and_source_kind_is_stated() {
             // improvement of several branches.
             BuildSource::Tile { tile, branch } => {
                 assert_eq!(*tile, UVec2::new(4, 4));
+                assert_eq!(*branch, shipped::plant());
+            }
+            // A band improvement is named by its band AND its branch - it stands at the camp and
+            // moves with it.
+            BuildSource::Band { band, branch } => {
+                assert_eq!(*band, core_sim::BandId(5));
                 assert_eq!(*branch, shipped::plant());
             }
         }
@@ -1897,6 +1916,7 @@ fn fixture_cohort(tile: Entity, staffed: u32) -> PopulationCohort {
         last_food_need: 0.0,
         fed_party_workers: Default::default(),
         last_food_spoiled: 0.0,
+        last_food_kept: 0.0,
         last_turn_food_transfers: Default::default(),
         last_turn_fodder_transfers: Default::default(),
         last_turn_transfer_crossings: Vec::new(),
@@ -4563,4 +4583,82 @@ fn a_load_clears_a_corral_heads_stale_date_and_the_next_turn_blocks_it() {
         "after one turn the Corral head, short of hurdles it cannot get, publishes Blocked"
     );
     assert_eq!(reason, "materials");
+}
+
+// ---------------------------------------------------------------------------------------------
+// A finished build of a directed-work rung is practice toward a leader (#859)
+// ---------------------------------------------------------------------------------------------
+
+/// **FINISHING A CULTIVATE BANKS EXACTLY ONE QUANTUM OF LEADERSHIP PRACTICE** -- once, on the turn
+/// the entry retires, and nothing before. `Cultivate` is a `directed_work` rung on the shipped
+/// ladder; the credit rides the rung flag, not the rung's identity.
+#[test]
+fn finishing_a_directed_work_build_banks_one_quantum_of_practice() {
+    let (mut app, band, sources) = world_with_a_queue(THE_WHOLE_QUEUE, BUILDERS);
+    app.world
+        .entity_mut(band)
+        .insert(core_sim::BandLeadership::default());
+    let quantum = app
+        .world
+        .resource::<core_sim::LeadershipConfigHandle>()
+        .get()
+        .practice_per_directed_build;
+
+    let practice = |app: &App| {
+        app.world
+            .get::<core_sim::BandLeadership>(band)
+            .unwrap()
+            .practice()
+    };
+    let mut turns = 0;
+    while !app
+        .world
+        .resource::<core_sim::ForageRegistry>()
+        .patch(sources[0])
+        .expect("the head's patch survives")
+        .is_cultivated()
+    {
+        assert_eq!(practice(&app), 0.0, "no practice before the build finishes");
+        resolve_a_turn(&mut app);
+        turns += 1;
+        assert!(turns < 200, "fixture: the head must finish");
+    }
+    assert_eq!(
+        practice(&app),
+        quantum,
+        "the finished Cultivate banks one quantum, once"
+    );
+}
+
+/// **A pen's ring is fencing work, not a rung build, and banks nothing** -- the credit is the
+/// `BuildJob::Climb` arm's alone.
+#[test]
+fn finishing_a_pen_ring_banks_no_practice() {
+    let (mut app, band, _herd, _source) = world_with_a_ring_at_the_head(BUILDERS);
+    app.world
+        .entity_mut(band)
+        .insert(core_sim::BandLeadership::default());
+
+    let ring_is_queued = |app: &App| {
+        app.world
+            .get::<LaborAllocation>(band)
+            .unwrap()
+            .build_queue
+            .iter()
+            .any(|entry| entry.declared == BuildJob::ExtendPen)
+    };
+    let mut turns = 0;
+    while ring_is_queued(&app) {
+        resolve_a_pen_turn(&mut app);
+        turns += 1;
+        assert!(turns < 200, "fixture: the ring must finish");
+    }
+    assert_eq!(
+        app.world
+            .get::<core_sim::BandLeadership>(band)
+            .unwrap()
+            .practice(),
+        0.0,
+        "a finished ring is not a directed-work rung"
+    );
 }

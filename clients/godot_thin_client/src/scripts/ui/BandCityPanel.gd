@@ -811,6 +811,7 @@ func set_header(stage_id: String, glyph: String, subject_name: String, stage_lab
 		_stage_label.text = stage_label
 	if _position_label != null:
 		_position_label.text = position_label
+		_position_label.tooltip_text = position_label
 		_position_label.visible = not position_label.is_empty()
 
 ## Update the cycler readout ("index+1 / count"). count <= 0 blanks it.
@@ -1304,7 +1305,12 @@ func _build_header_full() -> HBoxContainer:
 	_position_label.add_theme_color_override("font_color", HudStyle.INK_FAINT)
 	_position_label.text = ""
 	_position_label.visible = false
-	_position_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	# A long stage word plus coordinates must not widen the docked card either: the line trims with
+	# an ellipsis and carries its whole text on the tooltip. PASS keeps a click reaching the subject
+	# cluster's jump.
+	_position_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_position_label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	_position_label.mouse_filter = Control.MOUSE_FILTER_PASS
 	stage_row.add_child(_stage_label)
 	stage_row.add_child(_position_label)
 	subject.add_child(_name_label)
