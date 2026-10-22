@@ -216,8 +216,27 @@ func ingest_command_events(events_variant: Variant, turn: int) -> void:
             "carried": carried,
         })
 
-## Turn-orb items for the gatherings held this turn (#698). Non-locating notices, capped like the
-## hand-offs; the sim's own sentence is the row's detail.
+## Where the band a gathering MET is, resolved when the event half is pushed (never cached): the
+## player's own roster first (a same-people gathering), then the foreign bands in sight this frame
+## (`band_entry_for_id` covers both), then the connections section's remembered `last_seen` tile for
+## that `subject_band_id`. Anything unresolved is the non-locating sentinel.
+func _met_band_tile(band_id: int) -> Vector2i:
+    var unresolved := Vector2i(HudAttentionVocab.ATTENTION_NON_LOCATING, HudAttentionVocab.ATTENTION_NON_LOCATING)
+    if band_id == HudConst.NO_BAND_ID:
+        return unresolved
+    var band := _band_labor.band_entry_for_id(band_id)
+    if not band.is_empty():
+        return Vector2i(int(band.get("current_x", unresolved.x)), int(band.get("current_y", unresolved.y)))
+    for tie_variant in _band_labor.connections():
+        if not (tie_variant is Dictionary):
+            continue
+        var tie: Dictionary = tie_variant
+        if int(tie.get("subject_band_id", HudConst.NO_BAND_ID)) == band_id:
+            return Vector2i(int(tie.get("last_seen_x", unresolved.x)), int(tie.get("last_seen_y", unresolved.y)))
+    return unresolved
+
+## Turn-orb items for the gatherings held this turn (#698). They locate the band the gathering MET
+## (`_met_band_tile`), else are non-locating; the sim's own sentence is the row's detail.
 func _gathering_attention() -> Array:
     var items: Array = []
     for i in _gatherings.size():
@@ -229,12 +248,9 @@ func _gathering_attention() -> Array:
         # `on_turn_orb_focus`); a band the roster no longer holds leaves the row non-locating.
         var x := HudAttentionVocab.ATTENTION_NON_LOCATING
         var y := HudAttentionVocab.ATTENTION_NON_LOCATING
-        var band_id := int(gathering["band_id"])
-        if band_id != HudConst.NO_BAND_ID:
-            var band := _band_labor.player_band_by_band_id(band_id)
-            if not band.is_empty():
-                x = int(band.get("current_x", HudAttentionVocab.ATTENTION_NON_LOCATING))
-                y = int(band.get("current_y", HudAttentionVocab.ATTENTION_NON_LOCATING))
+        var tile := _met_band_tile(int(gathering["band_id"]))
+        x = tile.x
+        y = tile.y
         items.append({
             "kind": HudAttentionVocab.ATTENTION_KIND_GATHERING,
             "severity": HudAttentionVocab.ATTENTION_SEVERITY_INFO,

@@ -283,6 +283,10 @@ fn two_bands_of_one_people_gather_too_and_that_people_is_told_once() {
     let events = gathering_events(&app);
     assert_eq!(events.len(), 1, "one people, one line");
     assert_eq!(events[0].faction, HOME);
+    assert_eq!(
+        events[0].band, b.id.0,
+        "told from the lower band, naming the higher"
+    );
     assert_eq!(app.world.resource::<GatheringLedger>().held_by(HOME), 1);
     assert_eq!(app.world.resource::<GatheringLedger>().held_by(RIVAL), 0);
 }
@@ -322,7 +326,7 @@ fn a_tie_on_size_is_held_at_the_lower_band_id() {
 }
 
 #[test]
-fn each_people_is_told_in_its_own_words_with_its_own_band_tagged() {
+fn each_people_is_told_in_its_own_words_with_the_band_it_met_tagged() {
     let mut app = two_faction_world();
     let (a, b) = pair(&mut app, HOME, RIVAL);
     set_size(&mut app, &a, SMALL);
@@ -348,8 +352,8 @@ fn each_people_is_told_in_its_own_words_with_its_own_band_tagged() {
         .iter()
         .find(|e| e.faction == RIVAL)
         .expect("rival told");
-    assert_eq!(home_line.band, a.id.0);
-    assert_eq!(rival_line.band, b.id.0);
+    assert_eq!(home_line.band, b.id.0, "the line names the band met");
+    assert_eq!(rival_line.band, a.id.0, "the line names the band met");
     assert_eq!(home_line.tick, FIRST_TURN);
     assert_eq!(home_line.label, "A gathering");
     let place = format!("({}, {})", b.tile.x, b.tile.y);

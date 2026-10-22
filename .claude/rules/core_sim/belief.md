@@ -121,8 +121,9 @@ seam as the dead.
 
 **Who is told.** One `CommandEventKind::GatheringHeld` (`"gathering_held"`) line per participating
 people — one line when both bands are of one people — filed under that people, tagged `.with_band`
-with its own band, label `A gathering`, detail `<own band's name> met <other band's name> at (x, y).`
-(the pair is named from each people's own side; a band with no `BandName` reads as `Band <id>`). Both
+with the OTHER band, the one the reader met (a same-people pair, told once from its lower band, names the
+higher), because that is the band the turn orb's row jumps to; label `A gathering`, detail
+`<own band's name> met <other band's name> at (x, y).` (the pair is named from each people's own side; a band with no `BandName` reads as `Band <id>`). Both
 sides were in contact, so each is told; fog does not gate it.
 
 **The Telling.** `GatheringLedger` (`connections.rs`) holds a cumulative per-people count of
@@ -135,7 +136,7 @@ at world start hold a gathering on the opening turn (tick `0`, founding ages and
 founded after the opening turn holds none on its founding turn; a gathering is held where the band
 stands, not its home; a pair that stays in contact does not re-fire; a pair whose
 tie parked and re-meets fires again; a same-people pair fires and is told once; an expedition report
-does not fire; a size tie goes to the lower band id; each people's line carries its own band and its
+does not fire; a size tie goes to the lower band id; each people's line carries the band it met and its
 own wording; `belief_per_gathering` scales the credit; the Telling's beat lands once.
 
 ## The culture morale term — near / far from the ancestors

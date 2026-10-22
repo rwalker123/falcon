@@ -573,7 +573,7 @@ pub fn advance_connections(
                             own.name, other.name, place.position.x, place.position.y
                         )),
                     )
-                    .with_band(own.band),
+                    .with_band(other.band),
                 );
             }
         }
