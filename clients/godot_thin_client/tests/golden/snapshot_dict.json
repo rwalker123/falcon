@@ -8494,6 +8494,8 @@
           "kit_workers_holding": 99.230003,
           "kitted_staffed": 16,
           "lent_to_hunt": 44,
+          "load_home_in": 195,
+          "load_units": 58.349998,
           "material": "populations[0].labor_assignments[0].material",
           "material_upkeep_demand": [
             {
@@ -8558,6 +8560,7 @@
           "net_rate_home": 11.27,
           "next_load_home_in": 21,
           "overdraws": false,
+          "pack_units": 21.9,
           "party_workers": 71,
           "party_x": 26,
           "party_y": 15,
@@ -8625,6 +8628,8 @@
           "kit_workers_holding": 53.110001,
           "kitted_staffed": 197,
           "lent_to_hunt": 181,
+          "load_home_in": 78,
+          "load_units": 70.839996,
           "material": "populations[0].labor_assignments[1].material",
           "material_upkeep_demand": [
             {
@@ -8689,6 +8694,7 @@
           "net_rate_home": 14.17,
           "next_load_home_in": 78,
           "overdraws": true,
+          "pack_units": 59.689999,
           "party_workers": 148,
           "party_x": 173,
           "party_y": 184,
@@ -8756,6 +8762,8 @@
           "kit_workers_holding": 14.23,
           "kitted_staffed": 18,
           "lent_to_hunt": 174,
+          "load_home_in": 53,
+          "load_units": 82.949997,
           "material": "populations[0].labor_assignments[2].material",
           "material_upkeep_demand": [
             {
@@ -8820,6 +8828,7 @@
           "net_rate_home": 20.030001,
           "next_load_home_in": 123,
           "overdraws": true,
+          "pack_units": 81.650002,
           "party_workers": 1,
           "party_x": 60,
           "party_y": 49,
@@ -10960,6 +10969,8 @@
           "kit_workers_holding": 68.360001,
           "kitted_staffed": 127,
           "lent_to_hunt": 95,
+          "load_home_in": 40,
+          "load_units": 8.61,
           "material": "populations[1].labor_assignments[0].material",
           "material_upkeep_demand": [
             {
@@ -11024,6 +11035,7 @@
           "net_rate_home": 99.919998,
           "next_load_home_in": 188,
           "overdraws": false,
+          "pack_units": 67.239998,
           "party_workers": 198,
           "party_x": 79,
           "party_y": 90,
@@ -11091,6 +11103,8 @@
           "kit_workers_holding": 76.669998,
           "kitted_staffed": 82,
           "lent_to_hunt": 134,
+          "load_home_in": 85,
+          "load_units": 105.690002,
           "material": "populations[1].labor_assignments[1].material",
           "material_upkeep_demand": [
             {
@@ -11155,6 +11169,7 @@
           "net_rate_home": 72.489998,
           "next_load_home_in": 163,
           "overdraws": true,
+          "pack_units": 21.01,
           "party_workers": 17,
           "party_x": 116,
           "party_y": 105,
@@ -11222,6 +11237,8 @@
           "kit_workers_holding": 15.11,
           "kitted_staffed": 157,
           "lent_to_hunt": 93,
+          "load_home_in": 62,
+          "load_units": 74.239998,
           "material": "populations[1].labor_assignments[2].material",
           "material_upkeep_demand": [
             {
@@ -11286,6 +11303,7 @@
           "net_rate_home": 56.73,
           "next_load_home_in": 78,
           "overdraws": true,
+          "pack_units": 84.910004,
           "party_workers": 84,
           "party_x": 5,
           "party_y": 16,
@@ -13370,6 +13388,8 @@
           "kit_workers_holding": 63.790001,
           "kitted_staffed": 114,
           "lent_to_hunt": 6,
+          "load_home_in": 125,
+          "load_units": 36.709999,
           "material": "populations[2].labor_assignments[0].material",
           "material_upkeep_demand": [
             {
@@ -13434,6 +13454,7 @@
           "net_rate_home": 19.51,
           "next_load_home_in": 67,
           "overdraws": false,
+          "pack_units": 27.23,
           "party_workers": 33,
           "party_x": 4,
           "party_y": 193,
@@ -13501,6 +13522,8 @@
           "kit_workers_holding": 0.66,
           "kitted_staffed": 159,
           "lent_to_hunt": 87,
+          "load_home_in": 32,
+          "load_units": 96.370003,
           "material": "populations[2].labor_assignments[1].material",
           "material_upkeep_demand": [
             {
@@ -13565,6 +13588,7 @@
           "net_rate_home": 24.16,
           "next_load_home_in": 148,
           "overdraws": true,
+          "pack_units": 69.160004,
           "party_workers": 94,
           "party_x": 199,
           "party_y": 10,
@@ -13632,6 +13656,8 @@
           "kit_workers_holding": 75.290001,
           "kitted_staffed": 104,
           "lent_to_hunt": 100,
+          "load_home_in": 107,
+          "load_units": 13.73,
           "material": "populations[2].labor_assignments[2].material",
           "material_upkeep_demand": [
             {
@@ -13696,6 +13722,7 @@
           "net_rate_home": 3.01,
           "next_load_home_in": 109,
           "overdraws": true,
+          "pack_units": 15.84,
           "party_workers": 151,
           "party_x": 34,
           "party_y": 23,

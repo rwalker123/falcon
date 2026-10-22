@@ -1116,6 +1116,13 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
             // Turns until the soonest pack on the road lands home. ⛔ **`0` MEANS NOBODY IS
             // CARRYING A LOAD HOME** — never "lands this turn" — so it too drops its line.
             let _ = entry.insert("next_load_home_in", i64::from(assignment.nextLoadHomeIn()));
+            // **THE LOAD WAITING AT THE SITE (extract rows).** `load_units` is the row's material
+            // in the load not yet sent home, `pack_units` what one pack carries (`0` = no caravan
+            // and every non-extract row), and `load_home_in` the turns until the next load reaches
+            // camp INCLUDING the wait for a pack to fill (`0` = none within the forecast horizon).
+            let _ = entry.insert("load_units", f64::from(assignment.loadUnits()));
+            let _ = entry.insert("pack_units", f64::from(assignment.packUnits()));
+            let _ = entry.insert("load_home_in", i64::from(assignment.loadHomeIn()));
             // **THE STEADY PER-TURN RATE ARRIVING AT THE HOME BAND.** Amortized over the cycle and
             // steady-state coincide deliberately, so the row prints ONE number: a near row and a
             // far row are comparable figures on one board and a far posting never reads

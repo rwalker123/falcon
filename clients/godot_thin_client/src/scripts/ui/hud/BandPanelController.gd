@@ -3171,7 +3171,11 @@ func _build_extract_row(band: Dictionary, model: Dictionary) -> PanelContainer:
     var useful := _workings_roster_max_useful(band, model)
     var key := String(model.get("key", ""))
     var value_ink := HudDepositVocab.deposit_value_color(deposit, ladder, cutters, useful)
-    var shell := _site_row_shell(HudWorkVocab.EXTRACT_ROW_HEIGHT, key == _work_open_key,
+    var dig_assignment := _band_labor.extract_assignment_of(band, tile.x, tile.y, material)
+    var load_line := HudWorkVocab.dig_load_line(dig_assignment, material)
+    var shell := _site_row_shell(HudWorkVocab.EXTRACT_ROW_HEIGHT \
+        + (HudWorkVocab.WORK_ROW_PARTY_LINE_HEIGHT if load_line != "" else 0.0),
+        key == _work_open_key,
         HudStyle.WARN if value_ink == HudStyle.WARN else Color(0.0, 0.0, 0.0, 0.0))
     var row: PanelContainer = shell[SITE_ROW_SHELL_ROW]
     var col: VBoxContainer = shell[SITE_ROW_SHELL_COLUMN]
@@ -3246,6 +3250,10 @@ func _build_extract_row(band: Dictionary, model: Dictionary) -> PanelContainer:
     else:
         col.add_child(_build_working_yield_line(_working_yield_text(band, model, deposit, ladder,
             cutters, useful, floor), value_ink))
+    if load_line != "":
+        var load_node := _build_working_yield_line(load_line, HudStyle.INK_DIM,
+            HudWorkVocab.DIG_LOAD_LINE_META)
+        col.add_child(load_node)
     col.add_child(_build_pill_line(band, model, true))
     return row
 

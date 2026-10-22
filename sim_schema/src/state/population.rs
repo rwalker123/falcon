@@ -526,6 +526,13 @@ pub struct LaborAssignmentState {
     /// Of `workers`: bare hands. Appended last.
     #[serde(default)]
     pub bare_staffed: u32,
+    /// Units of the row's material in the party's load at the source, not yet sent home. Appended last.
+    pub load_units: f32,
+    /// Units of that material one pack carries; `0` on a row with no party. Appended last.
+    pub pack_units: f32,
+    /// Turns until the next landing, the wait for a pack to fill included; `0` = none within the
+    /// forecast horizon. Appended last.
+    pub load_home_in: u32,
 }
 
 /// **ONE LINE OF ONE TAKE ROW'S TABLE OF EQUIPMENT** — a row of [`LaborAssignmentState::kit_toe`].

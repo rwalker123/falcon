@@ -2457,6 +2457,17 @@ table LaborAssignment {
   // The crew past which the take stops rising (the room above the floor, clear-it-now), keepers
   // included, after the Max: the ceiling pass 3 staffs a row up to. 0 where the row is not staffed.
   usefulCrew:uint = 0;
+  // *** THE LOAD WAITING AT THE SOURCE (extract rows). *** loadUnits: units of the row's material in
+  // the work party's load, cut and not yet sent home (a porter leaves only with a full pack).
+  // packUnits: the units of that material one pack carries (the haul carry over the material's
+  // weight); 0 on a row with no party. Both 0 off an extract row.
+  loadUnits:float = 0;
+  packUnits:float = 0;
+  // Turns until the next landing at home, the wait for a pack to fill included: from a stepped
+  // forecast of the party, so it is the turn the soonest pack lands whether it is on the road or
+  // still filling. 0 = no landing within the forecast horizon (a part load with no take, or no
+  // party). Unlike nextLoadHomeIn, which counts only a pack already on the road.
+  loadHomeIn:uint = 0;
 }
 
 // One commodity entry in a band's local goods store (fixed-point quantity, `Scalar::SCALE` = 1.0).

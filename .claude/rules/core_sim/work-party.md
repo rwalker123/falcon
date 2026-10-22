@@ -111,7 +111,7 @@ reads its staffed crew before the next turn.
 
 **Wire** (`LaborAssignment`, appended): `maxWorkers` (`0` = no Max), `holdCrew`, `reachCrew`,
 `usefulCrew` (pass 3's ceiling, keepers included, after the Max), `keepersStaffed`, `kittedStaffed`, `bareStaffed` (the last three sum to `workers` on a staffed row).
-`SAVE_FORMAT_VERSION` 48.
+`SAVE_FORMAT_VERSION` 49.
 
 **Approximations to know.** The command-time restaff reads the world before the coming turn's
 regrowth, while the turn staffs after it, so a row's crew can move by a hand between the seed and the
@@ -444,9 +444,16 @@ per-material branch, or an extraction-only carry lever, would be the defect.
 lost.** A porter leaves only with a full pack (`WorkParty::close_turn`), so a lone hand at 0.8 a turn
 against a sledded stone pack of `40 / 3 = 13.3` digs for 17 turns before the first landing, with the
 deposit's stock falling, the store holding no stone, `materialYield` empty and `nextLoadHomeIn` `0`.
-The load (`WorkParty::load_cargo`) is not on the wire. Pinned by
+The load is published on an extract row: `loadUnits` (`WorkParty::load_cargo`, the material's
+units cut and not yet sent), `packUnits` (the pack in the same units, stamped by the extract arm; `0`
+with no party) and `loadHomeIn` (the caravan forecast's `first_load_turn` - turns until the next
+landing, the wait for a pack to fill included; `0` = none within the horizon, `NO_LOAD_WITHIN_HORIZON`).
+`nextLoadHomeIn` keeps its meaning (a pack already on the road). `loadHomeIn` is published on every
+party row; `loadUnits` / `packUnits` only on an extract row, the one web whose load is in the row's
+own units (a food web's is biomass). Pinned by
 `work_party_caravan::a_slow_stone_dig_is_conserved_and_lands_only_when_a_pack_fills` (stock removed ==
-store + load + porters' cargo every turn).
+store + load + porters' cargo every turn; the wire's load climbs, the pack matches, and
+`loadHomeIn` counts down to the turn the stone actually lands).
 
 **The haul carry is read off the row's kit, claimed whole like every job's.** `CaravanPricing` is
 resolved over the row's stored kit — the same claim `LaborAllocation::item_budget` rations the band's
@@ -537,6 +544,8 @@ Every party field on `LaborAssignment` (`snapshot.fbs`) reads `0` on a local row
 | `walkTiles` | the one-way walk, from the apron, shortened by any road |
 | `walkOutRemaining` | `> 0` while the whole party is still walking out; `0` for the rest of the posting |
 | `nextLoadHomeIn` | turns until the soonest pack lands; `0` = nobody is carrying a load home |
+| `loadHomeIn` | turns until the next landing counting the wait for a pack to fill; `0` = none within the forecast horizon |
+| `loadUnits` / `packUnits` | extract rows only: material units in the load at the source / units one pack carries |
 | `netRateHome` | cargo per turn arriving home **and keeping** — net of transit rot — the number the row prints: food on a hunt or forage row, the material's own units on an extract row (the row's `kind` says which) |
 | `spoiledRateHome` | cargo per turn lost on the walk home to transit rot, over the same forecast (#706); `netRateHome + spoiledRateHome` is what the porters carry in. `0` on a local row, an extract row and any walk every class survives |
 | `transitKeepsTurns` | the shortest shelf life among the row's cargo classes that rot on this walk, in turns; `0` when nothing rots |

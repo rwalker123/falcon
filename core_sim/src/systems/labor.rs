@@ -10142,6 +10142,9 @@ pub fn advance_labor_allocation(
                     // food ledger's fixed-point `Scalar`, and a round trip through it moves an `f32`
                     // take by an ulp — which is the local identity broken on the one row that has no
                     // party to explain it.
+                    if let Some(posting) = postings.get_mut(&idx) {
+                        posting.party.pack_units = pack;
+                    }
                     let arrived = if postings.contains_key(&idx) {
                         deliver_take_home(
                             postings.get_mut(&idx),
@@ -11003,6 +11006,7 @@ pub fn advance_labor_allocation(
                 posting.party.transit_keeps_turns = forecast.transit_keeps_turns;
                 posting.party.fodder_rate_home = forecast.fodder_rate_home;
                 posting.party.materials_rate_home = forecast.materials_rate_home.clone();
+                posting.party.load_home_in = forecast.first_load_turn;
             }
             // **A ROW AT ZERO HANDS HOLDS NO PARTY.** A player's unassign stood it down at command
             // time (`set_assignment` → `WorkParty::walk_home`); a row here at zero was trimmed there

@@ -312,6 +312,13 @@ pub struct WorkParty {
     /// **THE MATERIALS PER TURN ARRIVING HOME**, one row per material id, off the same forecast — a
     /// basket's, or a hunt's hide, bone and sinew.
     pub materials_rate_home: Vec<crate::materials_config::MaterialPayoff>,
+    /// **UNITS ONE PACK CARRIES** on the deposit web (the haul carry over the material's weight),
+    /// stamped by the extract arm each turn; `0` on the two food webs, whose pack is in biomass.
+    pub pack_units: f32,
+    /// **TURNS UNTIL THE NEXT LANDING** — the forecast's [`CaravanForecast::first_load_turn`], so it
+    /// counts the wait for a pack to fill as well as the walk; [`NO_LOAD_WITHIN_HORIZON`] when none
+    /// lands within the horizon. Restamped every turn.
+    pub load_home_in: u32,
 }
 
 /// **What a caravan's cargo is made of, and how long each part keeps** (#706) — what the forecast

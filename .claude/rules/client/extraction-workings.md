@@ -681,6 +681,16 @@ is labelled `Diggers` (`HudWorkVocab.DIG_CREW_STEPPER_LABEL`), its floor is `Hud
 raises a seeded 0 to one on open. The Work tab's inspector Max stepper follows the same fork. A renewing wood sheet
 keeps `Max` and `No max`. `ui_preview` chapter `workings`, state `workings_dig_crew` / `workings_wood_max`.
 
+### The load waiting at a dig site
+
+A slow dig fills a whole pack before its first stone lands home, so the stone sits at the site. An extract
+row with a caravan (`pack_units > 0`) states it through `HudWorkVocab.dig_load_line`:
+`8 of 13 stone in the load · home in 6 turns`, drawn as a line of its own on the Work tab's workings row
+(`DIG_LOAD_LINE_META`, one party line of extra height) and under the readout on a worked deposit sheet.
+The load is floored and the pack rounded to whole units. `load_home_in` 0 (no landing within the sim's
+horizon) drops the `· home in N turns` clause, and so does a pack already on the road (`next_load_home_in > 0`),
+whose countdown is the party block's `Next load home in` line. A row with no caravan draws no line.
+
 ### ⛔ THE CREW CURVE — THE TAKE AND THE DEAL ARE THE SIM'S, AT THE STEPPER'S CREW
 
 Issue #663. The sheet asks `ForecastQuery.KIND_DEPOSIT_CREW_TAKE` (`QueryCommand.deposit_crew_take`,

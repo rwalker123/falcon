@@ -1377,6 +1377,30 @@ const WORK_ROW_PARTY_NEXT_LOAD_FORMAT := "Next load home in %d turns"
 ## …and its singular, for the walk-out line's reason.
 const WORK_ROW_PARTY_NEXT_LOAD_ONE_FORMAT := "Next load home in 1 turn"
 
+## **THE LOAD WAITING AT A DIG SITE** - a slow dig fills a whole pack before its first stone lands home,
+## so the stone sits at the site and looked lost. `8 of 13 stone in the load`, then ` · home in 6 turns`
+## where the sim names a landing (`load_home_in`; `0` = none within its forecast horizon, which drops the
+## clause) and no pack is already on the road (`next_load_home_in > 0`: the party block's `Next load home
+## in` line states that countdown, and this line does not state it twice). Args: `[units, pack, material]`.
+const DIG_LOAD_LINE_FORMAT := "%d of %d %s in the load"
+const DIG_LOAD_HOME_CLAUSE_FORMAT := " · home in %d turns"
+const DIG_LOAD_HOME_CLAUSE_ONE_FORMAT := " · home in 1 turn"
+const DIG_LOAD_LINE_META := &"dig_load_line"
+
+## `""` where the row has no caravan (`pack_units` 0: a local row, any non-extract row). The load is
+## floored so a pack reads full only when it is; the pack is rounded to the whole unit.
+static func dig_load_line(assignment: Dictionary, material: String) -> String:
+    var pack := float(assignment.get("pack_units", 0.0))
+    if pack <= 0.0:
+        return ""
+    var line := DIG_LOAD_LINE_FORMAT % [floori(float(assignment.get("load_units", 0.0))),
+        roundi(pack), material]
+    var home_in := int(assignment.get("load_home_in", 0))
+    if home_in <= 0 or int(assignment.get("next_load_home_in", 0)) > 0:
+        return line
+    return line + (DIG_LOAD_HOME_CLAUSE_ONE_FORMAT if home_in == WORK_ROW_PARTY_TURNS_SINGULAR \
+        else DIG_LOAD_HOME_CLAUSE_FORMAT % home_in)
+
 ## **WHAT THE WALK HOME LOSES TO ROT** (#706) — food whose keeping class's shelf life is shorter than
 ## the walk rots before its pack lands. ONE sentence for both surfaces that state it: the compose
 ## sheet's PER TURN box (an amber bullet under the numbers) and a committed far row's party block.

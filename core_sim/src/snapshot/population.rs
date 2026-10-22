@@ -181,6 +181,18 @@ pub(crate) fn labor_assignment_to_state(
         keepers_staffed: assignment.staffing.keepers,
         kitted_staffed: assignment.staffing.kitted,
         bare_staffed: assignment.staffing.bare,
+        // **THE LOAD WAITING AT THE SOURCE** - only the deposit web's load is in the row's own
+        // units (material units); a food web's is biomass and is not published here.
+        load_units: if matches!(assignment.target, LaborTarget::Extract { .. }) {
+            assignment
+                .party
+                .as_ref()
+                .map_or(0.0, |party| party.load_cargo)
+        } else {
+            0.0
+        },
+        pack_units: assignment.party.as_ref().map_or(0.0, |p| p.pack_units),
+        load_home_in: assignment.party.as_ref().map_or(0, |p| p.load_home_in),
         ..Default::default()
     };
     match &assignment.target {

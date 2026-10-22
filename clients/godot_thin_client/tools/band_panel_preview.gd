@@ -19870,6 +19870,9 @@ const FAR_WORKING_WALK_TILES := 5
 const FAR_WORKING_ON_ROAD := 1
 const FAR_WORKING_NEXT_LOAD := 2
 const FAR_WORKING_RATE_HOME := 0.9
+const FAR_WORKING_LOAD_UNITS := 8.0
+const FAR_WORKING_PACK_UNITS := 13.33
+const FAR_WORKING_LOAD_HOME_IN := 6
 
 func _assert_a_far_working_states_its_party() -> void:
 	var band := _workings_band_fixture(WORKINGS_DEMAND)
@@ -19888,6 +19891,9 @@ func _assert_a_far_working_states_its_party() -> void:
 		row["hunters_on_the_road"] = FAR_WORKING_ON_ROAD
 		row["next_load_home_in"] = FAR_WORKING_NEXT_LOAD
 		row["net_rate_home"] = FAR_WORKING_RATE_HOME
+		row["load_units"] = FAR_WORKING_LOAD_UNITS
+		row["pack_units"] = FAR_WORKING_PACK_UNITS
+		row["load_home_in"] = FAR_WORKING_LOAD_HOME_IN
 	_hud.update_deposits(_workings_rows())
 	_push_bands([band])
 	_hud._bandpanel.rerender()
@@ -19923,6 +19929,15 @@ func _assert_a_far_working_states_its_party() -> void:
 		hover.contains(rate_line))
 	_assert_band_panel("…and never calls that figure food",
 		not hover.to_lower().contains("food"))
+	# **THE LOAD LINE IS ON THE ROW, AND A PACK ALREADY ON THE ROAD OWNS THE COUNTDOWN** - `next_load_home_in`
+	# is 2 here, so the line states the load alone rather than a second `home in` figure.
+	var want_load := "8 of 13 stone in the load"
+	var load_node := _find_meta_control(far_row, HudWorkVocab.DIG_LOAD_LINE_META) as Label
+	_assert_band_panel("a far dig row states its load (\"%s\", got \"%s\")"
+			% [want_load, "" if load_node == null else load_node.text],
+		load_node != null and load_node.text == want_load)
+	_assert_band_panel("…and a row with no caravan states none",
+		_find_meta_control(near_row, HudWorkVocab.DIG_LOAD_LINE_META) == null)
 	var near_hover := _workings_row_tooltip(near_row)
 	_assert_band_panel("a working with NO party carries no party block on its hover",
 		not near_hover.contains(HudWorkVocab.WORK_ROW_PARTY_NEXT_LOAD_FORMAT.get_slice("%", 0))

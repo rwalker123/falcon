@@ -6004,6 +6004,12 @@ func _build_deposit_assign_controls(deposit: Dictionary, target: VBoxContainer) 
     # on, and the runway under the dashed rule.
     _mount_deposit_readout(target, live_hosts, deposit, ladder, next_entry, chart_model,
         staffed_crew, curve_reply, curve_row_at_crew, party_view)
+    # **THE LOAD WAITING AT THE SITE** - what the crew has dug that is not yet on the road home.
+    var dig_load_line := HudWorkVocab.dig_load_line(working_row, material) if is_working else ""
+    if dig_load_line != "":
+        var dig_load_label := HudWidgets.alloc_hint_label(dig_load_line)
+        dig_load_label.set_meta(HudWorkVocab.DIG_LOAD_LINE_META, dig_load_line)
+        target.add_child(dig_load_label)
     # ⛔ **NO RANGE REFUSAL** — the forage sheet's retirement, one web over. A working past the picked
     # band's work range posts a work party (the section above) rather than lapsing its crew, so a
     # refusal would forbid the very assignment the caravan exists to make.

@@ -47,6 +47,9 @@ var h
 ## The hex every state in this chapter stands on. Its own coordinates, so a working staged here can
 ## never be confused with the road frames' tile.
 const WORKING_TILE_X := 21
+const DIG_LOAD_UNITS := 8
+const DIG_PACK_UNITS := 13.33
+const DIG_LOAD_HOME_IN := 6
 const WORKING_TILE_Y := 14
 
 ## ⛔ **EVERY BAND IN THIS CHAPTER STANDS ON THE WORKING'S OWN HEX, AND SINCE issue #650 IT HAS TO.**
@@ -1079,6 +1082,35 @@ func run(harness) -> void:
 	h._show_tile(_workings_tile([_idle_stone_working()]))
 	await h._settle()
 
+	# ⛔⛔ **STATE workings-dig-load - THE LOAD WAITING AT THE SITE.** A slow dig fills a whole pack before
+	# its first stone lands home, so the stone sat at the site and looked lost. The worked sheet states
+	# the load against the pack and when it gets home; with no landing in the sim's horizon it states
+	# the load alone.
+	h._hud.update_band_alerts([_dig_load_band(DIG_LOAD_UNITS, DIG_LOAD_HOME_IN)])
+	h._show_tile(_workings_tile([_worked_down_quarry()]))
+	await h._settle()
+	h._hud._drawercompose.open_deposit_compose(_worked_down_quarry())
+	await h._settle()
+	var load_sheet: Node = h._hud._drawercompose._compose_sheet
+	var load_node := Q.find_live_meta_node(load_sheet, HudWorkVocab.DIG_LOAD_LINE_META)
+	var want_load := "%d of %d stone in the load · home in %d turns" % [
+		DIG_LOAD_UNITS, roundi(DIG_PACK_UNITS), DIG_LOAD_HOME_IN]
+	h._assert_hud("a dig sheet states the load waiting at the site (want \"%s\", got \"%s\")"
+			% [want_load, "" if load_node == null else String(load_node.get_meta(HudWorkVocab.DIG_LOAD_LINE_META))],
+		load_node != null and String(load_node.get_meta(HudWorkVocab.DIG_LOAD_LINE_META)) == want_load)
+	await h._save("workings_dig_load")
+	h._hud.update_band_alerts([_dig_load_band(DIG_LOAD_UNITS, 0)])
+	h._hud._drawercompose.open_deposit_compose(_worked_down_quarry())
+	await h._settle()
+	var no_landing: Node = Q.find_live_meta_node(h._hud._drawercompose._compose_sheet,
+		HudWorkVocab.DIG_LOAD_LINE_META)
+	h._assert_hud("…and with no landing in the horizon it drops the `home in` clause",
+		no_landing != null and String(no_landing.get_meta(HudWorkVocab.DIG_LOAD_LINE_META))
+			== "%d of %d stone in the load" % [DIG_LOAD_UNITS, roundi(DIG_PACK_UNITS)])
+	await h._save("workings_dig_load_no_landing")
+	h._hud._drawercompose.close_compose_sheet()
+	await h._settle()
+
 	# ⛔⛔ **STATE workings-quarry-reach — THE CREW'S FLOOR IS DISCARDED WHERE THE GROUND NEVER RENEWS.**
 	# The sim's `extraction::deposit_effective_floor` returns the rung's floor alone at `NEVER_RENEWS`;
 	# `HudDepositVocab.composed_floor` mirrors it, and this is the state where the two used to disagree.
@@ -1947,6 +1979,15 @@ func _verdict_lead(walk: Dictionary) -> String:
 
 ## Whether any Label under `root` carries `needle` — the pending and out-of-range sentences are hint
 ## labels in the yields host, which `Readout.yields_text` (the ROW's faces) does not reach.
+## The worked quarry with its load: `units` waiting, one pack of `DIG_PACK_UNITS`, home in `home_in`.
+func _dig_load_band(units: int, home_in: int) -> Dictionary:
+	var band := _worked_quarry_band_fixture()
+	var row: Dictionary = (band["labor_assignments"] as Array).back()
+	row["load_units"] = float(units)
+	row["pack_units"] = DIG_PACK_UNITS
+	row["load_home_in"] = home_in
+	return band
+
 func _minus_button(root: Node) -> Button:
 	if root == null or root.is_queued_for_deletion():
 		return null

@@ -500,6 +500,9 @@ fn create_populations<'a>(
                                 keepersStaffed: assignment.keepers_staffed,
                                 kittedStaffed: assignment.kitted_staffed,
                                 bareStaffed: assignment.bare_staffed,
+                                loadUnits: assignment.load_units,
+                                packUnits: assignment.pack_units,
+                                loadHomeIn: assignment.load_home_in,
                             },
                         )
                     })
@@ -1674,6 +1677,9 @@ fn decode_labor_assignment(
         keepers_staffed: assignment.keepersStaffed(),
         kitted_staffed: assignment.kittedStaffed(),
         bare_staffed: assignment.bareStaffed(),
+        load_units: assignment.loadUnits(),
+        pack_units: assignment.packUnits(),
+        load_home_in: assignment.loadHomeIn(),
     })
 }
 

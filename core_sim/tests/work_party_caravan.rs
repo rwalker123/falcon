@@ -1209,6 +1209,31 @@ fn published_material_yield(app: &App) -> f32 {
         .sum()
 }
 
+/// The load fields the extract row publishes, off the ENCODED buffer: `(loadUnits, packUnits,
+/// loadHomeIn)`.
+fn published_load(app: &App) -> (f32, f32, u32) {
+    use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
+    let snapshot = app
+        .world
+        .resource::<SnapshotHistory>()
+        .latest_entry()
+        .expect("a snapshot was captured")
+        .snapshot;
+    let bytes = sim_schema::encode_snapshot_flatbuffer(snapshot.as_ref());
+    let envelope =
+        fb::root_as_envelope(bytes.as_ref()).expect("the snapshot encodes to a valid envelope");
+    let row = envelope
+        .payload_as_snapshot()
+        .and_then(|snapshot| snapshot.population())
+        .and_then(|section| section.populations())
+        .expect("the population section carries the cohort list")
+        .iter()
+        .flat_map(|cohort| cohort.laborAssignments().into_iter().flatten())
+        .find(|assignment| assignment.kind().unwrap_or_default() == EXTRACT_KIND)
+        .expect("the extract row is on the wire");
+    (row.loadUnits(), row.packUnits(), row.loadHomeIn())
+}
+
 /// [`published_material_yield`] for `material`.
 fn published_material_yield_of(app: &App, material: &str) -> f32 {
     use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
@@ -3120,6 +3145,8 @@ fn a_slow_stone_dig_is_conserved_and_lands_only_when_a_pack_fills() {
         stock_of(&app)
     };
     let mut first_landing = None;
+    let mut predicted_landing = None;
+    let mut last_load = 0.0_f32;
     for turn in 0..DIG_TURNS {
         resolve_a_turn(&mut app);
         let held = app
@@ -3143,14 +3170,44 @@ fn a_slow_stone_dig_is_conserved_and_lands_only_when_a_pack_fills() {
                 "the first landing waits for a full pack: {removed} dug against a pack of {pack}"
             );
         }
+        let (load_units, pack_units, load_home_in) = published_load(&app);
+        assert!(
+            (pack_units - pack).abs() < 1e-3,
+            "turn {turn}: the wire states the pack: {pack_units} vs {pack}"
+        );
         if first_landing.is_none() {
             assert_eq!(
                 published_material_yield_of(&app, STONE),
                 0.0,
                 "turn {turn}: nothing has landed, so the row publishes no yield"
             );
+            assert!(
+                (load_units - party.load_cargo).abs() < 1e-3,
+                "turn {turn}: the wire states the load"
+            );
+            if turn > 0 && party.on_the_road.is_empty() {
+                assert!(
+                    load_units > last_load,
+                    "turn {turn}: the load climbs while the pack fills: {load_units} after {last_load}"
+                );
+            }
+            last_load = load_units;
+            assert!(
+                load_home_in > 0,
+                "turn {turn}: a filling pack is predicted to land"
+            );
+            let predicted = turn + load_home_in as usize;
+            assert_eq!(
+                *predicted_landing.get_or_insert(predicted),
+                predicted,
+                "turn {turn}: the countdown ticks down to one fixed landing turn"
+            );
         }
     }
+    assert_eq!(
+        predicted_landing, first_landing,
+        "the published countdown names the turn the stone actually lands"
+    );
     assert!(
         first_landing.is_some(),
         "liveness: {DIG_TURNS} turns of digging fill a pack and land it"
