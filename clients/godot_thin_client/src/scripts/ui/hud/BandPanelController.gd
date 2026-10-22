@@ -1006,6 +1006,8 @@ func build_band_zone(band: Dictionary, with_vitals: bool = true) -> VBoxContaine
     # one-column stack follows this list as-is, while the split reads the `column` field — so the
     # authored pairing can put two blocks together without reordering the stack that does not use it.
     var vitals: Control = _build_vitals_label(band) if with_vitals else null
+    # The leader block is FIRST in the flat stack and in the left column (#859).
+    var leader: Control = _build_leader_block(band) if with_vitals else null
     var people := _build_people_block(band)
     # The chart is ALWAYS built; only its height answers the tier. `TALL` gets the full series, every
     # shorter tier the compact one — same series, same empty marker, drawn denser.
@@ -1041,6 +1043,8 @@ func build_band_zone(band: Dictionary, with_vitals: bool = true) -> VBoxContaine
     # flank's history. **The two column CONSTANTS are named for an older pairing and are positional**,
     # which is why they are not renamed with each re-authoring: they are left and right.
     var blocks: Array[Dictionary] = []
+    if leader != null:
+        blocks.append({"control": leader, "column": BAND_COLUMN_LARDER})
     if vitals != null:
         blocks.append({"control": vitals, "column": BAND_COLUMN_LARDER})
     if people != null:
@@ -1325,6 +1329,44 @@ func _band_zone_column_count() -> int:
         return 1
     return _panel.band_zone_columns()
 
+## **THE LEADER BLOCK** (#859): a `LeaderPortrait` square beside the chief line. A chief reads `Chief
+## Orrin`, a council `Elders' council — Orrin speaks` (its portrait wearing the group badge); before a
+## leader the portrait is an empty dimmed slot beside the four-source progress bar and its `7 / 10`,
+## hovering to the per-source sentence. `null` for a band with neither a leader nor a threshold (a
+## foreign cohort), so such a band gets no block at all.
+func _build_leader_block(band: Dictionary) -> Control:
+    var phrase := HudFormat.band_leader_phrase(band)
+    var progress: Dictionary = {} if phrase != "" else HudFormat.band_chief_progress(band)
+    if phrase == "" and progress.is_empty():
+        return null
+    var faction := int(band.get("faction", HudConst.PLAYER_FACTION_ID))
+    var council := int(band.get("leader_kind", HudFormat.LEADER_KIND_NONE)) == HudFormat.LEADER_KIND_ELDER_COUNCIL
+    var block := HBoxContainer.new()
+    block.name = HudWorkVocab.BAND_LEADER_BLOCK_NAME
+    block.set_meta(HudWorkVocab.BAND_LEADER_BLOCK_META, true)
+    block.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    block.mouse_filter = Control.MOUSE_FILTER_PASS
+    block.add_theme_constant_override("separation", HudWorkVocab.BAND_LEADER_BLOCK_SEPARATION)
+    block.add_child(LeaderPortrait.make(faction, phrase == "", council))
+    var text := RichTextLabel.new()
+    text.name = HudWorkVocab.BAND_LEADER_TEXT_NAME
+    text.bbcode_enabled = true
+    text.fit_content = true
+    text.scroll_active = false
+    text.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+    text.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    text.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+    text.mouse_filter = Control.MOUSE_FILTER_PASS
+    if phrase != "":
+        text.text = "[color=#%s]%s[/color]" % [HudStyle.INK.to_html(false), phrase]
+    else:
+        text.text = "[color=#%s]%s[/color] %s %s" % [HudStyle.INK_DIM.to_html(false),
+            HudFormat.CHIEF_ROW_LABEL, HudFormat.chief_bar_bbcode(progress), String(progress.get("label", ""))]
+        block.tooltip_text = String(progress.get("tooltip", ""))
+        text.tooltip_text = block.tooltip_text
+    block.add_child(text)
+    return block
+
 ## The vitals readout — Food, Fodder, Morale and Growth, of which Food / Morale / Growth carry the
 ## click-to-expand disclosures (Fodder is a plain row, and there is no Output row: productivity reads
 ## on the WORK zone's head). Which of the optional rows appear is the producer's
@@ -1350,8 +1392,6 @@ func _build_vitals_label(band: Dictionary) -> RichTextLabel:
     # for in height. The drawer host keeps it (it has no header and renders foreign bands).
     var vitals_lines := _banddetail.unit_summary_lines(band, _selectioncard.selected_terrain_label(), ctx,
         _band_zone_tier == HudWorkVocab.BAND_ZONE_TIER_SHORT, false)
-    # The chief / leader row is one more vitals row (#859), last in the table.
-    vitals_lines.append_array(HudFormat.band_leader_row_lines(band, ctx.row_tooltips))
     detail_label.set_meta(HudWorkVocab.BAND_VITALS_LABEL_META, true)
     detail_label.text = DetailFormat.detail_bbcode(vitals_lines, ctx)
     # **A ROW'S HOVER SHOWS OVER THAT ROW ALONE** (`DetailFormat.wire_row_hovers`).

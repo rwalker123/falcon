@@ -2125,13 +2125,37 @@ func _hay_ledger_states() -> void:
 		# before a leader, `Leader:` + the name after), so it is read off the vitals label's own text.
 		var vitals_nodes := _find_all_meta(leader_panel, HudWorkVocab.BAND_VITALS_LABEL_META)
 		var vitals: RichTextLabel = vitals_nodes[0] if not vitals_nodes.is_empty() else null
-		var vitals_raw := vitals.text if vitals != null else ""
 		var vitals_plain := vitals.get_parsed_text() if vitals != null else ""
 		var work_scroll := _find_named(leader_panel, HudWorkVocab.WORK_SECTIONS_SCROLL_NAME)
 		var want_leader := String(leader_case[2])
-		h._assert_hud("%s: Leader row %s" % [leader_case[0], "reads '%s'" % want_leader if want_leader != "" else "is absent"],
-			(vitals_plain.contains("Leader") and vitals_plain.contains(want_leader)) if want_leader != ""
-			else not vitals_plain.contains("Leader"))
+		# The leader is its OWN BLOCK at the head of the Band tab's zone (#859), not a vitals row.
+		var block_nodes := _find_all_meta(leader_panel, HudWorkVocab.BAND_LEADER_BLOCK_META)
+		var block: Node = block_nodes[0] if not block_nodes.is_empty() else null
+		var text_label: RichTextLabel = null
+		var portrait: LeaderPortrait = null
+		if block != null:
+			text_label = block.find_child(HudWorkVocab.BAND_LEADER_TEXT_NAME, true, false) as RichTextLabel
+			for child in block.get_children():
+				if child is LeaderPortrait:
+					portrait = child
+		var block_raw := text_label.text if text_label != null else ""
+		var block_plain := text_label.get_parsed_text() if text_label != null else ""
+		h._assert_hud("%s: the leader block exists on the Band tab, once" % leader_case[0], block_nodes.size() == 1)
+		h._assert_hud("%s: the leader block is the FIRST block of the zone" % leader_case[0],
+			block != null and block.get_parent().get_child(0) == block
+			and vitals != null and block.get_parent() == vitals.get_parent()
+			and block.get_index() < vitals.get_index())
+		h._assert_hud("%s: the vitals table holds no leader or chief row" % leader_case[0],
+			not vitals_plain.contains("Leader") and not vitals_plain.contains("Chief")
+			and not vitals.text.contains(HudFormat.CHIEF_BAR_FILLED_GLYPH))
+		h._assert_hud("%s: leader block %s" % [leader_case[0], "reads '%s'" % want_leader if want_leader != "" else "shows the progress bar"],
+			block_plain.contains(want_leader) if want_leader != ""
+			else block_plain.contains(HudFormat.CHIEF_ROW_LABEL))
+		h._assert_hud("%s: portrait is %s%s" % [leader_case[0], "empty" if want_leader == "" else "filled",
+			" with the council badge" if String(leader_case[0]) == "leader_council" else ""],
+			portrait != null and portrait.is_empty_slot() == (want_leader == "")
+			and portrait.is_council() == (String(leader_case[0]) == "leader_council")
+			and portrait.size.x >= LeaderPortrait.PORTRAIT_SIZE - 0.5)
 		h._assert_hud("%s: the sub line carries no leader clause (%s)" % [leader_case[0], leader_panel._position_label.text],
 			not leader_panel._position_label.text.to_lower().contains("led by"))
 		var want_label := String(leader_case[3])
@@ -2139,11 +2163,12 @@ func _hay_ledger_states() -> void:
 		for pts in (leader_case[4] as Array).slice(0, maxi((leader_case[4] as Array).size() - 1, 0)):
 			filled += int(pts)
 		var empty_cells := int((leader_case[4] as Array).back()) if not (leader_case[4] as Array).is_empty() else 0
-		h._assert_hud("%s: Chief row %s" % [leader_case[0], "reads '%s' with %d filled / %d empty cells" % [want_label, filled, empty_cells] if want_label != "" else "is absent"],
-			(not vitals_raw.contains(HudFormat.CHIEF_BAR_FILLED_GLYPH) and not vitals_raw.contains(HudFormat.CHIEF_BAR_EMPTY_GLYPH)) if want_label == ""
-			else (vitals_plain.contains("Chief") and vitals_plain.contains(want_label)
-				and vitals_raw.count(HudFormat.CHIEF_BAR_FILLED_GLYPH) == filled
-				and vitals_raw.count(HudFormat.CHIEF_BAR_EMPTY_GLYPH) == empty_cells))
+		h._assert_hud("%s: Chief bar %s" % [leader_case[0], "reads '%s' with %d filled / %d empty cells" % [want_label, filled, empty_cells] if want_label != "" else "is absent"],
+			(not block_raw.contains(HudFormat.CHIEF_BAR_FILLED_GLYPH) and not block_raw.contains(HudFormat.CHIEF_BAR_EMPTY_GLYPH)) if want_label == ""
+			else (block_plain.contains(want_label)
+				and block_raw.count(HudFormat.CHIEF_BAR_FILLED_GLYPH) == filled
+				and block_raw.count(HudFormat.CHIEF_BAR_EMPTY_GLYPH) == empty_cells
+				and block != null and (block as Control).tooltip_text.contains("Splits: ")))
 		h._assert_hud("%s: the Work tab's sections hold no chief or leader row" % leader_case[0],
 			work_scroll == null or (not _scroll_text_has(work_scroll, "Leader:") and not _scroll_text_has(work_scroll, "Chief:")))
 		# A wide line in the zone must not widen the docked card past the strip the dock reserves.

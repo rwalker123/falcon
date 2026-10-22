@@ -38,6 +38,7 @@ paths:
 | `ui/hud/TradeHoverCard.gd` | The Trade tab's hover card: a row's rating piles or a shipment's cargo, placed beside the row and never under the list panel |
 | `ui/hud/FactionMark.gd` | **The one faction mark** — a flag glyph in `MapView.faction_color`, on every counterparty; the slot a faction's flag (#647) fills |
 | `ui/hud/CrewSplitMarks.gd` | One small square per worker, **drawn** (a custom-draw `Control`, not glyphs): how a site's crew divides between tending it and taking from it — see "THE CREW SPLIT" below. Mounted on every Work-tab site row and under the forage compose sheet's stepper |
+| `ui/hud/LeaderPortrait.gd` | The leader block's 48px portrait square on the Band tab (#859): draws `res://assets/portraits/leader_placeholder.png` when that file exists (the seam for real art), else a faction-coloured head-and-shoulders silhouette; `empty` dims it, `council` adds the group badge. See "THE BAND TAB SHOWS WHO LEADS THE BAND" |
 | `ui/hud/RungLinkIcon.gd` | A pooling link's rung as a glyph (path dotted, trail dashed, dirt road solid pigment, paved road double; open ground a faint dot) |
 | `ui/hud/hud_trade_vocab.gd` | `HudTradeVocab` — the crossing codes (direction / link / cause), the tab's thresholds, words and sizes |
 | `ui/PenStatus.gd` | Single source of truth for **"is this pen's herd starving?"** — `FULLY_FED` / `FED_EPSILON` + `fed_fraction(herd)` / `is_starving(fed)`, reading `HerdTelemetryState.penFedFraction` (`< 1` ⇒ the pen's own pasture plus the fodder carried in did not cover its demand, so the herd is SHRINKING every turn — it is never a bill the keeper failed to pay, human food not being animal feed). Plus `herd_is_starving(herd)` for a caller holding only the herd dict. The ONE test all three surfaces ask — the herd drawer's **`Fed:`** row (`DetailFormat.pen_feed_value`, which carries the mark, the fed share, the pasture/fodder split and the shortfall; the CORRAL row states the rung alone, see `herd-readouts.md`), the map's distress badge (`MapView._draw_herd`) and the turn orb's `starving_pen` producer — so they can never disagree about which pen is dying |
@@ -91,31 +92,41 @@ command center**: shown whenever ≥1 player band exists, always displaying a
   exactly what the harness pair `band_panel_people` (snapshot path) / `band_panel_people_map_path`
   (map path) exists to keep separable — a fixture reached only one way cannot see it.
   **THE BAND TAB SHOWS WHO LEADS THE BAND, AND HOW FAR IT IS FROM HAVING ONE** (#859). The header is
-  the name and the sub line only (stage + position). The chief / leader line is **one more row of the
-  Band tab's vitals table**, last under Food / Fodder / Morale / Beliefs / Growth and above PEOPLE: a
-  `Key: value` line appended in `BandPanelController._build_vitals_label` by
-  `HudFormat.band_leader_row_lines`, so it takes the vitals' own key column, type size, inks and row
-  spacing, and (being in the vitals label) the no-dock fallback host shows it too. The Work tab carries
-  none of it. The wire gives
+  the name and the sub line only (stage + position). The leader is its **own block at the head of the
+  Band tab's zone** (`BandPanelController._build_leader_block`): the FIRST block of the flat stack and of
+  the authored split's left column, above the vitals, built only where `build_band_zone` builds vitals
+  (the no-dock host does not carry it). It is an `HBoxContainer` named `BandLeaderBlock`
+  (`HudWorkVocab.BAND_LEADER_BLOCK_META`): a `LeaderPortrait` square on the left, text on the right
+  (`BandLeaderText`, autowrap, so nothing clips at the 380px reservation). The Work tab carries none of
+  it. The wire gives
   `leader_name`, `leader_kind` (0 none / 1 chief / 2 elder council), `leadership_threshold` (10),
   `leadership_practice` and its four parts `leadership_from_builds` / `_splits` / `_herd` / `_stages`
   (3 per finished Cultivate, Farm, Tame or Corral, 3 per player-ordered split credited to both
   bands, 1 per hex walked following a herd, 5 the first time a settlement stage is reached; the sum
-  freezes once a leader exists). With a leader the row is `Leader` / `Chief Orrin` or
-  `Elders' council — Orrin speaks` (`HudFormat.band_leader_phrase`); the value wraps in its table cell
-  and never widens the card. With none it is `Chief` / a compact glyph bar then `7 / 10` (practice
-  floored and capped at the threshold, whole numbers): one `▰` per point, in order builds / splits /
-  herd / stages (green / blue / amber / cyan, `HudFormat.chief_source_colors`, as `[color]` runs), then
-  `▱` for the remainder (`HudFormat.chief_bar_bbcode`), so the bar is as wide as the threshold and is
-  text, not a sized control. `HudFormat.band_chief_progress` answers `{}` (no row) for a band with a
-  leader or a threshold of 0 (foreign cohort), and the faction page has no band to ask. The row hover
-  is the headline "A band gains a leader once it does enough work that needs an organiser." and one
-  line of per-source points, stored in the vitals context's `row_tooltips` under `Chief`. There is no
-  `no chief yet` text. Harness frames `leader_partial`, `leader_empty`, `leader_chief`, `leader_council`
-  in `band_expedition` dock the panel RIGHT on the BAND tab and read the vitals label (found by
-  `BAND_VITALS_LABEL_META`) to assert the `Leader` row's words, the `Chief` row's `7 / 10` with its
-  filled and empty cell counts, the absence of the other row, nothing of either in the Work tab's
-  sections, no leader clause on the sub line, and the card's minimum width within
+  freezes once a leader exists). With a leader the text is `Chief Orrin` or
+  `Elders' council — Orrin speaks` in primary ink (`HudFormat.band_leader_phrase`) and the portrait is
+  filled; a council's portrait also wears a small group badge (a disc with three dots) in its
+  bottom-right corner. With none the portrait is an EMPTY slot (dimmed frame and a faint silhouette) and
+  the text is `Chief` / a compact glyph bar then `7 / 10` (practice floored and capped at the
+  threshold, whole numbers): one `▰` per point, in order builds / splits / herd / stages (green / blue /
+  amber / cyan, `HudFormat.chief_source_colors`, as `[color]` runs), then `▱` for the remainder
+  (`HudFormat.chief_bar_bbcode`), so the bar is as wide as the threshold and is text, not a sized
+  control. `HudFormat.band_chief_progress` answers `{}` for a band with a leader or a threshold of 0
+  (foreign cohort), and a band with neither gets NO block; the faction page has no band to ask. The
+  block's hover is the headline "A band gains a leader once it does enough work that needs an organiser."
+  and one line of per-source points. There is no `no chief yet` text.
+  **`LeaderPortrait` is the portrait square** (48px logical). It first tries `res://assets/portraits/
+  leader_placeholder.png` (`PORTRAIT_TEXTURE_PATH`, checked with `ResourceLoader.exists`) and draws it
+  scaled into the square: that path is the seam where real art lands, and no file ships there. Without
+  it, it draws a head-and-shoulders silhouette (circle head, half-ellipse shoulders) in the band's
+  faction map colour (`MapView.faction_color`, as `FactionMark` does) on a `GROUND_2` ground with a thin
+  `LINE` frame; `empty` drops the silhouette to `EMPTY_ALPHA` and the frame to `EMPTY_FRAME_ALPHA`.
+  Harness frames `leader_partial`, `leader_empty`, `leader_chief`, `leader_council`
+  in `band_expedition` dock the panel RIGHT on the BAND tab and assert, per frame: the block exists once,
+  is the first child of the vitals' own container and precedes the vitals, the vitals label holds no
+  `Leader` / `Chief` row or bar glyph, the block's words (or the `7 / 10` bar with its filled and empty
+  cell counts and tooltip), the portrait's empty / council state and width, nothing of either in the
+  Work tab's sections, no leader clause on the sub line, and the card's minimum width within
   `current_reservation_size()`. The header's sub line trims with an ellipsis and carries its whole
   text on its tooltip (`MOUSE_FILTER_PASS`, so a click still reaches the subject's jump), so a long
   stage word cannot widen the panel either.

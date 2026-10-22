@@ -105,11 +105,8 @@ const BAND_HEADER_COUNCIL_FORMAT := "Elders' council — %s speaks"
 ## **THE CHIEF-PROGRESS BAR** (#859) under the header's sub line, while a band has no leader. Four
 ## sources in this order, each a distinct hue; the remainder to the threshold is the empty cell.
 const CHIEF_LABEL_FORMAT := "%d / %d"
-## The two vitals-row keys the Band tab shows (#859): `Chief` while the band has no leader (value = a
-## compact glyph bar and `7 / 10`), `Leader` once it has one. Both are `Key: value` lines of the vitals
-## table, so they take the same key column, type size and inks as Food / Morale / Growth.
-const CHIEF_ROW_KEY := "Chief"
-const LEADER_ROW_KEY := "Leader"
+## The word before the progress bar in the Band tab's leader block (#859): `Chief <bar> 7 / 10`.
+const CHIEF_ROW_LABEL := "Chief"
 ## The compact bar's filled and empty cell glyphs -- the block glyphs `meter_bar` draws.
 const CHIEF_BAR_FILLED_GLYPH := "▰"
 const CHIEF_BAR_EMPTY_GLYPH := "▱"
@@ -283,22 +280,6 @@ static func chief_bar_bbcode(progress: Dictionary) -> String:
         out += "[color=#%s]%s[/color]" % [HudStyle.INK_FAINT.to_html(false),
             CHIEF_BAR_EMPTY_GLYPH.repeat(cells - used)]
     return out
-
-## **THE LEADER ROW OF THE BAND TAB'S VITALS** (#859): `[]` for a foreign band or no threshold, else one
-## `Key: value` line -- `Leader: Chief Orrin` / `Chief: <bar> 7 / 10` -- for the vitals table to render.
-## The per-source tooltip is stored into `row_tooltips` under the row's key (the vitals' own hover path).
-static func band_leader_row_lines(entry: Dictionary, row_tooltips: Dictionary) -> Array[String]:
-    var lines: Array[String] = []
-    var phrase := band_leader_phrase(entry)
-    if phrase != "":
-        lines.append("%s: %s" % [LEADER_ROW_KEY, phrase])
-        return lines
-    var progress := band_chief_progress(entry)
-    if progress.is_empty():
-        return lines
-    row_tooltips[CHIEF_ROW_KEY] = String(progress.get("tooltip", ""))
-    lines.append("%s: %s %s" % [CHIEF_ROW_KEY, chief_bar_bbcode(progress), String(progress.get("label", ""))])
-    return lines
 
 ## **A BAND WITH ITS PEOPLE** -- `Netherford, Lothari` -- or the people alone when no band is named
 ## (a builder the roster does not hold, or the wire's 0).
