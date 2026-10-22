@@ -1209,6 +1209,32 @@ fn published_material_yield(app: &App) -> f32 {
         .sum()
 }
 
+/// [`published_material_yield`] for `material`.
+fn published_material_yield_of(app: &App, material: &str) -> f32 {
+    use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
+    let snapshot = app
+        .world
+        .resource::<SnapshotHistory>()
+        .latest_entry()
+        .expect("a snapshot was captured")
+        .snapshot;
+    let bytes = sim_schema::encode_snapshot_flatbuffer(snapshot.as_ref());
+    let envelope =
+        fb::root_as_envelope(bytes.as_ref()).expect("the snapshot encodes to a valid envelope");
+    envelope
+        .payload_as_snapshot()
+        .and_then(|snapshot| snapshot.population())
+        .and_then(|section| section.populations())
+        .into_iter()
+        .flatten()
+        .flat_map(|cohort| cohort.laborAssignments().into_iter().flatten())
+        .filter(|assignment| assignment.kind().unwrap_or_default() == EXTRACT_KIND)
+        .flat_map(|row| row.materialYield().into_iter().flatten())
+        .filter(|payoff| payoff.materialId().unwrap_or_default() == material)
+        .map(|payoff| payoff.amount())
+        .sum()
+}
+
 /// The pack a party of this row carries, struck through the caravan's own pricing — the haul carry
 /// over the material's weight.
 fn priced_pack(app: &App, band: Entity, kit: &KitChoice) -> f32 {
@@ -3008,4 +3034,125 @@ fn a_rejoining_hand_landing_on_a_re_posted_party_walks_back_out_the_whole_walk()
         }
     }
     assert!(saw_one_join, "liveness: a walker landed on a posted party");
+}
+
+// ---------------------------------------------------------------------------------------------
+// STONE — a slow dig is conserved: what leaves the seam is in the store or on its way
+// ---------------------------------------------------------------------------------------------
+
+const STONE: &str = "stone";
+/// Ground that holds a 900-unit stone deposit in the shipped `extraction.json`.
+const STONY: sim_schema::TerrainType = sim_schema::TerrainType::RollingHills;
+/// One hex past the apron — the live game's nearest stone seam.
+const JUST_PAST_THE_APRON: u32 = 3;
+/// Turns a one-hand dig runs for.
+const DIG_TURNS: usize = 40;
+
+/// ⛔ **A SLOW DIG IS CONSERVED, AND ITS FIRST LANDING WAITS FOR A FULL PACK** - one hand cutting
+/// stone at a seam one hex past the apron, on the sledding kit. Every unit that left the seam is
+/// in the band's store, in the party's load or on a porter's back, turn after turn; nothing lands
+/// (the row publishes no `materialYield`, the store holds no stone) until the load has filled one
+/// pack, because a porter leaves only with a full pack (`WorkParty::close_turn`) - and at a take of
+/// a unit a turn against a pack of `haul carry / weight` that is many turns of silence. This is the
+/// caravan's model working, not a loss: the stone is in the load, which the wire does not carry.
+#[test]
+fn a_slow_stone_dig_is_conserved_and_lands_only_when_a_pack_fills() {
+    let tile = UVec2::new(CAMP.x + JUST_PAST_THE_APRON, CAMP.y);
+    let mut app = build_test_app();
+    app.update();
+    let entity = app
+        .world
+        .resource::<TileRegistry>()
+        .index(tile.x, tile.y)
+        .expect("the seam's tile is on the map");
+    app.world
+        .get_mut::<core_sim::Tile>(entity)
+        .expect("a map tile carries terrain")
+        .terrain = STONY;
+    let kit = extract_kit("sledding");
+    let pack = {
+        let equipment = EquipmentConfig::builtin();
+        let labor = app.world.resource::<core_sim::LaborConfigHandle>().get();
+        let pricing = core_sim::work_party::CaravanPricing::resolve(
+            &equipment,
+            &kit,
+            1.0,
+            1.0,
+            core_sim::SourcePriority::default(),
+            &BandEquipment::start_stocked_for(&EquipmentConfig::for_a_stocked_fixture(), 1.0),
+            &[],
+            &labor,
+        );
+        let weight = app
+            .world
+            .resource::<core_sim::MaterialsConfigHandle>()
+            .get()
+            .material(STONE)
+            .expect("stone is a material")
+            .weight;
+        core_sim::work_party::material_pack(pricing.haul_carry, weight)
+    };
+    let band = spawn_camp_band(
+        &mut app,
+        LaborTarget::Extract {
+            tile,
+            material: STONE.to_string(),
+            floor: FLOOR,
+        },
+        Some(kit),
+    );
+    {
+        let mut allocation = app
+            .world
+            .get_mut::<LaborAllocation>(band)
+            .expect("the band keeps its allocation");
+        allocation.assignments[0].workers = 1;
+        allocation.assignments[0].max_workers = Some(1);
+    }
+    let stock_of = |app: &App| {
+        app.world
+            .resource::<core_sim::DepositRegistry>()
+            .source(tile, STONE)
+            .map_or(0.0, |working| working.stock)
+    };
+    let capacity = {
+        resolve_a_turn(&mut app);
+        stock_of(&app)
+    };
+    let mut first_landing = None;
+    for turn in 0..DIG_TURNS {
+        resolve_a_turn(&mut app);
+        let held = app
+            .world
+            .get::<PopulationCohort>(band)
+            .expect("the band keeps its cohort")
+            .stores
+            .material_total(STONE)
+            .to_f32();
+        let party = extract_party(&app, band).expect("a seam past the apron posts a party");
+        let carried = party.load_cargo + party.on_the_road.iter().map(|w| w.cargo).sum::<f32>();
+        let removed = capacity - stock_of(&app);
+        assert!(
+            (removed - (held + carried)).abs() < 1e-2,
+            "turn {turn}: {removed} left the seam, {held} is home and {carried} is on the way"
+        );
+        if held > 0.0 && first_landing.is_none() {
+            first_landing = Some(turn);
+            assert!(
+                removed >= pack,
+                "the first landing waits for a full pack: {removed} dug against a pack of {pack}"
+            );
+        }
+        if first_landing.is_none() {
+            assert_eq!(
+                published_material_yield_of(&app, STONE),
+                0.0,
+                "turn {turn}: nothing has landed, so the row publishes no yield"
+            );
+        }
+    }
+    assert!(
+        first_landing.is_some(),
+        "liveness: {DIG_TURNS} turns of digging fill a pack and land it"
+    );
 }

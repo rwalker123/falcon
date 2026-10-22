@@ -31,6 +31,7 @@ const BaseFx := preload("res://tools/ui_preview/fixtures_base.gd")
 const TileFx := preload("res://tools/ui_preview/fixtures_tile.gd")
 const Q := preload("res://tools/ui_preview/node_query.gd")
 const Readout := preload("res://tools/ui_preview/readouts.gd")
+const Spine := preload("res://tools/ui_preview/compose_vocab.gd")
 const ForecastFx := preload("res://tools/ui_preview/fixtures_forecast.gd")
 ## `format_assign_labor` is `static`, so the deposit-kit states read the line the commit would send
 ## without standing a `Main` up.
@@ -1035,6 +1036,49 @@ func run(harness) -> void:
 	h._hud._drawercompose.close_compose_sheet()
 	await h._settle()
 
+	# ⛔⛔ **STATE workings-dig-crew — A STONE SEAM'S STEPPER IS THE DIGGER COUNT, AND IT HAS NO `No max`.**
+	# The sim works a seam that never renews with exactly its Max in heads, so a Max of 0 staffs nobody.
+	# The sheet opens on one digger, labelled `Diggers`, with `−` greyed at that floor; the wood sheet
+	# beside it keeps `Max` and `No max`.
+	h._hud.update_band_alerts([_band_at_the_working()])
+	h._show_tile(_workings_tile([_idle_stone_working()]))
+	await h._settle()
+	h._hud._compose.set_deposit_max(0)
+	h._hud._drawercompose.open_deposit_compose(_idle_stone_working())
+	await h._settle()
+	var dig_sheet: Node = h._hud._drawercompose._compose_sheet
+	h._assert_hud("a stone sheet opens on %d digger, never `%s` (%s)"
+			% [HudDepositVocab.DIG_CREW_MIN, HudWorkVocab.MAX_STEPPER_NO_MAX,
+				Readout.max_stepper_text(dig_sheet)],
+		Readout.max_stepper_value(dig_sheet) == HudDepositVocab.DIG_CREW_MIN
+			and Readout.max_stepper_text(dig_sheet) == str(HudDepositVocab.DIG_CREW_MIN))
+	h._assert_hud("…its stepper is labelled `%s`" % HudWorkVocab.DIG_CREW_STEPPER_LABEL,
+		_sheet_text_contains(dig_sheet, HudWorkVocab.DIG_CREW_STEPPER_LABEL.to_upper())
+			or _sheet_text_contains(dig_sheet, HudWorkVocab.DIG_CREW_STEPPER_LABEL))
+	var dig_minus := _minus_button(dig_sheet)
+	h._assert_hud("…and its `−` is greyed at the floor of %d" % HudDepositVocab.DIG_CREW_MIN,
+		dig_minus != null and dig_minus.disabled)
+	await h._save("workings_dig_crew")
+	h._hud._drawercompose.close_compose_sheet()
+	await h._settle()
+	h._hud.update_band_alerts([_band_at_the_working()])
+	h._show_tile(_workings_tile([_wood_working(WOOD_OVER_CUT)]))
+	await h._settle()
+	h._hud._compose.set_deposit_max(0)
+	h._hud._drawercompose.open_deposit_compose(_wood_working(WOOD_OVER_CUT))
+	await h._settle()
+	var wood_max_sheet: Node = h._hud._drawercompose._compose_sheet
+	h._assert_hud("a wood sheet keeps `%s` on its Max (%s)"
+			% [HudWorkVocab.MAX_STEPPER_NO_MAX, Readout.max_stepper_text(wood_max_sheet)],
+		Readout.max_stepper_text(wood_max_sheet) == HudWorkVocab.MAX_STEPPER_NO_MAX)
+	await h._save("workings_wood_max")
+	h._hud._drawercompose.close_compose_sheet()
+	await h._settle()
+	# The chapter goes on under the band it was already staged with.
+	h._hud.update_band_alerts([_fresh_stone_band_fixture()])
+	h._show_tile(_workings_tile([_idle_stone_working()]))
+	await h._settle()
+
 	# ⛔⛔ **STATE workings-quarry-reach — THE CREW'S FLOOR IS DISCARDED WHERE THE GROUND NEVER RENEWS.**
 	# The sim's `extraction::deposit_effective_floor` returns the rung's floor alone at `NEVER_RENEWS`;
 	# `HudDepositVocab.composed_floor` mirrors it, and this is the state where the two used to disagree.
@@ -1903,6 +1947,17 @@ func _verdict_lead(walk: Dictionary) -> String:
 
 ## Whether any Label under `root` carries `needle` — the pending and out-of-range sentences are hint
 ## labels in the yields host, which `Readout.yields_text` (the ROW's faces) does not reach.
+func _minus_button(root: Node) -> Button:
+	if root == null or root.is_queued_for_deletion():
+		return null
+	if root is Button and (root as Button).text == Spine.COMPOSE_STEPPER_MINUS_FACE:
+		return root as Button
+	for child in root.get_children():
+		var found := _minus_button(child)
+		if found != null:
+			return found
+	return null
+
 func _sheet_text_contains(root: Node, needle: String) -> bool:
 	if root is Label and (root as Label).text.contains(needle):
 		return true

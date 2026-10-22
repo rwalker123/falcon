@@ -453,18 +453,20 @@ static func add_stepper_controls(row: HBoxContainer, count: int, plus_enabled: b
 ## **THE MAX STEPPER** (#871) — `−`, the value, `+`, for the most hands the sim may put on a staffed
 ## source. `0` is "no max" and reads `No max`; the `−` is greyed there (there is nothing lower) and the
 ## `+` greys at `upper`, the band's working-age people. `on_change` fires with the new Max. The buttons
-## carry the aria names `Lower the max` / `Raise the max`. Returns the value `Label`.
+## carry the aria names `Lower the max` / `Raise the max`. `floor_workers` is the lowest count the stepper
+## offers (default 0 = `No max`); a dig crew passes 1, so `No max` is never drawn and `−` greys at 1.
+## Returns the value `Label`.
 static func add_max_stepper(row: HBoxContainer, max_workers: int, upper: int,
-        on_change: Callable, compact_chrome: bool = false) -> Label:
+        on_change: Callable, compact_chrome: bool = false, floor_workers: int = 0) -> Label:
     var minus := Button.new()
     minus.text = HudWorkVocab.STEPPER_MINUS_FACE
     minus.custom_minimum_size = Vector2(HudWorkVocab.WORKER_STEPPER_BUTTON_WIDTH, 0)
     HudStyle.apply_button(minus, "ghost")
-    minus.disabled = max_workers <= 0
+    minus.disabled = max_workers <= floor_workers
     minus.tooltip_text = HudWorkVocab.MAX_STEPPER_LOWER_ARIA
     if "accessibility_name" in minus:
         minus.set("accessibility_name", HudWorkVocab.MAX_STEPPER_LOWER_ARIA)
-    minus.pressed.connect(func() -> void: on_change.call(maxi(max_workers - HudConst.WORKER_STEP, 0)))
+    minus.pressed.connect(func() -> void: on_change.call(maxi(max_workers - HudConst.WORKER_STEP, floor_workers)))
     row.add_child(minus)
     var value := Label.new()
     value.text = str(max_workers) if max_workers > 0 else HudWorkVocab.MAX_STEPPER_NO_MAX

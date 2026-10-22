@@ -440,6 +440,14 @@ same carry a hunter's pack is struck from. So a bare porter carries `12 / 2.4 = 
 `40 / 2.4 ≈ 16.7`. The whole difference between two materials is the one `weight` on each; a
 per-material branch, or an extraction-only carry lever, would be the defect.
 
+**A slow far working lands nothing until its first pack fills, and the stone is in the load, not
+lost.** A porter leaves only with a full pack (`WorkParty::close_turn`), so a lone hand at 0.8 a turn
+against a sledded stone pack of `40 / 3 = 13.3` digs for 17 turns before the first landing, with the
+deposit's stock falling, the store holding no stone, `materialYield` empty and `nextLoadHomeIn` `0`.
+The load (`WorkParty::load_cargo`) is not on the wire. Pinned by
+`work_party_caravan::a_slow_stone_dig_is_conserved_and_lands_only_when_a_pack_fills` (stock removed ==
+store + load + porters' cargo every turn).
+
 **The haul carry is read off the row's kit, claimed whole like every job's.** `CaravanPricing` is
 resolved over the row's stored kit — the same claim `LaborAllocation::item_budget` rations the band's
 gear with — and every take kit (`sledding`, `woodcutting`, `stonework`) carries the sled, so a

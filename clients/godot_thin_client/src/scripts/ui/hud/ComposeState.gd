@@ -230,6 +230,14 @@ func set_deposit_kit_id(kit_id: String) -> void:
 func clamp_deposit_max(cap: int) -> void:
 	_deposit_max = clampi(_deposit_max, 0, maxi(cap, 0))
 
+## A dig crew has no `No max` state: raise the composed count to at least `minimum`, returning whether
+## it moved. See `HudDepositVocab.DIG_CREW_MIN` for why a never-renewing seam needs a count.
+func raise_deposit_max_to(minimum: int) -> bool:
+	if _deposit_max >= minimum:
+		return false
+	_deposit_max = minimum
+	return true
+
 # ---- The open sheet's subject identity -----------------------------------------------------------
 var _kind: String = KIND_NONE
 var _subject: String = ""

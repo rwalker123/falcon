@@ -156,12 +156,32 @@ fn take_hands_needed(row: &StaffRowInput<'_>, target: f32, armed: u32) -> Option
     (row.hands)(target, armed).map(|hands| (hands.max(0.0).ceil() as u32).max(AT_LEAST_ONE_HAND))
 }
 
+/// Which passes a staffing run deals.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Passes {
+    /// Passes 1 and 2 only: the keepers and the hold and reach crews - the hands that keep working
+    /// once a source sits at its floor. The drawdown (pass 3) is left out.
+    Steady,
+    /// All three passes: the crews the band really works this turn.
+    All,
+}
+
 /// **THE THREE PASSES** — see the module doc. `pool` is the hands the sim may staff;
 /// `shelf` the band's live units per item (taken off as rows are armed).
 pub fn staff_band(
     rows: &[StaffRowInput<'_>],
     pool: u32,
     shelf: &mut BTreeMap<Arc<str>, u32>,
+) -> Vec<RowStaffing> {
+    staff_passes(rows, pool, shelf, Passes::All)
+}
+
+/// [`staff_band`] over the passes `passes` names.
+fn staff_passes(
+    rows: &[StaffRowInput<'_>],
+    pool: u32,
+    shelf: &mut BTreeMap<Arc<str>, u32>,
+    passes: Passes,
 ) -> Vec<RowStaffing> {
     let mut order: Vec<usize> = (0..rows.len()).collect();
     order.sort_by_key(|&i| (std::cmp::Reverse(rows[i].priority), i));
@@ -215,6 +235,10 @@ pub fn staff_band(
                 ReachTarget::Heads(heads) => heads,
             }
         });
+    }
+
+    if passes == Passes::Steady {
+        return ledger.out;
     }
 
     // ## Pass 3 — every row up to its USEFUL crew: the kit's units still unspent first (a kit never
@@ -531,12 +555,15 @@ pub struct KitWant {
 #[derive(Debug, Clone, Default)]
 pub struct WorkKitPlan {
     pub wants: Vec<KitWant>,
-    /// Every staffed row's crew in the unlimited-shelf run, keyed by its target.
+    /// Every staffed row's keepers and hold and reach crews (passes 1 and 2) in the unlimited-shelf
+    /// run - the crews the wants are read off - keyed by its target.
     pub crews: Vec<(LaborTarget, StaffedCrew)>,
 }
 
-/// **RUN THE PASSES AGAINST AN UNLIMITED SHELF** over the band's real rows, pool, Maxes, floors and
-/// priorities, and read off the kitted heads each row gets. The band's own ledger is replaced by one
+/// **RUN THE HOLD AND REACH PASSES AGAINST AN UNLIMITED SHELF** over the band's real rows, pool,
+/// Maxes, floors and priorities, and read off the kitted heads each row gets from passes 1 and 2 -
+/// the crews that last. Pass 3 (the drawdown that pulls a stock down to its floor in a turn) adds no
+/// want: its hands work with whatever kit is left, or bare. The band's own ledger is replaced by one
 /// holding [`UNLIMITED_SHELF_UNITS`] fresh units of every item any row's kit references, so the
 /// answer does not move as the player picks an outfit, only as the work changes. A row's heads
 /// become whole kits (`units_for`: a kit is claimed whole, the scarcest item deciding) and are
@@ -570,7 +597,7 @@ pub fn work_kit_plan<'a>(
             shelf.insert(Arc::clone(item), UNLIMITED_SHELF_UNITS);
         }
     }
-    let staffed = staff_band(&inputs.rows, pool, &mut shelf);
+    let staffed = staff_passes(&inputs.rows, pool, &mut shelf, Passes::Steady);
     let mut wants: BTreeMap<String, KitWant> = BTreeMap::new();
     for ((row, kit), crew) in inputs.rows.iter().zip(&inputs.kits).zip(&staffed) {
         let kits_needed = row
@@ -1091,8 +1118,8 @@ pub fn refresh_band_work_kit_wants(world: &mut bevy::prelude::World, band: bevy:
     }
 }
 
-/// The crews the passes give `band`'s staffed rows against an unlimited shelf - the run the wants are
-/// read off. `None` where the band has no cohort or allocation.
+/// The keepers and hold and reach crews (passes 1 and 2) the band's staffed rows get against an
+/// unlimited shelf - the run the wants are read off. `None` where the band has no cohort or allocation.
 pub fn unlimited_shelf_crews(
     world: &bevy::prelude::World,
     band: bevy::prelude::Entity,
@@ -1259,6 +1286,41 @@ mod tests {
         let mut units = shelf(2);
         let out = staff_band(&[capped], 100, &mut units);
         assert_eq!(out[0].kitted + out[0].bare, 5, "the Max caps pass 3");
+    }
+
+    #[test]
+    fn the_steady_passes_kit_only_the_hold_and_reach_crew_not_the_drawdown() {
+        // A source well above its floor: reach 8 is two armed hands at rate 4, the useful take 52 is
+        // thirteen. On an unlimited shelf the full passes kit all thirteen; the steady passes kit
+        // the two that keep working once the stock sits at its floor.
+        const POOL: u32 = 40;
+        const REACH_CREW: u32 = 2;
+        const USEFUL_CREW: u32 = 13;
+        let mut row = linear_row(
+            SourcePriority::Normal,
+            None,
+            0,
+            4.0,
+            8.0,
+            4.0,
+            1.0,
+            spears(),
+        );
+        row.useful_take = 52.0;
+        let rows = vec![row];
+
+        let mut steady_shelf = shelf(UNLIMITED_SHELF_UNITS);
+        let steady = staff_passes(&rows, POOL, &mut steady_shelf, Passes::Steady);
+        assert_eq!(steady[0].kitted, REACH_CREW, "the reach crew is the want");
+        assert_eq!(steady[0].bare, 0, "the steady passes seat no bare hand");
+
+        let mut full_shelf = shelf(UNLIMITED_SHELF_UNITS);
+        let full = staff_band(&rows, POOL, &mut full_shelf);
+        assert_eq!(
+            full[0].kitted, USEFUL_CREW,
+            "liveness: the drawdown kits the whole useful crew when the shelf allows"
+        );
+        assert!(steady[0].kitted < POOL && steady[0].kitted < full[0].kitted);
     }
 
     #[test]

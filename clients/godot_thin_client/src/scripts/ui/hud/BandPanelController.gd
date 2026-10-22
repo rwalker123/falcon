@@ -7045,7 +7045,9 @@ func _build_working_inspector(band: Dictionary, model: Dictionary) -> PanelConta
         _commit_work_priority(band, model, level),
         String(model.get("priority", HudWorkVocab.WORK_PRIORITY_NORMAL))))
     # **THE WORKING'S MAX, LIVE** (#871) - the crew is the sim's, so this is the only crew control.
-    _build_work_inspector_section(col, HudWorkVocab.WORK_INSPECT_MAX)
+    var inspector_dig_crew := not HudDepositVocab.renews(deposit)
+    _build_work_inspector_section(col, HudWorkVocab.DIG_CREW_STEPPER_LABEL if inspector_dig_crew \
+        else HudWorkVocab.WORK_INSPECT_MAX)
     var max_line := HBoxContainer.new()
     max_line.add_theme_constant_override("separation", HudWorkVocab.WORKER_STEPPER_SEPARATION)
     var max_tile := HudDepositVocab.tile_of(deposit)
@@ -7058,7 +7060,8 @@ func _build_working_inspector(band: Dictionary, model: Dictionary) -> PanelConta
         func(n: int) -> void: _emit_assign_labor(band, HudConst.LABOR_KIND_EXTRACT, n,
             max_tile.x, max_tile.y, "", max_floor, String(model["material"]),
             SourceForecast.IMPROVEMENT_NONE,
-            String(max_assignment.get("kit_id", KitRoster.NO_KIT_ID))), true)
+            String(max_assignment.get("kit_id", KitRoster.NO_KIT_ID))), true,
+        HudDepositVocab.DIG_CREW_MIN if inspector_dig_crew else 0)
     col.add_child(max_line)
     _build_work_inspector_rule(col)
     var actions := HBoxContainer.new()

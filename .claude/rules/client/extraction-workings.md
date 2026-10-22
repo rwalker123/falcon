@@ -672,6 +672,15 @@ than three special cases) and its value is the crew curve's **`next_rung_take`**
 crew (issue #663) — see "THE CREW CURVE" below. It is absent while the curve is in flight, where the
 reply names no `next_rung` (the top of the branch), and where the row prices the next rung at `0`.
 
+### A stone sheet's stepper is the digger count, and it has no `No max`
+
+The sim works a seam that never renews (`HudDepositVocab.renews` false) with exactly its Max in heads,
+so a Max of 0 staffs nobody until stone's crew is a keep-on-hand target. On such a sheet the Max stepper
+is labelled `Diggers` (`HudWorkVocab.DIG_CREW_STEPPER_LABEL`), its floor is `HudDepositVocab.DIG_CREW_MIN`
+(one: `−` greys at 1), its upper bound is still the band's working-age people, and `_build_deposit_assign_controls`
+raises a seeded 0 to one on open. The Work tab's inspector Max stepper follows the same fork. A renewing wood sheet
+keeps `Max` and `No max`. `ui_preview` chapter `workings`, state `workings_dig_crew` / `workings_wood_max`.
+
 ### ⛔ THE CREW CURVE — THE TAKE AND THE DEAL ARE THE SIM'S, AT THE STEPPER'S CREW
 
 Issue #663. The sheet asks `ForecastQuery.KIND_DEPOSIT_CREW_TAKE` (`QueryCommand.deposit_crew_take`,

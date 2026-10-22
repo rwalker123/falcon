@@ -4407,6 +4407,8 @@ const MAX_CHIP_TOOLTIP := "The most hands the game will put on this source. Chan
 ## **THE MAX STEPPER** (compose sheets and the inspector): `No max` at 0, else the number.
 const MAX_STEPPER_NO_MAX := "No max"
 const MAX_STEPPER_LABEL := "Max"
+## A never-renewing seam is worked by exactly its Max in heads, so its stepper is the dig crew.
+const DIG_CREW_STEPPER_LABEL := "Diggers"
 const MAX_STEPPER_LOWER_ARIA := "Lower the max"
 const MAX_STEPPER_RAISE_ARIA := "Raise the max"
 ## Wide enough for `No max` at the row font.

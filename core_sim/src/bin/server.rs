@@ -32157,10 +32157,12 @@ mod tests {
         assert_eq!(staffed_hands(&app, entity), pool - SCOUTS);
     }
 
-    /// **OUTFIT THE BAND WITH EXACTLY WHAT ITS WORK WANTS AND THE REAL STAFFING IS THE UNLIMITED-SHELF
-    /// RUN** - the wants are a fixed point.
+    /// **OUTFIT THE BAND WITH EXACTLY WHAT ITS WORK WANTS AND EVERY ROW HOLDS ITS FULL HOLD-AND-REACH
+    /// CREW** - the wants are sized from passes 1 and 2, so the real staffing keeps each row's keepers
+    /// and kitted crew from those passes; the drawdown hands (pass 3) then work with any unit the
+    /// whole-kit rounding left, or bare, or idle.
     #[test]
-    fn outfitting_exactly_the_wanted_kits_reproduces_the_unlimited_shelf_crews() {
+    fn outfitting_exactly_the_wanted_kits_gives_every_row_its_full_hold_and_reach_crew() {
         let mut app = build_world_app();
         let faction = FactionId(0);
         let band = band_with_an_open_loadout_window(&app);
@@ -32181,27 +32183,30 @@ mod tests {
         assert!(!wanted.is_empty(), "fixture: the work wants a kit");
         handle_set_starting_loadout(&mut app, faction, band, &wanted, &[]);
 
-        let unlimited =
+        let steady =
             core_sim::staffing::unlimited_shelf_crews(&app.world, entity).expect("the band staffs");
-        let real: Vec<(LaborTarget, (u32, u32, u32))> = app
+        assert!(
+            steady.iter().any(|(_, crew)| crew.kitted > 0),
+            "fixture: a steady crew is kitted, or the comparison below proves nothing"
+        );
+        let allocation = app
             .world
             .get::<LaborAllocation>(entity)
-            .expect("the band's allocation")
-            .assignments
-            .iter()
-            .filter(|row| row.target.is_staffed())
-            .map(|row| {
-                (
-                    row.target.clone(),
-                    (row.staffing.keepers, row.staffing.kitted, row.staffing.bare),
-                )
-            })
-            .collect();
-        let expected: Vec<(LaborTarget, (u32, u32, u32))> = unlimited
-            .into_iter()
-            .map(|(target, crew)| (target, (crew.keepers, crew.kitted, crew.bare)))
-            .collect();
-        assert_eq!(real, expected, "keepers, kitted and bare per row");
+            .expect("the band's allocation");
+        for (target, crew) in &steady {
+            let row = allocation
+                .assignments
+                .iter()
+                .find(|row| &row.target == target)
+                .expect("a steady row is a real row");
+            assert_eq!(row.staffing.keepers, crew.keepers, "keepers of {target:?}");
+            assert!(
+                row.staffing.kitted >= crew.kitted,
+                "the wanted kits arm the whole steady crew of {target:?}: {} < {}",
+                row.staffing.kitted,
+                crew.kitted
+            );
+        }
     }
 }
 

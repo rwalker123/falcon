@@ -2688,7 +2688,7 @@ func _staffed_split(is_working: bool, working_row: Dictionary, crew: int, foreca
 ## over a staffed source's crew. Priority is `High` / `Normal` / `Low` (the work inspector's own picker);
 ## the Max is `-` / `+` with `No max` at 0, bounded above by the band's working-age people.
 func _mount_priority_and_max(parent: VBoxContainer, priority: String, max_workers: int, upper: int,
-        on_priority: Callable, on_max: Callable) -> void:
+        on_priority: Callable, on_max: Callable, is_dig_crew: bool = false) -> void:
     var priority_block := VBoxContainer.new()
     priority_block.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     priority_block.add_theme_constant_override("separation", HudComposeVocab.CREW_ROW_LABEL_SEPARATION)
@@ -2698,10 +2698,12 @@ func _mount_priority_and_max(parent: VBoxContainer, priority: String, max_worker
     var max_block := VBoxContainer.new()
     max_block.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     max_block.add_theme_constant_override("separation", HudComposeVocab.CREW_ROW_LABEL_SEPARATION)
-    max_block.add_child(HudWidgets.alloc_section_label(HudWorkVocab.MAX_STEPPER_LABEL))
+    max_block.add_child(HudWidgets.alloc_section_label(
+        HudWorkVocab.DIG_CREW_STEPPER_LABEL if is_dig_crew else HudWorkVocab.MAX_STEPPER_LABEL))
     var stepper := HBoxContainer.new()
     stepper.add_theme_constant_override("separation", HudWorkVocab.WORKER_STEPPER_SEPARATION)
-    HudWidgets.add_max_stepper(stepper, max_workers, upper, on_max)
+    HudWidgets.add_max_stepper(stepper, max_workers, upper, on_max, false,
+        HudDepositVocab.DIG_CREW_MIN if is_dig_crew else 0)
     max_block.add_child(stepper)
     parent.add_child(max_block)
 
@@ -5872,6 +5874,12 @@ func _build_deposit_assign_controls(deposit: Dictionary, target: VBoxContainer) 
     # **THE MAX IS CLAMPED TO THE BAND'S WORKING-AGE PEOPLE** (#871), and the crew is the sim's: the
     # snapshot row's `workers` on a working the band holds, else the curve's useful cutters held to the Max.
     _compose.clamp_deposit_max(maxi(int(band.get("working_age", 0)), 0))
+    # ⛔ **A SEAM THAT NEVER RENEWS HAS NO `No max`** - the sim works it with exactly its Max in heads, so
+    # a Max of 0 staffs nobody. The floor is raised AFTER the clamp (a band of no working-age people still
+    # shows 1).
+    var is_dig_crew := not offers_floor
+    if is_dig_crew:
+        _compose.raise_deposit_max_to(HudDepositVocab.DIG_CREW_MIN)
     var staffed_crew := _staffed_crew_of(is_working, current, cap, _compose.deposit_max())
     var live_hosts: Array[Dictionary] = []
     # **THE FLOOR PRESETS, THROUGH THE SHARED PICKER**, with each preset's own per-turn take on its
@@ -5932,7 +5940,8 @@ func _build_deposit_assign_controls(deposit: Dictionary, target: VBoxContainer) 
             _compose.set_deposit_max(n)
             if is_working:
                 _send_deposit_assignment(band, deposit, tile, material)
-            _build_deposit_assign_controls(_live_deposit(subject_key, deposit), target))
+            _build_deposit_assign_controls(_live_deposit(subject_key, deposit), target),
+        is_dig_crew)
     if capped_by_seam:
         target.add_child(HudWidgets.alloc_hint_label(seam_note))
     # **THE KIT ROW** (issue #663). The roster's `extract` job lists the Woodcutting kit (sled + axe)
