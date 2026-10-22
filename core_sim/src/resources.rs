@@ -1670,6 +1670,10 @@ pub enum CommandEventKind {
     CancelOrder,
     SedentarizationPrompt,
     SiteDiscovered,
+    /// **Two bands met after having no live tie** - a gathering (`docs/plan_civilization_steps.md`
+    /// section "The gathering is detected, not commanded"). One row per participating people,
+    /// tagged with that people's band; the detail names both bands and the tile.
+    GatheringHeld,
     ExpeditionSent,
     ExpeditionArrived,
     ExpeditionRecalled,
@@ -1841,6 +1845,7 @@ impl CommandEventKind {
             CommandEventKind::CancelOrder => "cancel_order",
             CommandEventKind::SedentarizationPrompt => "sedentarization_prompt",
             CommandEventKind::SiteDiscovered => "site_discovered",
+            CommandEventKind::GatheringHeld => "gathering_held",
             CommandEventKind::ExpeditionSent => "expedition_sent",
             CommandEventKind::ExpeditionArrived => "expedition_arrived",
             CommandEventKind::ExpeditionRecalled => "expedition_recalled",

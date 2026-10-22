@@ -179,8 +179,8 @@ pub use config_override::{
     ConfigKindSpec, ConfigOverrideError, InstalledOverride,
 };
 pub use connections::{
-    advance_connections, Connection, ConnectionKey, ConnectionLedger, ContactsThisTurn, Sighting,
-    FULL_TIE, NO_TIE,
+    advance_connections, Connection, ConnectionKey, ConnectionLedger, ContactsThisTurn,
+    GatheringLedger, Sighting, FULL_TIE, NO_TIE,
 };
 pub use connections_config::{
     load_connections_config_from_env, ConnectionStrengthConfig, ConnectionsConfig,
@@ -1077,6 +1077,7 @@ pub fn build_headless_app() -> App {
         .insert_resource(visibility::VisibilityLedger::default())
         .insert_resource(visibility::VisibilitySweepTracker::default())
         .insert_resource(connections::ConnectionLedger::default())
+        .insert_resource(connections::GatheringLedger::default())
         .insert_resource(systems::HeartLedger::default())
         .insert_resource(systems::CulturePressureLedger::default())
         .insert_resource(systems::BreedingBreakOffs::default())

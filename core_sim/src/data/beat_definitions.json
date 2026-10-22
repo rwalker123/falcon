@@ -145,6 +145,52 @@
     ]
   },
   {
+    "id": "belief.gathering_held",
+    "tier": "ambient",
+    "soul": {
+      "question": "Two fires that burned apart now burn together. The ground where they met is not the same ground."
+    },
+    "when": {
+      "all": [
+        {
+          "signal": "gatherings.held_this_turn",
+          "gte": 1
+        }
+      ]
+    },
+    "nouns": {},
+    "wardrobe": [
+      {
+        "id": "gathering_held.two_fires",
+        "fit": {},
+        "voice": {
+          "mythic": "Two bands came to one ground and sat down together. Names were traded, and stories. The ground remembers who sat there.",
+          "warm": "Two bands met and sat down in the same place. We traded names and stories, and that spot means something now."
+        }
+      },
+      {
+        "id": "gathering_held.said_over_fire",
+        "fit": {},
+        "voice": {
+          "mythic": "They came in from the grass, and we sat with them. What was said over that fire, the place will keep.",
+          "warm": "Folks came in from the grass and sat down with us. Whatever got said over that fire, we'll tell it for a long time."
+        }
+      },
+      {
+        "id": "gathering_held.a_place_to_return_to",
+        "fit": {},
+        "voice": {
+          "mythic": "We met them there, and now there is a place to return to. The young will be told: this is where we first sat together.",
+          "warm": "We met them there, and now it's a place to come back to. The young ones will hear: this is where we first sat down together."
+        }
+      }
+    ],
+    "gloss": [
+      "gatherings.held_this_turn"
+    ],
+    "cooldown_turns": 3
+  },
+  {
     "id": "leadership.chief_rises",
     "tier": "beat",
     "soul": {

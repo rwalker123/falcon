@@ -5,9 +5,9 @@ extends RefCounted
 ## docs/plan_hud_decomposition.md).
 ##
 ## WHAT THIS IS — and the domain split with `TurnOrbController`. The turn orb's attention registry is
-## assembled from two halves. `TurnOrbController` owns the orb WIDGET, the snapshot-driven fork
+## assembled from several halves. `TurnOrbController` owns the orb WIDGET, the snapshot-driven fork
 ## producer, and the registry ASSEMBLY (`set_band_attention` / `_push_attention` fold the band half +
-## the fork half into ONE `TurnOrb.set_attention` and severity-sort). This controller owns the OTHER
+## the event half (`event_attention`, pushed from `ingest_command_events`) + the fork half into ONE `TurnOrb.set_attention` and severity-sort). This controller owns the OTHER
 ## half: PRODUCING the band/expedition attention rows, and ROUTING their "Jump →". `HudLayer.update_band_alerts`
 ## builds the array through `build_band_attention` and hands it to `_turnorb.set_band_attention(...)`.
 ##
@@ -55,6 +55,10 @@ var _herd_label_for_id_fn: Callable
 ## every frame but the one the events landed on — and the rows would flicker away mid-turn, which is
 ## exactly when the player is deciding what to do with those hands.
 var _handoffs: Array[Dictionary] = []
+
+## This turn's `gathering_held` rows (label + detail), under the same tick/seq filters as `_handoffs`
+## and cleared on the same turn change.
+var _gatherings: Array[Dictionary] = []
 
 ## The turn `_handoffs` describes. A hand-off is news about ONE turn, so the list is dropped whole
 ## when the turn changes rather than accumulating a session's worth of finished builds.
@@ -124,6 +128,10 @@ const HANDOFF_TICK_KEY := "tick"
 
 const HANDOFF_SEQ_KEY := "seq"
 
+## The band an event is about — the decoder's top-level `band` key (`0` / `HudConst.NO_BAND_ID` when it
+## is about none). A `gathering_held` event carries the gathering band's durable id here.
+const EVENT_BAND_KEY := "band"
+
 ## **A ROW THE SIM NEVER SEQUENCED.** `seq` is ONE-BASED, so `0` is the FlatBuffers default and means
 ## the row never went through `CommandEventLog::push`. There is nothing to de-duplicate on, so such a
 ## row is admitted rather than dropped — the same reading `EventDockPanel` gives it, minus that panel's
@@ -135,6 +143,14 @@ const HANDOFF_SEQ_UNSEQUENCED := 0
 ## row that will not say which turn it belongs to is not evidence about this one.
 const HANDOFF_TICK_NONE := -1
 
+## **A RESOLUTION EVENT IS STAMPED ONE TURN BEHIND THE FRAME THAT CARRIES IT.** The sim pushes the
+## events of a turn's resolution (a gathering in `TurnStage::Visibility`, a build hand-off in the
+## Population stage) with the `SimulationTick` it holds BEFORE it advances, and `advance_tick` runs in
+## `TurnStage::Snapshot` right before the snapshot is captured, whose header turn is the post-advance
+## value. So an event raised by resolving turn N rides the frame whose turn is N + 1 and says `tick == N`.
+## Filtering on `tick == turn` matched nothing live (the harness stamped `tick == turn`, which is why it
+## passed). The turn a row must name is `turn - RESOLUTION_TICK_LAG`.
+const RESOLUTION_TICK_LAG := 1
 ## **INGEST THE TURN'S BUILD HAND-OFFS** (`docs/plan_standing_upkeep.md` §2.3) — the completions whose
 ## crew moved, off the same `command_events` array the Telling and the event dock read.
 ##
@@ -152,7 +168,9 @@ const HANDOFF_TICK_NONE := -1
 ## `command_events_retention_turns` of them, so an initial connect or a resync after a dropped delta
 ## re-delivers every hand-off of the last twenty turns. Taking the array as "what happened this turn"
 ## re-dated all of them to now and flooded the orb with builds the player finished long ago. So a row
-## joins `_handoffs` only if its own `tick` IS `_handoff_turn`; the backfill still reaches the surfaces
+## joins `_handoffs` only if its own `tick` IS the turn just RESOLVED (`_handoff_turn -
+## RESOLUTION_TICK_LAG`, see that constant: the sim stamps resolution events before it advances the
+## tick, so they ride the NEXT frame); the backfill still reaches the surfaces
 ## that want history (the Telling, the event dock) and reaches this one as nothing at all, which is
 ## correct — a hand-off is a decision about hands that moved THIS turn.
 ##
@@ -165,6 +183,7 @@ func ingest_command_events(events_variant: Variant, turn: int) -> void:
         return
     if turn != _handoff_turn:
         _handoffs.clear()
+        _gatherings.clear()
         _leaders.clear()
         _handoff_seqs.clear()
         _handoff_turn = turn
@@ -173,6 +192,20 @@ func ingest_command_events(events_variant: Variant, turn: int) -> void:
             continue
         var entry: Dictionary = entry_variant
         var detail := String(entry.get("detail", ""))
+        if String(entry.get("kind", "")) == HudAttentionVocab.GATHERING_EVENT_KIND:
+            if int(entry.get(HANDOFF_TICK_KEY, HANDOFF_TICK_NONE)) != _handoff_turn - RESOLUTION_TICK_LAG:
+                continue
+            var gather_seq := int(entry.get(HANDOFF_SEQ_KEY, HANDOFF_SEQ_UNSEQUENCED))
+            if gather_seq != HANDOFF_SEQ_UNSEQUENCED:
+                if _handoff_seqs.has(gather_seq):
+                    continue
+                _handoff_seqs[gather_seq] = true
+            _gatherings.append({
+                "label": String(entry.get("label", "")).strip_edges(),
+                "detail": detail.strip_edges(),
+                "band_id": int(entry.get(EVENT_BAND_KEY, HudConst.NO_BAND_ID)),
+            })
+            continue
         if String(entry.get("kind", "")) == HudAttentionVocab.LEADER_EVENT_KIND:
             _ingest_leader_event(entry, detail)
             continue
@@ -181,7 +214,7 @@ func ingest_command_events(events_variant: Variant, turn: int) -> void:
         var carried := detail.contains(HANDOFF_STATUS_CARRIED)
         if not carried and not detail.contains(HANDOFF_STATUS_FREED):
             continue
-        if int(entry.get(HANDOFF_TICK_KEY, HANDOFF_TICK_NONE)) != _handoff_turn:
+        if int(entry.get(HANDOFF_TICK_KEY, HANDOFF_TICK_NONE)) != _handoff_turn - RESOLUTION_TICK_LAG:
             continue
         var seq := int(entry.get(HANDOFF_SEQ_KEY, HANDOFF_SEQ_UNSEQUENCED))
         if seq != HANDOFF_SEQ_UNSEQUENCED:
@@ -193,12 +226,56 @@ func ingest_command_events(events_variant: Variant, turn: int) -> void:
             "carried": carried,
         })
 
+## Where the band a gathering MET is, resolved when the event half is pushed (never cached): the
+## player's own roster first (a same-people gathering), then the foreign bands in sight this frame
+## (`band_entry_for_id` covers both), then the connections section's remembered `last_seen` tile for
+## that `subject_band_id`. Anything unresolved is the non-locating sentinel.
+func _met_band_tile(band_id: int) -> Vector2i:
+    var unresolved := Vector2i(HudAttentionVocab.ATTENTION_NON_LOCATING, HudAttentionVocab.ATTENTION_NON_LOCATING)
+    if band_id == HudConst.NO_BAND_ID:
+        return unresolved
+    var band := _band_labor.band_entry_for_id(band_id)
+    if not band.is_empty():
+        return Vector2i(int(band.get("current_x", unresolved.x)), int(band.get("current_y", unresolved.y)))
+    for tie_variant in _band_labor.connections():
+        if not (tie_variant is Dictionary):
+            continue
+        var tie: Dictionary = tie_variant
+        if int(tie.get("subject_band_id", HudConst.NO_BAND_ID)) == band_id:
+            return Vector2i(int(tie.get("last_seen_x", unresolved.x)), int(tie.get("last_seen_y", unresolved.y)))
+    return unresolved
+
+## Turn-orb items for the gatherings held this turn (#698). They locate the band the gathering MET
+## (`_met_band_tile`), else are non-locating; the sim's own sentence is the row's detail.
+func _gathering_attention() -> Array:
+    var items: Array = []
+    for i in _gatherings.size():
+        var gathering: Dictionary = _gatherings[i]
+        if i >= HudAttentionVocab.ATTENTION_HANDOFF_MAX_ROWS:
+            break
+        var label := String(gathering["label"])
+        # Locates the gathering band like the idle-workers row does (its tile, plain recenter through
+        # `on_turn_orb_focus`); a band the roster no longer holds leaves the row non-locating.
+        var x := HudAttentionVocab.ATTENTION_NON_LOCATING
+        var y := HudAttentionVocab.ATTENTION_NON_LOCATING
+        var tile := _met_band_tile(int(gathering["band_id"]))
+        x = tile.x
+        y = tile.y
+        items.append({
+            "kind": HudAttentionVocab.ATTENTION_KIND_GATHERING,
+            "severity": HudAttentionVocab.ATTENTION_SEVERITY_INFO,
+            "label": label if label != "" else HudAttentionVocab.ATTENTION_GATHERING_LABEL,
+            "detail": String(gathering["detail"]),
+            "x": x, "y": y,
+        })
+    return items
+
 ## Hold one `leader_emerged` event for the turn (#859). The tick filter and the `seq` de-dup are the
 ## hand-off's, for the same reasons (a full snapshot re-ships the whole ring; a recapture delta
 ## re-ships the turn). A row carrying a faction must be the player's. The kind and name come off the
 ## detail (`kind=chief name=Ash`); a band is held once.
 func _ingest_leader_event(entry: Dictionary, detail: String) -> void:
-    if int(entry.get(HANDOFF_TICK_KEY, HANDOFF_TICK_NONE)) != _handoff_turn:
+    if int(entry.get(HANDOFF_TICK_KEY, HANDOFF_TICK_NONE)) != _handoff_turn - RESOLUTION_TICK_LAG:
         return
     if entry.has("faction") and int(entry["faction"]) != HudConst.PLAYER_FACTION_ID:
         return
@@ -453,13 +530,23 @@ func build_band_attention(player_bands: Array, player_expeditions: Array) -> Arr
     # Producer 8 — a finished build's crew moved (§2.3). Outside the band loop and fed by the command
     # stream rather than by the roster: a hand-off is an EVENT, and no band field records that it
     # happened.
-    attention.append_array(_crew_handoff_attention())
-    # Producer 9 — a band gained a chief or council (#859): an EVENT off the command stream.
-    attention.append_array(_leader_emerged_attention(player_bands))
+    # (The hand-off and gathering rows are NOT built here — see `event_attention`.)
+    # (Producer 9, leader-emerged, is an event row too — see `event_attention`.)
     # Producer 10 — a herd our bands hunt is stressed / collapsing. After the band loop because one
     # herd is hunted by several bands and gets ONE row.
     attention.append_array(_herd_thinning_attention(player_bands))
     return attention
+
+## **THE EVENT HALF OF THE ORB REGISTRY** — the crew hand-off rows, the gathering rows, then the leader-emerged rows,
+## in that order. They are derived from the command-event stream, which `Main` ingests AFTER `update_band_alerts`
+## within a frame, so folding them into `build_band_attention` delivered them a frame late (or, on the
+## opening frame, never). `HudLayer.ingest_command_events` pushes this array to the orb as its own half
+## the moment the rows are ingested, so they land the frame they arrive whatever order Main runs in.
+func event_attention() -> Array:
+    var rows: Array = _crew_handoff_attention()
+    rows.append_array(_gathering_attention())
+    rows.append_array(_leader_emerged_attention(_band_labor.player_bands()))
+    return rows
 
 ## **THE DEALINGS HALF OF THE REGISTRY** (early diplomacy) -- one row per band with an item addressed to
 ## it, because the answer window is ONE turn and the orb is the only surface that reaches the player on

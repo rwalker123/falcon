@@ -11,6 +11,10 @@
 //!   there. At `1.0` the unit of belief *is* the dead-equivalent: a place reading `12` holds twelve
 //!   people's worth of ancestors. Later sources (gatherings, the monument) are priced in that unit.
 //!
+//! - `belief_per_gathering` **1.0** — belief added to the tile a gathering is held on (the larger
+//!   band's standing tile), in the same dead-equivalents: one gathering is worth one death's
+//!   ancestors. A PLAYTEST DIAL.
+//!
 //! - `ancestor_pull` **{ secular_devout 0.3, traditionalist_revisionist −0.3 }** — the signed offset
 //!   each named culture axis takes at full tie to the ancestors (`s → 1`, `r = 1`); see
 //!   `.claude/rules/core_sim/belief.md` → "The ancestor pull". An empty map turns the pull off.
@@ -42,13 +46,39 @@ pub struct BeliefConfig {
     /// Belief added to the tile a band stands on, per person who dies there. Applied to the turn's
     /// **fractional** death total, not the whole-person events, because belief is a continuous
     /// stock — a band losing a third of a person a turn for three turns has buried one.
+    #[serde(deserialize_with = "deserialize_non_negative_finite")]
     pub belief_per_death: f32,
+    /// Belief added to the tile a gathering is held on, per gathering — two bands meeting after
+    /// having no live tie, credited at the larger band's standing tile. In the same
+    /// dead-equivalents as `belief_per_death`. PLAYTEST DIAL; finite and `>= 0` at parse.
+    #[serde(deserialize_with = "deserialize_non_negative_finite")]
+    pub belief_per_gathering: f32,
     /// The signed offset each named culture axis takes at full tie to the ancestors (`s → 1`,
     /// `r = 1`), keyed by the axis snake_case key (`crate::culture::culture_axis_key`). An unknown
     /// key or a non-finite value is a parse error; an axis not named takes no pull, so an empty map
     /// turns the pull off. PLAYTEST DIAL.
     #[serde(deserialize_with = "deserialize_ancestor_pull")]
     pub ancestor_pull: BTreeMap<String, f32>,
+}
+
+/// Shipped belief per gathering: one gathering is worth one death's ancestors.
+const DEFAULT_BELIEF_PER_GATHERING: f32 = 1.0;
+/// Shipped belief per death: the unit of belief is the dead-equivalent.
+const DEFAULT_BELIEF_PER_DEATH: f32 = 1.0;
+
+/// Parse a belief-per-source lever, refusing a value that is not finite or is negative.
+fn deserialize_non_negative_finite<'de, D>(deserializer: D) -> Result<f32, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    use serde::de::Error;
+    let value = f32::deserialize(deserializer)?;
+    if !value.is_finite() || value < 0.0 {
+        return Err(D::Error::custom(format!(
+            "belief lever must be finite and >= 0, got {value}"
+        )));
+    }
+    Ok(value)
 }
 
 /// Shipped pull on the Devout axis (positive is devout) at full tie.
@@ -83,7 +113,8 @@ where
 impl Default for BeliefConfig {
     fn default() -> Self {
         Self {
-            belief_per_death: 1.0,
+            belief_per_death: DEFAULT_BELIEF_PER_DEATH,
+            belief_per_gathering: DEFAULT_BELIEF_PER_GATHERING,
             ancestor_pull: BTreeMap::from([
                 (
                     culture_axis_key(CultureTraitAxis::SecularDevout).to_string(),
@@ -223,6 +254,18 @@ mod tests {
             builtin.ancestor_pull,
             BeliefConfig::default().ancestor_pull,
             "the shipped pull and the serde default must agree"
+        );
+    }
+
+    #[test]
+    fn belief_per_gathering_must_be_finite_and_non_negative() {
+        assert!(BeliefConfig::from_json_str(r#"{ "belief_per_gathering": -0.5 }"#).is_err());
+        assert!(BeliefConfig::from_json_str(r#"{ "belief_per_gathering": 1e60 }"#).is_err());
+        let off = BeliefConfig::from_json_str(r#"{ "belief_per_gathering": 0 }"#).expect("parses");
+        assert_eq!(off.belief_per_gathering, 0.0);
+        assert_eq!(
+            BeliefConfig::builtin().belief_per_gathering,
+            BeliefConfig::default().belief_per_gathering
         );
     }
 

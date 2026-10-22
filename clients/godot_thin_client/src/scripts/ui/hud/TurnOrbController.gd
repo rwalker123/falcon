@@ -60,6 +60,10 @@ var _band_attention: Array = []
 ## half and for the same reason: `set_attention` is a full replace, so a fork arriving on its own
 ## delta has to be able to rebuild the whole registry without re-running the other producers.
 var _knowledge_attention: Array = []
+## The EVENT half: crew hand-off and gathering rows, derived from the command-event stream. Its own
+## half because `Main` ingests that stream AFTER `update_band_alerts`, so the rows exist only once
+## `HudLayer.ingest_command_events` has run; pushed from there, they land the frame they arrive.
+var _event_attention: Array = []
 ## The OUTFITTING half (issue #629) — its own half for `_knowledge_attention`'s reason: it is produced
 ## by a cluster whose ingest is not this controller's, so a snapshot that moves a window without
 ## moving the band alerts must still be able to replace it alone. **It carries ONE ROW PER BAND with
@@ -168,6 +172,14 @@ func set_band_attention(attention: Array) -> void:
 	_band_attention = attention
 	_push_attention()
 
+## Store the EVENT half (hand-offs, gatherings) and push the whole registry. Guarded on
+## equality like the other event-sized halves: it is empty on most frames.
+func set_event_attention(attention: Array) -> void:
+	if _event_attention == attention:
+		return
+	_event_attention = attention
+	_push_attention()
+
 ## The band/expedition half as last stored — read by `HudLayer._after_pending_change`, which refreshes
 ## the idle rows in it when a pending edit moves the idle count between snapshots.
 func band_attention() -> Array:
@@ -240,6 +252,7 @@ func _push_attention() -> void:
 	if _turn_orb == null:
 		return
 	var attention: Array = _band_attention.duplicate(true)
+	attention.append_array(_event_attention)
 	attention.append_array(_knowledge_attention)
 	attention.append_array(_loadout_attention)
 	attention.append_array(_dealing_attention)

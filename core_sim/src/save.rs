@@ -146,7 +146,8 @@ pub const SAVE_MAGIC: [u8; 8] = *b"SHDWSAV\x01";
 /// | 49 | The storage branches (#708): `TileImprovementRegistry` gained `bands` (`BandImprovementRegistry`, the improvements a band holds at its camp, keyed `(BandId, branch)`), `LaborTarget::Band` joins the labor rows and `BuildSource::Band` the queue's sources, `SourceKind` gained `Band`, and the ladder gained the `camp_stores` and `food_stores` branches. A version-48 blob has no band registry and names no such branch, so it does not decode |
 /// | 50 | Kept food teaches storage (#708): `PopulationCohort` gained `last_food_kept`, the food the band's meal ate from lots it had kept at least `storage_kept_age_turns`, which `rot_band_larders` reads beside the rot to pay the storage lesson. A version-49 blob has no such field and is refused. |
 /// | 51 | Kept food counts larder time (#708): `FoodBatch` gained `stored`, the turns a lot has sat in the band's own larder, separate from its spoilage `age` (which a caravan pack's walk advances). The kept rule reads `stored`, so a far hunt's meat is not kept at its first meal. A version-50 blob has no such field and is refused. |
-pub const SAVE_FORMAT_VERSION: u32 = 51;
+/// | 52 | Gatherings (#698): `SimState` gained `gatherings` (`GatheringLedger`, the cumulative count of gatherings each people has held, which the Telling diffs into `gatherings.held_this_turn`). `CommandEventKind` gained `GatheringHeld`. A version-51 blob has no such field |
+pub const SAVE_FORMAT_VERSION: u32 = 52;
 
 /// gzip level for the payload document.
 ///

@@ -159,6 +159,30 @@ paths:
   `turn_orb_unworked_rung`, whose fixture carries a WORKED patch as a negative control precisely so a
   roster read that sees no crews fails the row COUNT.
 
+  - **`gathering_held`** (**info**, LOCATING, `AttentionController._gathering_attention`, #698) —
+    two peoples' bands met this turn. Raised by `ingest_command_events` keyed on the event KIND alone
+    (never parsing the detail), under the same own-`tick` and `seq` filters as `crew_handoff` (a row's `tick` is the turn just RESOLVED, `turn - RESOLUTION_TICK_LAG`: the sim stamps resolution events before `advance_tick` runs, so the event for turn N rides the frame for N + 1 and says `tick == N`; both producers matched nothing live while this filtered on `tick == turn`, and the harness fixtures stamp the server's `turn - 1` for that reason); the row's
+    label is the event's label ("A gathering") and its detail the sim's own sentence, verbatim. **The row
+    locates the band it MET**: the event's top-level `band` key (the decoder's per-event band id,
+    `AttentionController.EVENT_BAND_KEY`) names the OTHER band, and `_met_band_tile` resolves it when the
+    event half is pushed (never cached from an earlier frame), in this order: the player's own roster
+    (a same-people gathering), the foreign bands in sight this frame (`HudBandLaborState.band_entry_for_id`
+    covers both), then the connections section's remembered `last_seen_x`/`last_seen_y` for that
+    `subject_band_id`. The row carries that tile like the idle-workers row, so it wears `Jump →` and
+    routes through the same `on_turn_orb_focus` recentre. An unresolved band or an event carrying no band
+    leaves the row non-locating (`x < 0`). It has no `Open ▸` (not on `ATTENTION_KINDS_WITH_A_PANEL`), wears the `gathering` campfire sprite (the `workers` palm says "work"; `⇄` is the text fallback in `KIND_ICON`), and is
+    capped at `ATTENTION_HANDOFF_MAX_ROWS`. The feed line rides the Notable rung (`hud_event_vocab.gd`).
+
+  - **THE EVENT-DERIVED ROWS (`crew_handoff`, `gathering_held`, `leader_emerged`) ARE THEIR OWN HALF OF THE REGISTRY.**
+    `AttentionController.event_attention()` returns the hand-off rows, the gathering rows, then the leader-emerged rows (read from `_band_labor.player_bands()` at push time);
+    `HudLayer.ingest_command_events` pushes them with `TurnOrbController.set_event_attention` the moment
+    it has ingested the events, and `_push_attention` folds that half in right after the band half.
+    They are deliberately NOT part of `build_band_attention`: `Main._apply_snapshot` runs
+    `update_band_alerts` BEFORE `ingest_command_events`, so a band build could only carry the previous
+    frame's events — a row would land a turn late, and on the opening frame never. As their own half
+    they land the frame they arrive, whatever order `Main` runs its sections in. The harness drives
+    that real order (populations, then events, one frame) in `chapters/turn_orb.gd`.
+
   - **`crew_handoff`** (**info**, NON-locating, `_crew_handoff_attention`) — a build finished this turn
     and its crew MOVED: onto the finished rung's keeping if that rung declares an upkeep, back to the
     idle pool if it does not (`docs/plan_standing_upkeep.md` §2.3). **It is an attention row because of
@@ -183,7 +207,7 @@ paths:
     dropped delta — carries the whole `command_events_retention_turns` ring, which re-dated twenty
     turns of hand-offs to now and flooded the orb; and a **mid-tick recapture delta** re-ships every
     row since the turn baseline, announcing this turn's hand-offs twice. So a row joins the window
-    only if its own `tick` is the turn the window describes, and only if its `seq` has not been taken
+    only if its own `tick` is the turn just RESOLVED (`turn - RESOLUTION_TICK_LAG`), and only if its `seq` has not been taken
     for that turn (`0` being the unsequenced sentinel, admitted rather than dropped — the tick filter
     already bounds the set). **The two filters answer different questions** — WHICH TURN, and SEEN
     ALREADY — and neither substitutes for the other. `Main`'s dispatch comment said re-ingesting a
@@ -198,13 +222,13 @@ paths:
     are in words instead (*"they are idle — the band's work board has them"*). Capped at
     `ATTENTION_HANDOFF_MAX_ROWS` with an overflow row, for the off-screen-popover reason.
 
-  - **`leader_emerged`** (**info**, locating, `_leader_emerged_attention`) — a band gained a chief or an
+  - **`leader_emerged`** (**info**, locating, `_leader_emerged_attention`, event half) — a band gained a chief or an
     elders' council this turn. **Source: the command stream**, the `crew_handoff` pattern exactly: the
     sim's `leader_emerged` event (`core_sim/src/leadership.rs`, `kind=<chief|elder_council> name=<Name>`
     on the detail, the band on the event's own `band` field) is ingested by
-    `AttentionController.ingest_command_events`, windowed on the event's own `tick` == the turn and
+    `AttentionController.ingest_command_events`, windowed on the event's own `tick` == `turn - RESOLUTION_TICK_LAG` (`advance_leadership` runs in turn resolution and stamps the pre-advance tick) and
     de-duplicated on `seq` (0 admitted), so a full snapshot's re-shipped ring adds no row. Own-faction
-    events only. One row per band, found in THIS snapshot's roster. Label `"<Band> has a chief"` /
+    events only. One row per band, found in the roster `_band_labor` holds when the event half is pushed (part of `event_attention()`, after the gathering rows). Label `"<Band> has a chief"` /
     `"<Band> has an elders' council"`; detail `"Chief <Name> — see the Band tab"` /
     `"<Name> speaks for them — Band tab"` (the council's is shorter because orb rows clip at
     `POPOVER_WIDTH`). When the event names no leader the band's cohort `leader_kind` / `leader_name`
