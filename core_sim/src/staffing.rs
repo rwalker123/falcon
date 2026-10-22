@@ -220,7 +220,7 @@ fn staff_passes(
     for group in &groups {
         deal_round_robin(group, |i| ledger.deal_keeper(&rows[i], i));
         deal_kitted(rows, group, &mut ledger, shelf, |row, kmax| {
-            take_hands_needed(row, row.hold_take, kmax).map_or(NOBODY, |hands| hands)
+            take_hands_needed(row, row.hold_take, kmax).unwrap_or(NOBODY)
         });
     }
 
@@ -229,9 +229,7 @@ fn staff_passes(
         deal_kitted(rows, group, &mut ledger, shelf, |row, kmax| {
             match row.reach {
                 ReachTarget::Nothing => NOBODY,
-                ReachTarget::Take(target) => {
-                    take_hands_needed(row, target, kmax).map_or(NOBODY, |hands| hands)
-                }
+                ReachTarget::Take(target) => take_hands_needed(row, target, kmax).unwrap_or(NOBODY),
                 ReachTarget::Heads(heads) => heads,
             }
         });
