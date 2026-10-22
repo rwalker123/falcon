@@ -3944,7 +3944,7 @@ fn seed_source_yield(
                     ),
                     carry,
                     carry(&equipment_cfg.no_kit()),
-                    hunting_party.stay_fraction(core_sim::herd_wariness(&quarry, &fauna)),
+                    &hunting_party,
                     drives_known,
                 ),
                 keep_hands,

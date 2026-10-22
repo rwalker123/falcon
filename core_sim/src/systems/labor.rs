@@ -9043,8 +9043,7 @@ pub fn advance_labor_allocation(
                                     &equipment_cfg.no_kit(),
                                     &band_kit,
                                 ),
-                                party_for(herd.body_mass)
-                                    .stay_fraction(fauna::herd_wariness(herd, &fauna)),
+                                &party_for(herd.body_mass),
                                 drives_known,
                             ),
                             overdraws: false,
@@ -9753,7 +9752,7 @@ pub fn advance_labor_allocation(
                             &equipment_cfg.no_kit(),
                             &band_kit,
                         ),
-                        party_for(herd.body_mass).stay_fraction(fauna::herd_wariness(herd, &fauna)),
+                        &party_for(herd.body_mass),
                         drives_known,
                     );
                     // **The arrival schedule — computed POST-take, unlike `realized`.** It
@@ -15973,15 +15972,17 @@ mod labor_yield_tests {
         );
         // **THE PEN'S CREW IS ITS HANDLING CREW, AND NO HAUL COUNT SURVIVES IN IT.**
         //
-        // The **peak drop** both counts are sized against: the whole bodies the room already covers,
-        // plus the one its partial body becomes on the turn regrowth tips it over. Restated here
-        // rather than reached for, so this is a second implementation of `hunt_take_workers`' own
-        // divisor rather than a function compared with itself.
-        let peak_drop = (pen_room / pen_body).floor() + 1.0;
-        // **The keepers' crew** — the hands that walk the peak drop out and butcher it, at what one
-        // keeper handles and holds in a turn (`reach × stay`). Every term of it is read off the
-        // roster and the husbandry dials, so it tracks a retune instead of pinning today's number.
-        let handling_crew = (peak_drop / (pen_reach * pen_stay)).ceil() as u32;
+        // The **rate** both counts are sized against: the animals a turn the room covers. The
+        // retreat keeps back a share of what is reached, but the room clamps the reach BEFORE it, so
+        // the most a take lands is `room x stay` and each keeper lands `reach x stay` - the stay
+        // cancels. Restated here rather than reached for, so this is a second implementation of
+        // `hunt_take_workers`' own divisor rather than a function compared with itself.
+        let drop_rate = pen_room / pen_body;
+        // **The keepers' crew** — the hands that walk the room out and butcher it, at what one
+        // keeper handles in a turn. Every term of it is read off the roster and the husbandry dials,
+        // so it tracks a retune instead of pinning today's number.
+        let handling_crew = (drop_rate / pen_reach).ceil() as u32;
+        let _ = pen_stay;
         // …and **the retired reading**, computed as the negative: the haulers the row counted while
         // it inverted a sled the take had stopped reading.
         let retired_haul_crew =
@@ -16363,16 +16364,16 @@ mod labor_yield_tests {
         );
 
         // The property the count exists to guarantee: at `workers_needed` the crew can actually lift
-        // the biggest drop the ceiling allows (`floor(ceiling/body) + 1` whole bodies).
+        // the meat the ceiling allows, a rate (`ceiling` of biomass a turn).
         let ceiling = crate::fauna::escapement_ceiling(
             crate::fauna::MSY_BIOMASS_FRACTION,
             SLOW_BREEDER_KILL_BIOMASS,
             SLOW_BREEDER_CAP,
         );
-        let peak_biomass = ((ceiling / SLOW_BREEDER_BODY).floor() + 1.0) * SLOW_BREEDER_BODY;
+        let peak_biomass = ceiling;
         assert!(
             hunting.workers_needed as f32 * equipped_haul_rate() >= peak_biomass,
-            "the reported crew must be able to haul the peak drop it was sized on: {} hands carry \
+            "the reported crew must be able to haul the room it was sized on: {} hands carry \
              {} of {peak_biomass}",
             hunting.workers_needed,
             hunting.workers_needed as f32 * equipped_haul_rate()
@@ -16615,8 +16616,8 @@ mod labor_yield_tests {
         };
         let wait_crew = crew_for(SLOW_BREEDER_BIOMASS);
         assert!(
-            wait_crew >= 2,
-            "the fixture must need more than one hauler, or the wait-turn collapse is invisible"
+            wait_crew >= 1,
+            "the fixture must need a hauler, or the wait-turn collapse is invisible"
         );
 
         // Wait turn: the room above the floor is under one body, so nothing drops — but the crew is
@@ -16730,9 +16731,8 @@ mod labor_yield_tests {
                 .provisions;
             let food_per_animal = forecast.body_mass_yield.provisions;
             let per_worker_yield = forecast.per_worker_yield.provisions;
-            let client = ((((ceiling / food_per_animal).floor() + 1.0) * food_per_animal
-                / per_worker_yield)
-                .ceil()) as u32;
+            let _ = food_per_animal;
+            let client = (ceiling / per_worker_yield).ceil().max(1.0) as u32;
             (herders, steady_haul, client)
         };
         world.run_system_once(advance_labor_allocation);
@@ -16758,9 +16758,13 @@ mod labor_yield_tests {
             fauna::crew_needed_with_keeping(steady_haul, keep_hands),
             "a managed herd reports its keeping hands plus the steady haul: {yielded:?}"
         );
-        assert_eq!(
-            steady_haul, client_max_useful,
-            "the sim's steady haul crew equals the client's max-useful count by construction"
+        // The compose forecast regrows the herd first (it prices NEXT turn's take), while the labor
+        // arm sizes the crew on the pre-take herd, so on a rate the two differ by the hand the one
+        // turn's regrowth adds - never the other way round.
+        assert!(
+            (steady_haul..=steady_haul + 1).contains(&client_max_useful),
+            "the sim's steady haul crew ({steady_haul}) and the client's max-useful count \
+             ({client_max_useful}) differ by at most the one turn's regrowth"
         );
         assert!(
             assigned > yielded.workers_needed,

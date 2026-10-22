@@ -949,7 +949,7 @@ deleted along with the Fog-of-Knowledge `fogRaster` overlay it existed to feed (
 >     `fauna::tests::a_wary_boar_herd_needs_the_hands_the_retreat_costs` at the shipped rate (body
 >     12, `engage_rate` 1.0, `wariness` 0.25 at the spear line's neutral dispersion ⇒ `0.75` boar down
 >     per hunter, so a 28-animal drop costs **38** hands where the raw reach reads 28), and on the
->     exported row by `hunt_yield_vector::the_exported_crew_pays_for_the_retreat`.
+>     exported row by `hunt_yield_vector::the_exported_crew_is_what_the_retreat_lets_land`.
 >
 >     `stay == 0` reports **`0`**, which is the answer rather than a sentinel: nothing the party
 >     reaches ever stands, so the take is identically zero at every party size and no crew achieves
@@ -1034,8 +1034,10 @@ deleted along with the Fog-of-Knowledge `fogRaster` overlay it existed to feed (
 >   `labor::a_wild_herd_being_tamed_reports_its_full_crew_without_the_ownership_lag`.
 >
 > - **The haul term is the CEILING's carry crew, not this turn's `carried`** (`fauna::hunt_haul_workers`).
->   `workers_needed`'s hauling component is the crew that carries home the **peak animal drop the
->   ceiling allows** — `ceil((floor(ceiling/body) + 1)·body / per_worker)`, off the assignment's
+>   `workers_needed`'s hauling component is the crew that carries home **the meat the ceiling
+>   allows, as a rate** — `ceil(ceiling / per_worker)`, never below one hand (the retired
+>   `floor(ceiling/body) + 1` whole-animal drop is explained in "A hunt crew is sized on a RATE"
+>   below), off the assignment's
 >   `hunt_escapement_ceiling`, the same number the take is bounded by and the same count the client's
 >   compose panel `_max_useful_workers` caps at. **Neither half carries a build term any more**
 >   (`docs/plan_standing_upkeep.md` §2.2): the herd offers what stands above the floor, and a hauler
@@ -1061,10 +1063,10 @@ deleted along with the Fog-of-Knowledge `fogRaster` overlay it existed to feed (
 >   continuous (`body_mass_yield == 0`, no lumpiness), so it keeps the ordinary `workers_needed_for_take`
 >   overstaffing inversion.
 > - **The ENGAGEMENT term is sized off the SAME peak drop, and it is the one that binds on light game**
->   (`fauna::hunt_engage_workers`, `docs/plan_hunt_through_combat.md` §2) — `ceil(peak_animal_drop /
+>   (`fauna::hunt_engage_workers`, `docs/plan_hunt_through_combat.md` §2) — `ceil(animals a turn /
 >   (engage_rate × stay))`, the inverse of the **closed-form per-hunter bring-down rate**,
->   sharing `peak_animal_drop` with the haul term so the two crews can never be sized against different
->   drops. The retreat rides it for the reason it rides the take: what a hunter *reaches* is
+>   sharing `animals_a_turn` with the haul and fight terms so the crews can never be sized against
+>   different targets. The retreat rides it for the reason it rides the take: what a hunter *reaches* is
 >   not what a hunter *lands* (see "THE RETREAT PRICES THE CREW" above).
 >
 >   **It is the inverse of the rate, NOT of `fauna::animals_engaged`.** That helper answers how many
@@ -1084,7 +1086,34 @@ deleted along with the Fog-of-Knowledge `fogRaster` overlay it existed to feed (
 >   `hunt_yield_vector::the_exported_crew_counts_the_hands_that_can_reach_the_herd` (both units, with
 >   the pen's no-engagement-stage reading as the liveness half — that harness holds `wariness` at its
 >   identity, so the retreat's own effect is pinned separately by
->   `the_exported_crew_pays_for_the_retreat`).
+>   `the_exported_crew_is_what_the_retreat_lets_land`).
+> - **A hunt crew is sized on a RATE, through ONE function** (`fauna::hunt_crew_for_take`). The
+>   target is meat per turn and the crew is the smallest whose haul, reach and **fight** all cover it:
+>   `max(haul, ceil(animals a turn / (engage_rate x stay)), ceil(animals a turn / bodies per
+>   hunter))`, `animals a turn = target / body` (`FightRate` is the fight's per-hunter bodies, from
+>   `(attack - defense) x lethality x hit_chance / durability`). The staffing passes ask it for the
+>   hold, reach and useful targets (`staffing::hunt_input`), the labor arm and the assign-time seed
+>   ask it for `workers_needed` through `hunt_crew_needed`, and the kit claim's twin
+>   `hunt_useful_take_hands` reads the same terms - so the hold, reach and useful crews and
+>   `workers_needed` are one function of the target, and the curve's plateau (`hunt_useful_crew`) lands
+>   on the same crew. Two things it deliberately does NOT do:
+>   - **It does not size a whole animal in one turn.** The crew terms were `floor(target / body) + 1`
+>     - enough hands to fell a whole animal in a single turn - and a herd whose regrowth is a third of
+>     an animal a turn was staffed with eleven hunters (the live Wild Aurochs row). The fight banks
+>     across turns on the wound ledger, the reach is fractional and a source that cannot spare a body
+>     pauses and accumulates, so the take is a rate and the crew is the hands that average it.
+>   - **It does not ask a crew for more than the take can reach.** The engagement is clamped to the
+>     room before the retreat, so the most that lands is `room x stay`; the target is capped there
+>     (`hunt_crew_terms`), which is why the useful crew and the curve's plateau agree (7 and 7 on the
+>     live row, where the room alone would have asked for 9).
+>   The retreat still prices a target BELOW that cap (a hold or reach
+>   crew: `a_wary_boar_herd_needs_the_hands_the_retreat_costs`), and cancels at the room itself
+>   (`the_exported_crew_is_what_the_retreat_lets_land`). `FightRate::CannotWound` is `None` from `hunt_crew_for_take` (no headcount of that party takes
+>   anything), and `hunt_crew_needed` reads the haul and reach alone there. Pinned by
+>   `hunt_useful_crew_on_the_wire::a_herds_regrowth_staffs_the_hands_that_average_it_not_a_whole_animal_a_turn`
+>   (the live row's hold crew is 4 against the old 11, the staffed useful crew equals `workersNeeded`
+>   every turn and the curve's plateau before a turn, and 20 turns of the real passes take what the
+>   herd regrows).
 > - **Wild hunting is untouched, deliberately.** No maintenance (the herd isn't yours), but it keeps
 >   its carry cap. **The models differ because the products differ: hunt = reach + carry; harvest =
 >   maintain + take.**

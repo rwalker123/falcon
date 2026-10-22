@@ -874,7 +874,13 @@ fn hunt_input<'a>(
         .party_against(Quarry::Mass(herd.body_mass))
     };
     let bare_party = party_of(&coverage(NOBODY), &herd);
-    input.bare_can_work = crate::fauna::hunt_fight_hands(&herd, fauna, 1.0, &bare_party).is_some();
+    input.bare_can_work = !matches!(
+        crate::fauna::FightRate::of(
+            &bare_party,
+            crate::fauna::herd_fight_stage(&herd, fauna).as_ref()
+        ),
+        crate::fauna::FightRate::CannotWound
+    );
     let base = sources.labor.hunt.per_worker_biomass_capacity;
     let bare_carry =
         equipment.hunt_per_worker_biomass_capacity(base, &equipment.no_kit(), band_kit);
@@ -883,19 +889,18 @@ fn hunt_input<'a>(
     input.hands = Box::new(move |target, armed| {
         let cov = coverage(armed);
         let party = party_of(&cov, &hands_herd);
-        let stay = party.stay_fraction(crate::fauna::herd_wariness(&hands_herd, fauna));
-        let haul = crate::fauna::hunt_crew_needed(
+        crate::fauna::hunt_crew_for_take(
             target,
+            room,
             &hands_herd,
             fauna,
             &cov,
             |crew_kit| equipment.hunt_per_worker_biomass_capacity(base, crew_kit, band_kit),
             bare_carry,
-            stay,
+            &party,
             drives,
-        ) as f32;
-        let fight = crate::fauna::hunt_fight_hands(&hands_herd, fauna, target, &party)?;
-        Some(haul.max(fight))
+        )
+        .map(|crew| crew as f32)
     });
     if room <= NO_TAKE_WANTED {
         return;

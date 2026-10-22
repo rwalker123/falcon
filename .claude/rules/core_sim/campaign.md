@@ -1023,9 +1023,10 @@ signal — and it has **two shapes, because the two webs' products differ**:
   `0`, via the shared `workers_needed_for_take` helper (capacity = `forage.per_worker_biomass_capacity ×
   seasonal_weight`, matching `forage_take`'s worker cap so a low-season labor-bound patch isn't falsely
   flagged).
-- **Hunt (whole animals)** — the **carry crew for the peak animal drop the ceiling allows**
+- **Hunt (whole animals)** — the **crew for the meat the ceiling allows, as a rate**
   (`fauna::hunt_haul_workers`,
-  `ceil((floor(ceiling/body)+1)·body / hunt.per_worker_biomass_capacity)`, off the stance's
+  `ceil(ceiling / hunt.per_worker_biomass_capacity)`, with the reach and fight terms in
+  `fauna::hunt_crew_for_take` - see `fauna.md`), off the stance's
   `hunt_escapement_ceiling`), **NOT** the lumpy `workers_needed_for_take(take.carried, …)`.
   A slow breeder whose room above its floor is lighter than one body drops **0** animals on a wait
   turn, so inverting `carried` would collapse `workers_needed` (to `0`, or the herder count for a

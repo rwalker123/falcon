@@ -14646,12 +14646,13 @@ func _assert_dock_chart_carries_the_kit() -> void:
 			% [str(trapped.get("settled_fraction")), str(speared.get("settled_fraction"))],
 		float(trapped.get("settled_fraction", 1.0))
 			< float(speared.get("settled_fraction", 1.0)) - STOCK_FRACTION_MARGIN)
-	# **AND THE REMEDY THE VERDICT NAMES MOVES WITH IT.** `crew_to_clear` floors on `crew_that_reaches`,
-	# so this covers both drawdown answers at once — a spear party needs strictly more hands to pull the
-	# same herd to the same floor.
-	_assert_band_panel("…and the spear line needs more hands to clear the same room (%d against %d)"
+	# **THE RETREAT CANCELS AT THE ROOM, SO THE REMEDY THE VERDICT NAMES IS THE SAME CREW UNDER BOTH KITS.**
+	# `crew_to_clear` caps the room at `room x stay` (the sim's `hunt_crew_terms`): the most that lands is
+	# the room's animals times the share that stand, and dividing by what stands then cancels it. The
+	# retreat still moves the CURVE above and the hold crew below, where the target sits under the room.
+	_assert_band_panel("…and clearing the same room asks the same hands of either kit (%d against %d)"
 			% [int(speared.get("crew_to_clear", 0)), int(trapped.get("crew_to_clear", 0))],
-		int(speared.get("crew_to_clear", 0)) > int(trapped.get("crew_to_clear", 0)))
+		int(speared.get("crew_to_clear", 0)) == int(trapped.get("crew_to_clear", 0)))
 	# **AND THE HOLD CREW MOVES WITH IT TOO.** `crew_to_hold` is `fauna::hunt_take_workers`, and it
 	# divides by what STAYS like every other crew answer on this sheet: a spear party keeping one
 	# animal in four needs four times the hands to take the same regrowth every turn. It read the RAW
@@ -14800,15 +14801,14 @@ func _assert_kit_reprices_the_source() -> void:
 	_assert_band_panel("the passive device out-takes the spear on the same herd (%s against %s)"
 			% [str(trap_take), str(spear_take)],
 		trap_take > spear_take + SourceForecast.COMPONENT_RENDER_MIN)
-	# **…AND THE CREW THE SHEET ASKS FOR MOVES WITH IT.** `engage_workers` divides the peak drop by what
-	# STAYS, so the spear line's stepper caps strictly higher than the trap line's on one herd — which
-	# is what keeps the cap at or above the *clear it now* pill beside it, that pill having divided by
-	# the retreat-aware reach all along.
+	# **…AND THE CREW THE SHEET ASKS FOR IS THE SAME, because the sim sizes a hunt crew on a RATE capped at
+	# `room x stay`** (`fauna::hunt_crew_for_take`): the retreat prices a target BELOW the room and cancels
+	# at the room itself, which is what the stepper's cap is struck at.
 	var spear_cap := _kit_hunt_cap(quarry, 1.0)
 	var trap_cap := _kit_hunt_cap(quarry, 0.0)
-	_assert_band_panel("…and the crew the sheet asks for moves with it (%d against %d)"
+	_assert_band_panel("…and the crew the sheet asks for is the same either way, the retreat cancelling at the room (%d against %d)"
 			% [spear_cap, trap_cap],
-		spear_cap > trap_cap)
+		spear_cap == trap_cap)
 
 	# --- **THE MATERIAL ACCOUNT IS REPRICED TOO, AND IT IS THE ONE THAT TRAVELS AS A VECTOR.** It sat
 	# unrepriced for the whole life of this seam because `SOURCE_PER_WORKER_KEYS` is a list of SCALAR

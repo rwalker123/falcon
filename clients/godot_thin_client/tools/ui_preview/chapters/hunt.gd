@@ -48,11 +48,23 @@ var _last_work_party_ask: Dictionary = {}
 # preview earns its keep.
 const LOCAL_HUNT_HUNTERS := 6
 
-## What the stepper actually renders once `LOCAL_HUNT_HUNTERS` is dialed in: the sheet's own
-## whole-animal carry cap ("max 3 workers useful here"), Red Deer food_per_animal 2.0 ÷ the band's
-## 0.8 per-worker carry = 3 carriers to haul one body. The dial is clamped to it exactly as it is
-## for the player, so this — not 6 — is what a guard on those frames can assert.
-const LOCAL_HUNT_CAPPED_CREW := 3
+## What the stepper actually renders once `LOCAL_HUNT_HUNTERS` is dialed in: the sheet's own cap.
+## A hunt crew is sized on a RATE (`fauna::hunt_crew_for_take`), and this room - a Sustain ceiling of
+## 0.30 food over Red Deer's 2.0 food an animal, about 0.15 animals a turn - is one hunter's work
+## (`ceil(0.30 / 0.8)`), where the retired whole-animal drop named the 3 carriers of one body. The
+## dial is clamped to it exactly as it is for the player, so this - not 6 - is what a guard on those
+## frames can assert.
+const LOCAL_HUNT_CAPPED_CREW := 1
+
+## The rate-form crew's hand-checked terms (`_retreat_crew_assertions`): a 120-biomass animal, one hunter
+## carrying 40 and reaching a quarter of an animal a turn, a target of a third of an animal, and a
+## 480-biomass room at a stay of one half.
+const RATE_BODY := 120.0
+const RATE_CARRY := 40.0
+const RATE_ENGAGE := 0.25
+const RATE_TARGET := 40.0
+const RATE_ROOM := 480.0
+const RATE_STAY := 0.5
 
 ## **THE THREE DESTINATION CAPACITIES THE FLOOR FLAG IS PROBED AT**, all against the taming herd's own
 ## live `K` of 2150 (≈11 Red Deer at the best-harvest floor, which is what the flag flies today).
@@ -221,10 +233,23 @@ func _far_boar_band() -> Dictionary:
 		"activity": "forage", "labor_assignments": [],
 	})
 
+## How much roomier than the shared boar the far-party herds are. A crew is sized on a RATE
+## (`fauna::hunt_crew_for_take`), so the shared boar's thin room (about 0.15 animals a turn) is worth ONE
+## hunter and the stepper clamps the frames' 2- and 3-hunter crews to it; scaling the ceilings keeps
+## the room worth more hands than the largest crew these frames compose.
+const FAR_PARTY_CEILING_SCALE := 8.0
+
+func _roomy_boar() -> Dictionary:
+	var herd := HerdFx.raid_boar_herd()
+	var ceilings: Dictionary = herd["hunt_policy_ceilings"]
+	for policy in ceilings:
+		ceilings[policy] = float(ceilings[policy]) * FAR_PARTY_CEILING_SCALE
+	return herd
+
 ## The Wild Boar the far-herd state composes against, carrying the caravan reply the fixture's
 ## answerer hands back (`ForecastFx.WORK_PARTY_FORECAST_KEY`).
 func _far_boar_herd() -> Dictionary:
-	var herd := HerdFx.raid_boar_herd()
+	var herd := _roomy_boar()
 	herd[ForecastFx.WORK_PARTY_FORECAST_KEY] = {
 		"posts_a_party": true, "rate_home": FAR_PARTY_RATE_HOME,
 		"walk_tiles": FAR_PARTY_WALK_TILES, "walk_turns": FAR_PARTY_WALK_TURNS,
@@ -236,7 +261,7 @@ func _far_boar_herd() -> Dictionary:
 
 ## …and the same boar carrying Ray's small-caravan reply — see `SMALL_PARTY_*`.
 func _far_boar_small_herd() -> Dictionary:
-	var herd := HerdFx.raid_boar_herd()
+	var herd := _roomy_boar()
 	herd[ForecastFx.WORK_PARTY_FORECAST_KEY] = {
 		"posts_a_party": true, "rate_home": SMALL_PARTY_RATE_HOME,
 		"walk_tiles": SMALL_PARTY_WALK_TILES, "walk_turns": SMALL_PARTY_WALK_TURNS,
@@ -246,7 +271,7 @@ func _far_boar_small_herd() -> Dictionary:
 
 ## ...and the same boar whose whole take rots on the walk - see `SPOIL_ALL_*`.
 func _far_boar_spoiling_herd() -> Dictionary:
-	var herd := HerdFx.raid_boar_herd()
+	var herd := _roomy_boar()
 	herd[ForecastFx.WORK_PARTY_FORECAST_KEY] = {
 		"posts_a_party": true, "rate_home": 0.0,
 		"walk_tiles": FAR_PARTY_WALK_TILES, "walk_turns": FAR_PARTY_WALK_TURNS,
@@ -951,9 +976,9 @@ func run(harness) -> void:
 	# States 3n–3o — the LOCAL hunt sheet (herd inside the band's apron). The preview line reads the
 	# crew's HONEST carry-aware delivered take in ANIMALS (delivered ÷ food_per_animal), not the
 	# unquantized food rate. Red Deer fpa 2.0, band per-worker 0.8, output 0.9; Sustain ceiling 0.30,
-	# Deplete 0.60. `LOCAL_HUNT_HUNTERS` is dialed in, but the stepper clamps the crew to 3 carriers
-	# (`LOCAL_HUNT_CAPPED_CREW`) — and the clamp is immaterial to what these two frames show: a 3-hunter
-	# crew collects 2.16 food/turn and a 6-hunter one 4.32, both far above the ceilings below, so the
+	# Deplete 0.60. `LOCAL_HUNT_HUNTERS` is dialed in, but the stepper clamps the crew to its rate-sized cap
+	# (`LOCAL_HUNT_CAPPED_CREW`) — and the clamp is immaterial to what these two frames show: a 1-hunter
+	# crew collects 0.72 food/turn and a 6-hunter one 4.32, both above the ceilings below, so the
 	# HERD's flow ceiling is what binds and the quantized take is the same either way:
 	#   3n Sustain — delivered = min(0.30×0.9, …) = 0.27 → ≈0.14 Red Deer/turn · renewable (green).
 	#   3o Deplete  — delivered 0.54 > Sustain 0.27 → WARN-amber "⚠ ≈0.27 Red Deer/turn — overdraws the
@@ -3432,16 +3457,49 @@ func _retreat_crew_assertions() -> void:
 		float(speared_forecast["axis_per_animal"]), float(speared_forecast["engage_rate"]),
 		SourceForecast.STAY_FRACTION_NONE_BREAKS_OFF)
 
-	# (0) THE FRAME REALLY STAGES THE DISAGREEMENT. Without it the claim below is satisfied by any
-	#     herd whose two arms happen to coincide, and says nothing about the defect.
-	h._assert_hud("the fixture stages the played gap — the raw reach sizes %d hands where *clear it now* names %d"
+	# (0) **THE RETREAT CANCELS AT THE ROOM ITSELF, AND PRICES A TARGET BELOW IT.** The most a take lands is
+	#     `room x stay`, so the crew that clears the room is the raw reach (the sim's
+	#     `the_exported_crew_is_what_the_retreat_lets_land`); a target BELOW the room divides by what
+	#     stands, so the same herd asks more hands of a retreating party than of a calm one.
+	h._assert_hud("the retreat cancels at the room - the raw reach sizes %d hands and *clear it now* names %d"
 			% [raw_engage, speared_clear],
-		raw_engage < speared_clear)
+		raw_engage == speared_clear)
+	var half_room := float(speared_forecast["axis_ceiling"]) * 0.5
+	var retreating_half := SourceForecast.engage_workers(half_room,
+		float(speared_forecast["axis_per_animal"]), float(speared_forecast["engage_rate"]),
+		float(speared_forecast["stay"]))
+	var calm_half := SourceForecast.engage_workers(half_room,
+		float(speared_forecast["axis_per_animal"]), float(speared_forecast["engage_rate"]),
+		SourceForecast.STAY_FRACTION_NONE_BREAKS_OFF)
+	h._assert_hud("…while a target below the room is priced by the retreat (%d hands against %d calm)"
+			% [retreating_half, calm_half],
+		retreating_half > calm_half)
+
+	# (0b) **THE CREW IS SIZED ON A RATE, TERM FOR TERM WITH `fauna::hunt_crew_for_take`** (the haul and
+	#      the reach; the fight is the sim's alone). Stated by arithmetic here, never by asking the layer:
+	#      a third of a 120-biomass animal a turn (target 40) is `ceil(40 / 40)` = 1 hauler and
+	#      `ceil((40 / 120) / 0.25)` = 2 reachers, where the retired whole-animal drop named 3 and 4.
+	h._assert_hud("a target of a third of an animal a turn sizes the hands that average it (haul 1, reach 2, crew 2)",
+		SourceForecast.haul_workers(RATE_TARGET, RATE_BODY, RATE_CARRY) == 1
+			and SourceForecast.engage_workers(RATE_TARGET, RATE_BODY, RATE_ENGAGE, 1.0) == 2
+			and SourceForecast.take_workers(RATE_TARGET, RATE_BODY, RATE_CARRY, RATE_ENGAGE, 1.0) == 2)
+	#      The target is capped at what the take can reach, `room x stay`: a 480-biomass room at stay 0.5
+	#      lands 240 (2 animals) at 0.25 x 0.5 an animal per hunter = 16 hands, not the 32 the whole room
+	#      would ask - the retreat cancels at the room.
+	h._assert_hud("the target is capped at room x stay (16 hands, not the whole room's %d)"
+			% SourceForecast.take_workers(RATE_ROOM, RATE_BODY, RATE_CARRY, RATE_ENGAGE, RATE_STAY),
+		SourceForecast.take_workers(RATE_ROOM, RATE_BODY, RATE_CARRY, RATE_ENGAGE, RATE_STAY,
+			RATE_ROOM) == 16)
+	#      …and a source with no engagement stage (a pen, the plant web) sizes the haul alone.
+	h._assert_hud("a source with no engagement stage sizes the haul alone, whatever stays",
+		SourceForecast.take_workers(RATE_ROOM, RATE_BODY, RATE_CARRY,
+			SourceForecast.NO_ENGAGEMENT_STAGE, RATE_STAY, RATE_ROOM)
+			== SourceForecast.haul_workers(RATE_ROOM, RATE_BODY, RATE_CARRY))
 
 	# (1) **THE CAP IS NO LONGER BELOW THE TARGET BESIDE IT**, which is the whole of the report.
-	h._assert_hud("the stepper caps at %d — at or above the %d *clear it now* names, where the raw reach capped at %d"
+	h._assert_hud("the stepper caps at %d — at or above the %d *clear it now* names, and at the raw reach's %d"
 			% [speared_cap, speared_clear, raw_engage],
-		speared_cap >= speared_clear)
+		speared_cap >= speared_clear and speared_cap == raw_engage)
 
 	# (2) **THE INVARIANT, over several species rather than the boar alone** — no crew target on a
 	#     hunt sheet may name a crew the stepper refuses to reach. It is the property the whole
@@ -3470,9 +3528,9 @@ func _retreat_crew_assertions() -> void:
 	#     not there to be seen keeps everything it reaches, so its cap is the raw-reach sizing exactly.
 	var trapped_cap := _source_worker_cap(_retreat_crew_boar(TRAP_LINE_STAY),
 		SourceForecast.SOURCE_KIND_HERD)
-	h._assert_hud("a trap line keeps what it reaches, so its cap is the raw-reach one (%d) and the spear line's is larger (%d)"
+	h._assert_hud("a trap line's cap is the raw-reach one (%d) and so is the spear line's (%d): the retreat cancels at the room"
 			% [trapped_cap, speared_cap],
-		trapped_cap == raw_engage and speared_cap > trapped_cap)
+		trapped_cap == raw_engage and speared_cap == trapped_cap)
 
 	# (4) **A SOURCE WITH NO ENGAGEMENT STAGE IS BYTE-IDENTICAL WHATEVER IS SUBSTITUTED**, the
 	#     byte-identity this arc holds each time the arm reaches a new consumer. Asserted as an A/B on
@@ -4842,8 +4900,24 @@ func _spear_short_aurochs() -> Dictionary:
 		# is about.
 		"defense": AUROCHS_DEFENSE,
 		"durability": AUROCHS_DURABILITY,
+		# The herd's own growth, as the sheet's crews are sized on it: a hold crew is the hands that
+		# average the regrowth AT the floor (a rate, not a whole animal), so a herd with no growth wants
+		# one hand and the sentence about the hands that stay home has nobody to be about.
+		"regrowth_samples": _spear_short_regrowth_samples(),
 		"tile_info": HerdFx.compact_herd_tile_fixture(),
 	}
+
+## A logistic growth curve in biomass a turn, `SPEAR_SHORT_GROWTH_RATE x f x (1 - f) x K`, so the herd
+## regrows about a tenth of its capacity a turn at the 50% floor - over an animal a turn on this herd.
+const SPEAR_SHORT_GROWTH_RATE := 0.4
+const SPEAR_SHORT_GROWTH_SAMPLES := 11
+
+func _spear_short_regrowth_samples() -> PackedFloat32Array:
+	var samples := PackedFloat32Array()
+	for i in range(SPEAR_SHORT_GROWTH_SAMPLES):
+		var fraction := float(i) / float(SPEAR_SHORT_GROWTH_SAMPLES - 1)
+		samples.push_back(SPEAR_SHORT_GROWTH_RATE * fraction * (1.0 - fraction) * AUROCHS_CAPACITY)
+	return samples
 
 ## A curve that rises once per armed hunter and then goes flat — the shape a plateau of EITHER kind
 ## has, which is the whole reason the reply has to say which kind this one is.

@@ -124,6 +124,18 @@ const SHEET_CREW_NUMBER_META := &"sheet_crew_number"
 ## to end a staffed row is `stop_labor`.
 const STOP_WORKING_BUTTON := "Stop working here"
 
+## **A WORKED SOURCE'S SHEET EDITS LIVE, AND SAYS SO.** `Done` only closes the sheet (it sends nothing);
+## `Applied` shows after a setting's command went out, holds `APPLIED_HOLD_SECONDS`, then fades over
+## `APPLIED_FADE_SECONDS`. It is one label above the buttons, not one per control, because every live
+## edit rebuilds the sheet's controls.
+const DONE_BUTTON := "Done"
+const APPLIED_TEXT := "Applied"
+const APPLIED_HOLD_SECONDS := 1.2
+const APPLIED_FADE_SECONDS := 0.6
+const MSEC_PER_SECOND := 1000.0
+const DONE_BUTTON_META := &"compose_done"
+const APPLIED_META := &"compose_applied"
+
 const CREW_ROW_LABEL_SEPARATION := 4
 const CREW_ROW_SEPARATION := 6
 

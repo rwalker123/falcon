@@ -556,6 +556,36 @@ func run(harness) -> void:
 		Q.find_meta_node(h._hud._drawercompose._compose_sheet,
 			HudWidgets.IMPROVEMENT_CONTROL_META) != null)
 
+	# **A WORKED SOURCE'S SHEET EDITS LIVE AND SAYS SO** - `Done` beside `Stop working here` (it only closes
+	# the sheet), and `Applied` above them after a stepper change sends its command.
+	var worked_sheet: Node = h._hud._drawercompose._compose_sheet
+	var done_btn := Q.find_button_by_text(worked_sheet, HudComposeVocab.DONE_BUTTON)
+	h._assert_hud("a worked sheet offers `%s` beside `%s`" % [HudComposeVocab.DONE_BUTTON,
+			HudComposeVocab.STOP_WORKING_BUTTON],
+		done_btn != null and unassign_btn != null and done_btn.get_parent() == unassign_btn.get_parent())
+	h._assert_hud("…and no `%s` shows before anything was changed" % HudComposeVocab.APPLIED_TEXT,
+		Q.find_live_meta_node(worked_sheet, HudComposeVocab.APPLIED_META) == null)
+	var plus_btn := Q.find_max_button(worked_sheet, HudWorkVocab.MAX_STEPPER_RAISE_ARIA)
+	var pressed_plus := plus_btn != null
+	if pressed_plus:
+		plus_btn.pressed.emit()
+		await h._settle()
+	h._assert_hud("…and `%s` appears after a Max change" % HudComposeVocab.APPLIED_TEXT,
+		pressed_plus and Q.find_live_meta_node(h._hud._drawercompose._compose_sheet,
+			HudComposeVocab.APPLIED_META) != null)
+	await h._save("forage_worked_done_applied")
+	var fresh_done := Q.find_button_by_text(h._hud._drawercompose._compose_sheet,
+		HudComposeVocab.DONE_BUTTON)
+	var had_done := fresh_done != null
+	if had_done:
+		fresh_done.pressed.emit()
+		await h._settle()
+	h._assert_hud("…and `%s` closes the sheet" % HudComposeVocab.DONE_BUTTON,
+		had_done and not h._hud._drawercompose.is_compose_sheet_open())
+	# The live edit above left an optimistic row behind; drop it so the frames that follow open on the
+	# band as staged.
+	h._hud._band_labor.pending_labor().clear()
+
 	# Restore the unassigned near band for the frames that follow.
 	h._hud._band_labor._player_band = BandFx.forage_range_bands()[0]
 	h._hud._compose.reset_forage_source()

@@ -2713,27 +2713,74 @@ func _mount_priority_and_max(parent: VBoxContainer, priority: String, max_worker
 ## live edit and the first commit cannot send two different lines.
 func _send_hunt_assignment(band: Dictionary, herd_id: String, herd_x: int, herd_y: int,
         needs_hunt: bool) -> void:
+    _note_applied()
     _emit_assign_labor(band, SourceForecast.LABOR_KIND_HUNT,
         HudComposeVocab.NEED_ROW_STANDING_HANDS if needs_hunt else _compose.hunt_max(),
         herd_x, herd_y, herd_id, _compose.hunt_floor(), "", _compose.hunt_improvement(),
         _compose.hunt_kit_id(), PackedStringArray(), needs_hunt)
 
 func _send_forage_assignment(band: Dictionary, x: int, y: int) -> void:
+    _note_applied()
     _emit_assign_labor(band, SourceForecast.LABOR_KIND_FORAGE, _compose.forage_max(), x, y, "",
         _compose.forage_floor(), _compose.forage_species(), _compose.forage_improvement(),
         _compose.forage_kit_id(), _compose.forage_take_species())
 
 func _send_deposit_assignment(band: Dictionary, deposit: Dictionary, tile: Vector2i,
         material: String) -> void:
+    _note_applied()
     var named_floor := _compose.deposit_floor() if HudDepositVocab.renews(deposit) \
         else SourceForecast.FLOOR_UNNAMED
     _emit_assign_labor(band, HudConst.LABOR_KIND_EXTRACT, _compose.deposit_max(), tile.x, tile.y, "",
         named_floor, material, SourceForecast.IMPROVEMENT_NONE, _compose.deposit_kit_id())
 
+## **THE COMMIT ROW.** A source the band does not work yet keeps its one commit button. A worked source's
+## sheet edits live, so its row is `Done` (primary, closes the sheet and sends nothing) beside
+## `Stop working here`, with `Applied` above it for a beat after a live edit went out.
+func _mount_commit_row(target: VBoxContainer, assign_btn: Button, is_unassign: bool) -> void:
+    if not is_unassign:
+        target.add_child(assign_btn)
+        return
+    var applied_left_sec := float(_applied_until_msec - Time.get_ticks_msec()) \
+        / HudComposeVocab.MSEC_PER_SECOND
+    if applied_left_sec > 0.0:
+        var applied := Label.new()
+        applied.text = HudComposeVocab.APPLIED_TEXT
+        applied.add_theme_color_override("font_color", HudStyle.HEALTHY)
+        applied.add_theme_font_size_override("font_size", HudWorkVocab.ALLOC_SECTION_FONT_SIZE)
+        applied.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+        applied.set_meta(HudComposeVocab.APPLIED_META, true)
+        target.add_child(applied)
+        var fade := applied.create_tween()
+        fade.tween_interval(applied_left_sec)
+        fade.tween_property(applied, "modulate:a", 0.0, HudComposeVocab.APPLIED_FADE_SECONDS)
+    var row := HBoxContainer.new()
+    row.add_theme_constant_override("separation", HudComposeVocab.CREW_ROW_SEPARATION)
+    var done := Button.new()
+    done.text = HudComposeVocab.DONE_BUTTON
+    done.set_meta(HudComposeVocab.DONE_BUTTON_META, true)
+    done.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    HudStyle.apply_button(done, "primary")
+    done.pressed.connect(func() -> void: close_compose_sheet())
+    assign_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    HudStyle.apply_button(assign_btn, "ghost")
+    row.add_child(done)
+    row.add_child(assign_btn)
+    target.add_child(row)
+
+## When the last live edit's command went out plus the hold: every commit row built before then shows
+## `Applied` (a live edit rebuilds the controls more than once). Zeroed when the sheet closes, so a first
+## commit (which closes the sheet) leaves nothing behind.
+var _applied_until_msec := 0
+
+func _note_applied() -> void:
+    _applied_until_msec = Time.get_ticks_msec() \
+        + int(HudComposeVocab.APPLIED_HOLD_SECONDS * HudComposeVocab.MSEC_PER_SECOND)
+
 ## Relay a priority mark for a source the band already works (`Main.format_work_priority`). The sheet's
 ## priority segment is LIVE on a working source and rides the commit on a new one.
 func _emit_work_priority(band: Dictionary, _kind: String, x: int, y: int, herd_id: String,
         material: String, level: String) -> void:
+    _note_applied()
     work_priority_requested.emit({
         "faction": int(band.get("faction", HudConst.PLAYER_FACTION_ID)),
         "band_id": int(band.get("band_id", HudConst.NO_BAND_ID)),
@@ -3510,7 +3557,7 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
             _emit_work_priority(band, SourceForecast.LABOR_KIND_HUNT, herd_x, herd_y, herd_id, "",
                 _compose.hunt_priority())
         close_compose_sheet())
-    target.add_child(assign_btn)
+    _mount_commit_row(target, assign_btn, is_unassign)
 
 ## Whether the herd migrates — the only kind that accepts the `follow` token (the server refuses it on a
 ## herd that stays where it is). Read off the wire's `size_class` word.
@@ -4297,7 +4344,7 @@ func _build_forage_assign_controls(tile_info: Dictionary, target: VBoxContainer)
             _emit_work_priority(band, SourceForecast.LABOR_KIND_FORAGE, x, y, "", "",
                 _compose.forage_priority())
         close_compose_sheet())
-    target.add_child(assign_btn)
+    _mount_commit_row(target, assign_btn, is_unassign)
 
 ## ⛔ **RETIRED — `_mount_work_range_refusal`, THE STATIONARY WEBS' RANGE GATE** (issue #650). It
 ## refused a patch or a working past the band's `band_work_range`, because the sim lapsed such a crew
@@ -4568,6 +4615,7 @@ func close_compose_sheet() -> void:
 ## only place either composition ends, so clearing the pair leaves no way for the other web's stale
 ## dial to survive into a later session.
 func _on_compose_sheet_closed() -> void:
+    _applied_until_msec = 0
     _compose.clear_composing()
     _compose.reset_forage_source()
     _compose.reset_hunt_source()
@@ -6041,7 +6089,7 @@ func _build_deposit_assign_controls(deposit: Dictionary, target: VBoxContainer) 
             _emit_work_priority(band, HudConst.LABOR_KIND_EXTRACT, tile.x, tile.y, "", material,
                 _compose.deposit_priority())
         close_compose_sheet())
-    target.add_child(assign_btn)
+    _mount_commit_row(target, assign_btn, is_unassign)
 
 ## **THE POINTER LINE — `⛏ Quarry this rock from the Work tab.`** — the retired `_emit_improvement`
 ## pattern, and the same widget the forage sheet's offered rung uses, so a deposit rung and a plant

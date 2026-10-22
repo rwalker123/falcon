@@ -1274,7 +1274,9 @@ func run(harness) -> void:
 	await h._settle()
 	await h._save("herd_tame_worker_cap_sustain")
 	var bare_cap := Readout.stepper_value(h._hud._drawercompose._compose_sheet)
-	h._assert_hud("an extractive compose staffs its own take-useful crew (7)", bare_cap == 7)
+	# The take-useful crew is sized on a RATE (`fauna::hunt_crew_for_take`), which is 3 on this room
+	# where the retired whole-animal drop named 7.
+	h._assert_hud("an extractive compose staffs its own take-useful crew (3)", bare_cap == 3)
 	h._assert_hud("…and the composed Tame staffed the SAME crew, so the verb moves no take-side number",
 		tame_cap == bare_cap)
 

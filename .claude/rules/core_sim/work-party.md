@@ -80,6 +80,13 @@ bench and the walkers) and restaff the band after the launch. A hunting-by-need 
 | 2 | **kitted** hands up to the row's **reach crew** |
 | 3 | every row up to its **useful crew** (the room above the floor, clear-it-now; the crew past which the take stops rising): the kit's units still unspent first, then **bare** hands, only on a web where a bare hand takes something (never on a hunt that needs a weapon) |
 
+**A hunt row's three targets (hold, reach, useful) are sized by `fauna::hunt_crew_for_take`**, the
+one crew function `workers_needed` also reads: haul, reach and fight against a take RATE, capped at
+what the take can reach (`room x stay`), never against a whole animal felled in one turn
+(`fauna.md` -> "A hunt crew is sized on a RATE"). A Wild Aurochs herd regrowing a third of an animal
+a turn holds with four hunters, where the whole-animal sizing named eleven and starved the forage and
+stone rows of hands.
+
 A kitted hand holds the whole of its row's live kit items, drawn from one shelf per item shared by
 every row (so two rows cannot arm one spear twice). **Hold crew** is the hands that take the
 regrowth at the floor; **reach crew** is the hands whose take is strictly above the peak regrowth

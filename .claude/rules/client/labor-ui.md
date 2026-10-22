@@ -827,8 +827,19 @@ composition of the `engageRate × dip` pair: `engagement_per_worker` (animals a 
 
 ```text
 reach(workers)  = workers × engageRate × <account>PerAnimal
-engageCrew      = ceil((floor(ceiling / bodyMass) + 1) / engageRate)
+engageCrew      = ceil((target / bodyMass) / (engageRate x stay))   # a RATE, never floor(...) + 1
 ```
+
+**THE CLIENT'S CLOSED-FORM CREW IS THE SIM'S RATE FORM, LESS THE FIGHT** (`fauna::hunt_crew_for_take`).
+`SourceForecast.take_workers` is `max(haul, reach)` with `haul = max(1, ceil(target / per_worker))` and
+`reach = max(1, ceil(target / body / (engage_rate x stay)))` (`0` with no engagement stage or `stay <= 0`);
+the target is capped at `room x stay` where the source has an engagement stage and the room is known
+(`max_useful_workers` passes its ceiling; `crew_to_clear` caps its room the same way, so the retreat
+cancels at the room and the stepper's cap equals the *clear it now* pill). The sim's FIGHT term
+(`ceil(animals a turn / bodies per hunter)`) needs `lethality` and `hit_chance`, which are unpublished, so
+the client never computes it: where a fight binds, the sheet reads the published `workers_needed` /
+`hunt_useful_workers` and the crew-take curve's plateau, which already include it. `ui_preview`'s `hunt`
+chapter pins the three hand-checked terms (`RATE_*`).
 
 - **`engageRate <= 0` MEANS UNBOUNDED, never "reaches nothing"** (`NO_ENGAGEMENT_STAGE`). It is the
   wire's finite reading of the sim's `f32::INFINITY` — a **pen** publishes it (a penned animal is not
@@ -8248,6 +8259,21 @@ The committed row prints `netRateHome`, so past the apron `_with_home_rate` subs
 - **A floor drag keeps the committed floor's `rate_home`** on the headline while the source readings
   move with the drag: the section is not re-asked mid-gesture, and the release rebuilds at the
   committed floor, which asks again.
+
+## A worked source's sheet says it edits live: `Done` and `Applied`
+
+On a source the band already works (`is_unassign`), floor, Priority, Max / Diggers, kit and take edits send
+their command the moment they change. `DrawerComposeController._mount_commit_row` ends such a sheet with
+`Done` (`HudComposeVocab.DONE_BUTTON`, primary, closes the sheet and sends nothing) beside `Stop working
+here` (ghost). A source not yet worked keeps its single commit button and no `Done`. `Applied`
+(`APPLIED_TEXT`, `HudStyle.HEALTHY`) is one right-aligned label above the buttons, not one per control,
+because every live edit rebuilds the controls. `_note_applied` stamps `_applied_until_msec` from the three
+live senders (`_send_hunt_assignment`, `_send_forage_assignment`, `_send_deposit_assignment`) and
+`_emit_work_priority`; every commit row built before that moment draws the label (one edit rebuilds more
+than once), which fades after `APPLIED_HOLD_SECONDS` over `APPLIED_FADE_SECONDS`. A sheet close zeroes the
+stamp. The harness settle drives tweens to their end, so a frame never shows the label; the chapter
+asserts it by meta (`APPLIED_META`) and `forage_worked_done_applied` shows `Done` beside `Stop working
+here`.
 
 ## STAFFED SOURCES ON THE COMPOSE SHEETS — the crew, the Priority segment, the Max stepper (#871)
 
