@@ -26,7 +26,7 @@ paths:
 | `ui/BandCityPanel.gd` / `.tscn` | The dockable **Band/City command center** CanvasLayer — persistent whenever ≥1 player band exists, dockable to any of the 4 edges (default left, persisted to `user://band_city_dock.cfg`) + collapse-to-rail (the rail runs along the dock's PLENTIFUL axis — stacked on L/R, one line with the restore toggle right-justified on T/B — and `COLLAPSED_SIZE` is a FLOOR on the strip it reserves, not an answer; see "The collapsed rail runs along the dock's plentiful axis"). Header (stage glyph/name/label + the band's hex coordinates + `◀ n/N ▶` cycler + 2×2 dock chooser + collapse) plus an **ACTION REGISTRY** — a registration seam (`register_action` / `action_invoked`) holding every verb the panel offers, the `⚒` included, rendered on its own BAR row under the header on a vertical dock, on the SUBJECT ROW itself on a horizontal one and on the COLLAPSED RAIL in either, taking zero height wherever it is not the live mount; see "The action registry is ONE list with THREE mount points" — body hosts **AN ORDERED LIST OF NAMED ZONES AT A FIXED CROSS-AXIS SIZE**, declared by the SUBJECT via **`set_zone_layout(specs)`** and filled by **`set_zones(contents)`** (keys `&"band"`/`&"work"`/`&"knowledge"`/`&"parties"`; the panel OWNS and frees them, and frees a content handed in for a zone the layout does not declare). A band declares three, the faction page four — see "THE BODY IS AN ORDERED LIST OF ZONES". Two shells, chosen by the panel's own **WIDTH** (`wide_shell_min_width()` — never a dock-edge test, so a resizable dock needs no special case). **That threshold is DERIVED FROM THE LIVE ZONE LIST, never hand-picked and never a fixed set of terms**: it sums each declared zone's flank (an EXPANDING zone contributing `ZONE_WORK_MIN_WIDTH`, the one readable board column the test exists to protect) plus **one `RAIL_SEPARATOR_SPAN` per GAP** plus `PANEL_CHROME_H` — so a band's three come to 380 + 380 + 354 + 2×25 + 26 = **1190** and the faction page's four to 380 + 380 + 354 + 354 + 3×25 + 26 = **1569**. **It is therefore PER-SUBJECT**: on a window between the two the faction page correctly tabs while a band's page stays abreast, which is also why `set_zone_layout` is called BEFORE the zone contents are built. `ZONE_WORK_MIN_WIDTH` (380) MIRRORS Hud's `WORK_COLUMN_MIN_WIDTH` — one readable board column — exactly as `ZONE_WORK_MAX_WIDTH` (1520) mirrors `WORK_COLUMN_MIN_WIDTH × WORK_MAX_COLUMNS`; the two are a PAIR with Hud's column consts and move with them. The chrome term is load-bearing because the threshold is tested against the panel's OUTER `_panel_extent().x` while the zones live in `_interior_size()`. It shipped hand-picked at **900**, which broke the whole 900–1055 band (the derived threshold was 1056 then, before the flanks widened): the work zone came out 224px, Hud clamped to one column, its labels clipped — and the NARROW shell would have given the board the full 874px, so flipping wide early made it ~4× narrower, degrading the thing the wide shell exists to improve. `PANEL_CHROME_H` is a `const`; `_wide_separator_span()` and `_fixed_zone_span()` are FUNCTIONS over `_zone_layout`, shared by `wide_shell_min_width()`, `_card_width()`, `_affordable_work_columns()` and `zone_size()` so none of them can disagree about how much width the chrome eats. (`WIDE_SEPARATOR_SPAN`, the `const` that hard-wired TWO gaps, is deleted — it was the one term a fourth column could not have been added around.) **wide** (in practice T/B) = every declared zone side by side, the flanks fixed at `ZONE_BAND_WIDTH` (380) / `ZONE_PARTY_WIDTH` (`PANEL_WIDTH − PANEL_CHROME_H` = 354 — see "The wide shell's flanks are never narrower than the narrow shell's zone") / `ZONE_KNOWLEDGE_WIDTH` (the same 354, taking the same floor for the same rule), work EXPAND_FILL, `LINE_SOFT` hairlines in every gap, no tab bar; **narrow** (in practice L/R) = the subject's own tab bar under the header + exactly one zone beneath it (active tab = SIGNAL ink + a 2px SIGNAL underline, badges via `set_tab_badge(zone, text, hot)`, selection persisted as `CONFIG_KEY_TAB`). **The cross-axis size is FIXED** — `PANEL_WIDTH` 380 (L/R) / `_horizontal_panel_height()` = the body budget (`PANEL_HEIGHT_WIDE` 418 at one band column, `PANEL_HEIGHT_WIDE_TWO_COLUMN` 335 at two, the `maxf` making 418 the live answer at both) **plus the active shell's own chrome** (`_shell_chrome_height()`: 0 wide, the tab bar narrow), clamped to `MAX_WIDE_HEIGHT_FRACTION` of the window (T/B) — see "The strip's height is 418 at ONE band column and 335 at two" — so `current_reservation_size()` changes ONLY on dock/collapse/hide/viewport-resize and a content edit can no longer re-emit `reservation_changed` → `MapView.set_reserved_inset` → cache invalidation (the map flicker on every `+` press). **TWO sanctioned `ScrollContainer`s exist in the panel — the PARTIES list and the BAND zone** — and the harness asserts both halves for each: that it exists, and that no OTHER zone has grown one (`_assert_scroll_only_where_sanctioned`, a table of `(node name, owning zone)` pairs, so a scroll under the wrong zone still fails). Everything else is no-scroll by design; the work zone pages itself against **`work_zone_size()`** — a named reader of the KEYED **`zone_size(zone)`**, which is one answer with one parameter rather than a named accessor per zone that a fourth zone would have to add a fifth of — the zone's interior after chrome — e.g. 354×1107 in a 380 L dock, 789×300 in a 1920 bottom dock with the chrome rail sharing that row — and re-pages on the **`zones_resized`** signal). **Zone hosts are plain `Control`s, not containers**, so an over-wide zone content cannot push the card past its fixed cross-axis size; `clip_contents` keeps overflow inside its own zone. Reserves its edge via `reservation_changed(edge, size)` → `Main._apply_reservation(&"band_panel", …)`, which since issue #377 fans a HORIZONTAL dock's reservation to the map at 0 (the card floats over live map) and a TOP dock's to the HUD at 0 as well (its readouts belong beside the card, not below the strip). On a **BOTTOM** dock the strip also carries **a trailing CHROME RAIL** the HUD parks its stacked bottom-bar chrome into (`rail_slot_host` / `set_rail_width`, issue #324) — a SIBLING of the card, not a cell of its row, and bottom-only since #377 (a top dock never displaces `BottomBar`, so its chrome stays home). See "Band/City dockable panel". See "Band/City dockable panel" + `docs/plan_band_city_dock.md` |
 | `ui/hud/DisclosureTriangle.gd` | The Work tab section head's fold control's MARK — a filled triangle (`▼` open, `▶` folded) DRAWN with `draw_colored_polygon`, its bounding box (`drawn_rect`) centred in its rect by geometry; laid full-rect over the ghost Button that is the hit area. See "THE SECTION HEAD'S TRIANGLE IS DRAWN" |
 | `ui/hud/WorkInspectorDialog.gd` | **The work board's inspector, rehosted OUT of the work zone** (`docs/plan_standing_upkeep.md` §4.9 item 12d) — see "THE WORK INSPECTOR IS A DIALOG" below. An **`AutoSizingPanel`** on its OWN `CanvasLayer` (`HudLayer.work_inspector_host()`, `WORK_INSPECTOR_LAYER_INDEX` = 105), holding the `PanelContainer` `BandPanelController._build_work_inspector` still builds — the head line, the conditional notes, the arrivals strip, and (since item 12d's SECOND pass) the POLICY / PRIORITY / KITS **sections** with their controls drawn, over a two-button actions row. **A `Control` on a layer and never a `Popup`**: `Popup` auto-hides on an outside click and on parent focus loss, which is precisely the dismissal this surface forbids (it RE-TARGETS when another board row is selected, so a stepper press elsewhere is ordinary use). **NON-MODAL — no catcher, no scrim**: every pixel it claims is a pixel of dead map, so it claims only the card. **Centred in the ROOM the dock leaves — one placement for all four dock edges**, no `room_bounds` (it is a surface you WRITE INTO, so it takes a layer above the docked ones rather than dodging them — `panel-framework.md`'s table). `_room()` is the viewport inside `VIEWPORT_MARGIN` cut back to the panel card's MAP-FACING side, read through `BandCityPanel.map_facing_edge`, the one table naming which side of a docked card faces the map. It was centred in the raw viewport for one slice, which held only while the card was ~104–156px tall; the sections took it to 340 and a viewport centre then ran straight through a bottom dock's panel. `mount(strip, reserved, card_rect, map_facing)` is the whole API: `reserved` is `BandPanelController._work_inspector_height`'s answer for the same model and becomes the card's `min_height`, which is how *reserved ≥ drawn* survived the move. Rebuilt per render, never patched (the rung track's rule — every figure on the strip moves per snapshot), and the re-mount IS the re-target |
-| `ui/hud/FactionRollup.gd` | **All-`static`, stateless** builder of the FACTION PAGE's FOUR zones (issue #450) — the all-band rollup the cycler pins first. `build_band_zone` (the summed PEOPLE bar + the band page's own vitals rows — Food / **Fodder** / **Upkeep** / Morale / Growth; a sixth, Trade, went with arc #527's retired account, and the `Kit` row it sat beside went with `docs/plan_standing_upkeep.md` §4.9 item 12 — durabilities never aggregated, so that row was an alert and a drill-down, and the CRAFTING panel's kit ledger already states the items in full. The **`Upkeep`** row is the standing MATERIAL bill, folded PER BAND out of `DetailFormat.band_material_bill` and rendering only where some band on the roster owes a good — see `band-readouts.md` → "THE STANDING MATERIAL BILL". The `Fodder` row is the Food row beat for beat, sums the same way, and has the band row's DORMANT form on the same gate folded across the roster — see `band-readouts.md` → "THE FACTION PAGE'S `Fodder:` ROW". `build_band_zone` took the faction's `{track: progress}` row as a sixth parameter for that row's hover alone, and **takes no knowledge row at all now** — the dormant row's hover was retired (it reached the whole block, not the row), and the parameter went with its one reader. `_build_vitals_label` CLEARS the previous render's carets before building, which this page did not do until a dormant row inherited one), `build_work_zone` (the whole workforce as one bar and the per-band roster), **`build_knowledge_zone`** (SETTLING, the craft tracks, DISCOVERIES — the fourth column the panel's ordered-list body exists to hold, retired) and `build_parties_zone` (every party and the band it left, its NAME jumping to that band — see "THE PARTIES ROW NAMES THE HOME BAND" for why `_summary_row` binds a separate `jump_owner`), plus the `_stat_row` leaf they are built from. Its two new inputs are threaded in as PARAMETERS like every other: the player faction's sedentarization entry and its discovered-site array, read off `FactionReadouts` (`faction_sedentarization` / `faction_discovered_sites`), which is where the PLAYER-FACTION FILTER over those two per-faction wire arrays already lives — a second walk looking for `PLAYER_FACTION_ID` is a second chance to disagree about whose faction is being reported. **It is a shared LAYER rather than a controller because the page is a READOUT** — no steppers, no compose sheet, no open row, nothing that survives a snapshot; its one control, the Open Borders toggle, reads its state off the snapshot and emits through a Callable the controller threads in — so it has no per-cluster state to own, which is the whole of what makes a controller one (`hud-modules.md`). The one thing it needs is threaded in as a PARAMETER: the `HudBandLaborState` instance, plus the caller's `herd_label_for_id` Callable (the treatment `HudFormat.panel_expedition_summary` already takes — a stateless layer must not reach for the roster/selection/herd-list state that resolver reads). **IT RE-DERIVES NOTHING**: every total is a SUM over answers the per-band surfaces already give (`DetailFormat.band_net_food` / `band_provisions` / `band_fodder_store` / `band_net_fodder` / `band_material_bill`, `HudBandLaborState.effective_idle` / `effective_worker_map` / `effective_role_workers` / `band_party_workers`, `FactionReadouts.faction_tracks`), so a band's own page and this one cannot disagree about a number — a rollup with its own food ledger would be a second source of truth for the identity `larder_delta == income − consumption − pen_feed − raid_forfeit` the food arc keeps closed. Dependency direction: it reads `HudWidgets` / `HudFormat` / `DetailFormat` / `SourceForecast` / `HudStyle` / the vocab leaves and `FactionReadouts`' track table, and none of them may read it back |
+| `ui/hud/FactionRollup.gd` | **All-`static`, stateless** builder of the FACTION PAGE's FOUR zones (issue #450) — the all-band rollup the cycler pins first. `build_band_zone` (the summed one People bar and its idle card + the band page's own vitals rows — Food / **Fodder** / **Upkeep** / Morale / Growth; a sixth, Trade, went with arc #527's retired account, and the `Kit` row it sat beside went with `docs/plan_standing_upkeep.md` §4.9 item 12 — durabilities never aggregated, so that row was an alert and a drill-down, and the CRAFTING panel's kit ledger already states the items in full. The **`Upkeep`** row is the standing MATERIAL bill, folded PER BAND out of `DetailFormat.band_material_bill` and rendering only where some band on the roster owes a good — see `band-readouts.md` → "THE STANDING MATERIAL BILL". The `Fodder` row is the Food row beat for beat, sums the same way, and has the band row's DORMANT form on the same gate folded across the roster — see `band-readouts.md` → "THE FACTION PAGE'S `Fodder:` ROW". `build_band_zone` took the faction's `{track: progress}` row as a sixth parameter for that row's hover alone, and **takes no knowledge row at all now** — the dormant row's hover was retired (it reached the whole block, not the row), and the parameter went with its one reader. `_build_vitals_label` CLEARS the previous render's carets before building, which this page did not do until a dormant row inherited one), `build_work_zone` (the per-band roster, each row with its idle count), **`build_knowledge_zone`** (SETTLING, the craft tracks, DISCOVERIES — the fourth column the panel's ordered-list body exists to hold, retired) and `build_parties_zone` (every party and the band it left, its NAME jumping to that band — see "THE PARTIES ROW NAMES THE HOME BAND" for why `_summary_row` binds a separate `jump_owner`), plus the `_stat_row` leaf they are built from. Its two new inputs are threaded in as PARAMETERS like every other: the player faction's sedentarization entry and its discovered-site array, read off `FactionReadouts` (`faction_sedentarization` / `faction_discovered_sites`), which is where the PLAYER-FACTION FILTER over those two per-faction wire arrays already lives — a second walk looking for `PLAYER_FACTION_ID` is a second chance to disagree about whose faction is being reported. **It is a shared LAYER rather than a controller because the page is a READOUT** — no steppers, no compose sheet, no open row, nothing that survives a snapshot; its one control, the Open Borders toggle, reads its state off the snapshot and emits through a Callable the controller threads in — so it has no per-cluster state to own, which is the whole of what makes a controller one (`hud-modules.md`). The one thing it needs is threaded in as a PARAMETER: the `HudBandLaborState` instance, plus the caller's `herd_label_for_id` Callable (the treatment `HudFormat.panel_expedition_summary` already takes — a stateless layer must not reach for the roster/selection/herd-list state that resolver reads). **IT RE-DERIVES NOTHING**: every total is a SUM over answers the per-band surfaces already give (`DetailFormat.band_net_food` / `band_provisions` / `band_fodder_store` / `band_net_fodder` / `band_material_bill`, `HudBandLaborState.effective_idle` / `effective_worker_map` / `effective_role_workers` / `band_party_workers`, `FactionReadouts.faction_tracks`), so a band's own page and this one cannot disagree about a number — a rollup with its own food ledger would be a second source of truth for the identity `larder_delta == income − consumption − pen_feed − raid_forfeit` the food arc keeps closed. Dependency direction: it reads `HudWidgets` / `HudFormat` / `DetailFormat` / `SourceForecast` / `HudStyle` / the vocab leaves and `FactionReadouts`' track table, and none of them may read it back |
 | `ui/hud/ConnectionsRoster.gd` | **All-`static`** builder of the band page's **Peoples tab** and its wide-shell section under Parties (issue #549), the in-place `refill`, the tab badge, and the ONE subject-naming rule (`subject_label`) the trade shipment picker shares. See "The Peoples tab" |
 | `ui/hud/hud_connections_vocab.gd` | `HudConnectionsVocab` — the roster's head, its three tie states and their words, the parked line, the empty line, and the node names of the tab, its rows box and its sanctioned scroll (`LIST_NAME`). A leaf: reads nothing |
 | `ui/hud/PeoplesDiplomacy.gd` | **All-`static`** builder of the Peoples tab's **diplomacy block** (early diplomacy C2, issue #233): one block per other people the wire names (goodwill words, the treaty in force, `Propose a treaty` / `End treaty` / the border toggle), the border-state rule (`border_state`) and the change signature the in-place refill diffs on. It emits nothing: the three actions are Callables the controller hands in. See "The Peoples tab's diplomacy block" |
@@ -38,6 +38,7 @@ paths:
 | `ui/hud/TradeHoverCard.gd` | The Trade tab's hover card: a row's rating piles or a shipment's cargo, placed beside the row and never under the list panel |
 | `ui/hud/FactionMark.gd` | **The one faction mark** — a flag glyph in `MapView.faction_color`, on every counterparty; the slot a faction's flag (#647) fills |
 | `ui/hud/CrewSplitMarks.gd` | One small square per worker THE SIM STAFFED, **drawn** (a custom-draw `Control`, not glyphs): how a staffed row's crew divides into keepers, hands holding a whole kit and bare hands (`keepers_staffed` / `kitted_staffed` / `bare_staffed`) — see "THE CREW BAR" below. Mounted under the crew number of every staffed Work-tab row and under the crew number of the compose sheets |
+| `ui/hud/LeaderPortrait.gd` | The leader block's 48px portrait square on the Band tab (#859): draws `res://assets/portraits/leader_placeholder.png` when that file exists (the seam for real art), else a faction-coloured head-and-shoulders silhouette; `empty` dims it, `council` adds the group badge. See "THE BAND TAB SHOWS WHO LEADS THE BAND" |
 | `ui/hud/RungLinkIcon.gd` | A pooling link's rung as a glyph (path dotted, trail dashed, dirt road solid pigment, paved road double; open ground a faint dot) |
 | `ui/hud/hud_trade_vocab.gd` | `HudTradeVocab` — the crossing codes (direction / link / cause), the tab's thresholds, words and sizes |
 | `ui/PenStatus.gd` | Single source of truth for **"is this pen's herd starving?"** — `FULLY_FED` / `FED_EPSILON` + `fed_fraction(herd)` / `is_starving(fed)`, reading `HerdTelemetryState.penFedFraction` (`< 1` ⇒ the pen's own pasture plus the fodder carried in did not cover its demand, so the herd is SHRINKING every turn — it is never a bill the keeper failed to pay, human food not being animal feed). Plus `herd_is_starving(herd)` for a caller holding only the herd dict. The ONE test all three surfaces ask — the herd drawer's **`Fed:`** row (`DetailFormat.pen_feed_value`, which carries the mark, the fed share, the pasture/fodder split and the shortfall; the CORRAL row states the rung alone, see `herd-readouts.md`), the map's distress badge (`MapView._draw_herd`) and the turn orb's `starving_pen` producer — so they can never disagree about which pen is dying |
@@ -90,6 +91,52 @@ command center**: shown whenever ≥1 player band exists, always displaying a
   answers `""` when neither resolves, so both paths produce the identical header. That split is
   exactly what the harness pair `band_panel_people` (snapshot path) / `band_panel_people_map_path`
   (map path) exists to keep separable — a fixture reached only one way cannot see it.
+  **THE BAND TAB SHOWS WHO LEADS THE BAND, AND HOW FAR IT IS FROM HAVING ONE** (#859). The header is
+  the name and the sub line only (stage + position). The leader is its **own block at the head of the
+  Band tab's zone** (`BandPanelController._build_leader_block`): the FIRST block of the flat stack and of
+  the authored split's left column, above the vitals, built only where `build_band_zone` builds vitals
+  (the no-dock host does not carry it). It is an `HBoxContainer` named `BandLeaderBlock`
+  (`HudWorkVocab.BAND_LEADER_BLOCK_META`): a `LeaderPortrait` square on the left, text on the right
+  (`BandLeaderText`, autowrap, so nothing clips at the 380px reservation). The Work tab carries none of
+  it. The wire gives
+  `leader_name`, `leader_kind` (0 none / 1 chief / 2 elder council), `leadership_threshold` (10),
+  `leadership_practice` and its four parts `leadership_from_builds` / `_splits` / `_herd` / `_stages`
+  (3 per finished Cultivate, Farm, Tame or Corral, 3 per player-ordered split credited to both
+  bands, 1 per hex walked following a herd, 5 the first time a settlement stage is reached; the sum
+  freezes once a leader exists). With a leader the text is `Chief Orrin` or
+  `Elders' council — Orrin speaks` in primary ink (`HudFormat.band_leader_phrase`) and the portrait is
+  filled; a council's portrait also wears a small group badge (a disc with three dots) in its
+  bottom-right corner. With none the portrait is an EMPTY slot (dimmed frame and a faint silhouette) and
+  the text is `Chief` / a compact glyph bar then `7 / 10` (practice floored and capped at the
+  threshold, whole numbers): one `▰` per point, in order builds / splits / herd / stages (green / blue /
+  amber / cyan, `HudFormat.chief_source_colors`, as `[color]` runs), then `▱` for the remainder
+  (`HudFormat.chief_bar_bbcode`), so the bar is as wide as the threshold and is text, not a sized
+  control. `HudFormat.band_chief_progress` answers `{}` for a band with a leader or a threshold of 0
+  (foreign cohort), and a band with neither gets NO block; the faction page has no band to ask. The
+  block's hover is the headline "A band gains a leader once it does enough work that needs an organiser."
+  and one line of per-source points. There is no `no chief yet` text.
+  **`LeaderPortrait` is the portrait square** (48px logical). It first tries `res://assets/portraits/
+  leader_placeholder.png` (`PORTRAIT_TEXTURE_PATH`, checked with `ResourceLoader.exists`) and draws it
+  scaled into the square: that path is the seam where the art lands, and one painted bust ships there
+  for every leader. It loads through `IconSprites.texture_for`, never a bare `load` in `_draw`: a
+  texture only a `_draw` local holds is freed before the canvas renders, and the square draws solid
+  white (it did, in the first art drop). Without
+  it, it draws a head-and-shoulders silhouette (circle head, half-ellipse shoulders) in the band's
+  faction map colour (`MapView.faction_color`, as `FactionMark` does) on a `GROUND_2` ground with a thin
+  `LINE` frame; `empty` drops the silhouette to `EMPTY_ALPHA` and the frame to `EMPTY_FRAME_ALPHA`.
+  The art's generation prompt and post-processing steps are in `assets/portraits/portrait_prompts.txt`.
+  Harness frames `leader_partial`, `leader_empty`, `leader_chief`, `leader_council`
+  in `band_expedition` dock the panel RIGHT on the BAND tab and assert, per frame: the block exists once,
+  is the first child of the vitals' own container and precedes the vitals, the vitals label holds no
+  `Leader` / `Chief` row or bar glyph, the block's words (or the `7 / 10` bar with its filled and empty
+  cell counts and tooltip), the portrait's empty / council state and width, nothing of either in the
+  Work tab's sections, no leader clause on the sub line, and the card's minimum width within
+  `current_reservation_size()`. The header's sub line trims with an ellipsis and carries its whole
+  text on its tooltip (`MOUSE_FILTER_PASS`, so a click still reaches the subject's jump), so a long
+  stage word cannot widen the panel either.
+  The event feed's `leader_emerged` is Notable in
+  `hud_event_vocab.gd`; its `name=` is a hidden key and `EventDockPanel.detail_phrase` drops the
+  continuation words of any hidden value (`name=Orrin II`).
   **THE MARKER IS A STRUCTURAL COPY OF THE COHORT — `entry.duplicate()` plus declared stamps.** It was
   a hand-listed literal naming 56 of the cohort's keys, and it leaked THREE times: `hunt_mode`, then
   `working_age`/`idle_workers`, then the Minimal TOE's six, which made a band's **`Kit` row disappear**
@@ -494,7 +541,7 @@ Measured on a TOP dock at 1.35: `_bound_leading` 360, `_bound_trailing` 344, `_a
 edge on a horizontal dock is the HUD's authored lateral column (`Hud.lateral_column_widths()`, a
 `max(authored, live)`), which the card is holding clear on purpose. It is not the card failing to
 stretch, and widening it into that gap would put it over a live HUD column.
-- **Zone `band` — vitals · PEOPLE · KEEPING · food outlook · WORKFORCE + role cards** (`BandPanelController.build_band_zone`; the KEEPING block is `docs/plan_standing_upkeep.md` §2.5's and is specified in "THE KEEPING BLOCK" below).
+- **Zone `band` — vitals · PEOPLE (one bar + idle card) · food outlook · role cards (Scout, Warrior)** (`BandPanelController.build_band_zone`).
   The Food/Fodder/Upkeep/Morale/Growth rows are the disclosures — and their breakdowns open in a
   POPOVER, never inline (see Band food status: inline growth is what clipped this very zone).
   **There is no `Output:` row and no `Position:` row here.** Productivity reads on the WORK zone's
@@ -515,7 +562,7 @@ stretch, and widening it into that gap would put it over a live HUD column.
   arc #527 retired that account, the row and the header total together, so the tier drops nothing
   today. The `Population … Workers … (Idle …)` LINE is
   **gone** — the two bars below state the same facts as charts, and a text restatement above them was
-  the third telling of one fact. **PEOPLE** is the new one: a stacked children/working/elders bar
+  the third telling of one fact. **PEOPLE** is the new one: a stacked children | working | idle | elders bar
   (`children`/`working_age`/`elders`) plus its
   key and the **dependent count** — `14 dependents`, WARN-tinted once the ratio
   `(children+elders)/working × 100` passes `PEOPLE_DEPENDENCY_HEAVY`. **THE RATIO IS NOT SHOWN
@@ -558,36 +605,31 @@ stretch, and widening it into that gap would put it over a live HUD column.
   row `false / 0 / 0`; a heart member always holds a live tie, so the gate keys on the bond, never on
   the contact sentinel — drawing either as a zero Bond would claim a tie is gone). Every figure is the sim's; the client
   computes only `current turn − contact turn`.
-  Its palette is deliberately MUTED (`VOICE_PIGMENT` / `INK_DIM` / `VOICE_INK`) against
-  **WORKFORCE**'s saturated one (`HEALTHY` / `SIGNAL` / `VOICE_INK` / `WARN` / `VOICE_PIGMENT` /
-  `INK_FAINT`): two bars,
-  same shape, different question — *who they are* vs *what they do* — and they must not read as the
-  same chart twice.
-  **THE WORKFORCE SEGMENTS PARTITION `working_age`, WHICH IS WHY THE BENCH AND THE BUILDERS EACH HAVE
-  ONE.** Forage · Hunt · **Build** · Roles · **Bench** · Idle, and the head states `n idle of m` off
-  the same `HudBandLaborState.effective_idle` — which nets BOTH of those crews out: a worker at the
-  bench is assigned labor (`crafting-panel.md` → "The stepper's ceiling"), and a builder is the band's
-  own `builders` ROLE since §2.5 (`labor-ui.md` → "`effective_idle` SUMS `staffed_total`"; the segment
-  is `effective_role_workers(band, "builders")` now, the per-source build crew it used to sum having
-  left the tile). Without a
-  segment of its own each would leave Idle and appear nowhere, so the bar would quietly stop adding up
-  to the head beside it — which is exactly what shipped: `Forage 9 · Hunt 6 · Idle 3` accounting for
-  18 with three builders both miscounted and invisible.
-  **The builders are their own slice rather than folded into Forage or Hunt**: those two name what a
-  crew TAKES, and a builder takes nothing, so folding them in would show a band gathering from a patch
-  nobody is gathering. It draws in `SIGNAL_DEEP` — the live cyan a rung under construction already
-  wears, one step down, so it reads as work-in-flight without competing with the Hunt slice beside it.
-  `FactionRollup._build_workforce_block` carries both segments for the identical reason — the two bars
-  are one chart at two scales, and a faction total missing a segment the band bar has is the same hole
-  one level up.
-  **PARTIES ARE A HEADER CLAUSE, NOT A SEGMENT** — `3 idle of 16 · 10 away`
-  (`HudWorkVocab.WORKFORCE_AWAY_FORMAT`, shown only when the count is non-zero, tooltipped with what
-  "away" means). The sim removes a party's members from the parent band's working-age cohort the turn
-  it launches (`band_cohort.working -= party_scalar`), so those hands are not inside `working_age` at
-  all; a Parties SEGMENT therefore made the segments sum PAST their own denominator — a bar totalling
-  22 above a head reading "4 idle of 16". The fact still has to be reachable, so it moved to the head
-  rather than being deleted. `FactionRollup`'s bar takes the same clause off the same
-  `HudBandLaborState.band_party_workers` sum. **FIVE standing roles are CARDS** — Scout + Warrior
+  **THE PEOPLE BAR IS ONE BAR — children | working | idle | elders** (issue #878; the old Workforce bar
+  is gone from both the band and the faction pages). Children, working and elders keep People's muted
+  tokens (`VOICE_PIGMENT` / `INK_DIM` / `VOICE_INK`); idle is `HudStyle.WARN` amber and is omitted from
+  bar and key at 0. **THE PARTITION RULE:** `idle` is `HudBandLaborState.people_idle` (the pending-aware
+  `effective_idle`, net of the bench, every role row and hands walking home, less the idle hands the
+  next hunting-by-need muster takes) and `working` is `working_age − idle`, so the four segments sum
+  to `size`. Forage, Hunt, Cutters, Build, Roles, Bench, Walking home and Out hunting are all
+  "working": the working segment's tooltip carries them as one sentence
+  (`18 working: Forage 9 · Hunt 6 · Build 3`, non-zero parts only, `HudBandLaborState.working_breakdown`
+  through `HudWidgets.working_tooltip`). The bar, the idle card, the faction sums and the orb's
+  "N idle workers" alert (`AttentionController`) all read `people_idle`, so they cannot disagree.
+  **PARTIES ARE A HEADER CLAUSE, NOT A SEGMENT** — `People 30 · 10 away`
+  (`HudWorkVocab.PEOPLE_AWAY_FORMAT`, non-zero only, tooltipped `PEOPLE_AWAY_TOOLTIP_FORMAT`). The sim
+  removes a party's members from the parent band's working-age cohort on launch, so they are not
+  inside `size`; a segment for them made the bar overrun its denominator. `FactionRollup` takes the
+  same clause off the same `band_party_workers` sum.
+  **THE IDLE CARD** (`HudWidgets.build_idle_card`, `HudStyle.idle_card_stylebox`) sits directly under
+  the People block (after the heart rows) only when idle > 0: a bordered amber card, big `N idle`
+  over a dim reason line (band: `IDLE_CARD_REASON_BAND`, today the instruction to put them on a work
+  row or send a party; faction: `N idle across your bands` over `Saltmarch 4 · Brackwater 3`, most
+  idle first, capped at `IDLE_CARD_BANDS_MAX` with `· +N more`, then `. Not on any job.`). Its tooltip
+  says idle people are spare capacity, not waste; the Idle segment's tooltip is the reason line.
+  `FactionRollup._build_people_block(labor, bands)` sums the same split across the roster.
+
+  **FIVE standing roles are CARDS** — Scout + Warrior
   here, Agriculture + Husbandry + **Builders** in the KEEPING block below, in rows of two — (bordered, name · the `−/+` stepper and its
   `assign_labor` emit · **the kit row, where the role has one** · the role's description LAST), not rows
   in a list — the fix for a standing role being indistinguishable from a worked source. That middle
@@ -676,7 +718,7 @@ stretch, and widening it into that gap would put it over a live HUD column.
   `N out · M workers`, its `⋯` menu's recall-all, its tab badge and the faction page's Parties zone all
   list and count `HudBandLaborState.band_zone_parties` / `faction_zone_parties`, which drop the parties
   `is_trade_party` names (mission `trade`). Scouts, work parties, stations and **envoys** stay. The whole
-  set (`band_parties`) is kept for the Workforce bar's `away` clause, since a shipment's hands really are
+  set (`band_parties`) is kept for the People head's `away` clause, since a shipment's hands really are
   gone from the band. A parked envoy or shipment reads `Waiting on an answer` rather than `Awaiting
   orders` (`HudFormat.expedition_phase_label(phase, mission)`, `HudExpeditionVocab.MISSIONS_WAITING_ON_AN_ANSWER`):
   it is waiting for the people it came to answer, so it wears no amber and does not turn the Parties
@@ -778,10 +820,10 @@ stretch, and widening it into that gap would put it over a live HUD column.
   (`scripts/preview.sh res://tools/band_panel_preview.tscn` → `ui_preview_out/
   band_panel_{left,right,top,bottom,collapsed}.png`). **The ZONE states are the Part-2 frames:**
   `band_panel_people` (both bars, the dependency ratio, the two role cards) ·
-  **`band_panel_workforce_away`** (the reference band with its TWO parties in the field — the only
-  configuration in which the Parties defect is visible: the header reads `3 idle of 16 · 10 away`
-  over a bar of Forage 5 · Hunt 4 · Roles 4 · Idle 3, summing to 16 rather than to the 26 a Parties
-  segment made of it) ·
+  **`band_panel_people_away`** (the reference band with its TWO parties in the field — the only
+  configuration in which the Parties defect is visible: the People head reads `30 · 10 away` over
+  chips that still sum to `size`) · **`band_panel_people_idle`** / **`band_panel_people_no_idle`** (the
+  idle card present exactly when idle > 0) ·
   **`band_panel_people_map_path`** (the SAME block reached the OTHER way — by clicking the band ON THE
   MAP, through the real `MapView._rebuild_unit_markers` → `refresh_selection_payload` →
   `show_unit_selection` → `BandPanelController.render_band`. `band_panel_people` drives the SNAPSHOT path,
@@ -1303,7 +1345,7 @@ pre-existing `band_panel_*` frame moved in that readout and in nothing else.
 | zone | holds |
 |---|---|
 | `band` | the summed PEOPLE bar · the band page's own vitals rows through its own renderer — Food · Kit · Morale · Growth (a fifth, Trade, went with arc #527's retired account) |
-| `work` | the whole WORKFORCE bar · one row per band, its work summarised as counts (`2 sources · 1 pen`) |
+| `work` | one row per band: its work summarised as counts (`2 sources · 1 pen · 13 working`) and a trailing amber `4 idle` (faint `none idle`) |
 | `knowledge` | SETTLING (the stage's WORD, keyed, with its meter) · the craft tracks · DISCOVERIES (kinds, headed by the instance count) — **the last of the three only where the box can hold it** |
 | `parties` | one row per party — its mission summary and the band it LEFT |
 
@@ -2243,20 +2285,21 @@ restores the food-outlook chart and the role cards' hint text that SHORT hides. 
 flank filled 49% of the room and rendered bare `Scout` / `− 2 +` steppers — the width complaint
 answered by moving the emptiness rather than removing it.
 
-**The blocks are heterogeneous, so which column each lands in is AUTHORED, never reflowed** — and
-raising the tier forced the pairing to change. Of four authored candidates measured at TALL against a
-300px box, exactly one fits:
+**The blocks are heterogeneous, so which column each lands in is AUTHORED, never reflowed.** When
+the Workforce bar joined the People bar (issue #878) every ordering was re-measured at TALL against the
+358px box, chartless and charted (`band_panel_band_columns_two` / `_charted`):
 
-| split | measured |
-|---|---|
-| vitals + PEOPLE \| WORKFORCE | 316 / 193 — overflows |
-| vitals + PEOPLE \| outlook + WORKFORCE | 200 / 321 — overflows |
-| vitals \| PEOPLE + outlook + WORKFORCE | 130 / 391 — overflows |
-| **vitals + outlook \| PEOPLE + WORKFORCE** | **246 / 263** — fits |
+| split (left \| right) | chartless | charted |
+|---|---|---|
+| vitals + PEOPLE + outlook \| ROLES | 260 / 175 = 67% | 376 / 175 = **47%** — fails |
+| vitals + outlook \| PEOPLE + ROLES | 104 / 331 = **31%** | 220 / 331 = 66% |
+| vitals \| PEOPLE + outlook + ROLES | 104 / 331 = **31%** | 104 / 447 = **23%** |
+| **vitals + PEOPLE \| outlook + ROLES** | **260 / 175 = 67%** | **260 / 291 = 89%** |
+| vitals + ROLES \| PEOPLE + outlook | 291 / 144 = **49%** | 291 / 260 = 89% |
 
-It reads as *the larder | the people*, which is defensible on its own terms, but **that is a happy
-accident: it is the only one that fits.** Do not treat the pairing as a design principle that would
-survive the blocks changing size — re-measure all four.
+`vitals + PEOPLE | outlook + ROLES` (ROLES = homeward lines + the Scout and Warrior cards) is the only one
+clearing the 0.65 balance floor both charted and chartless, so ONE split serves both. It also keeps the
+People block and its idle card together, as the prototype draws them. Re-measure; never derive.
 
 **A band with no food history builds no chart, and that is turn one** — the first frame of every new
 game. Under the charted split that column was the vitals alone, 130 against 263, so there was a
@@ -2347,7 +2390,7 @@ emptiness sits. (With the role cards' pickers the CHARTED flank no longer has em
 OVERFLOWS its box and the zone's own scroll carries the remainder.)
 
 Blocks are emitted in **build** order for one column and by **column** field for two, so the flat stack
-stays vitals · PEOPLE · outlook · WORKFORCE.
+stays vitals · PEOPLE · outlook · roles (the homeward lines and the role cards).
 
 **The fill assertion measures the WHOLE FLANK against the WHOLE room, plus a separate balance claim.**
 Measuring only the deepest column passed the 130/263 flank at 88% — the short column was invisible to
@@ -3157,7 +3200,7 @@ the same `_build_role_card`; nothing about the keeping is a parallel surface.
   also costs nothing that pairing it would save, the row height being the card's either way.
 - **HANDS WALKING HOME ARE A SEGMENT AND TWO OR THREE LINES** (#706). A stood-down far party's hands
   walk home (`homeward_*`, the band's keys): inside `working_age`, netted out of idle, so the bar
-  carries a `Walking home` segment (`WORKFORCE_KEY_HOMEWARD`, `INK_DIM`) or it stops partitioning.
+  is named in the working tooltip as `Walking home` (`WORKING_PART_HOMEWARD`) or that breakdown stops accounting for them.
   Under the key, `HudWorkVocab.homeward_lines`: `3 walking home with 2.40 food — all home in 3 turns`
   (`homeward_all_home_in`; the food clause only when they carry any), then `First load lands in 1 turn`
   only when `homeward_next_load_in` is sooner than all-home — its own line, because one long line
@@ -3176,9 +3219,9 @@ the same `_build_role_card`; nothing about the keeping is a parallel surface.
   takes the row to 0 at once, and hiding the row the player acted on read as the unassign failing.
   `band_panel_work_row_homeward` asserts the crew-0 row's line and ink, the plural food-less line
   closing a posted row's block, and no line on a row nobody walks home from.
-- **The keeping roles are in the WORKFORCE bar's `Roles` SEGMENT even though their cards are not in
-  that block.** The segments partition `working_age`, `effective_idle` already nets these hands out
-  of Idle, and a segment that omitted them would stop the key adding up to the head the zone states.
+- **The keeping roles are in the working breakdown's `Roles` PART even though their cards are not in
+  the roles block.** The parts sum to `working_age − idle`, `effective_idle` already nets these hands
+  out of Idle, and a breakdown that omitted them would lose those hands from the working tooltip.
 - **THE KEEPING PAIR MOUNTS NO KIT PICKER, and two independent facts say so.** The wire names no
   default kit for either job — there is no `defaultAgricultureKitId` twin of `defaultScoutKitId`, so
   `(default)` would be a guess and `HudBandLaborState.default_kit_id` falls through to the HUNT
@@ -8043,6 +8086,15 @@ priority list. A staffed row's `workers` is the SIM's answer, so the Work tab dr
   tests (a staffed row can read a crew of zero).
 - **ROADWORK** is a staffed row drawn through `_build_pool_line`: a read-only number and the bar from the
   roadwork row's own staffed fields, no stepper. The tile-improvement row draws the same pair.
+- **A BAND IMPROVEMENT (a drying rack) is a staffed row too** (wire kind `band`, `HudConst.LABOR_KIND_BAND`,
+  keyed `band:<branch>` and carrying a `branch` but no tile, `x`/`y` = -1). It is in `STAFFED_KINDS`, so
+  `effective_idle` / `working_breakdown` / `orderable_hands` count its hands as working and orderable. It
+  rides the GROUNDWORK section after the tile crews (`_band_improvement_models`,
+  `_build_band_improvement_row`, meta `BAND_IMPROVEMENT_ROW_META`): the catalog's branch name, a read-only
+  crew number and the `CrewSplitMarks` bar, no stepper. It is removed with `stop_labor <f> <band>
+  branch=<id>` (`Main.site_address` spells a payload with a branch and no tile that way; the server's
+  `parse_band_improvement_source` reads it). Harness: `band_panel_work_tile_crews`; `command_guard` drives
+  the line.
 - **The retired stepper machinery.** `SourceForecast.crew_cap_state` / `source_worker_cap_state`, the row's
   `can_add` / `add_blocked_reason`, the cap note on the hover, `STEPPER_WORKING_FULL_REASON_FORMAT` and the
   `+` ceiling that read the sim's useful crew are gone: no control clamps a crew any more. The keepers' own
@@ -8114,17 +8166,18 @@ The labor-side contract is `labor-ui.md` -> "HUNTING BY NEED". The rows it adds 
   `min(hunt_useful_workers, effective idle)`; ON sends 0 with `follow`.
 - **DONOR ROWS.** A row that lends hands (`lent_to_hunt` > 0) reads `4 -> 3` in its count slot and, on
   its own line in WARN, `N out hunting · back after the kill`. Workings carry the same count and line.
-- **THE WORKFORCE BAR MOVES EVERY LENT HAND.** `HudBandLaborState.hunt_muster_out(band)` returns the
-  idle hands the muster takes, each kind's `lent_to_hunt` and the bench's. The bar (band zone in
-  `BandPanelController`, faction total in `FactionRollup._build_workforce_block`) subtracts each from
-  its home segment (Forage / Hunt / `Cutters` / Bench / Idle) and draws one WARN `Out hunting` segment
-  (`WORKFORCE_KEY_OUT_HUNTING`) of idle-taken + row-lent + bench-lent, so the segments still partition
-  `working_age`. The header reads `I idle · M out hunting` with the same M
-  (`WORKFORCE_IDLE_OUT_FORMAT`); with nothing lent there is no segment and the plain header. Each term
-  is clamped to the segment it leaves. Role-card ceilings still use the unmustered idle count.
+- **THE WORKING BREAKDOWN MOVES EVERY LENT HAND.** `HudBandLaborState.hunt_muster_out(band)` returns
+  the idle hands the muster takes, each kind's `lent_to_hunt` and the bench's. `working_breakdown`
+  (read by the band zone in `BandPanelController` and summed by `FactionRollup._build_people_block`)
+  subtracts each from its home part (Forage / Hunt / `Cutters` / Bench) or from Idle, and adds one
+  `Out hunting` part (`WORKING_PART_OUT_HUNTING`) of idle-taken + row-lent + bench-lent, so the parts
+  still sum to `working_age − idle`. Mustered hands count as WORKING, so the idle segment and the idle
+  card leave them out and the People head carries no hunting clause; with nothing lent there is no
+  part. Each term is clamped to the part it leaves. Role-card ceilings still use the unmustered idle
+  count.
 - **A NEED ROW SHORT OF ITS HUNT-TURN KIT** goes through the same `_work_row_kit_note` as any take row
   (the model's `kit_note` and the `◆` in `marks`, and the inspector's KITS section): it has no
-  special path. Frames `band_panel_workforce_out_hunting`, `band_panel_workforce_no_lending`,
+  special path. Frames `band_panel_people_out_hunting`, `band_panel_people_no_lending`,
   `band_panel_need_kit_short`, `band_panel_need_kit_short_inspector`.
 - **Heights.** The meter is a party line (`_work_row_party_lines`), so the row's height and the
   board's reservation pay for it without a second edit.

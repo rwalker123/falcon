@@ -58,6 +58,7 @@ fn spawn_band(app: &mut App) -> Entity {
                 last_food_need: 0.0,
                 fed_party_workers: Default::default(),
                 last_food_spoiled: 0.0,
+                last_food_kept: 0.0,
                 last_turn_food_transfers: Default::default(),
                 last_turn_fodder_transfers: Default::default(),
                 last_turn_transfer_crossings: Vec::new(),
@@ -134,15 +135,15 @@ fn a_surplus_that_rots_teaches_storage_by_the_predicted_credit() {
     meal_then_rot(&mut app);
 
     let ladder = app.world.resource::<LadderConfigHandle>().get();
-    let (rotted, need) = {
+    let (rotted, kept, need) = {
         let c = cohort(&app, band);
-        (c.last_food_spoiled, c.last_food_need)
+        (c.last_food_spoiled, c.last_food_kept, c.last_food_need)
     };
     assert!(
         rotted > 0.0 && need > 0.0,
         "fixture: rot {rotted}, need {need}"
     );
-    let practice = storage_practice(rotted, need, &ladder.knowledge);
+    let practice = storage_practice(rotted, kept, need, &ladder.knowledge);
     let expected = ladder
         .knowledge
         .ledger_credit(STORAGE_KNOWLEDGE, practice)
@@ -158,7 +159,12 @@ fn a_surplus_that_rots_teaches_storage_by_the_predicted_credit() {
 #[test]
 fn a_band_with_no_surplus_learns_nothing() {
     let (mut app, band) = world();
-    stock_a_lot_about_to_expire(&mut app, band, SCANT);
+    // A scant FRESH lot: eaten the turn it landed, so it neither rots nor counts as kept.
+    {
+        let mut cohort = app.world.get_mut::<PopulationCohort>(band).unwrap();
+        cohort.stores = LocalStore::new();
+        cohort.stores.add_food(MEAT_CLASS, scalar_from_f32(SCANT));
+    }
     meal_then_rot(&mut app);
 
     let c = cohort(&app, band);
@@ -195,4 +201,134 @@ fn full_rate_rot_for_the_lessons_length_teaches_it() {
         "after {turns} turns progress is {}",
         storage_progress(&app)
     );
+}
+
+/// A class that keeps for many turns, so a lot of it is eaten long before it rots.
+const KEEPING_CLASS: &str = "dry";
+
+fn stock_fresh(app: &mut App, band: Entity, class: &str, amount: f32) {
+    let mut cohort = app.world.get_mut::<PopulationCohort>(band).unwrap();
+    cohort.stores = LocalStore::new();
+    cohort.stores.add_food(class, scalar_from_f32(amount));
+}
+
+/// **KEPT FOOD TEACHES STORAGE, SLOWLY (#708), through the real meal and rot systems.** A band that
+/// rots nothing still learns from eating food it had kept a while, at the kept weight's share of
+/// what rot pays - and a lot is kept from the SECOND meal after it landed, not the first.
+#[test]
+fn eating_kept_food_teaches_storage_at_the_kept_weight_and_only_from_the_second_meal() {
+    let (mut app, band) = world();
+    stock_fresh(&mut app, band, KEEPING_CLASS, SURPLUS);
+
+    // Meal T+1: the lot landed last turn and has not aged - fresh, no practice.
+    meal_then_rot(&mut app);
+    assert_eq!(cohort(&app, band).last_food_spoiled, 0.0, "nothing rots");
+    assert_eq!(
+        cohort(&app, band).last_food_kept,
+        0.0,
+        "fresh at the first meal"
+    );
+    assert_eq!(storage_progress(&app), 0.0);
+
+    // Meal T+2: the same lot has aged a turn - kept at the shipped threshold of 2.
+    meal_then_rot(&mut app);
+    let ladder = app.world.resource::<LadderConfigHandle>().get();
+    let (kept, need) = {
+        let c = cohort(&app, band);
+        (c.last_food_kept, c.last_food_need)
+    };
+    assert!(
+        kept > 0.0 && need > 0.0,
+        "fixture: kept {kept}, need {need}"
+    );
+    assert_eq!(
+        cohort(&app, band).last_food_spoiled,
+        0.0,
+        "still nothing rots"
+    );
+    let practice = storage_practice(0.0, kept, need, &ladder.knowledge);
+    let expected = ladder
+        .knowledge
+        .ledger_credit(STORAGE_KNOWLEDGE, practice)
+        .expect("storage is priced");
+    let got = storage_progress(&app);
+    assert!(expected > 0.0, "kept food pays something");
+    assert!(
+        (got - expected).abs() < EPSILON,
+        "got {got}, expected {expected}"
+    );
+    // And it is the weight's share of what a full turn of rot would pay.
+    let full_rot = ladder
+        .knowledge
+        .ledger_credit(STORAGE_KNOWLEDGE, ladder.knowledge.learn_rate)
+        .unwrap();
+    assert!(got < full_rot * ladder.knowledge.storage_kept_weight + EPSILON);
+}
+
+/// **A caravan pack and a party's own meals never teach**: the credit is the band's own larder
+/// meal, so a band whose meal ate nothing kept pays nothing however old its pack was.
+#[test]
+fn a_band_that_eats_only_fresh_food_learns_nothing_even_with_an_old_lot_beside_it() {
+    let (mut app, band) = world();
+    stock_fresh(&mut app, band, MEAT_CLASS, SURPLUS);
+    {
+        // An old lot of the SLOWER class sits untouched: the meal draws the fastest class first.
+        let mut cohort = app.world.get_mut::<PopulationCohort>(band).unwrap();
+        cohort
+            .stores
+            .add_food_aged(KEEPING_CLASS, scalar_from_f32(SURPLUS), 10);
+    }
+    meal_then_rot(&mut app);
+    assert_eq!(cohort(&app, band).last_food_kept, 0.0);
+    assert_eq!(storage_progress(&app), 0.0);
+}
+
+/// A walk long enough that the pack's spoilage age already exceeds the kept threshold, yet well
+/// inside the class's shelf life.
+const WALK_TURNS: u32 = 5;
+
+/// **KEPT MEANS SAT IN THE LARDER, NOT WALKED HOME (#708).** A caravan pack lands home with its
+/// spoilage age already set to its walk. That age must not count as larder time: the pack is fresh
+/// at its first meal however far it came, and kept only once it has sat the threshold turns.
+#[test]
+fn a_far_pack_is_not_kept_at_its_first_meal_and_is_once_it_has_sat_the_threshold() {
+    let (mut app, band) = world();
+    {
+        let mut cohort = app.world.get_mut::<PopulationCohort>(band).unwrap();
+        cohort.stores = LocalStore::new();
+        // Exactly what `land_food_home` does with a pack that walked `WALK_TURNS`.
+        cohort
+            .stores
+            .add_food_aged(KEEPING_CLASS, scalar_from_f32(SURPLUS), WALK_TURNS);
+    }
+    let threshold = app
+        .world
+        .resource::<LadderConfigHandle>()
+        .get()
+        .knowledge
+        .storage_kept_age_turns;
+    assert!(
+        WALK_TURNS >= threshold,
+        "fixture: the walk alone must reach the threshold"
+    );
+
+    // Meal after landing: the pack has walked, but it has not sat in the larder.
+    meal_then_rot(&mut app);
+    assert_eq!(
+        cohort(&app, band).last_food_kept,
+        0.0,
+        "a walked pack is fresh at its first meal"
+    );
+    assert_eq!(storage_progress(&app), 0.0);
+
+    // Every later meal until the threshold is met: the last of them eats a lot that has sat
+    // `threshold` turns (the meal reads the clock before that turn's rot pass advances it).
+    for _ in 1..threshold {
+        meal_then_rot(&mut app);
+    }
+    assert!(
+        cohort(&app, band).last_food_kept > 0.0,
+        "kept once it has sat {threshold} turns in the larder"
+    );
+    assert!(storage_progress(&app) > 0.0);
 }

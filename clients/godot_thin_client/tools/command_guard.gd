@@ -750,6 +750,7 @@ func _drive_stop_labor() -> void:
 				"material": DEPOSIT_MATERIAL},
 			{"kind": HudConst.LABOR_KIND_TILE, "x": TARGET_X, "y": TARGET_Y, "herd_id": "",
 				"branch": "route"},
+			{"kind": HudConst.LABOR_KIND_BAND, "x": -1, "y": -1, "herd_id": "", "branch": "camp_stores"},
 			{"kind": HudConst.LABOR_KIND_ROADWORK, "x": -1, "y": -1, "herd_id": ""}]:
 		_hud._bandpanel._commit_stop_labor(band, model)
 		await _settle()
@@ -1436,7 +1437,7 @@ const EXPECTED_KINDS := {
 	# THREE — the patch, the herd and the working; the road form is asserted to build NO line.
 	"work_priority": 3,
 	# FIVE — the patch, herd, working, tile-branch and roadwork forms of a staffed row's end (#871).
-	"stop_labor": 5,
+	"stop_labor": 6,
 	# FOUR — every form a queue row can withdraw.
 	"unqueue": 4,
 	# ONE — the Deny verb's sheet, opened on the herd its pick landed on, is the raid's only launch site.

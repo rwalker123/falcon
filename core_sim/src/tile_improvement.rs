@@ -255,6 +255,11 @@ impl TileImprovement {
 #[derive(Resource, Default, Debug, Clone, Serialize, Deserialize)]
 pub struct TileImprovementRegistry {
     improvements: BTreeMap<TileImprovementKey, TileImprovement>,
+    /// **THE BAND KIND'S HALF** ([`crate::band_improvement`]) - improvements a band holds at its camp
+    /// and carries with it, keyed `(band, branch)`. They ride this resource so every pass that reads
+    /// the per-tile improvements reads these beside them and the whole registry is one `SimState`
+    /// field, one coverage row and one scratch reset.
+    bands: crate::band_improvement::BandImprovementRegistry,
 }
 
 impl TileImprovementRegistry {
@@ -289,12 +294,23 @@ impl TileImprovementRegistry {
         self.improvements.values()
     }
 
+    /// The band kind's improvements.
+    pub fn bands(&self) -> &crate::band_improvement::BandImprovementRegistry {
+        &self.bands
+    }
+
+    /// The band kind's improvements, writable.
+    pub fn bands_mut(&mut self) -> &mut crate::band_improvement::BandImprovementRegistry {
+        &mut self.bands
+    }
+
     /// **CLEAR EVERY SOURCE'S PER-TURN BUILD SCRATCH - what a restore does so a load never republishes
     /// a stale date.** The scratch is stamped by the labor pass and cleared by the decay pass each
     /// turn, yet the checkpoint carries it, so a loaded world's first frame repeated the last
     /// turn's stamp (a pre-fix 2,101,109-turn date outlived the fix that removed it). Cleared here
     /// the frame reads "not yet estimated" until the first turn restamps it.
     pub(crate) fn clear_build_scratch(&mut self) {
+        self.bands.clear_build_scratch();
         for improvement in self.improvements.values_mut() {
             improvement.build_turns_remaining = None;
             improvement.build_queue_position = sim_schema::NOT_IN_ANY_BUILD_QUEUE;
@@ -313,7 +329,7 @@ impl TileImprovementRegistry {
     }
 
     pub fn is_empty(&self) -> bool {
-        self.improvements.is_empty()
+        self.improvements.is_empty() && self.bands.is_empty()
     }
 }
 

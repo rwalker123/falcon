@@ -894,8 +894,10 @@ over four wire terms — `kit_needs[]` and `materials_free[]` on the cohort, `be
     the Owned cell the faint `Not used` pill;
   - **some item `short > 0`** - `<Item> N short` per short item (the item's own display name as a label,
     since names are mixed singular and plural and there is no pluraliser), joined by ` · `, with `, Q coming`
-    where `queued > 0`: `DANGER` while any short item is not covered by its queue, `INK_DIM` once every one is
-    (`Spears 2 short · Sled 5 short, 1 coming` / `Baskets 1 short, 1 coming`);
+    where `queued - finished > 0` (units the queue still owes) and then `, F finished, arrives next turn`
+    where `finished > 0` (units made at the bench and parked to the top of next turn; `queued` includes them,
+    so the ink rule still reads the TOTAL `queued`): `DANGER` while any short item is not covered by its queue, `INK_DIM` once every one is
+    (`Spears 2 short · Sled 5 short, 1 coming` / `Baskets 1 short, 1 coming` / `Spears 1 short, 1 finished, arrives next turn`);
   - **claimed and nothing short** - `All N <noun> equipped` in `INK_FAINT`.
 
   The Owned cell is `X of Y equipped` for the weakest claimed item (largest `need - equipped`), Y being the

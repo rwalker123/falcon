@@ -1082,3 +1082,89 @@ fn a_kit_order_and_the_pickers_terms_reach_the_wire() {
         "free hide {free_hide} is the 40 held less the queue's claim ({expected})"
     );
 }
+
+// ---------------------------------------------------------------------------------------------
+// `KitNeedItem.finished` -- the parked share of `queued`, read off the ENCODED frame.
+// ---------------------------------------------------------------------------------------------
+
+/// The `(queued, finished)` the stalking kit's sled row publishes on the encoded frame.
+fn sled_queued_and_finished(app: &mut App, band: Entity) -> (u32, u32) {
+    recapture_snapshot_in_place(&mut app.world);
+    let snapshot = app
+        .world
+        .resource::<SnapshotHistory>()
+        .latest_entry()
+        .expect("a snapshot was captured")
+        .snapshot;
+    let bytes = sim_schema::encode_snapshot_flatbuffer(snapshot.as_ref());
+    let envelope =
+        fb::root_as_envelope(bytes.as_ref()).expect("the snapshot encodes to a valid envelope");
+    let cohort = envelope
+        .payload_as_snapshot()
+        .expect("the envelope carries a snapshot")
+        .population()
+        .and_then(|section| section.populations())
+        .expect("the population section carries the cohort list")
+        .iter()
+        .find(|cohort| cohort.entity() == band.to_bits())
+        .expect("the band is on the wire");
+    let sled = cohort
+        .kitNeeds()
+        .expect("the kit needs ride the row")
+        .iter()
+        .find(|need| need.kitId() == Some("big_game"))
+        .expect("the stalking kit is orderable")
+        .items()
+        .expect("items")
+        .iter()
+        .find(|item| item.itemId() == Some(SLED_RECIPE))
+        .expect("the stalking kit uses a sled");
+    (sled.queued(), sled.finished())
+}
+
+/// **`finished` IS THE PARKED SHARE OF `queued`** -- an item still in a queued order is owed and not
+/// parked; on the turn it completes with its order popped it is both `queued` and `finished`; the
+/// turn after, delivered into the equipment ledger, it is neither.
+#[test]
+fn a_finished_item_is_queued_and_finished_until_the_next_turn_stocks_it() {
+    let (mut app, band) = world();
+    bench_with(&mut app, band, PLENTY, &[(SLED_RECIPE, ONE)]);
+    assert_eq!(
+        sled_queued_and_finished(&mut app, band),
+        (ONE, NONE_MADE),
+        "an order still on the queue is owed, not parked"
+    );
+
+    app.world.run_system_once(advance_crafting);
+    assert!(
+        app.world
+            .get::<BandBench>(band)
+            .expect("a spawned band carries a bench")
+            .orders
+            .is_empty(),
+        "fixture: the sled was made and its order popped"
+    );
+    assert_eq!(
+        sled_queued_and_finished(&mut app, band),
+        (ONE, ONE),
+        "the made sled is parked: still counted in `queued`, and published as `finished`"
+    );
+
+    app.world.run_system_once(deliver_bench_output);
+    assert_eq!(
+        sled_queued_and_finished(&mut app, band),
+        (NONE_MADE, NONE_MADE),
+        "delivered into the ledger: neither queued nor finished"
+    );
+    assert_eq!(
+        app.world
+            .get::<BandEquipment>(band)
+            .expect("equipment ledger")
+            .live_units(
+                SLED_RECIPE,
+                &app.world.resource::<EquipmentConfigHandle>().get()
+            ),
+        ONE,
+        "the sled is in the equipment ledger"
+    );
+}

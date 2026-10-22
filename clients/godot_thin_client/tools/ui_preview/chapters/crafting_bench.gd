@@ -2335,11 +2335,11 @@ func _assert_bench_crew_is_not_idle() -> void:
 	# nets the bench out over a bar that never names it drops the crew off a chart whose segments are
 	# supposed to add up to the same workforce.
 	var hud_texts := _label_texts(h._hud)
-	h._assert_hud("crafting — the WORKFORCE head does not count the bench crew as idle",
-		hud_texts.has(HudWorkVocab.WORKFORCE_IDLE_FORMAT
-			% [BENCH_BOUND_WORKING_AGE - BENCH_CREW, BENCH_BOUND_WORKING_AGE]))
-	h._assert_hud("crafting — …and the bar names the crew it stopped counting",
-		hud_texts.has("%s %d" % [HudWorkVocab.WORKFORCE_KEY_BENCH, BENCH_CREW]))
+	h._assert_hud("crafting - the People bar's Idle chip does not count the bench crew as idle",
+		hud_texts.has("%s %d" % [HudWorkVocab.PEOPLE_KEY_IDLE, BENCH_BOUND_WORKING_AGE - BENCH_CREW]))
+	h._assert_hud("crafting - ...and the working segment's tooltip names the crew it counts",
+		_tooltips_contain(h._hud, HudWorkVocab.PEOPLE_WORKING_PART_FORMAT % [
+			HudWorkVocab.WORKING_PART_BENCH, BENCH_CREW]))
 
 ## The `disabled` state of the crew stepper's `−`/`+`, found by its face — the two are the only
 ## buttons in the panel wearing those single glyphs. `true` when no such button was found, which
@@ -2392,6 +2392,14 @@ func _label_with_text(node: Node, face: String) -> Label:
 		if found != null:
 			return found
 	return null
+
+func _tooltips_contain(node: Node, needle: String) -> bool:
+	if node is Control and (node as Control).tooltip_text.contains(needle):
+		return true
+	for child in node.get_children():
+		if _tooltips_contain(child, needle):
+			return true
+	return false
 
 func _label_texts(node: Node) -> Array:
 	var texts: Array = []
@@ -4430,6 +4438,40 @@ func _settled_short_kit_state(base_band: Dictionary) -> void:
 	h._assert_hud("crafting/kits — …and the row says one crook is short (%s)" % [said],
 		said.contains("Crook 1 short") and not said.contains("All 9 workers equipped"))
 	await h._save("crafting_kit_settled_short")
+	await _finished_kit_state(base_band)
+
+## **A FINISHED UNIT IS NOT "COMING"** (playtest: `Spears 1 short, 1 coming` over an EMPTY queue). `queued`
+## includes units finished at the bench and parked until next turn; `finished` splits them out.
+const FINISHED_KIT := "hunting_finished"
+const COMING_KIT := "hunting_coming"
+
+func _finished_kit_state(base_band: Dictionary) -> void:
+	var band := base_band.duplicate(true)
+	var needs: Array = band["kit_needs"]
+	var spears_recipe := _need_recipe(SPEARS_FLINT_RECIPE, 1.0, [["stone", 1.0], ["wood", 2.0], ["fibre", 1.0]])
+	needs.append(_need(FINISHED_KIT, "Finished kit", ["hunt"], 1, [
+		_need_item("spears", 1, 0, 1, 1, 1, [spears_recipe], 1)]))
+	needs.append(_need(COMING_KIT, "Coming kit", ["hunt"], 1, [
+		_need_item("spears", 1, 0, 1, 1, 1, [spears_recipe], 0)]))
+	band["kit_needs"] = needs
+	h._hud.update_band_alerts([band])
+	h._hud.open_crafting_panel(band)
+	await h._settle()
+	var panel: CraftingPanel = h._hud.crafting_panel().panel()
+	if panel == null:
+		h._assert_hud("crafting/kits — the finished-kit band's panel opens", false)
+		return
+	var finished_why := _text_of(_by_meta(panel, HudCraftingVocab.KIT_REASON_META, FINISHED_KIT))
+	h._assert_hud("crafting/kits — a finished spear reads `finished, arrives next turn`, never `coming` (%s)"
+			% [finished_why],
+		finished_why == "Spears 1 short, 1 finished, arrives next turn" and not finished_why.contains("coming"))
+	var coming_why := _text_of(_by_meta(panel, HudCraftingVocab.KIT_REASON_META, COMING_KIT))
+	h._assert_hud("crafting/kits — a spear the queue still owes keeps `, 1 coming` (%s)" % [coming_why],
+		coming_why == "Spears 1 short, 1 coming")
+	h._assert_hud("crafting/kits — a finished unit covers the gap, so the reason reads dim, not danger",
+		(_by_meta(panel, HudCraftingVocab.KIT_REASON_META, FINISHED_KIT) as Label).get_theme_color(
+			"font_color") == HudStyle.INK_DIM)
+	await h._save("crafting_kit_finished")
 
 func _kit_needs() -> Array:
 	return [
@@ -4463,9 +4505,9 @@ func _need(kit_id: String, display_name: String, jobs: Array, people: int, items
 ## `claimed` / `short` are the sim's: units claimed by rows, pools, sites and queued builds on the kit,
 ## and the whole units missing on those claims before the bench's queue is netted off.
 func _need_item(item_id: String, workers_per_unit: int, have: int, queued: int, claimed: float,
-		short: int, recipes: Array) -> Dictionary:
+		short: int, recipes: Array, finished: int = 0) -> Dictionary:
 	return {"item_id": item_id, "workers_per_unit": workers_per_unit, "have": have, "queued": queued,
-		"claimed": claimed, "short": short, "recipes": recipes}
+		"finished": finished, "claimed": claimed, "short": short, "recipes": recipes}
 
 func _need_recipe(recipe_id: String, output_per_pass: float, inputs: Array) -> Dictionary:
 	var rows: Array = []

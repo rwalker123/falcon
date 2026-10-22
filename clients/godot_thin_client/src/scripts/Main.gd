@@ -2080,6 +2080,10 @@ static func site_address(payload: Dictionary, allow_road: bool = true) -> String
         return herd_id
     var x := int(payload.get("x", -1))
     var y := int(payload.get("y", -1))
+    # A BAND improvement (a drying rack) names no tile: `branch=<id>`, the band being the command's own.
+    var band_branch := String(payload.get("branch", "")).strip_edges().to_lower()
+    if (x < 0 or y < 0) and band_branch != "":
+        return "branch=%s" % band_branch
     if x < 0 or y < 0:
         return ""
     # A tile-kind improvement's crew row is addressed by its branch, which leads: `<branch> <x> <y>`.
@@ -2104,6 +2108,8 @@ static func site_label(payload: Dictionary) -> String:
     var herd_id := String(payload.get("herd_id", "")).strip_edges()
     if herd_id != "":
         return herd_id
+    if int(payload.get("x", -1)) < 0 and String(payload.get("branch", "")).strip_edges() != "":
+        return "the %s" % String(payload.get("branch", "")).strip_edges()
     var tile := "(%d, %d)" % [int(payload.get("x", -1)), int(payload.get("y", -1))]
     if bool(payload.get("road", false)):
         return SITE_LABEL_ROAD_FORMAT % tile

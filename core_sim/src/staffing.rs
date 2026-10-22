@@ -476,6 +476,31 @@ fn tile_keepers(
         })
 }
 
+/// The keepers a band improvement owes: the tile kind's reading, off the band's own record.
+fn band_keepers(
+    world: &StaffingWorld<'_>,
+    band_kit: &BandEquipment,
+    target: &LaborTarget,
+    crew: u32,
+) -> f32 {
+    let LaborTarget::Band { band, branch } = target else {
+        return 0.0;
+    };
+    world
+        .tile_improvements
+        .bands()
+        .get(*band, *branch)
+        .map_or(0.0, |improvement| {
+            crate::systems::prospective_keep_hands(
+                world.sources.equipment,
+                band_kit,
+                improvement.held_rung(),
+                improvement.keeping_basis(world.sources.ladder),
+                crew,
+            )
+        })
+}
+
 /// The keepers the Roadwork pool owes: its kept roads' bills at the as-if-equipped rate, summed.
 fn roadwork_keepers(world: &StaffingWorld<'_>, band_kit: &BandEquipment, crew: u32) -> f32 {
     let Some(band) = world.band else {
@@ -735,6 +760,10 @@ fn build_staff_inputs<'a>(
             }
             LaborTarget::Tile { .. } => {
                 input.keepers = tile_keepers(world, band_kit, &target, crew_bound).ceil() as u32;
+            }
+            LaborTarget::Band { .. } => {
+                // It stands at the camp: distance 0, and the row is never a work party.
+                input.keepers = band_keepers(world, band_kit, &target, crew_bound).ceil() as u32;
             }
             LaborTarget::Roadwork => {
                 input.keepers = roadwork_keepers(world, band_kit, crew_bound).ceil() as u32;

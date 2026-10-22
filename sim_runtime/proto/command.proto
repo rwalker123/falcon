@@ -835,6 +835,8 @@ enum ConfigOverrideKind {
   CONFIG_OVERRIDE_KIND_FAUNA = 9;
   // The mobility score (#800) - staged for its smoothing, weights and distance reference. Append-only.
   CONFIG_OVERRIDE_KIND_MOBILITY = 10;
+  // The leadership practice levers (#859) - the threshold and the two quanta. Append-only.
+  CONFIG_OVERRIDE_KIND_LEADERSHIP = 11;
 }
 
 // Stage a config-tuning override that takes effect at the NEXT new_game — `build_headless_app`

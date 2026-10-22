@@ -1283,6 +1283,36 @@ impl BuildSourceRef {
         })
     }
 
+    /// **Does this name a band improvement?** - the named branch is a band-kind branch of the ladder
+    /// (a drying rack). The band rides `herd_id`, as `build rack <faction> <band>` carries it.
+    fn is_band_improvement(&self, ladder: &LadderConfig) -> bool {
+        self.branch.as_deref().is_some_and(|branch| {
+            ladder.source_kind(BranchId::new(branch)) == Some(SourceKind::Band)
+        })
+    }
+
+    /// **Pin a band improvement to the band a queue verb already names.** `build_order`,
+    /// `build_priority` and `work_priority` carry the band in the command, so their source is
+    /// `<branch>` alone; a band named a second time that disagrees is refused rather than
+    /// silently preferred. Any other source is returned as it was.
+    fn bound_to_band(mut self, ladder: &LadderConfig, band_id: u64) -> Result<Self, String> {
+        if !self.is_band_improvement(ladder) {
+            return Ok(self);
+        }
+        match self.herd_id.as_deref().map(str::parse::<u64>) {
+            None => self.herd_id = Some(band_id.to_string()),
+            Some(Ok(named)) if named == band_id => {}
+            Some(_) => {
+                return Err(format!(
+                    "a band improvement belongs to the band named in the command ({band_id}), \
+                     not to {}.",
+                    self.herd_id.as_deref().unwrap_or_default()
+                ));
+            }
+        }
+        Ok(self)
+    }
+
     /// **Does this name a tile improvement?** - the named branch is a tile-kind branch of the ladder.
     fn is_tile_improvement(&self, ladder: &LadderConfig) -> bool {
         self.branch.as_deref().is_some_and(|branch| {
@@ -1295,7 +1325,7 @@ impl BuildSourceRef {
     fn branch_refusal(&self, ladder: &LadderConfig) -> Option<String> {
         let branch = self.branch.as_deref()?;
         match ladder.source_kind(BranchId::new(branch)) {
-            Some(SourceKind::Road | SourceKind::Tile) => None,
+            Some(SourceKind::Road | SourceKind::Tile | SourceKind::Band) => None,
             Some(_) => Some(format!(
                 "'{branch}' is a branch whose source is worked by a crew, not kept per tile - \
                  name it by its tile, herd or `<x> <y> <material>`."
@@ -1313,6 +1343,13 @@ impl BuildSourceRef {
     fn target(&self, ladder: &LadderConfig) -> Option<LaborTarget> {
         if self.is_road(ladder) {
             return None;
+        }
+        if self.is_band_improvement(ladder) {
+            let band = self.herd_id.as_deref()?.parse::<u64>().ok()?;
+            return Some(LaborTarget::Band {
+                band: BandId(band),
+                branch: BranchId::new(self.branch.as_deref()?),
+            });
         }
         if self.is_tile_improvement(ladder) {
             return match (self.target_x, self.target_y, self.branch.as_deref()) {
@@ -1354,6 +1391,10 @@ impl BuildSourceRef {
     /// What the feed line calls it.
     fn label(&self, ladder: &LadderConfig) -> String {
         match (self.target_x, self.target_y, self.herd_id.as_ref()) {
+            (_, _, Some(band)) if self.is_band_improvement(ladder) => format!(
+                "the {} of band {band}",
+                self.branch.as_deref().unwrap_or_default()
+            ),
             (Some(x), Some(y), _) if self.is_road(ladder) => {
                 format!("the road at ({x}, {y})")
             }
@@ -1407,8 +1448,9 @@ struct BuildRungRequest {
 /// **What a queue verb says when it was handed no source** — one sentence for every verb that reads
 /// a [`BuildSourceRef`], so the grammar it names cannot drift between them.
 const SITE_SOURCE_GRAMMAR: &str = "two numbers name a tile, one token names a herd, \
-     `<x> <y> <material>` names a working and `<branch> <x> <y>` (`route <x> <y>`) names a road \
-     or a tile improvement";
+     `<x> <y> <material>` names a working, `<branch> <x> <y>` (`route <x> <y>`) names a road \
+     or a tile improvement and a band improvement (`rack`'s branch) is `<band> <branch>` (the band \
+     is the command's own where the verb already names one, so `<branch>` alone)";
 
 #[derive(Debug, Clone)]
 enum Command {
@@ -4181,6 +4223,7 @@ fn seed_source_yield(
         // A band-wide role produces no per-source yield, so there is no row to seed - and neither
         // does a tile improvement's crew, which keeps a standing and takes nothing.
         LaborTarget::Tile { .. }
+        | LaborTarget::Band { .. }
         | LaborTarget::Scout
         | LaborTarget::Warrior
         | LaborTarget::Roadwork
@@ -4475,7 +4518,7 @@ fn validate_labor_policy(
         }
         // **A tile improvement's crew has no stance to validate** - no floor, species or herd. What
         // `assign_labor` checks for it (a tile-kind branch, not another people's) is its own arm.
-        LaborTarget::Tile { .. } => Ok(()),
+        LaborTarget::Tile { .. } | LaborTarget::Band { .. } => Ok(()),
         LaborTarget::Scout
         | LaborTarget::Warrior
         | LaborTarget::Roadwork
@@ -4544,6 +4587,12 @@ fn validate_improvement(
             }
             validate_tile_verb(app, faction, *tile, *branch, rung)
         }
+        LaborTarget::Band { band, branch } => {
+            if verb_kind != Some(SourceKind::Band) {
+                return wrong_kind("a band");
+            }
+            validate_band_verb(app, faction, *band, *branch, rung)
+        }
         LaborTarget::Scout
         | LaborTarget::Warrior
         | LaborTarget::Roadwork
@@ -4562,6 +4611,7 @@ fn source_kind_noun(kind: SourceKind) -> &'static str {
         SourceKind::Road => "roads",
         SourceKind::Deposit => "deposits",
         SourceKind::Tile => "tiles",
+        SourceKind::Band => "bands",
     }
 }
 
@@ -5492,6 +5542,38 @@ fn handle_assign_labor(
                 return;
             }
         },
+        // **A BAND IMPROVEMENT'S CREW** - `band <branch> <workers>`: the tile row's twin for an
+        // improvement the band holds at its camp. It names the commanded BAND (the improvement is
+        // keyed by it and carried with it) and the ladder branch, which rides the `species` token as
+        // a tile row's does.
+        "band" => match (band_id, species.as_deref().map(str::trim)) {
+            (Some(band), Some(branch)) if !branch.is_empty() => {
+                let ladder = app.world.resource::<LadderConfigHandle>().get();
+                let branch = BranchId::new(branch);
+                if !core_sim::is_band_branch(&ladder, branch) {
+                    emit_command_failure(
+                        app,
+                        CommandEventKind::CancelOrder,
+                        faction,
+                        format!("'{branch}' is not a band improvement branch this ladder knows."),
+                    );
+                    return;
+                }
+                LaborTarget::Band {
+                    band: BandId(band),
+                    branch,
+                }
+            }
+            _ => {
+                emit_command_failure(
+                    app,
+                    CommandEventKind::CancelOrder,
+                    faction,
+                    "assign_labor band requires a band and a <branch>.".to_string(),
+                );
+                return;
+            }
+        },
         other => {
             emit_command_failure(
                 app,
@@ -5516,8 +5598,9 @@ fn handle_assign_labor(
         // generic one, as the warriors do.
         LaborTarget::Builders => CommandEventKind::CancelOrder,
         LaborTarget::Extract { .. } => CommandEventKind::Extraction,
-        // A tile improvement has no web's channel; it reports on the generic one, as the pools do.
-        LaborTarget::Tile { .. } => CommandEventKind::CancelOrder,
+        // A tile or band improvement has no web's channel; it reports on the generic one, as the
+        // pools do.
+        LaborTarget::Tile { .. } | LaborTarget::Band { .. } => CommandEventKind::CancelOrder,
     };
 
     // Stance validation. Unassigning (`workers == 0`) is always allowed — a player must be able to
@@ -5596,7 +5679,10 @@ fn handle_assign_labor(
     let unstaffing = workers == 0 && !target.is_need_row() && !target.is_staffed();
     let staffing_a_standing_pool = matches!(
         target,
-        LaborTarget::Builders | LaborTarget::Roadwork | LaborTarget::Tile { .. }
+        LaborTarget::Builders
+            | LaborTarget::Roadwork
+            | LaborTarget::Tile { .. }
+            | LaborTarget::Band { .. }
     );
     if staffing_a_standing_pool && kit_id.is_some() {
         let refusal = match target {
@@ -5605,6 +5691,9 @@ fn handle_assign_labor(
             }
             LaborTarget::Tile { .. } => {
                 "a tile crew names no kit — its keeping tools follow from the rung the improvement stands on"
+            }
+            LaborTarget::Band { .. } => {
+                "a band crew names no kit — its keeping tools follow from the rung the improvement stands on"
             }
             _ => "a pool names no kit — the road keepers' tools follow from the rung each road stands on",
         }
@@ -5692,6 +5781,34 @@ fn handle_assign_labor(
         app.world
             .resource_mut::<core_sim::TileImprovementRegistry>()
             .place(*tile, *branch, faction, &ladder);
+    }
+    // **A BAND CREW PLACES THE BAND'S OWN IMPROVEMENT**, at the branch's floor. The row names the
+    // band the command was addressed to (the selected band), never another.
+    if let (
+        true,
+        LaborTarget::Band {
+            band: held_by,
+            branch,
+        },
+    ) = (workers > 0 || target.is_staffed(), &target)
+    {
+        let ladder = app.world.resource::<LadderConfigHandle>().get();
+        if app.world.get::<BandId>(band.entity) != Some(held_by) {
+            emit_command_failure(
+                app,
+                event_kind,
+                faction,
+                format!(
+                    "Band {} is not the band this order was addressed to.",
+                    held_by.0
+                ),
+            );
+            return;
+        }
+        app.world
+            .resource_mut::<core_sim::TileImprovementRegistry>()
+            .bands_mut()
+            .place(*held_by, *branch, &ladder);
     }
 
     let kind_label = target.kind();
@@ -8625,6 +8742,61 @@ fn validate_tile_verb(
     }
 }
 
+/// **A band-kind verb's gate** - [`validate_tile_verb`]'s twin for an improvement a band holds at its
+/// camp: the faction must command the band, know the rung, and stand on the rung beneath it; a rung
+/// already held is refused rather than re-declared.
+fn validate_band_verb(
+    app: &bevy::prelude::App,
+    faction: FactionId,
+    band: BandId,
+    branch: BranchId,
+    rung: &core_sim::RungDef,
+) -> Result<(), String> {
+    let held_by_faction = app.world.iter_entities().any(|entity| {
+        entity.get::<BandId>() == Some(&band)
+            && entity
+                .get::<PopulationCohort>()
+                .is_some_and(|cohort| cohort.faction == faction)
+    });
+    if !held_by_faction {
+        return Err(format!(
+            "Band {} is not one of your people, so it cannot raise a {}.",
+            band.0,
+            rung.label.to_lowercase()
+        ));
+    }
+    let ladder = app.world.resource::<LadderConfigHandle>().get();
+    if let Some(refusal) = knowledge_refusal(app, faction, &ladder, rung) {
+        return Err(refusal);
+    }
+    let destination = rung.rung_id();
+    let required = ladder
+        .below_id(destination)
+        .expect("a rung a verb raises stands on the rung beneath it");
+    let label = rung.label.to_lowercase();
+    let improvements = app.world.resource::<core_sim::TileImprovementRegistry>();
+    match improvements.bands().get(band, branch) {
+        Some(improvement) if ladder.at_or_above(improvement.held_rung(), destination) => {
+            Err(format!("Band {}'s {label} is already built.", band.0))
+        }
+        Some(improvement) if !ladder.at_or_above(improvement.held_rung(), required) => {
+            Err(format!(
+                "It is only a {} - it must be a {} before you can raise it to a {label}.",
+                ladder.rung(improvement.held_rung()).label.to_lowercase(),
+                ladder.rung(required).label.to_lowercase(),
+            ))
+        }
+        Some(_) => Ok(()),
+        None if ladder.root_of(branch).map(core_sim::RungDef::rung_id) == Some(required) => Ok(()),
+        None => Err(format!(
+            "Band {} holds no {} yet - raise the {} first.",
+            band.0,
+            branch.as_str(),
+            ladder.rung(required).label.to_lowercase()
+        )),
+    }
+}
+
 /// **Every refusal `grade` / `pave` can produce, in the order they are asked.** Split out so the
 /// command and its tests read one list — the `validate_cultivate` convention one branch over.
 fn road_verb_refusal(
@@ -8984,7 +9156,7 @@ fn handle_build_rung(app: &mut bevy::prelude::App, faction: FactionId, request: 
         .target_x
         .zip(request.target_y)
         .map(|(x, y)| UVec2::new(x, y));
-    if request.band_id.is_some() && kind != Some(SourceKind::Road) {
+    if request.band_id.is_some() && !matches!(kind, Some(SourceKind::Road | SourceKind::Band)) {
         reject_build(
             app,
             faction,
@@ -9091,6 +9263,33 @@ fn handle_build_rung(app: &mut bevy::prelude::App, faction: FactionId, request: 
                 return;
             }
         },
+        // **A BAND IMPROVEMENT IS BUILT ON THE BAND ITSELF**: `build <verb> <faction> <band>`. The
+        // text grammar reads a lone number as a herd id (`parse_build_rung_tail` cannot know which
+        // verbs are band verbs), so the band is the explicit `band_id` or that lone number.
+        Some(SourceKind::Band) => {
+            let named = request.band_id.or_else(|| {
+                request
+                    .herd_id
+                    .as_deref()
+                    .and_then(|token| token.parse::<u64>().ok())
+            });
+            match (named, tile, &request.material) {
+                (Some(band), None, None) => LaborTarget::Band {
+                    band: BandId(band),
+                    branch: rung.branch,
+                },
+                _ => {
+                    reject_build(
+                        app,
+                        faction,
+                        channel,
+                        &verb,
+                        format!("'{verb}' names a band: `build {verb} <faction> <band>`."),
+                    );
+                    return;
+                }
+            }
+        }
         None => {
             reject_build(
                 app,
@@ -9122,6 +9321,9 @@ fn handle_build_rung(app: &mut bevy::prelude::App, faction: FactionId, request: 
             | BuildSource::Deposit { tile, .. }
             | BuildSource::Tile { tile, .. } => {
                 format!("({}, {})", tile.x, tile.y)
+            }
+            BuildSource::Band { band, branch } => {
+                format!("Band {}'s {}", band.0, branch.as_str())
             }
         },
     );
@@ -10509,7 +10711,10 @@ fn handle_abandon(app: &mut bevy::prelude::App, faction: FactionId, source: Buil
         handle_abandon_working(app, faction, UVec2::new(x, y), material);
         return;
     }
-    if let (true, Some(target)) = (source.is_tile_improvement(&ladder), source.target(&ladder)) {
+    if let (true, Some(target)) = (
+        source.is_tile_improvement(&ladder) || source.is_band_improvement(&ladder),
+        source.target(&ladder),
+    ) {
         let bands = bands_working_source(app, faction, &target);
         if bands.is_empty() {
             emit_command_failure(
@@ -10733,6 +10938,13 @@ fn handle_build_order(
     let Some(ladder) = source_ladder(app, faction, &source) else {
         return;
     };
+    let source = match source.bound_to_band(&ladder, band_id) {
+        Ok(source) => source,
+        Err(reason) => {
+            emit_command_failure(app, CommandEventKind::CancelOrder, faction, reason);
+            return;
+        }
+    };
     let label = source.label(&ladder);
     let Some(build_source) = source.build_source(&ladder) else {
         emit_command_failure(
@@ -10805,6 +11017,13 @@ fn handle_build_priority(
 ) {
     let Some(ladder) = source_ladder(app, faction, &source) else {
         return;
+    };
+    let source = match source.bound_to_band(&ladder, band_id) {
+        Ok(source) => source,
+        Err(reason) => {
+            emit_command_failure(app, CommandEventKind::CancelOrder, faction, reason);
+            return;
+        }
     };
     let label = source.label(&ladder);
     let Some(build_source) = source.build_source(&ladder) else {
@@ -11004,6 +11223,13 @@ fn handle_work_priority(
 ) {
     let Some(ladder) = source_ladder(app, faction, &source) else {
         return;
+    };
+    let source = match source.bound_to_band(&ladder, band_id) {
+        Ok(source) => source,
+        Err(reason) => {
+            emit_command_failure(app, CommandEventKind::CancelOrder, faction, reason);
+            return;
+        }
     };
     let label = source.label(&ladder);
     // ⛔ **A ROAD HAS NO CREW, SO NO ROW TO RANK** (`docs/plan_site_crews.md` §2.4): its only mark
@@ -11347,6 +11573,8 @@ fn build_rung_on_source(
         BuildSource::Road(_) => Some(declared),
         // A tile improvement's declaration answers for itself, the road's reason exactly.
         BuildSource::Tile { .. } => Some(declared),
+        // So is a band improvement's.
+        BuildSource::Band { .. } => Some(declared),
     }
 }
 
@@ -12963,6 +13191,7 @@ fn command_kind_display(kind: CommandEventKind) -> &'static str {
         CommandEventKind::CulturePull => "Culture pull",
         CommandEventKind::Dealing => "Dealing",
         CommandEventKind::Treaty => "Treaty",
+        CommandEventKind::LeaderEmerged => "Leader emerged",
     }
 }
 
@@ -14995,6 +15224,7 @@ mod tests {
                     last_food_need: 0.0,
                     fed_party_workers: Default::default(),
                     last_food_spoiled: 0.0,
+                    last_food_kept: 0.0,
                     last_turn_food_transfers: Default::default(),
                     last_turn_fodder_transfers: Default::default(),
                     last_turn_transfer_crossings: Vec::new(),
@@ -17048,6 +17278,326 @@ mod tests {
             queued(&mut app),
             1,
             "with a crew on it the climb is declared"
+        );
+    }
+
+    /// **A BAND IMPROVEMENT IS CREWED AND BUILT ON THE BAND ITSELF** - `assign_labor ... band
+    /// <branch> <workers>` puts a crew on the shipped drying rack (placing it at the band), a `kit`
+    /// token on that row is refused, and `build rack <faction> <band>` declares the climb only once
+    /// a crew is on it AND the `storage` lesson is learned. A branch that is not band-kind is
+    /// refused by name.
+    #[test]
+    fn assign_labor_band_crews_a_drying_rack_and_a_build_needs_that_crew_and_the_lesson() {
+        const CREW: u32 = 2;
+        let mut app = build_test_app();
+        app.update();
+        let faction = FactionId(0);
+        let band = starting_band_id(&mut app, faction);
+        let camp_stores = core_sim::BranchId::new("camp_stores");
+        let crew_on = |app: &mut bevy::prelude::App| -> u32 {
+            app.world
+                .query::<&LaborAllocation>()
+                .iter(&app.world)
+                .flat_map(|allocation| allocation.assignments.iter())
+                .filter(|row| matches!(&row.target, LaborTarget::Band { .. }))
+                // **The count on a band crew is its MAX** (#871): the sim staffs the keepers, so a
+                // freshly placed rack with no bill to keep stands at zero hands.
+                .map(|row| row.max_workers.unwrap_or(0))
+                .sum()
+        };
+        let queued = |app: &mut bevy::prelude::App| -> usize {
+            app.world
+                .query::<&LaborAllocation>()
+                .iter(&app.world)
+                .map(|allocation| allocation.build_queue.len())
+                .sum()
+        };
+        let assign = |app: &mut bevy::prelude::App, branch: &str, kit: Option<String>| {
+            handle_assign_labor(
+                app,
+                faction,
+                Some(band),
+                "band".to_string(),
+                CREW,
+                None,
+                None,
+                None,
+                Some(branch.to_string()),
+                None,
+                kit,
+                Vec::new(),
+                false,
+            );
+        };
+        // The band is named by its id alone: the lone number is read as the band by the server.
+        let rack = || BuildRungRequest {
+            verb: "rack".to_string(),
+            herd_id: Some(band.to_string()),
+            ..BuildRungRequest::default()
+        };
+
+        handle_build_rung(&mut app, faction, rack());
+        assert_eq!(
+            queued(&mut app),
+            0,
+            "no crew keeps the rack, so nothing is queued"
+        );
+
+        assign(&mut app, "camp_stores", Some("none".to_string()));
+        assert_eq!(crew_on(&mut app), 0, "a band crew names no kit");
+
+        assign(&mut app, "route", None);
+        assert_eq!(
+            crew_on(&mut app),
+            0,
+            "a branch that is not band-kind takes no band crew"
+        );
+
+        assign(&mut app, "camp_stores", None);
+        assert_eq!(crew_on(&mut app), CREW, "the crew row stands at its Max");
+        assert!(
+            app.world
+                .resource::<core_sim::TileImprovementRegistry>()
+                .bands()
+                .get(BandId(band), camp_stores)
+                .is_some(),
+            "the first crew places it at the band"
+        );
+
+        handle_build_rung(&mut app, faction, rack());
+        assert_eq!(
+            queued(&mut app),
+            0,
+            "a crew alone is not enough: the storage lesson is not learned"
+        );
+
+        app.world
+            .resource_mut::<core_sim::DiscoveryProgressLedger>()
+            .add_progress(
+                faction,
+                core_sim::spoilage::STORAGE_DISCOVERY_ID,
+                core_sim::scalar_one(),
+            );
+        handle_build_rung(&mut app, faction, rack());
+        assert_eq!(
+            queued(&mut app),
+            1,
+            "with a crew on it and the lesson learned the climb is declared"
+        );
+    }
+
+    /// **A BAND IMPROVEMENT'S CREW IS THE SIM'S KEEPERS, UNDER THE PLAYER'S MAX** (#871) - a rack
+    /// standing on its rung owes a bill, the sim staffs the hands that keep it from the pool at
+    /// distance 0, and a Max below the bill caps them. The command's count is only the Max.
+    #[test]
+    fn a_band_improvements_crew_is_the_keepers_the_sim_staffs_under_the_players_max() {
+        const GENEROUS_MAX: u32 = 12;
+        const TIGHT_MAX: u32 = 1;
+        let mut app = build_test_app();
+        app.update();
+        let faction = FactionId(0);
+        let band = starting_band_id(&mut app, faction);
+        let camp_stores = core_sim::BranchId::new("camp_stores");
+        let ladder = app.world.resource::<LadderConfigHandle>().get();
+        // Stand the rack on its rung, the whole span worked.
+        let rack_rung = ladder
+            .rungs_of(camp_stores)
+            .into_iter()
+            .find(|rung| rung.verb.is_some())
+            .expect("the branch has a built rung")
+            .rung_id();
+        let (base, width) = core_sim::band_improvement::band_rung_span(rack_rung, &ladder);
+        let staffed = |app: &mut bevy::prelude::App| -> (u32, Option<u32>) {
+            app.world
+                .query::<&LaborAllocation>()
+                .iter(&app.world)
+                .flat_map(|allocation| allocation.assignments.iter())
+                .find(|row| matches!(&row.target, LaborTarget::Band { .. }))
+                .map(|row| (row.workers, row.max_workers))
+                .expect("the band row stands")
+        };
+        let assign = |app: &mut bevy::prelude::App, max: u32| {
+            handle_assign_labor(
+                app,
+                faction,
+                Some(band),
+                "band".to_string(),
+                max,
+                None,
+                None,
+                None,
+                Some("camp_stores".to_string()),
+                None,
+                None,
+                Vec::new(),
+                false,
+            );
+        };
+        assign(&mut app, GENEROUS_MAX);
+        app.world
+            .resource_mut::<core_sim::TileImprovementRegistry>()
+            .bands_mut()
+            .get_mut(BandId(band), camp_stores)
+            .expect("placed by the first crew")
+            .set_position(base + width, &ladder);
+        assign(&mut app, GENEROUS_MAX);
+        let (keepers, max) = staffed(&mut app);
+        assert!(
+            keepers > 0 && keepers < GENEROUS_MAX,
+            "the sim staffs the rack's keepers, not the Max: {keepers} of {max:?}"
+        );
+        assign(&mut app, TIGHT_MAX);
+        let (capped, _) = staffed(&mut app);
+        assert!(
+            capped <= TIGHT_MAX,
+            "a Max of {TIGHT_MAX} caps the crew: {capped}"
+        );
+    }
+
+    /// **A QUEUED RACK CAN BE CANCELLED, RE-ORDERED AND RANKED** - the five queue verbs address a band
+    /// improvement by `branch=<id>` on the band (`abandon` / `unqueue` name the band beside it, the
+    /// other three carry it in the command). `unqueue` drops the entry and keeps the crew;
+    /// `abandon` drops the crew row and the entry and leaves the meter where it stood; a band that
+    /// is not the command's is refused.
+    #[test]
+    fn the_queue_verbs_address_a_band_improvement_by_branch() {
+        let mut app = build_test_app();
+        app.update();
+        let faction = FactionId(0);
+        let band = starting_band_id(&mut app, faction);
+        let camp_stores = core_sim::BranchId::new("camp_stores");
+        let source = |band_named: Option<u64>, branch: &str| BuildSourceRef {
+            target_x: None,
+            target_y: None,
+            herd_id: band_named.map(|band| band.to_string()),
+            material: None,
+            branch: Some(branch.to_string()),
+        };
+        let target = LaborTarget::Band {
+            band: BandId(band),
+            branch: camp_stores,
+        };
+        let build_source = BuildSource::of(&target).expect("a band row is a build source");
+        let rows = |app: &mut bevy::prelude::App| -> Vec<core_sim::LaborAssignment> {
+            app.world
+                .query::<&LaborAllocation>()
+                .iter(&app.world)
+                .flat_map(|allocation| allocation.assignments.iter().cloned())
+                .filter(|row| matches!(&row.target, LaborTarget::Band { .. }))
+                .collect()
+        };
+        let entry = |app: &mut bevy::prelude::App| -> Option<core_sim::BuildQueueEntry> {
+            app.world
+                .query::<&LaborAllocation>()
+                .iter(&app.world)
+                .find_map(|allocation| allocation.build_queue_entry(&build_source).cloned())
+        };
+        let declare = |app: &mut bevy::prelude::App| {
+            handle_build_rung(
+                app,
+                faction,
+                BuildRungRequest {
+                    verb: "rack".to_string(),
+                    herd_id: Some(band.to_string()),
+                    ..BuildRungRequest::default()
+                },
+            );
+        };
+
+        handle_assign_labor(
+            &mut app,
+            faction,
+            Some(band),
+            "band".to_string(),
+            2,
+            None,
+            None,
+            None,
+            Some("camp_stores".to_string()),
+            None,
+            None,
+            Vec::new(),
+            false,
+        );
+        app.world
+            .resource_mut::<core_sim::DiscoveryProgressLedger>()
+            .add_progress(
+                faction,
+                core_sim::spoilage::STORAGE_DISCOVERY_ID,
+                core_sim::scalar_one(),
+            );
+        declare(&mut app);
+        assert!(entry(&mut app).is_some(), "the rack is queued");
+
+        // Ranking and re-ordering take the band from the command: `branch=` alone is enough.
+        handle_build_priority(
+            &mut app,
+            faction,
+            band,
+            source(None, "camp_stores"),
+            "high".to_string(),
+        );
+        assert_eq!(
+            entry(&mut app).map(|entry| entry.priority),
+            Some(SourcePriority::High),
+            "build_priority marks the queued rack"
+        );
+        let events_before = app.world.resource::<CommandEventLog>().iter().count();
+        handle_build_order(&mut app, faction, band, source(None, "camp_stores"), 0);
+        let log = app.world.resource::<CommandEventLog>();
+        assert!(
+            log.iter()
+                .skip(events_before)
+                .any(|event| event.detail.as_deref().is_some_and(|detail| {
+                    detail.contains("action=build_order") && detail.contains("position=0")
+                })),
+            "build_order finds the queued rack and lands it first"
+        );
+        handle_work_priority(
+            &mut app,
+            faction,
+            band,
+            source(None, "camp_stores"),
+            "low".to_string(),
+        );
+        assert_eq!(
+            rows(&mut app).first().map(|row| row.priority),
+            Some(SourcePriority::Low),
+            "work_priority ranks the band row"
+        );
+        // A band named twice must agree with the command's own.
+        handle_work_priority(
+            &mut app,
+            faction,
+            band,
+            source(Some(band + 1), "camp_stores"),
+            "high".to_string(),
+        );
+        assert_eq!(
+            rows(&mut app).first().map(|row| row.priority),
+            Some(SourcePriority::Low),
+            "a different band named beside the command's is refused"
+        );
+
+        // `unqueue` withdraws the declaration and keeps the crew.
+        handle_unqueue(&mut app, faction, source(Some(band), "camp_stores"));
+        assert!(entry(&mut app).is_none(), "unqueue drops the entry");
+        assert_eq!(rows(&mut app).len(), 1, "the crew row is left alone");
+
+        // `abandon` without a band is refused; with one it drops the row and the entry.
+        declare(&mut app);
+        handle_abandon(&mut app, faction, source(None, "camp_stores"));
+        assert_eq!(rows(&mut app).len(), 1, "abandon needs the band named");
+        handle_abandon(&mut app, faction, source(Some(band), "camp_stores"));
+        assert!(rows(&mut app).is_empty(), "abandon drops the crew row");
+        assert!(entry(&mut app).is_none(), "abandon drops the queue entry");
+        assert!(
+            app.world
+                .resource::<core_sim::TileImprovementRegistry>()
+                .bands()
+                .get(BandId(band), camp_stores)
+                .is_some(),
+            "the meter is left to decay, not erased"
         );
     }
 
@@ -29928,6 +30478,9 @@ mod tests {
             matched_ if matched_ == shipped::fell() => "build fell 0 1 1 wood".to_string(),
             matched_ if matched_ == shipped::coppice() => "build coppice 0 1 1 wood".to_string(),
             matched_ if matched_ == shipped::quarry() => "build quarry 0 1 1 stone".to_string(),
+            // The storage branches' verbs: the pit is a tile verb, the rack names the band.
+            matched_ if matched_ == VerbId::new("dig") => "build dig 0 1 1".to_string(),
+            matched_ if matched_ == VerbId::new("rack") => format!("build rack 0 {ROAD_BAND_ID}"),
             other => panic!("no canonical command line is stated for the verb `{other:?}`"),
         }
     }

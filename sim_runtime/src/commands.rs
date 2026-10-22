@@ -1686,6 +1686,10 @@ pub enum ConfigOverrideKind {
     /// The mobility score (`mobility_config.json`, #800) - staged for its EMA `smoothing`, the two
     /// input `weights` and the `hexes_per_turn` reference.
     Mobility,
+    /// The leadership levers (`leadership_config.json`, #859) - staged for the practice threshold
+    /// and the four practice quanta (a finished directed-work build, a split, a herd-following hex, a
+    /// settlement stage reached).
+    Leadership,
 }
 
 impl ConfigOverrideKind {
@@ -1702,6 +1706,7 @@ impl ConfigOverrideKind {
         ConfigOverrideKind::Wellbeing,
         ConfigOverrideKind::Fauna,
         ConfigOverrideKind::Mobility,
+        ConfigOverrideKind::Leadership,
     ];
 
     /// The wire spelling, shared with the client's `tuning_manifest.json` `kind` field.
@@ -1717,6 +1722,7 @@ impl ConfigOverrideKind {
             ConfigOverrideKind::Wellbeing => "wellbeing",
             ConfigOverrideKind::Fauna => "fauna",
             ConfigOverrideKind::Mobility => "mobility",
+            ConfigOverrideKind::Leadership => "leadership",
         }
     }
 
@@ -3717,6 +3723,7 @@ fn config_override_kind_to_proto(kind: ConfigOverrideKind) -> pb::ConfigOverride
         ConfigOverrideKind::Wellbeing => pb::ConfigOverrideKind::Wellbeing,
         ConfigOverrideKind::Fauna => pb::ConfigOverrideKind::Fauna,
         ConfigOverrideKind::Mobility => pb::ConfigOverrideKind::Mobility,
+        ConfigOverrideKind::Leadership => pb::ConfigOverrideKind::Leadership,
     }
 }
 
@@ -3732,6 +3739,7 @@ fn config_override_kind_from_proto(value: i32) -> Result<ConfigOverrideKind, Com
         Ok(pb::ConfigOverrideKind::Wellbeing) => Ok(ConfigOverrideKind::Wellbeing),
         Ok(pb::ConfigOverrideKind::Fauna) => Ok(ConfigOverrideKind::Fauna),
         Ok(pb::ConfigOverrideKind::Mobility) => Ok(ConfigOverrideKind::Mobility),
+        Ok(pb::ConfigOverrideKind::Leadership) => Ok(ConfigOverrideKind::Leadership),
         Ok(pb::ConfigOverrideKind::Unspecified) | Err(_) => Err(CommandDecodeError::InvalidEnum {
             field: "ConfigOverrideKind",
             value,

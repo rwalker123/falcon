@@ -79,7 +79,7 @@ paths:
   first three run in one loop over the player faction's BANDS:
   - **`starving`** (critical) — `BandFoodStatus.is_critical(turns)` **or the band came short of its meal this turn** (`food_shortfall > 0`, `DetailFormat.band_is_starving`); label `"<band> starving"`. On a shortfall the detail names it — `"short 0.40 food — more hands on food"` (`HudAttentionVocab.STARVING_SHORTFALL_DETAIL_FORMAT`) — else `_food_turns_text(turns)`. ⛔ **The shortfall arm is the hand-to-mouth fix**: the sim eats `min(need, larder)` BEFORE the turn's take lands, so a band whose income beats its need on average goes hungry every turn with a runway nowhere near the critical line, and the runway test alone never fired for it. `ui_preview`'s `turn_orb_hand_to_mouth` pins it against a fed twin on the same runway.
   - **`losing_population`** (warn) — shrank vs the previous snapshot (`_prev_band_sizes`); label `"<band> losing population"`, detail = `_decline_reason(days, morale, morale_cause, last_emigrated, x, y, short_of_food)` (`— starving` / `— people leaving` / `— harsh terrain|climate|unrest` / `— low morale`). `starving` is answered by the SHORTFALL first, then by the runway threshold — a shrinking hand-to-mouth band is shrinking of hunger whatever its runway reads.
-  - **`idle_workers`** (warn) — `idle_workers > 0`; label `"N idle workers"`, detail = band name. Supersedes the old `activity == idle` alert (a worker count is more actionable). The count nets out the idle hands the next hunting-by-need muster takes (`HudBandLaborState.hunt_muster_out(band)["idle"]`), which the band panel's Workforce head counts as `out hunting`; a band whose idle hands all go out hunting raises no row. `band_panel_preview`'s `_assert_idle_attention_nets_the_muster` pins the pair.
+  - **`idle_workers`** (warn) — `idle_workers > 0`; label `"N idle workers"`, detail = band name. Supersedes the old `activity == idle` alert (a worker count is more actionable). The count is `HudBandLaborState.people_idle(band)` — the SAME pending-aware number the People bar's idle segment and the idle card show (`band-city-panel.md`), which nets out the idle hands the next hunting-by-need muster takes; a band whose idle hands all go out hunting raises no row. `band_panel_preview`'s `_assert_idle_attention_nets_the_muster` pins the pair. **Two orderings keep the orb and the bar on one answer:** `update_band_alerts` runs `_reconcile_pending()` BEFORE it builds attention, so a snapshot's orb never counts the previous turn's overlay; and `_after_pending_change` re-runs only the idle rows (`AttentionController.refresh_idle_rows`) so a stepper press moves the orb on the same frame — a full rebuild there would drop every losing-population row, `prev_band_sizes` being already overwritten. `_assert_orb_idle_follows_pending` pins both.
 
   - **`starving_pen`** (warn, `_starving_pen_attention`) — a pen this band keeps whose feed it could
     not pay: the herd is **shrinking every turn** and a 25-turn investment is draining away (it
@@ -197,6 +197,33 @@ paths:
     does nothing when pressed is a promise the row cannot keep; the detail says where those hands
     are in words instead (*"they are idle — the band's work board has them"*). Capped at
     `ATTENTION_HANDOFF_MAX_ROWS` with an overflow row, for the off-screen-popover reason.
+
+  - **`leader_emerged`** (**info**, locating, `_leader_emerged_attention`) — a band gained a chief or an
+    elders' council this turn. **Source: the command stream**, the `crew_handoff` pattern exactly: the
+    sim's `leader_emerged` event (`core_sim/src/leadership.rs`, `kind=<chief|elder_council> name=<Name>`
+    on the detail, the band on the event's own `band` field) is ingested by
+    `AttentionController.ingest_command_events`, windowed on the event's own `tick` == the turn and
+    de-duplicated on `seq` (0 admitted), so a full snapshot's re-shipped ring adds no row. Own-faction
+    events only. One row per band, found in THIS snapshot's roster. Label `"<Band> has a chief"` /
+    `"<Band> has an elders' council"`; detail `"Chief <Name> — see the Band tab"` /
+    `"<Name> speaks for them — Band tab"` (the council's is shorter because orb rows clip at
+    `POPOVER_WIDTH`). When the event names no leader the band's cohort `leader_kind` / `leader_name`
+    supply them. **Jump → the band's current tile** (plain recenter). A load produces no event for an
+    existing leader, so no row after a load. Icon `★`. ui_preview `turn_orb_leader_emerged`.
+  - **`herd_thinning`** (**warn**, locating, `_herd_thinning_attention`) — a herd the player's bands
+    hunt has dropped into the `stressed` (below its stressed fraction of carrying capacity) or
+    `collapsing` (below the Allee point: it keeps declining even if hunting stops) `ecology_phase` —
+    the warning arrives BEFORE the point of no return, where the Telling's own herd beat fires only at
+    collapsing. **Found through the bands' own Hunt assignments** (`_hunted_herds_of`, over THIS
+    snapshot's roster; never a scan of `herds`), de-duplicated across bands, corralled herds skipped
+    (they are `starving_pen`'s). A STANDING condition: the row stays while the herd is in either band
+    and goes when it recovers. Label `"<Species> herd thinning"` / `"<Species> herd collapsing"`;
+    detail `"down to N% — ease the hunt"` / `"down to N% — dying out even if left alone"`, N =
+    `round(biomass / carrying_capacity × 100)` off the herd dict. Sorted collapsing first, then N
+    ascending; capped at `ATTENTION_HERD_THINNING_MAX_ROWS` with a `"+N more herds thinning"`
+    overflow row. **Jump → the herd** (`_alerted_herd_at` → `BandPanelController.focus_labor_source`,
+    so the hunt row/drawer opens). Icon `▽`. ui_preview `turn_orb_herd_thinning` (negative controls: a
+    stressed herd nobody of ours hunts, a healthy hunted herd and a corralled herd raise no row).
 
   The fourth (`_awaiting_orders_attention`) runs over the **EXPEDITIONS** split out of that loop:
   - **`awaiting_orders`** (warn) — an expedition in `ExpeditionPhase::Awaiting`: parked at its

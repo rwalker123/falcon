@@ -146,7 +146,10 @@ the Crafters stepper is retired like the Builders one.
 - **A recipe caps its crafters per item.** Each recipe states how many hands can work one item at once
   (a spear 1, a sled 2 — a per-recipe config value). An order may take that many per item it still
   has to make, so a batch (*Baskets ×2*) works its items side by side, and twenty crafters never land
-  on one spear. Issue #852 carries the recipe values.
+  on one spear. The value is each recipe's `crafters_per_item` in `core_sim/src/data/recipes.json`
+  (#852): 1 for a thing one person holds and shapes (spears, clubs, hoes, snares, the awl), 2 for a
+  thing a second pair of hands holds while the first lashes or weaves (the sled, baskets, hurdles, the
+  tanning frame, the loom, the road tool sets).
 - **Orders are staffed the way builds are.** One crafter on every workable order first, at any
   priority; then round-robin within High up to each order's cap, then Normal, then Low.
 - **Each order carries a priority**, and it ranks against sources on the one priority list. So a High
@@ -249,7 +252,7 @@ that today only changes a label or an icon now changes what the player manages.
 
 | Level | What it is | How it starts | Who leads it |
 |---|---|---|---|
-| **1. Band** | One band, as today | The band's people accept direction once directed work succeeds (below) | a **chief** (Hierarchical) or an **elders' council** (Egalitarian) |
+| **1. Band** | One band, as today | The band does enough work that needs an organiser (below) | a **chief** (Hierarchical) or an **elders' council** (Egalitarian) |
 | **2. Tribe** | Bands linked by the supply network — those within reach that already pool goods | The linked bands share a **gathering place** they walk to and work on | a **paramount chief** or a **council of chiefs** |
 | **3. City** | A settled cluster large enough to carry the *city* label (#176), still independent | Its first administered store — a granary and the rations drawn from it | a **ruler** or an **assembly** |
 | **4. Nation** | Cities, tribes and bands united as one faction | Union by conquest or confederation (civilization steps 8–11, #695) | a **faction leader** — a king or a high council |
@@ -264,21 +267,39 @@ that today only changes a label or an icon now changes what the player manages.
 - **Before a nation, the player commands each city and tribe directly.** There are no orders above
   them until level 4 exists.
 
-### How a chief emerges: directed work that succeeds
+### How a chief emerges: work that needs an organiser
 
-A band comes to accept a chief by watching directed work succeed. Every way of playing has some:
+A band comes to need a chief by doing things no one can keep in their head alone. Each such thing
+adds points to the band's own count; when the count reaches the threshold the band has a chief or a
+council, for good. Success is not what counts: a band that spears a horse it happened to spawn
+beside has organised nothing.
 
-| Way of playing | Directed work that counts |
-|---|---|
-| Settled foragers and farmers | a finished build — the first Cultivate, Tame or Corral |
-| Migratory hunters | a big-game hunt that lands its kill — a party against an aurochs or a mammoth, through the hunt's fight |
-| Anyone | a battle won (`docs/plan_battles.md`), or work on a gathering place's monument |
+| What the band does | Why it needs an organiser | Points |
+|---|---|---|
+| Finishes a Cultivate, a Farm, a Tame or a Corral | someone sets who works the patch or the herd, and when | **3** each |
+| Splits — the player orders it | someone decides who goes and what they take; the leavers need someone to lead them away | **3**, to **both** bands |
+| Walks with a followed herd | moving the whole band and its gear after a herd — every hex counts, the walk to reach the herd included | **1** per hex |
+| Reaches a settlement stage (Seasonal camp at 50, Village at 100) | more people, more to manage | **5**, the first time each stage is reached |
 
-Each success adds to one practice count, the way the knowledge ledger teaches a lesson by doing.
-When it fills, the band has a chief or a council. A migratory people needs no settling for either
-level: its chief comes from its hunts, and its tribe forms at a gathering place on its round —
-which is what the gathering place was for foragers in the first place
-(`docs/plan_civilization_steps.md` → "The contact chain").
+The threshold is **10**. Every number is a lever in `leadership_config.json`, tunable in the
+Workbench; these are opening values for playtest.
+
+- **No single act makes a chief.** The largest single award is a stage, at 5.
+- **The count is the band's own, not the people's.** Leadership as a learned skill belongs to the
+  nation level, where it is a people's knowledge; a band's chief comes from what that band does.
+- **Every finished intensification build counts, Farm and Corral included.** A pen's extension ring is
+  fencing, not a new rung, and pays nothing; roads, felling, coppicing and quarrying are not directed
+  work and pay nothing.
+- **A stage pays once.** A band that shrinks below a stage and grows back is not paid again.
+- **What it takes in play** (opening values): a band that splits twice on its first turn holds 6 and
+  needs two builds; each splinter holds 3 and needs three builds or seven hexes of herd. A band that
+  never splits needs four builds, or three and a stage. A migratory band that never splits needs
+  about two legs of its herd's round.
+- **A band that does none of it never gets a leader.** It is doing nothing a leader is for.
+
+A migratory people needs no settling for either level: its chief comes from following its herds, and
+its tribe forms at a gathering place on its round — which is what the gathering place was for
+foragers in the first place (`docs/plan_civilization_steps.md` → "The contact chain").
 
 ### What each level's orders are
 
@@ -425,9 +446,8 @@ writing's miscount and the other ceilings.
 
 ## Open questions
 
-None open in this doc. The battle flow that decides who defends is `docs/plan_battles.md`'s; each
-recipe's crafter cap per item is #852's (crafting arc #840); whether a tile's cap also counts the
-people living on it is the settlement design's.
+None open in this doc. The battle flow that decides who defends is `docs/plan_battles.md`'s; whether
+a tile's cap also counts the people living on it is the settlement design's.
 
 ## Related
 
@@ -439,7 +459,6 @@ people living on it is the settlement design's.
 - [#695](https://github.com/rwalker123/falcon/issues/695) — borders, absorption and the two routes to one polity (how a nation forms)
 - `docs/plan_civilization_steps.md` — the ladder the four levels follow: consent to direction, the
   gathering place, writing's management capacity
-- `docs/plan_battles.md` — a battle won is directed work that succeeds
 - [#798](https://github.com/rwalker123/falcon/issues/798) — hunting by need: the one row type where the
   sim already sizes the crew itself
 - `docs/plan_harvest_floor.md` — the floor and the two crew targets

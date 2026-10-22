@@ -717,6 +717,76 @@ static func build_composition_key(segments: Array, trailing: Control = null) -> 
         key.add_child(trailing)
     return key
 
+## **THE ONE PEOPLE BAR'S SEGMENTS** — children | working | idle | elders — shared by the band zone and
+## the faction page so the palette, order and tooltips are written once. `working_parts` is
+## `HudBandLaborState.working_breakdown` (summed over bands on the faction page); it becomes the
+## working segment's tooltip. `idle_tooltip` is the idle card's reason line. Zero segments are omitted.
+static func people_segments(children: int, working: int, idle: int, elders: int,
+        working_parts: Dictionary, idle_tooltip: String) -> Array:
+    var segments: Array = []
+    if children > 0:
+        segments.append({"key": HudWorkVocab.PEOPLE_GLYPH_CHILDREN, "count": children,
+            "color": HudStyle.VOICE_PIGMENT,
+            "tooltip": "%d %s" % [children, HudWorkVocab.PEOPLE_LABEL_CHILDREN]})
+    if working > 0:
+        segments.append({"key": HudWorkVocab.PEOPLE_GLYPH_WORKING, "count": working,
+            "color": HudStyle.INK_DIM, "tooltip": working_tooltip(working, working_parts)})
+    if idle > 0:
+        segments.append({"key": HudWorkVocab.PEOPLE_KEY_IDLE, "count": idle,
+            "color": HudStyle.WARN, "tooltip": idle_tooltip})
+    if elders > 0:
+        segments.append({"key": HudWorkVocab.PEOPLE_GLYPH_ELDERS, "count": elders,
+            "color": HudStyle.VOICE_INK,
+            "tooltip": "%d %s" % [elders, HudWorkVocab.PEOPLE_LABEL_ELDERS]})
+    return segments
+
+## The working segment's one-sentence tooltip: `18 working: Forage 9 · Hunt 6 · Build 3`.
+## No parts (nothing known to be doing anything) reads `18 working age`.
+static func working_tooltip(working: int, parts: Dictionary) -> String:
+    if parts.is_empty():
+        return "%d %s" % [working, HudWorkVocab.PEOPLE_LABEL_WORKING]
+    var pieces: Array[String] = []
+    for label in parts:
+        pieces.append(HudWorkVocab.PEOPLE_WORKING_PART_FORMAT % [label, int(parts[label])])
+    return HudWorkVocab.PEOPLE_WORKING_BREAKDOWN_FORMAT % [
+        working, HudWorkVocab.PEOPLE_WORKING_BREAKDOWN_SEPARATOR.join(pieces)]
+
+## The People head's readout: the head count plus the away clause (parties are a header clause, not a
+## segment: the sim takes a party's members out of `working_age` on launch).
+static func people_head_readout(total: int, away: int) -> String:
+    var readout := str(total)
+    if away > 0:
+        readout += HudWorkVocab.PEOPLE_AWAY_FORMAT % away
+    return readout
+
+## The IDLE CARD: a bordered amber card, a big amber number over a dim reason line. The card's tooltip
+## says idle people are spare capacity. Tagged `IDLE_CARD_META` so a harness finds it by identity.
+static func build_idle_card(number_text: String, reason_text: String) -> PanelContainer:
+    var card := PanelContainer.new()
+    card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    card.add_theme_stylebox_override("panel", HudStyle.idle_card_stylebox())
+    card.set_meta(HudWorkVocab.IDLE_CARD_META, true)
+    card.tooltip_text = HudWorkVocab.IDLE_CARD_TOOLTIP
+    var col := VBoxContainer.new()
+    col.add_theme_constant_override("separation", HudWorkVocab.IDLE_CARD_SEPARATION)
+    col.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    card.add_child(col)
+    var number := Label.new()
+    number.text = number_text
+    number.add_theme_font_size_override("font_size", HudWorkVocab.IDLE_CARD_NUMBER_FONT_SIZE)
+    number.add_theme_color_override("font_color", HudStyle.WARN)
+    number.set_meta(HudWorkVocab.IDLE_CARD_NUMBER_META, true)
+    number.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    col.add_child(number)
+    var reason := Label.new()
+    reason.text = reason_text
+    reason.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+    reason.add_theme_font_size_override("font_size", HudWorkVocab.IDLE_CARD_REASON_FONT_SIZE)
+    reason.add_theme_color_override("font_color", HudStyle.INK_DIM)
+    reason.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    col.add_child(reason)
+    return card
+
 ## A zone's content column: the VBox every zone builder fills.
 static func make_zone_column() -> VBoxContainer:
     var col := VBoxContainer.new()

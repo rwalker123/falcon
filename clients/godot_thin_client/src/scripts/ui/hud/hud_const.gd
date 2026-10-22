@@ -113,6 +113,10 @@ const LABOR_KIND_EXTRACT := "extract"
 ## names which ladder branch, and the work board reads the branch's and rung's names off the catalog.
 const LABOR_KIND_TILE := "tile"
 
+## A BAND IMPROVEMENT's crew row (a drying rack): the sim staffs it from the player's floor like a tile
+## row's, but the improvement is the BAND's own, so the row names a `branch` and no tile (`x`/`y` read -1).
+const LABOR_KIND_BAND := "band"
+
 # **THE BUILDING ROLE** (`docs/plan_standing_upkeep.md` §2.5) — the third band-level standing pool,
 # staffed by the same `assign_labor <faction> <band> builders <workers>`, and the one that replaced
 # the per-source build crew a verb used to carry.

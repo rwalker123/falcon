@@ -1,0 +1,59 @@
+# Leader Portrait Generation Prompts
+#
+# The portrait twin of assets/icons/icon_prompts.txt and assets/terrain/texture_prompts.txt.
+# These prompts generate the art behind the leader block at the top of the Band tab
+# (issue #859, `src/scripts/ui/hud/LeaderPortrait.gd`).
+#
+# WHERE IT GOES: LeaderPortrait draws `res://assets/portraits/leader_placeholder.png`
+# (`PORTRAIT_TEXTURE_PATH`) whenever that file exists, and falls back to a drawn
+# head-and-shoulders silhouette in the faction colour when it does not. Dropping the PNG at
+# that path is the whole wiring; no code changes.
+#
+# HOW IT IS DRAWN, which is what the prompt has to serve:
+#   - FULL-BLEED AND OPAQUE. The texture is stretched over the whole square (44px inside a
+#     48px frame), on top of the panel ground. It is NOT keyed to transparency the way the
+#     icon families are, so there is no magenta background and no icon_key.py step. The
+#     image's own background IS the portrait's background.
+#   - ONE IMAGE FOR EVERY LEADER AND EVERY FACTION. The same picture is the chief, the elders'
+#     council speaker and every rival people's leader, so it must not commit to one culture,
+#     sex or faction colour. A distinct face per leader is a later art set; this one is the
+#     placeholder.
+#   - DIMMED FOR "NO LEADER YET". The empty state draws the same texture at low alpha, so the
+#     image must still read as a person when faint: a strong head-and-shoulders silhouette
+#     against a darker background.
+#   - JUDGE IT AT 44px, NOT AT 1024. Fine detail (jewellery, face paint, fur texture) turns to
+#     noise at this size. The face, the hair outline and the shoulders are what survive.
+#     Downscale candidates side by side before choosing, as for the icons.
+#
+# THE ERA: a band society just becoming a chiefdom. Hunting, foraging, first herding and
+# sowing; stone, bone, hide, wood. No metal, no crowns, no writing, no recognisable real-world
+# culture (the peoples are procedurally generated).
+#
+# THE STYLE matches the terrain textures: painterly, muted, earthy, not photoreal, not a
+# flat-vector icon. The background is dark and close to the panel ground #0e161a (HudStyle
+# GROUND_2), so the 1px frame reads as the edge of the picture rather than as a box drawn
+# around a lighter one.
+#
+# AFTER GENERATING:
+#   1. Crop to a square with the head roughly centred, the top of the head about 15% below
+#      the top edge, and the shoulders cut off by the bottom edge.
+#   2. Resize to 256x256 PNG (the square shows at 44px logical; 256 leaves room for HiDPI).
+#   3. Save as assets/portraits/leader_placeholder.png.
+#   4. Restart through scripts/run_stack.sh, which re-imports changed art. For a bare `godot`
+#      launch or a preview harness, run
+#      `godot --headless --path clients/godot_thin_client --import` first.
+#   5. Check the Band tab in all three states: chief, council (the badge sits over the
+#      bottom-right corner, so keep that corner free of anything important) and no leader
+#      yet (the faint version).
+#
+# ============================================================================
+# leader_placeholder  ->  assets/portraits/leader_placeholder.png
+# ============================================================================
+
+leader_placeholder: Painterly head-and-shoulders portrait of a prehistoric band chief, an older weathered person of indeterminate ethnicity, calm steady gaze toward the viewer, face lit softly from the upper left, long hair tied back, simple hide cloak with a fur collar over the shoulders, a single bone-and-cord necklace, no metal, no crown, no headdress, no face paint, no text. Dark muted blue-black background (#0e161a), plain and even, no scenery, no vignette, no frame, no border. Strong clear silhouette of head and shoulders against the background, head centred, shoulders cropped by the bottom edge. Muted earthy palette of ochre, umber, and warm skin tones, painterly brushwork, not photorealistic, not a flat vector icon. Square 1:1, readable as a small game UI portrait.
+
+# Negative prompt (Leonardo.ai / Stable Diffusion):
+#   text, watermark, signature, frame, border, rounded corners, card, badge, vignette,
+#   scenery, landscape, sky, crown, helmet, armour, metal, jewellery clutter, feathers
+#   headdress, face paint, multiple people, full body, hands, photorealistic, 3d render,
+#   flat vector, oversaturated, bright background

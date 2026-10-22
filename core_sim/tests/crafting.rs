@@ -94,6 +94,7 @@ fn cohort(working: f32, stores: LocalStore) -> PopulationCohort {
         last_food_need: 0.0,
         fed_party_workers: Default::default(),
         last_food_spoiled: 0.0,
+        last_food_kept: 0.0,
         last_turn_food_transfers: Default::default(),
         last_turn_fodder_transfers: Default::default(),
         last_turn_transfer_crossings: Vec::new(),
@@ -711,6 +712,7 @@ const FIXTURE_RECIPES: &str = r#"{
     "ingot": {
       "craft": "tanning",
       "work": 4.0,
+      "crafters_per_item": 1,
       "inputs": [{ "material": "ore", "amount": 4.0, "reads": "hardness" }],
       "outputs": [{ "equipment": "spears", "amount": 1.0 }],
       "grades": { "poor": {} }

@@ -349,6 +349,7 @@ fn give_spears_two_metal_tiers(app: &mut App, edit: impl FnOnce(&mut serde_json:
                 "label": label,
                 "craft": "bone_working",
                 "work": 6.0,
+                "crafters_per_item": 1,
                 "inputs": [{ "material": "bone", "amount": 1.0, "reads": "density" }],
                 "outputs": [{ "equipment": SPEARS_ITEM, "amount": 1.0, "tier": tier }]
             }),

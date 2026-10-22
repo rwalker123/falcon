@@ -136,6 +136,8 @@ const KNOWLEDGE_UNLOCK_NOTES := {
 	"herd_lore": "See where a migrating herd goes next.",
 	"travois": "Each worker carries more on the move.",
 	"drives": "Hunters take more from a big herd.",
+	# Storage (#707/#708): taught by rot, unlocks both stores.
+	"storage": "Build a drying rack at camp and dig storage pits, so food keeps longer.",
 }
 
 # --- Owned state (moved off HudLayer) ---

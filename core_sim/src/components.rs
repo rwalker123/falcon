@@ -304,17 +304,28 @@ pub struct MaterialDraw {
 /// **One lot of one keeping class, and how long it has been keeping** — the unit food rots in.
 /// `age` counts the rot passes the lot has survived (plus any walk it was carried on), so it expires
 /// the turn its age reaches the class's shelf life; see [`FoodMix`].
+///
+/// **`age` and `stored` are two clocks.** `age` is the SPOILAGE clock: it starts at the walk a
+/// caravan pack was carried on, so meat rots on the way home. `stored` is the LARDER clock: it
+/// starts at `0` the turn the lot enters a band's larder (a home harvest and a landing pack alike)
+/// and advances one per rot pass while it sits there. Food counts as KEPT (#708) by `stored`, never
+/// by `age`, so a far hunt's meat does not arrive already "kept".
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct FoodBatch {
-    /// Turns this lot has been keeping.
+    /// Turns this lot has been keeping (walk included).
     pub age: u32,
+    /// Turns this lot has sat in the band's own larder.
+    pub stored: u32,
     /// How much of it there is (never zero in a held mix).
     pub amount: Scalar,
 }
 
+/// The larder time of a lot that has just entered a band's larder.
+pub const JUST_STORED: u32 = 0;
+
 /// `batches` scaled to total exactly `target`, every batch by the same factor (in exact fixed-point:
 /// each share floors, and the micro-units the floors drop go one at a time to the oldest batches
-/// with room — any batch when `target` exceeds what is held). The lots keep their ages.
+/// with room — any batch when `target` exceeds what is held). The lots keep both clocks.
 fn scale_batches(batches: &[FoodBatch], target: Scalar) -> Vec<FoodBatch> {
     let held: i128 = batches.iter().map(|b| i128::from(b.amount.raw())).sum();
     if held <= 0 || target <= scalar_zero() {
@@ -348,6 +359,7 @@ fn scale_batches(batches: &[FoodBatch], target: Scalar) -> Vec<FoodBatch> {
         .filter(|(_, share)| *share > 0)
         .map(|(batch, share)| FoodBatch {
             age: batch.age,
+            stored: batch.stored,
             amount: Scalar::from_raw(share),
         })
         .collect()
@@ -360,7 +372,7 @@ fn scale_batches(batches: &[FoodBatch], target: Scalar) -> Vec<FoodBatch> {
 /// ([`crate::spoilage`]) rather than being cut down to a line up front:
 ///
 /// - [`Self::add`] lands a lot at age 0; [`Self::add_aged`] lands one that has been travelling.
-///   Lots of equal age in a class merge.
+///   Both land with larder time `0`. Lots of equal age AND equal larder time in a class merge.
 /// - **Every take removes the oldest lot first** within a class ([`Self::remove`]).
 /// - **A proportional move** ([`Self::proportional`], [`Self::split`]) scales every lot by the same
 ///   factor, so the share that moves keeps its ages and both halves expire on the same turn.
@@ -428,21 +440,39 @@ impl FoodMix {
     /// Add `amount` of `class` that has already kept `age` turns (a pack that was walked home).
     /// A non-positive amount is a no-op; a lot of the same age merges.
     pub fn add_aged(&mut self, class: &str, amount: Scalar, age: u32) {
-        if amount <= scalar_zero() {
+        self.add_lot(
+            class,
+            FoodBatch {
+                age,
+                stored: JUST_STORED,
+                amount,
+            },
+        );
+    }
+
+    /// Add one whole lot, both clocks as given; a lot of the same age and larder time merges. Lots
+    /// stay oldest first (by `age`, then by `stored`).
+    fn add_lot(&mut self, class: &str, lot: FoodBatch) {
+        if lot.amount <= scalar_zero() {
             return;
         }
+        let key = (lot.age, lot.stored);
         let batches = self.classes.entry(class.to_string()).or_default();
-        match batches.iter().position(|b| b.age <= age) {
-            Some(i) if batches[i].age == age => batches[i].amount += amount,
-            Some(i) => batches.insert(i, FoodBatch { age, amount }),
-            None => batches.push(FoodBatch { age, amount }),
+        match batches.iter().position(|b| (b.age, b.stored) <= key) {
+            Some(i) if (batches[i].age, batches[i].stored) == key => {
+                batches[i].amount += lot.amount;
+            }
+            Some(i) => batches.insert(i, lot),
+            None => batches.push(lot),
         }
     }
 
-    /// Add every lot of `other`, ages kept.
+    /// Add every lot of `other`, ages and larder times kept.
     pub fn merge(&mut self, other: &FoodMix) {
-        for (class, age, amount) in other.batches() {
-            self.add_aged(class, amount, age);
+        for (class, lots) in &other.classes {
+            for lot in lots {
+                self.add_lot(class, *lot);
+            }
         }
     }
 
@@ -470,14 +500,17 @@ impl FoodMix {
         taken
     }
 
-    /// Remove up to `amount` from the one lot of `class` aged `age` — the debit for a pack that
-    /// rotted on its walk. Returns what was removed.
+    /// Remove up to `amount` from the one just-landed lot of `class` aged `age` (larder time
+    /// [`JUST_STORED`]) — the debit for a pack that rotted on its walk. Returns what was removed.
     pub fn remove_batch(&mut self, class: &str, age: u32, amount: Scalar) -> Scalar {
         let Some(batches) = self.classes.get_mut(class) else {
             return scalar_zero();
         };
         let mut taken = scalar_zero();
-        if let Some(batch) = batches.iter_mut().find(|b| b.age == age) {
+        if let Some(batch) = batches
+            .iter_mut()
+            .find(|b| b.age == age && b.stored == JUST_STORED)
+        {
             taken = min(amount.max(scalar_zero()), batch.amount);
             batch.amount -= taken;
         }
@@ -511,6 +544,51 @@ impl FoodMix {
         eaten
     }
 
+    /// **The meal, measuring the KEPT share** - [`Self::eat`], also returning how much of what was
+    /// eaten came from lots that had sat in the larder at least `kept_from_stored` turns (the lot's
+    /// `stored` clock, NOT its spoilage `age`: a pack landed after a long walk is not yet kept).
+    /// The clock is read BEFORE the meal's rot pass advances it, so a lot landed on turn `T` has
+    /// `stored` `0` at meal `T+1`; callers map "kept N turns" to `kept_from_stored = N - 1`.
+    pub fn eat_measuring_kept(
+        &mut self,
+        amount: Scalar,
+        order: &[String],
+        kept_from_stored: u32,
+    ) -> (Scalar, Scalar) {
+        let mut kept = scalar_zero();
+        let mut remaining = amount.max(scalar_zero());
+        let mut eaten = scalar_zero();
+        let unnamed: Vec<String> = self
+            .classes
+            .keys()
+            .filter(|class| !order.contains(class))
+            .cloned()
+            .collect();
+        for class in order.iter().chain(unnamed.iter()) {
+            if remaining <= scalar_zero() {
+                break;
+            }
+            // Oldest lot first, as `remove` takes them, so the kept share is read off the same lots.
+            if let Some(batches) = self.classes.get(class) {
+                let mut want = remaining;
+                for batch in batches {
+                    if want <= scalar_zero() {
+                        break;
+                    }
+                    let part = min(want, batch.amount);
+                    want -= part;
+                    if batch.stored >= kept_from_stored {
+                        kept += part;
+                    }
+                }
+            }
+            let taken = self.remove(class, remaining);
+            remaining -= taken;
+            eaten += taken;
+        }
+        (eaten, kept)
+    }
+
     /// **One rot pass** — every lot of a class `shelf_life` knows ages by one turn, and a lot whose
     /// age has reached its class's shelf life rots **whole**. Returns what rotted. A class with no
     /// shelf life never ages or rots.
@@ -522,6 +600,7 @@ impl FoodMix {
             };
             for batch in batches.iter_mut() {
                 batch.age += 1;
+                batch.stored += 1;
             }
             batches.retain(|batch| {
                 let expired = batch.age as f32 >= life;
@@ -805,6 +884,17 @@ impl LocalStore {
             self.food.remove(class, qty);
         }
         taken
+    }
+
+    /// **The meal, measuring the kept share** - see [`FoodMix::eat_measuring_kept`].
+    pub fn eat_food_measuring_kept(
+        &mut self,
+        amount: Scalar,
+        order: &[String],
+        kept_from_stored: u32,
+    ) -> (Scalar, Scalar) {
+        self.food
+            .eat_measuring_kept(amount, order, kept_from_stored)
     }
 
     /// **One rot pass over the larder** — see [`FoodMix::age_and_expire`]. Returns what rotted.
@@ -1641,6 +1731,11 @@ pub struct PopulationCohort {
     /// pack is credited as income when it lands and debited here the same turn, so income stays the
     /// one producer it always was. On the wire as `PopulationCohortState.foodSpoiled`.
     pub last_food_spoiled: f32,
+    /// **The food the band's meal ate from lots it had KEPT a while** (#708) - what
+    /// `spoilage::rot_band_larders` reads, right after the meal that wrote it, to pay the storage
+    /// lesson's kept half (`spoilage::storage_practice`). Rewritten every turn by
+    /// `simulate_population`; a caravan pack and a party's own meals never write it.
+    pub last_food_kept: f32,
     /// **THE FOOD THAT CROSSED BETWEEN THIS BAND AND ANOTHER, AS OF THIS TURN'S FRAME** — the
     /// per-turn twin of the accumulator [`LaborAllocation::last_food_transfers`], split by
     /// [`TransferLink`], and the reading a client renders.
@@ -3223,6 +3318,16 @@ pub enum LaborTarget {
     /// several tile branches, and working one is not working another. It names no floor - there is
     /// no stock to leave standing.
     Tile { tile: UVec2, branch: BranchId },
+    /// **KEEP AN IMPROVEMENT THE BAND ITSELF HOLDS** - the band kind's crew row
+    /// (`core_sim/src/band_improvement.rs`), the tile row's twin with the tile taken away: the
+    /// improvement stands at the band's camp and moves with it, so there is no position, no
+    /// distance and never a work party.
+    ///
+    /// Stored as `(band, branch)`, the registry's own key. **The row carries its own band's id**,
+    /// redundant with the allocation it sits in, so a row is a pure value: [`BuildSource::of`],
+    /// [`Self::same_source`] and every registry lookup need no band argument, and two bands' racks
+    /// are two distinct sources in every map keyed by one. It names no floor - there is no stock.
+    Band { band: BandId, branch: BranchId },
 }
 
 /// The stable role key a **Forage** row publishes, and the one a plant-web build queue entry names
@@ -3245,6 +3350,9 @@ pub const EXTRACT_ROLE_KEY: &str = "extract";
 /// tile build-queue entry names its source with. One key for every tile-kind branch, for the reason
 /// there is one row kind: which branch it is, is the improvement's.
 pub const TILE_ROLE_KEY: &str = "tile";
+/// The **Band** twin of [`TILE_ROLE_KEY`] - the crew row on a band-kind improvement, and the row a
+/// band build-queue entry names its source with. One key for every band-kind branch.
+pub const BAND_ROLE_KEY: &str = "band";
 
 impl LaborTarget {
     /// The stable role key (also the snapshot `kind` string and the `activity` summary).
@@ -3258,6 +3366,7 @@ impl LaborTarget {
             LaborTarget::Builders => "builders",
             LaborTarget::Extract { .. } => EXTRACT_ROLE_KEY,
             LaborTarget::Tile { .. } => TILE_ROLE_KEY,
+            LaborTarget::Band { .. } => BAND_ROLE_KEY,
         }
     }
 
@@ -3288,7 +3397,9 @@ impl LaborTarget {
             // follow from the improvement's rung (`EquipmentConfig::pool_toe`), exactly as a
             // pool's do, and the command refuses a `kit` token on the row. `roadwork` is the job
             // whose default kit is the empty `none`, which is what a row that carries nothing wants.
-            LaborTarget::Tile { .. } => crate::equipment_config::KitJob::Roadwork,
+            LaborTarget::Tile { .. } | LaborTarget::Band { .. } => {
+                crate::equipment_config::KitJob::Roadwork
+            }
         }
     }
 
@@ -3332,6 +3443,17 @@ impl LaborTarget {
                     branch: right,
                 },
             ) => a == b && left == right,
+            // **Keyed by band AND branch**, the registry's own key.
+            (
+                LaborTarget::Band {
+                    band: a,
+                    branch: left,
+                },
+                LaborTarget::Band {
+                    band: b,
+                    branch: right,
+                },
+            ) => a == b && left == right,
             _ => false,
         }
     }
@@ -3363,9 +3485,9 @@ impl LaborTarget {
     /// **IS THIS ROW STAFFED BY THE SIM, FROM THE PLAYER'S FLOOR** (#871,
     /// `docs/plan_labor_at_scale.md`) — the player states the source, its floor, its kit and an
     /// optional Max, and [`crate::staffing::staff_band`] decides the crew every turn. A wild or kept
-    /// patch, a hunt that is not a need row, a working, a tile improvement and the Roadwork pool are;
-    /// Scout, Warrior and Builders keep the crew the player set, and a need row keeps its own
-    /// muster sizing.
+    /// patch, a hunt that is not a need row, a working, a tile improvement, a band improvement (the
+    /// tile kind's reading, at the camp) and the Roadwork pool are; Scout, Warrior and Builders keep
+    /// the crew the player set, and a need row keeps its own muster sizing.
     ///
     /// Stated exhaustively so a new target has to answer the question rather than inherit a default.
     pub fn is_staffed(&self) -> bool {
@@ -3373,6 +3495,7 @@ impl LaborTarget {
             LaborTarget::Forage { .. }
             | LaborTarget::Extract { .. }
             | LaborTarget::Tile { .. }
+            | LaborTarget::Band { .. }
             | LaborTarget::Roadwork => true,
             LaborTarget::Hunt { move_with_herd, .. } => !move_with_herd,
             LaborTarget::Scout | LaborTarget::Warrior | LaborTarget::Builders => false,
@@ -3388,8 +3511,10 @@ impl LaborTarget {
             // or the working loses its place in the build queue — and a row held at zero is a site
             // with no crew, so nothing keeps it.
             | LaborTarget::Extract { .. }
-            // **A tile improvement is ground the band holds**, a working's reading exactly.
-            | LaborTarget::Tile { .. } => true,
+            // **A tile improvement is ground the band holds**, a working's reading exactly - and a
+            // band improvement is a thing the band holds, so zeroing its crew is *stop keeping it*.
+            | LaborTarget::Tile { .. }
+            | LaborTarget::Band { .. } => true,
             LaborTarget::Scout
             | LaborTarget::Warrior
             | LaborTarget::Roadwork
@@ -3416,6 +3541,7 @@ impl LaborTarget {
             | LaborTarget::Hunt { .. }
             | LaborTarget::Extract { .. }
             | LaborTarget::Tile { .. }
+            | LaborTarget::Band { .. }
             | LaborTarget::Scout
             | LaborTarget::Warrior => false,
         }
@@ -6431,6 +6557,12 @@ pub enum BuildSource {
     /// reading ([`LaborTarget::Tile`]): the band's `builders` pool raises it and the crew on the row
     /// keeps it, so the entry is pruned exactly as a deposit's is - no row, no holding.
     Tile { tile: UVec2, branch: BranchId },
+    /// **AN IMPROVEMENT A BAND HOLDS AT ITS CAMP** - `(band, branch)`, the key of the band half of
+    /// [`crate::tile_improvement::TileImprovementRegistry`]. **Backed by a labor row**
+    /// ([`LaborTarget::Band`]), the tile kind's reading: the band's own `builders` pool raises it and
+    /// the crew on the row keeps it. The band id is part of the key so two bands' racks are two
+    /// sources in every map the whole world shares (the site-crew denominators, the estimate claims).
+    Band { band: BandId, branch: BranchId },
 }
 
 /// **THE ROAD-MEMBERSHIP ANSWER A CALLER WITH NO VIEW OF THE ROADS GIVES** — *"leave road entries
@@ -6461,6 +6593,10 @@ impl BuildSource {
                 tile: *tile,
                 branch: *branch,
             }),
+            LaborTarget::Band { band, branch } => Some(BuildSource::Band {
+                band: *band,
+                branch: *branch,
+            }),
             LaborTarget::Scout
             | LaborTarget::Warrior
             | LaborTarget::Roadwork
@@ -6485,6 +6621,7 @@ impl BuildSource {
             // **The crew row's own key**, a working's reading: a tile improvement has a row, so a
             // client joins its queued build to the crew that is standing on it.
             BuildSource::Tile { .. } => TILE_ROLE_KEY,
+            BuildSource::Band { .. } => BAND_ROLE_KEY,
         }
     }
 
@@ -6508,6 +6645,13 @@ impl BuildSource {
                     branch: worked,
                 },
             ) => tile == other && branch == worked,
+            (
+                BuildSource::Band { band, branch },
+                LaborTarget::Band {
+                    band: other,
+                    branch: worked,
+                },
+            ) => band == other && branch == worked,
             // **A road names no row.** `LaborTarget::Roadwork` is band-wide and covers every road
             // the band keeps, so it names no one of them — the same answer `Agriculture` gives a
             // patch.
@@ -7761,7 +7905,8 @@ impl LaborAllocation {
             BuildSource::Patch(_)
             | BuildSource::Herd(_)
             | BuildSource::Deposit { .. }
-            | BuildSource::Tile { .. } => self
+            | BuildSource::Tile { .. }
+            | BuildSource::Band { .. } => self
                 .assignments
                 .iter()
                 .any(|assignment| source.names(&assignment.target)),

@@ -38,8 +38,8 @@ Design: `docs/plan_labor_at_scale.md` ("Decided"). Engine: `core_sim/src/staffin
 head of each band's labor pass in `systems/labor.rs`, restated by the command path through
 `staffing::restaff_band`.
 
-**A forage, hunt (not a need row), extraction, tile-improvement or Roadwork row's `workers` is the
-sim's answer**, not the player's. The player states a **Max** (`LaborAssignment::max_workers`;
+**A forage, hunt (not a need row), extraction, tile-improvement, band-improvement or Roadwork row's
+`workers` is the sim's answer**, not the player's. The player states a **Max** (`LaborAssignment::max_workers`;
 `None` = no Max) and the **floor** the row already carries; each turn the sim zeroes those rows'
 hands and refills them. `LaborTarget::is_staffed` names the kinds. Scout, Warrior, Builders and a
 need row keep the player's count.
@@ -71,6 +71,14 @@ walkers) and the published `idleWorkers` (what pass 3 left over) keep their mean
 The party verbs (`send_scout`, `send_expedition`, `send_denial_raid`, `station_expedition`,
 `send_trade_expedition`) draw from `BandWorkforce::partyable` (pool less the player-set crews, the
 bench and the walkers) and restaff the band after the launch. A hunting-by-need muster is unchanged.
+
+**A band-improvement row (`LaborTarget::Band`, the drying rack) is staffed exactly as a tile row is**:
+its keepers come from the record's bill (`staffing::band_keepers`, the tile kind's reading off the
+band's own `BandImprovementRegistry`), it is dealt at distance 0 (it stands at the camp and never
+posts a party), the count on `assign_labor ... band <branch> <n>` is its Max, and the first crew
+places it at the branch's root. A rack at its root owes no bill and so stands at zero hands; one on
+its rung is staffed with the hands that keep it, under the Max.
+Pinned by `server::tests::a_band_improvements_crew_is_the_keepers_the_sim_staffs_under_the_players_max`.
 
 **Three passes**, each capped by the row's Max:
 
@@ -118,7 +126,7 @@ reads its staffed crew before the next turn.
 
 **Wire** (`LaborAssignment`, appended): `maxWorkers` (`0` = no Max), `holdCrew`, `reachCrew`,
 `usefulCrew` (pass 3's ceiling, keepers included, after the Max), `keepersStaffed`, `kittedStaffed`, `bareStaffed` (the last three sum to `workers` on a staffed row).
-`SAVE_FORMAT_VERSION` 49.
+`SAVE_FORMAT_VERSION` 52 (the staffing), 53 (the dig load).
 
 **Approximations to know.** The command-time restaff reads the world before the coming turn's
 regrowth, while the turn staffs after it, so a row's crew can move by a hand between the seed and the
@@ -947,7 +955,7 @@ Marsh Grazers (47 a head, ≈ 2.8 food an animal, 37 animals of room) priced a c
 
 ```text
 net_eat = max(0, food_demand − Σ realized)          // band_turns_of_food's own terms
-keeps   = spoilage::band_shelf_life(keeping, class) // the class the herd's meat lands in
+keeps   = spoilage::band_shelf_life(keeping, held, class) // the class the herd's meat lands in
 meal    = max(0, net_eat × keeps − usable_larder)   // usable = larder − rot_ahead, as the runway
 animals = max(1, ceil(meal / food_per_animal))      // food_per_animal = body_mass × provisions_per_biomass
 crew    = smallest curve row with likely ≥ animals  // CREW_TAKE_RISE_TOLERANCE slack; else the useful crew
@@ -962,9 +970,11 @@ crew    = smallest curve row with likely ≥ animals  // CREW_TAKE_RISE_TOLERANC
   falling back to `kill_fallback_class`; food per animal via `fauna::herd_food_per_animal`, the
   figure behind the wire's `foodPerAnimal`). The turn (labor pass) and the capture both call it, so
   the wire's `musterCrew` is what the turn musters. The `finishing` path sizes the crew the same way.
-- **Preservation moves the meal through `spoilage::band_shelf_life`** — the one place a shelf life is
-  read (`campaign.md` → "Food spoils by keeping class"). A longer `flesh` shelf life (drying, #708)
-  lengthens the rot rule and the meal together: a bigger meal, a bigger crew, a bigger haul.
+- **Preservation moves the meal through `spoilage::band_shelf_life`** — the one place a band's shelf
+  life is read (`campaign.md` → "Food spoils by keeping class" and "What a store buys"). A band
+  holding a drying rack keeps its `flesh` longer (`held`, resolved once per band per capture or
+  turn), which lengthens the rot rule and the meal together: a bigger meal, a bigger crew, a bigger
+  haul. A pack walking home is away from the rack and keeps only the base life.
 
 The meal's `usable_larder` is the same kill-class larder as the clock's (above), not the whole store.
 
@@ -1152,8 +1162,8 @@ nothing.
 
 **The roster carries them as a branch of their own.** `LadderConfig::standalone_knowledges` (required)
 files a knowledge no rung teaches under a wire `branch` token and an `area` (here `roam` / `reach`,
-orders 1–3); `knowledge_roster()` appends them after the rung-taught ones with `is_step: false`, so
-`ladderKnowledge` and `intensificationKnowledge` publish them with no client list. See
+orders 1–3); `knowledge_roster()` appends them after the rung-taught ones with `is_step` read off
+the rungs (false for these, since no rung waits on them), so `ladderKnowledge` and `intensificationKnowledge` publish them with no client list. See
 `intensification.md` → "Knowledge no rung teaches".
 
 ## The tests that carry the arc

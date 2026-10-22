@@ -431,8 +431,8 @@ fork fails **exactly one**, naming `assign_labor 0 4904 builders 1 kit none`; re
 have no label to read — and leaves the stepper pair green.)
 
 (It was 240 / 341 / 94 before **`band_panel_builders_segment`** — the BUILDERS segment
-state, whose two `assert OK`s are its own bounds/content-fits pair and whose seven `PASS`es are
-`_assert_people_matches_workforce`'s four plus three of its own. **Its fixture IS the claim**: the
+state, whose two `assert OK`s are its own bounds/content-fits pair and whose `PASS`es are
+`_assert_people_bar_is_one_bar`'s plus three of its own. **Its fixture IS the claim**: the
 reference band's four assignments spend 13 of 16 workers, so putting THREE builders on its forage row
 takes it to exactly `working_age` — before the fix the zone read `3 idle of 16` over segments summing
 to 13, and after it `0 idle of 16` over segments summing to 16. **A band with slack could not say
@@ -3042,7 +3042,7 @@ Three frames, run after the work-party states: `band_panel_work_crew_split`,
   (`_assert_an_uncrewed_queued_source_still_draws`), the pool rows' crew control (a `+`, or the Roadwork
   pool's number) sits in the site rows' column, no Groundwork row carries a stepper, and a pending
   edit's Max restates through `_emit_work_assign` (`RESTATE_STANDING_COUNT`).
-- **`command_guard`** drives the five `stop_labor` forms through the real server parser
+- **`command_guard`** drives the six `stop_labor` forms (the band improvement's `branch=<id>` is the sixth) through the real server parser
   (`_drive_stop_labor`).
 
 **A clean run is exit 0, "run complete — no failures".**
@@ -3120,3 +3120,16 @@ gift checkbox, the confirm dialogs) and **states what the line must say just bef
   (`a_destination_entity_in_place_of_its_band_id_is_a_failure`,
   `a_faction_addressed_line_is_compared_with_the_composed_answer`) pin both comparisons without launching
   Godot. The gate reads **70 commands** on this tree.
+
+## The one People bar's frames (issue #878)
+
+`band_panel_people_idle` (the reference band, 3 idle: the amber card under the People block) and
+`band_panel_people_no_idle` (every hand spent: no card, no Idle chip) are a PAIR, and
+`_assert_people_bar_is_one_bar` makes the shared claims on both and on the need/builders/homeward states:
+the four chips sum to `size`, the Idle chip is `HudBandLaborState.people_idle`, working is
+`working_age − idle`, the card exists exactly when idle > 0, and the working chip's tooltip names every
+non-zero part of `working_breakdown`. `_assert_faction_idle_card` (on `band_panel_faction`, two bands both
+idle) and `_assert_faction_work_idle_labels` (on `band_panel_faction_work`: an idle label per band row,
+`N working` in each summary, no bar) cover the faction page; `_assert_idle_card_reason_list` drives the
+most-idle-first, capped-at-three `+N more` list over constructed bands. The orb's idle alert is asserted
+equal to `people_idle` in `_assert_idle_attention_nets_the_muster`.

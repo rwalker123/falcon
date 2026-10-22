@@ -755,6 +755,7 @@ pub(crate) fn kit_need_states(
                         queued: item.queued,
                         claimed: item.claimed,
                         short: item.short,
+                        finished: item.finished,
                         recipes,
                     }
                 })
@@ -990,7 +991,8 @@ pub(crate) fn craft_suggestion_states(
                             state.target_y = tile.y;
                             state.material = material.clone();
                         }
-                        None => {}
+                        // A band improvement stands at the camp: it names no tile to point at.
+                        Some(BuildSource::Band { .. }) | None => {}
                     }
                     state
                 })

@@ -1417,6 +1417,7 @@ mod tests {
             last_food_need: 0.0,
             fed_party_workers: Default::default(),
             last_food_spoiled: 0.0,
+            last_food_kept: 0.0,
             last_turn_food_transfers: Default::default(),
             last_turn_fodder_transfers: Default::default(),
             last_turn_transfer_crossings: Vec::new(),
@@ -1499,10 +1500,14 @@ mod tests {
             // This fixture asserts on the derived readouts, not on band identity.
             band_id: None,
             band_name: None,
+            leadership: None,
+            leadership_threshold: 0.0,
             // No world, so no outfitting window either.
             loadout_window: None,
             heart: None,
             culture_pressures: Vec::new(),
+            band_improvements: Vec::new(),
+            held_preservation: crate::spoilage::HeldPreservation::none(),
             cohort,
             allocation: Some(allocation),
             expedition: None,

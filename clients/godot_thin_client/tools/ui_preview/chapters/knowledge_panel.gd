@@ -1924,10 +1924,11 @@ func _assert_the_areas_gather_the_domains() -> void:
 	h._assert_hud("knowledge areas — an area with no domains is NEVER drawn (%d of %d declared)"
 			% [areas.size(), declared],
 		areas.size() < declared)
-	h._assert_hud("knowledge areas — FOOD gathers the two food branches (%s)"
+	h._assert_hud("knowledge areas — FOOD gathers the two food branches and the standalone stores row (%s)"
 			% str(_domain_keys_of(areas, StringName(KnowledgeFx.AREA_FOOD))),
 		_domain_keys_of(areas, StringName(KnowledgeFx.AREA_FOOD))
-			== [HudKnowledgeVocab.DOMAIN_KEY_LAND, HudKnowledgeVocab.DOMAIN_KEY_HERDS])
+			== [HudKnowledgeVocab.DOMAIN_KEY_LAND, HudKnowledgeVocab.DOMAIN_KEY_HERDS,
+				StringName(KnowledgeFx.BRANCH_STORES)])
 	# …and MAKING gathers the two wire-placed branches BEFORE the one domain the client places, which
 	# is where an order taken off anything but the roster shows up.
 	h._assert_hud("knowledge areas — `%s` gathers Forestry, Extraction and the client-placed CRAFT fan, in that order (%s)"
@@ -2216,9 +2217,9 @@ func _assert_the_headings_are_drawn() -> void:
 		drawn == areas.size() and areas.size() > 0)
 	# …and the rows are still there beneath them, which is what says the grouping added a level
 	# rather than replacing one.
-	h._assert_hud("knowledge areas — …and FOOD's two domain rows are drawn under its heading (%d)"
+	h._assert_hud("knowledge areas — …and FOOD's three domain rows are drawn under its heading (%d)"
 			% _rendered_domain_rows(StringName(KnowledgeFx.AREA_FOOD)),
-		_rendered_domain_rows(StringName(KnowledgeFx.AREA_FOOD)) == 2)
+		_rendered_domain_rows(StringName(KnowledgeFx.AREA_FOOD)) == 3)
 	# …and MAKING's THREE, which is the heading that gathers more than one branch off the wire. Asked
 	# beside Food because "the rows are under their heading" is satisfied by a panel that draws one
 	# row per area — a shape the two-row heading alone cannot rule out.

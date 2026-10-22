@@ -947,7 +947,8 @@ func _confirm_destructive(body: String, ok_text: String, on_confirm: Callable) -
 
 # ---- zone `band` ------------------------------------------------------------
 
-## Zone `band`: vitals · people · food outlook · workforce (+ the two role cards).
+## Zone `band`: vitals · the one PEOPLE bar (+ its idle card) · food outlook · roles (the homeward
+## lines and the two role cards).
 ## `with_vitals` is false for the legacy flat host, whose Occupants card already renders the very
 ## same Food/Morale/Position rows in its own `%OccupantDetail` drawer above this.
 ## **ON A HORIZONTAL DOCK THE BAND ZONE GROWS WIDE, NOT TALL** — the design rule for the whole panel
@@ -956,43 +957,14 @@ func _confirm_destructive(body: String, ok_text: String, on_confirm: Callable) -
 ## direction that cannot re-emit `reservation_changed` and re-invalidate the map's cache.
 ##
 ## **THE SPLIT IS AUTHORED HERE, NOT REFLOWED.** These blocks are heterogeneous — a wrapped BBCode
-## label, two composition bars each with its own key, a row of role cards — so a generic "fill column A
-## then spill into B" would separate a bar from its key and break the pairs that read together. The
-## PANEL decides how many columns there are (`band_zone_columns()`, purely geometric); this decides
-## what goes in them.
-##
-## **THERE ARE TWO AUTHORED SPLITS AND ONE BOOLEAN CHOOSES BETWEEN THEM: does this band have a food
-## history to chart?** Both are hand-authored and hand-measured — a declared variant selected by a
-## predicate, the same shape as the tier itself, and not a reflow. The split feeds NO geometry: it
-## moves no column count and no reservation, so the flicker invariant is not in play here at all.
-##
-##   * **chart present — THE LARDER | THE PEOPLE** (vitals + outlook | PEOPLE + WORKFORCE), measured
-##     **246 / 263** of a 300px box.
-##   * **chart absent — vitals + PEOPLE | WORKFORCE**, measured **200 / 193**.
-##
-## Both pairs are MEASURED, not derived by subtracting the chart's height from the charted numbers:
-## the separations and the vitals label's wrapping differ per grouping, so the arithmetic does not
-## decompose and the predicted 258 / 188 both came out wrong by ~12px.
-##
-## PEOPLE is the only block that moves, and that is the entire difference between them.
-##
-## **THE PAIRING IS FORCED BY MEASUREMENT, not chosen for tidiness.** At 380px on the TALL tier the
-## blocks come out vitals 130 · PEOPLE 58 · outlook 116 · WORKFORCE 193, and with the chart present
-## only one of the four candidates fits a 300px box:
-##
-##   * vitals + PEOPLE | WORKFORCE ………………… **316** / 193 — OVERFLOWS by 16 (`band_panel_arrivals_bottom`)
-##   * vitals + PEOPLE | outlook + WORKFORCE … 200 / **321** — overflows
-##   * vitals | PEOPLE + outlook + WORKFORCE … 130 / **391** — overflows
-##   * vitals + outlook | PEOPLE + WORKFORCE … 258 / **263** — fits, and near-balanced
-##
-## Take the chart away and that winner becomes 130 against 263 — one full column beside a third-full
-## one, and **that is turn one**, the first frame a new player ever sees, since a band with no history
-## has nothing to chart. The overflowing candidate is the one that balances once the chart's height
-## leaves with it, which is why the chartless variant is the split the chart broke.
+## label, a composition bar with its key and idle card, a chart, a row of role cards — so a generic
+## "fill column A then spill into B" would separate a bar from its key and break the pairs that read
+## together. The PANEL decides how many columns there are (`band_zone_columns()`, purely geometric);
+## this decides what goes in them. ONE split serves the charted and chartless cases alike; its
+## measurements are in the table below `build_band_zone`'s block list and in `band-city-panel.md`.
 ##
 ## **ONE column is byte-identical to the flat build**, deliberately: the blocks are emitted in BUILD
-## order there, not column order, so the flat stack is still vitals · PEOPLE · outlook · WORKFORCE and
-## every existing frame and every tier threshold is untouched.
+## order there, not column order, so the flat stack is vitals · PEOPLE · outlook · roles.
 ##
 ## **EVERY BLOCK IS BUILT AT EVERY TIER, and the stack SCROLLS when the box cannot hold it.** A tier
 ## chooses DENSITY — the compact chart against the full-height one — and nothing else; it may not
@@ -1010,48 +982,50 @@ func build_band_zone(band: Dictionary, with_vitals: bool = true) -> VBoxContaine
     # one-column stack follows this list as-is, while the split reads the `column` field — so the
     # authored pairing can put two blocks together without reordering the stack that does not use it.
     var vitals: Control = _build_vitals_label(band) if with_vitals else null
+    # The leader block is FIRST in the flat stack and in the left column (#859).
+    var leader: Control = _build_leader_block(band) if with_vitals else null
     var people := _build_people_block(band)
     # The chart is ALWAYS built; only its height answers the tier. `TALL` gets the full series, every
     # shorter tier the compact one — same series, same empty marker, drawn denser.
     var outlook: Control = _build_food_outlook_block(band,
         _band_zone_tier != HudWorkVocab.BAND_ZONE_TIER_TALL)
-    var workforce := _build_workforce_block(band)
-    # **ONE AUTHORED SPLIT, RE-AUTHORED AND RE-MEASURED WHEN THE KEEPING BLOCK LEFT THIS FLANK**
-    # (`docs/plan_standing_upkeep.md` §4.7). The three pool cards and their fund-mode row moved to the
-    # WORK tab, so the flank is back to FOUR blocks and the pairing the builders card forced
-    # (`vitals + WORKFORCE | PEOPLE + keeping + outlook`) no longer describes anything. All four
-    # candidates were re-measured rather than reasoned, chartless and charted:
+    var roles := _build_roles_block(band)
+    # **ONE AUTHORED SPLIT, RE-AUTHORED AND RE-MEASURED WHEN THE WORKFORCE BAR JOINED THE PEOPLE BAR**
+    # (issue #878). The Workforce bar and its head left the flank for the one People bar and its idle
+    # card, so the block that used to be `WORKFORCE` is only the homeward lines and the two role cards
+    # (`ROLES` below) and the PEOPLE block grew an idle card. All five orderings that could fit were
+    # re-measured, chartless and charted, rather than reasoned:
     #
-    # | split | chartless | charted |
+    # | split (left \| right) | chartless | charted |
     # |---|---|---|
-    # | vitals + PEOPLE \| outlook + WORKFORCE | 174/256 = 68% | 174/372 = **47%** |
-    # | vitals + outlook \| PEOPLE + WORKFORCE | 104/326 = **32%** | 220/326 = 67% |
-    # | vitals \| PEOPLE + outlook + WORKFORCE | 104/326 = **32%** | 104/442 = **24%** |
-    # | **vitals + PEOPLE + outlook \| WORKFORCE** | **174/256 = 68%** | **290/256 = 88%** |
+    # | vitals + PEOPLE + outlook \| ROLES | 260/175 = 67% | 376/175 = **47%** |
+    # | vitals + outlook \| PEOPLE + ROLES | 104/331 = **31%** | 220/331 = 66% |
+    # | vitals \| PEOPLE + outlook + ROLES | 104/331 = **31%** | 104/447 = **23%** |
+    # | **vitals + PEOPLE \| outlook + ROLES** | **260/175 = 67%** | **260/291 = 89%** |
+    # | vitals + ROLES \| PEOPLE + outlook | 291/144 = **49%** | 291/260 = 89% |
     #
-    # The last is the best CHARTED layout by a wide margin and ties the best CHARTLESS one, so ONE
-    # split serves both and `people_column` stays retired. It reads as *who they are and where the
-    # larder is going | what their hands are doing*, which is defensible on its own terms and is NOT
-    # why it was chosen: it is simply the arrangement that fits.
+    # The fourth is the only one that clears the 65% floor charted AND chartless, so ONE split still
+    # serves both and `people_column` stays retired. It also keeps the PEOPLE block and its idle card
+    # beside the vitals, which is the pairing the approved prototype draws. It reads as *the band and
+    # its people | the larder's outlook and what the hands can be set to*, which is defensible and NOT
+    # why it was chosen: it is the arrangement that fits (the charted column is 291 of a 358px box).
     #
-    # **THE FLOOR STAYS AT 0.65.** `band_panel_preview`'s `BAND_FLANK_BALANCE_FLOOR` was lowered
-    # 0.75 → 0.65 because no split cleared 0.75 with the keeping block present, and none clears it
-    # without one either — 68% is the CHARTLESS flank's arithmetic ceiling here, exactly as it was
-    # before, since its three blocks total what they total however they are dealt out. The charted
-    # flank has 23 points of slack at 88% and is not the binding case.
+    # **THE FLOOR STAYS AT 0.65**: the chartless flank's 67% is its arithmetic ceiling here, as it has
+    # been, since its two columns hold what they hold however the blocks are dealt out.
     #
-    # **RE-MEASURE BEFORE MOVING A BLOCK, AND NEVER DERIVE ONE ROW FROM ANOTHER.** Separations and
-    # spacing differ per grouping, and prediction by subtraction has now been wrong three times in this
-    # flank's history. **The two column CONSTANTS are named for an older pairing and are positional**,
-    # which is why they are not renamed with each re-authoring: they are left and right.
+    # **RE-MEASURE BEFORE MOVING A BLOCK, AND NEVER DERIVE ONE ROW FROM ANOTHER.** The two column
+    # CONSTANTS are named for an older pairing and are positional: they are left and right.
     var blocks: Array[Dictionary] = []
+    if leader != null:
+        blocks.append({"control": leader, "column": BAND_COLUMN_LARDER})
     if vitals != null:
         blocks.append({"control": vitals, "column": BAND_COLUMN_LARDER})
     if people != null:
         blocks.append({"control": people, "column": BAND_COLUMN_LARDER})
     if outlook != null:
-        blocks.append({"control": outlook, "column": BAND_COLUMN_LARDER})
-    blocks.append({"control": workforce, "column": BAND_COLUMN_PEOPLE})
+        blocks.append({"control": outlook, "column": BAND_COLUMN_PEOPLE})
+    blocks.append({"control": roles, "column": BAND_COLUMN_PEOPLE})
+
     # BOTH layouts go inside the scroll — the flat stack and the two-column row alike. A widened flank
     # halves what each column carries but does not make either of them unable to overflow, and a rule
     # that scrolled one layout and clipped the other would be the same content loss on a wider monitor.
@@ -1329,6 +1303,44 @@ func _band_zone_column_count() -> int:
         return 1
     return _panel.band_zone_columns()
 
+## **THE LEADER BLOCK** (#859): a `LeaderPortrait` square beside the chief line. A chief reads `Chief
+## Orrin`, a council `Elders' council — Orrin speaks` (its portrait wearing the group badge); before a
+## leader the portrait is an empty dimmed slot beside the four-source progress bar and its `7 / 10`,
+## hovering to the per-source sentence. `null` for a band with neither a leader nor a threshold (a
+## foreign cohort), so such a band gets no block at all.
+func _build_leader_block(band: Dictionary) -> Control:
+    var phrase := HudFormat.band_leader_phrase(band)
+    var progress: Dictionary = {} if phrase != "" else HudFormat.band_chief_progress(band)
+    if phrase == "" and progress.is_empty():
+        return null
+    var faction := int(band.get("faction", HudConst.PLAYER_FACTION_ID))
+    var council := int(band.get("leader_kind", HudFormat.LEADER_KIND_NONE)) == HudFormat.LEADER_KIND_ELDER_COUNCIL
+    var block := HBoxContainer.new()
+    block.name = HudWorkVocab.BAND_LEADER_BLOCK_NAME
+    block.set_meta(HudWorkVocab.BAND_LEADER_BLOCK_META, true)
+    block.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    block.mouse_filter = Control.MOUSE_FILTER_PASS
+    block.add_theme_constant_override("separation", HudWorkVocab.BAND_LEADER_BLOCK_SEPARATION)
+    block.add_child(LeaderPortrait.make(faction, phrase == "", council))
+    var text := RichTextLabel.new()
+    text.name = HudWorkVocab.BAND_LEADER_TEXT_NAME
+    text.bbcode_enabled = true
+    text.fit_content = true
+    text.scroll_active = false
+    text.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+    text.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    text.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+    text.mouse_filter = Control.MOUSE_FILTER_PASS
+    if phrase != "":
+        text.text = "[color=#%s]%s[/color]" % [HudStyle.INK.to_html(false), phrase]
+    else:
+        text.text = "[color=#%s]%s[/color] %s %s" % [HudStyle.INK_DIM.to_html(false),
+            HudFormat.CHIEF_ROW_LABEL, HudFormat.chief_bar_bbcode(progress), String(progress.get("label", ""))]
+        block.tooltip_text = String(progress.get("tooltip", ""))
+        text.tooltip_text = block.tooltip_text
+    block.add_child(text)
+    return block
+
 ## The vitals readout — Food, Fodder, Morale and Growth, of which Food / Morale / Growth carry the
 ## click-to-expand disclosures (Fodder is a plain row, and there is no Output row: productivity reads
 ## on the WORK zone's head). Which of the optional rows appear is the producer's
@@ -1352,48 +1364,50 @@ func _build_vitals_label(band: Dictionary) -> RichTextLabel:
     # No Position row either: the coordinates are IDENTITY and the panel HEADER states them
     # (`_panel_position_label`), so a vitals row would be a second telling — and one this zone pays
     # for in height. The drawer host keeps it (it has no header and renders foreign bands).
-    detail_label.text = DetailFormat.detail_bbcode(
-        _banddetail.unit_summary_lines(band, _selectioncard.selected_terrain_label(), ctx,
-            _band_zone_tier == HudWorkVocab.BAND_ZONE_TIER_SHORT, false), ctx)
+    var vitals_lines := _banddetail.unit_summary_lines(band, _selectioncard.selected_terrain_label(), ctx,
+        _band_zone_tier == HudWorkVocab.BAND_ZONE_TIER_SHORT, false)
+    detail_label.set_meta(HudWorkVocab.BAND_VITALS_LABEL_META, true)
+    detail_label.text = DetailFormat.detail_bbcode(vitals_lines, ctx)
     # **A ROW'S HOVER SHOWS OVER THAT ROW ALONE** (`DetailFormat.wire_row_hovers`).
     DetailFormat.wire_row_hovers(detail_label, ctx)
     return detail_label
 
-## "PEOPLE" — who the band IS: a stacked children/working-age/elders bar plus its key and the
-## dependency ratio. Returns null when the snapshot carries no age structure at all, so the block is
-## OMITTED rather than rendered from a fabricated split.
-## The palette is deliberately MUTED against the Workforce bar below: the two bars share a shape but
-## answer different questions (composition vs allocation) and must not read as the same chart twice.
+## "PEOPLE" — who the band IS and what they are doing: ONE stacked bar, children | working | idle |
+## elders, with its key and the dependency count. Returns null when the snapshot carries no age
+## structure at all, so the block is OMITTED rather than rendered from a fabricated split.
+##
+## **`idle` IS `HudBandLaborState.people_idle`, `working` IS `working_age − idle`**, so the four
+## segments sum to `size` and the bar, the idle card, the faction page and the orb's alert all read one
+## number. The working segment's tooltip carries the breakdown the old Workforce bar drew. A party's
+## members are not in `working_age` (the sim takes them out on launch), so they are a header clause.
 func _build_people_block(band: Dictionary) -> VBoxContainer:
-    # **THE WIRE CARRIES WHOLE PEOPLE, AND THIS PANEL RENDERS THEM.** The sim keeps the brackets
-    # fractional internally (the fraction is a growth accumulator), rounds them ONCE, and publishes
-    # `children` + `working_age` + `elders == size`. Nothing here re-decides what a fraction means:
-    # a client that apportioned the raw Scalars for itself could round a 16.6-worker band UP to 17
-    # in this bar while the Workforce header below counted the sim's floored 16, the same frame.
+    # **THE WIRE CARRIES WHOLE PEOPLE, AND THIS PANEL RENDERS THEM.** The sim rounds the brackets ONCE
+    # and publishes `children` + `working_age` + `elders == size`; nothing here re-decides a fraction.
     var children := int(band.get("children", 0))
-    var working := int(band.get("working_age", 0))
     var elders := int(band.get("elders", 0))
     # The band's own head count is the header total — it IS the sum, by the sim's construction.
     var total := int(band.get("size", 0))
     if total <= 0:
         return null
-    var segments: Array = []
-    if children > 0:
-        segments.append({"key": HudWorkVocab.PEOPLE_GLYPH_CHILDREN, "count": children,
-            "color": HudStyle.VOICE_PIGMENT, "tooltip": "%d %s" % [children, HudWorkVocab.PEOPLE_LABEL_CHILDREN]})
-    if working > 0:
-        segments.append({"key": HudWorkVocab.PEOPLE_GLYPH_WORKING, "count": working,
-            "color": HudStyle.INK_DIM, "tooltip": "%d %s" % [working, HudWorkVocab.PEOPLE_LABEL_WORKING]})
-    if elders > 0:
-        segments.append({"key": HudWorkVocab.PEOPLE_GLYPH_ELDERS, "count": elders,
-            "color": HudStyle.VOICE_INK, "tooltip": "%d %s" % [elders, HudWorkVocab.PEOPLE_LABEL_ELDERS]})
+    var split := _band_labor.people_split(band)
+    var working := int(split["working"])
+    var idle := int(split["idle"])
+    var segments := HudWidgets.people_segments(children, working, idle, elders,
+        _band_labor.working_breakdown(band), HudWorkVocab.IDLE_CARD_REASON_BAND)
+    var away_workers := _band_labor.band_party_workers(band)
     var block := HudWidgets.make_zone_block()
-    block.add_child(HudWidgets.zone_head(HudWorkVocab.ZONE_HEADER_PEOPLE, str(total)))
+    block.add_child(HudWidgets.zone_head(HudWorkVocab.ZONE_HEADER_PEOPLE,
+        HudWidgets.people_head_readout(total, away_workers), null, HudStyle.INK_DIM,
+        HudWorkVocab.PEOPLE_AWAY_TOOLTIP_FORMAT % away_workers if away_workers > 0 else ""))
     block.add_child(HudWidgets.build_composition_bar(segments))
-    block.add_child(HudWidgets.build_composition_key(segments, _build_dependency_chip(children, working, elders)))
+    block.add_child(HudWidgets.build_composition_key(segments,
+        _build_dependency_chip(children, int(band.get("working_age", 0)), elders)))
     var heart := _build_heart_rows(band)
     if heart != null:
         block.add_child(heart)
+    if idle > 0:
+        block.add_child(HudWidgets.build_idle_card(HudWorkVocab.IDLE_CARD_NUMBER_FORMAT % idle,
+            HudWorkVocab.IDLE_CARD_REASON_BAND))
     return block
 
 ## **THE BAND'S STANDING TOWARD ITS PEOPLE'S HEART** (issue #284, `docs/plan_band_fission.md`
@@ -1469,91 +1483,19 @@ func _build_dependency_chip(children: int, working: int, elders: int) -> Control
     chip.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
     return chip
 
-## "WORKFORCE" — what the band DOES: a stacked Forage/Hunt/Roles/Parties/Idle bar, its key, and the
-## two standing-role CARDS. Saturated against People's muted palette (see `_build_people_block`).
+## The ROLES block: the homeward lines and the two standing-role CARDS (Scout, Warrior). It is what the
+## Workforce block kept when its bar and head moved into the one People bar. It has no head of its own.
 ##
 ## **THE ROLE CARDS ALWAYS CARRY THEIR DESCRIPTIONS.** A `compact_cards` flag used to drop the hint
 ## line to a tooltip in a short box, and it is gone rather than left unused: the zone scrolls now, so
 ## there is nothing to buy by deleting the one line that says what a standing role IS.
-func _build_workforce_block(band: Dictionary) -> VBoxContainer:
+func _build_roles_block(band: Dictionary) -> VBoxContainer:
     var idle := _band_labor.effective_idle(band)
-    var forage_workers := 0
-    var hunt_workers := 0
-    # **THE BUILDERS ARE THEIR OWN SEGMENT, ACROSS BOTH WEBS.** They are staffed labor that takes
-    # nothing from any source, so they belong in neither the Forage nor the Hunt slice — and they have
-    # to be SOMEWHERE, `effective_idle` having netted them out.
-    #
-    # **THE COUNT IS THE BAND'S `builders` POOL, not a sum of per-source build crews**
-    # (`docs/plan_standing_upkeep.md` §2.5). It is a standing ROLE row like scout and warrior, which
-    # is also why it is not folded into `role_workers` below: a build is a job the queue names, and
-    # the segment says how many hands are on that queue at all.
-    var build_workers := int(_band_labor.effective_role_workers(
-        band, HudConst.LABOR_KIND_BUILDERS).get("workers", 0))
-    var extract_workers := 0
-    var merged := _band_labor.effective_worker_map(band)
-    for key in merged:
-        var m: Dictionary = merged[key]
-        var workers := int(m.get("workers", 0))
-        match String(m.get("kind", "")):
-            SourceForecast.LABOR_KIND_FORAGE: forage_workers += workers
-            SourceForecast.LABOR_KIND_HUNT: hunt_workers += workers
-            HudConst.LABOR_KIND_EXTRACT, HudConst.LABOR_KIND_TILE: extract_workers += workers
     var scout_eff := _band_labor.effective_role_workers(band, HudConst.LABOR_KIND_SCOUT)
     var warrior_eff := _band_labor.effective_role_workers(band, HudConst.LABOR_KIND_WARRIOR)
-    # **THE ROADWORK POOL IS A ROLE, so it is in the Roles SEGMENT though its line is on the Work
-    # tab.** The bar's segments partition `working_age`; a site's keepers are part of that site's own
-    # crew now (`docs/plan_site_crews.md`), so they are already in the Forage / Hunt slices.
-    var role_workers := int(scout_eff.get("workers", 0)) + int(warrior_eff.get("workers", 0)) \
-        + int(_band_labor.effective_role_workers(band, HudConst.LABOR_KIND_ROADWORK).get("workers", 0))
-    # Workers out with a party are NOT a segment — the sim already took them out of `working_age` on
-    # launch, so a slice for them overran the denominator the segments partition. They read as the
-    # header's "away" clause instead (`WORKFORCE_AWAY_FORMAT`).
-    var away_workers := _band_labor.band_party_workers(band)
-    var segments: Array = []
-    # HUNTING BY NEED: lent hands leave their home segment for "Out hunting"; idle hands taken leave Idle.
-    var muster_out := _band_labor.hunt_muster_out(band)
-    var out_by_kind: Dictionary = muster_out["by_kind"]
-    forage_workers -= int(out_by_kind.get(SourceForecast.LABOR_KIND_FORAGE, 0))
-    hunt_workers -= int(out_by_kind.get(SourceForecast.LABOR_KIND_HUNT, 0))
-    extract_workers -= int(out_by_kind.get(HudConst.LABOR_KIND_EXTRACT, 0))
-    var bench_seg := _band_labor.bench_workers(band) - int(muster_out["bench"])
-    var idle_seg := idle - int(muster_out["idle"])
-    for spec in [
-        [HudWorkVocab.WORKFORCE_KEY_FORAGE, forage_workers, HudStyle.HEALTHY],
-        [HudWorkVocab.WORKFORCE_KEY_HUNT, hunt_workers, HudStyle.SIGNAL],
-        [HudWorkVocab.WORKFORCE_KEY_EXTRACT, extract_workers, HudStyle.READY],
-        # …and the builders beside the two takes, because a build is staffed ON one of those sources.
-        # `SIGNAL_DEEP` is the live cyan a rung under construction already wears, one step down, so it
-        # reads as work-in-flight without competing with the Hunt slice it sits next to.
-        [HudWorkVocab.WORKFORCE_KEY_BUILD, build_workers, HudStyle.SIGNAL_DEEP],
-        [HudWorkVocab.WORKFORCE_KEY_ROLES, role_workers, HudStyle.VOICE_INK],
-        # The bench's crew, between the work and the residual: `effective_idle` nets it out (a worker
-        # at the bench is assigned labor), so without a segment of its own it would vanish from a bar
-        # whose segments are supposed to partition the same `working_age` the header counts against.
-        [HudWorkVocab.WORKFORCE_KEY_BENCH, bench_seg, HudStyle.VOICE_PIGMENT],
-        # …and the hands walking home from a stood-down far party (#706), netted out of idle for the
-        # same reason, in the dim ink of people who are on their way rather than at work.
-        [HudWorkVocab.WORKFORCE_KEY_HOMEWARD, _band_labor.homeward_workers(band), HudStyle.INK_DIM],
-        [HudWorkVocab.WORKFORCE_KEY_OUT_HUNTING, int(muster_out["total"]), HudStyle.WARN],
-        [HudWorkVocab.WORKFORCE_KEY_IDLE, idle_seg, HudStyle.INK_FAINT],
-    ]:
-        if int(spec[1]) > 0:
-            segments.append({"key": String(spec[0]), "count": int(spec[1]), "color": spec[2],
-                "tooltip": "%s: %d" % [String(spec[0]), int(spec[1])]})
-    var readout := HudWorkVocab.WORKFORCE_IDLE_FORMAT % [idle_seg, int(band.get("working_age", 0))]
-    if int(muster_out["total"]) > 0:
-        readout = HudWorkVocab.WORKFORCE_IDLE_OUT_FORMAT % [idle_seg, int(muster_out["total"])]
-    if away_workers > 0:
-        readout += HudWorkVocab.WORKFORCE_AWAY_FORMAT % away_workers
     var block := HudWidgets.make_zone_block()
-    block.add_child(HudWidgets.zone_head(HudWorkVocab.ZONE_HEADER_WORKFORCE, readout,
-        null, HudStyle.SIGNAL if idle > 0 else HudStyle.INK_DIM,
-        HudWorkVocab.WORKFORCE_AWAY_TOOLTIP_FORMAT % away_workers if away_workers > 0 else ""))
-    if not segments.is_empty():
-        block.add_child(HudWidgets.build_composition_bar(segments))
-        block.add_child(HudWidgets.build_composition_key(segments))
-    # **WHO IS WALKING HOME, WITH WHAT, AND WHEN THEY ARE BACK** (#706) — under the bar whose
-    # `Walking home` segment counts them. The spoil line wears the Food line's `Spoiled` amber.
+    # **WHO IS WALKING HOME, WITH WHAT, AND WHEN THEY ARE BACK** (#706) — the working segment's tooltip
+    # counts them as `Walking home`. The spoil line wears the Food line's `Spoiled` amber.
     for line in HudWorkVocab.homeward_lines(band):
         block.add_child(_build_homeward_line(line, HudStyle.INK_DIM))
     var homeward_spoils := HudWorkVocab.homeward_spoils_line(band)
@@ -2221,6 +2163,7 @@ func _fill_work_zone_column(col: VBoxContainer, band: Dictionary) -> void:
     var models := _work_source_models(band)
     var extract_models := _extract_source_models(band)
     var tile_models := _tile_source_models(band)
+    tile_models.append_array(_band_improvement_models(band))
     col.add_child(_build_work_head(band, models,
         _work_component_sum(models, "rate"),
         _work_component_sum(models, "fodder_rate")))
@@ -2303,7 +2246,10 @@ func _work_section_items(band: Dictionary, models: Array, extract_models: Array,
             nodes.append(_build_extract_row(band, model as Dictionary))
         # Tile crews are site crews like a working's, so they ride the same section.
         for model in tile_models:
-            nodes.append(_build_tile_row(band, model as Dictionary))
+            if String((model as Dictionary).get("kind", "")) == HudConst.LABOR_KIND_BAND:
+                nodes.append(_build_band_improvement_row(model as Dictionary))
+            else:
+                nodes.append(_build_tile_row(band, model as Dictionary))
         _append_work_section(items, HudWorkVocab.WORK_SECTION_GROUNDWORK,
             _build_work_section_head(HudWorkVocab.WORK_SECTION_GROUNDWORK), nodes)
     if models.is_empty() and extract_models.is_empty() and tile_models.is_empty():
@@ -3100,6 +3046,56 @@ func _tile_source_models(band: Dictionary) -> Array:
             return ta.x < tb.x
         return String(a["branch"]) < String(b["branch"]))
     return models
+
+## **THE BAND IMPROVEMENT CREW ROWS THIS BAND HOLDS** (a drying rack): one model per `band` labor row.
+## Staffed like a tile row (the sim strikes the crew; the Max lives on a sheet), but the improvement is
+## the band's own, so the row has no tile - it names its branch alone. Listed with the tile crews, after
+## them, and drawn by `_build_band_improvement_row`.
+func _band_improvement_models(band: Dictionary) -> Array:
+    var models: Array = []
+    var branches: Array = _topbar.ladder_branches() if _topbar != null else []
+    var catalog: Array = _topbar.ladder_rungs() if _topbar != null else []
+    for assignment_variant in _band_labor.band_improvement_assignments_of(band):
+        var assignment: Dictionary = assignment_variant
+        var branch := String(assignment.get("branch", ""))
+        var key := _band_labor.pending_key(HudConst.LABOR_KIND_BAND, -1, -1, "", branch)
+        var merged: Dictionary = _band_labor.effective_worker_map(band).get(key, {})
+        models.append({
+            "kind": HudConst.LABOR_KIND_BAND,
+            "key": key, "x": -1, "y": -1, "herd_id": "", "branch": branch,
+            "tile": Vector2i(-1, -1),
+            "assignment": assignment,
+            "distance": 0,
+            "workers": merged.get("workers", int(assignment.get("workers", 0))),
+            "name": HudRouteVocab.branch_name(branches, branch),
+            "rung_name": HudRouteVocab.branch_root_name(catalog, branch),
+        })
+        _put_staffed_fields(models[models.size() - 1], merged, assignment)
+    return models
+
+func _build_band_improvement_row(model: Dictionary) -> PanelContainer:
+    var shell := _site_row_shell(HudWorkVocab.EXTRACT_ROW_HEIGHT, false, Color(0.0, 0.0, 0.0, 0.0))
+    var row: PanelContainer = shell[SITE_ROW_SHELL_ROW]
+    var col: VBoxContainer = shell[SITE_ROW_SHELL_COLUMN]
+    var line: HBoxContainer = shell[SITE_ROW_SHELL_LINE]
+    row.set_meta(HudWorkVocab.BAND_IMPROVEMENT_ROW_META, String(model["branch"]))
+    row.mouse_filter = Control.MOUSE_FILTER_PASS
+    line.add_child(HudWidgets.build_marker_icon(null, "", HudWorkVocab.WORK_ROW_ICON_WIDTH,
+        HudWorkVocab.WORK_ROW_FONT_SIZE))
+    var title := Label.new()
+    title.text = String(model["name"])
+    title.clip_text = true
+    title.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+    title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    title.add_theme_font_size_override("font_size", HudWorkVocab.WORK_ROW_FONT_SIZE)
+    title.add_theme_color_override("font_color", HudStyle.INK)
+    title.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    line.add_child(title)
+    # A READ-ONLY crew number: the sim's crew, no stepper (the Max is set on a sheet).
+    line.add_child(HudWidgets.build_crew_number(int(model.get("workers", 0))))
+    col.add_child(_build_site_crew_line(HudWorkVocab.site_crew_line(String(model["rung_name"])),
+        HudWorkVocab.SITE_CREW_LINE_META, _crew_bar_for_model(model)))
+    return row
 
 ## **ONE TILE CREW'S ROW** -- a site row's shell (`_site_row_shell`) carrying the catalog's name for the
 ## branch and its rung, the keeping mark off the standing bill, the crew count and, on a far posting, the

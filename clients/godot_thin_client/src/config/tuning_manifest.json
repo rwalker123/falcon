@@ -431,6 +431,63 @@
           "hint": "Hexes a band must step in one turn, following a herd (grazing or migrating), to earn the full distance points. Matches a band's walking speed, so walking every turn saturates it."
         }
       ]
+    },
+    {
+      "kind": "leadership",
+      "label": "Leadership",
+      "env_var": "LEADERSHIP_CONFIG_PATH",
+      "params": [
+        {
+          "pointer": "/practice_threshold",
+          "label": "Points for a chief",
+          "type": "float",
+          "min": 1,
+          "max": 40,
+          "step": 1,
+          "default": 10.0,
+          "hint": "How many points a band must bank before it accepts a chief (or an elders' council). Once it has one it keeps it and the points stop counting."
+        },
+        {
+          "pointer": "/practice_per_directed_build",
+          "label": "Cultivate, Farm, Tame or Corral finished",
+          "type": "float",
+          "min": 0.5,
+          "max": 10,
+          "step": 0.5,
+          "default": 3.0,
+          "hint": "Points a band banks each time it finishes a Cultivate or a Tame."
+        },
+        {
+          "pointer": "/practice_per_split",
+          "label": "Band split (each band)",
+          "type": "float",
+          "min": 0.5,
+          "max": 10,
+          "step": 0.5,
+          "default": 3.0,
+          "hint": "Points each of the two bands banks when you split a band: one organises what the leavers take, the other needs someone to lead it away."
+        },
+        {
+          "pointer": "/practice_per_herd_hex",
+          "label": "Per hex following a herd",
+          "type": "float",
+          "min": 0.1,
+          "max": 5,
+          "step": 0.1,
+          "default": 1.0,
+          "hint": "Points a band banks for every hex it steps while following a herd, grazing or migrating."
+        },
+        {
+          "pointer": "/practice_per_stage_reached",
+          "label": "Settlement stage reached",
+          "type": "float",
+          "min": 0.5,
+          "max": 20,
+          "step": 0.5,
+          "default": 5.0,
+          "hint": "Points a band banks the first time it grows into each settlement stage past the first. Each stage pays once."
+        }
+      ]
     }
   ]
 }

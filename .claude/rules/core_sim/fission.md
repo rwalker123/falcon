@@ -347,6 +347,10 @@ parent's.
 - A band formed by a split **can split again** — the command gates the source on `ResidentBand` — so
   the parent floor has to hold for a band that was itself formed fifteen turns ago.
 
+## A commanded split credits leadership
+
+The player's `split_band` verb runs `split_band_from_parent`, which credits `practice_per_split` toward a leader to BOTH the parent and the new band (`leadership.md`); the breeding break-off and the independence break-away run `split_band_from_parent_with` directly and credit nothing.
+
 ## Config files
 
 | File | Purpose |

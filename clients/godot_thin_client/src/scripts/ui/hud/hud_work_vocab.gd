@@ -163,8 +163,6 @@ const CONFIRM_DIALOG_TITLE := "Confirm"
 ## Zone section headers (uppercased by `HudWidgets.alloc_section_label`).
 const ZONE_HEADER_PEOPLE := "People"
 
-const ZONE_HEADER_WORKFORCE := "Workforce"
-
 const ZONE_HEADER_WORK := "Work"
 
 const ZONE_HEADER_PARTIES := "Parties"
@@ -426,6 +424,42 @@ const PEOPLE_LABEL_WORKING := "working age"
 
 const PEOPLE_LABEL_ELDERS := "elders"
 
+## The IDLE segment of the one People bar: working-age people on no job. Idle has no bundled mark, so
+## the key chip reads `Idle 4` (the composition key's no-mark form).
+const PEOPLE_KEY_IDLE := "Idle"
+
+## The WORKING segment's tooltip: what the working-age people are doing, non-zero parts only, in the
+## breakdown's own words (`WORKING_PART_*`). `Forage 9 · Hunt 6 · Build 3`.
+const PEOPLE_WORKING_BREAKDOWN_FORMAT := "%d working: %s"
+const PEOPLE_WORKING_BREAKDOWN_SEPARATOR := " · "
+const PEOPLE_WORKING_PART_FORMAT := "%s %d"
+
+## The IDLE CARD (shown under the People block only when someone is idle).
+## Band: big `N idle` plus why. Today nothing staffs people on its own, so the reason is the
+## instruction; the reason line is one constant so a later automatic-staffing rule changes one string.
+const IDLE_CARD_NUMBER_FORMAT := "%d idle"
+const IDLE_CARD_REASON_BAND := "Not on any job. Put them on a work row, or send them out as a party."
+const IDLE_CARD_NUMBER_FACTION_FORMAT := "%d idle across your bands"
+const IDLE_CARD_REASON_FACTION_TAIL := ". Not on any job."
+const IDLE_CARD_BAND_FORMAT := "%s %d"
+const IDLE_CARD_BAND_SEPARATOR := " · "
+const IDLE_CARD_MORE_FORMAT := " · +%d more"
+## At most this many bands are named on the faction idle card, most idle first.
+const IDLE_CARD_BANDS_MAX := 3
+const IDLE_CARD_TOOLTIP := "Idle people are the band's spare capacity, not waste."
+const IDLE_CARD_NUMBER_FONT_SIZE := 18
+const IDLE_CARD_REASON_FONT_SIZE := 11
+const IDLE_CARD_SEPARATION := 2
+const IDLE_CARD_META := &"idle_card"
+const IDLE_CARD_NUMBER_META := &"idle_card_number"
+
+## A faction band row's trailing idle label (`4 idle`, amber; `none idle`, faint).
+const FACTION_ROW_IDLE_FORMAT := "%d idle"
+const FACTION_ROW_NONE_IDLE := "none idle"
+const FACTION_ROW_IDLE_META := &"faction_row_idle"
+## `· N working` appended to a band row's work summary.
+const FACTION_ROW_WORKING_FORMAT := "%d working"
+
 ## Above this many dependents per 100 workers the band carries more mouths than hands → WARN. Stays
 ## here because the chip's own tint reads it beside the tooltip that `HudFormat.dependency_tooltip`
 ## now writes; the ratio BASE and the two tooltip strings travelled with that formatter.
@@ -498,15 +532,12 @@ const BAND_ZONE_TIER_COMPACT := 1
 
 const BAND_ZONE_TIER_TALL := 2
 
-## WORKFORCE readout + segment keys.
-const WORKFORCE_IDLE_FORMAT := "%d idle of %d"
-
-## Workers out with a party, appended to the idle readout and shown ONLY when there are any.
+## Workers out with a party, appended to the PEOPLE head's count and shown ONLY when there are any.
 ## **They are a HEADER CLAUSE, not a bar segment.** The sim removes a party's members from the parent
-## band's working-age cohort the turn it launches, so they are not inside the `working_age` the bar's
-## segments partition — drawing them as a slice made the segments sum past their own denominator
-## ("4 idle of 16" over a bar totalling 22). The fact still has to be reachable, so it reads here.
-const WORKFORCE_AWAY_FORMAT := " · %d away"
+## band's working-age cohort the turn it launches, so they are not inside the `size` the bar's
+## segments partition — drawing them as a slice made the segments sum past their own denominator.
+## The fact still has to be reachable, so it reads here.
+const PEOPLE_AWAY_FORMAT := " · %d away"
 
 ## **HANDS WALKING HOME FROM A STOOD-DOWN FAR PARTY** (#706). A far posting that ends hands nothing
 ## over at once: every porter finishes its walk and the hands at the source carry the load home. They
@@ -636,18 +667,18 @@ static func homeward_spoils_line(band: Dictionary) -> String:
         return ""
     return HOMEWARD_SPOILS_FORMAT % SourceForecast.format_magnitude(spoils)
 
-const WORKFORCE_AWAY_TOOLTIP_FORMAT := "%d away with parties\nNot in the bar below"
+const PEOPLE_AWAY_TOOLTIP_FORMAT := "%d away with parties\nNot in the bar"
 
-const WORKFORCE_KEY_FORAGE := "Forage"
+const WORKING_PART_FORAGE := "Forage"
 
-const WORKFORCE_KEY_HUNT := "Hunt"
+const WORKING_PART_HUNT := "Hunt"
 
 ## The hands cutting a working (`extract` rows: wood, stone). The crew noun the WORKINGS / GROUNDWORK
 ## block uses (`hud_deposit_vocab.gd`, "cutters"). Netted out of idle like every row, so without its
 ## own segment those hands vanish and the bar stops partitioning `working_age`.
-const WORKFORCE_KEY_EXTRACT := "Cutters"
+const WORKING_PART_EXTRACT := "Cutters"
 
-const WORKFORCE_KEY_ROLES := "Roles"
+const WORKING_PART_ROLES := "Roles"
 
 ## The hands on a source's BUILD (`docs/plan_standing_upkeep.md` §2.2) — the second allocation, which
 ## the Forage and Hunt segments deliberately do not absorb. Those two name what a crew TAKES; a builder
@@ -658,20 +689,18 @@ const WORKFORCE_KEY_ROLES := "Roles"
 ## from a bar whose segments are supposed to partition the same `working_age` the header counts
 ## against — `Forage 9 · Hunt 6 · Idle 3` accounting for 18 with the builders invisible as well as
 ## miscounted.
-const WORKFORCE_KEY_BUILD := "Build"
+const WORKING_PART_BUILD := "Build"
 
 ## The crafting bench's crew. **The segments PARTITION the workforce**, so the bench needs one of its
 ## own the moment idle stops counting it: netting the crew out of idle without naming it here would
 ## drop those hands off the bar entirely, and the key beneath would no longer add up to the head count
 ## the zone's own header states.
-const WORKFORCE_KEY_BENCH := "Bench"
-
-const WORKFORCE_KEY_IDLE := "Idle"
+const WORKING_PART_BENCH := "Bench"
 
 ## Hands walking home from a stood-down far party (#706). They are inside `working_age` and netted out
 ## of idle, so — like the bench — they need a segment of their own or the bar stops partitioning the
 ## head count its header states.
-const WORKFORCE_KEY_HOMEWARD := "Walking home"
+const WORKING_PART_HOMEWARD := "Walking home"
 
 ## Standing-role CARDS (the fix for roles reading as one more worked source in a list).
 const ROLE_NAME_SCOUT := "Scout"
@@ -1361,6 +1390,8 @@ const WORK_ROW_PARTY_WALK_TARGET_TILE := "improvement"
 ## A tile crew row's meta and crew noun (issue #175): the row carries `"x,y:branch"` so a harness finds
 ## it by identity, and its crew reads as *workers* where a working's reads as *cutters*.
 const TILE_ROW_META := &"tile_crew_row"
+## A band improvement's crew row (`kind == band`), valued with its branch id.
+const BAND_IMPROVEMENT_ROW_META := &"band_improvement_row"
 const TILE_CREW_NOUN := "workers"
 
 ## **WHAT ARRIVES HOME, ON A ROW WITH NO RATE SLOT** — the workings roster's hover, whose one-line
@@ -1526,11 +1557,9 @@ const WORK_ROW_NEED_COUNT_META := &"work_row_need_count"
 const WORK_ROW_NEED_METER_HEIGHT := 4.0
 const WORK_ROW_NEED_METER_META := &"work_row_need_meter"
 
-## The Workforce head's idle readout while hands are out on a hunt.
-const WORKFORCE_IDLE_OUT_FORMAT := "%d idle · %d out hunting"
-## The Workforce bar's segment for every hand the next hunting-by-need muster takes (idle hands plus
-## the hands lent off source rows and the bench). Warn ink, like the "back after the kill" lines.
-const WORKFORCE_KEY_OUT_HUNTING := "Out hunting"
+## The WORKING segment tooltip's part for every hand the next hunting-by-need muster takes (idle hands
+## plus the hands lent off source rows and the bench).
+const WORKING_PART_OUT_HUNTING := "Out hunting"
 
 static func need_turns_word(turns: int) -> String:
     return WORK_ROW_TURN_ONE if turns == WORK_ROW_NEED_TURN_SINGULAR else WORK_ROW_TURN_MANY
@@ -4110,6 +4139,18 @@ const WORK_SECTION_COLLAPSED_META := &"work_section_collapsed"
 ## and the band zone are: a `ScrollContainer` reports no minimum on its scrolling axis, so what the
 ## sections hold never reaches the panel's fixed cross-axis reservation.
 const WORK_SECTIONS_SCROLL_NAME := "WorkSections"
+
+## **THE LEADER BLOCK** (#859) is the first block of the Band tab's zone
+## (`BandPanelController._build_leader_block`): a portrait square and the chief line, or the
+## chief-progress bar before a leader. `BAND_LEADER_BLOCK_META` is the harness handle on the block and
+## `BAND_LEADER_TEXT_NAME` names its text label; `BAND_VITALS_LABEL_META` stays the handle on the vitals
+## label beside it.
+const BAND_VITALS_LABEL_META := &"band_vitals_label"
+const BAND_LEADER_BLOCK_META := &"band_leader_block"
+const BAND_LEADER_BLOCK_NAME := "BandLeaderBlock"
+const BAND_LEADER_TEXT_NAME := "BandLeaderText"
+## Gap between the portrait and the text beside it.
+const BAND_LEADER_BLOCK_SEPARATION := 8
 
 ## A section head's reserved height: `ZONE_HEAD_HEIGHT` grown to the compact chevron button (and, on
 ## the queue and the roads, the `+N more` door), which is what sets the row.

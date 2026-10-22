@@ -926,6 +926,15 @@ func tile_improvement_at(x: int, y: int, branch: String) -> Dictionary:
 			return row
 	return {}
 
+## This band's `band` labor rows (a band improvement's crew, e.g. a drying rack), in wire order.
+func band_improvement_assignments_of(band: Dictionary) -> Array:
+	var rows: Array = []
+	for entry in labor_assignments_of(band):
+		if entry is Dictionary \
+				and String((entry as Dictionary).get("kind", "")).to_lower() == HudConst.LABOR_KIND_BAND:
+			rows.append(entry)
+	return rows
+
 ## This band's `tile` labor rows (the wire's `kind == "tile"`), in wire order.
 func tile_assignments_of(band: Dictionary) -> Array:
 	var rows: Array = []
@@ -1035,6 +1044,9 @@ func pending_key(kind: String, x: int, y: int, herd_id: String, material: String
 			# A tile improvement keys per `(tile, branch)`; the BRANCH rides the `material` slot, the
 			# one free string a per-source key has.
 			return "tile:%d,%d:%s" % [x, y, material]
+		HudConst.LABOR_KIND_BAND:
+			# A band improvement keys per BRANCH alone (the improvement is the band's own).
+			return "band:%s" % material
 		HudConst.LABOR_KIND_ROADWORK:
 			# A road BUILD keys per tile; the band-wide roadwork ROLE falls through to the bare kind.
 			if x >= 0 and y >= 0:
@@ -1371,7 +1383,7 @@ static func staffed_total(entry: Dictionary) -> int:
 ## is unchanged.
 const STAFFED_KINDS: Array[String] = [
 	LABOR_KIND_FORAGE, LABOR_KIND_HUNT, HudConst.LABOR_KIND_EXTRACT,
-	HudConst.LABOR_KIND_TILE, HudConst.LABOR_KIND_ROADWORK,
+	HudConst.LABOR_KIND_TILE, HudConst.LABOR_KIND_BAND, HudConst.LABOR_KIND_ROADWORK,
 ]
 
 ## The wire keys the three staffing passes publish on a row, copied onto the merged row as integers:
@@ -1400,13 +1412,15 @@ func effective_worker_map(band: Dictionary) -> Dictionary:
 		# every other kind, which `pending_key` ignores.
 		var key := pending_key(kind, int(a.get("target_x", -1)), int(a.get("target_y", -1)),
 			String(a.get("fauna_id", "")),
-			String(a.get("branch", "")) if kind == HudConst.LABOR_KIND_TILE \
+			String(a.get("branch", "")) \
+				if kind == HudConst.LABOR_KIND_TILE or kind == HudConst.LABOR_KIND_BAND \
 				else String(a.get("material", "")))
 		merged[key] = {
 			# **ONE CREW PER ROW AGAIN** (`docs/plan_standing_upkeep.md` §2.5). A row carried a second
 			# `improvement_workers` allocation for one slice; the builders are a band-level POOL now, so
 			# their hands ride their OWN row of this same map, keyed `builders` like `scout`.
 			"kind": kind, "workers": int(a.get("workers", 0)),
+			"branch": String(a.get("branch", "")),
 			"x": int(a.get("target_x", -1)), "y": int(a.get("target_y", -1)),
 			"herd_id": String(a.get("fauna_id", "")),
 			# WHERE THIS CREW STOPS, as a fraction of the source's capacity — the whole of the harvest
@@ -1743,6 +1757,60 @@ func hunt_muster_out(band: Dictionary) -> Dictionary:
 		bench_out = mini(maxi(int((bench_variant as Dictionary).get(
 			HudCraftingVocab.BENCH_LENT_TO_HUNT_KEY, 0)), 0), bench_workers(band))
 	return {"idle": idle_out, "by_kind": by_kind, "bench": bench_out, "total": total + bench_out}
+
+## **THE IDLE COUNT THE PLAYER IS TOLD, in ONE place** (the People bar's Idle segment, the idle card,
+## the faction page's totals and rows, the orb's "N idle workers" alert all read this). It is
+## `effective_idle` (pending-aware, net of every row, the bench and hands walking home) less the idle
+## hands the next hunting-by-need muster takes, which read as out hunting, i.e. as working.
+func people_idle(band: Dictionary) -> int:
+	return maxi(effective_idle(band) - int(hunt_muster_out(band)["idle"]), 0)
+
+## `{working, idle}` over a band's working-age people: `idle` is `people_idle`, `working` is the rest of
+## `working_age`. With the children and the elders they sum to the band's `size`.
+func people_split(band: Dictionary) -> Dictionary:
+	var idle := people_idle(band)
+	return {"working": maxi(int(band.get("working_age", 0)) - idle, 0), "idle": idle}
+
+## What the working people are doing: `{part label: count}`, non-zero parts only, in a fixed order
+## (`HudWorkVocab.WORKING_PART_*`). The hands the next hunt muster takes move from their row (or the
+## bench) to Out hunting. The parts are the working segment's tooltip; the bar does not draw them.
+func working_breakdown(band: Dictionary) -> Dictionary:
+	var forage_workers := 0
+	var hunt_workers := 0
+	var extract_workers := 0
+	var merged := effective_worker_map(band)
+	for key in merged:
+		var m: Dictionary = merged[key]
+		var workers := int(m.get("workers", 0))
+		match String(m.get("kind", "")):
+			SourceForecast.LABOR_KIND_FORAGE: forage_workers += workers
+			SourceForecast.LABOR_KIND_HUNT: hunt_workers += workers
+			HudConst.LABOR_KIND_EXTRACT, HudConst.LABOR_KIND_TILE, HudConst.LABOR_KIND_BAND:
+				extract_workers += workers
+	var muster_out := hunt_muster_out(band)
+	var out_by_kind: Dictionary = muster_out["by_kind"]
+	forage_workers -= int(out_by_kind.get(SourceForecast.LABOR_KIND_FORAGE, 0))
+	hunt_workers -= int(out_by_kind.get(SourceForecast.LABOR_KIND_HUNT, 0))
+	extract_workers -= int(out_by_kind.get(HudConst.LABOR_KIND_EXTRACT, 0))
+	# The builders are the band's `builders` ROLE; scout, warrior and the roadwork pool are Roles.
+	var build_workers := int(effective_role_workers(band, HudConst.LABOR_KIND_BUILDERS).get("workers", 0))
+	var role_workers := int(effective_role_workers(band, HudConst.LABOR_KIND_SCOUT).get("workers", 0)) \
+		+ int(effective_role_workers(band, HudConst.LABOR_KIND_WARRIOR).get("workers", 0)) \
+		+ int(effective_role_workers(band, HudConst.LABOR_KIND_ROADWORK).get("workers", 0))
+	var parts: Dictionary = {}
+	for spec in [
+		[HudWorkVocab.WORKING_PART_FORAGE, forage_workers],
+		[HudWorkVocab.WORKING_PART_HUNT, hunt_workers],
+		[HudWorkVocab.WORKING_PART_EXTRACT, extract_workers],
+		[HudWorkVocab.WORKING_PART_BUILD, build_workers],
+		[HudWorkVocab.WORKING_PART_ROLES, role_workers],
+		[HudWorkVocab.WORKING_PART_BENCH, bench_workers(band) - int(muster_out["bench"])],
+		[HudWorkVocab.WORKING_PART_HOMEWARD, homeward_workers(band)],
+		[HudWorkVocab.WORKING_PART_OUT_HUNTING, int(muster_out["total"])],
+	]:
+		if int(spec[1]) > 0:
+			parts[String(spec[0])] = int(spec[1])
+	return parts
 
 ## Hands of a stood-down far party still walking home (`PopulationCohortState.homewardWorkers`) —
 ## out of the idle pool until they arrive. 0 = nobody walking home.

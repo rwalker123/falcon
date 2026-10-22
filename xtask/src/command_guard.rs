@@ -908,6 +908,7 @@ mod tests {
             "work_priority 0 71204 44 23 wood low",
             "stop_labor 0 71204 44 23 wood",
             "stop_labor 0 71204 roadwork",
+            "stop_labor 0 71204 branch=camp_stores",
             "build_priority 0 71204 44 23 stone high",
             "build_priority 0 71204 route 44 23 normal",
             "build_order 0 71204 route 44 23 0",

@@ -43,10 +43,14 @@
 use bevy::math::UVec2;
 use bevy::prelude::Entity;
 use core_sim::grid_utils::hex_distance_wrapped;
+use core_sim::spoilage::{
+    kept_from_stored, storage_practice, STORAGE_DISCOVERY_ID, STORAGE_KNOWLEDGE,
+};
 use core_sim::{
     build_test_app, herd_default_hunt_kit, run_turn, BandBench, BandId, BandWorkforce,
-    CreaturesConfigHandle, EquipmentConfigHandle, FaunaConfigHandle, LaborAllocation, LaborTarget,
-    PopulationCohort, SimulationConfig, SnapshotHistory, TakeSelection, DEFAULT_ESCAPEMENT_FLOOR,
+    CreaturesConfigHandle, DiscoveryProgressLedger, EquipmentConfigHandle, FactionId,
+    FaunaConfigHandle, LaborAllocation, LaborTarget, LadderConfigHandle, PopulationCohort,
+    SimulationConfig, SnapshotHistory, TakeSelection, DEFAULT_ESCAPEMENT_FLOOR,
 };
 use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
 
@@ -81,6 +85,9 @@ enum Staffing {
     /// Everything the Work board offers nearby: every gathering site in the apron (foragers spread
     /// evenly) and the food-paying herd in hunt reach with the most standing stock.
     Thorough,
+    /// [`Staffing::Naive`]'s nearest food-paying herd, with EVERY hand on it and no gathering - a
+    /// band living on big game, whose kills sit a few turns in the larder.
+    HuntOnly,
 }
 
 impl Staffing {
@@ -88,6 +95,7 @@ impl Staffing {
         match self {
             Staffing::Naive => "naive",
             Staffing::Thorough => "thorough",
+            Staffing::HuntOnly => "hunt-only",
         }
     }
 }
@@ -333,7 +341,7 @@ fn choose_sources(
         .filter(|h| h.distance <= band.workRange() + HUNT_SEARCH_BEYOND_APRON)
         .collect();
     match staffing {
-        Staffing::Naive => herds.sort_by(|a, b| {
+        Staffing::Naive | Staffing::HuntOnly => herds.sort_by(|a, b| {
             a.distance
                 .cmp(&b.distance)
                 .then(b.biomass.total_cmp(&a.biomass))
@@ -345,7 +353,7 @@ fn choose_sources(
         }),
     }
     let sites_taken = match staffing {
-        Staffing::Naive => 1,
+        Staffing::Naive | Staffing::HuntOnly => 1,
         Staffing::Thorough if in_apron => patches.len(),
         Staffing::Thorough => 1,
     };
@@ -487,7 +495,42 @@ impl TurnReading {
     }
 }
 
+/// **How the band learned `storage`** (#708), read off the real systems turn by turn: the ledger's
+/// own progress, the practice kept food paid, and what the opening reserve alone paid.
+#[derive(Clone, Default)]
+struct StorageTrack {
+    /// Turn the ledger first reached the completion bar, if it did.
+    learned_at: Option<u32>,
+    /// Turn the ROT half alone (cumulative, kept food ignored) would have reached the bar.
+    rot_only_learned_at: Option<u32>,
+    /// Cumulative practice units from rot, from kept food, and from the opening reserve alone.
+    rot_practice: f32,
+    kept_practice: f32,
+    reserve_practice: f32,
+    /// Turn the opening reserve (the oldest `dry` lot) was last seen in the larder.
+    reserve_gone_at: Option<u32>,
+    /// The ledger's progress at the end, and the practice a lesson costs.
+    final_progress: f32,
+    lesson_cost: f32,
+    /// Cumulative practice at fixed turns, for the print.
+    marks: Vec<(u32, f32, f32, f32, f32)>,
+}
+
+/// The opening reserve is the oldest lot of the `startup_class` in the larder - nothing else is
+/// that old, since every later lot lands younger.
+fn oldest_lot(app: &bevy::app::App, entity: Entity, class: &str) -> Option<(u32, f32)> {
+    let cohort = app.world.get::<PopulationCohort>(entity)?;
+    cohort
+        .stores
+        .food()
+        .batches()
+        .filter(|(c, _, _)| *c == class)
+        .map(|(_, age, amount)| (age, amount.to_f32()))
+        .max_by_key(|(age, _)| *age)
+}
+
 struct RunSummary {
+    storage: StorageTrack,
     biome: &'static str,
     staffing: Staffing,
     seed: u64,
@@ -527,7 +570,13 @@ fn stock_text(stock: Option<(f32, f32)>) -> String {
     stock.map_or("unseen".to_string(), |(b, k)| format!("{b:.0}/{k:.0}"))
 }
 
-fn run(seed: u64, biome: &'static str, staffing: Staffing, out: &mut String) -> RunSummary {
+fn run(
+    seed: u64,
+    biome: &'static str,
+    staffing: Staffing,
+    turns_to_run: u32,
+    out: &mut String,
+) -> RunSummary {
     use std::fmt::Write;
 
     let mut app = build_test_app();
@@ -565,7 +614,10 @@ fn run(seed: u64, biome: &'static str, staffing: Staffing, out: &mut String) -> 
         )
     };
 
-    let (sources, choice) = choose_sources(&opening, width, wrap, staffing);
+    let (mut sources, choice) = choose_sources(&opening, width, wrap, staffing);
+    if matches!(staffing, Staffing::HuntOnly) {
+        sources.retain(|key| matches!(key, SourceKey::Hunt(_)));
+    }
     let entity = band_entity(&mut app, band_id);
     let labor = if default_rows > 0 {
         format!("DEFAULT — the spawned band carried {default_rows} labour row(s); left untouched")
@@ -622,8 +674,81 @@ fn run(seed: u64, biome: &'static str, staffing: Staffing, out: &mut String) -> 
     );
 
     let mut turns: Vec<TurnReading> = Vec::new();
-    for _ in 0..TURNS {
+    let mut storage = StorageTrack::default();
+    let startup_class = app
+        .world
+        .resource::<core_sim::DemographicsConfigHandle>()
+        .get()
+        .keeping
+        .startup_class
+        .clone();
+    let (kept_age, lesson_cost, learn_threshold) = {
+        let ladder = app.world.resource::<LadderConfigHandle>().get();
+        (
+            kept_from_stored(&ladder.knowledge),
+            ladder.knowledge.lesson_cost(STORAGE_KNOWLEDGE).unwrap(),
+            ladder.knowledge.completion_threshold,
+        )
+    };
+    storage.lesson_cost = lesson_cost;
+    let mut progress_before = 0.0_f32;
+    for turn_index in 0..turns_to_run {
+        let reserve_before = oldest_lot(&app, entity, &startup_class);
         run_turn(&mut app);
+        {
+            let ladder = app.world.resource::<LadderConfigHandle>().get();
+            let cohort = app.world.get::<PopulationCohort>(entity);
+            let progress = app
+                .world
+                .resource::<DiscoveryProgressLedger>()
+                .get_progress(FactionId(PLAYER_FACTION), STORAGE_DISCOVERY_ID)
+                .to_f32();
+            let turn = turn_index + 1;
+            if let Some(cohort) = cohort {
+                let need = cohort.last_food_need;
+                let kept = storage_practice(0.0, cohort.last_food_kept, need, &ladder.knowledge);
+                let total = (progress - progress_before) * lesson_cost;
+                storage.kept_practice += kept;
+                storage.rot_practice += (total - kept).max(0.0);
+                // The opening reserve: what the meal ate from it this turn, if it was old enough to
+                // count as kept.
+                if let Some((age, before)) = reserve_before {
+                    let after = oldest_lot(&app, entity, &startup_class)
+                        .filter(|(a, _)| *a == age + 1)
+                        .map_or(0.0, |(_, amount)| amount);
+                    if age >= kept_age {
+                        storage.reserve_practice += storage_practice(
+                            0.0,
+                            (before - after).max(0.0),
+                            need,
+                            &ladder.knowledge,
+                        );
+                    }
+                    if after > 0.0 {
+                        storage.reserve_gone_at = None;
+                    } else if storage.reserve_gone_at.is_none() {
+                        storage.reserve_gone_at = Some(turn);
+                    }
+                }
+            }
+            progress_before = progress;
+            if storage.learned_at.is_none() && progress >= learn_threshold {
+                storage.learned_at = Some(turn);
+            }
+            if storage.rot_only_learned_at.is_none() && storage.rot_practice >= lesson_cost {
+                storage.rot_only_learned_at = Some(turn);
+            }
+            if matches!(turn, 10 | 25 | 50 | 100 | 200 | 300) {
+                storage.marks.push((
+                    turn,
+                    progress,
+                    storage.rot_practice / lesson_cost,
+                    storage.kept_practice / lesson_cost,
+                    storage.reserve_practice / lesson_cost,
+                ));
+            }
+            storage.final_progress = progress;
+        }
         let bytes = encoded_frame(&app);
         let world = world_of(&bytes);
         let tick = world.header().map(|h| h.tick()).unwrap_or_default();
@@ -848,6 +973,7 @@ fn run(seed: u64, biome: &'static str, staffing: Staffing, out: &mut String) -> 
     let _ = writeln!(out, "  band: {fate}");
 
     RunSummary {
+        storage,
         biome,
         staffing,
         seed,
@@ -875,7 +1001,7 @@ fn a_band_that_stands_still_for_a_hundred_turns() {
     let summaries: Vec<RunSummary> = RUNS
         .iter()
         .flat_map(|&(seed, biome)| STAFFINGS.map(|staffing| (seed, biome, staffing)))
-        .map(|(seed, biome, staffing)| run(seed, biome, staffing, &mut out))
+        .map(|(seed, biome, staffing)| run(seed, biome, staffing, TURNS, &mut out))
         .collect();
 
     let rule = "=".repeat(100);
@@ -937,4 +1063,45 @@ fn a_band_that_stands_still_for_a_hundred_turns() {
         let _ = writeln!(out, "  seed {} {}: {}", s.seed, s.staffing.label(), s.labor);
     }
     println!("{out}");
+}
+
+/// **WHEN DOES A STATIONARY BAND LEARN STORAGE?** (#708) Over 300 turns on the five pinned maps and
+/// both staffings, off the real systems: the turn the ledger reached the bar, the turn rot alone
+/// would have, and what the opening reserve's own rations paid.
+///
+/// ```text
+/// cargo test -p core_sim --test stationary_push_probe storage_ -- --ignored --nocapture
+/// ```
+#[test]
+#[ignore = "printing probe - run with --ignored --nocapture"]
+fn storage_learning_over_three_hundred_turns() {
+    const STORAGE_PROBE_TURNS: u32 = 300;
+    let mut out = String::new();
+    println!(
+        "{:<27} {:>4} {:<8} {:>9} {:>11} | cumulative ledger fractions (progress / rot / kept / reserve) at turns",
+        "biome", "seed", "staffing", "learned", "rot-only"
+    );
+    for &(seed, biome) in RUNS.iter() {
+        for staffing in [Staffing::Naive, Staffing::Thorough, Staffing::HuntOnly] {
+            let summary = run(seed, biome, staffing, STORAGE_PROBE_TURNS, &mut out);
+            let s = &summary.storage;
+            let marks = s
+                .marks
+                .iter()
+                .map(|(t, p, r, k, g)| format!("t{t}: {p:.2}/{r:.2}/{k:.2}/{g:.2}"))
+                .collect::<Vec<_>>()
+                .join("  ");
+            println!(
+                "{:<27} {:>4} {:<8} {:>9} {:>11} | {}  reserve last seen turn {}",
+                biome,
+                seed,
+                staffing.label(),
+                s.learned_at.map_or("never".to_string(), |t| t.to_string()),
+                s.rot_only_learned_at
+                    .map_or("never".to_string(), |t| t.to_string()),
+                marks,
+                s.reserve_gone_at.map_or("-".to_string(), |t| t.to_string()),
+            );
+        }
+    }
 }
