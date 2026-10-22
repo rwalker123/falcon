@@ -75,6 +75,8 @@ gets one — once, permanently.
   `leadershipPractice`, which is what a split bar draws). Own bands only; a foreign row carries the
   defaults.
 - **The Telling**: signals `leadership.chiefs_emerged_this_turn` / `leadership.councils_emerged_this_turn`
-  and noun `leadership.newest_leader` (see `telling.md`), driving the beats `leadership.chief_rises` and
+  and nouns `leadership.newest_chief` / `leadership.newest_council` (kind-scoped, so a chief and a
+  council emerging together each name their own leader; see `telling.md`), driving the beats
+  `leadership.chief_rises` and
   `leadership.council_forms` (not `once`; each band may get one). The prose says the band grew too
   many, too spread out and too much on the move for everyone to just know what to do.

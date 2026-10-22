@@ -1673,7 +1673,8 @@ pub enum ConfigOverrideKind {
     /// input `weights` and the `hexes_per_turn` reference.
     Mobility,
     /// The leadership levers (`leadership_config.json`, #859) - staged for the practice threshold
-    /// and the two practice quanta.
+    /// and the four practice quanta (a finished directed-work build, a split, a herd-following hex, a
+    /// settlement stage reached).
     Leadership,
 }
 

@@ -215,8 +215,8 @@ const ATTENTION_KNOWLEDGE_LEARNED_LABEL_FORMAT := "%s learned"
 const ATTENTION_KNOWLEDGE_LEARNED_DETAIL := "see what it lets your hands do"
 
 ## **A BAND GAINED A LEADER THIS TURN** (#859) -- the sim's `leader_emerged` command event. News, so
-## `info`; it locates on the band's tile (`Jump →`). One row per band; the detail points at the Work
-## tab, where the chief's lines live. Both details are kept short because orb rows CLIP at
+## `info`; it locates on the band's tile (`Jump →`). One row per band; the detail points at the Band
+## tab, where the leader block lives. Both details are kept short because orb rows CLIP at
 ## `POPOVER_WIDTH`.
 const ATTENTION_KIND_LEADER_EMERGED := "leader_emerged"
 

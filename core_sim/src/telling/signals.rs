@@ -38,14 +38,6 @@ const CULTURE_AXIS_PREFIX: &str = "culture.axis.";
 /// through the rollback snapshot for free and a rollback cannot invent a phantom discovery.
 pub const SITES_DISCOVERED_TOTAL_KEY: &str = "internal.sites.discovered_total";
 
-/// The **cumulative** count of the player faction's bands led by a chief, retained in the ledger's
-/// edge state so `leadership.chiefs_emerged_this_turn` is a per-turn diff, exactly as
-/// [`SITES_DISCOVERED_TOTAL_KEY`] is for discoveries. Not a registered signal.
-pub const CHIEFS_TOTAL_KEY: &str = "internal.leadership.chiefs_total";
-
-/// The cumulative count of bands led by an elders' council -- the twin of [`CHIEFS_TOTAL_KEY`].
-pub const COUNCILS_TOTAL_KEY: &str = "internal.leadership.councils_total";
-
 /// The narrator's attained medium, as a 0-based index into `voice.mediums`. **Set by
 /// `telling_tick`, not by [`sample_signals`]** — it is derived from the ledger's attained rung plus
 /// this turn's sample, so it is injected after the base sample exists (the `stance.*` idiom). It is
@@ -133,20 +125,16 @@ pub struct SignalSources<'a> {
     /// Resident bands of `faction`: `(cohort, its labor allocation)`. Also the noun resolvers'
     /// view of the band layer, so the query is walked once for both.
     pub bands: &'a [BandView<'a>],
-    /// Last turn's cumulative totals, for the `*_this_turn` diffs.
+    /// Last turn's cumulative totals, for the `sites.discovered_this_turn` diff.
     pub previous: CumulativeTotals,
 }
 
 /// The **cumulative** counts a per-turn signal is a diff of. Kept in the ledger's reserved
 /// `internal.*` edge-state keys, so they round-trip through the rollback snapshot for free and a
-/// rollback cannot invent a phantom discovery or a phantom chief.
+/// rollback cannot invent a phantom discovery.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct CumulativeTotals {
     pub discovered_sites: f64,
-    /// Player-faction bands currently led by a chief.
-    pub chiefs: f64,
-    /// Player-faction bands currently led by an elders' council.
-    pub councils: f64,
 }
 
 impl CumulativeTotals {
@@ -160,20 +148,15 @@ impl CumulativeTotals {
         };
         Self {
             discovered_sites: read(SITES_DISCOVERED_TOTAL_KEY),
-            chiefs: read(CHIEFS_TOTAL_KEY),
-            councils: read(COUNCILS_TOTAL_KEY),
         }
     }
 
     /// Write this turn's totals into the edge state, to be next turn's `previous`.
     pub fn commit(&self, edge_state: &mut BTreeMap<String, Scalar>) {
-        for (key, value) in [
-            (SITES_DISCOVERED_TOTAL_KEY, self.discovered_sites),
-            (CHIEFS_TOTAL_KEY, self.chiefs),
-            (COUNCILS_TOTAL_KEY, self.councils),
-        ] {
-            edge_state.insert(key.to_string(), Scalar::from_f32(value as f32));
-        }
+        edge_state.insert(
+            SITES_DISCOVERED_TOTAL_KEY.to_string(),
+            Scalar::from_f32(self.discovered_sites as f32),
+        );
     }
 }
 
@@ -188,6 +171,16 @@ pub struct BandView<'a> {
     pub labor: Option<&'a LaborAllocation>,
     /// The band's leader, if it has accepted one (`crate::leadership`).
     pub leadership: Option<&'a BandLeadership>,
+}
+
+/// How many of the faction's bands accepted a leader of `kind` on this very turn.
+fn emerged_this_turn(sources: &SignalSources<'_>, kind: LeaderKind) -> f64 {
+    sources
+        .bands
+        .iter()
+        .filter_map(|band| band.leadership.and_then(|l| l.leader.as_ref()))
+        .filter(|leader| leader.kind == kind && leader.since_turn == sources.tick.0)
+        .count() as f64
 }
 
 /// Sample every registered signal for the player faction. Called once per turn.
@@ -219,24 +212,16 @@ pub fn sample_signals(sources: &SignalSources<'_>) -> (SignalSample, CumulativeT
         (discovered_total - sources.previous.discovered_sites).max(0.0),
     );
 
-    // Leaders are a *standing* count of the faction's bands, so "this turn" is the same diff.
-    let leaders_of = |kind: LeaderKind| {
-        sources
-            .bands
-            .iter()
-            .filter_map(|band| band.leadership.and_then(|l| l.leader.as_ref()))
-            .filter(|leader| leader.kind == kind)
-            .count() as f64
-    };
-    let chiefs_total = leaders_of(LeaderKind::Chief);
-    let councils_total = leaders_of(LeaderKind::ElderCouncil);
+    // A leader emerging is read off the leader's own `since_turn`, not diffed against a standing
+    // count: a led band lost the same turn (death, merge, leaving the faction) must not mask a
+    // new leader elsewhere.
     sample.set(
         "leadership.chiefs_emerged_this_turn",
-        (chiefs_total - sources.previous.chiefs).max(0.0),
+        emerged_this_turn(sources, LeaderKind::Chief),
     );
     sample.set(
         "leadership.councils_emerged_this_turn",
-        (councils_total - sources.previous.councils).max(0.0),
+        emerged_this_turn(sources, LeaderKind::ElderCouncil),
     );
 
     for (signal, discovery_id) in [
@@ -277,8 +262,6 @@ pub fn sample_signals(sources: &SignalSources<'_>) -> (SignalSample, CumulativeT
         sample,
         CumulativeTotals {
             discovered_sites: discovered_total,
-            chiefs: chiefs_total,
-            councils: councils_total,
         },
     )
 }
@@ -313,8 +296,6 @@ mod tests {
         assert!(!is_registered_signal("vibes.total"));
         assert!(!is_registered_signal("culture.axis.nonexistent"));
         assert!(!is_registered_signal(SITES_DISCOVERED_TOTAL_KEY));
-        assert!(!is_registered_signal(CHIEFS_TOTAL_KEY));
-        assert!(!is_registered_signal(COUNCILS_TOTAL_KEY));
     }
 
     #[test]

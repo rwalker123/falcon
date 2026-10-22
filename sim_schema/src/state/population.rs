@@ -1862,7 +1862,7 @@ pub struct PopulationCohortState {
     /// The practice a leader emerges at, so a client can say "N of M". Appended last.
     #[serde(default)]
     pub leadership_threshold: f32,
-    /// `leadership_practice` from finished Cultivate and Tame builds. Appended last.
+    /// `leadership_practice` from finished Cultivate, Sow, Tame and Corral builds. Appended last.
     #[serde(default)]
     pub leadership_from_builds: f32,
     /// ...from commanded band splits. Appended last.

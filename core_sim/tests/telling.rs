@@ -143,8 +143,8 @@ fn a_beat_with_no_dressable_wardrobe_does_not_fire() {
 
 // --- leadership (#859) -----------------------------------------------------------------------
 
-/// Hand the faction's first resident band a leader of `kind` named `name`, the way
-/// `advance_leadership` leaves one, and return its entity.
+/// Hand the faction's first unled resident band a leader of `kind` named `name`, the way
+/// `advance_leadership` leaves one (`since_turn` is the tick the next turn samples).
 fn give_a_band_a_leader(
     app: &mut bevy::app::App,
     faction: FactionId,
@@ -152,27 +152,37 @@ fn give_a_band_a_leader(
     name: &str,
 ) {
     let band = {
-        let mut query = app
-            .world
-            .query_filtered::<(bevy::prelude::Entity, &core_sim::PopulationCohort), bevy::prelude::With<core_sim::ResidentBand>>();
-        query
+        let mut query = app.world.query_filtered::<(
+            bevy::prelude::Entity,
+            &core_sim::PopulationCohort,
+            Option<&core_sim::BandLeadership>,
+        ), bevy::prelude::With<core_sim::ResidentBand>>();
+        let mut unled: Vec<_> = query
             .iter(&app.world)
-            .find(|(_, cohort)| cohort.faction == faction)
-            .map(|(entity, _)| entity)
-            .expect("the world has a resident band of the faction")
+            .filter(|(_, cohort, led)| {
+                cohort.faction == faction && led.is_none_or(|l| l.leader.is_none())
+            })
+            .map(|(entity, _, _)| entity)
+            .collect();
+        unled.sort();
+        unled
+            .into_iter()
+            .next()
+            .expect("the world has an unled resident band of the faction")
     };
+    let since_turn = app.world.resource::<core_sim::SimulationTick>().0;
     app.world.entity_mut(band).insert(core_sim::BandLeadership {
         leader: Some(core_sim::BandLeader {
             name: name.to_string(),
             kind,
-            since_turn: 0,
+            since_turn,
         }),
         ..core_sim::BandLeadership::default()
     });
 }
 
 /// **A chief emerging fires the chief beat the turn it appears, dressed in the leader's name** --
-/// and only that turn: the signal is a diff of a cumulative count, so a standing leader is not news.
+/// and only that turn: the signal reads the leader's `since_turn`, so a standing leader is not news.
 #[test]
 fn a_chief_emerging_fires_the_chief_beat_with_the_leaders_name() {
     let mut app = spawn_world();
@@ -253,5 +263,89 @@ fn a_council_forming_fires_the_council_beat_with_the_speakers_name() {
     assert!(
         beats(&app).iter().any(|e| e.label.contains("Hale")),
         "the speaker is named"
+    );
+}
+
+/// **A council beat names the council's speaker even when a chief emerged the same turn.** The tier
+/// budget lets one `beat` through a turn, so the chief beat is held back by its own cooldown (a
+/// first chief fired it two turns earlier) and the council beat lands. The second chief sits on the
+/// lower band id with the same `since_turn`, so a kind-blind "newest leader" resolver would name
+/// the chief in the council beat.
+#[test]
+fn a_council_beat_names_its_speaker_not_a_chief_who_emerged_alongside() {
+    let mut app = spawn_world();
+    for _ in 0..3 {
+        spawn_band(&mut app, FactionId(0), 31);
+    }
+    for _ in 0..3 {
+        run_turn(&mut app);
+    }
+    give_a_band_a_leader(&mut app, FactionId(0), core_sim::LeaderKind::Chief, "Orrin");
+    run_turn(&mut app);
+    assert!(app
+        .world
+        .resource::<BeatLedger>()
+        .has_fired("leadership.chief_rises"));
+    // Two turns on: past the beat tier's own cooldown (2), inside the chief beat's (3).
+    run_turn(&mut app);
+
+    give_a_band_a_leader(&mut app, FactionId(0), core_sim::LeaderKind::Chief, "Yves");
+    give_a_band_a_leader(
+        &mut app,
+        FactionId(0),
+        core_sim::LeaderKind::ElderCouncil,
+        "Hale",
+    );
+    run_turn(&mut app);
+
+    let lines = beats(&app);
+    assert!(
+        lines.iter().any(|e| e.label.contains("Hale")),
+        "the council beat names its speaker: {lines:?}"
+    );
+    assert!(
+        !lines.iter().any(|e| e.label.contains("Yves")),
+        "the held-back chief is not named in the council beat: {lines:?}"
+    );
+}
+
+/// A led band lost the same turn another band gains a leader must not hide the new leader: the
+/// old signal diffed standing counts, which netted to zero here, and the beat never fired.
+#[test]
+fn losing_a_led_band_the_same_turn_does_not_mask_a_new_chief() {
+    let mut app = spawn_world();
+    spawn_band(&mut app, FactionId(0), 31);
+    spawn_band(&mut app, FactionId(0), 31);
+    for _ in 0..3 {
+        run_turn(&mut app);
+    }
+    give_a_band_a_leader(&mut app, FactionId(0), core_sim::LeaderKind::Chief, "Orrin");
+    run_turn(&mut app);
+    assert!(app
+        .world
+        .resource::<BeatLedger>()
+        .has_fired("leadership.chief_rises"));
+    for _ in 0..4 {
+        // past the beat's cooldown
+        run_turn(&mut app);
+    }
+
+    let led = {
+        let mut query = app
+            .world
+            .query::<(bevy::prelude::Entity, &core_sim::BandLeadership)>();
+        query
+            .iter(&app.world)
+            .find(|(_, l)| l.leader.is_some())
+            .map(|(entity, _)| entity)
+            .expect("one band is led")
+    };
+    app.world.despawn(led);
+    give_a_band_a_leader(&mut app, FactionId(0), core_sim::LeaderKind::Chief, "Brin");
+    run_turn(&mut app);
+    assert!(
+        beats(&app).iter().any(|e| e.label.contains("Brin")),
+        "the new chief is named though a led band was lost: {:?}",
+        beats(&app)
     );
 }

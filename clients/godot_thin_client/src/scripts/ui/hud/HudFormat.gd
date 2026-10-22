@@ -94,14 +94,14 @@ const BAND_ID_FALLBACK_NAME_FORMAT := "Band #%d"
 ## parenthesised pair here rather than as a labelled `Position:` row in the band zone's vitals.
 const BAND_HEADER_POSITION_FORMAT := "(%d, %d)"
 
-## **THE LEADER, on the header's third line** (issue #859) -- the line the chief-progress bar holds
-## until there is a leader, so the two never draw together. `leader_kind` is the wire's
+## **THE LEADER, in the Band tab's leader block** (issue #859) -- the block at the top of the tab
+## that holds the chief-progress bar until there is a leader, so the two never draw together. `leader_kind` is the wire's
 ## enum: 0 none, 1 chief, 2 elder council. A council has a named person too -- its speaker.
 const LEADER_KIND_NONE := 0
 const LEADER_KIND_CHIEF := 1
 const LEADER_KIND_ELDER_COUNCIL := 2
-const BAND_HEADER_CHIEF_FORMAT := "Chief %s"
-const BAND_HEADER_COUNCIL_FORMAT := "Elders' council — %s speaks"
+const BAND_LEADER_CHIEF_FORMAT := "Chief %s"
+const BAND_LEADER_COUNCIL_FORMAT := "Elders' council — %s speaks"
 ## **THE CHIEF-PROGRESS BAR** (#859) under the header's sub line, while a band has no leader. Four
 ## sources in this order, each a distinct hue; the remainder to the threshold is the empty cell.
 const CHIEF_LABEL_FORMAT := "%d / %d"
@@ -218,17 +218,17 @@ static func band_name(entry: Dictionary) -> String:
         return name
     return HudExpeditionVocab.PARTY_NAME_FORMAT % [name, HudExpeditionVocab.PARTY_SHORT_LABELS[mission]]
 
-## The header's leader line ("Led by Chief Orrin"), `""` when the band has no leader (the
-## chief-progress bar holds that line instead, see `band_chief_progress`).
+## The leader block's text line ("Chief Orrin" or "Elders' council — Orrin speaks"), `""` when the
+## band has no leader (the chief-progress bar fills the block instead, see `band_chief_progress`).
 static func band_leader_phrase(entry: Dictionary) -> String:
     var leader_name := String(entry.get("leader_name", "")).strip_edges()
     if leader_name == "":
         return ""
     match int(entry.get("leader_kind", LEADER_KIND_NONE)):
         LEADER_KIND_CHIEF:
-            return BAND_HEADER_CHIEF_FORMAT % leader_name
+            return BAND_LEADER_CHIEF_FORMAT % leader_name
         LEADER_KIND_ELDER_COUNCIL:
-            return BAND_HEADER_COUNCIL_FORMAT % leader_name
+            return BAND_LEADER_COUNCIL_FORMAT % leader_name
     return ""
 
 ## The segment hues, in `CHIEF_SOURCE_KEYS` order. Read at call time because `HudStyle`'s palette is

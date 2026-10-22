@@ -1,9 +1,10 @@
 //! **A chief emerges from directed work that succeeds** (#859, `.claude/rules/core_sim/leadership.md`).
 //!
 //! The emergence system, the kind rule, the permanence of the leader, the checkpoint and the
-//! splinter. The two credit sources are pinned where their seams are driven: `build_queue.rs` for a
-//! finished directed-work build and `denial_raid.rs` for a party's big-game kill; the unit-level
-//! predicates live beside `BandLeadership` itself.
+//! splinter. The four practice sources (finished directed-work builds -- Cultivate, Sow, Tame, Corral --
+//! commanded splits, hexes walked following a herd, settlement stages reached) are unit-pinned
+//! beside `BandLeadership` itself; `build_queue.rs` drives a finished build's credit through the
+//! labor pass.
 
 use bevy::app::App;
 use bevy::ecs::system::RunSystemOnce;

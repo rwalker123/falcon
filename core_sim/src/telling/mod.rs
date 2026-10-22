@@ -1236,7 +1236,6 @@ mod tests {
             &sample,
             &CumulativeTotals {
                 discovered_sites: 2.0,
-                ..CumulativeTotals::default()
             },
         );
 
@@ -1358,8 +1357,6 @@ mod tests {
         let mut ledger = BeatLedger::default();
         let totals = CumulativeTotals {
             discovered_sites: 4.0,
-            chiefs: 2.0,
-            councils: 1.0,
         };
         ledger.commit_edge_state(&SignalSample::default(), &totals);
         assert_eq!(

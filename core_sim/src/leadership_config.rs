@@ -26,7 +26,7 @@ pub const BUILTIN_LEADERSHIP_CONFIG: &str = include_str!("data/leadership_config
 pub struct LeadershipConfig {
     /// The practice a band must bank before it accepts a leader.
     pub practice_threshold: f64,
-    /// Practice one finished Cultivate, Farm, Tame or Corral build adds (`RungDef::directed_work`).
+    /// Practice one finished Cultivate, Sow, Tame or Corral build adds (`RungDef::directed_work`).
     pub practice_per_directed_build: f64,
     /// Practice a commanded band split adds to EACH of the two bands.
     pub practice_per_split: f64,

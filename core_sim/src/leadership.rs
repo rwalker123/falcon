@@ -92,7 +92,7 @@ pub struct BandLeader {
 /// permanent. Nothing accrues once a leader exists (the bar freezes where it stood).
 #[derive(Component, Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct BandLeadership {
-    /// From finished Cultivate, Farm, Tame and Corral builds (`RungDef::directed_work`).
+    /// From finished Cultivate, Sow, Tame and Corral builds (`RungDef::directed_work`).
     pub from_builds: f64,
     /// From commanded band splits, credited to both bands.
     pub from_splits: f64,

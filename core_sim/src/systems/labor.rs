@@ -317,8 +317,9 @@ pub struct LaborConfigs<'w> {
     pub demographics: Option<Res<'w, DemographicsConfigHandle>>,
     /// What a death adds to the place it happens on (`crate::belief`).
     pub belief: Res<'w, BeliefConfigHandle>,
-    /// How much practice a finished directed-work build and a big-game kill bank toward a band's
-    /// leader (`crate::leadership`). `Option`, like `demographics`: a hand-built test world that
+    /// The practice quanta toward a band's leader: a finished directed-work build (Cultivate,
+    /// Sow, Tame or Corral), a commanded split, each hex walked following a herd, and each
+    /// settlement stage reached (`crate::leadership`). `Option`, like `demographics`: a hand-built test world that
     /// never installed it reads the builtin, which is the very file `include_str!` baked in.
     pub leadership: Option<Res<'w, crate::leadership_config::LeadershipConfigHandle>>,
 }
@@ -5519,8 +5520,9 @@ type LaborBandParts = (
     Option<&'static mut BandEquipment>,
     Option<&'static BandId>,
     Option<&'static mut BandBench>,
-    // **The band's leadership practice** (`crate::leadership`): a finished directed-work build and a
-    // big-game hunt that lands its kill each bank a quantum on it. In the tuple rather than a new
+    // **The band's leadership practice** (`crate::leadership`): a finished directed-work build
+    // (Cultivate, Sow, Tame, Corral) banks a quantum on it, as do a split, herd-following hexes and
+    // settlement stages (those last three are credited elsewhere). In the tuple rather than a new
     // system parameter because this pass is at Bevy's 16-parameter limit.
     Option<&'static mut crate::leadership::BandLeadership>,
 );
@@ -5623,7 +5625,7 @@ pub fn advance_labor_allocation(
     // durability dials, resolved once. What varies per band is only its `BandEquipment` *wear*.
     let equipment_cfg = configs.equipment.get();
     let belief_cfg = configs.belief.get();
-    // The practice quanta a finished directed build and a big-game kill bank toward a leader.
+    // The practice quantum a finished directed-work build (Cultivate, Sow, Tame, Corral) banks toward a leader.
     let leadership_cfg = configs.leadership.as_ref().map_or_else(
         crate::leadership_config::LeadershipConfig::builtin,
         |handle| handle.get(),
