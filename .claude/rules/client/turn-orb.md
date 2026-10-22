@@ -159,11 +159,16 @@ paths:
   `turn_orb_unworked_rung`, whose fixture carries a WORKED patch as a negative control precisely so a
   roster read that sees no crews fails the row COUNT.
 
-  - **`gathering_held`** (**info**, NON-locating, `AttentionController._gathering_attention`, #698) —
+  - **`gathering_held`** (**info**, LOCATING, `AttentionController._gathering_attention`, #698) —
     two peoples' bands met this turn. Raised by `ingest_command_events` keyed on the event KIND alone
     (never parsing the detail), under the same own-`tick` and `seq` filters as `crew_handoff` (a row's `tick` is the turn just RESOLVED, `turn - RESOLUTION_TICK_LAG`: the sim stamps resolution events before `advance_tick` runs, so the event for turn N rides the frame for N + 1 and says `tick == N`; both producers matched nothing live while this filtered on `tick == turn`, and the harness fixtures stamp the server's `turn - 1` for that reason); the row's
-    label is the event's label ("A gathering") and its detail the sim's own sentence, verbatim. It is a
-    notice with no `Open ▸` (not on `ATTENTION_KINDS_WITH_A_PANEL`), wears the `gathering` campfire sprite (the `workers` palm says "work"; `⇄` is the text fallback in `KIND_ICON`), and is
+    label is the event's label ("A gathering") and its detail the sim's own sentence, verbatim. **The row
+    locates its band**: the event's top-level `band` key (the decoder's per-event band id,
+    `AttentionController.EVENT_BAND_KEY`) is resolved against the player's own bands by `band_id`
+    (`HudBandLaborState.player_band_by_band_id`), and the row carries that band's `current_x`/`current_y`
+    like the idle-workers row, so it wears `Jump →` and routes through the same `on_turn_orb_focus`
+    recentre. A band the roster no longer holds (died or merged) or an event carrying no band leaves the
+    row non-locating (`x < 0`). It has no `Open ▸` (not on `ATTENTION_KINDS_WITH_A_PANEL`), wears the `gathering` campfire sprite (the `workers` palm says "work"; `⇄` is the text fallback in `KIND_ICON`), and is
     capped at `ATTENTION_HANDOFF_MAX_ROWS`. The feed line rides the Notable rung (`hud_event_vocab.gd`).
 
   - **THE EVENT-DERIVED ROWS (`crew_handoff`, `gathering_held`) ARE THEIR OWN HALF OF THE REGISTRY.**

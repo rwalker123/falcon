@@ -1112,6 +1112,8 @@ const GATHERING_TURN := 62
 const GATHERING_LABEL := "A gathering"
 const GATHERING_DETAIL := "Elk Band met River Band at (12, 7)."
 const GATHERING_SEQ := 777
+## A durable band id no roster in this walk holds.
+const GATHERING_UNKNOWN_BAND := 99999
 
 ## The turn the opening frame carries: the sim stamps the first resolution at tick 0.
 const GATHERING_OPENING_TURN := 1
@@ -1121,12 +1123,21 @@ const GATHERING_OPENING_TURN := 1
 ## Seeding the attention controller directly and pushing a hand-built band build is what let the orb
 ## miss every gathering live: the rows arrive after the band build runs, so only the event half's own
 ## push can put them on the orb. No second populations frame is sent.
-func _gathering_frame(turn: int, seq: int) -> void:
+func _gathering_frame(turn: int, seq: int, event_band: int = HAND_TO_MOUTH_ENTITY) -> void:
 	h._hud._band_labor.set_turn(turn)
 	h._hud.update_band_alerts([_hand_to_mouth_band(HAND_TO_MOUTH_ENTITY, 0.0)])
 	h._hud.ingest_command_events([{
 		"tick": turn - AttentionController.RESOLUTION_TICK_LAG, "seq": seq, "kind": "gathering_held",
-		"label": GATHERING_LABEL, "detail": GATHERING_DETAIL}])
+		"label": GATHERING_LABEL, "detail": GATHERING_DETAIL, "band": event_band}])
+
+## The gathering row's locating target, read off the producer: the event's band's own tile, or the
+## non-locating sentinel.
+func _gathering_target() -> Vector2i:
+	for item_variant in h._hud._attention.event_attention():
+		var item: Dictionary = item_variant
+		if String(item.get("kind", "")) == HudAttentionVocab.ATTENTION_KIND_GATHERING:
+			return Vector2i(int(item["x"]), int(item["y"]))
+	return Vector2i(-99, -99)
 
 func _assert_gathering_row() -> void:
 	var prior_turn: int = h._hud._band_labor.current_turn()
@@ -1144,9 +1155,19 @@ func _assert_gathering_row() -> void:
 	var row: Variant = _orb_row_with(_orb_rows(), GATHERING_LABEL)
 	h._assert_hud("a gathering raises an orb row naming the sim's own sentence, the frame it arrives",
 		row != null and String((row as Dictionary)["detail"]) == GATHERING_DETAIL)
+	var band_fixture := _hand_to_mouth_band(HAND_TO_MOUTH_ENTITY, 0.0)
+	var band_tile := Vector2i(int(band_fixture["current_x"]), int(band_fixture["current_y"]))
+	h._assert_hud("the gathering row locates: it wears Jump and targets the event's band tile (%s)"
+		% str(_gathering_target()),
+		row != null and String((row as Dictionary)["jump"]).contains("Jump")
+		and _gathering_target() == band_tile)
 	h._hud.turn_orb.toggle_popover()
+	# A band the roster does not hold: the row falls back to non-locating, same label and detail.
+	_gathering_frame(GATHERING_TURN + 1, GATHERING_SEQ + 2, GATHERING_UNKNOWN_BAND)
+	h._assert_hud("a gathering whose band is not on the roster stays on the orb, non-locating",
+		_gathering_target() == Vector2i(HudAttentionVocab.ATTENTION_NON_LOCATING, HudAttentionVocab.ATTENTION_NON_LOCATING))
 	# The next turn brings no gathering: the event half is replaced wholesale and the row goes.
-	h._hud._band_labor.set_turn(GATHERING_TURN + 1)
+	h._hud._band_labor.set_turn(GATHERING_TURN + 2)
 	h._hud.ingest_command_events([])
 	h._assert_hud("the next turn without a gathering clears the row",
 		_orb_row_with(_orb_rows(), GATHERING_LABEL) == null)

@@ -122,6 +122,10 @@ const HANDOFF_TICK_KEY := "tick"
 
 const HANDOFF_SEQ_KEY := "seq"
 
+## The band an event is about — the decoder's top-level `band` key (`0` / `HudConst.NO_BAND_ID` when it
+## is about none). A `gathering_held` event carries the gathering band's durable id here.
+const EVENT_BAND_KEY := "band"
+
 ## **A ROW THE SIM NEVER SEQUENCED.** `seq` is ONE-BASED, so `0` is the FlatBuffers default and means
 ## the row never went through `CommandEventLog::push`. There is nothing to de-duplicate on, so such a
 ## row is admitted rather than dropped — the same reading `EventDockPanel` gives it, minus that panel's
@@ -192,6 +196,7 @@ func ingest_command_events(events_variant: Variant, turn: int) -> void:
             _gatherings.append({
                 "label": String(entry.get("label", "")).strip_edges(),
                 "detail": detail.strip_edges(),
+                "band_id": int(entry.get(EVENT_BAND_KEY, HudConst.NO_BAND_ID)),
             })
             continue
         if not detail.contains(HANDOFF_ACTION_TOKEN):
@@ -220,13 +225,22 @@ func _gathering_attention() -> Array:
         if i >= HudAttentionVocab.ATTENTION_HANDOFF_MAX_ROWS:
             break
         var label := String(gathering["label"])
+        # Locates the gathering band like the idle-workers row does (its tile, plain recenter through
+        # `on_turn_orb_focus`); a band the roster no longer holds leaves the row non-locating.
+        var x := HudAttentionVocab.ATTENTION_NON_LOCATING
+        var y := HudAttentionVocab.ATTENTION_NON_LOCATING
+        var band_id := int(gathering["band_id"])
+        if band_id != HudConst.NO_BAND_ID:
+            var band := _band_labor.player_band_by_band_id(band_id)
+            if not band.is_empty():
+                x = int(band.get("current_x", HudAttentionVocab.ATTENTION_NON_LOCATING))
+                y = int(band.get("current_y", HudAttentionVocab.ATTENTION_NON_LOCATING))
         items.append({
             "kind": HudAttentionVocab.ATTENTION_KIND_GATHERING,
             "severity": HudAttentionVocab.ATTENTION_SEVERITY_INFO,
             "label": label if label != "" else HudAttentionVocab.ATTENTION_GATHERING_LABEL,
             "detail": String(gathering["detail"]),
-            "x": HudAttentionVocab.ATTENTION_NON_LOCATING,
-            "y": HudAttentionVocab.ATTENTION_NON_LOCATING,
+            "x": x, "y": y,
         })
     return items
 
