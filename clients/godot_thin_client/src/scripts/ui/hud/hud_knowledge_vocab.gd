@@ -433,8 +433,8 @@ const PRACTISE_NOTES := {
 	"herd_lore": "Learned walking with a migrating herd.",
 	"travois": "Learned from goods left behind on long moves.",
 	"drives": "Learned from camp kills on a herd you follow.",
-	# Storage (#707) — taught by surplus rotting, not by a rung.
-	"storage": "Learned when food rots while your people have more than they eat.",
+	# Storage (#707, #708) — taught by keeping food, fastest when it rots; not by a rung.
+	"storage": "Learned by keeping food your people don't eat right away, and fastest when it rots.",
 }
 
 ## The craft half, which needs no table: every craft is learned the same way, and the sim charges the

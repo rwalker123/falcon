@@ -304,17 +304,28 @@ pub struct MaterialDraw {
 /// **One lot of one keeping class, and how long it has been keeping** — the unit food rots in.
 /// `age` counts the rot passes the lot has survived (plus any walk it was carried on), so it expires
 /// the turn its age reaches the class's shelf life; see [`FoodMix`].
+///
+/// **`age` and `stored` are two clocks.** `age` is the SPOILAGE clock: it starts at the walk a
+/// caravan pack was carried on, so meat rots on the way home. `stored` is the LARDER clock: it
+/// starts at `0` the turn the lot enters a band's larder (a home harvest and a landing pack alike)
+/// and advances one per rot pass while it sits there. Food counts as KEPT (#708) by `stored`, never
+/// by `age`, so a far hunt's meat does not arrive already "kept".
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct FoodBatch {
-    /// Turns this lot has been keeping.
+    /// Turns this lot has been keeping (walk included).
     pub age: u32,
+    /// Turns this lot has sat in the band's own larder.
+    pub stored: u32,
     /// How much of it there is (never zero in a held mix).
     pub amount: Scalar,
 }
 
+/// The larder time of a lot that has just entered a band's larder.
+pub const JUST_STORED: u32 = 0;
+
 /// `batches` scaled to total exactly `target`, every batch by the same factor (in exact fixed-point:
 /// each share floors, and the micro-units the floors drop go one at a time to the oldest batches
-/// with room — any batch when `target` exceeds what is held). The lots keep their ages.
+/// with room — any batch when `target` exceeds what is held). The lots keep both clocks.
 fn scale_batches(batches: &[FoodBatch], target: Scalar) -> Vec<FoodBatch> {
     let held: i128 = batches.iter().map(|b| i128::from(b.amount.raw())).sum();
     if held <= 0 || target <= scalar_zero() {
@@ -348,6 +359,7 @@ fn scale_batches(batches: &[FoodBatch], target: Scalar) -> Vec<FoodBatch> {
         .filter(|(_, share)| *share > 0)
         .map(|(batch, share)| FoodBatch {
             age: batch.age,
+            stored: batch.stored,
             amount: Scalar::from_raw(share),
         })
         .collect()
@@ -360,7 +372,7 @@ fn scale_batches(batches: &[FoodBatch], target: Scalar) -> Vec<FoodBatch> {
 /// ([`crate::spoilage`]) rather than being cut down to a line up front:
 ///
 /// - [`Self::add`] lands a lot at age 0; [`Self::add_aged`] lands one that has been travelling.
-///   Lots of equal age in a class merge.
+///   Both land with larder time `0`. Lots of equal age AND equal larder time in a class merge.
 /// - **Every take removes the oldest lot first** within a class ([`Self::remove`]).
 /// - **A proportional move** ([`Self::proportional`], [`Self::split`]) scales every lot by the same
 ///   factor, so the share that moves keeps its ages and both halves expire on the same turn.
@@ -428,21 +440,39 @@ impl FoodMix {
     /// Add `amount` of `class` that has already kept `age` turns (a pack that was walked home).
     /// A non-positive amount is a no-op; a lot of the same age merges.
     pub fn add_aged(&mut self, class: &str, amount: Scalar, age: u32) {
-        if amount <= scalar_zero() {
+        self.add_lot(
+            class,
+            FoodBatch {
+                age,
+                stored: JUST_STORED,
+                amount,
+            },
+        );
+    }
+
+    /// Add one whole lot, both clocks as given; a lot of the same age and larder time merges. Lots
+    /// stay oldest first (by `age`, then by `stored`).
+    fn add_lot(&mut self, class: &str, lot: FoodBatch) {
+        if lot.amount <= scalar_zero() {
             return;
         }
+        let key = (lot.age, lot.stored);
         let batches = self.classes.entry(class.to_string()).or_default();
-        match batches.iter().position(|b| b.age <= age) {
-            Some(i) if batches[i].age == age => batches[i].amount += amount,
-            Some(i) => batches.insert(i, FoodBatch { age, amount }),
-            None => batches.push(FoodBatch { age, amount }),
+        match batches.iter().position(|b| (b.age, b.stored) <= key) {
+            Some(i) if (batches[i].age, batches[i].stored) == key => {
+                batches[i].amount += lot.amount;
+            }
+            Some(i) => batches.insert(i, lot),
+            None => batches.push(lot),
         }
     }
 
-    /// Add every lot of `other`, ages kept.
+    /// Add every lot of `other`, ages and larder times kept.
     pub fn merge(&mut self, other: &FoodMix) {
-        for (class, age, amount) in other.batches() {
-            self.add_aged(class, amount, age);
+        for (class, lots) in &other.classes {
+            for lot in lots {
+                self.add_lot(class, *lot);
+            }
         }
     }
 
@@ -470,14 +500,17 @@ impl FoodMix {
         taken
     }
 
-    /// Remove up to `amount` from the one lot of `class` aged `age` — the debit for a pack that
-    /// rotted on its walk. Returns what was removed.
+    /// Remove up to `amount` from the one just-landed lot of `class` aged `age` (larder time
+    /// [`JUST_STORED`]) — the debit for a pack that rotted on its walk. Returns what was removed.
     pub fn remove_batch(&mut self, class: &str, age: u32, amount: Scalar) -> Scalar {
         let Some(batches) = self.classes.get_mut(class) else {
             return scalar_zero();
         };
         let mut taken = scalar_zero();
-        if let Some(batch) = batches.iter_mut().find(|b| b.age == age) {
+        if let Some(batch) = batches
+            .iter_mut()
+            .find(|b| b.age == age && b.stored == JUST_STORED)
+        {
             taken = min(amount.max(scalar_zero()), batch.amount);
             batch.amount -= taken;
         }
@@ -512,14 +545,15 @@ impl FoodMix {
     }
 
     /// **The meal, measuring the KEPT share** - [`Self::eat`], also returning how much of what was
-    /// eaten came from lots of at least `kept_from_age` (the lot's stored `age` at the meal).
-    /// Ages are read BEFORE the meal's rot pass ages them, so a lot landed on turn `T` has age `0`
-    /// at meal `T+1`; callers map "kept N turns" to `kept_from_age = N - 1`.
+    /// eaten came from lots that had sat in the larder at least `kept_from_stored` turns (the lot's
+    /// `stored` clock, NOT its spoilage `age`: a pack landed after a long walk is not yet kept).
+    /// The clock is read BEFORE the meal's rot pass advances it, so a lot landed on turn `T` has
+    /// `stored` `0` at meal `T+1`; callers map "kept N turns" to `kept_from_stored = N - 1`.
     pub fn eat_measuring_kept(
         &mut self,
         amount: Scalar,
         order: &[String],
-        kept_from_age: u32,
+        kept_from_stored: u32,
     ) -> (Scalar, Scalar) {
         let mut kept = scalar_zero();
         let mut remaining = amount.max(scalar_zero());
@@ -543,7 +577,7 @@ impl FoodMix {
                     }
                     let part = min(want, batch.amount);
                     want -= part;
-                    if batch.age >= kept_from_age {
+                    if batch.stored >= kept_from_stored {
                         kept += part;
                     }
                 }
@@ -566,6 +600,7 @@ impl FoodMix {
             };
             for batch in batches.iter_mut() {
                 batch.age += 1;
+                batch.stored += 1;
             }
             batches.retain(|batch| {
                 let expired = batch.age as f32 >= life;
@@ -856,9 +891,10 @@ impl LocalStore {
         &mut self,
         amount: Scalar,
         order: &[String],
-        kept_from_age: u32,
+        kept_from_stored: u32,
     ) -> (Scalar, Scalar) {
-        self.food.eat_measuring_kept(amount, order, kept_from_age)
+        self.food
+            .eat_measuring_kept(amount, order, kept_from_stored)
     }
 
     /// **One rot pass over the larder** — see [`FoodMix::age_and_expire`]. Returns what rotted.

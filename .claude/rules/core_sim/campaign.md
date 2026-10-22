@@ -428,7 +428,7 @@ party coming home, a band merging) can eat it. Engine: `core_sim/src/spoilage.rs
   `core_sim/tests/storage_branches.rs` and `demographics_config`'s tests. The rack and the pit are
   `intensification.md` -> "The band kind" / "The tile kind".
 - **The larder holds food per class and per age** — `LocalStore`'s `FoodMix`, a `class → [FoodBatch
-  { age, amount }]` map, lots oldest first, equal ages merged. `add` lands a lot at age 0;
+  { age, stored, amount }]` map, lots oldest first, equal ages and larder times merged. `add` lands a lot at age 0;
   `add_aged` lands one that was carried (a caravan pack lands aged by its walk). **Every take removes
   the oldest lot of a class first**; a proportional move (`proportional`, `split`, so a dowry, a
   pool, a shed, a launch larder) scales every lot by the same factor, so the moving share keeps its
@@ -522,17 +522,22 @@ credit        = practice / lesson_costs["storage"]                             /
   as `cultivation` and `herding`, which open the rung-2 step on their branches as `storage` opens the
   drying rack.
 - **Kept food teaches too, at `storage_kept_weight` (0.25) of rot's pace.** `kept` is the food the
-  band's meal ate from lots that had been in the larder at least `storage_kept_age_turns` (2) turns
-  since they landed. `simulate_population` measures it as it eats (`FoodMix::eat_measuring_kept`,
+  band's meal ate from lots that had sat in the band's own larder at least `storage_kept_age_turns`
+  (2) turns. A lot carries two clocks (`FoodBatch`): `age`, the spoilage clock, which a caravan
+  pack's walk has already advanced when it lands, and `stored`, the larder clock, which starts at 0
+  when the lot enters the larder (a home harvest and a landing pack alike) and advances one per rot
+  pass. Kept reads `stored`, never `age`, so far-hunt meat is fresh at its first meal however long
+  it walked. Lots merge only when both clocks match; a merge, a proportional split and the save
+  carry both. `simulate_population` measures it as it eats (`FoodMix::eat_measuring_kept`,
   parked on `PopulationCohort::last_food_kept`) and `rot_band_larders` pays it beside the rot, so
   storage practice is computed in one place (`spoilage::storage_practice`). The meal comes before
-  the rot pass that ages a lot, so a lot landed on turn *T* has stored age 0 at meal *T+1* (fresh)
-  and age 1 at meal *T+2* (kept at the shipped threshold): `spoilage::kept_from_age` maps the
-  threshold to a stored age, `storage_kept_age_turns - 1`. The weight is validated at most 1, so
-  kept food never teaches faster than rot, and the rot + kept total is capped at one full turn.
+  the rot pass that advances a lot's clocks, so a lot landed on turn *T* has `stored` 0 at meal
+  *T+1* (fresh) and 1 at meal *T+2* (kept at the shipped threshold): `spoilage::kept_from_stored`
+  maps the threshold to a larder time, `storage_kept_age_turns - 1`. The weight is validated at most
+  1, so kept food never teaches faster than rot, and the rot + kept total is capped at one full turn.
   Only the band's own larder meal counts: a caravan pack and a detached party's own meals do not.
-  The opening reserve is eaten after it has aged, so it pays kept practice too: at most
-  `food_reserve_days × weight` practice units in all (about a quarter of the lesson on the shipped
+  The opening reserve is eaten after it has sat, so it pays kept practice too: at most
+  `food_reserve_days x weight` practice units in all (about a quarter of the lesson on the shipped
   numbers). Levers: `knowledge.storage_kept_age_turns` / `storage_kept_weight` in
   `intensification_ladder.json`, both PLAYTEST DIALS.
 - **Transit rot never teaches.** `rot_band_larders` credits before the labor pass adds a caravan

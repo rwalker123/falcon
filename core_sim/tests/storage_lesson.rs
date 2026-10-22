@@ -282,3 +282,53 @@ fn a_band_that_eats_only_fresh_food_learns_nothing_even_with_an_old_lot_beside_i
     assert_eq!(cohort(&app, band).last_food_kept, 0.0);
     assert_eq!(storage_progress(&app), 0.0);
 }
+
+/// A walk long enough that the pack's spoilage age already exceeds the kept threshold, yet well
+/// inside the class's shelf life.
+const WALK_TURNS: u32 = 5;
+
+/// **KEPT MEANS SAT IN THE LARDER, NOT WALKED HOME (#708).** A caravan pack lands home with its
+/// spoilage age already set to its walk. That age must not count as larder time: the pack is fresh
+/// at its first meal however far it came, and kept only once it has sat the threshold turns.
+#[test]
+fn a_far_pack_is_not_kept_at_its_first_meal_and_is_once_it_has_sat_the_threshold() {
+    let (mut app, band) = world();
+    {
+        let mut cohort = app.world.get_mut::<PopulationCohort>(band).unwrap();
+        cohort.stores = LocalStore::new();
+        // Exactly what `land_food_home` does with a pack that walked `WALK_TURNS`.
+        cohort
+            .stores
+            .add_food_aged(KEEPING_CLASS, scalar_from_f32(SURPLUS), WALK_TURNS);
+    }
+    let threshold = app
+        .world
+        .resource::<LadderConfigHandle>()
+        .get()
+        .knowledge
+        .storage_kept_age_turns;
+    assert!(
+        WALK_TURNS >= threshold,
+        "fixture: the walk alone must reach the threshold"
+    );
+
+    // Meal after landing: the pack has walked, but it has not sat in the larder.
+    meal_then_rot(&mut app);
+    assert_eq!(
+        cohort(&app, band).last_food_kept,
+        0.0,
+        "a walked pack is fresh at its first meal"
+    );
+    assert_eq!(storage_progress(&app), 0.0);
+
+    // Every later meal until the threshold is met: the last of them eats a lot that has sat
+    // `threshold` turns (the meal reads the clock before that turn's rot pass advances it).
+    for _ in 1..threshold {
+        meal_then_rot(&mut app);
+    }
+    assert!(
+        cohort(&app, band).last_food_kept > 0.0,
+        "kept once it has sat {threshold} turns in the larder"
+    );
+    assert!(storage_progress(&app) > 0.0);
+}

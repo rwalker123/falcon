@@ -1519,8 +1519,8 @@ type PartiesAndLadder<'w, 's> = (
     Option<Res<'w, LadderConfigHandle>>,
 );
 
-/// The lot age no lot reaches: a world with no ladder counts no food as kept.
-const NO_KEPT_FOOD_AGE: u32 = u32::MAX;
+/// The larder time no lot reaches: a world with no ladder counts no food as kept.
+const NO_KEPT_FOOD_STORED: u32 = u32::MAX;
 
 #[allow(clippy::too_many_arguments)] // Bevy system parameters require explicit resource access
 pub fn simulate_population(
@@ -1554,8 +1554,8 @@ pub fn simulate_population(
     (parties, ladder): PartiesAndLadder,
 ) {
     let party_working = stationed_party_workers(&parties);
-    let kept_from_age = ladder.map_or(NO_KEPT_FOOD_AGE, |ladder| {
-        crate::spoilage::kept_from_age(&ladder.get().knowledge)
+    let kept_from_stored = ladder.map_or(NO_KEPT_FOOD_STORED, |ladder| {
+        crate::spoilage::kept_from_stored(&ladder.get().knowledge)
     });
     let population_cfg = pipeline_config.config().population();
     let belief_cfg = belief_config.get();
@@ -1675,7 +1675,7 @@ pub fn simulate_population(
         let (_, kept) = cohort.stores.eat_food_measuring_kept(
             food_before - outcome.state.food_store,
             &demo.keeping.eat_order(),
-            kept_from_age,
+            kept_from_stored,
         );
         // **The kept share of the meal teaches storage** (#708), paid by `spoilage::rot_band_larders`
         // beside rot's half so storage practice is computed in exactly one place.

@@ -44,7 +44,7 @@ use bevy::math::UVec2;
 use bevy::prelude::Entity;
 use core_sim::grid_utils::hex_distance_wrapped;
 use core_sim::spoilage::{
-    kept_from_age, storage_practice, STORAGE_DISCOVERY_ID, STORAGE_KNOWLEDGE,
+    kept_from_stored, storage_practice, STORAGE_DISCOVERY_ID, STORAGE_KNOWLEDGE,
 };
 use core_sim::{
     build_test_app, herd_default_hunt_kit, run_turn, BandBench, BandId, BandWorkforce,
@@ -685,7 +685,7 @@ fn run(
     let (kept_age, lesson_cost, learn_threshold) = {
         let ladder = app.world.resource::<LadderConfigHandle>().get();
         (
-            kept_from_age(&ladder.knowledge),
+            kept_from_stored(&ladder.knowledge),
             ladder.knowledge.lesson_cost(STORAGE_KNOWLEDGE).unwrap(),
             ladder.knowledge.completion_threshold,
         )

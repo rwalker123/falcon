@@ -185,11 +185,13 @@ pub const STORAGE_DISCOVERY_ID: u32 = 2018;
 /// in `start_profile_knowledge_tags.json`.
 pub const STORAGE_KNOWLEDGE: &str = "storage";
 
-/// **The lot age at which eating a lot counts as KEPT** (#708): `storage_kept_age_turns` turns since
-/// it landed. A lot landing on turn `T` has age `0` at meal `T+1` (the meal comes before the rot
-/// pass that ages it), age `1` at meal `T+2`: so "kept N turns" is a stored age of `N - 1`. The
-/// ladder validates `storage_kept_age_turns >= 1`, so this never underflows.
-pub fn kept_from_age(knowledge: &LadderKnowledge) -> u32 {
+/// **The larder time at which eating a lot counts as KEPT** (#708): the lot has sat in the band's
+/// own larder `storage_kept_age_turns` turns. It reads the lot's larder clock (`FoodBatch::stored`),
+/// never its spoilage `age`, which a caravan pack's walk has already advanced. A lot entering the
+/// larder on turn `T` has `stored` `0` at meal `T+1` (the meal comes before the rot pass that
+/// advances it) and `1` at meal `T+2`: so "kept N turns" is a larder time of `N - 1`. The ladder
+/// validates `storage_kept_age_turns >= 1`, so this never underflows.
+pub fn kept_from_stored(knowledge: &LadderKnowledge) -> u32 {
     knowledge.storage_kept_age_turns.saturating_sub(1)
 }
 
@@ -203,8 +205,8 @@ pub fn kept_from_age(knowledge: &LadderKnowledge) -> u32 {
 /// total         = min(rot_practice + kept_practice, learn_rate)
 /// ```
 ///
-/// `kept` is the food the meal ate from lots kept at least `storage_kept_age_turns`
-/// ([`kept_from_age`]). Zero when the band needs nothing or neither term has anything.
+/// `kept` is the food the meal ate from lots that sat in the larder at least `storage_kept_age_turns`
+/// ([`kept_from_stored`]). Zero when the band needs nothing or neither term has anything.
 pub fn storage_practice(rotted: f32, kept: f32, need: f32, knowledge: &LadderKnowledge) -> f32 {
     if need <= 0.0 {
         return 0.0;
@@ -515,6 +517,35 @@ mod tests {
         assert_eq!(lots, vec![(2, 3.0), (0, 4.0)]);
     }
 
+    /// **Larder time rides every move.** A lot that sat a turn keeps that turn through a merge, a
+    /// proportional split and the serialized form, and does not merge with a same-age lot that has
+    /// not sat.
+    #[test]
+    fn larder_time_survives_merges_splits_and_never_merges_with_a_fresher_lot() {
+        let mut sat = FoodMix::default();
+        sat.add(DRY, scalar_from_f32(10.0));
+        sat.age_and_expire(|c| keeping().shelf_life(c));
+        // A pack that walked one turn lands now: same spoilage age, no larder time.
+        let mut landed = FoodMix::default();
+        landed.add_aged(DRY, scalar_from_f32(10.0), 1);
+        sat.merge(&landed);
+        assert_eq!(sat.batches().count(), 2, "equal age, different larder time");
+
+        let half = sat.proportional(scalar_from_f32(10.0));
+        let mut kept = scalar_zero();
+        let mut mix = half.clone();
+        let mut again = FoodMix::default();
+        again.merge(&mix);
+        assert_eq!(again, half);
+        let (_, k) = mix.eat_measuring_kept(scalar_from_f32(100.0), &keeping().eat_order(), 1);
+        kept += k;
+        assert!(close(kept, 5.0), "only the half that sat counts: {kept:?}");
+
+        let json = serde_json::to_string(&sat).expect("serializes");
+        let back: FoodMix = serde_json::from_str(&json).expect("deserializes");
+        assert_eq!(back, sat);
+    }
+
     #[test]
     fn the_forecast_is_what_the_turns_actually_rot() {
         // A mixed, mixed-age larder: the forward walk must name exactly what the turns then rot.
@@ -706,7 +737,7 @@ mod tests {
     fn a_lot_is_kept_from_the_second_meal_after_it_landed() {
         let k = knowledge();
         assert_eq!(k.storage_kept_age_turns, KEPT_AGE_TURNS);
-        let from_age = kept_from_age(&k);
+        let from_age = kept_from_stored(&k);
         let order = keeping().eat_order();
         let ration = scalar_from_f32(1.0);
         let mut store = LocalStore::default();
@@ -732,24 +763,27 @@ mod tests {
         let mut store = LocalStore::default();
         store.add_food("flesh", scalar_from_f32(10.0));
         let (_, kept) =
-            store.eat_food_measuring_kept(scalar_from_f32(5.0), &order, kept_from_age(&k));
+            store.eat_food_measuring_kept(scalar_from_f32(5.0), &order, kept_from_stored(&k));
         assert_eq!(
             storage_practice(NOTHING_ROTTED, kept.to_f32(), SMALL_NEED, &k),
             0.0
         );
     }
 
-    /// **The meal reads the oldest lot first**, so the kept share is the old lot's, not a share of
-    /// the class.
+    /// **The meal reads the oldest lot first**, so the kept share is the lot that has sat in the
+    /// larder, not a share of the class.
     #[test]
-    fn a_mixed_age_meal_counts_only_the_old_lots_as_kept() {
+    fn a_mixed_age_meal_counts_only_the_lots_that_sat_as_kept() {
         let k = knowledge();
         let order = keeping().eat_order();
         let mut store = LocalStore::default();
-        store.add_food_aged("dry", scalar_from_f32(2.0), 3);
+        store.add_food("dry", scalar_from_f32(2.0));
+        for _ in 0..3 {
+            store.age_food(|_| Some(f32::INFINITY));
+        }
         store.add_food("dry", scalar_from_f32(5.0));
         let (eaten, kept) =
-            store.eat_food_measuring_kept(scalar_from_f32(4.0), &order, kept_from_age(&k));
+            store.eat_food_measuring_kept(scalar_from_f32(4.0), &order, kept_from_stored(&k));
         assert_eq!(eaten, scalar_from_f32(4.0));
         assert_eq!(kept, scalar_from_f32(2.0));
     }

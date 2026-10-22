@@ -878,8 +878,9 @@ Harness: `fixtures_knowledge.gd` carries the three rows; `knowledge_panel.gd` as
 ## `storage` IS A STANDALONE STEP ROW UNDER `food` (#707, #708)
 
 `storage` rides the roster after the roaming skills as branch `stores`, area `food`, `is_step = true`
-(it gates the drying rack and the storage pit), taught by rot (food that spoils while the band has more
-than it eats), not by a rung. `stores` has no `DOMAIN_BRANCH_LABELS` entry, so the row reads **Stores**
+(it gates the drying rack and the storage pit), taught by keeping food rather than by a rung: food
+eaten after sitting in the larder pays slowly, and rot (food that spoils while the band has more than
+it eats) pays fastest. `stores` has no `DOMAIN_BRANCH_LABELS` entry, so the row reads **Stores**
 off `domain_label`'s capitalized fallback. Copy: `KNOWLEDGE_UNLOCK_NOTES["storage"]` and
 `PRACTISE_NOTES["storage"]`. Harness: `fixtures_knowledge.gd` carries the row (`BRANCH_STORES`), and
 `knowledge_panel.gd` expects FOOD to gather `plant`, `animal`, `stores` (three drawn rows).
