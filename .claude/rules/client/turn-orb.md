@@ -166,6 +166,16 @@ paths:
     notice with no `Open ▸` (not on `ATTENTION_KINDS_WITH_A_PANEL`), wears the `gathering` campfire sprite (the `workers` palm says "work"; `⇄` is the text fallback in `KIND_ICON`), and is
     capped at `ATTENTION_HANDOFF_MAX_ROWS`. The feed line rides the Notable rung (`hud_event_vocab.gd`).
 
+  - **THE EVENT-DERIVED ROWS (`crew_handoff`, `gathering_held`) ARE THEIR OWN HALF OF THE REGISTRY.**
+    `AttentionController.event_attention()` returns the hand-off rows then the gathering rows;
+    `HudLayer.ingest_command_events` pushes them with `TurnOrbController.set_event_attention` the moment
+    it has ingested the events, and `_push_attention` folds that half in right after the band half.
+    They are deliberately NOT part of `build_band_attention`: `Main._apply_snapshot` runs
+    `update_band_alerts` BEFORE `ingest_command_events`, so a band build could only carry the previous
+    frame's events — a row would land a turn late, and on the opening frame never. As their own half
+    they land the frame they arrive, whatever order `Main` runs its sections in. The harness drives
+    that real order (populations, then events, one frame) in `chapters/turn_orb.gd`.
+
   - **`crew_handoff`** (**info**, NON-locating, `_crew_handoff_attention`) — a build finished this turn
     and its crew MOVED: onto the finished rung's keeping if that rung declares an upkeep, back to the
     idle pool if it does not (`docs/plan_standing_upkeep.md` §2.3). **It is an attention row because of

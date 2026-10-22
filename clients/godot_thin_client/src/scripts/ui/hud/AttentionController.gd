@@ -5,9 +5,9 @@ extends RefCounted
 ## docs/plan_hud_decomposition.md).
 ##
 ## WHAT THIS IS — and the domain split with `TurnOrbController`. The turn orb's attention registry is
-## assembled from two halves. `TurnOrbController` owns the orb WIDGET, the snapshot-driven fork
+## assembled from several halves. `TurnOrbController` owns the orb WIDGET, the snapshot-driven fork
 ## producer, and the registry ASSEMBLY (`set_band_attention` / `_push_attention` fold the band half +
-## the fork half into ONE `TurnOrb.set_attention` and severity-sort). This controller owns the OTHER
+## the event half (`event_attention`, pushed from `ingest_command_events`) + the fork half into ONE `TurnOrb.set_attention` and severity-sort). This controller owns the OTHER
 ## half: PRODUCING the band/expedition attention rows, and ROUTING their "Jump →". `HudLayer.update_band_alerts`
 ## builds the array through `build_band_attention` and hands it to `_turnorb.set_band_attention(...)`.
 ##
@@ -397,9 +397,18 @@ func build_band_attention(player_bands: Array, player_expeditions: Array) -> Arr
     # Producer 8 — a finished build's crew moved (§2.3). Outside the band loop and fed by the command
     # stream rather than by the roster: a hand-off is an EVENT, and no band field records that it
     # happened.
-    attention.append_array(_crew_handoff_attention())
-    attention.append_array(_gathering_attention())
+    # (The hand-off and gathering rows are NOT built here — see `event_attention`.)
     return attention
+
+## **THE EVENT HALF OF THE ORB REGISTRY** — the crew hand-off rows then the gathering rows, in that
+## order. They are derived from the command-event stream, which `Main` ingests AFTER `update_band_alerts`
+## within a frame, so folding them into `build_band_attention` delivered them a frame late (or, on the
+## opening frame, never). `HudLayer.ingest_command_events` pushes this array to the orb as its own half
+## the moment the rows are ingested, so they land the frame they arrive whatever order Main runs in.
+func event_attention() -> Array:
+    var rows: Array = _crew_handoff_attention()
+    rows.append_array(_gathering_attention())
+    return rows
 
 ## **THE DEALINGS HALF OF THE REGISTRY** (early diplomacy) -- one row per band with an item addressed to
 ## it, because the answer window is ONE turn and the orb is the only surface that reaches the player on

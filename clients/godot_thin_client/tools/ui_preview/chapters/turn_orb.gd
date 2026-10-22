@@ -490,7 +490,7 @@ func _handoff_recapture_fixture() -> Array:
 ## How many hand-off rows the producer would put on the orb right now.
 func _handoff_row_count() -> int:
 	var rows := 0
-	for item_variant in h._hud._attention.build_band_attention([], []):
+	for item_variant in h._hud._attention.event_attention():
 		var item: Dictionary = item_variant
 		if String(item.get("kind", "")) == HudAttentionVocab.ATTENTION_KIND_CREW_HANDOFF:
 			rows += 1
@@ -1113,23 +1113,45 @@ const GATHERING_LABEL := "A gathering"
 const GATHERING_DETAIL := "Elk Band met River Band at (12, 7)."
 const GATHERING_SEQ := 777
 
+## The turn the opening frame carries: the sim stamps the first resolution at tick 0.
+const GATHERING_OPENING_TURN := 1
+
+## **DRIVEN IN `Main._apply_snapshot`'S OWN ORDER** — `update_band_alerts` (the populations section) FIRST,
+## then `ingest_command_events`, both for the SAME frame, the event stamped `turn - RESOLUTION_TICK_LAG`.
+## Seeding the attention controller directly and pushing a hand-built band build is what let the orb
+## miss every gathering live: the rows arrive after the band build runs, so only the event half's own
+## push can put them on the orb. No second populations frame is sent.
+func _gathering_frame(turn: int, seq: int) -> void:
+	h._hud._band_labor.set_turn(turn)
+	h._hud.update_band_alerts([_hand_to_mouth_band(HAND_TO_MOUTH_ENTITY, 0.0)])
+	h._hud.ingest_command_events([{
+		"tick": turn - AttentionController.RESOLUTION_TICK_LAG, "seq": seq, "kind": "gathering_held",
+		"label": GATHERING_LABEL, "detail": GATHERING_DETAIL}])
+
 func _assert_gathering_row() -> void:
 	var prior_turn: int = h._hud._band_labor.current_turn()
-	h._hud._band_labor.set_turn(GATHERING_TURN)
-	h._hud._attention.ingest_command_events([{
-		"tick": GATHERING_TURN - AttentionController.RESOLUTION_TICK_LAG, "seq": GATHERING_SEQ, "kind": "gathering_held",
-		"label": GATHERING_LABEL, "detail": GATHERING_DETAIL}], GATHERING_TURN)
-	h._hud.turn_orb.set_attention(h._hud._attention.build_band_attention([], []))
+	# The opening frame: turn 1, event at tick 0.
+	_gathering_frame(GATHERING_OPENING_TURN, GATHERING_SEQ)
 	h._hud.turn_orb.open_popover()
+	await h._settle()
+	var opening_row: Variant = _orb_row_with(_orb_rows(), GATHERING_LABEL)
+	h._assert_hud("the opening frame's gathering is on the orb that same frame",
+		opening_row != null and String((opening_row as Dictionary)["detail"]) == GATHERING_DETAIL)
+	# A later turn, still one frame.
+	_gathering_frame(GATHERING_TURN, GATHERING_SEQ + 1)
 	await h._settle()
 	await h._save("turn_orb_gathering")
 	var row: Variant = _orb_row_with(_orb_rows(), GATHERING_LABEL)
-	h._assert_hud("a gathering raises an orb row naming the sim's own sentence",
+	h._assert_hud("a gathering raises an orb row naming the sim's own sentence, the frame it arrives",
 		row != null and String((row as Dictionary)["detail"]) == GATHERING_DETAIL)
 	h._hud.turn_orb.toggle_popover()
-	h._hud.turn_orb.set_attention([])
-	h._hud._attention.ingest_command_events([], GATHERING_TURN + 1)
+	# The next turn brings no gathering: the event half is replaced wholesale and the row goes.
+	h._hud._band_labor.set_turn(GATHERING_TURN + 1)
+	h._hud.ingest_command_events([])
+	h._assert_hud("the next turn without a gathering clears the row",
+		_orb_row_with(_orb_rows(), GATHERING_LABEL) == null)
 	h._hud._band_labor.set_turn(prior_turn)
+	h._hud.ingest_command_events([])
 
 ## **THE KNOWLEDGE SCREEN'S ORB ROW** (`docs/plan_knowledge_screen.md` §5, slice C) — one row per
 ## discovery that finished this turn, **and nothing else at all**.
