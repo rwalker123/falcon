@@ -9,7 +9,7 @@ extends Control
 ## in place of the silhouette. Until art lands the head-and-shoulders silhouette is drawn in the band's
 ## faction map colour (`MapView.faction_color`, the tint FactionMark and the map's banners use).
 
-## Drop-in path for the real placeholder art; nothing ships at it, so the silhouette is the fallback.
+## Drop-in path for the portrait art; the drawn silhouette is the fallback when no file is there.
 const PORTRAIT_TEXTURE_PATH := "res://assets/portraits/leader_placeholder.png"
 
 ## The square's logical side.
@@ -67,7 +67,9 @@ func _draw() -> void:
     var box := Rect2(Vector2.ZERO, Vector2(PORTRAIT_SIZE, PORTRAIT_SIZE))
     draw_rect(box, HudStyle.GROUND_2, true)
     var alpha := EMPTY_ALPHA if _empty else FILLED_ALPHA
-    var tex: Texture2D = load(PORTRAIT_TEXTURE_PATH) as Texture2D if has_art() else null
+    # Through IconSprites' cache, never a bare `load`: a texture only this local holds is freed when
+    # `_draw` returns, before the canvas renders the command, and the square draws solid white.
+    var tex := IconSprites.texture_for(PORTRAIT_TEXTURE_PATH, false) if has_art() else null
     if tex != null:
         draw_texture_rect(tex, box.grow(-FRAME_INSET), false, Color(1.0, 1.0, 1.0, alpha))
     else:

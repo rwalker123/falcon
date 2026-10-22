@@ -117,7 +117,10 @@ command center**: shown whenever ≥1 player band exists, always displaying a
   and one line of per-source points. There is no `no chief yet` text.
   **`LeaderPortrait` is the portrait square** (48px logical). It first tries `res://assets/portraits/
   leader_placeholder.png` (`PORTRAIT_TEXTURE_PATH`, checked with `ResourceLoader.exists`) and draws it
-  scaled into the square: that path is the seam where real art lands, and no file ships there. Without
+  scaled into the square: that path is the seam where the art lands, and one painted bust ships there
+  for every leader. It loads through `IconSprites.texture_for`, never a bare `load` in `_draw`: a
+  texture only a `_draw` local holds is freed before the canvas renders, and the square draws solid
+  white (it did, in the first art drop). Without
   it, it draws a head-and-shoulders silhouette (circle head, half-ellipse shoulders) in the band's
   faction map colour (`MapView.faction_color`, as `FactionMark` does) on a `GROUND_2` ground with a thin
   `LINE` frame; `empty` drops the silhouette to `EMPTY_ALPHA` and the frame to `EMPTY_FRAME_ALPHA`.
