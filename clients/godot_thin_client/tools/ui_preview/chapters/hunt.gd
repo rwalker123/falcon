@@ -1640,8 +1640,8 @@ func run(harness) -> void:
 	var corral_offer = ForageFx.find_improvement_control(h._hud._drawercompose._compose_sheet, "corral")
 	h._assert_hud("Corral's OFFERED payoff names BOTH products too, food leading",
 		corral_offer != null
-		and String(corral_offer.get_meta(HudWidgets.IMPROVEMENT_STATE_META, ""))
-			== HudWidgets.IMPROVEMENT_STATE_OFFERED
+		and String(corral_offer.get_meta(ForageFx.IMPROVEMENT_STATE_META, ""))
+			== ForageFx.IMPROVEMENT_STATE_OFFERED
 		and Readout.improvement_deal_text(h._hud._drawercompose._compose_sheet)
 			.ends_with(BOAR_CORRAL_PAYOFF_FACE))
 	h._assert_hud("…as the block's ONLY row, an offered rung stating its payoff and nothing else",
@@ -1701,7 +1701,6 @@ func run(harness) -> void:
 
 	await _tame_deal_reads_the_curve()
 
-	await _hunt_crew_split_follows_the_stepper()
 
 
 # =====================================================================================
@@ -1796,47 +1795,6 @@ func _tame_deal_reads_the_curve() -> void:
 	h._hud._drawercompose.close_compose_sheet()
 	h._hud._compose.reset_hunt_source()
 
-## **THE HUNT SHEET'S CREW SPLIT IS THE CURVE ROW'S `keep_hands` AT THE STEPPER'S CREW.** A sender
-## authors half a hand of keeping per hunter on every row, so a sheet reading the wrong row lands on a
-## figure the claims name; the stepper then moves and the marks and the sentence must follow.
-func _hunt_crew_split_follows_the_stepper() -> void:
-	var query: ForecastQuery = h._hud.forecast_query()
-	query.set_sender(func(request_id: int, ask: Dictionary) -> bool:
-		var reply := ForecastFx.answer(h._hud, request_id, ask)
-		if String(ask.get("kind", "")) == ForecastQuery.KIND_HUNT_CREW_TAKE:
-			for row in reply.get("per_crew", []):
-				(row as Dictionary)[SourceForecast.CREW_CURVE_KEEP_HANDS_KEY] = \
-					HUNT_SPLIT_KEEP_PER_HAND * float((row as Dictionary).get(
-						SourceForecast.CREW_TAKE_WORKERS_KEY, 0))
-		query.deliver.call_deferred([reply])
-		return true)
-	query.reset()
-	var boar := HerdFx.investment_pair_boar_herd()
-	h._hud._compose.reset_hunt_source()
-	h._hud._compose.set_hunt_band(-1)
-	h._show_herd(boar)
-	for crew in [HUNT_SPLIT_CREW, HUNT_SPLIT_STEPPED_CREW]:
-		h._compose_herd(boar, crew)
-		await h._settle()
-		h._compose_herd(boar, crew)
-		await h._settle()
-		if crew == HUNT_SPLIT_CREW:
-			await h._save("herd_crew_split_sheet")
-		var sheet = h._hud._drawercompose._compose_sheet
-		var marks := Readout.crew_split_marks(sheet)
-		var want := HUNT_SPLIT_KEEP_PER_HAND * float(crew)
-		var words := HUNT_SPLIT_WORDS if crew == HUNT_SPLIT_CREW else HUNT_SPLIT_STEPPED_WORDS
-		h._assert_hud("crew split, hunt sheet at %d — the bar is the curve row's (%s, want %d · %d)"
-				% [crew, "none" if marks == null else "%d · %d" % [marks.crew(), marks.keepers()],
-					crew, roundi(want)],
-			marks != null and marks.crew() == crew and marks.keepers() == roundi(want))
-		h._assert_hud("…and the hover reads \"%s…\" (%s)"
-				% [words, "" if marks == null else marks.tooltip_text],
-			marks != null and marks.tooltip_text.begins_with(words))
-	ForecastFx.install(h._hud)
-	query.reset()
-	h._hud._drawercompose.close_compose_sheet()
-	h._hud._compose.reset_hunt_source()
 
 ## The authored keeping on the hunt curve, and the two crews the sheet is read at, with their words.
 const HUNT_SPLIT_KEEP_PER_HAND := 0.5
@@ -3717,7 +3675,7 @@ const ACTOR_FORAGE_VERB := "Harvest"
 const ACTOR_HUNT_VERB := "Hunt Here"
 
 ## The rung each web's improvement control offers on these fixtures — a wild Thriving patch offers
-## Cultivate, a part-tamed herd offers Tame. Reached by `HudWidgets.IMPROVEMENT_CONTROL_META`, never by
+## Cultivate, a part-tamed herd offers Tame. Reached by `ForageFx.IMPROVEMENT_CONTROL_META`, never by
 ## face, so the claim is about the control's PRESENCE rather than about its wording.
 const ACTOR_FORAGE_RUNG := "cultivate"
 const ACTOR_HUNT_RUNG := "tame"

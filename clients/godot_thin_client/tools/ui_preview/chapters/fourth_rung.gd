@@ -75,6 +75,17 @@ func _field_tile(terrace_progress: float) -> Dictionary:
 		entry["terrace_payoff"] = TERRACE_YIELD
 	return RungFx.stamp_patch(tile, HudComposeVocab.FORAGE_FORECAST_PREFIX)
 
+## The names the rung card (`RungLadder.track`) lists for a source — where a rung is NAMED now that the
+## strip's chip carries only its glyph.
+func _track_names(source: Dictionary, prefix: String, plant: bool = true) -> Array:
+	var names: Array = []
+	var rows := RungLadder.track(SourceForecast.LABOR_KIND_FORAGE if plant else SourceForecast.LABOR_KIND_HUNT,
+		source, HudComposeVocab.FORAGE_FORECAST_PREFIX if plant else prefix, "",
+		h._hud._topbar.faction_tracks(HudConst.PLAYER_FACTION_ID), {}, {})
+	for row in rows:
+		names.append(String(row.get(RungLadder.ROW_NAME_KEY, "")))
+	return names
+
 func _terrace_states() -> void:
 	h._hud._band_labor._player_band = BandFx.band_fixture()
 	_knowledge(KNOWN, KNOWN)
@@ -88,11 +99,11 @@ func _terrace_states() -> void:
 		not h._hud.tile_detail.get_parsed_text().contains(TERRACE_LABEL))
 	var sheet = h._hud._drawercompose._compose_sheet
 	h._assert_hud("a Farm with a catalog step above it OFFERS that step: the `terrace` control is live",
-		ForageFx.improvement_state(sheet, TERRACE_VERB) == HudWidgets.IMPROVEMENT_STATE_OFFERED)
-	h._assert_hud("…it is named by the catalog's own label, not a client table",
-		ForageFx.improvement_face(sheet, TERRACE_VERB).contains(TERRACE_LABEL))
+		ForageFx.improvement_state(sheet, TERRACE_VERB) == ForageFx.IMPROVEMENT_STATE_OFFERED)
+	h._assert_hud("…it is named by the catalog's own label on the rung card, not a client table",
+		_track_names(tile, "").any(func(n: String) -> bool: return n.contains(TERRACE_LABEL)))
 	h._assert_hud("…and the rung below it is a DONE state, not a second offer",
-		ForageFx.improvement_state(sheet, "sow") == HudWidgets.IMPROVEMENT_STATE_DONE)
+		ForageFx.improvement_state(sheet, "sow") == ForageFx.IMPROVEMENT_STATE_DONE)
 	var ladder: Array = SourceForecast.improvement_ladder(tile, HudComposeVocab.FORAGE_FORECAST_PREFIX)
 	h._assert_hud("the source's ladder is the catalog's, in climb order (%s)" % str(ladder),
 		ladder == ["cultivate", "sow", TERRACE_VERB])
@@ -115,7 +126,7 @@ func _terrace_states() -> void:
 	await h._save("fourth_rung_terrace_locked")
 	h._assert_hud("the step's knowledge unlearned: no live control for it",
 		ForageFx.improvement_state(h._hud._drawercompose._compose_sheet, TERRACE_VERB)
-			!= HudWidgets.IMPROVEMENT_STATE_OFFERED)
+			!= ForageFx.IMPROVEMENT_STATE_OFFERED)
 	h._hud._drawercompose.close_compose_sheet()
 	_knowledge(KNOWN, KNOWN)
 
@@ -131,7 +142,7 @@ func _terrace_states() -> void:
 	await h._settle()
 	h._assert_hud("a patch holding only Tended is NOT offered Terrace",
 		ForageFx.improvement_state(h._hud._drawercompose._compose_sheet, TERRACE_VERB)
-			!= HudWidgets.IMPROVEMENT_STATE_OFFERED)
+			!= ForageFx.IMPROVEMENT_STATE_OFFERED)
 	var gates := RungGates.source_gates(tended_only, HudComposeVocab.FORAGE_FORECAST_PREFIX,
 		{"cultivation": KNOWN, "seed_selection": KNOWN, KNOWLEDGE_TERRACING: KNOWN})
 	h._assert_hud("…and the step's own gate says the rung below is not held (%s)" % str(gates),
@@ -156,9 +167,9 @@ func _stud_states() -> void:
 	await h._save("fourth_rung_stud_offered")
 	var sheet = h._hud._drawercompose._compose_sheet
 	h._assert_hud("a Pen with a catalog step above it OFFERS that step: the `stud` control is live",
-		ForageFx.improvement_state(sheet, STUD_VERB) == HudWidgets.IMPROVEMENT_STATE_OFFERED)
-	h._assert_hud("…named by the catalog's own label",
-		ForageFx.improvement_face(sheet, STUD_VERB).contains(STUD_LABEL))
+		ForageFx.improvement_state(sheet, STUD_VERB) == ForageFx.IMPROVEMENT_STATE_OFFERED)
+	h._assert_hud("…named by the catalog's own label on the rung card",
+		_track_names(herd, "", false).any(func(n: String) -> bool: return n.contains(STUD_LABEL)))
 	h._assert_hud("…and a penned herd is enclosed by the catalog's trait, not by a flag",
 		RungQuotes.is_enclosed(herd, ""))
 	h._hud._drawercompose.close_compose_sheet()

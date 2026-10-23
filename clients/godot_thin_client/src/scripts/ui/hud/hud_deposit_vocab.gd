@@ -1403,12 +1403,6 @@ const BRANCH_COMMIT_VERBS := {
 	BRANCH_EXTRACTION: "Dig",
 }
 
-## …and the NOUN the pointer line names the ground with — *this stand* for a wood, *this rock* for a
-## seam. It is per BRANCH for the crew noun's reason: the rung's own verb already says which rung.
-const BRANCH_GROUND_NOUNS := {
-	BRANCH_FORESTRY: "this stand",
-	BRANCH_EXTRACTION: "this rock",
-}
 
 ## The crew this branch staffs — `""` for a branch this client has never heard of, which every caller
 ## renders as no sheet rather than as an unnamed one.
@@ -1418,30 +1412,7 @@ static func crew_noun(branch: String) -> String:
 static func commit_verb(branch: String) -> String:
 	return String(BRANCH_COMMIT_VERBS.get(branch, ""))
 
-static func ground_noun(branch: String) -> String:
-	return String(BRANCH_GROUND_NOUNS.get(branch, ""))
 
-## ⛔ **THE SHEET EMITS NO IMPROVEMENT VERB — `assign_labor` is the only command it sends.** The rung
-## is declared from the Work board, exactly as `cultivate` and `sow` are, and this line is the pointer
-## that says so. `Work tab` is a live `[url]`; the verb and the ground's noun come off the NEXT rung's
-## catalog entry and this branch's own table.
-const DEPOSIT_OFFER_LABEL_FORMAT := "%s %s"
-
-## …and the form for a band that does not work this ground yet. The sim's rule is that an improvement
-## verb reaches only bands ALREADY working the source, so the sheet says so where the player meets it
-## rather than offering a link that would land on a board with no row to press.
-const DEPOSIT_OFFER_UNWORKED_FORMAT := "Send %s here first, then %s from the %s."
-
-## The rung a pointer line names — `Quarry this rock`. `""` where the working is at the top of its
-## branch or the next rung declares no verb, and the sheet then states no pointer at all.
-static func offer_label(entry: Dictionary, branch: String) -> String:
-	var verb := catalog_verb(entry)
-	if verb == RUNG_CATALOG_NONE:
-		return ""
-	var noun := ground_noun(branch)
-	if noun == "":
-		return ""
-	return DEPOSIT_OFFER_LABEL_FORMAT % [verb.capitalize(), noun]
 
 # ---- WHAT STANDING ON THIS RUNG TEACHES (issue #650) --------------------------------------------
 #

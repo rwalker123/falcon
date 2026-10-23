@@ -3133,3 +3133,36 @@ idle) and `_assert_faction_work_idle_labels` (on `band_panel_faction_work`: an i
 `N working` in each summary, no bar) cover the faction page; `_assert_idle_card_reason_list` drives the
 most-idle-first, capped-at-three `+N more` list over constructed bands. The orb's idle alert is asserted
 equal to `people_idle` in `_assert_idle_attention_nets_the_muster`.
+
+## The work strip's port (issue #877)
+
+The Work board's source rows wear the work strip (`band-city-panel.md` -> "THE WORK STRIP") and open a
+compose sheet on a click, so the walk's inspector-dialog states for forage, hunt, working and tile rows
+were retired with the card: the sections and worst-case-fit frames, the kits and upkeep gates, the
+priority and floor-swap pickers, the dialog's centring, modality, ESC precedence and reselect states, and
+the crew-split frame. The roadwork row's inspector keeps its own claims. What replaced them:
+
+- **A row is found by its rung slot** (`WORK_ROW_RUNG_META`, stamped on the marks run when no rung mark
+  is drawn), and a row's name by `_row_name_label` (the first ellipsised expanding Label under the row).
+- **The ladder chip is a container**: `WORK_ROW_BUILD_STATE_META` / `_KIND_META` sit on it and its `Button`
+  is the press target (`_chip_button`). `_workings_marks()` returns each Groundwork row's offer button
+  stamped with the row's `(tile, material)` key, which is the handle the deposit-track claims read.
+- **A kit shortfall is a line of the strip's warning mark** (`warn_lines`, `WORK_STRIP_WARN_META`),
+  asserted on the model and on the drawn mark's WARN ink; the old kit glyph is gone.
+- **A stalled build is the filling chip with a WARN ink**, not a different face: the face is always
+  `glyph + percent`.
+- **The ladder mark's hover says only that it takes the source up a rung**; the pile and standing rate
+  are on the rung card.
+- **The strip must fit the 356px L-dock** beside the pills line. `_assert_zones_within_bounds` and the
+  zone-width fit claims are what fail when `WORK_STRIP_CREW_WIDTH` or `WORK_STRIP_SEPARATION` grow.
+- **The row's crew bar is proved on the strip**: `_render_work_crew_split_states` (frames
+  `band_panel_work_crew_split`, `_big`, `band_panel_work_max_chip`) asserts each row's bar sits inside the row,
+  under the number, with the row's own segment counts, and `band_panel_work_crew_split_four` is the queue head
+  carrying all four segments (keepers, builders, kit-holding, bare) with each drawn even where the crew
+  overflows its room. A fixture row that states `workers` without the three staffed keys draws no bar, which
+  real wire data never does (they sum to `workers`); `_build_state_band_fixture` states them.
+- **The row click is driven through the row's `gui_input`** (`_render_work_row_click_states`): a pointer press at
+  a forage, hunt and groundwork row's name opens the matching sheet beside the selection card (non-empty
+  anchor) and the sheet is still open after the next snapshot refresh; a press on the strip's chip opens the
+  rung card and not the sheet. `Main` is not instanced, so the map's focus-and-select hop is stood in for by a
+  listener on `alert_focus_requested`.

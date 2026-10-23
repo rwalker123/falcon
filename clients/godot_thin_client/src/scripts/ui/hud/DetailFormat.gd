@@ -1575,25 +1575,6 @@ static func graze_range_label(range_radius: int) -> String:
         return "1 tile"
     return "%d tiles" % tiles
 
-## **THE BUILD METER'S VALUE — one spelling for both webs' four rungs** (`docs/plan_unit_costed_work.md`
-## §11): `Preparing 18 / 50 work (42%)`. The four `*_label` functions below compose through it, so a
-## plant rung and an animal rung state a job's size the same way.
-##
-## **THE PERCENTAGE IS THE CALLER'S, NEVER `work_done / work_cost`.** The wire ships the fraction and
-## the two absolutes as separate fields and they are exactly each other; dividing here would be a
-## second authority over one meter, and the first turn the two disagreed the row would say so.
-##
-## A `work_cost` at `BUILD_WORK_COST_NONE` states the percentage alone — the row this always was. That
-## is a source the wire prices no such job on, not a missing field: `18 / 0 work` reads as a defect
-## where a bare percentage reads as an unpriced job.
-static func build_meter_value(verb: String, progress: float,
-        work_done: float, work_cost: float) -> String:
-    if work_cost <= SourceForecast.BUILD_WORK_COST_NONE:
-        return HudSelectionVocab.BUILD_METER_PERCENT_FORMAT % [
-            verb, HudFormat.progress_percent(progress)]
-    return HudSelectionVocab.BUILD_METER_WORK_FORMAT % [
-        verb, format_work_units(work_done), format_work_units(work_cost),
-        HudFormat.progress_percent(progress)]
 
 ## **THE RUNG ROW'S WHOLE VALUE — one composer, four rungs, both webs** (issue #545). The tile card's
 ## plant rungs and the herd drawer's animal ones render through this and nothing else, so a rung's

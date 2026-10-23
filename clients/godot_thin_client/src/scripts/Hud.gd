@@ -489,6 +489,10 @@ var _drawercompose: DrawerComposeController = null
 # `%AllocationPanel` host that call in; the three methods Main reaches by name
 # (`set_band_city_panel` / `cycle_panel_band` / `focus_panel_band`) stay here as thin delegators below.
 var _bandpanel: BandPanelController = null
+# The "Take it to…" rung card both the Work tab's rows and a source's compose sheet open (issue #877).
+# Constructed with the compose controller's collaborators and handed to both; its commands leave through
+# `_bandpanel`'s signals, whose relays are wired below.
+var _rungcard: RungCardController = null
 # The selection drawer's RENDER DISPATCH (HUD decomposition Phase 2c-3): the one-drawer land/occupant
 # dispatch, the land-drawer terrain-line producer, the `%AllocationPanel` occupant/expedition/band-move
 # branches, and the height-capping fit path. HudLayer keeps the reflectively-reached `_render_selection_panel`
@@ -712,6 +716,7 @@ func _ready() -> void:
     # The drawer's compose half. Handed the SAME state models, the two drawer-action containers it
     # fills, the selection card it anchors the sheet beside, the HUD CanvasLayer as the host it
     # parents that sheet into, and the three HudLayer helpers that keep callers on this side.
+    _rungcard = RungCardController.new(_band_labor, _topbar, self, _herd_label_for_id)
     _drawercompose = DrawerComposeController.new(
         _compose, _band_labor, _selection, _topbar, _selectioncard, self,
         herd_assign_controls, forage_assign_controls, road_ladder_controls,
@@ -786,6 +791,11 @@ func _ready() -> void:
     _bandpanel = BandPanelController.new(
         _band_labor, _compose, _selectioncard, _disclosures, _banddetail, self,
         _emit_assign_labor, _herd_label_for_id, _targeting, _topbar)
+    _bandpanel.set_rung_card(_rungcard)
+    _drawercompose.set_work_strip_sources(_bandpanel, _rungcard)
+    # A click on a Work-tab row opens that source's sheet (issue #877): the row has already selected
+    # the source, and the compose controller resolves the selection and opens the right sheet.
+    _bandpanel.source_sheet_requested.connect(_drawercompose.open_source_sheet)
     _bandpanel.cancel_order_requested.connect(
         func(band: Dictionary, scope: String) -> void: cancel_order_requested.emit(band, scope))
     _bandpanel.upkeep_mode_requested.connect(

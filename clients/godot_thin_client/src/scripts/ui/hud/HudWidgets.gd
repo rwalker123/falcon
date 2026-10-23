@@ -262,61 +262,6 @@ static func build_wrapping_status_part(text: String, color: Color) -> Label:
     label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     return label
 
-## **THE LINE-BREAK RULE `build_wrapping_status_part` DRAWS WITH, spelled so the MEASUREMENT can use
-## the identical one.** `Label` composes these internally from `autowrap_mode` and adds
-## `BREAK_TRIM_EDGE_SPACES`; `Font.get_multiline_string_size` takes them as an argument and defaults
-## to `BREAK_MANDATORY | BREAK_WORD_BOUND` — i.e. WITHOUT the adaptive break. A measurement taken at
-## the default flags therefore under-counts the lines of any text the drawn label breaks adaptively,
-## and an under-counted line is height nobody reserved. Stated once, here, so the two cannot drift.
-const WRAPPING_STATUS_PART_BREAK_FLAGS := TextServer.BREAK_MANDATORY \
-    | TextServer.BREAK_WORD_BOUND | TextServer.BREAK_ADAPTIVE | TextServer.BREAK_TRIM_EDGE_SPACES
-
-## **WHAT A WRAPPED STATUS PART COSTS *BEYOND* THE ONE LINE ITS HOST'S CONSTANTS ALREADY CHARGE FOR
-## IT** — `(lines − 1) × HudWorkVocab.WORK_INSPECTOR_NOTE_WRAP_LINE_HEIGHT`, and `0.0` for the ordinary
-## sentence that fits on one line. **The second line costs MORE than the first (17 against 14)**,
-## because a `Label`'s `line_spacing` is spent between lines and a one-line label has no between — see
-## that constant, which was found by this under-reserving by exactly 3px a line.
-##
-## **STATED AS AN OVERFLOW, NOT AS A HEIGHT, so no existing reservation constant has to change its
-## meaning.** `WORK_INSPECTOR_NOTE_HEIGHT`, `WORK_INSPECTOR_SECTION_HEAD_HEIGHT` and
-## `WORK_INSPECTOR_KITS_BILL_HEIGHT` each charge exactly one line of this type and go on doing so;
-## a host that lets a line wrap adds this on top of the term it already had. `WORK_INSPECTOR_CEILING_
-## HEIGHT` stays the ceiling AT ONE LINE PER NOTE, which is a floor on the wrapped worst case rather
-## than a number that quietly stopped describing anything.
-##
-## ⛔ **THE FONT IS ASKED, NOT A DETACHED `Label`** — `EventDockPanel.natural_label_width`'s rule,
-## which cost a whole font size to learn: a `Label` that has never entered the tree shapes its text at
-## the DEFAULT theme's 16px whatever `add_theme_font_size_override` was handed, while `get_theme_font`
-## / `get_theme_font_size` resolve through the theme CHAIN and are correct while detached. The probe
-## is built through the real builder so the size, the font and the break flags are the drawn label's
-## own rather than a restatement of them.
-##
-## ⛔ **AND THE LINE COUNT IS A RATIO, NOT A DIVISION OF PIXEL HEIGHTS.**
-## `Font.get_multiline_string_size` sums the shaped lines' own heights and adds no line spacing, while
-## a drawn `Label` adds the theme's `line_spacing` to every line — so the measured `y` is NOT the
-## height to reserve. What it is good for is HOW MANY lines there are, and that count is then priced
-## at the measured per-line cost this zone already states, spacing included.
-static func wrapped_status_part_overflow(text: String, width: float) -> float:
-    return float(wrapped_status_part_lines(text, width) - 1) \
-        * HudWorkVocab.WORK_INSPECTOR_NOTE_WRAP_LINE_HEIGHT
-
-## How many lines `build_wrapping_status_part(text)` draws in a column `width` px wide — at least one,
-## whatever the width. See `wrapped_status_part_overflow`, which is the only caller and carries the
-## reasons.
-static func wrapped_status_part_lines(text: String, width: float) -> int:
-    var probe := build_wrapping_status_part(text, HudStyle.INK)
-    var font: Font = probe.get_theme_font(&"font")
-    var font_size: int = probe.get_theme_font_size(&"font_size")
-    # Never entered the tree, so there is nothing deferred to wait for and `free` is the honest verb.
-    probe.free()
-    if font == null or width <= 0.0:
-        return 1
-    var line_height: float = font.get_height(font_size)
-    if line_height <= 0.0:
-        return 1
-    var wrapped := font.get_multiline_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, width,
-        font_size, -1, WRAPPING_STATUS_PART_BREAK_FLAGS)
-    return maxi(1, int(round(wrapped.y / line_height)))
 
 ## THE SPECIES / SITE MARK ON A TEXT ROW — bundled art where the client has it, the emoji where it
 ## does not. One builder, so the HUD's text surfaces cannot drift apart from each other or from the
@@ -646,7 +591,7 @@ const COMPOSITION_SWATCH_SEPARATION := 4
 
 ## A composition chip's segment key, as `Control` meta — the handle a harness identifies it by,
 ## since issue #249 made the key a TEXTURE on the PEOPLE bar and left the label holding the count
-## alone. Mirrors `POLICY_RUNG_META` / `IMPROVEMENT_CONTROL_META`'s job for their controls.
+## alone. Mirrors `POLICY_RUNG_META`'s job for its control.
 const COMPOSITION_SEGMENT_META := &"composition_segment"
 ## The gap between a zone column's SECTIONS (blocks); the tighter within-block gap is
 ## `HudWorkVocab.ZONE_BLOCK_SEPARATION`, which has readers on both sides of this boundary.
@@ -1156,7 +1101,7 @@ const HUNT_GATE_META := "hunt_gate"
 const CARGO_ROW_KEY_META := "cargo_row_key"
 
 ## …and WHICH control of that row a node is, as `Control` meta — one of the four values below. Keyed
-## this way rather than as four booleans for `IMPROVEMENT_STATE_META`'s reason: a harness asserting
+## this way rather than as four booleans: a harness asserting
 ## about "the row's controls" wants the SET of them, and a positional walk over an `HBoxContainer` is
 ## exactly what this replaced.
 const CARGO_CONTROL_META := "cargo_control"
@@ -1231,21 +1176,6 @@ const COMPOSE_COMMIT_META := "compose_commit"
 const WORK_PARTY_SECTION_META := "work_party_section"
 const WORK_PARTY_LINE_META := "work_party_line"
 
-## The improvement CONTROL's node, as `Control` meta — the stable handle on the second axis, for the
-## same reason `POLICY_RUNG_META` is the stable handle on a rung. Its value is the IMPROVEMENT key
-## (`"cultivate"` / `"sow"` / `"tame"` / `"corral"`), so a harness can assert which rung the control
-## names.
-##
-## **THE TYPE NO LONGER SEPARATES ANYTHING — every state is a `Label`, and `IMPROVEMENT_STATE_META`
-## is the whole answer** (`docs/plan_standing_upkeep.md` §4.7a ①). The type used to say CHOICE versus
-## FACT, which was true while this sheet could commit; it cannot, so there is no choice on it to
-## shape. Assert the STATE, and assert the SET of them — a builder that renders everything as a Label
-## passes any single positive check.
-const IMPROVEMENT_CONTROL_META := "improvement"
-
-## …and WHICH of the five states that control is in, as `Control` meta — `IMPROVEMENT_STATE_*`.
-const IMPROVEMENT_STATE_META := "improvement_state"
-
 ## RETIRED — **`CHECKBOX_LIVE_FONT_COLOR_SLOTS`**, every font-colour slot a live `CheckBox` drew its
 ## face in (`docs/plan_standing_upkeep.md` §4.7a ①). It existed because `HudStyle.apply_checkbox`
 ## writes all of them, so a caller re-tinting a face had to write all of them or the colour flickered
@@ -1271,240 +1201,7 @@ const IMPROVEMENT_STATE_META := "improvement_state"
 ## the label instead.
 const FLORA_CROP_ROW_SPECIES_META := "flora_crop_row_species"
 
-## **THE IMPROVEMENT CONTROL** (issue #442) — the second axis's whole widget, in the ONE of four
-## states the caller resolved, plus its trailing notes.
-##
-## `state` is `IMPROVEMENT_STATE_*`. The face and the tooltip are the CALLER's words (it knows the
-## rung, its payoff, its meter and — when gated — its reason); what lives here is the SHAPE the four
-## states share, so the two webs cannot drift into two different-looking controls:
-##
-##   OFFERED — a `RichTextLabel`: ONE line naming the rung and the control that takes it, whose
-##             `Work tab` is a clickable `[url]` dispatched through `on_link`.
-##   DECLARED — the rung's own name plus the word saying it is QUEUED, as a `Label`: a rung the band
-##             has declared and has neither builders nor banked work on.
-##   GATED   — a `Label` whose text IS the reason the caller resolved; the tooltip is the rung's hint,
-##             NOT the reasons. See the const's own note for why the greyed-checkbox form was retired.
-##   RUNNING — a `Label` in SIGNAL ink: a build in flight is a FACT the meters state, not an intent
-##             the player holds.
-##   DONE    — a plain `Label`. Nothing left to say but the state.
-##
-## **NOT ONE OF THEM IS A CHECKBOX, AND THAT IS THE POINT** (`docs/plan_standing_upkeep.md` §4.7a
-## ①). OFFERED and DECLARED were `CheckBox`es — the last two states that were a CHOICE — and the
-## choice they offered was a lie: ticking the box committed nothing, and the only thing that sent the
-## verb was a button reading **`Forage`**. Ticking it and closing the sheet did nothing at all,
-## reported from play repeatedly. **The declaration moved to the Work tab's `⌃`**, one click on the
-## tab that owns the builders pool and the build queue; the sheet keeps the FORECAST, which is what
-## the face and the readout beneath it have always been. A checkbox is a CHOICE and this sheet has
-## none left to offer, so the shape follows — the same rule the GATED and DONE states were already
-## rendered under.
-##
-## **AND THE OFFER STATES NO PRICE.** It carried the rung's work cost, its turn estimate and its
-## standing upkeep for a day. Ray, from play: *"That information should be on the work tab. No need to
-## have it here, it is useless."* A cost is actionable on the surface that queues, funds and orders
-## jobs, so the pile and the rate ride the `⌃` mark's own tooltip and the turn count rides the BUILD
-## QUEUE row's date. **The rung's PAYOFF is not a price and stays** — `ONCE TENDED 1.20 food`, in the
-## `PER TURN` readout below, is the "should I?" this sheet exists to answer.
-##
-## **`abandon_improvement` AND THE UNTICK BOTH RETIRED BEFORE THIS, and their prose went with them.**
-## The `IMPROVEMENT_STATE_DECLARED` const carried a note saying its uncheck sent
-## `cultivate <faction> <x> <y> 0` and that "both take the hands off and neither withdraws the
-## declaration"; that stopped being true at §2.5, when unticking became `unqueue` and the crew-zero
-## form became a parse error. **The withdrawal survives, on the BUILD QUEUE row's `✕`** — a
-## declaration is a queue entry, so the list of entries is where one is dropped.
-##
-## `notes` render beneath in the hint style — the WARN-amber zero-payoff line when running
-## (`warn_notes` picks the tint), the *not started* line plus the queued word on a DECLARED one, the
-## REMEDY line on an OFFERED one (which control queues this rung, and what has to be true first —
-## §4.7a's stated limit), and on a GATED control the SECOND and later gate reasons, the first having
-## become the control's own text. Returns the whole block, so a caller adds one child.
-##
-## **RETIRED — `on_toggle` and `disabled_reason`.** The first was called with the improvement's NEW
-## value when a box was ticked or unticked, and there is no box; the second was the ONE thing that
-## disabled one, and it had no caller even then. Nothing on this control can be pressed, so nothing
-## on it can be refused.
-##
-## **`pace` INKS THE WHOLE FACE, AND IT CARRIES THREE STATES RATHER THAN A WARNING FLAG.** It was
-## `warn_face: bool`, which could say only *amber or not*; a build line has to say which of three
-## things the meter is doing — climbing, holding, or losing ground — because those are three different
-## decisions (`SourceForecast.build_pace`, which owns the classification and the reason the client may
-## not derive the sign itself). A face is one `Label` and so takes one colour, so the state cannot
-## ride the turns clause alone — which is the honest treatment anyway, since what a losing pace is
-## wrong about is the whole proposition on that line.
-##
-## **AN UNSTARTED RUNG TAKES ONLY THE TWO STOPPING PACES.** `GROWING`'s green would read as an
-## achievement on a rung nobody has started, so an OFFERED or DECLARED face at a finite estimate keeps
-## its own neutral ink and only `HOLDING` / `LOSING` override it (`improvement_pace_stops`). RUNNING
-## takes all three, its meter having actually moved.
-##
-## **`BUILD_PACE_HELD` IS DELIBERATELY IN NEITHER TABLE, and its absence is the render**
-## (`docs/plan_standing_upkeep.md` §4.6a). A meter parked by the player with its keeping covered is not
-## failing at anything, so it falls through to `fallback` — the live neutral ink — and stops nothing. It
-## is listed nowhere rather than mapped to a neutral colour on purpose: a state that renders by having
-## no entry cannot acquire a warning by someone adding a row.
-##
-## **`BUILD_PACE_UNKNOWN` shares that fall-through and is a different fact** — *no answer* rather than
-## *no problem*. They read alike because there is nothing to say either way; only `build_pace` knows
-## which, and only the tile card's own row spells the difference in words.
-## It is a `match` rather than a `const` DICTIONARY because a const initializer evaluates at class
-## LOAD, and a table keyed on another `class_name`d script's consts welds this leaf's load order to
-## that script's — the cross-class `const` hazard `hud-modules.md` records.
-static func improvement_pace_color(pace: String, fallback: Color) -> Color:
-    match pace:
-        SourceForecast.BUILD_PACE_GROWING: return HudStyle.HEALTHY
-        SourceForecast.BUILD_PACE_HOLDING: return HudStyle.WARN
-        SourceForecast.BUILD_PACE_LOSING: return HudStyle.DANGER
-    return fallback
 
-## Does an UNSTARTED rung's face re-tint for this pace? The two stopping ones only — see above for
-## why `GROWING` is not one of them.
-static func improvement_pace_stops(pace: String) -> bool:
-    return pace == SourceForecast.BUILD_PACE_HOLDING or pace == SourceForecast.BUILD_PACE_LOSING
-
-const IMPROVEMENT_STATE_OFFERED := "offered"
-const IMPROVEMENT_STATE_RUNNING := "running"
-const IMPROVEMENT_STATE_DONE := "done"
-## **A RUNG DECLARED WITH NOTHING IN FLIGHT.** The declaration stands — the wire carries it, or the
-## player has just pressed the Work board's `⌃` — but there are no builders on it and its meter has
-## never moved, so nothing is being built and the control must not claim otherwise. It renders the
-## OFFER's own face plus the word saying it is QUEUED (`HudComposeVocab.BUILD_QUEUED_NOTE`).
-##
-## **IT SAYS NO POSITION AND NO DATE, deliberately** (`docs/plan_standing_upkeep.md` §4.7a). The sheet
-## says what the ground IS; the SCHEDULE — where in the queue, and when it lands — is the Work tab's,
-## which is the surface that can reorder it.
-##
-## **IT EXISTS BECAUSE RENDERING A DECLARATION AS RUNNING WAS A ONE-WAY DOOR.** A player who declared
-## `cultivate` on a band with no free hands got `Cultivating 0 / 50 work (0%)` with the *not started*
-## warning and no way back off it. Reported from play. The undo is `unqueue`, on the BUILD QUEUE row's
-## `✕` (`docs/plan_standing_upkeep.md` §2.5) — never the crew-zero `cultivate <f> <x> <y> 0`, which
-## SET the declaration again and is a parse error now.
-const IMPROVEMENT_STATE_DECLARED := "declared"
-## An offer the source cannot take yet: the control's whole slot spends itself on the first unmet
-## prerequisite. It shipped once as a greyed checkbox reading "Cultivate this patch · then 0.04 food
-## …" with the reason on a second line beneath, which put an OFFER the player cannot accept directly
-## above the sentence explaining that they cannot accept it — the card arguing with itself. The reason
-## is the control's own text now, and the offer wording is GONE rather than greyed.
-const IMPROVEMENT_STATE_FOREIGN := "foreign"
-const IMPROVEMENT_STATE_GATED := "gated"
-
-static func build_improvement_control(improvement: String, state: String, face: String,
-        tooltip: String, notes: Array = [],
-        warn_notes: bool = false, pace: String = SourceForecast.BUILD_PACE_UNKNOWN,
-        on_link: Callable = Callable()) -> VBoxContainer:
-    var block := VBoxContainer.new()
-    block.add_theme_constant_override("separation", HudWorkVocab.WORKER_STEPPER_SEPARATION)
-    if state == IMPROVEMENT_STATE_RUNNING:
-        # A STATE, not a choice — the DONE treatment in the live ink rather than the achieved green,
-        # since the meter is still going up. `set_label_tooltip` because a bare `tooltip_text` on a
-        # Label is a SILENT no-op.
-        var running := Label.new()
-        running.text = face
-        running.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-        running.add_theme_font_size_override("font_size",
-            HudWorkVocab.POLICY_PICKER_NAME_FONT_SIZE)
-        # **THE STATE OF THE BUILD IS THIS LINE'S COLOUR** — green while the meter climbs, amber while
-        # it holds, red while it loses ground. `SIGNAL` is the fallback for a pace nobody could answer
-        # (no crew, no priced job), which is the neutral live ink this face has always worn.
-        running.add_theme_color_override("font_color",
-            improvement_pace_color(pace, HudStyle.SIGNAL))
-        running.set_meta(IMPROVEMENT_CONTROL_META, improvement)
-        running.set_meta(IMPROVEMENT_STATE_META, state)
-        set_label_tooltip(running, tooltip)
-        block.add_child(running)
-    elif state == IMPROVEMENT_STATE_GATED:
-        # Same Label treatment as DONE — both are states rather than choices — but in the muted ink a
-        # prerequisite deserves rather than DONE's HEALTHY, which would read as an achievement.
-        var locked := Label.new()
-        locked.text = face
-        locked.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-        locked.add_theme_color_override("font_color", HudStyle.INK_FAINT)
-        locked.add_theme_font_size_override("font_size",
-            HudWorkVocab.POLICY_PICKER_NAME_FONT_SIZE)
-        locked.set_meta(IMPROVEMENT_CONTROL_META, improvement)
-        locked.set_meta(IMPROVEMENT_STATE_META, state)
-        set_label_tooltip(locked, tooltip)
-        block.add_child(locked)
-    elif state == IMPROVEMENT_STATE_DONE:
-        # A state, not a choice. `set_label_tooltip` because a bare `tooltip_text` on a Label is a
-        # SILENT no-op (Labels default to MOUSE_FILTER_IGNORE).
-        var done := Label.new()
-        done.text = face
-        # **THE SAME SIZE THE STANCE RUNGS' NAMES WEAR** (`POLICY_PICKER_NAME_FONT_SIZE`). The two are
-        # peer AXES, and rendering the second one at hint size made the whole decision read as a
-        # footnote to the first. It used to say this by carrying NO override at all, which was true
-        # only while the rung name carried none either; that stopped being true when the preset face
-        # was stepped down, and the tie is written out now rather than implied. The gate/pause notes
-        # below it stay at hint size, where they belong.
-        done.add_theme_font_size_override("font_size",
-            HudWorkVocab.POLICY_PICKER_NAME_FONT_SIZE)
-        done.add_theme_color_override("font_color", HudStyle.HEALTHY)
-        done.set_meta(IMPROVEMENT_CONTROL_META, improvement)
-        done.set_meta(IMPROVEMENT_STATE_META, state)
-        set_label_tooltip(done, tooltip)
-        block.add_child(done)
-    elif state == IMPROVEMENT_STATE_OFFERED:
-        # **THE OFFER IS A POINTER, AND THE POINTER CARRIES A LINK** (`docs/plan_standing_upkeep.md`
-        # §4.7a ①). `🌱 Cultivate this patch from the Work tab.` — one line, whose `Work tab` is a
-        # clickable `[url]` that switches the dock to the tab that queues it.
-        #
-        # **IT IS THE ONE STATE BUILT AS A `RichTextLabel`, and the reason is the WRAP.** A link that
-        # is a sibling `Button` (`build_inline_link`) is atomic to the layout, so a sentence built as
-        # [Label][link][Label] cannot break inside either half — on this ~245px sheet the tail would
-        # overflow the card rather than wrap. Inline `[url]` flows with the text. Every other state
-        # stays a `Label`: none of them points anywhere, and a plain Label is the cheaper node.
-        var offer := RichTextLabel.new()
-        offer.bbcode_enabled = true
-        offer.fit_content = true
-        offer.scroll_active = false
-        offer.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-        offer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-        # `normal_font_size`, not `font_size` — a `RichTextLabel` reads the former, and the latter is
-        # accepted and then never looked at, which is the same silent no-op `set_label_tooltip` exists
-        # for one class over. The peer-axis sizing rule is unchanged: this is the stance rungs' size.
-        offer.add_theme_font_size_override("normal_font_size",
-            HudWorkVocab.POLICY_PICKER_NAME_FONT_SIZE)
-        offer.add_theme_stylebox_override("normal", HudStyle.empty_stylebox())
-        # An offer is a proposition, so it wears the body ink the rest of the sheet's facts do — and a
-        # stopping PACE overrides it, a job the band's pool can never finish being worth saying before
-        # the commitment as well as after. `GROWING` deliberately does not (`improvement_pace_stops`).
-        # **`default_color` is the `RichTextLabel`'s slot**; `font_color` is a Label's and is ignored.
-        offer.add_theme_color_override("default_color",
-            improvement_pace_color(pace, HudStyle.INK) if improvement_pace_stops(pace) \
-                else HudStyle.INK)
-        offer.text = face
-        offer.tooltip_text = tooltip
-        offer.set_meta(IMPROVEMENT_CONTROL_META, improvement)
-        offer.set_meta(IMPROVEMENT_STATE_META, state)
-        # A FRESH label each render, so `meta_clicked` is wired here rather than once — the same
-        # per-render wiring the vitals block and the faction rollup's `[url]` rows take.
-        if on_link.is_valid():
-            offer.meta_clicked.connect(func(meta: Variant) -> void: on_link.call(String(meta)))
-        block.add_child(offer)
-    else:
-        # DECLARED — the offer's rung name plus the word that says it is queued. A `Label`: it points
-        # at nothing, the job already being on the list.
-        var unstarted := Label.new()
-        unstarted.text = face
-        unstarted.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-        unstarted.add_theme_font_size_override("font_size", HudWorkVocab.POLICY_PICKER_NAME_FONT_SIZE)
-        # **A DECLARED RUNG IS LIVE AND AN OFFERED ONE IS NOT, and the ink is the whole of that
-        # distinction.** SIGNAL is the running face's neutral, which is what a queued job shares with
-        # a building one — the band has committed to it.
-        unstarted.add_theme_color_override("font_color",
-            improvement_pace_color(pace, HudStyle.SIGNAL) if improvement_pace_stops(pace) \
-                else HudStyle.SIGNAL)
-        unstarted.set_meta(IMPROVEMENT_CONTROL_META, improvement)
-        unstarted.set_meta(IMPROVEMENT_STATE_META, state)
-        # `set_label_tooltip`, not `tooltip_text` — a bare `tooltip_text` on a Label is a SILENT no-op
-        # (Labels default to `MOUSE_FILTER_IGNORE`). It was a `CheckBox.tooltip_text` before, which
-        # worked; the hint would simply have stopped appearing.
-        set_label_tooltip(unstarted, tooltip)
-        block.add_child(unstarted)
-    for note in notes:
-        var line := alloc_hint_label(String(note))
-        if warn_notes:
-            line.add_theme_color_override("font_color", HudStyle.WARN)
-        block.add_child(line)
-    return block
 
 ## ONE RUNG of the policy picker: a clickable, styleable, disable-able `Button` with a TWO-LINE face
 ## whose lines carry DIFFERENT TYPE — which `Button.text` structurally cannot do (one font size per

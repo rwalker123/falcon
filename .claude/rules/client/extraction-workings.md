@@ -16,6 +16,19 @@ The sim side is `.claude/rules/core_sim/extraction.md`, which is authoritative f
 on the wire MEANS, and `docs/plan_extraction.md` is the design of record. This file is what the client
 does with them. Read the sim one first — most of the traps here are its traps, arriving one layer out.
 
+> #### Since #877 a working's row and sheet wear the work strip, and the inspector is gone
+>
+> A Groundwork row opens the working's compose sheet on a click (`band-city-panel.md` → "THE WORK
+> STRIP"). That retired the row's inspector (`_build_working_inspector`, `_work_inspector_height`), the
+> sheet's **pointer line** and offer line (`_build_deposit_offer_line`) and the sheet's crew-split
+> sentence. The ladder slot on the row and on the sheet is the strip's chip; both open the deposit track
+> through `RungCardController.open_deposit_track`. The track's declarations
+> (`_emit_deposit_declaration`) and the put-down (`emit_working_abandon`, `_build_working_abandon_row`)
+> live on `RungCardController` too, and `BandPanelController` relays its signals. **`Stop holding this
+> working` is on the deposit sheet's action row** beside `Show on map`, `Done` and `Stop working here`,
+> with the ladder card's hover. Where the sections below name the retired controls they describe the
+> design the strip replaced; the `(tile, material)` pairing rules they state still hold at every emitter.
+
 ## Key scripts
 
 | Script | Purpose |

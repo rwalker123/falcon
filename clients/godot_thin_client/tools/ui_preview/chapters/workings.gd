@@ -28,6 +28,7 @@ extends RefCounted
 ## a control is found the same way here as there.
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 const BaseFx := preload("res://tools/ui_preview/fixtures_base.gd")
+const ForageFx := preload("res://tools/ui_preview/fixtures_forage.gd")
 const TileFx := preload("res://tools/ui_preview/fixtures_tile.gd")
 const Q := preload("res://tools/ui_preview/node_query.gd")
 const Readout := preload("res://tools/ui_preview/readouts.gd")
@@ -429,13 +430,10 @@ func run(harness) -> void:
 		h._assert_hud("…and a RENEWING seam is offered the floor presets AND the chart",
 			_first_meta(sheet, HudWidgets.POLICY_RUNG_META) != null
 				and _first_meta(sheet, HudWidgets.FLOOR_CHART_META) != null)
-		# **THE POINTER LINE — the sheet emits no improvement verb, so it NAMES the board that does.**
-		h._assert_hud("…and the pointer line names the next rung and links the Work tab (%s)"
-				% _offer_text(sheet),
-			_offer_text(sheet).contains(HudDepositVocab.offer_label(
-					_catalog_entry(HudDepositVocab.RUNG_KEY_COPPICE),
-					HudDepositVocab.BRANCH_FORESTRY))
-				and _offer_text(sheet).contains(HudComposeVocab.WORK_TAB_LINK_TEXT))
+		# **THE SHEET'S WORK STRIP CARRIES THE NEXT RUNG'S `⌃`** (issue #877): the pointer line at the Work
+		# tab is gone, the strip mounts the control itself.
+		h._assert_hud("…and the strip is mounted on the sheet",
+			ForageFx.find_strip(sheet) != null)
 		# ⛔ **THE DEAL IS THE CREW CURVE'S `next_rung_take`, AND THIS STAND-IN PRICES NO NEXT RUNG**
 		# (issue #663) — the bare curve `fixtures_forecast` answers with names none. The catalog rate
 		# times the stepper is the arithmetic the playtest caught ignoring the axes, so there is no
@@ -1693,19 +1691,6 @@ func _authored_curve(in_range: bool, whole_kits: int = CURVE_WHOLE_KITS) -> Dict
 		CURVE_IN_RANGE_FLAG_KEY: in_range,
 	}
 
-## **THE CREW SPLIT FOLLOWS THE STEPPER THROUGH THE CURVE** — the marks count the crew, their share
-## is the authored row's `keep_hands` at that crew, and the hover and the sentence under the figure
-## say it in words.
-func _assert_crew_split_on_sheet(sheet: Node, crew: int, words: String) -> void:
-	var marks := Readout.crew_split_marks(sheet)
-	var want := CURVE_KEEP_PER_HAND * float(crew)
-	h._assert_hud("crew split, working sheet at %d — the bar is the curve row's (%s, want %d · %d)"
-			% [crew, "none" if marks == null else "%d · %d" % [marks.crew(), marks.keepers()],
-				crew, roundi(want)],
-		marks != null and marks.crew() == crew and marks.keepers() == roundi(want))
-	h._assert_hud("…and the hover reads \"%s…\" (%s)"
-			% [words, "" if marks == null else marks.tooltip_text],
-		marks != null and marks.tooltip_text.begins_with(words))
 
 ## The authored curve's keeping: half a hand per cutter, so every crew's row differs.
 const CURVE_KEEP_PER_HAND := 0.5
@@ -1798,13 +1783,11 @@ func _crew_curve_states() -> void:
 				% h._hud._compose.deposit_max(),
 			h._hud._compose.deposit_max() == SHEET_CREW)
 		_assert_curve_row_on_sheet(sheet, SHEET_CREW)
-		_assert_crew_split_on_sheet(sheet, SHEET_CREW, CURVE_SPLIT_WORDS)
 		_assert_draw_reads_the_curve(sheet, wood, SHEET_CREW)
 		await h._save("workings_forestry_kit_curve")
 		# **THE STEPPER MOVES, THE FIGURES MOVE WITH IT — to the next row, off the same answer.**
 		sheet = await _open_curve_sheet(wood, CURVE_STEPPED_CREW)
 		_assert_curve_row_on_sheet(sheet, CURVE_STEPPED_CREW)
-		_assert_crew_split_on_sheet(sheet, CURVE_STEPPED_CREW, CURVE_SPLIT_STEPPED_WORDS)
 		# ⛔ **SLEDS ALONE ARE NO WOODCUTTING KIT.** The kit is a sled AND an axe on every rung, so a
 		# band holding three sleds and no axe fields zero whole kits — the line says so, where the
 		# retired held-rung narrowing counted the sleds on a deadfall and read the crew as outfitted.
@@ -2746,11 +2729,6 @@ func _first_meta(root: Node, meta: String) -> Node:
 			return found
 	return null
 
-## The pointer line's parsed text. It is the ONE state built as a `RichTextLabel` (the `Work tab`
-## `[url]` has to flow with the sentence), so its words are read through `get_parsed_text`.
-func _offer_text(sheet: Node) -> String:
-	var node := _first_meta(sheet, HudWidgets.IMPROVEMENT_CONTROL_META)
-	return (node as RichTextLabel).get_parsed_text() if node is RichTextLabel else ""
 
 # ---- READING THE LADDER'S ROWS ----------------------------------------------------------------
 #

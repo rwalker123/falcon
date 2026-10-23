@@ -8,7 +8,7 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 228
+const EXPECTED_CHECKPOINTS := 220
 
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 const BaseFx := preload("res://tools/ui_preview/fixtures_base.gd")
@@ -1272,11 +1272,9 @@ func run(harness) -> void:
 	# Cultivate reads its own RUNNING label; this one is the DONE state's, naming the rung the patch is
 	# standing on — which the face's own words are what separate, both states being Labels now.
 	var stale_control = ForageFx.find_improvement_control(stale_sheet, "cultivate")
-	h._assert_hud("the finished rung reads as a DONE label, so no build in flight can explain a dip",
+	h._assert_hud("the finished rung reads as the standing-rung mark, so no build in flight can explain a dip",
 		String(ForageFx.improvement_state(stale_sheet, "cultivate"))
-				== HudWidgets.IMPROVEMENT_STATE_DONE
-			and ForageFx.improvement_face(stale_sheet, "cultivate").contains(
-				String(HudComposeVocab.IMPROVEMENT_DONE_LABELS["cultivate"])))
+			== ForageFx.IMPROVEMENT_STATE_DONE)
 	h._hud._band_labor._player_band = prior_player_band
 	h._hud._band_labor._player_bands = prior_player_bands
 	h._hud._compose.reset_forage_source()   # the states after this one open on their own patch
@@ -1435,7 +1433,7 @@ func run(harness) -> void:
 			SourceForecast.IMPROVEMENT_CULTIVATE))
 	h._assert_hud("…and the sheet offers no Cultivate on it",
 		String(ForageFx.improvement_state(h._hud._drawercompose._compose_sheet, "cultivate"))
-			!= HudWidgets.IMPROVEMENT_STATE_OFFERED)
+			!= ForageFx.IMPROVEMENT_STATE_OFFERED)
 	# **THE PAIR THAT STOPS THIS BECOMING "CULTIVATE IS NEVER OFFERED".** A retire test that answered
 	# true unconditionally would satisfy every line above; a wild patch with the knowledge in hand must
 	# still offer the rung.
@@ -2664,90 +2662,8 @@ func run(harness) -> void:
 		String(verdict_text).ends_with(verdict_want))
 	h._hud._compose.set_forage_floor(SourceForecast.FLOOR_FOOD_PEAK)
 
-	await _crew_split_sheet_states()
 
-## ---- THE CREW SPLIT UNDER THE STEPPER (`CrewSplitMarks`) ----------------------------------------
-##
-## One mark per harvester under the sheet's stepper, the tending share off the crew curve row's
-## `keep_hands` AT THE STEPPER'S CREW, and the same sentence muted under the next-turn figure. The
-## patch authors its curve with a DIFFERENT keep at every crew, so a sheet reading the wrong row — or
-## a constant — lands on a figure the claims name. While the curve is in flight there are no marks.
-func _crew_split_sheet_states() -> void:
-	var tile := BaseFx.food_tile_fixture()
-	tile["patch_upkeep_hands"] = KEPT_CURVE_KEEP_HANDS
-	var rows: Array = []
-	for workers in range(1, CREW_SPLIT_CURVE_ROWS + 1):
-		# A take that rises with every gatherer, so the curve plateaus nowhere inside the rows and the
-		# stepper's cap is the band's pool rather than the curve.
-		var keep := CREW_SPLIT_KEEP_PER_HAND * float(workers)
-		rows.append({"workers": workers,
-			"take": CREW_SPLIT_TAKE_PER_GATHERER * (float(workers) - keep),
-			SourceForecast.FORAGE_CREW_KEEP_HANDS_KEY: keep})
-	tile[ForecastFx.FORAGE_CREW_TAKE_KEY] = {"per_crew": rows}
-	var query: ForecastQuery = h._hud.forecast_query()
-	query.reset()
-	h._hud._drawercompose.close_compose_sheet()
-	# A band that works NO patch, so the bar is the FORECAST's split of a new source (a worked one states
-	# the snapshot row's own).
-	var prior_split_band = h._hud._band_labor.player_band()
-	var prior_split_bands = h._hud._band_labor._player_bands
-	h._hud._band_labor._player_band = BandFx.forage_range_bands()[0]
-	h._hud._band_labor._player_bands = [h._hud._band_labor.player_band()]
-	h._hud._compose.reset_forage_source()
-	h._hud._compose.set_forage_floor(SourceForecast.FLOOR_FOOD_PEAK)
-	h._show_tile(tile)
-	await h._settle()
-	h._compose_forage(tile)
-	await h._settle()
-	# Set the Max on the open sheet (a close would reset the composition), then forget the curve so
-	# the next render is read before the stand-in has answered.
-	h._hud._compose.set_forage_max(CREW_SPLIT_SHEET_CREW)
-	query.reset()
-	h._compose_forage(tile)
-	h._assert_hud("crew split, sheet — while the curve is in flight no keeper is drawn (%s)"
-			% ("none" if _crew_split_on_sheet() == null else str(_crew_split_on_sheet().keepers())),
-		_crew_split_on_sheet() != null and _crew_split_on_sheet().keepers() == 0)
-	await h._settle()
-	h._compose_forage(tile)
-	await h._settle()
-	await h._save("forage_crew_split_sheet")
-	h._assert_hud("crew split, sheet — precondition: the stepper stands at %d (got %d)"
-			% [CREW_SPLIT_SHEET_CREW, h._hud._compose.forage_max()],
-		h._hud._compose.forage_max() == CREW_SPLIT_SHEET_CREW)
-	var marks := _crew_split_on_sheet()
-	var want_keep := CREW_SPLIT_KEEP_PER_HAND * float(CREW_SPLIT_SHEET_CREW)
-	h._assert_hud("crew split, sheet — the bar counts the staffed crew (%s)"
-			% ("none" if marks == null else str(marks.crew())),
-		marks != null and marks.crew() == CREW_SPLIT_SHEET_CREW)
-	h._assert_hud("crew split, sheet — the keepers are the curve row's `keep_hands` at that crew, in whole people (%s, want %d)"
-			% [("none" if marks == null else "%d" % marks.keepers()), roundi(want_keep)],
-		marks != null and marks.keepers() == roundi(want_keep))
-	h._assert_hud("crew split, sheet — the hover says it (\"%s\")"
-			% ("" if marks == null else marks.tooltip_text),
-		marks != null and marks.tooltip_text.begins_with(CREW_SPLIT_SHEET_WORDS))
-	# The stepper moves, and the marks follow it through the curve rather than staying put.
-	h._hud._compose.set_forage_max(CREW_SPLIT_STEPPED_CREW)
-	h._compose_forage(tile)
-	await h._settle()
-	await h._save("forage_crew_split_sheet_stepped")
-	var stepped := _crew_split_on_sheet()
-	var stepped_keep := CREW_SPLIT_KEEP_PER_HAND * float(CREW_SPLIT_STEPPED_CREW)
-	h._assert_hud("crew split, sheet — with the Max at %d, the bar follows the crew and its curve row (%s)"
-			% [CREW_SPLIT_STEPPED_CREW, "none" if stepped == null
-				else "%d · %d" % [stepped.crew(), stepped.keepers()]],
-		stepped != null and stepped.crew() == CREW_SPLIT_STEPPED_CREW
-			and stepped.keepers() == roundi(stepped_keep)
-			and stepped.tooltip_text.begins_with(CREW_SPLIT_STEPPED_WORDS))
-	h._hud._drawercompose.close_compose_sheet()
-	h._hud._compose.reset_forage_source()
-	query.reset()
-	h._hud._band_labor._player_band = prior_split_band
-	h._hud._band_labor._player_bands = prior_split_bands
-	await h._settle()
 
-## The crew-split marks on the open compose sheet, or `null` where it draws none.
-func _crew_split_on_sheet() -> CrewSplitMarks:
-	return Readout.crew_split_marks(h._hud._drawercompose._compose_sheet)
 
 ## The authored curve's keeping: half a hand per worker, so every crew's row differs.
 const CREW_SPLIT_KEEP_PER_HAND := 0.5

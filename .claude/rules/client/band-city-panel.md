@@ -2,6 +2,7 @@
 paths:
   - "clients/godot_thin_client/src/scripts/ui/{BandCityPanel,BandFoodStatus,PenStatus}.gd"
   - "clients/godot_thin_client/src/scripts/ui/hud/BandPanelController.gd"
+  - "clients/godot_thin_client/src/scripts/ui/hud/{WorkStrip,RungCardController}.gd"
   - "clients/godot_thin_client/src/scripts/ui/hud/WorkInspectorDialog.gd"
   - "clients/godot_thin_client/src/scripts/ui/hud/DisclosureTriangle.gd"
   - "clients/godot_thin_client/src/scripts/ui/hud/{TradeZoneController,TradeLedger,TradeHoverCard,FactionMark,RungLinkIcon,hud_trade_vocab}.gd"
@@ -38,6 +39,8 @@ paths:
 | `ui/hud/TradeHoverCard.gd` | The Trade tab's hover card: a row's rating piles or a shipment's cargo, placed beside the row and never under the list panel |
 | `ui/hud/FactionMark.gd` | **The one faction mark** — a flag glyph in `MapView.faction_color`, on every counterparty; the slot a faction's flag (#647) fills |
 | `ui/hud/CrewSplitMarks.gd` | One small square per worker THE SIM STAFFED, **drawn** (a custom-draw `Control`, not glyphs): how a staffed row's crew divides into keepers, hands holding a whole kit and bare hands (`keepers_staffed` / `kitted_staffed` / `bare_staffed`) — see "THE CREW BAR" below. Mounted under the crew number of every staffed Work-tab row and under the crew number of the compose sheets |
+| `ui/hud/WorkStrip.gd` | **The work strip (#877)** — ONE control a source wears on its Work row AND on its compose sheet, built from one model (`model_from_row`) by one builder (`build`): the standing-rung mark, the ladder chip, the floor glyph, the one `⚠`, the `ⓘ`, then the crew number over a `CrewSplitMarks` bar. All-`static`. `build_chip` / `fill_layer` are shared with the rung card's stop row (`RungLadder`) |
+| `ui/hud/RungCardController.gd` | `RefCounted` owner of the ONE rung-card popup (#877): the plant / animal destination track, the ring card and the deposit track, opened from a row's strip or a sheet's strip alike, plus the crop step, the stop row, the declarations and the working put-down. It emits `improvement_requested`, `crop_chosen`, `extend_pen_requested`, `unqueue_requested` and `working_abandon_requested`; `BandPanelController` relays them. Hud holds it as `_rungcard` |
 | `ui/hud/LeaderPortrait.gd` | The leader block's 48px portrait square on the Band tab (#859): draws `res://assets/portraits/leader_placeholder.png` when that file exists (the seam for real art), else a faction-coloured head-and-shoulders silhouette; `empty` dims it, `council` adds the group badge. See "THE BAND TAB SHOWS WHO LEADS THE BAND" |
 | `ui/hud/RungLinkIcon.gd` | A pooling link's rung as a glyph (path dotted, trail dashed, dirt road solid pigment, paved road double; open ground a faint dot) |
 | `ui/hud/hud_trade_vocab.gd` | `HudTradeVocab` — the crossing codes (direction / link / cause), the tab's thresholds, words and sizes |
@@ -4801,6 +4804,11 @@ either alone passes on a builder that gets the grammar backwards.
 
 ## THE WORK INSPECTOR IS A DIALOG, AND THE ZONE STOPS PAYING FOR IT (§4.9 item 12d)
 
+> **Since #877 the dialog hosts the ROADWORK roster row's card alone** (`_build_road_inspector`). A
+> forage, hunt, working or tile row opens its compose sheet on a click, and everything the dialog drew
+> for those rows is on the sheet or on the strip — see "THE WORK STRIP". The passages below describe
+> the dialog's own geometry, which is unchanged.
+
 `docs/plan_standing_upkeep.md` §4.9 item 12d. The board's inspector strip is a **persistent,
 viewport-centred, NON-MODAL `WorkInspectorDialog`** on its own `CanvasLayer`. It is a **rehost, not a
 redesign**: `BandPanelController._build_work_inspector` builds exactly what it built before — the head
@@ -8068,13 +8076,12 @@ priority list. A staffed row's `workers` is the SIM's answer, so the Work tab dr
   - A need row (hunting by need) draws no bar; its count slot is unchanged.
 - **THE MAX CHIP.** A static `Max N` label (`HudWidgets.build_max_chip`, `MAX_CHIP_META`) sits beside the
   Priority pill on the row's pill line, only while the row's `max_workers` is above zero. It is not a
-  control: the Max is set on the source's sheet or the inspector.
-- **THE INSPECTOR.** A staffed row's card draws a MAX section after Priority: the Max stepper
-  (`HudWidgets.add_max_stepper`, `No max` at 0, `Lower the max` / `Raise the max`, bounded above by the band's
-  working-age people), live. `WORK_INSPECTOR_MAX_SECTION_HEIGHT` is a term in `_work_inspector_height` and
-  `_working_inspector_height`, gated by `_work_inspector_has_max`, the builder's own predicate.
-  **`Unassign` sends `stop_labor`** (`_commit_stop_labor` → `stop_labor_requested` → `Hud` →
-  `Main.format_stop_labor`), never `assign_labor … 0`: on a staffed row a count of zero is a Max of none.
+  control: the Max is set on the source's sheet.
+- **THE MAX IS SET ON THE SHEET.** A staffed row's sheet draws the Max stepper after Priority
+  (`HudWidgets.add_max_stepper`, `No max` at 0, `Lower the max` / `Raise the max`, bounded above by the
+  band's working-age people), live (see "THE WORK STRIP"). **`Stop working here` sends `stop_labor`**
+  (`stop_labor_requested` → `Hud` → `Main.format_stop_labor`), never `assign_labor … 0`: on a staffed row a
+  count of zero is a Max of none.
 - ⛔ **A RESTATE MUST SEND THE MAX, NEVER THE CREW.** `_emit_work_assign` takes `RESTATE_STANDING_COUNT`
   (the default for the crop pick, the kit pick, the floor pick and the rung track's crop step) and resolves
   it to the row's `max_workers`. Restating the row's `workers` would turn the sim's staffing into a Max the
@@ -8101,6 +8108,94 @@ priority list. A staffed row's `workers` is the SIM's answer, so the Work tab dr
   figure is the sim's, never derived here.
 
 The compose sheet's half is `labor-ui.md` → "STAFFED SOURCES ON THE COMPOSE SHEETS".
+
+## THE WORK STRIP — one control on the row and on the sheet (#877)
+
+A source's Work row and its compose sheet wear the SAME control, `WorkStrip`, built from the same
+model. It replaced the row's rung slot, marks run, kit mark, crew number and bar, and the improvement
+control the sheets used to mount; and it retired the Work inspector for source rows.
+
+- **Left to right:** the standing-rung mark (a ghost button opening the ring card on a penned herd), the
+  ladder slot, the floor glyph, the one `⚠`, the `ⓘ`, and the crew column.
+- **The ladder slot** is `⌃🌱` while the next rung is on offer, and the chip FILLING to the build's
+  progress while one is under way (`🌱60%`, `fill_layer`, stamped `WORK_STRIP_FILL_META` with the
+  amount). A stalled build is the same chip with a WARN border and ink; its hover says `no spare hands
+  this turn`. Both open the rung card; a chip carries `WORK_ROW_BUILD_KIND_META` /
+  `WORK_ROW_BUILD_STATE_META` / `WORK_ROW_MODEL_META` on the container (its `Button` is the child that
+  presses).
+- **`⚠` is ONE mark whose hover is every warning line**, joined: the overdraw, overstaffed, kit-short,
+  pen-underfed and keeping-short sentences the row's producer already wrote (`warn_lines`). No new
+  sentence exists for it. **`ⓘ`** carries the tools-short sentence, which stops nothing.
+- **The crew column** is the number over the `CrewSplitMarks` bar. The bar draws a FOURTH segment, the
+  builders (`HudStyle.CREW_BUILD`), and the number counts them (`workers + builders`);
+  `HudWorkVocab.crew_bar_words` gains an `N building` clause. A need row keeps its need-count label in the
+  number slot and draws no bar; a donor row keeps its struck-through count.
+- **Builders are the band's pool while the row is the queue head** (`BandPanelController.site_builders`)
+  and zero otherwise. #872 replaces the function with a per-site count; it is the only place that
+  changes.
+- **THE ROW IS FOUND BY ITS RUNG SLOT.** A row with no rung mark stamps `WORK_ROW_RUNG_META` (blank) on
+  its marks run instead of drawing an empty column, so a harness finds every row without the row
+  paying width for it.
+- **THE STRIP'S WIDTH IS BUDGETED AGAINST THE NARROW DOCK.** `WORK_STRIP_CREW_WIDTH` (48) and
+  `WORK_STRIP_SEPARATION` (4) are what let the L-dock's 356px box hold the strip beside the pills line;
+  at 72 / 8 the Work column overflowed by up to 15px on rows with a chip.
+
+- **A CREW WIDER THAN ITS ROOM STILL SHOWS EVERY SEGMENT.** `CrewSplitMarks.drawn_segments(drawn)` shares the
+  drawn marks so each non-empty segment keeps at least one (keepers, builders, kit-holding, bare), the rest
+  going to the segments in proportion, and the `+N` counts the remainder; a plain "first N" hid the last
+  two segments on a crew of seven.
+- **THE CHIP'S HOVER IS THE ESTIMATE.** While the row's build is the queue head with builders on it the chip
+  says `Cultivating 60% · 3 building, done in ≈5 turns` (`WORK_STRIP_BUILD_DONE_FORMAT`), on the row and on
+  the sheet alike, since both read the one producer's `build_turns`; the sheet prints no turn figure of its own.
+- **"Too depleted to pen" rides the strip's `⚠`** (`HudComposeVocab.IMPROVEMENT_DEAL_DEPLETED_NOTE`, appended to
+  `warn_lines` where the Corral rung, on offer or in flight, would pay under the flow floor).
+
+**A ROW CLICK OPENS THE SOURCE'S SHEET.** The press selects the source exactly as `Show on map` does and
+opens its compose sheet (`BandPanelController._open_source_sheet` → `source_sheet_requested` →
+`DrawerComposeController.open_source_sheet`, which resolves the herd, tile or working). The strip's own
+buttons stop the press.
+
+**THE SHEET'S STRIP IS BUILT FROM THE SHEET'S OWN WIRE SOURCE** (`source_strip_row(..., source)` and
+`strip_handlers(..., wire_source)`), so the chip, the rung card it opens and the readout beside it read
+one dictionary; the board's rows read the controller's lookups. A source the band does not work yet goes
+through the same producer from an empty assignment, with a crew of zero.
+
+**WHAT THE INSPECTOR'S CONTENT BECAME** (every row of the old card has a home):
+
+| the inspector's | now |
+|---|---|
+| head (mark, name, rung) | the row, and the sheet's title |
+| `Jump to source` | `Show on map`, at the left of the worked source's action row |
+| `Unassign` | `Stop working here` on the sheet |
+| a working's `Stop holding this working` | the same link on the deposit sheet (DANGER, the ladder card's hover) |
+| Priority, Max, floor presets, Kit | the sheet's own segments, steppers and kit row |
+| the take-kit picker and its shortfall | the sheet's Kit row and its `N of M available` line |
+| notes, arrivals ticks, the site's bill, a foreign build | `DrawerComposeController._mount_row_details` under the strip: `note` / `muted_note` (inked by severity), the `ArrivalStrip`, `HudWorkVocab.upkeep_bill_text` and the `foreign_build` line |
+
+**The worked-source action row is `Show on map` · `Done` · `Stop working here`.** `Done` closes the
+sheet and is kept because every edit on a worked sheet is live.
+
+**THE RUNG CARD IS A `PopupPanel`, so it draws above the sheet's `CanvasLayer`.** A running row's chip
+doubles as a STOP row on the card: `RungLadder.build_track(rows, on_pick, title, on_stop)` renders the
+in-flight leg as the filling chip with `— click to stop` and calls `on_stop`, which withdraws the queued
+build. The card is anchored to whichever control was pressed.
+
+**Retired with the inspector:** `_build_work_inspector`, `_build_working_inspector`,
+`_work_inspector_height` and the kit / upkeep / priority inspector helpers, `_commit_work_floor`,
+`_commit_stop_labor`, the row's `marks` string (`warn_lines` replaced it), the kit mark glyph, the
+improvement control and its pace colours (`HudWidgets.build_improvement_control`,
+`improvement_pace_color` / `_stops`), the sheet's pointer line, offer line and gear line
+(`_build_improvement_control`, `_build_deposit_offer_line`, `_build_gear_for`), the
+`STAFFED_*` crew-block constants, the sheet's own crew-split sentence and the turn-estimate face
+(`≈N turns`). The sim still prices a build; the strip states the progress and the rung card the pile.
+
+**Harnesses.** `band_panel_preview` drives the board's strips (the climbing chip, the stalled chip, the
+`⌃` offers, the strip's `⚠` for the kit shortfall) and every deposit-track claim through
+`_workings_marks()`, which stamps each Groundwork row's offer chip with its `(tile, material)` key;
+`ui_preview`'s `work_strip` chapter renders the forage, hunt and worked sheets and asserts the rung card
+is a visible window over the sheet. The inspector-dialog claims for source rows (sections, kits,
+priority picker, worst-case fit, ESC precedence) were retired with the card; the road inspector keeps
+its own.
 
 ## The faction page's Family limit row (issue #691)
 

@@ -541,6 +541,25 @@ incoming block called `_find_crew_target`, a helper the split had moved to `Q.fi
 run rendered **zero** frames. Git cannot see that seam, so any merge touching this harness must be
 rendered before it is trusted — an empty conflict list proves nothing here.
 
+## `chapters/work_strip.gd` — the work strip on the sheets (issue #877)
+
+Appended LAST in `CHAPTERS`. Four frames: `work_strip_forage_sheet` (an unworked patch, the strip with the
+next rung on offer), `work_strip_forage_sheet_rung_card` (the chip pressed, the rung card open),
+`work_strip_hunt_sheet`, and `work_strip_worked_sheet` (a worked patch, the chip filling and the footer's
+`Show on map`).
+
+The claims a frame cannot make: the card is a visible `Window` over the sheet's `CanvasLayer` (read off
+`RungCardController.card()`), it dismisses, and an UNWORKED source's footer carries no `Show on map`
+(there is no crew to stop or finish). The sheet's strip passes its own wire source to the rung card; a
+tile that is not in `forage_patch_lookup` (every `ui_preview` fixture) opens its track only because of
+that, which is why this chapter fails if the sheet's handlers fall back to the board's lookups.
+
+The strip is read through `ForageFx.find_strip` / `strip_model` / `ladder_kind`, which answer in the old
+improvement-control STATE WORDS (`IMPROVEMENT_STATE_OFFERED` / `RUNNING` / `DONE`) so the older chapters'
+claims about a rung's state kept their shape. Claims about the retired face text (`≈N turns`, the pace
+colours, the DONE label, the pointer line, the crew-split sentence on the sheet) were deleted rather than
+re-aimed: nothing renders them.
+
 ## Worked-source mark states (issue #412)
 
 **`ui_preview`** — nine behavioural assertions on `RungGates.next_rung_ready`, asserted DIRECTLY over
