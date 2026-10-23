@@ -2469,12 +2469,9 @@ func run(harness) -> void:
 		at_floor_text.contains(SourceForecast.format_magnitude(held_take)))
 	# …and the verdict says the source is HOLDING rather than that the crew takes nothing. The refusal
 	# is the sentence this state used to carry, so its absence here is half the claim.
-	h._assert_hud("…while the verdict states it is holding, not that it is empty (%s)"
+	h._assert_hud("…while NO verdict row is drawn (a source holding at its floor states nothing there) (%s)"
 			% Readout.verdict_text(h._hud._drawercompose._compose_sheet),
-		Readout.verdict_text(h._hud._drawercompose._compose_sheet).contains(
-				SourceForecast.VERDICT_HOLDS_AT_FLOOR)
-			and Readout.verdict_severity(h._hud._drawercompose._compose_sheet)
-				== SourceForecast.VERDICT_OK)
+		Readout.verdict_text(h._hud._drawercompose._compose_sheet) == "")
 
 	# **AND THE TEACHING LINE MAY NOT DENY THE TAKE THE HEADLINE IS QUOTING.** Reported from play
 	# beside the pair above: a patch publishing `+0.71 /turn` rendered *"Teaching nothing: nothing is

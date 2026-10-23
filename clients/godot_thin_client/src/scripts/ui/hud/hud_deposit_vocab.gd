@@ -1321,52 +1321,6 @@ const DEPOSIT_REVERTING_TIP_FORMAT := "Going back %s"
 ## nothing: the ground slides back toward what it gives for free.
 const DEPOSIT_IDLE_TIP := "⚠ Unworked: decaying\nFix: assign cutters"
 
-# ---- PUTTING A WORKING DOWN — the undo a HELD working had nowhere else (issue #650) ---------------
-#
-# ⛔ **THE VERB IS `abandon_working`, AND IT IS NOT `abandon`.** `abandon <f> <x> <y>` names a PLACE:
-# it builds a `LaborTarget::Forage`, so it does not reach a working at all, and it drops every band of
-# the faction's holding on the tile, a forage assignment there included. `abandon_working` names the
-# `(tile, material)` PAIR and drops the holding on that ONE working. **This client must not send the
-# wider verb for the narrower act**, which is the road branch's own rule read in the other direction.
-#
-# ⛔ **AND `assign_labor … extract … 0` IS NOT AN UNDO EITHER.** A working raised above its free floor
-# is a holding, so a crew of zero is *"stop cutting"*: the row survives, the bill survives, and the
-# meter takes something like a hundred turns to rot back to the free floor. What ends the bill is this.
-
-## The control, at the BOTTOM of the working's ladder card — under the rows, because putting a working
-## down is the opposite end of the same decision they offer. **It names the ACT rather than the wire's
-## verb**, the road row's own rule: *abandon* reads as walking away from the ground, and a player who
-## walks away is exactly who has NOT pressed this.
-const WORKING_ABANDON_LABEL := "Stop holding this working"
-
-## ⛔ **WHAT IT DESTROYS, FIRST — and the banked work is the half a player cannot see coming.** The sim
-## drops the holding and its build-queue entry and leaves the METER to rot, which is the plant web's
-## own retirement contract: nothing is demolished, and nothing is refunded either. A hover that said
-## only *"drops this band's hold"* would read as reversible, which it is not once work is banked.
-const WORKING_ABANDON_DROPS_FORMAT := "Drops this band's hold on the %s here, and any rung it has " \
-	+ "queued on it. The work already banked is not given back: with nobody holding it, the ground " \
-	+ "slides back to what it gives for free."
-
-## …and WHY a player would want it. A working is kept by its own crew, so dropping one frees nothing
-## band-wide; what it does is take the rung's queue entry and the band's claim off the ground.
-const WORKING_ABANDON_WHY := "It stays held until you do: its queued rung stays in line, and its " \
-	+ "crew keeps it before they cut."
-
-## **ONE HOVER, ON BOTH EMITTERS.** The ladder card's row and the roster row's `✕` send the identical
-## command, so they state the identical consequence: roads.md's rule that *"a one-click destructive
-## action that under-states what it destroys is worse in a roster than on a card"* is kept by giving
-## the roster the CARD's whole hover rather than a shorter one.
-##
-## ⛔ **THERE IS NO SECOND WARN LINE, AND THAT IS A DECISION.** The road's `✕` carries one because
-## `abandon` names a place and takes a forage assignment down with the road — a consequence its label
-## does not name. `abandon_working` names the `(tile, material)` pair: it drops this band's hold on
-## THIS working and touches neither the other working on the same hex nor any forage row nor the road.
-## The blast radius is exactly what the label says, so a second line would be warning about a reach
-## the verb does not have.
-static func working_abandon_tooltip(deposit: Dictionary) -> String:
-	return HudFormat.join_tooltip_lines([
-		WORKING_ABANDON_DROPS_FORMAT % material_label(deposit).to_lower(),
-		WORKING_ABANDON_WHY])
 
 ## The material row's INK, forked on the hazard mark the composer put there rather than on a second
 ## reading of the working — `deposit_value_color`'s rule, and the same one.

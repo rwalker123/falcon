@@ -18946,11 +18946,6 @@ func _assert_a_crewless_working_says_so() -> void:
 ## **The board is the roster's own, with ONE working walked away from**: the near wood, held at
 ## `felling` with a real bill, a real shortfall and NOBODY on its `extract` row. Every other row is
 ## unchanged, so the readout claims below are about that row rather than about the whole block.
-##
-## ⛔ **THE EMITTER IS DRIVEN, AND THE CLAIM IS THE LINE.** The ladder card's put-down row sends
-## `abandon_working 0 <x> <y> wood`; `command_guard` drives the builder directly and can only assert the
-## PARSE, so this is where the material is proved to ride the press. The near hex's OTHER working is STONE, so a control that lost the material — or took its
-## neighbour's — reads as a different line here.
 func _assert_a_working_can_be_put_down() -> void:
 	_hud.update_deposits(_walked_away_workings_rows())
 	_push_bands([_walked_away_band_fixture()])
@@ -18990,67 +18985,12 @@ func _assert_a_working_can_be_put_down() -> void:
 			% hover,
 		hover.contains(HudDepositVocab.DEPOSIT_REVERTING_TIP_FORMAT
 			% HudDepositVocab.reverting_value(_walked_away_workings_row())))
-	await _assert_the_ladder_offers_the_put_down(walked)
 	# **THE BOARD GOES BACK**, so the states after this one run against the roster's own fixture — the
 	# `_restore_workings_roster_fixture` idiom applied at the state that narrowed it.
 	_hud.update_deposits(_workings_rows())
 	_push_bands([_workings_band_fixture(WORKINGS_DEMAND)])
 	_hud._bandpanel.rerender()
 	await _settle()
-
-## ⛔ **THE LADDER CARD CARRIES THE PUT-DOWN, AT THE BOTTOM** — the road ladder's own shape, and the
-## verb's one emitter now (the deposit sheet's `Stop working here` is `stop_labor`, which drops the same
-## holding). The line is asserted by EQUALITY so the material is proved to ride the press.
-func _assert_the_ladder_offers_the_put_down(row: Control) -> void:
-	var mark := _workings_mark_in(row)
-	_assert_band_panel("the walked-away row still opens its ladder, the crew being forgiven by the mark",
-		mark != null)
-	if mark == null:
-		return
-	mark.pressed.emit()
-	await _settle()
-	await _save("band_panel_workings_put_down")
-	var put_down := _find_meta_control(_hud, HudWorkVocab.WORKINGS_LADDER_ABANDON_META) as Button
-	_assert_band_panel("…and its card offers the put-down row beneath the rungs",
-		put_down != null)
-	if put_down == null:
-		_hud._rungcard.dismiss()
-		await _settle()
-		return
-	_assert_band_panel("…named for the ACT rather than the wire's verb — `%s` (\"%s\")"
-			% [HudDepositVocab.WORKING_ABANDON_LABEL, put_down.text],
-		put_down.text == HudDepositVocab.WORKING_ABANDON_LABEL)
-	# ⛔ **THE CARD'S HOVER AND THE ROSTER'S ARE ONE STRING**, which is the whole of *the roster must
-	# not be quieter than the card*.
-	_assert_band_panel("…carrying the roster's own hover verbatim, so neither surface is quieter",
-		put_down.tooltip_text == HudDepositVocab.working_abandon_tooltip(_walked_away_workings_row()))
-	var line := await _drive_working_abandon(put_down)
-	var wanted := "abandon_working %d %d %d %s" % [HudConst.PLAYER_FACTION_ID,
-		ROSTER_NEAR_TILE.x, ROSTER_NEAR_TILE.y, WORKINGS_WOOD]
-	print("band_panel_preview: workings ladder put-down -> %s" % line)
-	_assert_band_panel("…and it sends the roster's own line, the two emitters converging on one builder (\"%s\")"
-			% line,
-		line == wanted)
-	_assert_band_panel("…and the card closes on the press, the drop re-rendering the zone it is anchored to",
-		not _hud._rungcard.is_open())
-	# **THE ZONE IS RE-RENDERED BEFORE ANYTHING ELSE READS IT**, the declare probe's own rule: `as
-	# Button` on a freed node aborts the walk with no `FAIL` line and an exit status of 0.
-	_hud._bandpanel.rerender()
-	await _settle()
-
-## Press one of the verb's two controls and format what came out of `HudLayer` — **the player's chain
-## end to end**, through the real relay and the real builder rather than through a payload this file
-## composed. `""` where nothing was emitted, which fails the equality above by being a different line.
-func _drive_working_abandon(control: Button) -> String:
-	var seen: Array = []
-	var sink := func(payload: Dictionary) -> void: seen.append(payload)
-	_hud.abandon_working_requested.connect(sink)
-	control.pressed.emit()
-	await _settle()
-	_hud.abandon_working_requested.disconnect(sink)
-	if seen.is_empty():
-		return ""
-	return String(MAIN_SCRIPT.format_abandon_working(seen[0] as Dictionary).get("line", ""))
 
 ## The roster's own three rows with the near WOOD walked away from — held at `felling` with a real
 ## bill the pool is not covering, which is the only shape in which a crew of zero is a LEAK rather
@@ -19219,13 +19159,6 @@ func _restore_roadwork_roster_fixture() -> void:
 # argument applies one branch over — with two things that do not: a working publishes NO KEEPER (the
 # band's own `extract` ROW is the membership test), and one TILE can hold TWO workings, so the row's
 # identity is `(tile, material)` and a tile-keyed roster silently loses one of them.
-#
-# ⛔ **AND ITS `✕` IS `abandon_working`, NOT `abandon`** (issue #650). `abandon` resolves a tile to a
-# FORAGE source sim-side (`BuildSourceRef::target` → `forage_source`), which `LaborTarget::same_source`
-# pairs only with another Forage row — so it does not reach a working at all, and it drops every
-# band-of-the-faction's holding on the tile besides. `abandon_working <f> <x> <y> <material>` names the
-# pair and drops this band's hold on the ONE working, which is what `_assert_a_working_can_be_put_down`
-# asserts by EQUALITY on the emitted line.
 
 ## The three workings this band holds, at three DISTANCES — reusing the road roster's own tiles, so
 ## the locators are worked against one stated camp and a move to `_band_fixture` fails both blocks
@@ -19968,8 +19901,8 @@ func _assert_zone_head_reserves(where: String, block: Control, reserved: float) 
 #
 # ⛔ **THERE WAS NO FIXTURE WITH MORE THAN THREE WORKINGS, WHICH IS EXACTLY WHY NOTHING CAUGHT THE
 # DEFECT.** `_open_deposit_track` — the `⌃` that opens a working's rung ladder — has ONE caller, and
-# it is a roster ROW; the ladder card is also where the second `abandon_working` button lives. So a
-# band's fourth working could be neither climbed nor put down while its keeping was still billed,
+# it is a roster ROW. So a
+# band's fourth working could not be climbed while its keeping was still billed,
 # and every roster frame in this file staged exactly three rows.
 
 ## FIVE workings across the roster's three tiles, so the collapsed block draws 3 and states `+2 more`.

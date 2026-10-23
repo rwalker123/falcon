@@ -2581,13 +2581,6 @@ static func roadwork_roster_row_height(build_queued: bool) -> float:
 # ⛔ **THE `quarrywork` POOL AND ITS HEAD STEPPER ARE RETIRED** (`docs/plan_site_crews.md` §0). A
 # working is kept by the crew cutting it, staffed on its own GROUNDWORK row, so the keeping is that
 # row's crew and the row states it (the crew-split marks under its stepper).
-#
-# ⛔ **AND ITS `✕` IS `abandon_working`, NEVER `abandon`** (issue #650). The road roster's drop is
-# `abandon <faction> <x> <y>`, whose target resolves to a FORAGE source sim-side
-# (`BuildSourceRef::target` → `forage_source`) and which drops every band-of-the-faction's holding on
-# the tile — so it neither reaches a working nor confines itself to one. `abandon_working <faction>
-# <x> <y> <material>` names the `(tile, material)` PAIR and drops this band's hold on that ONE working,
-# which is why the row's control carries the material structurally rather than by label.
 
 ## **A WORKING HAS HALF A NAME THE ROAD LACKED — its MATERIAL** — so the name cell is the material
 ## and then the road roster's locator: `Wood · 4 tiles E`. Two workings on one tile are two rows that
@@ -2603,10 +2596,6 @@ const WORKINGS_ROSTER_ROW_META := "workings_roster_row"
 
 
 
-## …and the LADDER CARD's own put-down row, which sends the identical command from the other of the
-## verb's two surfaces. **Valued `true` rather than a key**: the card is about exactly one working, so
-## there is nothing for a harness to tell apart, where a roster row's control has its siblings.
-const WORKINGS_LADDER_ABANDON_META := "workings_ladder_abandon"
 
 # ---- The BUILD QUEUE block (`docs/plan_standing_upkeep.md` §4.6b) ---------------------------------
 #
@@ -4016,18 +4005,6 @@ const SITE_KEEPING_TOOLS_INFO := POOL_TOOLS_SHORT_INFO_LINE
 static func site_keeping_is_short(kept: float, demand: float) -> bool:
     return demand >= SourceForecast.UPKEEP_WORK_MIN \
         and demand - kept >= SourceForecast.UPKEEP_WORK_MIN
-
-## **THE SITE'S BILL AS ONE SENTENCE** — what this rung costs to stand, per turn: the tending line, then
-## the goods it eats. `""` on a wild site, which owes nothing. The sheet states it under the crew.
-static func upkeep_bill_text(tending: Dictionary, goods_terms: Array) -> String:
-    var text := tending_text(tending)
-    var goods: Array[String] = []
-    for term in goods_terms:
-        goods.append(String(term))
-    if goods.is_empty():
-        return text
-    return text + TENDING_CLAUSE_SEPARATOR + WORK_INSPECT_KITS_UPKEEP_GOODS_FORMAT \
-        % RUNG_TRACK_PRICE_SEPARATOR.join(goods)
 
 ## **THE KEEPING HOVER** — `""` on a site with nothing to say. A short site LEADS with the claim the
 ## `⚠` makes; both marks then state the tending line; the tools sentence closes a tools-short site.

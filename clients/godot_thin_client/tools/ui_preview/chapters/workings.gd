@@ -948,9 +948,9 @@ func run(harness) -> void:
 	h._hud._drawercompose.open_deposit_compose(_wood_at_its_floor())
 	await h._settle()
 	var held_sheet: Node = h._hud._drawercompose._compose_sheet
-	h._assert_hud("a wood standing at its floor reads the SHARED at-the-floor verdict (%s)"
+	h._assert_hud("a wood standing at its floor draws no verdict row (%s)"
 			% Readout.verdict_text(held_sheet),
-		Readout.verdict_text(held_sheet).contains(SourceForecast.VERDICT_HOLDS_AT_FLOOR))
+		Readout.verdict_text(held_sheet) == "")
 	# **THE TAKE IS THE REGROWTH AT THAT FLOOR, capped by what the crew can lift** — the curve's own
 	# value at `floor × capacity`, which is the peak this wood renews at and the figure the tile card
 	# has been calling `sustainable_take` all along. Nothing more is reachable: the stock IS the floor,

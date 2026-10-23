@@ -20,13 +20,12 @@ extends RefCounted
 ## **IT EMITS ITS OWN SIGNALS** and the hosts relay them: `improvement_requested` (a picked rung),
 ## `crop_chosen` (the crop a plant rung commits, sent BEFORE the declaration so the optimistic overlay the
 ## declaration writes is the one the rebuilt board reads), `extend_pen_requested`, `unqueue_requested`
-## (the in-flight rung's STOP) and `working_abandon_requested`.
+## (the in-flight rung's STOP).
 
 signal improvement_requested(payload: Dictionary)
 signal crop_chosen(band: Dictionary, model: Dictionary, species: String)
 signal extend_pen_requested(payload: Dictionary)
 signal unqueue_requested(payload: Dictionary)
-signal working_abandon_requested(payload: Dictionary)
 
 var _band_labor: HudBandLaborState = null
 var _topbar: FactionReadouts = null
@@ -240,7 +239,6 @@ func open_deposit_track(band: Dictionary, deposit: Dictionary, cutters: int,
         func() -> void:
             dismiss()
             emit_unqueue(band, _deposit_unqueue_model(deposit))))
-    column.add_child(_build_working_abandon_row(band, deposit))
     _fresh_body().add_child(column)
     _popup.popup(_anchor_rect(anchor))
 
@@ -290,47 +288,6 @@ func _deposit_track_queue(band: Dictionary) -> Dictionary:
         HudRouteVocab.ROAD_LADDER_QUEUE_AHEAD_KEY: keys.size(),
         HudRouteVocab.ROAD_LADDER_QUEUE_HEAD_KEY: head,
     }
-
-## **PUT THE WORKING DOWN — the row at the bottom of its ladder card.** `unqueue` withdraws a
-## DECLARATION and a crew of zero is "stop cutting"; a working raised above its free floor is a HOLDING,
-## and `abandon_working` is the only thing that ends the bill it carries. Offered unconditionally: the
-## card is opened from a holding by construction.
-func _build_working_abandon_row(band: Dictionary, deposit: Dictionary) -> VBoxContainer:
-    var column := VBoxContainer.new()
-    column.add_theme_constant_override("separation", HudWorkVocab.RUNG_TRACK_ROW_SEPARATION)
-    var button := Button.new()
-    button.text = HudDepositVocab.WORKING_ABANDON_LABEL
-    button.tooltip_text = HudDepositVocab.working_abandon_tooltip(deposit)
-    button.set_meta(HudWorkVocab.WORKINGS_LADDER_ABANDON_META, true)
-    button.custom_minimum_size = Vector2(HudWorkVocab.RUNG_TRACK_WIDTH, 0.0)
-    HudStyle.apply_button(button, "ghost")
-    HudWidgets.compact(button, HudWorkVocab.RUNG_TRACK_ROW_FONT_SIZE,
-        HudWorkVocab.WORK_PAGER_PADDING_V)
-    button.pressed.connect(func() -> void:
-        # Closes the card BEFORE it emits: the drop re-renders the zone this card is anchored to.
-        dismiss()
-        emit_working_abandon(band, deposit))
-    column.add_child(button)
-    column.add_child(RungLadder.build_aside(HudDepositVocab.WORKING_ABANDON_WHY))
-    return column
-
-## `abandon_working <faction> <x> <y> <material>`. Names no band, carries no `pending_entity`: the
-## overlay's entries are keyed to a band's labor rows and this command drops one.
-func emit_working_abandon(band: Dictionary, deposit: Dictionary) -> void:
-    if band.is_empty():
-        return
-    var tile := HudDepositVocab.tile_of(deposit)
-    if tile.x < 0 or tile.y < 0:
-        return
-    var material := HudDepositVocab.material_of(deposit)
-    if material == HudDepositVocab.MATERIAL_NONE:
-        return
-    working_abandon_requested.emit({
-        "faction": int(band.get("faction", HudConst.PLAYER_FACTION_ID)),
-        "x": tile.x,
-        "y": tile.y,
-        "material": material,
-    })
 
 # ---- the popup ---------------------------------------------------------------------------------------
 

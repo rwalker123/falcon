@@ -1670,7 +1670,7 @@ func _mount_take_chips(target: VBoxContainer, basket: Array[Dictionary],
     # zero-height hint still spends the block's separation, so the chips would sit over a gap that
     # nothing draws in. `""` is the whole of the forage answer now (`_take_consequence_note`).
     var consequence := _take_consequence_note(single_pick, crop_is_default, crop_rung, committed,
-        basket, ground_committed != "", rung_percent)
+        basket, ground_committed != "")
     # Off the sites the crop IS picked (the default is a pick), and this order raises the farm of it.
     if offsite_label != "" and ground_committed == "" and committed != "":
         consequence = HudFloraVocab.OFFSITE_CREW_LINE_FORMAT % [offsite_label,
@@ -1758,12 +1758,13 @@ func _take_chip_state(species: String, selection: PackedStringArray, single_pick
 ## with no name to state answers `""` and the sheet mounts no line.
 func _take_consequence_note(single_pick: bool, crop_is_default: bool,
         crop_rung: String, committed: String, basket: Array[Dictionary],
-        ground_is_committed: bool, rung_percent: int) -> String:
+        ground_is_committed: bool) -> String:
     if not single_pick or committed == "":
         return ""
+    # Ground already committed to a crop states nothing: the lit (disabled) chip says which crop, and
+    # "Nothing picked" would be false.
     if ground_is_committed:
-        return HudFloraVocab.TAKE_NOTE_COMMITTED_FORMAT % [_take_display_name(committed, basket),
-            HudComposeVocab.improvement_running_label(crop_rung).to_lower(), rung_percent]
+        return ""
     if crop_is_default:
         return HudFloraVocab.TAKE_NOTE_CULTIVATE_DEFAULT_FORMAT % _take_display_name(
             committed, basket)
@@ -2175,8 +2176,8 @@ func _mount_work_strip(parent: VBoxContainer, band: Dictionary, kind: String, x:
 
 ## **WHAT THE WORK-TAB INSPECTOR SHOWED THAT THE SHEET DID NOT**, now under the strip: the row's own
 ## note (the slipping-ground or staffing sentence, inked by its severity), the muted note, the
-## `ArrivalStrip` of upcoming deliveries where the schedule has a gap, the site's standing bill, and
-## whose build it is where another people holds this source.
+## `ArrivalStrip` of upcoming deliveries where the schedule has a gap, and whose build it is where
+## another people holds this source. (The site's tending bill is the crew bar's and the ⚠'s hover.)
 func _mount_row_details(block: VBoxContainer, row: Dictionary) -> void:
     # ANOTHER PEOPLE'S BUILD on this source: whose it is, in warn ink - nothing here moves that meter and
     # the strip offers no `⌃` on it, so the sheet says why in the Work row's own words.
@@ -2195,10 +2196,6 @@ func _mount_row_details(block: VBoxContainer, row: Dictionary) -> void:
         var arrivals := ArrivalStrip.new()
         arrivals.set_schedule(schedule, _band_labor.current_turn())
         block.add_child(arrivals)
-    if not (row.get("upkeep_price_terms", []) as Array).is_empty():
-        block.add_child(HudWidgets.build_wrapping_status_part(
-            HudWorkVocab.upkeep_bill_text(row.get("tending", {}) as Dictionary,
-                row.get("upkeep_material_terms", []) as Array), HudStyle.INK_FAINT))
 
 
 ## **THE CREW THE SIM WILL STAFF** (#871). On a source the band works it is the snapshot row's own
@@ -2233,20 +2230,21 @@ func _mount_priority_and_max(parent: VBoxContainer, priority: String, max_worker
     var priority_block := VBoxContainer.new()
     priority_block.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     priority_block.add_theme_constant_override("separation", HudComposeVocab.CREW_ROW_LABEL_SEPARATION)
-    priority_block.add_child(HudWidgets.alloc_section_label(HudWorkVocab.WORK_INSPECT_PRIORITY))
-    priority_block.add_child(HudWidgets.build_work_priority_picker(on_priority, priority))
+    # The hint line is gone from the sheet; its sentence is the label's and every level's hover instead.
+    var priority_label := HudWidgets.alloc_section_label(HudWorkVocab.WORK_INSPECT_PRIORITY)
+    HudWidgets.set_label_tooltip(priority_label, HudWorkVocab.WORK_PRIORITY_HINT)
+    priority_block.add_child(priority_label)
+    priority_block.add_child(HudWidgets.build_work_priority_picker(on_priority, priority, false))
     parent.add_child(priority_block)
-    var max_block := VBoxContainer.new()
-    max_block.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-    max_block.add_theme_constant_override("separation", HudComposeVocab.CREW_ROW_LABEL_SEPARATION)
-    max_block.add_child(HudWidgets.alloc_section_label(
+    # **MAX IS ONE LINE** — the key on the left, the `−  N  +` stepper beside it, the `Kit` field row's shape.
+    var max_row := HBoxContainer.new()
+    max_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    max_row.add_theme_constant_override("separation", HudWorkVocab.WORKER_STEPPER_SEPARATION)
+    max_row.add_child(HudWidgets.build_field_key(
         HudWorkVocab.DIG_CREW_STEPPER_LABEL if is_dig_crew else HudWorkVocab.MAX_STEPPER_LABEL))
-    var stepper := HBoxContainer.new()
-    stepper.add_theme_constant_override("separation", HudWorkVocab.WORKER_STEPPER_SEPARATION)
-    HudWidgets.add_max_stepper(stepper, max_workers, upper, on_max, false,
+    HudWidgets.add_max_stepper(max_row, max_workers, upper, on_max, false,
         HudDepositVocab.DIG_CREW_MIN if is_dig_crew else 0)
-    max_block.add_child(stepper)
-    parent.add_child(max_block)
+    parent.add_child(max_row)
 
 ## **A SOURCE THE BAND WORKS IS EDITED LIVE** (#871): its sheet's commit is `Stop working here`, so the
 ## Max, the floor, the kit (and a patch's take selection) re-send the assignment the moment they change,
@@ -2431,8 +2429,9 @@ func _mount_readout(parent: VBoxContainer, hosts: Array, model: Dictionary, work
             func(host: Container, live: Dictionary, crew: int) -> void:
                 var limit: Dictionary = (yields_at.call(_live_floor(live), crew,
                     _live_reaches(live)) as Dictionary).get(YIELD_MODEL_LIMIT, {})
-                host.add_child(HudWidgets.build_verdict_line(
-                    limit if not limit.is_empty() else live.get("verdict", {}))))
+                var shown: Dictionary = limit if not limit.is_empty() else live.get("verdict", {})
+                if not shown.is_empty():
+                    host.add_child(HudWidgets.build_verdict_line(shown)))
     var aside_host := VBoxContainer.new()
     aside_host.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     column.add_child(aside_host)

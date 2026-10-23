@@ -1553,9 +1553,8 @@ func run(harness) -> void:
 	var holding := SourceForecast.harvest_verdict({"reached_turn": SourceForecast.PROJECTION_REACHED_NONE,
 		"settled_fraction": 0.0, "series": []}, ForageFx.FLOOR_CHART_CREW, 96.0, 2150.0,
 		SourceForecast.FLOOR_FOOD_PEAK, 0, "hunters", 100.0, "Red Deer", true)
-	h._assert_hud("…while a source held AT its floor states that it is holding, not that it is empty",
-		String(holding.get("text", "")) == SourceForecast.VERDICT_HOLDS_AT_FLOOR
-			and String(holding.get("severity", "")) == SourceForecast.VERDICT_OK)
+	h._assert_hud("…while a source held AT its floor answers no verdict at all, so the sheet draws none",
+		holding.is_empty())
 
 	# 3y — THE PAYING CONTROL: the same oracle deer, which pays real food. Each picker button's product
 	# line must carry that food (`2.33 food`), which is the half of the rule the wolf frame cannot

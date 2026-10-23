@@ -155,16 +155,6 @@ signal split_band_requested(payload: Dictionary)
 # its own signal rather than reaching that controller, this panel's rule: controllers never talk to
 # each other, and HudLayer is the one place the two emitters converge on `Main.format_abandon`.
 signal road_abandon_requested(payload: Dictionary)
-# A WORKING was put down (issue #650) — relayed to HudLayer.abandon_working_requested and built by
-# `Main.format_abandon_working`. **TWO emitters, one relay**, the road pair's own rule: the workings
-# roster row's `✕` and the deposit ladder card's put-down row both send this, so the verb's grammar
-# has one place to drift from rather than two.
-#
-# ⛔ **IT IS NOT `abandon_requested`.** That signal carries `abandon <faction> <x> <y>`, which names a
-# PLACE: it resolves to a forage source sim-side and drops every band-of-the-faction's holding on the
-# tile. A working is keyed `(tile, material)`, so its own verb carries the pair and this payload does
-# too — routing it onto the wider signal would put a road's blast radius behind a working's label.
-signal working_abandon_requested(payload: Dictionary)
 # Recenter + select a hex (a zone row / cycler jump) — relayed to HudLayer.alert_focus_requested.
 signal alert_focus_requested(x: int, y: int)
 # Pin an exact occupant on the map after that recenter — relayed to HudLayer.roster_occupant_selected.
@@ -667,8 +657,6 @@ func set_rung_card(card: RungCardController) -> void:
         extend_pen_requested.emit(payload))
     card.unqueue_requested.connect(func(payload: Dictionary) -> void:
         unqueue_requested.emit(payload))
-    card.working_abandon_requested.connect(func(payload: Dictionary) -> void:
-        working_abandon_requested.emit(payload))
     # The crop a plant rung commits rides the band's own forage row (`assign_labor`'s `species` token),
     # ahead of the declaration, so the overlay the declaration writes is the one the board reads.
     card.crop_chosen.connect(func(band: Dictionary, model: Dictionary, species: String) -> void:

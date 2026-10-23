@@ -1690,7 +1690,7 @@ It might be better to show what will be taken the 'next' turn."*
 - **The at-floor SUPPRESSION went with it.** The `now → after` walk was withheld on a source already at
   its floor, which is why the sheet had nothing left to show; the forward headline is what made the
   suppression unnecessary. They were one defect.
-- **The new verdict is `At the floor and holding it — taking only what grows back.`**
+- **A source holding at its floor draws NO verdict row** (`harvest_verdict` answers `{}`); the NEXT TURN figure above is the take that holds.
 - **Scoped to the two ceilings the headline reads.** The floor presets still quote the ROOM (`up to
   +N/turn`, takeable once) and `max_useful_workers` still divides the ROOM — those answer *different*
   questions, and re-pointing them moved a dozen unrelated assertions. The sustainability bar DID move
@@ -7555,14 +7555,7 @@ gatherer leaves the plants nobody picked standing, a cultivator weeds them out. 
 cultivate-with-nothing-picked line NAMES the crop the game would settle on, because silence there is
 the game choosing for the player without saying so.
 
-⛔ **ON GROUND ALREADY COMMITTED, THE LINE STATES THE COMMITMENT.** `Committed to Wild Emmer —
-sowing 94%` (`TAKE_NOTE_COMMITTED_FORMAT`): the crop off `patch_committed_species`, the participle and
-meter of the rung in flight. A committed patch sends no crop on the next commit, so
-`_resolve_crop_selection` answers `""` there — and the default line, handed that `""`, read *"Nothing
-picked — this ground would be committed to ."* on a Tended Patch of Wild Emmer mid-Sow. Reported from
-play; "Nothing picked" was false as well as blank. `_mount_take_chips` takes the ground's crop
-(`ground_committed`), so the lit chip is that crop too, and `_take_consequence_note` answers `""` for
-any branch with no name to format — a crop sentence never ends on a blank.
+⛔ **ON GROUND ALREADY COMMITTED, THE SHEET STATES NOTHING ABOUT IT.** `_take_consequence_note` answers `""` there (the old `Committed to Wild Emmer — sowing 94%` line is retired, and with it `TAKE_NOTE_COMMITTED_FORMAT`): the lit, disabled chip names the crop, and the default `Nothing picked …` line would be false, so none is drawn.
 
 ⛔ **AND EVERY CHIP ON THAT GROUND IS DISABLED, ITS HOVER SAYING WHY.** The composition sends no crop
 on committed ground, so a press could only move a pill that changes nothing. Each chip entry carries
@@ -8297,7 +8290,7 @@ Kit row and the readout.
 - **THE CREW ROW IS THE WORK STRIP** (`_mount_work_strip`, #877): the section label, then the SAME strip
   the Work tab's row wears (`band-city-panel.md` → "THE WORK STRIP") — the rung mark, the ladder chip, the
   floor glyph, `⚠`, `ⓘ`, and the crew number over the `CrewSplitMarks` bar — followed by the row's
-  details (`_mount_row_details`: the note, the arrival ticks, the site's upkeep bill, a foreign build).
+  details (`_mount_row_details`: the note, the arrival ticks, a foreign build — no tending line; the keepers are the crew bar's hover and the `⚠`'s).
   A working source states the row's `keepers_staffed` / `kitted_staffed` / `bare_staffed` and `hold_crew`
   verbatim; a NEW source's strip is the producer's reading of an empty assignment (crew zero). The number
   the readout below is PRICED at (the forecast crew on a new source) rides the strip as
@@ -8315,8 +8308,10 @@ Kit row and the readout.
   priced with the band's gear and cannot say how many more hands the herd could use) exceeds the staffed
   crew. `M` is that difference, held to the pool and the Max.
 - **THE PRIORITY SEGMENT AND THE MAX STEPPER** (`_mount_priority_and_max`): the work inspector's own
-  `build_work_priority_picker`, and `HudWidgets.add_max_stepper` (`No max` at 0, `Lower the max` / `Raise the
-  max`, bounded above by the band's working-age people).
+  `build_work_priority_picker` (drawn with `show_hint = false`: the `When something runs short…` sentence
+  rides the section label's and every level button's hover, not a line), and `HudWidgets.add_max_stepper`
+  (`No max` at 0, `Lower the max` / `Raise the max`, bounded above by the band's working-age people) on ONE
+  line with its key — `Max`, or `Diggers` on a dig sheet — the `Kit` field row's shape.
 - **LIVE ON A WORKING SOURCE, COMMITTED ON A NEW ONE.** A sheet on a source the band works has no commit
   verb but `Stop working here` (`stop_labor`), so every edit re-sends the assignment the moment it lands:
   the Max, the floor (a preset pick and a released chart drag), the kit, and a patch's take chips, all

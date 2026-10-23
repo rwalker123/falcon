@@ -2998,7 +2998,7 @@ const VERDICT_BLOCKED := "blocked"
 #
 # **IT STATES THE COUNTDOWN AND NOTHING ELSE.** Both readings once closed with *", then holds it —
 # taking only what grows back"*, and that clause is gone: what the source does once it ARRIVES is the
-# `VERDICT_HOLDS_AT_FLOOR` sentence's own job, said by the sheet the moment it is true, so a
+# equilibrium's own business (the sheet states no verdict once it is true), so a
 # countdown that also narrated the aftermath was answering a question the player had not reached yet.
 #
 # **AND THAT IS WHY THERE IS ONE PAIR HERE RATHER THAN TWO.** A STRIPPED twin of each existed solely
@@ -3024,10 +3024,8 @@ const VERDICT_SETTLES_END := "."
 # in two currencies.
 const VERDICT_AT_FLOOR_FORMAT := "Already at or below the floor. This crew takes nothing until it grows past %s."
 # THE SOURCE IS AT ITS FLOOR AND THE CREW IS LIVING OFF THE REGROWTH — the equilibrium the *reaches*
-# branch below promises, seen from inside rather than counted down to. It states no turn count because
-# there is nothing left to wait for, and it wears the same words the reaching verdict closes with, so
-# arriving at the floor and standing on it read as one state rather than two.
-const VERDICT_HOLDS_AT_FLOOR := "At the floor and holding it — taking only what grows back."
+# branch promises, seen from inside. It states NOTHING: `harvest_verdict` answers `{}` and the sheet
+# mounts no verdict row, the NEXT TURN figure above it already being the take that holds.
 # No crew at all is its own reading and must not render as "reaches the floor in 0 turns".
 const VERDICT_NO_CREW := "No one assigned. Nothing is taken and it grows back on its own."
 
@@ -3431,7 +3429,7 @@ static func harvest_verdict(walk: Dictionary, workers: int, biomass: float, capa
     # word it: the walk never "reaches" a floor it started on (`project_stock` requires a DESCENT), so
     # this would fall through to *"this crew can't draw it that low"* about a source already there.
     if not crew_is_taking(workers, biomass, capacity, floor):
-        return {"severity": VERDICT_OK, "text": VERDICT_HOLDS_AT_FLOOR}
+        return {}
     var reached := int(walk.get("reached_turn", PROJECTION_REACHED_NONE))
     if reached != PROJECTION_REACHED_NONE:
         return {

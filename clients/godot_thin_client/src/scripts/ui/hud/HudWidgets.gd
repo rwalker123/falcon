@@ -1376,7 +1376,8 @@ static func build_floor_picker(
 ## whatever the next scarcity handler is tomorrow, and a per-consumer list would grow forever. It is
 ## ELIDING with its own hover, the treatment every other one-line label in this strip takes, since the
 ## zone is a fixed-width box and this sentence is the longest thing in the block.
-static func build_work_priority_picker(on_pick: Callable, selected_level: String) -> VBoxContainer:
+static func build_work_priority_picker(on_pick: Callable, selected_level: String,
+        show_hint: bool = true) -> VBoxContainer:
     var current := HudWorkVocab.work_priority_of(selected_level)
     var block := VBoxContainer.new()
     block.add_theme_constant_override("separation", HudWorkVocab.WORKER_STEPPER_SEPARATION)
@@ -1400,12 +1401,16 @@ static func build_work_priority_picker(on_pick: Callable, selected_level: String
         var tint := HudStyle.button_font_color(variant, btn.disabled)
         if not is_selected:
             tint = HudStyle.INK_DIM
+        # A host that draws no hint line still keeps the reason: it rides every level's hover.
+        if not show_hint:
+            btn.tooltip_text = HudWorkVocab.WORK_PRIORITY_HINT
         var cell := _policy_rung_cell(btn, String(HudWorkVocab.WORK_PRIORITY_FACES.get(level, level)),
             "", tint)
         cell.size_flags_horizontal = Control.SIZE_EXPAND_FILL
         grid.add_child(cell)
     block.add_child(grid)
-    block.add_child(build_status_part(HudWorkVocab.WORK_PRIORITY_HINT, HudStyle.INK_FAINT, true))
+    if show_hint:
+        block.add_child(build_status_part(HudWorkVocab.WORK_PRIORITY_HINT, HudStyle.INK_FAINT, true))
     return block
 
 ## **THE DIAL BETWEEN THE PRESETS** — a whole-percent slider over the same floor the presets set, so

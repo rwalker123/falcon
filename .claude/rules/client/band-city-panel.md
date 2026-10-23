@@ -40,7 +40,7 @@ paths:
 | `ui/hud/FactionMark.gd` | **The one faction mark** — a flag glyph in `MapView.faction_color`, on every counterparty; the slot a faction's flag (#647) fills |
 | `ui/hud/CrewSplitMarks.gd` | One small square per worker THE SIM STAFFED, **drawn** (a custom-draw `Control`, not glyphs): how a staffed row's crew divides into keepers, hands holding a whole kit and bare hands (`keepers_staffed` / `kitted_staffed` / `bare_staffed`) — see "THE CREW BAR" below. Mounted under the crew number of every staffed Work-tab row and under the crew number of the compose sheets |
 | `ui/hud/WorkStrip.gd` | **The work strip (#877)** — ONE control a source wears on its Work row AND on its compose sheet, built from one model (`model_from_row`) by one builder (`build`): the standing-rung mark, the ladder chip, the floor glyph, the one `⚠`, the `ⓘ`, then the crew number over a `CrewSplitMarks` bar. All-`static`. `build_chip` / `fill_layer` are shared with the rung card's stop row (`RungLadder`) |
-| `ui/hud/RungCardController.gd` | `RefCounted` owner of the ONE rung-card popup (#877): the plant / animal destination track, the ring card and the deposit track, opened from a row's strip or a sheet's strip alike, plus the crop step, the stop row, the declarations and the working put-down. It emits `improvement_requested`, `crop_chosen`, `extend_pen_requested`, `unqueue_requested` and `working_abandon_requested`; `BandPanelController` relays them. Hud holds it as `_rungcard` |
+| `ui/hud/RungCardController.gd` | `RefCounted` owner of the ONE rung-card popup (#877): the plant / animal destination track, the ring card and the deposit track, opened from a row's strip or a sheet's strip alike, plus the crop step, the stop row, the declarations and the working put-down. It emits `improvement_requested`, `crop_chosen`, `extend_pen_requested`, and `unqueue_requested`; `BandPanelController` relays them. Hud holds it as `_rungcard` |
 | `ui/hud/LeaderPortrait.gd` | The leader block's 48px portrait square on the Band tab (#859): draws `res://assets/portraits/leader_placeholder.png` when that file exists (the seam for real art), else a faction-coloured head-and-shoulders silhouette; `empty` dims it, `council` adds the group badge. See "THE BAND TAB SHOWS WHO LEADS THE BAND" |
 | `ui/hud/RungLinkIcon.gd` | A pooling link's rung as a glyph (path dotted, trail dashed, dirt road solid pigment, paved road double; open ground a faint dot) |
 | `ui/hud/hud_trade_vocab.gd` | `HudTradeVocab` — the crossing codes (direction / link / cause), the tab's thresholds, words and sizes |
@@ -8167,10 +8167,10 @@ through the same producer from an empty assignment, with a crew of zero.
 | head (mark, name, rung) | the row, and the sheet's title |
 | `Jump to source` | `Show on map`, at the left of the worked source's action row |
 | `Unassign` | `Stop working here` on the sheet |
-| a working's `Stop holding this working` | `Stop working here` on the deposit sheet (`stop_labor` drops the holding); the deposit ladder card keeps its own put-down row |
+| a working's `Stop holding this working` | `Stop working here` on the deposit sheet (`stop_labor` drops the holding); no put-down row remains anywhere on the client |
 | Priority, Max, floor presets, Kit | the sheet's own segments, steppers and kit row |
 | the take-kit picker and its shortfall | the sheet's Kit row and its `N of M available` line |
-| notes, arrivals ticks, the site's bill, a foreign build | `DrawerComposeController._mount_row_details` under the strip: `note` / `muted_note` (inked by severity), the `ArrivalStrip`, `HudWorkVocab.upkeep_bill_text` and the `foreign_build` line |
+| notes, arrivals ticks, the site's bill, a foreign build | `DrawerComposeController._mount_row_details` under the strip: `note` / `muted_note` (inked by severity), the `ArrivalStrip` and the `foreign_build` line (the site's tending line is the crew bar's and `⚠`'s hover) |
 
 **The worked-source action row is `Show on map` · `Done` · `Stop working here`.** `Done` closes the
 sheet and is kept because every edit on a worked sheet is live.

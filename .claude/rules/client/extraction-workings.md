@@ -23,11 +23,12 @@ does with them. Read the sim one first — most of the traps here are its traps,
 > sheet's **pointer line** and offer line (`_build_deposit_offer_line`) and the sheet's crew-split
 > sentence. The ladder slot on the row and on the sheet is the strip's chip; both open the deposit track
 > through `RungCardController.open_deposit_track`. The track's declarations
-> (`_emit_deposit_declaration`) and the put-down (`emit_working_abandon`, `_build_working_abandon_row`)
-> live on `RungCardController` too, and `BandPanelController` relays its signals. **The deposit sheet's
-> action row is `Show on map` · `Done` · `Stop working here`**: `stop_labor` drops a working's holding
-> through the same `drop_holding_and_cancel_ring` the put-down uses, so the sheet carries no
-> `Stop holding this working`. That verb's one remaining emitter is the deposit ladder card's bottom row.
+> (`_emit_deposit_declaration`) live on `RungCardController`, and `BandPanelController` relays its
+> signals. **The deposit sheet's action row is `Show on map` · `Done` · `Stop working here`**, and the
+> deposit ladder card has no put-down row: `stop_labor` drops a working's holding through the same
+> `drop_holding_and_cancel_ring` the retired `Stop holding this working` used, so the client sends no
+> `abandon_working` at all (the server verb, its parser and `command_guard`'s drive of
+> `Main.format_abandon_working` remain as grammar).
 > Where the sections below name the retired controls they describe the design the strip replaced; the
 > `(tile, material)` pairing rules they state still hold at every emitter.
 
@@ -1258,65 +1259,14 @@ the row and its build-queue entry — through the same `drop_holding_and_cancel_
 Routing a working's press onto the wider signal would put a road's blast radius behind a working's
 label.
 
-## PUTTING A WORKING DOWN — TWO EMITTERS, ONE RELAY, ONE BUILDER (issue #650)
+## PUTTING A WORKING DOWN — `Stop working here` (`stop_labor`)
 
-⛔ **AND `assign_labor … extract … 0` IS NOT AN UNDO.** `systems::labor`'s
-`source_has_a_meter_at_risk` makes a working raised above its free floor a HOLDING, so a crew of zero
-is *"stop cutting"* and never *"this band has nothing here"*: the row survives, the bill survives, and
-`extraction_keeping_claims` reads the ROW. Measured sim-side: an unstaffed built working does revert
-on its own — a quarry prunes itself at **t103**, a coppice at **t202** — which is a hundred turns of a
-bill nobody could stop. **And the bill is SHARED, which is the decisive fact.** Under the default
-`UpkeepFundMode::Spread` the abandoned working takes its proportional cut of the band's one
-`quarrywork` pool: one keeper holds one felling working at 60.0 for ever alone, and slides to **49.96
-in forty turns** the moment a walked-away sibling sits beside it. **A working you walked away from
-degrades a working you did not.** That measurement is the copy's argument and the control's reason.
-
-The verb has **two surfaces, the road's pair one branch over**:
-
-| surface | control | where |
-|---|---|---|
-| (retired with the inspector) | `Stop working here` on the deposit sheet sends `stop_labor`, which drops the same holding | `BandPanelController._build_working_inspector` |
-| the deposit LADDER card | `Stop holding this working`, the BOTTOM row under the rungs | `BandPanelController._build_working_abandon_row` |
-
-⛔ **BOTH EMIT `working_abandon_requested` THROUGH ONE `_emit_working_abandon`, AND THAT IS roads.md's
-STATED RULE.** *"Two emitters converging on one relay is what stops the verb's grammar drifting."*
-Here they converge one layer earlier still — both controls live on the same controller — so the chain
-is one function, one signal, one `HudLayer` relay and one `Main.format_abandon_working`.
-
-⛔ **THE MATERIAL RIDES THE EMISSION STRUCTURALLY.** `_emit_working_abandon` reads the pair off the
-`deposits` ROW it was handed (`tile_of` / `material_of`) and returns on `MATERIAL_NONE` beside its
-return on a negative tile — `_emit_deposit_declaration`'s discipline, for its exact reason. One hex
-holds two workings, so a press that lost the material would not merely under-specify the order: it
-would put down the OTHER working, and the resulting line parses perfectly.
-
-### ⛔ NEITHER CONTROL IS GATED, BECAUSE MEMBERSHIP IS THE GATE
-
-The road ladder's abandon row is *"offered ONLY where the keeper is in the player's roster"*. A working
-publishes no keeper — it is held by whichever band has an `extract` row on the pair — so the same
-condition is stated by the surface rather than tested on it: the roster lists exactly the workings
-this band holds, and the ladder card is opened from one of its rows. Every control this verb has is
-therefore already standing on a holding the acting band can drop.
-
-### ⛔ THERE IS NO SECOND WARN LINE, AND THAT IS A DECISION
-
-The road's `✕` carried one (`ROAD_LADDER_ABANDON_ALSO`, retired) while its bare-tile `abandon` took a
-forage assignment down with the road; it sends the `road <x> <y>` form now, which does not. `abandon_working` names the `(tile, material)` pair: it touches neither the other working on the
-same hex, nor any forage row, nor the road. **The blast radius is exactly what the label says**, so a
-second line would be warning about a reach the verb does not have.
-
-**What the hover says instead is what a player cannot see coming**, in two lines composed once by
-`HudDepositVocab.working_abandon_tooltip`:
-
-- `WORKING_ABANDON_DROPS_FORMAT` — what it destroys, **the banked work included**. The sim drops the
-  holding and its queue entry and leaves the METER to rot, so nothing is demolished and nothing is
-  refunded either; a hover saying only *"drops this band's hold"* would read as reversible, which it
-  stops being the moment work is banked.
-- `WORKING_ABANDON_WHY_FORMAT` — why a player would want it, which is the shared bill above.
-
-⛔ **AND THE ROSTER GETS THE CARD'S WHOLE HOVER, VERBATIM.** That is how the *"must not be quieter"*
-rule is kept here: one composer, both controls, asserted by EQUALITY rather than by containment. The
-card additionally states the WHY as a visible `RungLadder.build_aside`, a card having the room a
-roster row does not.
+A working raised above its free floor is a HOLDING, so `assign_labor … extract … 0` is not an undo: the
+row, the bill and the meter's slow rot survive a crew of zero. What ends it is `stop_labor`, which the
+deposit sheet's `Stop working here` sends and which drops the row and its build-queue entry through
+`drop_holding_and_cancel_ring`. The client carries no `abandon_working` emitter, no
+`working_abandon_requested` signal and no `WORKING_ABANDON_*` vocabulary; `Main.format_abandon_working`
+stays only because `command_guard` drives the server's grammar through it.
 
 ## THE CREWLESS READOUT — a crew of zero is not an absence of news
 
@@ -1495,7 +1445,7 @@ renews, so it is offered the dial, and it stands on a rung that strands 85% of t
 | `workings_forestry_sheet` | `Assign foresters ▸` — the eyebrow naming the BRANCH's crew, the crew row naming it again, **the floor presets AND the chart, because the ground grows back**, the pointer line naming the next rung and linking the Work tab, NO deal row (the stand-in curve names no next rung), the sheet's own overdraw note, the SHARED harvest verdict, and the commit verb `Cut`. It also asserts the arm that verdict REPLACED still composes — `deposit_verdict` on a curveless working — which no frame can show beside it |
 | `workings_extraction_sheet` | `Assign diggers ▸` on the rock beside it — the OTHER branch's noun, **neither preset nor chart nor crew pill**, the verdict the finite ladder turns on (*Gathering reaches 330 of 2200. A quarry would reach 1870.*), the runway aside at this rate, the IDLE seam's own sentence beside it (never `Runs out in 0 turns`), and `Dig`. **It is the NEGATIVE that makes the forestry sheet's dial mean something**: same chapter, same hex, one fork |
 | `workings_floor_strip` / `_peak` / `_learn` | the dial at each of the three intent presets on ONE stand — the preset lit, the chart drawn, the take in the working's own MATERIAL at every position, the `now → after` arrow agreeing with the sheet's own verdict (both gated on the same walk), and the teaching line at the shared `learn_multiplier` for that floor. **The stand is a nearly-full one on purpose**: the chapter's working fixture sits BELOW the top preset's floor, so on it the third frame would be empty for a reason that has nothing to do with the dial |
-| `workings_floor_held` | a wood standing EXACTLY at its floor — the shared *At the floor and holding it*, the take collapsing to what the stand puts back, and NO arrow, the two readings being one number. The crew is read BACK off the sheet, since a reopened sheet seeds from the band's own row |
+| `workings_floor_held` | a wood standing EXACTLY at its floor — NO verdict row (the source holding at its floor states nothing there), the take collapsing to what the stand puts back, and NO arrow, the two readings being one number. The crew is read BACK off the sheet, since a reopened sheet seeds from the band's own row |
 | `workings_floor_stripped` | the dial DRAGGED to the bottom, live (`committed = false`) — the chart the pointer holds still alive, the readings refilled in place, the `⚠ overdraws the seam` mark and the strip consequence in the working's own noun |
 | `workings_fresh_runway` | **a crew committed this turn on a seam that has cut nothing** — the FORECAST runway (`reachable ÷ the seeded rate`) where the sheet used to read *Nobody is cutting it*, the same seam with no crew still reading it, and the renewing verdict quoting the SEEDED take rather than a zero. Three states, three readings, one frame plus two producer claims |
 | `workings_unopened` | **the state a player meets first** — both branches' free floors on one hex, untouched: the full seam as ONE figure under the floor's own name, no hazard word of either kind, and the IDLE quarry still reading `not being worked`, which is the pair `is_unopened` exists to keep apart |
@@ -1619,8 +1569,7 @@ quieter"* rule made falsifiable, and the card closing on the press is asserted b
 **Frames:** `band_panel_workings_roster` (the head with its stepper and its `⚠` over three rows, each
 wearing its `⌃` and its `✕`, under a four-card pools block), `band_panel_workings_track` (the ladder
 open over it), `band_panel_workings_walked_away` (the crewless row reading `Felling · no crew · ⚠
-going back`), `band_panel_workings_put_down` (the ladder card with `Stop holding this working` and its
-aside beneath the rungs), `band_panel_workings_roster_unseen` (case 2 — the head still drawn, the
+going back`), `band_panel_workings_roster_unseen` (case 2 — the head still drawn, the
 muted line in place of the rows) and `band_panel_workings_craft_gated` (the CRAFT gate's own board —
 three rows still drawn, asserted on which of them carry the track mark, behind a precondition that the
 roster did not simply lose a row).
