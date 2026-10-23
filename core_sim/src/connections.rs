@@ -56,13 +56,17 @@ use std::collections::{BTreeMap, BTreeSet};
 use bevy::prelude::*;
 
 use crate::{
-    belief::BeliefRegistry,
+    belief::{credit_ritual_lesson, BeliefRegistry},
     belief_config::BeliefConfigHandle,
     components::{BandId, BandName, PopulationCohort, ResidentBand, Tile},
     connections_config::{ConnectionsConfig, ConnectionsConfigHandle},
+    intensification::LadderConfigHandle,
     metrics::SimulationMetrics,
     orders::FactionId,
-    resources::{CommandEventEntry, CommandEventKind, CommandEventLog, SimulationTick},
+    resources::{
+        CommandEventEntry, CommandEventKind, CommandEventLog, DiscoveryProgressLedger,
+        SimulationTick,
+    },
     scalar::Scalar,
     systems::band_label,
 };
@@ -497,6 +501,8 @@ pub fn advance_connections(
     mut belief: ResMut<BeliefRegistry>,
     mut gatherings: ResMut<GatheringLedger>,
     mut event_log: ResMut<CommandEventLog>,
+    ladder: Res<LadderConfigHandle>,
+    mut discovery: ResMut<DiscoveryProgressLedger>,
 ) {
     let cfg = config.get();
     let turn = tick.0;
@@ -526,6 +532,7 @@ pub fn advance_connections(
 
     if !meetings.is_empty() {
         let belief_cfg = belief_config.get();
+        let ladder = ladder.get();
         let attendee = |band: BandId| -> Option<Attendee> {
             residents
                 .iter()
@@ -556,6 +563,12 @@ pub fn advance_connections(
                 continue;
             };
             belief.credit_gathering(place.position, &belief_cfg);
+            // **A gathering teaches ritual to the people of EACH band in the pair** - and a pair of
+            // one people pays it once, not twice (`belief::credit_ritual_lesson`).
+            credit_ritual_lesson(&ladder.knowledge, low.faction, &mut discovery);
+            if high.faction != low.faction {
+                credit_ritual_lesson(&ladder.knowledge, high.faction, &mut discovery);
+            }
             for (own, other) in [(&low, &high), (&high, &low)] {
                 // One line per people: a pair of one people is told once, from its lower band.
                 if own.faction == other.faction && own.band != low.band {

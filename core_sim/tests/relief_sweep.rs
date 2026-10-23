@@ -449,6 +449,7 @@ fn sowable_and_deltas(world: &World) -> (usize, usize, usize) {
                     .is_site(UVec2::new(x, y)),
                 fresh,
                 core_sim::NO_DEPOSIT_FLOOR,
+                core_sim::NO_BELIEF,
                 &|_| false,
             )
             .is_none()

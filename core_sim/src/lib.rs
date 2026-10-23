@@ -139,7 +139,10 @@ pub use band_names::{
     load_band_names_from_env, BandNameCatalog, BandNameCatalogHandle, BandNameCatalogMetadata,
     BandNamesError, BAND_NAME_SALT, BUILTIN_BAND_NAMES,
 };
-pub use belief::{BeliefRegistry, NO_BELIEF};
+pub use belief::{
+    advance_improvement_belief, credit_ritual_lesson, BeliefRegistry, NO_BELIEF,
+    RITUAL_DISCOVERY_ID, RITUAL_KNOWLEDGE,
+};
 pub use belief_config::{
     load_belief_config_from_env, BeliefConfig, BeliefConfigHandle, BeliefConfigMetadata,
     BUILTIN_BELIEF_CONFIG,
@@ -926,6 +929,14 @@ pub fn build_headless_app() -> App {
     {
         panic!("keeping preservation does not reconcile with the intensification ladder: {err}");
     }
+    // **Every improvement that adds belief names a tile rung the ladder defines** (#692) - the belief
+    // config's cross-config half, run where the ladder and the belief config are both in scope.
+    if let Err(err) = belief_handle
+        .get()
+        .validate_improvement_belief(&ladder_for_reconcile)
+    {
+        panic!("belief config does not reconcile with the intensification ladder: {err}");
+    }
     let demographics_handle =
         demographics_config::DemographicsConfigHandle::new(demographics_config);
     let (supply_network_config, supply_network_metadata) =
@@ -1376,6 +1387,12 @@ pub fn build_headless_app() -> App {
                 // the tile kind's pass rather than racing it for the write.
                 band_improvement::advance_band_improvements
                     .after(tile_improvement::advance_tile_improvements),
+                // **A HELD MONUMENT ADDS BELIEF** (#692) - the third source on the belief seam,
+                // credited right after the tile improvements have settled the turn (decay included)
+                // so a rung that just slipped back to its root pays nothing.
+                belief::advance_improvement_belief
+                    .after(tile_improvement::advance_tile_improvements)
+                    .after(band_improvement::advance_band_improvements),
             )
                 .in_set(TurnStage::Logistics)
                 .run_if(capability_enabled(
