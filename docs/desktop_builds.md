@@ -123,14 +123,14 @@ the zip name.
 
 ### Export templates
 
-Install the templates matching the editor (`4.7.stable`) via the editor
+Install the templates matching the editor (`4.7.2.stable`) via the editor
 (**Editor ▸ Manage Export Templates**), or by hand:
 
 ```bash
-TPL="$HOME/Library/Application Support/Godot/export_templates/4.7.stable"
+TPL="$HOME/Library/Application Support/Godot/export_templates/4.7.2.stable"
 mkdir -p "$TPL"
-# From Godot_v4.7-stable_export_templates.tpz — Windows and/or macOS entries:
-unzip -o -j Godot_v4.7-stable_export_templates.tpz \
+# From Godot_v4.7.2-stable_export_templates.tpz — Windows and/or macOS entries:
+unzip -o -j Godot_v4.7.2-stable_export_templates.tpz \
   'templates/windows_release_x86_64.exe' 'templates/windows_debug_x86_64.exe' \
   'templates/windows_release_x86_64_console.exe' 'templates/windows_debug_x86_64_console.exe' \
   'templates/macos.zip' 'templates/version.txt' -d "$TPL"
