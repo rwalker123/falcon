@@ -1,11 +1,15 @@
-//! **A tribe forms when linked bands share a gathering place** (`docs/plan_labor_at_scale.md` ->
-//! "Leaders: four levels of orders", level 2). Rationale: `.claude/rules/core_sim/leadership.md`.
+//! **A tribe is earned.** Every pair of bands that are *local* to one another (one people, one
+//! supply network that is not 0, one belief-anchor tile) gets a **closeness score** each turn: the
+//! weighted sum of six inputs in `[0, 1]` ([`CloseInputs`], [`closeness`]) -- shared origin,
+//! culture likeness, the connection tie, a shared history built by being local and faded by being
+//! apart, belief on the shared urn, and acting as a tribe. A pair is *close* at
+//! `leadership_config.json -> tribe_score_threshold`. A tribe-candidate is a connected component
+//! of close pairs within one (people, network, anchor) set, of [`MIN_TRIBE_BANDS`] or more bands,
+//! at least one of which has a chief of its own.
 //!
-//! Each turn [`advance_tribes`] groups the resident bands by `(people, supply network, belief
-//! anchor tile)` -- bands that pool with one another AND remember the same place -- and every
-//! group of [`MIN_TRIBE_BANDS`] or more is a tribe. The [`TribeRegistry`] keeps a tribe's identity
-//! across turns (see [`resolve_matches`]), gives a new tribe its [`TribeLeader`] and name once, and
-//! tells the player when a tribe forms, gains or loses a band, or dissolves.
+//! The [`TribeRegistry`] keeps a tribe's identity across turns (see [`resolve_matches`]), promotes
+//! the largest chiefed member's own [`BandLeader`] to the tribe's leader, and tells the player when
+//! a tribe forms, gains or loses a band, or dissolves.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -13,45 +17,45 @@ use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use crate::{
+    belief::BeliefRegistry,
     components::{BandId, BandName, PopulationCohort, ResidentBand},
-    culture::{CultureManager, CultureOwner, CultureTraitAxis},
-    leader_names::LeaderNameCatalogHandle,
+    connections::ConnectionLedger,
+    culture::{max_axis_gap, CultureLayer, CultureManager, CultureOwner, CULTURE_TRAIT_SPAN},
+    leadership::{BandLeader, BandLeadership, LeaderKind},
+    leadership_config::{LeadershipConfig, LeadershipConfigHandle},
     orders::FactionId,
-    resources::{
-        CommandEventEntry, CommandEventKind, CommandEventLog, SimulationConfig, SimulationTick,
-    },
+    resources::{CommandEventEntry, CommandEventKind, CommandEventLog, SimulationTick},
     supply::SupplyNetworkMembership,
     systems::band_label,
+    wellbeing_config::WellbeingConfigHandle,
 };
 
 /// How many bands make "several": the definition of a tribe, not a tuning lever.
 pub const MIN_TRIBE_BANDS: usize = 2;
 
-/// The axis value below which a tribe's leader is a paramount chief -- the same cut
-/// `LeaderKind::for_axis_value` makes for a band (negative = hierarchical).
-const PARAMOUNT_BELOW_AXIS_VALUE: f32 = 0.0;
+/// The full width of a culture trait axis (`-span..=span`): the denominator that turns the one
+/// culture-distance metric ([`max_axis_gap`]) into a likeness in `[0, 1]`.
+const CULTURE_AXIS_RANGE: f32 = 2.0 * CULTURE_TRAIT_SPAN;
 
 /// A tribe's durable identity. Allocated from [`TribeRegistry`]; never reused.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct TribeId(pub u64);
 
-/// What kind of leadership a tribe formed under.
+/// What kind of leadership a tribe follows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TribeLeaderKind {
-    /// One person the bands follow. Where the largest band's culture leans hierarchical.
+    /// A member band's chief, promoted.
     ParamountChief,
-    /// The bands' chiefs sit together, with one named speaker. Where it leans egalitarian.
+    /// A member band's elders' council, promoted; its speaker is the named person.
     CouncilOfChiefs,
 }
 
 impl TribeLeaderKind {
-    /// The kind a tribe whose largest band reads `axis_value` on `HierarchicalEgalitarian` forms
-    /// under; zero goes to the council, as for a band.
-    pub fn for_axis_value(axis_value: f32) -> Self {
-        if axis_value < PARAMOUNT_BELOW_AXIS_VALUE {
-            TribeLeaderKind::ParamountChief
-        } else {
-            TribeLeaderKind::CouncilOfChiefs
+    /// The tribe-level kind a member band's own leader kind is promoted to.
+    pub fn promoted_from(kind: LeaderKind) -> Self {
+        match kind {
+            LeaderKind::Chief => TribeLeaderKind::ParamountChief,
+            LeaderKind::ElderCouncil => TribeLeaderKind::CouncilOfChiefs,
         }
     }
 
@@ -64,12 +68,27 @@ impl TribeLeaderKind {
     }
 }
 
-/// The person a tribe follows (a council's speaker, for a council). Fixed at formation.
+/// The person a tribe follows: a member band's own leader, promoted. Re-promoted from another
+/// member if `band` leaves the tribe.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TribeLeader {
     pub name: String,
     pub kind: TribeLeaderKind,
+    /// The turn this person became the tribe's leader.
     pub since_turn: u64,
+    /// The member band whose leader this is.
+    pub band: BandId,
+}
+
+impl TribeLeader {
+    fn promote(from: BandId, leader: &BandLeader, turn: u64) -> Self {
+        Self {
+            name: leader.name.clone(),
+            kind: TribeLeaderKind::promoted_from(leader.kind),
+            since_turn: turn,
+            band: from,
+        }
+    }
 }
 
 /// One tribe.
@@ -84,11 +103,26 @@ pub struct Tribe {
     pub since_turn: u64,
 }
 
-/// **Every tribe, and how many each people has formed.** Checkpoint state: identity and the leader
-/// persist across turns and nothing rebuilds them.
-#[derive(Resource, Default, Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// An unordered pair of bands, lower id first: the key a shared history is kept under.
+pub type BandPair = (BandId, BandId);
+
+fn band_pair(a: BandId, b: BandId) -> BandPair {
+    if a <= b {
+        (a, b)
+    } else {
+        (b, a)
+    }
+}
+
+/// **Every tribe, every pair's shared history, and how many tribes each people has formed.**
+/// Checkpoint state: identity, the leader and the histories persist across turns and nothing
+/// rebuilds them. Keyed by [`BandId`], never `Entity`.
+#[derive(Resource, Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TribeRegistry {
     tribes: BTreeMap<TribeId, Tribe>,
+    /// Each pair's shared history in `(0, 1]`: built while the pair is local, faded while it is
+    /// not, never reset. A pair absent has none.
+    history: BTreeMap<BandPair, f64>,
     next_id: u64,
     /// Cumulative formations per people, the total the Telling diffs into
     /// `tribes.formed_this_turn`.
@@ -117,6 +151,11 @@ impl TribeRegistry {
         self.tribes.values().find(|t| t.members.contains(&band))
     }
 
+    /// The shared history of a pair of bands (`0.0` with none).
+    pub fn shared_history(&self, a: BandId, b: BandId) -> f64 {
+        self.history.get(&band_pair(a, b)).copied().unwrap_or(0.0)
+    }
+
     /// Every tribe `faction` has formed, cumulative.
     pub fn formed_by(&self, faction: FactionId) -> u64 {
         self.formed.get(&faction).copied().unwrap_or(0)
@@ -129,8 +168,7 @@ impl TribeRegistry {
     }
 }
 
-/// One candidate group this turn: the bands of one people that pool with each other and remember
-/// one place.
+/// One set of bands of one people: a local bucket or a tribe candidate.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BandGroup {
     pub faction: FactionId,
@@ -182,9 +220,9 @@ pub fn resolve_matches(
         .collect()
 }
 
-/// Group `(band, people, network, anchor)` rows into candidate tribes: same people, same network,
-/// same anchor, at least [`MIN_TRIBE_BANDS`] bands. Network 0 and a missing anchor are skipped.
-pub fn group_bands(
+/// The sets of bands that are local to one another: same people, same network (not 0), same
+/// belief-anchor tile. Only sets of [`MIN_TRIBE_BANDS`] or more are returned.
+pub fn local_buckets(
     rows: impl IntoIterator<Item = (BandId, FactionId, u32, Option<UVec2>)>,
 ) -> Vec<BandGroup> {
     let mut keyed: BTreeMap<(FactionId, u32, (u32, u32)), BTreeSet<BandId>> = BTreeMap::new();
@@ -205,10 +243,121 @@ pub fn group_bands(
         .collect()
 }
 
+/// Every unordered pair inside the buckets: the pairs that are local this turn.
+fn local_pairs(buckets: &[BandGroup]) -> BTreeSet<BandPair> {
+    let mut pairs = BTreeSet::new();
+    for bucket in buckets {
+        let members: Vec<BandId> = bucket.members.iter().copied().collect();
+        for (i, a) in members.iter().enumerate() {
+            for b in &members[i + 1..] {
+                pairs.insert((*a, *b));
+            }
+        }
+    }
+    pairs
+}
+
+/// **This turn's tribe candidates**: within each bucket, the connected components of the close
+/// pairs that hold [`MIN_TRIBE_BANDS`] or more bands, at least one of them chiefed.
+pub fn close_groups(
+    buckets: &[BandGroup],
+    close: impl Fn(BandId, BandId) -> bool,
+    chiefed: impl Fn(BandId) -> bool,
+) -> Vec<BandGroup> {
+    let mut groups = Vec::new();
+    for bucket in buckets {
+        let mut unvisited: BTreeSet<BandId> = bucket.members.clone();
+        while let Some(&start) = unvisited.iter().next() {
+            let mut component = BTreeSet::from([start]);
+            let mut frontier = vec![start];
+            unvisited.remove(&start);
+            while let Some(band) = frontier.pop() {
+                let linked: Vec<BandId> = unvisited
+                    .iter()
+                    .copied()
+                    .filter(|other| close(band, *other))
+                    .collect();
+                for other in linked {
+                    unvisited.remove(&other);
+                    component.insert(other);
+                    frontier.push(other);
+                }
+            }
+            if component.len() >= MIN_TRIBE_BANDS && component.iter().any(|b| chiefed(*b)) {
+                groups.push(BandGroup {
+                    faction: bucket.faction,
+                    members: component,
+                });
+            }
+        }
+    }
+    groups
+}
+
+/// How alike two cultures are, in `[0, 1]` (1 identical, 0 opposite): one minus the one
+/// culture-distance metric ([`max_axis_gap`], the largest per-axis gap) over the full axis range.
+pub fn likeness(a: &CultureLayer, b: &CultureLayer) -> f64 {
+    let gap = max_axis_gap(a.traits.values(), b.traits.values()).to_f32();
+    f64::from((1.0 - gap / CULTURE_AXIS_RANGE).clamp(0.0, 1.0))
+}
+
+/// The six inputs to a pair's closeness score, each in `[0, 1]`.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct CloseInputs {
+    /// 1 when the two bands' founding lines share an origin band, else 0.
+    pub origin: f64,
+    /// How alike their own culture layers are ([`likeness`]); 0 when either has no layer.
+    pub likeness: f64,
+    /// The stronger direction of the connection tie between them (`FULL_TIE` = 1).
+    pub tie: f64,
+    /// Their shared history ([`TribeRegistry::shared_history`]).
+    pub history: f64,
+    /// The anchor weight of the belief standing on their shared urn; 0 when not local.
+    pub belief: f64,
+    /// [`acting_as_a_tribe`].
+    pub acting: f64,
+}
+
+/// **A pair's closeness score**: the weighted sum of its inputs. The one pure place the weights are
+/// applied, so the opening numbers can be pinned without a world.
+pub fn closeness(config: &LeadershipConfig, inputs: &CloseInputs) -> f64 {
+    config.tribe_weight_origin * inputs.origin
+        + config.tribe_weight_likeness * inputs.likeness
+        + config.tribe_weight_tie * inputs.tie
+        + config.tribe_weight_history * inputs.history
+        + config.tribe_weight_belief * inputs.belief
+        + config.tribe_weight_acting * inputs.acting
+}
+
+/// The reading of "acting as a tribe" a pair earns from doing things together as one tribe, in
+/// `[0, 1]`. It applies only to a pair already in the same tribe (`same_tribe`); a pair outside one
+/// reads 0. Nothing feeds it yet: the tribe-level orders (#862, #864) and works the tribe shares
+/// are what will, and each adds its measure here.
+pub fn acting_as_a_tribe(same_tribe: bool) -> f64 {
+    if !same_tribe {
+        return NOT_ACTING;
+    }
+    NOT_ACTING
+}
+
+/// The reading while no tribe-level act exists to measure.
+const NOT_ACTING: f64 = 0.0;
+
+/// Whether two bands' founding lines share an origin band: both descend from one starting band.
+fn shares_origin(a: &BTreeSet<u64>, b: &BTreeSet<u64>) -> bool {
+    a.intersection(b).next().is_some()
+}
+
 /// What the system reads of one resident band.
 struct BandFacts {
     size: u32,
     name: String,
+    /// The band's belief anchor tile.
+    anchor: Option<UVec2>,
+    /// The origin bands of the band's founding lines.
+    origins: BTreeSet<u64>,
+    /// The band's own leader, if it has accepted one.
+    leader: Option<BandLeader>,
 }
 
 /// The largest of `bands` (most people; ties to the lowest id) among those still resident.
@@ -221,6 +370,21 @@ fn largest_band<'a>(
         .filter_map(|band| facts.get(band).map(|f| (f.size, *band)))
         .min_by_key(|(size, band)| (std::cmp::Reverse(*size), *band))
         .map(|(_, band)| band)
+}
+
+/// The largest chiefed band among `bands` (most people; ties to the lowest id), with its leader.
+fn largest_chiefed<'a>(
+    bands: impl IntoIterator<Item = &'a BandId>,
+    facts: &'a BTreeMap<BandId, BandFacts>,
+) -> Option<(BandId, &'a BandLeader)> {
+    bands
+        .into_iter()
+        .filter_map(|band| {
+            let f = facts.get(band)?;
+            Some((f.size, *band, f.leader.as_ref()?))
+        })
+        .min_by_key(|(size, band, _)| (std::cmp::Reverse(*size), *band))
+        .map(|(_, band, leader)| (band, leader))
 }
 
 /// The feed line for a tribe's formation, naming its leader the way a band leader's line does.
@@ -250,25 +414,55 @@ fn tribe_entry(
     CommandEventEntry::new(tick, kind, tribe.faction, label, Some(detail)).with_band(band)
 }
 
-/// **Keep the tribes: match, form, change membership, dissolve.** Runs each turn after the
-/// belief anchors and the supply networks of the turn are settled and after `advance_leadership`.
-/// Bands are visited in id order and tribes in id order, so identity and the feed are
+/// The anchor weight of the belief standing on a bucket's shared urn: the weight belief already
+/// uses (`CultureConfig::anchor_weight`), read at the anchor the bucket's bands share.
+fn bucket_anchor_weight(
+    bucket: &BandGroup,
+    belief: &BeliefRegistry,
+    wellbeing: &crate::wellbeing_config::WellbeingConfig,
+    facts: &BTreeMap<BandId, BandFacts>,
+) -> f64 {
+    let anchor = bucket
+        .members
+        .iter()
+        .find_map(|member| facts.get(member).and_then(|f| f.anchor));
+    anchor.map_or(0.0, |anchor| {
+        f64::from(wellbeing.culture.anchor_weight(belief.get(anchor)))
+    })
+}
+
+/// What the tribe system reads of each resident band: entity, id, people, name and leadership.
+type TribeBandParts = (
+    Entity,
+    &'static BandId,
+    &'static PopulationCohort,
+    Option<&'static BandName>,
+    Option<&'static BandLeadership>,
+);
+
+/// **Score the pairs, then keep the tribes: match, form, change membership, dissolve.** Runs at the
+/// end of the Population stage, after the belief anchors, the supply networks and the leaders of
+/// the turn are settled. Bands and tribes are visited in id order, so identity and the feed are
 /// deterministic.
 #[allow(clippy::too_many_arguments)] // Bevy system parameters require explicit resource access
 pub fn advance_tribes(
     tick: Res<SimulationTick>,
-    sim_config: Res<SimulationConfig>,
-    names: Res<LeaderNameCatalogHandle>,
+    config: Res<LeadershipConfigHandle>,
     culture: Res<CultureManager>,
+    ledger: Res<ConnectionLedger>,
+    belief: Res<BeliefRegistry>,
+    wellbeing: Res<WellbeingConfigHandle>,
     supply: Res<SupplyNetworkMembership>,
     mut registry: ResMut<TribeRegistry>,
     mut event_log: ResMut<CommandEventLog>,
-    bands: Query<(Entity, &BandId, &PopulationCohort, Option<&BandName>), With<ResidentBand>>,
+    bands: Query<TribeBandParts, With<ResidentBand>>,
 ) {
     let turn = tick.0;
+    let config = config.get();
+    let wellbeing = wellbeing.get();
     let mut facts: BTreeMap<BandId, BandFacts> = BTreeMap::new();
     let mut rows = Vec::new();
-    for (entity, band, cohort, name) in bands.iter() {
+    for (entity, band, cohort, name, leadership) in bands.iter() {
         facts.insert(
             *band,
             BandFacts {
@@ -276,6 +470,13 @@ pub fn advance_tribes(
                 name: name
                     .map(|n| n.0.clone())
                     .unwrap_or_else(|| band_label(*band)),
+                anchor: cohort.belief_anchor,
+                origins: cohort
+                    .founding_lines
+                    .iter()
+                    .map(|line| line.origin_band)
+                    .collect(),
+                leader: leadership.and_then(|l| l.leader.clone()),
             },
         );
         rows.push((
@@ -285,11 +486,73 @@ pub fn advance_tribes(
             cohort.belief_anchor,
         ));
     }
-    let groups = group_bands(rows);
-    let matches = resolve_matches(&registry.tribes, &groups);
-    let band_name = |band: BandId| facts.get(&band).map(|f| f.name.clone());
 
-    // Existing tribes: update the matched, dissolve the rest.
+    // 1. Shared history: built a step by being local, faded a step by not; never reset. An
+    //    exhausted entry or one naming a band that is gone is pruned.
+    let buckets = local_buckets(rows);
+    let local = local_pairs(&buckets);
+    let build = 1.0 / config.tribe_history_build_turns;
+    let fade = 1.0 / config.tribe_history_fade_turns;
+    for pair in &local {
+        let entry = registry.history.entry(*pair).or_insert(0.0);
+        *entry = (*entry + build).min(1.0);
+    }
+    registry.history.retain(|pair, value| {
+        if !local.contains(pair) {
+            *value = (*value - fade).max(0.0);
+        }
+        *value > 0.0 && facts.contains_key(&pair.0) && facts.contains_key(&pair.1)
+    });
+
+    // 2. Closeness of every local pair, then the candidate groups: close components with a chief.
+    let mut close_pairs: BTreeSet<BandPair> = BTreeSet::new();
+    for bucket in &buckets {
+        let anchor_weight = bucket_anchor_weight(bucket, &belief, &wellbeing, &facts);
+        let members: Vec<BandId> = bucket.members.iter().copied().collect();
+        for (i, a) in members.iter().enumerate() {
+            for b in &members[i + 1..] {
+                let layers = (
+                    culture.band_layer_by_owner(CultureOwner::from_band(*a)),
+                    culture.band_layer_by_owner(CultureOwner::from_band(*b)),
+                );
+                let tie = ledger
+                    .edges_between(*a, *b)
+                    .iter()
+                    .flatten()
+                    .map(|connection| f64::from(connection.strength.to_f32()))
+                    .fold(0.0, f64::max);
+                let same_tribe = registry
+                    .tribe_of(*a)
+                    .is_some_and(|tribe| tribe.members.contains(b));
+                let inputs = CloseInputs {
+                    origin: f64::from(u8::from(shares_origin(
+                        &facts[a].origins,
+                        &facts[b].origins,
+                    ))),
+                    likeness: match layers {
+                        (Some(la), Some(lb)) => likeness(la, lb),
+                        _ => 0.0,
+                    },
+                    tie,
+                    history: registry.shared_history(*a, *b),
+                    belief: anchor_weight,
+                    acting: acting_as_a_tribe(same_tribe),
+                };
+                if closeness(&config, &inputs) >= config.tribe_score_threshold {
+                    close_pairs.insert((*a, *b));
+                }
+            }
+        }
+    }
+    let groups = close_groups(
+        &buckets,
+        |a, b| close_pairs.contains(&band_pair(a, b)),
+        |band| facts.get(&band).is_some_and(|f| f.leader.is_some()),
+    );
+    let matches = resolve_matches(&registry.tribes, &groups);
+    let band_exists = |band: BandId| facts.contains_key(&band);
+
+    // 3. Existing tribes: update the matched, dissolve the rest.
     let previous: Vec<TribeId> = registry.tribes.keys().copied().collect();
     for id in previous {
         let Some(&index) = matches.get(&id) else {
@@ -311,6 +574,12 @@ pub fn advance_tribes(
         let joined: Vec<BandId> = group.members.difference(&tribe.members).copied().collect();
         let left: Vec<BandId> = tribe.members.difference(&group.members).copied().collect();
         tribe.members = group.members.clone();
+        // The leader's band left: promote the largest chiefed member now standing, quietly.
+        if !tribe.members.contains(&tribe.leader.band) {
+            if let Some((band, leader)) = largest_chiefed(tribe.members.iter(), &facts) {
+                tribe.leader = TribeLeader::promote(band, leader, turn);
+            }
+        }
         let tribe = tribe.clone();
         for band in joined {
             event_log.push(tribe_entry(
@@ -324,7 +593,7 @@ pub fn advance_tribes(
         }
         for band in left {
             // A band that no longer exists did not leave; it is gone.
-            if band_name(band).is_none() {
+            if !band_exists(band) {
                 continue;
             }
             event_log.push(tribe_entry(
@@ -338,7 +607,7 @@ pub fn advance_tribes(
         }
     }
 
-    // New tribes: every group no tribe kept.
+    // 4. New tribes: every group no tribe kept.
     let claimed: BTreeSet<usize> = matches.values().copied().collect();
     for (index, group) in groups.iter().enumerate() {
         if claimed.contains(&index) {
@@ -347,29 +616,16 @@ pub fn advance_tribes(
         let Some(largest) = largest_band(group.members.iter(), &facts) else {
             continue;
         };
-        // The kind is fixed forever, so it is not read off a default: a largest band with no
-        // culture layer yet waits a turn.
-        let Some(layer) = culture.band_layer_by_owner(CultureOwner::from_band(largest)) else {
+        let Some((leader_band, leader)) = largest_chiefed(group.members.iter(), &facts) else {
             continue;
         };
-        let axis_value =
-            layer.traits.values()[CultureTraitAxis::HierarchicalEgalitarian.index()].to_f32();
         let id = registry.allocate();
-        let name = format!(
-            "{} tribe",
-            band_name(largest).unwrap_or_else(|| band_label(largest))
-        );
-        let leader = TribeLeader {
-            name: names.catalog().name_for_tribe(sim_config.map_seed, id.0),
-            kind: TribeLeaderKind::for_axis_value(axis_value),
-            since_turn: turn,
-        };
         let tribe = Tribe {
             id,
             faction: group.faction,
-            name,
+            name: format!("{} tribe", facts[&largest].name),
             members: group.members.clone(),
-            leader,
+            leader: TribeLeader::promote(leader_band, leader, turn),
             since_turn: turn,
         };
         *registry.formed.entry(group.faction).or_insert(0) += 1;
@@ -417,6 +673,7 @@ mod tests {
                     name: "Orrin".into(),
                     kind: TribeLeaderKind::CouncilOfChiefs,
                     since_turn: 1,
+                    band: band(ids[0]),
                 },
                 since_turn: 1,
             },
@@ -424,13 +681,13 @@ mod tests {
     }
 
     #[test]
-    fn the_kind_follows_the_sign_and_zero_goes_to_the_council() {
+    fn a_bands_leader_kind_is_promoted_one_to_one() {
         assert_eq!(
-            TribeLeaderKind::for_axis_value(-0.01),
+            TribeLeaderKind::promoted_from(LeaderKind::Chief),
             TribeLeaderKind::ParamountChief
         );
         assert_eq!(
-            TribeLeaderKind::for_axis_value(0.0),
+            TribeLeaderKind::promoted_from(LeaderKind::ElderCouncil),
             TribeLeaderKind::CouncilOfChiefs
         );
     }
@@ -469,16 +726,99 @@ mod tests {
     }
 
     #[test]
-    fn grouping_skips_network_zero_a_missing_anchor_and_a_lone_band() {
+    fn buckets_skip_network_zero_a_missing_anchor_and_a_lone_band() {
         let at = |x, y| Some(UVec2::new(x, y));
         let f = FactionId(0);
-        let groups = group_bands([
+        let buckets = local_buckets([
             (band(1), f, 1, at(2, 2)),
             (band(2), f, 1, at(2, 2)),
             (band(3), f, 1, at(5, 5)),
             (band(4), f, 0, at(2, 2)),
             (band(5), f, 1, None),
         ]);
-        assert_eq!(groups, vec![group(&[1, 2])]);
+        assert_eq!(buckets, vec![group(&[1, 2])]);
+    }
+
+    #[test]
+    fn candidates_are_close_components_with_a_chief_among_them() {
+        let buckets = [group(&[1, 2, 3, 4, 5])];
+        // 1-2-3 close in a chain, 4-5 close; only band 4 is chiefed.
+        let bonded = |a: BandId, b: BandId| {
+            matches!(
+                band_pair(a, b),
+                (BandId(1), BandId(2)) | (BandId(2), BandId(3)) | (BandId(4), BandId(5))
+            )
+        };
+        let chiefed = |b: BandId| b == band(4);
+        assert_eq!(
+            close_groups(&buckets, bonded, chiefed),
+            vec![group(&[4, 5])],
+            "the chiefless chain is no tribe"
+        );
+        assert_eq!(
+            close_groups(&buckets, bonded, |b| b == band(3)),
+            vec![group(&[1, 2, 3])],
+        );
+    }
+
+    /// The shipped weights, so the opening numbers are pinned as they ship.
+    fn shipped() -> LeadershipConfig {
+        LeadershipConfig::default()
+    }
+
+    fn inputs(origin: f64, likeness: f64, tie: f64, history: f64, belief: f64) -> CloseInputs {
+        CloseInputs {
+            origin,
+            likeness,
+            tie,
+            history,
+            belief,
+            acting: 0.0,
+        }
+    }
+
+    #[test]
+    fn a_fresh_split_scores_under_the_line_and_history_carries_it_over() {
+        let config = shipped();
+        // Shared origin 3 + identical culture 3 + full tie 2, no history yet.
+        assert_eq!(closeness(&config, &inputs(1.0, 1.0, 1.0, 0.0, 0.0)), 8.0);
+        // A little belief on the urn still leaves it short.
+        assert!(
+            closeness(&config, &inputs(1.0, 1.0, 1.0, 0.0, 0.5)) < config.tribe_score_threshold
+        );
+        // A fifth of the history (5 local turns) closes the gap exactly.
+        assert_eq!(closeness(&config, &inputs(1.0, 1.0, 1.0, 0.2, 0.0)), 9.0);
+    }
+
+    #[test]
+    fn likeness_and_tie_each_move_the_score_by_their_weight() {
+        let config = shipped();
+        let base = closeness(&config, &inputs(1.0, 1.0, 1.0, 0.0, 0.0));
+        assert_eq!(
+            closeness(&config, &inputs(1.0, 0.5, 1.0, 0.0, 0.0)),
+            base - 1.5
+        );
+        assert_eq!(
+            closeness(&config, &inputs(1.0, 1.0, 0.5, 0.0, 0.0)),
+            base - 1.0
+        );
+        assert_eq!(
+            closeness(&config, &inputs(0.0, 1.0, 1.0, 0.0, 0.0)),
+            base - 3.0
+        );
+        assert_eq!(closeness(&config, &inputs(1.0, 1.0, 1.0, 1.0, 1.0)), 14.0);
+    }
+
+    #[test]
+    fn acting_as_a_tribe_reads_nothing_until_something_feeds_it() {
+        assert_eq!(acting_as_a_tribe(false), 0.0);
+        assert_eq!(acting_as_a_tribe(true), 0.0);
+    }
+
+    #[test]
+    fn origins_are_shared_when_any_origin_band_is_common() {
+        let a = BTreeSet::from([1, 2]);
+        assert!(shares_origin(&a, &BTreeSet::from([2, 9])));
+        assert!(!shares_origin(&a, &BTreeSet::from([3])));
     }
 }
