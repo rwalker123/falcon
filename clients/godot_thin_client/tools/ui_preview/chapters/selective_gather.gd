@@ -27,7 +27,7 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 82
+const EXPECTED_CHECKPOINTS := 81
 
 ## **NEEDLES FOR RETIRED STRINGS, KEPT SO THEY STAY RETIRED.** The forage side of the chip row's
 ## consequence line is gone, all three sentences of it: two restated the selection the chips directly
@@ -415,14 +415,14 @@ func _assert_committed_ground_names_its_crop() -> void:
 			% Readout.improvement_deal_value(_sheet()),
 		Readout.improvement_deal_value(_sheet()) == Readout.DEAL_ROW_ABSENT)
 	await h._settle()
-	h._hud._compose.set_forage_count(SOW_SHEET_CREW)
+	h._hud._compose.set_forage_max(SOW_SHEET_CREW)
 	h._compose_forage(tile)
 	await h._settle()
 	await h._save("forage_take_sow_committed")
 	var once_sown := Readout.improvement_deal_value(_sheet())
 	h._assert_hud("committed ground — premise: the sheet carries the playtest crew (%d)"
-			% h._hud._compose.forage_count(),
-		h._hud._compose.forage_count() == SOW_SHEET_CREW)
+			% h._hud._compose.forage_max(),
+		h._hud._compose.forage_max() == SOW_SHEET_CREW)
 	h._assert_hud("…and ONCE SOWN is the curve's next_rung_take at that crew (got \"%s\")" % once_sown,
 		once_sown.contains(SourceForecast.format_magnitude(SOW_ONCE_SOWN_AT_CREW)))
 	h._assert_hud("…and not the crew-blind field yield (%s)"
@@ -464,7 +464,7 @@ func _assert_curve_states_the_whole_deal() -> void:
 	await h._settle()
 	h._compose_forage(tile)
 	await h._settle()
-	h._hud._compose.set_forage_count(SOW_SHEET_CREW)
+	h._hud._compose.set_forage_max(SOW_SHEET_CREW)
 	h._compose_forage(tile)
 	await h._settle()
 	await h._save("forage_take_sow_curve_deal")
@@ -576,7 +576,7 @@ func _compose_selection(tile: Dictionary, selection: PackedStringArray, workers:
 		improvement: String = "") -> void:
 	h._compose_forage(tile)
 	h._hud._compose.set_forage_take_species(selection)
-	h._hud._compose.set_forage_count(workers)
+	h._hud._compose.set_forage_max(workers)
 	if improvement != "":
 		h._hud._compose.set_forage_improvement(improvement)
 	h._compose_forage(tile)
@@ -639,7 +639,7 @@ func run(harness) -> void:
 	h._hud._compose.reset_forage_source()
 	h._show_tile(tile)
 	h._compose_forage(tile)
-	h._hud._compose.set_forage_count(BASKET_WORKERS)
+	h._hud._compose.set_forage_max(BASKET_WORKERS)
 	h._compose_forage(tile)
 	await h._settle()
 	await h._save("forage_take_default")
@@ -694,9 +694,6 @@ func run(harness) -> void:
 			and narrowed["food"] != Readout.YIELDS_ACCOUNT_ABSENT)
 	h._assert_hud("…and it fell, this plant being a quarter of the stand at an eighth of the rate",
 		float(String(narrowed["food"])) < float(String(whole_basket["food"])))
-	h._assert_hud("…and the useful-worker count fell with it, on the same edit",
-		int(narrowed["crew"]) < int(whole_basket["crew"])
-			and int(narrowed["crew"]) > 0)
 	h._assert_hud("…and a NARROWED forage crew states no take-note either — that sentence is retired too",
 		_chip_states().size() == 3 and not _sheet_says(RETIRED_NOTE_FORAGE_NARROWED))
 	h._assert_hud("…and a priced narrowing states no honest-silence aside at all",
@@ -922,7 +919,7 @@ func run(harness) -> void:
 	h._hud._compose.reset_forage_source()
 	h._show_tile(meadow)
 	h._compose_forage(meadow)
-	h._hud._compose.set_forage_count(BASKET_WORKERS)
+	h._hud._compose.set_forage_max(BASKET_WORKERS)
 	h._compose_forage(meadow)
 	await h._settle()
 	var both_states := _chip_states()

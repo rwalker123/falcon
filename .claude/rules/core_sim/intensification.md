@@ -2551,7 +2551,7 @@ Validation counts kinds, so any number of band branches is a JSON edit.
 improvements reads these beside them and the whole thing is one `SimState` field
 (`tile_improvements`), one coverage row and one build-scratch reset. `SAVE_FORMAT_VERSION` 48.
 
-**The crew is the keeper, and distance is always zero.** `assign_labor <faction> <band> band <branch>
+**The crew is the keeper, and distance is always zero.** The sim staffs those keepers from the band's pool under the player's Max, as it does a tile row's (`work-party.md` -> "The sim staffs every source"). `assign_labor <faction> <band> band <branch>
 <workers>` (`LaborTarget::Band { band, branch }`, role key `band`; the branch rides the command's
 `species` slot as a tile row's does; the band is the one the command is addressed to). The improvement
 stands at the camp, so the row is never a work party: `party_source_position` names no tile. The first

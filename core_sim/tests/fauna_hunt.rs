@@ -165,6 +165,8 @@ fn hunt_assignment_takes_biomass_and_yields() {
                     party: None,
                     muster_crew: 0,
                     planned_crew: 0,
+                    max_workers: Some(HUNT_WORKERS),
+                    staffing: Default::default(),
                     target: LaborTarget::Hunt {
                         fauna_id: herd_id.clone(),
                         floor: 0.0,

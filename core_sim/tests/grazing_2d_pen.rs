@@ -285,6 +285,8 @@ fn spawn_keeper(app: &mut App, herd_id: &str, tile: UVec2) -> Entity {
                     party: None,
                     muster_crew: 0,
                     planned_crew: 0,
+                    max_workers: Some(KEEPER_WORKERS),
+                    staffing: Default::default(),
                     target: LaborTarget::Hunt {
                         fauna_id: herd_id.to_string(),
                         floor: 0.5,
@@ -634,6 +636,8 @@ fn begin_extension(
                 party: None,
                 muster_crew: 0,
                 planned_crew: 0,
+                max_workers: Some(KEEPER_WORKERS),
+                staffing: Default::default(),
                 target: LaborTarget::Builders,
                 workers: KEEPER_WORKERS,
                 kit: None,

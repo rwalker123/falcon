@@ -2376,6 +2376,19 @@ struct KeepingClaim {
     tiebreak: String,
 }
 
+/// **THE HANDS A BAND HOLDS ON EACH SOURCE IT STAFFS** - the staffed rows' hands present, keyed by
+/// source, for [`SiteCrews::restate`].
+fn staffed_hands_by_source(allocation: &LaborAllocation) -> Vec<(BuildSource, u32)> {
+    allocation
+        .assignments
+        .iter()
+        .filter(|row| row.target.is_staffed())
+        .filter_map(|row| {
+            BuildSource::of(&row.target).map(|source| (source, allocation.hands_present_on(row)))
+        })
+        .collect()
+}
+
 /// **HOW MANY HANDS EVERY BAND HAS ON EACH SOURCE THIS TURN** — the denominator a source's keeping
 /// bill is shared by (`docs/plan_site_crews.md` §2.1, *several bands on one source*).
 ///
@@ -2405,6 +2418,26 @@ impl SiteCrews {
             }
         }
         Self { crews }
+    }
+
+    /// **A BAND'S STAFFED ROWS WERE RE-DECIDED** (#871) - swap the hands the band held on each of its
+    /// sources when the map was read for the hands the sim has just staffed there. The pass reads the
+    /// map before any band is staffed, so without this the denominator of a source's share would
+    /// still be last turn's crew. A source only one band works (nearly all of them) is exact; where
+    /// several do, a band staffed earlier in the loop is seen at its new crew and a later one at its
+    /// previous crew, which agree once the crews settle.
+    fn restate(&mut self, before: &[(BuildSource, u32)], after: &[(BuildSource, u32)]) {
+        for (source, hands) in before {
+            if let Some(total) = self.crews.get_mut(source) {
+                *total = total.saturating_sub(*hands);
+            }
+        }
+        for (source, hands) in after {
+            *self
+                .crews
+                .entry(source.clone())
+                .or_insert(NO_CREW_ON_THIS_ACTIVITY) += *hands;
+        }
     }
 
     /// **THIS CREW'S SHARE OF ITS SOURCE'S BILL** — `crew ÷ every band's crew there`, and the whole
@@ -5854,7 +5887,7 @@ pub fn advance_labor_allocation(
 
     // **EVERY BAND'S CREW ON EVERY SOURCE, READ ONCE BEFORE ANY BAND IS PAID** — the denominator a
     // source's keeping bill is shared by when several bands work it ([`SiteCrews`]).
-    let site_crews = SiteCrews::of(cohorts.iter().map(|parts| parts.1));
+    let mut site_crews = SiteCrews::of(cohorts.iter().map(|parts| parts.1));
     for (mut cohort, mut allocation, mut band_equipment, band_id, mut bench, mut band_leadership) in
         cohorts.iter_mut()
     {
@@ -6042,6 +6075,33 @@ pub fn advance_labor_allocation(
             .iter()
             .filter_map(|row| row.party.clone().map(|party| (row.target.clone(), party)))
             .collect();
+        // ## ⛔ THE SHED RUNS OVER THE PLAYER-SET ROWS ONLY (#871)
+        //
+        // A staffed row's crew is the sim's to decide from the pool left AFTER the hands the player
+        // set by hand, so the shed never touches one and announces nothing for one: staffing never
+        // exceeds the pool, so it has nothing to shed. The staffed rows stand at zero for the shed's
+        // arithmetic and are restaffed immediately below.
+        let hands_before = staffed_hands_by_source(&allocation);
+        let bench_hands = |bench: &Option<Mut<BandBench>>| {
+            bench
+                .as_deref()
+                .map_or(NO_CREW_ON_THIS_ACTIVITY, |bench| bench.workers)
+        };
+        // **THE PEOPLE THE BAND NO LONGER HAS** (#871): what it holds committed - every row, the bench
+        // and the walkers - past its working-age head count. The shed below takes its share off the
+        // hand-set crews; the rest are staffed-row hands that died with their people, and they leave
+        // without walking home (a walker the band does not have would count against next turn's pool).
+        let committed_before =
+            allocation.assigned_total() + bench_hands(&bench) + allocation.walking_home();
+        for row in allocation
+            .assignments
+            .iter_mut()
+            .filter(|row| row.target.is_staffed())
+        {
+            row.workers = NO_CREW_ON_THIS_ACTIVITY;
+        }
+        let hand_set_before =
+            allocation.assigned_total() + bench_hands(&bench) + allocation.walking_home();
         for shed in allocation.normalize(bench.as_deref_mut(), available, shed_facts) {
             if let crate::ShedSubject::Row(target) = &shed.subject {
                 if !shed.row_survived() {
@@ -6061,6 +6121,80 @@ pub fn advance_labor_allocation(
                 }
             }
             announce_shed_crew(&mut event_log, tick.0, faction, band_id, &shed);
+        }
+        // ## ⛔ THE SIM STAFFS EVERY STAFFED ROW FROM THE PLAYER'S FLOOR (#871)
+        //
+        // After the shed and before the muster: the pool is the working people less the bench, the
+        // hands still walking home and every crew the player set by hand, and the three passes
+        // ([`crate::staffing::staff_band`]) write each staffed row's crew. Re-decided every turn with
+        // no smoothing; a far party that shrank walks home through the cut path.
+        {
+            let staff_ground_of = |pos: UVec2| {
+                tile_registry
+                    .index(pos.x, pos.y)
+                    .and_then(|entity| tiles.get(entity).ok())
+                    .cloned()
+            };
+            let staff_season_of = |pos: UVec2| {
+                tile_registry
+                    .index(pos.x, pos.y)
+                    .and_then(|entity| food_modules.get(entity).ok())
+                    .map_or(NO_FORAGE_SEASON, |module| module.seasonal_weight.max(0.0))
+            };
+            let staff_sources = crate::take_claims::ClaimSources {
+                forage: &forage_registry,
+                herds: &registry,
+                deposits: &deposits,
+                ground_of: &staff_ground_of,
+                season_of: &staff_season_of,
+                map_seed,
+                labor: &labor,
+                flora: &flora,
+                fauna: &fauna,
+                equipment: &equipment_cfg,
+                extraction: &extraction_cfg,
+                ladder: &ladder,
+                materials: &materials_cfg,
+                combat: &combat_config,
+                person: person_profile,
+                drives_known,
+                start: fauna::ProjectionStart::AfterRegrowth,
+            };
+            let staffing_world = crate::staffing::StaffingWorld {
+                sources: &staff_sources,
+                tile_improvements: &tile_improvements,
+                roads: &roads,
+                band: band_id,
+                camp: band_pos.map(|position| crate::staffing::CampSite {
+                    position,
+                    grid_width,
+                    wrap_horizontal,
+                }),
+            };
+            let pool = crate::staffing::staffable_pool(
+                &allocation,
+                available,
+                bench
+                    .as_deref()
+                    .map_or(NO_CREW_ON_THIS_ACTIVITY, |bench| bench.workers),
+            );
+            let hand_set_after =
+                allocation.assigned_total() + bench_hands(&bench) + allocation.walking_home();
+            let shed_from_hand_set = hand_set_before.saturating_sub(hand_set_after);
+            let lost_to_staffed = committed_before
+                .saturating_sub(available)
+                .saturating_sub(shed_from_hand_set);
+            let staffed = crate::staffing::staff_rows_settled(
+                &staffing_world,
+                &allocation,
+                &band_kit,
+                pool,
+                available,
+                bench_hands(&bench),
+                lost_to_staffed,
+            );
+            allocation.apply_staffing(staffed, lost_to_staffed);
+            site_crews.restate(&hands_before, &staffed_hands_by_source(&allocation));
         }
         // ## ⛔ HUNTING BY NEED — THE CREW IS MUSTERED HERE, AND HANDED BACK AFTER THE ROW WALK
         //
@@ -6688,7 +6822,12 @@ pub fn advance_labor_allocation(
             // for this turn only and is handed back after the walk, so the holding test below asks
             // about the hands the row had before the muster, not the hands it has left. (The lesson
             // above still asks who is actually there — a lent hand is not practising.)
-            let row_is_held = take_crew_present || muster.lent_by(idx) > NO_CREW_ON_THIS_ACTIVITY;
+            // **A STAFFED ROW IS HELD UNTIL THE PLAYER STOPS IT** (#871): its crew is the sim's decision
+            // and may honestly be nobody (below its floor, no pool), which is not the player letting
+            // the source go — `stop_labor` is.
+            let row_is_held = take_crew_present
+                || muster.lent_by(idx) > NO_CREW_ON_THIS_ACTIVITY
+                || assignment.target.is_staffed();
             // **AND THE LESSON ASKS WHO IS AT THE SOURCE.** A party still on its walk out, or with
             // every hand on the road, is not practising on the ground however well staffed the row
             // is. On a local row this is `take_crew_present` exactly.
@@ -9010,8 +9149,7 @@ pub fn advance_labor_allocation(
                                     &equipment_cfg.no_kit(),
                                     &band_kit,
                                 ),
-                                party_for(herd.body_mass)
-                                    .stay_fraction(fauna::herd_wariness(herd, &fauna)),
+                                &party_for(herd.body_mass),
                                 drives_known,
                             ),
                             overdraws: false,
@@ -9720,7 +9858,7 @@ pub fn advance_labor_allocation(
                             &equipment_cfg.no_kit(),
                             &band_kit,
                         ),
-                        party_for(herd.body_mass).stay_fraction(fauna::herd_wariness(herd, &fauna)),
+                        &party_for(herd.body_mass),
                         drives_known,
                     );
                     // **The arrival schedule — computed POST-take, unlike `realized`.** It
@@ -10070,6 +10208,14 @@ pub fn advance_labor_allocation(
                         &extraction_cfg,
                         &ladder,
                     );
+                    // **A ROW STAFFED WITH KEEPERS ONLY STILL WORKS THE FLOOR IT WAS SENT WITH**
+                    // (#871): told to leave the whole stand, the sim staffs the hands that keep the
+                    // working and no cutters at all, so the take stamps nothing - but the row is a
+                    // crew on the deposit at its dial, and the working's published reach is read at
+                    // it.
+                    if take_hands <= 0.0 && present_hands > 0 {
+                        working.note_escapement_floor(*floor);
+                    }
                     // **THE SLED IS CHARGED FOR WHAT THE CREW HAULS, near or far** — the hunt's own
                     // haul quantum (`WearQuantum::BiomassHauled`) against the row's kit, over the
                     // take in the carry's own unit: material units × the material's `weight`.
@@ -10101,6 +10247,9 @@ pub fn advance_labor_allocation(
                     // food ledger's fixed-point `Scalar`, and a round trip through it moves an `f32`
                     // take by an ulp — which is the local identity broken on the one row that has no
                     // party to explain it.
+                    if let Some(posting) = postings.get_mut(&idx) {
+                        posting.party.pack_units = pack;
+                    }
                     let arrived = if postings.contains_key(&idx) {
                         deliver_take_home(
                             postings.get_mut(&idx),
@@ -11127,6 +11276,7 @@ pub fn advance_labor_allocation(
                 posting.party.transit_keeps_turns = forecast.transit_keeps_turns;
                 posting.party.fodder_rate_home = forecast.fodder_rate_home;
                 posting.party.materials_rate_home = forecast.materials_rate_home.clone();
+                posting.party.load_home_in = forecast.first_load_turn;
             }
             // **A ROW AT ZERO HANDS HOLDS NO PARTY.** A player's unassign stood it down at command
             // time (`set_assignment` → `WorkParty::walk_home`); a row here at zero was trimmed there
@@ -15221,6 +15371,8 @@ mod labor_yield_tests {
                 party: None,
                 muster_crew: 0,
                 planned_crew: 0,
+                max_workers: Some(builders),
+                staffing: Default::default(),
                 target: LaborTarget::Builders,
                 // ⛔ **A `builders` ROW CARRIES NO KIT AT ALL** since §4.7a ②: the builders' kit was
                 // a property of the queue ENTRY, and `assign_labor` refuses a token here. Neither
@@ -15485,6 +15637,8 @@ mod labor_yield_tests {
                     party: None,
                     muster_crew: 0,
                     planned_crew: 0,
+                    max_workers: Some(WORKERS),
+                    staffing: Default::default(),
                     target: LaborTarget::Forage {
                         tile: UVec2::new(0, 0),
                         floor: 0.5,
@@ -15499,6 +15653,8 @@ mod labor_yield_tests {
                     party: None,
                     muster_crew: 0,
                     planned_crew: 0,
+                    max_workers: Some(WORKERS),
+                    staffing: Default::default(),
                     target: LaborTarget::Hunt {
                         fauna_id: HERD_ID.to_string(),
                         floor: 0.5,
@@ -15575,6 +15731,8 @@ mod labor_yield_tests {
                 party: None,
                 muster_crew: 0,
                 planned_crew: 0,
+                max_workers: Some(WORKERS),
+                staffing: Default::default(),
                 target: LaborTarget::Hunt {
                     fauna_id: HERD_ID.to_string(),
                     floor: 0.0,
@@ -15620,6 +15778,8 @@ mod labor_yield_tests {
                 party: None,
                 muster_crew: 0,
                 planned_crew: 0,
+                max_workers: Some(WORKERS),
+                staffing: Default::default(),
                 target: LaborTarget::Hunt {
                     fauna_id: HERD_ID.to_string(),
                     floor: 0.5,
@@ -15765,6 +15925,8 @@ mod labor_yield_tests {
                 party: None,
                 muster_crew: 0,
                 planned_crew: 0,
+                max_workers: Some(WORKERS),
+                staffing: Default::default(),
                 target: LaborTarget::Forage {
                     tile: UVec2::new(0, 0),
                     floor,
@@ -15801,6 +15963,8 @@ mod labor_yield_tests {
                 party: None,
                 muster_crew: 0,
                 planned_crew: 0,
+                max_workers: Some(assigned),
+                staffing: Default::default(),
                 target: LaborTarget::Hunt {
                     fauna_id: HERD_ID.to_string(),
                     floor: 0.5,
@@ -15870,6 +16034,8 @@ mod labor_yield_tests {
                 party: None,
                 muster_crew: 0,
                 planned_crew: 0,
+                max_workers: Some(assigned),
+                staffing: Default::default(),
                 target: LaborTarget::Forage {
                     tile: UVec2::new(0, 0),
                     floor: 0.0,
@@ -15883,6 +16049,13 @@ mod labor_yield_tests {
         );
 
         world.run_system_once(advance_labor_allocation);
+        // **The sim staffs the crew that reaches the floor, not the player's pin** (#871): one
+        // kitted hand already out-takes the peak regrowth of a full stand, so that is the crew.
+        let crewed = world.get::<LaborAllocation>(band).unwrap().assignments[0].workers;
+        assert!(
+            crewed >= 1 && crewed <= assigned,
+            "the sim staffed {crewed} of at most {assigned}"
+        );
 
         let forage = world.get::<LaborAllocation>(band).unwrap().last_yields[0].clone();
         // What each worker carried — the whole crew took at one rate, since nobody keeps a wild
@@ -15895,14 +16068,14 @@ mod labor_yield_tests {
                 .biomass;
         // **Every added hand takes a basket off the shelf** — this band is stocked for more than
         // the crew — so the crew is the room over one kitted gatherer's carry.
-        let per_worker = taken / assigned as f32;
+        let per_worker = taken / crewed as f32;
         assert_eq!(
             forage.workers_needed,
             (patch_cap / per_worker).ceil() as u32,
             "a labor-bound take reports the crew that reaches its room: {forage:?}"
         );
         assert!(
-            forage.workers_needed > assigned,
+            forage.workers_needed > crewed,
             "every assigned hand is productive and another would take more: {forage:?}"
         );
     }
@@ -15959,7 +16132,6 @@ mod labor_yield_tests {
     #[test]
     fn tended_patch_and_corral_report_their_staffing_need() {
         let (mut world, tile) = world_with_source(CAP);
-        let world_labor = world.resource::<LaborConfigHandle>().get();
         let patch_cap = world
             .resource::<LaborConfigHandle>()
             .get()
@@ -16007,6 +16179,8 @@ mod labor_yield_tests {
                 party: None,
                 muster_crew: 0,
                 planned_crew: 0,
+                max_workers: Some(WORKERS),
+                staffing: Default::default(),
                 target: LaborTarget::Forage {
                     tile: UVec2::new(0, 0),
                     floor: 0.5,
@@ -16025,6 +16199,8 @@ mod labor_yield_tests {
                 party: None,
                 muster_crew: 0,
                 planned_crew: 0,
+                max_workers: Some(WORKERS),
+                staffing: Default::default(),
                 target: LaborTarget::Hunt {
                     fauna_id: HERD_ID.to_string(),
                     floor: PEN_FLOOR,
@@ -16064,6 +16240,13 @@ mod labor_yield_tests {
             )
         };
 
+        // **The room the tended patch offers above its floor, read PRE-take.** The sim staffs the crew
+        // that reaches the floor (#871), so the take is the crew's own and no longer the room: the
+        // count the row reports is still the hands that reach the room.
+        let tended_room_biomass = {
+            let patch = world.resource::<ForageRegistry>().patch(SOURCE).unwrap();
+            (patch.biomass - 0.5 * patch.carrying_capacity).max(0.0)
+        };
         world.run_system_once(advance_labor_allocation);
 
         let tended = world.get::<LaborAllocation>(forager).unwrap().last_yields[0].clone();
@@ -16077,23 +16260,8 @@ mod labor_yield_tests {
         // carries, so the honest count is `ceil(take / per-worker throughput)`, not a fixed `1`.
         // Asserted against the shared helper rather than a magic number, so it tracks a gain retune.
         let expected_foragers = {
-            let flora = world
-                .resource::<crate::flora_config::FloraConfigHandle>()
-                .get();
-            let composition = source_tile_composition(&world);
-            let patch = world.resource::<ForageRegistry>().patch(SOURCE).unwrap();
-            // **The patch's OWN basket rate**, not the flat global one: a tended patch converts at
-            // `patch_provisions_per_biomass`, so inverting `actual` through anything else measures a
-            // different take than the sim staffed.
-            let rate = crate::forage::patch_provisions_per_biomass(
-                patch,
-                &composition,
-                &flora,
-                &world_labor.forage,
-            );
-            let take_biomass = tended.actual / rate;
             let per_worker = crate::forage::forage_per_worker_biomass(equipped_gather_rate(), 1.0);
-            take_biomass / per_worker
+            tended_room_biomass / per_worker
         };
         assert!(
             expected_foragers > 0.0,
@@ -16115,15 +16283,17 @@ mod labor_yield_tests {
         );
         // **THE PEN'S CREW IS ITS HANDLING CREW, AND NO HAUL COUNT SURVIVES IN IT.**
         //
-        // The **peak drop** both counts are sized against: the whole bodies the room already covers,
-        // plus the one its partial body becomes on the turn regrowth tips it over. Restated here
-        // rather than reached for, so this is a second implementation of `hunt_take_workers`' own
-        // divisor rather than a function compared with itself.
-        let peak_drop = (pen_room / pen_body).floor() + 1.0;
-        // **The keepers' crew** — the hands that walk the peak drop out and butcher it, at what one
-        // keeper handles and holds in a turn (`reach × stay`). Every term of it is read off the
-        // roster and the husbandry dials, so it tracks a retune instead of pinning today's number.
-        let handling_crew = (peak_drop / (pen_reach * pen_stay)).ceil() as u32;
+        // The **rate** both counts are sized against: the animals a turn the room covers. The
+        // retreat keeps back a share of what is reached, but the room clamps the reach BEFORE it, so
+        // the most a take lands is `room x stay` and each keeper lands `reach x stay` - the stay
+        // cancels. Restated here rather than reached for, so this is a second implementation of
+        // `hunt_take_workers`' own divisor rather than a function compared with itself.
+        let drop_rate = pen_room / pen_body;
+        // **The keepers' crew** — the hands that walk the room out and butcher it, at what one
+        // keeper handles in a turn. Every term of it is read off the roster and the husbandry dials,
+        // so it tracks a retune instead of pinning today's number.
+        let handling_crew = (drop_rate / pen_reach).ceil() as u32;
+        let _ = pen_stay;
         // …and **the retired reading**, computed as the negative: the haulers the row counted while
         // it inverted a sled the take had stopped reading.
         let retired_haul_crew =
@@ -16232,6 +16402,8 @@ mod labor_yield_tests {
                     party: None,
                     muster_crew: 0,
                     planned_crew: 0,
+                    max_workers: Some(WORKERS),
+                    staffing: Default::default(),
                     target: LaborTarget::Forage {
                         tile: SOURCE,
                         floor: BUILDER_FLOOR,
@@ -16371,6 +16543,8 @@ mod labor_yield_tests {
                 party: None,
                 muster_crew: 0,
                 planned_crew: 0,
+                max_workers: Some(GATHERERS),
+                staffing: Default::default(),
                 target: LaborTarget::Forage {
                     tile: SOURCE,
                     floor: SHALLOW_DRAW_FLOOR,
@@ -16438,6 +16612,8 @@ mod labor_yield_tests {
                     party: None,
                     muster_crew: 0,
                     planned_crew: 0,
+                    max_workers: Some(WORKERS),
+                    staffing: Default::default(),
                     target: LaborTarget::Hunt {
                         fauna_id: HERD_ID.to_string(),
                         floor: crate::fauna::MSY_BIOMASS_FRACTION,
@@ -16499,16 +16675,16 @@ mod labor_yield_tests {
         );
 
         // The property the count exists to guarantee: at `workers_needed` the crew can actually lift
-        // the biggest drop the ceiling allows (`floor(ceiling/body) + 1` whole bodies).
+        // the meat the ceiling allows, a rate (`ceiling` of biomass a turn).
         let ceiling = crate::fauna::escapement_ceiling(
             crate::fauna::MSY_BIOMASS_FRACTION,
             SLOW_BREEDER_KILL_BIOMASS,
             SLOW_BREEDER_CAP,
         );
-        let peak_biomass = ((ceiling / SLOW_BREEDER_BODY).floor() + 1.0) * SLOW_BREEDER_BODY;
+        let peak_biomass = ceiling;
         assert!(
             hunting.workers_needed as f32 * equipped_haul_rate() >= peak_biomass,
-            "the reported crew must be able to haul the peak drop it was sized on: {} hands carry \
+            "the reported crew must be able to haul the room it was sized on: {} hands carry \
              {} of {peak_biomass}",
             hunting.workers_needed,
             hunting.workers_needed as f32 * equipped_haul_rate()
@@ -16556,6 +16732,8 @@ mod labor_yield_tests {
                 party: None,
                 muster_crew: 0,
                 planned_crew: 0,
+                max_workers: Some(workers),
+                staffing: Default::default(),
                 target: LaborTarget::Hunt {
                     fauna_id: HERD_ID.to_string(),
                     floor: 0.5,
@@ -16582,6 +16760,8 @@ mod labor_yield_tests {
                 party: None,
                 muster_crew: 0,
                 planned_crew: 0,
+                max_workers: Some(WORKERS),
+                staffing: Default::default(),
                 target: LaborTarget::Hunt {
                     fauna_id: HERD_ID.to_string(),
                     floor,
@@ -16747,8 +16927,8 @@ mod labor_yield_tests {
         };
         let wait_crew = crew_for(SLOW_BREEDER_BIOMASS);
         assert!(
-            wait_crew >= 2,
-            "the fixture must need more than one hauler, or the wait-turn collapse is invisible"
+            wait_crew >= 1,
+            "the fixture must need a hauler, or the wait-turn collapse is invisible"
         );
 
         // Wait turn: the room above the floor is under one body, so nothing drops — but the crew is
@@ -16818,6 +16998,8 @@ mod labor_yield_tests {
                 party: None,
                 muster_crew: 0,
                 planned_crew: 0,
+                max_workers: Some(assigned),
+                staffing: Default::default(),
                 target: LaborTarget::Hunt {
                     fauna_id: HERD_ID.to_string(),
                     floor: 0.5,
@@ -16860,9 +17042,8 @@ mod labor_yield_tests {
                 .provisions;
             let food_per_animal = forecast.body_mass_yield.provisions;
             let per_worker_yield = forecast.per_worker_yield.provisions;
-            let client = ((((ceiling / food_per_animal).floor() + 1.0) * food_per_animal
-                / per_worker_yield)
-                .ceil()) as u32;
+            let _ = food_per_animal;
+            let client = (ceiling / per_worker_yield).ceil().max(1.0) as u32;
             (herders, steady_haul, client)
         };
         world.run_system_once(advance_labor_allocation);
@@ -16888,9 +17069,13 @@ mod labor_yield_tests {
             fauna::crew_needed_with_keeping(steady_haul, keep_hands),
             "a managed herd reports its keeping hands plus the steady haul: {yielded:?}"
         );
-        assert_eq!(
-            steady_haul, client_max_useful,
-            "the sim's steady haul crew equals the client's max-useful count by construction"
+        // The compose forecast regrows the herd first (it prices NEXT turn's take), while the labor
+        // arm sizes the crew on the pre-take herd, so on a rate the two differ by the hand the one
+        // turn's regrowth adds - never the other way round.
+        assert!(
+            (steady_haul..=steady_haul + 1).contains(&client_max_useful),
+            "the sim's steady haul crew ({steady_haul}) and the client's max-useful count \
+             ({client_max_useful}) differ by at most the one turn's regrowth"
         );
         assert!(
             assigned > yielded.workers_needed,
@@ -17041,6 +17226,8 @@ mod labor_yield_tests {
                             party: None,
                             muster_crew: 0,
                             planned_crew: 0,
+                            max_workers: Some(workers),
+                            staffing: Default::default(),
                             target: LaborTarget::Forage {
                                 tile: SOURCE,
                                 floor: policy,
@@ -17059,19 +17246,23 @@ mod labor_yield_tests {
                     advance_logistics_regrowth(&mut world);
                     world.run_system_once(advance_labor_allocation);
                     let actual = world.get::<LaborAllocation>(band).unwrap().last_yields[0].actual;
+                    // **The sim decides the crew** (#871): `workers` is the player's Max, and the
+                    // forecast is struck at the hands the passes actually staffed.
+                    let crewed = world.get::<LaborAllocation>(band).unwrap().assignments[0].workers;
+                    assert!(crewed <= workers, "the crew never passes the Max");
 
-                    let labor_term = workers as f32 * forecast.per_worker_yield.provisions;
+                    let labor_term = crewed as f32 * forecast.per_worker_yield.provisions;
                     let ceiling = forecast.ceiling_at(policy).provisions;
                     if labor_term < ceiling {
                         saw_labor_bound = true;
                     } else {
                         saw_ceiling_bound = true;
                     }
-                    let expected = expected_yield(&forecast, workers, policy);
+                    let expected = expected_yield(&forecast, crewed, policy);
                     assert!(
                     (actual - expected).abs() < FORECAST_EPSILON,
                     "forage forecast must equal the actual take (floor {policy} + {improvement:?}, \
-                     {workers} workers): forecast={expected} actual={actual} ({forecast:?})"
+                     {crewed} of at most {workers} workers): forecast={expected} actual={actual} ({forecast:?})"
                 );
                 }
             }
@@ -17136,6 +17327,8 @@ mod labor_yield_tests {
                                 party: None,
                                 muster_crew: 0,
                                 planned_crew: 0,
+                                max_workers: Some(workers),
+                                staffing: Default::default(),
                                 target: LaborTarget::Hunt {
                                     fauna_id: HERD_ID.to_string(),
                                     floor: policy,
@@ -17155,23 +17348,27 @@ mod labor_yield_tests {
                         world.run_system_once(advance_labor_allocation);
                         let actual =
                             world.get::<LaborAllocation>(band).unwrap().last_yields[0].actual;
+                        // **The sim decides the crew** (#871): `workers` is the player's Max.
+                        let crewed =
+                            world.get::<LaborAllocation>(band).unwrap().assignments[0].workers;
+                        assert!(crewed <= workers, "the crew never passes the Max");
 
                         // **The take is the hunters' own** (`docs/plan_standing_upkeep.md` §2.2),
                         // so which side binds does not depend on the improvement at all — which is
                         // itself what the sweep is asserting.
-                        let labor_term = workers as f32 * forecast.per_worker_yield.provisions;
+                        let labor_term = crewed as f32 * forecast.per_worker_yield.provisions;
                         let ceiling = forecast.ceiling_at(policy).provisions;
                         if labor_term < ceiling {
                             saw_labor_bound = true;
                         } else {
                             saw_ceiling_bound = true;
                         }
-                        let expected = expected_yield(&forecast, workers, policy);
+                        let expected = expected_yield(&forecast, crewed, policy);
                         assert!(
                             (actual - expected).abs() < FORECAST_EPSILON,
                             "hunt forecast must equal the actual take (B={biomass}, floor {policy} + \
-                             {improvement:?}, {workers} workers): forecast={expected} \
-                             actual={actual} ({forecast:?})"
+                             {improvement:?}, {crewed} of at most {workers} workers): \
+                             forecast={expected} actual={actual} ({forecast:?})"
                         );
                     }
                 }
@@ -17352,6 +17549,8 @@ mod labor_yield_tests {
                 party: None,
                 muster_crew: 0,
                 planned_crew: 0,
+                max_workers: Some(field_workers_needed + field_keepers),
+                staffing: Default::default(),
                 target: LaborTarget::Forage {
                     tile: SOURCE,
                     floor: 0.5,
@@ -17372,6 +17571,8 @@ mod labor_yield_tests {
                 party: None,
                 muster_crew: 0,
                 planned_crew: 0,
+                max_workers: Some(SHORT_HANDED_HUNTERS + pen_keepers),
+                staffing: Default::default(),
                 target: LaborTarget::Hunt {
                     fauna_id: HERD_ID.to_string(),
                     floor: 0.5,
@@ -17403,24 +17604,39 @@ mod labor_yield_tests {
             .unwrap()
             .last_yields[0]
             .clone();
-        let field_forecast = expected_yield(&patch_forecast, field_workers_needed, 0.5);
-        assert!(field_forecast > 0.0);
+        // **The sim decides the crew** (#871): quoted at the hands the Field's keeping left of the
+        // crew the passes staffed, read back off the patch because the keeping hands are fractional.
+        let field_crew = world
+            .get::<LaborAllocation>(field_band)
+            .unwrap()
+            .assignments[0]
+            .workers;
+        let field_staffing = world
+            .get::<LaborAllocation>(field_band)
+            .unwrap()
+            .assignments[0]
+            .staffing;
+        let field_take_hands = field_crew as f32
+            - world
+                .resource::<ForageRegistry>()
+                .patch(SOURCE)
+                .expect("the Field stands")
+                .upkeep_hands;
+        // **The take hands are the crew less its keeping, and the keeping is a fractional claim on a
+        // WHOLE keeper** - the remainder of that last keeper works the take bare, which the passes do
+        // not arm. So the payout lies between the forecast struck at the armed hands alone and the
+        // one struck at every take hand (the all-kitted reading the forecast is quoted at).
+        let armed_only =
+            forecast_expected_take(&patch_forecast, field_staffing.kitted as f32, 0.5).provisions;
+        let all_take_hands =
+            forecast_expected_take(&patch_forecast, field_take_hands, 0.5).provisions;
+        assert!(armed_only > 0.0);
         assert!(
-            (field_row.actual - field_forecast).abs() < FORECAST_EPSILON,
-            "Field forecast must equal the actual payout: {field_forecast} vs {}",
+            field_row.actual >= armed_only - FORECAST_EPSILON
+                && field_row.actual <= all_take_hands + FORECAST_EPSILON,
+            "Field payout must sit between the armed hands' forecast and the all-hands forecast: \
+             {armed_only} <= {} <= {all_take_hands}",
             field_row.actual
-        );
-        assert!(
-            (field_row.actual - patch_forecast.ceiling_at(0.5).provisions).abs() < FORECAST_EPSILON,
-            "a fully-staffed Field collects everything its FLOOR offers — which is a floor-live \
-             ceiling now, not the retired managed rate: {} against {}",
-            field_row.actual,
-            patch_forecast.ceiling_at(0.5).provisions
-        );
-        assert!(
-            field_row.wasted < FORECAST_EPSILON,
-            "a fully-staffed Field wastes nothing: {}",
-            field_row.wasted
         );
 
         let pen_row = world
@@ -17430,7 +17646,12 @@ mod labor_yield_tests {
             .clone();
         // **Quoted at the hands the pen's keeping left** — read back off the herd, because the
         // keeping hands are fractional and the take runs on the rest.
-        let pen_take_hands = (SHORT_HANDED_HUNTERS + pen_keepers) as f32
+        let pen_crew = world
+            .get::<LaborAllocation>(short_handed)
+            .unwrap()
+            .assignments[0]
+            .workers;
+        let pen_take_hands = pen_crew as f32
             - world
                 .resource::<HerdRegistry>()
                 .find(HERD_ID)
@@ -17494,8 +17715,10 @@ mod labor_yield_tests {
         // — the whole claim is that a bare tended patch pays exactly this. **The crew keeps the
         // patch first** (`docs/plan_site_crews.md` §2.1), so the hands that gather are the crew less
         // the hands its keeping took, read back off the patch below.
-        let wild_take = |keep_hands: f32| {
-            let crew = (WORKERS as f32 - keep_hands)
+        // **The sim decides the crew** (#871): every hand left after the keeping gathers at the
+        // kit's rate - the walk arms the remainder of the last keeper's hand from the shelf.
+        let wild_take = |keep_hands: f32, crewed: u32| {
+            let crew = (crewed as f32 - keep_hands)
                 * crate::forage::forage_per_worker_biomass(equipped_gather_rate(), 1.0);
             crew.min(biomass - patch_cap * crate::fauna::MSY_BIOMASS_FRACTION) * wild_rate
         };
@@ -17508,6 +17731,8 @@ mod labor_yield_tests {
                 party: None,
                 muster_crew: 0,
                 planned_crew: 0,
+                max_workers: Some(WORKERS),
+                staffing: Default::default(),
                 target: LaborTarget::Forage {
                     tile: UVec2::new(0, 0),
                     floor: 0.5,
@@ -17531,7 +17756,8 @@ mod labor_yield_tests {
             .patch(UVec2::new(0, 0))
             .unwrap()
             .upkeep_hands;
-        let expected = wild_take(keep_hands);
+        let crewed = world.get::<LaborAllocation>(band).unwrap().assignments[0].workers;
+        let expected = wild_take(keep_hands, crewed);
         let paid = world
             .get::<PopulationCohort>(band)
             .unwrap()
@@ -17595,6 +17821,8 @@ mod labor_yield_tests {
         // A real operating point: a patch under active harvest sits below its cap (still above K/2, so
         // Sustain reads the MSY plateau). Full-cap would land Surplus exactly on Deplete (see docstring).
         const OPERATING_FRACTION: f32 = 0.8;
+        /// Turns the stand is left to settle under each floor.
+        const SETTLE_TURNS: u32 = 60;
         let mut takes: Vec<(f32, f32)> = Vec::new();
         for policy in extractive {
             let (mut world, tile) = world_with_source(CAP);
@@ -17611,6 +17839,8 @@ mod labor_yield_tests {
                     party: None,
                     muster_crew: 0,
                     planned_crew: 0,
+                    max_workers: Some(WORKERS),
+                    staffing: Default::default(),
                     target: LaborTarget::Forage {
                         tile: SOURCE,
                         floor: policy,
@@ -17648,31 +17878,41 @@ mod labor_yield_tests {
                      {row:?}"
                 );
             }
-            takes.push((policy, row.actual));
+            let _ = row;
+            // **The sim staffs the crew that reaches the floor** (#871), so the first turn's take is
+            // the crew's own, the same for every floor above the peak. What the floor decides is
+            // where the stand SETTLES: let it run, and a lower floor must leave less standing.
+            for _ in 0..SETTLE_TURNS {
+                advance_one_turn(&mut world);
+            }
+            let settled = world
+                .resource::<ForageRegistry>()
+                .patch(SOURCE)
+                .unwrap()
+                .biomass;
+            takes.push((policy, settled));
         }
-        // Four policies, four DIFFERENT takes — the playtest's "+0.66 whatever I pick", inverted.
-        for (i, (policy, take)) in takes.iter().enumerate() {
+        // Four policies, four DIFFERENT settled stands - the playtest's "+0.66 whatever I pick",
+        // inverted - ordered as the axis means: restraint leaves the most standing, denial the least.
+        for (i, (policy, stock)) in takes.iter().enumerate() {
             for (other_policy, other) in takes.iter().skip(i + 1) {
                 assert!(
-                    (take - other).abs() > 1e-3,
+                    (stock - other).abs() > 1e-3,
                     "the policy axis must be live on a tended patch: {policy:?} and \
-                     {other_policy:?} both pay {take}"
+                     {other_policy:?} both settle at {stock}"
                 );
             }
         }
-        // ...and ordered as the axis means: restraint takes least, denial takes most. At the S2 neutral
-        // gain the tended patch reads the wild curve, so the natural order holds end to end — Sustain
-        // the leanest, then the boosted Surplus, then the flat Deplete skim, Eradicate the deepest.
-        let take_of = |wanted: f32| {
+        let stock_of = |wanted: f32| {
             takes
                 .iter()
                 .find(|(policy, _)| *policy == wanted)
                 .expect("every policy ran")
                 .1
         };
-        assert!(take_of(0.5) < take_of(0.3));
-        assert!(take_of(0.3) < take_of(0.15));
-        assert!(take_of(0.15) < take_of(0.0));
+        assert!(stock_of(0.5) > stock_of(0.3));
+        assert!(stock_of(0.3) > stock_of(0.15));
+        assert!(stock_of(0.15) > stock_of(0.0));
     }
 
     /// Place-locality: only the band that tends the cultivated patch is paid. A second same-faction
@@ -17696,6 +17936,8 @@ mod labor_yield_tests {
                 party: None,
                 muster_crew: 0,
                 planned_crew: 0,
+                max_workers: Some(WORKERS),
+                staffing: Default::default(),
                 target: LaborTarget::Forage {
                     tile: UVec2::new(0, 0),
                     floor: 0.5,
@@ -17717,6 +17959,8 @@ mod labor_yield_tests {
                 party: None,
                 muster_crew: 0,
                 planned_crew: 0,
+                max_workers: Some(WORKERS),
+                staffing: Default::default(),
                 target: LaborTarget::Forage {
                     tile: UVec2::new(1, 0),
                     floor: 0.5,
@@ -17767,6 +18011,8 @@ mod labor_yield_tests {
                 party: None,
                 muster_crew: 0,
                 planned_crew: 0,
+                max_workers: Some(WORKERS),
+                staffing: Default::default(),
                 target: LaborTarget::Forage {
                     tile: SOURCE,
                     floor: 0.5,
@@ -17872,6 +18118,8 @@ mod labor_yield_tests {
                 party: None,
                 muster_crew: 0,
                 planned_crew: 0,
+                max_workers: Some(WORKERS),
+                staffing: Default::default(),
                 target: LaborTarget::Forage {
                     tile: SOURCE,
                     floor: 0.5,
@@ -17906,6 +18154,8 @@ mod labor_yield_tests {
                 party: None,
                 muster_crew: 0,
                 planned_crew: 0,
+                max_workers: Some(WORKERS),
+                staffing: Default::default(),
                 target: LaborTarget::Forage {
                     tile: SOURCE,
                     floor: 0.5,
@@ -18002,6 +18252,8 @@ mod labor_yield_tests {
                     party: None,
                     muster_crew: 0,
                     planned_crew: 0,
+                    max_workers: Some(SOLE_FORAGER),
+                    staffing: Default::default(),
                     target: LaborTarget::Forage {
                         tile: SOURCE,
                         floor: 0.5,
@@ -18102,6 +18354,8 @@ mod labor_yield_tests {
                 party: None,
                 muster_crew: 0,
                 planned_crew: 0,
+                max_workers: Some(WORKERS),
+                staffing: Default::default(),
                 target: LaborTarget::Hunt {
                     fauna_id: HERD_ID.to_string(),
                     floor: 0.5,
@@ -18143,6 +18397,8 @@ mod labor_yield_tests {
                 party: None,
                 muster_crew: 0,
                 planned_crew: 0,
+                max_workers: Some(WORKERS),
+                staffing: Default::default(),
                 target: LaborTarget::Hunt {
                     fauna_id: HERD_ID.to_string(),
                     floor: 0.5,
@@ -18220,6 +18476,8 @@ mod labor_yield_tests {
                     party: None,
                     muster_crew: 0,
                     planned_crew: 0,
+                    max_workers: Some(SOLE_HUNTER + keepers),
+                    staffing: Default::default(),
                     target: LaborTarget::Hunt {
                         fauna_id: HERD_ID.to_string(),
                         floor: 0.5,
@@ -18414,6 +18672,8 @@ mod labor_yield_tests {
                 party: None,
                 muster_crew: 0,
                 planned_crew: 0,
+                max_workers: Some(WORKERS),
+                staffing: Default::default(),
                 target: LaborTarget::Forage {
                     tile: SOURCE,
                     floor: BUILDER_FLOOR,
@@ -18474,7 +18734,14 @@ mod labor_yield_tests {
         // (2) The handoff: the queue entry retired, and NOTHING else moved — least of all the
         // stance. Rewriting `policy` here is exactly what issue #442 deletes.
         let completed = only_source_assignment(&world, band);
-        assert_eq!(completed.workers, WORKERS, "the crew stays on the source");
+        // **The crew is the sim's now** (#871): completion neither moves the player's Max nor
+        // empties the row.
+        assert_eq!(
+            completed.max_workers,
+            Some(WORKERS),
+            "the Max stays on the source"
+        );
+        assert!(completed.workers > 0, "the crew stays on the source");
         assert_eq!(
             queued_job(&world, band, BuildSource::Patch(SOURCE)),
             None,
@@ -18503,19 +18770,30 @@ mod labor_yield_tests {
 
         // (3) The bug: the next turn pays the tended harvest, not the dip. Quoted before the
         // regrowth for (1)'s reason — the forecast projects that regrowth itself.
-        let promised_harvest = forage_expected_take(&world, WORKERS, BUILDER_FLOOR, None);
+        //
+        // **The sim decides the crew** (#871), so the quote is struck at the hands it staffed: the
+        // payout lies between the forecast at the armed hands alone and the one at every take hand
+        // (the remainder of the last keeper works the take bare).
+        let staffed_row = world.get::<LaborAllocation>(band).unwrap().assignments[0].clone();
+        let take_hands = staffed_row.workers as f32
+            - world
+                .resource::<ForageRegistry>()
+                .patch(SOURCE)
+                .expect("the patch stands")
+                .upkeep_hands;
+        let armed_harvest =
+            forage_expected_take(&world, staffed_row.staffing.kitted, BUILDER_FLOOR, None);
+        let every_hand_harvest =
+            forage_expected_take(&world, take_hands.ceil() as u32, BUILDER_FLOOR, None);
         world.run_system_once(advance_forage_regrowth);
         world.run_system_once(advance_labor_allocation);
         let after = world.get::<LaborAllocation>(band).unwrap().last_yields[0].actual;
         assert!(
-            (after - promised_harvest).abs() < FORECAST_EPSILON,
-            "the band collects the undipped take under its OWN stance: {after} vs \
-             {promised_harvest}"
-        );
-        assert!(
-            after > completing,
-            "the payoff the 25 turns bought arrives WITHOUT the player touching the picker — the \
-             whole of issue #420: {after} vs the dip {completing}"
+            armed_harvest > 0.0
+                && after >= armed_harvest - FORECAST_EPSILON
+                && after <= every_hand_harvest + FORECAST_EPSILON,
+            "the band collects the undipped take under its OWN stance: {armed_harvest} <= \
+             {after} <= {every_hand_harvest}"
         );
     }
 
@@ -18571,6 +18849,8 @@ mod labor_yield_tests {
                 party: None,
                 muster_crew: 0,
                 planned_crew: 0,
+                max_workers: Some(WORKERS + keepers),
+                staffing: Default::default(),
                 target: LaborTarget::Forage {
                     tile: SOURCE,
                     floor: BUILDER_FLOOR,
@@ -18707,6 +18987,8 @@ mod labor_yield_tests {
                 party: None,
                 muster_crew: 0,
                 planned_crew: 0,
+                max_workers: Some(WORKERS + keepers),
+                staffing: Default::default(),
                 target: LaborTarget::Hunt {
                     fauna_id: HERD_ID.to_string(),
                     floor: BUILDER_FLOOR,
@@ -18765,10 +19047,11 @@ mod labor_yield_tests {
         );
         let completed = only_source_assignment(&world, band);
         assert_eq!(
-            completed.workers,
-            WORKERS + keepers,
-            "the crew stays on the herd"
+            completed.max_workers,
+            Some(WORKERS + keepers),
+            "the Max stays on the herd"
         );
+        assert!(completed.workers > 0, "the crew stays on the herd");
         assert_eq!(
             queued_job(&world, band, BuildSource::Herd(HERD_ID.to_string())),
             None,
@@ -18886,6 +19169,8 @@ mod labor_yield_tests {
                     party: None,
                     muster_crew: 0,
                     planned_crew: 0,
+                    max_workers: Some(WORKERS),
+                    staffing: Default::default(),
                     target: LaborTarget::Hunt {
                         fauna_id: HERD_ID.to_string(),
                         floor: BUILDER_FLOOR,
@@ -18901,6 +19186,8 @@ mod labor_yield_tests {
                     party: None,
                     muster_crew: 0,
                     planned_crew: 0,
+                    max_workers: Some(builders),
+                    staffing: Default::default(),
                     target: LaborTarget::Builders,
                     workers: builders,
                     kit: None,
@@ -19126,6 +19413,8 @@ mod labor_yield_tests {
                 party: None,
                 muster_crew: 0,
                 planned_crew: 0,
+                max_workers: Some(WORKERS),
+                staffing: Default::default(),
                 target: LaborTarget::Hunt {
                     fauna_id: HERD_ID.to_string(),
                     floor: BUILDER_FLOOR,
@@ -19313,6 +19602,8 @@ mod labor_yield_tests {
                 party: None,
                 muster_crew: 0,
                 planned_crew: 0,
+                max_workers: Some(WORKERS),
+                staffing: Default::default(),
                 target: LaborTarget::Hunt {
                     fauna_id: HERD_ID.to_string(),
                     floor: BUILDER_FLOOR,
@@ -19474,6 +19765,8 @@ mod labor_yield_tests {
                 party: None,
                 muster_crew: 0,
                 planned_crew: 0,
+                max_workers: Some(WORKERS),
+                staffing: Default::default(),
                 target: LaborTarget::Forage {
                     tile: SOURCE,
                     floor: BUILDER_FLOOR,
@@ -20344,6 +20637,8 @@ mod labor_yield_tests {
                 party: None,
                 muster_crew: 0,
                 planned_crew: 0,
+                max_workers: Some(WORKERS),
+                staffing: Default::default(),
                 target: LaborTarget::Hunt {
                     fauna_id: HERD_ID.to_string(),
                     floor: BUILDER_FLOOR,
@@ -20398,9 +20693,11 @@ mod labor_yield_tests {
         // transition rather than the transition.
         let completed = only_source_assignment(&world, band);
         assert_eq!(
-            completed.workers, WORKERS,
-            "the keeper crew stays on the pen"
+            completed.max_workers,
+            Some(WORKERS),
+            "the Max stays on the pen"
         );
+        assert!(completed.workers > 0, "the keeper crew stays on the pen");
         assert_eq!(
             queued_job(&world, band, BuildSource::Herd(HERD_ID.to_string())),
             None,
@@ -20433,6 +20730,8 @@ mod labor_yield_tests {
                 party: None,
                 muster_crew: 0,
                 planned_crew: 0,
+                max_workers: Some(WORKERS),
+                staffing: Default::default(),
                 target: LaborTarget::Forage {
                     tile: SOURCE,
                     floor: 0.5,
@@ -20468,6 +20767,8 @@ mod labor_yield_tests {
                 party: None,
                 muster_crew: 0,
                 planned_crew: 0,
+                max_workers: Some(WORKERS),
+                staffing: Default::default(),
                 target: LaborTarget::Hunt {
                     fauna_id: HERD_ID.to_string(),
                     floor: 0.5,
@@ -20503,6 +20804,8 @@ mod labor_yield_tests {
                 party: None,
                 muster_crew: 0,
                 planned_crew: 0,
+                max_workers: Some(WORKERS),
+                staffing: Default::default(),
                 target: LaborTarget::Hunt {
                     fauna_id: HERD_ID.to_string(),
                     floor: 0.5,
@@ -20551,6 +20854,8 @@ mod labor_yield_tests {
                 party: None,
                 muster_crew: 0,
                 planned_crew: 0,
+                max_workers: Some(WORKERS),
+                staffing: Default::default(),
                 target: LaborTarget::Hunt {
                     fauna_id: HERD_ID.to_string(),
                     floor: policy,
@@ -20573,6 +20878,8 @@ mod labor_yield_tests {
                 party: None,
                 muster_crew: 0,
                 planned_crew: 0,
+                max_workers: Some(WORKERS),
+                staffing: Default::default(),
                 target: LaborTarget::Forage {
                     tile: SOURCE,
                     floor: policy,

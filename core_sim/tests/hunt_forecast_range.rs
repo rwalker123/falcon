@@ -224,6 +224,8 @@ fn spawn_hunters(app: &mut App, pos: UVec2, fauna_id: &str, floor: f32) -> bevy:
                     party: None,
                     muster_crew: 0,
                     planned_crew: 0,
+                    max_workers: Some(CREW),
+                    staffing: Default::default(),
                     target: LaborTarget::Hunt {
                         fauna_id: fauna_id.to_string(),
                         floor,
@@ -243,6 +245,7 @@ fn spawn_hunters(app: &mut App, pos: UVec2, fauna_id: &str, floor: f32) -> bevy:
 /// `server::seed_source_yield` does when the player composes the assignment — the *only* row that
 /// carries a distribution, since a resolved row is a fact and reports the point it paid.
 fn seed_the_forecast(app: &mut App, band: bevy::prelude::Entity, fauna_id: &str, floor: f32) {
+    let crew = staffed_crew(app, band);
     let seeded = {
         let fauna = app.world.resource::<FaunaConfigHandle>().get();
         let labor = app.world.resource::<LaborConfigHandle>().get();
@@ -255,7 +258,7 @@ fn seed_the_forecast(app: &mut App, band: bevy::prelude::Entity, fauna_id: &str,
             equipped_haul_rate(),
             &party_at(&combat),
             CONTENT_BAND_OUTPUT_MULTIPLIER,
-            CREW,
+            crew,
             core_sim::NO_HANDS,
             floor,
             labor.yield_average_horizon_turns,
@@ -274,6 +277,19 @@ fn seed_the_forecast(app: &mut App, band: bevy::prelude::Entity, fauna_id: &str,
         .get_mut::<LaborAllocation>(band)
         .expect("the band carries its allocation")
         .set_source_yield(&target, seeded);
+}
+
+/// **The crew the sim staffed on the band's one row** (#871): the command path restaffs the band the
+/// instant a row is written, and the pre-commit forecast is quoted at the hands that settles on -
+/// the `CREW` a fixture names is only the row's Max.
+fn staffed_crew(app: &mut App, band: bevy::prelude::Entity) -> u32 {
+    core_sim::staffing::restaff_band(&mut app.world, band);
+    app.world
+        .get::<LaborAllocation>(band)
+        .expect("the band carries its allocation")
+        .assignments
+        .first()
+        .map_or(0, |row| row.workers)
 }
 
 /// A content band's output multiplier — morale `1.0`, so the forecast and the take share it.
@@ -937,6 +953,8 @@ fn a_gather_reports_a_point_and_pays_it() {
                         party: None,
                         muster_crew: 0,
                         planned_crew: 0,
+                        max_workers: Some(CREW),
+                        staffing: Default::default(),
                         target: LaborTarget::Forage {
                             tile: coord,
                             floor: FOOD_PEAK,
@@ -953,6 +971,7 @@ fn a_gather_reports_a_point_and_pays_it() {
             .id()
     };
 
+    let crew = staffed_crew(&mut app, band);
     // Seed the row from the plant web's own preview — the same seam the server's assign path calls.
     let seeded_row = {
         let labor = app.world.resource::<LaborConfigHandle>().get();
@@ -973,7 +992,7 @@ fn a_gather_reports_a_point_and_pays_it() {
             equipped_gather_rate(),
             seasonal,
             CONTENT_BAND_OUTPUT_MULTIPLIER,
-            CREW,
+            crew,
             core_sim::NO_HANDS,
             FOOD_PEAK,
             &TakeSelection::EVERYTHING,

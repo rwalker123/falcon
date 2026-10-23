@@ -7409,6 +7409,15 @@ pub(crate) fn forecast_source_yield(
                         .map_or(NO_RETREAT_STAGE_STAY, |(party, quarry)| {
                             party.stay_fraction(quarry.profile.wariness)
                         }),
+                    // **The fight is a crew term too**, off the same party and quarry: a pen
+                    // slaughters and so asks for none.
+                    forecast
+                        .fight
+                        .as_ref()
+                        .filter(|_| !forecast.slaughters)
+                        .map_or(FightRate::NoFight, |(party, quarry)| {
+                            FightRate::of(party, Some(quarry))
+                        }),
                 ),
                 Some(axis) => workers_needed_for_take(
                     actual.component(axis),
@@ -10079,19 +10088,34 @@ pub fn hunt_haul_workers(ceiling: f32, body: f32, per_worker: f32) -> u32 {
     if !body.is_finite() || body <= 0.0 || !per_worker.is_finite() || per_worker <= 0.0 {
         return NO_CREW_ON_THIS_ACTIVITY;
     }
-    let peak_biomass = peak_animal_drop(ceiling, body) * body;
-    (peak_biomass / per_worker).ceil() as u32
+    (ceiling.max(0.0) / per_worker)
+        .ceil()
+        .max(AT_LEAST_ONE_HUNTER) as u32
 }
 
-/// **The most whole animals a `ceiling` can drop in one turn** — `floor(ceiling / body) + 1`, the one
-/// definition of the peak drop, shared by [`hunt_haul_workers`] and [`hunt_engage_workers`] so the
-/// two crew terms can never be sized against different drops.
+/// **A MEAT TARGET IN ANIMALS A TURN** - `target / body`, a RATE and not a whole-animal drop. Shared
+/// by [`hunt_haul_workers`], [`hunt_engage_workers`] and [`hunt_fight_workers`] so the crew terms
+/// are sized against one target.
 ///
-/// The `+1` is the partial body still standing: on the turn regrowth tips it over the room covers one
-/// more animal than `floor` sees. `body` is assumed finite-positive — every caller checks it first.
-fn peak_animal_drop(ceiling: f32, body: f32) -> f32 {
-    (ceiling.max(0.0) / body).floor() + 1.0
+/// # ⛔ A CREW IS SIZED ON THE RATE, NOT ON THE WHOLE ANIMAL THE ROOM TIPS OVER
+///
+/// This was `floor(target / body) + 1` - enough hands to put a WHOLE animal on the ground in one
+/// turn. The take does not work that way: a sub-body reach carries between turns on the wound ledger
+/// ([`crate::combat::DamageLedger`]), the retreat keeps the part body in closed form, and a source
+/// that cannot spare a whole animal pauses and accumulates. So a target of a third of an animal a
+/// turn takes a crew that averages a third of an animal a turn, and the whole-animal crew was three
+/// times too big: eleven hunters on an aurochs herd whose regrowth is one animal every three turns
+/// (`docs/plan_labor_at_scale.md`). [`project_realized_hunt`] and [`hunt_crew_take_curve`] already
+/// read the take as a rate; this makes the crew terms read it the same way.
+///
+/// `body` is assumed finite-positive - every caller checks it first.
+fn animals_a_turn(target: f32, body: f32) -> f32 {
+    target.max(0.0) / body
 }
+
+/// **ONE HUNTER IS THE LEAST A LIVE SOURCE ASKS FOR** - a crew term never reads `0` for a source
+/// that can be worked, however small its target (a source at its floor still wants a hand).
+const AT_LEAST_ONE_HUNTER: f32 = 1.0;
 
 /// **The ENGAGEMENT crew for a whole-animal (hunt) source** — how many hunters it takes to put the
 /// ceiling's peak animal drop *on the ground* in one turn, the third unit in `workers_needed`'s
@@ -10171,7 +10195,59 @@ pub fn hunt_engage_workers(ceiling: f32, body: f32, engage_rate: f32, stay: f32)
         // crew size. Either way this term has nothing to say and the `max()` keeps the others.
         return 0;
     }
-    (peak_animal_drop(ceiling, body) / brought_down).ceil() as u32
+    (animals_a_turn(ceiling, body) / brought_down)
+        .ceil()
+        .max(AT_LEAST_ONE_HUNTER) as u32
+}
+
+/// **HOW FAST ONE HUNTER'S WEAPON TAKES A QUARRY DOWN** - the fight stage as a crew term.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum FightRate {
+    /// The quarry stages no fight (a pen slaughters), so the fight asks for no hands.
+    NoFight,
+    /// Bodies one hunter brings down a turn: `(attack - defense) x lethality x hit_chance /
+    /// durability`, the damage that banks between turns on the wound ledger.
+    BodiesPerHunter(f32),
+    /// The party's best hunter cannot wound the quarry: no headcount of it takes anything.
+    CannotWound,
+}
+
+impl FightRate {
+    /// The fight `party` stages against `quarry` (`None` = [`herd_fight_stage`]'s pen answer).
+    pub fn of(party: &HuntingParty, quarry: Option<&QuarryFight>) -> FightRate {
+        let Some(quarry) = quarry else {
+            return FightRate::NoFight;
+        };
+        let Some(crew) = party.crews.first() else {
+            return FightRate::CannotWound;
+        };
+        let tuning = &party.tuning;
+        let bodies_per_hunter =
+            crate::combat::strike_damage(crew.hunter.attack, quarry.profile.defense)
+                * tuning.lethality
+                * tuning.hit_chance
+                / quarry.profile.durability;
+        if bodies_per_hunter.is_finite() && bodies_per_hunter > NO_HANDS {
+            FightRate::BodiesPerHunter(bodies_per_hunter)
+        } else {
+            FightRate::CannotWound
+        }
+    }
+}
+
+/// **THE HANDS THE FIGHT NEEDS TO BRING DOWN `target` OF MEAT A TURN** - `ceil(animals a turn /
+/// bodies per hunter)`. `Some(0)` where the quarry stages no fight, `None` where the party cannot
+/// wound it.
+pub fn hunt_fight_workers(target: f32, body: f32, fight: FightRate) -> Option<u32> {
+    match fight {
+        FightRate::NoFight => Some(0),
+        FightRate::CannotWound => None,
+        FightRate::BodiesPerHunter(rate) => Some(
+            (animals_a_turn(target, body) / rate)
+                .ceil()
+                .max(AT_LEAST_ONE_HUNTER) as u32,
+        ),
+    }
 }
 
 /// **A STAFFING PLAN, NOT THIS TURN'S NEED** — the carriers in this crew cover the turns the herd is
@@ -10198,13 +10274,11 @@ pub fn hunt_take_workers(
     per_worker: f32,
     engage_rate: f32,
     stay: f32,
+    fight: FightRate,
 ) -> u32 {
-    hunt_haul_workers(ceiling, body, per_worker).max(hunt_engage_workers(
-        ceiling,
-        body,
-        engage_rate,
-        stay,
-    ))
+    hunt_haul_workers(ceiling, body, per_worker)
+        .max(hunt_engage_workers(ceiling, body, engage_rate, stay))
+        .max(hunt_fight_workers(ceiling, body, fight).unwrap_or(NO_CREW_ON_THIS_ACTIVITY))
 }
 
 /// **THE ROW'S OWN ROOM ON THE MEAT SIDE AT `floor`** — the pen's take room on a penned herd, the
@@ -10232,31 +10306,19 @@ pub fn hunt_useful_take_hands(
     equipped_party: &HuntingParty,
 ) -> f32 {
     let room = hunt_crew_room(herd, fauna, floor);
+    let fight = FightRate::of(equipped_party, herd_fight_stage(herd, fauna).as_ref());
     let carry_and_reach = hunt_take_workers(
         room,
         herd.body_mass,
         herd_carry_rate(herd, fauna, equipped_haul),
         herd_engage_rate(herd, fauna, equipped_party.drives_known),
         equipped_party.stay_fraction(herd_wariness(herd, fauna)),
+        FightRate::NoFight,
     );
-    let Some(quarry) = herd_fight_stage(herd, fauna) else {
-        return carry_and_reach as f32;
-    };
-    let Some(hunter) = equipped_party.crews.first().map(|crew| crew.hunter) else {
-        return crate::equipment_config::NO_CLAIMING_HANDS;
-    };
-    let tuning = &equipped_party.tuning;
-    let bodies_per_hunter = crate::combat::strike_damage(hunter.attack, quarry.profile.defense)
-        * tuning.lethality
-        * tuning.hit_chance
-        / quarry.profile.durability;
-    if !bodies_per_hunter.is_finite()
-        || bodies_per_hunter <= crate::equipment_config::NO_CLAIMING_HANDS
-    {
-        return crate::equipment_config::NO_CLAIMING_HANDS;
+    match hunt_fight_workers(room, herd.body_mass, fight) {
+        Some(fight_hands) => carry_and_reach.max(fight_hands) as f32,
+        None => crate::equipment_config::NO_CLAIMING_HANDS,
     }
-    let fight = (peak_animal_drop(room, herd.body_mass) / bodies_per_hunter).ceil() as u32;
-    carry_and_reach.max(fight) as f32
 }
 
 /// ⛔ **A HUNT ROW'S TAKE CREW, CREW-INDEPENDENT** (`docs/plan_site_crews.md` §4) — the haul half
@@ -10265,6 +10327,42 @@ pub fn hunt_useful_take_hands(
 /// are counted at the bare carry rather than diluting the carry of every hand; and the reach half
 /// ([`hunt_engage_workers`]) at the party's own retreat. `room` is the row's room on the meat side
 /// ([`hunt_crew_room`]), read before the take draws it down.
+///
+/// ⛔ **THIS IS THE ONE CREW FUNCTION** for a hunt row: the staffing passes ask it for the hold,
+/// reach and useful targets, the labor arm and the assign-time seed ask it for `workers_needed`, and
+/// the kit claim reads its twin [`hunt_useful_take_hands`]. All of them size the crew on the take as
+/// the sim resolves it - a RATE ([`animals_a_turn`]) through the haul, the reach and the fight - so
+/// the hold crew, the useful crew and `workers_needed` cannot name different crews for one target.
+/// `party` supplies the retreat (`stay`) and the fight; `None` where it cannot wound the quarry.
+#[allow(clippy::too_many_arguments)] // the crew's inputs: target, room, herd, coverage and its rates
+pub fn hunt_crew_for_take(
+    target: f32,
+    room: f32,
+    herd: &Herd,
+    fauna: &FaunaConfig,
+    coverage: &crate::equipment_config::KitCoverage,
+    carry_per_worker: impl Fn(&crate::equipment_config::KitChoice) -> f32,
+    bare_carry: f32,
+    party: &HuntingParty,
+    drives_known: bool,
+) -> Option<u32> {
+    let (reach_and_haul, fight) = hunt_crew_terms(
+        target,
+        room,
+        herd,
+        fauna,
+        coverage,
+        carry_per_worker,
+        bare_carry,
+        party,
+        drives_known,
+    );
+    fight.map(|fight| reach_and_haul.max(fight))
+}
+
+/// [`hunt_crew_for_take`] for a row's `workers_needed`, whose target is the whole `room`: a party
+/// that cannot wound the quarry reads the haul and reach it would need, since the row has no use for
+/// `None`.
 #[allow(clippy::too_many_arguments)] // the crew's inputs: room, herd, coverage and its rates
 pub fn hunt_crew_needed(
     room: f32,
@@ -10273,26 +10371,69 @@ pub fn hunt_crew_needed(
     coverage: &crate::equipment_config::KitCoverage,
     carry_per_worker: impl Fn(&crate::equipment_config::KitChoice) -> f32,
     bare_carry: f32,
-    stay: f32,
+    party: &HuntingParty,
     drives_known: bool,
 ) -> u32 {
+    let (reach_and_haul, fight) = hunt_crew_terms(
+        room,
+        room,
+        herd,
+        fauna,
+        coverage,
+        carry_per_worker,
+        bare_carry,
+        party,
+        drives_known,
+    );
+    reach_and_haul.max(fight.unwrap_or(NO_CREW_ON_THIS_ACTIVITY))
+}
+
+/// The crew's terms: `(max(haul, reach), fight)`, the fight `None` where the party cannot wound.
+///
+/// # The target is capped at what the take can reach: `room x stay`
+///
+/// The engagement is clamped to the room BEFORE the retreat, so the most a take ever lands is the
+/// room's animals times the share that stand ([`HuntingParty::stay_fraction`]): a wary herd keeps
+/// the rest. Asking a crew for the whole room is asking for a take no crew makes, and the curve's
+/// plateau ([`hunt_useful_crew`]) is the crew that reaches `room x stay`. The cap is applied here,
+/// once, so the staffing, `workers_needed` and the plateau name one crew.
+#[allow(clippy::too_many_arguments)] // the crew's inputs: target, room, herd, coverage and its rates
+fn hunt_crew_terms(
+    target: f32,
+    room: f32,
+    herd: &Herd,
+    fauna: &FaunaConfig,
+    coverage: &crate::equipment_config::KitCoverage,
+    carry_per_worker: impl Fn(&crate::equipment_config::KitChoice) -> f32,
+    bare_carry: f32,
+    party: &HuntingParty,
+    drives_known: bool,
+) -> (u32, Option<u32>) {
     let body = herd.body_mass;
     if !body.is_finite() || body <= 0.0 {
-        return NO_CREW_ON_THIS_ACTIVITY;
+        return (NO_CREW_ON_THIS_ACTIVITY, Some(NO_CREW_ON_THIS_ACTIVITY));
     }
+    let stay = party.stay_fraction(herd_wariness(herd, fauna));
+    let target = target.min(room.max(0.0) * stay);
     let haul = coverage
         .hands_to_reach(
-            peak_animal_drop(room, body) * body,
+            target.max(0.0),
             |kit| herd_carry_rate(herd, fauna, carry_per_worker(kit)),
             herd_carry_rate(herd, fauna, bare_carry),
         )
         .ceil() as u32;
-    haul.max(hunt_engage_workers(
-        room,
+    let reach = hunt_engage_workers(
+        target,
         body,
         herd_engage_rate(herd, fauna, drives_known),
         stay,
-    ))
+    );
+    let fight = hunt_fight_workers(
+        target,
+        body,
+        FightRate::of(party, herd_fight_stage(herd, fauna).as_ref()),
+    );
+    (haul.max(reach), fight)
 }
 
 /// **RETIRED: `hunt_provisions(biomass, &FaunaConfig, mult)`** — the single global biomass→provisions
@@ -12362,6 +12503,11 @@ fn is_land_tile(position: UVec2, registry: &TileRegistry, tiles: &Query<&Tile>) 
 
 #[cfg(test)]
 mod tests {
+    /// The crew terms' target in animals a turn (the rate the crew is sized on).
+    fn peak_animal_drop(ceiling: f32, body: f32) -> f32 {
+        animals_a_turn(ceiling, body)
+    }
+
     use super::*;
     use crate::fauna_config::ShoreRequirement;
     use crate::ladder_ids::shipped;
@@ -13453,7 +13599,14 @@ mod tests {
                     "an unstalked source owes no engagement crew (stay {stay})"
                 );
                 assert_eq!(
-                    hunt_take_workers(ROOMY_CEILING, LIGHT_BODY, HUNTER_CARRY, f32::INFINITY, stay),
+                    hunt_take_workers(
+                        ROOMY_CEILING,
+                        LIGHT_BODY,
+                        HUNTER_CARRY,
+                        f32::INFINITY,
+                        stay,
+                        FightRate::NoFight
+                    ),
                     haul,
                     "…so the take crew is the haul crew, unchanged (stay {stay})"
                 );
@@ -13475,6 +13628,7 @@ mod tests {
             HUNTER_CARRY,
             SLOW_REACH,
             NOTHING_BREAKS_OFF,
+            FightRate::NoFight,
         );
         let reach_haul = hunt_haul_workers(ROOMY_CEILING, LIGHT_BODY, HUNTER_CARRY);
         assert!(
@@ -13492,6 +13646,7 @@ mod tests {
             HUNTER_CARRY,
             FAST_REACH,
             NOTHING_BREAKS_OFF,
+            FightRate::NoFight,
         );
         let carry_haul = hunt_haul_workers(ROOMY_CEILING, HEAVY_BODY, HUNTER_CARRY);
         let carry_reach =
@@ -13534,19 +13689,19 @@ mod tests {
     /// demonstrably leaves the herd short.
     #[test]
     fn a_wary_boar_herd_needs_the_hands_the_retreat_costs() {
-        const PEAK_DROP: f32 = 28.0;
-        const RETREAT_AWARE_CREW: u32 = 38;
-        const RAW_REACH_CREW: u32 = 28;
+        const PEAK_DROP: f32 = 27.0;
+        const RETREAT_AWARE_CREW: u32 = 36;
+        const RAW_REACH_CREW: u32 = 27;
 
         assert_eq!(
             peak_animal_drop(BOAR_ROOM, BOAR_BODY),
             PEAK_DROP,
-            "the fixture's room must be the 28-animal drop the numbers below are derived from"
+            "the fixture's room must be the 27-animal rate the numbers below are derived from"
         );
         let crew = hunt_engage_workers(BOAR_ROOM, BOAR_BODY, BOAR_ENGAGE_RATE, BOAR_STAY);
         assert_eq!(
             crew, RETREAT_AWARE_CREW,
-            "28 boar at 0.75 down per hunter is {RETREAT_AWARE_CREW} hands, not {crew}"
+            "27 boar at 0.75 down per hunter is {RETREAT_AWARE_CREW} hands, not {crew}"
         );
         assert_eq!(
             hunt_engage_workers(BOAR_ROOM, BOAR_BODY, BOAR_ENGAGE_RATE, NOTHING_BREAKS_OFF,),
@@ -13811,6 +13966,7 @@ mod tests {
                 HUNTER_CARRY,
                 EASY_ENGAGE_RATE,
                 NOTHING_STANDS,
+                FightRate::NoFight,
             ),
             hunt_haul_workers(ROOMY_CEILING, LIGHT_BODY, HUNTER_CARRY),
             "the take crew collapses to the haul term, it does not collapse to zero"

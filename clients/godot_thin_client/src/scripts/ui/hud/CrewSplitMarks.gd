@@ -1,20 +1,19 @@
 class_name CrewSplitMarks
 extends Control
 
-## **ONE SMALL SQUARE PER WORKER** — how a site's crew divides between tending it and taking from it.
+## **ONE SMALL SQUARE PER WORKER THE SIM STAFFED** (#871) — how a staffed row's crew divides into
+## keepers (the site's keeping hands), hands holding a whole kit, and bare hands.
 ##
-## The tending share fills from the left in a muted earth, the takers are bright, and a person split
-## between the two is one square shaded in part (the tending fraction from the left). It is drawn, not
-## glyphs, so a part-person reads as a fraction rather than as a third kind of mark.
+## The keepers fill from the left in a muted earth, then the kitted hands in the bright green, then the
+## bare hands in a quieter green. It is drawn, not glyphs, so the three read as a bar of colour.
 ##
-## **IT DRAWS; IT DOES NOT MODEL.** The tending figure is the sim's — the row's own `keep_hands` on a
-## Work-tab row, the crew curve row's `keep_hands` on a compose sheet — and the caller hands it in.
-## ⛔ Never the site's `upkeep_hands`: that sums every band keeping the site, so it is no row's figure. Whether a row
-## carries marks at all is `HudWorkVocab.crew_split_shown`, and the words on its hover are
-## `HudWorkVocab.crew_split_words`, so the picture and the sentence are about one figure.
+## **IT DRAWS; IT DOES NOT MODEL.** The three counts are the sim's — the row's own `keepers_staffed` /
+## `kitted_staffed` / `bare_staffed` on a Work-tab row or a working source's sheet, the client's
+## forecast crew on a source nobody works yet — and the caller hands them in. The words on its hover are
+## `HudWorkVocab.crew_bar_words`, so the picture and the sentence are about one set of figures.
 ##
-## **INFORMATION, NOT AN ALERT**: no warning ink and no ⚠. The two colours are `HudStyle.CREW_TEND` /
-## `CREW_TAKE`, derived from the palette's own earth and green.
+## **INFORMATION, NOT AN ALERT**: no warning ink and no ⚠. The colours are `HudStyle.CREW_TEND` /
+## `CREW_KITTED` / `CREW_BARE`, derived from the palette's own earth and green.
 ##
 ## **A WIDE CREW NEVER WIDENS ITS ROW.** The control claims only one mark plus a `+N` as its minimum
 ## width and fits the rest at draw time against the width it was actually given: first the marks
@@ -24,8 +23,9 @@ extends Control
 ## **REACHABLE BY HOVER AND BY KEYBOARD.** The hover is the native tooltip; a keyboard focus floats the
 ## same sentence in a small card under the marks, because Godot shows no tooltip on focus.
 
-var _crew := 0
-var _keep := 0.0
+var _keepers := 0
+var _kitted := 0
+var _bare := 0
 var _mark_size := HudWorkVocab.CREW_SPLIT_MARK_SIZE
 var _gap := HudWorkVocab.CREW_SPLIT_MARK_GAP
 var _radius := HudWorkVocab.CREW_SPLIT_MARK_RADIUS
@@ -33,26 +33,31 @@ var _align_end := true
 var _words := ""
 var _focus_card: PanelContainer = null
 
-## Build the marks for a crew of `crew` of whom `keep_hands` tend. `sheet` takes the compose sheet's
-## larger squares and aligns them to the start; a Work-tab row aligns them under its stepper.
-static func build(crew: int, keep_hands: float, labor_kind: String, sheet: bool) -> CrewSplitMarks:
+## Build the bar for a crew of `keepers + kitted + bare`. `kit_names` is the kit's on-screen item words
+## (`baskets`), `hold_crew` the wire's hands-to-hold figure (`0` = none). `sheet` takes the compose
+## sheet's larger squares and aligns them to the start; a Work-tab row aligns them under its number.
+static func build(keepers: int, kitted: int, bare: int, kit_names: String, hold_crew: int,
+        sheet: bool) -> CrewSplitMarks:
     var marks := CrewSplitMarks.new()
-    marks.setup(crew, keep_hands, labor_kind, sheet)
+    marks.setup(keepers, kitted, bare, kit_names, hold_crew, sheet)
     return marks
 
-func setup(crew: int, keep_hands: float, labor_kind: String, sheet: bool) -> void:
-    _crew = maxi(crew, 0)
-    _keep = maxf(keep_hands, 0.0)
+func setup(keepers: int, kitted: int, bare: int, kit_names: String, hold_crew: int,
+        sheet: bool) -> void:
+    _keepers = maxi(keepers, 0)
+    _kitted = maxi(kitted, 0)
+    _bare = maxi(bare, 0)
     if sheet:
         _mark_size = HudWorkVocab.CREW_SPLIT_SHEET_MARK_SIZE
         _gap = HudWorkVocab.CREW_SPLIT_SHEET_MARK_GAP
         _radius = HudWorkVocab.CREW_SPLIT_SHEET_MARK_RADIUS
     _align_end = not sheet
-    _words = HudWorkVocab.crew_split_words(_crew, keep_hands, labor_kind)
+    _words = HudWorkVocab.crew_bar_words(_keepers, _kitted, _bare, kit_names, hold_crew)
     tooltip_text = _words
     if "accessibility_description" in self:
         set("accessibility_description", _words)
-    set_meta(HudWorkVocab.CREW_SPLIT_META, {"crew": _crew, "keep": keep_hands})
+    set_meta(HudWorkVocab.CREW_SPLIT_META,
+        {"keepers": _keepers, "kitted": _kitted, "bare": _bare})
     # PASS, so the row's own click still reaches the row and the tooltip still shows.
     mouse_filter = Control.MOUSE_FILTER_PASS
     focus_mode = Control.FOCUS_ALL
@@ -69,16 +74,22 @@ func words() -> String:
 
 ## How many workers this control was handed.
 func crew() -> int:
-    return _crew
+    return _keepers + _kitted + _bare
 
-## The tending share it draws, capped at the crew.
-func keep_hands() -> float:
-    return _keep
+## The three segments it draws.
+func keepers() -> int:
+    return _keepers
+
+func kitted() -> int:
+    return _kitted
+
+func bare() -> int:
+    return _bare
 
 ## **THE LAYOUT IT WOULD DRAW AT `width`** — `{size, gap, drawn, overflow}`. Pure, so a harness can
 ## ask the overflow question of the same arithmetic the draw uses.
 func layout_for(width: float) -> Dictionary:
-    var n := _crew
+    var n := crew()
     var mark := _mark_size
     var gap := _gap
     if n <= 0:
@@ -110,8 +121,8 @@ func _overflow_width(count: int) -> float:
 
 ## The legibility floor: the whole crew where it is small, else one floor-sized mark and its count.
 func _min_width() -> float:
-    var full := _row_width(_crew, _mark_size, _gap)
-    var floored := HudWorkVocab.CREW_SPLIT_MARK_SIZE_FLOOR + _gap + _overflow_width(_crew)
+    var full := _row_width(crew(), _mark_size, _gap)
+    var floored := HudWorkVocab.CREW_SPLIT_MARK_SIZE_FLOOR + _gap + _overflow_width(crew())
     return minf(full, floored)
 
 func _draw() -> void:
@@ -128,7 +139,7 @@ func _draw() -> void:
     var x := size.x - total if _align_end else 0.0
     var y := (size.y - mark) * 0.5
     for i in drawn:
-        _draw_mark(Rect2(x, y, mark, mark), clampf(_keep - float(i), 0.0, 1.0))
+        _draw_mark(Rect2(x, y, mark, mark), _segment_of(i))
         x += mark + gap
     if overflow > 0:
         var font := get_theme_default_font()
@@ -145,23 +156,37 @@ func _draw() -> void:
         ring.set_corner_radius_all(_radius)
         ring.draw(get_canvas_item(), Rect2(Vector2.ZERO, size))
 
-## One mark: `tend` of it (0..1) is the tending share, filled from the left.
-func _draw_mark(rect: Rect2, tend: float) -> void:
+## Which segment the i-th mark belongs to: keepers first, then the kitted hands, then the bare ones.
+func _segment_of(i: int) -> int:
+    if i < _keepers:
+        return SEGMENT_KEEPER
+    if i < _keepers + _kitted:
+        return SEGMENT_KITTED
+    return SEGMENT_BARE
+
+const SEGMENT_KEEPER := 0
+const SEGMENT_KITTED := 1
+const SEGMENT_BARE := 2
+
+## One mark, filled and outlined in its segment's colours.
+func _draw_mark(rect: Rect2, segment: int) -> void:
     var radius := int(round(float(_radius) * rect.size.x / _mark_size))
+    var fill := HudStyle.CREW_TEND
+    var line := HudStyle.CREW_TEND_LINE
+    if segment == SEGMENT_KITTED:
+        fill = HudStyle.CREW_KITTED
+        line = HudStyle.CREW_KITTED_LINE
+    elif segment == SEGMENT_BARE:
+        fill = HudStyle.CREW_BARE
+        line = HudStyle.CREW_BARE_LINE
     var base := StyleBoxFlat.new()
-    base.bg_color = HudStyle.CREW_TEND if tend >= 1.0 else HudStyle.CREW_TAKE
+    base.bg_color = fill
     base.set_corner_radius_all(radius)
     base.draw(get_canvas_item(), rect)
-    if tend > 0.0 and tend < 1.0:
-        var part := StyleBoxFlat.new()
-        part.bg_color = HudStyle.CREW_TEND
-        part.corner_radius_top_left = radius
-        part.corner_radius_bottom_left = radius
-        part.draw(get_canvas_item(), Rect2(rect.position, Vector2(rect.size.x * tend, rect.size.y)))
     var edge := StyleBoxFlat.new()
     edge.draw_center = false
     edge.set_border_width_all(HudWorkVocab.CREW_SPLIT_MARK_BORDER)
-    edge.border_color = HudStyle.CREW_TEND_LINE if tend > 0.0 else HudStyle.CREW_TAKE_LINE
+    edge.border_color = line
     edge.set_corner_radius_all(radius)
     edge.draw(get_canvas_item(), rect)
 

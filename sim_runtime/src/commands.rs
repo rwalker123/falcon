@@ -315,6 +315,20 @@ pub enum CommandPayload {
         /// branch's road) rather than the tile's patch.
         branch: Option<String>,
     },
+    /// **Stop a staffed row** (#871) - remove the band's row for one source (a patch, a herd, a
+    /// working, a tile improvement), or its Roadwork pool when `roadwork` is set. The verb that
+    /// ends a row now that `assign_labor`'s count is the player's Max and `0` means no Max.
+    /// Addressed exactly as [`CommandPayload::WorkPriority`] is.
+    StopLabor {
+        faction_id: u32,
+        band_id: u64,
+        target_x: Option<u32>,
+        target_y: Option<u32>,
+        herd_id: Option<String>,
+        material: Option<String>,
+        branch: Option<String>,
+        roadwork: bool,
+    },
     /// **Mark one QUEUED BUILD with the player's own Build mark** (`docs/plan_site_crews.md` §2.4) —
     /// `"high"`, `"normal"` or `"low"` on the named band's queue entry for this source. The
     /// builders' tool claim and the build's material claim rank at the head entry's mark; the site
@@ -2154,6 +2168,25 @@ impl CommandEnvelope {
                 material: material.clone(),
                 branch: branch.clone(),
             }),
+            CommandPayload::StopLabor {
+                faction_id,
+                band_id,
+                target_x,
+                target_y,
+                herd_id,
+                material,
+                branch,
+                roadwork,
+            } => pb::command_envelope::Command::StopLabor(pb::StopLaborCommand {
+                faction_id: *faction_id,
+                band_id: *band_id,
+                target_x: *target_x,
+                target_y: *target_y,
+                herd_id: herd_id.clone(),
+                material: material.clone(),
+                branch: branch.clone(),
+                roadwork: *roadwork,
+            }),
             CommandPayload::BuildPriority {
                 faction_id,
                 band_id,
@@ -2917,6 +2950,16 @@ impl CommandEnvelope {
                 level: cmd.level,
                 material: cmd.material,
                 branch: cmd.branch,
+            },
+            pb::command_envelope::Command::StopLabor(cmd) => CommandPayload::StopLabor {
+                faction_id: cmd.faction_id,
+                band_id: cmd.band_id,
+                target_x: cmd.target_x,
+                target_y: cmd.target_y,
+                herd_id: cmd.herd_id,
+                material: cmd.material,
+                branch: cmd.branch,
+                roadwork: cmd.roadwork,
             },
             pb::command_envelope::Command::BuildPriority(cmd) => CommandPayload::BuildPriority {
                 faction_id: cmd.faction_id,
@@ -3870,6 +3913,73 @@ mod tests {
                 herd_id: None,
                 material: Some("wood".to_string()),
                 branch: None,
+            },
+        ] {
+            let envelope = CommandEnvelope {
+                payload: payload.clone(),
+                correlation_id: None,
+            };
+            let bytes = envelope.encode_to_vec().expect("encode");
+            let decoded = CommandEnvelope::decode(&bytes).expect("decode");
+            assert_eq!(decoded.payload, payload);
+        }
+    }
+
+    /// **`stop_labor` survives the envelope in every source shape it addresses** (#871) - a tile, a
+    /// herd, a working, a tile improvement and the Roadwork pool, each field a distinct value so a
+    /// transposition cannot pass.
+    #[test]
+    fn stop_labor_round_trips_through_the_envelope() {
+        for payload in [
+            CommandPayload::StopLabor {
+                faction_id: 1,
+                band_id: 7,
+                target_x: Some(4),
+                target_y: Some(9),
+                herd_id: None,
+                material: None,
+                branch: None,
+                roadwork: false,
+            },
+            CommandPayload::StopLabor {
+                faction_id: 2,
+                band_id: 8,
+                target_x: None,
+                target_y: None,
+                herd_id: Some("game_deer_3".to_string()),
+                material: None,
+                branch: None,
+                roadwork: false,
+            },
+            CommandPayload::StopLabor {
+                faction_id: 3,
+                band_id: 9,
+                target_x: Some(5),
+                target_y: Some(11),
+                herd_id: None,
+                material: Some("wood".to_string()),
+                branch: None,
+                roadwork: false,
+            },
+            CommandPayload::StopLabor {
+                faction_id: 4,
+                band_id: 10,
+                target_x: Some(6),
+                target_y: Some(13),
+                herd_id: None,
+                material: None,
+                branch: Some("plant".to_string()),
+                roadwork: false,
+            },
+            CommandPayload::StopLabor {
+                faction_id: 5,
+                band_id: 11,
+                target_x: None,
+                target_y: None,
+                herd_id: None,
+                material: None,
+                branch: None,
+                roadwork: true,
             },
         ] {
             let envelope = CommandEnvelope {

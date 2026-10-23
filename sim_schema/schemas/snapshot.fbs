@@ -1791,6 +1791,14 @@ table BandLoadoutWindowState {
   // splinter, whose food yields to its goods. `foodShare == foodCarried` is not a safe test - a
   // splinter whose goods leave room for its whole share carries all of it.
   foodFixed:bool = false;
+  // THE OUTFIT THE BAND'S WORK WANTS (appended last): for each kit the staffed rows would put to
+  // use, how many whole kits the band needs for those rows to be fully equipped. Derived by running
+  // the sim's own staffing passes over the band's real rows, pool, Maxes, floors and priorities
+  // against an UNLIMITED shelf, so it does not move as the player picks an outfit - only as the
+  // work changes. `count` is in the unit `set_starting_loadout` orders in (kits, which expand to
+  // items). Ordered High to Low priority, then by the nearest wanting row's distance from camp,
+  // then by kit id. Empty while no staffed row wants a kit, and on a closed window.
+  workKitWants:[WorkKitWant];
 }
 
 // One cap row: how many units of `id` this take may claim. `id` is an `equipment.json` item id on
@@ -1984,6 +1992,15 @@ enum SourcePriority : ubyte {
   Normal = 0,
   High = 1,
   Low = 2,
+}
+
+// One kit the band's work wants: `kit` is the equipment.json kit id the picker orders in, `count`
+// the whole kits the rows using it would arm in the unlimited-shelf run, `priority` the highest
+// rank among those rows (the same wire enum a labor row carries).
+table WorkKitWant {
+  kit:string;
+  count:uint = 0;
+  priority:SourcePriority;
 }
 
 table LaborAssignment {
@@ -2255,7 +2272,7 @@ table LaborAssignment {
   // `Normal` on every row that has never been marked, and on every band-wide role (scout, warrior,
   // agriculture, husbandry, builders): a role is not a worked source and has no rank to state.
   // Captured live from the allocation, like the other intent fields. Appended last (append-only).
-  priority:SourcePriority = Normal;
+  priority:SourcePriority;
 
   // --- THE WORK ROW'S PER-GOOD SHORTFALL (appended last) ----------------------------------------
   // WHAT THIS ROW'S SOURCE WAS BILLED IN GOODS, AND WHAT THE STORE PAID - the good-side twin of the
@@ -2481,6 +2498,40 @@ table LaborAssignment {
   // so (targetX, targetY, branch) is what joins this row to its `TileImprovementState`. "" on every
   // other row. A tile row has no floor, species or material; its crew is the improvement's keeper.
   branch:string;
+  // --- THE SIM STAFFS THE ROW FROM THE PLAYER'S FLOOR (appended last; #871) ----------------------
+  // docs/plan_labor_at_scale.md. A forage, hunt (non-need), extract, tile or roadwork row's `workers`
+  // is the SIM's answer now, struck by three passes (hold-kitted + keepers, reach-kitted, bare where
+  // it helps). The player states a MAX; the sim fills the row up to it.
+  //
+  // The player's Max on this row. 0 = no Max (the sim staffs as many as help). Always 0 on a
+  // need row, a scout, a warrior and the builders, whose count is still the player's crew.
+  maxWorkers:uint = 0;
+  // Hands needed to HOLD the source at the player's floor (regrowth at the floor over one hand's
+  // take). 0 where nothing regrows or the row is not staffed by the passes.
+  holdCrew:uint = 0;
+  // Hands needed to REACH the floor (peak regrowth between the floor and the stock, plus one).
+  // 0 where the stock is at or under the floor, or the row is not staffed by the passes.
+  reachCrew:uint = 0;
+  // Of `workers`: keepers (the site's keeping hands), kitted hands (each holding a whole kit) and
+  // bare hands. keepersStaffed + kittedStaffed + bareStaffed == workers on a staffed row, so the
+  // work-strip can draw three segments with no client arithmetic.
+  keepersStaffed:uint = 0;
+  kittedStaffed:uint = 0;
+  bareStaffed:uint = 0;
+  // The crew past which the take stops rising (the room above the floor, clear-it-now), keepers
+  // included, after the Max: the ceiling pass 3 staffs a row up to. 0 where the row is not staffed.
+  usefulCrew:uint = 0;
+  // *** THE LOAD WAITING AT THE SOURCE (extract rows). *** loadUnits: units of the row's material in
+  // the work party's load, cut and not yet sent home (a porter leaves only with a full pack).
+  // packUnits: the units of that material one pack carries (the haul carry over the material's
+  // weight); 0 on a row with no party. Both 0 off an extract row.
+  loadUnits:float = 0;
+  packUnits:float = 0;
+  // Turns until the next landing at home, the wait for a pack to fill included: from a stepped
+  // forecast of the party, so it is the turn the soonest pack lands whether it is on the road or
+  // still filling. 0 = no landing within the forecast horizon (a part load with no take, or no
+  // party). Unlike nextLoadHomeIn, which counts only a pack already on the road.
+  loadHomeIn:uint = 0;
 }
 
 // One commodity entry in a band's local goods store (fixed-point quantity, `Scalar::SCALE` = 1.0).
@@ -5073,7 +5124,7 @@ table BenchState {
   //
   // Captured LIVE off the bench, exactly as `LaborAssignment.priority` is, so an edit lands on the
   // command's own recapture and no optimistic overlay is needed. Appended last (append-only).
-  priority:SourcePriority = Normal;
+  priority:SourcePriority;
   // --- THE QUEUE (appended last) -----------------------------------------------------------------
   // Every order on the bench, HEAD FIRST. Empty on an idle bench. An order's index here is the
   // `order` the queue verbs (`bench_order_count`, `bench_remove`, `bench_raise`) address.

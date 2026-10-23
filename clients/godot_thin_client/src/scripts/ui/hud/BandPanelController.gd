@@ -102,6 +102,10 @@ signal build_order_requested(payload: Dictionary)
 # It carries no `pending_entity`: the mark is captured LIVE off the allocation, so it arrives on this
 # command's own recapture and there is no optimistic copy to roll back (§4.9 item 9a's rule).
 signal work_priority_requested(payload: Dictionary)
+## A staffed row was STOPPED (#871) - the inspector's `Unassign`. Relayed to HudLayer.stop_labor_requested
+## and formatted by `Main.format_stop_labor`; payload `{ faction, band_id, x, y, herd_id, material,
+## branch, roadwork }`. No optimistic copy: the next snapshot carries the row's absence.
+signal stop_labor_requested(payload: Dictionary)
 ## A QUEUED build's own mark, cycled from its site's work row (`docs/plan_site_crews.md` §2.4) — the
 ## `Build` pill. Payload `{ faction, band_id, x, y, herd_id, level }`; `Main.format_build_priority`
 ## renders it. No optimistic write: `BuildQueueEntryState.buildPriority` is captured live.
@@ -1505,15 +1509,18 @@ func _build_roles_block(band: Dictionary) -> VBoxContainer:
     # row gives each card ~82px, which clips the kit face and the role name alike. The pairing is
     # the split the roles already have — the two EXPEDITIONARY roles above, the two KEEPING roles
     # below — so the second row reads as its own family rather than as an overflow of the first.
+    # A role card's `+` gates on the hands the player can still ORDER, not on the idle count (sim-staffed
+    # crews never block a player-set one — `HudBandLaborState.orderable_hands`).
+    var orderable := _band_labor.orderable_hands(band)
     var scout_row := _build_role_card_row()
-    scout_row.add_child(_build_role_card(band, HudWorkVocab.ROLE_NAME_SCOUT, HudWorkVocab.SCOUT_ROLE_HINT, HudConst.LABOR_KIND_SCOUT, scout_eff, idle))
+    scout_row.add_child(_build_role_card(band, HudWorkVocab.ROLE_NAME_SCOUT, HudWorkVocab.SCOUT_ROLE_HINT, HudConst.LABOR_KIND_SCOUT, scout_eff, orderable))
     # A visible predator within raid range turns the Warrior card's static hint into a live crimson
     # alert naming the on-guard count — the guarding role is only legible when the threat it answers is.
     var warrior_threat := _band_predator_threat_present(band)
     var warrior_hint := HudWorkVocab.WARRIOR_ROLE_HINT
     if warrior_threat:
         warrior_hint = HudWorkVocab.WARRIOR_THREAT_ALERT_FORMAT % int(warrior_eff.get("workers", 0))
-    scout_row.add_child(_build_role_card(band, HudWorkVocab.ROLE_NAME_WARRIOR, warrior_hint, HudConst.LABOR_KIND_WARRIOR, warrior_eff, idle, warrior_threat))
+    scout_row.add_child(_build_role_card(band, HudWorkVocab.ROLE_NAME_WARRIOR, warrior_hint, HudConst.LABOR_KIND_WARRIOR, warrior_eff, orderable, warrior_threat))
     block.add_child(scout_row)
     return block
 
@@ -1933,7 +1940,7 @@ func _role_build_target(band: Dictionary, kind: String) -> Dictionary:
 ## second opinion about which entry is at the head, and the header names the kit the block's own top
 ## row is being raised with.
 func _pending_head_build_target(band: Dictionary) -> Dictionary:
-    var queued := _build_queue_models(band, _work_source_models(band, 0))
+    var queued := _build_queue_models(band, _work_source_models(band))
     if queued.is_empty():
         return {BUILD_TARGET_BRANCH_KEY: KitRoster.BUILD_BRANCH_NONE,
             BUILD_TARGET_RUNG_KEY: KitRoster.BUILD_RUNG_ANY}
@@ -1949,7 +1956,7 @@ func _pending_head_build_target(band: Dictionary) -> Dictionary:
 ## for a surface (the crafting panel's suggestions) that names a queued build by its position.
 func build_queue_faces(band: Dictionary) -> Dictionary:
     var faces: Dictionary = {}
-    for model_variant in _build_queue_models(band, _work_source_models(band, 0)):
+    for model_variant in _build_queue_models(band, _work_source_models(band)):
         var model: Dictionary = model_variant
         var rank := _build_queue_row_rank(model)
         if rank >= 0:
@@ -2153,9 +2160,10 @@ func _fill_work_zone_column(col: VBoxContainer, band: Dictionary) -> void:
     # card is anchored to a row this pass is about to free.
     _dismiss_rung_track()
     var idle := _band_labor.effective_idle(band)
-    var models := _work_source_models(band, idle)
+    var models := _work_source_models(band)
     var extract_models := _extract_source_models(band)
     var tile_models := _tile_source_models(band)
+    tile_models.append_array(_band_improvement_models(band))
     col.add_child(_build_work_head(band, models,
         _work_component_sum(models, "rate"),
         _work_component_sum(models, "fodder_rate")))
@@ -2238,7 +2246,10 @@ func _work_section_items(band: Dictionary, models: Array, extract_models: Array,
             nodes.append(_build_extract_row(band, model as Dictionary))
         # Tile crews are site crews like a working's, so they ride the same section.
         for model in tile_models:
-            nodes.append(_build_tile_row(band, model as Dictionary))
+            if String((model as Dictionary).get("kind", "")) == HudConst.LABOR_KIND_BAND:
+                nodes.append(_build_band_improvement_row(model as Dictionary))
+            else:
+                nodes.append(_build_tile_row(band, model as Dictionary))
         _append_work_section(items, HudWorkVocab.WORK_SECTION_GROUNDWORK,
             _build_work_section_head(HudWorkVocab.WORK_SECTION_GROUNDWORK), nodes)
     if models.is_empty() and extract_models.is_empty() and tile_models.is_empty():
@@ -2667,17 +2678,26 @@ func _build_pool_line(band: Dictionary, role_name: String, hint: String, kind: S
         line.add_child(_pool_card_mark(HudWorkVocab.UPKEEP_POOL_IDLE_MARK, HudStyle.INK_DIM))
     var commanded_kit_id := _commanded_role_kit_id(band, kind) if _role_states_a_kit(kind) \
         else KitRoster.NO_KIT_ID
-    HudWidgets.add_stepper_controls(line, workers, _band_labor.effective_idle(band) > 0,
-        func(n: int) -> void: _emit_assign_labor(
-            band, kind, n, -1, -1, "", SourceForecast.DEFAULT_HARVEST_FLOOR,
-            "", SourceForecast.IMPROVEMENT_NONE, commanded_kit_id), true, {},
-        HudWorkVocab.STEPPER_NO_IDLE_REASON)
+    # **ROADWORK IS A STAFFED ROW** (#871): the sim fills it from the road keeping's bill, so it draws the
+    # read-only crew number and the crew bar where Builders, Scout and Warrior keep a stepper.
+    var roadwork_row: Dictionary = {}
+    if kind == HudConst.LABOR_KIND_ROADWORK:
+        roadwork_row = _band_labor.effective_worker_map(band).get(
+            _band_labor.pending_key(kind, -1, -1, ""), {})
+        line.add_child(HudWidgets.build_crew_number(workers))
+    else:
+        HudWidgets.add_stepper_controls(line, workers, _band_labor.orderable_hands(band) > 0,
+            func(n: int) -> void: _emit_assign_labor(
+                band, kind, n, -1, -1, "", SourceForecast.DEFAULT_HARVEST_FLOOR,
+                "", SourceForecast.IMPROVEMENT_NONE, commanded_kit_id), true, {},
+            HudWorkVocab.STEPPER_NO_IDLE_REASON)
     # **LINE TWO SAYS WHAT THE HANDS DO**, in the rung line's quiet register — and the builders' kit
     # face after it, where the retired one-line form had it beside the title.
     var second := subline if detail == "" \
         else HudWorkVocab.WORK_INSPECT_SENTENCE_SEPARATOR.join(PackedStringArray([subline, detail]))
     (shell[SITE_ROW_SHELL_COLUMN] as VBoxContainer).add_child(
-        _build_site_crew_line(second, HudWorkVocab.WORK_POOL_SUBLINE_META))
+        _build_site_crew_line(second, HudWorkVocab.WORK_POOL_SUBLINE_META,
+            _crew_bar_for_model(roadwork_row) if kind == HudConst.LABOR_KIND_ROADWORK else null))
     # **AND ANY LINE THAT BELONGS TO THE POOL ITSELF** (the road crew's fund-mode pick and its unseen
     # line) hangs under line two in the same indent, each charged to the row's reservation.
     for extra in extras:
@@ -2959,8 +2979,23 @@ func _extract_source_models(band: Dictionary) -> Array:
         # HUNTING BY NEED: the hands this working gives up to next turn's hunt.
         model["lent_to_hunt"] = int(_band_labor.extract_assignment_of(
             band, tile.x, tile.y, String(model["material"])).get("lent_to_hunt", 0))
+        _put_staffed_fields(model, _band_labor.effective_worker_map(band).get(key, {}),
+            _band_labor.extract_assignment_of(band, tile.x, tile.y, String(model["material"])))
         models.append(model)
     return models
+
+## **THE STAFFED FIELDS A ROW'S MODEL CARRIES** (#871): the Max, the hold figure, the three-way split of
+## the crew and the kit's on-screen item words, off the merged row `merged` (pending-aware for the Max) and
+## the confirmed assignment `assignment` (the table of equipment). One writer, so the work, groundwork
+## and tile rows cannot read one crew three ways.
+func _put_staffed_fields(model: Dictionary, merged: Dictionary, assignment: Dictionary) -> void:
+    model["max_workers"] = int(merged.get("max_workers", 0))
+    model["hold_crew"] = int(merged.get("hold_crew", 0))
+    model["keepers_staffed"] = int(merged.get("keepers_staffed", 0))
+    model["kitted_staffed"] = int(merged.get("kitted_staffed", 0))
+    model["bare_staffed"] = int(merged.get("bare_staffed", 0))
+    model["kit_names"] = HudWorkVocab.toe_item_names(
+        assignment.get(SourceForecast.ASSIGNMENT_KIT_TOE_KEY, []) as Array, _item_display_names)
 
 ## **THE TILE CREW ROWS THIS BAND HOLDS** (issue #175) -- one model per `tile` labor row, nearest
 ## first. No tile branch ships yet, so this is empty on every shipped world; it exists so the FIRST one
@@ -2998,6 +3033,8 @@ func _tile_source_models(band: Dictionary) -> Array:
             "rung_name": HudRouteVocab.rung_name_in(catalog, rung_key) \
                 if rung_key != "" else HudRouteVocab.branch_root_name(catalog, branch),
         })
+        _put_staffed_fields(models[models.size() - 1],
+            _band_labor.effective_worker_map(band).get(key, {}), assignment)
     models.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
         if int(a["distance"]) != int(b["distance"]):
             return int(a["distance"]) < int(b["distance"])
@@ -3009,6 +3046,56 @@ func _tile_source_models(band: Dictionary) -> Array:
             return ta.x < tb.x
         return String(a["branch"]) < String(b["branch"]))
     return models
+
+## **THE BAND IMPROVEMENT CREW ROWS THIS BAND HOLDS** (a drying rack): one model per `band` labor row.
+## Staffed like a tile row (the sim strikes the crew; the Max lives on a sheet), but the improvement is
+## the band's own, so the row has no tile - it names its branch alone. Listed with the tile crews, after
+## them, and drawn by `_build_band_improvement_row`.
+func _band_improvement_models(band: Dictionary) -> Array:
+    var models: Array = []
+    var branches: Array = _topbar.ladder_branches() if _topbar != null else []
+    var catalog: Array = _topbar.ladder_rungs() if _topbar != null else []
+    for assignment_variant in _band_labor.band_improvement_assignments_of(band):
+        var assignment: Dictionary = assignment_variant
+        var branch := String(assignment.get("branch", ""))
+        var key := _band_labor.pending_key(HudConst.LABOR_KIND_BAND, -1, -1, "", branch)
+        var merged: Dictionary = _band_labor.effective_worker_map(band).get(key, {})
+        models.append({
+            "kind": HudConst.LABOR_KIND_BAND,
+            "key": key, "x": -1, "y": -1, "herd_id": "", "branch": branch,
+            "tile": Vector2i(-1, -1),
+            "assignment": assignment,
+            "distance": 0,
+            "workers": merged.get("workers", int(assignment.get("workers", 0))),
+            "name": HudRouteVocab.branch_name(branches, branch),
+            "rung_name": HudRouteVocab.branch_root_name(catalog, branch),
+        })
+        _put_staffed_fields(models[models.size() - 1], merged, assignment)
+    return models
+
+func _build_band_improvement_row(model: Dictionary) -> PanelContainer:
+    var shell := _site_row_shell(HudWorkVocab.EXTRACT_ROW_HEIGHT, false, Color(0.0, 0.0, 0.0, 0.0))
+    var row: PanelContainer = shell[SITE_ROW_SHELL_ROW]
+    var col: VBoxContainer = shell[SITE_ROW_SHELL_COLUMN]
+    var line: HBoxContainer = shell[SITE_ROW_SHELL_LINE]
+    row.set_meta(HudWorkVocab.BAND_IMPROVEMENT_ROW_META, String(model["branch"]))
+    row.mouse_filter = Control.MOUSE_FILTER_PASS
+    line.add_child(HudWidgets.build_marker_icon(null, "", HudWorkVocab.WORK_ROW_ICON_WIDTH,
+        HudWorkVocab.WORK_ROW_FONT_SIZE))
+    var title := Label.new()
+    title.text = String(model["name"])
+    title.clip_text = true
+    title.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+    title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    title.add_theme_font_size_override("font_size", HudWorkVocab.WORK_ROW_FONT_SIZE)
+    title.add_theme_color_override("font_color", HudStyle.INK)
+    title.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    line.add_child(title)
+    # A READ-ONLY crew number: the sim's crew, no stepper (the Max is set on a sheet).
+    line.add_child(HudWidgets.build_crew_number(int(model.get("workers", 0))))
+    col.add_child(_build_site_crew_line(HudWorkVocab.site_crew_line(String(model["rung_name"])),
+        HudWorkVocab.SITE_CREW_LINE_META, _crew_bar_for_model(model)))
+    return row
 
 ## **ONE TILE CREW'S ROW** -- a site row's shell (`_site_row_shell`) carrying the catalog's name for the
 ## branch and its rung, the keeping mark off the standing bill, the crew count and, on a far posting, the
@@ -3045,16 +3132,9 @@ func _build_tile_row(band: Dictionary, model: Dictionary) -> PanelContainer:
     line.add_child(_build_site_keeping_mark(kept, demand, tools_short,
         _site_short_tool_names(improvement) if tools_short else "",
         HudWorkVocab.tending_of(improvement, HudComposeVocab.BARE_FORECAST_PREFIX, "")))
-    var count := Label.new()
-    count.text = str(workers)
-    count.add_theme_font_size_override("font_size", HudWorkVocab.WORK_ROW_FONT_SIZE)
-    count.add_theme_color_override("font_color", HudStyle.INK)
-    count.mouse_filter = Control.MOUSE_FILTER_IGNORE
-    line.add_child(count)
+    line.add_child(HudWidgets.build_crew_number(workers))
     col.add_child(_build_site_crew_line(HudWorkVocab.site_crew_line(String(model["rung_name"])),
-        HudWorkVocab.SITE_CREW_LINE_META, _crew_split_for_row(workers,
-            float(assignment.get(SourceForecast.ASSIGNMENT_KEEP_HANDS_KEY,
-                SourceForecast.NO_UPKEEP_DEMAND)), HudConst.LABOR_KIND_TILE)))
+        HudWorkVocab.SITE_CREW_LINE_META, _crew_bar_for_model(model)))
     var party := SourceForecast.party_readout(assignment)
     if SourceForecast.party_is_posted(party):
         var lines: Array[String] = HudWorkVocab.party_block_lines(party, HudWorkVocab.TILE_CREW_NOUN,
@@ -3087,7 +3167,11 @@ func _build_extract_row(band: Dictionary, model: Dictionary) -> PanelContainer:
     var useful := _workings_roster_max_useful(band, model)
     var key := String(model.get("key", ""))
     var value_ink := HudDepositVocab.deposit_value_color(deposit, ladder, cutters, useful)
-    var shell := _site_row_shell(HudWorkVocab.EXTRACT_ROW_HEIGHT, key == _work_open_key,
+    var dig_assignment := _band_labor.extract_assignment_of(band, tile.x, tile.y, material)
+    var load_line := HudWorkVocab.dig_load_line(dig_assignment, material)
+    var shell := _site_row_shell(HudWorkVocab.EXTRACT_ROW_HEIGHT \
+        + (HudWorkVocab.WORK_ROW_PARTY_LINE_HEIGHT if load_line != "" else 0.0),
+        key == _work_open_key,
         HudStyle.WARN if value_ink == HudStyle.WARN else Color(0.0, 0.0, 0.0, 0.0))
     var row: PanelContainer = shell[SITE_ROW_SHELL_ROW]
     var col: VBoxContainer = shell[SITE_ROW_SHELL_COLUMN]
@@ -3143,28 +3227,16 @@ func _build_extract_row(band: Dictionary, model: Dictionary) -> PanelContainer:
     var assignment := _band_labor.extract_assignment_of(band, tile.x, tile.y, material)
     var floor := _band_labor.floor_for_extract(band, tile.x, tile.y, material) \
         if HudDepositVocab.renews(deposit) else SourceForecast.FLOOR_UNNAMED
-    var kit_id := String(assignment.get("kit_id", KitRoster.NO_KIT_ID))
-    # The gate as its REASONS, so the greyed `+` names each condition that failed and `can_add` is
-    # nothing but their absence.
-    var add_blocked := PackedStringArray()
-    if _band_labor.effective_idle(band) <= 0:
-        add_blocked.append(HudWorkVocab.STEPPER_NO_IDLE_REASON)
-    if useful != HudDepositVocab.CUTTERS_UNCAPPED and cutters >= useful:
-        add_blocked.append(HudWorkVocab.STEPPER_WORKING_FULL_REASON_FORMAT % useful)
-    var can_add := add_blocked.is_empty()
-    var extract_value := HudWidgets.add_stepper_controls(line, cutters, can_add,
-        func(n: int) -> void: _emit_assign_labor(band, HudConst.LABOR_KIND_EXTRACT, n,
-            tile.x, tile.y, "", floor, material, SourceForecast.IMPROVEMENT_NONE, kit_id), true, {},
-        HudWorkVocab.DISABLED_REASON_SEPARATOR.join(add_blocked))
+    # **A WORKING'S CREW IS THE SIM'S** (#871): a read-only number, no stepper. The Max is set on the
+    # working's sheet and shows as a chip beside the Priority pill.
+    var extract_value := HudWidgets.build_crew_number(cutters)
+    line.add_child(extract_value)
     var extract_lent := int(model.get("lent_to_hunt", 0))
     if extract_lent > 0:
         _mark_lent_count(extract_value, cutters, extract_lent)
     col.add_child(_build_site_crew_line(HudWorkVocab.site_crew_line(
         rung_name if rung_name != "" else HudWorkVocab.SITE_CREW_RUNG_WILD),
-        HudWorkVocab.SITE_CREW_LINE_META, _crew_split_for_row(cutters,
-            float(assignment.get(SourceForecast.ASSIGNMENT_KEEP_HANDS_KEY,
-                SourceForecast.NO_UPKEEP_DEMAND)),
-            HudConst.LABOR_KIND_EXTRACT)))
+        HudWorkVocab.SITE_CREW_LINE_META, _crew_bar_for_model(model)))
     if extract_lent > 0:
         # A donor working: line three is the loan, in warn ink, in place of the yield it is not making.
         var lent_line := _build_working_yield_line(
@@ -3174,6 +3246,10 @@ func _build_extract_row(band: Dictionary, model: Dictionary) -> PanelContainer:
     else:
         col.add_child(_build_working_yield_line(_working_yield_text(band, model, deposit, ladder,
             cutters, useful, floor), value_ink))
+    if load_line != "":
+        var load_node := _build_working_yield_line(load_line, HudStyle.INK_DIM,
+            HudWorkVocab.DIG_LOAD_LINE_META)
+        col.add_child(load_node)
     col.add_child(_build_pill_line(band, model, true))
     return row
 
@@ -3234,6 +3310,9 @@ func _add_priority_pills(line: HBoxContainer, band: Dictionary, model: Dictionar
             String(model.get("priority", HudWorkVocab.WORK_PRIORITY_NORMAL)),
             HudWorkVocab.WORK_ROW_PRIORITY_PILL_META, HudWorkVocab.WORK_ROW_PRIORITY_PILL_TOOLTIP,
             func(level: String) -> void: _commit_work_priority(band, model, level)))
+        # **A STATIC `Max N` CHIP** (#871), only while the player set a Max - a label, not a control.
+        if int(model.get("max_workers", 0)) > 0:
+            line.add_child(HudWidgets.build_max_chip(int(model.get("max_workers", 0))))
     if bool(model.get("build_queued", false)):
         line.add_child(_build_priority_pill(HudWorkVocab.WORK_ROW_BUILD_PILL_FORMAT,
             String(model.get("build_priority", HudWorkVocab.WORK_PRIORITY_NORMAL)),
@@ -3287,12 +3366,20 @@ func _build_site_crew_line(text: String,
         line.add_child(split)
     return margin
 
-## **THE CREW SPLIT FOR A WORK-TAB ROW**, or `null` where the site has no tending bill. The tending
-## figure is the row's own `keep_hands`, read off the wire and never derived.
-func _crew_split_for_row(crew: int, keep_hands: float, labor_kind: String) -> Control:
-    if not HudWorkVocab.crew_split_shown(crew, keep_hands):
+## **THE CREW BAR FOR A WORK-TAB ROW** (#871) - keepers / with gear / bare, the three counts the sim
+## struck for the row (`keepers_staffed` / `kitted_staffed` / `bare_staffed`), or `null` on a row with no
+## crew to draw (a need row, an empty crew). The hover words are `HudWorkVocab.crew_bar_words`.
+func _crew_bar_for_model(model: Dictionary) -> Control:
+    if bool(model.get("need_row", false)):
         return null
-    return CrewSplitMarks.build(crew, keep_hands, labor_kind, false)
+    return _crew_bar(int(model.get("keepers_staffed", 0)), int(model.get("kitted_staffed", 0)),
+        int(model.get("bare_staffed", 0)), String(model.get("kit_names", "")),
+        int(model.get("hold_crew", 0)))
+
+## The bar itself. A crew of zero still draws no marks but states `Nobody here this turn` on its hover,
+## so the row never goes silent about why it is empty.
+func _crew_bar(keepers: int, kitted: int, bare: int, kit_names: String, hold_crew: int) -> Control:
+    return CrewSplitMarks.build(keepers, kitted, bare, kit_names, hold_crew, false)
 
 ## **THE ROW'S KEEPING MARK** — `⚠` when the site's crew keeps less than it owes, else `ⓘ` where its
 ## keeping tools came up short, else an empty reserved slot. The hover states the tending in whole
@@ -5525,7 +5612,7 @@ func _queue_drop(_at: Vector2, data: Variant, band: Dictionary, key: String) -> 
 ## index counted here was therefore wrong by the number of entries hidden above it — the regression
 ## this comment used to call "correct all along".
 func _confirmed_queue_entries(band: Dictionary) -> Array:
-    return _build_queue_models(band, _work_source_models(band, 0)).filter(
+    return _build_queue_models(band, _work_source_models(band)).filter(
         func(m): return not _build_queue_row_is_pending(m as Dictionary))
 
 ## **THE DROP INDICATOR, DRAWN INSIDE THE TARGET ROW'S OWN 28px.** The block's rows are flush
@@ -5756,12 +5843,11 @@ func _queue_crop_choices(band: Dictionary, model: Dictionary) -> Array:
     var patch: Dictionary = _band_labor.forage_patch_lookup().get(Vector2i(x, y), {})
     if RungQuotes.quote_of_verb(patch, "", rung).is_empty():
         return []
-    var workers := int(model.get("workers", 0))
     var entries: Array = [{
         "label": HudWorkVocab.BUILD_QUEUE_CROP_DEFAULT_LABEL,
         "species": "",
         "on_pick": func() -> void: _emit_work_assign(
-            band, model, workers, RESTATE_STANDING_FLOOR, ""),
+            band, model, RESTATE_STANDING_COUNT, RESTATE_STANDING_FLOOR, ""),
     }]
     for entry_variant in SourceForecast.flora_basket_entries(patch.get("composition", [])):
         var entry: Dictionary = entry_variant
@@ -5773,7 +5859,7 @@ func _queue_crop_choices(band: Dictionary, model: Dictionary) -> Array:
                 String(entry.get("display_name", species)), int(entry.get("percent", 0))],
             "species": species,
             "on_pick": func() -> void: _emit_work_assign(
-                band, model, workers, RESTATE_STANDING_FLOOR, species),
+                band, model, RESTATE_STANDING_COUNT, RESTATE_STANDING_FLOOR, species),
         })
     # A list holding only `Sim picks` is not a choice, so the row is not expandable — the same answer
     # an animal entry gets, reached by a different route.
@@ -5973,7 +6059,7 @@ func _open_crop_step(band: Dictionary, model: Dictionary, source: Dictionary, ru
     margin.add_child(RungLadder.build_crop_step(crops,
         func(species: String) -> void:
             _dismiss_rung_track()
-            _emit_work_assign(band, model, int(model.get("workers", 0)),
+            _emit_work_assign(band, model, RESTATE_STANDING_COUNT,
                 RESTATE_STANDING_FLOOR, species)
             _emit_ready_declaration(band, model, rung),
         # **BACK REBUILDS THE TRACK RATHER THAN RESTORING IT**, the card's own never-patched rule: the
@@ -6376,21 +6462,19 @@ func _build_work_row(band: Dictionary, model: Dictionary) -> PanelContainer:
         # the sim has sent this turn, or that it sends when the band needs meat.
         line.add_child(_build_need_count_label(model))
     else:
-        var stepper_value := HudWidgets.add_stepper_controls(line, int(model.get("workers", 0)),
-            bool(model.get("can_add", false)),
-            func(n: int) -> void: _emit_work_assign(band, model, n), true, {},
-            String(model.get("add_blocked_reason", "")))
+        # **A STAFFED ROW CARRIES NO STEPPER** (#871): its crew is the sim's, drawn as a read-only number
+        # in the stepper's old column, and the Max is set on the source's sheet.
+        var crew_number := HudWidgets.build_crew_number(int(model.get("workers", 0)))
+        line.add_child(crew_number)
         # A DONOR row shows the standing count struck through beside what is left after the loan.
         var lent := int(model.get("lent_to_hunt", 0))
         if lent > 0:
-            _mark_lent_count(stepper_value, int(model.get("workers", 0)), lent)
+            _mark_lent_count(crew_number, int(model.get("workers", 0)), lent)
     # **LINE TWO NAMES THE RUNG THE SITE STANDS ON**, and nothing else: covered keeping says nothing,
     # a short one is the `⚠` above, and the accounts line below says what the take produces.
     col.add_child(_build_site_crew_line(HudWorkVocab.site_crew_line(
         String(model.get("rung_word", HudWorkVocab.SITE_CREW_RUNG_WILD))),
-        HudWorkVocab.SITE_CREW_LINE_META, _crew_split_for_row(int(model.get("workers", 0)),
-            float(model.get("keep_hands", SourceForecast.NO_UPKEEP_DEMAND)),
-            String(model.get("kind", "")))))
+        HudWorkVocab.SITE_CREW_LINE_META, _crew_bar_for_model(model)))
     col.add_child(_build_work_row_accounts(band, model))
     # **TWO PRIORITY MARKS, ON THEIR OWN LINE UNDER THE ROW** (`docs/plan_site_crews.md` §2.4).
     # `Priority` ranks the site crew's claim on scarce tools and goods and is on every row; `Build`
@@ -6621,11 +6705,9 @@ func _build_follow_toggle(band: Dictionary, model: Dictionary) -> Button:
     btn.set_meta(HudWorkVocab.WORK_ROW_FOLLOW_TOGGLE_META, on)
     btn.pressed.connect(func() -> void:
         # **HUNTING BY NEED.** Turning following ON states a need row: `hunt 0 … follow`, the sim
-        # musters the crew. Turning it OFF states an ordinary hunt at what the herd can use, capped at
-        # the band's idle hands (the sim drops the row if that is 0).
-        var hands := mini(int(model.get("hunt_useful_workers", 0)), _band_labor.effective_idle(band)) \
-            if on else HudComposeVocab.NEED_ROW_STANDING_HANDS
-        _emit_work_assign(band, model, hands, RESTATE_STANDING_FLOOR,
+        # musters the crew. Turning it OFF states an ordinary STAFFED hunt with no Max (#871) - the sim
+        # strikes the crew from the floor, so the count slot is `0` either way and `follow` is the difference.
+        _emit_work_assign(band, model, HudComposeVocab.NEED_ROW_STANDING_HANDS, RESTATE_STANDING_FLOOR,
             RESTATE_STANDING_SPECIES, RESTATE_STANDING_KIT, 0 if on else 1))
     return btn
 
@@ -6865,6 +6947,16 @@ func _build_work_inspector(band: Dictionary, model: Dictionary) -> PanelContaine
     col.add_child(HudWidgets.build_work_priority_picker(func(level: String) -> void:
         _commit_work_priority(band, model, level),
         String(model.get("priority", HudWorkVocab.WORK_PRIORITY_NORMAL))))
+    # **THE MAX, LIVE** (#871): the one crew control a staffed row has. A need row has no Max (its count
+    # slot is unchanged), so the section is gated on `_work_inspector_has_max`, the reservation's own test.
+    if _work_inspector_has_max(model):
+        _build_work_inspector_section(col, HudWorkVocab.WORK_INSPECT_MAX)
+        var max_line := HBoxContainer.new()
+        max_line.add_theme_constant_override("separation", HudWorkVocab.WORKER_STEPPER_SEPARATION)
+        HudWidgets.add_max_stepper(max_line, int(model.get("max_workers", 0)),
+            int(band.get("working_age", 0)),
+            func(n: int) -> void: _emit_work_assign(band, model, n), true)
+        col.add_child(max_line)
     # **THE ONLY SECTION A ROW CAN LACK.** A section whose pickers have nothing to offer is a control
     # that answers nothing — the queue row's own rule — and `_work_inspector_has_kits` is the ONE
     # predicate, asked here and by the reservation, so the two cannot disagree about whether it drew.
@@ -6901,7 +6993,7 @@ func _build_work_inspector(band: Dictionary, model: Dictionary) -> PanelContaine
     actions.add_child(HudWidgets.build_inline_link(HudWorkVocab.WORK_INSPECT_UNASSIGN, HudStyle.DANGER,
         func() -> void:
             _work_open_key = ""
-            _emit_work_assign(band, model, 0)))
+            _commit_stop_labor(band, model)))
     col.add_child(actions)
     return strip
 
@@ -6956,6 +7048,25 @@ func _build_working_inspector(band: Dictionary, model: Dictionary) -> PanelConta
     col.add_child(HudWidgets.build_work_priority_picker(func(level: String) -> void:
         _commit_work_priority(band, model, level),
         String(model.get("priority", HudWorkVocab.WORK_PRIORITY_NORMAL))))
+    # **THE WORKING'S MAX, LIVE** (#871) - the crew is the sim's, so this is the only crew control.
+    var inspector_dig_crew := not HudDepositVocab.renews(deposit)
+    _build_work_inspector_section(col, HudWorkVocab.DIG_CREW_STEPPER_LABEL if inspector_dig_crew \
+        else HudWorkVocab.WORK_INSPECT_MAX)
+    var max_line := HBoxContainer.new()
+    max_line.add_theme_constant_override("separation", HudWorkVocab.WORKER_STEPPER_SEPARATION)
+    var max_tile := HudDepositVocab.tile_of(deposit)
+    var max_assignment := _band_labor.extract_assignment_of(band, max_tile.x, max_tile.y,
+        String(model["material"]))
+    var max_floor := _band_labor.floor_for_extract(band, max_tile.x, max_tile.y,
+        String(model["material"])) if HudDepositVocab.renews(deposit) else SourceForecast.FLOOR_UNNAMED
+    HudWidgets.add_max_stepper(max_line, int(model.get("max_workers", 0)),
+        int(band.get("working_age", 0)),
+        func(n: int) -> void: _emit_assign_labor(band, HudConst.LABOR_KIND_EXTRACT, n,
+            max_tile.x, max_tile.y, "", max_floor, String(model["material"]),
+            SourceForecast.IMPROVEMENT_NONE,
+            String(max_assignment.get("kit_id", KitRoster.NO_KIT_ID))), true,
+        HudDepositVocab.DIG_CREW_MIN if inspector_dig_crew else 0)
+    col.add_child(max_line)
     _build_work_inspector_rule(col)
     var actions := HBoxContainer.new()
     actions.add_theme_constant_override("separation", HudWorkVocab.COMPOSITION_KEY_SEPARATION)
@@ -7040,7 +7151,7 @@ func _road_inspector_height() -> float:
 ## over the actions: `_build_working_inspector`'s children, term for term.
 func _working_inspector_height() -> float:
     return HudWorkVocab.WORK_INSPECTOR_HEIGHT + HudWorkVocab.WORK_INSPECTOR_PRIORITY_SECTION_HEIGHT \
-        + HudWorkVocab.WORK_INSPECTOR_ACTIONS_RULE_HEIGHT
+        + HudWorkVocab.WORK_INSPECTOR_MAX_SECTION_HEIGHT + HudWorkVocab.WORK_INSPECTOR_ACTIONS_RULE_HEIGHT
 
 ## A SECTION HEADER — the hairline, then the dim uppercase word — in the Band panel's own vocabulary
 ## rather than a style invented for this card: `HudWidgets.alloc_section_label` is what the allocation
@@ -7333,11 +7444,11 @@ func _build_work_inspector_picker(listing: Dictionary, kits: Array, chosen: Stri
 ## the token costs.
 func _emit_work_take_kit(band: Dictionary, model: Dictionary, kit_id: String,
         _default_id: String) -> void:
-    _emit_work_assign(band, model, int(model.get("workers", 0)),
+    _emit_work_assign(band, model, RESTATE_STANDING_COUNT,
         RESTATE_STANDING_FLOOR, RESTATE_STANDING_SPECIES, kit_id)
 
 func _commit_work_floor(band: Dictionary, model: Dictionary, floor: float) -> void:
-    _emit_work_assign(band, model, int(model.get("workers", 0)), floor)
+    _emit_work_assign(band, model, RESTATE_STANDING_COUNT, floor)
 
 ## **THE RANK COMMAND** — `work_priority <faction> <band> <source…> high|normal|low`
 ## (`docs/plan_standing_upkeep.md` §4.9 item 9b).
@@ -7363,6 +7474,30 @@ func _commit_work_priority(band: Dictionary, model: Dictionary, level: String) -
         "level": HudWorkVocab.work_priority_of(level),
     })
     _repage_work_zone()
+
+## **STOP A STAFFED ROW** (#871) - the inspector's `Unassign`. A staffed row's count is a Max now, so
+## `assign_labor … 0` no longer ends it; `stop_labor` does, and the server removes the row. The payload
+## addresses the row the way `Main.site_address` reads it, plus `roadwork` for the Roadwork pool.
+func _commit_stop_labor(band: Dictionary, model: Dictionary) -> void:
+    if model.is_empty():
+        return
+    emit_signal("stop_labor_requested", {
+        "faction": int(band.get("faction", HudConst.PLAYER_FACTION_ID)),
+        "band_id": int(band.get("band_id", HudConst.NO_BAND_ID)),
+        "x": int(model.get("x", -1)),
+        "y": int(model.get("y", -1)),
+        "herd_id": String(model.get("herd_id", "")),
+        "material": String(model.get("material", "")),
+        "branch": String(model.get("branch", "")),
+        "roadwork": String(model.get("kind", "")) == HudConst.LABOR_KIND_ROADWORK,
+    })
+    _repage_work_zone()
+
+## Does the inspector draw the Max section? On every staffed row but a hunting-by-need row, whose count
+## slot is unchanged. The reservation and the builder both ask this, so they cannot disagree.
+func _work_inspector_has_max(model: Dictionary) -> bool:
+    return HudBandLaborState.is_staffed_row(String(model.get("kind", "")),
+        bool(model.get("need_row", false)))
 
 ## The height the open inspector reserves — BOTH the `WorkInspectorDialog`'s own `min_height` and what
 ## the strip actually draws at, so the card can never be fitted shorter than its content.
@@ -7421,6 +7556,8 @@ func _work_inspector_height(model: Dictionary) -> float:
     # arms became terms and the max became a sum.
     height += HudWorkVocab.WORK_INSPECTOR_POLICY_SECTION_HEIGHT
     height += HudWorkVocab.WORK_INSPECTOR_PRIORITY_SECTION_HEIGHT
+    if _work_inspector_has_max(model):
+        height += HudWorkVocab.WORK_INSPECTOR_MAX_SECTION_HEIGHT
     if _work_inspector_has_kits(model):
         height += HudWorkVocab.WORK_INSPECTOR_KITS_SECTION_HEIGHT
         # …and the gear-shortfall line under the take picker, on the builder's own test verbatim. It
@@ -7508,7 +7645,7 @@ func _work_row_summary_text(model: Dictionary) -> String:
 ## One dict per worked source, carrying everything the row, the chips and the inspector need — built
 ## ONCE per render off `_band_labor.effective_worker_map` (confirmed + optimistic pending), so the board, the
 ## chip counts and the totals can never disagree.
-func _work_source_models(band: Dictionary, idle: int) -> Array:
+func _work_source_models(band: Dictionary) -> Array:
     var models: Array = []
     var merged := _band_labor.effective_worker_map(band)
     # **THE BAND'S BUILDERS POOL, RESOLVED ONCE FOR THE WHOLE BOARD** (`docs/plan_standing_upkeep.md`
@@ -7563,8 +7700,12 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
         # so it is admitted on the flag: it IS the order the band is carrying out.
         var is_need_row := kind == SourceForecast.LABOR_KIND_HUNT \
             and bool(m.get("move_with_herd", false))
+        # **A STAFFED ROW STAYS ON THE BOARD AT A CREW OF ZERO** (#871): the crew is the sim's, so `0` is
+        # "nobody this turn" (below its floor, no hands free), not an unassign - the player ends a staffed
+        # row with `stop_labor`, and the server removes it.
         if workers <= 0 and not pending and not queued_keys.has(String(key)) \
-                and HudWorkVocab.row_homeward_workers(m) <= 0 and not is_need_row:
+                and HudWorkVocab.row_homeward_workers(m) <= 0 and not is_need_row \
+                and not HudBandLaborState.is_staffed_row(kind):
             continue
         var x := int(m.get("x", -1))
         var y := int(m.get("y", -1))
@@ -7584,7 +7725,6 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
         # case `HudWidgets.build_marker_icon` renders the glyph for.
         var icon_texture: Texture2D = null
         var label := ""
-        var cap := {}
         # **THE SOURCE'S OWN CEILING, HELD BESIDE THE `+` GATE THAT ALREADY READS IT.** The gate
         # answers *may this `+` add another hand*; this is the number it answers against, kept because
         # the row asks a SECOND question of it below — whether the crew already standing here is
@@ -7618,7 +7758,6 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
             # producer the compose sheet reads on this row's own composition, so the two `+`s cannot
             # strike at two ceilings.
             useful = SourceForecast.worked_row_ceiling(kind, m, patch)
-            cap = SourceForecast.crew_cap_state(useful, workers, idle)
         else:
             var herd_label := _herd_label_for_id(herd_id)
             icon = FoodIcons.for_herd(herd_label)
@@ -7644,7 +7783,6 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
             # twins to read it. **The forage branch above deliberately does not**: its `0` is a
             # structural *does not apply*, never *no crew is useful here*.
             useful = SourceForecast.worked_row_ceiling(kind, m, live_herd)
-            cap = SourceForecast.crew_cap_state(useful, workers, idle)
         # ⛔ **AND WHETHER THE CREW ALREADY HERE IS BIGGER THAN THE SOURCE CAN USE** — the third web's
         # question, asked on all three now (`SourceForecast.crew_is_wasted`). It is a SECOND reading of
         # the same ceiling the `+` gate above is struck at, and it is not that gate's `note`: the note
@@ -8173,14 +8311,19 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
             # RESTATES it, so a `+`/`−` on the board cannot silently re-kit a crew back to the job
             # default — the same rule, and the same failure, as the improvement axis beside it.
             "kit_id": String(m.get("kit_id", KitRoster.NO_KIT_ID)),
-            "can_add": bool(cap.get("can_add", idle > 0)),
-            # The greyed `+`'s hover — the cap gate's own reason, or the plain idle gate's where this
-            # row kind has no source ceiling.
-            "add_blocked_reason": String(cap.get("blocked_reason",
-                "" if idle > 0 else HudWorkVocab.STEPPER_NO_IDLE_REASON)),
+            # **THE SIM'S CREW AND HOW IT DIVIDES** (#871) - the three passes' answer, read off the
+            # merged row (`HudBandLaborState.STAFFED_KEYS`). The row draws a read-only number and the
+            # crew bar from these; the Max is the player's, the only crew control a staffed row has.
+            "max_workers": int(m.get("max_workers", 0)),
+            "hold_crew": int(m.get("hold_crew", 0)),
+            "keepers_staffed": int(m.get("keepers_staffed", 0)),
+            "kitted_staffed": int(m.get("kitted_staffed", 0)),
+            "bare_staffed": int(m.get("bare_staffed", 0)),
+            "kit_names": HudWorkVocab.toe_item_names(
+                m.get(SourceForecast.ASSIGNMENT_KIT_TOE_KEY, []) as Array, _item_display_names),
             "schedule": HudBandLaborState.as_schedule(m.get("arrival_schedule", null)),
             "tooltip": HudFormat.join_tooltip_lines([String(yld.get("tooltip", "")),
-                HudFormat.floor_hint(floor, kind), String(cap.get("note", "")),
+                HudFormat.floor_hint(floor, kind),
                 # **THE HAZARD THE FLAG BELOW IS RAISED FOR, IN THE ONE WORD ALL THREE WEBS USE.** A
                 # row cannot carry a mark the player cannot read: on a band with no idle hands the
                 # cap note above is empty, so without this the attention flag would have no sentence
@@ -8411,6 +8554,12 @@ func _find_work_model(models: Array, key: String) -> Dictionary:
 ## meaningful choice. A crew-size edit must not silently re-point the crew.
 const RESTATE_STANDING_FLOOR := -1.0
 
+## **`workers` IS THE ROW'S COUNT SLOT, WHICH IS A MAX ON A STAFFED ROW** (#871) - the crew is the sim's,
+## so a pick that merely restates the row (a crop, a kit, a floor) must send the Max the player set and
+## never the crew the sim struck, or one click would turn the sim's staffing into a fixed order. This
+## sentinel says *restate the row's own Max*.
+const RESTATE_STANDING_COUNT := -1
+
 ## **`species` IS THE CROP TOKEN, AND ITS DEFAULT IS `RESTATE_STANDING_SPECIES` RATHER THAN `""`**
 ## (`docs/plan_standing_upkeep.md` §4.7a ③). `""` is a REAL instruction on this axis — *take the
 ## tile's dominant legal plant* — so it cannot double as *leave the crop alone*, which is the floor's
@@ -8440,6 +8589,8 @@ func _emit_work_assign(band: Dictionary, model: Dictionary, workers: int,
         kit_id: String = RESTATE_STANDING_KIT,
         move_with_herd: int = RESTATE_STANDING_FOLLOW) -> void:
     var kind := String(model.get("kind", ""))
+    if workers == RESTATE_STANDING_COUNT:
+        workers = int(model.get("max_workers", 0))
     var standing := float(model.get("floor", SourceForecast.DEFAULT_HARVEST_FLOOR))
     _emit_assign_labor(band, kind, workers, int(model.get("x", -1)), int(model.get("y", -1)),
         String(model.get("herd_id", "")),
@@ -10502,7 +10653,7 @@ func _on_station_link_pressed(band_id: int, host_id: int) -> void:
     var band := _band_labor.player_band_by_band_id(band_id)
     if band.is_empty() or host_id == HudConst.NO_BAND_ID:
         return
-    if _band_labor.effective_idle(band) <= 0:
+    if _band_labor.orderable_hands(band) <= 0:
         return
     _reset_verb_state()
     _targeting.disarm_verb_picks()
@@ -11559,7 +11710,7 @@ func verb_block_reasons(mission: String, band: Dictionary) -> PackedStringArray:
             if _split_worker_pool(band) <= 0:
                 reasons.append(HudComposeVocab.VERB_BLOCKED_SPLIT_NO_WORKERS)
         _:
-            if _band_labor.effective_idle(band) <= 0:
+            if _band_labor.orderable_hands(band) <= 0:
                 var verb := HudComposeVocab.verb_for_mission(mission)
                 reasons.append(HudComposeVocab.VERB_BLOCKED_NO_IDLE_FORMAT
                     % String(verb.get(HudComposeVocab.VERB_KEY_ACTION, mission)))
@@ -11684,7 +11835,7 @@ func build_verb_form() -> Control:
         verb_name = HudDealingsVocab.TREATY_SHEET_NAME
     form.add_child(HudWidgets.alloc_section_label(HudComposeVocab.VERB_FORM_HEADER_FORMAT % [
         String(verb.get(HudComposeVocab.VERB_KEY_TOOLTIP, verb_name)), HudFormat.band_name(band)]))
-    form.add_child(_build_compose_sheet(band, _band_labor.effective_idle(band)))
+    form.add_child(_build_compose_sheet(band, _band_labor.orderable_hands(band)))
     _verb_form_node = form
     # **THE SHEET SCROLLS INSIDE THE DRAWER, so it keeps a gutter the scrollbar's width on its right**,
     # reserved unconditionally (as `StartingLoadoutPanel._scroll_gutter` does) so a sheet that grows
@@ -11764,7 +11915,7 @@ func set_drawer_rerender(fn: Callable) -> void:
 func _push_zone_badges(band: Dictionary) -> void:
     if _panel == null:
         return
-    var models := _work_source_models(band, _band_labor.effective_idle(band))
+    var models := _work_source_models(band)
     var attention: Array = models.filter(func(m): return bool(m["attention"]))
     _panel.set_tab_badge(BandCityPanel.ZONE_BAND, "", false)
     _panel.set_tab_badge(BandCityPanel.ZONE_WORK,

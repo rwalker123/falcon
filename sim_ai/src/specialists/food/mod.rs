@@ -76,6 +76,10 @@ pub const ROLE_FORAGE: &str = "forage";
 /// Also the kit job a herd is worked under — `KitOptionState::jobs` names the verbs by the same
 /// words as the labor roles (*"any of `"hunt"`, `"forage"`, `"scout"`, `"warrior"`"*).
 pub const ROLE_HUNT: &str = "hunt";
+/// **NO MAX** on a staffed row's `assign_labor` (#871): the count is the player's cap and `0` means the
+/// sim staffs as many hands as help. The AI never caps a forage or hunt row.
+pub(crate) const NO_MAX: u32 = 0;
+
 /// The band-wide build pool: `assign_labor <faction> <band> builders <n>`, whose whole output goes
 /// on the head of the band's build queue (`command_text.rs` → `assign_labor`).
 pub const ROLE_BUILDERS: &str = "builders";
@@ -339,12 +343,17 @@ impl Food {
             .max_by(|a, b| a.expected(hands).total_cmp(&b.expected(hands)))
     }
 
+    /// **Ask for a source, and let the sim staff it** (#871). The forage and hunt rows are staffed by
+    /// the sim from the row's floor, kit and priority, so the AI sends **no Max** (`0`): `workers`
+    /// is the crew the rule PLANNED - the number its ledger projection priced - and is deliberately
+    /// not on the wire. The sim's crew for the row reads back as the row's `workers` next frame.
     fn assign(
         &self,
         band: &PopulationCohortState,
         key: &SourceKey,
-        workers: u32,
+        _planned_workers: u32,
     ) -> CommandPayload {
+        let workers = NO_MAX;
         let (role, target_x, target_y, fauna_id) = match key {
             SourceKey::Patch(tile) => (ROLE_FORAGE, Some(tile.x), Some(tile.y), None),
             SourceKey::Herd(id) => (ROLE_HUNT, None, None, Some(id.clone())),
@@ -357,9 +366,57 @@ impl Food {
         let floor = band
             .labor_assignments
             .iter()
-            .find(|row| row.workers > 0 && SourceKey::of_row(row).as_ref() == Some(key))
+            .find(|row| SourceKey::of_row(row).as_ref() == Some(key))
             .map(|row| row.floor);
         self.assign_role(band, role, workers, target_x, target_y, fauna_id, floor)
+    }
+
+    /// Whether the band already holds a row on `key` (staffed or not).
+    fn holds_row(band: &PopulationCohortState, key: &SourceKey) -> bool {
+        band.labor_assignments
+            .iter()
+            .any(|row| SourceKey::of_row(row).as_ref() == Some(key))
+    }
+
+    /// **Open a source the band does not work yet** (#871). An `assign_labor` with no Max onto a row
+    /// the band already holds changes nothing - the sim staffs that row from the pool whatever the
+    /// AI says - so only a NEW source is a command; for a held row this answers nothing and the hands
+    /// simply stay in the pool for the sim to staff.
+    fn open(
+        &self,
+        band: &PopulationCohortState,
+        key: &SourceKey,
+        planned_workers: u32,
+    ) -> Option<CommandPayload> {
+        (!Self::holds_row(band, key)).then(|| self.assign(band, key, planned_workers))
+    }
+
+    /// **Give a source up** (#871): a rule that empties a row stops it - `assign_labor … 0` is "no
+    /// Max" now, never an unassign. A rule that only THINS a row (`left > 0`) sends nothing: the
+    /// sim staffs every row from the pool the others leave, so there is no donor to reduce.
+    fn release(
+        &self,
+        band: &PopulationCohortState,
+        key: &SourceKey,
+        left: u32,
+    ) -> Option<CommandPayload> {
+        if left > 0 {
+            return None;
+        }
+        let (target_x, target_y, herd_id) = match key {
+            SourceKey::Patch(tile) => (Some(tile.x), Some(tile.y), None),
+            SourceKey::Herd(id) => (None, None, Some(id.clone())),
+        };
+        Some(CommandPayload::StopLabor {
+            faction_id: self.faction,
+            band_id: band.band_id,
+            target_x,
+            target_y,
+            herd_id,
+            material: None,
+            branch: None,
+            roadwork: false,
+        })
     }
 
     /// `assign_labor` on a band-wide role (`builders`, …): no target, no kit, no floor.
@@ -411,7 +468,13 @@ impl Food {
             faction_id: self.faction,
             band_id: Some(band.band_id),
             role: role.to_owned(),
-            workers,
+            // A forage or hunt row is staffed by the sim: no Max (#871). A band-wide role still
+            // carries the player's (here the AI's) count.
+            workers: if role == ROLE_FORAGE || role == ROLE_HUNT {
+                NO_MAX
+            } else {
+                workers
+            },
             target_x,
             target_y,
             fauna_id,

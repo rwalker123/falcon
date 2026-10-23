@@ -258,6 +258,7 @@ func _ready() -> void:
 	await _drive_build_order()
 	await _drive_build_priority()
 	await _drive_work_priority()
+	await _drive_stop_labor()
 	await _drive_unqueue()
 	_assert_retired_kit_verbs()
 	await _drive_send_trade_expedition()
@@ -737,6 +738,23 @@ func _drive_work_priority() -> void:
 		}).is_empty():
 		_fail("work_priority: a line was built for a ROAD, which has no crew to rank")
 
+## **`stop_labor` - A STAFFED ROW'S END** (#871), in the five forms it can name: the patch, the herd, the
+## working, a tile-branch row (`<branch> <x> <y>`, the word leading) and the lone `roadwork` token. A staffed
+## row's count slot is a Max now, so this is the only line that ends one - and it names its band by BandId.
+func _drive_stop_labor() -> void:
+	var band: Dictionary = _hud._band_labor.panel_band()
+	for model in [
+			{"kind": SourceForecast.LABOR_KIND_FORAGE, "x": TARGET_X, "y": TARGET_Y, "herd_id": ""},
+			{"kind": SourceForecast.LABOR_KIND_HUNT, "x": -1, "y": -1, "herd_id": NEAR_HERD_ID},
+			{"kind": HudConst.LABOR_KIND_EXTRACT, "x": TARGET_X, "y": TARGET_Y, "herd_id": "",
+				"material": DEPOSIT_MATERIAL},
+			{"kind": HudConst.LABOR_KIND_TILE, "x": TARGET_X, "y": TARGET_Y, "herd_id": "",
+				"branch": "route"},
+			{"kind": HudConst.LABOR_KIND_BAND, "x": -1, "y": -1, "herd_id": "", "branch": "camp_stores"},
+			{"kind": HudConst.LABOR_KIND_ROADWORK, "x": -1, "y": -1, "herd_id": ""}]:
+		_hud._bandpanel._commit_stop_labor(band, model)
+		await _settle()
+
 ## **`unqueue` — THE WITHDRAWAL**, in the four forms a queue row can name: patch, herd, working, road.
 func _drive_unqueue() -> void:
 	var band: Dictionary = _hud._band_labor.panel_band()
@@ -993,6 +1011,8 @@ func _connect_recorders() -> void:
 		_record("build_order", p, MAIN_SCRIPT.format_build_order(p)))
 	_hud.work_priority_requested.connect(func(p: Dictionary) -> void:
 		_record("work_priority", p, MAIN_SCRIPT.format_work_priority(p)))
+	_hud.stop_labor_requested.connect(func(p: Dictionary) -> void:
+		_record("stop_labor", p, MAIN_SCRIPT.format_stop_labor(p)))
 	_hud.unqueue_requested.connect(func(p: Dictionary) -> void:
 		_record("unqueue", p, MAIN_SCRIPT.format_unqueue(p)))
 	_hud.build_priority_requested.connect(func(p: Dictionary) -> void:
@@ -1416,6 +1436,8 @@ const EXPECTED_KINDS := {
 	"build_priority": 4,
 	# THREE — the patch, the herd and the working; the road form is asserted to build NO line.
 	"work_priority": 3,
+	# FIVE — the patch, herd, working, tile-branch and roadwork forms of a staffed row's end (#871).
+	"stop_labor": 6,
 	# FOUR — every form a queue row can withdraw.
 	"unqueue": 4,
 	# ONE — the Deny verb's sheet, opened on the herd its pick landed on, is the raid's only launch site.

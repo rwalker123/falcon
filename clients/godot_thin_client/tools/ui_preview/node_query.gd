@@ -122,13 +122,30 @@ static func find_meta_node(root: Node, meta: String) -> Node:
 			return found
 	return null
 
-static func find_crew_target(root: Node, key: String) -> Button:
+## `find_meta_node`, SKIPPING any subtree queued for deletion. A control edit rebuilds the compose block and
+## `queue_free`s the previous generation's root, whose descendants stay in the tree - un-flagged - until the
+## frame ends, so a plain first-match finder can read the generation that was just replaced.
+static func find_live_meta_node(root: Node, meta: String) -> Node:
+	if root == null or root.is_queued_for_deletion():
+		return null
+	if root is Control and (root as Control).has_meta(meta):
+		return root
+	for child in root.get_children():
+		var found := find_live_meta_node(child, meta)
+		if found != null:
+			return found
+	return null
+
+## The Max stepper's `-` / `+` buttons under `root` (#871), found by their aria names - the controls a
+## compose sheet's crew is now bounded through.
+static func find_max_button(root: Node, aria: String) -> Button:
 	if root == null:
 		return null
-	if root is Button and (root as Button).get_meta(HudWidgets.CREW_TARGET_META, "") == key:
+	if root is Button and (root as Button).tooltip_text == aria \
+			and not (root as Button).is_queued_for_deletion():
 		return root as Button
 	for child in root.get_children():
-		var found := find_crew_target(child, key)
+		var found := find_max_button(child, aria)
 		if found != null:
 			return found
 	return null

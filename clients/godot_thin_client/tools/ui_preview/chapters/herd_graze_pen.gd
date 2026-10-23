@@ -24,12 +24,6 @@ const RungFx := preload("res://tools/ui_preview/fixtures_rung.gd")
 ## The `ui_preview` harness node: the HUD under test, plus `_settle` / `_save` / `_assert_hud`.
 var h
 
-## The phrase every take-cap note is built around (`SourceForecast.MAX_USEFUL_NOTE_FORMAT`), so the
-## pair below can be compared as WHOLE NOTES rather than by asking twice whether one number is
-## present: two `contains` claims are satisfied by two different notes, and "the verb moved nothing"
-## is a claim about the note being the same one.
-const TAKE_CAP_NOTE_NEEDLE := "useful here"
-
 const TAME_CAP_WOULD_BE_HERDERS := 30
 
 ## The RETIRED pause note's own stem, and any turn estimate at all — the two needles
@@ -74,6 +68,17 @@ func _taming_stalled_herd_fixture() -> Dictionary:
 	var fixture := HerdFx.taming_herd_fixture()
 	fixture["ecology_phase"] = "stressed"
 	return fixture
+
+## `band` with its hunt rows removed - a band that works no herd, so a sheet over any herd stages the
+## NEW-source forecast the cap tests below are about (a worked herd states the sim's crew instead).
+func _band_without_hunt_rows(band: Dictionary) -> Dictionary:
+	var out := band.duplicate(true)
+	var kept: Array = []
+	for entry in out.get("labor_assignments", []):
+		if not (entry is Dictionary) or String((entry as Dictionary).get("kind", "")) != "hunt":
+			kept.append(entry)
+	out["labor_assignments"] = kept
+	return out
 
 func _tame_worker_cap_herd_fixture() -> Dictionary:
 	var fixture := HerdFx.taming_herd_fixture()
@@ -554,6 +559,8 @@ func run(harness) -> void:
 	# Push both fixtures as the known-herd roster so the open-ended Attack/Defense bars have a
 	# reference to normalize against (Elevation-style) — the mammoth holds the roster max.
 	h._set_world_herds([HerdFx.herd_fixture(), HerdFx.deadly_herd_fixture()])
+	# A band that works NO herd, so the sheet offers each verb (a worked herd offers `Stop working here`).
+	h._hud._band_labor._player_band = _band_without_hunt_rows(BandFx.band_fixture())
 	h._show_herd(HerdFx.herd_fixture())
 	h._compose_herd(HerdFx.herd_fixture())
 	await h._settle()
@@ -1021,6 +1028,7 @@ func run(harness) -> void:
 	# food-unit upkeep, and a pen has none: it eats its own fenced pasture and hay. The payoff now
 	# stands alone, and this frame is where a dangling `−` or an orphaned `feed` word would show.
 	h._hud._compose.reset_hunt_source()
+	h._hud._band_labor._player_band = _band_without_hunt_rows(BandFx.band_fixture())
 	h._show_herd(HerdFx.corral_ready_herd_fixture())
 	h._compose_herd(HerdFx.corral_ready_herd_fixture(), Spine.COMPOSE_COUNT_UNSET, ForageFx.COMPOSE_FLOOR_UNSET, "corral")
 	await h._settle()
@@ -1073,10 +1081,7 @@ func run(harness) -> void:
 	# drawer's `Keepers` row is a different allocation entirely and reads 0 here, the reference band
 	# keeping nothing. `BandFx.band_fixture()` is restored immediately after the save, since
 	# `herd_corral_depleted` and every state downstream document the reference band's 4.
-	var under_herded_band := BandFx.band_fixture().duplicate(true)
-	for entry in under_herded_band["labor_assignments"]:
-		if entry is Dictionary and String((entry as Dictionary).get("kind", "")) == "hunt":
-			(entry as Dictionary)["workers"] = UNDER_HERDED_CORRAL_HERDERS_STAFFED
+	var under_herded_band := _band_without_hunt_rows(BandFx.band_fixture())
 	h._hud._band_labor._player_band = under_herded_band
 	h._hud._compose.reset_hunt_source()
 	h._show_herd(_under_herded_corral_fixture())
@@ -1085,7 +1090,6 @@ func run(harness) -> void:
 	# spends the one-shot on the re-seeded rung instead, and dialing an explicit count would overwrite
 	# whatever auto-max produced — the frame must show auto-max REACHING the cap, not advertising it.
 	h._compose_herd(_under_herded_corral_fixture(), Spine.COMPOSE_COUNT_UNSET, ForageFx.COMPOSE_FLOOR_UNSET, "corral")
-	h._hud._compose.arm_hunt_autofill()
 	h._compose_herd(_under_herded_corral_fixture())
 	await h._settle()
 	await h._save("herd_corral_under_herded")
@@ -1094,8 +1098,8 @@ func run(harness) -> void:
 	# because the cap is now the SELECTED STANCE's take-useful raised to the floor (issue #442) rather
 	# than a build verb's 1-worker prep count raised to it — a crew building a pen still hunts, and the
 	# stance says how hard. Asserting equality would pin the old overload's arithmetic.
-	h._assert_hud("auto-max fills the corral crew to at least the herder deficit, proving it is reachable",
-		h._hud._compose.hunt_count() >= UNDER_HERDED_CORRAL_HERDERS_NEEDED)
+	h._assert_hud("the corral crew the sheet staffs reaches the herder deficit, proving it is reachable",
+		Readout.stepper_value(h._hud._drawercompose._compose_sheet) >= UNDER_HERDED_CORRAL_HERDERS_NEEDED)
 	# Restore the reference band (4 herders on game_deer_07) for everything downstream.
 	h._hud._band_labor._player_band = BandFx.band_fixture()
 
@@ -1244,7 +1248,7 @@ func run(harness) -> void:
 	h._hud.update_intensification([{"faction": 0, "knowledges": {"cultivation": 1.0, "herding": 1.0, "seed_selection": 1.0, "penning": 1.0}}])
 	# A band with idle workers comfortably above both caps (Tame 30, Sustain 7), so the stepper is bound by
 	# USEFULNESS (the "max N useful here" note), not by the idle-labor ceiling (a different note entirely).
-	var tame_cap_band := BandFx.band_fixture()
+	var tame_cap_band := _band_without_hunt_rows(BandFx.band_fixture())
 	tame_cap_band["idle_workers"] = TAME_CAP_WOULD_BE_HERDERS * 2
 	tame_cap_band["working_age"] = TAME_CAP_WOULD_BE_HERDERS * 3
 	h._hud._band_labor._player_band = tame_cap_band
@@ -1258,12 +1262,10 @@ func run(harness) -> void:
 		SourceForecast.FLOOR_FOOD_PEAK, "tame")
 	await h._settle()
 	await h._save("herd_tame_worker_cap")
-	var tame_cap_note := Q.label_containing(h._hud._drawercompose._compose_sheet, TAKE_CAP_NOTE_NEEDLE)
-	h._assert_hud("a composed Tame states a take cap at all (\"%s\")" % tame_cap_note,
-		tame_cap_note != "")
+	var tame_cap := Readout.stepper_value(h._hud._drawercompose._compose_sheet)
+	h._assert_hud("a composed Tame staffs a take crew at all (%d)" % tame_cap, tame_cap > 0)
 	h._assert_hud("…and it is NOT the would-be herder crew (%d) — that keeping is the band POOL's"
-		% TAME_CAP_WOULD_BE_HERDERS,
-		not tame_cap_note.contains("max %d workers useful" % TAME_CAP_WOULD_BE_HERDERS))
+		% TAME_CAP_WOULD_BE_HERDERS, tame_cap != TAME_CAP_WOULD_BE_HERDERS)
 	# COMPANION — the SAME herd at the SAME floor with NO verb composed. Its cap must be the identical
 	# take-useful count: the take is what the stepper is for, and a build beside it moves nothing.
 	h._hud._compose.reset_hunt_source()
@@ -1271,11 +1273,12 @@ func run(harness) -> void:
 	h._compose_herd(_tame_worker_cap_herd_fixture(), Spine.COMPOSE_COUNT_UNSET, SourceForecast.FLOOR_FOOD_PEAK)
 	await h._settle()
 	await h._save("herd_tame_worker_cap_sustain")
-	var bare_cap_note := Q.label_containing(h._hud._drawercompose._compose_sheet, TAKE_CAP_NOTE_NEEDLE)
-	h._assert_hud("an extractive compose caps on its own take-useful (max 7), floored at 0",
-		bare_cap_note.contains("max 7 workers useful"))
-	h._assert_hud("…and the composed Tame read the SAME cap, so the verb moves no take-side number",
-		tame_cap_note == bare_cap_note)
+	var bare_cap := Readout.stepper_value(h._hud._drawercompose._compose_sheet)
+	# The take-useful crew is sized on a RATE (`fauna::hunt_crew_for_take`), which is 3 on this room
+	# where the retired whole-animal drop named 7.
+	h._assert_hud("an extractive compose staffs its own take-useful crew (3)", bare_cap == 3)
+	h._assert_hud("…and the composed Tame staffed the SAME crew, so the verb moves no take-side number",
+		tame_cap == bare_cap)
 
 	# State — THE PEN THAT DREW NOTHING, appended last so no frame before it moves. Same 40% pasture as
 	# the starving pen above, but its keeper carried in nothing at all (no store, or no Foddering), so

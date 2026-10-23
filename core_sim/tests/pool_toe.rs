@@ -398,6 +398,8 @@ fn two_quarries_and_one_chisel(ranks: [SourcePriority; 2]) -> [bool; 2] {
                 party: None,
                 muster_crew: 0,
                 planned_crew: 0,
+                max_workers: Some(A_TAKE_CREW + A_QUARRY_KEEPING_CREW),
+                staffing: Default::default(),
                 target: LaborTarget::Extract {
                     tile: *tile,
                     material: material.clone(),
@@ -491,6 +493,8 @@ fn a_queued_paving_and_a_quarry(build_mark: SourcePriority) -> PavingTurn {
             party: None,
             muster_crew: 0,
             planned_crew: 0,
+            max_workers: Some(A_TAKE_CREW + A_QUARRY_KEEPING_CREW),
+            staffing: Default::default(),
             target: LaborTarget::Extract {
                 tile: quarry_tile,
                 material: material.clone(),
@@ -504,6 +508,8 @@ fn a_queued_paving_and_a_quarry(build_mark: SourcePriority) -> PavingTurn {
             party: None,
             muster_crew: 0,
             planned_crew: 0,
+            max_workers: Some(BUILDERS),
+            staffing: Default::default(),
             target: LaborTarget::Builders,
             workers: BUILDERS,
             kit: None,
@@ -604,6 +610,8 @@ fn a_band_keeping_a_paved_road_and_a_quarry(quarry_rank: SourcePriority) -> Shar
             party: None,
             muster_crew: 0,
             planned_crew: 0,
+            max_workers: Some(A_TAKE_CREW + A_QUARRY_KEEPING_CREW),
+            staffing: Default::default(),
             target: LaborTarget::Extract {
                 tile: quarry_tile,
                 material: material.clone(),
@@ -619,6 +627,8 @@ fn a_band_keeping_a_paved_road_and_a_quarry(quarry_rank: SourcePriority) -> Shar
             party: None,
             muster_crew: 0,
             planned_crew: 0,
+            max_workers: Some(ONE_KEEPER),
+            staffing: Default::default(),
             target: LaborTarget::Roadwork,
             workers: ONE_KEEPER,
             kit: None,
@@ -1181,36 +1191,14 @@ fn staff_one_role(
         party: None,
         muster_crew: 0,
         planned_crew: 0,
+        max_workers: Some(keepers),
+        staffing: Default::default(),
         target: role,
         workers: keepers,
         kit: None,
         priority: SourcePriority::default(),
     });
     app.world.entity_mut(band).insert(allocation);
-    size_the_band(app, band, keepers);
-}
-
-/// **MOVE A ROLE'S HEAD COUNT THE WAY A STEPPER PRESS DOES** — straight onto the band's
-/// `LaborAllocation` with **no turn in between**, which is what `handle_assign_labor` does with the
-/// command (`core_sim/src/bin/server.rs`): the row moves immediately and nothing re-settles the
-/// pool until the next turn resolves.
-///
-/// The command handler itself lives in the server **binary** and no integration test can call it;
-/// what this reproduces is the state it leaves behind, which is the whole of the defect — an
-/// allocation whose row has moved past the crew account the last turn stamped.
-fn restaff_outside_the_turn(app: &mut App, band: Entity, role: &LaborTarget, keepers: u32) {
-    {
-        let mut allocation = app
-            .world
-            .get_mut::<LaborAllocation>(band)
-            .expect("the fixture band holds an allocation");
-        let assignment = allocation
-            .assignments
-            .iter_mut()
-            .find(|assignment| assignment.target.same_source(role))
-            .expect("the fixture band staffs the role under test");
-        assignment.workers = keepers;
-    }
     size_the_band(app, band, keepers);
 }
 
@@ -2139,59 +2127,12 @@ mod a_pool_puts_its_idle_hands_on_the_work_still_owed {
     mod and_the_wire_says_how_many_keepers_it_did_not_use {
         use super::*;
 
-        /// ⛔ **THE ISSUE'S OWN CASE — a bill one geared keeper covers, with a second keeper
-        /// assigned, publishes the second keeper as standing.**
-        ///
-        /// One short-haul dirt road wants `0.66` of a keeper at the geared rate and the band owns
-        /// the one tool that arms them, so the road is paid in full out of the plan alone and step
-        /// 5 has no deficit to spend anything on. The pool was given **2** keepers, so `1.34` of
-        /// them did nothing at all — more than a whole person, which is the reading a stepper acts
-        /// on.
-        #[test]
-        fn a_bill_one_geared_keeper_covers_leaves_the_second_keeper_standing() {
-            const KEEPERS: u32 = 2;
-            const ONE_ROAD: u32 = 1;
-            const ONE_TOOL: u32 = 1;
-            /// **What this fixture strands**, measured: `2` keepers less the `0.66` the road's
-            /// bill asked for at the geared rate.
-            const THE_KEEPERS_THE_BILL_NEVER_REACHED_FOR: f32 = 1.3399999;
-            /// A whole person standing is what makes this the issue rather than a rounding
-            /// remainder.
-            const A_WHOLE_KEEPER: f32 = 1.0;
-
-            let turn = a_roadwork_pool_over_dirt_roads(
-                &[(EARTHMOVING, ONE_TOOL)],
-                KEEPERS,
-                ONE_ROAD,
-                A_SHORT_HAUL,
-            );
-            let (required, filled) = toe_line(&turn.app, "roadwork", EARTHMOVING);
-            let idle = published_idle_keepers(&turn.app, "roadwork");
-
-            assert!(
-                filled >= required,
-                "fixture: the hands the bill wanted are armed, so there is no deficit for step 5 \
-                 to spend the spare keeper on: filled {filled} against required {required}"
-            );
-            assert_eq!(
-                turn.supplied, turn.bills,
-                "fixture: …and the road is paid in full by the geared plan alone"
-            );
-            assert_eq!(
-                idle, THE_KEEPERS_THE_BILL_NEVER_REACHED_FOR,
-                "the wire states the keepers the turn's bill did not consume"
-            );
-            assert_eq!(
-                idle,
-                KEEPERS as f32 - required,
-                "…which is the head count less the hands the plan put on the road"
-            );
-            assert!(
-                idle > A_WHOLE_KEEPER,
-                "…and it is a whole person and more, which is what a step-down mark acts on: \
-                 {idle}"
-            );
-        }
+        // **RETIRED WITH THE PLAYER-SET ROADWORK CREW (#871).** Five tests here stated how many of
+        // the keepers the PLAYER put on the pool the bill did not consume (the issue's own
+        // two-keepers-for-a-one-keeper-bill case, a head count with no roads, the head count a
+        // press moved after the settle, the hands step 5 spent). The Roadwork crew is the sim's now:
+        // it staffs the keepers the roads' bill calls for, so there is no hand-set head count to
+        // have left standing. The two tests below still hold the figure at its edges.
 
         /// ⛔ **THE CONTROL THAT MAKES THE CLAIM MEAN SOMETHING — the bare-handed pair.**
         ///
@@ -2232,104 +2173,6 @@ mod a_pool_puts_its_idle_hands_on_the_work_still_owed {
             );
         }
 
-        /// ⛔ **IDLE IS STRUCK AFTER THE TOP-UP, NOT BEFORE IT.**
-        ///
-        /// Three keepers over two short-haul roads: the plan wants `1.32` of them, so `1.68` are
-        /// left standing — and the band's single earthmoving set cannot arm the hands the plan
-        /// placed, so both roads end the split short. Step 5 spends part of those `1.68` closing
-        /// the gap, **bare**, and what the wire publishes is what is left after it did.
-        ///
-        /// **This is the assertion that fails if someone later publishes the pre-top-up figure.**
-        /// Reporting `1.68` here would tell the player to step down a keeper the sim has working —
-        /// issue #714's own defect, arriving through the readout instead of through the split.
-        #[test]
-        fn the_hands_step_five_spent_are_not_published_as_standing() {
-            const KEEPERS: u32 = 3;
-            const TWO_ROADS: u32 = 2;
-            const ONE_TOOL: u32 = 1;
-            /// **What the plan left standing before step 5 ran**, measured: `3` keepers less the
-            /// `1.32` the two bills asked for at the geared rate.
-            const BEFORE_THE_TOP_UP: f32 = 1.68;
-            /// **And what was still standing after it**, measured: step 5 spent `0.648` bare hands
-            /// closing the two roads' `0.648` work units of deficit.
-            const AFTER_THE_TOP_UP: f32 = 1.0400001;
-
-            let turn = a_roadwork_pool_over_dirt_roads(
-                &[(EARTHMOVING, ONE_TOOL)],
-                KEEPERS,
-                TWO_ROADS,
-                A_SHORT_HAUL,
-            );
-            let (required, filled) = toe_line(&turn.app, "roadwork", EARTHMOVING);
-            let idle = published_idle_keepers(&turn.app, "roadwork");
-
-            assert_eq!(
-                KEEPERS as f32 - required,
-                BEFORE_THE_TOP_UP,
-                "fixture: the plan really does leave hands standing — {required} of {KEEPERS}"
-            );
-            assert!(
-                filled < required,
-                "fixture: and the pool is short of the tool those hands were planned at, so there \
-                 is a deficit for step 5 to spend them on: filled {filled} against required \
-                 {required}"
-            );
-            assert_eq!(
-                turn.supplied, turn.bills,
-                "fixture: …which it does, closing both roads out of hands that were idle"
-            );
-
-            assert_eq!(
-                idle, AFTER_THE_TOP_UP,
-                "⛔ the wire states what step 5 could NOT place, not what the plan left over"
-            );
-            assert!(
-                idle < BEFORE_THE_TOP_UP,
-                "⛔ strictly fewer than the plan left standing: the hands step 5 spent are working \
-                 and must not be offered up — {idle} against {BEFORE_THE_TOP_UP}"
-            );
-        }
-
-        /// ⛔ **A POOL WITH A HEAD COUNT AND NO SITES PUBLISHES ITS WHOLE HEAD COUNT** — probably
-        /// the commonest shape there is, and the one an early return would have silently omitted.
-        ///
-        /// Three keepers on `roadwork` and not a road in the world: there is no bill at all, so
-        /// every one of them stands. It is the only keeping pool, so it is the only line
-        /// (`docs/plan_site_crews.md` §4), and **`builders` states no line** — it is not a keeping
-        /// pool, `build_workers` puts the whole head count on the queue head, so no builder is ever
-        /// left standing by a plan that wanted fewer.
-        #[test]
-        fn a_pool_with_a_head_count_and_no_sites_publishes_all_of_it() {
-            const KEEPERS: u32 = 3;
-            const NO_ROADS: u32 = 0;
-
-            let turn = a_roadwork_pool_over_dirt_roads(&[], KEEPERS, NO_ROADS, A_SHORT_HAUL);
-
-            assert!(
-                turn.bills.is_empty(),
-                "fixture: there is no road and therefore no bill: {:?}",
-                turn.bills
-            );
-            assert_eq!(
-                published_idle_keepers(&turn.app, "roadwork"),
-                KEEPERS as f32,
-                "every keeper the player put on the role stands, and the wire says so"
-            );
-
-            let crew = published_pool_crew(&turn.app);
-            assert_eq!(
-                crew.iter()
-                    .map(|(pool, _)| pool.as_str())
-                    .collect::<Vec<_>>(),
-                vec!["roadwork"],
-                "the one keeping pool states its line and the retired ones state none: {crew:?}"
-            );
-            assert!(
-                crew.iter().all(|(pool, _)| pool != "builders"),
-                "⛔ the builders are not a keeping pool and state no crew line: {crew:?}"
-            );
-        }
-
         /// ⛔ **A FULLY COMMITTED POOL REPORTS EXACTLY NONE — no tolerance.**
         ///
         /// Two long-haul roads want `3.96` keepers of the pool's `3`, so the split is capped from
@@ -2362,91 +2205,6 @@ mod a_pool_puts_its_idle_hands_on_the_work_still_owed {
                 0.0,
                 "⛔ exactly none, with no tolerance: a pool that wanted more hands than it has has \
                  none to spare"
-            );
-        }
-
-        /// ⛔ **THE REPORTED CASE — a head count moved AFTER the settle publishes the head count it
-        /// was SETTLED at, not the one the band's row carries now.**
-        ///
-        /// `assign_labor` writes the band's row the instant the player presses the stepper, outside
-        /// the turn; the crew account is stamped only where the turn settles the pool. So on every
-        /// frame between a press and the next turn resolution the two disagree — and a client
-        /// projecting the press as `idleKeepers + (row − keepers)` gets the right answer only if
-        /// `keepers` is the **settled** basis. Publishing the row's live head count here would make
-        /// that difference `0` on exactly the frame the player is deciding from, collapsing the
-        /// projection to a turn-old figure: three keepers freshly put on a pool with nothing to do
-        /// would report none.
-        #[test]
-        fn the_published_head_count_is_the_one_the_turn_settled_not_the_row_as_it_stands_now() {
-            const SETTLED_WITH: u32 = 1;
-            const AFTER_THE_PRESS: u32 = 3;
-            const NO_ROADS: u32 = 0;
-
-            let mut turn =
-                a_roadwork_pool_over_dirt_roads(&[], SETTLED_WITH, NO_ROADS, A_SHORT_HAUL);
-            assert_eq!(
-                published_settled_keepers(&turn.app, "roadwork"),
-                SETTLED_WITH as f32,
-                "fixture: the turn settled the pool at the head count it was staffed with"
-            );
-
-            let (band, _, _, _) = first_band(&mut turn.app);
-            restaff_outside_the_turn(&mut turn.app, band, &LaborTarget::Roadwork, AFTER_THE_PRESS);
-            core_sim::recapture_snapshot_in_place(&mut turn.app.world);
-
-            assert_eq!(
-                published_row_workers(&turn.app, "roadwork"),
-                AFTER_THE_PRESS,
-                "fixture: the press really did move the band's row on this very frame, with no \
-                 turn between"
-            );
-            assert_eq!(
-                published_settled_keepers(&turn.app, "roadwork"),
-                SETTLED_WITH as f32,
-                "⛔ the crew account states the head count it was STRUCK against — the row has \
-                 moved past it and the account must not follow"
-            );
-            assert_eq!(
-                published_idle_keepers(&turn.app, "roadwork"),
-                SETTLED_WITH as f32,
-                "…and its idle figure is still the settled one, unchanged by a press the turn has \
-                 not seen"
-            );
-
-            let projected = published_idle_keepers(&turn.app, "roadwork")
-                + (published_row_workers(&turn.app, "roadwork") as f32
-                    - published_settled_keepers(&turn.app, "roadwork"));
-            assert_eq!(
-                projected, AFTER_THE_PRESS as f32,
-                "⛔ which is what lets a reader project the pending edit: every keeper on a pool \
-                 with nothing to do, on the frame of the press"
-            );
-        }
-
-        /// ⛔ **THE TWO TERMS COME FROM ONE MOMENT** — a pool holding no site at all reports its
-        /// whole head count idle, so `idleKeepers == keepers` exactly.
-        ///
-        /// It is the invariant that catches the pair being stamped from two different moments: any
-        /// seam that took the idle figure from the turn and the head count from anywhere else
-        /// breaks this the moment the two disagree, and a pool with no claims is where they are
-        /// provably equal.
-        #[test]
-        fn a_pool_with_no_claims_reports_every_keeper_it_was_struck_with() {
-            const KEEPERS: u32 = 3;
-            const NO_ROADS: u32 = 0;
-
-            let turn = a_roadwork_pool_over_dirt_roads(&[], KEEPERS, NO_ROADS, A_SHORT_HAUL);
-            let idle = published_idle_keepers(&turn.app, "roadwork");
-            let keepers = published_settled_keepers(&turn.app, "roadwork");
-
-            assert_eq!(
-                keepers, KEEPERS as f32,
-                "the head count published is the one the pool was settled with"
-            );
-            assert_eq!(
-                idle, keepers,
-                "⛔ nothing was claimed, so every keeper the pool was struck with is idle — the \
-                 two terms are one turn's arithmetic"
             );
         }
 
@@ -2483,6 +2241,8 @@ mod a_pool_puts_its_idle_hands_on_the_work_still_owed {
                     party: None,
                     muster_crew: 0,
                     planned_crew: 0,
+                    max_workers: Some(keepers),
+                    staffing: Default::default(),
                     target: role,
                     workers: keepers,
                     kit: None,

@@ -414,6 +414,25 @@ message AssignLaborCommand {
   bool move_with_herd = 13;
 }
 
+// STOP A STAFFED ROW (#871, docs/plan_labor_at_scale.md): remove the band's row for one source, the
+// way `assign_labor ... 0` used to before a count became the player's MAX. The sim staffs every
+// forage, hunt, extraction, tile-improvement and Roadwork row from the player's floor, so a count of
+// 0 on `assign_labor` now means "no max" and ending a row has its own verb.
+//
+// SOURCE ADDRESSING is `work_priority`'s: two integer tokens name a TILE, one token a HERD id,
+// `<x> <y> <material>` a WORKING, `<branch> <x> <y>` a tile improvement; `roadwork` (no source)
+// names the band's Roadwork pool.
+message StopLaborCommand {
+  uint32 faction_id = 1;
+  uint64 band_id = 2;
+  optional uint32 target_x = 3;
+  optional uint32 target_y = 4;
+  optional string herd_id = 5;
+  optional string material = 6;
+  optional string branch = 7;
+  bool roadwork = 8;
+}
+
 // Travel a band toward a target tile at band_move_tiles_per_turn/turn.
 message MoveBandCommand {
   uint32 faction_id = 1;
@@ -1807,5 +1826,6 @@ message CommandEnvelope {
     ProposeTreatyCommand propose_treaty = 92;
     SendEnvoyCommand send_envoy = 93;
     EndTreatyCommand end_treaty = 94;
+    StopLaborCommand stop_labor = 95;
   }
 }

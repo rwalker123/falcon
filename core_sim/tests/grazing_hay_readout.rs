@@ -187,6 +187,8 @@ fn keeper_row(herd_id: &str) -> LaborAssignment {
         party: None,
         muster_crew: 0,
         planned_crew: 0,
+        max_workers: Some(KEEPERS),
+        staffing: Default::default(),
         target: LaborTarget::Hunt {
             fauna_id: herd_id.to_string(),
             floor: SUSTAIN,
@@ -922,13 +924,17 @@ fn a_band_that_loses_its_last_worker_publishes_no_hay_ledger() {
     }
     resolve_and_publish(&mut app);
 
+    // **Every row is empty-handed** (#871): the sim's staffed rows are held, not shed - the row is the
+    // player's standing order and survives with nobody on it - so the premise is that the band has
+    // no hands anywhere, not that it has no rows.
     assert!(
         app.world
             .get::<LaborAllocation>(band)
             .expect("the fixture band keeps its allocation")
             .assignments
-            .is_empty(),
-        "the premise of this fixture is that the band sheds every row and leaves the pass early"
+            .iter()
+            .all(|row| row.workers == 0),
+        "the premise of this fixture is that the band has no hands on any row"
     );
     let (need_dead, income_dead, runway_dead, store_dead) = published_band_ledger(&app, band);
     println!(
@@ -936,24 +942,27 @@ fn a_band_that_loses_its_last_worker_publishes_no_hay_ledger() {
          {income_dead:.6}, runway {runway_alive} -> {runway_dead} (store {store_dead:.3})"
     );
 
+    // **The pens are still the band's** (#871): a staffed row is held, not shed, when its hands go, so
+    // the band still keeps the pen and still owes it the same gap - what must NOT be republished is
+    // the income of a Field nobody is on, and a runway struck against it.
     assert!(
-        need_dead.abs() < EPSILON,
-        "a band keeping no pens owes no hay — it must not republish last turn's {need_alive} \
-         (published {need_dead})"
+        (need_dead - need_alive).abs() < EPSILON,
+        "a band keeping its pens still owes their hay: {need_alive} -> {need_dead}"
     );
     assert!(
         income_dead.abs() < EPSILON,
-        "and it grows none either — not last turn's {income_alive} (published {income_dead})"
+        "a Field nobody is on grows no hay — not last turn's {income_alive} (published \
+         {income_dead})"
     );
     assert!(
         store_dead > 0.0,
-        "its store is still stocked, so the sentinel below is about the DRAIN and not an empty \
-         store ({store_dead})"
+        "its store is still stocked, so the runway below is about the DRAIN and not an empty store \
+         ({store_dead})"
     );
-    assert_eq!(
-        runway_dead, NOT_FOOD_LIMITED_TURNS,
-        "and the runway that follows from them is the no-drain sentinel, not last turn's \
-         {runway_alive}"
+    assert!(
+        runway_dead < NOT_FOOD_LIMITED_TURNS,
+        "the pens still drain the store with no income to meet them, so the runway is a real count \
+         ({runway_dead}), not the no-drain sentinel"
     );
 }
 
@@ -1295,6 +1304,8 @@ fn forager_row(patch: UVec2) -> LaborAssignment {
         party: None,
         muster_crew: 0,
         planned_crew: 0,
+        max_workers: Some(KEEPERS),
+        staffing: Default::default(),
         target: LaborTarget::Forage {
             tile: patch,
             floor: SUSTAIN,

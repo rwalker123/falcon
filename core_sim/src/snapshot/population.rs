@@ -12,6 +12,9 @@ use super::*;
 // Every term past the assignment itself is one the ROW cannot resolve for itself — each needs a
 // registry, both webs, or the band's whole allocation — so they are handed in rather than derived
 // here. A bundle struct would only move that list one line up.
+/// The wire's reading of "the player set no Max on this row" (`LaborAssignment.maxWorkers`).
+const NO_MAX_WORKERS: u32 = 0;
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn labor_assignment_to_state(
     assignment: &LaborAssignment,
@@ -169,6 +172,27 @@ pub(crate) fn labor_assignment_to_state(
                     .collect()
             })
             .unwrap_or_default(),
+        // **THE SIM'S STAFFING OF THIS ROW** (#871) - straight off the assignment, which the
+        // labor pass (or the command's own restaff) stamped. Zero on a row the passes do not staff.
+        max_workers: assignment.max_workers.unwrap_or(NO_MAX_WORKERS),
+        hold_crew: assignment.staffing.hold_crew,
+        reach_crew: assignment.staffing.reach_crew,
+        useful_crew: assignment.staffing.useful_crew,
+        keepers_staffed: assignment.staffing.keepers,
+        kitted_staffed: assignment.staffing.kitted,
+        bare_staffed: assignment.staffing.bare,
+        // **THE LOAD WAITING AT THE SOURCE** - only the deposit web's load is in the row's own
+        // units (material units); a food web's is biomass and is not published here.
+        load_units: if matches!(assignment.target, LaborTarget::Extract { .. }) {
+            assignment
+                .party
+                .as_ref()
+                .map_or(0.0, |party| party.load_cargo)
+        } else {
+            0.0
+        },
+        pack_units: assignment.party.as_ref().map_or(0.0, |p| p.pack_units),
+        load_home_in: assignment.party.as_ref().map_or(0, |p| p.load_home_in),
         ..Default::default()
     };
     match &assignment.target {
@@ -557,6 +581,9 @@ pub(crate) fn mustered_take_gear(
             mustered.assignments[need_idx].workers,
         );
         claims.claims[need_idx] = split.claim;
+        if let Some(ask) = claims.asks.get_mut(need_idx) {
+            *ask = split.claim;
+        }
         claims.keep_hands[need_idx] = split.keep_hands;
     }
     // The same settled gear the capture and auto-craft read (`take_row_gear`), now for the mustered
@@ -3247,6 +3274,7 @@ pub(crate) fn snapshot_demographics(
 /// A band with no window, or a closed one, gets no entry: absent is what a closed window reads as.
 pub(crate) fn band_loadout_windows<'a>(
     windows: &crate::starting_loadout::StartingLoadout,
+    work_wants: Option<&crate::staffing::WorkKitWants>,
     equipment_config: &crate::equipment_config::EquipmentConfig,
     carry: &crate::carry::CarryConfig,
     bands: impl Iterator<
@@ -3336,6 +3364,26 @@ pub(crate) fn band_loadout_windows<'a>(
                 food_share,
                 food_carried,
                 food_fixed: window.food_is_fixed(),
+                work_kit_wants: work_wants
+                    .map(|wants| wants.of(band))
+                    .unwrap_or_default()
+                    .iter()
+                    .map(|want| sim_schema::state::WorkKitWantState {
+                        kit: want.kit.clone(),
+                        count: want.count,
+                        priority: match want.priority {
+                            crate::components::SourcePriority::High => {
+                                sim_schema::state::SourcePriorityState::High
+                            }
+                            crate::components::SourcePriority::Normal => {
+                                sim_schema::state::SourcePriorityState::Normal
+                            }
+                            crate::components::SourcePriority::Low => {
+                                sim_schema::state::SourcePriorityState::Low
+                            }
+                        },
+                    })
+                    .collect(),
                 ..BandLoadoutWindowState::default()
             };
             match &window.supply {
@@ -3600,6 +3648,8 @@ mod tests {
                 party: None,
                 muster_crew: 0,
                 planned_crew: 0,
+                max_workers: Some(4),
+                staffing: Default::default(),
                 target: LaborTarget::Hunt {
                     fauna_id: "test-herd".to_string(),
                     floor: 0.5,
@@ -3922,6 +3972,8 @@ mod tests {
                 party: None,
                 muster_crew: 0,
                 planned_crew: 0,
+                max_workers: Some(4),
+                staffing: Default::default(),
                 target: LaborTarget::Scout,
                 workers: 4,
                 kit: None,
@@ -4020,6 +4072,8 @@ mod tests {
                     party: None,
                     muster_crew: 0,
                     planned_crew: 0,
+                    max_workers: Some(1),
+                    staffing: Default::default(),
                     target: match source {
                         BuildSource::Patch(tile) => LaborTarget::Forage {
                             tile: *tile,

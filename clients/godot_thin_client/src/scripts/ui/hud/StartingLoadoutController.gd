@@ -190,6 +190,8 @@ const BAND_FOOD_SHARE := "food_share"
 const BAND_FOOD_CARRIED := "food_carried"
 ## Whether the band's larder counts against its carry without yielding to goods (see the vocab key).
 const BAND_FOOD_FIXED := "food_fixed"
+## `[{kit, count}]` the band's work wants, High to Low then nearest (`HudLoadoutVocab.WORK_KIT_WANTS_KEY`).
+const BAND_WORK_WANTS := "work_wants"
 ## `item_id -> units` / `material_id -> units`, a take's caps. Empty on a grant window.
 const BAND_ITEM_SUPPLY := "item_supply"
 const BAND_MATERIAL_SUPPLY := "material_supply"
@@ -373,6 +375,15 @@ func _ingest_window(band_id: int, window: Dictionary, names: Dictionary) -> void
 	state[BAND_FOOD_SHARE] = float(window.get(HudLoadoutVocab.FOOD_SHARE_KEY, 0.0))
 	state[BAND_FOOD_CARRIED] = float(window.get(HudLoadoutVocab.FOOD_CARRIED_KEY, 0.0))
 	state[BAND_FOOD_FIXED] = bool(window.get(HudLoadoutVocab.FOOD_FIXED_KEY, false))
+	var wants: Array = []
+	for want_variant in window.get(HudLoadoutVocab.WORK_KIT_WANTS_KEY, []):
+		if want_variant is Dictionary:
+			var want: Dictionary = want_variant
+			wants.append({
+				HudLoadoutVocab.WANT_KIT_KEY: String(want.get(HudLoadoutVocab.WANT_KIT_KEY, "")),
+				HudLoadoutVocab.WANT_COUNT_KEY: int(want.get(HudLoadoutVocab.WANT_COUNT_KEY, 0)),
+			})
+	state[BAND_WORK_WANTS] = wants
 	var item_supply := _supply_map(window.get(HudLoadoutVocab.PARENT_ITEM_SUPPLY_KEY, []))
 	var material_supply := _supply_map(window.get(HudLoadoutVocab.PARENT_MATERIAL_SUPPLY_KEY, []))
 	state[BAND_ITEM_SUPPLY] = item_supply
@@ -738,6 +749,7 @@ func render() -> void:
 		},
 		StartingLoadoutPanel.PAYLOAD_FOOD: _food_payload(band),
 		StartingLoadoutPanel.PAYLOAD_REFUSAL: _refusal_text(band),
+		StartingLoadoutPanel.PAYLOAD_OUTFIT: _outfit_payload(band),
 	})
 
 ## The band's food, for the bar's legend line — `{}` on a window carrying none, which draws no line.
@@ -881,6 +893,7 @@ func _kit_rows(band: Dictionary) -> Array:
 				HudLoadoutVocab.KIT_JOBS_SEPARATOR, false),
 			"uses_text": uses_text,
 			"count": count,
+			"want": _kit_want(band, kit_id),
 			"can_add": _kit_ceiling(band, kit_id) > count,
 		})
 	return rows
@@ -1388,6 +1401,7 @@ func _ensure_panel() -> void:
 	_panel.band_selected.connect(_on_band_selected)
 	_panel.kit_count_changed.connect(_on_kit_count_changed)
 	_panel.material_units_changed.connect(_on_material_units_changed)
+	_panel.outfit_requested.connect(_on_outfit_requested)
 
 func _on_dismissed() -> void:
 	collapse()
@@ -1408,6 +1422,76 @@ func _on_kit_count_changed(kit_id: String, count: int) -> void:
 	var current := int((band[BAND_KIT_PICKS] as Dictionary).get(kit_id, 0))
 	_write_pick(band, BAND_KIT_PICKS, kit_id,
 		_clamp_press(count, current, _kit_ceiling(band, kit_id)))
+
+## ⛔ **OUTFIT FOR MY WORK — the kit picks become the wants, clamped by the same ceilings a press
+## meets.** Materials are left alone. The wants are walked in the sim's order (High to Low, nearest
+## first), and each takes `min(want, _kit_ceiling)` priced against the kits already placed, so when
+## the carry (or a take's supply) runs out the kit that hits the cap gets what fits and the rest get 0.
+## Sent as ONE order through `_send_order`, exactly as a stepper press is.
+func _on_outfit_requested() -> void:
+	var band := _subject_state()
+	if band.is_empty():
+		return
+	var target: Dictionary = _outfit_plan(band)["picks"]
+	var picks: Dictionary = band[BAND_KIT_PICKS]
+	if target == picks:
+		return
+	var revert_kits: Dictionary = picks.duplicate()
+	var revert_materials: Dictionary = (band[BAND_MATERIAL_PICKS] as Dictionary).duplicate()
+	band[BAND_KIT_PICKS] = target
+	band.erase(BAND_REFUSAL)
+	if is_expanded():
+		render()
+	_push_attention()
+	_send_order(_subject, revert_kits, revert_materials)
+
+## What the work wants of one kit, `0` for a kit it does not want.
+func _kit_want(band: Dictionary, kit_id: String) -> int:
+	var total := 0
+	for want_variant in band.get(BAND_WORK_WANTS, []):
+		var want: Dictionary = want_variant
+		if String(want.get(HudLoadoutVocab.WANT_KIT_KEY, "")) == kit_id:
+			total += int(want.get(HudLoadoutVocab.WANT_COUNT_KEY, 0))
+	return total
+
+## `{picks, short}`: the kit allocation the button would place and whether any want goes unmet in
+## full. Computed by writing into the band's pick map and restoring it, so `_kit_ceiling` prices each
+## kit against the ones already placed with no second copy of the arithmetic.
+func _outfit_plan(band: Dictionary) -> Dictionary:
+	var held: Dictionary = band[BAND_KIT_PICKS]
+	var placed: Dictionary = {}
+	band[BAND_KIT_PICKS] = placed
+	var short := false
+	for want_variant in band.get(BAND_WORK_WANTS, []):
+		var want: Dictionary = want_variant
+		var kit_id := String(want.get(HudLoadoutVocab.WANT_KIT_KEY, ""))
+		var wanted := int(want.get(HudLoadoutVocab.WANT_COUNT_KEY, 0))
+		if wanted <= 0 or _kit_uses(kit_id).is_empty():
+			continue
+		var fits := mini(wanted, _kit_ceiling(band, kit_id))
+		if fits < wanted:
+			short = true
+		if fits > 0:
+			placed[kit_id] = int(placed.get(kit_id, 0)) + fits
+	band[BAND_KIT_PICKS] = held
+	return {"picks": placed, "short": short}
+
+## The button's state for the panel: `{enabled, tooltip, short}`.
+func _outfit_payload(band: Dictionary) -> Dictionary:
+	var plan := _outfit_plan(band)
+	var enabled := true
+	var tooltip := HudLoadoutVocab.OUTFIT_TOOLTIP
+	if (band.get(BAND_WORK_WANTS, []) as Array).is_empty():
+		enabled = false
+		tooltip = HudLoadoutVocab.OUTFIT_TOOLTIP_NO_WANTS
+	elif plan["picks"] == band[BAND_KIT_PICKS]:
+		enabled = false
+		tooltip = HudLoadoutVocab.OUTFIT_TOOLTIP_MATCHED
+	return {
+		StartingLoadoutPanel.OUTFIT_ENABLED: enabled,
+		StartingLoadoutPanel.OUTFIT_TOOLTIP: tooltip,
+		StartingLoadoutPanel.OUTFIT_SHORT: bool(plan["short"]),
+	}
 
 func _on_material_units_changed(material_id: String, units: int) -> void:
 	var band := _subject_state()

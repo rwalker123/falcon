@@ -31,8 +31,6 @@ const STEPPER_PLUS_FACE := "+"
 const DISABLED_REASON_SEPARATOR := "\n"
 const STEPPER_MINUS_AT_ZERO_REASON := "Already at zero — there is nothing to take off."
 const STEPPER_NO_IDLE_REASON := "No free workers — take someone off another work row first."
-## A working's `+` past the most hands the working can use (`cutters < useful`), `%d` that count.
-const STEPPER_WORKING_FULL_REASON_FORMAT := "%d is all this working can use — more hands add nothing."
 
 # Policy-picker layout: the two-line rung buttons (name over product line) wrap at most 3 per row, so
 # the six-rung forage/local-hunt pickers read as two tidy rows of three and the four extractive rungs
@@ -1196,6 +1194,12 @@ const WORK_INSPECTOR_POLICY_SECTION_HEIGHT := WORK_INSPECTOR_SECTION_HEAD_HEIGHT
 const WORK_INSPECTOR_PRIORITY_SECTION_HEIGHT := WORK_INSPECTOR_SECTION_HEAD_HEIGHT \
     + WORK_INSPECTOR_PRIORITY_PICKER_HEIGHT
 
+## …and the MAX section (#871): its header and the one stepper line. The line is the stepper's own
+## measured height (its `-` / `+` buttons at the compact row type), taller than a picker's 22px line.
+const WORK_INSPECTOR_MAX_LINE_HEIGHT := 26.0
+const WORK_INSPECTOR_MAX_SECTION_HEIGHT := WORK_INSPECTOR_SECTION_HEAD_HEIGHT \
+    + WORK_INSPECTOR_MAX_LINE_HEIGHT
+
 ## …and the KITS section AT ITS FLOOR: its header and the ONE control line every row draws — the take
 ## crew's tool. **It is the only section a row can LACK** — `_work_inspector_has_kits` gates it, a
 ## section with an empty picker in it being a control that answers nothing.
@@ -1285,6 +1289,7 @@ const WORK_INSPECTOR_CEILING_HEIGHT := WORK_INSPECTOR_HEIGHT \
     + WORK_INSPECTOR_ARRIVALS_HEIGHT \
     + WORK_INSPECTOR_POLICY_SECTION_HEIGHT \
     + WORK_INSPECTOR_PRIORITY_SECTION_HEIGHT \
+    + WORK_INSPECTOR_MAX_SECTION_HEIGHT \
     + WORK_INSPECTOR_KITS_SECTION_HEIGHT \
     + WORK_INSPECTOR_KITS_SHORTFALL_HEIGHT \
     + WORK_INSPECTOR_KITS_BILL_HEIGHT \
@@ -1385,6 +1390,8 @@ const WORK_ROW_PARTY_WALK_TARGET_TILE := "improvement"
 ## A tile crew row's meta and crew noun (issue #175): the row carries `"x,y:branch"` so a harness finds
 ## it by identity, and its crew reads as *workers* where a working's reads as *cutters*.
 const TILE_ROW_META := &"tile_crew_row"
+## A band improvement's crew row (`kind == band`), valued with its branch id.
+const BAND_IMPROVEMENT_ROW_META := &"band_improvement_row"
 const TILE_CREW_NOUN := "workers"
 
 ## **WHAT ARRIVES HOME, ON A ROW WITH NO RATE SLOT** — the workings roster's hover, whose one-line
@@ -1400,6 +1407,30 @@ const WORK_ROW_PARTY_NEXT_LOAD_FORMAT := "Next load home in %d turns"
 
 ## …and its singular, for the walk-out line's reason.
 const WORK_ROW_PARTY_NEXT_LOAD_ONE_FORMAT := "Next load home in 1 turn"
+
+## **THE LOAD WAITING AT A DIG SITE** - a slow dig fills a whole pack before its first stone lands home,
+## so the stone sits at the site and looked lost. `8 of 13 stone in the load`, then ` · home in 6 turns`
+## where the sim names a landing (`load_home_in`; `0` = none within its forecast horizon, which drops the
+## clause) and no pack is already on the road (`next_load_home_in > 0`: the party block's `Next load home
+## in` line states that countdown, and this line does not state it twice). Args: `[units, pack, material]`.
+const DIG_LOAD_LINE_FORMAT := "%d of %d %s in the load"
+const DIG_LOAD_HOME_CLAUSE_FORMAT := " · home in %d turns"
+const DIG_LOAD_HOME_CLAUSE_ONE_FORMAT := " · home in 1 turn"
+const DIG_LOAD_LINE_META := &"dig_load_line"
+
+## `""` where the row has no caravan (`pack_units` 0: a local row, any non-extract row). The load is
+## floored so a pack reads full only when it is; the pack is rounded to the whole unit.
+static func dig_load_line(assignment: Dictionary, material: String) -> String:
+    var pack := float(assignment.get("pack_units", 0.0))
+    if pack <= 0.0:
+        return ""
+    var line := DIG_LOAD_LINE_FORMAT % [floori(float(assignment.get("load_units", 0.0))),
+        roundi(pack), material]
+    var home_in := int(assignment.get("load_home_in", 0))
+    if home_in <= 0 or int(assignment.get("next_load_home_in", 0)) > 0:
+        return line
+    return line + (DIG_LOAD_HOME_CLAUSE_ONE_FORMAT if home_in == WORK_ROW_PARTY_TURNS_SINGULAR \
+        else DIG_LOAD_HOME_CLAUSE_FORMAT % home_in)
 
 ## **WHAT THE WALK HOME LOSES TO ROT** (#706) — food whose keeping class's shelf life is shorter than
 ## the walk rots before its pack lands. ONE sentence for both surfaces that state it: the compose
@@ -2483,6 +2514,9 @@ const WORK_INSPECT_RUNG_SEPARATOR := " · "
 const WORK_INSPECT_JUMP := "Jump to source"
 
 const WORK_INSPECT_UNASSIGN := "Unassign"
+
+## The inspector's MAX section header (#871): the most hands the game may put on this source, live.
+const WORK_INSPECT_MAX := "Max"
 
 ## The POLICY section\'s header. **A NOUN, where the retired link face was a verb** — it read
 ## *"Change policy"*, which is what you press, and a header names what is below it. The other two
@@ -4344,18 +4378,14 @@ const BUILD_QUEUE_ROW_HEIGHT := WORK_ROW_HEIGHT + BUILD_QUEUE_ROW_TOOLS_LINE_HEI
 ## tile: `Quarry · Stone (70, 17)`. The material is half the working's identity, one hex holding two.
 const BUILD_QUEUE_WORKING_FACE_FORMAT := "%s · %s (%d, %d)"
 
-## ---- THE CREW SPLIT: one mark per worker ------------------------------------------------------
+## ---- THE CREW BAR: one mark per worker the SIM staffed (#871) ----------------------------------
 ##
-## A site's crew tends it before it takes, and the marks say how the hands on a row divide: one small
-## square per worker, the tending share filled from the left in a muted earth, the takers bright, a
-## person split between the two shaded in part. Information, not an alert — no warning ink, no ⚠. The
-## tending figure is the sim's (the row's own `keep_hands` on a row, never the site's summed
-## `upkeep_hands`; the crew curve's `keep_hands` on the sheet); nothing here derives it. `CrewSplitMarks` draws them.
-
-## Below this many tending hands a site has no tending bill, and the row draws no marks.
-const CREW_SPLIT_MIN_KEEP_HANDS := 0.001
-## A split this close to a whole person is stated as one, without `About`.
-const CREW_SPLIT_WHOLE_PERSON_SLACK := 0.05
+## A staffed row's crew is the sim's answer (`docs/plan_labor_at_scale.md`), struck by three passes, and
+## the bar says how it divides: one small square per worker, the keepers (the site's keeping hands)
+## first in a muted earth, then the hands holding a whole kit in the bright green, then the bare hands in
+## a quieter green. Information, not an alert — no warning ink, no ⚠. The three counts are the row's own
+## `keepers_staffed` / `kitted_staffed` / `bare_staffed` (they sum to `workers`); nothing here derives
+## them. `CrewSplitMarks` draws them and the words ride its hover.
 
 ## The row's marks — the approved prototype's 9px square, 3px apart, 2px corners.
 const CREW_SPLIT_MARK_SIZE := 9.0
@@ -4373,54 +4403,80 @@ const CREW_SPLIT_MARK_BORDER := 1
 const CREW_SPLIT_FOCUS_CARD_WIDTH := 230.0
 ## What a crew too wide even at the floor ends on: the count of marks not drawn.
 const CREW_SPLIT_OVERFLOW_FORMAT := "+%d"
-## The marks' handle, valued `{crew, keep}` as handed in.
+## The bar's handle, valued `{keepers, kitted, bare}` as handed in.
 const CREW_SPLIT_META := &"crew_split_marks"
-## The sheet's muted sentence under the next-turn figure, valued the sentence.
+## The sheet's muted line under the crew bar, valued the sentence.
 const CREW_SPLIT_SENTENCE_META := &"crew_split_sentence"
 
-## The verb the takers do, and the thing the tenders keep, per web.
-const CREW_SPLIT_VERB_HARVEST := "harvest"
-const CREW_SPLIT_VERB_HUNT := "hunt"
-const CREW_SPLIT_VERB_CUT := "cut"
-const CREW_SPLIT_VERB_TILE := "tend"
-const CREW_SPLIT_OBJECT_PATCH := "the patch"
-const CREW_SPLIT_OBJECT_HERD := "the herd"
-const CREW_SPLIT_OBJECT_WORKING := "the working"
-const CREW_SPLIT_OBJECT_TILE := "the improvement"
-const CREW_SPLIT_SOME_FORMAT := "%s%d of %d %s tending %s; %d %s free to %s."
-const CREW_SPLIT_ALL_FORMAT := "All %d are tending %s — nobody is free to %s."
-const CREW_SPLIT_ONE_FORMAT := "The one worker is tending %s — nobody is free to %s."
-const CREW_SPLIT_ABOUT := "About "
-const CREW_SPLIT_IS := "is"
-const CREW_SPLIT_ARE := "are"
+## The three clauses of the bar's hover, in the order the bar draws them, and the empty crew's line.
+const CREW_BAR_KEEPERS_FORMAT := "%d keep it up"
+const CREW_BAR_KITTED_FORMAT := "%d with %s"
+const CREW_BAR_BARE_FORMAT := "%d bare-handed"
+const CREW_BAR_NOBODY := "Nobody here this turn"
+const CREW_BAR_CLAUSE_SEPARATOR := " · "
+## What the hover appends once the source has a floor to hold: how many of the taking hands hold the
+## source there and how many more draw it down to the floor.
+const CREW_BAR_HOLD_FORMAT := " — %d hold it at the floor"
+const CREW_BAR_DRAW_FORMAT := ", %d more draw it down to it"
+## The kit's name when the row's table of equipment names no item.
+const CREW_BAR_GEAR_FALLBACK := "gear"
 
-## Does a crew carry marks at all? Only where its site has a tending bill.
-static func crew_split_shown(crew: int, keep_hands: float) -> bool:
-    return crew > 0 and keep_hands >= CREW_SPLIT_MIN_KEEP_HANDS
+## **THE BAR'S SENTENCE** — `3 keep it up · 2 with baskets · 1 bare-handed — 2 hold it at the floor,
+## 1 more draw it down to it`. A zero clause is dropped; an empty crew is `CREW_BAR_NOBODY`. The hold
+## clause reads the wire's `hold_crew` (`0` = nothing regrows, or not a staffed row): of the hands that
+## TAKE (the crew less its keepers), `hold_crew` hold the source at the floor and the rest draw it
+## down to it.
+static func crew_bar_words(keepers: int, kitted: int, bare: int, kit_names: String,
+        hold_crew: int) -> String:
+    var crew := keepers + kitted + bare
+    if crew <= 0:
+        return CREW_BAR_NOBODY
+    var parts: Array[String] = []
+    if keepers > 0:
+        parts.append(CREW_BAR_KEEPERS_FORMAT % keepers)
+    if kitted > 0:
+        parts.append(CREW_BAR_KITTED_FORMAT % [kitted,
+            kit_names if kit_names != "" else CREW_BAR_GEAR_FALLBACK])
+    if bare > 0:
+        parts.append(CREW_BAR_BARE_FORMAT % bare)
+    var words := CREW_BAR_CLAUSE_SEPARATOR.join(PackedStringArray(parts))
+    var taking := kitted + bare
+    if hold_crew > 0 and taking > 0:
+        var holding := mini(hold_crew, taking)
+        words += CREW_BAR_HOLD_FORMAT % holding
+        if taking > holding:
+            words += CREW_BAR_DRAW_FORMAT % (taking - holding)
+    return words
 
-## **THE SPLIT IN WORDS** — whole people, `About` where the sim's figure falls mid-person, the verb and
-## the thing kept per web. The figure is the row's own, so it never exceeds the crew.
-static func crew_split_words(crew: int, keep_hands: float, labor_kind: String) -> String:
-    var verb := CREW_SPLIT_VERB_HARVEST
-    var what := CREW_SPLIT_OBJECT_PATCH
-    if labor_kind == SourceForecast.LABOR_KIND_HUNT:
-        verb = CREW_SPLIT_VERB_HUNT
-        what = CREW_SPLIT_OBJECT_HERD
-    elif labor_kind == HudConst.LABOR_KIND_EXTRACT:
-        verb = CREW_SPLIT_VERB_CUT
-        what = CREW_SPLIT_OBJECT_WORKING
-    elif labor_kind == HudConst.LABOR_KIND_TILE:
-        verb = CREW_SPLIT_VERB_TILE
-        what = CREW_SPLIT_OBJECT_TILE
-    var keep := maxf(keep_hands, 0.0)
-    var tending := clampi(roundi(keep), 1, crew)
-    var free := crew - tending
-    if float(crew) - keep <= CREW_SPLIT_WHOLE_PERSON_SLACK or free <= 0:
-        if crew == 1:
-            return CREW_SPLIT_ONE_FORMAT % [what, verb]
-        return CREW_SPLIT_ALL_FORMAT % [crew, what, verb]
-    var about := CREW_SPLIT_ABOUT \
-        if absf(keep - float(tending)) > CREW_SPLIT_WHOLE_PERSON_SLACK else ""
-    return CREW_SPLIT_SOME_FORMAT % [about, tending, crew,
-        CREW_SPLIT_IS if tending == 1 else CREW_SPLIT_ARE, what, free,
-        CREW_SPLIT_IS if free == 1 else CREW_SPLIT_ARE, verb]
+## Every item the row's table of equipment names, by roster display name lower-cased and joined
+## naturally (`baskets and sickles`) — the kit's on-screen words. `""` where it names none.
+static func toe_item_names(lines: Array, item_names: Dictionary) -> String:
+    var names: Array[String] = []
+    for row_variant in lines:
+        if not (row_variant is Dictionary):
+            continue
+        var id := String((row_variant as Dictionary).get(HudBandLaborState.POOL_TOE_ITEM_KEY, ""))
+        var name := String(item_names.get(id, "")).strip_edges().to_lower()
+        if name != "" and not names.has(name):
+            names.append(name)
+    return natural_list(names)
+
+## **A STATIC `Max N` CHIP** beside the Priority pill — present only while the player set a Max.
+const MAX_CHIP_FORMAT := "Max %d"
+const MAX_CHIP_META := &"max_chip"
+## A staffed row's read-only crew number: the stepper's value column, so the numbers line up down the board.
+const CREW_NUMBER_WIDTH := WORKER_STEPPER_VALUE_WIDTH
+const CREW_NUMBER_META := &"crew_number"
+const MAX_CHIP_TOOLTIP := "The most hands the game will put on this source. Change it from the source's sheet."
+
+## **THE MAX STEPPER** (compose sheets and the inspector): `No max` at 0, else the number.
+const MAX_STEPPER_NO_MAX := "No max"
+const MAX_STEPPER_LABEL := "Max"
+## A never-renewing seam is worked by exactly its Max in heads, so its stepper is the dig crew.
+const DIG_CREW_STEPPER_LABEL := "Diggers"
+const MAX_STEPPER_LOWER_ARIA := "Lower the max"
+const MAX_STEPPER_RAISE_ARIA := "Raise the max"
+## Wide enough for `No max` at the row font.
+const MAX_STEPPER_VALUE_WIDTH := 64.0
+const MAX_STEPPER_META := &"max_stepper"
+const MAX_STEPPER_VALUE_META := &"max_stepper_value"

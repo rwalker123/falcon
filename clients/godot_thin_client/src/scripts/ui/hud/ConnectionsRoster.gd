@@ -319,7 +319,7 @@ static func _build_station_link(state: int, party: Dictionary, band_id: int, hos
 		reason = HudConnectionsVocab.STATION_LINK_DONE_TOOLTIP
 	elif state == HudConnectionsVocab.STATE_PARKED:
 		reason = HudConnectionsVocab.STATION_LINK_PARKED_REASON
-	elif band_labor.effective_idle(band_labor.player_band_by_band_id(band_id)) <= 0:
+	elif band_labor.orderable_hands(band_labor.player_band_by_band_id(band_id)) <= 0:
 		reason = HudConnectionsVocab.STATION_LINK_NO_FREE_REASON
 	var link := HudWidgets.build_inline_link(text, HudStyle.SIGNAL, func() -> void:
 		if on_station.is_valid():

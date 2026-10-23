@@ -133,8 +133,11 @@ static func band_fixture() -> Dictionary:
 		#     (a banked whole animal cashed on this KILL turn), yet `overdraws=false` under Sustain → the
 		#     row reads CLEAN, NO ⚠. Under the old client test this row false-tripped the flag — the fix.
 		"labor_assignments": [
-			{"kind": "forage", "workers": 5, "target_x": 71, "target_y": 18, "floor": 0.5, "actual_yield": 0.48, "sustainable_yield": 0.48, "workers_needed": 1, "overdraws": false},
-			{"kind": "hunt", "workers": 4, "fauna_id": "game_deer_07", "floor": 0.5, "target_x": 70, "target_y": 17, "actual_yield": 0.46, "sustainable_yield": 0.20, "workers_needed": 4, "overdraws": false},
+			{"kind": "forage", "workers": 5, "target_x": 71, "target_y": 18, "floor": 0.5, "actual_yield": 0.48, "sustainable_yield": 0.48, "workers_needed": 1, "overdraws": false,
+				# The sim's staffing of this row (#871): 5 hands, 2 holding a basket kit, 3 bare.
+				"max_workers": 0, "hold_crew": 1, "reach_crew": 3, "keepers_staffed": 0, "kitted_staffed": 2, "bare_staffed": 3, "useful_crew": 5},
+			{"kind": "hunt", "workers": 4, "fauna_id": "game_deer_07", "floor": 0.5, "target_x": 70, "target_y": 17, "actual_yield": 0.46, "sustainable_yield": 0.20, "workers_needed": 4, "overdraws": false,
+				"max_workers": 0, "hold_crew": 2, "reach_crew": 4, "keepers_staffed": 0, "kitted_staffed": 4, "bare_staffed": 0, "useful_crew": 4},
 			{"kind": "scout", "workers": 2},
 			{"kind": "warrior", "workers": 2},
 		],
@@ -242,8 +245,11 @@ const CULTIVATING_BAND_BUILDERS := 3
 static func cultivating_forage_band_fixture(x: int = 66, y: int = 10) -> Dictionary:
 	var band: Dictionary = forage_range_bands()[0]
 	band["labor_assignments"] = [{
-		"kind": "forage", "workers": 1, "target_x": x, "target_y": y, "floor": 0.5,
+		"kind": "forage", "workers": ForageFx.CULTIVATE_SIM_WORKERS_NEEDED, "target_x": x, "target_y": y, "floor": 0.5,
 		"improvement": "cultivate",
+		# The sim's staffing (#871): the crew it struck for this row - a keeper, a hand with the kit, a bare one.
+		"max_workers": 0, "hold_crew": 1, "reach_crew": 3, "keepers_staffed": 1, "kitted_staffed": 1,
+		"bare_staffed": 1, "useful_crew": 3,
 		"actual_yield": 0.08, "sustainable_yield": 0.96, "realized_yield": 0.08,
 		"workers_needed": ForageFx.CULTIVATE_SIM_WORKERS_NEEDED, "overdraws": false,
 	}, builders_role_row(CULTIVATING_BAND_BUILDERS)]

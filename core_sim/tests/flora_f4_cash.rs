@@ -403,6 +403,8 @@ fn spawn_forager(
                     party: None,
                     muster_crew: 0,
                     planned_crew: 0,
+                    max_workers: Some(FORAGE_WORKERS),
+                    staffing: Default::default(),
                     // Policy is irrelevant to a Field — the rung-3 branch resolves before the policy
                     // arms and `continue`s. Sustain is the harmless default.
                     target: LaborTarget::Forage {

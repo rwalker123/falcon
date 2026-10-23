@@ -219,9 +219,9 @@ const DENIAL_KILLS_ROW := [26, 42, 55, 66, 74, 82, 88, 94]
 ## turn rows are all `0`, the wire's "not within the horizon on that end".
 const DENIAL_REPELLED_KILLS_ROW := [3, 5, 7, 9, 10, 11, 12, 13]
 ## The party the sim quotes for the deep quarry (`denialPartyNeeded`): the smallest one whose kills
-## outpace the herd's regrowth — well past the reference band's three idle workers, so the Deny click
-## on it is the short-handed refusal.
-const DENIAL_DEEP_PARTY_NEEDED := 11
+## outpace the herd's regrowth — past ALL the reference band's sixteen hands (the ceiling is the hands the
+## player can still order, staffed rows included), so the Deny click on it is the short-handed refusal.
+const DENIAL_DEEP_PARTY_NEEDED := 17
 ## **THE REPORTED SHAPE — a bounded expectation, a bounded good run, and a BAD run that never
 ## finishes.** `high == 0` is the wire's "not within the horizon on that end", and no other denial
 ## fixture in this file stages it: every table above bounds all three, so the frames could not show
@@ -1453,7 +1453,7 @@ func _ready() -> void:
 
 	# A row OPEN in the inspector strip: the board loses rows to it, and still no scrollbar.
 	_panel.set_dock(SIDE_LEFT)
-	_hud._bandpanel._toggle_work_inspector(_hud._bandpanel._work_source_models(_hud._band_labor._panel_band, 0)[0]["key"])
+	_hud._bandpanel._toggle_work_inspector(_hud._bandpanel._work_source_models(_hud._band_labor._panel_band)[0]["key"])
 	await _settle()
 	await _save("band_panel_inspector")
 	_assert_zones_within_bounds()
@@ -1462,6 +1462,7 @@ func _ready() -> void:
 	# The strip's BASE shape — no notes, no arrivals, picker closed — which is what the reserved
 	# constant is authored against. The states below add one conditional child each.
 	_assert_work_inspector_fits("band_panel_inspector")
+	_assert_work_inspector_max_and_stop()
 	_hud._bandpanel._toggle_work_inspector(_hud._bandpanel._work_open_key)
 
 	# The Work menu's destructive action asks first, and the confirm names what is SPARED.
@@ -2166,6 +2167,20 @@ func _ready() -> void:
 	await _settle()
 	await _save("band_panel_no_idle")
 	_assert_verbs_gate_on_idle()
+	# ⛔ **THE SAME BAND WITH ITS HANDS ON A SIM-STAFFED ROW KEEPS THE EXPEDITION VERBS LIVE** — the sim
+	# re-staffs from what a party leaves, so a staffed crew never blocks a party.
+	var staffed_band := _band_fixture()
+	staffed_band["idle_workers"] = 0
+	staffed_band["labor_assignments"] = [
+		{"kind": "forage", "workers": 16, "workers_needed": 16, "floor": 0.5,
+			"target_x": 71, "target_y": 18, "actual_yield": 0.48, "sustainable_yield": 0.48},
+	]
+	_push_bands([staffed_band])
+	await _settle()
+	for id in [HudComposeVocab.VERB_SCOUT, HudComposeVocab.VERB_DENY, HudComposeVocab.VERB_TRADE]:
+		var staffed_button: Button = _panel._action_buttons.get(id)
+		_assert_band_panel("hands all on a staffed row: %s stays live on the bar" % String(id),
+			staffed_button != null and not staffed_button.disabled)
 
 	_assert_scroll_only_where_sanctioned()
 	_assert_zones_within_bounds()
@@ -3901,7 +3916,7 @@ func _assert_kept_source_offers_upkeep(where: String) -> void:
 ## the right edge of a 356px column is still a rung the card stated.
 func _inspected_rung_face() -> String:
 	var band: Dictionary = _hud._band_labor._panel_band
-	for model_variant in _hud._bandpanel._work_source_models(band, 0):
+	for model_variant in _hud._bandpanel._work_source_models(band):
 		var model: Dictionary = model_variant
 		if String(model.get("key", "")) == _hud._bandpanel._work_open_key:
 			return String(model.get("rung_face", ""))
@@ -3946,7 +3961,7 @@ func _option_has_item(picker: OptionButton, face: String) -> bool:
 ## reservation is the sum of three sections" passes on a card that draws none of them.
 func _assert_sections_are_drawn_and_cost_the_sum() -> void:
 	var band: Dictionary = _hud._band_labor._panel_band
-	var models: Array = _hud._bandpanel._work_source_models(band, 0)
+	var models: Array = _hud._bandpanel._work_source_models(band)
 	if models.is_empty():
 		_fail("sections — no work model to measure the card against")
 		return
@@ -3965,6 +3980,9 @@ func _assert_sections_are_drawn_and_cost_the_sum() -> void:
 	var sections := HudWorkVocab.WORK_INSPECTOR_POLICY_SECTION_HEIGHT \
 		+ HudWorkVocab.WORK_INSPECTOR_PRIORITY_SECTION_HEIGHT \
 		+ HudWorkVocab.WORK_INSPECTOR_ACTIONS_RULE_HEIGHT
+	# …and the MAX section a staffed row draws (#871), on the builder's own predicate.
+	if _hud._bandpanel._work_inspector_has_max(model):
+		sections += HudWorkVocab.WORK_INSPECTOR_MAX_SECTION_HEIGHT
 	if kitted:
 		sections += HudWorkVocab.WORK_INSPECTOR_KITS_SECTION_HEIGHT
 		if kept:
@@ -4704,7 +4722,7 @@ func _assert_kit_short_notes() -> void:
 	var covered_model := {}
 	var itemless_model := {}
 	var basket_model := {}
-	for model_variant in _hud._bandpanel._work_source_models(band, 0):
+	for model_variant in _hud._bandpanel._work_source_models(band):
 		var model: Dictionary = model_variant
 		match String(model.get("herd_id", "")):
 			KIT_SHORT_WORK_HERD_ID:
@@ -4794,7 +4812,7 @@ func _assert_kit_short_marks() -> void:
 	var short_marks := ""
 	var covered_marks := ""
 	var itemless_marks := ""
-	for model_variant in _hud._bandpanel._work_source_models(band, 0):
+	for model_variant in _hud._bandpanel._work_source_models(band):
 		var model: Dictionary = model_variant
 		match String(model.get("herd_id", "")):
 			KIT_SHORT_WORK_HERD_ID:
@@ -4881,7 +4899,7 @@ func _assert_material_short_note() -> void:
 	var good_hover := ""
 	var hands_note := ""
 	var hands_severity := ""
-	for model_variant in _hud._bandpanel._work_source_models(band, 0):
+	for model_variant in _hud._bandpanel._work_source_models(band):
 		var model: Dictionary = model_variant
 		if String(model.get("herd_id", "")) == MATERIAL_SHORT_HERD_ID:
 			good_note = String(model.get("note", ""))
@@ -5016,7 +5034,7 @@ func _assert_unbuilt_warning(state_name: String) -> void:
 	var band: Dictionary = _hud._band_labor._panel_band
 	var found := false
 	var failures: Array[String] = []
-	for model_variant in _hud._bandpanel._work_source_models(band, 0):
+	for model_variant in _hud._bandpanel._work_source_models(band):
 		var model: Dictionary = model_variant
 		if String(model.get("herd_id", "")) != UNBUILT_WORK_HERD_ID:
 			continue
@@ -5092,7 +5110,7 @@ func _assert_keeping_remedy(state_name: String, want_tools: bool) -> void:
 	var other := hands_note if want_tools else tools_note
 	var found := false
 	var failures: Array[String] = []
-	for model_variant in _hud._bandpanel._work_source_models(band, 0):
+	for model_variant in _hud._bandpanel._work_source_models(band):
 		var model: Dictionary = model_variant
 		if String(model.get("herd_id", "")) != UNDER_HERDED_WORK_HERD_ID:
 			continue
@@ -5147,7 +5165,7 @@ func _assert_keeper_warning(state_name: String, expect_warned: bool) -> void:
 	var band: Dictionary = _hud._band_labor._panel_band
 	var found := false
 	var failures: Array[String] = []
-	for model_variant in _hud._bandpanel._work_source_models(band, 0):
+	for model_variant in _hud._bandpanel._work_source_models(band):
 		var model: Dictionary = model_variant
 		if String(model.get("herd_id", "")) != UNDER_HERDED_WORK_HERD_ID:
 			continue
@@ -10727,7 +10745,7 @@ func _ready_herd_fixtures() -> Array:
 ## rather than eyeballed: three chevrons and one chevron look similar in a thumbnail, and "the mark
 ## renders" is a much weaker claim than "the mark renders where it should and nowhere else".
 func _assert_ready_marks() -> void:
-	var models: Array = _hud._bandpanel._work_source_models(_hud._band_labor.panel_band(), 0)
+	var models: Array = _hud._bandpanel._work_source_models(_hud._band_labor.panel_band())
 	var ready: Array = models.filter(func(m): return String(m["ready_policy"]) != "")
 	_assert_band_panel("ready — exactly two of the three worked sources offer a rung", ready.size() == 2)
 	var by_policy: Array = ready.map(func(m): return String(m["ready_policy"]))
@@ -11579,7 +11597,7 @@ func _assert_blocked_pen_head_hover_and_detail() -> void:
 		return
 	var model := {}
 	for model_variant in _hud._bandpanel._build_queue_models(_hud._band_labor.panel_band(),
-			_hud._bandpanel._work_source_models(_hud._band_labor.panel_band(), 0)):
+			_hud._bandpanel._work_source_models(_hud._band_labor.panel_band())):
 		if _hud._bandpanel._build_queue_row_rank(model_variant) == SourceForecast.BUILD_QUEUE_HEAD:
 			model = model_variant
 	var short := {DetailFormat.MATERIAL_SHORT_ID_KEY: PEN_MATERIAL,
@@ -11659,7 +11677,7 @@ func _assert_the_corral_entry_states_its_pen_site(pile: Array, band: Dictionary)
 		hover.size() >= 2 and hover[1] == line)
 	_hud._bandpanel._toggle_queue_settings(String(_hud._bandpanel._build_queue_models(
 		_hud._band_labor.panel_band(), _hud._bandpanel._work_source_models(
-			_hud._band_labor.panel_band(), 0))[0].get("key", "")))
+			_hud._band_labor.panel_band()))[0].get("key", "")))
 	await _settle()
 	var detail: Array = _queue_strip_detail().split("\n")
 	_assert_band_panel("pen site — …and so does the open detail (%s)" % str(detail),
@@ -11773,7 +11791,7 @@ func _assert_a_road_behind_a_blocked_pen_head_is_just_queued() -> void:
 		_fail("road behind blocked head — the queue draws %d rows, wanted 2" % rows.size())
 		return
 	var models: Array = _hud._bandpanel._build_queue_models(_hud._band_labor.panel_band(),
-		_hud._bandpanel._work_source_models(_hud._band_labor.panel_band(), 0))
+		_hud._bandpanel._work_source_models(_hud._band_labor.panel_band()))
 	var road_model := {}
 	for model_variant in models:
 		if _hud._bandpanel._build_queue_row_rank(model_variant) == SourceForecast.BUILD_QUEUE_HEAD + 1:
@@ -11859,7 +11877,7 @@ func _assert_work_row_warns_of_an_underfed_pen() -> void:
 ## The ring band's hunt row model, off the controller's own producer.
 func _hunt_row_model() -> Dictionary:
 	var band: Dictionary = _hud._band_labor.player_bands()[0] if not _hud._band_labor.player_bands().is_empty() else {}
-	for model_variant in _hud._bandpanel._work_source_models(band, 0):
+	for model_variant in _hud._bandpanel._work_source_models(band):
 		var model: Dictionary = model_variant
 		if String(model.get("kind", "")) == SourceForecast.LABOR_KIND_HUNT:
 			return model
@@ -11995,7 +12013,7 @@ func _report_queue_row_columns(state_name: String) -> void:
 ## over the models serves both webs.
 func _work_row_label_for_source(tile: Vector2i) -> String:
 	var band: Dictionary = _hud._band_labor._panel_band
-	for model_variant in _hud._bandpanel._work_source_models(band, 0):
+	for model_variant in _hud._bandpanel._work_source_models(band):
 		var model: Dictionary = model_variant
 		if int(model.get("x", -1)) == tile.x and int(model.get("y", -1)) == tile.y:
 			return String(model.get("label", ""))
@@ -12679,7 +12697,7 @@ func _assert_ready_mark_declares() -> void:
 	_push_bands([_declare_band_fixture()])
 	await _settle()
 	var queued: Array = _hud._bandpanel._build_queue_models(band,
-		_hud._bandpanel._work_source_models(band, 0))
+		_hud._bandpanel._work_source_models(band))
 	_assert_band_panel("declare — all %d declarations are in the build queue on the same frame (found %d)"
 		% [DECLARE_ROW_COUNT, queued.size()], queued.size() == DECLARE_ROW_COUNT)
 	# **READ OFF THE BLOCK'S OWN VERDICT, NOT OFF THE SOURCE'S POSITION** (§4.9 item 9a). *Pending* is
@@ -12841,9 +12859,8 @@ func _herder_floor_herd_fixtures() -> Array:
 ## So the row keeps its ⚠ — the board still KNOWS — and three claims survive, re-aimed:
 ##   1. the row still carries the under-herded ⚠;
 ##   2. neither cap twin reaches the keeper crew any more — the ceiling is the TAKE's own usefulness;
-##   3. `source_worker_cap_state` (the worked row) and `_forecast_worker_cap` (the compose stepper)
-##      answer with the SAME ceiling, which is the promise the two twins make by sitting beside each
-##      other and is the one thing this frame has always really been about.
+##   3. `_forecast_worker_cap` (the compose sheet's forecast crew) answers with the forecast's own ceiling
+##      (the worked row's `+` it once sat beside is retired with the stepper, #871).
 func _assert_herder_floor_row(herd_id: String) -> void:
 	var band: Dictionary = _hud._band_labor._panel_band
 	var idle := _hud._band_labor.effective_idle(band)
@@ -12851,7 +12868,7 @@ func _assert_herder_floor_row(herd_id: String) -> void:
 		_fail("herder-floor frame needs idle workers to gate on the source")
 		return
 	var found := false
-	for model in _hud._bandpanel._work_source_models(band, idle):
+	for model in _hud._bandpanel._work_source_models(band):
 		var m: Dictionary = model
 		if String(m.get("herd_id", "")) != herd_id:
 			continue
@@ -12864,9 +12881,8 @@ func _assert_herder_floor_row(herd_id: String) -> void:
 	if not found:
 		_fail("no Hunt work row for %s" % herd_id)
 		return
-	# The twins, asked the same question about the same herd. `_forecast_worker_cap` is given an
-	# assignable count well above the ceiling so its answer IS the usefulness ceiling and not a labor
-	# bound; `source_worker_cap_state` is probed on either side of that ceiling.
+	# `_forecast_worker_cap` is given an assignable count well above the ceiling so its answer IS the
+	# usefulness ceiling and not a labor bound.
 	#
 	# ⛔ **NEITHER TWIN ADDS A KEEPING COUNT OF ITS OWN** (`docs/plan_site_crews.md`): the sim's own
 	# "most hands that still help" already includes the keepers, so the cap is whatever ceiling the
@@ -12875,16 +12891,11 @@ func _assert_herder_floor_row(herd_id: String) -> void:
 	var forecast := SourceForecast.forecast_inputs(herd, SourceForecast.SOURCE_KIND_HERD,
 		HudComposeVocab.BARE_FORECAST_PREFIX, SourceForecast.FLOOR_FOOD_PEAK)
 	var ceiling := HERDER_FLOOR_TAKE_USEFUL
-	var compose_cap := int(_hud._drawercompose._forecast_worker_cap(forecast, ceiling + 1)["cap"])
-	var row_below: bool = bool(SourceForecast.source_worker_cap_state(forecast, ceiling - 1, 1)["can_add"])
-	var row_at: bool = bool(SourceForecast.source_worker_cap_state(forecast, ceiling, 1)["can_add"])
+	var compose_cap := _hud._drawercompose._forecast_worker_cap(forecast, ceiling + 1)
 	if compose_cap != ceiling:
-		_fail("the compose stepper caps at %d, not the forecast's own %d" % [compose_cap, ceiling])
-	elif not (row_below and not row_at):
-		_fail(("the worked row does not gate at %d (can_add below=%s, at=%s)")
-			% [ceiling, row_below, row_at])
+		_fail("the forecast crew is %d, not the forecast's own %d" % [compose_cap, ceiling])
 	else:
-		print("band_panel_preview: assert OK — both cap twins gate at the forecast's own %d, adding no keeping count"
+		print("band_panel_preview: assert OK — the forecast crew is the forecast's own %d, adding no keeping count"
 			% ceiling)
 
 ## The countdown's own verb, as a LITERAL — the sentence it opens (`Domesticated is lost in 3 turns.`)
@@ -12898,7 +12909,7 @@ const UNDER_KEPT_COUNTDOWN_NEEDLE := "is lost in"
 func _assert_under_herded_work_row(herd_id: String) -> void:
 	var band: Dictionary = _hud._band_labor._panel_band
 	var found := false
-	for model in _hud._bandpanel._work_source_models(band, 0):
+	for model in _hud._bandpanel._work_source_models(band):
 		var m: Dictionary = model
 		if String(m.get("herd_id", "")) != herd_id:
 			continue
@@ -13396,7 +13407,7 @@ func _need_row_kit_short_state() -> void:
 	await _settle()
 	var marks := ""
 	var note := ""
-	for model_variant in _hud._bandpanel._work_source_models(_hud._band_labor._panel_band, 0):
+	for model_variant in _hud._bandpanel._work_source_models(_hud._band_labor._panel_band):
 		var model: Dictionary = model_variant
 		if bool(model.get("need_row", false)):
 			marks = String(model.get("marks", ""))
@@ -13486,7 +13497,7 @@ func _assert_work_row_rungs() -> void:
 	}
 	var labels_seen := 0
 	var seen := {}
-	for model in _hud._bandpanel._work_source_models(_hud._band_labor._panel_band, 0):
+	for model in _hud._bandpanel._work_source_models(_hud._band_labor._panel_band):
 		var m: Dictionary = model
 		var key := String(m.get("key", ""))
 		if not expected.has(key):
@@ -13582,7 +13593,7 @@ const RING_IN_FLIGHT_WORK_COST := 70.0
 ## One work model by its key, or `{}` — the board's own models, re-derived so a claim reads what the
 ## row was built from rather than what a fixture said.
 func _work_model_for_key(key: String) -> Dictionary:
-	for model in _hud._bandpanel._work_source_models(_hud._band_labor._panel_band, 0):
+	for model in _hud._bandpanel._work_source_models(_hud._band_labor._panel_band):
 		if String((model as Dictionary).get("key", "")) == key:
 			return model as Dictionary
 	return {}
@@ -13665,7 +13676,7 @@ func _work_head_fodder_total() -> Label:
 ## fodder term on every row would satisfy every positive claim above and fail exactly this one.
 func _assert_work_fodder_readouts() -> void:
 	var band: Dictionary = _hud._band_labor._panel_band
-	var models: Array = _hud._bandpanel._work_source_models(band, 0)
+	var models: Array = _hud._bandpanel._work_source_models(band)
 	var paying: Array = models.filter(func(m): return SourceForecast.has_component(float(m.get("fodder_rate", 0.0))))
 	_assert_band_panel("fodder — exactly one of this band's worked sources pays feed (found %d)"
 		% paying.size(), paying.size() == 1)
@@ -13710,7 +13721,7 @@ func _assert_work_fodder_readouts() -> void:
 ## which is the render-only-when-non-zero rule asked one account further out.
 func _assert_work_material_readouts() -> void:
 	var band: Dictionary = _hud._band_labor._panel_band
-	var models: Array = _hud._bandpanel._work_source_models(band, 0)
+	var models: Array = _hud._bandpanel._work_source_models(band)
 	var paying: Array = models.filter(func(m):
 		return SourceForecast.signed_material_components(m.get("material_rows", [])) != "")
 	_assert_band_panel("material — exactly one worked source pays a material (found %d)"
@@ -13782,7 +13793,7 @@ func _assert_no_work_fodder_total() -> void:
 ## `_open_work_inspector_for_herd`, for the frames that must name which patch they are looking at.
 func _open_work_inspector_for_tile(tile: Vector2i) -> void:
 	var band: Dictionary = _hud._band_labor._panel_band
-	var models: Array = _hud._bandpanel._work_source_models(band, 0)
+	var models: Array = _hud._bandpanel._work_source_models(band)
 	for model_variant in models:
 		var model: Dictionary = model_variant
 		if String(model.get("herd_id", "")) != "":
@@ -13797,7 +13808,7 @@ func _open_work_inspector_for_tile(tile: Vector2i) -> void:
 ## source (the wolf), not "the first row", which is the forage patch.
 func _open_work_inspector_for_herd(herd_id: String) -> void:
 	var band: Dictionary = _hud._band_labor._panel_band
-	var models: Array = _hud._bandpanel._work_source_models(band, 0)
+	var models: Array = _hud._bandpanel._work_source_models(band)
 	for model_variant in models:
 		var model: Dictionary = model_variant
 		if String(model.get("herd_id", "")) != herd_id:
@@ -14010,7 +14021,7 @@ func _assert_crew_edit_keeps_improvement(herd_id: String, improvement: String) -
 ## The work-board model for the row hunting `herd_id`, or {} — the models are rebuilt per call, so a row
 ## has to be re-found after every edit rather than held across one.
 func _find_work_model_for_herd(band: Dictionary, herd_id: String) -> Dictionary:
-	for model_variant in _hud._bandpanel._work_source_models(band, _hud._band_labor.effective_idle(band)):
+	for model_variant in _hud._bandpanel._work_source_models(band):
 		var model: Dictionary = model_variant
 		if String(model.get("herd_id", "")) == herd_id:
 			return model
@@ -14061,10 +14072,9 @@ func _many_sources_band_fixture() -> Dictionary:
 func _no_idle_band_fixture() -> Dictionary:
 	var band := _band_fixture()
 	band["idle_workers"] = 0
-	band["labor_assignments"] = [
-		{"kind": "forage", "workers": 16, "workers_needed": 16, "floor": 0.5,
-			"target_x": 71, "target_y": 18, "actual_yield": 0.48, "sustainable_yield": 0.48},
-	]
+	# Every hand on a PLAYER-SET row (the builders pool): hands on a sim-staffed row would still be
+	# orderable (asserted just below on the staffed fixture).
+	band["labor_assignments"] = [{"kind": "builders", "workers": 16}]
 	return band
 
 ## Pin the CANVAS (`content_scale_size`) as well as the window, and keep the two equal so the stretch
@@ -14896,12 +14906,13 @@ func _assert_dock_chart_carries_the_kit() -> void:
 			% [str(trapped.get("settled_fraction")), str(speared.get("settled_fraction"))],
 		float(trapped.get("settled_fraction", 1.0))
 			< float(speared.get("settled_fraction", 1.0)) - STOCK_FRACTION_MARGIN)
-	# **AND THE REMEDY THE VERDICT NAMES MOVES WITH IT.** `crew_to_clear` floors on `crew_that_reaches`,
-	# so this covers both drawdown answers at once — a spear party needs strictly more hands to pull the
-	# same herd to the same floor.
-	_assert_band_panel("…and the spear line needs more hands to clear the same room (%d against %d)"
+	# **THE RETREAT CANCELS AT THE ROOM, SO THE REMEDY THE VERDICT NAMES IS THE SAME CREW UNDER BOTH KITS.**
+	# `crew_to_clear` caps the room at `room x stay` (the sim's `hunt_crew_terms`): the most that lands is
+	# the room's animals times the share that stand, and dividing by what stands then cancels it. The
+	# retreat still moves the CURVE above and the hold crew below, where the target sits under the room.
+	_assert_band_panel("…and clearing the same room asks the same hands of either kit (%d against %d)"
 			% [int(speared.get("crew_to_clear", 0)), int(trapped.get("crew_to_clear", 0))],
-		int(speared.get("crew_to_clear", 0)) > int(trapped.get("crew_to_clear", 0)))
+		int(speared.get("crew_to_clear", 0)) == int(trapped.get("crew_to_clear", 0)))
 	# **AND THE HOLD CREW MOVES WITH IT TOO.** `crew_to_hold` is `fauna::hunt_take_workers`, and it
 	# divides by what STAYS like every other crew answer on this sheet: a spear party keeping one
 	# animal in four needs four times the hands to take the same regrowth every turn. It read the RAW
@@ -15050,15 +15061,14 @@ func _assert_kit_reprices_the_source() -> void:
 	_assert_band_panel("the passive device out-takes the spear on the same herd (%s against %s)"
 			% [str(trap_take), str(spear_take)],
 		trap_take > spear_take + SourceForecast.COMPONENT_RENDER_MIN)
-	# **…AND THE CREW THE SHEET ASKS FOR MOVES WITH IT.** `engage_workers` divides the peak drop by what
-	# STAYS, so the spear line's stepper caps strictly higher than the trap line's on one herd — which
-	# is what keeps the cap at or above the *clear it now* pill beside it, that pill having divided by
-	# the retreat-aware reach all along.
+	# **…AND THE CREW THE SHEET ASKS FOR IS THE SAME, because the sim sizes a hunt crew on a RATE capped at
+	# `room x stay`** (`fauna::hunt_crew_for_take`): the retreat prices a target BELOW the room and cancels
+	# at the room itself, which is what the stepper's cap is struck at.
 	var spear_cap := _kit_hunt_cap(quarry, 1.0)
 	var trap_cap := _kit_hunt_cap(quarry, 0.0)
-	_assert_band_panel("…and the crew the sheet asks for moves with it (%d against %d)"
+	_assert_band_panel("…and the crew the sheet asks for is the same either way, the retreat cancelling at the room (%d against %d)"
 			% [spear_cap, trap_cap],
-		spear_cap > trap_cap)
+		spear_cap == trap_cap)
 
 	# --- **THE MATERIAL ACCOUNT IS REPRICED TOO, AND IT IS THE ONE THAT TRAVELS AS A VECTOR.** It sat
 	# unrepriced for the whole life of this seam because `SOURCE_PER_WORKER_KEYS` is a list of SCALAR
@@ -15379,7 +15389,7 @@ func _assert_denial_turn_clause_shapes() -> void:
 ## pick staying armed. Composed from the VOCABULARY.
 func _assert_denial_short_handed(herd: Dictionary) -> void:
 	var quarry := "Wild Boar"
-	var idle := _hud._band_labor.effective_idle(_hud._band_labor.panel_band())
+	var idle := _hud._band_labor.orderable_hands(_hud._band_labor.panel_band())
 	_assert_band_panel("the band can field %d of the %d hunters this herd needs — the precondition"
 			% [idle, DENIAL_DEEP_PARTY_NEEDED],
 		idle < DENIAL_DEEP_PARTY_NEEDED)
@@ -15523,7 +15533,7 @@ func _assert_denial_sheet_viable() -> void:
 ## Send: a rule that disabled every raid would pass the disable claim alone.
 func _assert_denial_sheet_short_handed() -> void:
 	var quarry := "Wild Boar"
-	var idle := _hud._band_labor.effective_idle(_hud._band_labor.panel_band())
+	var idle := _hud._band_labor.orderable_hands(_hud._band_labor.panel_band())
 	_assert_band_panel("the band can field %d of the %d hunters this herd needs — the precondition"
 			% [idle, DENIAL_DEEP_PARTY_NEEDED],
 		idle < DENIAL_DEEP_PARTY_NEEDED)
@@ -15719,7 +15729,7 @@ func _assert_denial_quarry_eligibility() -> void:
 ## what this half stages. **The published half is the A/B below**, on the same row.
 func _assert_a_crew_bigger_than_its_source_is_flagged() -> void:
 	var band: Dictionary = _hud._band_labor.panel_band()
-	var models: Array = _hud._bandpanel._work_source_models(band, 0)
+	var models: Array = _hud._bandpanel._work_source_models(band)
 	var by_tile: Dictionary = {}
 	for model_variant in models:
 		var model: Dictionary = model_variant
@@ -15800,7 +15810,7 @@ func _assert_the_wire_s_answer_silences_the_client_s() -> void:
 	await _settle()
 	var band: Dictionary = _hud._band_labor.panel_band()
 	var wasted: Dictionary = {}
-	for model_variant in _hud._bandpanel._work_source_models(band, 0):
+	for model_variant in _hud._bandpanel._work_source_models(band):
 		var model: Dictionary = model_variant
 		if Vector2i(int(model.get("x", -1)), int(model.get("y", -1))) == CAP_DEMO_WASTED_TILE:
 			wasted = model
@@ -15857,7 +15867,7 @@ func _assert_board_and_map_list_agree(fixture: Dictionary, case_label: String,
 	_hud._bandpanel.rerender()
 	await _settle()
 	var model: Dictionary = {}
-	for model_variant in _hud._bandpanel._work_source_models(_hud._band_labor.panel_band(), 0):
+	for model_variant in _hud._bandpanel._work_source_models(_hud._band_labor.panel_band()):
 		if Vector2i(int((model_variant as Dictionary).get("x", -1)),
 				int((model_variant as Dictionary).get("y", -1))) == CAP_DEMO_WASTED_TILE:
 			model = model_variant
@@ -17036,6 +17046,16 @@ func _render_builders_segment_state() -> void:
 			BUILDERS_SEGMENT_CREW, tip],
 		tip.contains(HudWorkVocab.PEOPLE_WORKING_PART_FORMAT % [
 			HudWorkVocab.WORKING_PART_BUILD, BUILDERS_SEGMENT_CREW]))
+	# ⛔ **SIM-STAFFED CREWS NEVER BLOCK A PLAYER-SET ONE.** Every hand is spent (idle 0), and the
+	# rows holding them include forage and hunt rows the sim staffs, so the Scout `+` is live anyway:
+	# its ceiling is `orderable_hands`, not `effective_idle`.
+	var scout_card := _find_role_card(HudWorkVocab.ROLE_NAME_SCOUT)
+	var scout_plus := _find_button_with_text(scout_card, HudWorkVocab.STEPPER_PLUS_FACE) \
+		if scout_card != null else null
+	_assert_band_panel(
+		"band_panel_builders_segment: with idle 0 and hands on staffed rows, the Scout `+` is enabled",
+		scout_plus != null and not scout_plus.disabled
+			and _hud._band_labor.orderable_hands(band) > _hud._band_labor.effective_idle(band))
 	# …and the NEGATIVE that keeps the segment a reading rather than livery: the reference band has no
 	# builders and must grow no such segment, the bar's own render-only-when-non-zero rule.
 	_push_bands([_band_fixture()])
@@ -17721,7 +17741,7 @@ func _render_queue_head_tools_short_state() -> void:
 	await _settle()
 	band = _hud._band_labor.panel_band()
 	var head_model: Dictionary = (_hud._bandpanel._build_queue_models(band,
-		_hud._bandpanel._work_source_models(band, 0))[0] as Dictionary).duplicate()
+		_hud._bandpanel._work_source_models(band))[0] as Dictionary).duplicate()
 	var pending_model := head_model.duplicate()
 	pending_model[BandPanelController.BUILD_QUEUE_ROW_PENDING_KEY] = true
 	var tail_model := pending_model.duplicate()
@@ -17820,7 +17840,7 @@ func _strip_fact_lines(strip: Control) -> int:
 	var band := _hud._band_labor.panel_band()
 	var key := String(strip.get_meta(HudWorkVocab.BUILD_QUEUE_SETTINGS_META))
 	for model_variant in _hud._bandpanel._build_queue_models(band,
-			_hud._bandpanel._work_source_models(band, 0)):
+			_hud._bandpanel._work_source_models(band)):
 		var model: Dictionary = model_variant
 		if String(model.get("key", "")) == key:
 			return int(_hud._bandpanel._queue_settings_content(band, model)["fact_lines"])
@@ -17830,7 +17850,7 @@ func _strip_fact_lines(strip: Control) -> int:
 func _tame_fact_lines() -> int:
 	var band := _hud._band_labor.panel_band()
 	for model_variant in _hud._bandpanel._build_queue_models(band,
-			_hud._bandpanel._work_source_models(band, 0)):
+			_hud._bandpanel._work_source_models(band)):
 		var model: Dictionary = model_variant
 		if String(model.get("key", "")) == _queue_entry_key(true):
 			return int(_hud._bandpanel._queue_settings_content(band, model)["fact_lines"])
@@ -17905,7 +17925,7 @@ func _assert_labelled_withdrawal_by_real_input(strip: Control) -> void:
 func _queue_entry_key(animal: bool) -> String:
 	var band := _hud._band_labor.panel_band()
 	for entry_variant in _hud._bandpanel._build_queue_models(band,
-			_hud._bandpanel._work_source_models(band, 0)):
+			_hud._bandpanel._work_source_models(band)):
 		var entry: Dictionary = entry_variant
 		var is_animal := String(entry.get("kind", "")) == SourceForecast.LABOR_KIND_HUNT
 		if is_animal == animal:
@@ -18470,8 +18490,8 @@ func _assert_an_uncrewed_queued_source_still_draws() -> void:
 	_push_bands([_build_uncrewed_queue_band_fixture(false)])
 	_hud._bandpanel.rerender()
 	await _settle()
-	_assert_band_panel("an emptied source the band has NOT queued stays OFF the work board — the deliberate emptying still hides it",
-		not _work_board_draws_source(emptied_key))
+	_assert_band_panel("a staffed source the sim sent nobody to STAYS on the work board (#871) - only `stop_labor` ends a row",
+		_work_board_draws_source(emptied_key))
 	var lone_rows := _build_queue_rows()
 	_assert_band_panel("…and the block draws the %d entry the wire really carries (got %d)"
 			% [QUEUE_UNCREWED_NEGATIVE_ROWS, lone_rows.size()],
@@ -20111,6 +20131,9 @@ const FAR_WORKING_WALK_TILES := 5
 const FAR_WORKING_ON_ROAD := 1
 const FAR_WORKING_NEXT_LOAD := 2
 const FAR_WORKING_RATE_HOME := 0.9
+const FAR_WORKING_LOAD_UNITS := 8.0
+const FAR_WORKING_PACK_UNITS := 13.33
+const FAR_WORKING_LOAD_HOME_IN := 6
 
 func _assert_a_far_working_states_its_party() -> void:
 	var band := _workings_band_fixture(WORKINGS_DEMAND)
@@ -20129,6 +20152,9 @@ func _assert_a_far_working_states_its_party() -> void:
 		row["hunters_on_the_road"] = FAR_WORKING_ON_ROAD
 		row["next_load_home_in"] = FAR_WORKING_NEXT_LOAD
 		row["net_rate_home"] = FAR_WORKING_RATE_HOME
+		row["load_units"] = FAR_WORKING_LOAD_UNITS
+		row["pack_units"] = FAR_WORKING_PACK_UNITS
+		row["load_home_in"] = FAR_WORKING_LOAD_HOME_IN
 	_hud.update_deposits(_workings_rows())
 	_push_bands([band])
 	_hud._bandpanel.rerender()
@@ -20164,6 +20190,15 @@ func _assert_a_far_working_states_its_party() -> void:
 		hover.contains(rate_line))
 	_assert_band_panel("…and never calls that figure food",
 		not hover.to_lower().contains("food"))
+	# **THE LOAD LINE IS ON THE ROW, AND A PACK ALREADY ON THE ROAD OWNS THE COUNTDOWN** - `next_load_home_in`
+	# is 2 here, so the line states the load alone rather than a second `home in` figure.
+	var want_load := "8 of 13 stone in the load"
+	var load_node := _find_meta_control(far_row, HudWorkVocab.DIG_LOAD_LINE_META) as Label
+	_assert_band_panel("a far dig row states its load (\"%s\", got \"%s\")"
+			% [want_load, "" if load_node == null else load_node.text],
+		load_node != null and load_node.text == want_load)
+	_assert_band_panel("…and a row with no caravan states none",
+		_find_meta_control(near_row, HudWorkVocab.DIG_LOAD_LINE_META) == null)
 	var near_hover := _workings_row_tooltip(near_row)
 	_assert_band_panel("a working with NO party carries no party block on its hover",
 		not near_hover.contains(HudWorkVocab.WORK_ROW_PARTY_NEXT_LOAD_FORMAT.get_slice("%", 0))
@@ -20343,9 +20378,9 @@ func _assert_the_workings_roster_names_its_workings() -> void:
 			if face == HudWorkVocab.STEPPER_MINUS_FACE or face == HudWorkVocab.STEPPER_PLUS_FACE:
 				faces.append(face)
 		steppers.append(faces.size())
-	_assert_band_panel("…and every ROW carries its own crew stepper, one `−` and one `+` each (%s)"
+	_assert_band_panel("…and no ROW carries a stepper - a working's crew is the sim's (%s)"
 			% [steppers],
-		steppers == [2, 2, 2])
+		steppers == [0, 0, 0])
 	# ⛔ **AND NO ROW CARRIES A `✕`** — putting a working down is its INSPECTOR's action, the harvest
 	# row's `Unassign` placement (`_assert_the_roster_drop_puts_one_working_down`).
 	var drops: Array = []
@@ -21048,7 +21083,7 @@ func _queue_row_faces() -> Array:
 func _build_queue_face_for(key: String) -> String:
 	var band := _hud._band_labor.panel_band()
 	for entry_variant in _hud._bandpanel._build_queue_models(band,
-			_hud._bandpanel._work_source_models(band, 0)):
+			_hud._bandpanel._work_source_models(band)):
 		var entry: Dictionary = entry_variant
 		if String(entry.get("key", "")) == key:
 			return _hud._bandpanel._build_queue_job_face(entry)
@@ -21961,7 +21996,7 @@ func _assert_shared_source_queue_order() -> void:
 	var band := _hud._band_labor.panel_band()
 	var drawn: Array = []
 	for entry_variant in _hud._bandpanel._build_queue_models(band,
-			_hud._bandpanel._work_source_models(band, 0)):
+			_hud._bandpanel._work_source_models(band)):
 		drawn.append(String((entry_variant as Dictionary).get("key", "")))
 	var wanted: Array = [_shared_queue_key(SHARED_QUEUE_TILE_X),
 		_shared_queue_key(SHARED_QUEUE_TILE_SHARED), _shared_queue_key(SHARED_QUEUE_TILE_Z)]
@@ -22074,7 +22109,7 @@ func _render_queue_withdrawal_state() -> void:
 	var band_after := _hud._band_labor.panel_band()
 	var modelled_keys: Array = []
 	for entry_variant in _hud._bandpanel._build_queue_models(band_after,
-			_hud._bandpanel._work_source_models(band_after, 0)):
+			_hud._bandpanel._work_source_models(band_after)):
 		modelled_keys.append(String((entry_variant as Dictionary).get("key", "")))
 	print("band_panel_preview: queue withdrawal — entries left ", modelled_keys,
 		" withdrawn ", _hud._band_labor.pending_unqueues_for(
@@ -22891,7 +22926,7 @@ func _assert_queue_row_settings() -> void:
 	_assert_band_panel("…while the PLANT entry expands, and the strip belongs to THAT row",
 		String(strip.get_meta(HudWorkVocab.BUILD_QUEUE_SETTINGS_META))
 			== String((_hud._bandpanel._build_queue_models(_hud._band_labor.panel_band(),
-				_hud._bandpanel._work_source_models(_hud._band_labor.panel_band(), 0))[0]
+				_hud._bandpanel._work_source_models(_hud._band_labor.panel_band()))[0]
 					as Dictionary).get("key", "")))
 	var picker := _find_meta_control(strip,
 		HudWorkVocab.BUILD_QUEUE_CROP_PICKER_META) as OptionButton
@@ -22978,7 +23013,7 @@ func _assert_queue_row_settings() -> void:
 ## Reported as well as asserted: 0 spare is a real fit rather than a comfortable one.
 func _assert_open_settings_fits_the_wide_zone() -> void:
 	var queued: Array = _hud._bandpanel._build_queue_models(_hud._band_labor.panel_band(),
-		_hud._bandpanel._work_source_models(_hud._band_labor.panel_band(), 0))
+		_hud._bandpanel._work_source_models(_hud._band_labor.panel_band()))
 	var plant := ""
 	for entry_variant in queued:
 		var entry: Dictionary = entry_variant
@@ -23233,7 +23268,7 @@ func _assert_work_row_and_badge_agree() -> void:
 	var builders := int(_hud._band_labor.effective_role_workers(
 		band, HudConst.LABOR_KIND_BUILDERS).get("workers", 0))
 	var faces := _work_row_build_faces()
-	var models: Array = _hud._bandpanel._work_source_models(band, 0)
+	var models: Array = _hud._bandpanel._work_source_models(band)
 	var checked := 0
 	var stalled_count := 0
 	var disagreed: Array[String] = []
@@ -23296,7 +23331,7 @@ func _work_row_build_faces() -> Dictionary:
 ## row's own `label` is what the name Label carries, so this is the join between the two.
 func _work_row_label_for_tile(tile: Vector2i) -> String:
 	var band: Dictionary = _hud._band_labor._panel_band
-	for model_variant in _hud._bandpanel._work_source_models(band, 0):
+	for model_variant in _hud._bandpanel._work_source_models(band):
 		var model: Dictionary = model_variant
 		if int(model.get("x", -1)) == tile.x and int(model.get("y", -1)) == tile.y:
 			return String(model.get("label", ""))
@@ -23354,8 +23389,8 @@ func _assert_pending_assign_rollback() -> void:
 	_assert_band_panel("the optimistic write lands — the Builders role reads %d" % ROLLBACK_BUILDERS,
 		int(_hud._band_labor.effective_role_workers(band, HudConst.LABOR_KIND_BUILDERS)
 			.get("workers", -1)) == ROLLBACK_BUILDERS)
-	_assert_band_panel("…and so does the unrelated edit beside it — %d foragers" % ROLLBACK_FORAGERS,
-		_hud._band_labor.effective_forage_workers(band,
+	_assert_band_panel("…and so does the unrelated edit beside it — a Max of %d foragers" % ROLLBACK_FORAGERS,
+		_hud._band_labor.effective_forage_max(band,
 			ROLLBACK_SURVIVOR_TILE.x, ROLLBACK_SURVIVOR_TILE.y) == ROLLBACK_FORAGERS)
 	# THE FAILURE PATH: exactly what `Main._on_hud_assign_labor` does when the send answers `false`.
 	_hud.drop_pending_assign(builders_payload)
@@ -23365,9 +23400,9 @@ func _assert_pending_assign_rollback() -> void:
 	_assert_band_panel("a send that never went drops its pending entry — the Builders role is back to the wire's %d, unpending (got %d/%s)"
 			% [wire_builders, int(rolled.get("workers", -1)), str(rolled.get("pending", true))],
 		int(rolled.get("workers", -1)) == wire_builders and not bool(rolled.get("pending", true)))
-	_assert_band_panel("…and the OTHER pending edit on the same band SURVIVES it — still %d foragers"
+	_assert_band_panel("…and the OTHER pending edit on the same band SURVIVES it — still a Max of %d foragers"
 			% ROLLBACK_FORAGERS,
-		_hud._band_labor.effective_forage_workers(band,
+		_hud._band_labor.effective_forage_max(band,
 			ROLLBACK_SURVIVOR_TILE.x, ROLLBACK_SURVIVOR_TILE.y) == ROLLBACK_FORAGERS)
 	# Leave the overlay as this block found it, or every state after it renders a pending forage row.
 	_hud.drop_pending_assign(sent[0] as Dictionary)
@@ -23737,7 +23772,7 @@ func _repair_band_fixture() -> Dictionary:
 ## — an achieved rung short of its cost, which the sim can no longer publish (see this block's
 ## header). What remains is the negative, which is the half that was actually violated.
 func _assert_no_repair_offer(where: String) -> void:
-	var models: Array = _hud._bandpanel._work_source_models(_hud._band_labor.panel_band(), 0)
+	var models: Array = _hud._bandpanel._work_source_models(_hud._band_labor.panel_band())
 	if models.is_empty():
 		_fail("%s — no work row to read" % where)
 		return
@@ -25163,18 +25198,18 @@ func _assert_crew_edit_keeps_the_kit(where: String, band: Dictionary, herd_id: S
 		_fail("%s: the row does not carry the sent kit before the edit (\"%s\") — the crew-edit claim would be vacuous"
 			% [where, String(before.get("kit_id", ""))])
 		return
-	_hud._bandpanel._emit_work_assign(band, before, int(before.get("workers", 0)) + 1)
+	_hud._bandpanel._emit_work_assign(band, before, int(before.get("max_workers", 0)) + 1)
 	var after := _pending_kit_model(band, herd_id, tile)
-	_assert_band_panel("%s: a `+` on the pending row keeps the crew's kit (\"%s\", want \"%s\") and moves the count (%d → %d)"
+	_assert_band_panel("%s: a Max edit on the pending row keeps the crew's kit (\"%s\", want \"%s\") and moves the Max (%d → %d)"
 			% [where, String(after.get("kit_id", "")), BandFx.KIT_ID_NONE,
-				int(before.get("workers", 0)), int(after.get("workers", 0))],
+				int(before.get("max_workers", 0)), int(after.get("max_workers", 0))],
 		String(after.get("kit_id", "")) == BandFx.KIT_ID_NONE
-			and int(after.get("workers", 0)) == int(before.get("workers", 0)) + 1)
+			and int(after.get("max_workers", 0)) == int(before.get("max_workers", 0)) + 1)
 
 ## The work model for the pending source, re-found per call — the models are rebuilt each time, so a
 ## row cannot be held across an edit.
 func _pending_kit_model(band: Dictionary, herd_id: String, tile: Vector2i) -> Dictionary:
-	for model_variant in _hud._bandpanel._work_source_models(band, 0):
+	for model_variant in _hud._bandpanel._work_source_models(band):
 		var model: Dictionary = model_variant
 		if herd_id != "":
 			if String(model.get("herd_id", "")) == herd_id:
@@ -25233,7 +25268,7 @@ const BOARD_LAYOUT_PROBE_COUNTS: Array[int] = [3, 4, 6, 8, 12]
 ## card.
 func _open_first_work_inspector() -> void:
 	var band: Dictionary = _hud._band_labor._panel_band
-	var models: Array = _hud._bandpanel._work_source_models(band, 0)
+	var models: Array = _hud._bandpanel._work_source_models(band)
 	if models.is_empty():
 		_fail("no work model to open the inspector dialog on")
 		return
@@ -25316,7 +25351,7 @@ func _assert_dialog_is_not_modal(where: String) -> void:
 ## holding a DIFFERENT strip.
 func _assert_dialog_survives_a_reselect() -> void:
 	var band: Dictionary = _hud._band_labor._panel_band
-	var models: Array = _hud._bandpanel._work_source_models(band, 0)
+	var models: Array = _hud._bandpanel._work_source_models(band)
 	if models.size() < 2:
 		_fail("re-select — the board lists fewer than two rows to switch between")
 		return
@@ -25857,7 +25892,7 @@ func _assert_kits_section_draws_its_control() -> void:
 ## leaving it there would hand the next state a strip built from a model no board contains.
 func _assert_work_inspector_worst_case_fits(where: String) -> void:
 	var band: Dictionary = _hud._band_labor._panel_band
-	var models: Array = _hud._bandpanel._work_source_models(band, 0)
+	var models: Array = _hud._bandpanel._work_source_models(band)
 	if models.is_empty():
 		_fail("%s — no work model to build a worst-case inspector from" % where)
 		return
@@ -26072,7 +26107,7 @@ func _render_work_sections_states() -> void:
 
 	# ---- THE SECTIONS: four heads, each `N on work`; GROUNDWORK absent on a band holding no working --
 	var agri_workers := 0
-	for model_variant in _hud._bandpanel._work_source_models(band, 0):
+	for model_variant in _hud._bandpanel._work_source_models(band):
 		var model: Dictionary = model_variant
 		if String(model.get("kind", "")) == SourceForecast.LABOR_KIND_FORAGE:
 			agri_workers += int(model.get("workers", 0))
@@ -26234,7 +26269,7 @@ func _render_work_sections_states() -> void:
 
 	# ---- THE SECTIONS COLLAPSE: the chevron folds AGRICULTURE and nothing else --------------------
 	var hunt_rows_before := 0
-	for model_variant in _hud._bandpanel._work_source_models(band, 0):
+	for model_variant in _hud._bandpanel._work_source_models(band):
 		if String((model_variant as Dictionary).get("kind", "")) == SourceForecast.LABOR_KIND_HUNT:
 			hunt_rows_before += 1
 	var chevron := _find_meta_control_valued(_panel, HudWorkVocab.WORK_SECTION_CHEVRON_META,
@@ -26311,12 +26346,6 @@ func _assert_site_crew_is_whole_workers() -> void:
 			% [take, KEEPING_CAP_SIM_CREW], take < KEEPING_CAP_SIM_CREW)
 	_assert_band_panel("keeping cap — the cap IS the sim's %d (got %d), with no keeping count added"
 			% [KEEPING_CAP_SIM_CREW, useful], useful == KEEPING_CAP_SIM_CREW)
-	_assert_band_panel("keeping cap — a crew at the take's useful %d can still add a hand"
-			% take, bool(SourceForecast.source_worker_cap_state(forecast, take, KEEPING_CAP_IDLE)
-				.get("can_add", false)))
-	_assert_band_panel("keeping cap — …and not one past the sim's %d" % KEEPING_CAP_SIM_CREW,
-		not bool(SourceForecast.source_worker_cap_state(forecast, KEEPING_CAP_SIM_CREW,
-			KEEPING_CAP_IDLE).get("can_add", true)))
 
 ## The sim's most-useful crew on the kept site (take 2 + keeping 1), the band's one idle hand, and a
 ## take useful up to two hands.
@@ -26362,16 +26391,20 @@ func _assert_pool_row_is_a_site_row(role_name: String, icon: String, subline: St
 			% [role_name, subline, "" if sub == null else sub.text],
 		sub != null and sub.text.begins_with(subline)
 			and sub.get_theme_color(FONT_COLOR_THEME_KEY) == HudStyle.INK_DIM)
+	# A pool row's right edge is its `+` (a player-set crew) or its read-only crew number (a staffed one);
+	# a site row's is its crew number (#871). Both sit at the row's right edge.
 	var pool_plus := _find_stepper_plus(pool)
-	var site_plus := _find_stepper_plus(site)
-	var pool_x := -1.0 if pool_plus == null else pool_plus.get_global_rect().end.x
+	var site_plus := _find_meta_control(site, String(HudWorkVocab.CREW_NUMBER_META))
+	var pool_edge: Control = pool_plus if pool_plus != null \
+		else _find_meta_control(pool, String(HudWorkVocab.CREW_NUMBER_META))
+	var pool_x := -1.0 if pool_edge == null else pool_edge.get_global_rect().end.x
 	var site_x := -1.0 if site_plus == null else site_plus.get_global_rect().end.x
 	print("band_panel_preview: pool row %s — `+` right edge %.1f, site row's %.1f, icon x %.1f / %.1f"
 		% [role_name, pool_x, site_x, -1.0 if glyph == null else glyph.get_global_rect().position.x,
 			_site_row_icon_x(site)])
-	_assert_band_panel("pool row `%s` — its stepper sits in the site rows' column (`+` ends at %.1f, theirs %.1f)"
+	_assert_band_panel("pool row `%s` — its crew control sits in the site rows' column (ends at %.1f, theirs %.1f)"
 			% [role_name, pool_x, site_x],
-		pool_plus != null and site_plus != null and is_equal_approx(pool_x, site_x))
+		pool_edge != null and site_plus != null and is_equal_approx(pool_x, site_x))
 	_assert_band_panel("pool row `%s` — …and its icon in their icon column" % role_name,
 		glyph != null and is_equal_approx(glyph.get_global_rect().position.x, _site_row_icon_x(site)))
 
@@ -26456,6 +26489,8 @@ func _render_tile_crew_state() -> void:
 	rows.append({"kind": HudConst.LABOR_KIND_TILE, "workers": TILE_FX_UNKNOWN_WORKERS,
 		"target_x": ROSTER_FAR_TILE.x, "target_y": ROSTER_FAR_TILE.y, "fauna_id": "",
 		"branch": TILE_FX_UNKNOWN_BRANCH})
+	rows.append({"kind": HudConst.LABOR_KIND_BAND, "workers": BAND_IMPROVEMENT_FX_WORKERS,
+		"target_x": -1, "target_y": -1, "fauna_id": "", "branch": BAND_IMPROVEMENT_FX_BRANCH})
 	_push_bands([band])
 	_hud._bandpanel.rerender()
 	await _settle()
@@ -26487,10 +26522,60 @@ func _render_tile_crew_state() -> void:
 			% [TILE_FX_ROOT_LABEL, str(bare)],
 		bare.has(HudWorkVocab.site_crew_line(TILE_FX_ROOT_LABEL))
 			and not bare.has(HudWorkVocab.site_crew_line(HudWorkVocab.SITE_CREW_RUNG_WILD)))
+	# **A BAND IMPROVEMENT (a drying rack) IS A STAFFED ROW LIKE A TILE'S**: a read-only crew number and
+	# no stepper, named off the catalog, and its sim-staffed hands count as WORKING (netted out of idle)
+	# while staying orderable - they are re-staffed from whatever the player's own orders leave.
+	var rack := _find_meta_control_valued(_panel, String(HudWorkVocab.BAND_IMPROVEMENT_ROW_META),
+		BAND_IMPROVEMENT_FX_BRANCH)
+	_assert_band_panel("band improvement — the rack's row is drawn", rack != null)
+	if rack != null:
+		var rack_texts: Array = []
+		var rack_labels: Array = []
+		_collect_labels(rack, rack_labels)
+		for label in rack_labels:
+			rack_texts.append((label as Label).text)
+		_assert_band_panel("band improvement — …states its crew of %d (got %s)"
+				% [BAND_IMPROVEMENT_FX_WORKERS, str(rack_texts)],
+			rack_texts.has(str(BAND_IMPROVEMENT_FX_WORKERS)))
+		_assert_band_panel("band improvement — …and carries no stepper",
+			_find_button_with_text(rack, HudWorkVocab.STEPPER_PLUS_FACE) == null)
+	# Staged with slack (BAND_IMPROVEMENT_FX_SLACK spare hands) so the idle claim is not 0 == 0.
+	var with_rack: Dictionary = band.duplicate(true)
+	with_rack["working_age"] = int(with_rack.get("working_age", 0)) + BAND_IMPROVEMENT_FX_SLACK
+	var without_rack: Dictionary = with_rack.duplicate(true)
+	var kept_rows: Array = []
+	for entry in (without_rack.get("labor_assignments", []) as Array):
+		if String((entry as Dictionary).get("kind", "")) != HudConst.LABOR_KIND_BAND:
+			kept_rows.append(entry)
+	without_rack["labor_assignments"] = kept_rows
+	var idle_with: int = _hud._band_labor.effective_idle(with_rack)
+	var idle_without: int = _hud._band_labor.effective_idle(without_rack)
+	_assert_band_panel("band improvement — its crew is netted out of idle (%d -> %d, slack staged)"
+			% [idle_without, idle_with],
+		idle_without > 0
+			and idle_with == maxi(idle_without - BAND_IMPROVEMENT_FX_WORKERS, 0))
+	var crews_with: int = _hud._band_labor.staffed_crews_total(with_rack)
+	var crews_without: int = _hud._band_labor.staffed_crews_total(without_rack)
+	_assert_band_panel("band improvement — …and its hands join the orderable pool (staffed %d -> %d)"
+			% [crews_without, crews_with],
+		crews_with - crews_without == BAND_IMPROVEMENT_FX_WORKERS
+			and _hud._band_labor.orderable_hands(with_rack)
+				== idle_with + crews_with)
+	var rack_line := MAIN_SCRIPT.format_stop_labor({
+		"faction": HudConst.PLAYER_FACTION_ID, "band_id": 71204, "x": -1, "y": -1, "herd_id": "",
+		"branch": BAND_IMPROVEMENT_FX_BRANCH})
+	_assert_band_panel("band improvement — stopping it names `branch=<id>` (got %s)" % str(rack_line),
+		String(rack_line.get("line", "")).ends_with(" branch=%s" % BAND_IMPROVEMENT_FX_BRANCH))
 	_hud.update_ladder_rungs([])
 	_hud.update_ladder_branches([])
 	_hud.update_tile_improvements([])
 	_restore_workings_roster_fixture()
+
+const BAND_IMPROVEMENT_FX_BRANCH := "camp_stores"
+const BAND_IMPROVEMENT_FX_WORKERS := 2
+## Spare hands staged on top of the fixture's working-age: more than every staffed and role row together
+## holds (the fixture is over-booked by its tile crews), so idle is a real, positive number.
+const BAND_IMPROVEMENT_FX_SLACK := 60
 
 func _render_work_sections_all_five() -> void:
 	_panel.set_dock(SIDE_LEFT)
@@ -26531,9 +26616,10 @@ func _render_work_sections_all_five() -> void:
 		_assert_band_panel("all five sections — the `%s` section head is drawn" % String(key),
 			_work_section_head(key) != null)
 	var road_crew := _find_pool_card(HudWorkVocab.ROLE_NAME_ROADWORK)
-	_assert_band_panel("all five sections — the ROADWORK section's pool row is named `%s`, with a stepper"
+	_assert_band_panel("all five sections — the ROADWORK section's pool row is named `%s`, with a read-only crew number (the sim staffs it) and no stepper"
 			% HudWorkVocab.ROLE_NAME_ROADWORK,
-		road_crew != null and _find_stepper_plus(road_crew) != null)
+		road_crew != null and _find_stepper_plus(road_crew) == null
+			and _find_meta_control(road_crew, String(HudWorkVocab.CREW_NUMBER_META)) != null)
 	_assert_band_panel("all five sections — …and the section itself is still headed `%s`"
 			% String(HudWorkVocab.WORK_SECTION_TITLES[HudWorkVocab.WORK_SECTION_ROADWORK]),
 		String(HudWorkVocab.WORK_SECTION_TITLES[HudWorkVocab.WORK_SECTION_ROADWORK]) == "Roadwork")
@@ -26744,7 +26830,7 @@ func _assert_site_tools_are_named() -> void:
 		short_mark != null and short_mark.tooltip_text.ends_with(warn_want))
 	var note_want := HudWorkVocab.WORK_ROW_UNDER_KEPT_TOOLS_NAMED_FORMAT % hoes
 	var note := ""
-	for model_variant in _hud._bandpanel._work_source_models(_hud._band_labor.panel_band(), 0):
+	for model_variant in _hud._bandpanel._work_source_models(_hud._band_labor.panel_band()):
 		var model: Dictionary = model_variant
 		if Vector2i(int(model.get("x", -1)), int(model.get("y", -1))) == QUEUE_THIRD_PATCH:
 			note = String(model.get("note", ""))
@@ -26866,63 +26952,92 @@ func _assert_drawer_fit_survives_an_unsettled_rebuild() -> void:
 const SPLIT_FIT_SETTLE_FRAMES := 6
 
 
-# ---- THE CREW SPLIT: ONE MARK PER WORKER (`CrewSplitMarks`) --------------------------------------
-#
-# Every Work-tab site row whose crew keeps its site carries one small square per worker under its
-# stepper, the tending share off the ROW's own `keep_hands` filled from the left. One board holds
-# every case the marks have: a split that falls MID-PERSON (3.2 of 5, so the fourth square is
-# part-shaded and the hover says `About`), a crew ALL tending (3 of 3), a WILD patch with no bill (no
-# marks at all — the control), and a groundwork row (the verb is `cut`). A second render puts a crew
-# far wider than its row on the same patch, which is the overflow case.
-#
-# ⛔ **EVERY SITE'S `upkeep_hands` IS THE SUM OF TWO BANDS' KEEPING**, the second band's share
-# (`CREW_SPLIT_OTHER_BAND_KEEP`) added on top, so a row that read the site figure lands on a number
-# the claims name. A second band works the mid patch too, and its own row must read its own split.
+## **THE INSPECTOR'S MAX AND ITS `Unassign`** (#871) - the card draws the Max stepper (`No max` on a row the
+## player has not capped) and its `Unassign` sends `stop_labor` for the row it is open on, in the verb's own
+## grammar, rather than `assign_labor … 0` (which on a staffed row is a Max of none and ends nothing).
+func _assert_work_inspector_max_and_stop() -> void:
+	var root := _work_inspector_root()
+	var value := _find_meta_control(root, String(HudWorkVocab.MAX_STEPPER_VALUE_META))
+	_assert_band_panel("inspector - a staffed row's card draws the Max stepper, reading `%s` while uncapped"
+			% HudWorkVocab.MAX_STEPPER_NO_MAX,
+		value is Label and (value as Label).text == HudWorkVocab.MAX_STEPPER_NO_MAX)
+	var band: Dictionary = _hud._band_labor._panel_band
+	var model: Dictionary = _hud._bandpanel._work_source_models(band)[0]
+	var sent: Array = []
+	var sink := func(payload: Dictionary) -> void: sent.append(payload)
+	_hud.stop_labor_requested.connect(sink)
+	_hud._bandpanel._commit_stop_labor(band, model)
+	_hud.stop_labor_requested.disconnect(sink)
+	_assert_band_panel("inspector - Unassign emits one stop request (%d)" % sent.size(), sent.size() == 1)
+	if sent.size() == 1:
+		var line := String(MAIN_SCRIPT.format_stop_labor(sent[0] as Dictionary).get("line", ""))
+		var want := "stop_labor %d %d " % [int(band.get("faction", 0)), int(band.get("band_id", -1))]
+		_assert_band_panel("…as `stop_labor <faction> <band> <source>` (got \"%s\")" % line,
+			line.begins_with(want) and not line.contains("assign_labor"))
 
-## The mid-person split: a crew of five on a patch whose keeping took 3.2 hands.
+# ---- THE CREW BAR: ONE MARK PER WORKER THE SIM STAFFED (`CrewSplitMarks`, #871) -------------------
+#
+# Every staffed Work-tab row draws one small square per worker under its crew number: the keepers in a
+# muted earth, then the hands holding a whole kit, then the bare hands - the row's own
+# `keepers_staffed` / `kitted_staffed` / `bare_staffed`, which sum to its `workers`. One board holds
+# every case the bar has: a MIXED crew (3 keeping, 1 with the kit, 1 bare, so all three segments and
+# the hold clause), a crew ALL keeping (3 of 3), a WILD patch with no keepers (a bar of kit and bare
+# hands), an EMPTY crew (`Nobody here this turn`), and a groundwork row. A second render puts a crew far
+# wider than its row on the same patch, which is the overflow case.
+#
+# ⛔ **A SECOND BAND WORKS THE MID PATCH TOO**, and its own row must draw its own split.
+
+## The mixed crew: five hands on a patch - 3 keeping it up, 1 with the kit, 1 bare; one holds it.
 const CREW_SPLIT_MID_CREW := 5
-const CREW_SPLIT_MID_KEEP := 3.2
-## The all-tending crew: three hands, all three spent keeping.
+const CREW_SPLIT_MID_KEEPERS := 3
+const CREW_SPLIT_MID_KITTED := 1
+const CREW_SPLIT_MID_BARE := 1
+const CREW_SPLIT_MID_HOLD := 1
+## The Max the player set on the mid patch for the chip frame.
+const CREW_SPLIT_MAX_CHIP_VALUE := 3
+const CREW_SPLIT_MAX_CHIP_FACE := "Max 3"
+## The all-keeping crew: three hands, all three keeping.
 const CREW_SPLIT_ALL_CREW := 3
-const CREW_SPLIT_ALL_KEEP := 3.0
-## What the near wood working's keeping took off its two cutters.
-const CREW_SPLIT_WORKING_KEEP := 0.6
-## The second band on the mid patch: its crew, what its own keeping took, and its sentence.
+## What the near wood working's two cutters divide into.
+const CREW_SPLIT_WORKING_KEEPERS := 1
+const CREW_SPLIT_WORKING_KITTED := 1
+## The second band on the mid patch: its crew and its split.
 const CREW_SPLIT_OTHER_BAND_ENTITY := 9061
 const CREW_SPLIT_OTHER_BAND_CREW := 2
-const CREW_SPLIT_OTHER_BAND_KEEP := 1.0
-const CREW_SPLIT_OTHER_WORDS := "1 of 2 is tending the patch; 1 is free to harvest."
-## A crew far wider than its row can draw one square each for, and what it spends keeping.
+const CREW_SPLIT_OTHER_BAND_KEEPERS := 1
+## A crew far wider than its row can draw one square each for.
 const CREW_SPLIT_BIG_CREW := 48
-const CREW_SPLIT_BIG_KEEP := 12.0
-## The hunt web's words are asked of the producer: a crew of four, one and a half of them keeping.
-const CREW_SPLIT_HUNT_CREW := 4
-const CREW_SPLIT_HUNT_KEEP := 1.5
-## The exact sentences the hover must state — spelled out, never recomposed through the vocabulary.
-const CREW_SPLIT_MID_WORDS := "About 3 of 5 are tending the patch; 2 are free to harvest."
-const CREW_SPLIT_ALL_WORDS := "All 3 are tending the patch — nobody is free to harvest."
-const CREW_SPLIT_WORKING_WORDS := "About 1 of 2 is tending the working; 1 is free to cut."
-const CREW_SPLIT_HUNT_WORDS := "About 2 of 4 are tending the herd; 2 are free to hunt."
+const CREW_SPLIT_BIG_KEEPERS := 12
+const CREW_SPLIT_BIG_KITTED := 20
+## The roster's on-screen words for the items the kits name.
+const CREW_SPLIT_ITEM_NAMES := {"basket": "Basket", "sled": "Sled"}
+## The exact sentences the hover must state - spelled out, never recomposed through the vocabulary.
+const CREW_SPLIT_MID_WORDS := "3 keep it up · 1 with basket · 1 bare-handed — 1 hold it at the floor, 1 more draw it down to it"
+const CREW_SPLIT_ALL_WORDS := "3 keep it up"
+const CREW_SPLIT_WORKING_WORDS := "1 keep it up · 1 with sled"
+const CREW_SPLIT_OTHER_WORDS := "1 keep it up · 1 bare-handed"
+const CREW_SPLIT_NOBODY_WORDS := "Nobody here this turn"
+## The producer's words for a hunt crew of four, all with spears: two hold it, two draw it down.
+const CREW_SPLIT_HUNT_WORDS := "4 with spears — 2 hold it at the floor, 2 more draw it down to it"
 
-func _crew_split_patches(mid_keep: float) -> Array:
-	var patches := _sections_patches(false)
-	for i in range(patches.size()):
-		var patch: Dictionary = (patches[i] as Dictionary).duplicate(true)
-		var tile := Vector2i(int(patch.get("x", -1)), int(patch.get("y", -1)))
-		# The SITE's figure sums every band keeping it, so it is never any one row's answer.
-		if tile == QUEUE_SECOND_PATCH:
-			patch["upkeep_hands"] = mid_keep + CREW_SPLIT_OTHER_BAND_KEEP
-		elif tile == QUEUE_THIRD_PATCH:
-			patch["upkeep_hands"] = CREW_SPLIT_ALL_KEEP + CREW_SPLIT_OTHER_BAND_KEEP
-		patches[i] = patch
-	return patches
+func _crew_split_patches() -> Array:
+	return _sections_patches(false)
 
-## The wild patch's tile — the one `_sections_patches` leaves without a bill.
+## The wild patch's tile - the one `_sections_patches` leaves without a bill.
 func _crew_split_wild_tile() -> Vector2i:
 	var wild: Dictionary = _build_queue_patches(1)[0]
 	return Vector2i(int(wild.get("x", -1)), int(wild.get("y", -1)))
 
-func _crew_split_band(mid_crew: int, mid_keep: float) -> Dictionary:
+## A staffed row's wire fields for a crew divided `keepers` / `kitted` / `bare`.
+func _crew_split_row_fields(keepers: int, kitted: int, bare: int, hold: int, item: String) -> Dictionary:
+	return {
+		"workers": keepers + kitted + bare, "max_workers": 0, "hold_crew": hold, "reach_crew": hold + 1,
+		"keepers_staffed": keepers, "kitted_staffed": kitted, "bare_staffed": bare,
+		"useful_crew": keepers + kitted + bare,
+		"kit_toe": [{"item_id": item, "required": 1, "filled": 1}],
+	}
+
+func _crew_split_band(mid_crew: int, mid_keepers: int, mid_kitted: int, mid_max: int = 0) -> Dictionary:
 	var band := _sections_band_fixture()
 	var rows: Array = band["labor_assignments"]
 	for i in range(rows.size()):
@@ -26930,60 +27045,59 @@ func _crew_split_band(mid_crew: int, mid_keep: float) -> Dictionary:
 		var tile := Vector2i(int(row.get("target_x", -1)), int(row.get("target_y", -1)))
 		if String(row.get("kind", "")) == SourceForecast.LABOR_KIND_FORAGE:
 			if tile == QUEUE_SECOND_PATCH:
-				row["workers"] = mid_crew
-				row[SourceForecast.ASSIGNMENT_KEEP_HANDS_KEY] = mid_keep
+				row.merge(_crew_split_row_fields(mid_keepers, mid_kitted,
+					mid_crew - mid_keepers - mid_kitted, CREW_SPLIT_MID_HOLD, "basket"), true)
+				row["max_workers"] = mid_max
 			elif tile == QUEUE_THIRD_PATCH:
-				row["workers"] = CREW_SPLIT_ALL_CREW
-				row[SourceForecast.ASSIGNMENT_KEEP_HANDS_KEY] = CREW_SPLIT_ALL_KEEP
+				row.merge(_crew_split_row_fields(CREW_SPLIT_ALL_CREW, 0, 0, 0, "basket"), true)
+			else:
+				# Every other patch: a wild one - kit and bare hands, nobody keeping.
+				row.merge(_crew_split_row_fields(0, 1, 1, 1, "basket"), true)
 		rows[i] = row
-	rows.append({
-		"kind": HudConst.LABOR_KIND_EXTRACT, "workers": WORKINGS_CUTTERS,
-		"target_x": ROSTER_NEAR_TILE.x, "target_y": ROSTER_NEAR_TILE.y, "fauna_id": "",
-		"material": WORKINGS_WOOD,
-		SourceForecast.ASSIGNMENT_KEEP_HANDS_KEY: CREW_SPLIT_WORKING_KEEP,
-	})
+	var working := {
+		"kind": HudConst.LABOR_KIND_EXTRACT, "target_x": ROSTER_NEAR_TILE.x,
+		"target_y": ROSTER_NEAR_TILE.y, "fauna_id": "", "material": WORKINGS_WOOD,
+	}
+	working.merge(_crew_split_row_fields(CREW_SPLIT_WORKING_KEEPERS, CREW_SPLIT_WORKING_KITTED, 0, 0,
+		"sled"), true)
+	rows.append(working)
 	return band
 
-## A second band working the mid patch beside the first, with its own crew and its own keeping.
+## A second band working the mid patch beside the first, with its own crew and its own split.
 func _crew_split_other_band() -> Dictionary:
 	var band := _band_fixture()
 	band["entity"] = CREW_SPLIT_OTHER_BAND_ENTITY
-	band["labor_assignments"] = [{
-		"kind": SourceForecast.LABOR_KIND_FORAGE, "workers": CREW_SPLIT_OTHER_BAND_CREW,
+	var row := {
+		"kind": SourceForecast.LABOR_KIND_FORAGE,
 		"target_x": QUEUE_SECOND_PATCH.x, "target_y": QUEUE_SECOND_PATCH.y, "fauna_id": "",
-		"floor": 0.5, SourceForecast.ASSIGNMENT_KEEP_HANDS_KEY: CREW_SPLIT_OTHER_BAND_KEEP,
-	}]
+		"floor": 0.5,
+	}
+	row.merge(_crew_split_row_fields(CREW_SPLIT_OTHER_BAND_KEEPERS, 0,
+		CREW_SPLIT_OTHER_BAND_CREW - CREW_SPLIT_OTHER_BAND_KEEPERS, 0, "basket"), true)
+	band["labor_assignments"] = [row]
 	return band
 
-func _crew_split_workings() -> Array:
-	var rows := _workings_rows()
-	for i in range(rows.size()):
-		var row: Dictionary = (rows[i] as Dictionary).duplicate(true)
-		if int(row.get("tile_x", -1)) == ROSTER_NEAR_TILE.x \
-				and int(row.get("tile_y", -1)) == ROSTER_NEAR_TILE.y \
-				and String(row.get("material", "")) == WORKINGS_WOOD:
-			row["upkeep_hands"] = CREW_SPLIT_WORKING_KEEP + CREW_SPLIT_OTHER_BAND_KEEP
-		rows[i] = row
-	return rows
-
-func _stage_crew_split_board(mid_crew: int, mid_keep: float) -> void:
+func _stage_crew_split_board(mid_crew: int, mid_keepers: int, mid_kitted: int,
+		mid_max: int = 0) -> void:
+	_hud._bandpanel.set_item_display_names(CREW_SPLIT_ITEM_NAMES)
 	_hud.update_intensification([_workings_knowledge_row()])
 	_hud.update_deposit_rungs(_deposit_rung_catalog())
-	_hud.update_deposits(_crew_split_workings())
+	_hud.update_deposits(_workings_rows())
 	_set_world_herds(_herd_fixtures())
-	_set_forage_patches(_crew_split_patches(mid_keep))
-	_push_bands([_crew_split_band(mid_crew, mid_keep), _crew_split_other_band()])
+	_set_forage_patches(_crew_split_patches())
+	_push_bands([_crew_split_band(mid_crew, mid_keepers, mid_kitted, mid_max),
+		_crew_split_other_band()])
 	_hud._bandpanel.rerender()
 	await _settle()
 
-## The marks drawn inside the work row for `tile`, or `null` where the row draws none.
+## The bar drawn inside the work row for `tile`, or `null` where the row draws none.
 func _crew_split_marks_for_tile(tile: Vector2i) -> CrewSplitMarks:
 	var row := _sections_row(_work_row_label_for_tile(tile))
 	if row == null:
 		return null
 	return _find_meta_control(row, String(HudWorkVocab.CREW_SPLIT_META)) as CrewSplitMarks
 
-## The marks drawn inside the first groundwork row that carries any.
+## The bar drawn inside the first groundwork row that carries any.
 func _crew_split_marks_on_working() -> CrewSplitMarks:
 	for row in _workings_rows_drawn():
 		var marks := _find_meta_control(row, String(HudWorkVocab.CREW_SPLIT_META)) as CrewSplitMarks
@@ -26991,7 +27105,7 @@ func _crew_split_marks_on_working() -> CrewSplitMarks:
 			return marks
 	return null
 
-## The marks' drawn rect lies inside the row they ride, so a crew never widens its row.
+## The bar's drawn rect lies inside the row it rides, so a crew never widens its row.
 func _crew_split_inside_row(marks: CrewSplitMarks, tile: Vector2i) -> bool:
 	var row := _sections_row(_work_row_label_for_tile(tile))
 	return row != null and marks != null \
@@ -27000,88 +27114,109 @@ func _crew_split_inside_row(marks: CrewSplitMarks, tile: Vector2i) -> bool:
 func _render_work_crew_split_states() -> void:
 	_panel.set_dock(SIDE_LEFT)
 	_panel.set_active_tab(&"work")
-	await _stage_crew_split_board(CREW_SPLIT_MID_CREW, CREW_SPLIT_MID_KEEP)
+	await _stage_crew_split_board(CREW_SPLIT_MID_CREW, CREW_SPLIT_MID_KEEPERS, CREW_SPLIT_MID_KITTED)
 	await _save("band_panel_work_crew_split")
 	_assert_zones_within_bounds()
 	_assert_zone_content_fits()
 	var mid := _crew_split_marks_for_tile(QUEUE_SECOND_PATCH)
-	_assert_band_panel("crew split — a patch with a tending bill draws its marks", mid != null)
+	_assert_band_panel("crew bar - a staffed patch draws its bar", mid != null)
 	if mid != null:
-		_assert_band_panel("crew split — one mark per worker: the marks count the row's crew (%d, want %d)"
+		_assert_band_panel("crew bar - one mark per worker: the bar counts the row's crew (%d, want %d)"
 				% [mid.crew(), CREW_SPLIT_MID_CREW],
 			mid.crew() == CREW_SPLIT_MID_CREW)
-		_assert_band_panel("crew split — the tending share is the ROW's own `keep_hands`, not the site's sum (%.2f, want %.2f)"
-				% [mid.keep_hands(), CREW_SPLIT_MID_KEEP],
-			is_equal_approx(mid.keep_hands(), CREW_SPLIT_MID_KEEP))
-		var part := clampf(mid.keep_hands() - floorf(mid.keep_hands()), 0.0, 1.0)
-		_assert_band_panel("crew split — a split that falls mid-person part-shades one mark (%.2f of it tends)"
-				% part,
-			part > 0.0 and part < 1.0)
-		_assert_band_panel("crew split — the hover says it in whole people, `About` mid-person (\"%s\")"
+		_assert_band_panel("crew bar - the three segments are the ROW's own staffed counts (%d / %d / %d)"
+				% [mid.keepers(), mid.kitted(), mid.bare()],
+			mid.keepers() == CREW_SPLIT_MID_KEEPERS and mid.kitted() == CREW_SPLIT_MID_KITTED
+				and mid.bare() == CREW_SPLIT_MID_BARE)
+		_assert_band_panel("crew bar - the hover says it, with the kit's on-screen name and the hold clause (\"%s\")"
 				% mid.tooltip_text,
 			mid.tooltip_text == CREW_SPLIT_MID_WORDS)
-		_assert_band_panel("crew split — the marks take keyboard focus, so the sentence is reachable without a mouse",
+		_assert_band_panel("crew bar - the bar takes keyboard focus, so the sentence is reachable without a mouse",
 			mid.focus_mode == Control.FOCUS_ALL)
-		_assert_band_panel("crew split — the marks sit inside their row",
+		_assert_band_panel("crew bar - the bar sits inside its row",
 			_crew_split_inside_row(mid, QUEUE_SECOND_PATCH))
 		mid.grab_focus()
 		await _settle()
 		var card := mid.focus_card()
-		_assert_band_panel("crew split — a keyboard focus floats the same sentence",
+		_assert_band_panel("crew bar - a keyboard focus floats the same sentence",
 			card != null and _has_label_titled(card, CREW_SPLIT_MID_WORDS))
 		mid.release_focus()
 		await _settle()
+	var row_number := _find_meta_control(_sections_row(_work_row_label_for_tile(QUEUE_SECOND_PATCH)),
+		String(HudWorkVocab.CREW_NUMBER_META))
+	_assert_band_panel("crew bar - the row's crew is a read-only number, and the board draws no stepper on a staffed row",
+		row_number != null and int(row_number.get_meta(HudWorkVocab.CREW_NUMBER_META)) == CREW_SPLIT_MID_CREW
+			and _find_button_with_text(_sections_row(_work_row_label_for_tile(QUEUE_SECOND_PATCH)),
+				HudWorkVocab.STEPPER_PLUS_FACE) == null)
 	var all := _crew_split_marks_for_tile(QUEUE_THIRD_PATCH)
-	_assert_band_panel("crew split — an all-tending crew says nobody is free (\"%s\")"
+	_assert_band_panel("crew bar - an all-keeping crew states only the keepers (\"%s\")"
 			% ("" if all == null else all.tooltip_text),
 		all != null and all.tooltip_text == CREW_SPLIT_ALL_WORDS)
-	var wild_row := _sections_row(_work_row_label_for_tile(_crew_split_wild_tile()))
-	_assert_band_panel("crew split — a WILD patch owes no tending and draws no marks (row found: %s)"
-			% str(wild_row != null),
-		wild_row != null and _find_meta_control(wild_row, String(HudWorkVocab.CREW_SPLIT_META)) == null)
+	var wild := _crew_split_marks_for_tile(_crew_split_wild_tile())
+	_assert_band_panel("crew bar - a WILD patch owes no keeping: its bar has no keepers (%s)"
+			% ("none" if wild == null else str(wild.keepers())),
+		wild != null and wild.keepers() == 0 and wild.crew() > 0)
 	var working := _crew_split_marks_on_working()
-	_assert_band_panel("crew split — a groundwork row draws its marks, the verb `cut` (\"%s\")"
+	_assert_band_panel("crew bar - a groundwork row draws its bar (\"%s\")"
 			% ("" if working == null else working.tooltip_text),
 		working != null and working.crew() == WORKINGS_CUTTERS
 			and working.tooltip_text == CREW_SPLIT_WORKING_WORDS)
-	# **TWO BANDS ON ONE SITE EACH DRAW THEIR OWN SPLIT** — the second band's board, same patch.
+	# **TWO BANDS ON ONE SITE EACH DRAW THEIR OWN SPLIT** - the second band's board, same patch.
 	var first_entity := int(_hud._band_labor.panel_band().get("entity", -1))
 	_hud._bandpanel.jump_to_band_entity(CREW_SPLIT_OTHER_BAND_ENTITY)
 	_panel.set_active_tab(&"work")
 	await _settle()
 	var other := _crew_split_marks_for_tile(QUEUE_SECOND_PATCH)
-	_assert_band_panel("crew split — the OTHER band on the same patch draws its own crew and keeping (%s)"
-			% ("none" if other == null else "%d · %.2f" % [other.crew(), other.keep_hands()]),
+	_assert_band_panel("crew bar - the OTHER band on the same patch draws its own crew and split (%s)"
+			% ("none" if other == null else "%d · %d" % [other.crew(), other.keepers()]),
 		other != null and other.crew() == CREW_SPLIT_OTHER_BAND_CREW
-			and is_equal_approx(other.keep_hands(), CREW_SPLIT_OTHER_BAND_KEEP))
-	_assert_band_panel("…and says its own sentence (\"%s\")" % ("" if other == null else other.tooltip_text),
+			and other.keepers() == CREW_SPLIT_OTHER_BAND_KEEPERS)
+	_assert_band_panel("...and says its own sentence (\"%s\")" % ("" if other == null else other.tooltip_text),
 		other != null and other.tooltip_text == CREW_SPLIT_OTHER_WORDS)
 	_hud._bandpanel.jump_to_band_entity(first_entity)
 	_panel.set_active_tab(&"work")
 	await _settle()
-	var hunt_words := HudWorkVocab.crew_split_words(CREW_SPLIT_HUNT_CREW, CREW_SPLIT_HUNT_KEEP,
-		SourceForecast.LABOR_KIND_HUNT)
-	_assert_band_panel("crew split — the hunt web's words say `the herd` and `hunt` (\"%s\")" % hunt_words,
+	# **THE MAX CHIP** (#871) - a static label beside the Priority pill, only on the row the player capped.
+	await _stage_crew_split_board(CREW_SPLIT_MID_CREW, CREW_SPLIT_MID_KEEPERS, CREW_SPLIT_MID_KITTED,
+		CREW_SPLIT_MAX_CHIP_VALUE)
+	await _save("band_panel_work_max_chip")
+	var chip_row := _sections_row(_work_row_label_for_tile(QUEUE_SECOND_PATCH))
+	var chip := _find_meta_control(chip_row, String(HudWorkVocab.MAX_CHIP_META)) as Label
+	_assert_band_panel("max chip - a row the player capped states `%s`, a label and not a control (%s)"
+			% [CREW_SPLIT_MAX_CHIP_FACE, "none" if chip == null else chip.text],
+		chip != null and chip.text == CREW_SPLIT_MAX_CHIP_FACE)
+	_assert_band_panel("max chip - …on the pill line, beside the Priority pill",
+		chip != null and chip.get_parent() != null and chip.get_parent().get_parent() != null
+			and chip.get_parent().get_parent().has_meta(HudWorkVocab.WORK_ROW_PILL_LINE_META))
+	var other_chip_row := _sections_row(_work_row_label_for_tile(QUEUE_THIRD_PATCH))
+	_assert_band_panel("max chip - …and an uncapped row draws none",
+		other_chip_row != null
+			and _find_meta_control(other_chip_row, String(HudWorkVocab.MAX_CHIP_META)) == null)
+	await _stage_crew_split_board(CREW_SPLIT_MID_CREW, CREW_SPLIT_MID_KEEPERS, CREW_SPLIT_MID_KITTED)
+	var hunt_words := HudWorkVocab.crew_bar_words(0, 4, 0, "spears", 2)
+	_assert_band_panel("crew bar - the producer's words for a hunt crew (\"%s\")" % hunt_words,
 		hunt_words == CREW_SPLIT_HUNT_WORDS)
+	_assert_band_panel("crew bar - an empty crew says nobody is here this turn",
+		HudWorkVocab.crew_bar_words(0, 0, 0, "", 3) == CREW_SPLIT_NOBODY_WORDS)
 
 	# A crew far wider than its row: the squares shrink to their floor, then the first N draw and the
 	# rest are counted. The row's width must not move.
-	await _stage_crew_split_board(CREW_SPLIT_BIG_CREW, CREW_SPLIT_BIG_KEEP)
+	await _stage_crew_split_board(CREW_SPLIT_BIG_CREW, CREW_SPLIT_BIG_KEEPERS, CREW_SPLIT_BIG_KITTED)
 	await _save("band_panel_work_crew_split_big")
 	_assert_zones_within_bounds()
 	_assert_zone_content_fits()
 	var big := _crew_split_marks_for_tile(QUEUE_SECOND_PATCH)
-	_assert_band_panel("crew split, big crew — the marks still count the whole crew",
+	_assert_band_panel("crew bar, big crew - the bar still counts the whole crew",
 		big != null and big.crew() == CREW_SPLIT_BIG_CREW)
 	if big != null:
 		var plan := big.layout_for(big.size.x)
-		_assert_band_panel("crew split, big crew — too wide for its row, so the rest are counted (drew %d, +%d)"
+		_assert_band_panel("crew bar, big crew - too wide for its row, so the rest are counted (drew %d, +%d)"
 				% [int(plan["drawn"]), int(plan["overflow"])],
 			int(plan["overflow"]) > 0 and int(plan["drawn"]) + int(plan["overflow"]) == CREW_SPLIT_BIG_CREW)
-		_assert_band_panel("crew split, big crew — the squares shrank no smaller than their floor (%.1f)"
+		_assert_band_panel("crew bar, big crew - the squares shrank no smaller than their floor (%.1f)"
 				% float(plan["size"]),
 			float(plan["size"]) >= HudWorkVocab.CREW_SPLIT_MARK_SIZE_FLOOR - 0.001)
-		_assert_band_panel("crew split, big crew — and the marks stay inside their row",
+		_assert_band_panel("crew bar, big crew - and the bar stays inside its row",
 			_crew_split_inside_row(big, QUEUE_SECOND_PATCH))
 
 	_hud.update_deposits([])
@@ -27395,7 +27530,7 @@ func _wild_row_foreign_text() -> String:
 	return ""
 
 func _wild_row_model() -> Dictionary:
-	for model in _hud._bandpanel._work_source_models(_hud._band_labor._panel_band, 0):
+	for model in _hud._bandpanel._work_source_models(_hud._band_labor._panel_band):
 		if String(model.get("key", "")) == "forage:%d,%d" % [RUNG_WILD_TILE.x, RUNG_WILD_TILE.y]:
 			return model
 	return {}
@@ -27476,7 +27611,7 @@ func _other_peoples_build_rows() -> void:
 		var frame := "band_panel_work_other_tame" if owner == OTHER_PEOPLE_FACTION else "band_panel_work_own_tame"
 		await _save(frame)
 		var model := {}
-		for candidate in _hud._bandpanel._work_source_models(_hud._band_labor._panel_band, 0):
+		for candidate in _hud._bandpanel._work_source_models(_hud._band_labor._panel_band):
 			if String(candidate.get("key", "")) == "hunt:%s" % RUNG_PASTORAL_HERD_ID:
 				model = candidate
 		if owner == OTHER_PEOPLE_FACTION:

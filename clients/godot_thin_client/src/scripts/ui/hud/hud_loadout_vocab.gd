@@ -92,6 +92,12 @@ const GRANT_PARENT_BAND_ID := 0
 ## **The card draws them, and nothing else.** There is no client-side draft to reconcile them against:
 ## every stepper press sends a whole-order replacement, so the only two things a published allocation
 ## can be are this card's own echo and a move the sim made for its own reasons.
+## ⛔ **WHAT THE BAND'S WORK WANTS** — `[{kit, count, priority}]`, whole kits (the unit an order is
+## placed in), measured by the sim against an UNLIMITED shelf so it does not move as picks change.
+## Already ordered High to Low priority, then nearest source; the fill walks it in that order.
+const WORK_KIT_WANTS_KEY := "work_kit_wants"
+const WANT_KIT_KEY := "kit"
+const WANT_COUNT_KEY := "count"
 const WINDOW_KITS_KEY := "kits"
 const WINDOW_MATERIALS_KEY := "materials"
 ## ⛔ **A TAKE'S CAP, PER ITEM — AND A KIT ROW CANNOT BE CAPPED ON ITS OWN AGAINST IT.** `sled` is
@@ -214,6 +220,20 @@ const RECIPE_WORK_FORMAT := "%s work"
 ## The legend above the recipe list: the key for every swatch drawn on a row, in the resources
 ## column's own order.
 const LEGEND_HEAD := "Materials"
+
+## ⛔ **THE WORK'S WANT, beside a kit's stepper.** Amber while the pick is under it, the calm ink once
+## it matches or exceeds. Drawn only for a kit the work wants.
+const WORK_WANT_FORMAT := "work wants %d"
+## The button that sets every kit to its want. Ghost, like the card's other quiet actions.
+const OUTFIT_LABEL := "Outfit for my work"
+const OUTFIT_TOOLTIP := "Set every kit to what your band's work wants, high-priority work first."
+const OUTFIT_TOOLTIP_NO_WANTS := "Your band's work wants no kit."
+const OUTFIT_TOOLTIP_MATCHED := "Your kits already match what your work wants."
+## One amber line under the button while the wants do not all fit the carry.
+const OUTFIT_SHORT_NOTE := "Not all of it fits — high-priority work is outfitted first."
+const WORK_WANT_META := &"loadout_work_want"
+const OUTFIT_BUTTON_META := &"loadout_outfit_button"
+const OUTFIT_SHORT_META := &"loadout_outfit_short"
 
 ## **THE FOOTER'S LEADING TEXT — two short declaratives, one fact each.** The card is dismissible and
 ## the orb's row is the way back to it; the TURN is what ends that, and a player who has put the card

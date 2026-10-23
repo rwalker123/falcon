@@ -1116,6 +1116,13 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
             // Turns until the soonest pack on the road lands home. ⛔ **`0` MEANS NOBODY IS
             // CARRYING A LOAD HOME** — never "lands this turn" — so it too drops its line.
             let _ = entry.insert("next_load_home_in", i64::from(assignment.nextLoadHomeIn()));
+            // **THE LOAD WAITING AT THE SITE (extract rows).** `load_units` is the row's material
+            // in the load not yet sent home, `pack_units` what one pack carries (`0` = no caravan
+            // and every non-extract row), and `load_home_in` the turns until the next load reaches
+            // camp INCLUDING the wait for a pack to fill (`0` = none within the forecast horizon).
+            let _ = entry.insert("load_units", f64::from(assignment.loadUnits()));
+            let _ = entry.insert("pack_units", f64::from(assignment.packUnits()));
+            let _ = entry.insert("load_home_in", i64::from(assignment.loadHomeIn()));
             // **THE STEADY PER-TURN RATE ARRIVING AT THE HOME BAND.** Amortized over the cycle and
             // steady-state coincide deliberately, so the row prints ONE number: a near row and a
             // far row are comparable figures on one board and a far posting never reads
@@ -1178,6 +1185,17 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
             // The turns the food the kill replaces (the meat on hand) will last; the figure
             // `turns_until_hunt` counts down from. 999 = not food-limited; 0 off a need row.
             let _ = entry.insert("need_runway", f64::from(assignment.needRunway()));
+            // THE SIM STAFFS THE ROW FROM THE PLAYER'S FLOOR (#871): `workers` above is the sim's
+            // crew; `max_workers` is the player's Max (0 = no Max), `hold_crew` / `reach_crew` the
+            // hands to hold / reach the floor, the three `*_staffed` counts split `workers` into
+            // keepers / kitted / bare (they sum to it), and `useful_crew` is the pass-3 ceiling.
+            let _ = entry.insert("max_workers", i64::from(assignment.maxWorkers()));
+            let _ = entry.insert("hold_crew", i64::from(assignment.holdCrew()));
+            let _ = entry.insert("reach_crew", i64::from(assignment.reachCrew()));
+            let _ = entry.insert("keepers_staffed", i64::from(assignment.keepersStaffed()));
+            let _ = entry.insert("kitted_staffed", i64::from(assignment.kittedStaffed()));
+            let _ = entry.insert("bare_staffed", i64::from(assignment.bareStaffed()));
+            let _ = entry.insert("useful_crew", i64::from(assignment.usefulCrew()));
             array.push(&entry.to_variant());
         }
     }
@@ -2202,6 +2220,27 @@ fn loadout_window_to_dict(window: fb::BandLoadoutWindowState<'_>) -> VarDictiona
         "parent_material_supply",
         &loadout_supply_to_array(window.parentMaterialSupply()),
     );
+    // THE KITS THE BAND'S WORK WANTS, measured against an unlimited shelf so the list does not move
+    // as the player picks. `count` is whole kits (the unit `set_starting_loadout` orders in);
+    // `priority` is the same word a labor row carries. Already ordered High to Low, then nearest.
+    let mut wants = VarArray::new();
+    if let Some(rows) = window.workKitWants() {
+        for row in rows {
+            let mut want = VarDictionary::new();
+            let _ = want.insert("kit", row.kit().unwrap_or(""));
+            let _ = want.insert("count", i64::from(row.count()));
+            let _ = want.insert(
+                "priority",
+                match row.priority() {
+                    fb::SourcePriority::High => "high",
+                    fb::SourcePriority::Low => "low",
+                    _ => "normal",
+                },
+            );
+            wants.push(&want.to_variant());
+        }
+    }
+    let _ = dict.insert("work_kit_wants", &wants);
     dict
 }
 

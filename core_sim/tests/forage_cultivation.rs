@@ -270,6 +270,8 @@ fn forage_row(patch: UVec2, policy: f32, foragers: u32) -> LaborAssignment {
         party: None,
         muster_crew: 0,
         planned_crew: 0,
+        max_workers: Some(foragers),
+        staffing: Default::default(),
         target: LaborTarget::Forage {
             tile: patch,
             floor: policy,
@@ -318,6 +320,8 @@ fn set_forage_improvement(app: &mut App, band: bevy::prelude::Entity, improvemen
                     party: None,
                     muster_crew: 0,
                     planned_crew: 0,
+                    max_workers: Some(builders),
+                    staffing: Default::default(),
                     target: LaborTarget::Builders,
                     workers: builders,
                     kit: None,
@@ -481,6 +485,8 @@ fn spawn_forager_at(
                                 party: None,
                                 muster_crew: 0,
                                 planned_crew: 0,
+                                max_workers: Some(foragers),
+                                staffing: Default::default(),
                                 target: LaborTarget::Builders,
                                 workers: foragers,
                                 kit: None,
@@ -1652,12 +1658,26 @@ const TOKEN_SECOND_CREW: u32 = 1;
 
 /// Re-staff a band's Forage assignment in place — the test-side twin of `assign_labor`'s worker
 /// count, which since issue #442 never touches the improvement beside it.
+/// **A fixture writes a staffed row's crew and its Max together** (#871): the sim zeroes a staffed
+/// row's hands and restaffs them from the Max every turn, so editing `workers` alone is undone by the
+/// next pass.
+trait SetCrewAndMax {
+    fn set_crew_and_max(&mut self, crew: u32);
+}
+
+impl SetCrewAndMax for LaborAssignment {
+    fn set_crew_and_max(&mut self, crew: u32) {
+        self.workers = crew;
+        self.max_workers = Some(crew);
+    }
+}
+
 fn set_forage_workers(app: &mut App, band: bevy::prelude::Entity, workers: u32) {
     app.world
         .get_mut::<LaborAllocation>(band)
         .expect("the band forages")
         .assignments[0]
-        .workers = workers;
+        .set_crew_and_max(workers);
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -2183,7 +2203,7 @@ fn stand_the_take_down(app: &mut App, band: bevy::prelude::Entity) {
         .assignments
     {
         if matches!(assignment.target, LaborTarget::Forage { .. }) {
-            assignment.workers = 0;
+            assignment.set_crew_and_max(0);
         }
     }
 }
@@ -2751,11 +2771,12 @@ fn set_maintain_workers(app: &mut App, band: bevy::prelude::Entity, workers: u32
             .iter_mut()
             .find(|row| matches!(row.target, LaborTarget::Forage { .. }))
         {
-            row.workers = if workers == NOBODY_KEEPING {
+            // **Crew and Max together** (#871): the sim staffs a forage row up to its Max.
+            row.set_crew_and_max(if workers == NOBODY_KEEPING {
                 NOBODY_KEEPING
             } else {
                 gatherers + workers
-            };
+            });
         }
         allocation.assigned_total()
     };
@@ -3224,6 +3245,8 @@ fn an_unstarted_patch_quotes_the_next_rungs_job_and_the_quote_halves_with_the_cr
                 party: None,
                 muster_crew: 0,
                 planned_crew: 0,
+                max_workers: Some(workers),
+                staffing: Default::default(),
                 target: LaborTarget::Builders,
                 workers,
                 kit: None,
@@ -3611,6 +3634,8 @@ fn spawn_band_holding_one_patch_and_queueing_a_build(
             party: None,
             muster_crew: 0,
             planned_crew: 0,
+            max_workers: Some(builders),
+            staffing: Default::default(),
             target: LaborTarget::Builders,
             workers: builders,
             kit: None,
@@ -4360,7 +4385,7 @@ fn a_rung_completes_erodes_and_is_repaired_only_by_re_queueing_it() {
             .expect("band exists");
         for row in allocation.assignments.iter_mut() {
             if matches!(row.target, LaborTarget::Forage { .. }) {
-                row.workers = NO_CREW_ON_THIS_ACTIVITY;
+                row.set_crew_and_max(NO_CREW_ON_THIS_ACTIVITY);
             }
         }
     }
@@ -4416,6 +4441,8 @@ fn a_rung_completes_erodes_and_is_repaired_only_by_re_queueing_it() {
             party: None,
             muster_crew: 0,
             planned_crew: 0,
+            max_workers: Some(builders),
+            staffing: Default::default(),
             target: LaborTarget::Builders,
             workers: builders,
             kit: None,

@@ -31,6 +31,7 @@ const BaseFx := preload("res://tools/ui_preview/fixtures_base.gd")
 const TileFx := preload("res://tools/ui_preview/fixtures_tile.gd")
 const Q := preload("res://tools/ui_preview/node_query.gd")
 const Readout := preload("res://tools/ui_preview/readouts.gd")
+const Spine := preload("res://tools/ui_preview/compose_vocab.gd")
 const ForecastFx := preload("res://tools/ui_preview/fixtures_forecast.gd")
 ## `format_assign_labor` is `static`, so the deposit-kit states read the line the commit would send
 ## without standing a `Main` up.
@@ -46,6 +47,9 @@ var h
 ## The hex every state in this chapter stands on. Its own coordinates, so a working staged here can
 ## never be confused with the road frames' tile.
 const WORKING_TILE_X := 21
+const DIG_LOAD_UNITS := 8
+const DIG_PACK_UNITS := 13.33
+const DIG_LOAD_HOME_IN := 6
 const WORKING_TILE_Y := 14
 
 ## ⛔ **EVERY BAND IN THIS CHAPTER STANDS ON THE WORKING'S OWN HEX, AND SINCE issue #650 IT HAS TO.**
@@ -403,14 +407,14 @@ func run(harness) -> void:
 		# re-seeds the crew off the band's standing row, so a count set before it is thrown away.
 		foresters.pressed.emit()
 		await h._settle()
-		h._hud._compose.set_deposit_count(SHEET_CREW)
+		h._hud._compose.set_deposit_max(SHEET_CREW)
 		h._hud._drawercompose.open_deposit_compose(_wood_working(WOOD_OVER_CUT))
 		await h._settle()
 		var sheet: Node = h._hud._drawercompose._compose_sheet
 		# The crew the sheet SETTLED on, read back rather than assumed: the stepper's cap is the
 		# working's own max-useful against the band's hands, and asserting a deal at a count the sheet
 		# refused would be asserting a number nothing on screen shows.
-		var crew: int = h._hud._compose.deposit_count()
+		var crew: int = h._hud._compose.deposit_max()
 		h._assert_hud("…and its eyebrow names the BRANCH's crew, not a rung's (%s)"
 				% sheet._header.text,
 			sheet._header.text.contains((HudComposeVocab.COMPOSE_SHEET_EYEBROW_FORMAT
@@ -494,7 +498,7 @@ func run(harness) -> void:
 	if diggers != null:
 		diggers.pressed.emit()
 		await h._settle()
-		h._hud._compose.set_deposit_count(SHEET_CREW)
+		h._hud._compose.set_deposit_max(SHEET_CREW)
 		h._hud._drawercompose.open_deposit_compose(_stone_working(STONE_TAKE))
 		await h._settle()
 		var sheet: Node = h._hud._drawercompose._compose_sheet
@@ -510,12 +514,12 @@ func run(harness) -> void:
 		h._assert_hud("…and a FINITE seam is offered neither a floor preset nor a chart",
 			_first_meta(sheet, HudWidgets.POLICY_RUNG_META) == null
 				and _first_meta(sheet, HudWidgets.FLOOR_CHART_META) == null)
-		# ⛔ **NOR ANY CREW-TARGET PILL** — both pills are answers about a FLOOR, so the empty chart
-		# model is what drops them rather than a branch in the deposit builder.
-		h._assert_hud("…and neither crew-target pill, both being answers about a floor",
-			Readout.crew_target_count(sheet, HudWidgets.CREW_TARGET_CLEAR)
+		# ⛔ **NOR ANY CREW TARGET** — both are answers about a FLOOR, so the empty chart model is what
+		# drops them rather than a branch in the deposit builder.
+		h._assert_hud("…and neither crew target, both being answers about a floor",
+			Readout.crew_target_count(h._hud._drawercompose, Readout.TARGET_CLEAR)
 					== Readout.CREW_TARGET_ABSENT
-				and Readout.crew_target_count(sheet, HudWidgets.CREW_TARGET_HOLD)
+				and Readout.crew_target_count(h._hud._drawercompose, Readout.TARGET_HOLD)
 					== Readout.CREW_TARGET_ABSENT)
 		h._assert_hud("…and its verdict states what this rung reaches AND what the next would (%s)"
 				% Readout.verdict_text(sheet),
@@ -884,14 +888,14 @@ func run(harness) -> void:
 	await h._settle()
 	h._hud._drawercompose.open_deposit_compose(_standing_wood())
 	await h._settle()
-	h._hud._compose.set_deposit_count(SHEET_CREW)
+	h._hud._compose.set_deposit_max(SHEET_CREW)
 	for preset_variant in SourceForecast.FLOOR_PRESETS:
 		var preset := String(preset_variant)
 		# **DRIVEN AS THE PRESET BUTTON DRIVES IT** — the dial, then the autofill one-shot, then the
 		# rebuild. Not through the button's face, which is the picker's own text and would make this a
 		# claim about a label.
 		h._hud._compose.set_deposit_floor(SourceForecast.floor_for_preset(preset))
-		h._hud._compose.set_deposit_count(SHEET_CREW)
+		h._hud._compose.set_deposit_max(SHEET_CREW)
 		h._hud._drawercompose.open_deposit_compose(_standing_wood())
 		await h._settle()
 		var floor_sheet: Node = h._hud._drawercompose._compose_sheet
@@ -942,7 +946,7 @@ func run(harness) -> void:
 	h._show_tile(_workings_tile([_wood_at_its_floor(), _stone_working(STONE_TAKE)]))
 	await h._settle()
 	h._hud._compose.set_deposit_floor(SourceForecast.FLOOR_FOOD_PEAK)
-	h._hud._compose.set_deposit_count(SHEET_CREW)
+	h._hud._compose.set_deposit_max(SHEET_CREW)
 	h._hud._drawercompose.open_deposit_compose(_wood_at_its_floor())
 	await h._settle()
 	var held_sheet: Node = h._hud._drawercompose._compose_sheet
@@ -957,7 +961,7 @@ func run(harness) -> void:
 	# ⛔ **THE CREW IS READ BACK RATHER THAN ASSUMED**, the forestry sheet's own rule one state up: a
 	# reopened sheet seeds from the band's standing row, so the count is the band's and asserting a
 	# take at a count the sheet refused would be asserting a number nothing on screen shows.
-	var held_crew: int = h._hud._compose.deposit_count()
+	var held_crew: int = Readout.stepper_value(held_sheet)
 	h._assert_hud("…and its take is `min(crew × rate, what the stand puts back)` at %d (%s)"
 			% [held_crew, Readout.yields_text(held_sheet)],
 		held_crew > 0 and Readout.yields_text(held_sheet).contains(
@@ -1006,7 +1010,7 @@ func run(harness) -> void:
 	h._hud.update_band_alerts([_fresh_stone_band_fixture()])
 	h._show_tile(_workings_tile([_idle_stone_working()]))
 	await h._settle()
-	h._hud._compose.set_deposit_count(FRESH_STONE_CUTTERS)
+	h._hud._compose.set_deposit_max(FRESH_STONE_CUTTERS)
 	h._hud._drawercompose.open_deposit_compose(_idle_stone_working())
 	await h._settle()
 	var fresh_sheet: Node = h._hud._drawercompose._compose_sheet
@@ -1032,6 +1036,78 @@ func run(harness) -> void:
 		String(HudDepositVocab.deposit_verdict(_fresh_scatter_working(), _ladder(),
 				_fresh_scatter_assignment()).get("text", "")).contains(
 			DetailFormat.format_trimmed(FRESH_SCATTER_SEED, HudDepositVocab.CARD_STOCK_DECIMALS)))
+	h._hud._drawercompose.close_compose_sheet()
+	await h._settle()
+
+	# ⛔⛔ **STATE workings-dig-crew — A STONE SEAM'S STEPPER IS THE DIGGER COUNT, AND IT HAS NO `No max`.**
+	# The sim works a seam that never renews with exactly its Max in heads, so a Max of 0 staffs nobody.
+	# The sheet opens on one digger, labelled `Diggers`, with `−` greyed at that floor; the wood sheet
+	# beside it keeps `Max` and `No max`.
+	h._hud.update_band_alerts([_band_at_the_working()])
+	h._show_tile(_workings_tile([_idle_stone_working()]))
+	await h._settle()
+	h._hud._compose.set_deposit_max(0)
+	h._hud._drawercompose.open_deposit_compose(_idle_stone_working())
+	await h._settle()
+	var dig_sheet: Node = h._hud._drawercompose._compose_sheet
+	h._assert_hud("a stone sheet opens on %d digger, never `%s` (%s)"
+			% [HudDepositVocab.DIG_CREW_MIN, HudWorkVocab.MAX_STEPPER_NO_MAX,
+				Readout.max_stepper_text(dig_sheet)],
+		Readout.max_stepper_value(dig_sheet) == HudDepositVocab.DIG_CREW_MIN
+			and Readout.max_stepper_text(dig_sheet) == str(HudDepositVocab.DIG_CREW_MIN))
+	h._assert_hud("…its stepper is labelled `%s`" % HudWorkVocab.DIG_CREW_STEPPER_LABEL,
+		_sheet_text_contains(dig_sheet, HudWorkVocab.DIG_CREW_STEPPER_LABEL.to_upper())
+			or _sheet_text_contains(dig_sheet, HudWorkVocab.DIG_CREW_STEPPER_LABEL))
+	var dig_minus := _minus_button(dig_sheet)
+	h._assert_hud("…and its `−` is greyed at the floor of %d" % HudDepositVocab.DIG_CREW_MIN,
+		dig_minus != null and dig_minus.disabled)
+	await h._save("workings_dig_crew")
+	h._hud._drawercompose.close_compose_sheet()
+	await h._settle()
+	h._hud.update_band_alerts([_band_at_the_working()])
+	h._show_tile(_workings_tile([_wood_working(WOOD_OVER_CUT)]))
+	await h._settle()
+	h._hud._compose.set_deposit_max(0)
+	h._hud._drawercompose.open_deposit_compose(_wood_working(WOOD_OVER_CUT))
+	await h._settle()
+	var wood_max_sheet: Node = h._hud._drawercompose._compose_sheet
+	h._assert_hud("a wood sheet keeps `%s` on its Max (%s)"
+			% [HudWorkVocab.MAX_STEPPER_NO_MAX, Readout.max_stepper_text(wood_max_sheet)],
+		Readout.max_stepper_text(wood_max_sheet) == HudWorkVocab.MAX_STEPPER_NO_MAX)
+	await h._save("workings_wood_max")
+	h._hud._drawercompose.close_compose_sheet()
+	await h._settle()
+	# The chapter goes on under the band it was already staged with.
+	h._hud.update_band_alerts([_fresh_stone_band_fixture()])
+	h._show_tile(_workings_tile([_idle_stone_working()]))
+	await h._settle()
+
+	# ⛔⛔ **STATE workings-dig-load - THE LOAD WAITING AT THE SITE.** A slow dig fills a whole pack before
+	# its first stone lands home, so the stone sat at the site and looked lost. The worked sheet states
+	# the load against the pack and when it gets home; with no landing in the sim's horizon it states
+	# the load alone.
+	h._hud.update_band_alerts([_dig_load_band(DIG_LOAD_UNITS, DIG_LOAD_HOME_IN)])
+	h._show_tile(_workings_tile([_worked_down_quarry()]))
+	await h._settle()
+	h._hud._drawercompose.open_deposit_compose(_worked_down_quarry())
+	await h._settle()
+	var load_sheet: Node = h._hud._drawercompose._compose_sheet
+	var load_node := Q.find_live_meta_node(load_sheet, HudWorkVocab.DIG_LOAD_LINE_META)
+	var want_load := "%d of %d stone in the load · home in %d turns" % [
+		DIG_LOAD_UNITS, roundi(DIG_PACK_UNITS), DIG_LOAD_HOME_IN]
+	h._assert_hud("a dig sheet states the load waiting at the site (want \"%s\", got \"%s\")"
+			% [want_load, "" if load_node == null else String(load_node.get_meta(HudWorkVocab.DIG_LOAD_LINE_META))],
+		load_node != null and String(load_node.get_meta(HudWorkVocab.DIG_LOAD_LINE_META)) == want_load)
+	await h._save("workings_dig_load")
+	h._hud.update_band_alerts([_dig_load_band(DIG_LOAD_UNITS, 0)])
+	h._hud._drawercompose.open_deposit_compose(_worked_down_quarry())
+	await h._settle()
+	var no_landing: Node = Q.find_live_meta_node(h._hud._drawercompose._compose_sheet,
+		HudWorkVocab.DIG_LOAD_LINE_META)
+	h._assert_hud("…and with no landing in the horizon it drops the `home in` clause",
+		no_landing != null and String(no_landing.get_meta(HudWorkVocab.DIG_LOAD_LINE_META))
+			== "%d of %d stone in the load" % [DIG_LOAD_UNITS, roundi(DIG_PACK_UNITS)])
+	await h._save("workings_dig_load_no_landing")
 	h._hud._drawercompose.close_compose_sheet()
 	await h._settle()
 
@@ -1085,7 +1161,7 @@ func run(harness) -> void:
 	# band's own `extract` row, and a take asserted at a count the sheet refused is a claim about a
 	# number nothing on screen shows. Composed at the 0.5 default the cap was ZERO, so the stepper
 	# clamped the crew away and the sheet quoted a take of nothing — which is what this reads back.
-	var reach_crew: int = h._hud._compose.deposit_count()
+	var reach_crew: int = Readout.stepper_value(reach_sheet)
 	h._assert_hud("…so the sheet staffs the band's own %d diggers rather than clamping them away (%d)"
 			% [WORKED_QUARRY_CUTTERS, reach_crew],
 		reach_crew == WORKED_QUARRY_CUTTERS)
@@ -1191,7 +1267,7 @@ func run(harness) -> void:
 	# the road carries, and the sheet states both. The row is the curve's at the stepper's crew, by
 	# equality, so a line quoting the home rate twice (or the bare rate) fails.
 	var at_source := Q.find_meta_node(far_sheet, HudDepositVocab.DEPOSIT_TAKE_AT_SOURCE_META) as Label
-	var far_crew: int = h._hud._compose.deposit_count()
+	var far_crew: int = Readout.stepper_value(far_sheet)
 	var want_at_source := HudDepositVocab.DEPOSIT_TAKE_AT_SOURCE_FORMAT % [
 		SourceForecast.format_magnitude(CURVE_TAKES[far_crew - 1]), WOOD_MATERIAL_ID]
 	h._assert_hud("…with the crew curve's take AT THE WORKING beneath it (want \"%s\", got \"%s\")"
@@ -1483,7 +1559,7 @@ func _deposit_kit_states() -> void:
 	if foresters != null:
 		foresters.pressed.emit()
 		await h._settle()
-		h._hud._compose.set_deposit_count(SHEET_CREW)
+		h._hud._compose.set_deposit_max(SHEET_CREW)
 		h._hud._compose.set_deposit_kit_id(KitRoster.NO_KIT_ID)
 		h._hud._drawercompose.open_deposit_compose(_wood_working(WOOD_OVER_CUT))
 		await h._settle()
@@ -1545,7 +1621,7 @@ func _deposit_kit_states() -> void:
 	if diggers != null:
 		diggers.pressed.emit()
 		await h._settle()
-		h._hud._compose.set_deposit_count(SHEET_CREW)
+		h._hud._compose.set_deposit_max(SHEET_CREW)
 		h._hud._drawercompose.open_deposit_compose(_stone_working(STONE_TAKE))
 		await h._settle()
 		var sheet: Node = h._hud._drawercompose._compose_sheet
@@ -1623,19 +1699,19 @@ func _authored_curve(in_range: bool, whole_kits: int = CURVE_WHOLE_KITS) -> Dict
 func _assert_crew_split_on_sheet(sheet: Node, crew: int, words: String) -> void:
 	var marks := Readout.crew_split_marks(sheet)
 	var want := CURVE_KEEP_PER_HAND * float(crew)
-	h._assert_hud("crew split, working sheet at %d — the marks are the curve row's (%s, want %d · %.2f)"
-			% [crew, "none" if marks == null else "%d · %.2f" % [marks.crew(), marks.keep_hands()],
-				crew, want],
-		marks != null and marks.crew() == crew and is_equal_approx(marks.keep_hands(), want))
-	h._assert_hud("…and the hover and the sentence under the figure both read \"%s\" (%s | %s)"
-			% [words, "" if marks == null else marks.tooltip_text, Readout.crew_split_sentence(sheet)],
-		marks != null and marks.tooltip_text == words and Readout.crew_split_sentence(sheet) == words)
+	h._assert_hud("crew split, working sheet at %d — the bar is the curve row's (%s, want %d · %d)"
+			% [crew, "none" if marks == null else "%d · %d" % [marks.crew(), marks.keepers()],
+				crew, roundi(want)],
+		marks != null and marks.crew() == crew and marks.keepers() == roundi(want))
+	h._assert_hud("…and the hover reads \"%s…\" (%s)"
+			% [words, "" if marks == null else marks.tooltip_text],
+		marks != null and marks.tooltip_text.begins_with(words))
 
 ## The authored curve's keeping: half a hand per cutter, so every crew's row differs.
 const CURVE_KEEP_PER_HAND := 0.5
 ## The two crews' sentences, spelled out.
-const CURVE_SPLIT_WORDS := "About 2 of 3 are tending the working; 1 is free to cut."
-const CURVE_SPLIT_STEPPED_WORDS := "1 of 2 is tending the working; 1 is free to cut."
+const CURVE_SPLIT_WORDS := "2 keep it up"
+const CURVE_SPLIT_STEPPED_WORDS := "1 keep it up"
 
 ## The wood fixture carrying an authored curve reply — what the stand-in server answers the sheet's
 ## question with (`fixtures_forecast.gd` → `DEPOSIT_CREW_TAKE_KEY`).
@@ -1658,7 +1734,7 @@ func _curve_band(sleds: int, axes: int) -> Dictionary:
 
 ## Re-open the wood's sheet at `crew` over the tile carrying `wood`, settled, and hand the sheet back.
 func _open_curve_sheet(wood: Dictionary, crew: int) -> Node:
-	h._hud._compose.set_deposit_count(crew)
+	h._hud._compose.set_deposit_max(crew)
 	h._hud._drawercompose.open_deposit_compose(wood)
 	await h._settle()
 	return h._hud._drawercompose._compose_sheet
@@ -1719,8 +1795,8 @@ func _crew_curve_states() -> void:
 		await h._settle()
 		var sheet: Node = await _open_curve_sheet(wood, SHEET_CREW)
 		h._assert_hud("…the sheet stands on the crew it was composed at (%d)"
-				% h._hud._compose.deposit_count(),
-			h._hud._compose.deposit_count() == SHEET_CREW)
+				% h._hud._compose.deposit_max(),
+			h._hud._compose.deposit_max() == SHEET_CREW)
 		_assert_curve_row_on_sheet(sheet, SHEET_CREW)
 		_assert_crew_split_on_sheet(sheet, SHEET_CREW, CURVE_SPLIT_WORDS)
 		_assert_draw_reads_the_curve(sheet, wood, SHEET_CREW)
@@ -1887,8 +1963,8 @@ func _assert_draw_reads_the_curve(sheet: Node, wood: Dictionary, crew: int) -> v
 	h._assert_hud("precondition: the curve and the bare rate name different holding crews (%d | %d)"
 			% [curve_hold, bare_hold], curve_hold != bare_hold)
 	h._assert_hud("…and *hold it after* is the curve's smallest holding crew (%d, want %d, not %d)"
-			% [Readout.crew_target_count(sheet, HudWidgets.CREW_TARGET_HOLD), curve_hold, bare_hold],
-		Readout.crew_target_count(sheet, HudWidgets.CREW_TARGET_HOLD) == curve_hold)
+			% [Readout.crew_target_count(h._hud._drawercompose, Readout.TARGET_HOLD), curve_hold, bare_hold],
+		Readout.crew_target_count(h._hud._drawercompose, Readout.TARGET_HOLD) == curve_hold)
 
 ## The verdict sentence's leading clause for a walk — the arm the shared verdict takes before any crew
 ## remedy is appended, so the claim is about the DRAW and not about the reaching crew.
@@ -1903,6 +1979,26 @@ func _verdict_lead(walk: Dictionary) -> String:
 
 ## Whether any Label under `root` carries `needle` — the pending and out-of-range sentences are hint
 ## labels in the yields host, which `Readout.yields_text` (the ROW's faces) does not reach.
+## The worked quarry with its load: `units` waiting, one pack of `DIG_PACK_UNITS`, home in `home_in`.
+func _dig_load_band(units: int, home_in: int) -> Dictionary:
+	var band := _worked_quarry_band_fixture()
+	var row: Dictionary = (band["labor_assignments"] as Array).back()
+	row["load_units"] = float(units)
+	row["pack_units"] = DIG_PACK_UNITS
+	row["load_home_in"] = home_in
+	return band
+
+func _minus_button(root: Node) -> Button:
+	if root == null or root.is_queued_for_deletion():
+		return null
+	if root is Button and (root as Button).text == Spine.COMPOSE_STEPPER_MINUS_FACE:
+		return root as Button
+	for child in root.get_children():
+		var found := _minus_button(child)
+		if found != null:
+			return found
+	return null
+
 func _sheet_text_contains(root: Node, needle: String) -> bool:
 	if root is Label and (root as Label).text.contains(needle):
 		return true

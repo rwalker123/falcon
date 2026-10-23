@@ -190,6 +190,8 @@ fn world_with_a_queue_knowing(
             party: None,
             muster_crew: 0,
             planned_crew: 0,
+            max_workers: Some(GATHERERS + keeping_for(ONE_SOURCE)),
+            staffing: Default::default(),
             target: LaborTarget::Forage {
                 tile: *source,
                 floor: FOOD_PEAK,
@@ -207,6 +209,8 @@ fn world_with_a_queue_knowing(
         party: None,
         muster_crew: 0,
         planned_crew: 0,
+        max_workers: Some(builders),
+        staffing: Default::default(),
         target: LaborTarget::Builders,
         workers: builders,
         // ⛔ A `builders` ROW carries no kit — the bare isolation rides the queue entry
@@ -848,6 +852,9 @@ fn the_animal_webs_escapement_stall_publishes_minus_four_beside_its_shortfall() 
             .iter_mut()
             .find(|row| matches!(row.target, LaborTarget::Hunt { .. }))
             .expect("the band works the herd");
+        // **The player's remedy is the Max** (#871): the sim staffs the keepers and the hunters up
+        // to it, so naming the crew is raising the cap the staffing fills.
+        row.max_workers = Some(crew);
         row.workers = crew;
     }
 
@@ -968,6 +975,8 @@ fn world_with_a_half_tamed_herd(crew: u32, floor: f32) -> (App, Entity, String) 
             party: None,
             muster_crew: 0,
             planned_crew: 0,
+            max_workers: Some(crew),
+            staffing: Default::default(),
             target: LaborTarget::Hunt {
                 fauna_id: herd_id.clone(),
                 floor,
@@ -981,6 +990,8 @@ fn world_with_a_half_tamed_herd(crew: u32, floor: f32) -> (App, Entity, String) 
             party: None,
             muster_crew: 0,
             planned_crew: 0,
+            max_workers: Some(BUILDERS),
+            staffing: Default::default(),
             target: LaborTarget::Builders,
             workers: BUILDERS,
             kit: None,
@@ -1367,16 +1378,25 @@ fn unqueue_withdraws_the_declaration_and_the_source_stops_publishing_a_job() {
         "fixture: the build must have started, or 'withdrawing it' says nothing"
     );
 
-    let take_before = app
-        .world
-        .get::<LaborAllocation>(band)
-        .expect("the band keeps its allocation")
-        .workers_on(&LaborTarget::Forage {
-            tile: sources[0],
-            floor: FOOD_PEAK,
-            species: None,
-            take_species: TakeSelection::EVERYTHING,
-        });
+    // **The take crew's Max** (#871): the sim staffs a forage row, so what `unqueue` must leave
+    // alone is the player's cap on it, not the hands the staffing happens to find free this turn.
+    let take_max = |app: &App| {
+        app.world
+            .get::<LaborAllocation>(band)
+            .expect("the band keeps its allocation")
+            .assignments
+            .iter()
+            .find(|row| {
+                row.target.same_source(&LaborTarget::Forage {
+                    tile: sources[0],
+                    floor: FOOD_PEAK,
+                    species: None,
+                    take_species: TakeSelection::EVERYTHING,
+                })
+            })
+            .and_then(|row| row.max_workers)
+    };
+    let take_before = take_max(&app);
     assert!(
         app.world
             .get_mut::<LaborAllocation>(band)
@@ -1393,14 +1413,9 @@ fn unqueue_withdraws_the_declaration_and_the_source_stops_publishing_a_job() {
         .expect("the band keeps its allocation");
     assert!(allocation.build_queue.is_empty(), "the declaration is gone");
     assert_eq!(
-        allocation.workers_on(&LaborTarget::Forage {
-            tile: sources[0],
-            floor: FOOD_PEAK,
-            species: None,
-            take_species: TakeSelection::EVERYTHING,
-        }),
+        take_max(&app),
         take_before,
-        "…and the take crew is untouched: `unqueue` is the undo for a DECLARATION"
+        "…and the take crew's Max is untouched: `unqueue` is the undo for a DECLARATION"
     );
     assert_eq!(
         meter(&app, sources[0]),
@@ -1790,6 +1805,8 @@ fn world_with_a_ring_at_the_head(builders: u32) -> (App, Entity, String, UVec2) 
             party: None,
             muster_crew: 0,
             planned_crew: 0,
+            max_workers: Some(RING_KEEPERS + RING_KEEPERS),
+            staffing: Default::default(),
             target: LaborTarget::Hunt {
                 fauna_id: RING_HERD.to_string(),
                 floor: FOOD_PEAK,
@@ -1805,6 +1822,8 @@ fn world_with_a_ring_at_the_head(builders: u32) -> (App, Entity, String, UVec2) 
             party: None,
             muster_crew: 0,
             planned_crew: 0,
+            max_workers: Some(GATHERERS + keeping_for(ONE_SOURCE)),
+            staffing: Default::default(),
             target: LaborTarget::Forage {
                 tile: source,
                 floor: FOOD_PEAK,
@@ -1819,6 +1838,8 @@ fn world_with_a_ring_at_the_head(builders: u32) -> (App, Entity, String, UVec2) 
             party: None,
             muster_crew: 0,
             planned_crew: 0,
+            max_workers: Some(builders),
+            staffing: Default::default(),
             target: LaborTarget::Builders,
             workers: builders,
             kit: None,
@@ -2158,6 +2179,8 @@ fn world_with_two_bands_on_one_source() -> (App, Entity, Vec<UVec2>) {
         party: None,
         muster_crew: 0,
         planned_crew: 0,
+        max_workers: Some(GATHERERS + keeping_for(ONE_SOURCE)),
+        staffing: Default::default(),
         target: LaborTarget::Forage {
             tile: source,
             floor: FOOD_PEAK,
@@ -2181,6 +2204,8 @@ fn world_with_two_bands_on_one_source() -> (App, Entity, Vec<UVec2>) {
             party: None,
             muster_crew: 0,
             planned_crew: 0,
+            max_workers: Some(a_pool_that_finishes_a_cultivate_in_one_turn()),
+            staffing: Default::default(),
             target: LaborTarget::Builders,
             workers: a_pool_that_finishes_a_cultivate_in_one_turn(),
             kit: None,
@@ -2194,6 +2219,8 @@ fn world_with_two_bands_on_one_source() -> (App, Entity, Vec<UVec2>) {
             party: None,
             muster_crew: 0,
             planned_crew: 0,
+            max_workers: Some(BUILDERS),
+            staffing: Default::default(),
             target: LaborTarget::Builders,
             workers: BUILDERS,
             kit: None,
@@ -2350,21 +2377,6 @@ fn a_second_ring_is_accepted(app: &mut App, id: &str) -> bool {
         .begin_pen_extension(radius_max)
 }
 
-/// **The band loses every working hand**, so the shed empties every row it staffed and the keeper
-/// row goes with its queue entry — the third exit, and the one no command issues.
-///
-/// ⛔ **NEITHER DISTANCE NOR AN EMPTY LARDER ENDS A ROW ANY MORE.** A Hunt row past the leash posts a
-/// [`core_sim::WorkParty`] and keeps working (`docs/plan_civilization_steps.md` §One work party), and
-/// a party is fed by its band's ordinary consumption, so there is no supply gate to fail either. The
-/// exit that survives without a command is the band's own people running out — the shedding order
-/// emptying the row — so that is what this stages.
-fn the_band_loses_its_hands(app: &mut App, band: Entity) {
-    app.world
-        .get_mut::<PopulationCohort>(band)
-        .expect("the band keeps its cohort")
-        .working = scalar_zero();
-}
-
 /// **A RING THAT LEAVES THE BUILD QUEUE CAN BE STARTED AGAIN.**
 ///
 /// `extend_pen` sets `pen_extending` *before* it queues, and only completion cleared it. So an entry
@@ -2413,27 +2425,6 @@ fn an_abandoned_pen_frees_its_ring_to_be_started_again() {
     assert!(
         a_second_ring_is_accepted(&mut app, &herd_id),
         "an abandoned pen frees the ring: `extend_pen` must be accepted again"
-    );
-}
-
-/// The **LAPSE** exit — nobody issued a command at all: the band lost the hands that kept the pen,
-/// the shed emptied the row, and the turn's prune took the entry with it. It is the easiest of the
-/// three to miss and it strands the ring identically
-/// ([`an_unqueued_ring_frees_the_pen_to_be_extended_again`] has the mechanism).
-#[test]
-fn a_lapsed_keeper_row_frees_its_ring_to_be_started_again() {
-    let (mut app, band, herd_id, _) = world_with_a_ring_at_the_head(BUILDERS);
-    resolve_a_pen_turn(&mut app);
-    the_band_loses_its_hands(&mut app, band);
-    resolve_a_pen_turn(&mut app);
-    assert!(
-        queued_sources(&app, band).is_empty(),
-        "fixture: the lapsed keeper row takes its ring entry with it"
-    );
-    println!("after the lapse: is a second ring accepted?");
-    assert!(
-        a_second_ring_is_accepted(&mut app, &herd_id),
-        "a lapsed keeper row frees the ring: `extend_pen` must be accepted again"
     );
 }
 

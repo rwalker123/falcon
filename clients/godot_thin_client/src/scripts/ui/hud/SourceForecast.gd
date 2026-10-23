@@ -1396,46 +1396,9 @@ const MAX_USEFUL_BARREN := 1
 # from `perWorkerBiomass` — the take is component-wise `min(collection, ceiling)` over ONE biomass
 # quantity through the SAME rates, so one biomass-space throughput answers all three. See
 # `per_worker_biomass`, and the `PER_WORKER_BIOMASS_UNKNOWN` sentinel it retired.
-# A whole-animal hunt's kill-credit bank accumulates the smoothed take, then discharges a WHOLE animal
-# when it holds a full body. Worst case the turn's rate lands with just under one body already banked,
-# so one extra whole animal drops that turn beyond floor(rate / body) — this is that +1.
-const HUNT_PEAK_DROP_BANK_BONUS := 1
-# A tended patch / corralled herd collapses max-useful to exactly 1, so this note has to read
-# "max 1 worker" — pluralize the noun rather than shipping "max 1 workers".
-const MAX_USEFUL_NOTE_FORMAT := "max %d %s useful here — more would be idle"
-const MAX_USEFUL_NOUN_ONE := "worker"
-const MAX_USEFUL_NOUN_MANY := "workers"
-# **THE SAME CAP, WHEN THE WEAPONS ARE WHAT BINDS IT.** A plateau has two causes and the curve cannot
-# tell them apart — the herd ran out of room, or the band ran out of spears — so on a band armed for
-# four "more would be idle" blames the herd for a shortage of gear while thirteen hands stand idle.
-# The reply's `armed_crew` is what separates the two, and this wording is earned only where the cap
-# EQUALS it (see `DrawerComposeController._forecast_worker_cap`, which holds the whole gate).
-# The third `%s` is the reply's `weapon_item_id` VERBATIM. `DetailFormat.kit_item_label` would name
-# it — that table is real and already carries `spears` and `traps` — and it is deliberately not read
-# here, because it answers in a kit ROW's voice ("Spears", capitalised) while this position is
-# mid-sentence, where a capital reads as a proper noun. The ids the hunt kits name their weapon by
-# are lowercase English plurals, so raw is the spelling that finishes "the rest have no …" as
-# English.
-# **WHAT THAT COSTS, STATED RATHER THAN DENIED**: a hunt weapon whose id is not a lowercase plural
-# would reach the player exactly as the wire spells it. Three items on the roster already carry ids
-# of that shape — `stone_dressing`, `tanning_frame`, `bone_awl` — and none of them is the attack item
-# of any hunt kit, so it is the CURRENT roster, not this format, that keeps the sentence English.
-const MAX_USEFUL_NOTE_GEAR_FORMAT := "max %d %s useful here — the rest have no %s"
-# The CONFIRMED-row twin of MAX_USEFUL_NOTE_FORMAT: a worked source's `+` explaining why it is dead
-# (see `source_worker_cap_state`). Worded from the row's point of view ("fully staffed") rather than
-# the compose stepper's ("max N useful here"), because the player is looking at a running assignment.
-const MAX_USEFUL_CAPPED_TOOLTIP := "Full: %d %s max"
-# The OTHER binding cap: idle workers run out BELOW the usefulness ceiling, so the `+` caps at the band's
-# hands, not usefulness. The sentence names only the band's limit (the one arg: the crew pool) and is
-# shown ONLY once the composed crew is at it — the useful figure is deliberately not quoted: past the
-# crew curve's asked rows it was a rough estimate that disagreed with the "clear it now" pill.
-const LABOR_BOUND_NOTE_FORMAT := "%d is all this band can send — free up workers to send more"
-# RETIRED — **`BUILD_BOUND_NOTE_FORMAT`**, the same cap worded to name the sheet's OWN builders
-# stepper (`docs/plan_standing_upkeep.md` §2.5). It existed because the take and the build shared one
-# source pool, so the nearer lever for freeing a hand was sometimes two rows down on the same sheet.
-# A verb states no crew now: the sheet has one stepper, so there is one remedy and
-# `LABOR_BOUND_NOTE_FORMAT` is it.
-
+# **A HUNT CREW IS SIZED ON A RATE** (`fauna::hunt_crew_for_take`): the target is meat per turn, the
+# animals a turn are `target / body`, and a crew term never reads below one hunter for a live source.
+const HUNT_CREW_AT_LEAST_ONE := 1
 # A herd past the apron is an ordinary hunt whose crew posts a caravan (`docs/plan_civilization_steps.md`
 # §One work party); the only raid the client composes is the DENIAL raid.
 #
@@ -2376,56 +2339,39 @@ static func phase_zones(src: Dictionary, prefix: String) -> Array[Dictionary]:
 static func learn_multiplier(floor: float) -> float:
     return clamp_floor(floor) / FLOOR_FOOD_PEAK
 
-## **THE WHOLE-ANIMAL HAUL CREW**, mirroring the sim's `fauna::hunt_haul_workers` exactly: the worst
-## turn drops `floor(ceiling / body) + 1` whole bodies (the kill-credit bank can hold just under one
-## when the turn's rate lands), and every one of them has to be carried. `ceiling`, `body` and
-## `per_worker` must be in the SAME units — biomass for the crew targets, the paid account for
-## `max_useful_workers`, since an animal count is a ratio and a ratio is unit-free.
-static func haul_workers(ceiling: float, body: float, per_worker: float) -> int:
+## **THE HAUL CREW**, mirroring the sim's `fauna::hunt_haul_workers`: the hands that carry the TARGET as a
+## RATE, `ceil(target / per_worker)`, never below one. It was the whole-animal drop `floor(ceiling /
+## body) + 1`, enough hands to carry a body that lands in one turn; the take is a rate (a source that
+## cannot spare a body pauses and accumulates), so the crew is the hands that average it. `target`,
+## `body` and `per_worker` must be in the SAME units - biomass for the crew targets, the paid account
+## for `max_useful_workers`, since a ratio is unit-free. `0` where the body or the carry is unpriceable.
+static func haul_workers(target: float, body: float, per_worker: float) -> int:
     if body <= 0.0 or not can_price_crew(per_worker):
         return 0
-    return ceili(float(peak_animal_drop(ceiling, body)) * body / per_worker)
+    return maxi(ceili(maxf(target, 0.0) / per_worker), HUNT_CREW_AT_LEAST_ONE)
 
-## **THE MOST WHOLE ANIMALS A `ceiling` CAN DROP IN ONE TURN** — `floor(ceiling / body) + 1`, the
-## client mirror of the sim's `fauna::peak_animal_drop`, and shared by BOTH crew terms below for the
-## reason the sim shares it: two terms sized against different drops can never be reconciled.
-## `body` is assumed positive — every caller checks it first.
-static func peak_animal_drop(ceiling: float, body: float) -> int:
-    return floori(maxf(ceiling, 0.0) / body) + HUNT_PEAK_DROP_BANK_BONUS
+## **A MEAT TARGET IN ANIMALS A TURN** - `target / body`, the client mirror of the sim's
+## `fauna::animals_a_turn`, shared by the reach crew below for the reason the sim shares it: two terms
+## sized against different targets can never be reconciled. `body` is assumed positive.
+static func animals_a_turn(target: float, body: float) -> float:
+    return maxf(target, 0.0) / body
 
-## **THE WHOLE-ANIMAL ENGAGEMENT CREW**, mirroring the sim's `fauna::hunt_engage_workers`: how many
-## hunters it takes to bring the peak animal drop DOWN in one turn. It is the inverse of the pair
-## `animals_engaged` → `animals_stayed` — those take `workers × engage_rate` unrounded and then cut it
-## by the retreat, so the crew that lands `n` animals is `ceil(n / (engage_rate × stay))`.
+## **THE REACH CREW**, mirroring the sim's `fauna::hunt_engage_workers`: `ceil(animals a turn /
+## (engage_rate x stay))`, never below one. It is the inverse of the per-hunter rate `animals_engaged`
+## -> `animals_stayed` take, so the crew that lands `n` animals a turn is `n / (engage_rate x stay)`.
 ##
-## **THE RETREAT PRICES THE CREW AS WELL AS THE TAKE**, because a party that keeps one animal in four
-## needs four times the hands to draw the same stock down. Sizing on the RAW reach put this crew — and
-## through `take_workers` the stepper's own cap — BELOW the *clear it now* pill beside it, which has
-## divided by `engagement_carry`'s retreat-aware reach all along: 82 against 108 on a played Wild Boar
-## herd, the sheet naming a crew the panel then refused to let the player assign. 108 is the honest
-## number.
+## **THE RETREAT PRICES THE CREW AS WELL AS THE TAKE**: a party that keeps one animal in four needs four
+## times the hands to draw the same stock down, so the divisor is what ONE hunter puts on the ground,
+## never the raw reach.
 ##
-## **`stay <= STAY_FRACTION_ALL_BREAK_OFF` ANSWERS `0`, and that is not the degenerate reading it
-## looks like.** Nothing the party reaches ever stands, so the take is identically zero at every crew
-## size — there is no number of hands that achieves it, and the crew NEEDED to achieve the take is
-## therefore none. The `max()` in `take_workers` then keeps the haul crew, exactly as it does for a
-## source with no engagement stage at all.
+## **`stay <= STAY_FRACTION_ALL_BREAK_OFF` ANSWERS `0`**: nothing the party reaches ever stands, so no
+## crew achieves the take and the `max()` in `take_workers` keeps the haul crew. A source with no
+## engagement stage (a pen, the plant web) answers `0` the same way.
 ##
-## **IT CANNOT BE FOLDED INTO `haul_workers`, because the two scale on DIFFERENT UNITS** — hauling is
-## per biomass (one hauler carries 40), engaging is per animal (one hunter reaches 10 fowl or 0.05
-## mammoths) — so neither dominates across the roster. A Wild Fowl herd with ~470 head above its floor
-## is ~61 biomass: **two** haulers clear it and **47** hunters are needed to reach it, so a cap sized
-## on carry alone said "more hands would be idle" about the very hands the take was short of. The
-## mammoth inverts it (one hunter reaches the peak drop; twenty are needed to carry it home).
-##
-## **THE DIP RIDES THIS CREW TOO** (`docs/plan_harvest_floor.md` §3.1) — hands gentling a herd are
-## hands not stalking it, so it takes proportionally more of them to corner the same drop.
-##
-## `0` where the term has nothing to say: a source with no engagement stage (`NO_ENGAGEMENT_STAGE` —
-## a pen, the plant web) or a degenerate body/dip. The `max()` then keeps the haul crew and neither
-## web regresses. Units on `ceiling`/`body` are free, exactly as they are for `haul_workers`.
-static func engage_workers(ceiling: float, body: float, engage_rate: float,
-        stay: float) -> int:
+## **IT CANNOT BE FOLDED INTO `haul_workers`, because the two scale on DIFFERENT UNITS** - hauling is
+## per biomass (one hauler carries 40), reaching is per animal (one hunter reaches 10 fowl or 0.05
+## mammoths) - so neither dominates across the roster. Units on `target`/`body` are free.
+static func engage_workers(target: float, body: float, engage_rate: float, stay: float) -> int:
     if body <= 0.0:
         return 0
     var reach := engagement_per_worker(engage_rate)
@@ -2434,7 +2380,7 @@ static func engage_workers(ceiling: float, body: float, engage_rate: float,
     var landed := animals_stayed(reach, stay)
     if landed <= STAY_FRACTION_ALL_BREAK_OFF:
         return 0
-    return ceili(float(peak_animal_drop(ceiling, body)) / landed)
+    return maxi(ceili(animals_a_turn(target, body) / landed), HUNT_CREW_AT_LEAST_ONE)
 
 ## **THE ANIMALS ONE WORKER BRINGS INTO CONTACT PER TURN** — `engageRate × dip`, and the ONE
 ## composition of that pair every engagement quotient in this file divides by. It exists so the three
@@ -2475,20 +2421,28 @@ static func engagement_carry(body_mass: float, engage_rate: float,
     return ENGAGEMENT_UNBOUNDED if is_inf(reach) \
         else body_mass * animals_stayed(reach, stay)
 
-## **THE TAKE-SIDE CREW FOR A WHOLE-ANIMAL SOURCE** — `max(haul, engage)`, the client mirror of the
-## sim's `fauna::hunt_take_workers`, and the one place that `max` is written down. Two jobs, one crew,
-## two units: reach the animals, then carry them home. `max()`, never `+` — one crew covering its
-## busiest job.
+## **THE TAKE-SIDE CREW FOR A WHOLE-ANIMAL SOURCE** - `max(haul, reach)`, the client mirror of the sim's
+## `fauna::hunt_crew_for_take` less its FIGHT term. Two jobs, one crew, two units: reach the animals,
+## then carry them home. `max()`, never `+` - one crew covering its busiest job.
 ##
-## Units on `ceiling`/`body` are free (an animal count is a ratio), so this answers in biomass for the
-## crew targets and in the paid account for the worker cap, exactly as its two halves do.
+## **THE TARGET IS CAPPED AT WHAT THE TAKE CAN REACH, `room x stay`** (`hunt_crew_terms`): the engagement
+## is clamped to the room before the retreat, so the most that lands is the room's animals times the
+## share that stand, and asking a crew for more is asking for a take no crew makes. A negative `room`
+## (the default) is "not known here" and leaves the target uncapped; pass it where it is known.
 ##
-## `stay` is a pass-through to the engage half; the haul side knows nothing about a retreat, a body
-## weighing the same whether it was easy or hard to bring down.
-static func take_workers(ceiling: float, body: float, per_worker: float,
-        engage_rate: float, stay: float) -> int:
-    return maxi(haul_workers(ceiling, body, per_worker),
-        engage_workers(ceiling, body, engage_rate, stay))
+## ⛔ **THE FIGHT TERM IS NOT HERE, AND THE CLIENT CANNOT HAVE IT**: `ceil(animals a turn / bodies per
+## hunter)` reads `lethality` and `hit_chance`, which are unpublished, so a quarry the party can reach
+## but fights slowly is sized by the sim's published `workers_needed` / `hunt_useful_workers` and the
+## crew-take curve's plateau (`max_useful_workers` prefers both), never by this closed form.
+##
+## Units on `target`/`body` are free (an animal count is a ratio).
+static func take_workers(target: float, body: float, per_worker: float,
+        engage_rate: float, stay: float, room: float = -1.0) -> int:
+    var capped := target
+    if room >= 0.0 and has_engagement_stage(engage_rate):
+        capped = minf(target, room * clampf(stay, 0.0, STAY_FRACTION_NONE_BREAKS_OFF))
+    return maxi(haul_workers(capped, body, per_worker),
+        engage_workers(capped, body, engage_rate, stay))
 
 ## **HOW MANY ANIMALS THIS PARTY BRINGS INTO CONTACT THIS TURN** — the client mirror of the sim's
 ## `fauna::animals_engaged`, and the one definition of it, so no two readings of a herd can disagree
@@ -2829,8 +2783,15 @@ static func crew_to_clear(room: float, carry: float, reaching: int,
             # The curve levelled off below the room: nobody clears this herd in a turn, at any size.
             return NO_CREW_ANSWER
         # …still rising when the rows ran out — see `crew_take_curve_settled`.
+    # **THE ROOM IS CAPPED AT WHAT THE TAKE CAN REACH, `room x stay`** - the sim's `hunt_crew_terms` cap:
+    # the engagement is clamped to the room BEFORE the retreat, so the most a crew lands is the room's
+    # animals times the share that stand, and a pill asking for the whole room would name a crew the
+    # stepper (and the sim's `workers_needed`) never asks for. The retreat then cancels at the room
+    # itself, which is why this and the stepper's cap agree.
+    var reachable_room := room * clampf(stay, 0.0, STAY_FRACTION_NONE_BREAKS_OFF) \
+        if has_engagement_stage(engage_rate) else room
     var per_worker := minf(carry, engagement_carry(body_mass, engage_rate, stay))
-    return maxi(maxi(1, ceili(room / per_worker)), maxi(reaching, 0))
+    return maxi(maxi(1, ceili(reachable_room / per_worker)), maxi(reaching, 0))
 
 ## ***HOLD IT AFTER*** — the crew that takes exactly what grows back at the floor, so the stock sits
 ## there: the interpolated regrowth at the floor over the same carry, **rounded up to one whole body
@@ -3088,7 +3049,7 @@ const DENIAL_PARTY_NEEDED_NONE := 0
 const DENIAL_SHORT_HANDED_BUTTON := "Not Enough Hunters"
 # …and the reason beneath it, in the sheet's own hint register, stating BOTH numbers: what the herd
 # requires and what the band actually has. The stepper above it is already sitting at the second.
-const DENIAL_SHORT_HANDED_REASON_FORMAT := "%s needs %d hunters and this band has only %d idle. Free up workers before this raid can break the herd."
+const DENIAL_SHORT_HANDED_REASON_FORMAT := "%s needs %d hunters and this band has only %d to send. Free up workers before this raid can break the herd."
 # **`0` MEANS "NOT WITHIN THE HORIZON" ON THAT END, never "immediately".** `Low` is the FEWEST turns
 # — the optimistic draw, where more animals stay and more strikes land — so a positive `low` beside a
 # `0` `high` reads "only on a good run".
@@ -5603,7 +5564,7 @@ static func max_useful_workers(forecast: Dictionary) -> int:
             return maxi(plateau, hold)
         return maxi(take_workers(ceiling, per_animal, per_worker,
             float(forecast.get("engage_rate", NO_ENGAGEMENT_STAGE)),
-            float(forecast.get("stay", STAY_FRACTION_NONE_BREAKS_OFF))), hold)
+            float(forecast.get("stay", STAY_FRACTION_NONE_BREAKS_OFF)), ceiling), hold)
     # ⛔ **RE-SOLVED, NEVER RESCALED.** `per_worker` is the average over the crew this source was
     # priced for; a band short of gear needs a LARGER crew to reach the ceiling than the flat quotient
     # says, because the marginal worker past saturation still contributes the bare rate. With no
@@ -5613,54 +5574,6 @@ static func max_useful_workers(forecast: Dictionary) -> int:
         float(forecast.get(FORECAST_COVERAGE_BARE_KEY, COVERAGE_ABSENT)),
         int(forecast.get(FORECAST_COVERAGE_SATURATING_CREW_KEY, 0)),
         float(forecast.get(FORECAST_COVERAGE_APPLIED_KEY, COVERAGE_ABSENT))), hold)
-
-## Per-SOURCE `+`-gate for a CONFIRMED Current-actions Forage/Hunt row — the worked-row twin of the
-## compose stepper's `max_useful_workers` cap (`DrawerComposeController._forecast_worker_cap`), and
-## beside it so the two can never disagree. A source's `+` may add a worker only while the band has an
-## idle worker AND this source is below its own max-useful ceiling, so a single source can't absorb
-## workers past the point they help. An unknown forecast (MAX_USEFUL_UNBOUNDED — no wire data) falls
-## back to the plain `idle > 0` gate. Returns `{can_add, note}`; `note` is set ONLY when max-useful (not
-## idle) is what stopped the `+`, so the row tooltip explains a dead button rather than leaving it
-## mysterious. Scout/Warrior are band-wide roles with no ceiling — they keep the plain gate and never
-## call this.
-##
-## **`blocked_reason` IS THE GREYED `+`'s HOVER, AND IT NAMES WHICHEVER CONDITION FAILED** — no free
-## hands, or the source's ceiling (`selection-card.md` → "A DISABLED CONTROL SAYS WHY"); `""` while the
-## `+` can add. It is returned by the gate itself, so the face and the sentence are one test.
-##
-## **`useful_floor` IS RETIRED, AND WITH IT `herd_crew_floor`** (`docs/plan_standing_upkeep.md` §2.2).
-## Both twins used to RAISE this ceiling to a managed herd's `herdersNeeded`, because one crew both
-## hunted and held the animals: a cap sized on the take alone went dead below the count the sim was
-## asking for, while the same row rendered the under-herded ⚠. **Those keepers are the MAINTAIN
-## allocation now.** Flooring the TAKE cap on them made the hunt stepper demand hands that belong to
-## another crew — and the crew that answers `herdersNeeded` has its own stepper, its own ceiling
-## (`idle + this source's keepers`) and its own command.
-##
-## **THE *HOLD* CREW IS STILL FOLDED IN, and it is a different thing** — the hands that take what the
-## source REGROWS, a fact about this take at this floor rather than a demand a kind of source makes.
-## It lives inside `max_useful_workers`, where both twins pick it up without either caller being
-## trusted to remember it.
-static func source_worker_cap_state(forecast: Dictionary, workers: int, idle: int) -> Dictionary:
-    return crew_cap_state(max_useful_workers(forecast), workers, idle)
-
-## **THE SAME GATE, HANDED THE CEILING RATHER THAN A FORECAST** — what a worked row calls with
-## `worked_row_ceiling`'s answer, so the row's `+` and the compose sheet's (which caps at that same
-## number on the row's own composition) are struck at one ceiling by construction.
-static func crew_cap_state(useful: int, workers: int, idle: int) -> Dictionary:
-    var no_idle := "" if idle > 0 else HudWorkVocab.STEPPER_NO_IDLE_REASON
-    if useful == MAX_USEFUL_UNBOUNDED or workers < useful:
-        return {"can_add": idle > 0, "note": "", "blocked_reason": no_idle}
-    # At/over this source's max-useful: the `+` is capped by the source, not by idle. The ROW note
-    # explains only when idle workers remain (else the idle-exhausted gate is the binding one); the
-    # `+`'s own hover names both when both hold.
-    var noun := MAX_USEFUL_NOUN_ONE if useful == 1 else MAX_USEFUL_NOUN_MANY
-    var full := MAX_USEFUL_CAPPED_TOOLTIP % [useful, noun]
-    var note := full if idle > 0 else ""
-    var reasons := PackedStringArray([full])
-    if no_idle != "":
-        reasons.insert(0, no_idle)
-    return {"can_add": false, "note": note,
-        "blocked_reason": HudWorkVocab.DISABLED_REASON_SEPARATOR.join(reasons)}
 
 ## **IS THIS CREW BIGGER THAN ITS SOURCE CAN USE?** — hands standing on a job that has nothing left
 ## for them, which is the one question every web asks and only two of them used to answer. It is the

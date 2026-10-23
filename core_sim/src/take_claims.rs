@@ -44,6 +44,9 @@ use crate::materials_config::MaterialsConfig;
 /// on the role, so no room caps the claim.
 const EVERY_HAND_USES_IT: f32 = f32::INFINITY;
 
+/// **NOBODY IS ON THE ROW** — the crew below which a staffing stamp claims nothing.
+const NO_STAFFED_CREW: u32 = 0;
+
 /// **WHAT THE CLAIM IS STRUCK FROM** — the world's sources and the tables their rates come from,
 /// borrowed once by each surface that settles a band's take gear.
 pub struct ClaimSources<'a> {
@@ -76,7 +79,7 @@ pub struct ClaimSources<'a> {
 
 impl ClaimSources<'_> {
     /// The patch as the next take will find it.
-    fn patch(&self, tile: UVec2) -> Option<Cow<'_, ForagePatch>> {
+    pub(crate) fn patch(&self, tile: UVec2) -> Option<Cow<'_, ForagePatch>> {
         let patch = self.forage.patch(tile)?;
         Some(match self.start {
             ProjectionStart::AfterRegrowth => Cow::Borrowed(patch),
@@ -87,7 +90,7 @@ impl ClaimSources<'_> {
     }
 
     /// The herd as the next take will find it.
-    fn herd(&self, id: &str) -> Option<Cow<'_, Herd>> {
+    pub(crate) fn herd(&self, id: &str) -> Option<Cow<'_, Herd>> {
         let herd = self.herds.find(id)?;
         Some(match self.start {
             ProjectionStart::AfterRegrowth => Cow::Borrowed(herd),
@@ -99,7 +102,7 @@ impl ClaimSources<'_> {
 
     /// The working and its ground as the next take will find them — the live working, or the one
     /// a crew put on fresh ground would open ([`crate::extraction::projected_working`]).
-    fn working(&self, tile: UVec2, material: &str) -> Option<(DepositSource, Tile)> {
+    pub(crate) fn working(&self, tile: UVec2, material: &str) -> Option<(DepositSource, Tile)> {
         let ground = (self.ground_of)(tile)?;
         let mut working = crate::extraction::projected_working(
             self.deposits,
@@ -439,6 +442,11 @@ pub struct RowClaims {
     pub claims: Vec<f32>,
     /// The planned keep hands each claim was struck less.
     pub keep_hands: Vec<f32>,
+    /// **WHAT EACH ROW WOULD ASK FOR if its crew were armed as planned** (#871) - the old
+    /// planned-rule claim, which for a staffed row is not what the passes granted (`claims`).
+    /// It is the `required` of a row's published `kitToe`, so the shortfall the staffing left
+    /// (`filled < required`) is still stated by item.
+    pub asks: Vec<f32>,
 }
 
 /// [`RowClaims`] for every row of `allocation`, at each row's own crew.
@@ -451,7 +459,7 @@ pub fn row_claims(
     for assignment in &allocation.assignments {
         // The kit claim is struck on the hands PRESENT at the source: the row's crew less its
         // rejoining walkers (`LaborAllocation::hands_present_on`).
-        let split = if assignment.target.is_standing_pool() {
+        let mut split = if assignment.target.is_standing_pool() {
             CrewClaim::default()
         } else {
             take_kit_claim(
@@ -463,8 +471,27 @@ pub fn row_claims(
                 allocation.hands_present_on(assignment),
             )
         };
+        let planned_claim = split.claim;
+        // **A STAFFED ROW CLAIMS EXACTLY THE HANDS THE STAFFING ARMED** (#871): the passes already
+        // decided who holds a kit, across rows and priorities, out of this very ledger, so the
+        // walk's rationing must hand each row those units and no more or less. Read only while the
+        // stamp is current (its total is the crew on the row); a row nobody has staffed yet claims
+        // by the old planned rule.
+        if assignment.target.is_staffed()
+            && assignment.staffing.total() == assignment.workers
+            && assignment.workers > NO_STAFFED_CREW
+        {
+            // **Plus the take hands a keeper's last whole hand leaves** - the keeping takes a
+            // fraction of its last keeper and the rest of that hand gathers, so the walk may arm
+            // it (up to what the planned rule asked for) rather than leave it basketless.
+            let keeper_remainder =
+                (assignment.staffing.keepers as f32 - split.keep_hands).max(NO_CLAIMING_HANDS);
+            let armed = assignment.staffing.kitted as f32;
+            split.claim = armed.max(split.claim.min(armed + keeper_remainder));
+        }
         rows.claims.push(split.claim);
         rows.keep_hands.push(split.keep_hands);
+        rows.asks.push(planned_claim.max(split.claim));
     }
     rows
 }

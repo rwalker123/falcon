@@ -1705,7 +1705,7 @@ func run(harness) -> void:
 	# (3 = the Sustain ceiling's max-useful workers, below the band's 10 idle): the `+` button is
 	# DISABLED, the "max 3 workers useful here — more would be idle" note explains why, and the
 	# "Expected yield" row reads the ceiling itself (+0.96 /turn = min(3 × 0.32, 0.96)).
-	h._hud._compose.set_forage_count(3)
+	h._hud._compose.set_forage_max(3)
 	h._compose_forage(BaseFx.food_tile_fixture())
 	await h._settle()
 	await h._save("forage_forecast_cap")
@@ -1719,14 +1719,14 @@ func run(harness) -> void:
 	forage_labor_band["idle_workers"] = 2
 	h._hud._band_labor._player_band = forage_labor_band
 	h._hud._compose.set_forage_band(-1)
-	h._hud._compose.set_forage_count(2)
+	h._hud._compose.set_forage_max(2)
 	h._compose_forage(BaseFx.food_tile_fixture())
 	await h._settle()
 	await h._save("forage_labor_bound")
 	# Restore the 10-idle range band + count for the states that follow.
 	h._hud._band_labor._player_band = BandFx.forage_range_bands()[0]
 	h._hud._compose.set_forage_band(-1)
-	h._hud._compose.set_forage_count(3)
+	h._hud._compose.set_forage_max(3)
 
 	# State 2-tended — a fully-cultivated forage patch: the Tile card's cultivation row reads
 	# "🌾 Tended Patch" (SIGNAL tint) with an "Ecology: Thriving" row above it. A tended
@@ -1739,7 +1739,7 @@ func run(harness) -> void:
 	# State 2-stressed — an over-drawn (uncultivated) forage patch: the Ecology row reads a WARN-amber
 	# "⚠ Stressed" right under "Forage biomass", exactly like a stressed herd's Ecology row. Proves the
 	# row is NOT gated on cultivation.
-	h._hud._compose.set_forage_count(1)
+	h._hud._compose.set_forage_max(1)
 	h._show_tile(TileFx.stressed_tile_fixture())
 	await h._settle()
 	await h._save("food_tile_stressed")
@@ -1772,7 +1772,7 @@ func run(harness) -> void:
 	#
 	# State food_layers — the reference frame: all THREE crop roles on one patch, so every role icon is
 	# in one picture and the card states outright that 62% of what grows on this ground is not food.
-	h._hud._compose.set_forage_count(1)
+	h._hud._compose.set_forage_max(1)
 	h._show_tile(TileFx.three_role_tile_fixture())
 	await h._settle()
 	await h._save("tile_food_layers")

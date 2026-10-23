@@ -926,6 +926,15 @@ func tile_improvement_at(x: int, y: int, branch: String) -> Dictionary:
 			return row
 	return {}
 
+## This band's `band` labor rows (a band improvement's crew, e.g. a drying rack), in wire order.
+func band_improvement_assignments_of(band: Dictionary) -> Array:
+	var rows: Array = []
+	for entry in labor_assignments_of(band):
+		if entry is Dictionary \
+				and String((entry as Dictionary).get("kind", "")).to_lower() == HudConst.LABOR_KIND_BAND:
+			rows.append(entry)
+	return rows
+
 ## This band's `tile` labor rows (the wire's `kind == "tile"`), in wire order.
 func tile_assignments_of(band: Dictionary) -> Array:
 	var rows: Array = []
@@ -1035,6 +1044,9 @@ func pending_key(kind: String, x: int, y: int, herd_id: String, material: String
 			# A tile improvement keys per `(tile, branch)`; the BRANCH rides the `material` slot, the
 			# one free string a per-source key has.
 			return "tile:%d,%d:%s" % [x, y, material]
+		HudConst.LABOR_KIND_BAND:
+			# A band improvement keys per BRANCH alone (the improvement is the band's own).
+			return "band:%s" % material
 		HudConst.LABOR_KIND_ROADWORK:
 			# A road BUILD keys per tile; the band-wide roadwork ROLE falls through to the bare kind.
 			if x >= 0 and y >= 0:
@@ -1364,6 +1376,29 @@ const OPTIONAL_YIELD_KEYS: Array[String] = [
 static func staffed_total(entry: Dictionary) -> int:
 	return maxi(int(entry.get("workers", 0)), 0)
 
+## **THE STAFFED KINDS** (#871) - the rows whose `workers` the SIM strikes from the player's floor
+## (`docs/plan_labor_at_scale.md`): forage, hunt, extract, tile and Roadwork. On them the count the
+## player states is a MAX (`max_workers`, `0` = no Max), never a crew. Builders, Scout, Warrior and the
+## bench keep a player-set count, and so does a hunting-by-need row (`move_with_herd`), whose count slot
+## is unchanged.
+const STAFFED_KINDS: Array[String] = [
+	LABOR_KIND_FORAGE, LABOR_KIND_HUNT, HudConst.LABOR_KIND_EXTRACT,
+	HudConst.LABOR_KIND_TILE, HudConst.LABOR_KIND_BAND, HudConst.LABOR_KIND_ROADWORK,
+]
+
+## The wire keys the three staffing passes publish on a row, copied onto the merged row as integers:
+## the player's Max, the hands to hold / reach the floor, the three-way split of `workers` into keepers
+## / kitted / bare, and the pass-3 ceiling. **This map is a hand-listed allowlist**, so a key not copied
+## here does not exist as far as the work board is concerned.
+const STAFFED_KEYS: Array[String] = [
+	"max_workers", "hold_crew", "reach_crew", "keepers_staffed", "kitted_staffed", "bare_staffed",
+	"useful_crew",
+]
+
+## Is this row's crew the sim's? `move_with_herd` is the hunting-by-need row, whose count is not.
+static func is_staffed_row(kind: String, move_with_herd: bool = false) -> bool:
+	return STAFFED_KINDS.has(kind) and not move_with_herd
+
 ## Confirmed labor assignments overlaid with this band's pending assigns, keyed by source/role.
 ## Each value: {kind, workers, x, y, herd_id, policy, pending: bool, + per-source yield fields}.
 func effective_worker_map(band: Dictionary) -> Dictionary:
@@ -1377,13 +1412,15 @@ func effective_worker_map(band: Dictionary) -> Dictionary:
 		# every other kind, which `pending_key` ignores.
 		var key := pending_key(kind, int(a.get("target_x", -1)), int(a.get("target_y", -1)),
 			String(a.get("fauna_id", "")),
-			String(a.get("branch", "")) if kind == HudConst.LABOR_KIND_TILE \
+			String(a.get("branch", "")) \
+				if kind == HudConst.LABOR_KIND_TILE or kind == HudConst.LABOR_KIND_BAND \
 				else String(a.get("material", "")))
 		merged[key] = {
 			# **ONE CREW PER ROW AGAIN** (`docs/plan_standing_upkeep.md` §2.5). A row carried a second
 			# `improvement_workers` allocation for one slice; the builders are a band-level POOL now, so
 			# their hands ride their OWN row of this same map, keyed `builders` like `scout`.
 			"kind": kind, "workers": int(a.get("workers", 0)),
+			"branch": String(a.get("branch", "")),
 			"x": int(a.get("target_x", -1)), "y": int(a.get("target_y", -1)),
 			"herd_id": String(a.get("fauna_id", "")),
 			# WHERE THIS CREW STOPS, as a fraction of the source's capacity — the whole of the harvest
@@ -1424,6 +1461,8 @@ func effective_worker_map(band: Dictionary) -> Dictionary:
 			# tick strip. Empty = "not projected", which renders no strip (never a famine).
 			"arrival_schedule": as_schedule(a.get("arrival_schedule", null)),
 		}
+		for staffed_key in STAFFED_KEYS:
+			(merged[key] as Dictionary)[staffed_key] = int((a as Dictionary).get(staffed_key, 0))
 		# The PRESENCE-SENSITIVE rate keys, copied through only when the wire carried them:
 		# `source_yield_readout` distinguishes "absent" (fall back to the actual/sustainable split)
 		# from "present and 0", so a `get(..., 0.0)` default here would silently assert a zero.
@@ -1568,6 +1607,15 @@ func effective_worker_map(band: Dictionary) -> Dictionary:
 		if settled != null:
 			(merged[key] as Dictionary)[SourceForecast.ASSIGNMENT_HUNT_USEFUL_WORKERS_KEY] = \
 				int(settled)
+		# **ON A STAFFED ROW THE PENDING NUMBER IS THE MAX, NOT A CREW** (#871). The sim strikes the crew,
+		# so the overlay states the Max the player just set and leaves the crew - and its split, and the
+		# hold / reach figures - at the settled row's until the recapture answers (the server restaffs at
+		# once, so it is one round trip). A brand-new source has no settled row, so it reads a crew of 0.
+		if is_staffed_row(String(pd.get("kind", "")), bool(pd.get("move_with_herd", false))):
+			for staffed_key in STAFFED_KEYS:
+				(merged[key] as Dictionary)[staffed_key] = int(settled_party.get(staffed_key, 0))
+			(merged[key] as Dictionary)["workers"] = int(settled_party.get("workers", 0))
+			(merged[key] as Dictionary)["max_workers"] = int(pd.get("workers", 0))
 		# **AND THE PARTY SURVIVES A PENDING CREW EDIT**, for the ceiling's reason and a sharper one
 		# of its own: `LaborAllocation::set_assignment` carries the party across the re-push
 		# precisely so that a `−`/`+` does not restart the transit countdown, so a client that
@@ -1737,7 +1785,8 @@ func working_breakdown(band: Dictionary) -> Dictionary:
 		match String(m.get("kind", "")):
 			SourceForecast.LABOR_KIND_FORAGE: forage_workers += workers
 			SourceForecast.LABOR_KIND_HUNT: hunt_workers += workers
-			HudConst.LABOR_KIND_EXTRACT, HudConst.LABOR_KIND_TILE: extract_workers += workers
+			HudConst.LABOR_KIND_EXTRACT, HudConst.LABOR_KIND_TILE, HudConst.LABOR_KIND_BAND:
+				extract_workers += workers
 	var muster_out := hunt_muster_out(band)
 	var out_by_kind: Dictionary = muster_out["by_kind"]
 	forage_workers -= int(out_by_kind.get(SourceForecast.LABOR_KIND_FORAGE, 0))
@@ -1785,24 +1834,69 @@ func bench_workers(band: Dictionary) -> int:
 ## between `BandWorkforce::idle()` and `benchable()`, and capping the stepper at `effective_idle`
 ## would pin it to the crew already on it.
 func benchable_workers(band: Dictionary) -> int:
-	return effective_idle(band) + bench_workers(band)
+	return orderable_hands(band) + bench_workers(band)
+
+## **THE HANDS THE PLAYER CAN STILL ORDER ONTO A PLAYER-SET CREW — the ONE sum every such ceiling
+## reads** (bench crafters, Scout, Warrior, Builders, a party's crew). Sim-staffed crews are what is
+## left AFTER the player's own orders, so they never block one: the ceiling is `effective_idle` plus the
+## crews standing on the staffed rows (`STAFFED_KINDS`, a hunting-by-need row excluded as its count is
+## the player's), which the sim re-staffs from whatever remains. With every hand on a staffed row
+## `effective_idle` is 0 and a ceiling built on it alone pins every stepper at zero.
+##
+## **NO DOUBLE COUNT**: the staffed rows' `workers` are the wire's (a staffed row carries no pending
+## crew), and a player-set edit's own pending crew sits in `effective_idle`'s subtraction, so raising a
+## stepper lowers this by exactly what it raised and the staffed rows shrink on the next snapshot,
+## never locally. A staffed row's OWN display is untouched — it still reads `workers`.
+func orderable_hands(band: Dictionary) -> int:
+	return effective_idle(band) + staffed_crews_total(band)
+
+## Σ crews on the sim-staffed rows (`is_staffed_row`), read off the same merged map `effective_idle` nets.
+func staffed_crews_total(band: Dictionary) -> int:
+	var total := 0
+	var merged := effective_worker_map(band)
+	for key in merged:
+		var row: Dictionary = merged[key]
+		if is_staffed_row(String(row.get("kind", "")), bool(row.get("move_with_herd", false))):
+			total += staffed_total(row)
+	return total
+
+## **DOES THIS BAND HOLD A ROW ON THIS SOURCE?** (#871) - pending-aware, and the test `Work` and the
+## compose sheets use for "the band works it". A staffed row can read a crew of ZERO (nobody free, or the
+## source under its floor) and is still worked, so a crew count is no longer the test.
+func has_hunt_row(band: Dictionary, herd_id: String) -> bool:
+	return effective_worker_map(band).has(pending_key(LABOR_KIND_HUNT, -1, -1, herd_id))
+
+func has_forage_row(band: Dictionary, x: int, y: int) -> bool:
+	return effective_worker_map(band).has(pending_key(LABOR_KIND_FORAGE, x, y, ""))
+
+func has_extract_row(band: Dictionary, x: int, y: int, material: String) -> bool:
+	return effective_worker_map(band).has(
+		pending_key(HudConst.LABOR_KIND_EXTRACT, x, y, "", material))
 
 ## Effective worker count on ONE forage tile, overlaying any pending value (the single-source scalar
 ## twin of `effective_worker_map` — beside it because it reads the same pending overlay + confirmed base).
 func effective_forage_workers(band: Dictionary, x: int, y: int) -> int:
-	var pend := pending_assigns_for(int(band.get("entity", -1)))
-	var key := pending_key(LABOR_KIND_FORAGE, x, y, "")
-	if pend.has(key):
-		return int((pend[key] as Dictionary).get("workers", 0))
-	return workers_for_forage(band, x, y)
+	return int(effective_worker_map(band).get(pending_key(LABOR_KIND_FORAGE, x, y, ""), {}).get(
+		"workers", 0))
+
+## **THE PLAYER'S MAX ON ONE SOURCE, PENDING-AWARE** (#871) - `0` = no Max. A staffed row's pending edit
+## states the Max (the crew is the sim's), so these three are what a sheet seeds its Max stepper from.
+func effective_forage_max(band: Dictionary, x: int, y: int) -> int:
+	return int(effective_worker_map(band).get(pending_key(LABOR_KIND_FORAGE, x, y, ""), {}).get(
+		"max_workers", 0))
+
+func effective_hunt_max(band: Dictionary, herd_id: String) -> int:
+	return int(effective_worker_map(band).get(pending_key(LABOR_KIND_HUNT, -1, -1, herd_id), {}).get(
+		"max_workers", 0))
+
+func effective_extract_max(band: Dictionary, x: int, y: int, material: String) -> int:
+	return int(effective_worker_map(band).get(
+		pending_key(HudConst.LABOR_KIND_EXTRACT, x, y, "", material), {}).get("max_workers", 0))
 
 ## Effective worker count hunting ONE herd, overlaying any pending value.
 func effective_hunt_workers(band: Dictionary, herd_id: String) -> int:
-	var pend := pending_assigns_for(int(band.get("entity", -1)))
-	var key := pending_key(LABOR_KIND_HUNT, -1, -1, herd_id)
-	if pend.has(key):
-		return int((pend[key] as Dictionary).get("workers", 0))
-	return workers_for_hunt(band, herd_id)
+	return int(effective_worker_map(band).get(pending_key(LABOR_KIND_HUNT, -1, -1, herd_id), {}).get(
+		"workers", 0))
 
 ## > ### ⛔ RETIRED — `upkeep_pool_state`, the Agriculture/Husbandry pool's summed bill
 ## >
@@ -2185,11 +2279,8 @@ func workers_for_extract(band: Dictionary, x: int, y: int, material: String) -> 
 ## `effective_forage_workers`' twin, and it keys through the material for `extract_assignment_of`'s
 ## reason.
 func effective_extract_workers(band: Dictionary, x: int, y: int, material: String) -> int:
-	var pend := pending_assigns_for(int(band.get("entity", -1)))
-	var key := pending_key(HudConst.LABOR_KIND_EXTRACT, x, y, "", material)
-	if pend.has(key):
-		return int((pend[key] as Dictionary).get("workers", 0))
-	return workers_for_extract(band, x, y, material)
+	return int(effective_worker_map(band).get(
+		pending_key(HudConst.LABOR_KIND_EXTRACT, x, y, "", material), {}).get("workers", 0))
 
 ## The band's standing HUNT assignment on `herd_id` — `{}` when it hunts no such herd. The herd twin
 ## of `forage_assignment_of`.

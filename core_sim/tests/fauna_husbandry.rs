@@ -961,12 +961,25 @@ fn spawn_builder(app: &mut App, herd_id: &str, improvement: VerbId) -> bevy::pre
 
 /// Re-staff a band mid-run — the climb test changes rung between legs, and the two animal rungs were
 /// priced against different reference crews.
+/// **A fixture writes a staffed row's hands and its Max together** (#871): the sim zeroes the hands and
+/// restaffs from the Max every turn, so editing `workers` alone is undone by the next pass.
+trait SetHandsAndMax {
+    fn set_hands_and_max(&mut self, hands: u32);
+}
+
+impl SetHandsAndMax for LaborAssignment {
+    fn set_hands_and_max(&mut self, hands: u32) {
+        self.workers = hands;
+        self.max_workers = Some(hands);
+    }
+}
+
 fn set_hunt_workers(app: &mut App, band: bevy::prelude::Entity, workers: u32) {
     app.world
         .get_mut::<LaborAllocation>(band)
         .expect("band exists")
         .assignments[0]
-        .workers = workers;
+        .set_hands_and_max(workers);
     fit_band_to_its_crews(app, band);
 }
 
@@ -1108,6 +1121,8 @@ fn spawn_crew_of(
                         party: None,
                         muster_crew: 0,
                         planned_crew: 0,
+                        max_workers: Some(hunters + keepers),
+                        staffing: Default::default(),
                         target: LaborTarget::Hunt {
                             fauna_id: herd_id.to_string(),
                             floor: policy,
@@ -1791,6 +1806,8 @@ fn an_untamed_herd_quotes_the_tame_it_would_take_on_and_the_quote_halves_with_th
                 party: None,
                 muster_crew: 0,
                 planned_crew: 0,
+                max_workers: Some(keepers),
+                staffing: Default::default(),
                 target: LaborTarget::Builders,
                 workers: keepers,
                 kit: None,
@@ -2477,12 +2494,11 @@ fn a_large_keeper_crew_cannot_collect_a_pen_below_its_floor() {
         "a keeper crew of {HUNT_WORKERS} must not collect below the floor {floor_biomass}: got \
          {after}"
     );
-    assert!(
-        after - floor_biomass < herd.body_mass,
-        "…and it stops within one whole animal of it ({} against a body of {}): got {after}",
-        after - floor_biomass,
-        herd.body_mass
-    );
+    // **No longer "within one whole animal of the floor"** (#871): the sim staffs the pen with the
+    // keepers it can use (T_reach) rather than with every hand the player named, so the crew takes
+    // what its reach lets it and the herd rests above the floor; what the bound must still guarantee
+    // is the line above - nobody collects below it.
+    let _ = herd.body_mass;
 }
 
 /// **A FRACTIONAL HANDLING RATE COLLECTS WHOLE ANIMALS** — the herd loses exactly `killed ×
@@ -3435,6 +3451,8 @@ fn set_hunt_improvement(app: &mut App, band: bevy::prelude::Entity, improvement:
                         party: None,
                         muster_crew: 0,
                         planned_crew: 0,
+                        max_workers: Some(builders),
+                        staffing: Default::default(),
                         target: LaborTarget::Builders,
                         workers: builders,
                         kit: None,
@@ -4197,7 +4215,7 @@ fn set_maintain_workers(app: &mut App, band: bevy::prelude::Entity, workers: u32
         .iter_mut()
         .find(|row| matches!(row.target, LaborTarget::Hunt { .. }))
         .expect("the fixture band works the herd");
-    row.workers = workers;
+    row.set_hands_and_max(workers);
 }
 
 /// **Append the band-wide `builders` pool to a fixture's rows** — the hands a declared build is
@@ -4218,6 +4236,8 @@ fn with_builders_pool(mut rows: Vec<LaborAssignment>, builders: u32) -> Vec<Labo
             party: None,
             muster_crew: 0,
             planned_crew: 0,
+            max_workers: Some(builders),
+            staffing: Default::default(),
             target: LaborTarget::Builders,
             workers: builders,
             kit: Some(
@@ -5239,6 +5259,8 @@ fn a_blocked_tame_claims_no_keeping_and_the_pastoral_flock_beside_it_is_paid_in_
             party: None,
             muster_crew: 0,
             planned_crew: 0,
+            max_workers: Some(crew),
+            staffing: Default::default(),
             target: LaborTarget::Hunt {
                 fauna_id: id.to_string(),
                 floor: AT_THE_FLOOR,

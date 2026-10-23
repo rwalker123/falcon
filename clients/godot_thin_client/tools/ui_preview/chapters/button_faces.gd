@@ -11,7 +11,7 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 16
+const EXPECTED_CHECKPOINTS := 5
 
 const Q := preload("res://tools/ui_preview/node_query.gd")
 
@@ -20,7 +20,7 @@ var h
 
 # ---- the TWO-LINE BUTTON FACE and its state colour (issue #383) ---------------------------------
 # A `Button` renders its own `text` in ONE font size, so a face that needs two sizes is built from
-# child `Label`s beside an empty-`text` Button (`HudWidgets._policy_rung_cell`, `_crew_target_pill`).
+# child `Label`s beside an empty-`text` Button (`HudWidgets._policy_rung_cell`).
 # Those Labels are independent nodes: `add_theme_color_override("font_color", …)` reaches a Button's
 # own `text` and NOTHING else, and Godot's automatic disabled-state fade works the same way — so a
 # state coloured through the theme alone moves the BOX and leaves both lines at full brightness, i.e.
@@ -61,12 +61,6 @@ const TWO_LINE_FACE_PROBE_VARIANT := "ghost"
 ## the sampler.
 const TWO_LINE_FACE_PROBE_METRIC := "→ 1.48 food"
 
-## The two crew counts the caller-half probe builds its pills from. They differ so the row renders BOTH
-## targets, and `workers` is set to the hold one so exactly one pill comes out SELECTED — which is what
-## makes "the two pills wear different answers" a real claim rather than a tautology.
-const TWO_LINE_FACE_PROBE_CLEAR_CREW := 2
-const TWO_LINE_FACE_PROBE_HOLD_CREW := 5
-
 ## The peak luminance an ENABLED line must reach for the dim comparison below it to mean anything.
 ## `HudStyle.INK` is ~0.93 and the second line at `POLICY_PICKER_METRIC_ALPHA` composites to ~0.70,
 ## while either button box sits at ~0.10 — so this bar fails on a line that rendered no glyphs at all
@@ -90,17 +84,6 @@ func _two_line_rung_face(disabled: bool) -> Control:
 	return HudWidgets._policy_rung_cell(btn,
 		HudFormat.floor_preset_face(SourceForecast.FLOOR_PRESET_PEAK),
 		TWO_LINE_FACE_PROBE_METRIC,
-		HudStyle.button_font_color(TWO_LINE_FACE_PROBE_VARIANT, disabled))
-
-## The pill twin of `_two_line_rung_face`. `apply_pill_button` writes a `disabled` stylebox and NO font
-## colours at all, so this control's disabled state is exactly the "the box fades and the face does
-## not" shape — which is why the pixel claim is asked of it rather than of the box.
-func _two_line_pill_face(disabled: bool) -> Control:
-	var btn := Button.new()
-	btn.disabled = disabled
-	HudStyle.apply_pill_button(btn)
-	return HudWidgets._crew_target_pill(btn, str(TWO_LINE_FACE_PROBE_HOLD_CREW),
-		HudComposeVocab.CREW_TARGET_HOLD_LABEL,
 		HudStyle.button_font_color(TWO_LINE_FACE_PROBE_VARIANT, disabled))
 
 ## Render ONE face alone on the probe canvas and read back the peak luminance inside each of its lines'
@@ -173,10 +156,8 @@ func _face_line_colours(root: Node) -> Array[Color]:
 		out.append(label.get_theme_color("font_color"))
 	return out
 
-## **THE GUARD.** Two halves, and they cover different seams: the CALLER (a shipped builder resolves
-## its tint through the shared table, and both lines wear that one answer) and the STATE (a face built
-## for a DISABLED button renders both lines dim, which is the half no live caller reaches today and so
-## the half nothing else can see).
+## **THE GUARD.** The STATE: a face built for a DISABLED button renders both lines dim, which is the half
+## no live caller reaches today and so the half nothing else can see.
 func run(harness) -> void:
 	h = harness
 
@@ -196,49 +177,11 @@ func run(harness) -> void:
 	host.set_anchors_preset(Control.PRESET_FULL_RECT)
 	probe.add_child(host)
 
-	# HALF 1 — THE CALLER, through the REAL public builder. `build_crew_targets` is the one shipped
-	# two-line hand-built face (the policy rung's metric line came off the picker with the numbers, so
-	# its second line is built but unused today). Both pills are asked for at once because the pair IS
-	# the claim: the selected one must wear the `primary` answer and the resting one the `ghost` answer,
-	# so a face that hard-coded either colour fails on the other.
-	var targets := HudWidgets.build_crew_targets({
-			"crew_to_clear": TWO_LINE_FACE_PROBE_CLEAR_CREW,
-			"crew_to_hold": TWO_LINE_FACE_PROBE_HOLD_CREW,
-		}, TWO_LINE_FACE_PROBE_HOLD_CREW,
-		func(_count: int) -> void: pass)
-	host.add_child(targets)
-	await h._settle(false)
-	for spec in [
-		[HudWidgets.CREW_TARGET_HOLD, "primary", "the target the crew is ON"],
-		[HudWidgets.CREW_TARGET_CLEAR, "ghost", "a target the crew is NOT on"],
-	]:
-		var what := String(spec[2])
-		var pill := Q.find_crew_target(targets, String(spec[0]))
-		var lines: Array[Color] = []
-		if pill != null:
-			# The face's Labels are siblings of the Button under the pill's CELL, not children of it.
-			lines = _face_line_colours(pill.get_parent())
-		h._assert_hud("%s renders a two-line face to colour" % what,
-			lines.size() == TWO_LINE_FACE_LINES)
-		if lines.size() != TWO_LINE_FACE_LINES:
-			continue
-		var want := HudStyle.button_font_color(String(spec[1]))
-		h._assert_hud("…and its LEAD line is the shared table's `%s` answer, not a colour of its own"
-				% String(spec[1]),
-			lines[0].is_equal_approx(want))
-		h._assert_hud("…and %s's second line is that SAME answer at the metric alpha — one tint, derived"
-				% what,
-			lines[1].is_equal_approx(
-				Color(want, want.a * HudWorkVocab.POLICY_PICKER_METRIC_ALPHA)))
-	host.remove_child(targets)
-	targets.queue_free()
-
-	# HALF 2 — THE STATE, measured on rendered pixels. Both builders are covered: the crew pill because
-	# it is live, the policy rung because its cell is the face the invariant was written for and a rung
-	# is one caller away from being disabled again.
+	# THE STATE, measured on rendered pixels. The policy rung's cell is the face the invariant was written
+	# for, and a rung is one caller away from being disabled again. (The crew-target pill it was written
+	# beside retired with the crew stepper, #871.)
 	for spec in [
 		["the policy picker's rung", Callable(self, "_two_line_rung_face")],
-		["a crew-target pill", Callable(self, "_two_line_pill_face")],
 	]:
 		var what := String(spec[0])
 		var make: Callable = spec[1]

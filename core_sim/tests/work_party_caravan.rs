@@ -165,6 +165,8 @@ fn spawn_band_camped_at(
                     party: None,
                     muster_crew: 0,
                     planned_crew: 0,
+                    max_workers: Some(CREW),
+                    staffing: Default::default(),
                     target,
                     workers: CREW,
                     kit,
@@ -1208,6 +1210,57 @@ fn published_material_yield(app: &App) -> f32 {
         .sum()
 }
 
+/// The load fields the extract row publishes, off the ENCODED buffer: `(loadUnits, packUnits,
+/// loadHomeIn)`.
+fn published_load(app: &App) -> (f32, f32, u32) {
+    use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
+    let snapshot = app
+        .world
+        .resource::<SnapshotHistory>()
+        .latest_entry()
+        .expect("a snapshot was captured")
+        .snapshot;
+    let bytes = sim_schema::encode_snapshot_flatbuffer(snapshot.as_ref());
+    let envelope =
+        fb::root_as_envelope(bytes.as_ref()).expect("the snapshot encodes to a valid envelope");
+    let row = envelope
+        .payload_as_snapshot()
+        .and_then(|snapshot| snapshot.population())
+        .and_then(|section| section.populations())
+        .expect("the population section carries the cohort list")
+        .iter()
+        .flat_map(|cohort| cohort.laborAssignments().into_iter().flatten())
+        .find(|assignment| assignment.kind().unwrap_or_default() == EXTRACT_KIND)
+        .expect("the extract row is on the wire");
+    (row.loadUnits(), row.packUnits(), row.loadHomeIn())
+}
+
+/// [`published_material_yield`] for `material`.
+fn published_material_yield_of(app: &App, material: &str) -> f32 {
+    use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
+    let snapshot = app
+        .world
+        .resource::<SnapshotHistory>()
+        .latest_entry()
+        .expect("a snapshot was captured")
+        .snapshot;
+    let bytes = sim_schema::encode_snapshot_flatbuffer(snapshot.as_ref());
+    let envelope =
+        fb::root_as_envelope(bytes.as_ref()).expect("the snapshot encodes to a valid envelope");
+    envelope
+        .payload_as_snapshot()
+        .and_then(|snapshot| snapshot.population())
+        .and_then(|section| section.populations())
+        .into_iter()
+        .flatten()
+        .flat_map(|cohort| cohort.laborAssignments().into_iter().flatten())
+        .filter(|assignment| assignment.kind().unwrap_or_default() == EXTRACT_KIND)
+        .flat_map(|row| row.materialYield().into_iter().flatten())
+        .filter(|payoff| payoff.materialId().unwrap_or_default() == material)
+        .map(|payoff| payoff.amount())
+        .sum()
+}
+
 /// The pack a party of this row carries, struck through the caravan's own pricing — the haul carry
 /// over the material's weight.
 fn priced_pack(app: &App, band: Entity, kit: &KitChoice) -> f32 {
@@ -1729,6 +1782,21 @@ fn a_far_workings_crew_curve_quotes_the_cut_the_turn_makes_at_the_source() {
 
 /// The work-party query for the fixture's far wood, asked at `kit`, over [`CREW`].
 fn ask_about_the_wood(app: &mut App, distance: u32, kit: &str) -> WorkPartyForecastReply {
+    // **The sim decides the crew** (#871): the sheet is asked about the crew the wood row has, which
+    // is the number the row's own rate was struck at.
+    let crew = app
+        .world
+        .query::<&LaborAllocation>()
+        .iter(&app.world)
+        .find_map(|allocation| {
+            allocation
+                .assignments
+                .iter()
+                .find(|row| matches!(row.target, LaborTarget::Extract { .. }))
+                .map(|row| row.workers)
+        })
+        .filter(|workers| *workers > 0)
+        .unwrap_or(CREW);
     let reply = core_sim::forecast_query::answer_forecast_query(
         &mut app.world,
         &QueryPayload::WorkPartyForecast(WorkPartyForecastQuery {
@@ -1740,7 +1808,7 @@ fn ask_about_the_wood(app: &mut App, distance: u32, kit: &str) -> WorkPartyForec
                 material: WOOD.to_string(),
             },
             kit_id: kit.to_string(),
-            workers: CREW,
+            workers: crew,
             floor: FLOOR,
         }),
     );
@@ -1832,6 +1900,8 @@ fn a_far_workings_rate_home_on_the_turn_it_completes_a_rung_is_the_querys() {
             party: None,
             muster_crew: 0,
             planned_crew: 0,
+            max_workers: Some(BUILDERS),
+            staffing: Default::default(),
             target: LaborTarget::Builders,
             workers: BUILDERS,
             kit: None,
@@ -1936,13 +2006,13 @@ fn cutting_a_far_crew_walks_the_dropped_hands_home() {
         "from the source, over the whole walk"
     );
     assert_eq!(workforce(&app).assignable(), CREW - (CREW - KEPT));
-    let assignable = workforce(&app).assignable();
-    let given = app
-        .world
-        .get_mut::<LaborAllocation>(band)
-        .expect("the band keeps its allocation")
-        .set_assignment(LaborTarget::Scout, CREW - KEPT, assignable, None);
-    assert_eq!(given, 0, "the walkers cannot be given to another row");
+    // The ceiling a player-set order clamps against excludes the walkers: only the hands still with
+    // the band (the sim-staffed hunt gives up its own) can be ordered elsewhere.
+    assert_eq!(
+        workforce(&app).assignable(),
+        KEPT,
+        "the walkers are not the band's to give"
+    );
     for turn in 1..=WALK {
         resolve_a_turn(&mut app);
         let now = published_homeward(&app);
@@ -2542,10 +2612,13 @@ fn rays_band() -> (App, Entity) {
             .get_mut::<LaborAllocation>(band)
             .expect("the band keeps its allocation");
         allocation.assignments[0].workers = RAY_ROW;
+        allocation.assignments[0].max_workers = Some(RAY_ROW);
         allocation.assignments.push(LaborAssignment {
             party: None,
             muster_crew: 0,
             planned_crew: 0,
+            max_workers: Some(RAY_ROW),
+            staffing: Default::default(),
             target: LaborTarget::Scout,
             workers: RAY_ROW,
             kit: None,
@@ -2668,8 +2741,8 @@ fn a_herd_back_inside_the_apron_does_not_count_its_walkers_twice() {
         None,
     );
     assert!(
-        workforce.benchable().min(1) == 1 && workforce.benchable() == RAY_IDLE,
-        "a bench crew of one is within what the bench clamps against: idle {}, benchable {}",
+        workforce.benchable().min(1) == 1 && workforce.benchable() == RAY_POOL - RAY_ROW,
+        "the sim-staffed hunt is benchable, the player-set Scout is not: idle {}, benchable {}",
         read.band_idle,
         workforce.benchable()
     );
@@ -2732,12 +2805,15 @@ fn a_re_entered_rows_take_is_priced_on_the_hands_present() {
     let control = |crew: u32| {
         let (mut control, band) = world_hunting_at(INSIDE_THE_APRON);
         *control.world.resource_mut::<HerdRegistry>() = herds_at_the_start.clone();
-        control
-            .world
-            .get_mut::<LaborAllocation>(band)
-            .expect("the control keeps its allocation")
-            .assignments[0]
-            .workers = crew;
+        {
+            let mut allocation = control
+                .world
+                .get_mut::<LaborAllocation>(band)
+                .expect("the control keeps its allocation");
+            allocation.assignments[0].workers = crew;
+            // **The crew is the sim's now** (#871): the control's Max is what pins it to `crew`.
+            allocation.assignments[0].max_workers = Some(crew);
+        }
         resolve_a_turn(&mut control);
         published_hunt_row(&control).actual_yield
     };
@@ -2984,4 +3060,244 @@ fn a_rejoining_hand_landing_on_a_re_posted_party_walks_back_out_the_whole_walk()
         }
     }
     assert!(saw_one_join, "liveness: a walker landed on a posted party");
+}
+
+// ---------------------------------------------------------------------------------------------
+// STONE — a slow dig is conserved: what leaves the seam is in the store or on its way
+// ---------------------------------------------------------------------------------------------
+
+const STONE: &str = "stone";
+/// Ground that holds a 900-unit stone deposit in the shipped `extraction.json`.
+const STONY: sim_schema::TerrainType = sim_schema::TerrainType::RollingHills;
+/// One hex past the apron — the live game's nearest stone seam.
+const JUST_PAST_THE_APRON: u32 = 3;
+/// Turns a one-hand dig runs for.
+const DIG_TURNS: usize = 40;
+
+/// ⛔ **A SLOW DIG IS CONSERVED, AND ITS FIRST LANDING WAITS FOR A FULL PACK** - one hand cutting
+/// stone at a seam one hex past the apron, on the sledding kit. Every unit that left the seam is
+/// in the band's store, in the party's load or on a porter's back, turn after turn; nothing lands
+/// (the row publishes no `materialYield`, the store holds no stone) until the load has filled one
+/// pack, because a porter leaves only with a full pack (`WorkParty::close_turn`) - and at a take of
+/// a unit a turn against a pack of `haul carry / weight` that is many turns of silence. This is the
+/// caravan's model working, not a loss: the stone is in the load, which the wire does not carry.
+#[test]
+fn a_slow_stone_dig_is_conserved_and_lands_only_when_a_pack_fills() {
+    let tile = UVec2::new(CAMP.x + JUST_PAST_THE_APRON, CAMP.y);
+    let mut app = build_test_app();
+    app.update();
+    let entity = app
+        .world
+        .resource::<TileRegistry>()
+        .index(tile.x, tile.y)
+        .expect("the seam's tile is on the map");
+    app.world
+        .get_mut::<core_sim::Tile>(entity)
+        .expect("a map tile carries terrain")
+        .terrain = STONY;
+    let kit = extract_kit("sledding");
+    let pack = {
+        let equipment = EquipmentConfig::builtin();
+        let labor = app.world.resource::<core_sim::LaborConfigHandle>().get();
+        let pricing = core_sim::work_party::CaravanPricing::resolve(
+            &equipment,
+            &kit,
+            1.0,
+            1.0,
+            core_sim::SourcePriority::default(),
+            &BandEquipment::start_stocked_for(&EquipmentConfig::for_a_stocked_fixture(), 1.0),
+            &[],
+            &labor,
+        );
+        let weight = app
+            .world
+            .resource::<core_sim::MaterialsConfigHandle>()
+            .get()
+            .material(STONE)
+            .expect("stone is a material")
+            .weight;
+        core_sim::work_party::material_pack(pricing.haul_carry, weight)
+    };
+    let band = spawn_camp_band(
+        &mut app,
+        LaborTarget::Extract {
+            tile,
+            material: STONE.to_string(),
+            floor: FLOOR,
+        },
+        Some(kit),
+    );
+    {
+        let mut allocation = app
+            .world
+            .get_mut::<LaborAllocation>(band)
+            .expect("the band keeps its allocation");
+        allocation.assignments[0].workers = 1;
+        allocation.assignments[0].max_workers = Some(1);
+    }
+    let stock_of = |app: &App| {
+        app.world
+            .resource::<core_sim::DepositRegistry>()
+            .source(tile, STONE)
+            .map_or(0.0, |working| working.stock)
+    };
+    let capacity = {
+        resolve_a_turn(&mut app);
+        stock_of(&app)
+    };
+    let mut first_landing = None;
+    let mut predicted_landing = None;
+    let mut last_load = 0.0_f32;
+    for turn in 0..DIG_TURNS {
+        resolve_a_turn(&mut app);
+        let held = app
+            .world
+            .get::<PopulationCohort>(band)
+            .expect("the band keeps its cohort")
+            .stores
+            .material_total(STONE)
+            .to_f32();
+        let party = extract_party(&app, band).expect("a seam past the apron posts a party");
+        let carried = party.load_cargo + party.on_the_road.iter().map(|w| w.cargo).sum::<f32>();
+        let removed = capacity - stock_of(&app);
+        assert!(
+            (removed - (held + carried)).abs() < 1e-2,
+            "turn {turn}: {removed} left the seam, {held} is home and {carried} is on the way"
+        );
+        if held > 0.0 && first_landing.is_none() {
+            first_landing = Some(turn);
+            assert!(
+                removed >= pack,
+                "the first landing waits for a full pack: {removed} dug against a pack of {pack}"
+            );
+        }
+        let (load_units, pack_units, load_home_in) = published_load(&app);
+        assert!(
+            (pack_units - pack).abs() < 1e-3,
+            "turn {turn}: the wire states the pack: {pack_units} vs {pack}"
+        );
+        if first_landing.is_none() {
+            assert_eq!(
+                published_material_yield_of(&app, STONE),
+                0.0,
+                "turn {turn}: nothing has landed, so the row publishes no yield"
+            );
+            assert!(
+                (load_units - party.load_cargo).abs() < 1e-3,
+                "turn {turn}: the wire states the load"
+            );
+            if turn > 0 && party.on_the_road.is_empty() {
+                assert!(
+                    load_units > last_load,
+                    "turn {turn}: the load climbs while the pack fills: {load_units} after {last_load}"
+                );
+            }
+            last_load = load_units;
+            assert!(
+                load_home_in > 0,
+                "turn {turn}: a filling pack is predicted to land"
+            );
+            let predicted = turn + load_home_in as usize;
+            assert_eq!(
+                *predicted_landing.get_or_insert(predicted),
+                predicted,
+                "turn {turn}: the countdown ticks down to one fixed landing turn"
+            );
+        }
+    }
+    assert_eq!(
+        predicted_landing, first_landing,
+        "the published countdown names the turn the stone actually lands"
+    );
+    assert!(
+        first_landing.is_some(),
+        "liveness: {DIG_TURNS} turns of digging fill a pack and land it"
+    );
+}
+
+// ---------------------------------------------------------------------------------------------
+// A STAFFING THAT SHRINKS A FAR PARTY NEVER COMMITS A HAND TWICE
+// ---------------------------------------------------------------------------------------------
+
+/// The near row's Max in the shrink scenario.
+const NEAR_ROW_MAX: u32 = 3;
+
+/// **A far party the staffing shrinks walks the hands it loses home, and those hands are not handed
+/// to the row that caused the cut.** A band of six works a far wood with all six; the player then
+/// adds a `High` near wood. Staffing shrinks the far party, the cut hands WALK HOME with their share
+/// of the load, and the near row waits for them: committed hands (rows, bench, walkers) never pass
+/// the people the band has, and next turn nothing is discarded as "lost".
+#[test]
+fn a_far_party_the_staffing_shrinks_walks_its_cut_hands_home_and_commits_no_hand_twice() {
+    let (mut app, band) = world_extracting_at(8, None);
+    // Staff the far row at the whole band.
+    resolve_a_turn(&mut app);
+    resolve_a_turn(&mut app);
+    let far_before = extract_party(&app, band)
+        .expect("a far working posts a party")
+        .workers;
+    assert_eq!(
+        far_before, CREW,
+        "precondition: the far party holds the whole band"
+    );
+
+    // The near, High-ranked wood the player adds.
+    let near_tile = UVec2::new(CAMP.x + INSIDE_THE_APRON, CAMP.y);
+    let entity = app
+        .world
+        .resource::<TileRegistry>()
+        .index(near_tile.x, near_tile.y)
+        .expect("the near tile is on the map");
+    app.world
+        .get_mut::<core_sim::Tile>(entity)
+        .expect("a map tile carries terrain")
+        .terrain = WOODED;
+    {
+        let mut allocation = app
+            .world
+            .get_mut::<LaborAllocation>(band)
+            .expect("the band keeps its allocation");
+        allocation.assignments.push(LaborAssignment {
+            party: None,
+            muster_crew: 0,
+            planned_crew: 0,
+            max_workers: Some(NEAR_ROW_MAX),
+            staffing: Default::default(),
+            target: LaborTarget::Extract {
+                tile: near_tile,
+                material: WOOD.to_string(),
+                floor: FLOOR,
+            },
+            workers: 0,
+            kit: None,
+            priority: SourcePriority::High,
+        });
+        // The far row is capped below the band so the staffing has to cut it.
+        allocation.assignments[0].max_workers = Some(CREW - NEAR_ROW_MAX);
+    }
+    core_sim::staffing::restaff_band(&mut app.world, band);
+
+    let committed = |app: &App| {
+        let allocation = app.world.get::<LaborAllocation>(band).unwrap();
+        allocation.assigned_total() + allocation.walking_home()
+    };
+    let allocation = app.world.get::<LaborAllocation>(band).unwrap();
+    assert!(
+        allocation.walking_home() > 0,
+        "liveness: the shrunk party's cut hands are walking home"
+    );
+    assert!(
+        committed(&app) <= CREW,
+        "{} hands committed (rows {} + walking {}) for {CREW} people",
+        committed(&app),
+        allocation.assigned_total(),
+        allocation.walking_home()
+    );
+    // Next turn nothing is discarded: the walkers are still accounted for.
+    resolve_a_turn(&mut app);
+    assert!(
+        committed(&app) <= CREW,
+        "after the turn: {} committed for {CREW}",
+        committed(&app)
+    );
 }

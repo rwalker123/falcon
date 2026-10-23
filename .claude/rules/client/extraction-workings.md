@@ -672,6 +672,25 @@ than three special cases) and its value is the crew curve's **`next_rung_take`**
 crew (issue #663) — see "THE CREW CURVE" below. It is absent while the curve is in flight, where the
 reply names no `next_rung` (the top of the branch), and where the row prices the next rung at `0`.
 
+### A stone sheet's stepper is the digger count, and it has no `No max`
+
+The sim works a seam that never renews (`HudDepositVocab.renews` false) with exactly its Max in heads,
+so a Max of 0 staffs nobody until stone's crew is a keep-on-hand target. On such a sheet the Max stepper
+is labelled `Diggers` (`HudWorkVocab.DIG_CREW_STEPPER_LABEL`), its floor is `HudDepositVocab.DIG_CREW_MIN`
+(one: `−` greys at 1), its upper bound is still the band's working-age people, and `_build_deposit_assign_controls`
+raises a seeded 0 to one on open. The Work tab's inspector Max stepper follows the same fork. A renewing wood sheet
+keeps `Max` and `No max`. `ui_preview` chapter `workings`, state `workings_dig_crew` / `workings_wood_max`.
+
+### The load waiting at a dig site
+
+A slow dig fills a whole pack before its first stone lands home, so the stone sits at the site. An extract
+row with a caravan (`pack_units > 0`) states it through `HudWorkVocab.dig_load_line`:
+`8 of 13 stone in the load · home in 6 turns`, drawn as a line of its own on the Work tab's workings row
+(`DIG_LOAD_LINE_META`, one party line of extra height) and under the readout on a worked deposit sheet.
+The load is floored and the pack rounded to whole units. `load_home_in` 0 (no landing within the sim's
+horizon) drops the `· home in N turns` clause, and so does a pack already on the road (`next_load_home_in > 0`),
+whose countdown is the party block's `Next load home in` line. A row with no caravan draws no line.
+
 ### ⛔ THE CREW CURVE — THE TAKE AND THE DEAL ARE THE SIM'S, AT THE STEPPER'S CREW
 
 Issue #663. The sheet asks `ForecastQuery.KIND_DEPOSIT_CREW_TAKE` (`QueryCommand.deposit_crew_take`,
@@ -761,13 +780,12 @@ not apply*) reads as `CUTTERS_UNCAPPED`. **There is no client quotient over the 
 `perWorkerBiomass` left anywhere**: `max_useful_cutters` is deleted, so a geared crew is measured
 against one ceiling on all three surfaces.
 
-⛔ **AND THE SHEET READS THE ROW'S FIGURE WHILE IT COMPOSES THAT ROW.** The curve's plateau and
-`useful_cutters` are the same rule but two evaluations, and they disagreed: a one-forester deadfall's
-Groundwork `+` greyed while the sheet on the same tile offered two. So where the sheet's floor and kit
-match the band's own `extract` row (`DrawerComposeController._composed_standing_row`), its cap is
-`published_useful_cutters` off that row; on any other composition the curve answers. The sheet's crew
-pool is the row's idle rule too — `source_crew_pool_extract` is `effective_idle` plus the effective
-crew here (`labor-ui.md` → "THE SHEET'S `+` AND THE ROW'S `+` READ ONE CEILING").
+⛔ **THE ROW'S `+` AND THE SHEET'S ARE RETIRED (#871).** A working's crew is the sim's (a read-only
+number and the keepers / kit / bare bar on the Groundwork row; the staffed snapshot row's `workers` on its
+sheet), so no control clamps a crew and `_composed_standing_row` and the row's `+` ceiling are gone. The
+sheet's forecast crew for a working the band does not yet cut is the curve's useful cutters
+(`curve_useful_cutters`) held to the pool and the player's Max; `source_crew_pool_extract` (`effective_idle`
+plus the crew already there) is that pool (`labor-ui.md` → "STAFFED SOURCES ON THE COMPOSE SHEETS").
 
 ⛔ **NEVER `workers_needed` FOR THE ROW'S `+`.** It was, for one release:
 `_workings_roster_max_useful` took `worked_crew_ceiling` (retired), which read `workers_needed`

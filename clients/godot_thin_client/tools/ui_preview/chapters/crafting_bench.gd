@@ -17,7 +17,7 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 336
+const EXPECTED_CHECKPOINTS := 340
 
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 
@@ -762,6 +762,7 @@ func _crafting_states() -> void:
 	await _material_shortage_state()
 	await _worked_forecast_state()
 	await _auto_craft_states()
+	await _staffed_hands_state()
 	await _kit_order_states()
 
 	# Hand everything back: the panel closed, the roster restored to the reference band.
@@ -4625,3 +4626,53 @@ func _kit_lines_from(control: Control) -> Array:
 	h._hud.bench_raise_kit_requested.disconnect(on_raise)
 	h._hud.bench_order_count_requested.disconnect(on_count)
 	return lines
+
+# ---- every hand on a sim-staffed row ---------------------------------------------------------------
+
+const STAFFED_HANDS_WORKING_AGE := 18
+const STAFFED_HANDS_CREWS: Array[int] = [10, 8]
+const STAFFED_HANDS_FAUNA: Array[String] = ["fx_herd_a", "fx_herd_b"]
+
+## **THE PLAYTEST: "0 idle of 18", every hand on a staffed row, and the crafters `+` dead.** The sim
+## staffs sources from what the player's own orders leave, so a staffed crew never blocks one: the
+## crew stepper's ceiling is `HudBandLaborState.orderable_hands`, not the idle count.
+func _staffed_hands_state() -> void:
+	var band := _crafting_band()
+	band["working_age"] = STAFFED_HANDS_WORKING_AGE
+	band["idle_workers"] = 0
+	var bench: Dictionary = _bench()
+	bench["workers"] = 0
+	band["bench"] = bench
+	var rows: Array = []
+	for index in range(STAFFED_HANDS_CREWS.size()):
+		rows.append({"kind": "hunt", "workers": STAFFED_HANDS_CREWS[index],
+			"fauna_id": STAFFED_HANDS_FAUNA[index]})
+	band["labor_assignments"] = rows
+	h._hud.update_band_alerts([band])
+	h._hud.open_crafting_panel(band)
+	await h._settle()
+	var labor: HudBandLaborState = h._hud._band_labor
+	h._assert_hud("crafting/staffed — every hand is on a staffed row, so idle is 0 (%d)"
+			% labor.effective_idle(band), labor.effective_idle(band) == 0)
+	h._assert_hud("crafting/staffed — …and the hands the player can still order are all of them (%d)"
+			% labor.benchable_workers(band),
+		labor.benchable_workers(band) == STAFFED_HANDS_WORKING_AGE)
+	var panel: CraftingPanel = h._hud.crafting_panel().panel()
+	var plus := _crew_plus(panel) if panel != null else null
+	h._assert_hud("crafting/staffed — the crafters `+` is enabled", plus != null and not plus.disabled)
+	var lines: Array = await _lines_from(plus) if plus != null else []
+	h._assert_hud("crafting/staffed — pressing it raises the crew (%s)" % str(lines),
+		lines.size() == 1 and String(lines[0]).begins_with("bench_crew"))
+	await h._save("crafting_bench_staffed_hands")
+
+func _crew_plus(node: Node) -> Button:
+	if node.has_meta(HudCraftingVocab.ORDER_DECREMENT_META) \
+			or node.has_meta(HudCraftingVocab.ORDER_INCREMENT_META):
+		return null
+	if node is Button and (node as Button).text == HudCraftingVocab.BENCH_CREW_INCREMENT:
+		return node as Button
+	for child in node.get_children():
+		var found := _crew_plus(child)
+		if found != null:
+			return found
+	return null

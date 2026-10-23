@@ -44,11 +44,10 @@ const LAST_PLANT_HOME := 1
 # The source this compose belongs to ("x,y"), so a per-snapshot re-render preserves the dialed count
 # but a NEW tile re-seeds it from that tile's standing staffing.
 var _forage_key: String = ""
-var _forage_count: int = 0
-# One-shot: set when the player CLICKS a forage FLOOR PRESET so the next rebuild auto-fills the worker
-# count to that floor's max-useful cap ("give me everything this patch sustains"). Cleared as soon as it is
-# consumed, never set by a −/+ tick, so manual counts survive the rebuild.
-var _forage_autofill := false
+var _forage_max: int = 0
+# **THE SOURCE'S PRIORITY AS COMPOSED** (#871): `high` | `normal` | `low`, seeded from the standing row's
+# own mark and committed with `work_priority` when it is not `normal`.
+var _forage_priority: String = HudWorkVocab.WORK_PRIORITY_NORMAL
 var _forage_floor: float = SourceForecast.DEFAULT_HARVEST_FLOOR
 # **THE SECOND AXIS** (issue #442) — the improvement this sheet renders the patch as building, or
 # `IMPROVEMENT_NONE` for "building nothing". Seeded from the standing assignment's own `improvement`
@@ -111,11 +110,9 @@ var _forage_seeded_band: int = NO_BAND_ENTITY
 # (`HudDepositVocab.renews`), and on a finite seam this member simply stays at its default and rides
 # the command as the sim's own.
 var _deposit_key: String = ""
-var _deposit_count: int = 0
+var _deposit_max: int = 0
+var _deposit_priority: String = HudWorkVocab.WORK_PRIORITY_NORMAL
 var _deposit_floor: float = SourceForecast.DEFAULT_HARVEST_FLOOR
-# The deposit twin of `_forage_autofill` — the same one-shot contract: picking a floor jumps the crew
-# to that floor's max-useful, and a `−`/`+` tick never does.
-var _deposit_autofill := false
 var _deposit_band: int = NO_BAND_ENTITY
 ## The band the composed count was last seeded from — `NO_BAND_ENTITY` until a first seed. The builder
 ## re-seeds when this disagrees with the band it has resolved, which is how switching the ACTOR
@@ -126,12 +123,11 @@ var _deposit_seeded_band: int = NO_BAND_ENTITY
 var _deposit_kit_id: String = KitRoster.NO_KIT_ID
 
 var _hunt_key: String = ""
-var _hunt_count: int = 0
+var _hunt_max: int = 0
+var _hunt_priority: String = HudWorkVocab.WORK_PRIORITY_NORMAL
 var _hunt_floor: float = SourceForecast.DEFAULT_HARVEST_FLOOR
 # The hunt twin of `_forage_improvement` — same contract, the animal ladder's verbs.
 var _hunt_improvement: String = ""
-# The hunt twin of `_forage_autofill` — same one-shot contract.
-var _hunt_autofill := false
 var _hunt_band: int = NO_BAND_ENTITY
 # The hunt twin of `_forage_seeded_band` — same contract.
 var _hunt_seeded_band: int = NO_BAND_ENTITY
@@ -164,8 +160,16 @@ var _party_kit_id: String = KitRoster.NO_KIT_ID
 func deposit_key() -> String:
 	return _deposit_key
 
-func deposit_count() -> int:
-	return _deposit_count
+func deposit_priority() -> String:
+	return _deposit_priority
+
+func set_deposit_priority(level: String) -> void:
+	_deposit_priority = HudWorkVocab.work_priority_of(level)
+
+## **THE PLAYER'S MAX ON THIS SOURCE** (#871): the most hands the sim may put on it, `0` = no Max. It is
+## never a crew - the sim strikes that from the floor.
+func deposit_max() -> int:
+	return _deposit_max
 
 ## Where this sheet's crew is being told to stop, as a fraction of the working's capacity. It is the
 ## CREW's own floor — the sim composes it with the rung's as a maximum
@@ -195,7 +199,7 @@ func begin_deposit_source(key: String, band_entity: int) -> void:
 ## about ONE band's standing row, which is why switching the actor re-seeds them exactly as switching
 ## the source does.
 func seed_deposit(count: int, floor: float) -> void:
-	_deposit_count = count
+	_deposit_max = count
 	_deposit_floor = SourceForecast.clamp_floor(floor)
 	_deposit_seeded_band = _deposit_band
 
@@ -207,8 +211,8 @@ func reset_deposit_source() -> void:
 func set_deposit_band(entity: int) -> void:
 	_deposit_band = entity
 
-func set_deposit_count(count: int) -> void:
-	_deposit_count = count
+func set_deposit_max(count: int) -> void:
+	_deposit_max = count
 
 ## The dial's value, clamped on the way in — the one entry point for every source of one (a preset
 ## button, a chart drag, a rehydrated seed), so an out-of-range value is a clamped dial rather than a
@@ -216,24 +220,23 @@ func set_deposit_count(count: int) -> void:
 func set_deposit_floor(floor: float) -> void:
 	_deposit_floor = SourceForecast.clamp_floor(floor)
 
-## Arm the one-shot: the NEXT render jumps the crew to the max-useful for the floor just picked.
-func arm_deposit_autofill() -> void:
-	_deposit_autofill = true
-
-func consume_deposit_autofill() -> bool:
-	var armed := _deposit_autofill
-	_deposit_autofill = false
-	return armed
-
 func set_deposit_kit_id(kit_id: String) -> void:
 	_deposit_kit_id = kit_id
 
 ## Clamp the composed crew to a freshly-resolved cap — the working's own max-useful, or the band's
-## hands, whichever binds. `clamp_forage_count`'s twin and for its reason: the cap moves when the seam
+## hands, whichever binds. `clamp_forage_max`'s twin and for its reason: the cap moves when the seam
 ## is drawn down or the picker names a smaller band, and a count above it would arm a `+` the sheet
 ## has already refused.
-func clamp_deposit_count(cap: int) -> void:
-	_deposit_count = clampi(_deposit_count, 0, maxi(cap, 0))
+func clamp_deposit_max(cap: int) -> void:
+	_deposit_max = clampi(_deposit_max, 0, maxi(cap, 0))
+
+## A dig crew has no `No max` state: raise the composed count to at least `minimum`, returning whether
+## it moved. See `HudDepositVocab.DIG_CREW_MIN` for why a never-renewing seam needs a count.
+func raise_deposit_max_to(minimum: int) -> bool:
+	if _deposit_max >= minimum:
+		return false
+	_deposit_max = minimum
+	return true
 
 # ---- The open sheet's subject identity -----------------------------------------------------------
 var _kind: String = KIND_NONE
@@ -252,8 +255,16 @@ func _init(default_floor: float) -> void:
 func forage_key() -> String:
 	return _forage_key
 
-func forage_count() -> int:
-	return _forage_count
+func forage_priority() -> String:
+	return _forage_priority
+
+func set_forage_priority(level: String) -> void:
+	_forage_priority = HudWorkVocab.work_priority_of(level)
+
+## **THE PLAYER'S MAX ON THIS SOURCE** (#871): the most hands the sim may put on it, `0` = no Max. It is
+## never a crew - the sim strikes that from the floor.
+func forage_max() -> int:
+	return _forage_max
 
 func forage_floor() -> float:
 	return _forage_floor
@@ -308,7 +319,7 @@ func begin_forage_source(key: String, band_entity: int) -> void:
 ## against the crew the newly-picked band really has on the tile.
 func seed_forage(count: int, floor: float, improvement: String, species: String = "",
 		take_species: PackedStringArray = PackedStringArray()) -> void:
-	_forage_count = count
+	_forage_max = count
 	_forage_floor = SourceForecast.clamp_floor(floor)
 	_forage_improvement = improvement
 	# **THE CROP SEEDS FROM THE ASSIGNMENT'S OWN `species`, which is the SELECTION.** It used to clear
@@ -345,8 +356,8 @@ func set_forage_band(entity: int) -> void:
 func set_forage_floor(floor: float) -> void:
 	_forage_floor = SourceForecast.clamp_floor(floor)
 
-func set_forage_count(count: int) -> void:
-	_forage_count = count
+func set_forage_max(count: int) -> void:
+	_forage_max = count
 
 func set_forage_species(species: String) -> void:
 	_forage_species = species
@@ -356,7 +367,7 @@ func set_forage_improvement(improvement: String) -> void:
 	_forage_improvement = improvement
 
 ## Tick or untick ONE plant of the take selection — the chip row's whole mutation, and a
-## read-modify-write, so it lives here for `clamp_forage_count`'s reason. Answers whether the toggle
+## read-modify-write, so it lives here for `clamp_forage_max`'s reason. Answers whether the toggle
 ## LANDED, so a caller can tell a refusal from an ordinary edit without re-reading the set.
 ##
 ## **A CHIP IS A PLAIN TOGGLE ON THE THING THE PLAYER CLICKED, AND THE IMPLICIT-ALL IS WHAT MADE THAT
@@ -418,20 +429,10 @@ func _sorted_species(species: PackedStringArray) -> PackedStringArray:
 	unique.sort()
 	return unique
 
-## Arm the auto-fill one-shot (a floor CLICK, never a stepper tick).
-func arm_forage_autofill() -> void:
-	_forage_autofill = true
-
-## Consume the auto-fill one-shot: true exactly once per arming, disarming it as it answers.
-func consume_forage_autofill() -> bool:
-	var armed := _forage_autofill
-	_forage_autofill = false
-	return armed
-
 ## Clamp the dialed count into the current cap. A read-modify-write, so it lives here rather than
 ## being spelled out at the call site where the field could be read and written apart.
-func clamp_forage_count(cap: int) -> void:
-	_forage_count = clampi(_forage_count, 0, cap)
+func clamp_forage_max(cap: int) -> void:
+	_forage_max = clampi(_forage_max, 0, cap)
 
 ## Re-resolve the composed crop through `resolver`, which takes the CURRENT selection and answers the
 ## still-legal one (a rung switch changes which plants it can take). The read-modify-write is
@@ -457,8 +458,16 @@ func resolve_forage_species(resolver: Callable) -> void:
 func hunt_key() -> String:
 	return _hunt_key
 
-func hunt_count() -> int:
-	return _hunt_count
+func hunt_priority() -> String:
+	return _hunt_priority
+
+func set_hunt_priority(level: String) -> void:
+	_hunt_priority = HudWorkVocab.work_priority_of(level)
+
+## **THE PLAYER'S MAX ON THIS SOURCE** (#871): the most hands the sim may put on it, `0` = no Max. It is
+## never a crew - the sim strikes that from the floor.
+func hunt_max() -> int:
+	return _hunt_max
 
 ## PUBLIC beyond the herd drawer: `_herd_crew_noun` and the improvement control's deal (which prices
 ## its dip against the held STANCE — issue #442) read it from outside the
@@ -504,7 +513,7 @@ func reset_hunt_kit() -> void:
 ## herd — the hunt twin of `seed_forage`, including the seeded-band record.
 func seed_hunt(count: int, floor: float, improvement: String, move_with_herd: bool = false) -> void:
 	_hunt_move_with_herd = move_with_herd
-	_hunt_count = count
+	_hunt_max = count
 	_hunt_floor = SourceForecast.clamp_floor(floor)
 	_hunt_improvement = improvement
 	_hunt_seeded_band = _hunt_band
@@ -523,20 +532,12 @@ func set_hunt_floor(floor: float) -> void:
 func set_hunt_improvement(improvement: String) -> void:
 	_hunt_improvement = improvement
 
-func set_hunt_count(count: int) -> void:
-	_hunt_count = count
+func set_hunt_max(count: int) -> void:
+	_hunt_max = count
 
-func arm_hunt_autofill() -> void:
-	_hunt_autofill = true
-
-func consume_hunt_autofill() -> bool:
-	var armed := _hunt_autofill
-	_hunt_autofill = false
-	return armed
-
-## The hunt twin of `clamp_forage_count` — the same read-modify-write, kept off the call site.
-func clamp_hunt_count(cap: int) -> void:
-	_hunt_count = clampi(_hunt_count, 0, cap)
+## The hunt twin of `clamp_forage_max` — the same read-modify-write, kept off the call site.
+func clamp_hunt_max(cap: int) -> void:
+	_hunt_max = clampi(_hunt_max, 0, cap)
 
 # ---- The Deny sheet's PREY -------------------------------------------------------------------------
 

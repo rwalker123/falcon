@@ -24,6 +24,7 @@
 //! test states its own precondition before it asserts anything.
 
 use bevy::app::App;
+use bevy::ecs::system::RunSystemOnce;
 use bevy::math::UVec2;
 use bevy::prelude::Entity;
 use core_sim::shipped;
@@ -177,6 +178,8 @@ fn world_hunting_at(
                 party: None,
                 muster_crew: 0,
                 planned_crew: 0,
+                max_workers: Some(CREW_ON_THE_ROW),
+                staffing: Default::default(),
                 target: LaborTarget::Hunt {
                     fauna_id: HERD_ID.to_string(),
                     floor,
@@ -528,6 +531,7 @@ fn the_cap_differs_from_the_fightless_quotient_on_a_fight_bound_quarry() {
         per_worker,
         fauna.engage_rate_for(&herd.species),
         stay,
+        core_sim::FightRate::NoFight,
     );
     assert_ne!(
         published, fightless,
@@ -1530,6 +1534,20 @@ fn a_pens_quote_is_its_payout_at_every_keeper_count() {
             .hold_wariness_at_zero();
         let band = the_band(&mut app);
         staff_the_row(&mut app, band, keepers);
+        // **The keepers the sim staffs** (#871): the count the sweep names is the row's Max, and the
+        // quote is struck at the hands the staffing settles on - the crew the turn then pays.
+        app.world
+            .get_mut::<LaborAllocation>(band)
+            .expect("the fixture band carries its allocation")
+            .assignments[0]
+            .max_workers = Some(keepers);
+        core_sim::staffing::restaff_band(&mut app.world, band);
+        let keepers = app
+            .world
+            .get::<LaborAllocation>(band)
+            .expect("the fixture band carries its allocation")
+            .assignments[0]
+            .workers;
 
         // **Which arm binds, composed from the take's own terms** — the whole bodies the floor
         // leaves sparable against the whole bodies the crew's load seats.
@@ -1570,9 +1588,13 @@ fn a_pens_quote_is_its_payout_at_every_keeper_count() {
              {carry_animals})"
         );
     }
+    // **Only the carry bound is reachable since the sim staffs the pen** (#871): it adds keepers while
+    // another hand still takes something, and stops at the crew the carry seats - the room is never
+    // the first term to bind a staffed pen, so a sweep demanding the room-bound arm would be
+    // demanding a crew the staffing never settles on.
     assert!(
-        saw_room_bound && saw_carry_bound,
-        "the sweep must exercise both of the bounds the pen already had: room-bound={saw_room_bound} \
+        saw_carry_bound,
+        "the sweep must exercise the carry bound: room-bound={saw_room_bound} \
          carry-bound={saw_carry_bound}"
     );
 }
@@ -2014,10 +2036,13 @@ fn a_penned_rows_workers_needed_is_its_handling_crew_and_never_a_haul_count() {
             .run_system_once(core_sim::advance_labor_allocation);
         recapture_snapshot_in_place(&mut app.world);
         let published = published_workers_needed(&app);
-        assert_eq!(
-            published, seeded,
-            "the seeded row and the resolved row are two producers of ONE number: seed {seeded}, \
-             wire {published}"
+        // The seed prices NEXT turn's room (the herd regrown once more) and this single pass takes
+        // the herd as it stands, so on a rate the two differ by at most the hand one turn's regrowth
+        // adds. The whole-animal sizing hid that behind a `+ 1` body.
+        assert!(
+            published.abs_diff(seeded) <= THE_PEAK_DROPS_EXTRA_BODY,
+            "the seeded row and the resolved row are two producers of ONE number, one turn's \
+             regrowth apart: seed {seeded}, wire {published}"
         );
 
         answers.push((carry, seeded, plateau));
@@ -2132,9 +2157,24 @@ fn a_band_short_of_spears_is_capped_at_the_hunters_it_armed() {
 fn a_band_stocked_for_the_pool_arms_every_hand() {
     let mut app = world_hunting(AUROCHS, stocked());
     let reply = crew_take_reply(&mut app, default_hunt_kit());
-    assert_eq!(
-        reply.armed_crew, POOL,
-        "every hand in a {POOL}-hand pool is holding a spear, so the count is the crew asked about"
+    let curve: Vec<(u32, f32)> = reply
+        .per_crew
+        .iter()
+        .map(|row| (row.workers, row.animals_likely))
+        .collect();
+    let plateau = plateau_of(&curve);
+    assert!(
+        plateau > NO_USEFUL_CREW,
+        "PRECONDITION: the herd has room for somebody, or the comparison below is empty"
+    );
+    // The armed count is the hands the row CLAIMS a spear for, and a row claims only the hands that
+    // would take something (`hunt_useful_take_hands`), so it is the useful crew when that is under
+    // the pool - never fewer than the hands the curve says are worth having.
+    assert!(
+        reply.armed_crew >= plateau,
+        "every useful hand ({plateau}) holds a spear in a {POOL}-hand pool stocked for all of it: \
+         {} armed",
+        reply.armed_crew
     );
     assert_eq!(reply.weapon_item_id, SPEARS);
 }
@@ -2221,5 +2261,179 @@ fn a_pen_arms_every_hand_because_a_slaughter_has_no_gate() {
         NO_USEFUL_CREW,
         "…and the SAME bare hands on the SAME aurochs OUT ON THE RANGE arm nobody — `attack 1` \
          against `defense 6` lands exactly nothing, at any head count"
+    );
+}
+
+// =============================================================================================
+// THE STAFFED CREW IS SIZED ON A RATE, NOT ON A WHOLE ANIMAL IN ONE TURN
+// =============================================================================================
+
+/// The live case that exposed it: a Wild Aurochs herd at 41% of its carrying capacity, on a 0.38
+/// floor, a stalking band fielding the `big_game` kit.
+const LIVE_STOCK: f32 = 745.7;
+const LIVE_CAPACITY: f32 = 1810.0;
+const LIVE_FLOOR: f32 = 0.38;
+/// The crew the staffing named for that row when it sized a WHOLE animal down in one turn.
+const WHOLE_ANIMAL_CREW: u32 = 11;
+/// Turns the drive runs for.
+const DRIVE_TURNS: usize = 20;
+
+/// The crews off the ENCODED hunt row.
+struct HuntCrews {
+    hold: u32,
+    reach: u32,
+    useful: u32,
+    needed: u32,
+    plateau: u32,
+    workers: u32,
+    food: f32,
+}
+
+fn published_hunt_crews(app: &App) -> HuntCrews {
+    use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
+
+    let snapshot = app
+        .world
+        .resource::<SnapshotHistory>()
+        .latest_entry()
+        .expect("a snapshot was captured")
+        .snapshot;
+    let bytes = sim_schema::encode_snapshot_flatbuffer(snapshot.as_ref());
+    let envelope =
+        fb::root_as_envelope(bytes.as_ref()).expect("the snapshot encodes to a valid envelope");
+    let row = envelope
+        .payload_as_snapshot()
+        .and_then(|snapshot| snapshot.population())
+        .and_then(|section| section.populations())
+        .expect("the population section carries the cohort list")
+        .iter()
+        .flat_map(|cohort| cohort.laborAssignments().into_iter().flatten())
+        .find(|assignment| assignment.kind().unwrap_or_default() == "hunt")
+        .expect("the fixture band's hunt row is on the wire");
+    HuntCrews {
+        hold: row.holdCrew(),
+        reach: row.reachCrew(),
+        useful: row.usefulCrew(),
+        needed: row.workersNeeded(),
+        plateau: row.huntUsefulWorkers(),
+        workers: row.workers(),
+        food: row.actualYield(),
+    }
+}
+
+/// **A HUNT ROW'S STAFFED CREW IS THE CREW THE TAKE NEEDS, NOT THE CREW THAT FELLS A WHOLE ANIMAL IN
+/// ONE TURN.** The fight banks across turns and the reach is fractional, so a herd whose regrowth is
+/// a third of an animal a turn wants the hands that average a third of an animal a turn. The live
+/// row named eleven; the staffing, `workersNeeded` and the curve's plateau answer one question.
+#[test]
+fn a_herds_regrowth_staffs_the_hands_that_average_it_not_a_whole_animal_a_turn() {
+    let mut app = world_hunting_at(AUROCHS, stocked(), LIVE_STOCK, LIVE_CAPACITY, LIVE_FLOOR);
+    let band = app
+        .world
+        .query::<(Entity, &BandId)>()
+        .iter(&app.world)
+        .find(|(_, id)| id.0 == BAND)
+        .map(|(entity, _)| entity)
+        .expect("the fixture band is spawned");
+    {
+        let mut allocation = app
+            .world
+            .get_mut::<LaborAllocation>(band)
+            .expect("the band keeps its allocation");
+        allocation.assignments[0].max_workers = None;
+        allocation.assignments[0].workers = 0;
+    }
+    core_sim::staffing::restaff_band(&mut app.world, band);
+    recapture_snapshot_in_place(&mut app.world);
+
+    let crews = published_hunt_crews(&app);
+    assert!(
+        crews.hold > 0 && crews.workers > 0,
+        "liveness: the herd has room and the band has hands, so somebody is staffed"
+    );
+    assert!(
+        crews.hold < WHOLE_ANIMAL_CREW && crews.useful < WHOLE_ANIMAL_CREW,
+        "the hold ({}) and useful ({}) crews are a rate's worth of hands, well under the \
+         {WHOLE_ANIMAL_CREW} a whole animal in one turn asked for",
+        crews.hold,
+        crews.useful
+    );
+    assert!(
+        crews.hold <= crews.reach && crews.reach <= crews.useful,
+        "{} <= {} <= {}",
+        crews.hold,
+        crews.reach,
+        crews.useful
+    );
+    assert_eq!(
+        crews.useful, crews.plateau,
+        "…and the curve's plateau is the crew past which the take stops rising"
+    );
+
+    // Drive the real turn path with the staffed crew: it must hold the herd at its floor.
+    let floor_stock = LIVE_FLOOR * LIVE_CAPACITY;
+    let body = app
+        .world
+        .resource::<HerdRegistry>()
+        .find(HERD_ID)
+        .expect("the fixture herd is in the registry")
+        .body_mass;
+    let mut food = 0.0_f32;
+    let mut regrown = 0.0_f32;
+    let mut taken = 0.0_f32;
+    let mut lowest = f32::MAX;
+    let mut highest = f32::MIN;
+    let stock_of = |app: &App| {
+        app.world
+            .resource::<HerdRegistry>()
+            .find(HERD_ID)
+            .expect("the herd stays")
+            .biomass
+    };
+    for _ in 0..DRIVE_TURNS {
+        // A turn in stage order: Logistics regrows the herd, then Population staffs and takes.
+        let before = stock_of(&app);
+        {
+            let fauna = app.world.resource::<FaunaConfigHandle>().get();
+            let mut registry = app.world.resource_mut::<HerdRegistry>();
+            for herd in registry.herds.iter_mut() {
+                core_sim::regrow_biomass(herd, &fauna);
+            }
+        }
+        let regrew_to = stock_of(&app);
+        app.world
+            .run_system_once(core_sim::advance_labor_allocation);
+        recapture_snapshot_in_place(&mut app.world);
+        let row = published_hunt_crews(&app);
+        assert_eq!(
+            row.useful, row.needed,
+            "the staffing's useful crew and the row's workersNeeded are one function of one room"
+        );
+        assert!(
+            row.hold <= row.useful && row.hold < WHOLE_ANIMAL_CREW,
+            "the hold crew ({}) is a rate's worth of hands every turn",
+            row.hold
+        );
+        food += row.food;
+        let stock = stock_of(&app);
+        regrown += regrew_to - before;
+        taken += regrew_to - stock;
+        lowest = lowest.min(stock);
+        highest = highest.max(stock);
+    }
+    assert!(food > 0.0, "liveness: the crew brought animals down");
+    assert!(
+        (taken - regrown).abs() <= 2.0 * body,
+        "the crew takes what the herd regrows, to within a couple of animals over {DRIVE_TURNS} \
+         turns (the model's lumpiness): took {taken}, regrew {regrown}"
+    );
+    assert!(
+        lowest >= floor_stock - body,
+        "the herd never falls more than one animal under its floor: {lowest} vs {floor_stock}"
+    );
+    assert!(
+        highest <= floor_stock + 2.0 * body,
+        "the staffed crew keeps up with the regrowth - the herd does not pile up above its floor: \
+         {highest} vs {floor_stock}"
     );
 }

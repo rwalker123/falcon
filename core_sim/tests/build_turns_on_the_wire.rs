@@ -167,6 +167,9 @@ fn staff_the_keeping(app: &mut App, source: UVec2, keepers: u32) {
             })
             .expect("the fixture's band holds the source patch");
         row.workers += keepers;
+        // **The Max is what the sim staffs up to** (#871): hands put on a row by editing `workers`
+        // alone are zeroed and restaffed from the cap at the next turn.
+        row.max_workers = Some(row.max_workers.unwrap_or(0) + keepers);
         headroom
     };
     let mut cohort = app
@@ -448,6 +451,8 @@ fn spawn_the_holding_band(
                     party: None,
                     muster_crew: 0,
                     planned_crew: 0,
+                    max_workers: Some(gatherers),
+                    staffing: Default::default(),
                     target: LaborTarget::Forage {
                         tile: source,
                         floor: DEFAULT_ESCAPEMENT_FLOOR,
@@ -466,6 +471,8 @@ fn spawn_the_holding_band(
                     party: None,
                     muster_crew: 0,
                     planned_crew: 0,
+                    max_workers: Some(builders),
+                    staffing: Default::default(),
                     target: LaborTarget::Builders,
                     workers: builders,
                     kit: None,

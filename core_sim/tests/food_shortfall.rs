@@ -95,6 +95,8 @@ fn eat_and_publish(larder_in_meals: f32) -> Published {
         party: None,
         muster_crew: 0,
         planned_crew: 0,
+        max_workers: Some(0),
+        staffing: Default::default(),
         target: LaborTarget::Scout,
         workers: 0,
         kit: None,

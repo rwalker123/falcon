@@ -3009,35 +3009,43 @@ FORAGE row, whose site crew (`KIT_BASKET_SHORT_NEEDED` = 2) is one short of its 
 asserts the kit note is non-empty, or the claim would pass on a row that lost it. Measured: exit 0,
 1500 `PASS`.
 
-## The crew split on the Work-tab rows (`_render_work_crew_split_states`)
+## The crew bar on the Work-tab rows (`_render_work_crew_split_states`)
 
-Two frames and eighteen claims, run after the work-party states:
-`band_panel_work_crew_split` and `band_panel_work_crew_split_big`. The behaviour is
-`band-city-panel.md` → "THE CREW SPLIT".
+Three frames, run after the work-party states: `band_panel_work_crew_split`,
+`band_panel_work_max_chip` and `band_panel_work_crew_split_big`. The behaviour is
+`band-city-panel.md` → "STAFFED WORK ROWS".
 
-- **One board holds every case**: a patch whose keeping took 3.2 of 5 hands (the fourth mark
-  part-shaded, the hover `About 3 of 5 …`), a patch all three of whose hands tend (`All 3 are tending
-  the patch — nobody is free to harvest.`), a wild patch with no bill (no marks, the control), and a
-  wood working whose keeping took 0.6 of 2 cutters (the verb `cut`). The hunt web's words are asked of
-  the producer.
-- **Each site's `upkeep_hands` is the sum of two bands' keeping.** A second band
-  (`CREW_SPLIT_OTHER_BAND_ENTITY`) adds its share on top. A row that read the site figure would land on
-  a number the claims name.
+- **One board holds every case**: a mixed crew (3 keeping it up, 1 with the kit, 1 bare, one hand holding
+  the floor: `3 keep it up · 1 with basket · 1 bare-handed — 1 hold it at the floor, 1 more draw it down to
+  it`), a crew all keeping (`3 keep it up`), a wild patch whose bar has no keepers, and a wood working
+  (`1 keep it up · 1 with sled`). The producer's words are asked for a hunt crew (`4 with spears — 2 hold it
+  at the floor, 2 more draw it down to it`) and an empty one (`Nobody here this turn`).
+- **The rows carry the wire's staffed fields** (`_crew_split_row_fields`: `keepers_staffed` /
+  `kitted_staffed` / `bare_staffed` summing to `workers`, `hold_crew`, a `kit_toe` line), and the item
+  names come from `set_item_display_names`. A second band
+  (`CREW_SPLIT_OTHER_BAND_ENTITY`) works the mid patch with its own split.
 - The claims:
-  - marks count the crew, and the share is the ROW's own `keep_hands`;
-  - the hovers, by equality;
-  - the marks take keyboard focus, and a focus floats the same sentence;
-  - the marks sit inside their row;
-  - the second band, jumped to on the same patch, draws its own crew, keeping and sentence.
-- **The big crew** (48 hands, 12 tending) shrinks the squares to their floor and counts the rest
-  (`+31` in the frame), and the marks stay inside their row.
+  - the bar counts the row's crew and its three segments are the ROW's own counts;
+  - the hover, by equality, with the kit's on-screen name and the hold clause;
+  - the bar takes keyboard focus and a focus floats the same sentence, and sits inside its row;
+  - the row's crew is a read-only number and the board draws no `+` on a staffed row;
+  - the second band, jumped to on the same patch, draws its own crew and split.
+- **The Max chip** (`band_panel_work_max_chip`): the mid row capped at `CREW_SPLIT_MAX_CHIP_VALUE` states
+  `Max 3` as a label on the pill line; the uncapped row beside it draws none.
+- **The big crew** (48 hands, 12 keeping, 20 kitted) shrinks the squares to their floor and counts the rest,
+  and the bar stays inside its row.
+- **The inspector** (`_assert_work_inspector_max_and_stop`, run with `band_panel_inspector`): the card
+  draws the Max stepper reading `No max`, and `Unassign` emits one stop request that
+  `Main.format_stop_labor` renders as `stop_labor <faction> <band> …`, never `assign_labor`. The reservation
+  term is `WORK_INSPECTOR_MAX_SECTION_HEIGHT`, summed in `_assert_sections_are_drawn_and_cost_the_sum`.
+- **The rest of the board follows**: a staffed row at crew zero stays on the board
+  (`_assert_an_uncrewed_queued_source_still_draws`), the pool rows' crew control (a `+`, or the Roadwork
+  pool's number) sits in the site rows' column, no Groundwork row carries a stepper, and a pending
+  edit's Max restates through `_emit_work_assign` (`RESTATE_STANDING_COUNT`).
+- **`command_guard`** drives the six `stop_labor` forms (the band improvement's `branch=<id>` is the sixth) through the real server parser
+  (`_drive_stop_labor`).
 
-**Sabotage-verified in one run, three disjoint mutations**: the row reading the bill instead of the
-hands fails five claims; marks drawn with no bill fails the wild-row claim; no truncation fails the
-overflow claim. A later run tried a fourth: the row reading the site's `upkeep_hands` fails five
-claims, both two-band claims among them.
-
-**A clean run is 1518 `PASS`, exit 0.**
+**A clean run is exit 0, "run complete — no failures".**
 
 ## The migration-mode rows on the Work tab (`_follow_row_states`, `docs/plan_roaming_bands.md`, #797)
 

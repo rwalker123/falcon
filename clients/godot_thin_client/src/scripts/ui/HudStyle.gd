@@ -97,18 +97,23 @@ static var VOICE_PIGMENT := Color(0.784, 0.612, 0.400, 1.0)   # #c89c66  earth p
 # the SIGNAL cyan (which means "targeting" everywhere else) nor as a greyed-out/disabled control.
 static var VOICE_INK     := Color(0.510, 0.635, 0.706, 1.0)   # #82a2b4  cool ink, a written record
 
-# ---- The crew split: who on a row is tending and who is taking ---------------
-# DERIVED from two authored tokens, so each palette gets them without a fifth entry: the tending
-# share is the earth pigment muted down (work holding the ground, quiet), the takers are the healthy
-# green lifted (the people bringing something home). Neither is a warning ink — this is information.
+# ---- The crew bar: keepers, hands with a kit, bare hands ----------------------
+# DERIVED from two authored tokens, so each palette gets them without a fifth entry: the keepers are
+# the earth pigment muted down (work holding the ground, quiet), the kitted hands are the healthy
+# green lifted (the people bringing the most home), the bare hands the same green muted down. None is
+# a warning ink — this is information.
 const CREW_TEND_DARKEN := 0.4
 const CREW_TEND_LINE_DARKEN := 0.22
-const CREW_TAKE_LIGHTEN := 0.15
-const CREW_TAKE_LINE_LIGHTEN := 0.45
+const CREW_KITTED_LIGHTEN := 0.15
+const CREW_KITTED_LINE_LIGHTEN := 0.45
+const CREW_BARE_DARKEN := 0.3
+const CREW_BARE_LINE_DARKEN := 0.1
 static var CREW_TEND := VOICE_PIGMENT.darkened(CREW_TEND_DARKEN)
 static var CREW_TEND_LINE := VOICE_PIGMENT.darkened(CREW_TEND_LINE_DARKEN)
-static var CREW_TAKE := HEALTHY.lightened(CREW_TAKE_LIGHTEN)
-static var CREW_TAKE_LINE := HEALTHY.lightened(CREW_TAKE_LINE_LIGHTEN)
+static var CREW_KITTED := HEALTHY.lightened(CREW_KITTED_LIGHTEN)
+static var CREW_KITTED_LINE := HEALTHY.lightened(CREW_KITTED_LINE_LIGHTEN)
+static var CREW_BARE := HEALTHY.darkened(CREW_BARE_DARKEN)
+static var CREW_BARE_LINE := HEALTHY.darkened(CREW_BARE_LINE_DARKEN)
 
 # Hex strings for BBCode-based labels (RichTextLabel headers, command feed). DERIVED from the
 # colours above by `apply_palette` — never edit one of these to change a tint.
@@ -168,8 +173,10 @@ static func apply_palette(p: Dictionary) -> void:
 	SIGNAL_WASH = Color(SIGNAL, SIGNAL_WASH_OPACITY)
 	CREW_TEND = VOICE_PIGMENT.darkened(CREW_TEND_DARKEN)
 	CREW_TEND_LINE = VOICE_PIGMENT.darkened(CREW_TEND_LINE_DARKEN)
-	CREW_TAKE = HEALTHY.lightened(CREW_TAKE_LIGHTEN)
-	CREW_TAKE_LINE = HEALTHY.lightened(CREW_TAKE_LINE_LIGHTEN)
+	CREW_KITTED = HEALTHY.lightened(CREW_KITTED_LIGHTEN)
+	CREW_KITTED_LINE = HEALTHY.lightened(CREW_KITTED_LINE_LIGHTEN)
+	CREW_BARE = HEALTHY.darkened(CREW_BARE_DARKEN)
+	CREW_BARE_LINE = HEALTHY.darkened(CREW_BARE_LINE_DARKEN)
 	SIGNAL_HEX = SIGNAL.to_html(false)
 	WARN_HEX = WARN.to_html(false)
 	DANGER_HEX = DANGER.to_html(false)

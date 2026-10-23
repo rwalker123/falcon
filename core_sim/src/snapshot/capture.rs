@@ -58,6 +58,8 @@ pub struct SnapshotContext<'w> {
     pub active_profile: Option<Res<'w, crate::start_profile::ActiveStartProfile>>,
     /// The opening outfitting window's live state. `Option` for the same reason.
     pub starting_loadout: Option<Res<'w, crate::starting_loadout::StartingLoadout>>,
+    /// The kit each open outfitting window's work wants. `Option` for the same reason.
+    pub work_kit_wants: Option<Res<'w, crate::staffing::WorkKitWants>>,
     /// Each people's Open Borders setting — published as the viewer's own row only. `Option` for the
     /// same reason as the two above.
     pub border_policies: Option<Res<'w, crate::resources::FactionBorderPolicies>>,
@@ -2773,6 +2775,7 @@ pub fn capture_snapshot(
         start_profiles,
         active_profile,
         starting_loadout,
+        work_kit_wants,
         border_policies,
         treaties,
         pending_dealings,
@@ -3266,6 +3269,7 @@ pub fn capture_snapshot(
             .map(|windows| {
                 crate::snapshot::population::band_loadout_windows(
                     windows,
+                    work_kit_wants.as_deref(),
                     &equipment_config,
                     &viewer_carry,
                     populations.iter().filter_map(
@@ -4590,6 +4594,7 @@ pub fn publish_baseline_snapshot(world: &mut World) {
     // `history.update` and `history.refresh_latest`, and a leaked `true` from an earlier path would
     // reproduce the exact defect this function exists to remove.
     world.resource_mut::<SnapshotCaptureMode>().refresh_in_place = false;
+    crate::staffing::refresh_work_kit_wants(world);
     world.run_system_once(capture_snapshot);
 }
 
@@ -4615,6 +4620,7 @@ pub fn recapture_snapshot_in_place(world: &mut World) {
         return;
     }
     world.resource_mut::<SnapshotCaptureMode>().refresh_in_place = true;
+    crate::staffing::refresh_work_kit_wants(world);
     world.run_system_once(capture_snapshot);
     world.resource_mut::<SnapshotCaptureMode>().refresh_in_place = false;
 }

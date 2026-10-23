@@ -58,6 +58,13 @@ wayfinding gear before bare-handed ones. A band always feeds itself before it sc
 band keeps its watch before it draws its sources down further. When people are short, the range comes
 up short and the Scouting range card says so.
 
+**Within a priority, sources take turns, nearest first.** Each pass deals one worker at a time to
+every source in the priority group that still wants one, in order of distance from camp (ties keep
+the order they were added), until the group is full or the people run out; only then does the next
+priority get that pass. Two equal sources split the band evenly, and an odd worker goes to the nearer
+one. Distance never drops a source: the player asked for it, so a far source is dealt every round,
+just after the nearer ones. Each source's Max and each pass's crew still bound what it gets.
+
 **Kitted first, across priorities.** A lower-priority source worked with gear is preferred to a
 higher-priority source worked bare-handed. Gear is what makes a worker productive, so a kit should
 never sit unused in the band's pile while someone works bare-handed elsewhere.

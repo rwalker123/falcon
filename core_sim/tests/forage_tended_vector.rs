@@ -329,6 +329,8 @@ fn spawn_forager_with_workers(
                     party: None,
                     muster_crew: 0,
                     planned_crew: 0,
+                    max_workers: Some(workers),
+                    staffing: Default::default(),
                     target: LaborTarget::Forage {
                         tile: patch,
                         floor,
@@ -464,7 +466,17 @@ fn the_published_per_biomass_rate_is_what_a_real_turn_credits_on_both_binding_si
                 .patch(coord)
                 .expect("the seated patch")
                 .upkeep_hands;
-            let take_hands = workers as f32 - keep_hands;
+            // **The crew the sim staffed** (#871): `workers` is only the row's Max, and the turn
+            // sends the hands the stand can use.
+            let staffed = app
+                .world
+                .get::<LaborAllocation>(band)
+                .expect("the foraging band keeps its allocation")
+                .assignments
+                .iter()
+                .find(|row| matches!(row.target, LaborTarget::Forage { .. }))
+                .map_or(0, |row| row.workers);
+            let take_hands = staffed as f32 - keep_hands;
             assert!(
                 take_hands > 0.0,
                 "fixture: floor {floor} with {workers} forager(s) must have hands left over the \

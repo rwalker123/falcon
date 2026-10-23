@@ -3482,6 +3482,26 @@ impl LaborTarget {
         )
     }
 
+    /// **IS THIS ROW STAFFED BY THE SIM, FROM THE PLAYER'S FLOOR** (#871,
+    /// `docs/plan_labor_at_scale.md`) — the player states the source, its floor, its kit and an
+    /// optional Max, and [`crate::staffing::staff_band`] decides the crew every turn. A wild or kept
+    /// patch, a hunt that is not a need row, a working, a tile improvement, a band improvement (the
+    /// tile kind's reading, at the camp) and the Roadwork pool are; Scout, Warrior and Builders keep
+    /// the crew the player set, and a need row keeps its own muster sizing.
+    ///
+    /// Stated exhaustively so a new target has to answer the question rather than inherit a default.
+    pub fn is_staffed(&self) -> bool {
+        match self {
+            LaborTarget::Forage { .. }
+            | LaborTarget::Extract { .. }
+            | LaborTarget::Tile { .. }
+            | LaborTarget::Band { .. }
+            | LaborTarget::Roadwork => true,
+            LaborTarget::Hunt { move_with_herd, .. } => !move_with_herd,
+            LaborTarget::Scout | LaborTarget::Warrior | LaborTarget::Builders => false,
+        }
+    }
+
     pub fn is_source(&self) -> bool {
         match self {
             LaborTarget::Forage { .. }
@@ -3672,6 +3692,52 @@ pub struct LaborAssignment {
     ///
     /// ⛔ **OUTSIDE THIS TYPE'S EQUALITY**, for [`Self::muster_crew`]'s reason, and it rides the save.
     pub planned_crew: u32,
+    /// **THE PLAYER'S MAX — THE MOST WORKERS THE SIM MAY PUT ON THIS ROW** (#871,
+    /// `docs/plan_labor_at_scale.md` "The crew stepper is retired; a MAX replaces it"). `None` is no
+    /// max: the sim staffs the row to whatever the three passes allow
+    /// ([`crate::staffing::staff_band`]). Only a **staffed** row ([`LaborTarget::is_staffed`])
+    /// reads it; on Scout, Warrior and Builders the crew is still what the player set.
+    ///
+    /// It is **intent**, so it is inside this type's equality, and it caps **every** pass: no pass
+    /// puts the row's total (keepers + kitted + bare) above it.
+    pub max_workers: Option<u32>,
+    /// **WHO THE SIM PUT ON THIS ROW THIS TURN, AND WHY** — the keepers, the kitted heads, the bare
+    /// heads and the two published crew targets. Meaningful only on a staffed row; `workers` is
+    /// their sum there.
+    ///
+    /// ⛔ **OUTSIDE THIS TYPE'S EQUALITY**, for [`Self::muster_crew`]'s reason: it is a fact the
+    /// turn (or the command that just changed an input) restamps, and it rides the save because the
+    /// take-kit claim is struck from it ([`crate::take_claims::row_claims`]).
+    pub staffing: StaffedCrew,
+}
+
+/// **THE SIM'S STAFFING OF ONE ROW** — what [`crate::staffing::staff_band`] decided, kept on the
+/// row it decided it for so the walk, the take-kit claim and the wire all read one answer.
+///
+/// `keepers + kitted + bare` is the row's `workers`. `hold_crew` and `reach_crew` are the two crew
+/// sizes the passes aim at (after the row's Max), published for the client's tooltips.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StaffedCrew {
+    /// Hands the row owes its site's keeping — staffed first, whether or not the band has gear.
+    pub keepers: u32,
+    /// Heads armed with the row's whole take kit out of the band's pooled units.
+    pub kitted: u32,
+    /// Heads working bare-handed where a bare hand still helps.
+    pub bare: u32,
+    /// The crew that takes what regrows at the floor (keepers included), after the row's Max.
+    pub hold_crew: u32,
+    /// The crew that draws the stock down toward the floor (keepers included), after the row's Max.
+    pub reach_crew: u32,
+    /// The crew past which the take stops rising - pass 3's ceiling (keepers included), after the
+    /// row's Max.
+    pub useful_crew: u32,
+}
+
+impl StaffedCrew {
+    /// Every head the sim staffed on the row.
+    pub fn total(&self) -> u32 {
+        self.keepers + self.kitted + self.bare
+    }
 }
 
 /// ⛔ **EQUALITY IS THE ORDER THE PLAYER GAVE, AND THE PARTY IS NOT PART OF IT.**
@@ -3686,6 +3752,7 @@ impl PartialEq for LaborAssignment {
             && self.workers == other.workers
             && self.kit == other.kit
             && self.priority == other.priority
+            && self.max_workers == other.max_workers
     }
 }
 
@@ -5853,6 +5920,10 @@ pub struct BandWorkforce {
     /// on no row and at no bench, but not with the band either, so they are netted out of every
     /// ceiling until their walk ends.
     pub walking_home: u32,
+    /// **Hands the sim staffed onto sources** (a forage, hunt, extraction, tile or Roadwork row's
+    /// `workers`) - the part of `assigned` that is what is left after the player's own orders, so it
+    /// never blocks one.
+    pub sim_staffed: u32,
 }
 
 impl BandWorkforce {
@@ -5872,6 +5943,13 @@ impl BandWorkforce {
             assigned: allocation.map(|a| a.assigned_total()).unwrap_or(0),
             benched: bench.map(|b| b.workers).unwrap_or(0),
             walking_home: allocation.map(|a| a.walking_home()).unwrap_or(0),
+            sim_staffed: allocation.map_or(0, |a| {
+                a.assignments
+                    .iter()
+                    .filter(|row| row.target.is_staffed())
+                    .map(|row| row.staffed_total())
+                    .sum()
+            }),
         }
     }
 
@@ -5895,11 +5973,23 @@ impl BandWorkforce {
             .saturating_sub(self.walking_home)
     }
 
-    /// **The ceiling a bench command clamps against** — `idle` plus the crew already at the bench,
-    /// because a band's own crew stays put while its job is swapped and must not be counted twice.
+    /// **The most hands a detached party may draw** - the pool less every player-set crew (the bench
+    /// included) and the walkers. Sim-staffed source rows count as available: they are what is left
+    /// after the player's orders and give the hands up at once.
+    pub fn partyable(&self) -> u32 {
+        self.pool
+            .saturating_sub(self.assigned.saturating_sub(self.sim_staffed))
+            .saturating_sub(self.benched)
+            .saturating_sub(self.walking_home)
+    }
+
+    /// **The ceiling a bench command clamps against** — the pool less the player-set crews and the
+    /// hands walking home. The sim-staffed rows count as available (they are what is left after the
+    /// player's orders and give the hands up at once), and the bench's own crew is not subtracted, so
+    /// it is not counted twice while its job is swapped.
     pub fn benchable(&self) -> u32 {
         self.pool
-            .saturating_sub(self.assigned)
+            .saturating_sub(self.assigned.saturating_sub(self.sim_staffed))
             .saturating_sub(self.walking_home)
     }
 }
@@ -6838,35 +6928,43 @@ impl LaborAllocation {
             }
         }
         for source in sources {
-            let held = self
-                .assignments
+            self.settle_rejoining_on(&source, excess);
+        }
+    }
+
+    /// [`Self::settle_rejoining`] for ONE source - the starvation shed's step, which takes a hand off
+    /// one row and must settle that row's walkers and nobody else's: a staffed row is zeroed ahead of
+    /// the shed and refilled after it, so a sweep over every source would read each staffed row's
+    /// walkers as excess and discard them (with their cargo) for a hand taken off another row.
+    pub fn settle_rejoining_on(&mut self, source: &LaborTarget, excess: ExcessRejoining) {
+        let held = self
+            .assignments
+            .iter()
+            .find(|row| row.target.same_source(source))
+            .map_or(NO_CREW_ON_THIS_ACTIVITY, |row| row.workers);
+        loop {
+            let rejoining = self.rejoining_to(source);
+            if rejoining <= held {
+                break;
+            }
+            let over = rejoining - held;
+            let Some(at) = self
+                .homeward
                 .iter()
-                .find(|row| row.target.same_source(&source))
-                .map_or(NO_CREW_ON_THIS_ACTIVITY, |row| row.workers);
-            loop {
-                let rejoining = self.rejoining_to(&source);
-                if rejoining <= held {
-                    break;
-                }
-                let over = rejoining - held;
-                let Some(at) = self
-                    .homeward
-                    .iter()
-                    .enumerate()
-                    .filter(|(_, walk)| walk.rejoins_row && walk.target.same_source(&source))
-                    .max_by_key(|(_, walk)| walk.turns_left)
-                    .map(|(at, _)| at)
-                else {
-                    break;
-                };
-                let mut cut = self.homeward[at].split_off(over);
-                if self.homeward[at].workers == NO_CREW_ON_THIS_ACTIVITY {
-                    self.homeward.remove(at);
-                }
-                if excess == ExcessRejoining::WalkHomePlain {
-                    cut.rejoins_row = crate::work_party::WALKS_PLAIN;
-                    self.homeward.push(cut);
-                }
+                .enumerate()
+                .filter(|(_, walk)| walk.rejoins_row && walk.target.same_source(source))
+                .max_by_key(|(_, walk)| walk.turns_left)
+                .map(|(at, _)| at)
+            else {
+                break;
+            };
+            let mut cut = self.homeward[at].split_off(over);
+            if self.homeward[at].workers == NO_CREW_ON_THIS_ACTIVITY {
+                self.homeward.remove(at);
+            }
+            if excess == ExcessRejoining::WalkHomePlain {
+                cut.rejoins_row = crate::work_party::WALKS_PLAIN;
+                self.homeward.push(cut);
             }
         }
     }
@@ -7391,7 +7489,7 @@ impl LaborAllocation {
         let others: u32 = self
             .assignments
             .iter()
-            .filter(|a| !a.target.same_source(&target))
+            .filter(|a| !a.target.same_source(&target) && !a.target.is_staffed())
             .map(|a| a.staffed_total())
             .sum();
         let headroom = available.saturating_sub(others);
@@ -7464,6 +7562,7 @@ impl LaborAllocation {
             }
         });
         if applied > 0 || keep_holding {
+            let target_is_staffed = target.is_staffed();
             self.assignments.push(LaborAssignment {
                 target,
                 workers: applied,
@@ -7487,11 +7586,104 @@ impl LaborAllocation {
                 party: standing_party,
                 muster_crew: if need_row { standing_muster } else { 0 },
                 planned_crew: if need_row { standing_planned } else { 0 },
+                // **A PINNED CREW IS A MAX** — `set_assignment` names an exact crew, which on a
+                // staffed row the sim reads as the most it may put there. The player-facing verb is
+                // [`Self::set_staffed_row`], whose count is the Max outright.
+                max_workers: target_is_staffed.then_some(applied),
+                staffing: StaffedCrew::default(),
             });
             self.last_yields.push(SourceYield::ZERO);
         }
         self.settle_rejoining(ExcessRejoining::WalkHomePlain);
         applied
+    }
+
+    /// **STATE A STAFFED ROW — THE PLAYER'S WHOLE ORDER ON A SOURCE** (#871): its floor and kit ride
+    /// `target` and `kit`, and `max` is the most the sim may put on it (`None` is no max). The row is
+    /// created or restated in place keeping everything the player did not state (priority, party,
+    /// muster), and its crew is left at whatever the last staffing wrote — the caller restaffs the
+    /// band ([`crate::staffing`]) so the snapshot shows the new crew the moment the player acts.
+    ///
+    /// Returns `false` for a target the sim does not staff.
+    pub fn set_staffed_row(
+        &mut self,
+        target: LaborTarget,
+        max: Option<u32>,
+        kit: Option<crate::equipment_config::KitChoice>,
+    ) -> bool {
+        if !target.is_staffed() {
+            return false;
+        }
+        self.align_yields();
+        if let Some(idx) = self
+            .assignments
+            .iter()
+            .position(|a| a.target.same_source(&target))
+        {
+            let row = &mut self.assignments[idx];
+            row.target = target;
+            row.max_workers = max;
+            if kit.is_some() {
+                row.kit = kit;
+            }
+            return true;
+        }
+        self.assignments.push(LaborAssignment {
+            target,
+            workers: NO_CREW_ON_THIS_ACTIVITY,
+            kit,
+            priority: SourcePriority::default(),
+            party: None,
+            muster_crew: 0,
+            planned_crew: 0,
+            max_workers: max,
+            staffing: StaffedCrew::default(),
+        });
+        self.last_yields.push(SourceYield::ZERO);
+        true
+    }
+
+    /// **WRITE WHAT THE STAFFING DECIDED ONTO ITS ROWS** (#871) — `workers` becomes the staffed
+    /// total, the breakdown rides the row, and a far party that shrank is cut through the same
+    /// stand-down path a player's cut takes, so its dropped hands walk home rather than vanish.
+    ///
+    /// `lost_people` is how many of the hands the staffed rows held the band no longer has (it lost
+    /// people since they were staffed): that many of the hands a far party loses are discarded where
+    /// they stand rather than walked home, because a walker the band does not have would be counted
+    /// against next turn's pool and cut again.
+    pub fn apply_staffing(&mut self, staffed: Vec<(LaborTarget, StaffedCrew)>, lost_people: u32) {
+        self.align_yields();
+        let mut lost_left = lost_people;
+        for (target, crew) in staffed {
+            let Some(idx) = self
+                .assignments
+                .iter()
+                .position(|a| a.target.same_source(&target))
+            else {
+                continue;
+            };
+            let applied = crew.total();
+            let rejoining_kept = self.rejoining_to(&target).min(applied);
+            let standing_party = self.assignments[idx].party.take();
+            let standing_party = standing_party.and_then(|mut party| {
+                if applied == 0 {
+                    let mut walks = party.walk_home(&target);
+                    discard_lost_hands(&mut walks, &mut lost_left);
+                    self.homeward.extend(walks);
+                    None
+                } else {
+                    let mut walks = party.cut_crew(applied - rejoining_kept, &target);
+                    discard_lost_hands(&mut walks, &mut lost_left);
+                    self.homeward.extend(walks);
+                    Some(party)
+                }
+            });
+            let row = &mut self.assignments[idx];
+            row.party = standing_party;
+            row.workers = applied;
+            row.staffing = crew;
+        }
+        self.settle_rejoining(ExcessRejoining::WalkHomePlain);
     }
 
     /// **Remove a source's row outright**, telemetry included — the deliberate end of a band's
@@ -7882,7 +8074,7 @@ impl LaborAllocation {
                     }
                     // ⛔ Present hands go first, then rejoining walkers (the most `turns_left`
                     // first); a shed walker is discarded, as every hand the shed removes is.
-                    self.settle_rejoining(ExcessRejoining::Discard);
+                    self.settle_rejoining_on(&target, ExcessRejoining::Discard);
                     (ShedSubject::Row(target), remaining)
                 }
                 // ⛔ **NEVER `remove_order`** — that forfeits the drawn pile. The queue, every
@@ -8370,6 +8562,23 @@ impl BandTravel {
 /// playtest wants to move it off the peak.
 pub const DEFAULT_ESCAPEMENT_FLOOR: f32 = crate::fauna::MSY_BIOMASS_FRACTION;
 
+/// **DROP THE HANDS THE BAND NO LONGER HAS FROM THE WALKS A STAFFING CUT MADE** (#871) - `lost`
+/// counts down as people are discarded, group by group in the order the cut listed them, and a group
+/// emptied by it is removed. What is left walks home.
+fn discard_lost_hands(walks: &mut Vec<crate::work_party::HomewardWalk>, lost: &mut u32) {
+    if *lost == NO_CREW_ON_THIS_ACTIVITY {
+        return;
+    }
+    for walk in walks.iter_mut() {
+        let dropped = (*lost).min(walk.workers);
+        if dropped > NO_CREW_ON_THIS_ACTIVITY {
+            let _ = walk.split_off(dropped);
+            *lost -= dropped;
+        }
+    }
+    walks.retain(|walk| walk.workers > NO_CREW_ON_THIS_ACTIVITY);
+}
+
 /// **Is a floor a legal one?** Finite and in `0.0..=1.0` — a floor is a fraction of `K`, so anything
 /// outside that names a stock the source cannot have.
 ///
@@ -8829,6 +9038,8 @@ mod tests {
             party: None,
             muster_crew: 0,
             planned_crew: 0,
+            max_workers: Some(take),
+            staffing: Default::default(),
             target: LaborTarget::Forage {
                 tile,
                 floor: DEFAULT_ESCAPEMENT_FLOOR,
@@ -8861,6 +9072,8 @@ mod tests {
             party: None,
             muster_crew: 0,
             planned_crew: 0,
+            max_workers: Some(take),
+            staffing: Default::default(),
             target: LaborTarget::Hunt {
                 fauna_id: herd.to_string(),
                 floor: DEFAULT_ESCAPEMENT_FLOOR,
@@ -8888,6 +9101,8 @@ mod tests {
             party: None,
             muster_crew: 0,
             planned_crew: 0,
+            max_workers: Some(workers),
+            staffing: Default::default(),
             target,
             workers,
             kit: None,
@@ -8975,6 +9190,44 @@ mod tests {
         );
         assert_eq!(allocation.workers_on(&LaborTarget::Warrior), 2);
         assert_eq!(allocation.assignments[0].workers, 3, "the gathering stands");
+    }
+
+    /// **SHEDDING ONE HAND TOUCHES ONLY THE ROW IT CAME OFF.** A staffed row is zeroed ahead of the
+    /// shed (it is refilled after), so its rejoining walkers read as excess to any sweep over every
+    /// source; the shed settles the shed row's walkers alone, and a staffed row's walk, with its
+    /// cargo, survives a hand taken off a scout.
+    #[test]
+    fn shedding_a_hand_leaves_a_staffed_rows_rejoining_walkers_alone() {
+        const WALKERS: u32 = 2;
+        const CARGO: f32 = 5.0;
+        let mut staffed = staffed_forage(PATCH_A, 3);
+        staffed.workers = NO_CREW_ON_THIS_ACTIVITY;
+        let mut allocation = LaborAllocation {
+            assignments: vec![staffed, staffed_role(LaborTarget::Scout, 2)],
+            ..Default::default()
+        };
+        allocation.homeward.push(crate::work_party::HomewardWalk {
+            target: allocation.assignments[0].target.clone(),
+            workers: WALKERS,
+            turns_left: 3,
+            walk_turns: 3,
+            cargo: CARGO,
+            classes: Default::default(),
+            goods: Default::default(),
+            rejoins_row: crate::work_party::WALKS_BACK_TO_ITS_ROW,
+        });
+        let shed = allocation.normalize(None, 1, ShedFacts::default());
+        assert_eq!(
+            shed_targets(&shed),
+            vec![LaborTarget::Scout],
+            "liveness: the scout gave a hand"
+        );
+        assert_eq!(
+            allocation.rejoining_to(&allocation.assignments[0].target.clone()),
+            WALKERS,
+            "the staffed row's walkers were not discarded by a hand taken off the scout"
+        );
+        assert_eq!(allocation.homeward[0].cargo, CARGO, "...nor their cargo");
     }
 
     /// **STEP 2 — A WARRIOR GIVES WHILE NOTHING THREATENS THE BAND**, ahead of a keeper the bill does
@@ -9274,6 +9527,8 @@ mod tests {
             party: None,
             muster_crew: 0,
             planned_crew: 0,
+            max_workers: None,
+            staffing: Default::default(),
             priority,
             ..staffed_forage(tile, take)
         }
@@ -10705,6 +10960,8 @@ mod tests {
             party: None,
             muster_crew: 0,
             planned_crew: 0,
+            max_workers: Some(workers),
+            staffing: Default::default(),
         }
     }
 

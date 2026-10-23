@@ -143,6 +143,12 @@ signal build_order_requested(payload: Dictionary)
 ## the server re-captures after every command, so it arrives on this command's own recapture.
 signal work_priority_requested(payload: Dictionary)
 
+## Emitted when the player stops a STAFFED row (a source sheet's `Stop working here`, the inspector's
+## `Unassign`). Payload `{ faction, band_id, x, y, herd_id, material, branch, roadwork }`; Main formats
+## `stop_labor <faction> <band_id> <source…>`. No optimistic overlay and so no `pending_entity`: the
+## server restaffs the band at once and the next snapshot carries the row's absence.
+signal stop_labor_requested(payload: Dictionary)
+
 ## Emitted when the player cycles a QUEUED build's own mark from its site's work row
 ## (`docs/plan_site_crews.md` §2.4). Payload keys: { faction, band_id, x, y, herd_id, level }. Main
 ## formats `build_priority <faction> <band_id> <source…> <level>`. No optimistic overlay and so no
@@ -712,6 +718,12 @@ func _ready() -> void:
         forestry_assign_controls, extraction_assign_controls,
         tile_panel,
         _resolve_assign_band, _herd_label_for_id, _emit_assign_labor)
+    # A priority mark / `Stop working here` from a source sheet go straight out (#871): live on the
+    # allocation, so no optimistic overlay and no rollback.
+    _drawercompose.work_priority_requested.connect(
+        func(payload: Dictionary) -> void: work_priority_requested.emit(payload))
+    _drawercompose.stop_labor_requested.connect(
+        func(payload: Dictionary) -> void: stop_labor_requested.emit(payload))
     # **THE ROAD LADDER'S DECLARATION GOES STRAIGHT OUT — no optimistic overlay write.**
     # `_on_work_row_improvement_requested` records a pending LABOR ROW before it relays, which is
     # right for a `⌃` on the work board; a road has no work row, so there is nothing to record and
@@ -797,6 +809,8 @@ func _ready() -> void:
         func(payload: Dictionary) -> void: build_order_requested.emit(payload))
     _bandpanel.work_priority_requested.connect(
         func(payload: Dictionary) -> void: work_priority_requested.emit(payload))
+    _bandpanel.stop_labor_requested.connect(
+        func(payload: Dictionary) -> void: stop_labor_requested.emit(payload))
     _bandpanel.build_priority_requested.connect(
         func(payload: Dictionary) -> void: build_priority_requested.emit(payload))
     # The WORK row's `⌃` is the DECLARATION now (`docs/plan_standing_upkeep.md` §4.7a ①), and this

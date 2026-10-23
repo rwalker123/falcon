@@ -411,6 +411,29 @@ The window is **per band**, so it rides the cohort beside the two things a picke
   `OverCarry` refuses on. Whether a window is open, its carry and its kit rows are all per-band, on
   `loadoutWindow`.
 
+- **`loadoutWindow.workKitWants`** (`[WorkKitWant{kit, count, priority}]`) — the outfit the band's
+  work wants, in kits (the unit `set_starting_loadout` orders in). It is the staffing's **hold and
+  reach passes** (passes 1 and 2, `staffing::work_kit_plan`) run over the band's real staffed rows,
+  pool, Maxes, floors and priorities against an **unlimited shelf** - the crews that keep working
+  once a source sits at its floor. Pass 3 (the drawdown that pulls a stock above its floor down in
+  one turn, kitting every hand the pool allows) adds no want, so a source standing well above its
+  floor does not ask for a kit per hand in the pool. The run is `Passes::Steady`; the real staffing
+  is `Passes::All`: a ledger holding `staffing::UNLIMITED_SHELF_UNITS` fresh
+  units of every item any row's kit references, so the figure does not move as the player picks an
+  outfit, only as the work changes. Each row's kitted heads become whole kits (`units_for`: a kit is
+  claimed whole, the scarcest item deciding) and are summed per kit id over the rows using it;
+  `priority` is the highest `SourcePriority` among them (the wire enum a labor row carries); rows are
+  ordered High to Low, then by the nearest wanting row's distance from camp, then by kit id. It is
+  derived, not saved (`staffing::WorkKitWants`, a not-sim-state resource): `restaff_band` refreshes
+  the band's entry while its window is open, and `recapture_snapshot_in_place` /
+  `publish_baseline_snapshot` refresh every open window, so every command that restaffs shows the new
+  figure. Outfitting exactly the wanted kits gives every row its full hold-and-reach kitted crew
+  (`server::tests::outfitting_exactly_the_wanted_kits_gives_every_row_its_full_hold_and_reach_crew`);
+  the drawdown hands then work with any unit the whole-kit rounding left, bare where a bare hand
+  helps, or idle. `WorkKitPlan::crews` is that same steady run.
+  An accepted `set_starting_loadout` restaffs the outfitted band (and, on a take, the parent whose
+  gear moved) at once through `restaff_and_reseed`.
+
 **`loadoutWindow.open` is NOT the client's success signal** — it reads `true` after a refusal and after
 a success alike, because a commit never closes a window. A success is read off the band's own
 published state on the recapture the command triggers, which is exactly the allocation it sent. A

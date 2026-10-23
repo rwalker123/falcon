@@ -197,6 +197,8 @@ fn hunt_row(herd_id: &str, priority: SourcePriority) -> LaborAssignment {
         party: None,
         muster_crew: 0,
         planned_crew: 0,
+        max_workers: Some(KEEPER_WORKERS),
+        staffing: Default::default(),
         target: LaborTarget::Hunt {
             fauna_id: herd_id.to_string(),
             floor: SUSTAIN,
@@ -576,6 +578,8 @@ fn queue_a_build(
         party: None,
         muster_crew: 0,
         planned_crew: 0,
+        max_workers: Some(RING_BUILDERS),
+        staffing: Default::default(),
         target: LaborTarget::Builders,
         workers: RING_BUILDERS,
         kit: None,

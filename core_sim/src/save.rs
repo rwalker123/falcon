@@ -147,7 +147,9 @@ pub const SAVE_MAGIC: [u8; 8] = *b"SHDWSAV\x01";
 /// | 50 | Kept food teaches storage (#708): `PopulationCohort` gained `last_food_kept`, the food the band's meal ate from lots it had kept at least `storage_kept_age_turns`, which `rot_band_larders` reads beside the rot to pay the storage lesson. A version-49 blob has no such field and is refused. |
 /// | 51 | Kept food counts larder time (#708): `FoodBatch` gained `stored`, the turns a lot has sat in the band's own larder, separate from its spoilage `age` (which a caravan pack's walk advances). The kept rule reads `stored`, so a far hunt's meat is not kept at its first meal. A version-50 blob has no such field and is refused. |
 /// | 52 | Gatherings (#698): `SimState` gained `gatherings` (`GatheringLedger`, the cumulative count of gatherings each people has held, which the Telling diffs into `gatherings.held_this_turn`). `CommandEventKind` gained `GatheringHeld`. A version-51 blob has no such field |
-pub const SAVE_FORMAT_VERSION: u32 = 52;
+/// | 53 | The sim staffs every source from the player's floor (#871): `LaborAssignment` gained `max_workers` (the most the player allows on the row; `None` = no Max) and `staffing` (`StaffedCrew`: the keepers, kitted and bare hands the passes put on the row and the hold, reach and useful crews they were sized to). A staffed row's `workers` is the sim's count, restaffed every turn from the Max. The allocation rides `BandRecord::labor`, so a version-52 blob does not decode |
+/// | 54 | The dig row shows its load (#871): `WorkParty` gained `pack_units` (the units of the row's material one pack carries) and `load_home_in` (turns to the next landing, counting the wait for a pack to fill), stamped each turn and published on `LaborAssignment`. A version-53 blob has neither and is refused. |
+pub const SAVE_FORMAT_VERSION: u32 = 54;
 
 /// gzip level for the payload document.
 ///

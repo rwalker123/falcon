@@ -105,6 +105,7 @@ mod sites_config;
 mod snapshot;
 mod snapshot_overlays_config;
 pub mod spoilage;
+pub mod staffing;
 mod start_profile;
 pub mod starting_loadout;
 mod supply;
@@ -164,8 +165,8 @@ pub use components::{
     LaborAllocation, LaborAssignment, LaborTarget, LocalStore, MaterialBatch, MaterialDraw,
     MoraleCause, MusterBench, MusterKit, MusterPlan, PoolToeLine, PopulationCohort, PowerNode,
     QueuedBuildToe, ResidentBand, ScoutPack, Settlement, ShedCrew, ShedFacts, ShedStep,
-    ShedSubject, ShipmentTerms, SourcePriority, SourceShedFacts, SourceYield, StartingUnit,
-    StationReport, StrangersOrder, TakeSelection, Tile, TownCenter, TransferCause,
+    ShedSubject, ShipmentTerms, SourcePriority, SourceShedFacts, SourceYield, StaffedCrew,
+    StartingUnit, StationReport, StrangersOrder, TakeSelection, Tile, TownCenter, TransferCause,
     TransferCounterparty, TransferCrossing, TransferDirection, TransferLedger, TransferLink,
     YieldRange, DEFAULT_ESCAPEMENT_FLOOR, FODDER, FOOD, HEAD_ORDER, MIN_ORDER_COUNT,
     NO_IMPROVEMENT_UNDERWAY, STRIP_IT_BARE,
@@ -266,18 +267,19 @@ pub use fauna::{
     herd_rung_already_built, herd_rung_key, herd_size_tier, herd_space_capacity,
     herd_standing_provisions, herd_standing_rung_share, herd_standing_scale, herd_take_room,
     herd_upkeep_demand, herd_upkeep_shortfall, herd_upkeep_supply, herd_upkeep_workers_needed,
-    herd_wariness, herd_work_keeper_load, hunt_armed_crew, hunt_crew_needed, hunt_crew_room,
-    hunt_crew_take_curve, hunt_crew_turns_to_kill, hunt_engage_workers, hunt_escapement_ceiling,
-    hunt_haul_workers, hunt_kill_progress, hunt_source_yield_preview, hunt_take_bound,
-    hunt_take_overdraws, hunt_take_workers, hunt_useful_crew, kill_carry_rate, kill_over_retreat,
-    migratory_corridor_tiles, next_turns_quarry, pen_site_in_world, pen_site_is_free,
-    pen_tiles_claimed_by, per_hunter_take_biomass, project_arrivals_hunt, project_realized_hunt,
-    quantise_animal_take, quarry_default_hunt_kit, regrow_biomass, regrowth_delta_at,
-    repopulate_fauna, resolve_hunt_engagement, resolve_hunt_fight, retreat_band_edge, retreat_mean,
-    retreat_seed, spawn_initial_herds, species_requires_denial, stamp_breeding_gains,
+    herd_wariness, herd_work_keeper_load, hunt_armed_crew, hunt_crew_for_take, hunt_crew_needed,
+    hunt_crew_room, hunt_crew_take_curve, hunt_crew_turns_to_kill, hunt_engage_workers,
+    hunt_escapement_ceiling, hunt_fight_workers, hunt_haul_workers, hunt_kill_progress,
+    hunt_source_yield_preview, hunt_take_bound, hunt_take_overdraws, hunt_take_workers,
+    hunt_useful_crew, kill_carry_rate, kill_over_retreat, migratory_corridor_tiles,
+    next_turns_quarry, pen_site_in_world, pen_site_is_free, pen_tiles_claimed_by,
+    per_hunter_take_biomass, project_arrivals_hunt, project_realized_hunt, quantise_animal_take,
+    quarry_default_hunt_kit, regrow_biomass, regrowth_delta_at, repopulate_fauna,
+    resolve_hunt_engagement, resolve_hunt_fight, retreat_band_edge, retreat_mean, retreat_seed,
+    spawn_initial_herds, species_requires_denial, stamp_breeding_gains,
     stamp_migratory_game_trails, stay_fraction, sustainable_yield, taken_pen_tiles,
     unqueue_build_and_cancel_ring, would_be_herders_needed, AnimalTake, Contact, CrewContact,
-    CrewKeeping, EcologyPhase, EngagementQuantum, EngagementStop, FightCasualties, Herd,
+    CrewKeeping, EcologyPhase, EngagementQuantum, EngagementStop, FightCasualties, FightRate, Herd,
     HerdDensityMap, HerdPayoff, HerdRegistry, HerdTelemetry, HerdTelemetryEntry, HuntCrew,
     HuntCrewCurveInputs, HuntCrewTake, HuntDraw, HuntEngagement, HuntFight, HuntProjection,
     HuntTakeBound, HuntingParty, OutcomeKills, PartyResolution, PenSiteScene, PreyDatum,
@@ -1120,6 +1122,7 @@ pub fn build_headless_app() -> App {
         // reading for a world that never ran worldgen — a load restores the saved window, and a
         // fresh world has `stamp_starting_loadout` open it.
         .init_resource::<starting_loadout::StartingLoadout>()
+        .init_resource::<staffing::WorkKitWants>()
         .insert_resource(snapshot_history)
         .insert_resource(snapshot::SnapshotCaptureMode::default())
         // **Who the world publishes a frame to.** Empty at boot: a world with no claimed seat

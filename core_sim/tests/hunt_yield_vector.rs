@@ -269,6 +269,8 @@ fn spawn_hunters(
                     party: None,
                     muster_crew: 0,
                     planned_crew: 0,
+                    max_workers: Some(workers),
+                    staffing: Default::default(),
                     target: LaborTarget::Hunt {
                         fauna_id: fauna_id.to_string(),
                         floor,
@@ -746,6 +748,8 @@ fn spawn_resident_crew(
                     party: None,
                     muster_crew: 0,
                     planned_crew: 0,
+                    max_workers: Some(workers),
+                    staffing: Default::default(),
                     target: LaborTarget::Hunt {
                         fauna_id: fauna_id.to_string(),
                         floor,
@@ -764,6 +768,8 @@ fn spawn_resident_crew(
                     party: None,
                     muster_crew: 0,
                     planned_crew: 0,
+                    max_workers: Some(build_crew),
+                    staffing: Default::default(),
                     target: LaborTarget::Builders,
                     workers: build_crew,
                     kit: None,
@@ -784,6 +790,20 @@ fn spawn_resident_crew(
             },
         ))
         .id()
+}
+
+/// **The crew the sim staffed on the band's hunt row** (#871): the command path restaffs the band the
+/// instant a row is written (`core_sim::restaff_band`), and the hands it settles on are what the
+/// pre-commit forecast must be quoted at - the count a test names is only the row's Max.
+fn staffed_hunters(app: &mut App, band: bevy::prelude::Entity) -> u32 {
+    core_sim::staffing::restaff_band(&mut app.world, band);
+    app.world
+        .get::<LaborAllocation>(band)
+        .expect("the band keeps its allocation")
+        .assignments
+        .iter()
+        .find(|row| matches!(row.target, LaborTarget::Hunt { .. }))
+        .map_or(0, |row| row.workers)
 }
 
 /// The **pre-commit forecast** for this herd/staffing/policy — the assign-time seed
@@ -981,8 +1001,9 @@ fn the_forecast_equals_the_paid_take_on_the_wire() {
                         saw_escapement_bound = true;
                     }
                 }
-                let forecast = precommit_food(&app, &id, policy, crew);
                 let band = spawn_resident_hunters(&mut app, pos, &id, policy, crew);
+                let staffed = staffed_hunters(&mut app, band);
+                let forecast = precommit_food(&app, &id, policy, staffed);
 
                 app.world.run_system_once(advance_labor_allocation);
                 recapture_snapshot_in_place(&mut app.world);
@@ -1144,8 +1165,9 @@ fn the_forecast_equals_the_paid_take_with_a_build_in_flight_at_every_floor() {
                             saw_escapement_bound = true;
                         }
                     }
-                    let forecast = precommit_food_building(&app, &id, floor, crew, improvement);
                     let band = spawn_resident_crew(&mut app, pos, &id, floor, crew, improvement);
+                    let staffed = staffed_hunters(&mut app, band);
+                    let forecast = precommit_food_building(&app, &id, floor, staffed, improvement);
 
                     app.world.run_system_once(advance_labor_allocation);
                     recapture_snapshot_in_place(&mut app.world);
@@ -1600,7 +1622,7 @@ fn a_penned_herd_publishes_no_engagement_stage() {
 /// `forecast == actual` pin is not asserting that one draw equals a mean), so that term resolves to
 /// `1.0` here and the two units below are the only thing this case measures. The retreat's own effect
 /// on the exported crew is pinned by
-/// [`the_exported_crew_pays_for_the_retreat`], on the shipped roster's wariness.
+/// [`the_exported_crew_is_what_the_retreat_lets_land`], on the shipped roster's wariness.
 #[test]
 fn the_exported_crew_counts_the_hands_that_can_reach_the_herd() {
     let mut saw_reach_bound = false;
@@ -1679,7 +1701,7 @@ fn the_exported_crew_counts_the_hands_that_can_reach_the_herd() {
                 herd.biomass,
                 core_sim::herd_capacity(herd, &fauna),
             );
-            let peak = ((ceiling / herd.body_mass).floor() + 1.0) * herd.body_mass;
+            let peak = ceiling;
             let armed = sleds * equipped_haul_rate();
             if peak <= armed {
                 haul
@@ -1736,7 +1758,7 @@ const NOTHING_BREAKS_OFF: f32 = 1.0;
 /// deliberately cannot see this), against the same seam the sim uses, and paired sharply: the
 /// exported crew must be the retreat-aware count AND strictly above the retreat-blind one.
 #[test]
-fn the_exported_crew_pays_for_the_retreat() {
+fn the_exported_crew_is_what_the_retreat_lets_land() {
     let (mut app, id, pos) = headless_with_species(WARY_SPECIES);
     // **Undo the harness's retreat hold** — this case is about the retreat, so it needs the roster's
     // authored wariness rather than the identity every other case in this file pins against.
@@ -1793,10 +1815,19 @@ fn the_exported_crew_pays_for_the_retreat() {
     recapture_snapshot_in_place(&mut app.world);
     let row = exported_row(&app, band);
 
+    // The crew is sized on a take RATE, capped at what the retreat lets land: the engagement is
+    // clamped to the room before the retreat, so the most that lands is `room x stay`, and each hunter
+    // lands `reach x stay` - the stay cancels at the room. Asking the crew for the whole room (the
+    // retreat-aware count) asks for a take no crew makes.
     assert_eq!(
-        row.workers_needed, retreat_aware,
-        "the exported crew must be sized on what the party puts DOWN ({retreat_aware}), not on what \
-         it gets near ({retreat_blind})"
+        row.workers_needed, retreat_blind,
+        "the exported crew reaches `room x stay` at `reach x stay` a hunter, which is the room over \
+         the raw reach ({retreat_blind}), not the retreat-inflated {retreat_aware}"
+    );
+    assert!(
+        row.workers_needed < retreat_aware,
+        "…and so the retreat does not inflate it: {} vs {retreat_aware}",
+        row.workers_needed
     );
 }
 

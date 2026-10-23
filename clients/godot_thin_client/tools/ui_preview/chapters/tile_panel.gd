@@ -8,7 +8,7 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 123
+const EXPECTED_CHECKPOINTS := 126
 
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 const BaseFx := preload("res://tools/ui_preview/fixtures_base.gd")
@@ -526,8 +526,22 @@ func _assert_greyed_verbs_say_why(panel: BandCityPanel, roster: Array) -> void:
 	var band: Dictionary = roster[1]
 	var hands := int(band.get("working_age", 0))
 	band["idle_workers"] = 0
+	# **HANDS ON A SIM-STAFFED ROW ARE STILL ORDERABLE**: the sim re-staffs from what a party leaves, so
+	# a band whose every hand is on a forage row can still send all three expeditions.
 	band["labor_assignments"] = [{"kind": "forage", "workers": hands, "target_x": 58,
 		"target_y": 24, "floor": 0.5}]
+	h._hud._selectioncard.select_roster_occupant("unit", TILE_PANEL_MOVE_BAND_ENTITY)
+	h._hud._bandpanel.render_band(band)
+	await h._settle()
+	for verb_id in NO_IDLE_GREYED_VERBS:
+		var staffed_verb := HudComposeVocab.verb_for_id(verb_id)
+		var staffed_button := _verb_button(h._hud.allocation_panel, verb_id)
+		h._assert_hud("a band whose hands are all on staffed rows keeps its %s verb enabled — \"%s\""
+				% [verb_id, staffed_button.tooltip_text if staffed_button != null else "<none>"],
+			staffed_button != null and not staffed_button.disabled
+				and staffed_button.tooltip_text == String(staffed_verb[HudComposeVocab.VERB_KEY_TOOLTIP]))
+	# …and the genuinely spent band: every hand on a PLAYER-SET row (the builders pool).
+	band["labor_assignments"] = [{"kind": HudConst.LABOR_KIND_BUILDERS, "workers": hands}]
 	h._hud._selectioncard.select_roster_occupant("unit", TILE_PANEL_MOVE_BAND_ENTITY)
 	# The panel shows the SAME band, so its action bar is asked the same gate as the drawer row.
 	h._hud._bandpanel.render_band(band)
@@ -539,7 +553,7 @@ func _assert_greyed_verbs_say_why(panel: BandCityPanel, roster: Array) -> void:
 					% String(verb[HudComposeVocab.VERB_KEY_ACTION])]),
 			String(verb[HudComposeVocab.VERB_KEY_TOOLTIP]))
 		var button := _verb_button(h._hud.allocation_panel, verb_id)
-		h._assert_hud("a fully-staffed band's %s verb is greyed and its hover leads with why — \"%s\""
+		h._assert_hud("a band with every hand on a player-set row has its %s verb greyed and its hover leads with why — \"%s\""
 				% [verb_id, button.tooltip_text if button != null else "<none>"],
 			button != null and button.disabled and button.tooltip_text == want)
 		var bar_button: Variant = panel._action_buttons.get(verb_id)
@@ -944,7 +958,7 @@ func run(harness) -> void:
 	h._hud._band_labor._player_bands = []
 	h._hud._compose.reset_forage_source()
 	h._hud._compose.set_forage_band(-1)
-	h._hud._compose.set_forage_count(3)
+	h._hud._compose.set_forage_max(3)
 
 	# tile_panel_land — the LAND row lit: chips pinned above (In sight · Hospitable · Temperate ·
 	# Fertile · Verdant Basin), the land row leading the list with the tile's forage glyph + biome

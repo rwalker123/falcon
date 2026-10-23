@@ -42,15 +42,14 @@ use bevy::MinimalPlugins;
 use core_sim::TakeSelection;
 use core_sim::{
     advance_herds, advance_labor_allocation, available_workers, scalar_from_f32, scalar_one,
-    scalar_zero, spawn_initial_forage, spawn_initial_herds, spawn_initial_world, CommandEventKind,
-    CommandEventLog, CultureManager, DiscoveryProgressLedger, FactionId, FactionInventory,
-    FaunaConfigHandle, FoodModuleTag, ForageRegistry, GenerationId, GenerationRegistry,
-    HerdDensityMap, HerdRegistry, HerdTelemetry, LaborAllocation, LaborAssignment, LaborConfig,
-    LaborConfigHandle, LaborTarget, LadderConfigHandle, LocalStore, MapPresets, MapPresetsHandle,
-    MoraleCause, PopulationCohort, ShedFacts, SimulationConfig, SimulationTick,
-    SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle, SourcePriority, StartLocation,
-    StartProfileKnowledgeTags, StartProfileKnowledgeTagsHandle, Tile, TileRegistry,
-    WellbeingConfigHandle, FOOD,
+    scalar_zero, spawn_initial_forage, spawn_initial_herds, spawn_initial_world, CommandEventLog,
+    CultureManager, DiscoveryProgressLedger, FactionId, FactionInventory, FaunaConfigHandle,
+    FoodModuleTag, ForageRegistry, GenerationId, GenerationRegistry, HerdDensityMap, HerdRegistry,
+    HerdTelemetry, LaborAllocation, LaborAssignment, LaborConfig, LaborConfigHandle, LaborTarget,
+    LadderConfigHandle, LocalStore, MapPresets, MapPresetsHandle, MoraleCause, PopulationCohort,
+    ShedFacts, SimulationConfig, SimulationTick, SnapshotOverlaysConfig,
+    SnapshotOverlaysConfigHandle, SourcePriority, StartLocation, StartProfileKnowledgeTags,
+    StartProfileKnowledgeTagsHandle, Tile, TileRegistry, WellbeingConfigHandle, FOOD,
 };
 
 fn spawn_world() -> App {
@@ -323,6 +322,8 @@ fn forage_alloc_policy(tile: UVec2, workers: u32, policy: f32) -> LaborAllocatio
             party: None,
             muster_crew: 0,
             planned_crew: 0,
+            max_workers: Some(workers),
+            staffing: Default::default(),
             target: LaborTarget::Forage {
                 tile,
                 floor: policy,
@@ -478,6 +479,8 @@ fn sustain_hunt_below_regrowth_lets_herd_grow() {
                 party: None,
                 muster_crew: 0,
                 planned_crew: 0,
+                max_workers: Some(1),
+                staffing: Default::default(),
                 target: LaborTarget::Hunt {
                     fauna_id: id.clone(),
                     floor: 0.5,
@@ -570,6 +573,8 @@ fn a_hunt_actual_pulses_while_realized_holds_the_steady_average() {
                 party: None,
                 muster_crew: 0,
                 planned_crew: 0,
+                max_workers: Some(2),
+                staffing: Default::default(),
                 target: LaborTarget::Hunt {
                     fauna_id: id.clone(),
                     floor: 0.5,
@@ -714,6 +719,8 @@ fn a_drawn_down_hunt_realized_drifts_smoothly_never_sawtooths() {
                 party: None,
                 muster_crew: 0,
                 planned_crew: 0,
+                max_workers: Some(4),
+                staffing: Default::default(),
                 target: LaborTarget::Hunt {
                     fauna_id: id.clone(),
                     floor: 0.5,
@@ -805,6 +812,8 @@ fn a_hunt_past_the_leash_follows_its_herd_and_only_a_vanished_herd_ends_it() {
             party: None,
             muster_crew: 0,
             planned_crew: 0,
+            max_workers: Some(3),
+            staffing: Default::default(),
             target: LaborTarget::Hunt {
                 fauna_id: fauna_id.to_string(),
                 floor: 0.5,
@@ -929,6 +938,8 @@ fn a_hunt_just_past_the_apron_posts_a_party_on_the_same_apron_as_forage() {
                 party: None,
                 muster_crew: 0,
                 planned_crew: 0,
+                max_workers: Some(3),
+                staffing: Default::default(),
                 target: LaborTarget::Hunt {
                     fauna_id: id.clone(),
                     floor: 0.5,
@@ -1015,6 +1026,8 @@ fn a_far_work_partys_hunt_dead_credit_no_belief() {
                 party: None,
                 muster_crew: 0,
                 planned_crew: 0,
+                max_workers: Some(HUNTERS),
+                staffing: Default::default(),
                 target: LaborTarget::Hunt {
                     fauna_id: id.clone(),
                     floor: 0.5,
@@ -1182,6 +1195,8 @@ fn every_labor_loss_line_names_the_band_by_its_durable_id() {
             party: None,
             muster_crew: 0,
             planned_crew: 0,
+            max_workers: Some(3),
+            staffing: Default::default(),
             target: LaborTarget::Hunt {
                 fauna_id: GONE_HERD.to_string(),
                 floor: 0.5,
@@ -1193,12 +1208,16 @@ fn every_labor_loss_line_names_the_band_by_its_durable_id() {
         }],
         ..Default::default()
     };
+    // **Four scouts on a band of three** (#871): the hunt's crew is the sim's and never shed, so
+    // the shed's line is the player-set role being one hand over.
     allocation.assignments.push(LaborAssignment {
         party: None,
         muster_crew: 0,
         planned_crew: 0,
+        max_workers: Some(4),
+        staffing: Default::default(),
         target: LaborTarget::Scout,
-        workers: 1,
+        workers: 4,
         kit: None,
         priority: SourcePriority::default(),
     });
@@ -1249,7 +1268,15 @@ fn assignment_sum_clamps_to_working_age() {
     let mut alloc = LaborAllocation::default();
     let available = 5;
 
-    // Forage 3 workers (fits).
+    // Warrior 3 workers (fits). A player-set crew; a sim-staffed row would not count against it.
+    let applied = alloc.set_assignment(LaborTarget::Warrior, 3, available, None);
+    assert_eq!(applied, 3);
+
+    // Scout 4 workers requested, but only 2 headroom left → clamped to 2.
+    let applied = alloc.set_assignment(LaborTarget::Scout, 4, available, None);
+    assert_eq!(applied, 2, "over-budget assignment clamps to free headroom");
+    assert_eq!(alloc.assigned_total(), available);
+    alloc.set_assignment(LaborTarget::Warrior, 0, available, None);
     let applied = alloc.set_assignment(
         LaborTarget::Forage {
             tile: UVec2::new(1, 1),
@@ -1262,11 +1289,6 @@ fn assignment_sum_clamps_to_working_age() {
         None,
     );
     assert_eq!(applied, 3);
-
-    // Scout 4 workers requested, but only 2 headroom left → clamped to 2.
-    let applied = alloc.set_assignment(LaborTarget::Scout, 4, available, None);
-    assert_eq!(applied, 2, "over-budget assignment clamps to free headroom");
-    assert_eq!(alloc.assigned_total(), available);
 
     // Zero-worker unassign removes the forage source.
     let applied = alloc.set_assignment(
@@ -1343,6 +1365,32 @@ fn run_forage_yield(policy: f32) -> (core_sim::SourceYield, f32) {
     (y, before - after)
 }
 
+/// How many turns a stand is left to settle under a floor.
+const FLOOR_SETTLING_TURNS: u32 = 80;
+
+/// **Where a stand SETTLES under `floor`** (#871): the sim staffs the crew that reaches the floor, so
+/// the first turn's take is the crew's own and no longer the floor's - the floor decides how far the
+/// stand is drawn down in the end. Run it out and read the standing biomass.
+fn settled_forage_stock(floor: f32) -> f32 {
+    let mut app = spawn_world();
+    let (pos, tile) = food_tile(&mut app);
+    {
+        let mut registry = app.world.resource_mut::<ForageRegistry>();
+        let patch = registry.patch_mut(pos).expect("patch on the food tile");
+        patch.biomass = patch.carrying_capacity * STOCKED_STANDING_CROP;
+    }
+    spawn_band(&mut app, tile, 10, forage_alloc_policy(pos, 10, floor));
+    for _ in 0..FLOOR_SETTLING_TURNS {
+        app.world.run_system_once(core_sim::advance_forage_regrowth);
+        app.world.run_system_once(advance_labor_allocation);
+    }
+    app.world
+        .resource::<ForageRegistry>()
+        .patch(pos)
+        .expect("patch present")
+        .biomass
+}
+
 /// **The over-forage ⚠ is a fact about the stance's FLOOR, not about this turn's number.** A gather
 /// is an overdraw when it stops below the patch's most productive biomass — which is exactly what
 /// `components::floor_overdraws` reads — so a strip trips it and a peak-floor gather never can.
@@ -1366,14 +1414,18 @@ fn non_sustain_forage_trips_overdraw_while_sustain_does_not() {
         "an Eradicate gather strips past it — the ⚠: {erad:?}"
     );
     assert!(
-        sustain.actual > 0.0 && erad.actual > sustain.actual,
-        "and the ⚠ is earned: Eradicate really takes more this turn ({} vs {})",
+        sustain.actual > 0.0 && erad.actual > 0.0,
+        "both gathers pay: {} and {}",
         erad.actual,
         sustain.actual
     );
+    let _ = (erad_drawdown, sustain_drawdown);
+    // **The sim staffs the crew that reaches the floor** (#871), so the first turn's take is the
+    // crew's own at either floor; the ⚠ is earned in where the stand ends up.
+    let (erad_settled, sustain_settled) = (settled_forage_stock(0.0), settled_forage_stock(0.5));
     assert!(
-        erad_drawdown > sustain_drawdown,
-        "…and draws the patch down harder: {erad_drawdown} vs {sustain_drawdown}"
+        erad_settled < sustain_settled,
+        "…and Eradicate draws the patch down harder: {erad_settled} vs {sustain_settled}"
     );
 }
 
@@ -1488,6 +1540,8 @@ fn hunt_alloc(fauna_id: &str, workers: u32, floor: f32) -> LaborAllocation {
             party: None,
             muster_crew: 0,
             planned_crew: 0,
+            max_workers: Some(workers),
+            staffing: Default::default(),
             target: LaborTarget::Hunt {
                 fauna_id: fauna_id.to_string(),
                 floor,
@@ -1586,7 +1640,9 @@ fn a_crew_that_can_reach_a_below_peak_floor_warns_on_the_first_turn() {
     );
 
     // The warning is earned: the herd really is taken to its floor.
-    for _ in 1..SETTLING_TURNS {
+    // **The sim staffs the crew that reaches the floor** (#871), which takes the herd down at its
+    // own pace rather than in a few turns, so the descent is given the time it needs.
+    for _ in 1..FLOOR_SETTLING_TURNS {
         app.world.run_system_once(advance_herds);
         app.world.run_system_once(advance_labor_allocation);
     }
@@ -1861,23 +1917,30 @@ fn a_deeper_floor_pays_more_because_it_takes_more() {
         peak_paid > 0.0,
         "every harvest pays its basket's food component: {peak_paid}"
     );
-    assert!(
-        strip_paid > deep_paid && deep_paid > peak_paid,
-        "a deeper floor pays more: strip {strip_paid} > deep {deep_paid} > peak {peak_paid}"
-    );
-    // **And in exactly the proportion of the biomass taken.** A per-depth bonus would show up here
-    // as a payout ratio that outran the take ratio — which is precisely what the retired 4× markup
-    // did.
-    let paid_ratio = deep_paid / peak_paid;
-    let take_ratio = deep_take / peak_take;
-    assert!(
-        (paid_ratio - take_ratio).abs() < 1e-3,
-        "the payout ordering must track the DRAWDOWN, with no factor of its own: paid ×{paid_ratio} \
-         against take ×{take_ratio}"
+    // **The payout tracks the biomass taken, with no factor of its own** - a per-depth bonus would
+    // show up here as a payout per unit of biomass that moved with the floor, which is precisely
+    // what the retired 4x markup did.
+    let per_biomass = |paid: f32, take: f32| paid / take;
+    let (strip_rate, deep_rate, peak_rate) = (
+        per_biomass(strip_paid, strip_take),
+        per_biomass(deep_paid, deep_take),
+        per_biomass(peak_paid, peak_take),
     );
     assert!(
-        strip_take > deep_take && deep_take > peak_take,
-        "…and the drawdown itself is ordered: {strip_take} > {deep_take} > {peak_take}"
+        (deep_rate - peak_rate).abs() < 1e-3 && (strip_rate - peak_rate).abs() < 1e-3,
+        "the payout per biomass is the same at every depth: strip {strip_rate}, deep {deep_rate}, \
+         peak {peak_rate}"
+    );
+    // **What the floor decides is where the stand settles** (#871): the first turn's take is the
+    // staffed crew's own at every depth, so a deeper floor shows in the end, not in turn one.
+    let (strip_stock, deep_stock, peak_stock) = (
+        settled_forage_stock(0.0),
+        settled_forage_stock(0.15),
+        settled_forage_stock(0.5),
+    );
+    assert!(
+        strip_stock < deep_stock && deep_stock < peak_stock,
+        "…and the drawdown itself is ordered: {strip_stock} < {deep_stock} < {peak_stock}"
     );
 }
 
@@ -1940,6 +2003,8 @@ fn stage_hunt(
                 party: None,
                 muster_crew: 0,
                 planned_crew: 0,
+                max_workers: Some(workers),
+                staffing: Default::default(),
                 target: LaborTarget::Hunt {
                     fauna_id: id.clone(),
                     floor: 0.5,
@@ -2171,11 +2236,28 @@ fn a_crew_that_is_only_trimmed_is_announced_and_says_what_is_left() {
     // the allocation because it went out of range or past the leash, and a fixture whose shed row
     // could vanish for a reason that is not the shedding pass would be measuring the wrong thing —
     // or, as it did on the first attempt here, silently become the lapse test again.
-    let mut allocation = forage_alloc(patch_pos, 3);
+    //
+    // **The other crew is a WARRIOR guard, not a source** (#871): a Forage or Hunt row's crew is the
+    // sim's now and is never shed, so the shed only ever trims the crews the player set by hand.
+    let _ = patch_pos;
+    let mut allocation = LaborAllocation::default();
     allocation.assignments.push(LaborAssignment {
         party: None,
         muster_crew: 0,
         planned_crew: 0,
+        max_workers: Some(3),
+        staffing: Default::default(),
+        target: LaborTarget::Warrior,
+        workers: 3,
+        kit: None,
+        priority: SourcePriority::default(),
+    });
+    allocation.assignments.push(LaborAssignment {
+        party: None,
+        muster_crew: 0,
+        planned_crew: 0,
+        max_workers: Some(3),
+        staffing: Default::default(),
         target: LaborTarget::Scout,
         workers: 3,
         kit: None,
@@ -2239,7 +2321,7 @@ fn a_crew_that_is_only_trimmed_is_announced_and_says_what_is_left() {
 /// a shed row costs is exactly the hands the line reports — and the queue entry that required that
 /// row is retired by the turn's own prune, which is the half this asserts.
 #[test]
-fn a_shed_assignment_is_announced_and_its_declaration_goes_with_it() {
+fn a_staffed_row_squeezed_to_nobody_is_not_shed_and_keeps_its_declaration() {
     let mut app = spawn_world();
     let (_patch_pos, patch_tile) = food_tile(&mut app);
     let herd_id = app.world.resource::<HerdRegistry>().herds[0].id.clone();
@@ -2254,6 +2336,8 @@ fn a_shed_assignment_is_announced_and_its_declaration_goes_with_it() {
                 party: None,
                 muster_crew: 0,
                 planned_crew: 0,
+                max_workers: Some(1),
+                staffing: Default::default(),
                 target: LaborTarget::Hunt {
                     fauna_id: herd_id.clone(),
                     floor: 0.5,
@@ -2267,6 +2351,8 @@ fn a_shed_assignment_is_announced_and_its_declaration_goes_with_it() {
                 party: None,
                 muster_crew: 0,
                 planned_crew: 0,
+                max_workers: Some(1),
+                staffing: Default::default(),
                 target: LaborTarget::Builders,
                 workers: 1,
                 kit: None,
@@ -2287,42 +2373,99 @@ fn a_shed_assignment_is_announced_and_its_declaration_goes_with_it() {
 
     app.world.run_system_once(advance_labor_allocation);
 
-    assert_eq!(
-        app.world
-            .get::<LaborAllocation>(band)
-            .expect("band allocation")
-            .assignments
-            .len(),
-        1,
-        "the hunt row is dropped — this test is meaningless if nothing was shed"
-    );
-    assert_eq!(
-        app.world
-            .get::<LaborAllocation>(band)
-            .expect("band allocation")
-            .build_queue_position(&source),
-        None,
-        "an entry requires a row, so the shed row takes its declaration with it"
-    );
-    let entry = app
+    // **A staffed row is never shed** (#871): the builder the player set by hand holds the band's
+    // one pair of hands, the hunt is staffed from what is left - nobody - and stays the band's
+    // holding with its declaration intact, announcing nothing.
+    let allocation = app
         .world
-        .resource::<CommandEventLog>()
-        .iter()
-        .find(|entry| {
-            entry
+        .get::<LaborAllocation>(band)
+        .expect("band allocation");
+    assert_eq!(
+        allocation.assignments.len(),
+        2,
+        "the hunt row stands at nobody rather than being shed"
+    );
+    assert_eq!(
+        allocation.workers_on(&LaborTarget::Hunt {
+            fauna_id: herd_id.clone(),
+            floor: 0.5,
+            move_with_herd: false,
+        }),
+        0,
+        "the builder holds the only hand"
+    );
+    assert!(
+        allocation.build_queue_position(&source).is_some(),
+        "the row stands, so its declaration stands with it"
+    );
+    assert!(
+        !app.world
+            .resource::<CommandEventLog>()
+            .iter()
+            .any(|entry| entry
                 .detail
                 .as_deref()
-                .is_some_and(|detail| detail.contains("reason=too_few_workers"))
-        })
-        .cloned()
-        .expect("trimming an assignment must push a feed entry, not vanish silently");
-    let detail = entry.detail.clone().unwrap_or_default();
-    assert!(
-        detail.contains(&format!("herd={herd_id}")),
-        "the entry names the source that was given up: {detail}"
+                .is_some_and(|detail| detail.contains("reason=too_few_workers"))),
+        "nothing was shed, so nothing is announced"
     );
-    assert!(
-        matches!(entry.kind, CommandEventKind::Hunt),
-        "on the source's own feed channel"
+}
+
+/// **TWO EQUAL WILD PATCHES, FOUR BARE HANDS: THE SIM DEALS THEM ONE AT A TIME, SO THE CREWS SPLIT**
+/// (#871). Each priority group's passes deal round-robin, nearest row to camp first, so the same
+/// four hands that a fill-one-row-first rule would put 4/0 come out 2/2 through the real turn.
+#[test]
+fn two_equal_priority_forage_rows_split_the_hands_evenly() {
+    const HANDS: u32 = 4;
+    let mut app = spawn_world();
+    let (first, first_tile) = food_tile(&mut app);
+    let seeded: Vec<UVec2> = app
+        .world
+        .resource::<ForageRegistry>()
+        .patches
+        .keys()
+        .copied()
+        .filter(|pos| *pos != first)
+        .collect();
+    let second = *seeded
+        .iter()
+        .min_by_key(|pos| {
+            (
+                pos.x.abs_diff(first.x) + pos.y.abs_diff(first.y),
+                pos.x,
+                pos.y,
+            )
+        })
+        .expect("a second patch");
+    for pos in [first, second] {
+        let mut registry = app.world.resource_mut::<ForageRegistry>();
+        let patch = registry.patch_mut(pos).expect("patch");
+        patch.biomass = patch.carrying_capacity * STOCKED_STANDING_CROP;
+    }
+    let mut allocation = forage_alloc(first, HANDS);
+    let mut other = forage_alloc(second, HANDS).assignments.remove(0);
+    other.max_workers = None;
+    allocation.assignments[0].max_workers = None;
+    allocation.assignments.push(other);
+    let band = spawn_band(&mut app, first_tile, HANDS, allocation);
+
+    app.world.run_system_once(advance_labor_allocation);
+
+    let crews: Vec<u32> = app
+        .world
+        .get::<LaborAllocation>(band)
+        .expect("allocation")
+        .assignments
+        .iter()
+        .map(|row| row.workers)
+        .collect();
+    assert_eq!(
+        crews.iter().sum::<u32>(),
+        HANDS,
+        "liveness: every hand is staffed, or the split proves nothing ({crews:?})"
+    );
+    assert_eq!(
+        crews,
+        vec![HANDS / 2, HANDS / 2],
+        "the hands are dealt round-robin"
     );
 }

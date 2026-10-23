@@ -124,6 +124,8 @@ fn world(cultivate_is_one_turn_from_done: bool) -> (App, Entity, UVec2, String) 
             party: None,
             muster_crew: 0,
             planned_crew: 0,
+            max_workers: Some(GATHERERS + 6),
+            staffing: Default::default(),
             target: LaborTarget::Forage {
                 tile: anchor,
                 floor: FOOD_PEAK,
@@ -138,6 +140,8 @@ fn world(cultivate_is_one_turn_from_done: bool) -> (App, Entity, UVec2, String) 
             party: None,
             muster_crew: 0,
             planned_crew: 0,
+            max_workers: Some(HUNTERS),
+            staffing: Default::default(),
             target: LaborTarget::Hunt {
                 fauna_id: herd_id.clone(),
                 floor: FOOD_PEAK,
@@ -151,6 +155,8 @@ fn world(cultivate_is_one_turn_from_done: bool) -> (App, Entity, UVec2, String) 
             party: None,
             muster_crew: 0,
             planned_crew: 0,
+            max_workers: Some(BUILDERS),
+            staffing: Default::default(),
             target: LaborTarget::Builders,
             workers: BUILDERS,
             kit: None,

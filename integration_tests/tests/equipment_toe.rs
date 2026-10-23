@@ -149,6 +149,8 @@ fn hunting_world_at(
                 party: None,
                 muster_crew: 0,
                 planned_crew: 0,
+                max_workers: Some(crew.unwrap_or(workers).max(1)),
+                staffing: Default::default(),
                 target: LaborTarget::Hunt {
                     fauna_id: HERD_ID.to_string(),
                     floor: SHALLOW_FLOOR,
@@ -168,7 +170,14 @@ fn hunting_world_at(
 /// The same world with the band staffing **Forage** on a patch it is standing on or beside — the
 /// basket kit's half of the split. No herd is seated at all, so nothing on this path can wear a sled.
 fn gathering_world(kit: BandEquipment) -> (bevy::prelude::App, Entity) {
+    gathering_world_of(kit, None)
+}
+
+/// [`gathering_world`] with the row's **Max** stated: the sim staffs a forage row up to it (#871), so
+/// a comparison that needs the same crew in every arm names the crew all of them fill.
+fn gathering_world_of(kit: BandEquipment, crew: Option<u32>) -> (bevy::prelude::App, Entity) {
     let (mut app, band, workers, band_pos) = booted_band();
+    let workers = crew.unwrap_or(workers);
     let patch = app
         .world
         .resource::<ForageRegistry>()
@@ -184,6 +193,8 @@ fn gathering_world(kit: BandEquipment) -> (bevy::prelude::App, Entity) {
                 party: None,
                 muster_crew: 0,
                 planned_crew: 0,
+                max_workers: Some(workers.max(1)),
+                staffing: Default::default(),
                 target: LaborTarget::Forage {
                     tile: patch,
                     floor: STRIP_THE_PATCH,
@@ -211,6 +222,8 @@ fn scouting_world(kit: BandEquipment) -> (bevy::prelude::App, Entity) {
             party: None,
             muster_crew: 0,
             planned_crew: 0,
+            max_workers: Some(workers.max(1)),
+            staffing: Default::default(),
             target: LaborTarget::Scout,
             workers: workers.max(1),
             kit: None,
@@ -553,9 +566,22 @@ fn a_spawned_band_arms_every_worker_and_keeps_a_reserve() {
 #[test]
 fn both_hunt_carry_tiers_are_live_and_a_sledless_party_hauls_less() {
     // **Posted**: the sled hauls only what a work party carries home; a camp kill is kept whole.
-    let (mut kitted, kitted_band) =
-        posted_hunting_world_of(HORSE, HORSE_BODY_MASS, None, outfitted());
-    let (mut dry, dry_band) = posted_hunting_world_of(HORSE, HORSE_BODY_MASS, None, dry_sled());
+    // **A Max both arms fill** (#871): the sim sends a sledless crew more hands to haul what a sledded
+    // one carries in fewer, which would hide the carry tier behind the crew - so the hunters are
+    // held to a crew both arms want in full.
+    const A_CREW_BOTH_ARMS_FILL: u32 = 2;
+    let (mut kitted, kitted_band) = posted_hunting_world_of(
+        HORSE,
+        HORSE_BODY_MASS,
+        Some(A_CREW_BOTH_ARMS_FILL),
+        outfitted(),
+    );
+    let (mut dry, dry_band) = posted_hunting_world_of(
+        HORSE,
+        HORSE_BODY_MASS,
+        Some(A_CREW_BOTH_ARMS_FILL),
+        dry_sled(),
+    );
 
     let kitted_income = income_over(&mut kitted, kitted_band, RUN_TURNS);
     let dry_income = income_over(&mut dry, dry_band, RUN_TURNS);
@@ -662,18 +688,20 @@ fn a_sledless_party_keeps_the_whole_kill_it_cannot_seat() {
 }
 
 /// **A CAMP KILL HAS NO CARRY CAP ON ITS COUNT** — within `band_work_range` nothing is hauled, so
-/// the pack bounds nothing and only the fight and what the herd can spare decide the kill. Three
-/// hunters on 50-biomass deer reach three and bring down two; a sledless crew's pack seats
+/// the pack bounds nothing and only the fight and what the herd can spare decide the kill. Two
+/// hunters on 50-biomass deer bring down two; a sledless crew's pack seats
 /// `ceil(36 / 50) = 1`, a sledded one's `ceil(120 / 50) = 3`, so a carry kill-stop would split the two
 /// crews. On a camp kill they kill the same number and keep the same food.
 #[test]
 fn a_camp_kill_is_not_capped_by_the_sled() {
-    /// Hunters whose fight puts two bodies down while the sledless pack seats one.
-    const THREE_HUNTERS: u32 = 3;
+    /// Hunters whose fight puts two bodies down while the sledless pack seats one. The row's **Max**
+    /// since the sim staffs the crew (#871): the sledless arm would otherwise be sent a third hand to
+    /// carry what a camp kill never carries, so the two arms are held to the crew both can field.
+    const FIELDABLE_HUNTERS: u32 = 2;
     let (mut kitted, kitted_band) =
-        hunting_world_of(DEER, WASTE_BODY_MASS, Some(THREE_HUNTERS), outfitted());
+        hunting_world_of(DEER, WASTE_BODY_MASS, Some(FIELDABLE_HUNTERS), outfitted());
     let (mut dry, dry_band) =
-        hunting_world_of(DEER, WASTE_BODY_MASS, Some(THREE_HUNTERS), dry_sled());
+        hunting_world_of(DEER, WASTE_BODY_MASS, Some(FIELDABLE_HUNTERS), dry_sled());
     run_turn(&mut kitted);
     run_turn(&mut dry);
 
@@ -789,11 +817,15 @@ fn both_gather_tiers_are_live_and_bare_hands_gather_less() {
 fn a_band_short_of_baskets_gathers_between_the_bare_and_the_basketed() {
     // Few enough that most of the shipped band's gatherers go without, so the middle reading cannot
     // round into either end.
-    const BASKETS_OWNED: u32 = 2;
+    const BASKETS_OWNED: u32 = 1;
 
-    let (mut kitted, kitted_band) = gathering_world(outfitted());
-    let (mut partly, partly_band) = gathering_world(short_of(BASKETS, BASKETS_OWNED));
-    let (mut bare, bare_band) = gathering_world(dry_baskets());
+    // **The crew every arm fills** (#871): the sim sends a basketless crew more hands to gather what a
+    // basketed one carries in fewer, which would erase the middle reading.
+    const GATHERERS: u32 = 2;
+    let (mut kitted, kitted_band) = gathering_world_of(outfitted(), Some(GATHERERS));
+    let (mut partly, partly_band) =
+        gathering_world_of(short_of(BASKETS, BASKETS_OWNED), Some(GATHERERS));
+    let (mut bare, bare_band) = gathering_world_of(dry_baskets(), Some(GATHERERS));
 
     for _ in 0..GATHER_TURNS {
         run_turn(&mut kitted);
@@ -811,11 +843,11 @@ fn a_band_short_of_baskets_gathers_between_the_bare_and_the_basketed() {
     );
     assert!(
         bare_income < partly_income,
-        "two baskets must beat none: bare={bare_income} vs partly={partly_income}"
+        "one basket must beat none: bare={bare_income} vs partly={partly_income}"
     );
     assert!(
         partly_income < kitted_income,
-        "...and two baskets must not gather like a full set: partly={partly_income} vs \
+        "...and one basket must not gather like a full set: partly={partly_income} vs \
          kitted={kitted_income}"
     );
 }
@@ -2117,6 +2149,8 @@ fn report_the_strike_wear_the_shipped_opening_pays() {
             party: None,
             muster_crew: 0,
             planned_crew: 0,
+            max_workers: Some(workers.max(1)),
+            staffing: Default::default(),
             target: LaborTarget::Hunt {
                 fauna_id: HERD_ID.to_string(),
                 // The shipped default — the band holds the herd at its most productive biomass, so

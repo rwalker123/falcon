@@ -17,7 +17,7 @@ use crate::state::population::{
     LaborAssignmentState, MaterialAmountState, MaterialBatchState, MaterialShortfallState,
     PoolCrewLineState, PoolToeLineState, PoolingLinkState, PopulationCohortState,
     PopulationDemographicsState, ScoutTaskState, SettlementStageViewState, SourcePriorityState,
-    TransferCrossingState,
+    TransferCrossingState, WorkKitWantState,
 };
 use crate::state::subsistence::BuildLegState;
 use crate::world::{WorldDelta, WorldSnapshot};
@@ -229,6 +229,26 @@ fn create_populations<'a>(
                 };
                 let parent_item_supply = supply_row(&window.parent_item_supply);
                 let parent_material_supply = supply_row(&window.parent_material_supply);
+                let work_kit_wants: Vec<_> = window
+                    .work_kit_wants
+                    .iter()
+                    .map(|want| {
+                        let kit = builder.create_string(&want.kit);
+                        fb::WorkKitWant::create(
+                            builder,
+                            &fb::WorkKitWantArgs {
+                                kit: Some(kit),
+                                count: want.count,
+                                priority: match want.priority {
+                                    SourcePriorityState::Normal => fb::SourcePriority::Normal,
+                                    SourcePriorityState::High => fb::SourcePriority::High,
+                                    SourcePriorityState::Low => fb::SourcePriority::Low,
+                                },
+                            },
+                        )
+                    })
+                    .collect();
+                let work_kit_wants = builder.create_vector(&work_kit_wants);
                 fb::BandLoadoutWindowState::create(
                     builder,
                     &fb::BandLoadoutWindowStateArgs {
@@ -242,6 +262,7 @@ fn create_populations<'a>(
                         foodShare: window.food_share,
                         foodCarried: window.food_carried,
                         foodFixed: window.food_fixed,
+                        workKitWants: Some(work_kit_wants),
                     },
                 )
             });
@@ -474,6 +495,16 @@ fn create_populations<'a>(
                                 rejoiningAllHomeIn: assignment.rejoining_all_home_in,
                                 rejoiningFood: assignment.rejoining_food,
                                 branch: Some(branch),
+                                maxWorkers: assignment.max_workers,
+                                holdCrew: assignment.hold_crew,
+                                reachCrew: assignment.reach_crew,
+                                usefulCrew: assignment.useful_crew,
+                                keepersStaffed: assignment.keepers_staffed,
+                                kittedStaffed: assignment.kitted_staffed,
+                                bareStaffed: assignment.bare_staffed,
+                                loadUnits: assignment.load_units,
+                                packUnits: assignment.pack_units,
+                                loadHomeIn: assignment.load_home_in,
                             },
                         )
                     })
@@ -1653,6 +1684,16 @@ fn decode_labor_assignment(
         rejoining_all_home_in: assignment.rejoiningAllHomeIn(),
         rejoining_food: assignment.rejoiningFood(),
         branch: text(assignment.branch()),
+        max_workers: assignment.maxWorkers(),
+        hold_crew: assignment.holdCrew(),
+        reach_crew: assignment.reachCrew(),
+        useful_crew: assignment.usefulCrew(),
+        keepers_staffed: assignment.keepersStaffed(),
+        kitted_staffed: assignment.kittedStaffed(),
+        bare_staffed: assignment.bareStaffed(),
+        load_units: assignment.loadUnits(),
+        pack_units: assignment.packUnits(),
+        load_home_in: assignment.loadHomeIn(),
     })
 }
 
@@ -1665,8 +1706,10 @@ fn decode_loadout_supply_rows(
     })
 }
 
-fn decode_loadout_window(window: fb::BandLoadoutWindowState<'_>) -> BandLoadoutWindowState {
-    BandLoadoutWindowState {
+fn decode_loadout_window(
+    window: fb::BandLoadoutWindowState<'_>,
+) -> Result<BandLoadoutWindowState, DecodeError> {
+    Ok(BandLoadoutWindowState {
         open: window.open(),
         kits: map_rows(window.kits(), |row| OpeningKitDefaultState {
             kit_id: text(row.kitId()),
@@ -1683,7 +1726,23 @@ fn decode_loadout_window(window: fb::BandLoadoutWindowState<'_>) -> BandLoadoutW
         food_share: window.foodShare(),
         food_carried: window.foodCarried(),
         food_fixed: window.foodFixed(),
-    }
+        work_kit_wants: window
+            .workKitWants()
+            .map(|wants| {
+                wants
+                    .iter()
+                    .map(|want| {
+                        Ok(WorkKitWantState {
+                            kit: text(want.kit()),
+                            count: want.count(),
+                            priority: to_state_source_priority(want.priority())?,
+                        })
+                    })
+                    .collect::<Result<Vec<_>, DecodeError>>()
+            })
+            .transpose()?
+            .unwrap_or_default(),
+    })
 }
 
 fn decode_bench(bench: fb::BenchState<'_>) -> Result<BenchState, DecodeError> {
@@ -1982,7 +2041,10 @@ fn decode_population(
         expedition_cargo_fodder: cohort.expeditionCargoFodder(),
         expedition_trade_fodder_carry_weight: cohort.carryFodderWeight(),
         name: text(cohort.name()),
-        loadout_window: cohort.loadoutWindow().map(decode_loadout_window),
+        loadout_window: cohort
+            .loadoutWindow()
+            .map(decode_loadout_window)
+            .transpose()?,
         transfer_crossings: map_rows(cohort.transferCrossings(), |crossing| {
             TransferCrossingState {
                 commodity: text(crossing.commodity()),
