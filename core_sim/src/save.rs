@@ -149,7 +149,8 @@ pub const SAVE_MAGIC: [u8; 8] = *b"SHDWSAV\x01";
 /// | 52 | Gatherings (#698): `SimState` gained `gatherings` (`GatheringLedger`, the cumulative count of gatherings each people has held, which the Telling diffs into `gatherings.held_this_turn`). `CommandEventKind` gained `GatheringHeld`. A version-51 blob has no such field |
 /// | 53 | The sim staffs every source from the player's floor (#871): `LaborAssignment` gained `max_workers` (the most the player allows on the row; `None` = no Max) and `staffing` (`StaffedCrew`: the keepers, kitted and bare hands the passes put on the row and the hold, reach and useful crews they were sized to). A staffed row's `workers` is the sim's count, restaffed every turn from the Max. The allocation rides `BandRecord::labor`, so a version-52 blob does not decode |
 /// | 54 | The dig row shows its load (#871): `WorkParty` gained `pack_units` (the units of the row's material one pack carries) and `load_home_in` (turns to the next landing, counting the wait for a pack to fill), stamped each turn and published on `LaborAssignment`. A version-53 blob has neither and is refused. |
-pub const SAVE_FORMAT_VERSION: u32 = 54;
+/// | 55 | Tribes (#861): `SimState` gained `tribes` (`TribeRegistry`: every tribe with its id, people, name, member bands and leader, and the cumulative tribes each people has formed, which the Telling diffs into `tribes.formed_this_turn`). `CommandEventKind` gained `TribeFormed`, `TribeBandJoined`, `TribeBandLeft` and `TribeDissolved`, appended. A version-54 blob has neither |
+pub const SAVE_FORMAT_VERSION: u32 = 55;
 
 /// gzip level for the payload document.
 ///

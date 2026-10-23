@@ -40,6 +40,11 @@ pub const BUILTIN_LEADER_NAMES: &str = include_str!("data/leader_names.json");
 /// the same map seed -- and in particular not with the band-name permutation.
 pub const LEADER_NAME_SALT: u64 = 0x1EAD_E4A3_9B27_C6D1;
 
+/// A second XOR salt, on top of [`LEADER_NAME_SALT`], for the tribe-leader permutation: tribe
+/// leaders draw from the same pool but never share a shuffle with a band's leader. A fixed,
+/// arbitrary non-zero constant.
+pub const TRIBE_LEADER_NAME_SALT: u64 = 0x7121_BE5A_C0DE_4F19;
+
 /// The curated pool of leader names, in file order. File order is an index space, not a ranking.
 #[derive(Resource, Debug, Clone, Deserialize)]
 pub struct LeaderNameCatalog {
@@ -96,6 +101,14 @@ impl LeaderNameCatalog {
     pub fn name_for_band(&self, map_seed: u64, band: BandId) -> String {
         let seed = splitmix64(map_seed ^ LEADER_NAME_SALT);
         permuted_name(&self.names, seed, band.0 as usize)
+    }
+
+    /// The name of the leader tribe number `tribe` forms under `map_seed`: the same pool and
+    /// shuffle, under the tribe salt on top, so it is deterministic, unique among a world's tribes
+    /// until the pool is exhausted, and independent of every band leader's name.
+    pub fn name_for_tribe(&self, map_seed: u64, tribe: u64) -> String {
+        let seed = splitmix64(map_seed ^ LEADER_NAME_SALT ^ TRIBE_LEADER_NAME_SALT);
+        permuted_name(&self.names, seed, tribe as usize)
     }
 }
 

@@ -301,6 +301,28 @@ A migratory people needs no settling for either level: its chief comes from foll
 its tribe forms at a gathering place on its round — which is what the gathering place was for
 foragers in the first place (`docs/plan_civilization_steps.md` → "The contact chain").
 
+### How a tribe forms: one network, one gathering place (#861)
+
+The gathering place is the band's **belief anchor** — the urn on the map, the strongest belief tile
+the band has stood within reach of (`.claude/rules/core_sim/belief.md`). Deaths and gatherings both
+raise it.
+
+- **Two or more bands of one faction, in one supply network, holding the same anchor, are a tribe.**
+  Nothing is commanded; the tribe is read off the links and the anchors each turn.
+- **A band needs no chief of its own to join.** A member without one carries the tribe's orders out
+  worse — the lossy shape of "A leader can only run so much well" below.
+- **Membership follows the links.** A band joins when it links in and shares the anchor, and leaves
+  when its link breaks or its anchor moves. Under two bands the tribe dissolves; one that forms again
+  later has a new leader.
+- **Identity survives a split.** When a network splits, the side holding most of the old members
+  keeps the tribe and its leader; any other side of two or more bands is a new tribe. When two tribes
+  come to share one network and anchor, the one with more of its members there keeps it.
+- **The leader's kind is set at formation**, by the largest member band's Hierarchical ↔ Egalitarian
+  sign — a paramount chief below zero, a council of chiefs otherwise — and does not flip after.
+- **The tribe is named for its largest band** at formation ("Reedwater tribe").
+
+These are opening rules for playtest.
+
 ### What each level's orders are
 
 The player gives orders at the highest level they have. A change made by hand at a lower level stays
@@ -438,6 +460,8 @@ list every band. It is the same panel, rows and work strip, rolled up:
 
 - A chief runs one band, up to the cohesion ceiling (~150 people).
 - A paramount chief runs so many bands — a config lever.
+- A tribe member band with no chief of its own carries the paramount chief's orders out worse, the
+  same lossy shape as over-reach (#870).
 - A ruler's and a faction leader's reach is the **management capacity** writing lifts
   (`docs/plan_civilization_steps.md` → "Writing: the third ceiling caps management").
 

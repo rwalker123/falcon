@@ -6,6 +6,8 @@ paths:
   - "core_sim/src/data/leadership_config.json"
   - "core_sim/src/data/leader_names.json"
   - "core_sim/tests/leadership.rs"
+  - "core_sim/src/tribe.rs"
+  - "core_sim/tests/tribe.rs"
 ---
 
 # Leadership: a chief emerges from work that needs an organiser
@@ -80,3 +82,62 @@ gets one — once, permanently.
   `leadership.chief_rises` and
   `leadership.council_forms` (not `once`; each band may get one). The prose says the band grew too
   many, too spread out and too much on the move for everyone to just know what to do.
+
+## A tribe forms when linked bands share a gathering place
+
+Design: `docs/plan_labor_at_scale.md` ("Leaders: four levels of orders", level 2). Code:
+`core_sim/src/tribe.rs`, `tests/tribe.rs`. No wire, snapshot or client change: the tribe is sim state
+until a later slice puts it on screen.
+
+**Who forms one.** Each turn `advance_tribes` groups the resident bands by `(people, supply network
+id, belief anchor tile)`, skipping a band in network 0 or with no anchor
+(`PopulationCohort::belief_anchor`, the urn on the map; `belief.md`). Any group of
+`MIN_TRIBE_BANDS` (2, "several" by definition, not a lever) or more is a tribe. A band needs no chief
+of its own to join.
+
+**Identity across turns** (`resolve_matches`, pure and unit-pinned). The `TribeRegistry` resource
+holds tribes (`TribeId`, people, member `BandId`s, name, leader), `next_id` and a per-people
+cumulative `formed` count. Each tribe, in ascending id order, picks the group of its own people that
+holds the most of its previous members (ties: the group whose lowest `BandId` is lowest). Where
+several tribes picked one group, the one with more previous members in it keeps it (ties: the lower
+`TribeId`); a loser does not try a second group and dissolves. So a network split keeps the tribe on
+the majority side and the other side (2+ bands) forms a new tribe; two tribes merging into one group
+leave the survivor and dissolve the other, whose bands then read as joining. Membership becomes the
+group's current bands and is diffed for join/leave. A tribe none of whose members stands in a group
+of its people dissolves.
+
+**The leader.** A new tribe gets a `TribeLeader { name, kind, since_turn }` once, at formation. Kind
+comes from the **largest member band's** (most people; ties lowest `BandId`) own culture on
+`HierarchicalEgalitarian`: below zero `ParamountChief`, else `CouncilOfChiefs`. It never flips with
+later drift; a largest band with no culture layer yet delays formation a turn. The name is drawn from
+the band-leader pool (`leader_names.json`) by `name_for_tribe(map_seed, tribe_id)`, a permutation under
+`LEADER_NAME_SALT ^ TRIBE_LEADER_NAME_SALT` indexed by the tribe id, so tribe leaders are
+deterministic and independent of band leaders' names. A dissolved tribe's leader is gone; a re-formed
+tribe is a new tribe with a new id and leader. Leaders carry no stats. The tribe's **name** is
+"<largest band's name> tribe", fixed at formation.
+
+**What the player is told.** Four `CommandEventKind`s, each filed under the tribe's people with
+`with_band`. Bands are spelled in labels as `Band <id>` (`systems::band_label`) and in details as
+`band=<BandId.0>`, so the client swaps in the roster name; no detail carries `name=`.
+
+| Kind | Label | Detail | Against |
+|---|---|---|---|
+| `TribeFormed` | "Reedwater tribe forms; Orrin is paramount chief" / "Reedwater tribe forms; a council of chiefs gathers, Orrin speaks for it" | `tribe=<id> kind=paramount_chief\|council_of_chiefs leader=<name>` | the largest band |
+| `TribeBandJoined` | "Band 4 joins the Reedwater tribe" | `tribe=<id> band=<BandId>` | that band |
+| `TribeBandLeft` | "Band 4 leaves the Reedwater tribe" (a band that no longer exists is not announced) | `tribe=<id> band=<BandId>` | that band |
+| `TribeDissolved` | "The Reedwater tribe breaks up" | `tribe=<id>` | the largest former band still standing |
+
+The Telling signal `tribes.formed_this_turn` is `TribeRegistry::formed_by(faction)` diffed against
+last turn's total, which rides `CumulativeTotals::tribes_formed` under `internal.tribes.formed_total`;
+it drives the `tribe.forms` beat.
+
+**Schedule.** `advance_tribes` is ordered `.after(sedentarization_tick)`, the end of the Population
+stage; `balance_supply_networks` (Logistics) precedes it by stage. The edge is that late because the
+system reads `PopulationCohort` and files on `CommandEventLog`, which most of the stage writes, and
+the ambiguity gate rejects a system left unordered against them (an earlier
+`.after(simulate_population)` / `.after(advance_leadership)` placement produced 13 conflicts). From
+the end of the spine and the pressure/sedentarization tail it follows `simulate_population` (which
+refreshes the anchors), `advance_leadership`, migration, defection, independence and the culture
+splits.
+
+**Checkpoint.** `SimState::tribes` (`TribeRegistry`, `SIM_STATE_RESOURCES`); `SAVE_FORMAT_VERSION` 55.

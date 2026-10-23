@@ -227,6 +227,13 @@ const RUNG_BY_KIND := {
 	# "The elders' council forms; Orrin speaks for it") already names the person and the form, so
 	# `kind` (hidden below) and `name` add nothing as raw tokens.
 	"leader_emerged": RUNG_NOTABLE,
+	# **A TRIBE FORMING, A BAND JOINING OR LEAVING ONE, A TRIBE BREAKING UP** (#861, detail `tribe=<id>`,
+	# plus `kind=` / `leader=` on a forming). Notable, `leader_emerged`'s rung: the people's organisation
+	# changed and nothing is lost. Left unlisted they took `DEFAULT_RUNG` and a tribe formed silently.
+	"tribe_formed": RUNG_NOTABLE,
+	"tribe_band_joined": RUNG_NOTABLE,
+	"tribe_band_left": RUNG_NOTABLE,
+	"tribe_dissolved": RUNG_NOTABLE,
 	# **A MATERIAL THE STANDING BILLS EAT FASTER THAN IT ARRIVES** (`docs/plan_standing_upkeep.md`
 	# §4.9 item 12). Alert, and it NAMES THE BAND — this line is what replaced the faction `Gear`
 	# row's `⚠ 1 band` → *which band* drill-down, and a faction-level warning that says something is
@@ -771,6 +778,9 @@ const DETAIL_KEY_HIDDEN := {
 	"faction": true,
 	# `leader_emerged`'s `name=` is the leader, already in the label.
 	"name": true,
+	# The tribe lines' `tribe=` is a machine handle and `leader=` the person the label already names.
+	"tribe": true,
+	"leader": true,
 }
 
 ## **KEYS HIDDEN ONLY ON LINES CARRYING ONE `status=` TOKEN** — the rung-decay pair
