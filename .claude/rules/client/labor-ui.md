@@ -8327,7 +8327,8 @@ Kit row and the readout.
 - **The strip's ladder chip shows on a working source too**: the crew is the sim's, so a worked source
   always has a rung to take it to. The old "composed zero hides them" fork is gone.
 - **THE ACTION ROW of a worked source** is `Show on map` (left; moves the camera, the sheet stays open),
-  `Done` and `Stop working here`; a deposit sheet adds `Stop holding this working`.
+  `Done` and `Stop working here`, on a deposit sheet as on the others (`stop_labor` drops a working's
+  holding, so the sheet carries no second put-down).
 - **The harness reads the crew through `Readout.stepper_value`** (the sheet's crew number, found by
   `Q.find_live_meta_node`, which skips a generation `queue_free` has flagged but not removed) and the Max
   through `Readout.max_stepper_value` / `max_stepper_text`. `Readout.COMPOSE_STEPPERS_PER_SHEET` is the Max

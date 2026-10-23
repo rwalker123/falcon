@@ -18947,10 +18947,9 @@ func _assert_a_crewless_working_says_so() -> void:
 ## `felling` with a real bill, a real shortfall and NOBODY on its `extract` row. Every other row is
 ## unchanged, so the readout claims below are about that row rather than about the whole block.
 ##
-## ⛔ **BOTH EMITTERS ARE DRIVEN, AND THE CLAIM IS THE LINE.** The roster row's `✕` and the ladder
-## card's put-down row send the identical `abandon_working 0 <x> <y> wood`; `command_guard` drives the
-## builder directly and can only assert the PARSE, so this is where the material is proved to ride the
-## press. The near hex's OTHER working is STONE, so a control that lost the material — or took its
+## ⛔ **THE EMITTER IS DRIVEN, AND THE CLAIM IS THE LINE.** The ladder card's put-down row sends
+## `abandon_working 0 <x> <y> wood`; `command_guard` drives the builder directly and can only assert the
+## PARSE, so this is where the material is proved to ride the press. The near hex's OTHER working is STONE, so a control that lost the material — or took its
 ## neighbour's — reads as a different line here.
 func _assert_a_working_can_be_put_down() -> void:
 	_hud.update_deposits(_walked_away_workings_rows())
@@ -18991,15 +18990,7 @@ func _assert_a_working_can_be_put_down() -> void:
 			% hover,
 		hover.contains(HudDepositVocab.DEPOSIT_REVERTING_TIP_FORMAT
 			% HudDepositVocab.reverting_value(_walked_away_workings_row())))
-	await _assert_the_roster_drop_puts_one_working_down(walked)
-	# The put-down re-rendered the zone, so the row is read off the fresh board.
-	_hud._bandpanel.rerender()
-	await _settle()
-	var fresh := _workings_rows_drawn()
-	if fresh.size() < 2:
-		_fail("the walked-away board lost its rows after the inspector's put-down")
-		return
-	await _assert_the_ladder_offers_the_put_down(fresh[1])
+	await _assert_the_ladder_offers_the_put_down(walked)
 	# **THE BOARD GOES BACK**, so the states after this one run against the roster's own fixture — the
 	# `_restore_workings_roster_fixture` idiom applied at the state that narrowed it.
 	_hud.update_deposits(_workings_rows())
@@ -19007,52 +18998,9 @@ func _assert_a_working_can_be_put_down() -> void:
 	_hud._bandpanel.rerender()
 	await _settle()
 
-## ⛔ **THE ROW'S INSPECTOR PUTS IT DOWN — the harvest row's `Unassign` placement, and the hover that
-## must not under-state it.** A CLICK on the row opens the card; the put-down is its labelled action,
-## keyed to the working's own (tile, material). The claim is BOTH halves of the ladder card's hover,
-## and the line is asserted by EQUALITY.
-func _assert_the_roster_drop_puts_one_working_down(row: Control) -> void:
-	var key := String(row.get_meta(HudWorkVocab.WORKINGS_ROSTER_ROW_META))
-	var click := InputEventMouseButton.new()
-	click.button_index = MOUSE_BUTTON_LEFT
-	click.pressed = true
-	row.gui_input.emit(click)
-	await _settle()
-	# The card fits to its content over two frames (`WorkInspectorDialog.refit`).
-	await _settle()
-	await _save("band_panel_workings_inspector")
-	var drop := _find_meta_control(_hud, HudWorkVocab.WORKINGS_ROSTER_ABANDON_META) as Button
-	_assert_band_panel("a click on the walked-away row opens its inspector, whose put-down is keyed to it (%s)"
-			% key,
-		drop != null and String(drop.get_meta(HudWorkVocab.WORKINGS_ROSTER_ABANDON_META)) == key)
-	if drop == null:
-		_hud._bandpanel.close_work_inspector()
-		await _settle()
-		return
-	_assert_band_panel("…labelled for the ACT — `%s` (\"%s\")"
-			% [HudDepositVocab.WORKING_ABANDON_LABEL, drop.text],
-		drop.text == HudDepositVocab.WORKING_ABANDON_LABEL)
-	var deposit := _walked_away_workings_row()
-	_assert_band_panel("…whose hover names what it destroys, the banked work included (\"%s\")"
-			% drop.tooltip_text,
-		drop.tooltip_text.contains(HudDepositVocab.WORKING_ABANDON_DROPS_FORMAT
-			% HudDepositVocab.material_label(deposit).to_lower()))
-	_assert_band_panel("…and what holding it still means",
-		drop.tooltip_text.contains(HudDepositVocab.WORKING_ABANDON_WHY))
-	var line := await _drive_working_abandon(drop)
-	var wanted := "abandon_working %d %d %d %s" % [HudConst.PLAYER_FACTION_ID,
-		ROSTER_NEAR_TILE.x, ROSTER_NEAR_TILE.y, WORKINGS_WOOD]
-	print("band_panel_preview: workings inspector put-down -> %s" % line)
-	_assert_band_panel("…and the press closes the inspector",
-		not _hud._bandpanel.is_work_inspector_open())
-	_assert_band_panel(("…and pressing it sends `%s`, naming that row's TILE and its MATERIAL — never "
-			+ "the rock beside it and never a bare `abandon` (got \"%s\")") % [wanted, line],
-		line == wanted)
-
-## ⛔ **AND THE LADDER CARD CARRIES THE SAME PUT-DOWN, AT THE BOTTOM** — the road ladder's own shape,
-## and the second of the verb's two emitters. **Both converge on one builder**, so what is asserted is
-## that the two lines are the SAME line: a second command path would be a second place for the verb's
-## grammar to drift.
+## ⛔ **THE LADDER CARD CARRIES THE PUT-DOWN, AT THE BOTTOM** — the road ladder's own shape, and the
+## verb's one emitter now (the deposit sheet's `Stop working here` is `stop_labor`, which drops the same
+## holding). The line is asserted by EQUALITY so the material is proved to ride the press.
 func _assert_the_ladder_offers_the_put_down(row: Control) -> void:
 	var mark := _workings_mark_in(row)
 	_assert_band_panel("the walked-away row still opens its ladder, the crew being forgiven by the mark",
@@ -19864,15 +19812,6 @@ func _assert_the_workings_roster_names_its_workings() -> void:
 	_assert_band_panel("…and no ROW carries a stepper - a working's crew is the sim's (%s)"
 			% [steppers],
 		steppers == [0, 0, 0])
-	# ⛔ **AND NO ROW CARRIES A `✕`** — putting a working down is its INSPECTOR's action, the harvest
-	# row's `Unassign` placement (`_assert_the_roster_drop_puts_one_working_down`).
-	var drops: Array = []
-	for row in rows:
-		var control := _find_meta_control(row, HudWorkVocab.WORKINGS_ROSTER_ABANDON_META)
-		if control != null:
-			drops.append(String(control.get_meta(HudWorkVocab.WORKINGS_ROSTER_ABANDON_META)))
-	_assert_band_panel("…and no ROW carries the put-down, which is its inspector's (got %s)" % [drops],
-		drops.is_empty())
 	_assert_band_panel("…and never the ROAD roster's own drop, whose verb names a place rather than a working",
 		_find_meta_control(rows[0], HudWorkVocab.ROADWORK_ROSTER_ABANDON_META) == null)
 	# **AND THE HEAD IS THE POOL**, asserted on this state because it is the one with a live shortfall.

@@ -24,10 +24,12 @@ does with them. Read the sim one first — most of the traps here are its traps,
 > sentence. The ladder slot on the row and on the sheet is the strip's chip; both open the deposit track
 > through `RungCardController.open_deposit_track`. The track's declarations
 > (`_emit_deposit_declaration`) and the put-down (`emit_working_abandon`, `_build_working_abandon_row`)
-> live on `RungCardController` too, and `BandPanelController` relays its signals. **`Stop holding this
-> working` is on the deposit sheet's action row** beside `Show on map`, `Done` and `Stop working here`,
-> with the ladder card's hover. Where the sections below name the retired controls they describe the
-> design the strip replaced; the `(tile, material)` pairing rules they state still hold at every emitter.
+> live on `RungCardController` too, and `BandPanelController` relays its signals. **The deposit sheet's
+> action row is `Show on map` · `Done` · `Stop working here`**: `stop_labor` drops a working's holding
+> through the same `drop_holding_and_cancel_ring` the put-down uses, so the sheet carries no
+> `Stop holding this working`. That verb's one remaining emitter is the deposit ladder card's bottom row.
+> Where the sections below name the retired controls they describe the design the strip replaced; the
+> `(tile, material)` pairing rules they state still hold at every emitter.
 
 ## Key scripts
 
@@ -1273,7 +1275,7 @@ The verb has **two surfaces, the road's pair one branch over**:
 
 | surface | control | where |
 |---|---|---|
-| the GROUNDWORK row's INSPECTOR | `Stop holding this working`, DANGER, in the actions row | `BandPanelController._build_working_inspector` |
+| (retired with the inspector) | `Stop working here` on the deposit sheet sends `stop_labor`, which drops the same holding | `BandPanelController._build_working_inspector` |
 | the deposit LADDER card | `Stop holding this working`, the BOTTOM row under the rungs | `BandPanelController._build_working_abandon_row` |
 
 ⛔ **BOTH EMIT `working_abandon_requested` THROUGH ONE `_emit_working_abandon`, AND THAT IS roads.md's

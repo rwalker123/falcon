@@ -8167,7 +8167,7 @@ through the same producer from an empty assignment, with a crew of zero.
 | head (mark, name, rung) | the row, and the sheet's title |
 | `Jump to source` | `Show on map`, at the left of the worked source's action row |
 | `Unassign` | `Stop working here` on the sheet |
-| a working's `Stop holding this working` | the same link on the deposit sheet (DANGER, the ladder card's hover) |
+| a working's `Stop holding this working` | `Stop working here` on the deposit sheet (`stop_labor` drops the holding); the deposit ladder card keeps its own put-down row |
 | Priority, Max, floor presets, Kit | the sheet's own segments, steppers and kit row |
 | the take-kit picker and its shortfall | the sheet's Kit row and its `N of M available` line |
 | notes, arrivals ticks, the site's bill, a foreign build | `DrawerComposeController._mount_row_details` under the strip: `note` / `muted_note` (inked by severity), the `ArrivalStrip`, `HudWorkVocab.upkeep_bill_text` and the `foreign_build` line |

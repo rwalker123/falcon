@@ -2278,7 +2278,7 @@ func _send_deposit_assignment(band: Dictionary, deposit: Dictionary, tile: Vecto
 ## sheet edits live, so its row is `Done` (primary, closes the sheet and sends nothing) beside
 ## `Stop working here`, with `Applied` above it for a beat after a live edit went out.
 func _mount_commit_row(target: VBoxContainer, assign_btn: Button, is_unassign: bool,
-        on_show_map: Callable = Callable(), deposit: Dictionary = {}) -> void:
+        on_show_map: Callable = Callable()) -> void:
     if not is_unassign:
         target.add_child(assign_btn)
         return
@@ -2297,8 +2297,8 @@ func _mount_commit_row(target: VBoxContainer, assign_btn: Button, is_unassign: b
         fade.tween_property(applied, "modulate:a", 0.0, HudComposeVocab.APPLIED_FADE_SECONDS)
     # **`Show on map` AT THE LEFT, THE ACTIONS AT THE RIGHT** (issue #877): the camera jump the Work tab's
     # retired inspector called `Jump to source`. It moves the camera and nothing else, so the sheet
-    # stays open. A working's `Stop holding this working` rides the same line, the put-down the
-    # retired inspector carried.
+    # stays open. `Stop working here` (`stop_labor`) drops a working's holding too, so a working's sheet
+    # carries no second put-down.
     var row := HBoxContainer.new()
     row.add_theme_constant_override("separation", HudComposeVocab.CREW_ROW_SEPARATION)
     if on_show_map.is_valid():
@@ -2320,19 +2320,6 @@ func _mount_commit_row(target: VBoxContainer, assign_btn: Button, is_unassign: b
     row.add_child(done)
     row.add_child(assign_btn)
     target.add_child(row)
-    if not deposit.is_empty():
-        # A working raised above its free floor is a HOLDING: a crew of zero is "stop cutting" and the
-        # bill survives it, so the put-down is its own link, in DANGER, with the ladder card's hover.
-        var put_down := HudWidgets.build_inline_link(HudDepositVocab.WORKING_ABANDON_LABEL,
-            HudStyle.DANGER, func() -> void:
-                close_compose_sheet()
-                _rung.emit_working_abandon(_resolve_assign_band(), deposit))
-        put_down.tooltip_text = HudDepositVocab.working_abandon_tooltip(deposit)
-        put_down.set_meta(HudWorkVocab.WORKINGS_ROSTER_ABANDON_META, "%d,%d:%s" % [
-            HudDepositVocab.tile_of(deposit).x, HudDepositVocab.tile_of(deposit).y,
-            HudDepositVocab.material_of(deposit)])
-        put_down.size_flags_horizontal = Control.SIZE_SHRINK_END
-        target.add_child(put_down)
 
 ## When the last live edit's command went out plus the hold: every commit row built before then shows
 ## `Applied` (a live edit rebuilds the controls more than once). Zeroed when the sheet closes, so a first
@@ -5609,8 +5596,7 @@ func _build_deposit_assign_controls(deposit: Dictionary, target: VBoxContainer) 
                 _compose.deposit_priority())
         close_compose_sheet())
     _mount_commit_row(target, assign_btn, is_unassign, func() -> void:
-        _bandpanel.show_source_on_map(HudConst.LABOR_KIND_EXTRACT, tile.x, tile.y, ""),
-        deposit)
+        _bandpanel.show_source_on_map(HudConst.LABOR_KIND_EXTRACT, tile.x, tile.y, ""))
 
 
 ## **THE WORKING'S CHART MODEL — the SHARED instrument, composed ONCE per render and once per drag.**

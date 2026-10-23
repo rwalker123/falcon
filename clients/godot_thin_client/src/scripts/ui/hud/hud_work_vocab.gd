@@ -2602,13 +2602,6 @@ const WORKINGS_ROW_NAME_META := &"workings_row_name"
 const WORKINGS_ROSTER_ROW_META := "workings_roster_row"
 
 
-## ⛔ **A GROUNDWORK ROW CARRIES NO `✕`** — putting a working down is the row's INSPECTOR action (a
-## click on the row opens it), where a harvest or hunt row's `Unassign` lives: a destructive control a
-## comma from the `−` stepper is a mis-click hazard, and the labelled version names what it drops.
-## This is that action's stable handle, valued the working's own `(tile, material)` — the pair the
-## emitted line names. Its own constant rather than the road's, because a scan for the road roster's
-## `✕` must not find it.
-const WORKINGS_ROSTER_ABANDON_META := "workings_roster_abandon"
 
 ## …and the LADDER CARD's own put-down row, which sends the identical command from the other of the
 ## verb's two surfaces. **Valued `true` rather than a key**: the card is about exactly one working, so
