@@ -1,7 +1,7 @@
 //! **`Food`** — the food loop (`docs/plan_ai_driver.md` §4). Owns `runway_turns`; alarms
 //! `FoodShort` when the minimum own-band runway is below the profile's `food.runway_floor_turns`.
 //!
-//! Seven rules ([`rules`]), each a pure function of one band, the view, the plan's goals and the
+//! Eight rules ([`rules`]), each a pure function of one band, the view, the plan's goals and the
 //! memory, each producing at most one proposal per band whose `reason` names the rule and its
 //! subject — the §4 table, as shipped, in `propose` order:
 //!
@@ -19,6 +19,11 @@
 //!   keeps it first and gathers with the rest. On a completed rung it is a standing bill.
 //! - *upgrade the ground* — the rung known and a worked patch below it: declare the climb and
 //!   staff the builders, priced by the projection ledger ([`ledger`]).
+//! - *make room for the build* — a band with a climb in flight that holds its reserve (its steady
+//!   income projected over the horizon ends at or above the runway goal) places no free hand on food (rules 1, 3 and 4 are silent) and, while
+//!   the build reads under its builder cap, pauses its lowest-paying forage row other than the
+//!   build's own (floor 1.0: the row keeps its keepers, the build gets the rest); every paused row
+//!   harvests again once the build stands or the band no longer holds its reserve.
 //! - *draw down to survive* — the plan in force troughs at or below zero: lower a worked forage
 //!   row's harvest floor to the highest that survives, and put it back to Best once the runway
 //!   clears.
@@ -89,6 +94,7 @@ pub const INTENT_HUNT: &str = "hunt";
 pub const INTENT_UPGRADE: &str = "upgrade";
 pub const INTENT_DRAWDOWN: &str = "drawdown";
 pub const INTENT_HOLD: &str = "hold";
+pub const INTENT_ROOM: &str = "room";
 
 pub struct Food {
     faction: u32,
@@ -541,7 +547,7 @@ impl Specialist for Food {
         SPECIALIST_FOOD
     }
 
-    /// The seven rules per own band, in the table's order. Each yields at most one proposal per
+    /// The eight rules per own band, in the table's order. Each yields at most one proposal per
     /// band; the arbiter, ranking by goal gap closed, keeps every one whose claims — the labor
     /// rows it sets, the band's move, its split (`Cost::claimed`) — no higher-ranked proposal has
     /// taken. `ground` is the turn's land reading per band (`ground::read_all`); only the outfit's
@@ -568,12 +574,13 @@ impl Specialist for Food {
             out.proposals.extend(self.settle(view, plan, memory, band));
             // *Hold the ground* comes before *upgrade the ground*: holding what the band has
             // beats declaring the next rung.
-            let ruled: [Option<(Proposal, Reassignment)>; 5] = [
+            let ruled: [Option<(Proposal, Reassignment)>; 6] = [
                 self.feed_while_moving_change(view, plan, memory, band),
                 self.split_to_feed_change(view, plan, memory, band, &carried),
                 self.spare_hands_into_hunts_change(view, plan, memory, band, &carried),
                 self.hold_the_ground_change(view, plan, memory, band, &carried),
                 self.upgrade_the_ground_change(view, plan, memory, band, &carried),
+                self.make_room_change(view, plan, memory, band),
             ];
             let mut in_force = vec![carried];
             for (proposal, change) in ruled.into_iter().flatten() {

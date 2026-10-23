@@ -8515,7 +8515,7 @@ func _render_people_idle_states() -> void:
 # =====================================================================================
 # A declared build is worked by its own site's crew, so the work row's in-flight chip states THAT crew
 # off the source row (`builders_staffed` / `builders_cap` / `build_toe`): `N building (up to M), done in
-# ≈T`, `No spare hands this turn`, and the build's own tool shortfall. A press STOPS the build. The same
+# ≈T`, `No spare hands — raise a food row's floor or stop a row`, and the build's own tool shortfall. A press STOPS the build. The same
 # chip rides a road build on the Roadwork roster.
 const CREW_STAFFED := 3
 const CREW_CAP := 4

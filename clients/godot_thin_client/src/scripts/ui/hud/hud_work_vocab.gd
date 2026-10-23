@@ -1922,7 +1922,7 @@ const WORK_ROW_FOREIGN_BAND_META := &"work_row_foreign_band"
 ## A declared build is worked by its own site's crew, so the in-flight chip states THAT crew: how many
 ## builders the sim put on it this turn, the most it could take, and when it is done - or that nobody
 ## is free. The words are the prototype's (`work-strip.js`).
-const BUILD_CREW_NO_HANDS := "No spare hands this turn"
+const BUILD_CREW_NO_HANDS := "No spare hands — raise a food row's floor or stop a row"
 const BUILD_CREW_STAFFED_FORMAT := "%d building (up to %d)"
 const BUILD_CREW_DONE_FORMAT := "%s, done in %s"
 ## The build's own tool shortfall: the named tools, else the generic word where the roster has not named them.

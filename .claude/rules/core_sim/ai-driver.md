@@ -382,7 +382,7 @@ big_game 9` on the tick its loadout was sent (read off the `orchestrator:outfit`
 Decisions tabs gain `orchestrator` the moment such a decision exists, since the tab set is the
 decision log's specialist names.
 
-### `Food` (`specialists/food/`: `mod.rs` the plumbing, `rules.rs` the seven rules, `ledger.rs` the projection, `sources.rs` the source vocabulary)
+### `Food` (`specialists/food/`: `mod.rs` the plumbing, `rules.rs` the eight rules, `ledger.rs` the projection, `sources.rs` the source vocabulary)
 
 Owns `runway_turns`; alarms `food_short` when the minimum own-band `turns_of_food` is below
 `food.runway_floor_turns`. **The AI asks for a source and the sim staffs it (#871).** A forage or
@@ -733,6 +733,33 @@ fired and what the ledger said. The rules, in `propose` order:
   `food.projection_horizon_turns`, drawn from the hunt rows, then the lowest forage rows.
   Commands: `cultivate`/`sow`, **then the row reductions** (`stop_labor` for an emptied row) — the
   declaration is the whole order, and the sim deals the builders from the hands the rows leave.
+- **make room for the build** (`food:room:<band>`) — the sim staffs every food row's keepers and
+  hold crew before any builder, so a fed band whose rows take every hand leaves its build with
+  nobody. **Room is wanted** (`Food::room_wanted`) when the band has a climb in flight (a patch
+  one of its forage rows works, with a build declared and `builders_cap > 0`) and it **holds its
+  reserve** (`Food::holds_the_reserve`): the band's book at its **steady** income
+  (`Food::steady_book`: Σ `realized_yield` over its rows — `food_income` pulses with every hunt
+  kill, and a reserve read on it was undone the turn after it was spent), projected over
+  `food.projection_horizon_turns`, survives and ends lasting at least `goals.runway_turns`, the
+  personality's reserve. ⛔ One test for both halves: a larder-only runway (stock ÷ drain) kept a
+  row paused on sweep seed 5 from t24 to t40 while *draw down to survive* was stripping the band's
+  other patch, because the two rules read the band's food two ways. While room is wanted
+  *negative income*, *split to feed* and *spare hands into hunts* are silent, so no free hand is
+  placed on food and the hands the sim leaves over go to the build; with no build in flight spare
+  hands go to food as before. While the build reads `builders_staffed < builders_cap` the rule
+  **pauses** the band's lowest-paying forage row (`Food::row_rate`) — `assign_labor` at floor
+  `PAUSED_FLOOR` (1.0), so the stand is never above the floor and the sim staffs the row's keepers
+  only — one row a turn, and only where the band still holds its reserve with that row's
+  `realized_yield` gone. ⛔ **Never a
+  patch with a build declared on it**: a climb needs take room on its own patch
+  (`requires_work_room`), and pausing it blocked the build it was paused for (`blocked_reason:
+  escapement`, bench seed 59 t19). Once room is no longer wanted — the build stands, or the
+  band no longer holds its reserve — every paused row goes back to Best in one proposal (`harvest
+  again: forage x,y, …`). Both proposals are `standing` at `MAKE_ROOM_SCORE` (1.0 × the weight):
+  the declared build's hands are a bill, not a bid. *Draw down to survive* never touches a paused
+  row. Without the rule, the AI's rule 1 put every hand the staffing freed onto a new food tile
+  (seed 59 band 2 at t23: food income 1.96 against a need of 1.51, *"1 surplus hands … -> forage
+  4,14"*), and the build sat at 0 builders from t22 to t49.
 - **draw down to survive** (`food:drawdown:<band>`) — the projection of **the plan in force** —
   the band's book plus every change rules 1–5 proposed this turn (rules 2–5 answer their change
   through `*_change`, and `propose` collects them) — troughs at or below zero. Candidates: each
@@ -1224,7 +1251,7 @@ and `rover` (expand). Each key has one consumer:
 | `food.near_positive_fraction` | `Food` | how far under the net-income goal *spare hands into hunts* still fires |
 | `food.survival_floor` | `Food` | the lowest harvest floor *draw down to survive* may set, `0 ≤ f ≤ BEST_FLOOR` (the forager's and the rover's are `0`: survival outranks the peak) |
 | `goals.net_income_per_turn` | `ConstantStance` → `Food` | the net-income target `Food` scores toward (positive: build stock) |
-| `goals.runway_turns` | `ConstantStance` → `Food` | the runway target `Food` scores toward — the goal, where `food.runway_floor_turns` is the alarm |
+| `goals.runway_turns` | `ConstantStance` → `Food` | the runway target `Food` scores toward — the goal, where `food.runway_floor_turns` is the alarm — and the reserve *make room for the build* holds while it pauses a row |
 | `goals.ground_rung` (`wild` / `tended` / `field`) | `ConstantStance` → `Food` | the rung *upgrade the ground* climbs toward |
 | `land.known_tiles_floor` | `Land` | *blind*'s floor |
 | `land.split_size` | `Land` | *room*'s band size |
@@ -1519,10 +1546,13 @@ accepted), so the file's `declined` list is empty.
 (no queue, no head), so `food`'s upgrade rule declares **one climb at a time** (a second declaration
 would split the free hands the first was priced to have). Against the entry it replaced, at t60 working
 population by seed 54 / 18 / 22 / 59 / 50 / 20 / 3 / 37 went 26 / 22 / 20 / 26 / 22 / 24 / 9 / 24 to
-34 / 25 / 22 / 26 / 26 / 24 / 12 / 26, hunger deaths stayed 0 on every `stay`/`split`/`short` seed
-but 3 (15 to 14), and `patches_improved` fell from 1 to 0 on seeds 22 / 59 / 50 / 37 (a single
-climb now shares the free hands with the rows the sim staffs first). Runway holds near 999 turns on
-seeds 50 and 54, so `Land` (which needs a falling runway) never proposes there: both are `declined`
+33 / 25 / 21 / 26 / 25 / 24 / 12 / 26, hunger deaths stayed 0 on every `stay`/`split`/`short` seed
+but 3 (15 to 14), and `patches_improved` reads 2 / 0 / 0 / 1 / 0 / 0 / 0 / 1. The sim staffs every
+food row's hold crew before a builder, so the climb finishes only because *make room for the build*
+pauses a row for it; without that rule `patches_improved` fell to 0 on seeds 22 / 59 / 50 / 37. On
+a 20-seed sweep (seeds 1–24 less the bench's 3 / 18 / 20 / 22) the rule moved `patches_improved`
+1 → 3 and hunger deaths 121 → 120 at an unchanged working population of 373. Runway holds near 999
+turns on seeds 50 and 54, so `Land` (which needs a falling runway) never proposes there: both are `declined`
 rows with a note; seed 37's `declined` row was withdrawn because `Land` wins there again.
 
 ⛔ **The start kinds above are what the seeds read NOW, not what they were chosen for.** The

@@ -2723,7 +2723,8 @@ means no build is declared there. The Work tab therefore draws a build where the
   staffed nobody, or the build's own tools are short (`DetailFormat.build_toe_is_short`). The road and
   working rows wear `ROADWORK_CHIP_FACE` / `ROADWORK_CHIP_WARN_FACE`, a road having no meter to quote.
 - **Its hover is the crew** (`DetailFormat.build_crew_tooltip`): `N building (up to M), done in ≈T`, or
-  `No spare hands this turn` where the sim staffed nobody; then `⚠ Short of hoes.` from the build's own
+  `No spare hands — raise a food row's floor or stop a row` where the sim staffed nobody (the
+  sentence names the two levers that free a hand); then `⚠ Short of hoes.` from the build's own
   `build_toe` through the same `pool_toe_row_is_short` test the keeping rows ask; then
   `Click to stop this build.` The estimate comes off the same `SourceForecast.build_turns_remaining` the
   rung row reads, so the chip and the row cannot date one build two ways.

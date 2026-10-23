@@ -2357,7 +2357,7 @@ static func build_turns_clause(turns: int,
     return HudComposeVocab.BUILD_TURNS_COUNT_FORMAT % turns
 
 ## **THE BUILD CREW CHIP'S TOOLTIP** - what a declared build's own crew is doing: `N building (up to M),
-## done in ≈T`, or `No spare hands this turn` when the sim staffed nobody; then the build's OWN tool
+## done in ≈T`, or `No spare hands — raise a food row's floor or stop a row` when the sim staffed nobody; then the build's OWN tool
 ## shortfall (its `build_toe` lines, the same `pool_toe_row_is_short` test the keeping rows ask) and what
 ## a press does. `item_names` is `{item_id: display name}` off the equipment roster.
 static func build_crew_tooltip(src: Dictionary, prefix: String, item_names: Dictionary) -> String:

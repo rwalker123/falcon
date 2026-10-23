@@ -1,4 +1,4 @@
-//! **The seven `Food` rules** (`docs/plan_ai_driver.md` §4, the rule table). Each is a method on
+//! **The eight `Food` rules** (`docs/plan_ai_driver.md` §4, the rule table). Each is a method on
 //! [`Food`] taking the view, the plan, the memory and one band, and answering at most one
 //! proposal whose `reason` is `"<rule>: <subject> [ledger: …]"`. Every score is
 //! [`goal_progress`] × the specialist's weight; a rule handed no goals proposes nothing. Rules
@@ -25,13 +25,13 @@ use super::sources::{
     Source, SourceKey,
 };
 use super::{
-    Food, INTENT_ASSIGN, INTENT_DRAWDOWN, INTENT_FEED_MOVE, INTENT_HOLD, INTENT_HUNT,
-    INTENT_SETTLE, INTENT_SPLIT, INTENT_UPGRADE, ROLE_FORAGE, ROLE_HUNT,
+    Food, INTENT_ASSIGN, INTENT_DRAWDOWN, INTENT_FEED_MOVE, INTENT_HOLD, INTENT_HUNT, INTENT_ROOM,
+    INTENT_SETTLE, INTENT_SPLIT, INTENT_UPGRADE, NO_MAX, ROLE_FORAGE, ROLE_HUNT,
 };
 use crate::board::{Demand, Resource, BARE_KIT_ID};
 use crate::geometry::Tile;
 use crate::ground::{BandGround, Shape, Site};
-use crate::orchestrator::{GroundRung, Plan};
+use crate::orchestrator::{FoodGoals, GroundRung, Plan};
 use crate::specialists::{intent_key, Cost, Memo, Proposal, SPECIALIST_FOOD};
 use crate::view::{band_tile, SeatMemory, SeatView};
 
@@ -45,6 +45,16 @@ pub(super) const REASON_HOLD_GROUND: &str = "hold the ground";
 pub(super) const REASON_DRAW_DOWN: &str = "draw down to survive";
 /// *Draw down to survive*'s other half: the floor put back to Best once the projection clears.
 pub(super) const REASON_FLOOR_RESTORE: &str = "floor back to best";
+pub(super) const REASON_MAKE_ROOM: &str = "make room for the build";
+/// *Make room for the build*'s other half: the paused rows put back to Best.
+pub(super) const REASON_ROOM_RESTORE: &str = "harvest again";
+/// **The floor that PAUSES a forage row** while a build waits for hands: the highest a floor can be,
+/// so the stand is never above it, the sim staffs the row's keepers only, and the take hands go to
+/// the build. The food stays in the ground as regrowth until the floor goes back to Best.
+const PAUSED_FLOOR: f32 = 1.0;
+/// What *make room for the build* scores at: it is a bill the declared build owes, not a bid weighed
+/// against the goal gap (pausing a row lowers the income the gap is read on).
+const MAKE_ROOM_SCORE: f32 = 1.0;
 /// **The harvest-floor slider's coarse step**, chosen so the search is ten projections per row
 /// from Best down to zero.
 const FLOOR_STEP: f32 = 0.1;
@@ -931,7 +941,11 @@ impl Food {
         let fires = band.food_income < band.food_need
             || band.idle_workers > 0
             || !Self::surplus_rows(memory, band).is_empty();
-        if !fires || band.is_traveling || memory.born_by_split(band.band_id).is_some() {
+        if !fires
+            || band.is_traveling
+            || memory.born_by_split(band.band_id).is_some()
+            || self.room_wanted(view, plan, band)
+        {
             return (None, Reassignment::NONE);
         }
         let budget = self.budget_workers(view, plan);
@@ -1191,6 +1205,10 @@ impl Food {
         carried: &Reassignment,
     ) -> Option<(Proposal, Reassignment)> {
         let goals = plan.food_goals()?;
+        // A band making room for its build is short of income by choice, not by ground.
+        if self.room_wanted(view, plan, band) {
+            return None;
+        }
         // The most the parent may give up.
         let cap = band
             .working_age
@@ -1476,7 +1494,7 @@ impl Food {
         carried: &Reassignment,
     ) -> Option<(Proposal, Reassignment)> {
         let goals = plan.food_goals()?;
-        if band.is_traveling {
+        if band.is_traveling || self.room_wanted(view, plan, band) {
             return None;
         }
         let budget = self.budget_workers(view, plan);
@@ -2552,8 +2570,10 @@ impl Food {
             .labor_assignments
             .iter()
             // A forage row the sim staffed with nobody while the band has idle hands is the row whose
-            // floor is the limit (#871): lowering it is what puts those hands to work.
+            // floor is the limit (#871): lowering it is what puts those hands to work. A row paused
+            // for a build is *make room for the build*'s to put back, never this rule's.
             .filter(|row| row.kind == ROLE_FORAGE && (row.workers > 0 || band.idle_workers > 0))
+            .filter(|row| !Self::is_paused(row))
             .filter_map(|row| {
                 let tile = Tile::new(row.target_x, row.target_y);
                 workable_patch_at(view, tile).map(|patch| (row, tile, patch))
@@ -2664,6 +2684,191 @@ impl Food {
             ));
         }
         best.map(|(proposal, _)| proposal)
+    }
+
+    /// Whether `row` is a forage row *make room for the build* paused ([`PAUSED_FLOOR`]).
+    fn is_paused(row: &LaborAssignmentState) -> bool {
+        row.kind == ROLE_FORAGE && row.floor >= PAUSED_FLOOR - FLOOR_TOLERANCE
+    }
+
+    /// **The band's climb in flight that the sim can staff**: a patch one of its forage rows works,
+    /// with a build declared and a builder cap above nothing (`builders_cap` is `0` where the build
+    /// cannot progress this turn).
+    fn build_in_flight<'v>(
+        view: &'v SeatView,
+        band: &PopulationCohortState,
+    ) -> Option<&'v ForagePatchState> {
+        band.labor_assignments
+            .iter()
+            .filter(|row| row.kind == ROLE_FORAGE)
+            .filter_map(|row| workable_patch_at(view, Tile::new(row.target_x, row.target_y)))
+            .find(|patch| !patch.build_destination_rung.is_empty() && patch.builders_cap > 0)
+    }
+
+    /// **Room is wanted for a build**: the band has a climb in flight and **holds its reserve**
+    /// ([`Food::holds_the_reserve`] with no change). While it holds, no rule puts a free hand on a
+    /// food source — *negative income*, *split to feed* and *spare hands into hunts* are silent — so
+    /// the hands the sim leaves over go to the build; with no build in flight, spare hands go to
+    /// food as before.
+    pub(super) fn room_wanted(
+        &self,
+        view: &SeatView,
+        plan: &Plan,
+        band: &PopulationCohortState,
+    ) -> bool {
+        plan.food_goals()
+            .is_some_and(|goals| self.holds_the_reserve(band, &goals, &Reassignment::NONE))
+            && Self::build_in_flight(view, band).is_some()
+    }
+
+    /// **Whether the band holds its reserve under `change`**: projected at its steady income
+    /// ([`Food::steady_book`]) over the horizon, the larder never runs out and ends lasting at
+    /// least the plan's runway goal (`goals.runway_turns`, the personality's reserve). One test
+    /// for both halves of *make room for the build* — the pause is made only where it holds with
+    /// the paused row's income gone, and room stops being wanted the turn it no longer holds — so
+    /// a pause is never kept on a band the projection says is running out (bench sweep seed 5: a
+    /// larder-only runway kept a row paused t24–t40 while *draw down to survive* was stripping the
+    /// band's other patch).
+    fn holds_the_reserve(
+        &self,
+        band: &PopulationCohortState,
+        goals: &FoodGoals,
+        change: &Reassignment,
+    ) -> bool {
+        let after = project(
+            &Self::steady_book(band),
+            change,
+            self.floors.projection_horizon_turns,
+        );
+        survives(&after) && after.runway_at_end >= goals.runway_turns
+    }
+
+    /// **The band's book at its rows' steady income** — `realized_yield` summed, the long-run
+    /// average of each row's take. `food_income` is this turn's, and a hunt row's pulses (nothing on
+    /// a wait turn, a whole animal on a kill turn), so a reserve read on it flickers across the
+    /// goal turn to turn and a pause is undone the turn after it is made.
+    fn steady_book(band: &PopulationCohortState) -> Book {
+        Book {
+            income: band
+                .labor_assignments
+                .iter()
+                .map(|row| row.realized_yield)
+                .sum(),
+            ..Self::book(band)
+        }
+    }
+
+    /// **Rule 8 — make room for the build.** The sim staffs every food row's keepers and hold crew
+    /// before any builder, so a fed band whose rows take every hand leaves its build with nobody.
+    /// While room is wanted ([`Food::room_wanted`]) and the build reads under its builder cap, the
+    /// band's **lowest-paying** forage row ([`Food::row_rate`]) is paused — its floor set to
+    /// [`PAUSED_FLOOR`], so the sim keeps its keepers there and deals its other hands to the build
+    /// — one row a turn, and only where the band still holds its reserve with that row's income
+    /// gone ([`Food::holds_the_reserve`]). The reserve is what is spent; the stand keeps the food
+    /// as regrowth.
+    ///
+    /// **Harvest again**: once room is no longer wanted — the build stands, or the band no longer
+    /// holds its reserve — every paused row goes back to Best in one proposal.
+    ///
+    /// Both are `standing`: the build was declared, and the hands it is owed are a bill, not a bid.
+    pub(super) fn make_room_change(
+        &self,
+        view: &SeatView,
+        plan: &Plan,
+        memory: &SeatMemory,
+        band: &PopulationCohortState,
+    ) -> Option<(Proposal, Reassignment)> {
+        let goals = plan.food_goals()?;
+        if band.is_traveling {
+            return None;
+        }
+        let paused: Vec<&LaborAssignmentState> = band
+            .labor_assignments
+            .iter()
+            .filter(|row| Self::is_paused(row))
+            .collect();
+        let proposal = |commands: Vec<CommandPayload>, reason: String| Proposal {
+            cost: Cost::claimed(0, band.band_id, &commands),
+            commands,
+            intent: intent_key(SPECIALIST_FOOD, INTENT_ROOM, band.band_id),
+            score: MAKE_ROOM_SCORE * self.weight,
+            reason,
+            memo: None,
+            standing: true,
+        };
+        if !self.room_wanted(view, plan, band) {
+            if paused.is_empty() {
+                return None;
+            }
+            let tiles: Vec<Tile> = paused
+                .iter()
+                .map(|row| Tile::new(row.target_x, row.target_y))
+                .collect();
+            let commands = tiles
+                .iter()
+                .map(|tile| self.assign_at_floor(band, *tile, NO_MAX, None))
+                .collect();
+            let named: Vec<String> = tiles
+                .iter()
+                .map(|tile| SourceKey::Patch(*tile).describe())
+                .collect();
+            return Some((
+                proposal(
+                    commands,
+                    format!("{REASON_ROOM_RESTORE}: {}", named.join(", ")),
+                ),
+                Reassignment::NONE,
+            ));
+        }
+        let build = Self::build_in_flight(view, band)?;
+        if build.builders_staffed >= build.builders_cap {
+            return None;
+        }
+        let book = Self::steady_book(band);
+        let horizon = self.floors.projection_horizon_turns;
+        // ⛔ **Never a patch with a build declared on it.** A climb needs take room on its own patch
+        // (the rung's `requires_work_room`), so pausing the build's own row blocks the very build
+        // it was paused for (`blocked_reason: escapement`, bench seed 59 t19).
+        let mut rows: Vec<&LaborAssignmentState> = band
+            .labor_assignments
+            .iter()
+            .filter(|row| row.kind == ROLE_FORAGE && row.workers > 0 && !Self::is_paused(row))
+            .filter(|row| {
+                workable_patch_at(view, Tile::new(row.target_x, row.target_y))
+                    .is_some_and(|patch| patch.build_destination_rung.is_empty())
+            })
+            .collect();
+        rows.sort_by(|a, b| {
+            Self::row_rate(memory, band, a).total_cmp(&Self::row_rate(memory, band, b))
+        });
+        rows.into_iter().find_map(|row| {
+            let change = Reassignment {
+                income_lost: row.realized_yield,
+                income_gained: 0.0,
+                payoff_turn: 0,
+            };
+            if !self.holds_the_reserve(band, &goals, &change) {
+                return None;
+            }
+            let after = project(&book, &change, horizon);
+            let tile = Tile::new(row.target_x, row.target_y);
+            let commands = vec![self.assign_at_floor(band, tile, NO_MAX, Some(PAUSED_FLOOR))];
+            Some((
+                proposal(
+                    commands,
+                    format!(
+                        "{REASON_MAKE_ROOM}: pause {} for the build at {},{} ({} of {} builders) [{}]",
+                        SourceKey::Patch(tile).describe(),
+                        build.x,
+                        build.y,
+                        build.builders_staffed,
+                        build.builders_cap,
+                        ledger_note(&after)
+                    ),
+                ),
+                change,
+            ))
+        })
     }
 }
 
@@ -6066,5 +6271,137 @@ mod tests {
             Tile::new(5, 4),
             "the fixture's herd is in hunt reach"
         );
+    }
+
+    /// The fixture band working the near patch, where a climb is declared and short of its
+    /// builders, and the rich patch, each at the steady income given.
+    fn a_band_building(near_income: f32, rich_income: f32, staffed: u32) -> SeatView {
+        let mut view = a_view();
+        for patch in &mut view.snapshot.forage_patches {
+            if Tile::new(patch.x, patch.y) == NEAR_PATCH {
+                patch.build_destination_rung = crate::rungs::PLANT_TENDED.to_owned();
+                patch.builders_cap = 3;
+                patch.builders_staffed = staffed;
+            }
+        }
+        let band = &mut view.snapshot.populations[0];
+        band.idle_workers = 0;
+        band.labor_assignments = vec![
+            LaborAssignmentState {
+                realized_yield: near_income,
+                ..forage_row(NEAR_PATCH, 4, near_income)
+            },
+            LaborAssignmentState {
+                realized_yield: rich_income,
+                ..forage_row(RICH_PATCH, 3, rich_income)
+            },
+        ];
+        view
+    }
+
+    /// The floor an `assign_labor` states.
+    fn floor_of(command: &CommandPayload) -> Option<f32> {
+        match command {
+            CommandPayload::AssignLabor { floor, .. } => *floor,
+            other => panic!("not an assignment: {other:?}"),
+        }
+    }
+
+    fn make_room(view: &SeatView) -> Option<Proposal> {
+        food()
+            .make_room_change(view, &plan_with_food_share(1.0), &memory(), own_band(view))
+            .map(|(proposal, _)| proposal)
+    }
+
+    #[test]
+    fn a_fed_band_pauses_its_lowest_row_for_a_build_short_of_builders() {
+        // Steady income 7 against a need of 6: pausing the rich patch's 1.0 still feeds the band.
+        let view = a_band_building(6.0, 1.0, 0);
+        let proposal = make_room(&view).expect("the build is short and the band is fed");
+        assert!(proposal.standing);
+        assert_eq!(proposal.intent, format!("food:{INTENT_ROOM}:{BAND}"));
+        assert_eq!(proposal.commands.len(), 1);
+        assert_eq!(assigned_to(&proposal.commands[0]).2, Some(RICH_PATCH));
+        assert_eq!(floor_of(&proposal.commands[0]), Some(PAUSED_FLOOR));
+        assert!(
+            proposal.reason.starts_with(REASON_MAKE_ROOM),
+            "{}",
+            proposal.reason
+        );
+    }
+
+    #[test]
+    fn the_builds_own_patch_is_never_paused() {
+        let mut view = a_band_building(6.0, 1.0, 0);
+        view.snapshot.populations[0]
+            .labor_assignments
+            .retain(|row| Tile::new(row.target_x, row.target_y) == NEAR_PATCH);
+        assert!(make_room(&view).is_none());
+    }
+
+    #[test]
+    fn a_pause_that_would_spend_the_reserve_is_not_made() {
+        // Steady income 6.5 against 6: pausing the rich patch's 4.0 drains 3.5 a turn, and the
+        // larder of 84 does not last the horizon at the runway goal.
+        let view = a_band_building(2.5, 4.0, 0);
+        assert!(make_room(&view).is_none());
+    }
+
+    #[test]
+    fn a_build_with_its_builders_pauses_nothing() {
+        let view = a_band_building(6.0, 1.0, 3);
+        assert!(make_room(&view).is_none());
+    }
+
+    #[test]
+    fn paused_rows_harvest_again_once_the_build_stands() {
+        let mut view = a_band_building(6.0, 0.0, 0);
+        view.snapshot.populations[0].labor_assignments[1].floor = PAUSED_FLOOR;
+        // Still building: the paused row stays paused.
+        assert!(make_room(&view).is_none());
+        for patch in &mut view.snapshot.forage_patches {
+            patch.build_destination_rung.clear();
+            patch.builders_cap = 0;
+        }
+        let proposal = make_room(&view).expect("the build stands");
+        assert_eq!(proposal.commands.len(), 1);
+        assert_eq!(assigned_to(&proposal.commands[0]).2, Some(RICH_PATCH));
+        assert_eq!(floor_of(&proposal.commands[0]), None, "back to Best");
+        assert!(
+            proposal.reason.starts_with(REASON_ROOM_RESTORE),
+            "{}",
+            proposal.reason
+        );
+    }
+
+    #[test]
+    fn negative_income_places_no_free_hand_while_a_fed_band_builds() {
+        let mut view = a_band_building(6.0, 1.0, 0);
+        view.snapshot.populations[0].idle_workers = 3;
+        let plan = plan_with_food_share(1.0);
+        assert!(food()
+            .negative_income(&view, &plan, &memory(), own_band(&view))
+            .is_none());
+        // With no build in flight the same idle hands go to food.
+        for patch in &mut view.snapshot.forage_patches {
+            patch.build_destination_rung.clear();
+            patch.builders_cap = 0;
+        }
+        assert!(food()
+            .negative_income(&view, &plan, &memory(), own_band(&view))
+            .is_some());
+    }
+
+    #[test]
+    fn a_paused_row_harvests_again_once_the_band_no_longer_holds_its_reserve() {
+        let mut view = a_band_building(6.0, 0.0, 0);
+        view.snapshot.populations[0].labor_assignments[1].floor = PAUSED_FLOOR;
+        // Fed: the pause holds while the build is in flight.
+        assert!(make_room(&view).is_none());
+        // Eating three times the steady income: the larder of 84 runs out inside the horizon.
+        view.snapshot.populations[0].food_need = 18.0;
+        let proposal = make_room(&view).expect("the reserve is gone");
+        assert_eq!(assigned_to(&proposal.commands[0]).2, Some(RICH_PATCH));
+        assert_eq!(floor_of(&proposal.commands[0]), None, "back to Best");
     }
 }
