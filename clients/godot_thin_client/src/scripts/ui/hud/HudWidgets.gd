@@ -1591,10 +1591,8 @@ static func apply_palette() -> void:
 const VERDICT_DOT := "●"
 const VERDICT_DOT_FONT_SIZE := 9
 
-## **THE VERDICT LINE** (§7.1) — which of the two statements is BINDING, the crew or the floor. It is
-## the sentence the whole redesign exists to make sayable: the four-stance picker let a player select
-## Eradicate with one worker and never eradicate anything, because nothing compared the intent with
-## the hands. `verdict` is `SourceForecast.harvest_verdict`'s `{severity, text}`.
+## **A VERDICT LINE** — a `{severity, text}` sentence with its severity dot: the hunt sheet's
+## binding limit, a curveless deposit's reach (`HudDepositVocab.deposit_verdict`), the denial raid.
 ## The compose sheet's rot bullet (#706) carries this meta with its own text, so a harness reads what
 ## was drawn under the PER TURN numbers.
 const WORK_PARTY_ROT_META := &"work_party_rot"

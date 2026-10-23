@@ -274,15 +274,15 @@ composer that needs it calls it rather than re-deriving:
 
 | `regrowth_rate` | the tile row / the roster cell | the FLOOR DIAL | the sheet's readout note | the sheet's verdict | the sheet's aside |
 |---|---|---|---|---|---|
-| `> 0` | the OVER-CUT word — `⚠ overdrawing` | offered — presets + chart | `renewable` (HEALTHY), or the overdraw flag + the SHEET's noun (WARN) | the SHARED harvest one — *Reaches the floor in 19 turns.* / *At the floor and holding it* / *settles at 64% — 7 foresters would reach the floor* | the floor hint and the teaching line |
+| `> 0` | the OVER-CUT word — `⚠ overdrawing` | offered — presets + chart | `renewable` (HEALTHY), or the overdraw flag + the SHEET's noun (WARN) | none — the chart above the take carries the reach (a renewing working with no curve falls back to `deposit_verdict`) | the floor hint and the teaching line |
 | `== 0` | the RUNWAY — `75 turns left` (roster only) | none: rock does not come back | nothing: it renews nothing | *Gathering reaches 330 of 2,200. A quarry would reach 1,870.* | *Runs out in 275 turns at this rate.* |
 
-⛔ **THE RENEWING SHEET'S VERDICT USED TO BE THE OVER-CUT SENTENCE AND IS NOT ANY MORE** (issue #650).
-*Cutting 7.2 a turn against 4.5 that grows back* is true and is an OBSERVATION; with a dial there is a
-question to answer instead — does THIS crew get the stand down to where it was told to stop, and if
-not how many hands would. **The over-cut fact is not lost**: it is the `⚠` on the yields row directly
-above. `HudDepositVocab.deposit_verdict`'s renewing arm still ships and is still reached — a renewing
-working the wire sent no CURVE for has no walk, and that arm is what the readout falls back to.
+⛔ **A CHARTED RENEWING SHEET CARRIES NO VERDICT SENTENCE** (issue #650, then the verdict's retirement).
+*Cutting 7.2 a turn against 4.5 that grows back* is an OBSERVATION and is the `⚠` on the yields row
+directly above; the shared reaches-the-floor sentence that replaced it is gone too, because the chart
+draws the same answer. `HudDepositVocab.deposit_verdict`'s renewing arm still ships and is still
+reached — a renewing working the wire sent no CURVE for draws no chart, and that arm is the only reach
+figure the readout has there. A finite seam keeps its own (`Gathering reaches … A quarry would reach …`).
 
 **Forking on `branch` paints a renewing scatter with a runway that never moves**, and quotes a
 quarry's `sustainable_take` of `0` as though it were a bill met. `ui_preview`'s `workings` chapter
@@ -668,12 +668,12 @@ RUNWAY, whose numerator it is.
 
 ### ⛔ THE READOUT IS BUILT DIRECTLY, NOT THROUGH `_mount_readout` — AND STILL
 
-The shared mount wires every register off a `floor_chart_model` and drops the **VERDICT** outright
-when that model is not `known` — which is every FINITE seam, since a quarry publishes an all-zero
-curve and has no projection to walk. That verdict is the one sentence the whole branch turns on. So
-`_mount_deposit_readout` assembles the four SHARED widgets in the same order and the same registers,
-takes the verdict from the walk where there is one and from `HudDepositVocab.deposit_verdict` where
-there is not, and puts the runway aside under the finite arm alone.
+The shared mount wires every register off a `floor_chart_model` and carries no verdict on a charted sheet, and the
+model is not `known` — which is every FINITE seam, since a quarry publishes an all-zero
+curve and has no projection to walk. A finite seam's `deposit_verdict` is the one sentence the whole branch turns on. So
+`_mount_deposit_readout` assembles the SHARED widgets in the same order and the same registers,
+mounts `HudDepositVocab.deposit_verdict` only where there is no chart (a charted sheet mounts no
+verdict host at all), and puts the runway aside under the finite arm alone.
 
 ⛔ **AND THE `renewable` NOTE ON THE YIELDS ROW IS THE SAME FORK.** `_fill_yields_host` draws for
 three webs and composed that note from the overdraw flag alone, so a quarry read `1.20 STONE
@@ -761,7 +761,7 @@ rather than changing the shared code. The overlay reads `curve_take_at(reply, cr
 | the chart's projected series, `reached_turn`, `settled_fraction` | `SourceForecast.project_stock` with carry `ENGAGEMENT_UNBOUNDED` and engage = the row's take |
 | *hold it after* | `curve_crew_reaching(reply, regrowth at the floor)` — the smallest crew whose row takes the growth |
 | *clear it now* | `curve_crew_reaching(reply, room next turn)`, never below the crew whose walk reaches the floor |
-| the verdict's `K foresters would reach the floor` | `_curve_crew_that_reaches` — the smallest crew in the curve whose own walk reaches the floor; none in range takes the verdict's existing *settles at X% and holds there.* arm |
+| the *clear it now* floor | `_curve_crew_that_reaches` — the smallest crew in the curve whose own walk reaches the floor (the verdict that once also read it is retired) |
 | the stepper's useful cap | `curve_useful_cutters` — the smallest crew reaching the curve's best take; `CUTTERS_UNCAPPED` when no row in range plateaus |
 | the `now → after` pair | `after` = `min(take, regrowth at the floor)` |
 
@@ -770,8 +770,8 @@ room it IS the lift; at the room it clears to the floor on the first turn either
 the capped take reaches the floor on the same turn one fed the lift would.
 
 ⛔ **WITH NO CURVE, THE DRAW IS WITHHELD — NEVER THE BARE RATE.** Pending or failed, the
-model carries `CHART_DRAW_WITHHELD_KEY`: an empty `series`, no `reached_turn`, an empty `verdict` and
-both pills at `NO_CREW_ANSWER`. `_mount_crew_row` draws no pills and the verdict host stays empty. The
+model carries `CHART_DRAW_WITHHELD_KEY`: an empty `series`, no `reached_turn` and
+both pills at `NO_CREW_ANSWER`. `_mount_crew_row` draws no pills. The
 chart shows the stock and the regrowth for the moment the reply takes. The cap falls back to the
 band's pool alone.
 
@@ -834,9 +834,9 @@ reading the config's figure goes stale in silence the day a second term lands. T
 reads the catalog rate either: it prints the crew curve's `next_rung_take`, for the same reason one
 rung up.
 
-**AND IT IS RESOLVED BEFORE THE CHART** — the forage sheet's own load-bearing order. The chart, both
-crew targets and the verdict are read against a CREW, and reading them against a count the stepper is
-about to clamp away makes the panel state a verdict for a crew it then refuses to show.
+**AND IT IS RESOLVED BEFORE THE CHART** — the forage sheet's own load-bearing order. The chart and both
+crew targets are read against a CREW, and reading them against a count the stepper is
+about to clamp away makes the panel draw a chart for a crew it then refuses to show.
 
 ## THE LADDER — the deposit branches' two tracks, on the Work board
 
@@ -1442,10 +1442,10 @@ renews, so it is offered the dial, and it stands on a rung that strands 85% of t
 |---|---|
 | `workings_tile_card` | ONE hex, TWO material rows, each keyed by its own material — the claim a tile-keyed surface cannot make — plus the row's `stock · rung · crew · hazard` shape at the STATED ZERO (this band holds the working and has taken its hands off it), the rung named by the WIRE, **no bill, countdown or shortfall figure anywhere on the card**, those figures present on the block's HOVER, the countdown on the ROSTER's hover and not on this one, and no payoff row on two rungs that buy nothing |
 | `workings_payoff_rows` | the blank-key row, BOTH of them — `reaches 85% of the seam` on the quarry and `grows back twice as fast` on the coppice, the two AXES the two branches' ladders buy — and the structural claim: the rendered markup keeps exactly ONE `[table=`, which is the only place a keyless payoff's table split is visible |
-| `workings_forestry_sheet` | `Assign foresters ▸` — the eyebrow naming the BRANCH's crew, the crew row naming it again, **the floor presets AND the chart, because the ground grows back**, the pointer line naming the next rung and linking the Work tab, NO deal row (the stand-in curve names no next rung), the sheet's own overdraw note, the SHARED harvest verdict, and the commit verb `Cut`. It also asserts the arm that verdict REPLACED still composes — `deposit_verdict` on a curveless working — which no frame can show beside it |
+| `workings_forestry_sheet` | `Assign foresters ▸` — the eyebrow naming the BRANCH's crew, the crew row naming it again, **the floor presets AND the chart, because the ground grows back**, the pointer line naming the next rung and linking the Work tab, NO deal row (the stand-in curve names no next rung), the sheet's own overdraw note, NO verdict sentence under the chart, and the commit verb `Cut`. It also asserts the arm the retired verdict once replaced still composes — `deposit_verdict` on a curveless working — which no frame can show beside it |
 | `workings_extraction_sheet` | `Assign diggers ▸` on the rock beside it — the OTHER branch's noun, **neither preset nor chart nor crew pill**, the verdict the finite ladder turns on (*Gathering reaches 330 of 2200. A quarry would reach 1870.*), the runway aside at this rate, the IDLE seam's own sentence beside it (never `Runs out in 0 turns`), and `Dig`. **It is the NEGATIVE that makes the forestry sheet's dial mean something**: same chapter, same hex, one fork |
 | `workings_floor_strip` / `_peak` / `_learn` | the dial at each of the three intent presets on ONE stand — the preset lit, the chart drawn, the take in the working's own MATERIAL at every position, the `now → after` arrow agreeing with the sheet's own verdict (both gated on the same walk), and the teaching line at the shared `learn_multiplier` for that floor. **The stand is a nearly-full one on purpose**: the chapter's working fixture sits BELOW the top preset's floor, so on it the third frame would be empty for a reason that has nothing to do with the dial |
-| `workings_floor_held` | a wood standing EXACTLY at its floor — NO verdict row (the source holding at its floor states nothing there), the take collapsing to what the stand puts back, and NO arrow, the two readings being one number. The crew is read BACK off the sheet, since a reopened sheet seeds from the band's own row |
+| `workings_floor_held` | a wood standing EXACTLY at its floor — NO verdict row (no charted sheet draws one), the take collapsing to what the stand puts back, and NO arrow, the two readings being one number. The crew is read BACK off the sheet, since a reopened sheet seeds from the band's own row |
 | `workings_floor_stripped` | the dial DRAGGED to the bottom, live (`committed = false`) — the chart the pointer holds still alive, the readings refilled in place, the `⚠ overdraws the seam` mark and the strip consequence in the working's own noun |
 | `workings_fresh_runway` | **a crew committed this turn on a seam that has cut nothing** — the FORECAST runway (`reachable ÷ the seeded rate`) where the sheet used to read *Nobody is cutting it*, the same seam with no crew still reading it, and the renewing verdict quoting the SEEDED take rather than a zero. Three states, three readings, one frame plus two producer claims |
 | `workings_unopened` | **the state a player meets first** — both branches' free floors on one hex, untouched: the full seam as ONE figure under the floor's own name, no hazard word of either kind, and the IDLE quarry still reading `not being worked`, which is the pair `is_unopened` exists to keep apart |

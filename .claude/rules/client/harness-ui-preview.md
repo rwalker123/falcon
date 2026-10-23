@@ -560,6 +560,17 @@ claims about a rung's state kept their shape. Claims about the retired face text
 colours, the DONE label, the pointer line, the crew-split sentence on the sheet) were deleted rather than
 re-aimed: nothing renders them.
 
+## Charted sheets carry no verdict sentence
+
+`Readout.verdict_text` answers `""` on every charted forage and renewing-deposit sheet, and the chapters
+assert that as an ABSENCE paired with the chart's presence (`FLOOR_CHART_META`) or the yields row, never
+alone. The hunt sheet's binding-limit sentence is still read through the same helper
+(`chapters/hunt.gd`). A curveless or finite deposit keeps `deposit_verdict`, asserted at the producer
+and on the extraction sheet. Claims that were only about the retired sentences' wording
+(`forage_kept_curve_verdict`'s crew clause, the stripped/held aftermath trio, the at-floor `stock_face`
+pair) were deleted, and `chapters/workings.gd`'s arrow and curve-draw claims now read the chart model's
+`reached_turn` / `settled_fraction` off `DrawerComposeController._last_chart_model`.
+
 ## Worked-source mark states (issue #412)
 
 **`ui_preview`** — nine behavioural assertions on `RungGates.next_rung_ready`, asserted DIRECTLY over

@@ -1553,21 +1553,19 @@ static func curve_useful_cutters(reply: Dictionary) -> int:
 
 ## Set on a chart model when the sheet has no curve to draw a crew's draw from — the reply is in
 ## flight or refused. Every reading that projects what the crew takes
-## (the walk, the two crew pills, the verdict) is withheld, never replaced by the bare rate.
+## (the walk, the two crew pills) is withheld, never replaced by the bare rate.
 const CHART_DRAW_WITHHELD_KEY := "draw_withheld"
 
 ## ⛔ **THE CHART'S CREW-DRAW READINGS, RECOMPOSED OFF THE CREW CURVE** (issue #663). `floor_chart_model`
 ## walks the stock down at `perWorkerBiomass × crew`, which is the bare rate — a crew with sleds and
-## axes drew on the chart as one without. This takes that model and replaces the four readings that
+## axes drew on the chart as one without. This takes that model and replaces the three readings that
 ## stand for *what this crew takes a turn*:
 ##
 ## - the WALK (`series` / `reached_turn` / `settled_fraction`) — `project_stock` at the curve's `take`
 ##   for the composed crew, with no carry cap of its own;
 ## - *hold it after* — the smallest crew whose take covers the regrowth at the floor;
 ## - *clear it now* — the smallest crew whose take covers the room above the floor, floored on the
-##   reaching crew exactly as the shared composer floors it;
-## - the VERDICT — the shared `harvest_verdict`, its "K would reach the floor" being the smallest crew
-##   in the curve whose projection reaches it, and its no-remedy ending where none does.
+##   reaching crew exactly as the shared composer floors it.
 ##
 ## **THE ROW'S TAKE IS A SAFE STAND-IN FOR THE CREW'S LIFT.** The sim caps it at the room next turn, so a row reads either
 ## the crew's whole lift (below the room) or the room itself (a crew that clears it in one turn), and a
@@ -1576,8 +1574,7 @@ const CHART_DRAW_WITHHELD_KEY := "draw_withheld"
 ##
 ## Everything else on the model (the regrowth curve, the room, the floor, the teaching note) is a fact
 ## about the ground and is left as `floor_chart_model` composed it.
-static func curve_chart_model(model: Dictionary, deposit: Dictionary, crew: int, view: Dictionary,
-		crew_noun: String) -> Dictionary:
+static func curve_chart_model(model: Dictionary, deposit: Dictionary, crew: int, view: Dictionary) -> Dictionary:
 	if not bool(model.get("known", false)):
 		return model
 	var out := model.duplicate()
@@ -1587,7 +1584,6 @@ static func curve_chart_model(model: Dictionary, deposit: Dictionary, crew: int,
 		out[CHART_DRAW_WITHHELD_KEY] = true
 		out["series"] = PackedFloat32Array()
 		out["reached_turn"] = SourceForecast.PROJECTION_REACHED_NONE
-		out["verdict"] = {}
 		out["crew_to_clear"] = SourceForecast.NO_CREW_ANSWER
 		out["crew_to_hold"] = SourceForecast.NO_CREW_ANSWER
 		return out
@@ -1613,9 +1609,6 @@ static func curve_chart_model(model: Dictionary, deposit: Dictionary, crew: int,
 	out["settled_fraction"] = float(walk["settled_fraction"])
 	out["crew_to_hold"] = hold
 	out["crew_to_clear"] = clear
-	out["verdict"] = SourceForecast.harvest_verdict(walk, crew, biomass, capacity, floor_value,
-		reaching, crew_noun, 0.0, "",
-		SourceForecast.escapement_room_next_turn(src, prefix, floor_value) > 0.0)
 	return out
 
 ## The smallest crew in the curve whose projection reaches the floor — `0` where the stock already

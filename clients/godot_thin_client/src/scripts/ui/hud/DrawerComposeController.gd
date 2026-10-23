@@ -1455,8 +1455,7 @@ func _standing_kit_id(band: Dictionary, key: String) -> String:
     var row: Dictionary = _band_labor.effective_worker_map(band).get(key, {})
     return String(row.get(KitRoster.ROW_KIT_ID_KEY, KitRoster.NO_KIT_ID))
 
-## **A KEPT PATCH'S CREW COUNTS NAME THE WHOLE CREW THE STEPPER SETS** — both pills and the verdict's
-## crew clause. Each pill's take target
+## **A KEPT PATCH'S CREW COUNTS NAME THE WHOLE CREW THE STEPPER SETS** — both pills. Each pill's take target
 ## (`crew_to_clear` / `crew_to_hold`, in gathering hands) converted through the patch curve's own
 ## `keep_hands` (`SourceForecast.forage_curve_crew_for`), the conversion the cap goes through too, so
 ## the pills, the cap note and the stepper are one count. While the curve is in flight neither pill
@@ -1471,12 +1470,6 @@ func _kept_crew_targets(model: Dictionary, kept: bool) -> Dictionary:
         out[key] = SourceForecast.forage_curve_crew_for(per_crew,
             int(model.get(key, SourceForecast.NO_CREW_ANSWER))) \
             if ready else SourceForecast.NO_CREW_ANSWER
-    # …and the VERDICT's `K harvesters would reach the floor`, through the same conversion — the one
-    # other crew count the sheet states.
-    var reaching := int(model.get("reaching_crew", 0))
-    out["verdict"] = SourceForecast.verdict_with_reaching_crew(model.get("verdict", {}) as Dictionary,
-        reaching, SourceForecast.forage_curve_crew_for(per_crew, reaching) if ready \
-            else SourceForecast.NO_CREW_ANSWER, String(model.get("crew_noun", "")))
     return out
 
 ## **THE HANDS OF `workers` THAT GATHER ON A KEPT PATCH** — `workers - keep_hands` off the curve's row,
@@ -2413,13 +2406,9 @@ func _mount_readout(parent: VBoxContainer, hosts: Array, model: Dictionary, work
         var verdict_host := VBoxContainer.new()
         verdict_host.size_flags_horizontal = Control.SIZE_EXPAND_FILL
         column.add_child(verdict_host)
-        # **THE HUNT WEB SUPPLIES ITS OWN SENTENCE HERE, AND IT REPLACES THE SHARED ONE.** The chart
-        # model's verdict is composed from the projection walk, which carries the engagement and the
-        # retreat but NOT the fight — so on the animal web *"this crew can't draw it that low, 12
-        # herders would reach the floor"* is a remedy sized without half the arithmetic. The yield
-        # model names the smallest of the take's three real limits instead
-        # (`YIELD_MODEL_LIMIT`); the plant web has no fight, publishes no such key, and keeps the
-        # walk's answer unchanged.
+        # **ONLY THE HUNT WEB STATES A SENTENCE HERE** — the smallest of the take's three real limits
+        # (`YIELD_MODEL_LIMIT`). The plant web has no fight, publishes no such key, and this host
+        # stays empty: the floor chart above carries where the stock goes.
         #
         # **READ OFF THE SAME `yields_at` ANSWER THE ROWS ARE BUILT FROM**, at this floor and this
         # crew — the aside's locked-account line's rule, and for its reason: the models are PURE and
@@ -2429,9 +2418,8 @@ func _mount_readout(parent: VBoxContainer, hosts: Array, model: Dictionary, work
             func(host: Container, live: Dictionary, crew: int) -> void:
                 var limit: Dictionary = (yields_at.call(_live_floor(live), crew,
                     _live_reaches(live)) as Dictionary).get(YIELD_MODEL_LIMIT, {})
-                var shown: Dictionary = limit if not limit.is_empty() else live.get("verdict", {})
-                if not shown.is_empty():
-                    host.add_child(HudWidgets.build_verdict_line(shown)))
+                if not limit.is_empty():
+                    host.add_child(HudWidgets.build_verdict_line(limit)))
     var aside_host := VBoxContainer.new()
     aside_host.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     column.add_child(aside_host)
@@ -2764,7 +2752,7 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
     # the `+` refuses, which is the panel arguing with itself.
     chart_model = SourceForecast.floor_chart_model(_hunt_priced_herd(herd, band),
         SourceForecast.SOURCE_KIND_HERD,
-        HudComposeVocab.BARE_FORECAST_PREFIX, _compose.hunt_floor(), staffed_crew, crew_label.to_lower(), lesson_known,
+        HudComposeVocab.BARE_FORECAST_PREFIX, _compose.hunt_floor(), staffed_crew, lesson_known,
         crew_take, SourceForecast.WHOLE_CREW_TAKES, _player_knowledge())
     _last_chart_model = chart_model
     if bool(chart_model.get("known", false)):
@@ -2782,7 +2770,7 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
             _refresh_floor_live(live_hosts, SourceForecast.floor_chart_model(
                 _hunt_priced_herd(_live_herd(herd_id, herd), band),
                 SourceForecast.SOURCE_KIND_HERD,
-                HudComposeVocab.BARE_FORECAST_PREFIX, floor, staffed_crew, crew_label.to_lower(), lesson_known,
+                HudComposeVocab.BARE_FORECAST_PREFIX, floor, staffed_crew, lesson_known,
                 _hunt_live_crew_take, SourceForecast.WHOLE_CREW_TAKES, _player_knowledge()),
                 staffed_crew)
         target.add_child(HudWidgets.build_floor_chart(chart_model,
@@ -3640,7 +3628,7 @@ func _build_forage_assign_controls(tile_info: Dictionary, target: VBoxContainer)
         _forage_priced_patch(take_tile, band),
         SourceForecast.SOURCE_KIND_FORAGE, HudComposeVocab.FORAGE_FORECAST_PREFIX,
         _compose.forage_floor(), staffed_crew,
-        crew_label.to_lower(), lesson_known, [], _kept_take_crew(kept, staffed_crew),
+        lesson_known, [], _kept_take_crew(kept, staffed_crew),
         _player_knowledge()),
         kept)
     _last_chart_model = chart_model
@@ -3659,7 +3647,7 @@ func _build_forage_assign_controls(tile_info: Dictionary, target: VBoxContainer)
                 _forage_priced_patch(_forage_take_source(
                     _live_tile_info(subject_key, tile_info), take_state), band),
                 SourceForecast.SOURCE_KIND_FORAGE,
-                HudComposeVocab.FORAGE_FORECAST_PREFIX, floor, staffed_crew, crew_label.to_lower(),
+                HudComposeVocab.FORAGE_FORECAST_PREFIX, floor, staffed_crew,
                 lesson_known, [], _kept_take_crew(kept, staffed_crew),
                 _player_knowledge()), kept),
                 staffed_crew)
@@ -5618,8 +5606,7 @@ func _deposit_chart_model(deposit: Dictionary, ladder: Array[Dictionary], floor:
     var lesson_known := HudDepositVocab.standing_lesson_known(deposit, ladder, _player_knowledge())
     var model := SourceForecast.floor_chart_model(HudDepositVocab.forecast_source(deposit),
         SourceForecast.SOURCE_KIND_DEPOSIT, HudComposeVocab.BARE_FORECAST_PREFIX,
-        HudDepositVocab.composed_floor(deposit, floor), crew,
-        HudDepositVocab.crew_noun(HudDepositVocab.branch_of(deposit)).to_lower(), lesson_known)
+        HudDepositVocab.composed_floor(deposit, floor), crew, lesson_known)
     if not bool(model.get("known", false)):
         return model
     model["teaching_note"] = SourceForecast.teaching_note(
@@ -5631,8 +5618,7 @@ func _deposit_chart_model(deposit: Dictionary, ladder: Array[Dictionary], floor:
     # are recomposed off `_deposit_live_crew_view`, which is the committed floor's answer on a build
     # and the dragged floor's (or PENDING) on a drag. With no curve they are WITHHELD, never drawn at
     # the bare `perWorkerBiomass × crew` this model was composed at.
-    return HudDepositVocab.curve_chart_model(model, deposit, crew, _deposit_live_crew_view,
-        HudDepositVocab.crew_noun(HudDepositVocab.branch_of(deposit)).to_lower())
+    return HudDepositVocab.curve_chart_model(model, deposit, crew, _deposit_live_crew_view)
 
 ## **PER-PRESET TAKES FOR THE PICKER'S HOVERS** — what the seam offers above each preset's floor, in
 ## the working's own material. The forage picker's metric shape (`extractive_take_pair`), asked of a
@@ -5789,21 +5775,13 @@ func _mount_deposit_readout(target: VBoxContainer, hosts: Array, deposit: Dictio
         curve_row_at_crew)
     if deal_label != "" and deal_value != "":
         column.add_child(HudWidgets.build_improvement_deal(deal_label, deal_value))
-    var verdict_host := VBoxContainer.new()
-    verdict_host.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-    column.add_child(verdict_host)
-    if known:
-        # **THE REACHES-THE-FLOOR VERDICT IS THE SHARED COMPOSER'S** (`SourceForecast.harvest_verdict`,
-        # off the projection walk) — the same sentence a patch states, because the question is the
-        # same one: does this crew get the stock down to where it was told to stop.
-        # **A WITHHELD DRAW STATES NO VERDICT** — every renewing verdict is a sentence about what this
-        # crew draws, and with no curve there is no gear-bearing one to state.
-        _register_live(hosts, verdict_host, model, crew,
-            func(host: Container, live: Dictionary, _count: int) -> void:
-                var verdict: Dictionary = live.get("verdict", {})
-                if not verdict.is_empty():
-                    host.add_child(HudWidgets.build_verdict_line(verdict)))
-    else:
+    # **A CHARTED SHEET STATES NO VERDICT SENTENCE** — the floor chart above the take already draws
+    # where the stock goes. A curveless / finite deposit draws no chart, so `deposit_verdict` is the
+    # only reach figure it has and is mounted here.
+    if not known:
+        var verdict_host := VBoxContainer.new()
+        verdict_host.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+        column.add_child(verdict_host)
         verdict_host.add_child(HudWidgets.build_verdict_line(
             HudDepositVocab.deposit_verdict(deposit, ladder, assignment)))
     var aside_host := VBoxContainer.new()

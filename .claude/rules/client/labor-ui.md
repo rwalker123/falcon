@@ -858,9 +858,9 @@ chapter pins the three hand-checked terms (`RATE_*`).
 > the second.
 >
 > **It is not an edge case: it is the steady state a Sustain policy is FOR.** And the fix already
-> existed one row up — `harvest_verdict` had been moved onto the forward-looking
-> `escapement_room_next_turn` for this exact reason, which is why the verdict correctly read *"At the
-> floor and holding it"* while the line under it said nothing was happening. `floor_chart_model` now
+> existed one row up — the readout's headline had been moved onto the forward-looking
+> `escapement_room_next_turn` for this exact reason, which is why the headline correctly read a live
+> take while the line under it said nothing was happening. `floor_chart_model` now
 > resolves that room **once** and feeds both, so the two cannot disagree again.
 >
 > **AN UNREACHABLE CREW TARGET SHOWS A DISABLED `✕`, NOT ABSENCE.** `clear it now` / `hold it after`
@@ -1172,8 +1172,8 @@ present-but-empty so the five zones remain one enumeration: `HudFormat.floor_hin
 every consumer renders no line.
 
 The other four each state something the number does not, and **`strip`'s is load-bearing**: it is the
-only place the sheet says floor 0 is irreversible on the animal web, and the reaching verdict drops its
-own *"then holds it"* clause there on the understanding that this line carries the consequence.
+only place the sheet says floor 0 is irreversible on the animal web, and the strip is the only
+place the sheet states what taking everything costs, the chart sentence having been retired.
 
 > **EMPTYING AN ENTRY HERE SILENCES IT ON EVERY CONSUMER — five of them**: the compose readout's aside,
 > the expedition compose sheet, the work-row hint, the send-hunt banner and the expedition tooltip.
@@ -1626,10 +1626,9 @@ keeping hands, so a new turn is a new question — and `_drag_forage_crew_take` 
 - **The floor walk is drawn by the gatherers, and the verdict names the whole crew.**
   `floor_chart_model`'s `take_crew` (`_kept_take_crew`: the row's `workers - keep_hands`) is the carry
   the stock walk uses, so the reach, the settle and the take targets all describe the hands that take.
-  The verdict's `K harvesters would reach the floor` is re-spelled through the same
-  `forage_curve_crew_for` (`SourceForecast.verdict_with_reaching_crew`, off the model's
-  `reaching_crew`), so no number on the sheet is in take hands. While the curve is pending the walk
-  uses the whole crew and the clause closes without a count.
+  The pills' crew counts are re-spelled through `forage_curve_crew_for`
+  (`_kept_crew_targets`), so no number on the sheet is in take hands. While the curve is pending the
+  walk uses the whole crew.
 - **An unkept patch keeps the closed form** — there is no keeping to take out of the crew.
 - The hunt sheet reads `HuntCrewTake` and the deposit sheet `DepositCrewTake`, both already netted.
 - `ui_preview`'s stand-in (`fixtures_forecast.forage_crew_take_answer`) takes the tile's own
@@ -1690,7 +1689,7 @@ It might be better to show what will be taken the 'next' turn."*
 - **The at-floor SUPPRESSION went with it.** The `now → after` walk was withheld on a source already at
   its floor, which is why the sheet had nothing left to show; the forward headline is what made the
   suppression unnecessary. They were one defect.
-- **A source holding at its floor draws NO verdict row** (`harvest_verdict` answers `{}`); the NEXT TURN figure above is the take that holds.
+- **A source holding at its floor draws no verdict row**, as no charted sheet does; the NEXT TURN figure above is the take that holds.
 - **Scoped to the two ceilings the headline reads.** The floor presets still quote the ROOM (`up to
   +N/turn`, takeable once) and `max_useful_workers` still divides the ROOM — those answer *different*
   questions, and re-pointing them moved a dozen unrelated assertions. The sustainability bar DID move
@@ -1701,36 +1700,27 @@ It might be better to show what will be taken the 'next' turn."*
 > forward ceiling like the plant web now, but its *waste* and animal-count quantisation still work off
 > the old basis. Worth a look if a herd sheet at its floor reads oddly.
 
-### THE VERDICT LINE IS THE POINT OF THE REDESIGN (§7.1)
+### THE CHART IS THE VERDICT (§7.1)
 
 The four-stance picker let a player select Eradicate with one worker and never eradicate anything:
 the stance said what was intended and nothing said whether the crew could do it. Crew and floor are
-independent statements now, so `SourceForecast.harvest_verdict` compares them and says **which is
-binding**, in the raid verdict's own ok/slow/blocked severity vocabulary:
+independent statements now, and the **floor chart** says which is binding — the stock's walk against
+the floor line, the reach turn, the settle point.
 
-| state | severity | reads |
-|---|---|---|
-| the crew reaches the floor | `ok` | *Reaches the floor in 9 turns, then holds it — taking only what grows back.* |
-| the crew settles short of it | `slow` | *This crew can't draw it that low. It settles at 62% and holds there — 11 gatherers would reach the floor.* |
-| the crew reaches a floor NOTHING GROWS AT | `ok` | *Reaches the floor in 2 turns.* — no second clause |
-| nothing stands above the floor | `blocked` | *Already at or below the floor. This crew takes nothing until it grows past 98.* (a herd: *…past ≈11 Red Deer*) |
-| no crew at all | `blocked` | *No one assigned. Nothing is taken and it grows back on its own.* |
+**A CHARTED SHEET CARRIES NO VERDICT SENTENCE.** The shared `harvest_verdict` composer (*Reaches the
+floor in N turns* / *This crew can't draw it that low…* / *Already at or below the floor…* / *No one
+assigned…*), its `verdict_with_reaching_crew` re-spelling for a kept patch, the model's `"verdict"`
+key and `reaching_crew` / `crew_noun` are deleted: a sentence under the chart said again what the
+chart draws. Three things keep a sentence in that slot:
+- **the hunt sheet** keeps its binding-limit sentence (`yields_at(...)[YIELD_MODEL_LIMIT]`, the
+  smallest of the take's three real limits), which names a bound the walk does not carry;
+- **a curveless / finite deposit** draws no chart, so `HudDepositVocab.deposit_verdict` is the only
+  reach figure it has and is mounted;
+- **a rotting-build line** on the sheet's own aside is unrelated.
 
-**A VERDICT MAY NOT PROMISE AN AFTERMATH THE SOURCE CANNOT REACH.** Reported from play: a Rabbit
-Warren at `Take everything` read `0 hold it after` beside *"…then holds it — taking only what grows
-back"*. At floor 0 a herd is gone; there is nothing to hold and nothing regrows, so the panel was
-contradicting its own crew target. The clause is DROPPED rather than reworded — what stripping costs
-is already the aside's `FLOOR_STRIP_CONSEQUENCE` sentence, and a verdict restating it says one fact
-twice. **The discriminator is `regrowth_at(samples, floor) > 0`, NOT the web and NOT floor 0**: a
-patch stripped to 0 reseeds from bare ground, so it genuinely holds at 0 paying what grows back and
-keeps the full sentence. `floor_chart_model` resolves it from the same samples the projection walks
-and `crew_to_hold` divides, so the verdict's promise, the *hold it after* count and the readout's
-`after` reading are three consequences of one number.
-
-> The web branch (`kind != SOURCE_KIND_HERD`) is the plausible wrong fix and it **passes both obvious
-> assertions** — on a stripped herd and a stripped patch, "is a herd" and "cannot regrow" coincide.
-> The case that separates them is a HEALTHY herd at a floor it still regrows at, which must KEEP the
-> clause; sabotage found the pair vacuous without it.
+`crew_to_clear` / `crew_to_hold` / `reached_turn` stay on the model — the chart and the arrow's
+reaches-the-floor gate read them. `Readout.verdict_text` therefore answers `""` on every charted
+forage and renewing-deposit sheet, which the harness asserts beside the chart's presence.
 
 The settle point and the reach turn both come off the SAME projection the chart draws.
 `crew_that_reaches` names the remedy — a crew must out-carry the largest regrowth in the band it has
@@ -1753,7 +1743,7 @@ Four things follow, and each is load-bearing:
   ratio halved — so a second ROW of three numbers would carry ONE new fact in three slots. The
   comparison is also per account, so the two numbers touch.
 - **It renders only where the crew REACHES the floor**, gated on the walk's `reached_turn` — the same
-  walk the verdict one line down narrates ("Reaches the floor in 3 turns"). A crew that settles short
+  walk the chart draws. A crew that settles short
   never enters the holding state, and promising it a held rate is the failure this reading exists to
   fix. **And only where no BUILD is composed** — see "A COMPOSED BUILD SUPPRESSES THE FLOOR WALK"
   below. Both tests are the yield models' (`_walks_to_the_floor`), so the rows and the caption over
@@ -1788,12 +1778,10 @@ them on a stock prints `1075.00`, claiming precision the number lacks.
 
 **A HERD'S STOCK IS COUNTED IN ANIMALS, AND ONE FUNCTION SAYS SO.** `SourceForecast.stock_face`
 renders a standing quantity in the unit its source counts in — `98` for a patch, `≈11 Red Deer` for a
-herd (`animal_count`, floored at one body). **Both surfaces that name the floor's THRESHOLD read it
-from there**: the chart's flag and the at-floor verdict beneath it. They are two statements of one
-number and they diverged the moment the flag learned to count animals while the verdict went on
-quoting `grows past 1075` — caught in a rendered frame, not in review — so the cure is that no second
-rendering exists, not two kept in step by hand. `floor_chart_model` binds `body_mass` / `quarry` once
-and passes them BOTH to `harvest_verdict` and out on the model, for the same reason.
+herd (`animal_count`, floored at one body). **Every surface that names the floor's THRESHOLD reads it
+from there**: the chart's flag was once beside an at-floor verdict that quoted `grows past 1075` while
+the flag counted animals — caught in a rendered frame, not in review — so the cure is that no second
+rendering exists. `floor_chart_model` binds `body_mass` / `quarry` once and puts them on the model.
 
 > #### ⛔ `stock_face` IS FOR A **STOCK**. A PER-TURN RATE THROUGH IT IS AN OVERSTATEMENT, NOT A ROUNDING
 >

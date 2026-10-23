@@ -8,17 +8,10 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 354
+const EXPECTED_CHECKPOINTS := 349
 
-## The countdown verdict's opening, as a needle — the precondition every claim about that sentence
-## rests on ("this model reached the reaching branch at all").
+## The retired countdown sentence's opening: a charted sheet draws no such label, only the chart does.
 const REACHES_FLOOR_NEEDLE := "Reaches the floor"
-
-## **A NEEDLE FOR A RETIRED CLAUSE, KEPT SO IT STAYS RETIRED.** The countdown used to close by
-## promising the equilibrium it was counting down to, on sources that had one; the readout states that
-## itself, in `VERDICT_HOLDS_AT_FLOOR`, the moment it is true. Spelled out because there is no const
-## left to compose it from.
-const RETIRED_AFTERMATH_NEEDLE := "then holds it"
 
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 const BaseFx := preload("res://tools/ui_preview/fixtures_base.gd")
@@ -1144,12 +1137,6 @@ func run(harness) -> void:
 	h._assert_hud("…and at that crew the take really does empty the room (%.4f of %.4f food), one hand short does not"
 		% [clear_take, fowl_room_food],
 		clear_take >= fowl_room_food and short_take < fowl_room_food)
-	# (2) **AND THE VERDICT READS THE SAME PROJECTION.** One hunter reaching ten birds a turn cannot
-	# out-take this herd's regrowth, so the crew binds and the sentence must say so; carry-bound, the
-	# same hunter moved 40 biomass a turn and the sheet promised the floor. The twin below is what
-	# makes this a claim about the ARM rather than about the fixture.
-	h._assert_hud("the verdict is the crew's, not a promise of a floor one hunter cannot reach",
-		Readout.verdict_severity(reaching_sheet) == SourceForecast.VERDICT_SLOW)
 	# (3) **THE CLIENT-SIDE ⚠ GATE IS RETIRED.** A pair of assertions stood here holding that the gate
 	# and the verdict read ONE projection — which was the right invariant while the client answered the
 	# ⚠ at all. `LaborAssignment.overdraws` carries the whole verdict now (intent AND ability), so the
@@ -1178,19 +1165,20 @@ func run(harness) -> void:
 		% carry_face,
 		Readout.yields_text(unreached_sheet).contains(carry_face)
 			and not Readout.yields_text(unreached_sheet).contains(reach_face))
+	h._assert_hud("a charted hunt sheet states no countdown verdict beside its yields",
+		Readout.yields_text(unreached_sheet) != ""
+			and not Q.has_label_containing(unreached_sheet, REACHES_FLOOR_NEEDLE))
 	h._assert_hud("…and the crew is the carry-bound one (%d), not the reach-bound crew's"
 			% Readout.stepper_value(unreached_sheet),
 		Readout.stepper_value(unreached_sheet) >= Readout.stepper_value(reaching_sheet))
-	# **THE CREW TARGETS AND THE VERDICT DROP THE ARM TOO, and this half is the regression that matters
+	# **THE CREW TARGETS DROP THE ARM TOO, and this half is the regression that matters
 	# most**: a pen and the whole PLANT web publish exactly this value, so a target or a projection that
 	# read `NO_ENGAGEMENT_STAGE` as "reaches nothing" would move every forage sheet in the game. The
 	# same hunter carrying 40 biomass a turn clears this room in one, so the pill reads the carry
-	# quotient and the verdict promises the floor — precisely as it did before the arm existed.
+	# quotient — precisely as it did before the arm existed.
 	h._assert_hud("no engagement stage → *clear it now* is the carry quotient (%d) again"
 		% fowl_clear_by_carry,
 		Readout.crew_target_count(h._hud._drawercompose, Readout.TARGET_CLEAR) == fowl_clear_by_carry)
-	h._assert_hud("…and the verdict reaches the floor again, so the arm DROPS rather than merely shrinking",
-		Readout.verdict_severity(unreached_sheet) == SourceForecast.VERDICT_OK)
 
 	# States 3s–3v — the CARRY-AWARE ANIMALS-FIRST local-hunt preview (spec oracle: deer fpa 1.23, band
 	# per-worker 0.8, output 1.0, Sustain ceiling 2.33). The preview line reads the crew's HONEST
@@ -1359,49 +1347,7 @@ func run(harness) -> void:
 		SourceForecast.regrowth_at(SourceForecast.regrowth_samples(h._floor_chart_drawn_patch,
 			HudComposeVocab.FORAGE_FORECAST_PREFIX), FLOOR_CHART_ALLEE_STOCK_FRACTION) >= 0.0)
 
-	# **A VERDICT MAY NOT PROMISE AN AFTERMATH AT ALL — IT STATES THE COUNTDOWN AND STOPS.** Reported
-	# from play: a Rabbit Warren at `Take everything` read `0 hold it after` beside "Reaches the floor
-	# in 2 turns, then holds it — taking only what grows back". The herd is GONE at floor 0; there is
-	# nothing to hold and nothing that grows back, and the panel was contradicting its own crew target.
-	#
-	# That was first fixed by FORKING the sentence on the regrowth at the floor, so a stripped herd
-	# dropped the clause and a stripped patch — which really does reseed from bare ground — kept it.
-	# The clause is now off BOTH readings (`VERDICT_REACHES_FORMAT`): what a source does once it
-	# arrives is the `VERDICT_HOLDS_AT_FLOOR` sentence's own job, said the moment it is true. With
-	# nothing left for the fork to choose between, `harvest_verdict` takes no `regrows` term.
-	#
-	# **THE THREE MODELS ARE KEPT, and they are what stops the fork coming back**: a stripped herd (no
-	# aftermath), a stripped patch (a real one) and a HEALTHY herd above its floor (also a real one).
-	# Any re-added branch — on the web, on floor 0, or on the regrowth — puts the clause back on at
-	# least one of the three, and the single claim below covers all three at once.
 	var strip_crew := 64
-	var stripped_herd := SourceForecast.floor_chart_model(allee_herd, SourceForecast.SOURCE_KIND_HERD,
-		HudComposeVocab.BARE_FORECAST_PREFIX, SourceForecast.FLOOR_MIN, strip_crew, "hunters", LESSON_NOT_YET_LEARNED)
-	var stripped_patch = SourceForecast.floor_chart_model(h._floor_chart_drawn_patch,
-		SourceForecast.SOURCE_KIND_FORAGE, HudComposeVocab.FORAGE_FORECAST_PREFIX,
-		SourceForecast.FLOOR_MIN, strip_crew, "foragers",
-		LESSON_NOT_YET_LEARNED)
-	var stripped_herd_text := String((stripped_herd.get("verdict", {}) as Dictionary).get("text", ""))
-	var stripped_patch_text = String((stripped_patch.get("verdict", {}) as Dictionary).get("text", ""))
-	# The healthy herd is the third model, and it is the one a WEB branch gets wrong: it regrows at
-	# its floor like anything else, so "is a herd" and "cannot regrow" stop coinciding here.
-	var held_herd := SourceForecast.floor_chart_model(
-		ForageFx.floorify(HerdFx.grazing_healthy_herd_fixture()), SourceForecast.SOURCE_KIND_HERD,
-		HudComposeVocab.BARE_FORECAST_PREFIX, SourceForecast.FLOOR_FOOD_PEAK, strip_crew, "hunters", LESSON_NOT_YET_LEARNED)
-	var held_herd_text := String((held_herd.get("verdict", {}) as Dictionary).get("text", ""))
-	# The PRECONDITION: all three really are stating the countdown. Without it the absence claim below
-	# passes on three models that reached some other verdict entirely.
-	h._assert_hud("all three sources REACH their floor, so all three are stating the reaching verdict",
-		stripped_herd_text.contains(REACHES_FLOOR_NEEDLE)
-			and stripped_patch_text.contains(REACHES_FLOOR_NEEDLE)
-			and held_herd_text.contains(REACHES_FLOOR_NEEDLE))
-	h._assert_hud(("…and NONE of them promises an aftermath — not the stripped herd, not the patch"
-			+ " that reseeds, not the healthy herd (%s / %s / %s)")
-			% [stripped_herd_text, stripped_patch_text, held_herd_text],
-		not stripped_herd_text.contains(RETIRED_AFTERMATH_NEEDLE)
-			and not stripped_patch_text.contains(RETIRED_AFTERMATH_NEEDLE)
-			and not held_herd_text.contains(RETIRED_AFTERMATH_NEEDLE))
-
 	# **THE FLOOR FLAG'S UNIT AND ITS ORDER**, which no PNG can testify to at 10px. Asserted against
 	# hand-built models rather than the live sheet so both webs are reachable from one place and the
 	# expected strings are computable by eye: 1075 ÷ 100 = 10.75 → 11 animals at floor 0.50.
@@ -1458,7 +1404,7 @@ func run(harness) -> void:
 		FLOOR_FLAG_DESTINATION_CAPACITY
 	flag_probe.set_model(SourceForecast.floor_chart_model(destination_herd,
 		SourceForecast.SOURCE_KIND_HERD, HudComposeVocab.BARE_FORECAST_PREFIX,
-		SourceForecast.FLOOR_FOOD_PEAK, strip_crew, "hunters", LESSON_NOT_YET_LEARNED))
+		SourceForecast.FLOOR_FOOD_PEAK, strip_crew, LESSON_NOT_YET_LEARNED))
 	var destination_flag := flag_probe._floor_flag_text(SourceForecast.FLOOR_FOOD_PEAK, 1075.0)
 	h._assert_hud("a climbing floor states the threshold it is climbing to, and names the rung (got '%s')"
 		% destination_flag, destination_flag == "leave 50% · ≈11 Red Deer ↑ ≈15 at Corralled")
@@ -1469,7 +1415,7 @@ func run(harness) -> void:
 		FLOOR_FLAG_DESTINATION_CAPACITY_RICHER
 	flag_probe.set_model(SourceForecast.floor_chart_model(destination_herd,
 		SourceForecast.SOURCE_KIND_HERD, HudComposeVocab.BARE_FORECAST_PREFIX,
-		SourceForecast.FLOOR_FOOD_PEAK, strip_crew, "hunters", LESSON_NOT_YET_LEARNED))
+		SourceForecast.FLOOR_FOOD_PEAK, strip_crew, LESSON_NOT_YET_LEARNED))
 	var richer_flag := flag_probe._floor_flag_text(SourceForecast.FLOOR_FOOD_PEAK, 1075.0)
 	h._assert_hud("…and it is the WIRE's number: a richer destination renders a higher threshold (got '%s')"
 		% richer_flag, richer_flag == "leave 50% · ≈11 Red Deer ↑ ≈20 at Corralled")
@@ -1480,7 +1426,7 @@ func run(harness) -> void:
 		FLOOR_FLAG_DESTINATION_CAPACITY_BARREN
 	flag_probe.set_model(SourceForecast.floor_chart_model(destination_herd,
 		SourceForecast.SOURCE_KIND_HERD, HudComposeVocab.BARE_FORECAST_PREFIX,
-		SourceForecast.FLOOR_FOOD_PEAK, strip_crew, "hunters", LESSON_NOT_YET_LEARNED))
+		SourceForecast.FLOOR_FOOD_PEAK, strip_crew, LESSON_NOT_YET_LEARNED))
 	h._assert_hud("a destination that would hold NOTHING still states itself — zero is not absent",
 		flag_probe._floor_flag_text(SourceForecast.FLOOR_FOOD_PEAK, 1075.0)
 			== "leave 50% · ≈11 Red Deer ↑ 0 at Corralled")
@@ -1494,7 +1440,7 @@ func run(harness) -> void:
 			HudComposeVocab.BARE_FORECAST_PREFIX) == SourceForecast.NO_BUILD_DESTINATION_CAPACITY)
 	flag_probe.set_model(SourceForecast.floor_chart_model(unqueued_herd,
 		SourceForecast.SOURCE_KIND_HERD, HudComposeVocab.BARE_FORECAST_PREFIX,
-		SourceForecast.FLOOR_FOOD_PEAK, strip_crew, "hunters", LESSON_NOT_YET_LEARNED))
+		SourceForecast.FLOOR_FOOD_PEAK, strip_crew, LESSON_NOT_YET_LEARNED))
 	h._assert_hud("…so its flag keeps the bare mark and quotes nothing",
 		flag_probe._floor_flag_text(SourceForecast.FLOOR_FOOD_PEAK, 1075.0)
 			== "leave 50% · ≈11 Red Deer" + HarvestFloorChart.FLOOR_FLAG_CLIMBING_SUFFIX)
@@ -1506,7 +1452,7 @@ func run(harness) -> void:
 	unpriced_herd[SourceForecast.FORECAST_BUILD_DESTINATION_KEY] = RungFx.KEY_PEN
 	flag_probe.set_model(SourceForecast.floor_chart_model(unpriced_herd,
 		SourceForecast.SOURCE_KIND_HERD, HudComposeVocab.BARE_FORECAST_PREFIX,
-		SourceForecast.FLOOR_FOOD_PEAK, strip_crew, "hunters", LESSON_NOT_YET_LEARNED))
+		SourceForecast.FLOOR_FOOD_PEAK, strip_crew, LESSON_NOT_YET_LEARNED))
 	var unpriced_flag := flag_probe._floor_flag_text(SourceForecast.FLOOR_FOOD_PEAK, 1075.0)
 	h._assert_hud("a NAMED destination the wire prices at the sentinel still quotes nothing (got '%s')"
 		% unpriced_flag, unpriced_flag
@@ -1518,7 +1464,7 @@ func run(harness) -> void:
 		bool(SourceForecast.floor_chart_model(
 			ForageFx.floorify(HerdFx.grazing_healthy_herd_fixture()), SourceForecast.SOURCE_KIND_HERD,
 			HudComposeVocab.BARE_FORECAST_PREFIX, SourceForecast.FLOOR_FOOD_PEAK, strip_crew,
-			"hunters", LESSON_NOT_YET_LEARNED).get("floor_climbing", true)) == false)
+			LESSON_NOT_YET_LEARNED).get("floor_climbing", true)) == false)
 	flag_probe.free()
 	# The conversion itself, on literals. `animal_count` is the ONE place biomass becomes a head count
 	# (the drawer row and the flag both read it), so its two edges are worth stating outright: a
@@ -1531,30 +1477,6 @@ func run(harness) -> void:
 		SourceForecast.animal_count(19.0, 100.0) == 1)
 	h._assert_hud("…and a species with no body mass has no count to state",
 		SourceForecast.animal_count(820.0, 0.0) == SourceForecast.ANIMAL_COUNT_NONE)
-	# **THE FLAG AND THE VERDICT NAME ONE THRESHOLD, so they must name it in one unit.** Caught in a
-	# frame, not in review: this sheet read `leave 50% · ≈11 Red Deer` over "grows past 1075". Both now
-	# render the quantity through `stock_face`, and this is the assertion that says so — the verdict's
-	# sentence must CONTAIN what the flag flies, on the same model.
-	# **THE REFUSAL IS FORWARD-LOOKING NOW, so it is staged by the trailing `takes_next_turn`.** The
-	# headline above it states what the crew banks NEXT turn, so the sentence may only claim the crew
-	# takes nothing when next turn's growth really does not cross the floor — `false` here is a source
-	# far enough under it that it does not.
-	var at_floor := SourceForecast.harvest_verdict({"reached_turn": SourceForecast.PROJECTION_REACHED_NONE,
-		"settled_fraction": 0.0, "series": []}, ForageFx.FLOOR_CHART_CREW, 96.0, 2150.0,
-		SourceForecast.FLOOR_FOOD_PEAK, 0, "hunters", 100.0, "Red Deer", false)
-	h._assert_hud("the at-floor verdict quotes the threshold in the SAME unit the flag flies",
-		String(at_floor.get("text", "")).contains("≈11 Red Deer")
-			and not String(at_floor.get("text", "")).contains("1075"))
-	# **AND THE PAIR THAT MAKES `takes_next_turn` MEAN SOMETHING: the same standing stock, the same
-	# empty room, and a growth that DOES cross the floor.** That source is holding at its floor and
-	# living off the regrowth — the state whose headline used to read `0.00 FOOD` under *"takes nothing
-	# until it grows past 1075"* — so it states neither the refusal nor a settling verdict, both of
-	# which would be about a source that is not there yet.
-	var holding := SourceForecast.harvest_verdict({"reached_turn": SourceForecast.PROJECTION_REACHED_NONE,
-		"settled_fraction": 0.0, "series": []}, ForageFx.FLOOR_CHART_CREW, 96.0, 2150.0,
-		SourceForecast.FLOOR_FOOD_PEAK, 0, "hunters", 100.0, "Red Deer", true)
-	h._assert_hud("…while a source held AT its floor answers no verdict at all, so the sheet draws none",
-		holding.is_empty())
 
 	# 3y — THE PAYING CONTROL: the same oracle deer, which pays real food. Each picker button's product
 	# line must carry that food (`2.33 food`), which is the half of the rule the wolf frame cannot
@@ -3395,7 +3317,7 @@ func _source_worker_cap(src: Dictionary, kind: String) -> int:
 ## The two crew-target pills a hunt sheet renders, off the chart model that renders them.
 func _herd_crew_targets(herd: Dictionary) -> Dictionary:
 	var model := SourceForecast.floor_chart_model(herd, SourceForecast.SOURCE_KIND_HERD,
-		HudComposeVocab.BARE_FORECAST_PREFIX, SourceForecast.FLOOR_FOOD_PEAK, RETREAT_CHART_CREW, "hunters", LESSON_NOT_YET_LEARNED)
+		HudComposeVocab.BARE_FORECAST_PREFIX, SourceForecast.FLOOR_FOOD_PEAK, RETREAT_CHART_CREW, LESSON_NOT_YET_LEARNED)
 	return {
 		"clear": int(model.get("crew_to_clear", SourceForecast.NO_CREW_ANSWER)),
 		"hold": int(model.get("crew_to_hold", SourceForecast.NO_CREW_ANSWER)),

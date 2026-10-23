@@ -691,7 +691,7 @@ func run(harness) -> void:
 	await h._settle()
 	await h._save("improvement_running_plant")
 	var sustain_yields = Readout.yields_text(h._hud._drawercompose._compose_sheet)
-	var sustain_verdict = Readout.verdict_text(h._hud._drawercompose._compose_sheet)
+	var sustain_clear = Readout.crew_target_count(h._hud._drawercompose, Readout.TARGET_CLEAR)
 	var running_box = ForageFx.find_improvement_control(h._hud._drawercompose._compose_sheet, "cultivate")
 	# **A RUNNING BUILD IS A STATE** (`docs/plan_standing_upkeep.md` §2.4). The checkbox existed so it
 	# could be UNCHECKED, which sent `abandon_improvement`; the verb is derived from the meter now, so
@@ -736,7 +736,7 @@ func run(harness) -> void:
 	# floor, so the sheet has a floor walk it COULD state — and must not, because the `ONCE TENDED`
 	# row directly beneath the caption is a different "later" (the next rung, after a ~25-turn build)
 	# and the player read the labelled row as the caption's `after`. Reported from play. Nothing is
-	# lost: the verdict two lines down still narrates the walk in prose.
+	# lost: the chart below still draws the walk.
 	#
 	# **ASSERTED AS A PAIR, caption AND readings**, because either alone is satisfied by the mismatch
 	# this arc exists to prevent: a caption that dropped `now → after` over rows still drawing arrows
@@ -820,22 +820,21 @@ func run(harness) -> void:
 	# a `now → after` reading that did move; the take itself never did. That walk is suppressed while a
 	# build is composed, so the string is now the take alone and the old claim fails honestly.
 	#
-	# **The non-vacuity companion is the VERDICT**, which really is floor-driven on these two frames —
-	# the same crew that holds a patch at the food peak cannot draw it to a deep floor, and the
-	# sentence says so — so without it "the take did not move" would pass on a sheet that had stopped
+	# **The non-vacuity companion is the chart's clear-it-now target**, which really is floor-driven on
+	# these two frames — a deeper floor leaves more room above it to clear — so without it "the take did not move" would pass on a sheet that had stopped
 	# rendering. **The teaching line cannot be that companion any more**: this faction has already
 	# learned Cultivation, and since the floor stopped pacing the build
 	# (`docs/plan_standing_upkeep.md` §2.2) a known lesson leaves the aside silent at every floor.
 	# The PAYOFF is deliberately floor-independent too (a property of the finished rung), so it can
 	# stand in for neither.
 	var deplete_yields = Readout.yields_text(h._hud._drawercompose._compose_sheet)
-	var deplete_verdict = Readout.verdict_text(h._hud._drawercompose._compose_sheet)
+	var deplete_clear = Readout.crew_target_count(h._hud._drawercompose, Readout.TARGET_CLEAR)
 	print("ui_preview: take  peak=%s  deep=%s" % [sustain_yields, deplete_yields])
-	print("ui_preview: verdict  peak=%s  deep=%s" % [sustain_verdict, deplete_verdict])
+	print("ui_preview: clear target  peak=%s  deep=%s" % [sustain_clear, deplete_clear])
 	h._assert_hud("…and the RENDERED take does NOT move with the floor — this crew binds at both",
 		sustain_yields != "" and deplete_yields != "" and sustain_yields == deplete_yields)
-	h._assert_hud("…while the VERDICT this crew earns DOES move with the deeper draw",
-		sustain_verdict != "" and deplete_verdict != "" and sustain_verdict != deplete_verdict)
+	h._assert_hud("…while the chart's clear-it-now target DOES move with the deeper draw",
+		sustain_clear != deplete_clear)
 	# BOTH AXES, READ OFF THEIR OWN CONTROLS. This asserted the two compose-model fields the frame had
 	# just written, which is true whatever the sheet rendered — and "no gate, no repaint" is precisely a
 	# claim about the rendering: the Deplete rung must be lit AND live, with the Cultivate box still

@@ -34,9 +34,8 @@ const START_ORDER_PENDING_VERB := "Starting"
 # one enumeration — `HudFormat.floor_hint` answers `""` and every consumer renders no line.
 #
 # The other four each state something the number does not. `strip`'s is LOAD-BEARING beyond its own
-# sentence: it is the only place the sheet says floor 0 is irreversible on the animal web. The
-# reaching verdict states a bare countdown and nothing about an aftermath (`VERDICT_REACHES_FORMAT`),
-# so this line is the whole of what says what arriving there costs.
+# sentence: it is the only place the sheet says floor 0 is irreversible on the animal web, so this
+# line is the whole of what says what arriving there costs.
 #
 # **EMPTYING AN ENTRY HERE SILENCES IT ON EVERY CONSUMER**: the compose readout's aside (forage and
 # hunt sheets) and the work-row hint. That is the intent for a line worth nothing anywhere, and it is

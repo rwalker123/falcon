@@ -14407,7 +14407,7 @@ func _dock_chart_at_kit(quarry: Dictionary, roster: Array, kit_id: String,
 		KitRoster.priced_source(quarry, HudComposeVocab.BARE_FORECAST_PREFIX, roster,
 			KitRoster.JOB_HUNT, "spear_line", kit_id, {}),
 		SourceForecast.SOURCE_KIND_HERD, HudComposeVocab.BARE_FORECAST_PREFIX,
-		SourceForecast.floor_for_preset(SourceForecast.FLOOR_PRESET_PEAK), party, HudComposeVocab.COMPOSE_FIELD_PARTY.to_lower(), false)
+		SourceForecast.floor_for_preset(SourceForecast.FLOOR_PRESET_PEAK), party, false)
 
 func _assert_kit_reprices_the_source() -> void:
 	const PUBLISHED_CARRY := RETREAT_REFERENCE_CARRY

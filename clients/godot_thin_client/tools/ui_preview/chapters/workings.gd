@@ -455,21 +455,19 @@ func run(harness) -> void:
 				% Readout.yields_text(sheet),
 			Readout.yields_text(sheet).contains(
 				HudComposeVocab.LOCAL_EXTRACT_OVERDRAW_NOTE.to_upper()))
-		# ⛔ **AND ITS VERDICT IS THE SHARED REACHING ONE, WHICH IS WHAT THE FLOOR BOUGHT** (issue
-		# #650). It was `Cutting 7.2 a turn against 4.5 that grows back` — true, and an observation
-		# rather than a decision. With a dial there is a question to answer instead: does THIS crew get
-		# the stand down to where you told it to stop, and if not how many hands would. The over-cut
-		# fact is not lost — it is the ⚠ on the row above, asserted a line up.
+		# ⛔ **A CHARTED SHEET STATES NO VERDICT SENTENCE** (issue #650). The chart above the take draws
+		# whether this crew gets the stand down to the floor, so a sentence under it said the same
+		# thing twice. The over-cut fact is the ⚠ on the row above, asserted a line up.
 		#
 		# **`deposit_verdict`'s renewing arm still ships and is still reached** — a renewing working
-		# the wire sent no curve for has no walk to read, and that arm is what it falls back to.
+		# the wire sent no curve for has no chart, and that arm is what it falls back to.
 		var over_cut_sentence := HudDepositVocab.DEPOSIT_VERDICT_OVER_CUT_FORMAT % [
 			DetailFormat.format_trimmed(WOOD_OVER_CUT, HudDepositVocab.CARD_STOCK_DECIMALS),
 			DetailFormat.format_trimmed(WOOD_SUSTAINABLE, HudDepositVocab.CARD_STOCK_DECIMALS)]
-		h._assert_hud("…and its verdict is the SHARED harvest one, off the projection walk (%s)"
+		h._assert_hud("…and it draws the chart and NO verdict sentence under it (%s)"
 				% Readout.verdict_text(sheet),
-			Readout.verdict_text(sheet) != ""
-				and not Readout.verdict_text(sheet).contains(over_cut_sentence))
+			_first_meta(sheet, HudWidgets.FLOOR_CHART_META) != null
+				and Readout.verdict_text(sheet) == "")
 		# **AND THE ARM IT REPLACED IS STILL REACHED** — a renewing working the wire published no
 		# curve for has no walk, and `deposit_verdict` is what the readout falls back to there. The
 		# claim is the PRODUCER rather than a frame: no fixture can show both verdicts at once.
@@ -912,16 +910,17 @@ func run(harness) -> void:
 		# once the stand settles where the crew was told to stop. It exists only because there is a
 		# floor to settle AT.
 		#
-		# ⛔ **THE CLAIM IS THAT THE ARROW AND THE SENTENCE CANNOT DISAGREE**, not a per-preset table
+		# ⛔ **THE CLAIM IS THAT THE ARROW AND THE CHART CANNOT DISAGREE**, not a per-preset table
 		# of which frames have one: both are gated on the SAME walk (`_live_reaches` and
-		# `harvest_verdict`'s `reached_turn`), so a crew that settles short must be promised no holding
+		# the chart model's `reached_turn`), so a crew that settles short must be promised no holding
 		# rate. On this stand only the top preset is close enough to reach, which is a fact about the
 		# stock and would be re-authored every time the fixture moved — the pairing is not.
-		h._assert_hud("…and its `now → after` arrow agrees with its own verdict (%s | %s)"
-				% [Readout.yields_text(floor_sheet), Readout.verdict_text(floor_sheet)],
+		h._assert_hud("…and its `now → after` arrow agrees with its own chart (%s | reached turn %d)"
+				% [Readout.yields_text(floor_sheet),
+					int(h._hud._drawercompose._last_chart_model.get("reached_turn", -2))],
 			Readout.yields_show_a_transition(floor_sheet)
-				== Readout.verdict_text(floor_sheet).contains(
-					SourceForecast.VERDICT_REACHES_FORMAT.get_slice("%", 0)))
+				== (int(h._hud._drawercompose._last_chart_model.get("reached_turn",
+					SourceForecast.PROJECTION_REACHED_NONE)) != SourceForecast.PROJECTION_REACHED_NONE))
 		await h._save("workings_floor_%s" % preset)
 	# ⛔ **THE TEACHING LINE IS PRICED AT THE PLAYER'S FLOOR, THROUGH THE SHARED `learn_multiplier`** —
 	# and at the top preset that is `0.80 / 0.50`, the same ×1.60 a patch reads there. The rung's own
@@ -1926,16 +1925,19 @@ func _assert_draw_reads_the_curve(sheet: Node, wood: Dictionary, crew: int) -> v
 		HudDepositVocab.composed_floor(wood, h._hud._compose.deposit_floor()))
 	var curve_take: float = CURVE_TAKES[crew - 1]
 	var bare_take := FELLING_PER_WORKER * float(crew)
-	var curve_line := _verdict_lead(SourceForecast.project_stock(samples, stock, capacity,
-		floor_value, SourceForecast.ENGAGEMENT_UNBOUNDED, curve_take))
-	var bare_line := _verdict_lead(SourceForecast.project_stock(samples, stock, capacity,
-		floor_value, bare_take))
-	h._assert_hud("precondition: the curve's %.2f and the bare %.2f draw different verdicts (%s | %s)"
-			% [curve_take, bare_take, curve_line, bare_line], curve_line != bare_line)
-	h._assert_hud("…the verdict at %d is the curve's draw, not the bare rate's (%s | want %s, not %s)"
-			% [crew, Readout.verdict_text(sheet), curve_line, bare_line],
-		Readout.verdict_text(sheet).contains(curve_line)
-			and not Readout.verdict_text(sheet).contains(bare_line))
+	var curve_walk := SourceForecast.project_stock(samples, stock, capacity,
+		floor_value, SourceForecast.ENGAGEMENT_UNBOUNDED, curve_take)
+	var bare_walk := SourceForecast.project_stock(samples, stock, capacity,
+		floor_value, bare_take)
+	var curve_reading := "%d/%.3f" % [int(curve_walk["reached_turn"]), float(curve_walk["settled_fraction"])]
+	var bare_reading := "%d/%.3f" % [int(bare_walk["reached_turn"]), float(bare_walk["settled_fraction"])]
+	var drawn: Dictionary = h._hud._drawercompose._last_chart_model
+	var drawn_reading := "%d/%.3f" % [int(drawn.get("reached_turn", -2)), float(drawn.get("settled_fraction", -1.0))]
+	h._assert_hud("precondition: the curve's %.2f and the bare %.2f draw different walks (%s | %s)"
+			% [curve_take, bare_take, curve_reading, bare_reading], curve_reading != bare_reading)
+	h._assert_hud("…the chart at %d is the curve's draw, not the bare rate's (%s, want %s, not %s)"
+			% [crew, drawn_reading, curve_reading, bare_reading],
+		drawn_reading == curve_reading)
 	var growth := SourceForecast.regrowth_at(samples, floor_value)
 	var curve_hold := SourceForecast.NO_CREW_ANSWER
 	for i in CURVE_TAKES.size():
@@ -1949,16 +1951,6 @@ func _assert_draw_reads_the_curve(sheet: Node, wood: Dictionary, crew: int) -> v
 			% [Readout.crew_target_count(h._hud._drawercompose, Readout.TARGET_HOLD), curve_hold, bare_hold],
 		Readout.crew_target_count(h._hud._drawercompose, Readout.TARGET_HOLD) == curve_hold)
 
-## The verdict sentence's leading clause for a walk — the arm the shared verdict takes before any crew
-## remedy is appended, so the claim is about the DRAW and not about the reaching crew.
-func _verdict_lead(walk: Dictionary) -> String:
-	var reached := int(walk["reached_turn"])
-	if reached == 1:
-		return SourceForecast.VERDICT_REACHES_ONE_TURN
-	if reached != SourceForecast.PROJECTION_REACHED_NONE:
-		return SourceForecast.VERDICT_REACHES_FORMAT % reached
-	return SourceForecast.VERDICT_SETTLES_FORMAT % int(round(float(walk["settled_fraction"])
-		* SourceForecast.FLOOR_PERCENT_SCALE))
 
 ## Whether any Label under `root` carries `needle` — the pending and out-of-range sentences are hint
 ## labels in the yields host, which `Readout.yields_text` (the ROW's faces) does not reach.

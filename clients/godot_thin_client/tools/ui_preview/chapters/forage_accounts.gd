@@ -8,7 +8,7 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 220
+const EXPECTED_CHECKPOINTS := 217
 
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 const BaseFx := preload("res://tools/ui_preview/fixtures_base.gd")
@@ -118,19 +118,8 @@ const BELOW_FLOOR_STOCK_FRACTION := 0.2
 const AT_FLOOR_ACCOUNT_NEEDLE := "FOOD"
 const EMPTY_TAKE_NEEDLE := "0.00 FOOD"
 
-## …and the refusal's own words, which become true exactly when they are shown.
-const AT_FLOOR_REFUSAL_NEEDLE := "until it grows past"
-
-## The countdown verdict's two ends, as needles rather than as the format string — the claim is about
-## the SHAPE of the sentence (it opens with the count and stops there), and a `%d` cannot be matched.
+## The retired countdown sentence's opening, as a needle: a charted sheet draws no such label.
 const REACHES_FLOOR_HEAD := "Reaches the floor in "
-const REACHES_FLOOR_TAIL := " turns."
-
-## **A NEEDLE FOR A RETIRED CLAUSE, KEPT SO IT STAYS RETIRED.** The countdown used to close by
-## promising the equilibrium it was counting down to; the readout says that itself, in
-## `VERDICT_HOLDS_AT_FLOOR`, the moment it is true. This is deliberately spelled out here rather than
-## composed from a const, because there is no const left to compose it from.
-const RETIRED_REACHES_AFTERMATH := ", then holds it"
 
 const HAY_OVERDRAW_FORAGERS := 8
 
@@ -1709,8 +1698,9 @@ func run(harness) -> void:
 	await h._settle()
 	await h._save("floor_chart_full")
 	h._assert_compose_sheet_fits("floor_chart_full")
-	h._assert_hud("a floor above the stock is BLOCKED — the source binds, not the crew",
-		Readout.verdict_severity(h._hud._drawercompose._compose_sheet) == SourceForecast.VERDICT_BLOCKED)
+	h._assert_hud("a charted sheet states no verdict sentence — the chart above the take carries it",
+		Q.find_meta_node(h._hud._drawercompose._compose_sheet, HudWidgets.FLOOR_CHART_META) != null
+			and Readout.verdict_text(h._hud._drawercompose._compose_sheet) == "")
 	h._assert_hud("…and there is nothing to clear, so that target reads zero rather than a crew",
 		Readout.crew_target_count(h._hud._drawercompose, Readout.TARGET_CLEAR) == 0)
 	# THE HALF A PNG CANNOT SHOW: the chart, the targets and the verdict are read against the SAME
@@ -1810,8 +1800,8 @@ func run(harness) -> void:
 	await h._settle()
 	h._assert_hud("a LIVE drag leaves the chart alive — a rebuilt one would end the drag it is serving",
 		is_instance_valid(live_chart))
-	h._assert_hud("…and the verdict has re-read against the dragged floor, without that rebuild",
-		Readout.verdict_severity(h._hud._drawercompose._compose_sheet) == SourceForecast.VERDICT_BLOCKED)
+	h._assert_hud("…and the drag brings no verdict sentence back under the chart",
+		Readout.verdict_text(h._hud._drawercompose._compose_sheet) == "")
 	var yields_after = Readout.yields_text(h._hud._drawercompose._compose_sheet)
 	h._assert_hud("…and so have the YIELDS, which are what the player is dragging TOWARD (%s → %s)"
 		% [yields_before, yields_after],
@@ -2527,22 +2517,13 @@ func run(harness) -> void:
 		Readout.verdict_text(h._hud._drawercompose._compose_sheet)])
 	h._assert_hud("…so the headline states its zero (%s)" % below_text,
 		below_text.contains(EMPTY_TAKE_NEEDLE))
-	h._assert_hud("…and the *until it grows past* sentence is true exactly where it is shown (%s)"
+	h._assert_hud("…and no *until it grows past* sentence is drawn — the chart shows the floor (%s)"
 			% Readout.verdict_text(h._hud._drawercompose._compose_sheet),
-		Readout.verdict_text(h._hud._drawercompose._compose_sheet).contains(AT_FLOOR_REFUSAL_NEEDLE)
-			and Readout.verdict_severity(h._hud._drawercompose._compose_sheet)
-				== SourceForecast.VERDICT_BLOCKED)
+		Q.find_meta_node(h._hud._drawercompose._compose_sheet, HudWidgets.FLOOR_CHART_META) != null
+			and Readout.verdict_text(h._hud._drawercompose._compose_sheet) == "")
 
-	# **STATE forage_reaches_floor — THE COUNTDOWN STATES THE TURN COUNT AND NOTHING ELSE.**
-	# It read *"Reaches the floor in N turns, then holds it — taking only what grows back."* The
-	# aftermath clause is the `VERDICT_HOLDS_AT_FLOOR` sentence's own job, said by this same readout
-	# the moment the source arrives, so a countdown that also narrated it answered a question the
-	# player had not reached — and a STRIPPED twin of the sentence existed purely to drop that clause
-	# where there was no aftermath to promise. Both twins went with it (`VERDICT_REACHES_FORMAT`).
-	#
-	# The precondition is that this really is the COUNTDOWN branch: the at-floor and holding verdicts
-	# above carry "grows back" legitimately, so an absence claim made without knowing which branch
-	# rendered is satisfied by every other state in this chapter.
+	# **STATE forage_reaches_floor — A DESCENDING PATCH STATES NO COUNTDOWN.** The chart draws the
+	# walk down to the floor, so the sheet carries no "Reaches the floor in N turns" sentence.
 	var descending := BaseFx.food_tile_fixture()
 	h._hud._compose.reset_forage_source()
 	h._hud._compose.set_forage_floor(SourceForecast.FLOOR_FOOD_PEAK)
@@ -2552,14 +2533,11 @@ func run(harness) -> void:
 	await h._settle()
 	await h._save("forage_reaches_floor")
 	var descending_text := Readout.verdict_text(h._hud._drawercompose._compose_sheet)
-	print("ui_preview: descending  %s" % descending_text)
-	h._assert_hud("precondition: this crew is walking the patch DOWN to its floor (%s)"
+	h._assert_hud("a descending patch states no countdown sentence, only the chart does (%s)"
 			% descending_text,
-		descending_text.contains(REACHES_FLOOR_HEAD))
-	h._assert_hud("…and the sentence is the turn count alone — no aftermath clause (%s)"
-			% descending_text,
-		descending_text.ends_with(REACHES_FLOOR_TAIL)
-			and not descending_text.contains(RETIRED_REACHES_AFTERMATH))
+		Q.find_meta_node(h._hud._drawercompose._compose_sheet, HudWidgets.FLOOR_CHART_META) != null
+			and descending_text == ""
+			and not Q.has_label_containing(h._hud._drawercompose._compose_sheet, REACHES_FLOOR_HEAD))
 
 	# Put the faction's knowledge back where the block before this one left it.
 	h._hud.update_intensification([{"faction": 0, "knowledges": {"cultivation": 1.0, "herding": 1.0, "seed_selection": 1.0, "penning": 0.0}}])
@@ -2616,7 +2594,7 @@ func run(harness) -> void:
 	var take_model := SourceForecast.floor_chart_model(
 		h._hud._drawercompose._forage_priced_patch(kept_priced, h._hud._band_labor.player_band()),
 		SourceForecast.SOURCE_KIND_FORAGE, HudComposeVocab.FORAGE_FORECAST_PREFIX,
-		SourceForecast.FLOOR_FOOD_PEAK, KEPT_CURVE_CREW, "harvesters", false)
+		SourceForecast.FLOOR_FOOD_PEAK, KEPT_CURVE_CREW, false)
 	var keep_whole := int(ceilf(KEPT_CURVE_KEEP_HANDS))
 	for pill in [[Readout.TARGET_CLEAR, "crew_to_clear"], [Readout.TARGET_HOLD, "crew_to_hold"]]:
 		var take_target := int(take_model.get(pill[1], SourceForecast.NO_CREW_ANSWER))
@@ -2634,29 +2612,12 @@ func run(harness) -> void:
 	h._assert_hud("…and with no Max the sheet staffs the same whole crew (%d)" % (take_useful + keep_whole),
 		Readout.stepper_value(h._hud._drawercompose._compose_sheet) == take_useful + keep_whole)
 
-	# ⛔ **AND THE VERDICT'S CREW COUNT IS THE WHOLE CREW TOO.** A crew all of whom the keeping takes
-	# gathers nothing, so it cannot draw the patch down and the verdict states the crew that WOULD reach
-	# the floor — take hands plus the 2 keeping. (The walk itself is drawn by the gatherers the curve
-	# names, so a crew of 3 here — 1 gatherer — honestly reaches the floor in its own time.)
+	# A crew all of whom the keeping takes gathers nothing; the frame shows the chart for it.
 	h._hud._compose.set_forage_floor(KEPT_CURVE_DEEP_FLOOR)
 	h._hud._compose.set_forage_max(keep_whole)
 	h._compose_forage(kept)
 	await h._settle()
 	await h._save("forage_kept_curve_verdict")
-	var deep_model := SourceForecast.floor_chart_model(
-		h._hud._drawercompose._forage_priced_patch(kept_priced, h._hud._band_labor.player_band()),
-		SourceForecast.SOURCE_KIND_FORAGE, HudComposeVocab.FORAGE_FORECAST_PREFIX,
-		KEPT_CURVE_DEEP_FLOOR, keep_whole, "harvesters", false)
-	var reach_take := int(deep_model.get("reaching_crew", 0))
-	var verdict_text = Readout.verdict_text(h._hud._drawercompose._compose_sheet)
-	var verdict_want := SourceForecast.VERDICT_SETTLES_CREW_FORMAT % [reach_take + keep_whole,
-		"harvesters"]
-	print("ui_preview: kept curve verdict  %s" % verdict_text)
-	h._assert_hud("precondition: a deep floor this crew cannot reach states a reaching crew (%d take hands)"
-			% reach_take, reach_take > 0)
-	h._assert_hud("the verdict names the whole crew that would reach the floor, `%s` (got \"%s\")"
-			% [verdict_want.strip_edges(), verdict_text],
-		String(verdict_text).ends_with(verdict_want))
 	h._hud._compose.set_forage_floor(SourceForecast.FLOOR_FOOD_PEAK)
 
 
