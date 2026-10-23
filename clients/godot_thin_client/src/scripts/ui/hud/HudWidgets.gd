@@ -1002,15 +1002,20 @@ static func disabled_tooltip(reasons: PackedStringArray, tooltip: String) -> Str
 ## because a sheet whose whole thesis is *this is not a party* must not label its one input `Party` —
 ## the wrong word there teaches the wrong model more effectively than any amount of prose fixes.
 ## `at_max_reason` is the greyed `+`'s hover — the party is every hand the sheet may spend.
+## `key_tooltip` is the KEY label's hover (`""` = none), routed through `set_label_tooltip` because a
+## Label tooltip is otherwise a silent no-op; the split sheet carries its readouts there.
 static func build_party_stepper_row(count: int, party_max: int, on_change: Callable,
         key_text: String = HudComposeVocab.COMPOSE_FIELD_PARTY,
-        at_max_reason: String = HudComposeVocab.PARTY_AT_MAX_REASON) -> HBoxContainer:
+        at_max_reason: String = HudComposeVocab.PARTY_AT_MAX_REASON,
+        key_tooltip: String = "") -> HBoxContainer:
     var row := HBoxContainer.new()
     row.add_theme_constant_override("separation", HudWorkVocab.WORKER_STEPPER_SEPARATION)
     row.set_meta(PARTY_STEPPER_COUNT_META, count)
     var key := Label.new()
     key.text = key_text
     key.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    if key_tooltip != "":
+        set_label_tooltip(key, key_tooltip)
     row.add_child(key)
     add_stepper_controls(row, count, count < party_max, on_change, false, {}, at_max_reason)
     return row

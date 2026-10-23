@@ -770,7 +770,7 @@ stretch, and widening it into that gap would put it over a live HUD column.
   set on the Window and is no longer DRAWN (the treatment is borderless) — it is the window's NAME,
   which only an unembedded dialog would show. **The `settle` prompt was the fourth** — it went with
   the retired arrival verb, and `split_band` deliberately has no prompt at all: the split sheet's own
-  verdict block already states what it costs, so a modal would ask the player to confirm a number
+  Workers tooltip already states what it costs, so a modal would ask the player to confirm a number
   they are looking at.
 - **The panel has no Clear all; Move is a verb.** Move is the first of the band verbs on the
   action bar (and on the tile panel's band drawer), arming `TargetingController.begin_move_band`
@@ -6747,10 +6747,12 @@ the same quantity the sim bounds the command by (`available_workers`), so the st
 the server's refusal cannot disagree. `BandPanelController.verb_enabled` holds both gates, so on zero
 idle the three expedition verbs grey while `⌂ Split` stays live (`band_panel_no_idle`).
 
-**THE SHEET SHOWS THE CONSEQUENCE, BECAUSE THE INPUT IS ONE NUMBER.** Workers stepper → the share it
-implies → what the new band would be (people, brackets, dependants/worker, provisions) → the home
-band beside its now → the button, live or disabled-carrying-its-reason → an after-note that never
-moves.
+**THE SHEET IS THE STEPPER AND THE BUTTON, AND THE CONSEQUENCE RIDES THE `Workers` LABEL'S TOOLTIP,
+BECAUSE THE INPUT IS ONE NUMBER.** The tooltip (`BandPanelController._split_tooltip`, plain text, one
+fact per line) states the share it implies, what the new band would be (people, brackets, provisions,
+families), the home band beside its now, the family limit and its warning where the people is under
+one, and the after-note. It is routed through `HudWidgets.set_label_tooltip` (a Label tooltip is
+otherwise a silent no-op) via the stepper row's `key_tooltip` parameter.
 The people, the larder and the material all divide on that one share. **The verdict is not a line of
 its own**: it hangs off the disabled button as a tooltip, for the height reason in "THE REFUSAL RIDES
 THE DISABLED BUTTON'S TOOLTIP" below.
@@ -6796,15 +6798,15 @@ joined by `SPLIT_BLOCKED_SEPARATOR`, because fixing one otherwise just reveals t
 holds no copy of the rule: a verdict cannot cross the wire when the sheet moves a stepper, since that
 would be one field per possible composition. See `.claude/rules/core_sim/fission.md`.
 
-**THE REFUSAL RIDES THE DISABLED BUTTON'S TOOLTIP; THE LAST LINE IS THE AFTER-NOTE, ALWAYS.** One
-hint label under `Form the band` swapping its text — the refusal while a floor held,
-`SPLIT_BAND_AFTER_NOTE` once the composition was legal — changes the sheet's height the moment the
-stepper crosses a floor, because the two run to different line counts, and moves the controls under
-the cursor that is still on the stepper. The after-note describes what the VERB does — where the band
-appears, that it moves like any band, that the outfit closes with the turn — and every word of that is
-true whether or not the current composition is legal, so it is drawn unconditionally and the sheet's
-last line is a fixed block. `confirm.tooltip_text` carries `split_blocked_reason` instead, which is the
-control the reason is about; the button is still visible-and-disabled, never hidden.
+**THE REFUSAL RIDES THE DISABLED BUTTON'S TOOLTIP; THE AFTER-NOTE IS THE LAST LINE OF THE `Workers`
+TOOLTIP, ALWAYS.** A hint label under `Form the band` swapping its text between the refusal and the
+after-note would change the sheet's height the moment the stepper crosses a floor, moving the controls
+under the cursor that is still on the stepper; the sheet draws no label under the button at all.
+`confirm.tooltip_text` carries `split_blocked_reason` (or `SPLIT_BAND_HINT` when legal), which is the
+control the reason is about; the button is visible-and-disabled, never hidden. The after-note
+(`SPLIT_BAND_AFTER_NOTE`) describes what the VERB does — where the band appears, that it moves like
+any band, that the outfit closes with the turn — which is true whether or not the composition is
+legal, so it is on the tooltip unconditionally.
 
 **THE STEPPER'S KEY IS A PARAMETER** on `HudWidgets.build_party_stepper_row`, defaulting to the word
 the expedition sheets want. This sheet passes `SPLIT_STEPPER_LABEL` (`Workers`): a sheet whose
@@ -8221,26 +8223,26 @@ player's own RESIDENT bands (parties excluded), `HudLineageVocab.faction_groups`
   `FAINT_MARK`) that `DetailFormat.detail_bbcode` renders through `HudLineageVocab.line_bbcode`.
 - **Frames:** `family_limit_room` / `_near` / `_at` / `_lost_touch` / `_peoples` / `_lifted`.
 
-## The split sheet's families and FAMILY LIMIT block (issue #691)
+## The split sheet's families and family-limit lines (issue #691)
 
-`BandPanelController._fill_split_compose_sheet` states the founding lines each half would hold, from
-the SAME `share` as `N% of the band goes with them` (asked workers over the band's working-age):
+`BandPanelController._split_tooltip` states the founding lines each half would hold, from the SAME
+`share` as `N% of the band goes with them` (asked workers over the band's working-age):
 `taken = clamp(round_half_up(lines x share), 1, lines - 1)` (`HudLineageVocab.split_taken`), a
-one-line band taking 1 and keeping its 1.
+one-line band taking 1 and keeping its 1. Both ride the `Workers` label's tooltip; the sheet draws no
+rows.
 
-- A `Families` row on THE NEW BAND (`{taken}`) and on THE HOME BAND, AFTER (`{lines} -> {lines -
-  taken}`), whenever the band publishes `founding_lines`.
+- A `{taken} families` clause on the new-band line and `families {lines} -> {lines - taken}` on the
+  home-band line, whenever the band publishes `founding_lines`.
 - **Only while the people is under a limit** (`breeding_ceiling != 0`, projected reading, both world
-  constants known): a `FAMILY LIMIT` section with `Stays linked` (`{ceiling}, shared`) and `If it
-  loses touch` (`{new_limit} - home {home_limit}`), where `new_limit = min(taken x K, free)` and
+  constants known): a `Family limit: {ceiling}, shared while linked - {new_limit} - home
+  {home_limit} if it loses touch` line, where `new_limit = min(taken x K, free)` and
   `home_limit = min((union - taken) x K, free)` over the members' plus the other peoples' lines; a
-  one-line band prices at `floor(K/2)` and `(union - 1) x K + floor(K/2)`. One amber `◆` line: home
-  first (`breeding_population - new band people >= home_limit`), else the new band. Strings are in
-  `hud_compose_vocab.gd` (`SPLIT_*FAMIL*`, `SPLIT_LIMIT_*`), arithmetic in `hud_lineage_vocab.gd`.
-- The sheet scrolls inside the drawer, so `build_verb_form` wraps it in a right margin the
-  scrollbar's width, reserved unconditionally (as `StartingLoadoutPanel._scroll_gutter` does).
-- **Frames:** `family_limit_split`, `family_limit_split_free`; the harness scrolls the sheet to its
-  end before saving.
+  one-line band prices at `floor(K/2)` and `(union - 1) x K + floor(K/2)`. One `◆` warning line
+  follows: home first (`breeding_population - new band people >= home_limit`), else the new band.
+  Strings are in `hud_compose_vocab.gd` (`SPLIT_TIP_*`, `SPLIT_LIMIT_*`), arithmetic in
+  `hud_lineage_vocab.gd`.
+- **Frames:** `family_limit_split`, `family_limit_split_free`; the harness reads the `Workers` label's
+  tooltip and asserts the sheet's visible labels carry none of those strings.
 
 
 ## HUNTING BY NEED on the Work tab (issue #798)

@@ -33,8 +33,6 @@ const FOREIGN_NAMES := [
 
 ## The split sheet's stepper: half of the band's 16 workers, so the share is exactly 50%.
 const SPLIT_HALF_WORKERS := 8
-## Far past any sheet's height; the container clamps it to its own end.
-const SCROLL_TO_END := 100000
 
 var h
 
@@ -243,17 +241,18 @@ func run(harness) -> void:
 	h._panel.set_active_tab(&"parties")
 	await h._open_split_sheet(SPLIT_HALF_WORKERS)
 	await h._settle()
-	await _scroll_sheet_to_end()
 	await h._save("family_limit_split")
-	var sheet := _sheet_text()
-	h._assert_band_panel("family limit: the split sheet states the lines each half holds (`4 → 2`; %s)"
+	var sheet := _workers_tooltip()
+	h._assert_band_panel("family limit: the Workers tooltip states the lines each half holds (`4 → 2`; %s)"
 			% sheet.replace("\n", " | "),
-		sheet.contains(HudComposeVocab.SPLIT_ROW_FAMILIES) and sheet.contains("4 → 2"))
-	h._assert_band_panel("family limit: …the FAMILY LIMIT block prices both halves (`200 · home 400`)",
-		sheet.contains(HudComposeVocab.SPLIT_FAMILY_LIMIT_HEADER.to_upper())
-			and sheet.contains("500, shared") and sheet.contains("200 · home 400"))
+		sheet.contains("families 4 → 2") and sheet.contains("2 families"))
+	h._assert_band_panel("family limit: …the family-limit line prices both halves (`200 · home 400`)",
+		sheet.contains("Family limit:") and sheet.contains("500, shared") and sheet.contains("200 · home 400"))
 	h._assert_band_panel("family limit: …and the home half is told it would sit at its limit",
 		sheet.contains(HudComposeVocab.SPLIT_LIMIT_HOME_AT))
+	h._assert_band_panel("family limit: …and the sheet itself carries none of those strings as visible labels",
+		_sheet_visible_labels().find("Family limit") < 0 and _sheet_visible_labels().find("4 → 2") < 0
+			and _sheet_visible_labels().find("shared") < 0)
 	h._close_split_sheet()
 
 	# ---- 9. THE SPLIT SHEET on a free people: Families rows, no block ----------------------------------------
@@ -262,11 +261,10 @@ func run(harness) -> void:
 	h._push_bands([free, _kin_band()])
 	await h._open_split_sheet(SPLIT_HALF_WORKERS)
 	await h._settle()
-	await _scroll_sheet_to_end()
 	await h._save("family_limit_split_free")
-	sheet = _sheet_text()
-	h._assert_band_panel("family limit: a free people's split still shows Families, with no block",
-		sheet.contains("4 → 2") and not sheet.contains(HudComposeVocab.SPLIT_FAMILY_LIMIT_HEADER.to_upper()))
+	sheet = _workers_tooltip()
+	h._assert_band_panel("family limit: a free people's split tooltip still shows families, with no limit line",
+		sheet.contains("families 4 → 2") and not sheet.contains("Family limit:"))
 	h._close_split_sheet()
 
 	# ---- 10. THE ARITHMETIC, PNG-less --------------------------------------------------------------------------
@@ -277,19 +275,28 @@ func run(harness) -> void:
 	FactionNames.reset()
 	await h._pin_canvas(start_canvas)
 
-## The drawer the sheet is mounted in is a height-capped scroll, and the FAMILY LIMIT block is the
-## last thing on the sheet - so the frame that judges it scrolls to the end first.
-func _scroll_sheet_to_end() -> void:
-	var node: Node = h._verb_sheet()
-	while node != null and not (node is ScrollContainer):
-		node = node.get_parent()
-	if node == null:
-		h._fail("family limit: the split sheet is not inside a scroll container")
-		return
-	(node as ScrollContainer).scroll_vertical = SCROLL_TO_END
-	await h._settle()
+## The split sheet's readouts ride the tooltip on its `Workers` key label (a Label tooltip is only
+## live with a non-ignore mouse filter, which is asserted along with the text).
+func _workers_tooltip() -> String:
+	var label := _find_workers_label(h._sheet_root())
+	if label == null:
+		h._fail("family limit: the split sheet has no `%s` key label" % HudComposeVocab.SPLIT_STEPPER_LABEL)
+		return ""
+	h._assert_band_panel("family limit: the Workers label can show its tooltip",
+		label.mouse_filter == Control.MOUSE_FILTER_STOP)
+	return label.tooltip_text
 
-func _sheet_text() -> String:
+func _find_workers_label(node: Node) -> Label:
+	if node is Label and (node as Label).text == HudComposeVocab.SPLIT_STEPPER_LABEL:
+		return node as Label
+	for child in node.get_children():
+		var found := _find_workers_label(child)
+		if found != null:
+			return found
+	return null
+
+## Every visible Label's text on the sheet (tooltips are not text, so this is what is DRAWN).
+func _sheet_visible_labels() -> String:
 	return _text_of(h._sheet_root())
 
 func _text_of(node: Node) -> String:

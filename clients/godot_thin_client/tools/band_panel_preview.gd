@@ -2285,6 +2285,7 @@ func _ready() -> void:
 	_assert_zones_within_bounds()
 	_assert_zone_content_fits()
 	_assert_split_send("band_panel_split_ready", true)
+	_assert_split_sheet_is_stepper_and_button("band_panel_split_ready")
 	await _assert_split_card_fits_through_stepper()
 
 	# Under the NEW band's floor. The Send is DISABLED WITH ITS REASON, never hidden: a control that
@@ -7066,6 +7067,37 @@ func _assert_split_send(state_name: String, want_enabled: bool) -> void:
 		return
 	_assert_band_panel("%s — Send is %s" % [
 		state_name, "live" if want_enabled else "blocked"], send.disabled != want_enabled)
+
+## **THE SPLIT SHEET IS THE STEPPER AND THE BUTTON**; every readout rides the `Workers` key label's
+## tooltip. Asserted as a PAIR: no visible Label on the sheet carries a readout header (or the
+## after-note), AND the tooltip is there and states the new band's people count - a sheet that lost
+## the readouts entirely satisfies the first half alone.
+func _assert_split_sheet_is_stepper_and_button(state_name: String) -> void:
+	var gone: Array[String] = [
+		HudComposeVocab.SPLIT_SHARE_FORMAT.split("%")[0], "The new band", "The home band, after",
+		"Family limit", HudComposeVocab.SPLIT_BAND_AFTER_NOTE]
+	var key: Label = null
+	var strays: Array[String] = []
+	var pending: Array[Node] = [_sheet_root()]
+	while not pending.is_empty():
+		var node: Node = pending.pop_back()
+		pending.append_array(node.get_children())
+		if not (node is Label) or not (node as Control).is_visible_in_tree():
+			continue
+		var label := node as Label
+		if label.text == HudComposeVocab.SPLIT_STEPPER_LABEL:
+			key = label
+		for needle in gone:
+			if label.text.to_lower().contains(needle.to_lower()):
+				strays.append(label.text)
+	_assert_band_panel("%s — no visible Label on the split sheet carries a readout (%s)" % [
+		state_name, strays], strays.is_empty())
+	var head := "The new band: "
+	var tip := key.tooltip_text if key != null else ""
+	var people := int(tip.get_slice(head, 1).get_slice(" ", 0)) if tip.contains(head) else 0
+	_assert_band_panel("%s — the Workers label's tooltip states the new band's people (%d)" % [
+		state_name, people], key != null and people > 0
+			and key.mouse_filter == Control.MOUSE_FILTER_STOP)
 
 ## **EVERY APPLICABLE REASON, NEVER THE FIRST ONE.** The tooltip is compared by EQUALITY against the
 ## joined set — a `contains` on one sentence passes on a build that reports only that one, which is

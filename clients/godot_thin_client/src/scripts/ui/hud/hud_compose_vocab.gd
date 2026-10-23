@@ -863,44 +863,29 @@ const SPLIT_STEPPER_LABEL := "Workers"
 ## The split stepper's greyed `+`: every working-age person is already in the new band.
 const SPLIT_AT_MAX_REASON := "That is every worker the band has."
 
-## What the share works out to, under the stepper. The player is choosing a size, so the size is what
-## the sheet echoes back.
+## What the share works out to. The player is choosing a size, so the size is what the sheet echoes
+## back - as the first line of the Workers label's tooltip, which carries every readout the sheet
+## used to draw as rows (the sheet itself is the stepper and the button).
 const SPLIT_SHARE_FORMAT := "%d%% of the band goes with them"
 
-## The two readouts, in the order the decision is made: what you are making, then what it costs.
-const SPLIT_NEW_BAND_HEADER := "The new band"
-const SPLIT_HOME_AFTER_HEADER := "The home band, after"
-
-const SPLIT_ROW_PEOPLE := "People"
-const SPLIT_ROW_BRACKETS := "Workers · children · elders"
-const SPLIT_ROW_PROVISIONS := "Provisions"
-
-## Provisions to one decimal. Food is not people, so it is not apportioned to whole units — the
+## Provisions to one decimal. Food is not people, so it is not apportioned to whole units - the
 ## larder genuinely divides on the share.
 const SPLIT_STOCK_FORMAT := "%.1f"
-const SPLIT_ROW_WORKERS := "Workers"
-const SPLIT_ROW_CHILDREN := "Children"
-const SPLIT_ROW_ELDERS := "Elders"
 
-## `workers · children · elders`, all three already apportioned to whole bodies.
-const SPLIT_BRACKETS_FORMAT := "%d · %d · %d"
-
-## A now → after pair. Both sides are whole people from the SAME apportionment pass, so the two
-## halves sum to the band's own displayed total.
-const SPLIT_BEFORE_AFTER_FORMAT := "%s → %s"
-
-## The families row on both halves (issue #691): the founding lines each half would carry. `Families`
-## on the new band is the count it takes; on the home band it is `before → after`.
-const SPLIT_ROW_FAMILIES := "Families"
-
-## The FAMILY LIMIT block - drawn only for a people still under a breeding ceiling. `Stays linked` is
-## the shared ceiling while the halves keep in touch; `If it loses touch` prices each half alone.
-const SPLIT_FAMILY_LIMIT_HEADER := "Family limit"
-const SPLIT_ROW_LIMIT_LINKED := "Stays linked"
-const SPLIT_LIMIT_LINKED_FORMAT := "%d, shared"
-const SPLIT_ROW_LIMIT_APART := "If it loses touch"
-const SPLIT_LIMIT_APART_FORMAT := "%d · home %d"
-## The one amber line under the block, by precedence (home first: it is the larger half).
+## The Workers label's tooltip, one fact per line. `new band` = people, then the three brackets
+## already apportioned to whole bodies (`workers children elders`), then the larder share.
+const SPLIT_TIP_NEW_FORMAT := "The new band: %d people (%d workers · %d children · %d elders) · %s provisions"
+## The families clauses (issue #691): the founding lines the new band takes, and the home band's
+## `before -> after`. Appended only where the band publishes founding lines.
+const SPLIT_TIP_NEW_FAMILIES_FORMAT := " · %d families"
+## Every `now` is the two halves added back up and every `after` is from the SAME apportionment
+## pass, so the halves sum to the band's own displayed total.
+const SPLIT_TIP_HOME_FORMAT := "The home band, after: workers %d → %d · children %d → %d · elders %d → %d · provisions %s → %s"
+const SPLIT_TIP_HOME_FAMILIES_FORMAT := " · families %d → %d"
+## The FAMILY LIMIT line - drawn only for a people still under a breeding ceiling: the shared
+## ceiling while the halves stay in touch, then each half priced alone (`new`, `home`).
+const SPLIT_TIP_LIMIT_FORMAT := "Family limit: %d, shared while linked · %d · home %d if it loses touch"
+## The amber warning under the limit, by precedence (home first: it is the larger half).
 const SPLIT_LIMIT_HOME_AT := "Home would be at its limit if they lose touch."
 const SPLIT_LIMIT_NEW_AT := "The new band would be at its limit if it loses touch."
 
@@ -908,14 +893,13 @@ const SPLIT_BAND_BUTTON := "Form the band"
 
 const SPLIT_BAND_HINT := "Split this band in two where it stands. The new band moves like any other."
 
-## What the player is told under the button, VIABLE OR NOT — the things that are easy to miss about a
-## verb whose result appears on the tile you are already looking at. It describes the VERB, not this
-## composition, so the sheet draws it unconditionally and the footer is a fixed block; gating it on a
-## legal split grew the sheet the moment the stepper crossed a floor and jumped it under the cursor.
+## The last line of the Workers label's tooltip, VIABLE OR NOT - the things that are easy to miss about
+## a verb whose result appears on the tile you are already looking at. It describes the VERB, not this
+## composition, so it is the same sentence whether or not the split is legal.
 ##
-## **THE THIRD SENTENCE IS THE OUTFIT, and it is a fact this sheet no longer settles.** The worker
-## count still divides the people and the stores, but the splinter's GEAR is decided in the
-## outfitting card the split opens on it, and that card stays open until the turn advances
+## **THE THIRD SENTENCE IS THE OUTFIT, and it is a fact this sheet does not settle.** The worker
+## count divides the people and the stores, but the splinter's GEAR is decided in the outfitting card
+## the split opens on it, and that card stays open until the turn advances
 ## (`.claude/rules/client/starting-loadout.md`). One short declarative naming the deadline: the card
 ## opens itself, so what a player cannot otherwise learn here is that it can be revised and by when.
 const SPLIT_BAND_AFTER_NOTE := "It appears on this tile. Move it like any band. Outfit it before the turn ends."

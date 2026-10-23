@@ -8062,15 +8062,15 @@ func _build_verb_send(mission: String, face: String, tooltip: String, meta: Stri
         rerender())
     return confirm
 
-## **The SPLIT form** (`docs/plan_band_fission.md` §Q6) — one stepper, two readouts and a verdict.
+## **The SPLIT form** (`docs/plan_band_fission.md` §Q6) — one stepper and one button.
 ##
 ## **THE PLAYER PICKS ONE NUMBER HERE, AND THE GEAR IS PICKED SOMEWHERE ELSE.** The share the worker
-## count implies still divides the people, the larder and the material by itself, which is what these
-## two readouts show. What it no longer settles is the new band's OUTFIT: since the per-band loadout
-## arc a split opens an outfitting window on the splinter, standing at the proportional take it was
-## just handed and revisable until the turn advances
-## (`.claude/rules/client/starting-loadout.md`). So this sheet asks its one question, and the note
-## under the button says where the other one is answered.
+## count implies still divides the people, the larder and the material by itself; those readouts ride
+## the tooltip on the `Workers` label (`_split_tooltip`) so the sheet stays two controls tall. What the
+## worker count no longer settles is the new band's OUTFIT: since the per-band loadout arc a split
+## opens an outfitting window on the splinter, standing at the proportional take it was just handed
+## and revisable until the turn advances (`.claude/rules/client/starting-loadout.md`). The tooltip's
+## last line says where the other question is answered.
 func _fill_split_compose_sheet(sheet: VBoxContainer, band: Dictionary) -> void:
     var pool := _split_worker_pool(band)
     _split_workers = clampi(_split_workers, HudConst.WORKER_STEP, pool)
@@ -8078,70 +8078,15 @@ func _fill_split_compose_sheet(sheet: VBoxContainer, band: Dictionary) -> void:
         func(n: int) -> void:
             _split_workers = clampi(n, HudConst.WORKER_STEP, pool)
             rerender(),
-        HudComposeVocab.SPLIT_STEPPER_LABEL, HudComposeVocab.SPLIT_AT_MAX_REASON))
-    var share := (float(_split_workers) / float(pool)) if pool > 0 else 0.0
-    sheet.add_child(HudWidgets.alloc_hint_label(
-        HudComposeVocab.SPLIT_SHARE_FORMAT % int(round(share * 100.0))))
-
-    # **BOTH HALVES ARE APPORTIONED IN ONE PASS.** This is the client's OWN arithmetic — dividing
-    # whole people by a share the player chose genuinely needs rounding, unlike the brackets
-    # themselves, which arrive already whole. Running it separately over each half lets both round
-    # the same way and show 31 people leaving a band of 30. The chosen worker count is PINNED to the
-    # integer the player picked and left out of the apportionment, so the stepper can never disagree
-    # with the readout.
-    var whole := _split_apportioned(band, share)
-    var new_children: int = whole[0]
-    var new_elders: int = whole[1]
-    var kept_children: int = whole[2]
-    var kept_working: int = whole[3]
-    var kept_elders: int = whole[4]
-    var new_people := _split_workers + new_children + new_elders
-
-    var provisions := DetailFormat.band_provisions(band)
-    sheet.add_child(HudWidgets.alloc_section_label(HudComposeVocab.SPLIT_NEW_BAND_HEADER))
-    sheet.add_child(_split_row(HudComposeVocab.SPLIT_ROW_PEOPLE,
-        str(new_people)))
-    sheet.add_child(_split_row(HudComposeVocab.SPLIT_ROW_BRACKETS,
-        HudComposeVocab.SPLIT_BRACKETS_FORMAT % [_split_workers, new_children, new_elders]))
-    sheet.add_child(_split_row(HudComposeVocab.SPLIT_ROW_PROVISIONS,
-        HudComposeVocab.SPLIT_STOCK_FORMAT % (provisions * share)))
-    # **FAMILIES (issue #691)**: the founding lines the new band takes - the SAME `share` as the worker
-    # line above (asked workers over the band's working-age), applied to the parent's lines.
-    var lines := int(band.get(HudLineageVocab.FOUNDING_LINES_KEY, 0))
-    var taken := HudLineageVocab.split_taken(lines, share)
-    if lines > 0:
-        sheet.add_child(_split_row(HudComposeVocab.SPLIT_ROW_FAMILIES, str(taken)))
-
-    sheet.add_child(HudWidgets.alloc_section_label(HudComposeVocab.SPLIT_HOME_AFTER_HEADER))
-    # **EVERY `now` IS THE TWO HALVES ADDED BACK UP, NEVER A SECOND READING OF THE BAND.** `pool` is
-    # the ASSIGNABLE worker count while the `after` side comes out of the apportionment, and the two
-    # readings can still drift by a body — quoting `pool` here rendered `16 → 12` beside a new band
-    # of 5 and invited the player to find the missing person. Composing it from the halves makes the
-    # row sum by construction.
-    sheet.add_child(_split_row(HudComposeVocab.SPLIT_ROW_WORKERS,
-        HudComposeVocab.SPLIT_BEFORE_AFTER_FORMAT % [
-            str(kept_working + _split_workers), str(kept_working)]))
-    sheet.add_child(_split_row(HudComposeVocab.SPLIT_ROW_CHILDREN,
-        HudComposeVocab.SPLIT_BEFORE_AFTER_FORMAT % [
-            str(kept_children + new_children), str(kept_children)]))
-    sheet.add_child(_split_row(HudComposeVocab.SPLIT_ROW_ELDERS,
-        HudComposeVocab.SPLIT_BEFORE_AFTER_FORMAT % [
-            str(kept_elders + new_elders), str(kept_elders)]))
-    sheet.add_child(_split_row(HudComposeVocab.SPLIT_ROW_PROVISIONS,
-        HudComposeVocab.SPLIT_BEFORE_AFTER_FORMAT % [
-            HudComposeVocab.SPLIT_STOCK_FORMAT % provisions,
-            HudComposeVocab.SPLIT_STOCK_FORMAT % (provisions * (1.0 - share))]))
-    if lines > 0:
-        sheet.add_child(_split_row(HudComposeVocab.SPLIT_ROW_FAMILIES,
-            HudComposeVocab.SPLIT_BEFORE_AFTER_FORMAT % [
-                str(lines), str(HudLineageVocab.split_home_lines(lines, taken))]))
-    if HudLineageVocab.split_block_shown(band):
-        _fill_split_family_limit(sheet, band, taken, new_people)
+        HudComposeVocab.SPLIT_STEPPER_LABEL, HudComposeVocab.SPLIT_AT_MAX_REASON,
+        _split_tooltip(band, pool)))
 
     # **THE FLOORS COME FROM THE SIM, THE SENTENCE IS THE CLIENT'S.** The sheet moves a stepper, so a
     # published verdict would need one field per possible composition; what crosses the wire is the
     # pair of thresholds (`SPLIT_MIN_WORKERS_KEY` / `SPLIT_PARENT_MIN_WORKERS_KEY`), never a copy of
     # the rule. Both are checked and BOTH are reported — fixing one otherwise just reveals the other.
+    # The refusal rides the disabled button's tooltip: a footer line that came and went with the
+    # stepper would change the bottom-anchored sheet's height and jump it under the cursor.
     var blocked := split_blocked_reason(band, _split_workers, pool)
     var confirm := Button.new()
     confirm.text = HudComposeVocab.SPLIT_BAND_BUTTON
@@ -8155,47 +8100,55 @@ func _fill_split_compose_sheet(sheet: VBoxContainer, band: Dictionary) -> void:
             close_verb_form()
             _on_split_band_pressed(band, workers))
     sheet.add_child(confirm)
-    # **THE FOOTER IS THE AFTER-NOTE, ALWAYS, AND THE REFUSAL RIDES THE BUTTON'S TOOLTIP.** One label
-    # whose TEXT swapped between the two changed the sheet's height the moment the stepper crossed a
-    # floor, and the sheet is bottom-anchored: it answers a height change by jumping upward under the
-    # cursor that is still on the stepper. The note describes what the verb does, which is true
-    # whether or not this composition is legal, so drawing it unconditionally makes the footer a
-    # fixed block. The reason is not lost — `confirm.tooltip_text` above carries BOTH floors' refusal
-    # sentences on the disabled button, which is the control the reason is about.
-    sheet.add_child(HudWidgets.alloc_hint_label(HudComposeVocab.SPLIT_BAND_AFTER_NOTE))
 
-## **THE FAMILY LIMIT BLOCK (issue #691)** - what the split does to the breeding ceiling. While the two
-## halves stay in touch they are one breeding population under the SHARED ceiling; the second row prices
-## each alone, from the sim's own constants (`LineageWorld`), and the amber line says which half would
-## already be at its limit. Only for a people still under a limit.
-func _fill_split_family_limit(sheet: VBoxContainer, band: Dictionary, taken: int,
-        new_people: int) -> void:
-    var limits := HudLineageVocab.split_limits(band, taken)
-    sheet.add_child(HudWidgets.alloc_section_label(HudComposeVocab.SPLIT_FAMILY_LIMIT_HEADER))
-    sheet.add_child(_split_row(HudComposeVocab.SPLIT_ROW_LIMIT_LINKED,
-        HudComposeVocab.SPLIT_LIMIT_LINKED_FORMAT % HudLineageVocab.ceiling_of(band)))
-    sheet.add_child(_split_row(HudComposeVocab.SPLIT_ROW_LIMIT_APART,
-        HudComposeVocab.SPLIT_LIMIT_APART_FORMAT % [limits["new_limit"], limits["home_limit"]]))
-    var warning := HudLineageVocab.split_warning(band, limits, new_people)
-    if warning != "":
-        var label := HudWidgets.alloc_hint_label(warning)
-        label.add_theme_color_override("font_color", HudStyle.WARN)
-        sheet.add_child(label)
-
-## One `key   value` line on the split sheet — the `FactionRollup._stat_row` shape, kept local
-## because the parties zone has no shared detail-row widget and one sheet does not justify minting a
-## shared one.
-func _split_row(key: String, value: String) -> HBoxContainer:
-    var row := HBoxContainer.new()
-    row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-    var name_label := HudWidgets.build_field_key(key)
-    name_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-    row.add_child(name_label)
-    var value_label := Label.new()
-    value_label.text = value
-    value_label.add_theme_color_override("font_color", HudStyle.INK)
-    row.add_child(value_label)
-    return row
+## **THE SPLIT'S READOUTS, as the `Workers` label's tooltip** — plain text, one fact per line: the
+## share, the new band, the home band after, the family limit (+ its warning) where the people is
+## under one, and the after-note. This is the client's OWN arithmetic: dividing whole people by a
+## share the player chose genuinely needs rounding, unlike the brackets themselves, which arrive
+## already whole.
+func _split_tooltip(band: Dictionary, pool: int) -> String:
+    var share := (float(_split_workers) / float(pool)) if pool > 0 else 0.0
+    # **BOTH HALVES ARE APPORTIONED IN ONE PASS.** Running it separately over each half lets both
+    # round the same way and show 31 people leaving a band of 30. The chosen worker count is PINNED to
+    # the integer the player picked and left out of the apportionment, so the stepper can never
+    # disagree with the readout.
+    var whole := _split_apportioned(band, share)
+    var new_children: int = whole[0]
+    var new_elders: int = whole[1]
+    var kept_children: int = whole[2]
+    var kept_working: int = whole[3]
+    var kept_elders: int = whole[4]
+    var new_people := _split_workers + new_children + new_elders
+    var provisions := DetailFormat.band_provisions(band)
+    # **EVERY `now` IS THE TWO HALVES ADDED BACK UP, NEVER A SECOND READING OF THE BAND.** `pool` is
+    # the ASSIGNABLE worker count while the `after` side comes out of the apportionment, and the two
+    # readings can still drift by a body; composing `now` from the halves makes each pair sum by
+    # construction.
+    var lines := int(band.get(HudLineageVocab.FOUNDING_LINES_KEY, 0))
+    var taken := HudLineageVocab.split_taken(lines, share)
+    var new_line := HudComposeVocab.SPLIT_TIP_NEW_FORMAT % [new_people, _split_workers,
+        new_children, new_elders, HudComposeVocab.SPLIT_STOCK_FORMAT % (provisions * share)]
+    var home_line := HudComposeVocab.SPLIT_TIP_HOME_FORMAT % [
+        kept_working + _split_workers, kept_working,
+        kept_children + new_children, kept_children,
+        kept_elders + new_elders, kept_elders,
+        HudComposeVocab.SPLIT_STOCK_FORMAT % provisions,
+        HudComposeVocab.SPLIT_STOCK_FORMAT % (provisions * (1.0 - share))]
+    if lines > 0:
+        new_line += HudComposeVocab.SPLIT_TIP_NEW_FAMILIES_FORMAT % taken
+        home_line += HudComposeVocab.SPLIT_TIP_HOME_FAMILIES_FORMAT % [
+            lines, HudLineageVocab.split_home_lines(lines, taken)]
+    var tip: Array[String] = [
+        HudComposeVocab.SPLIT_SHARE_FORMAT % int(round(share * 100.0)), new_line, home_line]
+    if HudLineageVocab.split_block_shown(band):
+        var limits := HudLineageVocab.split_limits(band, taken)
+        tip.append(HudComposeVocab.SPLIT_TIP_LIMIT_FORMAT % [
+            HudLineageVocab.ceiling_of(band), limits["new_limit"], limits["home_limit"]])
+        var warning := HudLineageVocab.split_warning(band, limits, new_people)
+        if warning != "":
+            tip.append(warning)
+    tip.append(HudComposeVocab.SPLIT_BAND_AFTER_NOTE)
+    return "\n".join(tip)
 
 ## **What a split may draw from: the band's WORKERS, not its idle ones.** A split is not staffing a
 ## job — it divides the band, and an assignment held by someone who leaves lapses with them. This is
