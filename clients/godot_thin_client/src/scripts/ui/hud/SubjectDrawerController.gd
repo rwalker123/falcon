@@ -485,11 +485,6 @@ func _tile_terrain_lines(tile_info: Dictionary,
     if _topbar != null:
         ladder = HudRouteVocab.route_ladder(_topbar.route_rungs())
         build_rate = HudRouteVocab.branch_build_work_per_worker_turn(ladder)
-    # ⛔ **AND WHICH ROADS THIS FACTION HAS QUEUED, for the identical reason.** A road declared but
-    # not yet started banks nothing for as long as it waits behind the head of its band's queue, and
-    # the rung row read as a bare `Trail` throughout — indistinguishable from ground nobody has
-    # ordered anything on. The join is a set of TILES resolved here and handed over; the vocab leaf
-    # holds no band roster and no build queue, exactly as it holds no band NAMES.
     var queued_tiles: Dictionary = {}
     if _band_labor != null:
         queued_tiles = _band_labor.road_queue_tiles()
@@ -683,7 +678,8 @@ func _tile_terrain_lines(tile_info: Dictionary,
     # their `declared_rung`, from which that producer derives BOTH facts a row needs: whether this rung
     # is the declared one, and whether it is the one in flight.
     var unstaffed_rung := _band_labor.unstaffed_build_forage(
-        int(tile_info.get("x", -1)), int(tile_info.get("y", -1)))
+        int(tile_info.get("x", -1)), int(tile_info.get("y", -1)),
+        SourceForecast.build_crew_staffed(tile_info, HudComposeVocab.FORAGE_FORECAST_PREFIX))
     # **ONE ROW PER LIVE METER, AND THE TURNS LEAD IT** (issue #545). A rung declares a fixed size in
     # work units and a crew produces work units per turn, so what a glance wants off a build is HOW
     # LONG — which is now the row itself rather than an indented sub-line under a meter stating the
@@ -713,7 +709,7 @@ func _tile_terrain_lines(tile_info: Dictionary,
             continue
         # **THE ROW TAKES THE REAL BUILD CREW, NOT A *THIS RUNG IS IN FLIGHT* BOOL**
         # (`docs/plan_standing_upkeep.md` section 4.6a): the crew is what `BUILD_METER_HOLDS` cannot carry.
-        var crew := _band_labor.build_crew_forage(tile_x, tile_y)
+        var crew := SourceForecast.build_crew_staffed(tile_info, prefix)
         var row_key := DetailFormat.patch_rung_row_key(quote)
         # Another people's build in progress: the row names whose it is, in warn ink, and carries none
         # of this viewer's crew-dependent readings.
@@ -734,9 +730,6 @@ func _tile_terrain_lines(tile_info: Dictionary,
         # pays behind it.
         DetailFormat.note_under_kept_hover(ctx, row_key, tile_info, prefix,
             SourceForecast.SOURCE_KIND_FORAGE, verb)
-        # **THE GEAR'S SAVING HANGS OFF THE RUNG ACTUALLY IN FLIGHT.** The wire field is per SOURCE (at
-        # most one improvement is ever in flight on one), so it attaches to whichever meter the build is
-        # on and to nothing else, and so does the BLOCKED queue's remedy.
         if SourceForecast.build_verb(tile_info, prefix, SourceForecast.SOURCE_KIND_FORAGE,
                 unstaffed_rung) == verb:
             lines.append_array(DetailFormat.build_gear_lines(tile_info, prefix))
@@ -910,8 +903,9 @@ func _render_occupant_drawer(from_selection: bool = false) -> void:
         # `⚠ drifting` row, whose remedy is that row's own `[hint=…]` since the `At risk:` row it used
         # to hang under is retired.
         lines = DetailFormat.herd_summary_lines(_selection.herd(), _band_labor.world_herds(),
-            _band_labor.unstaffed_build_hunt(String(_selection.herd().get("id", ""))),
-            _band_labor.build_crew_hunt(String(_selection.herd().get("id", ""))), ctx,
+            _band_labor.unstaffed_build_hunt(String(_selection.herd().get("id", "")),
+                SourceForecast.build_crew_staffed(_selection.herd(), HudComposeVocab.BARE_FORECAST_PREFIX)),
+            SourceForecast.build_crew_staffed(_selection.herd(), HudComposeVocab.BARE_FORECAST_PREFIX), ctx,
             _band_labor.working_floor_hunt(String(_selection.herd().get("id", ""))),
             _band_labor.builder_label(RungQuotes.builder_band(_selection.herd())))
     _occupant_detail.text = DetailFormat.detail_bbcode(lines, ctx)

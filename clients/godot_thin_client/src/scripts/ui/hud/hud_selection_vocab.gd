@@ -271,24 +271,11 @@ const RUNG_TURNS_FORMAT := "≈%d turns (%d%%)"
 # …and its singular, so a build one turn out does not read `≈1 turns (99%)`.
 const RUNG_TURNS_ONE_FORMAT := "≈1 turn (%d%%)"
 
-# **THE SAME ESTIMATE AS A DATE — the turn this queue entry is expected to complete on**
-# (`docs/plan_standing_upkeep.md` §4.7). The BUILD QUEUE block's alone: its counts are CHAINED down
-# the list, so `≈42` / `≈61` / `≈98` read as three independent spans when they are cumulative.
-#
 # **It wears no `≈` and needs no singular.** The hedge belongs to the SPAN — a count that moves with
 # the crew — and a stated turn number is the estimate already committed to a date; `turn 41 (0%)` is
 # correct at one turn out, which is exactly the case `RUNG_TURNS_ONE_FORMAT` exists for on a span.
 const RUNG_COMPLETES_FORMAT := "turn %d (%d%%)"
 
-# **…AND THE SAME DATE UNDER A CLIMB WHOSE PERCENTAGE BELONGS TO ANOTHER RUNG** — `Cultivating 18% ·
-# turn 83`, on a queue row titled `Sow` (`docs/plan_standing_upkeep.md` §2.8).
-#
-# **THE VERB LEADS BECAUSE THE PERCENTAGE IS THE THING BEING QUALIFIED.** A queue entry names a
-# DESTINATION and climbs every rung on the way, so the leg in flight is routinely a rung the row's own
-# title does not name; `18%` alone under a `Sow` reads as the Field being 18% sown, which is a
-# different and false claim from the one it replaces. The participle is
-# `HudComposeVocab.IMPROVEMENT_RUNNING_LABELS`' — the same word the compose sheet's running face uses,
-# so one job is not called two things on one screen.
 #
 # **The `·` separates two statements about ONE job**, the row tooltip's own separator: how far into
 # the leg, and when the whole climb lands. It is deliberately not a parenthesis — the bracketed form
@@ -404,19 +391,6 @@ const RUNG_STALLED_FORMAT := "%s Stalled %d%%"
 # where the meter is actually losing work (`meterRotPerTurn > 0`). The history below is why the state
 # has its own face at all; the word and the unconditional mark are what was retired.
 #
-# **THE RUNG NOBODY HAS QUEUED — work banked, NOBODY on it, and no queue entry that could pick it up.**
-# The sim's `-1` again, but on a source that is in no band's build queue at all
-# (`SourceForecast.NOT_IN_ANY_BUILD_QUEUE`) with a meter that is not empty. Its own word, because the
-# player has silently lost what the rung was paying and nothing will recover it until they act.
-#
-# **THE MEASURED CASE IT EXISTS FOR** — a patch at (78, 20). `Field sown` completed on tick 88, and on
-# tick 89 the sim logged *"the field at (78,20) has gone feral — untended, the ground is reverting"*.
-# The queue entry had already retired at completion, so at tick 93 the tile sat at
-# `49.612 / 49.624 work` — 0.9997586 — with `buildTurnsRemaining -1`, `buildQueuePosition -1`, and its
-# yield fallen from a Field's 12.48 to a tended patch's 1.39. The card said `⚠ Stalled 100%`, a
-# reading that is wrong in both halves: it was not 100% (see `HudFormat.progress_percent`, which now
-# floors), and *Stalled* named a situation the player could not act on from the words given.
-#
 # ⛔ **`RUNG_REVERTING_FORMAT` AND `RUNG_HELD_FORMAT` ARE BOTH TAKEN AND NEITHER FITS.** *Reverting* is
 # a rung whose keeping does NOT cover it and which is actively slipping; this one published
 # `upkeepShortfall 0` and `meterRotPerTurn 0` — it is stable, and telling the player it is bleeding
@@ -427,42 +401,31 @@ const RUNG_STALLED_FORMAT := "%s Stalled %d%%"
 #
 # **IT IS NOT `RUNG_STALLED_FORMAT` EITHER, AND THE DIFFERENCE IS WHO IS PRESENT.** *Stalled* is
 # documented above as *builders are on it and the meter is not moving anyway* — a live entry whose
-# gate refuses. Nobody is on this one and no entry exists, so the two states want opposite remedies:
-# a stall wants the gate cleared, a lapse wants the job queued again.
+# gate refuses. Nobody is on this one and no build is declared, so the two states want opposite
+# remedies: a stall wants the gate cleared, a lapse wants the job declared again.
 #
 # ⛔ **WHETHER THE RUNG WAS ONCE FINISHED IS NOT ON THE WIRE**, so the face cannot say *Field lost*.
-# The same three conjuncts are met by a Field that went feral a hair short of full, by a cancelled
-# queue entry with work banked, and by a Sow nobody ever queued. What every one of them shares is
-# what the face states: how much is built, and that no band is building it.
-const RUNG_UNQUEUED_FORMAT := "%d%% built · not queued"
+const RUNG_UNQUEUED_FORMAT := "%d%% built · not being built"
 
 # …and the same state where the meter IS losing work every turn — the one case that earns the mark.
 # It carries `RUNG_ROTTING_PHRASE`, so `DetailFormat.rung_value_hex` paints it red as it paints every
 # meter going backwards.
-const RUNG_UNQUEUED_ROTTING_FORMAT := "%s %d%% built · not queued, %s"
+const RUNG_UNQUEUED_ROTTING_FORMAT := "%s %d%% built · not being built, %s"
 
 # The phrase both faces carry, named once so the hover that explains the state is routed off the
 # value the row already composed rather than re-deriving the verdict beside it — the same shape
 # `RUNG_ROTTING_PHRASE` has for the tint rule.
-const RUNG_UNQUEUED_PHRASE := "not queued"
+const RUNG_UNQUEUED_PHRASE := "not being built"
 
 # **THE HOVER, because the mark is two words on a ~245px card.** It states the STATE, that the work is
 # not lost, and the one click that resumes it — the register `WORK_ROW_READY_TRACK_TOOLTIP` set for
 # the chevron, which names the word AND what the press does.
 #
-# ⛔ **IT NAMES NO CAUSE, because the three conjuncts behind the mark cannot tell which one it was.**
-# It opened *"The ground went feral and lost this rung"* — a PLANT-web sentence on a hover
-# `DetailFormat.note_lapsed_hover` registers on `HUSBANDRY_ROW` and `CORRAL_ROW` as well, where a herd
-# with a part-built Tame and nobody on it was told about ground it does not have. And a feral field is
-# only one of the ways here: cancelling a queue entry with work banked satisfies the same three
-# conjuncts (`build_turns` at the wire's `-1`, a meter above empty, no entry) with nothing having gone
-# wrong at all. The word `Lapsed` is right in every one of them; only a cause would be a guess, so the
-# sentence states what IS and what to do and asserts nothing about how it got here.
-const RUNG_UNQUEUED_TOOLTIP_FORMAT := "%d%% built · not queued"
+const RUNG_UNQUEUED_TOOLTIP_FORMAT := "%d%% built · not being built"
 
 # The rotting twin's hover: the same three facts, plus the one that earned the mark.
 const RUNG_UNQUEUED_ROTTING_CLAUSE_FORMAT := " · losing %.1f/turn"
-const RUNG_UNQUEUED_FIX_LINE := "Fix: re-queue from Work row"
+const RUNG_UNQUEUED_FIX_LINE := "Fix: start it again from ⌃ on its row"
 
 # **NOT A HAZARD: THE SIM HAS NOT LOOKED AT THIS ENTRY YET**
 # (`SourceForecast.BUILD_TURNS_NOT_YET_ESTIMATED`, the wire's own `-5`,
@@ -478,11 +441,7 @@ const RUNG_UNQUEUED_FIX_LINE := "Fix: re-queue from Work row"
 # `*_value_hex` rule falls it through to `INK_HEX` **because it carries neither needle** — which is
 # the tint rule working as designed rather than by luck.
 #
-# **NOR IS IT THE SILENCE `-1` EARNS ELSEWHERE.** A queued entry has a ROW, and a row with an empty
-# date column reads as a job the queue has forgotten. *Queued* is a true, complete statement of where
-# the entry stands, and the meter beside it is the entry's own — `0%` on the turn it is declared,
-# which is honest.
-const RUNG_QUEUED_FORMAT := "Queued %d%%"
+const RUNG_QUEUED_FORMAT := "Declared %d%%"
 
 # **AND IT COVERS A CREWLESS `-1` TOO — there is deliberately no *no estimate* twin.** A crew fork was
 # built here for the 99% repair, on the reading that *Stalled* blames builders who do not exist, and
@@ -493,11 +452,6 @@ const RUNG_QUEUED_FORMAT := "Queued %d%%"
 # slipped is one the source has dropped out of, so the slide is told on THAT rung's row (`🌾
 # Tended 90%`, not built) rather than as a countdown.
 
-# **HAZARD: THE QUEUE IS STUCK HERE** (`SourceForecast.BUILD_TURNS_QUEUE_BLOCKED`, the wire's own
-# `-4`, `docs/plan_standing_upkeep.md` §4.6b). The band's builders are staffed and standing on this
-# entry, its own gate refuses it, so nothing banks — and, the whole pool being on the head of the
-# queue, nothing behind it moves either.
-#
 # **IT IS NOT `RUNG_STALLED_FORMAT`, AND THE DIFFERENCE IS WHAT THE PLAYER DOES NEXT.** *Stalled* is
 # a rung nobody is being held up by; this one is holding the band's ENTIRE build programme. It states
 # no cause — `DetailFormat.build_blocked_lines` puts that on the line beneath, which is where the
@@ -554,30 +508,9 @@ const RUNG_BLOCKED_FORMAT := "%s Blocked %d%%"
 # (`species_ceiling`), which is the gate-reason rule this client already follows: naming a
 # prerequisite without naming the lever tells a player the door is locked and not where the key is.
 #
-# > ### ⛔ ONE SENTENCE PER KEY MEANS ONE, AND FOUR OF THEM LOST A SECOND
-# >
-# > The block draws TWO lines — the headline and this — and that is the whole of it. Ray cut the rest on
-# > sight: *"You don't need 'your builders are stuck here', that's what Blocked means. You also don't
-# > need the 2nd and 3rd sentence."* So an entry that STATED its cause and then told the player what to
-# > do about it was two sentences where the card affords one, and the second went:
-# >
-# > - `site` — *"You will have to build somewhere else."*
-# > - `undeclared` — *"Remove it from the build queue and order the next step instead."*
-# > - `unworked` — *"Send a crew back, or remove the job from the build queue."*
-# > - `BUILD_BLOCKED_FALLBACK` — *"Your builders will wait here until it changes."*
-# >
-# > (The escapement pair below lost its own, and the keeping line went with them.)
-# >
-# > **THE ENTRIES THAT SURVIVE WHOLE FUSE THEIR LEVER INTO THE CAUSE with an em-dash** — *"…— the Know
-# > tab shows how far along they are"*, *"…— pick one on the job's row in the build queue"* — which is
-# > one sentence and is why they were not touched. **That is the shape to write a new key in**: state
-# > the refusal, and where a lever fits in the same breath, name it in the same sentence. A key whose
-# > remedy will not fit that way states the refusal alone; the block is a READOUT, and the surfaces
-# > that carry instructions are the build queue's own row and the `At risk:` row beneath this one.
-# > Length is a correctness property here — measure a rewrite in `ui_preview_out/tile_meter_blocked.png`.
 const BUILD_BLOCKED_REASONS := {
     "knowledge": "Your people have not learned how to do this yet — the Know tab shows how far along they are.",
-    "no_crop": "No crop has been chosen for this patch — pick one on the job's row in the build queue.",
+    "no_crop": "No crop has been chosen for this patch — pick one when you declare the job.",
     "species_ceiling": "This kind of animal will not go any further, however much your people learn.",
     "rung_below": "It has to be tamed before it can be penned.",
     "owned_by_other": "Another band already holds this — yours cannot build here.",
@@ -615,12 +548,6 @@ const BUILD_BLOCKED_REASONS := {
 # and the wire's key is just `materials`: WHICH good is read from the rung's own pile
 # (`SourceForecast.build_material_cost`), so the sentence names the thing the store ran out of.
 #
-# ⛔ **THE REMEDY IS NOT THE BUILDERS ROLE, AND SAYING SO IS THE POINT.** A build the store cannot
-# cover is not short of hands — there is no affordability gate on a rung (§2.5 retired the five verbs'
-# own), so it QUEUES AND STALLS: the arm runs, banks nothing and wastes the crew's turn. Adding
-# builders changes none of that. The lever is the bench that makes the good, or a trade, and both are
-# off the build line entirely — the same shape `escapement`'s remedy has.
-#
 # **IT FUSES ITS LEVER INTO THE CAUSE with an em-dash**, which is this table's own rule for a key that
 # survives whole, and it measures 58 characters against the card's ~120 budget.
 const BUILD_BLOCKED_REASON_MATERIALS := "materials"
@@ -631,9 +558,6 @@ const BUILD_BLOCKED_REASON_MATERIALS := "materials"
 # (`HudWorkVocab.WORK_ROW_MATERIAL_SHORT_FORMAT`, which is built from it). **Missing hands are amber
 # and a missing good is red** — one rule, two surfaces, one string.
 #
-# ⛔ **IT MAY NOT CARRY BBCODE.** These sentences go verbatim into the build queue row's plain-text
-# `tooltip_text` as well as into the card's BBCode, so a `[color=…]` run here would print its own
-# markup on the hover. The ink is the RENDERER's, keyed on this named prefix.
 const BUILD_BLOCKED_MATERIAL_SHORT_LEAD := "Short of "
 
 const BUILD_BLOCKED_MATERIALS_FORMAT := BUILD_BLOCKED_MATERIAL_SHORT_LEAD \

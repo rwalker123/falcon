@@ -13,8 +13,8 @@ use core_sim::{
     advance_crafting, announce_bench_material_short, build_test_app, deliver_bench_output,
     recapture_snapshot_in_place, scalar_from_f32, BandBench, BandEquipment, BenchOrder,
     BuildSource, CommandEventKind, CommandEventLog, EquipmentConfigHandle, Expedition,
-    ExpeditionMission, ExpeditionPhase, KeepingIssue, KitJob, LaborAllocation, LocalStore,
-    MaterialsConfigHandle, PoolToeLine, PopulationCohort, ResidentBand, SnapshotHistory,
+    ExpeditionMission, ExpeditionPhase, KeepingIssue, LaborAllocation, LocalStore,
+    MaterialsConfigHandle, PopulationCohort, ResidentBand, SnapshotHistory,
 };
 use std::collections::BTreeMap;
 
@@ -257,8 +257,8 @@ fn short_of_earthmoving_and_hoes(allocation: &mut LaborAllocation) {
     /// The site crew's claim, met with nothing: two keepers without.
     const SITE_REQUIRED: f32 = 2.0;
     const SITE_ISSUED: f32 = 0.0;
-    allocation.last_pool_toe = vec![PoolToeLine {
-        pool: KitJob::Builders,
+    allocation.last_build_toe = vec![core_sim::BuildToeLine {
+        source: BuildSource::Patch(PATCH),
         item: EARTHMOVING.to_string(),
         required: POOL_REQUIRED,
         filled: POOL_FILLED,
@@ -313,8 +313,8 @@ fn suggestions_rank_by_workers_without_and_net_out_the_queue() {
     }
     assert_eq!(
         (unqueued[1].4[0].0.as_str(), unqueued[1].4[0].1.as_str()),
-        ("pool", "builders"),
-        "the pool's line is keyed by its pool token"
+        ("build", "forage"),
+        "a build's line is keyed by the kind of the source it builds on"
     );
     assert_eq!(
         (unqueued[0].4[0].0.as_str(), unqueued[0].4[0].1.as_str()),

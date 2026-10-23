@@ -213,7 +213,7 @@ static func price_plant_build(tile: Dictionary, turns: int = BUILD_TURNS_REMAINI
 	# queued — so a fixture that priced a build and left the position at the sentinel would stage a
 	# countdown belonging to nothing, and the sheet would read it as an entry the pool is NOT on.
 	# `unbuilt` below puts it back to the sentinel, a patch nobody has declared being in no queue.
-	tile["patch_build_queue_position"] = SourceForecast.BUILD_QUEUE_HEAD
+	tile["patch_builders_cap"] = 3
 	return tile
 
 ## **A PATCH NOBODY IS BUILDING — both plant meters at zero, re-priced.**
@@ -244,7 +244,7 @@ static func unbuilt(tile: Dictionary) -> Dictionary:
 	tile = price_plant_build(tile)
 	# …and it is in NO band's queue, nothing having been declared on it. Set after the pricing above,
 	# which stamps the head position every priced build gets.
-	tile["patch_build_queue_position"] = SourceForecast.NOT_IN_ANY_BUILD_QUEUE
+	tile["patch_builders_cap"] = 0
 	# **AND THE STANDING RUNG COMES BACK DOWN WITH THE FLAGS.** `improvement_is_done` reads
 	# `patch_current_rung` and nothing else, so a fixture that unbuilt the two bools and left the rung
 	# where it was would go on reporting a Field the frame is staged to have removed.

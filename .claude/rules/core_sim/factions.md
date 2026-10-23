@@ -894,7 +894,7 @@ query order.
 | `BandName` | **kept**, unless a band of the new people already answers to it — then re-minted on the **new** people's permutation through `BandNameAllocator::mint` (`band-names.md`), drawing slots until one no other band of theirs uses. Slots are injective per faction, so the draw ends. The collision set is read after the earlier flips of the same turn, so two bands going over together cannot land on one name |
 | `ForagePatch::owner` / `Herd::owner` — the people who raised an improvement | every patch or herd the band has a labor row on (staffed or held at zero hands) and the **old** people own passes to the new people — **unless another band still of the old people works it too**, in which case the old people keep it. Only the owner moves; the rung and its build progress stay as they are. The shared-source test reads factions after every earlier flip this turn, so two bands of one people going over together take a patch they both worked |
 | a party already out (`Expedition.home_band` → this band) | its `cohort.faction` follows (the party's families went over), and it carries the re-minted name if there was one. It folds back into its band through the ordinary `Returning` arm, which never asks a faction. The losing people hears nothing beyond the band's own `band_changed_hands` pair |
-| the band's entity, `BandId`, stores, kit, bench, labor rows, build queue, `StartingLoadout` window | keyed to the band itself, not to a people — nothing to move |
+| the band's entity, `BandId`, stores, kit, bench, labor rows, declared builds, `StartingLoadout` window | keyed to the band itself, not to a people — nothing to move |
 
 **What is deliberately NOT moved:** `ExpeditionMission::Trade::destination_faction` and every
 `TransferCounterparty` — facts fixed at booking about whose band a shipment was addressed to, never
@@ -1039,8 +1039,8 @@ A snapshot is **one viewer's view**. Herds are fog-filtered, connections are fil
 observer's faction and roads are gated on `Discovered` — the band list was the one collection
 published whole, with no `With`, no faction predicate and no visibility test on
 `PopulationSnapshotQuery`. Every connected client therefore received every band's complete internal
-state: morale, larder, runway, knowledge fragments, labor assignments, equipment, bench, build
-queue, reachable stockpile, outfitting window, exact position — and its **pending defection**. The
+state: morale, larder, runway, knowledge fragments, labor assignments, equipment, bench, declared
+builds, reachable stockpile, outfitting window, exact position — and its **pending defection**. The
 Godot client declined to *draw* most of it, which is presentation, not a boundary.
 
 | Tier | Which band | What the frame carries |
@@ -1238,10 +1238,10 @@ a field that has since gone feral still reading as a field — is the staleness 
 already carries.
 
 **② The builder's state follows the builder.** *Who* is raising that improvement, *with what kit*,
-*how many turns from done* and *where it sits in their queue* is not a fact about the ground at all —
-it is the builder's internal state, the same category as the larder, the bench and the build queue a
-foreign band's row already withholds. So `buildTurnsRemaining`, `buildQueuePosition`,
-`buildWorkFromGear`, `buildBlockedReason`, `buildDestinationRung` / `buildDestinationCapacity` and
+*how many turns from done* and *how many builders are on it* is not a fact about the ground at all —
+it is the builder's internal state, the same category as the larder, the bench and the declared
+builds a foreign band's row already withholds. So `buildTurnsRemaining`, `buildersStaffed` /
+`buildersKitted` / `buildersCap` / `buildToe`, `buildWorkFromGear`, `buildBlockedReason`, `buildDestinationRung` / `buildDestinationCapacity` and
 `buildLegs` are the **viewer's own bands or nothing**, on explored ground exactly as on unexplored.
 Both source tables carry it, plants and herds alike; a per-web asymmetry here would be a second
 model.
@@ -1282,16 +1282,16 @@ model.
 > #### ⛔ RULE ② IS ENFORCED AT THE CAPTURE'S ITERATOR, and the two source tables share it
 >
 > `resolve_queued_build_sources` / `resolve_worked_sources` key purely by tile and herd id, so they cannot tell
-> whose queue an entry came from — an unfiltered walk resolved *every* faction's queue onto the
+> whose declaration it was — an unfiltered walk resolved *every* faction's declared builds onto the
 > shared source tables. `snapshot/capture.rs` filters both allocation iterators on
 > `cohort.faction == viewer_faction`, which is also what `WorkedSources::patch`'s own contract had
 > always claimed (*"`("", false)` when no band **of the faction** works it"*).
 >
 > **The stamped scratch needs the same gate and does not come from those indices.**
-> `buildTurnsRemaining` / `buildQueuePosition` / `buildWorkFromGear` / `buildLegs` are written onto
+> `buildTurnsRemaining` / `buildWorkFromGear` / `buildLegs` are written onto
 > the patch and the herd by `publish_build_chain` for whichever band worked the source, and the
 > stamp records no faction. What the two filtered indices give is the membership that answers *"could
-> one of our bands have stamped this"* — the source is in a viewer band's **queue**
+> one of our bands have stamped this"* — the source has a build declared by a viewer band
 > (`QueuedBuildSources::patch_is_queued`) or a viewer band **works** it (`WorkedSources::patch_is_worked`) —
 > and those are precisely the two ways `publish_build_chain` reaches a source at all. Where neither
 > holds, the row is built from `ForagePatch::without_build_estimate` / `Herd::without_build_estimate`.
@@ -1302,7 +1302,7 @@ model.
 > skipped on a source carrying no build, which is nearly all of them.
 >
 > **It does not narrow the viewer's own compose sheet.** `buildTurnsRemaining` is a *projection* on a
-> source nothing has queued, and a source the viewer's band works is inside the membership — so the
+> source nothing has declared, and a source the viewer's band works is inside the membership — so the
 > quote a player reads before committing is untouched.
 
 > **`hasOwner` is why "unowned" and "owned by faction 0" are different readings.** The wire carries a

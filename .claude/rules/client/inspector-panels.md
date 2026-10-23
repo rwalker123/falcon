@@ -197,15 +197,15 @@ socket, its refusal arriving later on the server's own event stream.
 > **⛔ THAT WAS TRUE UNTIL PARSING MOVED INTO THE BRIDGE, AND ITS OWN EXAMPLE IS WHAT BROKE.**
 > `bridge/command.rs` → `send_line` calls `parse_command_line` **before** it sends anything and returns
 > `{ok: false, error: …}` on a line it cannot read. That is a THIRD answer the invariant did not admit,
-> and the one that fired in play: `assign_labor 0 1 builders 1` — the line this section used as its
-> worked example — was **rejected locally**, because the role was missing from the text grammar
+> and the one that fired in play: an `assign_labor 0 1 <role> 1` for a role the text grammar did not
+> yet name — the line this section used as its worked example — was **rejected locally**, because the role was missing from the text grammar
 > (`harness-band-panel.md` → "A ROLE PASSES TWO GATES"), and the player was told the server was
 > unreachable while it was answering perfectly.
 
 So the site forks, and **it forks on the error CODE rather than on the reason's prose**:
 
 - **`ERR_CANT_CONNECT` → `HudEventVocab.COMMAND_REFUSED_FORMAT`** — `Refused before it left the client
-  — "assign_labor 0 1 builders 1": unexpected token "builders"`. The bridge's reason is passed
+  — "assign_labor 0 1 <role> 1": unexpected token "<role>"`. The bridge's reason is passed
   **verbatim**, because that reason names the token that failed and is the only actionable thing in the
   line. *"before it left the client"* is honest for every failure this code covers — an unparseable
   line, a dispatch that never reached the worker, a write the worker could not make, a wait that timed

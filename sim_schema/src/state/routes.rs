@@ -91,6 +91,24 @@ pub struct RouteState {
     /// nobody walked rather than an edge case.
     #[serde(default)]
     pub build_blocked_reason: String,
+    /// **The builders on this source's declared build this turn**, the bare-handed and the kitted
+    /// together (`docs/plan_labor_at_scale.md`, "Builds join the site's crew"). The viewer's own
+    /// bands only. Appended last (append-only).
+    #[serde(default)]
+    pub builders_staffed: u32,
+    /// Of [`Self::builders_staffed`], the ones holding the build kit the rung uses (every builder
+    /// when the rung asks for no tool).
+    #[serde(default)]
+    pub builders_kitted: u32,
+    /// **The most builders the build could take this turn** — the rung's `maxBuilders` cut by the
+    /// room the tile left. `0` where no build is declared.
+    #[serde(default)]
+    pub builders_cap: u32,
+    /// **The tools the build's builders asked for and what the settlement gave them**, one
+    /// [`crate::state::population::PoolToeLineState`] per tool (`pool` reads `"build"`). Empty where
+    /// the rung asks for no tool.
+    #[serde(default)]
+    pub build_toe: Vec<crate::state::population::PoolToeLineState>,
     /// **THIS TURN'S SHARE OF THE RUNG'S BUILD PILE**, and what the band's stores actually paid of
     /// it — the material twin of [`Self::upkeep_demand`] / [`Self::upkeep_supplied`], obeying the
     /// same rule: **`demand − supplied` is the shortfall, verbatim on the wire.**
@@ -182,7 +200,16 @@ pub struct TileImprovementState {
     pub upkeep_tools_short: bool,
     /// The viewer's keeping tools, one line per item the crews claimed.
     pub upkeep_toe: Vec<crate::state::population::KitToeLineState>,
-    /// Whether one of the viewer's own bands has a build queued on this improvement.
+    /// The builders on this improvement's declared build (see
+    /// [`crate::state::subsistence::ForagePatchState::builders_staffed`]).
+    pub builders_staffed: u32,
+    /// Of those, the ones holding the rung's build kit.
+    pub builders_kitted: u32,
+    /// The most builders the build could take this turn.
+    pub builders_cap: u32,
+    /// The tools the build's builders asked for and what they were given.
+    pub build_toe: Vec<crate::state::population::PoolToeLineState>,
+    /// Whether one of the viewer's own bands has a build declared on this improvement.
     pub is_queued: bool,
 }
 
@@ -207,6 +234,10 @@ impl Default for TileImprovementState {
             upkeep_hands: 0.0,
             upkeep_tools_short: false,
             upkeep_toe: Vec::new(),
+            builders_staffed: 0,
+            builders_kitted: 0,
+            builders_cap: 0,
+            build_toe: Vec::new(),
             is_queued: false,
         }
     }

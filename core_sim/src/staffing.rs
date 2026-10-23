@@ -18,6 +18,16 @@
 //!
 //! Whatever is left is idle. The Max caps **every** pass: no pass puts a row's total above it.
 //!
+//! # Builds join the crew (#872)
+//!
+//! A declared build is a **build input** beside the row inputs (`StaffRowInput::is_build`), staffed
+//! from the same pool and shelf: after pass 1 every build that can progress gets **one builder**
+//! (any priority, priority order then nearest first); then, per priority group in passes 2 and 3,
+//! the group's builds are dealt **before** its sources reach toward their floor, round-robin up to
+//! their cap (the rung's `max_builders`, cut by the room the tile left). A bare-handed builder
+//! always contributes, so a build is a pass-3 destination. A tile's room is shared by every row and
+//! build on it and by the other bands (`tile_worker_cap`).
+//!
 //! **Within a priority group every pass deals one head at a time, round-robin**, nearest row to camp
 //! first (ties by row index), until no row in the group wants another, the pool is empty or (for a
 //! kitted head) the shelf cannot arm one more; only then does the next lower group get that pass.
@@ -46,7 +56,8 @@ use std::sync::Arc;
 use glam::UVec2;
 
 use crate::components::{
-    BandEquipment, BandId, LaborAllocation, LaborTarget, SourcePriority, StaffedCrew,
+    BandEquipment, BandId, BuildCrew, BuildSource, LaborAllocation, LaborTarget, SourcePriority,
+    StaffedCrew,
 };
 use crate::equipment_config::{KitChoice, KitCoverage, Quarry};
 use crate::fauna::PartyResolution;
@@ -108,6 +119,15 @@ pub struct StaffRowInput<'a> {
     /// Hex distance from camp to the row's site (a hunt row's herd at its current tile); Roadwork
     /// has no single site and reads 0. Orders the heads of a priority group, nearest first.
     pub distance: u32,
+    /// **This input is a declared BUILD, not a source row** (#872). Its `max` is the most builders
+    /// it can take (zero when it cannot progress), its `keepers` and takes are nothing, and a bare
+    /// hand always contributes.
+    pub is_build: bool,
+    /// A build whose rung asks for no tool: every builder counts as kitted.
+    pub kitless: bool,
+    /// The tile the row's or build's hands stand on, when it is tile-bound; its room is shared with
+    /// every other row and build on it and with the other bands.
+    pub tile: Option<UVec2>,
 }
 
 /// What the passes decided for one row, in the order the inputs came.
@@ -126,6 +146,9 @@ fn units_for(heads: u32, people_per_unit: u32) -> u32 {
 /// **THE MOST KITTED HEADS THE ROW COULD HOLD** — the heads it holds already plus what the units
 /// still on the shelf arm, the scarcest item deciding (a kit is claimed whole).
 fn kitted_capacity(row: &StaffRowInput<'_>, held: u32, shelf: &BTreeMap<Arc<str>, u32>) -> u32 {
+    if row.kitless {
+        return u32::MAX;
+    }
     row.kit_items
         .iter()
         .map(|(item, people)| {
@@ -173,7 +196,7 @@ pub fn staff_band(
     pool: u32,
     shelf: &mut BTreeMap<Arc<str>, u32>,
 ) -> Vec<RowStaffing> {
-    staff_passes(rows, pool, shelf, Passes::All)
+    staff_passes(rows, pool, shelf, Passes::All, &BTreeMap::new())
 }
 
 /// [`staff_band`] over the passes `passes` names.
@@ -182,6 +205,7 @@ fn staff_passes(
     pool: u32,
     shelf: &mut BTreeMap<Arc<str>, u32>,
     passes: Passes,
+    tile_room: &BTreeMap<TileKey, u32>,
 ) -> Vec<RowStaffing> {
     let mut order: Vec<usize> = (0..rows.len()).collect();
     order.sort_by_key(|&i| (std::cmp::Reverse(rows[i].priority), i));
@@ -213,20 +237,55 @@ fn staff_passes(
         out,
         pool_left,
         cap_left,
+        tiles: rows.iter().map(|row| row.tile.map(tile_key)).collect(),
+        tile_room: tile_room.clone(),
     };
     let groups = priority_groups(rows, &order);
+    // Each priority group split into its builds and its sources: a group deals its builds first.
+    let split: Vec<(Vec<usize>, Vec<usize>)> = groups
+        .iter()
+        .map(|group| group.iter().partition(|&&i| rows[i].is_build))
+        .collect();
 
     // ## Pass 1 — keepers, then kitted heads up to the hold crew; one head at a time within a group.
-    for group in &groups {
-        deal_round_robin(group, |i| ledger.deal_keeper(&rows[i], i));
-        deal_kitted(rows, group, &mut ledger, shelf, |row, kmax| {
+    for (_, sources) in &split {
+        deal_round_robin(sources, |i| ledger.deal_keeper(&rows[i], i));
+        deal_kitted(rows, sources, &mut ledger, shelf, |row, kmax| {
             take_hands_needed(row, row.hold_take, kmax).unwrap_or(NOBODY)
         });
     }
 
-    // ## Pass 2 — kitted heads up to the reach crew, from whatever units and heads remain.
-    for group in &groups {
-        deal_kitted(rows, group, &mut ledger, shelf, |row, kmax| {
+    // ## One builder on every build — the player started it, so the game tries to staff it. After
+    // pass 1 (the ground the band already has never rots to pay for new ground), at any priority,
+    // in priority order then nearest first; kitted if the shelf can arm one, else bare.
+    if passes == Passes::All {
+        for (builds, _) in &split {
+            for &i in builds {
+                let row = &rows[i];
+                let kitted = kitted_capacity(row, NOBODY, shelf) >= 1;
+                if ledger.deal_head(
+                    i,
+                    true,
+                    if kitted {
+                        HeadKind::Kitted
+                    } else {
+                        HeadKind::Bare
+                    },
+                ) && kitted
+                {
+                    arm(row, NOBODY, 1, shelf);
+                }
+            }
+        }
+    }
+
+    // ## Pass 2 — kitted heads up to the reach crew, from whatever units and heads remain. A group's
+    // builds go first, up to their cap.
+    for (builds, sources) in &split {
+        if passes == Passes::All {
+            deal_kitted(rows, builds, &mut ledger, shelf, |row, _| cap_of(row));
+        }
+        deal_kitted(rows, sources, &mut ledger, shelf, |row, kmax| {
             match row.reach {
                 ReachTarget::Nothing => NOBODY,
                 ReachTarget::Take(target) => take_hands_needed(row, target, kmax).unwrap_or(NOBODY),
@@ -240,11 +299,14 @@ fn staff_passes(
     }
 
     // ## Pass 3 — every row up to its USEFUL crew: the kit's units still unspent first (a kit never
-    // sits on the shelf while someone works bare), then bare hands where one adds value.
-    for group in &groups {
-        deal_kitted(rows, group, &mut ledger, shelf, useful_hands);
+    // sits on the shelf while someone works bare), then bare hands where one adds value. A group's
+    // builds first: a bare-handed builder always contributes.
+    for (builds, sources) in &split {
+        deal_kitted(rows, builds, &mut ledger, shelf, |row, _| cap_of(row));
+        deal_round_robin(builds, |i| ledger.deal_head(i, true, HeadKind::Bare));
+        deal_kitted(rows, sources, &mut ledger, shelf, useful_hands);
         let mut needed: Vec<Option<u32>> = vec![None; rows.len()];
-        deal_round_robin(group, |i| {
+        deal_round_robin(sources, |i| {
             let row = &rows[i];
             if !row.bare_can_work {
                 return false;
@@ -270,6 +332,9 @@ struct Ledger {
     out: Vec<RowStaffing>,
     pool_left: u32,
     cap_left: Vec<u32>,
+    /// The tile each input's hands stand on, and the room each tile has left for this band.
+    tiles: Vec<Option<TileKey>>,
+    tile_room: BTreeMap<TileKey, u32>,
 }
 
 impl Ledger {
@@ -277,6 +342,14 @@ impl Ledger {
     fn deal_head(&mut self, i: usize, wanted: bool, kind: HeadKind) -> bool {
         if !wanted || self.pool_left == NOBODY || self.cap_left[i] == NOBODY {
             return false;
+        }
+        // The tile holds only so many hands, across every row and build on it (and, through the
+        // room it started with, every other band). A tile with no entry is unbounded.
+        if let Some(room) = self.tiles[i].and_then(|tile| self.tile_room.get_mut(&tile)) {
+            if *room == NOBODY {
+                return false;
+            }
+            *room -= 1;
         }
         match kind {
             HeadKind::Keeper => self.out[i].keepers += 1,
@@ -379,6 +452,53 @@ pub struct StaffingWorld<'a> {
     /// **The tile the band stands on** and the map it stands on, which a row's distance is measured
     /// from. `None` reads every row at distance 0.
     pub camp: Option<CampSite>,
+    /// **The hands every OTHER band has on each tile** — what a tile's `tile_worker_cap` is shared
+    /// with. In the turn it is the room earlier bands left (bands are staffed in a deterministic
+    /// order); from a command it is every other band's current placements.
+    pub tile_hands_elsewhere: &'a BTreeMap<TileKey, u32>,
+    /// **Whether a declared build can make progress this turn** — not complete, not gated, not stalled
+    /// on materials. A build that cannot gets no builders.
+    pub build_can_progress: &'a dyn Fn(&crate::components::BuildDeclaration) -> bool,
+}
+
+/// **A TILE AS A MAP KEY** — `(y, x)`, row-major like every registry keyed by tile (`UVec2` is not
+/// `Ord`), so iteration is an order and not an accident.
+pub type TileKey = (u32, u32);
+
+/// The map key of a tile position.
+pub fn tile_key(tile: UVec2) -> TileKey {
+    (tile.y, tile.x)
+}
+
+/// **THE TILE A DECLARED BUILD'S BUILDERS STAND ON** — its site, `None` for a band improvement (it
+/// sits on the band, not on a tile of the map).
+pub fn build_site_tile(source: &BuildSource, herds: &crate::fauna::HerdRegistry) -> Option<UVec2> {
+    match source {
+        BuildSource::Patch(tile) | BuildSource::Road(tile) => Some(*tile),
+        BuildSource::Deposit { tile, .. } | BuildSource::Tile { tile, .. } => Some(*tile),
+        BuildSource::Herd(id) => herds.find(id).map(|herd| herd.position()),
+        BuildSource::Band { .. } => None,
+    }
+}
+
+/// **THE HANDS ONE BAND HAS ON EACH TILE** — its source rows' crews and its builds' builders,
+/// summed per tile. What every other band's staffing subtracts from a tile's room.
+pub fn tile_hands_of(
+    allocation: &LaborAllocation,
+    herds: &crate::fauna::HerdRegistry,
+) -> BTreeMap<TileKey, u32> {
+    let mut hands: BTreeMap<TileKey, u32> = BTreeMap::new();
+    for row in &allocation.assignments {
+        if let Some(tile) = crate::systems::party_source_position(&row.target, herds) {
+            *hands.entry(tile_key(tile)).or_insert(NOBODY) += row.workers;
+        }
+    }
+    for (source, crew) in &allocation.build_crews {
+        if let Some(tile) = build_site_tile(source, herds) {
+            *hands.entry(tile_key(tile)).or_insert(NOBODY) += crew.total();
+        }
+    }
+    hands
 }
 
 /// Where the band's camp is, and the grid the hex distance wraps over.
@@ -525,23 +645,44 @@ fn roadwork_keepers(world: &StaffingWorld<'_>, band_kit: &BandEquipment, crew: u
 
 /// The staffed rows of an allocation as the passes see them, with the kit each resolved to.
 struct StaffInputs<'a> {
+    /// The staffed source rows, then the declared builds (`rows[targets.len()..]`).
     rows: Vec<StaffRowInput<'a>>,
     targets: Vec<LaborTarget>,
     /// Each staffed row's resolved kit, in `rows` order.
     kits: Vec<KitChoice>,
+    /// The declared builds, in the order they follow the source rows.
+    builds: Vec<BuildMeta>,
+    /// The room each referenced tile has for this band: the cap less the other bands' hands.
+    tile_room: BTreeMap<TileKey, u32>,
 }
 
-/// **STAFF EVERY STAFFED ROW OF `allocation`** — the world half of the passes. `pool` is
-/// [`staffable_pool`]; `available` the band's whole working crew, the bound keepers are sized
-/// against. Returns each staffed row's crew keyed by its target, for
-/// [`LaborAllocation::apply_staffing`].
+/// What a build input carries beyond the passes' view of it.
+struct BuildMeta {
+    source: BuildSource,
+    /// The effective cap published beside the crew.
+    cap: u32,
+}
+
+/// **WHAT STAFFING DECIDED FOR A BAND** — the crew of every staffed source row and of every
+/// declared build.
+#[derive(Debug, Clone, Default)]
+pub struct StaffedBand {
+    pub rows: Vec<(LaborTarget, StaffedCrew)>,
+    pub builds: Vec<(BuildSource, BuildCrew)>,
+}
+
+/// **STAFF EVERY STAFFED ROW AND EVERY DECLARED BUILD OF `allocation`** — the world half of the
+/// passes. `pool` is [`staffable_pool`]; `available` the band's whole working crew, the bound keepers
+/// are sized against. Returns each staffed row's crew keyed by its target, for
+/// [`LaborAllocation::apply_staffing`], and each build's crew keyed by its source, for
+/// [`LaborAllocation::apply_build_crews`].
 pub fn staff_rows<'a>(
     world: &'a StaffingWorld<'a>,
     allocation: &LaborAllocation,
     band_kit: &'a BandEquipment,
     pool: u32,
     available: u32,
-) -> Vec<(LaborTarget, StaffedCrew)> {
+) -> StaffedBand {
     let equipment = world.sources.equipment;
     let inputs = build_staff_inputs(world, allocation, band_kit, available);
     let mut shelf: BTreeMap<Arc<str>, u32> = BTreeMap::new();
@@ -552,8 +693,33 @@ pub fn staff_rows<'a>(
                 .or_insert_with(|| band_kit.live_units(item, equipment));
         }
     }
-    let staffed = staff_band(&inputs.rows, pool, &mut shelf);
-    inputs.targets.into_iter().zip(staffed).collect()
+    let staffed = staff_passes(
+        &inputs.rows,
+        pool,
+        &mut shelf,
+        Passes::All,
+        &inputs.tile_room,
+    );
+    let source_rows = inputs.targets.len();
+    let builds = inputs
+        .builds
+        .iter()
+        .zip(&staffed[source_rows..])
+        .map(|(meta, crew)| {
+            (
+                meta.source.clone(),
+                BuildCrew {
+                    kitted: crew.kitted,
+                    bare: crew.bare,
+                    cap: meta.cap,
+                },
+            )
+        })
+        .collect();
+    StaffedBand {
+        rows: inputs.targets.into_iter().zip(staffed).collect(),
+        builds,
+    }
 }
 
 /// **STAFF THE ROWS, THEN MAKE SURE NO HAND IS COMMITTED TWICE** - [`staff_rows`] sizes the pool as if
@@ -574,11 +740,12 @@ pub fn staff_rows_settled<'a>(
     available: u32,
     bench_workers: u32,
     lost_people: u32,
-) -> Vec<(LaborTarget, StaffedCrew)> {
+) -> StaffedBand {
     let mut staffed = staff_rows(world, allocation, band_kit, pool, available);
     loop {
         let mut after = allocation.clone();
-        after.apply_staffing(staffed.clone(), lost_people);
+        after.apply_staffing(staffed.rows.clone(), lost_people);
+        after.apply_build_crews(staffed.builds.clone());
         let committed = after.assigned_total() + bench_workers + after.walking_home();
         if committed <= available {
             return staffed;
@@ -602,23 +769,63 @@ pub fn staff_rows_settled<'a>(
                 .find(|row| row.target.same_source(target))
                 .map_or(SourcePriority::default(), |row| row.priority)
         };
-        let Some(at) = staffed
+        // The lowest-priority hand that can go: a row's hand above the party it must keep, or a
+        // builder (builders stand on no party). Builds rank by their site's Priority.
+        let build_priority_of = |source: &BuildSource| {
+            allocation
+                .assignments
+                .iter()
+                .find(|row| source.names(&row.target))
+                .map_or(SourcePriority::default(), |row| row.priority)
+        };
+        let row_pick = staffed
+            .rows
             .iter()
             .enumerate()
             .filter(|(_, (target, crew))| crew.total() > standing(target))
-            .min_by_key(|(index, (target, _))| (priority_of(target), std::cmp::Reverse(*index)))
-            .map(|(index, _)| index)
-        else {
-            return staffed;
-        };
-        let crew = &mut staffed[at].1;
-        if crew.bare > NOBODY {
-            crew.bare -= 1;
-        } else if crew.kitted > NOBODY {
-            crew.kitted -= 1;
-        } else {
-            crew.keepers -= 1;
+            .map(|(index, (target, _))| (priority_of(target), std::cmp::Reverse(index), index))
+            .min();
+        let build_pick = staffed
+            .builds
+            .iter()
+            .enumerate()
+            .filter(|(_, (_, crew))| crew.total() > NOBODY)
+            .map(|(index, (source, _))| {
+                (build_priority_of(source), std::cmp::Reverse(index), index)
+            })
+            .min();
+        match (row_pick, build_pick) {
+            (None, None) => return staffed,
+            (Some((_, _, at)), None) => take_one_row_hand(&mut staffed.rows[at].1),
+            (None, Some((_, _, at))) => take_one_builder(&mut staffed.builds[at].1),
+            (Some(row), Some(build)) => {
+                if (row.0, row.1) <= (build.0, build.1) {
+                    take_one_row_hand(&mut staffed.rows[row.2].1);
+                } else {
+                    take_one_builder(&mut staffed.builds[build.2].1);
+                }
+            }
         }
+    }
+}
+
+/// Take one hand off a staffed row's crew: bare first, then kitted, then a keeper.
+fn take_one_row_hand(crew: &mut StaffedCrew) {
+    if crew.bare > NOBODY {
+        crew.bare -= 1;
+    } else if crew.kitted > NOBODY {
+        crew.kitted -= 1;
+    } else {
+        crew.keepers -= 1;
+    }
+}
+
+/// Take one builder off a build's crew: bare first, then kitted.
+fn take_one_builder(crew: &mut BuildCrew) {
+    if crew.bare > NOBODY {
+        crew.bare -= 1;
+    } else {
+        crew.kitted -= 1;
     }
 }
 
@@ -686,7 +893,13 @@ pub fn work_kit_plan<'a>(
             shelf.insert(Arc::clone(item), UNLIMITED_SHELF_UNITS);
         }
     }
-    let staffed = staff_passes(&inputs.rows, pool, &mut shelf, Passes::Steady);
+    let staffed = staff_passes(
+        &inputs.rows,
+        pool,
+        &mut shelf,
+        Passes::Steady,
+        &inputs.tile_room,
+    );
     let mut wants: BTreeMap<String, KitWant> = BTreeMap::new();
     for ((row, kit), crew) in inputs.rows.iter().zip(&inputs.kits).zip(&staffed) {
         let kits_needed = row
@@ -775,6 +988,9 @@ fn build_staff_inputs<'a>(
             hands: Box::new(|_, _| Some(0.0)),
             bare_can_work: false,
             distance: NOBODY,
+            is_build: false,
+            kitless: false,
+            tile: crate::systems::party_source_position(&target, sources.herds),
         };
         if let (Some(camp), Some(site)) = (
             &world.camp,
@@ -832,17 +1048,114 @@ fn build_staff_inputs<'a>(
             LaborTarget::Roadwork => {
                 input.keepers = roadwork_keepers(world, band_kit, crew_bound).ceil() as u32;
             }
-            LaborTarget::Scout | LaborTarget::Warrior | LaborTarget::Builders => continue,
+            LaborTarget::Scout | LaborTarget::Warrior => continue,
         }
         rows.push(input);
         targets.push(target);
         staffed_kits.push(kit.clone());
     }
+    let builds = build_inputs(world, allocation, band_kit, &mut rows);
+    // The room each referenced tile has for this band: the cap less what the other bands hold.
+    let tile_cap = sources.labor.tile_worker_cap;
+    let mut tile_room: BTreeMap<TileKey, u32> = BTreeMap::new();
+    for tile in rows.iter().filter_map(|row| row.tile).map(tile_key) {
+        tile_room.entry(tile).or_insert_with(|| {
+            tile_cap.saturating_sub(
+                world
+                    .tile_hands_elsewhere
+                    .get(&tile)
+                    .copied()
+                    .unwrap_or(NOBODY),
+            )
+        });
+    }
+    // A build's published cap is also bounded by the room its tile started with.
+    let builds = builds
+        .into_iter()
+        .zip(rows.iter().skip(targets.len()))
+        .map(|(mut meta, row)| {
+            if let Some(room) = row.tile.and_then(|tile| tile_room.get(&tile_key(tile))) {
+                meta.cap = meta.cap.min(*room);
+            }
+            meta
+        })
+        .collect();
     StaffInputs {
         rows,
         targets,
         kits: staffed_kits,
+        builds,
+        tile_room,
     }
+}
+
+/// **THE DECLARED BUILDS AS BUILD INPUTS**, pushed after the source rows. Each is ranked by its
+/// site's one Priority, sits at its site's distance from camp, is capped by the in-flight rung's
+/// `max_builders` (zero when it cannot progress) and is armed from the rung's build tools.
+fn build_inputs<'a>(
+    world: &'a StaffingWorld<'a>,
+    allocation: &LaborAllocation,
+    band_kit: &'a BandEquipment,
+    rows: &mut Vec<StaffRowInput<'a>>,
+) -> Vec<BuildMeta> {
+    let sources = world.sources;
+    let equipment = sources.equipment;
+    let ladder = sources.ladder;
+    let mut metas = Vec::new();
+    for declaration in &allocation.builds {
+        let source = &declaration.source;
+        let rung = crate::systems::build_rung_in_flight(
+            declaration,
+            sources.forage,
+            sources.herds,
+            world.roads,
+            world.tile_improvements,
+            sources.deposits,
+            ladder,
+        );
+        let rung_cap = ladder
+            .rung_by_id(rung)
+            .and_then(|def| def.build.as_ref())
+            .map_or(NOBODY, |build| build.max_builders);
+        // A build ranks by its site's one Priority: the row working the source, the Roadwork row
+        // for a road, the band improvement's row when there is one, else Normal.
+        let priority = allocation
+            .assignments
+            .iter()
+            .find(|row| match source {
+                BuildSource::Road(_) => matches!(row.target, LaborTarget::Roadwork),
+                _ => source.names(&row.target),
+            })
+            .map_or(SourcePriority::default(), |row| row.priority);
+        let tile = build_site_tile(source, sources.herds);
+        let distance = match (&world.camp, tile) {
+            (Some(camp), Some(site)) => camp.distance_to(site),
+            _ => NOBODY,
+        };
+        let toe = equipment.pool_toe(rung.branch, Some(&rung.wire_key()));
+        let kit_items = live_kit_items(toe.kit(), band_kit, world);
+        let can_progress = rung_cap > NOBODY && (world.build_can_progress)(declaration);
+        rows.push(StaffRowInput {
+            priority,
+            max: Some(if can_progress { rung_cap } else { NOBODY }),
+            keepers: 0,
+            hold_take: NO_TAKE_WANTED,
+            useful_take: NO_TAKE_WANTED,
+            reach: ReachTarget::Nothing,
+            kit_items,
+            hands: Box::new(|_, _| Some(0.0)),
+            bare_can_work: true,
+            distance,
+            is_build: true,
+            kitless: toe.tools().is_empty(),
+            tile,
+        });
+        metas.push(BuildMeta {
+            source: source.clone(),
+            cap: rung_cap,
+        });
+    }
+    metas
 }
 
 /// Forage: a patch's regrowth at the floor and the peak between the floor and today's stock, turned
@@ -1128,20 +1441,74 @@ fn with_band_staffing<R>(
         .unwrap_or_else(|| BandEquipment::start_stocked_for(&equipment, available as f32));
     let no_improvements = crate::tile_improvement::TileImprovementRegistry::default();
     let no_roads = crate::routes::RoadRegistry::default();
+    let no_herds = crate::fauna::HerdRegistry::default();
+    let herds = world
+        .get_resource::<crate::fauna::HerdRegistry>()
+        .unwrap_or(&no_herds);
+    // Every OTHER band's current placements share a tile's room with this one.
+    let mut elsewhere: BTreeMap<TileKey, u32> = BTreeMap::new();
+    for (other, other_allocation) in world
+        .iter_entities()
+        .filter_map(|entity| Some((entity.id(), entity.get::<LaborAllocation>()?)))
+    {
+        if other == band {
+            continue;
+        }
+        for (tile, hands) in tile_hands_of(other_allocation, herds) {
+            *elsewhere.entry(tile).or_insert(NOBODY) += hands;
+        }
+    }
+    let no_discovery = crate::resources::DiscoveryProgressLedger::default();
+    let no_sites = crate::resources::FoodSiteRegistry::default();
+    let stores = &cohort.stores;
     Some(crate::take_claims::with_world_sources(
         world,
         faction,
         |sources| {
+            let tile_improvements = world
+                .get_resource::<crate::tile_improvement::TileImprovementRegistry>()
+                .unwrap_or(&no_improvements);
+            let roads = world
+                .get_resource::<crate::routes::RoadRegistry>()
+                .unwrap_or(&no_roads);
+            let grid = world
+                .get_resource::<crate::resources::TileRegistry>()
+                .map_or((0, 0), |tiles| (tiles.width, tiles.height));
+            let wrap_horizontal = world
+                .get_resource::<crate::resources::SimulationConfig>()
+                .is_some_and(|config| config.map_topology.wrap_horizontal);
+            let progress_context = crate::systems::BuildProgressContext {
+                sources,
+                roads,
+                tile_improvements,
+                band_id,
+                faction,
+                discovery: world
+                    .get_resource::<crate::resources::DiscoveryProgressLedger>()
+                    .unwrap_or(&no_discovery),
+                knowledge_threshold: sources.ladder.knowledge.completion_threshold,
+                food_sites: world
+                    .get_resource::<crate::resources::FoodSiteRegistry>()
+                    .unwrap_or(&no_sites),
+                grid,
+                wrap_horizontal,
+                stores,
+            };
+            let can_progress = |declaration: &crate::components::BuildDeclaration| {
+                crate::systems::declared_build_can_progress(
+                    &progress_context,
+                    &allocation,
+                    declaration,
+                )
+            };
             let staffing_world = StaffingWorld {
                 sources,
-                tile_improvements: world
-                    .get_resource::<crate::tile_improvement::TileImprovementRegistry>()
-                    .unwrap_or(&no_improvements),
-                roads: world
-                    .get_resource::<crate::routes::RoadRegistry>()
-                    .unwrap_or(&no_roads),
+                tile_improvements,
+                roads,
                 band: band_id,
                 camp,
+                tile_hands_elsewhere: &elsewhere,
+                build_can_progress: &can_progress,
             };
             body(&staffing_world, &allocation, &band_kit, pool, available)
         },
@@ -1176,7 +1543,8 @@ pub fn restaff_band(world: &mut bevy::prelude::World, band: bevy::prelude::Entit
         return;
     };
     if let Some(mut allocation) = world.get_mut::<LaborAllocation>(band) {
-        allocation.apply_staffing(staffed, NOBODY);
+        allocation.apply_staffing(staffed.rows, NOBODY);
+        allocation.apply_build_crews(staffed.builds);
     }
     refresh_band_work_kit_wants(world, band);
 }
@@ -1319,6 +1687,9 @@ mod tests {
             }),
             bare_can_work: bare_rate > 0.0,
             distance: 0,
+            is_build: false,
+            kitless: false,
+            tile: None,
         }
     }
 
@@ -1419,7 +1790,13 @@ mod tests {
         let rows = vec![row];
 
         let mut steady_shelf = shelf(UNLIMITED_SHELF_UNITS);
-        let steady = staff_passes(&rows, POOL, &mut steady_shelf, Passes::Steady);
+        let steady = staff_passes(
+            &rows,
+            POOL,
+            &mut steady_shelf,
+            Passes::Steady,
+            &BTreeMap::new(),
+        );
         assert_eq!(steady[0].kitted, REACH_CREW, "the reach crew is the want");
         assert_eq!(steady[0].bare, 0, "the steady passes seat no bare hand");
 
@@ -1474,6 +1851,111 @@ mod tests {
             out[0].bare, 2,
             "the High row's bare heads take what is left of the pool"
         );
+    }
+
+    /// A declared build as the staffing sees it: a bare hand always builds, the rung caps the
+    /// hands, and `tile` is shared with whatever else stands there.
+    fn a_build<'a>(
+        priority: SourcePriority,
+        rung_cap: u32,
+        tile: Option<UVec2>,
+    ) -> StaffRowInput<'a> {
+        StaffRowInput {
+            priority,
+            max: Some(rung_cap),
+            keepers: 0,
+            hold_take: 0.0,
+            useful_take: 0.0,
+            reach: ReachTarget::Nothing,
+            kit_items: Vec::new(),
+            hands: Box::new(|_, _| Some(0.0)),
+            bare_can_work: true,
+            distance: 0,
+            is_build: true,
+            kitless: true,
+            tile,
+        }
+    }
+
+    /// **EVERY BUILD GETS ITS ONE BUILDER BEFORE ANY BUILD GETS A SECOND**, whatever its priority:
+    /// the player started it, so the game tries to staff it.
+    #[test]
+    fn every_build_gets_one_builder_before_any_gets_a_second() {
+        const RUNG_CAP: u32 = 3;
+        let rows = vec![
+            a_build(SourcePriority::Low, RUNG_CAP, None),
+            a_build(SourcePriority::High, RUNG_CAP, None),
+        ];
+        // Two hands: one each, the High build gets no head start.
+        let out = staff_band(&rows, 2, &mut shelf(0));
+        assert_eq!((out[0].total(), out[1].total()), (1, 1));
+        // Four hands: the High build fills to its cap first.
+        let out = staff_band(&rows, 4, &mut shelf(0));
+        assert_eq!(
+            out[1].total(),
+            RUNG_CAP,
+            "the High build reaches its cap first"
+        );
+        assert_eq!(out[0].total(), 1);
+    }
+
+    /// **A RUNG CAPS ITS BUILDERS** however many hands the band has idle.
+    #[test]
+    fn a_rung_never_takes_more_builders_than_its_cap() {
+        const RUNG_CAP: u32 = 2;
+        let rows = vec![a_build(SourcePriority::Normal, RUNG_CAP, None)];
+        let out = staff_band(&rows, 20, &mut shelf(0));
+        assert_eq!(out[0].total(), RUNG_CAP);
+    }
+
+    /// **A BUILD THAT CANNOT PROGRESS TAKES NOBODY** (its cap is stated as zero).
+    #[test]
+    fn a_build_that_cannot_progress_takes_nobody() {
+        let rows = vec![
+            a_build(SourcePriority::High, 0, None),
+            a_build(SourcePriority::Low, 2, None),
+        ];
+        let out = staff_band(&rows, 10, &mut shelf(0));
+        assert_eq!((out[0].total(), out[1].total()), (0, 2));
+    }
+
+    /// **A TILE CAPS EVERYONE ON IT**: two builds on one tile share its room.
+    #[test]
+    fn two_builds_on_one_tile_share_its_room() {
+        const TILE_ROOM: u32 = 3;
+        let site = UVec2::new(4, 7);
+        let rows = vec![
+            a_build(SourcePriority::Normal, 4, Some(site)),
+            a_build(SourcePriority::Normal, 4, Some(site)),
+        ];
+        let room = BTreeMap::from([(tile_key(site), TILE_ROOM)]);
+        let out = staff_passes(&rows, 20, &mut shelf(0), Passes::All, &room);
+        assert_eq!(out[0].total() + out[1].total(), TILE_ROOM);
+        assert!(
+            out[0].total() >= 1 && out[1].total() >= 1,
+            "each still gets its one"
+        );
+    }
+
+    /// **WITHIN A PRIORITY GROUP A BUILD IS DEALT BEFORE A SOURCE REACHES TOWARD ITS FLOOR.**
+    #[test]
+    fn a_build_is_dealt_before_a_sources_reach_in_its_group() {
+        const RUNG_CAP: u32 = 3;
+        let mut source = linear_row(
+            SourcePriority::Normal,
+            None,
+            0,
+            0.0,
+            40.0,
+            4.0,
+            1.0,
+            Vec::new(),
+        );
+        source.useful_take = 40.0;
+        let rows = vec![source, a_build(SourcePriority::Normal, RUNG_CAP, None)];
+        let out = staff_band(&rows, 4, &mut shelf(0));
+        assert_eq!(out[1].total(), RUNG_CAP, "the build fills to its cap first");
+        assert_eq!(out[0].total(), 1, "the source takes what the build left");
     }
 
     #[test]

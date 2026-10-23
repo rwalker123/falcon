@@ -510,7 +510,6 @@ func _envoy_row_states(panel: BandCityPanel) -> void:
 	await h._settle()
 
 
-# ---- (f) THE COMMAND BUILDERS' REFUSALS --------------------------------------------------------------
 
 func _command_states() -> void:
 	var terms := {"road_rights": true, "open_borders": false, "bundles": []}

@@ -19,13 +19,13 @@ here are its traps, arriving one layer out.
 
 | Script | Purpose |
 |--------|---------|
-| `ui/hud/hud_route_vocab.gd` (`HudRouteVocab`) | The road VOCABULARY leaf — the four rung keys + their labels + `RUNG_ORDER`, the tile card's **four** row keys and their formats, one reader per wire field — **`build_turns_remaining_of` among them, the sim's own chained countdown for a queued road, defaulting to the `-1` sentinel and never `0`; and the standing-material trio `upkeep_material_demand_of` / `_supplied_of` / `_shortfall_of`** — the three-way keeping verdict (`is_short` the KEEPERS arm, `is_material_upkeep_short` the STONE arm, `is_keeping_short` their `or` and **never** their sum), and one composer per row (`road_row_value` and its `progress_clause` / `bonus_value` / **`upkeep_value`** / `reverting_value`, joined by `road_lines`, with `upkeep_tooltip` for the figures that left the row). It also owns the four `*_value_hex` forks `DetailFormat._value_hex` dispatches to, so a road's ink is decided beside the words it tints. A vocab module with static funcs, the `hud_work_vocab.gd` shape; it reads `SourceForecast` / `DetailFormat` / `HudSelectionVocab` / `HudConst` / `HudStyle` inside functions only, never in a `const`, so it adds no load cycle — **and that contract is what lets `SourceForecast` alias its four `RUNG_KEY_*` at `const` level** rather than spelling the wire's route rungs twice |
+| `ui/hud/hud_route_vocab.gd` (`HudRouteVocab`) | The road VOCABULARY leaf — the four rung keys + their labels + `RUNG_ORDER`, the tile card's **four** row keys and their formats, one reader per wire field — **`build_turns_remaining_of` among them, the sim's own chained countdown for a declared road, defaulting to the `-1` sentinel and never `0`; and the standing-material trio `upkeep_material_demand_of` / `_supplied_of` / `_shortfall_of`** — the three-way keeping verdict (`is_short` the KEEPERS arm, `is_material_upkeep_short` the STONE arm, `is_keeping_short` their `or` and **never** their sum), and one composer per row (`road_row_value` and its `progress_clause` / `bonus_value` / **`upkeep_value`** / `reverting_value`, joined by `road_lines`, with `upkeep_tooltip` for the figures that left the row). It also owns the four `*_value_hex` forks `DetailFormat._value_hex` dispatches to, so a road's ink is decided beside the words it tints. A vocab module with static funcs, the `hud_work_vocab.gd` shape; it reads `SourceForecast` / `DetailFormat` / `HudSelectionVocab` / `HudConst` / `HudStyle` inside functions only, never in a `const`, so it adds no load cycle — **and that contract is what lets `SourceForecast` alias its four `RUNG_KEY_*` at `const` level** rather than spelling the wire's route rungs twice |
 | `assets/terrain/terrain_blend.gdshader` → the **road pass** | Where a road is actually drawn. Modelled on the NAVIGABLE-TRUNK arm (own centre → shared edge midpoint, projection clamped to the segment), **not** on the Minor/Major edge pass, which draws along a hex SIDE — a road runs through hex CENTRES. Every arm plus an always-on CENTRE DISC are unioned by the river's max-coverage (== min-distance) pick, so bends round, junction hubs fill and dead-ends cap with no join geometry at all. Composited after the navigable-river pass, **over** the canopy and under peaks/FoW. `road_ladder_scalar` / `road_ladder_mix` are its two helpers; `best_tangent` is tracked and unused, and is where #603's rail rung plugs its sleeper UV in |
 | `ui/TerrainRenderer.gd` → the `ROAD_*` family + `_pack_road_texel` | Builds the per-hex **`road_map`** splatmap (RGBA8: R connection mask / G rung index / B build fraction / A flags) inside `rebuild_shader_maps`, derived client-side from `MapView.road_tile_lookup` — there is no road mask on the wire and none is wanted, a road row being per-TILE with computable neighbours. Also binds the `road_tex` array and pushes the `roads` config block's uniforms, including `road_at_risk_color` read LIVE off `HudStyle.DANGER` so a theme swap is picked up. `_road_tile_known` is the fog gate, reproducing the retired `AnnotationRenderer._road_tile_known` exactly |
-| `ui/hud/RungLadder.gd` → `route_track` / `build_track`'s `title` (a locked row is a disabled button reading `🔒 Roadbuilding`: `labor-ui.md` → "EVERY LADDER CARD'S RUNGS ARE BUTTONS") | **THE ROUTE BRANCH'S ROW PRODUCER, a SIBLING of `track` and never a widening of it** — `track` takes a labor `kind` and a wire source dict, and a road has neither. It emits `track`'s own `ROW_*` shape so the RENDERER is shared (`build_track` gained one optional heading argument and nothing else), walks `HudRouteVocab.route_ladder`'s ordered catalog, and owns the branch's seventh state, `STATE_UNORDERED` — the rung nobody declares. Its private leaves are `_route_meter_clause` (the meter, on the row DIRECTLY above the standing rung and no other), `_route_pile` / `_route_stall_clause` (the pile and its shortfall, through the SHARED `_build_price_asides`) and `_route_queue_aside` (where the press lands). ⛔ **The STANDING bill is on the row's HOVER (`_route_tooltip`), not on a `hold_asides` leaf** — `route_track` leaves `ROW_HOLD_ASIDES_KEY` empty on every row, deliberately: the plant and animal branches' `_hold_price_asides` reads a prefixed forecast SOURCE dict, and a road is not one |
+| `ui/hud/RungLadder.gd` → `route_track` / `build_track`'s `title` (a locked row is a disabled button reading `🔒 Roadbuilding`: `labor-ui.md` → "EVERY LADDER CARD'S RUNGS ARE BUTTONS") | **THE ROUTE BRANCH'S ROW PRODUCER, a SIBLING of `track` and never a widening of it** — `track` takes a labor `kind` and a wire source dict, and a road has neither. It emits `track`'s own `ROW_*` shape so the RENDERER is shared (`build_track` gained one optional heading argument and nothing else), walks `HudRouteVocab.route_ladder`'s ordered catalog, and owns the branch's seventh state, `STATE_UNORDERED` — the rung nobody declares. Its private leaves are `_route_meter_clause` (the meter, on the row DIRECTLY above the standing rung and no other), `_route_pile` / `_route_stall_clause` (the pile and its shortfall, through the SHARED `_build_price_asides`). ⛔ **The STANDING bill is on the row's HOVER (`_route_tooltip`), not on a `hold_asides` leaf** — `route_track` leaves `ROW_HOLD_ASIDES_KEY` empty on every row, deliberately: the plant and animal branches' `_hold_price_asides` reads a prefixed forecast SOURCE dict, and a road is not one |
 | `ui/hud/RungGates.gd` → `route_gates` / `route_knowledge_reason` | **THE ROUTE ARM of the shared gate layer**, keyed **RUNG KEY** rather than verb (two route rungs declare none, so a verb-keyed table cannot tell `path` from `trail`). Four gates in reading order — the ground, the un-orderable rung, the craft, the keeper — each carrying its own remedy. The craft's NAME is threaded in as a `{knowledge_id: display_name}` parameter off the ladder's knowledge roster, never a table here; its REMEDY is the rung whose `earns_knowledge` names that craft, **looked up through `HudRouteVocab.ladder_rung_teaching` and never inferred from `requires_rung`** |
 | `ui/hud/DrawerComposeController.gd` → the `build_road_drawer_actions` family | The tile card's `Road ▸` action and the `PopupPanel` it opens (`_open_road_ladder` / `_emit_road_improvement` / `_ensure_road_ladder` / `_road_ladder_anchor_rect` / `_dismiss_road_ladder`), filling `%RoadLadderControls` — its own container at the BOTTOM of the card, since `%ForageAssignControls` is gated on a gathering site with a band in hand. It emits `road_improvement_requested`, which `HudLayer` relays straight onto `improvement_requested`, and `road_abandon_requested`, which it relays onto `abandon_requested` — both with **no** optimistic overlay write. `_fill_road_ladder` is the card's re-render seam (the band picker calls it) and `_default_road_band` decides which band it opens on |
-| `ui/hud/BandPanelController.gd` → the `_roadwork_roster_*` family | **THE ROADWORK ROSTER** — `_roadwork_roster_models` (the `has_keeper`-before-`keeper_band_id` filter, the distance/bearing locator, the stable nearest-first sort), `_roadwork_roster_unseen` (case 2, off the cohort's published `roadwork_demand` and never a sum of the fog-filtered rows), `_build_roadwork_roster_block` / `_row` / `_abandon_button`. It emits its OWN `road_abandon_requested`, relayed by `HudLayer` onto `abandon_requested` — the same path the drawer's button takes, never a second builder. Its reserved height is resolved once in `_fill_work_zone_column` and spent in BOTH `build_queue_rows_max` and `_work_board_capacity` |
+| `ui/hud/BandPanelController.gd` → the `_roadwork_roster_*` family | **THE ROADWORK ROSTER** — `_roadwork_roster_models` (the `has_keeper`-before-`keeper_band_id` filter, the distance/bearing locator, the stable nearest-first sort), `_roadwork_roster_unseen` (case 2, off the cohort's published `roadwork_demand` and never a sum of the fog-filtered rows), `_build_roadwork_roster_block` / `_row` / `_abandon_button`. It emits its OWN `road_abandon_requested`, relayed by `HudLayer` onto `abandon_requested` — the same path the drawer's button takes, never a second builder. Its reserved height is resolved once in `_fill_work_zone_column` and spent in `_work_board_capacity` |
 | `ui/hud/hud_work_vocab.gd` → the `ROADWORK_ROSTER_*` family | The roster's words, metas and its `roadwork_roster_height` — the one expression the block reserves AND draws at, `pools_block_height`'s rule one block down. It lives here rather than in `HudRouteVocab` because the geometry of the Work zone belongs beside the two blocks it shares that zone with |
 | `ui/hud/SourceForecast.gd` → `compass_bearing` + `COMPASS_*` | The roster's 8-point bearing, beside `hex_distance_wrapped` and using the same private wrap-aware column delta. **Taken in DRAWN space** (`sqrt(3)` across a column, `1.5` down a row) — an angle off raw offset coordinates skews every diagonal by up to a whole sector |
 | `native/src/dict/routes.rs` | `routes_to_array` — **one dict per road TILE**, the `connections.rs` shape. The row's identity is `tile_x` / `tile_y`, which replaced the retired `RouteId`; beside them ride `has_keeper` / `keeper_band_id` (read the bool first — `0` is a real `BandId`) and `keeper_remoteness`, the multiple distance put on that road's price, and `build_turns_remaining`, the sim's chained countdown for a QUEUED road (the same five sentinels a patch publishes; `-1`, never `0`, for a rung nobody has ordered), and the **standing** `upkeep_material_demand` / `upkeep_material_supplied` pair — what HOLDING the rung swallows per turn and what the store paid of it, which is not the `build_material_*` pair beside it. There is **no path on the row** — a link knows its two endpoints, so the tiles between them are computable. **`ladder_rungs_to_array` is the file's second producer and answers a different question** — one row per RUNG of the branch, published once per world beside `ladderKnowledge`, carrying no faction and no tile. One field on it is not the rung's: `build_work_per_worker_turn` is the SIM's bare worker output, the same on every row, riding the catalog because the catalog is the set of numbers identical for every road in the world |
@@ -374,147 +374,50 @@ sentence naming one cause is false of the others. The row's absence states the
 same fact — both of the floor's terms are at their own neutral — and cannot state a false one beside
 it.
 
-## ⛔ A QUEUED ROAD WAS INVISIBLE ON EVERY SURFACE, WHICH READS AS A FAILED COMMAND
+## A DECLARED ROAD IS READ OFF ITS ROUTE ROW, AND THE ROAD CREW ROW CARRIES ITS BUILD CREW
 
-Reported from play at turn 122. Ray graded a tile and **nothing anywhere showed it had worked**.
-Three things were true at once and only the third was wrong:
+A road is the one build source with no take crew and no labor row, so the Work tab draws it from the
+routes table (`HudBandLaborState.roads()`), and its build crew chip is the one on the road crew row
+(`band-city-panel.md` → "THE BUILD CREW CHIP").
 
-1. **The `grade` landed** — the keeper was set (which is why `Stop keeping this road` was offered)
-   and the entry was on the wire.
-2. **It was banking zero, correctly.** A `Tame` sat at the head of that band's queue, and the road
-   build arm runs for the **head entry only**, so every builder was on the aurochs.
-3. ⛔ **The entry drew nothing.** `BandPanelController._work_source_models` walks the band's LABOR
-   ROWS and admits `forage` / `hunt` alone — and **a road is the one build source with no labor row
-   at all**, deliberately, since a road is not worked like a patch or a herd and has no take crew to
-   staff. So `_build_queue_models`' `not by_key.has(key): continue` dropped it silently.
-
-**A system obeying every rule while the UI shows nothing is indistinguishable from a command that
-failed.** Ray went looking for the warning in the `Roadwork` pool — which is the KEEPING pool, where
-a build draws `builders`, and the road was on the free floor owing nothing. Both of those readings
-were correct; neither was in scope.
-
-### The queue block draws the road, and the ROW IS NOT A SPECIAL CASE OF THE SKIP
-
-⛔ **`_build_queue_models`' rule is unchanged and stays right**: *an entry that does not draw still
-spends its rank*, which is what keeps `build_order` indexing the WIRE's list. What was wrong is that
-a road **has** a resolvable source; it is simply not a labor row. So the block consults a second map:
-
-- `_road_queue_models(band)` → `{pending_key: model}` over `HudBandLaborState.roads()`, joined on the
-  entry's `target_x` / `target_y`, which is the road row's own identity. A road tile the snapshot does
-  not carry is still skipped — that is the genuinely-unresolvable case arriving honestly.
-- **Every word comes from `HudRouteVocab`**, so the queue row and the tile card cannot say different
-  things about one road. The destination is `next_rung_key`'s derivation (the rung above the held one)
-  and never a rung read off the entry, **whose `kind` is `roadwork` and names no rung**.
+- **`roadwork` NAMES TWO THINGS ON THE WIRE, AND THE TILE IS WHAT TELLS THEM APART.** It is a
+  band-wide standing ROLE (`assign_labor <faction> <band> roadwork <n>`, one slot per band) and the
+  kind of a declared ROAD build, one per TILE. Both reach `HudBandLaborState.pending_key`, so its road
+  arm is gated on a real tile: a build keys `roadwork:64,17` and the role — asked at `-1, -1` like
+  every band-wide role — keeps the bare kind. Without the tile two declared roads share one key.
+- **Every word comes from `HudRouteVocab`**, so the Work tab and the tile card cannot say different
+  things about one road. The destination is `next_rung_key`'s derivation (the rung above the held one),
+  never a rung read off the build, whose `kind` is `roadwork` and names no rung.
 - **The face is the rung and the tile** (`Dirt Road (64, 17)`), from the CATALOG's `display_name` and
-  never `RUNG_LABELS`. `Grade (64, 17)` would name one STEP of the branch, and a tile can carry a road
-  AND a patch at once — the coordinates alone would draw two rows a player cannot tell apart.
-- ⛔ **THE REORDER IS THE FIX.** Ray's road was behind a Tame with no way to say *put the road first*.
-  A row that drew and could not be promoted would leave him exactly where he started, so the `▲`
-  being ENABLED on a rank-1 road is its own assertion.
-- **The model carries ONE LEG, and the leg is not decoration.** `_queue_settings_content` decides
-  whether a row is expandable and the `✕` lives in that expansion, so a road with no legs, no crop
-  and no kit would draw a row nobody could take back. A road's climb genuinely IS one leg.
-  `SourceForecast.BUILD_LEG_NAME_KEY` is why it renders: the food webs derive a leg's word from its
-  improvement VERB, and `rung_badge_word` is a hard-coded four that answers `""` for `grade`/`pave`.
-- ⛔ **THE `✕` IS `unqueue`, NOT `abandon`.** Withdrawing a declaration and putting a road down are
+  never `RUNG_LABELS`: a tile can carry a road AND a patch at once, and the coordinates tell the two
+  rows apart.
+- **STOPPING IS `unqueue`, NOT `abandon`.** Withdrawing a declaration and putting a road down are
   different verbs with different consequences — the meter and the keeper survive the first and not the
-  second — and the ladder's `Stop keeping this road` already owns the second. `format_unqueue` takes
-  the tile form and needed no change.
+  second — and the ladder's `Stop keeping this road` owns the second. `format_unqueue` takes the tile
+  form.
+- **THE DATE IS THE SIM'S OWN COUNTDOWN.** `RouteState.buildTurnsRemaining` carries the chained
+  countdown for a road through the same `published_build_countdown` seam the two food webs use, with
+  the identical five sentinels (`-1` no estimate, `-2` holds, `-3` rots, `-4` blocked, `-5` not yet
+  estimated), so `DetailFormat.build_sentinel_value` renders a road through the identical fork with no
+  route branch. `HudRouteVocab.build_turns_remaining_of` is the reader. The client never hardcodes
+  `-5` on a road: it means *the sim has not looked at this build yet*, true only on the turn the grade
+  is ordered.
+- **`RungLadder._route_turns` stays separate.** It prices an UNORDERED rung against a hypothetical
+  crew for the ladder card, and the wire field is `-1` for a road nobody has declared. Unordered rung →
+  the client estimates; declared build → the sim's number.
+- **`keeping_role_name` has a ROUTE arm**, because `source_kind_for_labor` is a two-way alias over the
+  two FOOD WEBS whose `else` is `SOURCE_KIND_HERD`: a road handed to it came back an animal.
 
-> #### ⛔ `roadwork` NAMES TWO THINGS ON THE WIRE, AND THE TILE IS WHAT TELLS THEM APART
->
-> It is a band-wide standing ROLE (`assign_labor <faction> <band> roadwork <n>`, one slot per band)
-> **and** it is the `BuildSource::kind()` of a queued ROAD, one per TILE. Both reach
-> `HudBandLaborState.pending_key`, so its road arm is gated on a real tile: an entry keys
-> `roadwork:64,17` and the role — asked at `-1, -1` like every band-wide role — keeps the bare kind it
-> has always had. **Without the tile two queued roads share one key**, and the block would join both
-> entries to whichever road it found first, draw one row for two jobs, and send that row's rank for
-> both.
+### The ladder's row being built carries no placement line
 
-> #### ⛔ THE DATE COLUMN IS THE SIM'S OWN COUNTDOWN, AND `Queued` IS ONE OF ITS FIVE SENTINELS
->
-> `RouteState.buildTurnsRemaining` carries the CHAINED countdown for a road — the same quantity
-> through the same `published_build_countdown` seam the two food webs use, with the identical five
-> sentinels (`-1` no estimate, `-2` holds, `-3` rots, `-4` blocked, `-5` not yet estimated) — so
-> `DetailFormat.build_sentinel_value` renders a road through the identical fork with **no route
-> branch at all**. `HudRouteVocab.build_turns_remaining_of` is the reader and
-> `BandPanelController._road_queue_model` fills `build_turns` from it.
->
-> **`BUILD_TURNS_NOT_YET_ESTIMATED` is still the right reading of a road ordered THIS TURN**, and it
-> is still not `-1`: on a ranked entry `-1` reads **`⚠ Stalled 0%`**, a claim that something is wrong,
-> and nothing is — the road is behind a head that takes every builder, exactly as designed. `-5` is
-> that state's own reading (**`Queued 0%`**, no hazard mark) and its note says why in the same words:
-> *"a build one command old with a staffed pool on it is not a stall"*. What changed is WHO decides
-> which sentinel it is: the sim publishes it, where the client used to choose.
->
-> ⛔ **THE CLIENT HARDCODED `-5` ON EVERY ROAD, AND IT READ `Queued 97%` FOR 147 TURNS.** Reported
-> from play. `-5` means *the sim has not looked at this entry yet*, which is true on the turn the
-> grade is ordered and false ever after, so a road under way and a road ordered this turn were
-> indistinguishable. The justification written beside the hardcode — *"a road publishes no chained
-> `buildTurnsRemaining`; it has no source row for the sim to stamp one on"* — **was never true of the
-> routes table, which is keyed by tile exactly as a patch row is.**
->
-> **A ROAD UNDER WAY READS `Grading 97% · turn 155`** — the plant and animal rows' own composition,
-> and not a fourth dialect. `_road_queue_model` puts the CATALOG's verb in `building_policy`, the slot
-> a patch's and a herd's models put their leg in, and `HudComposeVocab.improvement_running_label`
-> gerunds it; a road's climb is one leg, so its leg IS its destination. The DATE is a completion turn
-> rather than a countdown for the reason every other queue row's is — the counts are chained, so three
-> `≈N turns` read as independent spans when they are cumulative — and the hover adds the span.
->
-> ⛔ **`RungLadder._route_turns` DID NOT COLLAPSE INTO THIS, and must not.** It prices an **unordered**
-> rung against a hypothetical crew for the ladder card, and the wire field is `-1` for a road nobody
-> has queued. Unordered rung → the client estimates; queued entry → the sim's number.
->
-> **`keeping_role_name` gained a ROUTE arm for the same class of reason.** The queue row's price
-> clause names the pool that pays the standing bill, and `source_kind_for_labor` is a two-way alias
-> over the two FOOD WEBS whose `else` is `SOURCE_KIND_HERD` — so a road handed to it came back an
-> animal and the clause said `Husbandry`, a card that cannot move a road's bill.
-
-### The ladder says where the press lands, and what the estimate is measured from
-
-Ray: *"it isn't obvious that the road will show up in the build queue, so we need something to
-indicate that when the job is selected."* The buildable rung's `ROW_BUILD_ASIDES_KEY` states it:
-
-- **empty queue** — `joins this band's build queue, and starts now`;
-- **anything ahead** — `joins this band's build queue behind <head> and N more`.
-
-⛔ **AND IT RIDES A ROW MERELY OFFERED — THE ROW BEING BUILT CARRIES NO PLACEMENT LINE AT ALL.**
-
-The card used to state the placement a second way once the road was already on the list —
-`waiting behind (4, 33) — the estimate runs from when it starts` — and reported from play it was
-garbage two ways at once. **It explained a number the player was already looking at**: the row one
-line up states the progress AND the turns, so a note saying what that estimate runs from qualified a
-figure nobody had to hunt for. And on the reported screenshot **the head of the band's queue WAS the
-road the card was open on**, so the sentence named the road as the thing it was waiting behind.
-
-The surviving form answers what the row genuinely cannot — *what would this press do* — which is why
-it stays while the other went: the deleted one restated the row. `ROAD_LADDER_QUEUE_WAITING_FORMAT`
-and `ROAD_LADDER_QUEUE_ESTIMATE_NOTE` are retired, and `ROAD_LADDER_QUEUE_BEHIND_FORMAT` with them —
-it shared their `— %s` tail and there was nothing left to fill it. `_route_queue_aside`'s
-`with_estimate_note` parameter went too: with one live value it read as a fork somebody still had to
-think about, so the ONE caller gates on `is_building` instead. **The `builders <= BUILD_CREW_NONE`
-warn aside is untouched and still rides the row being built.**
-
-- ⛔ **THE HEAD IS NAMED BECAUSE IT IS THE WHOLE QUESTION.** The head takes every builder, so it alone
-  decides when this road starts; the rest are a count, which is what a reorder is measured against.
-  The subject comes from `HudWorkVocab.build_queue_subject` — the queue block's own vocabulary, so the
-  two surfaces cannot name one entry two ways — and it is the SUBJECT rather than the row's face,
-  `Tame Wild Aurochs` reading mid-sentence as another panel quoted rather than as English.
-- ⛔ **THE TURNS ESTIMATE IS KEPT.** `300 work · ≈105 turns` silently assumed the builders were free,
-  and **deleting the figure would throw away the one thing the row can say about the price of the
-  job** — it is exact once the builders reach the entry. The aside named what it was measured FROM
-  for a slice; that clause is retired above, the row being built now stating the progress and the
-  turns together where a qualifier only restated them.
-- **It re-renders with the `Band:` picker**, a different band being a different line to stand in.
-- **An UNKNOWN queue draws no line at all**, never the empty-queue sentence: those are different
-  facts and only one of them is reassuring.
+The row being built states the progress AND the turns; a second note saying what the estimate runs
+from would qualify a figure nobody had to hunt for. The `ROAD_LADDER_NO_BUILDERS_ASIDE` warn aside
+("No spare hands this turn") rides the row being built.
 
 ### …and the `Road` row stops reading as un-declared
 
-`progress_clause` appended nothing at a zero meter, so a road that was queued but had banked nothing
-read as a bare `Trail` — identical to ground nobody has touched. Ray: *"when it is in the queue, it
-should show a % complete in the road panel instead of continuing to make it look like it isn't
-queued."*
+`progress_clause` appended nothing at a zero meter, so a road that was declared but had banked nothing
+read as a bare `Trail` — identical to ground nobody has touched.
 
 | road | `Road:` row |
 |---|---|
@@ -535,20 +438,20 @@ queued."*
 
 > #### ⛔ A FULL METER ON A QUEUED ROAD MEANS **NOTHING HAS STARTED** — `queued_progress` is the reader
 >
-> Reported from play: a freshly-graded dirt road drew `Queued 100%` in the build queue while the tile
-> card's own climb clause fell silent. Neither surface was lying about the number it was handed.
+> Reported from play: a freshly-graded dirt road drew `100%` on its Work row while the tile card's own
+> climb clause fell silent. Neither surface was lying about the number it was handed.
 >
 > **`buildFraction` ANSWERS FOR THE RUNG AT RISK, WHICH ON A FRESH DECLARATION IS THE RUNG HELD.**
 > `routes::road_build_fraction` measures against `road_at_risk_rung`, which returns `standing.raising`
 > only where something is banked in it and otherwise falls back to `standing.held` — so a road at
 > trail-top with nothing yet banked into `dirt_road` is measured against the TRAIL, which is complete,
-> and the wire honestly publishes `METER_FULL`. The queue row read that raw as *100% of the dirt
+> and the wire honestly publishes `METER_FULL`. The Work row read that raw as *100% of the dirt
 > road*; the tile card, which suppresses its clause at a full meter, read it as *nothing is rising*
 > and said nothing at all.
 >
 > **`HudRouteVocab.queued_progress(road)` is the one reader ALL THREE HUD surfaces go through**: a
-> meter at or above `ROAD_METER_COMPLETE` on a road whose entry is queued reads
-> `ROAD_METER_UNSTARTED`, so the queue row draws `Queued 0%`, the card draws `Trail · 0% to dirt road`
+> meter at or above `ROAD_METER_COMPLETE` on a road with a declared build reads
+> `ROAD_METER_UNSTARTED`, so the Work row draws `0%`, the card draws `Trail · 0% to dirt road`
 > and the rung ladder's BUILDING row draws `0% · ≈150 turns`. A road with work banked is untouched,
 > which is what keeps the readings one sentence rather than a fork.
 >
@@ -603,7 +506,7 @@ queued."*
 > assertion on them passed. They state `METER_FULL` now, and `band_panel_preview`'s
 > `ROAD_QUEUE_METER` / `ROAD_QUEUE_ZERO_PERCENT` pair is the claim: **the two differing IS the
 > assertion**, so a reader that passed the wire's meter through fails naming the played
-> `Queued 100%`. Sabotage-verified — exactly one claim fails, and it is that one.
+> `100%`. Sabotage-verified — exactly one claim fails, and it is that one.
 >
 > **The general rule this file has now paid for twice**: a fixture staging a value the sim cannot
 > produce makes its own frame assert nothing, and it does it silently.
@@ -611,7 +514,7 @@ queued."*
 > #### ⛔ ONE PREDICATE, TWO SURFACES, AND THE JOIN STAYS AT THE CALL SITE
 >
 > `HudRouteVocab.is_queued(road, queued_tiles)` is the only test, so the tile card cannot say a road
-> is un-queued while the queue block is drawing a row for it. The SET is derived by
+> is un-queued while the Work tab is drawing a row for it. The SET is derived by
 > `HudBandLaborState.road_queue_tiles()` — over **every** player band, because *has anybody of mine
 > ordered this* is a faction question and a road queued by Band 2 reading un-queued under Band 1 is
 > the same invisibility one band over — and threaded into `road_lines` exactly as `keeper_label` and
@@ -623,24 +526,23 @@ queued."*
 `docs/plan_site_crews.md` §2.4. Roadwork is the one keeping pool left — a road has no crew of its own
 to put on it — so it keeps a band-wide stepper. The Work tab's ROADWORK section draws, top down: the
 head (`ROADWORK`, carrying the roster's `+N more` door), the pool's own row (`Road crew`,
-drawn as a site row — `band-city-panel.md` → "THE WORK TAB IS FIVE SECTIONS" — with the one-slot `⚠` /
+drawn as a site row — `band-city-panel.md` → "THE WORK TAB IS FOUR SECTIONS" — with the one-slot `⚠` /
 `ⓘ` mark, the coverage, tool and idle sentences on its hover, and the stepper), the Even/Best first
 pick wherever the road bill is live (`_build_upkeep_mode_row`, which
-reads the road bill alone), the unseen line, and the roads it keeps. A road row carries a `Build`
-pill only while a road build is queued on it (`build_priority … road <x> <y>`) and never a `Priority`
-pill — a road has no crew. Its `✕` sends `abandon <f> road <x> <y>`, the bare tile being the patch.
-The section draws only where the band has a road to keep, a road build queued, or a road crew still
+reads the road bill alone), the unseen line, and the roads it keeps. A road row carries a build crew
+chip only while a road build is declared on it, and never a `Priority` pill — a road has no take
+crew. Its `✕` sends `abandon <f> road <x> <y>`, the bare tile being the patch.
+The section draws only where the band has a road to keep, a road build declared, or a road crew still
 staffed (`_roadwork_section_shows`).
 
-The POOLS block, its row of four cards and their shared metrics are retired, so the card-width
-measurements in the next two sections are the record of a layout that no longer draws. The roster
-rows, their locator and their `✕` are unchanged.
+The card-width measurements in the next two sections are the record of the pool card's metrics when
+it was one of a row of four; the roster rows, their locator and their `✕` are as described.
 
-## The `roadwork` pool, and what a fourth card cost
+## The `roadwork` pool
 
 `roadwork` is an ordinary band-wide standing role in exactly the grammar `scout` and `warrior`
 use — `assign_labor <faction> <band> roadwork <n>`, one more arm on
-`Main.format_assign_labor`'s shared role branch, one more card in the Work tab's POOLS block.
+`Main.format_assign_labor`'s shared role branch, drawn as the `Road crew` row of the ROADWORK section.
 
 ⛔ **ITS HINT NAMES THE ROADS THE BAND BUILT, NOT THE GROUND IT IS STANDING ON.** The catchment is the
 KEEPER: a band keeps the tiles it graded or paved, wherever it has since walked, and what distance
@@ -654,18 +556,18 @@ escape a bill that follows them regardless.
 > The route coverage sentence (`UPKEEP_POOL_COVERAGE_ROUTE_FORMAT`) once said *"the roads this band
 > stands on"* after the hint above it had been corrected — one model, two strings, one of them wrong.
 > Every pool now shares ONE coverage format, `UPKEEP_POOL_COVERAGE_FORMAT` (`Supplies %s of %s work a
-> turn.`), which names no holdings and no queue, so `ROADWORK_ROLE_HINT` (`The road crew maintains the
-> roads this band built.`) is the only place the catchment is worded. The figure still carries no queued term:
+> turn.`), which names no holdings, so `ROADWORK_ROLE_HINT` (`The road crew maintains the
+> roads this band built.`) is the only place the catchment is worded. The figure carries no declared-build term:
 > the road pool's `asked` is the cohort's published `roadwork_demand` verbatim, not summed from the
 > fog-filtered road rows.
 
-> ### ⛔ AND `roadwork` COULD NOT BE STAFFED AT ALL, WHICH IS `builders`' DEFECT ONE ROLE LATER
+> ### ⛔ AND `roadwork` COULD NOT BE STAFFED AT ALL FOR A SLICE
 >
 > A role passes TWO gates: `sim_runtime::command_text`'s grammar and the server's own
 > `handle_assign_labor`. `roadwork` was in the server's list and **not in the grammar** — and the
 > client's native bridge parses a line there BEFORE it sends, so every `assign_labor … roadwork n`
-> was refused inside the client with nothing failing anywhere. It is the identical hole `builders`
-> fell through, and `command_guard`'s role sweep is what found it both times.
+> was refused inside the client with nothing failing anywhere. `command_guard`'s role sweep is what
+> found it.
 
 ### ⛔ THE BILL IS A COHORT FIELD. DO NOT SUM THE ROAD ROWS.
 
@@ -686,35 +588,15 @@ The road bill also counts toward the fund-mode row's *"is there anything to fund
 keeping runs through the same `distribute_upkeep_pool` under the band's own `upkeep_fund_mode`, so a
 band whose only standing cost is a road it KEEPS must still be offered the split.
 
-### The row of four does not fit at the shared metrics, and the zone had no row to give
-
-Measured, not assumed. A pool card's floor is its STEPPER, and at `WORKER_STEPPER_*` that is ~112px:
-four of them wanted **466px** of a WORK zone box that is **382** on the bottom dock and **356** on the
-left, and `band_panel_preview`'s overflow probe named every control that ran off the right edge. Both
-ways to buy that width cost a ROW, and the zone has none — split 3 + 1 the block wanted **420px of a
-358px box**, which is the build queue drawing nothing.
-
-**So the width came out of the CONTROL.** `HudWorkVocab.POOL_STEPPER_*` and
-`POOL_CARD_NAME_FONT_SIZE` are the pools block's own metrics and nobody else's: the WORKFORCE zone's
-Scout and Warrior cards sit two to a row and have width to spare, so narrowing their steppers would
-shrink a control for no reason. The horizontal trim (`POOL_STEPPER_PADDING_H`, through
-`HudWidgets.compact`'s opt-in `padding_h`) is the load-bearing half — `HudStyle` pads a button 11px
-each side, which alone floors it near 30px whatever `custom_minimum_size` says.
-
-⛔ **THE STEPPER MUST STAY THE CARD'S FLOOR**, and `band_panel_preview._assert_pool_cards_are_level`
-is where that fails. Four cards fit a 356px strip only while each is ~83px, and each is ~83px only
-while a fixed METRIC is the floor rather than a role NAME, which is content: the moment a name
-becomes the floor, one longer role name silently pushes the row past the zone's edge.
-
 ## THE ROADWORK ROSTER — the pool says how many, the roster says WHICH
 
-The pool card above says `Roadwork 2` and, for a slice, **nothing anywhere in the client said which
+The `Road crew` row above says `Roadwork 2` and, for a slice, **nothing anywhere in the client said which
 two roads those were.** Reported from play at turn 122. That is not untidiness: `abandon` is *"pay
 for this road and not that one"*, so the pool is the one place the per-road choice is exercised, and
 a player cannot choose among things they cannot see. The only way to find a road you were paying for
 was to remember where you put it.
 
-The roster is a **block inside the existing Work zone, directly under the POOLS block that raises the
+The roster is a **block inside the existing Work zone, directly under the Road crew row that raises the
 question** — `BandPanelController._build_roadwork_roster_block`, modelled on the expeditions block:
 small, self-contained, one row per item, omitted entirely when there is nothing to say. **Not a
 fourth zone**, which would move `wide_shell_min_width()`, the shell-flip threshold and every per-dock
@@ -749,7 +631,7 @@ the `✕` a player was aiming at.
 **Row click → its INSPECTOR**, the work board's card cut to a road (`_build_road_inspector`): `Jump
 to source` (`alert_focus_requested(x, y)` — a road IS its tile, so there is no entity resolution) and
 the put-down. The row is a site row — icon, the locator as its title, `road_row_value` on line two, the
-`Build` pill line while a road build is queued — and carries no `✕` (`band-city-panel.md` → "EVERY
+build crew chip while a road build is declared — and carries no `✕` (`band-city-panel.md` → "EVERY
 ROW ON THE WORK TAB SHARES THE SITE ROWS' COLUMNS").
 
 ### The put-down is the EXISTING abandon path, and it must not be quieter than the tile card
@@ -759,8 +641,8 @@ emits `BandPanelController.road_abandon_requested` (`_emit_road_abandon`), which
 `abandon_requested` → `Main.format_abandon` → `abandon <faction> road <x> <y>`. That is the **same**
 command path `DrawerComposeController.road_abandon_requested` already takes, and a second builder was
 deliberately not written: two emitters converging on one relay is what stops the verb's grammar
-drifting. Steady, full-opacity DANGER `✕`, no confirm — the single-item idiom the build-queue
-withdrawal and the parties recall already use.
+drifting. Steady, full-opacity DANGER `✕`, no confirm — the single-item idiom the build crew chip's
+stop and the parties recall already use.
 
 ⛔ **THE `✕` SENDS `abandon <faction> road <x> <y>`, WHICH NAMES THE ROAD ALONE** and carries no band
 token (`docs/plan_site_crews.md` §2.4). The bare tile would drop every band-of-that-faction's holding
@@ -779,15 +661,13 @@ cases, and the middle one is the one that must not be got wrong:
 2. **Demand > 0 but zero kept roads visible** → the block renders with ONE muted line saying the
    roads being kept are not in sight, under the Road crew row in its indent. **Never an empty roster beside a non-zero `Roadwork` count** —
    that is a readout that lies, and `band_panel_preview` sabotage-checks exactly it.
-3. **Roads visible** → the rows, capped at `ROADWORK_ROSTER_ROWS_MAX` with the build queue's own
-   `+N more` foot.
+3. **Roads visible** → the rows, capped at `ROADWORK_ROSTER_ROWS_MAX` with a `+N more` foot.
 
-### Its height is paid for in BOTH reservations
+### Its height is paid for in the board's capacity
 
-The Work zone `clip_contents`, and the roster renders BETWEEN the pools block and the build queue. So
-`HudWorkVocab.roadwork_roster_height` is resolved ONCE in `_fill_work_zone_column` and handed to
-**both** `build_queue_rows_max` and `_work_board_capacity` — one answer, so the block that draws and
-the two terms that pay for it cannot disagree. A block that drew without being paid for takes the
+The Work zone `clip_contents`, so `HudWorkVocab.roadwork_roster_height` is resolved ONCE in
+`_fill_work_zone_column` and handed to `_work_board_capacity` — one answer, so the block that draws and
+the term that pays for it cannot disagree. A block that drew without being paid for takes the
 difference silently off the bottom of the board; `band_panel_preview._assert_zone_content_fits`
 catches it across every state, which is how the unconditional-block sabotage was seen to fail.
 
@@ -830,14 +710,14 @@ to open).
 ### `RungLadder.route_track` is a SIBLING of `track`, and `build_track` is shared
 
 ⛔ **`track` TAKES A LABOR `kind` AND A WIRE SOURCE DICT, AND A ROAD HAS NEITHER** — no crew, no
-per-source forecast row, no queued entry publishing legs, no key prefix. Widening it would push every
+per-source forecast row, no declared build publishing legs, no key prefix. Widening it would push every
 plant and animal call site through a branch it cannot use. So the PRODUCER is a sibling and the
 RENDERER is not: `route_track` emits `track`'s own `ROW_*` shape and hands it to `build_track`, which
 gained one optional `title` argument and nothing else. A row is a row on any branch — same name, same
 face, same asides in the same order — and a second render loop would drift.
 
 **Three of the six original states are unreachable here, structurally**: `path` and `target` name
-legs of a QUEUED entry and no road publishes one.
+legs of a declared build and no road publishes one.
 
 > #### ⛔ A RUNG IS ONE LINE, AND EVERYTHING ELSE IS ONE HOVER AWAY
 >
@@ -927,7 +807,7 @@ band token that IS the keeper, so somebody has to be named out loud.
 - ⛔ **A PICK RE-RENDERS THE ROWS IN PLACE AND MUST NOT CLOSE THE CARD.** `_fill_road_ladder` refills
   the same Window; `popup()` is the OPEN's business alone. Every gate on the track is resolved against
   the acting band (`RungGates.route_gates(…, band, keeper_label)`) and the turns estimate is priced at
-  that band's own `builders` pool, so a row left standing after a pick would offer a rung the newly
+  that band's own road builders, so a row left standing after a pick would offer a rung the newly
   chosen band cannot have, at a pace it cannot keep.
 - **The `pick a band` gate did not become dead.** It fires where the player holds no bands at all,
   which is also the state in which the picker is not drawn — an empty selector states nothing.
@@ -949,10 +829,10 @@ other build surface in the game states a turns estimate. `route_track` had carri
   its banked work and its rate off a **prefixed forecast source dict**, which a road row is not.
   `RungLadder._route_turns` is the arithmetic, and it is four lines.
 - ⛔ **THIS IS THE UNORDERED RUNG'S ESTIMATE, AND IT IS NOT `RouteState.buildTurnsRemaining`.** That
-  field is live and carries the sim's chained countdown for a road actually QUEUED (see "The date
-  column is the sim's own countdown"); it answers `-1` for a rung nobody has declared, which is every
+  field is live and carries the sim's chained countdown for a road actually DECLARED (see "THE DATE IS
+  THE SIM'S OWN COUNTDOWN"); it answers `-1` for a rung nobody has declared, which is every
   row this card prices. **The two must not be collapsed**: a ladder card quoting the wire would state
-  *no estimate* on every rung a player is choosing between, and a queue row quoting this would put a
+  *no estimate* on every rung a player is choosing between, and a Work row quoting this would put a
   hypothetical crew's arithmetic where the sim's own answer belongs. The line the earlier draft
   carried here — *"a road has no source row, which is also why `buildTurnsRemaining` is a no-op for
   roads sim-side"* — was false in both halves.
@@ -969,12 +849,11 @@ other build surface in the game states a turns estimate. `route_track` had carri
   nobody has started. `_route_meter_clause` draws the same boundary for the same reason.
 - **The remoteness multiple is quoted apart from the estimate**, as it is from the price: folding it
   in would put a copy of the sim's pricing formula here.
-- ⛔ **ZERO BUILDERS IS AN ANSWER, NOT AN ABSENCE.** With nobody on the pool the row states its price
-  bare and the REMEDY rides beneath it as an aside (`ROAD_LADDER_NO_BUILDERS_ASIDE`, `build_aside`,
-  in the warn ink) — a blank column where every other row states a duration reads as a client that
-  failed to work it out. **And the rung stays orderable**: declaring a road with an empty pool is a
-  legal, ordinary act (the entry waits at the head of the queue for hands), so this is a note and
-  never a gate.
+- ⛔ **ZERO BUILDERS IS AN ANSWER, NOT AN ABSENCE.** With no spare hands the row states its price
+  bare and the aside beneath it reads `No spare hands this turn` (`ROAD_LADDER_NO_BUILDERS_ASIDE`,
+  `build_aside`, in the warn ink) — a blank column where every other row states a duration reads as a
+  client that failed to work it out. **And the rung stays orderable**: declaring a road with no hands
+  free is a legal, ordinary act (the build waits for them), so this is a note and never a gate.
 - ⛔ **NO FALLBACK ANYWHERE, IN EITHER READER.** A missing or zero rate answers
   `BUILD_TURNS_NO_ESTIMATE` on the ladder and `BUILD_CREW_NONE` — no *short N* clause at all — on the
   tile card. **Never `1.0`, and never an infinity.** A substituted constant is the transcription
@@ -998,11 +877,10 @@ other build surface in the game states a turns estimate. `route_track` had carri
 > **`RungLadder.route_track` therefore takes `kit_gear_by_rung`, a `{rung_key: gear}` map, not one
 > term for the card.** One answer spent on four rows quotes the paving kit's uplift on the `grade`
 > beneath it — an uplift the sim pays nothing for. `DrawerComposeController._road_ladder_kit_gear`
-> builds the map, one `KitRoster.builders_kit_for` + `build_gear` per catalog rung, so a band whose
-> `builders` row reads `none` because it has nothing queued is still quoted the tool the roster will
-> hand it when the press lands.
+> builds the map, one `build_kit_for_branch` + `build_gear` per catalog rung, so a band with no build
+> declared is still quoted the tool the roster will hand it when the press lands.
 >
-> **Measured on `road_ladder_rung_kit`** (a band holding the PAVING kit, two builders, a road at
+> **Measured on `road_ladder_rung_kit`** (a band holding the PAVING kit, two road builders, a road at
 > trail-top): the `grade` row's hover reads `≈150 turns` — `ceil(300 / 2)`, bare hands — and the
 > `pave` row's reads `≈134 turns` — `ceil(800 / (2 × 1.0 + 2 × 2.0))`. Deleting the rung test from
 > `build_gear` moves the `grade` row to `≈50 turns` and fails that state's first claim by name.
@@ -1028,36 +906,19 @@ other build surface in the game states a turns estimate. `route_track` had carri
 >
 > ⛔ #### THE THIRD ARM IS RIGHT AND FORGETTING THE RUNG READS AS `No kit`
 >
-> Reported from play: the build queue HEADER read **`1 builders · No kit`** over an expanded entry
-> whose own `KIT` dropdown read `Roadbuilding kit` — the detail right and the header wrong, the sim
-> demonstrably using the kit (the road advanced at ~3 work/turn on one builder, against the bare
-> `1.0`). `BandPanelController._role_kit_id` asked `KitRoster.build_kit_for_branch(kits, branch)` with
-> **two arguments**: the rung defaulted to `BUILD_RUNG_ANY`, both road kits hit the third arm, the
-> roster answered `NO_KIT_ID`, and the code fell through to `bare_kit_id`.
->
-> **THE FACE IS A REPEAT WITH A DIFFERENT CAUSE.** `3 builders · No kit` was reported once before and
-> fixed by deriving from the PENDING head when the wire had placed none; the same words came back
-> because a second thing the derivation needed was silently absent. **So the fix is a shape, not a
-> patched call site:**
+> A caller that asked `KitRoster.build_kit_for_branch(kits, branch)` without a rung had both road kits
+> hit the third arm, the roster answered `NO_KIT_ID`, and the surface read `No kit` over a band whose
+> expanded detail read `Roadbuilding kit` and whose road demonstrably advanced at the kit's rate. **The
+> fix is a shape, not a patched call site:**
 >
 > - **`rung` HAS NO DEFAULT on `kit_serves_build`, `work_kit_for_branch` and `build_kit_for_branch`.**
 >   A missing argument is a GDScript parse error, so a caller that cannot name a rung must *say* so by
 >   passing `BUILD_RUNG_ANY` — which is the sentence the third arm answers, stated on purpose instead
->   of arrived at by omission. `keeping_kit_for` and `command_guard`'s two drives now spell it, and
+>   of arrived at by omission. `keeping_kit_for` and `command_guard`'s two drives spell it, and
 >   each says why in one line (both name a PLANT or ANIMAL branch, whose kits bind no rung).
-> - **`BandPanelController._role_build_target` returns the PAIR**, replacing `_role_build_branch`.
->   There is no accessor left that hands back a branch without the rung that goes with it, and
->   `_queue_model_build_rung` is the ONE derivation the queue header and the queue row's kit picker
->   both read — two readings of one model is exactly what `No kit` over `Roadbuilding kit` looks like.
 > - **`KitRoster.resolve_selection` takes the rung too.** Its filter is `kit_offer`'s, so a caller
 >   naming a route branch and no rung had both road kits refused, `selectable` collapse back to the
 >   unfiltered list, and the branch silently stop mattering.
->
-> **Measured on `band_panel_queue_road_under_way`**: passing `BUILD_RUNG_ANY` in place of the head's
-> rung fails exactly one claim — *the queue HEADER names the head ROW's own kit* — with the row's own
-> dropdown still reading `Roadbuilding kit` beside it. That claim is an EQUALITY between the two
-> surfaces rather than an assertion about an id, so it fails for any future call site that forgets the
-> rung, not only for this one.
 
 ### The stone is FLAT, and the work beside it is not
 
@@ -1157,8 +1018,8 @@ no clause rather than a `0`.
 
 - ⛔ **`no_keeper` HAS NO WORDING IN THIS CLIENT AND MUST NOT GET ONE.** The sim mints the cause so an
   unkept road stops reporting `owned_by_other` — the two are not one cause, and a road nobody keeps
-  reported as a rival's sends the player after somebody who does not exist — but `prune_build_queue`
-  drops the queue entry of any road its band does not keep, so no unkept road survives to publish it.
+  reported as a rival's sends the player after somebody who does not exist — but the sim drops the
+  declared build of any road its band does not keep, so no unkept road survives to publish it.
   It is load-bearing for the gate and dead on the wire; a sentence for a state that cannot reach the
   player is dead content.
 
@@ -1231,7 +1092,7 @@ it reads `catalog_build_work_per_worker_turn` directly.
 ### ⛔ AND A ROAD CAN BE PUT DOWN AGAIN — the abandon row at the BOTTOM
 
 The picker above makes the keeper a choice; this is what makes it a reversible one. `unqueue`
-withdraws a DECLARATION and is wired up, but **once any work is banked the verb that releases a
+(the crew chip's stop) withdraws a DECLARATION and is wired up, but **once any work is banked the verb that releases a
 keeper is `abandon`**, which was command-line only — so a road handed to the wrong band could not be
 taken back from the UI at all.
 
@@ -1246,7 +1107,7 @@ taken back from the UI at all.
 > #### ⛔ IT NAMES THE ROAD, AND ONLY THE ROAD (`docs/plan_site_crews.md` §2.4)
 >
 > Both road `✕`s send `abandon <faction> road <x> <y>`, which puts down the road's keeping and its
-> queue entry and nothing else on the hex. It named a PLACE until the road form existed — the bare
+> declared build and nothing else on the hex. It named a PLACE until the road form existed — the bare
 > tile still does, dropping the faction's labor rows there too — and the row carried a second line
 > (`ROAD_LADDER_ABANDON_ALSO`, *"…and the foraging your people do on this hex goes down with it"*)
 > saying so. That line is retired with the consequence it stated.
@@ -1365,7 +1226,7 @@ control.
 
 **IT IS SHAPED LIKE A PLAIN ACTION, NOT LIKE FORAGE OR HUNT.** Those open a COMPOSE sheet because
 they take a worker count; `grade` / `pave` take none and a trailing count is a parse error — they
-DECLARE, and the hands come separately from `assign_labor <faction> <band> builders <n>`.
+DECLARE, and the sim staffs the road from the band's road crew.
 
 **LABELLED `Road ▸`, THE BRANCH'S NOUN**, matching the `Road` readout row's own key. Never a verb:
 `grade` stops being the whole story the day a non-road rung lands, and the control would then be
@@ -1427,7 +1288,7 @@ driven through the REAL action and the REAL formatter. Read as a set they are th
 feature exists to make: `road_ladder_gated` (a path, with every rung above it refused and each for
 its own reason — nothing on it pressable), `road_ladder_grade` (the same branch one rung up with
 Roadbuilding learned: `grade` OPEN, priced, DATED and pressable, under a `Band:` picker),
-`road_ladder_no_builders` (that same live row with nobody on the pool — the price bare and the remedy
+`road_ladder_no_builders` (that same live row with no spare hands — the price bare and the note
 beneath it), `road_ladder_pave` (the top rung on a REMOTE dirt road, quoting the base price with the
 multiple as its own clause, and offering the abandon row because the road is already this band's),
 `road_ladder_other_keeper` (a dirt road **a second band keeps** — the card OPENS on that keeper with
@@ -1532,8 +1393,8 @@ deliberately different number.
 
 ### The roadwork roster — `band_panel_preview`
 
-One chapter, appended after the build-queue states because the roster renders BETWEEN the pools and
-the queue: every claim above it is a claim about a zone that did not have it, and reordering these
+One chapter, appended after the build states because the roster renders in the Work zone's ROADWORK
+section: every claim above it is a claim about a zone that did not have it, and reordering these
 would move the frames that follow. Two frames — `band_panel_roadwork_roster` and
 `band_panel_roadwork_roster_unseen`.
 
@@ -1609,39 +1470,25 @@ free trail — the one-row composition and the absent bill — and nothing else 
 
 **THE QUEUED READING IS A PAIR, AND THE SEEDING IS PART OF THE TEST.**
 `_assert_a_declared_road_says_it_is_climbing` runs one fixture twice: with no entry on the wire the
-row states its rung BARE, and with a `roadwork` entry staged on the acting band's `build_queue` the
-same road reads `Trail · 0% to dirt road`. **A state that needs a queue must SEED one** — a frame
-named for the queued reading that renders the un-queued one is this arc's own recurring trap, and it
-has bitten twice. Beside them: declaring conjures no `Upkeep` row, and a road already carrying work
+row states its rung BARE, and with a road row staged on the band's routes (`builders_cap` 3, a build
+declared) the same road reads `Trail · 0% to dirt road`. **A state that needs a declared build must
+SEED one** — a frame named for the declared reading that renders the un-declared one is this arc's own
+recurring trap, and it has bitten twice. Beside them: declaring conjures no `Upkeep` row, and a road already carrying work
 still states its real percentage, which is what says the fix OPENED the zero case rather than
 replacing the reading above it.
 
-`road_ladder_queued` is the ladder's half — the same live `grade` row on a band holding two jobs,
-asserting the sentence, the SURVIVING estimate beside it, and the ABSENCE of the empty-queue reading
-(without which a producer printing both sentences passes).
-
-**Falsified**: emptying `HudBandLaborState.road_queue_tiles()` fails **exactly one** claim, the
-queued row's, and nothing else in the run.
-
-⛔ **AND `road_ladder_declared` ONE STATE BELOW IT IS THAT SENTENCE'S ABSENCE — THE PAIR IS THE
-CLAIM.** The same road with the `grade` standing on THIS tile draws **no placement aside of either
-form**, and the negative is named per surviving form rather than by a shared needle, so a producer
-resurrecting either is caught. It cannot stand alone: a producer that had dropped every aside passes
-a lone negative, and the state above it drawing its `joins …` sentence is what stops that. Its other
-two claims are Change 2's — `0% · ≈150 turns`, and the price GONE from that row — over the untouched
-rung above still quoting `800 work`.
+`road_ladder_queued` is the ladder's `grade` row on a freshly-graded trail before any build is declared
+on the tile; `road_ladder_declared` one state below it is the same road with the `grade` standing on
+THIS tile, and carries three claims — `0% · ≈150 turns`, the price GONE from that row, and the
+untouched rung above still quoting `800 work`.
 
 **Falsified**: passing the raw `build_fraction` back into the building row's figure fails **exactly
 one** claim, the progress one, naming the `100%` the wire honestly publishes for a completed trail.
 The price-absence claim beside it correctly still passes — a raw meter renders a METER face, not a
 price — which is why the progress claim is an EQUALITY against the whole face and not a `contains`.
 
-`band_panel_preview`'s `band_panel_queue_road` is the BUILD QUEUE block's own frame — a road row
-beside a herd row, which is the picture the reported defect made unobtainable — and it carries eight
-claims: the paired negative (the same road, no entry, no row), the row drawing at all, its face, its
-wire rank, the head marker being on the Tame in front of it, its `▲` being ENABLED, the `✕` in its
-settings strip, and the `unqueue 0 64 17` that `✕` transmits through the REAL formatter. **Falsified**:
-breaking `_road_at`'s tile join fails **exactly one** claim — the row count — and nothing else.
+The road crew row's build crew chip is judged on `band_panel_build_crew_road` (`harness-band-panel.md`
+→ "Build crew chips").
 
 `map_preview`'s `map_road_network` is the composite's own frame: five CONTIGUOUS runs laid parallel,
 one at each rung and one in shortfall, plus a **lone tile that must DRAW**. That last one inverted
@@ -1696,7 +1543,7 @@ moved, and removing `SECTION_ROUTES` from `MapView.SHADER_INPUT_SECTIONS` does t
 
 **`command_guard` sweeps the role**, which is what proves `assign_labor … roadwork` survives
 `sim_runtime::command_text::parse_command_line` — the parser the native bridge runs BEFORE it sends,
-and the one `builders` was missing from for a whole slice while every other gate stayed green.
+and a role missing from it fails nowhere else.
 
 > ### ⛔ A ROLE ADDED TO THE SWEEP SPENDS THE FIXTURE BAND'S WORKFORCE
 >
@@ -1721,17 +1568,15 @@ and the one `builders` was missing from for a whole slice while every other gate
 - `selection-card.md` — the land drawer these rows are appended to
 - `map-renderers.md` — `AnnotationRenderer`'s other four const families, and `_unwrapped_path_points`
 
-### Catalog-driven fallback prose, and the queue entry's `branch` (issue #175)
+### Catalog-driven fallback prose, and the road token (issue #175)
 
 `HudRouteVocab.rung_label` keeps the hand-written word for the shipped four rungs and humanises any
 other key (`tile:bog_drain` → `Bog drain`) rather than printing the raw wire key. `catalog_label` /
 `build_fallback_text` / `raising_fallback_text` / `deal_fallback_text` are the `Build {label}` /
 `Raising {label}` / `once {label}` forms a rung with no hand-written sentence reads through;
 `HudDepositVocab.deal_label` takes the `once {label}` form for any verb outside `fell` / `coppice` /
-`quarry`. `BuildQueueEntryState.branch` replaced the `road` bool: `HudRouteVocab.queue_entry_is_road`
-is true only for the road branch's id (`ROAD_BRANCH`), so a tile-kind entry takes the generic path and
-never reads as a road. `Main.SITE_ADDRESS_ROAD_TOKEN` is that same id, and every build is
-`build <verb> <faction> [band] <source…>`.
+`quarry`. The road branch's id is `HudRouteVocab.ROAD_BRANCH`, so a tile-kind source takes the generic
+path and never reads as a road. `Main.SITE_ADDRESS_ROAD_TOKEN` is that same id.
 
 ### The command's shape and the knowledge screen's counts read the catalog (issue #175)
 

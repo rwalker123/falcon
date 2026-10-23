@@ -597,8 +597,6 @@ func run(harness) -> void:
 			and not _row_selectable(stone_rows, HudDepositVocab.RUNG_KEY_GATHERING))
 	var open_rows := RungLadder.deposit_track(_stone_working(STONE_TAKE), _ladder(),
 		_knowledge(KNOWLEDGE_LEARNED), _knowledge_labels(), LADDER_CUTTERS)
-	# ⛔ **A PRICED ROW QUOTES ITS PILE AND ITS STANDING BILL, AND NO TURNS.** The estimate would be
-	# divided by a builders pool that may be on another job and would ignore the queue the press joins.
 	h._assert_hud("a rung within reach leads with its price and its upkeep, and quotes no turns (%s)"
 			% _row_face(open_rows, HudDepositVocab.RUNG_KEY_QUARRY),
 		_row_face(open_rows, HudDepositVocab.RUNG_KEY_QUARRY)

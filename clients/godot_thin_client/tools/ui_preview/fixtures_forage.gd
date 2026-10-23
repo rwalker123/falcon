@@ -8,6 +8,7 @@ const BaseFx := preload("res://tools/ui_preview/fixtures_base.gd")
 ## The test tree's one transcription of the sim's rung derivation: a fixture states its standing
 ## rung off its own flags through this, and re-stamps after any mutation of them.
 const RungFx := preload("res://tools/ui_preview/fixtures_rung.gd")
+const CrewFx := preload("res://tools/ui_preview/fixtures_crew.gd")
 
 # A floor BELOW the food peak, for the frames that need "this crew is drawing the source down" — the
 # `deplete`/`surplus` stances these fixtures were written against. It is one of the sim's own raid
@@ -93,6 +94,7 @@ static func floorify(src: Dictionary, prefix: String = "") -> Dictionary:
 	floorify_ceilings(src, prefix)
 	seed_growth_terms(src, prefix)
 	RungFx.stamp_source(src, prefix)
+	CrewFx.stamp(src, prefix)
 	return src
 
 ## Seed `per_worker_biomass` + `regrowth_samples` + the two phase-band cuts on a fixture that predates
@@ -385,16 +387,11 @@ static func find_improvement_control(root: Node, improvement: String) -> Control
 			return found
 	return null
 
-## **RETIRED — `build_crew_row`, the BUILDERS stepper's own finder** (`docs/plan_standing_upkeep.md`
-## §2.5). The row is gone with the per-source build crew a verb used to carry, and so is the meta it
-## was found by. What replaced every claim made through it is `Readout.stepper_count`: a compose sheet
+## The row is gone with the per-source build crew a verb used to carry, and so is the meta it was
+## found by. What replaced every claim made through it is `Readout.stepper_count`: a compose sheet
 ## mounts exactly ONE stepper — the take's — and asserting the COUNT is what catches a hypothetical
 ## build slider being added back under any name (§3.1).
 
-## RETIRED — **`BUILD_WORK_FLOOR_ABSENT` / `build_work_floor` / `build_work_floor_tooltip`**, which
-## read the BUILDERS row's threshold off `HudWidgets.BUILD_WORK_FLOOR_META`
-## (`docs/plan_standing_upkeep.md` §2.4).
-##
 ## **THE ROW STATES NO THRESHOLD, SO THERE IS NO NUMBER TO READ.** The meta carried the quoted rung's
 ## maintenance rate, back when a build crew supplied it and a crew under it banked nothing; the
 ## keeping pool owes that rate at every fullness now, so no rung declares a build-crew bar and the

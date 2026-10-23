@@ -511,17 +511,15 @@ pub struct Herd {
     /// and for its reason: the kit is re-read every turn, so no state may record *"this build was
     /// geared"*.
     pub build_work_from_gear: f32,
-    /// **WHERE THIS SOURCE SITS IN THE WINNING BAND'S BUILD QUEUE** — 0-based, and
-    /// [`crate::intensification::NOT_IN_ANY_BUILD_QUEUE`] (`-1`) when no band has queued it
+    /// **THE ESTIMATE-PASS STAMP** — `ESTIMATE_PASS_RAN` (`systems::labor`) once the estimate
+    /// pass has dated a declared build on this source this turn, else
+    /// [`crate::intensification::NOT_IN_ANY_BUILD_QUEUE`] (`-1`, the neutral). It is what separates
+    /// "no pass has run for this build yet" from "the pass ran and had no number"
     /// (`docs/plan_standing_upkeep.md` §4.6b).
     ///
     /// **It rides the same winner as [`Self::build_turns_remaining`] and
-    /// [`Self::build_work_from_gear`]** — the three are read as one set, so a date from one band's
-    /// queue beside another band's position would be two answers pretending to be one.
-    ///
-    /// **Without it a chained date is a number with no explanation.** The whole builders pool goes
-    /// on the head of a queue, so an entry's turns are everything above it plus its own span — and
-    /// the player cannot tell forty turns of work from eight turns of work behind four other jobs.
+    /// [`Self::build_work_from_gear`]** — the three are read as one set, so a date from one band
+    /// beside another band's stamp would be two answers pretending to be one.
     ///
     /// Transient per-turn scratch on [`Self::build_turns_remaining`]'s cycle, and for its reason.
     pub build_queue_position: i32,
@@ -1442,7 +1440,7 @@ impl Herd {
     }
 
     /// **STOP AN UNFINISHED COMMITMENT AND CLEAR ITS METER** — the state a recommit leaves behind
-    /// when its queue entry goes, and [`Herd::cancel_pen_extension`]'s twin in every respect
+    /// when its declared build goes, and [`Herd::cancel_pen_extension`]'s twin in every respect
     /// including the discarded progress: [`Self::begin_output_recommit`] resets the meter on every
     /// start, so preserved progress could never be resumed by any path the game has. The live
     /// fraction is untouched — a withdrawn order leaves the herd producing exactly what it was.
@@ -1493,7 +1491,7 @@ impl Herd {
     }
 
     /// **STOP AN UNFINISHED RING AND CLEAR ITS METER** — the state a ring leaves behind when its
-    /// queue entry goes ([`crate::fauna::cancel_dropped_rings`]).
+    /// declared build goes ([`crate::fauna::cancel_dropped_rings`]).
     ///
     /// # THE BANKED PROGRESS IS DISCARDED, AND THAT IS THE HONEST STATE
     ///
@@ -5263,7 +5261,7 @@ pub fn herd_build_rung(
     // The pen arm asked `standing.credit > 0`, and `animal:pen` is `partial_credit: on_completion`,
     // which `RungStanding::at` pins to `NO_RUNG_CREDIT` at **every** position short of full. So the
     // arm could never fire: a herd with real work banked on its fence and no live declaration (what
-    // `banking.declared_on` answers once the queue entry is gone) fell through and derived **no
+    // `banking.declared_on` answers once the declared build is gone) fell through and derived **no
     // verb**, where the retired two-meter walk answered `Corral`. `RungStanding::banked` is what a
     // meter carries rather than what it is worth, so it is positive from the first work banked on
     // either rung - which is also why one arm now serves both.
@@ -5292,7 +5290,7 @@ pub fn herd_build_verb(
     herd_build_rung(herd, ladder, declared).and_then(|rung| ladder.rung(rung).verb_id())
 }
 
-/// **IS THE RUNG THIS QUEUE ENTRY DECLARED ALREADY STANDING?** - the animal twin of
+/// **IS THE RUNG THIS DECLARED BUILD DECLARED ALREADY STANDING?** - the animal twin of
 /// `forage::patch_rung_already_built`, and the test that retires a **dead** entry
 /// (`docs/plan_standing_upkeep.md` §2.5).
 ///
@@ -5304,19 +5302,19 @@ pub fn herd_rung_already_built(herd: &Herd, ladder: &LadderConfig, declared: Run
     ladder.at_or_above(herd.standing().held, declared)
 }
 
-/// **CANCEL EVERY RING NAMED BY AN ENTRY THAT JUST LEFT A BUILD QUEUE.**
+/// **CANCEL EVERY RING NAMED BY AN ENTRY THAT JUST STOPPED BEING DECLARED.**
 ///
 /// `extend_pen` sets `Herd::pen_extending` **before** it queues, and only completion cleared it — so
 /// an entry dropped mid-ring left the flag set with nothing left to fund the ring, and
 /// [`Herd::begin_pen_extension`] refuses while it is set. That is a **permanent** dead end on that
 /// pen, one `✕` click away.
 ///
-/// Handed the entries a drop produced (`LaborAllocation::prune_build_queue` returns them; the two
+/// Handed the entries a drop produced (`LaborAllocation::prune_builds` returns them; the two
 /// command seams below read theirs before dropping), so every exit passes through one rule rather
 /// than each remembering it.
 pub fn cancel_dropped_rings(
     herds: &mut HerdRegistry,
-    dropped: &[crate::components::BuildQueueEntry],
+    dropped: &[crate::components::BuildDeclaration],
 ) {
     for entry in dropped {
         let crate::components::BuildSource::Herd(id) = &entry.source else {
@@ -5353,8 +5351,8 @@ pub fn unqueue_build_and_cancel_ring(
     let Some(mut allocation) = world.get_mut::<crate::components::LaborAllocation>(band) else {
         return false;
     };
-    let entry = allocation.build_queue_entry(source).cloned();
-    if !allocation.unqueue_build(source) {
+    let entry = allocation.build_declaration(source).cloned();
+    if !allocation.stop_build(source) {
         return false;
     }
     cancel_dropped_rings(&mut world.resource_mut::<HerdRegistry>(), entry.as_slice());
@@ -5375,7 +5373,7 @@ pub fn drop_holding_and_cancel_ring(
         return false;
     };
     let entry = crate::components::BuildSource::of(target)
-        .and_then(|source| allocation.build_queue_entry(&source).cloned());
+        .and_then(|source| allocation.build_declaration(&source).cloned());
     let Some(row) = allocation.drop_source_row(target) else {
         return false;
     };

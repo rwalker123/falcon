@@ -789,7 +789,6 @@ mod tests {
                 intent_in_force: None,
                 move_target: None,
                 born_by_split: None,
-                build_queue: Vec::new(),
             }],
             neighborhood: Vec::new(),
             ground: None,

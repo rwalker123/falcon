@@ -54,7 +54,6 @@ struct PublishedRow {
     children_count: u32,
     elders_count: u32,
     idle_workers: u32,
-    build_queue: usize,
     equipment_batches: usize,
     craft_offers: usize,
     /// **The bench is captured by its CONTENT, not by its presence.** `PopulationCohortState.bench`
@@ -131,7 +130,6 @@ fn published_rows(app: &App) -> Vec<PublishedRow> {
             children_count: row.childrenCount(),
             elders_count: row.eldersCount(),
             idle_workers: row.idleWorkers(),
-            build_queue: row.buildQueue().map(|v| v.len()).unwrap_or(0),
             equipment_batches: row.equipmentBatches().map(|v| v.len()).unwrap_or(0),
             craft_offers: row.craftOffers().map(|v| v.len()).unwrap_or(0),
             bench_recipe: row

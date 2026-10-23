@@ -80,9 +80,6 @@ pub const ROLE_HUNT: &str = "hunt";
 /// sim staffs as many hands as help. The AI never caps a forage or hunt row.
 pub(crate) const NO_MAX: u32 = 0;
 
-/// The band-wide build pool: `assign_labor <faction> <band> builders <n>`, whose whole output goes
-/// on the head of the band's build queue (`command_text.rs` → `assign_labor`).
-pub const ROLE_BUILDERS: &str = "builders";
 /// The intent kinds, one per rule (*split to feed* has two: the split, then the child's settle).
 pub const INTENT_ASSIGN: &str = "assign";
 pub const INTENT_FEED_MOVE: &str = "feed_move";
@@ -419,16 +416,6 @@ impl Food {
         })
     }
 
-    /// `assign_labor` on a band-wide role (`builders`, …): no target, no kit, no floor.
-    fn assign_pool(
-        &self,
-        band: &PopulationCohortState,
-        role: &str,
-        workers: u32,
-    ) -> CommandPayload {
-        self.assign_role(band, role, workers, None, None, None, None)
-    }
-
     /// `assign_labor` on a forage patch **at a stated harvest floor** — *draw down to survive*'s
     /// command; `None` is the wire default, Best.
     fn assign_at_floor(
@@ -504,15 +491,6 @@ impl Food {
             .iter()
             .find(|row| SourceKey::of_row(row).as_ref() == Some(key))
             .map_or(0, |row| row.workers)
-    }
-
-    /// Workers on the band-wide `role` pool.
-    fn workers_in_pool(band: &PopulationCohortState, role: &str) -> u32 {
-        band.labor_assignments
-            .iter()
-            .filter(|row| row.kind == role)
-            .map(|row| row.workers)
-            .sum()
     }
 
     /// **This specialist's slice of the plan**: the workers its share of the seat's working-age
@@ -704,6 +682,9 @@ pub(crate) mod tests {
         memory
     }
 
+    /// The most hands the fixture's plant rungs take at once - well above any crew a test frees.
+    pub const RUNG_BUILDER_CAP: u32 = 12;
+
     /// The raster the fixture world is: 8 wide, 6 high, wrapped.
     pub const RASTER_WIDTH: u32 = 8;
     pub const RASTER_HEIGHT: u32 = 6;
@@ -715,6 +696,15 @@ pub(crate) mod tests {
             sim_runtime::fixture::saturated_snapshot().expect("the fixture builds");
         snapshot.header.tick = TICK;
         snapshot.header.wrap_horizontal = true;
+        // The two plant rungs the upgrade rule climbs, each able to take `RUNG_BUILDER_CAP` hands.
+        snapshot.ladder_rungs = [crate::rungs::PLANT_TENDED, crate::rungs::PLANT_FARM]
+            .into_iter()
+            .map(|rung_key| sim_runtime::LadderRungState {
+                rung_key: rung_key.to_owned(),
+                max_builders: RUNG_BUILDER_CAP,
+                ..Default::default()
+            })
+            .collect();
         snapshot.visibility_raster.width = RASTER_WIDTH;
         snapshot.visibility_raster.height = RASTER_HEIGHT;
         snapshot.visibility_raster.samples =

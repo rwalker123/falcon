@@ -1320,8 +1320,7 @@ and fog-filtered with the row. The fields ride the checkpoint (`SAVE_FORMAT_VERS
 
 Tests: `predators::the_herd_names_the_predator_species_that_ate_most`,
 `predators::the_predation_stamp_resets_the_next_turn`,
-`predators::the_predation_stamp_round_trips_the_checkpoint_and_the_save`,
-`build_queue::a_tame_whose_room_wolves_emptied_refuses_as_predators_ate_growth` (encoded envelope).
+`predators::the_predation_stamp_round_trips_the_checkpoint_and_the_save`.
 
 ## The regional staples carry their correction in reach
 

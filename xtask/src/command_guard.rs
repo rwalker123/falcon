@@ -411,7 +411,6 @@ fn band_handle(payload: &CommandPayload) -> BandHandle {
         // **THE QUEUE BELONGS TO A BAND, so its reorder names one** — and its handle is REQUIRED
         // rather than optional, which is why it is wrapped here (`docs/plan_standing_upkeep.md`
         // §4.7b ③).
-        CommandPayload::BuildOrder { band_id, .. } => Some(*band_id),
         // **THE WORKED ROW'S RANK BELONGS TO A BAND TOO** — the shedding walk it feeds partitions
         // that band's own rows and the pen-feed split serves that band's own stores, so its handle is
         // REQUIRED exactly as the queue reorder's is (`docs/plan_standing_upkeep.md` §4.9 item 9b).
@@ -420,7 +419,6 @@ fn band_handle(payload: &CommandPayload) -> BandHandle {
         CommandPayload::StopLabor { band_id, .. } => Some(*band_id),
         // …and so does a queued build's BUILD MARK: the settlement it ranks is that band's own tools
         // and stores (`docs/plan_site_crews.md` §2.4), so its handle is required for the same reason.
-        CommandPayload::BuildPriority { band_id, .. } => Some(*band_id),
         // …and the BENCH's rank names a band too, and requires it: a bench belongs to exactly one
         // band, so there is no faction-wide reading of this verb to fall back on.
         CommandPayload::BenchPriority { band_id, .. } => Some(*band_id),
@@ -909,10 +907,7 @@ mod tests {
             "stop_labor 0 71204 44 23 wood",
             "stop_labor 0 71204 roadwork",
             "stop_labor 0 71204 branch=camp_stores",
-            "build_priority 0 71204 44 23 stone high",
-            "build_priority 0 71204 route 44 23 normal",
-            "build_order 0 71204 route 44 23 0",
-            "build_order 0 71204 44 23 wood 1",
+            "work_priority 0 71204 route 44 23 normal",
         ] {
             assert!(
                 matches!(band_handle(&parse(line)), BandHandle::Named(id) if id == BAND),

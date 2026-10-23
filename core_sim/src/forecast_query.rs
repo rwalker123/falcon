@@ -1492,7 +1492,7 @@ fn answer_work_party_forecast(
     // **The band's declared climb on this source** answers for a meter at zero, as it does for the
     // turn and the seed: a crew raising `tame` on an unstarted herd keeps it from the first turn.
     let declared = crate::components::BuildSource::of(&target)
-        .and_then(|source| allocation.build_queue_entry(&source))
+        .and_then(|source| allocation.build_declaration(&source))
         .and_then(|entry| match entry.declared {
             crate::components::BuildJob::Climb(rung) => Some(rung),
             // Neither "work on a rung already held" kind raises a rung.

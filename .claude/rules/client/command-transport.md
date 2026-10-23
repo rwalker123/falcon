@@ -393,8 +393,8 @@ sheet's `Stop working here` and the work inspector's `Unassign` (`BandPanelContr
 `DrawerComposeController._emit_stop_labor` → `stop_labor_requested` → `HudLayer` → `Main._on_hud_stop_labor`
 → `Main.format_stop_labor`).
 
-- **It names its band by `BandId`** (`faction`, `band_id` in the payload), like `work_priority` and
-  `build_order`, and rides the one seated link every faction-bearing command does.
+- **It names its band by `BandId`** (`faction`, `band_id` in the payload), like `work_priority`, and
+  rides the one seated link every faction-bearing command does.
 - **The source is `Main.site_address`'s**: `<x> <y>` for a patch, a herd id, `<x> <y> <material>` for a
   working, and `<branch> <x> <y>` for a tile-improvement keeper row (the branch word leads, from the
   payload's `branch`). The Roadwork pool is the lone token `roadwork` (`payload.roadwork`), never a tile.

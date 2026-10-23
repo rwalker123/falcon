@@ -46,13 +46,6 @@ extends RefCounted
 ## (`cultivate` / `sow` / `tame` / `corral`) and its withdrawal, sent by the improvement checkbox's
 ## tick and untick.
 ##
-## **THE CHECKBOX WAS NOT THE COMMIT, and that was the defect.** Only the sheet's own action button —
-## reading **`Forage`** — sent the verb, so ticking the box and closing the sheet did nothing at all.
-## Reported from play repeatedly. The declaration is one press of the WORK ROW's `⌃`, on the tab that
-## owns the builders pool and the build queue, and the withdrawal is that queue's own row `✕`;
-## **both signals survive on `BandPanelController`**, whose payloads were already byte-identical to
-## these, so `Main.format_improvement` / `format_unqueue` did not change at all.
-##
 ## What this sheet keeps is the FORECAST — the rung, what it would PAY once built, and its refusals —
 ## which is what a 28px work row could never hold and what makes it the place a rung is JUDGED. (Its
 ## COSTS went to the Work tab too; see `_improvement_offer_phrase`.)
@@ -64,8 +57,8 @@ extends RefCounted
 ## **IT CARRIES THE ACTING BAND'S `entity`, and for one release it carried nothing.** Reported from
 ## play: on the FACTION page the link switched to the FACTION's Work tab — a rollup, with no `⌃` on it
 ## — so the sentence sent the player somewhere that could not do what it promised. The acting band is
-## the one the sheet's `Band:` picker names, which is the band whose `⌃` queues this rung and whose
-## pool pays for it; `ComposeState.NO_BAND_ENTITY` where none resolves, which the far end treats as
+## the one the sheet's `Band:` picker names, which is the band whose `⌃` declares this rung;
+## `ComposeState.NO_BAND_ENTITY` where none resolves, which the far end treats as
 ## *switch the tab and jump nowhere*.
 ##
 ## **`entity` rather than `band_id`**: nothing here builds a command, and the panel resolves a band by
@@ -95,12 +88,6 @@ signal road_improvement_requested(payload: Dictionary)
 ## `unqueue` withdraws a DECLARATION and nothing else; the moment any work is banked the verb that
 ## releases a keeper is `abandon`, which was command-line only — so a road handed to the wrong band
 ## could not be taken back from the UI at all.
-##
-## ⛔ **IT NAMES A PLACE, NOT A ROAD.** `handle_abandon` drops the faction's labor rows on that tile as
-## well as the road's keeper and its queue entry, because a tile may carry a road AND a patch and
-## putting one down without the other would be silently partial. The row says so where the tile also
-## carries work of this faction's. **There is no road-only abandon and this client must not invent
-## one** — a command narrower than the sim implements would lie about what the button does.
 ##
 ## Relayed by `HudLayer` onto its own `abandon_requested`, which `Main.format_abandon` builds. **No
 ## optimistic write**, exactly as the declaration beside it: a road has no labor row to shadow.
@@ -168,6 +155,10 @@ func chart_crew_target(key: String) -> int:
 ## A priority mark / a stop on a source the band works (#871), relayed through HudLayer to `Main`.
 signal work_priority_requested(payload: Dictionary)
 signal stop_labor_requested(payload: Dictionary)
+## A declared build was STOPPED from the site's own sheet - the build crew control's `Stop building`.
+## Relayed to HudLayer.unqueue_requested (`Main.format_unqueue`), the same edge the work row's in-flight
+## chip uses. Payload `{ faction, x, y, herd_id, material, road, kind, pending_entity }`.
+signal unqueue_requested(payload: Dictionary)
 
 ## The crew each sheet prices its source at: the first-pass guess while the forecast is being struck, the
 ## staffed crew once it has been. A member rather than a parameter because the priced source is reached
@@ -208,15 +199,6 @@ var _road_ladder_band_entity: int = ComposeState.NO_BAND_ENTITY
 var _road_ladder_tile: Dictionary = {}
 var _road_ladder_index: int = -1
 
-## ⛔ **RETIRED — `_workings_card` / `_workings_body` / `_workings_band_entity` / `_workings_tile`**,
-## the `Workings ▸` popup's Window and the state that outlived one open of it (issue #650). The
-## working is composed on the shared COMPOSE SHEET now, whose node is `_compose_sheet` and whose
-## composition is `ComposeState`'s `deposit_*` group — so there is no second window and no second
-## acting-band member to keep in step with the first.
-## **RETIRED — `_pen_extend_crew`, the ring's own dialled crew** (`docs/plan_standing_upkeep.md`
-## §2.5). It held the number a stepper beside the Extend-pen button had dialled, because
-## `extend_pen` took a trailing worker count; the verb DECLARES now — it appends a queue entry and the
-## band's `builders` pool raises it at the head — so there is nothing left to hold between restates.
 
 ## **THE FORECAST QUERY SEAM**, injected by `HudLayer` after construction (`set_forecast_query`).
 ## Every sim-answered figure on the sheets comes through it — the crew-take curves and the work-party
@@ -367,11 +349,6 @@ func _emit_assign_labor(band: Dictionary, kind: String, workers: int, x: int, y:
 ## verb (`cultivate` / `sow` / `tame` / `corral`) and its untick into `unqueue <faction> <source>`,
 ## and it went with the checkbox: the box was not the commit — the action button reading **`Forage`**
 ## was — so ticking it and closing the sheet did nothing, reported from play repeatedly.
-##
-## **BOTH ORDERS SURVIVE, on the surface that owns the queue.** `BandPanelController` emits the
-## declaration off a WORK ROW's `⌃` and the withdrawal off a BUILD QUEUE row's `✕`, and its payloads
-## were already byte-identical to these — which is what let this whole function go without
-## `Main.format_improvement` / `format_unqueue` changing by a character.
 ##
 ## **WHAT WENT WITH IT AND MUST NOT COME BACK:** the *"an unchanged declaration is not an order"*
 ## comparison against `standing`, and the two-command commit. This sheet sends `assign_labor` and
@@ -1888,54 +1865,41 @@ func _forecast_worker_cap(forecast: Dictionary, assignable: int) -> int:
 ## **THE ROAD LADDER'S GEAR TERM, ONE ANSWER PER RUNG** — `{rung_key: build_gear}`, which
 ## `RungLadder.route_track` looks each row's answer up in.
 ##
-## ⛔ **THE KIT IS DERIVED PER RUNG, NOT READ OFF THE `builders` ROW.** The row publishes the kit the
-## sim RESOLVED for whatever is at the head of the queue, which on a card offering four rungs is the
-## answer to at most one of them; `KitRoster.builders_kit_for` is the same three-rule derivation the
-## compose sheets use, so a band whose row says `none` because it has nothing queued is quoted the
-## tool the roster will hand it when the press lands rather than bare hands.
-##
 ## **A rung the roster serves with nothing answers `{}`**, which `SourceForecast.build_turns_at`
 ## reads as the ungeared case — the honest reading for a branch no tool on this roster helps.
 func _road_ladder_kit_gear(band: Dictionary, ladder: Array[Dictionary]) -> Dictionary:
     var kits := _band_labor.kits()
-    var row_kit := HudBandLaborState.role_kit_id(band, HudConst.LABOR_KIND_BUILDERS)
-    var head_branch := _band_labor.head_build_branch(band)
-    var head_rung := _band_labor.head_build_rung(band)
     var by_rung: Dictionary = {}
     for entry in ladder:
         var rung_key := HudRouteVocab.catalog_rung_key(entry)
         if rung_key == "":
             continue
         by_rung[rung_key] = KitRoster.build_gear(band,
-            KitRoster.builders_kit_for(kits, row_kit, KitRoster.BUILD_BRANCH_ROUTE,
-                head_branch, rung_key, head_rung),
+            KitRoster.build_kit_for_branch(kits, KitRoster.BUILD_BRANCH_ROUTE, rung_key),
             KitRoster.BUILD_BRANCH_ROUTE, rung_key)
     return by_rung
 
-## **THE GEAR TERM OF THIS SHEET'S BUILD, AT THE KIT THE QUEUE ENTRY IMPLIES** — never at the kit the
-## sheet's own picker is showing.
+## **THE GEAR TERM OF THIS SHEET'S BUILD, AT THE KIT THE RUNG IMPLIES** — never at the kit the sheet's
+## own picker is showing.
 ##
 ## The picker above this control chooses what the TAKE crew carries; what speeds a build is what the
-## BUILDERS carry, and those are two different rows. Both sheets used to pass their own selection —
-## so a Cultivate was priced at the Gathering kit's build axis (nothing at all) and a Tame at
-## whichever hunt kit was picked — which is the whole of §1.2's defect.
+## BUILDERS carry, and those are two different rows. Both sheets used to pass their own selection — so
+## a Cultivate was priced at the Gathering kit's build axis (nothing at all) and a Tame at whichever
+## hunt kit was picked — which is the whole of §1.2's defect.
 ##
-## **The kit is derived per ENTRY, and the entry's web is the sheet's own** (`KitRoster.builders_kit_for`
-## → `equipment.md` → "THE BUILDERS' KIT IS DERIVED PER QUEUE ENTRY"): a patch is a plant build and a
-## herd an animal one, so the sheet knows its branch from the job it composes. `build_gear` then zeroes
-## a row whose branch disagrees, exactly as the sim's own `serves_build` does.
+## **The kit is derived per BUILD, and the build's web is the sheet's own**
+## (`KitRoster.build_kit_for_branch` → `equipment.md`): a patch is a plant build and a herd an animal
+## one, so the sheet knows its branch from the job it composes. `build_gear` then zeroes a row whose
+## branch disagrees, exactly as the sim's own `serves_build` does.
 ##
 ## ⛔ **THIS SHEET NAMES NO RUNG, AND THAT IS THE CORRECT ASK RATHER THAN A GAP.** Only a road tool
 ## binds a rung, and a road has no compose sheet — it is composed on the road ladder, which asks per
-## row. What the HEAD may be is another matter: a road at the head of this band's queue is holding
-## the builders, so its rung is threaded through, and `kit_serves_build`'s unqualified arm keeps a
-## rung-bound tool off this sheet's own estimate either way.
+## row — and `kit_serves_build`'s unqualified arm keeps a rung-bound tool off this sheet's own
+## estimate either way.
 func _build_gear_for(band: Dictionary, kind: String) -> Dictionary:
     var branch := KitRoster.build_branch_for_kind(kind)
-    var builders_kit := KitRoster.builders_kit_for(_band_labor.kits(),
-        HudBandLaborState.role_kit_id(band, HudConst.LABOR_KIND_BUILDERS), branch,
-        _band_labor.head_build_branch(band), KitRoster.BUILD_RUNG_ANY,
-        _band_labor.head_build_rung(band))
+    var builders_kit := KitRoster.build_kit_for_branch(_band_labor.kits(), branch,
+        KitRoster.BUILD_RUNG_ANY)
     return KitRoster.build_gear(band, builders_kit, branch)
 
 ## **THE IMPROVEMENT CONTROL** (issue #442 §3) — the second axis, in whichever ONE of its states this
@@ -1962,22 +1926,18 @@ func _build_gear_for(band: Dictionary, kind: String) -> Dictionary:
 ## of its cost is a rung being raised — but it is no longer a second opinion.
 ##
 ## The states and their precedence (see `HudWidgets.build_improvement_control` for the shape):
-##   RUNNING first — something is being built here, so nothing else is on offer. Its face carries
-##       the meter and, where the crew's proposed floor leaves anything for them to work, the turn
-##       estimate. **It is a STATE** — as every state of this control is since §4.7a ①. What puts a
-##       build with work on it down is `abandon`, command line only in this slice; what withdraws a
-##       DECLARATION is the BUILD QUEUE row's `✕`.
-##       **It states no PAUSE**: the phase-keyed WARN line this state used to carry
-##       (`_improvement_paused_note`, animal-only `_tame_stalled_hint` before that) described a sim
-##       that stopped a build outside Thriving, and `docs/plan_harvest_floor.md` §3.2 replaced that
-##       cliff with a rate — so it warned of a pause beside a meter its own face showed advancing. The
-##       rule it existed to make audible is stated better one register up, live and quantified, by the
-##       aside's teaching line.
-##   DONE next — the source stands on a built rung, so the state gets a static label, and the NEXT
-##       rung's line renders beneath it if there is one.
-##   OFFERED last — the next rung, its price, and the REMEDY naming the control that takes it. When
-##       that rung is GATED the offer is not rendered at all: the reason takes the control's slot
-##       instead (`IMPROVEMENT_STATE_GATED` — see the gated branch below for why).
+## RUNNING first — something is being built here, so nothing else is on offer. Its face carries the
+## meter and, where the crew's proposed floor leaves anything for them to work, the turn estimate.
+## **It is a STATE** — as every state of this control is since §4.7a ①. **It states no PAUSE**: the
+## phase-keyed WARN line this state used to carry (`_improvement_paused_note`, animal-only
+## `_tame_stalled_hint` before that) described a sim that stopped a build outside Thriving, and
+## `docs/plan_harvest_floor.md` §3.2 replaced that cliff with a rate — so it warned of a pause
+## beside a meter its own face showed advancing. The rule it existed to make audible is stated
+## better one register up, live and quantified, by the aside's teaching line. DONE next — the source
+## stands on a built rung, so the state gets a static label, and the NEXT rung's line renders
+## beneath it if there is one. OFFERED last — the next rung, its price, and the REMEDY naming the
+## control that takes it. When that rung is GATED the offer is not rendered at all: the reason takes
+## the control's slot instead (`IMPROVEMENT_STATE_GATED` — see the gated branch below for why).
 ##
 ## **THE FACES CARRY NO PAYOFF, AND THE `payoff_face` CALLABLE THAT FED THEM IS GONE.** Both states
 ## state the CHOICE and nothing else — the verb, or the verb and its meter. The terms moved one
@@ -1985,27 +1945,24 @@ func _build_gear_for(band: Dictionary, kind: String) -> Dictionary:
 ## see `_improvement_deal_row`. The one number this control still resolves for itself is the pen's
 ## zero-payoff-under-a-feed test, which is a warning about the RUNG and belongs in its note slot.
 ##
-## **THERE IS NO `extra_rows` HOOK ANY MORE** (`docs/plan_standing_upkeep.md` §4.7a ③). The plant web
-## dropped its CROP PICKER through it, beneath the box, on the reasoning that which crop the rung
-## commits to is part of the same decision — and the decision left this sheet, so the crop went with
-## it to the BUILD QUEUE row. Nothing is mounted beneath this control on any state.
+## ⛔ **DO NOT GIVE IT A HYPOTHETICAL CREW SLIDER.** With nobody on the build the sim honestly
+## publishes *no estimate*, and the tempting repair is a proposed crew to re-price it — which is
+## exactly a per-source build staffing control, re-implied.
+##
+## **THERE IS NO `extra_rows` HOOK** (`docs/plan_standing_upkeep.md` §4.7a ③): the crop the rung
+## commits to rides the work row's destination picker, so nothing is mounted beneath this control on
+## any state.
 ##
 ## **`workers`, `floor` AND `kit_gear` ARE THE PROPOSAL, not the standing assignment** — the stepper's
-## count, the slider's floor and the gear terms of the kit THIS ENTRY'S BUILDERS would carry (never
-## the sheet's own picker — see `_build_gear_for`). Both faces price
-## their turn estimate against them through `SourceForecast.build_turns_at`, which is the whole reason
-## this control is rebuilt by the live-refresh registry at its call sites: the sim's own
-## `buildTurnsRemaining` answers for the crew already there and cannot move under any of the three.
-## **`build_crew` IS THE BAND'S `builders` POOL, AND IT IS READ RATHER THAN COMPOSED**
-## (`docs/plan_standing_upkeep.md` §2.5). It was a stepper ON this control — the source's own build
-## allocation, which a verb carried as a trailing worker count — and both the stepper and the count
-## are retired: a verb DECLARES, appending an entry to the band's build queue, and the hands stand on
-## `assign_labor <faction> <band> builders <n>`. So this control quotes the estimate at the pool the
-## band already has (`HudBandLaborState.build_crew_forage` / `_hunt`) and offers nothing to dial.
+## count, the slider's floor and the gear terms of the kit THIS BUILD's builders would carry (never the
+## sheet's own picker — see `_build_gear_for`). Both faces price their turn estimate against them
+## through `SourceForecast.build_turns_at`, which is the whole reason this control is rebuilt by the
+## live-refresh registry at its call sites: the sim's own `buildTurnsRemaining` answers for the crew
+## already there and cannot move under any of the three.
 ##
-## ⛔ **DO NOT GIVE IT A HYPOTHETICAL CREW SLIDER.** With the pool at zero the sim honestly publishes
-## *no estimate*, and the tempting repair is a proposed crew to re-price it — which is exactly the
-## per-source build staffing this slice deletes, re-implied by a control.
+## **`build_crew` IS THE SITE'S OWN BUILD CREW, AND IT IS READ RATHER THAN COMPOSED**
+## (`docs/plan_labor_at_scale.md`): the source row's `builders_staffed`. The control quotes the
+## estimate at the crew the sim staffed and offers nothing to dial.
 func _build_improvement_control(kind: String, source: Dictionary, prefix: String, floor: float,
         composed: String, band: Dictionary, workers: int, kit_gear: Dictionary,
         works_the_ground: bool, target: VBoxContainer, build_crew: int = 0) -> void:
@@ -2035,31 +1992,16 @@ func _build_improvement_control(kind: String, source: Dictionary, prefix: String
     # ACTUALLY in flight when there are builders on it or work banked on its meter; a rung with neither
     # has been *declared* and nothing more. Rendering that as RUNNING was a one-way door — a player who
     # declared `cultivate` on a band with no free hands got `Cultivating 0 / 50 work (0%)` and no way
-    # back off it. Reported from play.
-    #
-    # It is the DECLARED state instead: the offer's own face plus `◷ Queued`, whose withdrawal is
-    # `unqueue <faction> <source>` on the BUILD QUEUE row's `✕` (`docs/plan_standing_upkeep.md` §2.5,
-    # §4.7a ①). The *not started* warning travels with it and stays useful, a band that SHRINKS
-    # shedding its builders while the declaration stands.
-    #
-    # **THE CREW TEST IS *ARE THEY ON THIS ONE*, WHICH IS THE QUEUE'S HEAD** (§4.6b). The whole
-    # `builders` pool goes on the head entry until its meter fills, so a staffed pool says nothing
-    # about an entry waiting third in line — and reading it as *in flight* would put the one-way
-    # `Cultivating 0 / 50 work (0%)` Label straight back on every queued-and-waiting rung.
-    #
-    # ⛔ **AND IT IS THE ACTING BAND'S OWN HEAD, WHICH `SourceForecast.build_is_queue_head` WAS NOT**
-    # (§4.9 item 9a). That read `buildQueuePosition == 0`, published per SOURCE and riding the WINNING
-    # band, so a source standing third in THIS band's line answered *head* whenever another band
-    # working it had it first — and the sheet drew the one-way running meter the note above records as
-    # a reported defect, reached by the wrong door. `is_band_build_head` asks the band's own
-    # `buildQueue`, which is the only list that can answer for this band.
+    # back off it. Reported from play. The DECLARED state instead is the offer's own face plus its
+    # stop, whose withdrawal is `unqueue <faction> <source>` on the work row's crew chip
+    # (`docs/plan_standing_upkeep.md` §2.5, §4.7a ①); the *not started* warning travels with it, which
+    # stays useful when the site's crew shrinks while the declaration stands.
     if running_verb != SourceForecast.IMPROVEMENT_NONE \
-            and not (build_crew > SourceForecast.BUILD_CREW_NONE \
-                and _band_labor.is_band_build_head(band, kind, source)) \
+            and build_crew <= SourceForecast.BUILD_CREW_NONE \
             and SourceForecast.improvement_progress(source, prefix, running_verb) \
                 <= SourceForecast.BUILD_METER_UNSTARTED:
-        _mount_declared_control(source, prefix, source_kind, running_verb, floor, band, kit_gear,
-            target, build_crew)
+        _mount_declared_control(kind, source, prefix, source_kind, running_verb, floor, band,
+            kit_gear, target, build_crew)
         return
     if running_verb != SourceForecast.IMPROVEMENT_NONE:
         var glyph := FoodIcons.for_policy(running_verb)
@@ -2132,19 +2074,16 @@ func _build_improvement_control(kind: String, source: Dictionary, prefix: String
         if _pen_rung_pays_nothing(deal, band):
             notes.append(HudComposeVocab.IMPROVEMENT_DEAL_DEPLETED_NOTE)
         # **THE STATE OF THE METER IS THE FACE'S COLOUR, AND IT HAS THREE VALUES** — green while the
-        # surplus is positive and a real turn count is quoted, amber while the crew banks exactly the
-        # rate and holds it at `∞`, red while the rate goes unpaid and the meter loses ground. It
-        # replaced the prose note beside the BUILDERS stepper (`2 work a turn holds it — the surplus is
-        # progress`), which was a sentence doing a colour's job on the line above it.
         # `SourceForecast.build_pace` owns the classification and the rule that the client reads the
-        # sim's answer rather than deriving the sign of a surplus for itself.
-        # **THE PACE IS ASKED WITH THE CREW, because one wire value covers two states**
-        # (`SourceForecast.BUILD_PACE_HELD`): `BUILD_METER_HOLDS` is a crew treading water when there
-        # is a crew, and a deliberate park when there is not.
+        # sim's answer rather than deriving the sign of a surplus for itself. **THE PACE IS ASKED
+        # WITH THE CREW, because one wire value covers two states**
+        # (`SourceForecast.BUILD_PACE_HELD`): `BUILD_METER_HOLDS` is a crew treading water when
+        # there is a crew, and a deliberate park when there is not.
         var pace := SourceForecast.build_pace(running_turns, build_crew)
         target.add_child(HudWidgets.build_improvement_control(running_verb,
             HudWidgets.IMPROVEMENT_STATE_RUNNING, running_face,
-            _improvement_running_tooltip(running_verb), notes, true, pace))
+            _improvement_running_tooltip(running_verb, source, prefix), notes, true, pace,
+            Callable(), _stop_build_callable(kind, source, band)))
         return
     # DONE — the highest rung this source has actually built, as a state label. Highest first, for the
     # reason the work board's rung mark tests highest first: a Field is ALSO cultivated and a penned
@@ -2240,11 +2179,10 @@ func _build_improvement_control(kind: String, source: Dictionary, prefix: String
             # carry one, and dropping the rest would hide half of what the rung costs to unlock.
             reasons.slice(1)))
         return
-    # **THE OFFER IS NEVER DEAD FOR WANT OF HANDS** (`docs/plan_standing_upkeep.md` §2.5). It greyed
-    # out on an empty build pool, because declaring used to mean declaring a build WITH a crew that
-    # the sim refused outright. A verb names no crew: declaring APPENDS a queue entry, which is legal
-    # and costs nothing whether or not anybody is on the `builders` role — and the note that says
-    # nobody is comes from the DECLARED state's own *not started* warning.
+    # **THE OFFER IS NEVER DEAD FOR WANT OF HANDS** (`docs/plan_labor_at_scale.md`). A verb names no
+    # crew: declaring is legal and costs nothing whether or not anybody is free, the site's crew works
+    # it when hands are, and the note that says nobody is on it comes from the DECLARED state's own
+    # *not started* warning.
     #
     # **AND THE OFFER NAMES THE CONTROL THAT TAKES IT, because it is no longer that control itself**
     # (§4.7a ①). A priced offer with no visible way to accept it is exactly what a sheet that merely
@@ -2327,49 +2265,33 @@ func _improvement_rung_face(rung: String) -> String:
     return HudComposeVocab.IMPROVEMENT_OFFER_BARE_FORMAT % [FoodIcons.for_policy(rung),
         String(HudComposeVocab.IMPROVEMENT_OFFER_LABELS.get(rung, rung.capitalize()))]
 
-## **RETIRED — `_mount_build_crew_row`, the BUILDERS stepper on the improvement control**
-## (`docs/plan_standing_upkeep.md` §2.5). It stated the source's own build crew, because the verb
-## carried one as a trailing worker count; the verb DECLARES now — `cultivate <f> <x> <y>` appends an
-## entry to the band's build queue and the extra token is a PARSE ERROR — and the hands stand on
-## `assign_labor <faction> <band> builders <n>`, a standing role card on the Band panel.
-##
 ## **WHAT THE SHEET SHOWS INSTEAD IS ALREADY ON THE CONTROL**: the rung's `<rung>WorkCost` (the pile),
 ## its `<rung>UpkeepDemand` (the rate it costs to hold, forever) and the chained
-## `buildTurnsRemaining` this source would get if queued now — all three published before anything is
-## queued. With the pool at zero the sim answers *no estimate*, and the face says so plainly rather
-## than rendering nothing.
-##
+## `buildTurnsRemaining` this source would get if declared now — all three published before anything is
+## declared. With nobody on the build the sim answers *no estimate*, and the face says so plainly
+## rather than rendering nothing.
 
-## **THE DECLARED CONTROL — a rung this band has queued and that has neither reached the head of that
-## queue nor banked any work.** The offer's own face (the verb and its price), the `◷ Queued` clause
-## that tells it from an unqueued offer, and the *not started* warning beneath.
+## **THE DECLARED CONTROL — a rung this band has declared and that has neither a crew on it nor any
+## work banked.** The offer's own face (the verb and its price), the `◷ Queued` clause that tells it
+## from an undeclared offer, and the *not started* warning beneath.
 ##
-## **IT IS A `Label`, AND THE UNDO IS SOMEWHERE ELSE** (`docs/plan_standing_upkeep.md` §4.7a ①). It
-## was a TICKED, live checkbox whose untick sent `unqueue <faction> <source>` — the withdrawal that
-## really does drop the declaration, leaving the row, its take crew, its kit and the meter exactly as
-## they are (§2.5). That verb is unchanged and so is its payload; what moved is the control, onto the
-## BUILD QUEUE row's `✕`, because a declaration IS a queue entry and the list of entries is where one
-## is dropped. This sheet commits nothing, so it withdraws nothing either.
+## **IT STOPS THROUGH THE SITE'S OWN CHIP** (`docs/plan_standing_upkeep.md` §4.7a ①, `_stop_build_callable`):
+## `unqueue <faction> <source>` drops the declaration, leaving the row, its take crew, its kit and the
+## meter exactly as they are (§2.5).
 ##
-## **IT STATES NO POSITION AND NO DATE.** The schedule belongs to the surface that can reorder it —
-## see `HudComposeVocab.BUILD_QUEUED_CLAUSE`.
-##
-## **IT IS PRICED AT THE BAND'S POOL, exactly as the OFFER beside it is** (§4.6b). A declared entry
-## that has not reached the head of the queue is not being worked THIS turn, and quoting it at nobody
-## would state *no estimate* for a band that has builders — the date it wants is *what this will take
-## once they reach it*, which is the closed form at the pool.
-func _mount_declared_control(source: Dictionary, prefix: String, source_kind: String, rung: String,
-        floor: float, band: Dictionary, kit_gear: Dictionary,
+## **IT IS PRICED AT THE SITE'S CREW, exactly as the OFFER beside it is** (§4.6b).
+func _mount_declared_control(kind: String, source: Dictionary, prefix: String, source_kind: String,
+        rung: String, floor: float, band: Dictionary, kit_gear: Dictionary,
         target: VBoxContainer, build_crew: int) -> void:
     var turns := SourceForecast.build_turns_at(source, prefix, rung, build_crew, floor, kit_gear)
-    # **THE *NOT STARTED* WARNING IS GATED ON THE POOL, and it was unconditional**
+    # **THE *NOT STARTED* WARNING IS GATED ON THE SITE'S CREW, and it was unconditional**
     # (`docs/plan_standing_upkeep.md` §2.5). It fired on every declared rung, which was right while
-    # DECLARED meant *nobody is building this*; a declaration is queued now, so a band with builders
-    # on the role really is going to raise it — the face beside this note quotes the date — and a
-    # warning there would be telling the player nothing is happening on a job that is simply waiting
-    # its turn. With the pool empty it is exactly as true as it ever was, and it LEADS, being the
-    # loudest thing true of the rung; the pen's zero payoff rides beneath it as it does on a running
-    # build, that note being about the RUNG rather than about the work in flight.
+    # DECLARED meant *nobody is building this*; a site with builders on it really is going to raise
+    # the rung — the face beside this note quotes the date — and a warning there would be telling the
+    # player nothing is happening on a job that is under way. With nobody on it the warning is exactly
+    # as true as it ever was, and it LEADS, being the loudest thing true of the rung; the pen's zero
+    # payoff rides beneath it as it does on a running build, that note being about the RUNG rather
+    # than about the work in flight.
     var notes: Array = []
     if build_crew <= SourceForecast.BUILD_CREW_NONE:
         notes.append(HudComposeVocab.BUILD_UNSTARTED_NOTE)
@@ -2379,9 +2301,10 @@ func _mount_declared_control(source: Dictionary, prefix: String, source_kind: St
     target.add_child(HudWidgets.build_improvement_control(rung,
         HudWidgets.IMPROVEMENT_STATE_DECLARED,
         HudComposeVocab.IMPROVEMENT_DECLARED_FORMAT % [
-            _improvement_rung_face(rung), HudComposeVocab.BUILD_QUEUED_CLAUSE],
-        String(HudComposeVocab.IMPROVEMENT_HINTS.get(rung, "")),
-        notes, true, SourceForecast.build_pace(turns, build_crew)))
+            _improvement_rung_face(rung), HudComposeVocab.BUILD_WAITING_CLAUSE],
+        _improvement_running_tooltip(rung, source, prefix),
+        notes, true, SourceForecast.build_pace(turns, build_crew), Callable(),
+        _stop_build_callable(kind, source, band)))
 
 ## **A PEN THAT WOULD PAY NOTHING IS A PURE LOSS, and the note that says so has now outlived three
 ## homes for the zero itself.** The pen harvests by constant escapement, so a herd at or below the MSY
@@ -2401,20 +2324,9 @@ func _pen_rung_pays_nothing(deal: Dictionary, band: Dictionary) -> bool:
     var output := float(band.get("output_multiplier", SourceForecast.OUTPUT_FULL))
     return float(deal["payoff"]) * output < SourceForecast.FOOD_FLOW_MIN
 
-## **RETIRED — `_improvement_offer_face`, the verb and its PRICE.** It composed
-## `🌱 Cultivate this patch — 50 work, ≈25 turns · 2 work a turn from Agriculture to hold` and was
-## shared by the OFFERED and DECLARED states so a rung could not be priced one way before it was
-## queued and another after.
-##
-## **THE PRICE LEFT THE SHEET, not the client** (`docs/plan_standing_upkeep.md` §4.7a ①). Ray, from
-## play: *"That information should be on the work tab. No need to have it here, it is useless."* The
-## pile and the standing rate ride the WORK ROW's `⌃` tooltip — one hover from the control that spends
-## them — and the turn count rides the BUILD QUEUE row's date, which is the sim's own chained answer
-## and the one a player reorders against. `DetailFormat.build_price_clause` composes the first pair
-## still and is unchanged; only its caller moved.
-##
-## What is left here is two much smaller composers: `_improvement_offer_phrase` (the pointer sentence)
-## and `_improvement_rung_face` (the bare rung, which DECLARED puts `◷ Queued` beside).
+## **THE OFFER'S PRICE LEFT THE SHEET** (the Work row's `⌃` tooltip states it), so two small composers
+## remain here: `_improvement_offer_phrase` (the pointer sentence) and `_improvement_rung_face` (the
+## bare rung, which DECLARED puts `◷ Queued` beside).
 
 ## The RUNNING control's tooltip: the rung's own hint — *what does this buy?* — and nothing else.
 ##
@@ -2423,8 +2335,32 @@ func _pen_rung_pays_nothing(deal: Dictionary, band: Dictionary) -> bool:
 ## it described — a build with nobody on it — is now stated live on the source itself, by the
 ## `Keeping:` row and the `At risk:` countdown beside it, which say what it is COSTING rather than
 ## what it would cost. The tooltip therefore takes no web, so it takes no `kind`.
-func _improvement_running_tooltip(improvement: String) -> String:
-    return String(HudComposeVocab.IMPROVEMENT_HINTS.get(improvement, ""))
+func _improvement_running_tooltip(improvement: String, source: Dictionary, prefix: String) -> String:
+    return HudFormat.join_tooltip_lines([
+        String(HudComposeVocab.IMPROVEMENT_HINTS.get(improvement, "")),
+        DetailFormat.build_crew_tooltip(source, prefix, _item_display_names)])
+
+## Display names of the equipment roster (`{item_id: name}`), so a build's tool shortfall is named.
+var _item_display_names: Dictionary = {}
+
+func set_item_display_names(names: Dictionary) -> void:
+    _item_display_names = names
+
+## **STOP THIS BUILD, FROM THE SITE'S OWN SHEET** - the work row's in-flight chip, on the sheet: a press
+## sends `unqueue` (which now means *stop this build*) for the source the sheet is about. A herd names its
+## `id`, a patch its tile; no optimistic write beyond the `pending_entity` the relay records.
+func _stop_build_callable(kind: String, source: Dictionary, band: Dictionary) -> Callable:
+    return func() -> void:
+        unqueue_requested.emit({
+            "faction": int(band.get("faction", HudConst.PLAYER_FACTION_ID)),
+            "x": -1 if kind == SourceForecast.LABOR_KIND_HUNT else int(source.get("x", -1)),
+            "y": -1 if kind == SourceForecast.LABOR_KIND_HUNT else int(source.get("y", -1)),
+            "herd_id": String(source.get("id", "")) if kind == SourceForecast.LABOR_KIND_HUNT else "",
+            "material": "",
+            "road": false,
+            "kind": kind,
+            "pending_entity": int(band.get("entity", -1)),
+        })
 
 ## The done-state label's face — the glyph and the rung's noun, THE SAME SHAPE ON BOTH WEBS.
 ##
@@ -2530,10 +2466,6 @@ func _payoff_terms(deal: Dictionary, band: Dictionary) -> String:
         float(deal["payoff_fodder"]) * output, SourceForecast.YIELD_ACCOUNT_FOOD,
         SourceForecast.scaled_material_rows(deal.get("payoff_material", []), output))
 
-## ⛔ RETIRED — **`_build_extend_pen_control`, THE TILE CARD'S `Extend pen` BUTTON AND ITS
-## `Fencing N%` BADGE** (`docs/plan_standing_upkeep.md` §4.9 item 12c). Reported from play: extending
-## a pen was a button on the TILE card, and it produced a **build queue entry** — so it was the one
-## queue entry in the game declared from somewhere other than the work tab.
 ##
 ## **THE MECHANICAL REASON IT ENDED UP HERE** was that `RungLadder.has_track` is FALSE when nothing
 ## sits above the standing rung, and `animal:pen` is the top of the animal branch — so a corralled
@@ -2546,8 +2478,6 @@ func _payoff_terms(deal: Dictionary, band: Dictionary) -> String:
 ## one position on a ladder. It opens a PRICE rather than committing on the click, because a ring
 ## draws `animal:pen`'s own hurdle pile since §2.7 and a one-click button stated that cost nowhere.
 ##
-## **THE BADGE WENT WITH IT, being a THIRD statement of one meter**: the build queue row dates and
-## withdraws the ring, and the work row's mark says one is up on its hover.
 ## `PEN_EXTEND_LABEL` / `PEN_EXTEND_TOOLTIP` / `PEN_FENCING_LABEL` retired with the control; the
 ## `extend_pen_requested` signal and `Main.format_extend_pen` did NOT — the command is unchanged and
 ## only its entry point moved.
@@ -3088,7 +3018,6 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
     # against. Without the standing term a fully-allocated band capped at `0` and the player could
     # take a crew to nothing and never put it back.
     #
-    # **THE BUILDERS ARE NOT IN THIS TRANSACTION ANY MORE** (`docs/plan_standing_upkeep.md` §2.5).
     # The sheet composed two crews and clamped them against one pool while a verb carried a head
     # count; the build is a band-level role now, so this is the take's ceiling and nothing else.
     var assignable := _band_labor.source_crew_pool_hunt(band, herd_id)
@@ -3131,23 +3060,6 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
     # the drag.
     _hunt_live_crew_take = crew_take
     _hunt_live_crew_view = crew_take_view
-    # THE COMPOSED IMPROVEMENT — the second axis.
-    # The deal it states rides the SELECTED stance, which is the whole point of the split: a Deplete
-    # builder's dip is a fraction of Deplete's larger ceiling, and it defeats itself through the
-    # ecology (the meter accrues only while the herd is Thriving) rather than through a gate.
-    # RESOLVED BEFORE THE FORECAST, because the forecast now takes it: while a build runs the sim's
-    # ceiling is `stance × <rung>BuildFraction`, so a stance-only forecast caps the stepper on a
-    # ceiling this crew will not be paid.
-    # A verb this herd has already built is RETIRED rather than carried — the animal twin of the
-    # forage sheet's rule, and for the same reason: `seed_hunt` runs only on a source change, so a
-    # composition outlives its build and would keep quoting a Tame that finished. `build_verb` is that
-    # retirement and its opposite in one derivation: it also ADOPTS a build the meters say is running
-    # where nothing was declared.
-    # **A DECLARATION MADE ELSEWHERE THIS FRAME OUTRANKS THE COMPOSITION** (§4.7a ①). The Work board's
-    # `⌃` writes the rung to the OPTIMISTIC OVERLAY, and this sheet is what would otherwise go on
-    # offering a rung the band has just queued — the sheet stays open across that press, so a stale
-    # OFFERED here is a sheet arguing with the queue row beside it. See
-    # `HudBandLaborState.pending_improvement_for` for why it reads the overlay and not the assignment.
     var composed_improvement := SourceForecast.build_verb(herd, HudComposeVocab.BARE_FORECAST_PREFIX,
             SourceForecast.SOURCE_KIND_HERD,
             _declared_or_composed(_band_labor.pending_improvement_for(
@@ -3446,22 +3358,7 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
                     # crew and none composed*, and which the dead commit button already forks on.
                     # It picks WHICH remedy the offered rung states (§4.7a ③).
                     is_working or staffed_crew > 0, host as VBoxContainer,
-                    # **THE ESTIMATE IS QUOTED AT THE ACTING BAND'S OWN `builders` POOL**
-                    # (`docs/plan_standing_upkeep.md` §4). It was this sheet's retired BUILDERS
-                    # stepper; it is the band's standing role now, so the reading moves when the
-                    # player staffs that role and never when they touch this sheet. It is the
-                    # PICKED band's, not a fold across the source's workers: this is the band the
-                    # commit names, so it is the band whose hands would raise the entry.
-                    #
-                    # **AND IT IS PENDING-AWARE, like the Builders card beside it.** It read the
-                    # CONFIRMED row, so a player who had just staffed the role read a card saying
-                    # `2` next to a sheet saying *"nobody is on this band's Builders role"* until
-                    # the turn resolved — two surfaces on one screen, and the stale one phrased as
-                    # an accusation. A pending role edit cannot be refused (`assign_labor` clamps
-                    # rather than rejects), so the optimistic read can never suppress a real
-                    # warning.
-                    int(_band_labor.effective_role_workers(
-                        band, HudConst.LABOR_KIND_BUILDERS).get("workers", 0))))
+                    SourceForecast.build_crew_staffed(herd, HudComposeVocab.BARE_FORECAST_PREFIX)))
     # THE ONE RESOLUTION OF THIS SHEET'S DEAL, spent by the readout below. An unassign quotes
     # none: the control above is not built either, so there would be no rung on the card for the
     # rows to be about.
@@ -3619,10 +3516,6 @@ func _mount_kit_row(target: VBoxContainer, kits: Array, job: String, kit_id: Str
         HudComposeVocab.COMPOSE_FIELD_KIT, false, crew, assignment)
     if row != null:
         target.add_child(row)
-
-
-
-
 
 
 
@@ -3872,21 +3765,10 @@ func _resolve_crop_selection(entries: Array[Dictionary], policy: String, committ
 ## (`docs/plan_standing_upkeep.md` §4.7a ③). One pressable row per plant in the tile's basket, with an
 ## illegal entry greyed beside its reason and the committed one marked-and-locked.
 ##
-## Ray, from play: *"The CROP TO TEND shouldn't be a selection here as the user can't do the
-## cultivate here."* He is right, and §4.7a ③ had already decided it — **the queue row is the job's
-## SETTINGS**, so the crop rides the entry it belongs to, beside the kit, on the tab that owns the
-## queue. `BandPanelController._build_queue_crop_picker` is where it went.
-##
 ## **THE CROP IS STILL COMMITTED BY THIS SHEET'S OWN `assign_labor`**, as its `species` token, exactly
 ## as before — that is why moving the CONTROL stranded nothing. `_resolve_crop_selection` still runs
 ## every render, so a composition can never name a plant this tile and rung cannot take, and the
 ## readout's `ONCE TENDED` terms still follow the selected crop through `_crop_payoff_terms`.
-##
-## **`HudStyle.apply_button`'s `selected_when_disabled` LOSES ITS LAST CALLER with it.** It was
-## written for issue #420's standing-but-gated rung, which went with the stance/improvement split, and
-## this picker's committed row was the second; it survives as a `HudStyle` flag because
-## marked-and-locked is a real state, and the queue row's picker does not need it — an `OptionButton`
-## marks its own selection natively.
 ##
 ## The `extra_rows` hook it rode retired with it: the improvement control mounts nothing beneath
 ## itself on any state now.
@@ -4235,13 +4117,6 @@ func _build_forage_assign_controls(tile_info: Dictionary, target: VBoxContainer)
     # UNASSIGN: what abandoning costs is already on the card in the rung's own hint ("It must stay
     # staffed or it goes feral"), so a second warning here would state one fact twice.
     if offsite_verb == "":
-        # **THE CROP PICKER IS NOT HERE ANY MORE** (`docs/plan_standing_upkeep.md` §4.7a ③). It rode
-        # beneath the box on the reasoning that which crop the rung commits to is part of the same
-        # decision — and the decision left this sheet, so the crop went with it to the job's own BUILD
-        # QUEUE row. Ray, from play: *"The CROP TO TEND shouldn't be a selection here as the user can't
-        # do the cultivate here."* The crop is still COMMITTED by this sheet's `assign_labor`, as its
-        # `species` token, which is why moving the control stranded nothing.
-        #
         # **IN THE LIVE SET, for the reason the hunt sheet's twin is** — the control's ink is priced at
         # the floor as well as at the crew, and a floor DRAG may not rebuild the sheet.
         var improvement_host := VBoxContainer.new()
@@ -4254,10 +4129,9 @@ func _build_forage_assign_controls(tile_info: Dictionary, target: VBoxContainer)
                     band, crew, _build_gear_for(band, SourceForecast.LABOR_KIND_FORAGE),
                     # The plant twin — see the hunt sheet's note (§4.7a ③).
                     is_working or staffed_crew > 0, host as VBoxContainer,
-                    # The plant twin — the ACTING band's own pool, pending-aware; see the hunt
-                    # sheet's note for both halves.
-                    int(_band_labor.effective_role_workers(
-                        band, HudConst.LABOR_KIND_BUILDERS).get("workers", 0))))
+                    # The plant twin - the builders the sim staffed on this patch's own build.
+                    SourceForecast.build_crew_staffed(tile_info,
+                        HudComposeVocab.FORAGE_FORECAST_PREFIX)))
     # **THE PAYOFF FOLLOWS THE SELECTED CROP, AND IT IS RESOLVED EXACTLY ONCE** (issue #419). The
     # readout's payoff row and the crop picker one control up must read ONE seam or they quote
     # different crops — which is the whole defect that issue named, in its second home. `deal_rung` is
@@ -4972,12 +4846,6 @@ func _deposit_crew_take_ask(band: Dictionary, deposit: Dictionary, kit_id: Strin
         },
     }
 
-## **THE OPTIMISTIC DECLARATION'S UNDO, ON THE ONE SURFACE `_after_pending_change()` CANNOT REACH.**
-## `Hud.drop_pending_assign` is the rollback for a verb the server refused, and the write path it
-## undoes (`_on_work_row_improvement_requested`) refreshes this sheet explicitly — so the rollback
-## must too, or a sheet open on that source goes on rendering the rung as DECLARED beside a queue row
-## that has already vanished.
-##
 ## **A REFRESH ALONE IS NOT ENOUGH, AND THAT IS THE WHOLE REASON THIS IS ITS OWN METHOD.** Both
 ## builders ADOPT the overlay's declaration into the composition — `if composed_improvement !=
 ## _compose.<web>_improvement(): set_<web>_improvement(...)`, which is what lets a `⌃` press flip an
@@ -5328,11 +5196,6 @@ func _open_road_ladder(tile_info: Dictionary, index: int, anchor: Control) -> vo
 
 ## **THE CARD'S CONTENTS, REBUILT IN PLACE** — the band row, the track, and the abandon row beneath it.
 ##
-## ⛔ **A PICK RE-RENDERS AND MUST NOT CLOSE THE CARD.** Every gate on the track is resolved against
-## the acting band (`RungGates.route_gates(…, band, keeper_label)`) and the turns estimate is priced at
-## that band's own `builders` pool, so a row left standing after a pick would offer a rung the newly
-## chosen band cannot have, at a pace it cannot keep. `popup()` is the OPEN's business alone; this
-## refills the same Window.
 func _fill_road_ladder() -> void:
     var margin := _road_ladder_body
     if margin == null or not is_instance_valid(margin):
@@ -5351,28 +5214,20 @@ func _fill_road_ladder() -> void:
     var keeper_label := ""
     if HudRouteVocab.has_keeper(road):
         keeper_label = _band_labor.band_label_for_id(HudRouteVocab.keeper_band_id_of(road))
-    # **THE CREW IS THE ACTING BAND'S `builders` POOL**, pending-aware, and the gear is what that pool
-    # carries for the ROUTE branch — **resolved PER RUNG**, which is what the road tools made
-    # necessary.
-    #
     # ⛔ **ONE GEAR TERM FOR THE WHOLE CARD WOULD QUOTE THE PAVING KIT'S `2.0` ON A `grade`.** Both
     # road tools declare the route branch and each names its own rung, so a card that asked once and
     # spent the answer on every row would promise an uplift the sim pays on exactly one of them. The
     # rows are the rungs, so the ask is per rung and `route_track` looks its row's answer up by key.
-    var builders := int(_band_labor.effective_role_workers(
-        band, HudConst.LABOR_KIND_BUILDERS).get("workers", SourceForecast.BUILD_CREW_NONE))
+    var builders := SourceForecast.build_crew_staffed(road, SourceForecast.BARE_SOURCE_PREFIX)
     var kit_gear := _road_ladder_kit_gear(band, ladder)
     # **WHETHER THIS ROAD IS ALREADY ORDERED IS A FACTION QUESTION, not the acting band's** — the
     # same set the tile card's `Road` row joins on, so the card and the ladder cannot disagree about
     # one road while the picker names a band that is not its keeper.
     var rows := RungLadder.route_track(road, ladder, _player_knowledge(),
         _topbar.knowledge_labels(), band, keeper_label, builders, kit_gear,
-        _road_ladder_queue(band), _band_labor.road_queue_tiles())
-    # ⛔ **THE RUNG ALREADY BEING BUILT IS A JUMP, NOT A SECOND ORDER.** The sim refuses a rung the
-    # band already keeps at or above (*you already keep it at that rung or above*), so pressing it
-    # spent a command to be told no; what a player pressing a road they have already ordered wants is
-    # the board where its place in the queue is decided. Resolved from the ROWS rather than re-derived,
-    # so the face that says *being built* and the press that acts on it read one answer.
+        _band_labor.road_queue_tiles())
+    # Resolved from the ROWS rather than re-derived, so the face that says *being built* and the
+    # press that acts on it read one answer.
     var building_verb := RungLadder.route_building_verb(rows)
     HudWidgets.clear_children(margin)
     var column := VBoxContainer.new()
@@ -5386,52 +5241,16 @@ func _fill_road_ladder() -> void:
         # The press closes the card BEFORE it emits, the destination track's own rule: the declaration
         # re-renders the drawer this card is anchored to.
         _dismiss_road_ladder()
-        # **A RUNG NOT YET ORDERED IS QUEUED AND THEN FOLLOWED; the one being built is only followed.**
-        # Either way the press ends on the acting band's Work tab — the board that says where this
-        # road stands in the queue and which staffs the builders that will raise it — so the act and
-        # its consequence are one gesture rather than a command that lands somewhere unseen.
         if verb != building_verb:
             _emit_road_improvement(band, _road_ladder_tile, verb)
         # **THE BAND IS THE `Band:` PICKER'S**, which is the band the entry is being made for and
         # whose pool pays for it — the same rule the offered rung's `Work tab` link follows.
         _navigate_to_work_tab(int(band.get("entity", ComposeState.NO_BAND_ENTITY))),
-        HudRouteVocab.ROAD_LADDER_TITLE))
+        HudRouteVocab.ROAD_LADDER_TITLE, RungLadder.max_builders_by_rung(_topbar.ladder_rungs())))
     var abandon := _build_road_abandon_row(road, band)
     if abandon != null:
         column.add_child(abandon)
     margin.add_child(column)
-
-## ⛔ **WHAT A PRESS WOULD LAND BEHIND — the acting band's own build queue, as `{ahead, head}`.**
-##
-## The press DECLARES: it appends an entry, and the whole `builders` pool funds the HEAD of that queue
-## until its meter fills. So *how long* is only half the answer and *what is it waiting behind* is the
-## other half — the question a road banking nothing for thirty turns actually raises.
-##
-## **THE HEAD IS THE ONLY ENTRY WORTH NAMING**, because it is the only one that decides when this road
-## starts; the rest are a count, which is what the BUILD QUEUE block's reorder arrows act on.
-##
-## `{}` for a band this controller cannot resolve, which the ladder renders as NO line rather than as
-## an empty queue — an unknown queue and an empty one are different facts and only one is reassuring.
-func _road_ladder_queue(band: Dictionary) -> Dictionary:
-    if band.is_empty():
-        return {}
-    var keys := _band_labor.build_queue_keys(band)
-    var head := ""
-    var entries: Variant = band.get("build_queue", [])
-    if entries is Array and not (entries as Array).is_empty() \
-            and (entries as Array)[0] is Dictionary:
-        var first: Dictionary = (entries as Array)[0]
-        # **THE SUBJECT, NOT THE QUEUE ROW'S FACE.** `Tame Wild Aurochs` reads as a fragment of another
-        # panel quoted mid-sentence; `behind Wild Aurochs` reads as a sentence. One resolution, in the
-        # queue block's own vocabulary, so the two surfaces cannot name one entry two ways.
-        head = HudWorkVocab.build_queue_subject(
-            String(first.get("kind", "")).strip_edges().to_lower(),
-            int(first.get("target_x", -1)), int(first.get("target_y", -1)),
-            _herd_label_for_id(String(first.get("fauna_id", ""))))
-    return {
-        HudRouteVocab.ROAD_LADDER_QUEUE_AHEAD_KEY: keys.size(),
-        HudRouteVocab.ROAD_LADDER_QUEUE_HEAD_KEY: head,
-    }
 
 ## ⛔ **WHICH BAND THE CARD OPENS ON, AND THE DEFAULT IS THE ONE A PLAYER WOULD HAVE PICKED ANYWAY.**
 ##
@@ -6380,10 +6199,6 @@ func _standing_actions_shape(summary_model: Dictionary) -> Array:
 func _herd_actions_shape(herd_id: String, corralled: bool, available: bool, summary_model: Dictionary) -> Array:
     return [herd_id, corralled, available] + _standing_actions_shape(summary_model)
 
-## ⛔ RETIRED — **`_update_extend_pen_control` and `_apply_fencing_badge`**, the in-place patch for the
-## `Fencing N%` badge and the words it wrote. They went with the badge itself (§4.9 item 12c); the
-## ring's meter is quoted by the build queue row, through the same `SourceForecast.pen_extend_fraction`
-## that division has always had exactly one home in.
 
 ## Patch the `Assign … ▸` CELL in place: its first line's noun (herders vs hunters can flip as a herd
 ## is tamed), its second line's standing summary, and the button's primary/ghost lit-while-composing

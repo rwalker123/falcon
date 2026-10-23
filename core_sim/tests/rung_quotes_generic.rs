@@ -226,9 +226,9 @@ fn stand_on_a_farm_and_queue_the_terrace(app: &mut App) -> (bevy::prelude::Entit
         ALL_HANDS,
         None,
     );
-    allocation.set_assignment(LaborTarget::Builders, BUILDERS, ALL_HANDS, None);
-    allocation.enqueue_build(BuildSource::Patch(site), BuildJob::Climb(terrace()));
+    allocation.declare_build(BuildSource::Patch(site), BuildJob::Climb(terrace()));
     app.world.entity_mut(band).insert(allocation);
+    core_sim::seat_builders(&mut app.world, band, BUILDERS);
     (band, site)
 }
 

@@ -3,7 +3,7 @@
 //! The emergence system, the kind rule, the permanence of the leader, the checkpoint and the
 //! splinter. The four practice sources (finished directed-work builds -- Cultivate, Sow, Tame, Corral --
 //! commanded splits, hexes walked following a herd, settlement stages reached) are unit-pinned
-//! beside `BandLeadership` itself; `build_queue.rs` drives a finished build's credit through the
+//! beside `BandLeadership` itself; `builds.rs` drives a finished build's credit through the
 //! labor pass.
 
 use bevy::app::App;

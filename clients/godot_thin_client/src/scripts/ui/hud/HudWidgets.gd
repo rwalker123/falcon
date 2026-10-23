@@ -190,15 +190,6 @@ static func build_row_note_label(text: String, color: Color, row_tooltip: String
 ## A secondary status part (line 2 of the two-line form): rendered a touch smaller
 ## (`HudWorkVocab.ALLOC_SECTION_FONT_SIZE`) than the title.
 ##
-## **`elide` IS FOR A HOST WHOSE WIDTH IS RESERVED RATHER THAN EARNED**, and it is the fix for a
-## defect that read as the whole panel being too narrow. A `Label` with autowrap off reports its
-## WHOLE text as its minimum width, and a zone host's content is anchored full-rect into a box that
-## `clip_contents` — so in a fixed-width zone one long line clamps the entire content column up to
-## its own width, and every row in that zone is then laid out past the box and loses its trailing
-## control to the clip. Measured on `band_panel_work_inspector_width`: a work inspector sentence
-## naming meat and two materials asks **358px of a 356px box**, and the 2px it is over cost the POOLS
-## readout its last word, the Builders card its `+`, and every board row its stepper — 14px off the
-## right edge of the tab, none of it in the strip that caused it.
 ##
 ## `TextServer.OVERRUN_TRIM_ELLIPSIS` drops the reported minimum to one pixel AND marks the cut with
 ## an `…`, which is why it is the mark rather than `clip_text` — that one cuts mid-word with nothing
@@ -210,18 +201,6 @@ static func build_row_note_label(text: String, color: Color, row_tooltip: String
 ## `HFlowContainer` that WRAPS between parts, inside a surface with width to spare; eliding there
 ## would shorten prose that fits today. A caller passes `true` when its host cannot grow.
 ##
-## ⛔ **AUTOWRAP IS THE WRONG TOOL *FOR AN ELIDING HOST*, AND IT USED TO BE THE WRONG TOOL FULL STOP.**
-## The retired claim read: *"AUTOWRAP IS THE WRONG TOOL HERE and is not an alternative. Both inspector
-## strips reserve their height as an exact number of ONE-line parts (`HudWorkVocab.
-## WORK_INSPECTOR_NOTE_LINE_HEIGHT`), and the zone clips vertically too — so a line that wrapped would
-## take its second row off the bottom of the board, trading a width overflow for a height one."* Both
-## halves of that were true of a strip living INSIDE the work zone. The work inspector is a
-## viewport-centred `WorkInspectorDialog` now (`docs/plan_standing_upkeep.md` §4.9 item 12d) — no
-## zone's box clips it, and its reservation is measured per wrapped line rather than counted in
-## one-line parts — so `build_wrapping_status_part` below is the tool for THAT host. Every host still
-## inside a reserved-width box (the tile card's flow, the drawer's standing summary, the parties
-## inspector's detail lines, the build queue's tooltip) keeps this builder and keeps the elide: for
-## them the retired paragraph is still exactly right.
 static func build_status_part(text: String, color: Color, elide: bool = false) -> Label:
     var label := Label.new()
     label.text = text
@@ -542,9 +521,6 @@ const KEEP_BUTTON_PADDING_H := -1
 ## The chrome half of `compact`, on its own for a control that must keep its TYPE SIZE and trim only
 ## the box around it. Does nothing to a non-Button (a Label has no stylebox to squeeze).
 ##
-## **THE SIDES ARE OPT-IN** (`KEEP_BUTTON_PADDING_H`) and the build queue's reorder arrows are the one
-## caller that opts in: `HudStyle`'s 11px side margins are why a 9px `✕` needed a 32px column, and a
-## PAIR of arrows sharing that same 32 has no room for four of them.
 static func trim_button_padding(control: Control, padding_v: int,
         padding_h: int = KEEP_BUTTON_PADDING_H) -> void:
     if not (control is Button):
@@ -1122,10 +1098,6 @@ const CREW_ROW_LABEL_META := "crew_row_label"
 ## there is nothing here for a harness to find. What a source's keeping costs is stated by
 ## `DetailFormat.at_risk_lines` on the land card and the herd drawer.
 
-## **RETIRED — `BUILD_CREW_ROW_META`** (`docs/plan_standing_upkeep.md` §2.5), the third meta on this
-## list to go the same way. It tagged the BUILDERS stepper on the improvement control; a verb
-## declares and names no hands, so there is no per-source build crew and nothing here to find. The
-## pool is a standing role card, and the queue that spends it is the band's.
 
 ## The VERDICT line, as `Control` meta — value is the severity (`SourceForecast.VERDICT_*`), which is
 ## the assertable half: the sentence carries turn counts and percentages that move with the fixture.
@@ -1288,29 +1260,13 @@ const FLORA_CROP_ROW_SPECIES_META := "flora_crop_row_species"
 ##             the player holds.
 ##   DONE    — a plain `Label`. Nothing left to say but the state.
 ##
-## **NOT ONE OF THEM IS A CHECKBOX, AND THAT IS THE POINT** (`docs/plan_standing_upkeep.md` §4.7a
-## ①). OFFERED and DECLARED were `CheckBox`es — the last two states that were a CHOICE — and the
-## choice they offered was a lie: ticking the box committed nothing, and the only thing that sent the
-## verb was a button reading **`Forage`**. Ticking it and closing the sheet did nothing at all,
-## reported from play repeatedly. **The declaration moved to the Work tab's `⌃`**, one click on the
-## tab that owns the builders pool and the build queue; the sheet keeps the FORECAST, which is what
-## the face and the readout beneath it have always been. A checkbox is a CHOICE and this sheet has
-## none left to offer, so the shape follows — the same rule the GATED and DONE states were already
-## rendered under.
 ##
-## **AND THE OFFER STATES NO PRICE.** It carried the rung's work cost, its turn estimate and its
-## standing upkeep for a day. Ray, from play: *"That information should be on the work tab. No need to
-## have it here, it is useless."* A cost is actionable on the surface that queues, funds and orders
-## jobs, so the pile and the rate ride the `⌃` mark's own tooltip and the turn count rides the BUILD
-## QUEUE row's date. **The rung's PAYOFF is not a price and stays** — `ONCE TENDED 1.20 food`, in the
-## `PER TURN` readout below, is the "should I?" this sheet exists to answer.
 ##
-## **`abandon_improvement` AND THE UNTICK BOTH RETIRED BEFORE THIS, and their prose went with them.**
-## The `IMPROVEMENT_STATE_DECLARED` const carried a note saying its uncheck sent
-## `cultivate <faction> <x> <y> 0` and that "both take the hands off and neither withdraws the
-## declaration"; that stopped being true at §2.5, when unticking became `unqueue` and the crew-zero
-## form became a parse error. **The withdrawal survives, on the BUILD QUEUE row's `✕`** — a
-## declaration is a queue entry, so the list of entries is where one is dropped.
+## **`abandon_improvement` AND THE UNTICK BOTH RETIRED BEFORE THIS, and their prose went with
+## them.** The `IMPROVEMENT_STATE_DECLARED` const carried a note saying its uncheck sent `cultivate
+## <faction> <x> <y> 0` and that "both take the hands off and neither withdraws the declaration";
+## that stopped being true at §2.5, when unticking became `unqueue` and the crew-zero form became a
+## parse error.
 ##
 ## `notes` render beneath in the hint style — the WARN-amber zero-payoff line when running
 ## (`warn_notes` picks the tint), the *not started* line plus the queued word on a DECLARED one, the
@@ -1360,23 +1316,33 @@ static func improvement_pace_color(pace: String, fallback: Color) -> Color:
 static func improvement_pace_stops(pace: String) -> bool:
     return pace == SourceForecast.BUILD_PACE_HOLDING or pace == SourceForecast.BUILD_PACE_LOSING
 
+## **NOT ONE OF THESE STATES IS A CHECKBOX, AND THAT IS THE POINT** (`docs/plan_standing_upkeep.md`
+## §4.7a ①). OFFERED and DECLARED were `CheckBox`es — the last two states that were a CHOICE — and the
+## choice they offered was a lie: ticking the box committed nothing, and the only thing that sent the
+## verb was a button reading **`Forage`**. Ticking it and closing the sheet did nothing at all, reported
+## from play repeatedly. **The declaration moved to the Work tab's `⌃`**, one click on the tab that
+## owns the site's crew; the sheet keeps the FORECAST, which is what the face and the readout beneath
+## it have always been. A checkbox is a CHOICE and this sheet has none left to offer, so the shape
+## follows — the same rule the GATED and DONE states were already rendered under.
+##
+## **AND THE OFFER STATES NO PRICE.** Ray, from play: *"That information should be on the work tab. No
+## need to have it here, it is useless."* A cost is actionable on the surface that declares and funds
+## jobs, so the pile and the rate ride the `⌃` mark's own tooltip and the turn count rides the Work
+## row's date. **The rung's PAYOFF is not a price and stays** — `ONCE TENDED 1.20 food`, in the
+## `PER TURN` readout below, is the "should I?" this sheet exists to answer.
 const IMPROVEMENT_STATE_OFFERED := "offered"
 const IMPROVEMENT_STATE_RUNNING := "running"
 const IMPROVEMENT_STATE_DONE := "done"
 ## **A RUNG DECLARED WITH NOTHING IN FLIGHT.** The declaration stands — the wire carries it, or the
 ## player has just pressed the Work board's `⌃` — but there are no builders on it and its meter has
 ## never moved, so nothing is being built and the control must not claim otherwise. It renders the
-## OFFER's own face plus the word saying it is QUEUED (`HudComposeVocab.BUILD_QUEUED_NOTE`).
+## OFFER's own face plus the word saying it is QUEUED (`HudComposeVocab.BUILD_WAITING_CLAUSE`).
 ##
-## **IT SAYS NO POSITION AND NO DATE, deliberately** (`docs/plan_standing_upkeep.md` §4.7a). The sheet
-## says what the ground IS; the SCHEDULE — where in the queue, and when it lands — is the Work tab's,
-## which is the surface that can reorder it.
-##
-## **IT EXISTS BECAUSE RENDERING A DECLARATION AS RUNNING WAS A ONE-WAY DOOR.** A player who declared
-## `cultivate` on a band with no free hands got `Cultivating 0 / 50 work (0%)` with the *not started*
-## warning and no way back off it. Reported from play. The undo is `unqueue`, on the BUILD QUEUE row's
-## `✕` (`docs/plan_standing_upkeep.md` §2.5) — never the crew-zero `cultivate <f> <x> <y> 0`, which
-## SET the declaration again and is a parse error now.
+## **IT SAYS NO POSITION AND NO DATE, deliberately.** The sheet says what the ground IS; the SCHEDULE —
+## when it lands — is the Work tab's. **It exists because rendering a declaration as RUNNING was a
+## one-way door:** a player who declared `cultivate` with nobody on it got `Cultivating 0 / 50 work
+## (0%)` with the *not started* warning and no way back off it. The undo is `unqueue`, on the site's
+## crew chip (`docs/plan_standing_upkeep.md` §2.5).
 const IMPROVEMENT_STATE_DECLARED := "declared"
 ## An offer the source cannot take yet: the control's whole slot spends itself on the first unmet
 ## prerequisite. It shipped once as a greyed checkbox reading "Cultivate this patch · then 0.04 food
@@ -1389,7 +1355,7 @@ const IMPROVEMENT_STATE_GATED := "gated"
 static func build_improvement_control(improvement: String, state: String, face: String,
         tooltip: String, notes: Array = [],
         warn_notes: bool = false, pace: String = SourceForecast.BUILD_PACE_UNKNOWN,
-        on_link: Callable = Callable()) -> VBoxContainer:
+        on_link: Callable = Callable(), on_stop: Callable = Callable()) -> VBoxContainer:
     var block := VBoxContainer.new()
     block.add_theme_constant_override("separation", HudWorkVocab.WORKER_STEPPER_SEPARATION)
     if state == IMPROVEMENT_STATE_RUNNING:
@@ -1504,7 +1470,16 @@ static func build_improvement_control(improvement: String, state: String, face: 
         if warn_notes:
             line.add_theme_color_override("font_color", HudStyle.WARN)
         block.add_child(line)
+    # **STOP THIS BUILD** - the running and declared states are a build the band's own crew is raising, and
+    # the site's sheet ends it where it states it (`unqueue`, which now means *stop this build*).
+    if on_stop.is_valid() and (state == IMPROVEMENT_STATE_RUNNING or state == IMPROVEMENT_STATE_DECLARED):
+        var stop := build_inline_link(HudWorkVocab.BUILD_CREW_STOP_LABEL, HudStyle.INK_DIM, on_stop)
+        stop.set_meta(IMPROVEMENT_STOP_META, true)
+        block.add_child(stop)
     return block
+
+## The meta on the sheet control's stop link, so a harness finds it before it reads its text.
+const IMPROVEMENT_STOP_META := &"improvement_stop"
 
 ## ONE RUNG of the policy picker: a clickable, styleable, disable-able `Button` with a TWO-LINE face
 ## whose lines carry DIFFERENT TYPE — which `Button.text` structurally cannot do (one font size per
@@ -1845,11 +1820,6 @@ static func build_stacked_action_button(btn: Button, label_text: String,
 ## rewrites — so a face muted only at build time grows a dead patch over the button the first time a
 ## note's text moves. Nothing else in the face can re-arm itself.
 ##
-## **THE FONT SIZE RIDES HERE RATHER THAN IN THE SUMMARY'S OWN BUILDERS**, because those builders are
-## shared with the sibling-row hosts (the work inspector, the parties strip) that want their own
-## registers: `build_status_part` pins `HudWorkVocab.ALLOC_SECTION_FONT_SIZE` and
-## `build_row_note_label` pins nothing at all, i.e. the stock 16. Inside a button the second line is
-## ONE readout and reads as one size.
 static func mute_button_face(root: Control) -> void:
     if root == null:
         return

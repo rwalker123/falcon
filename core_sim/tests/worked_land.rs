@@ -314,12 +314,12 @@ fn queue_a_sow_on(app: &mut App, tile: UVec2, worked_land: bool) -> bevy::prelud
         ALL_HANDS,
         None,
     );
-    allocation.set_assignment(LaborTarget::Builders, BUILDERS, ALL_HANDS, None);
-    allocation.enqueue_build(
+    allocation.declare_build(
         BuildSource::Patch(tile),
         BuildJob::Climb(shipped::plant_farm()),
     );
     app.world.entity_mut(band).insert(allocation);
+    core_sim::seat_builders(&mut app.world, band, BUILDERS);
     band
 }
 
@@ -398,7 +398,7 @@ fn working_a_farm_earns_worked_land() {
     app.world
         .get_mut::<LaborAllocation>(band)
         .expect("an allocation")
-        .build_queue
+        .builds
         .clear();
 
     let learned = |app: &App| {

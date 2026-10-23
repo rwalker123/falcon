@@ -404,10 +404,6 @@ func run(harness) -> void:
 			SourceForecast.IMPROVEMENT_SOW) == null)
 	# **RETIRED — the CULTIVATE half of the picker's header pair** (`docs/plan_standing_upkeep.md`
 	# §4.7a ③). It pinned that this rung asked which crop to TEND while Sow asked which to COMMIT to —
-	# a real distinction (Cultivate weeds the favoured share upward and leaves the rest standing) —
-	# and it was a claim about a control that is no longer on this sheet. The header words survive in
-	# `HudFloraVocab` unread; whether the queue row's picker earns a per-rung question is a design
-	# call, not a repair, and it would be made in a 84px face rather than a section header.
 
 	# State 2-crop-then-a / -b — THE PICKER ACTUALLY MOVES THE PAYOFF. The payoff term used to quote
 	# a species-BLIND patch number, so committing to Ground Nut showed Wild Emmer's payoff and the picker
@@ -639,15 +635,6 @@ func run(harness) -> void:
 	h._compose_forage(_four_species_committed_tile_fixture())
 	await h._settle()
 	await h._save("forage_crop_committed")
-	# **RETIRED with the picker it headed** (§4.7a ③) — the committed-crop header and the
-	# `Already committed …` hint beneath it. What a committed patch is committed TO is still stated on
-	# the LAND CARD's own basket, which is a readout rather than a control and is untouched.
-	# **RETIRED — the four claims about the committed READOUT's rows** (`docs/plan_standing_upkeep.md`
-	# §4.7a ③). They pinned that a committed patch listed its WHOLE basket rather than the committed
-	# crop alone, that every row was locked, and that the committed one alone wore the marked-and-
-	# locked treatment — `HudStyle.apply_button`'s `selected_when_disabled`, whose LAST caller they
-	# were. The picker is off this sheet; the crop is the BUILD QUEUE row's setting, and an
-	# `OptionButton` marks its own selection natively.
 	#
 	# **The header and the hint above still render and are still asserted**, which is what keeps this
 	# state a claim about a committed patch rather than a frame with nothing left in it.
@@ -986,11 +973,6 @@ func run(harness) -> void:
 	# that a species shipping none wore no icon — a pair, since the positive passes on a picker that
 	# ices every row and the negative on one that resolves nothing.
 	#
-	# **The picker is off this sheet and its replacement carries no art at all**: the queue row's
-	# `OptionButton` deliberately has no per-entry icon (`HudWidgets.build_option_picker`'s own rule —
-	# neither caller has per-entry art, and one glyph repeated down a list is noise). So there is no
-	# surface left for the claim to be made on, and `FloraSprites.texture_for` has no caller — a fact
-	# recorded rather than acted on, the flora sprite family being the land card's to own.
 
 	# State F4 cash crop — a basket with a CASH crop under Sow. Flax pays a MATERIAL, not provisions or
 	# fodder, so its provisions ratio is 0 and the ordinary "N.N×" row would read it as worthless; the

@@ -76,9 +76,9 @@ const ONE_HAND: u32 = 1;
 /// a state the command could not produce.
 const NO_GATHERERS: u32 = 0;
 
-/// The builders pool the build fixture staffs. Any positive count does; two matches the tended
-/// rung's own reference crew, so the turns it banks read as the shipped pace.
-const BUILDERS: u32 = 2;
+/// The builders the build fixture leaves idle beside its rows: the tended rung's own cap, so the
+/// build gets the same hands whatever the gatherers beside it take.
+const BUILDERS: u32 = 3;
 
 // ---------------------------------------------------------------------------------------------
 // 1. Neutrality — naming nothing is the gather that was already there.
@@ -1224,15 +1224,14 @@ fn spawn_band(
             },
             ResidentBand,
             LaborAllocation {
-                assignments: build_rows(patch, workers, take_species, builders),
+                assignments: build_rows(patch, workers, take_species),
                 // **A DECLARATION IS A HOLDING** — it is also what keeps the row alive at zero
                 // gatherers, which is the state the build fixture measures. Empty when nobody is
                 // building, so every other fixture here is an ordinary unqueued gather.
-                build_queue: if builders > 0 {
-                    vec![core_sim::BuildQueueEntry {
+                builds: if builders > 0 {
+                    vec![core_sim::BuildDeclaration {
                         source: core_sim::BuildSource::Patch(patch),
                         declared: core_sim::BuildJob::Climb(shipped::plant_tended()),
-                        priority: core_sim::SourcePriority::default(),
                     }]
                 } else {
                     Vec::new()
@@ -1246,13 +1245,8 @@ fn spawn_band(
 /// The band's rows: the take crew, plus the **builders pool** when the fixture is raising something.
 /// The builders are a band-level role — they stand on no source — which is the whole reason the
 /// gatherers' take selection cannot speak for them.
-fn build_rows(
-    patch: UVec2,
-    workers: u32,
-    take_species: TakeSelection,
-    builders: u32,
-) -> Vec<LaborAssignment> {
-    let mut rows = vec![LaborAssignment {
+fn build_rows(patch: UVec2, workers: u32, take_species: TakeSelection) -> Vec<LaborAssignment> {
+    let rows = vec![LaborAssignment {
         party: None,
         muster_crew: 0,
         planned_crew: 0,
@@ -1268,18 +1262,5 @@ fn build_rows(
         kit: None,
         priority: SourcePriority::default(),
     }];
-    if builders > 0 {
-        rows.push(LaborAssignment {
-            party: None,
-            muster_crew: 0,
-            planned_crew: 0,
-            max_workers: Some(builders),
-            staffing: Default::default(),
-            target: LaborTarget::Builders,
-            workers: builders,
-            kit: None,
-            priority: SourcePriority::default(),
-        });
-    }
     rows
 }

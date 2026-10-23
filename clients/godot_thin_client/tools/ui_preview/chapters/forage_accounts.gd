@@ -261,11 +261,6 @@ func _policy_rung_metric(root: Node, policy: String) -> String:
 ## **UNCHECK THE RUNNING BOX AND CHECK WHAT THE CLIENT WOULD TRANSMIT** — driven through the REAL
 ## control and the REAL formatter, not through the handler each would have called.
 ##
-## The chain is the player's: move the BUILDERS stepper, press the sheet's own commit button, capture
-## the payload off `HudLayer.improvement_requested`, and run it through `Main.format_improvement` —
-## the pure static `Main._on_hud_improvement` dispatches to. Asserting the LINE rather than the payload is what makes this test the shipped representation:
-## the payload could carry a perfectly good herd id and still be formatted into the tile-targeted
-## grammar, which is exactly the mistake the two webs' differing targeting rules invite.
 ##
 ## Restores the composed improvement afterwards, so the frame that just rendered is not disturbed for
 ## whatever asserts against it next.
@@ -982,6 +977,7 @@ func _reopened_patch_tile_fixture() -> Dictionary:
 func _reopened_patch_band_fixture() -> Dictionary:
 	var band := _building_patch_band_fixture(0.0)
 	band["working_age"] = REOPEN_TAKE_CREW + REOPEN_BUILD_CREW + REOPEN_KEEP_CREW
+	BandFx.CrewFx.staffed = REOPEN_BUILD_CREW
 	band["idle_workers"] = 0
 	band["labor_assignments"] = [{
 		"kind": "forage", "workers": REOPEN_TAKE_CREW,
@@ -990,10 +986,7 @@ func _reopened_patch_band_fixture() -> Dictionary:
 		"species": REOPEN_SPECIES,
 		"actual_yield": 0.0, "sustainable_yield": 0.0, "realized_yield": 0.0,
 		"overdraws": false,
-	}, {"kind": "agriculture", "workers": REOPEN_KEEP_CREW},
-		# **THE BUILD POOL IS A ROW OF THIS SAME LIST** (`docs/plan_standing_upkeep.md` §2.5) — a
-		# standing role like the keeping one beside it, not a second count on the forage assignment.
-		BandFx.builders_role_row(REOPEN_BUILD_CREW)]
+	}, {"kind": "agriculture", "workers": REOPEN_KEEP_CREW}]
 	return band
 
 ## meadow is the frame's whole subject.

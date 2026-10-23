@@ -166,7 +166,7 @@ pub enum CommandPayload {
     /// source kind off the rung's branch. This crate stays config-free: it carries the verb as
     /// text and checks only shape.
     ///
-    /// It appends an entry to the build queue of every band working the source and **names no
+    /// It declares a build on every band working the source and **names no
     /// crew** — the hands are the band-level `builders` role (`assign_labor <faction> <band>
     /// builders <n>`).
     ///
@@ -219,7 +219,7 @@ pub enum CommandPayload {
     // withdraws the declaration and [`CommandPayload::Abandon`] puts the whole holding down
     // (`docs/plan_standing_upkeep.md` §2.5). Proto field 46 is reserved and was never reused.
     /// **PUT A SOURCE DOWN** — drop the band's *holding* of it: the assignment row **and** its
-    /// build-queue entry, on every band of the faction working it
+    /// declared build, on every band of the faction working it
     /// (`docs/plan_standing_upkeep.md` §2.5).
     ///
     /// **The meters are untouched.** The ground keeps what is on it and, with nobody holding it,
@@ -246,7 +246,7 @@ pub enum CommandPayload {
         /// source on that branch rather than its patch.
         branch: Option<String>,
     },
-    /// **WITHDRAW A DECLARATION** — drop the source's build-queue entry only, leaving the row, its
+    /// **WITHDRAW A DECLARATION** — drop the source's declared build only, leaving the row, its
     /// take crew, its kit and the meter exactly as they are.
     ///
     /// It is the undo a declaration never had: `cultivate <f> <x> <y> 0` *set* the improvement with
@@ -263,26 +263,6 @@ pub enum CommandPayload {
         material: Option<String>,
         /// **A branch's per-tile source** (the road branch's road): with the tile pair, the tile's
         /// source on that branch rather than its patch.
-        branch: Option<String>,
-    },
-    /// **RE-ORDER ONE BAND'S BUILD QUEUE** — move its entry for the named source to `position`
-    /// (0-based, clamped to the queue's length).
-    ///
-    /// **The queue's defining input.** The whole `builders` pool goes on the head until that entry's
-    /// meter fills, so the order *is* the funding decision — and re-ordering is the one input a list
-    /// can carry that a stepper cannot (`docs/plan_standing_upkeep.md` §2.5).
-    BuildOrder {
-        faction_id: u32,
-        band_id: u64,
-        target_x: Option<u32>,
-        target_y: Option<u32>,
-        herd_id: Option<String>,
-        position: u32,
-        /// **A working**: with the tile pair, the deposit's material key — one hex can hold two
-        /// workings, so the tile alone names neither. `None` = the tile's forage patch.
-        material: Option<String>,
-        /// **A branch's queued build**: with the tile pair, the queue entry on that branch (the road
-        /// branch's road) rather than the tile's patch.
         branch: Option<String>,
     },
     // **RETIRED: `BuildKit` and `UpkeepKit`** (proto fields 60 and 63, reserved). The per-entry
@@ -311,7 +291,7 @@ pub enum CommandPayload {
         /// **A working**: with the tile pair, the deposit's material key — one hex can hold two
         /// workings, so the tile alone names neither. `None` = the tile's forage patch.
         material: Option<String>,
-        /// **A branch's queued build**: with the tile pair, the queue entry on that branch (the road
+        /// **A branch's declared build**: with the tile pair, the declared build on that branch (the road
         /// branch's road) rather than the tile's patch.
         branch: Option<String>,
     },
@@ -328,26 +308,6 @@ pub enum CommandPayload {
         material: Option<String>,
         branch: Option<String>,
         roadwork: bool,
-    },
-    /// **Mark one QUEUED BUILD with the player's own Build mark** (`docs/plan_site_crews.md` §2.4) —
-    /// `"high"`, `"normal"` or `"low"` on the named band's queue entry for this source. The
-    /// builders' tool claim and the build's material claim rank at the head entry's mark; the site
-    /// row's [`CommandPayload::WorkPriority`] ranks that site's own crew. Addressed exactly as
-    /// `work_priority` is.
-    BuildPriority {
-        faction_id: u32,
-        band_id: u64,
-        target_x: Option<u32>,
-        target_y: Option<u32>,
-        herd_id: Option<String>,
-        /// The level token: `"high"`, `"normal"` or `"low"`.
-        level: String,
-        /// **A working**: with the tile pair, the deposit's material key — one hex can hold two
-        /// workings, so the tile alone names neither. `None` = the tile's forage patch.
-        material: Option<String>,
-        /// **A branch's queued build**: with the tile pair, the queue entry on that branch (the road
-        /// branch's road) rather than the tile's patch.
-        branch: Option<String>,
     },
     /// **Say how a band splits a maintenance pool it cannot stretch**
     /// (`docs/plan_standing_upkeep.md` §2.5) — `"spread"` (everything degrades a little) or
@@ -2130,25 +2090,6 @@ impl CommandEnvelope {
                 material: material.clone(),
                 branch: branch.clone(),
             }),
-            CommandPayload::BuildOrder {
-                faction_id,
-                band_id,
-                target_x,
-                target_y,
-                herd_id,
-                position,
-                material,
-                branch,
-            } => pb::command_envelope::Command::BuildOrder(pb::BuildOrderCommand {
-                faction_id: *faction_id,
-                band_id: *band_id,
-                target_x: *target_x,
-                target_y: *target_y,
-                herd_id: herd_id.clone(),
-                position: *position,
-                material: material.clone(),
-                branch: branch.clone(),
-            }),
             CommandPayload::WorkPriority {
                 faction_id,
                 band_id,
@@ -2186,25 +2127,6 @@ impl CommandEnvelope {
                 material: material.clone(),
                 branch: branch.clone(),
                 roadwork: *roadwork,
-            }),
-            CommandPayload::BuildPriority {
-                faction_id,
-                band_id,
-                target_x,
-                target_y,
-                herd_id,
-                level,
-                material,
-                branch,
-            } => pb::command_envelope::Command::BuildPriority(pb::BuildPriorityCommand {
-                faction_id: *faction_id,
-                band_id: *band_id,
-                target_x: *target_x,
-                target_y: *target_y,
-                herd_id: herd_id.clone(),
-                level: level.clone(),
-                material: material.clone(),
-                branch: branch.clone(),
             }),
             CommandPayload::UpkeepMode {
                 faction_id,
@@ -2931,16 +2853,6 @@ impl CommandEnvelope {
                 material: cmd.material,
                 branch: cmd.branch,
             },
-            pb::command_envelope::Command::BuildOrder(cmd) => CommandPayload::BuildOrder {
-                faction_id: cmd.faction_id,
-                band_id: cmd.band_id,
-                target_x: cmd.target_x,
-                target_y: cmd.target_y,
-                herd_id: cmd.herd_id,
-                position: cmd.position,
-                material: cmd.material,
-                branch: cmd.branch,
-            },
             pb::command_envelope::Command::WorkPriority(cmd) => CommandPayload::WorkPriority {
                 faction_id: cmd.faction_id,
                 band_id: cmd.band_id,
@@ -2960,16 +2872,6 @@ impl CommandEnvelope {
                 material: cmd.material,
                 branch: cmd.branch,
                 roadwork: cmd.roadwork,
-            },
-            pb::command_envelope::Command::BuildPriority(cmd) => CommandPayload::BuildPriority {
-                faction_id: cmd.faction_id,
-                band_id: cmd.band_id,
-                target_x: cmd.target_x,
-                target_y: cmd.target_y,
-                herd_id: cmd.herd_id,
-                level: cmd.level,
-                material: cmd.material,
-                branch: cmd.branch,
             },
             pb::command_envelope::Command::UpkeepMode(cmd) => CommandPayload::UpkeepMode {
                 faction_id: cmd.faction_id,
@@ -3876,26 +3778,6 @@ mod tests {
                 herd_id: None,
                 level: "low".to_string(),
                 material: Some("wood".to_string()),
-                branch: None,
-            },
-            CommandPayload::BuildPriority {
-                faction_id: 2,
-                band_id: 8,
-                target_x: Some(5),
-                target_y: Some(11),
-                herd_id: None,
-                level: "high".to_string(),
-                material: None,
-                branch: Some("route".to_string()),
-            },
-            CommandPayload::BuildOrder {
-                faction_id: 3,
-                band_id: 9,
-                target_x: Some(6),
-                target_y: Some(13),
-                herd_id: None,
-                position: 2,
-                material: Some("stone".to_string()),
                 branch: None,
             },
             CommandPayload::Abandon {

@@ -644,11 +644,11 @@ keeping.
 A/B plus a drag: `improvement_turns_lone_crew` / `improvement_turns_full_crew` (one patch, one floor,
 **BUILD** crews 1 and 4 — `≈20 turns` against `≈5 turns`) and `improvement_turns_learning_floor` (the
 same crew mid-DRAG at the Learning preset), all three in `chapters/improvements.gd`.
-**WHAT THE A/B MOVES IS THE BAND'S `builders` POOL** (`docs/plan_standing_upkeep.md` §2.5) — the take
-crew has not priced a build since §2.2, and the build's own stepper is retired with the per-source
-crew, so the harness staffs the ROLE through `BandFx.staff_builders`. **That helper covers
-`player_band()` as well as `player_bands()`**: several chapters set the single-band member alone, and
-a helper walking only the list was a silent no-op on every one of them.
+**WHAT THE A/B MOVES IS THE SITE'S BUILD CREW** (`docs/plan_labor_at_scale.md`) — the take crew has
+not priced a build since §2.2, and a build is worked by its own site's crew, so the harness dials the
+crew through `BandFx.staff_builders`, which writes `builders_staffed` / `builders_kitted` on every forage
+patch and world herd the model holds (and `CrewFx.staffed`, which the chips re-read). A chapter that
+staged a source therefore quotes its build at `workers` builders whichever band works it.
 **The drag frame's claim INVERTED with the floor's retirement**: it used to assert a deeper floor
 quoted a FASTER build (`learn_multiplier` scaled the accrual); a build crew is not pulling on the
 source, so the same builders now read the SAME estimate at both floors, and the non-vacuity companion
@@ -1387,9 +1387,9 @@ COLOUR"; what belongs here is the shape of the drive and the two re-pointings it
   read as no declaration at all), and a disabled one (which cannot be undone).
 - **`compose_offer_no_hands` KEPT ITS NAME AND ITS FIXTURE AND ASSERTS THE INVERSE** (§2.5). It staged
   a band whose every hand is on tile A and opened a sheet over an UNWORKED tile B, so the build pool
-  was empty and the box greyed out with its reason. **Declaring costs no hands now** — ticking appends
-  a queue entry — so the state it stages has no refusal left in it, and what it asserts is that the box
-  is OFFERED, LIVE, and mounts no builders control of any kind. The precondition
+  was empty and the box greyed out with its reason. **Declaring costs no hands now** — ticking
+  declares a build the site's crew works — so the state it stages has no refusal left in it, and what it
+  asserts is that the box is OFFERED, LIVE, and mounts no builders control of any kind. The precondition
   (`effective_idle == 0`) is what keeps that a claim rather than a tautology: a fixture that had
   stopped being hand-starved would pass it for the wrong reason.
 - **The three INKS are asserted as a set across three frames**, read as the RESOLVED font colour
@@ -1400,14 +1400,11 @@ COLOUR"; what belongs here is the shape of the drive and the two re-pointings it
   other; `improvement_rung_slipped` is the other red one, reached through the SLIDING state rather
   than through an arithmetic sign.
 - **The retired threshold is now asserted as an outright ABSENCE, on both sides of the A/B**
-  (§4.6a). It was a RE-HOMING for one slice — the rate reachable as the BUILDERS label's tooltip — and
-  the mechanism under it is gone: the keeping pool owes the rate at every fullness, so no rung declares
-  a build-crew bar. `ForageFx.build_work_floor` / `build_work_floor_tooltip` and
+  (§4.6a). The mechanism under it is gone: the keeping owes the rate at every fullness, so no rung
+  declares a build-crew bar. `ForageFx.build_work_floor` / `build_work_floor_tooltip` and
   `BUILD_WORK_FLOOR_ABSENT` are deleted with it, since a scanner for a meta nothing stamps answers
-  `absent` on every sheet in the game — an assertion that cannot fail. It was paired with *the row
-  still mounts* (`ForageFx.build_crew_row`), or "states no threshold" passed on a sheet with no
-  BUILDERS row at all. **§2.5 retired the row itself**, so that pairing is gone with it and the
-  surviving structural claim is the opposite one — `Readout.stepper_count` pinning the sheet at ONE
+  `absent` on every sheet in the game — an assertion that cannot fail. The sheet mounts no build crew
+  row at all, so the surviving structural claim is `Readout.stepper_count` pinning the sheet at ONE
   stepper, which is what catches a build control re-added under any meta, any label or none.
 - **TWO EXISTING CLAIMS WERE RE-POINTED, and both were asserting the bug.**
   `improvement_turns_*`'s *"amber while the crew is under it, and quiet once it is cleared"* was about
@@ -1478,33 +1475,28 @@ ring and recapture claims, the vacuity guard correctly staying green.
 
 **A clean run is 333 frames / 1077 `PASS`, exit 0 — RE-MEASURED**, as this file's own rule says.
 
-## The kit swap's A/B moved to the BUILDERS' row (the builders-kits arc)
+## A site's build crew is dialled once and stamped on every source (`fixtures_crew.gd`)
 
-No frame added or removed, no assertion added or removed, and **both of `chapters/compose_rungs.gd`'s
-kit-swap frames now stage a different input** — the sheet no longer prices a build at its own picker's
-kit, which was the defect (`labor-ui.md` → "A BUILD IS PRICED AT THE **BUILDERS'** KIT"). The hunt
-picker is held FIXED across `herd_kit_swap_bare_build` / `_geared_build` and what moves is the band's
-`builders` row: unnamed on the bare frame (the sheet derives the roster's animal kit, for which that
-band publishes no resolved row, so the crew builds bare at `≈17 turns`) and `handling` on the geared
-one (a kit the band DOES publish a row for, so `≈11`). The counts are unchanged, which is the point —
-the same two readings, off the row that actually decides them.
+A build is worked by its own site's crew (`docs/plan_labor_at_scale.md`), so the count rides each
+source row as `builders_staffed` / `builders_kitted`, with `builders_cap` the fixture's own (it says a
+build is declared). `CrewFx.staffed` holds the dialled number (`UNSET` leaves a fixture's own numbers
+alone); a chapter dials it once with `BandFx.staff_builders` and every source that passes through
+`ForageFx.floorify` — every show, compose and herd refresh in the harness — is stamped with it through
+`CrewFx.stamp`. `BandFx.without_builders` resets it to zero and returns the band unchanged, a band dict
+carrying no builders any more.
 
-- **`BandFx.staff_builders` / `builders_role_row` take the row's `kit_id`**, defaulting to `""`, the
-  honest fixture for a pool the sim has resolved no kit for.
+## The kit swap's A/B prices the build at the rung's own kit
+
+`chapters/compose_rungs.gd`'s `herd_kit_swap_bare_build` / `_geared_build` hold the hunt picker FIXED:
+the sheet does not price a build at its own picker's kit (`labor-ui.md` → "A BUILD IS PRICED AT THE KIT
+ITS RUNG WANTS"). The claims are made on the PRODUCER — `build_turns_at` at the two kits' own resolved
+gear (`KitRoster.build_gear`) — and the two frames show the sheet is otherwise identical under both.
+
+- **`BandFx.staff_builders(band_labor, workers, _kit_id)` accepts a kit id for call sites that dial
+  one and carries no state**: the kit is the rung's own, never a band role's.
 - **The chapter's own synthetic handling entry (`HANDLING_KIT_ID`) and its `kit_tiers` row state
-  `build_work_branch: animal`.** A
-  worth without a branch serves NO web, so the geared frame would have read the bare answer for a
-  reason that has nothing to do with the row under test.
-- **`BandFx.kit_roster_fixture()` gained `hurdling` and `tillage`** — both list `builders` ALONE, so
-  every hunt and forage picker in both harnesses is byte-identical and only the Builders role card can
-  see them — and `hoes` joined the condition rows beside `hurdles`, the wire's list being the CONFIG's
-  item table rather than the band's holdings (without it the Builders card read `Hoes dry` on a band
-  nobody had asked about hoes).
-
-**A clean run is 332 frames / 1075 `PASS`, exit 0 — RE-MEASURED.** The recorded figure above was one
-frame and two `PASS` higher before this arc, which touched neither: `git diff` over
-`tools/ui_preview/**` adds and removes no `_save` and no assertion, so the previous record had already
-drifted — which is this line's own instruction being earned again.
+  `build_work_branch: animal`.** A worth without a branch serves NO web, so the geared reading would
+  have read the bare answer for a reason that has nothing to do with the row under test.
 
 ## The rate is not a tax on building (`docs/plan_standing_upkeep.md` §4.6a)
 
@@ -1534,8 +1526,8 @@ is `labor-ui.md`'s; what belongs here is the fixture arithmetic, which moved in 
   closed form nets it: an absent field and a stated nothing are the same arithmetic, and only one of
   them says the nothing is a fact about the web.
 - **`ForageFx.build_work_floor` / `build_work_floor_tooltip` / `BUILD_WORK_FLOOR_ABSENT` are deleted**
-  with the meta they scanned for; the claim they served is an ABSENCE now, paired with *the BUILDERS
-  row still mounts*.
+  with the meta they scanned for; the claim they served is an ABSENCE of any build control, asserted
+  by `Readout.stepper_count`.
 
 ### …and the second landing: a PARKED build is not a failure
 
@@ -1563,7 +1555,7 @@ for the same reason as before, its claim having inverted.**
   `UNSTAFFED` rather than a bare bool: at a call site `false` says nothing about which of the two
   `BUILD_METER_HOLDS` readings the row is being asked for.
 - **`band_panel_preview._assert_unbuilt_warning` asserts the MERGED note.** Its row still warns; what
-  changed is that it wears the keeping note rather than a BUILDERS one, and the `unbuilt` model flag it
+  changed is that it wears the keeping note rather than a build-crew one, and the `unbuilt` model flag it
   read is gone.
 - **`tile_two_meters_live` gained a PNG-less second reading with the keeping SHORT** — the one shape on
   which the at-risk mark has a choice of rows, and the shape a mark on the wrong row is invisible in.
@@ -1588,10 +1580,9 @@ for the same reason as before, its claim having inverted.**
   only thing that moves is the shortfall — and the face reads `— held` where the short-kept one reads
   `— ∞ turns` at the identical crew of zero.
 
-## The build-queue arc's changes here (`docs/plan_standing_upkeep.md` §4.6b)
+## The compose sheet's fit waits a second frame (`docs/plan_standing_upkeep.md` §4.6b)
 
-**A clean run is 332 frames / 1076 `PASS`, exit 0 — RE-MEASURED.** No frame was added or removed; the
-one `PASS` is `improvements.gd`'s claim that the land card's `At risk:` block names the ROLE that pays
+`improvements.gd` carries a claim that the land card's `At risk:` block names the ROLE that pays
 (`selection-card.md` → "…BUT IT NOW CARRIES A REMEDY SUB-ROW"), sabotage-verified by dropping the
 append.
 
@@ -3699,7 +3690,7 @@ Three frames and thirteen claims, appended LAST in the chapter (`_auto_craft_sta
 - `crafting_auto_working` -- an auto order being worked, the clubs suggestion in `auto_skipped`: its note by equality (`Auto skipped — back when bone is in`), no red shortfall line, Queue live, no Skip. PNG-less: the same item with nothing short reads the free-bench line, and a queued auto order on a queue ROW wears the tag.
 - `crafting_auto_idle` -- Auto on over an idle bench reads `Auto: nothing to make.` and not the Make-a-row prompt.
 
-- `crafting_build_queue_suggestion` (`_build_queue_suggestion_states`, after the auto frames; `EXPECTED_CHECKPOINTS` 258 -> **262**, RE-MEASURED) -- a take-row Spears suggestion above `Crook x2 / 2 builders, for Tame Wild Boar`, the label handed in through `set_build_queue_faces_source` (the join target, restored after). PNG-less beside it: a Sled short for a take AND a queued build keeps `3 hunters without`, and an empty faces map falls back to `2 builders, for (12, 7)`.
+- `crafting_build_queue_suggestion` (`_build_queue_suggestion_states`, after the auto frames) -- a declared-build suggestion reading `2 builders, for (12, 7)` (`1 builder, for (12, 7)` at one), the label being the build's own site name with no position (`HudWorkVocab.build_site_subject`). PNG-less beside it: a Sled short for a take AND a declared build keeps `3 hunters without`.
 
 ## `chapters/migration_mode.gd` — the need sheet (issue #798)
 

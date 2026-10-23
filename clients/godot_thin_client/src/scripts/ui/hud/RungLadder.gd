@@ -6,11 +6,19 @@ extends RefCounted
 ##
 ## **WHY IT EXISTS AT ALL.** `RungGates` answers *"may this source climb its NEXT rung"*, which is the
 ## right question for a MARK. A destination picker asks a different one: the sim stores **one position
-## per source** in cumulative work units and a queue entry names a **destination rung**, climbing every
-## rung between where the source stands and where it was sent
+## per source** in cumulative work units and a declared build names a **destination rung**, climbing
+## every rung between where the source stands and where it was sent
 ## (`docs/plan_standing_upkeep.md` §2.8). So the surface has to state the WHOLE branch — the rungs
 ## already paid for, the one the source stands on, the ones it could be taken to, and the ones it
 ## cannot — and `next_rung_ready` structurally cannot say any of that.
+##
+## ⛔ **IT RE-DERIVES NEITHER THE WORK NOR THE TURNS.** A leg's owing and its chained date are the
+## sim's (`SourceForecast.build_legs`), read where the declared build publishes them. A rung NO build
+## covers has no leg, and its owing is the per-rung `workCost − workDone` pair the wire publishes for
+## exactly this purpose — the same two numbers `forage::plant_build_legs` subtracts, which the sim's
+## own `patch_rung_work_done` calls *"a readout, not a second authority"*. **The TURNS have no such
+## pair**: they are chained by the sim, so a rung with no leg states no date at all rather than a
+## number this surface has no right to.
 ##
 ## **WHY ITS OWN FILE.** It is called by the work board's row (the `⌃` mark's track) and by nothing
 ## else *yet*, and it would have been a private method there — except that `BandPanelController` is a
@@ -22,13 +30,6 @@ extends RefCounted
 ## the gates need, **faction knowledge**, is threaded in as a `knowledge` PARAMETER exactly as
 ## `RungGates` threads it, and the ROW BUILDER takes its press handler as a `Callable`.
 ##
-## ⛔ **IT RE-DERIVES NEITHER THE WORK NOR THE TURNS.** A leg's owing and its chained date are the
-## sim's (`SourceForecast.build_legs`), read where the queued entry publishes them. A rung NO entry
-## covers has no leg, and its owing is the per-rung `workCost − workDone` pair the wire publishes for
-## exactly this purpose — the same two numbers `forage::plant_build_legs` subtracts, which the sim's
-## own `patch_rung_work_done` calls *"a readout, not a second authority"*. **The TURNS have no such
-## pair**: they are chained against a build queue this client cannot see, so a rung with no leg states
-## no date at all rather than a number this surface has no right to.
 
 # ---- THE FIVE STATES ------------------------------------------------------------------------------
 #
@@ -41,10 +42,10 @@ extends RefCounted
 const STATE_BANKED := "banked"
 ## The rung the source stands on today — the highest banked one, or the branch's wild floor.
 const STATE_STANDING := "standing"
-## Above the standing rung and BELOW the destination a queued entry names: a leg the climb will lay on
-## its way, not a thing the player chose for itself.
+## Above the standing rung and BELOW the destination a declared build names: a leg the climb will lay
+## on its way, not a thing the player chose for itself.
 const STATE_PATH := "path"
-## The destination a queued entry names. The climb ends here and the entry leaves the queue.
+## The destination a declared build names. The climb ends here and the build ends with it.
 const STATE_TARGET := "target"
 ## Reachable on this branch and refused — by knowledge, by this source's own state, or outright by
 ## what the species or the ground will admit. **A locked rung stays VISIBLE**: a track exists to say
@@ -96,10 +97,9 @@ const ROW_NAME_WIDTH_KEY := "name_width"
 const ROW_BUILD_ASIDES_KEY := "build_asides"
 const ROW_HOLD_ASIDES_KEY := "hold_asides"
 
-## ⛔ **THE ROUTE ROW THAT IS BEING BUILT — set on ONE row of a road's ladder, or on none.** It is the
-## producer's own answer, published so a caller can tell a press on that row from a press on a rung
-## merely offered without re-reading the queue and the meter for itself. Absent means `false`; only
-## `route_track` writes it, and only on an ordered rung.
+const ROW_MAX_BUILDERS_KEY := "max_builders"
+
+## Absent means `false`; only `route_track` writes it, and only on an ordered rung.
 const ROW_ROUTE_BUILDING_KEY := "route_building"
 ## A LOCKED row's blocker — the craft's name, or the refusal's own short clause — as its `🔒` states
 ## it.
@@ -167,9 +167,6 @@ static func track(kind: String, source: Dictionary, prefix: String, improvement:
     var branch: Array = [{}]
     branch.append_array(RungQuotes.quotes(source, prefix))
     var standing := _standing_index(branch)
-    # THE DESTINATION A QUEUED ENTRY NAMES, as an index into this branch. `-1` when nothing is queued
-    # here, which is the state the picker is usually opened in — and then no rung is `path` or
-    # `target`, because nothing has been chosen.
     var destination := _index_of_improvement(branch,
         SourceForecast.build_destination_rung(source, prefix))
     # …and the legs that entry still owes, keyed by rung so a row can ask for its own. The list is
@@ -266,13 +263,6 @@ static func has_track(rows: Array[Dictionary]) -> bool:
 
 # ---- THE ROUTE BRANCH — a SIBLING of `track`, never a widening of it -------------------------------
 #
-# ⛔ **`track` TAKES A LABOR `kind` AND A WIRE SOURCE DICT, AND A ROAD HAS NEITHER.** There is no
-# `forage`/`hunt` crew on a road, no per-source forecast row, no queued entry publishing legs, and no
-# `prefix` to spell its keys under. Widening that signature would push every plant and animal call
-# site through a branch it cannot use, so the route branch gets its own producer — and hands the
-# result to the SAME `build_track` renderer, which is what keeps one rung reading one way on every
-# card in the client.
-#
 # ⛔ **EVERY LABEL, PRICE, PAYOFF AND GATE COMES OFF THE CATALOG** (`HudRouteVocab.route_ladder`, the
 # wire's `ladderRungs`). Nothing here reads `HudRouteVocab.RUNG_LABELS` and nothing hard-codes the
 # four shipped rungs: a rung added to `intensification_ladder.json` appears as a row with no client
@@ -304,31 +294,25 @@ const STATE_UNORDERED := "unordered"
 ## `ROW_BUILD_ASIDES_KEY` / `ROW_HOLD_ASIDES_KEY` / `ROW_REASONS_KEY` stay EMPTY and `build_track`'s
 ## aside loops emit nothing for these rows without needing to know the difference.
 ##
-## **THE ROWS ARE OTHERWISE `track`'s OWN `ROW_*` SHAPE**, so the renderer is unchanged. Three of the
-## six original states are unreachable here and that is structural rather than unfinished: `path` and
-## `target` name legs of a QUEUED entry, and no road publishes one.
-## `builders` is the ACTING BAND'S OWN POOL and `kit_gear_by_rung` what that pool carries, which is
-## what makes the turns estimate a fact about the band the picker names rather than about the road —
-## a different band with a different pool is a different answer, so both move when the picker does.
-##
 ## ⛔ **THE GEAR IS KEYED BY RUNG, NOT ONE TERM FOR THE CARD.** Both shipped road tools serve the
 ## route branch and each names ONE rung of it, so a single answer spent on every row would quote the
 ## paving kit's uplift on the `grade` below it. `{}` — and a rung missing from the map — is the
 ## ungeared reading.
 ##
-## `queue` is that same band's BUILD QUEUE, as `{ahead, head}` — how many entries a press would land
-## behind and what the first of them is called. It moves with the picker for the identical reason: a
-## different band is a different line to stand in.
-##
-## `queued_tiles` is the FACTION's set of road tiles with a `roadwork` entry standing
+## `queued_tiles` is the FACTION's set of road tiles with a declared road build standing
 ## (`HudBandLaborState.road_queue_tiles`), joined here through `HudRouteVocab.is_queued` — the ONE
 ## predicate the tile card's `Road` row already asks, so the two blocks cannot disagree about whether
-## one road is being built. `{}` reads as *nothing is queued*, which is what a harness with no roster
-## states and what a faction that has ordered no road states.
+## one road is being built. `{}` reads as *no road build is declared*, which is what a harness with no
+## roster states and what a faction that has ordered no road states.
+##
+## `builders` is the acting band's own road crew count and `kit_gear_by_rung` what that crew carries,
+## which is what makes the turns estimate a fact about the band the picker names rather than about the
+## road — a different band with a different crew is a different answer, so both move when the picker
+## does.
 static func route_track(road: Dictionary, ladder: Array[Dictionary], knowledge: Dictionary,
         labels: Dictionary, band: Dictionary,
         keeper_label: String = "", builders: int = SourceForecast.BUILD_CREW_NONE,
-        kit_gear_by_rung: Dictionary = {}, queue: Dictionary = {},
+        kit_gear_by_rung: Dictionary = {},
         queued_tiles: Dictionary = {}) -> Array[Dictionary]:
     var rows: Array[Dictionary] = []
     var gates := RungGates.route_gates(road, ladder, knowledge, labels, band, keeper_label)
@@ -406,28 +390,17 @@ static func route_track(road: Dictionary, ladder: Array[Dictionary], knowledge: 
         #
         # A rung already ordered is not a purchase being weighed, so `300 work` on it answers a
         # question nobody is asking; what the player pressed the ladder to find out is whether the
-        # press LANDED, and the percentage is the receipt. **`0%` is the whole point** — a road queued
-        # behind another job banks nothing for dozens of turns, and a bare price there is exactly what
-        # made a working `grade` indistinguishable from a failed one.
+        # press LANDED, and the percentage is the receipt. **`0%` is the whole point** — a road declared
+        # with no hands free banks nothing for a while, and a bare price there is exactly what made a
+        # working `grade` indistinguishable from a failed one.
         #
         # The percentage is `HudRouteVocab.road_percent_of` over the same `build_fraction` the tile
         # card's `Road` row reads, so the two blocks cannot state one road two ways.
         #
-        # ⛔ **AND A PRICED ROW QUOTES NO TURNS.** They were divided by the acting band's CURRENT
-        # builders — who in the reported game were all on a Tame — and they ignored the queue the
-        # press would join, so the figure moved with a crew that was not going to work this road. What
-        # the row states instead is the rung's own standing bill, which is the half of the commitment
-        # a one-off pile cannot state and which no crew moves.
         row[ROW_WORK_KEY] = HudRouteVocab.catalog_work_cost(entry)
         var price := HudRouteVocab.road_ladder_price_face(entry)
         var figure := price
         if is_building:
-            # ⛔ **`queued_progress`, NEVER THE RAW METER.** A road on this branch is BY DEFINITION
-            # queued, and the meter it publishes belongs to the rung at RISK — which, with nothing
-            # banked above, is the rung it already HOLDS. Read raw, a `grade` ordered this turn draws
-            # `100%` on a job that has not started, which is the reported defect's third surface: the
-            # tile card's `progress_clause` and the band panel's queue rows already read it through
-            # here, and this row is the one that still did not.
             figure = HudRouteVocab.ROAD_LADDER_METER_FORMAT % HudRouteVocab.road_percent_of(
                 HudRouteVocab.queued_progress(road))
             row[ROW_ROUTE_BUILDING_KEY] = true
@@ -440,19 +413,13 @@ static func route_track(road: Dictionary, ladder: Array[Dictionary], knowledge: 
             row[ROW_SELECTABLE_KEY] = true
             row[ROW_FACE_KEY] = figure if not is_building or turns_clause == "" \
                 else HudRouteVocab.ROAD_LADDER_FACE_FORMAT % [figure, turns_clause]
-            # ⛔ **WHERE THE PRESS LANDS, STATED AT THE MOMENT OF THE DECISION — AND ONLY WHERE THERE
-            # IS STILL A PRESS TO DESCRIBE.** The press DECLARES: it appends to the acting band's
-            # build queue, and the head of that queue takes every builder, so a row that stated only
-            # a price promised work starting on the spot. That is what the sentence is for, and it is
-            # about a press that HAS NOT HAPPENED.
             #
             # ⛔ **THE ROW BEING BUILT GETS NO PLACEMENT LINE AT ALL.** Reported from play, on the
             # card itself: *"all the text under Dirt road is meaningless garbage"*. It restated the
             # row — the face one line up already carries the progress AND the turns, so a note
             # explaining what that estimate is measured from qualified a number the player was
-            # looking at — and on that screenshot the head of the band's queue WAS this very road,
-            # so the line named the road as the thing it was waiting behind. The row's own figures
-            # are the receipt for the press; there is nothing left for a sentence to add.
+            # looking at. The row's own figures are the receipt for the press; there is nothing
+            # left for a sentence to add.
             # ⛔ **THE PILE AND ITS STALL COME THROUGH THE SHARED COMPOSER**, the same
             # `_build_price_asides` the plant and animal tracks open with — so the format, the order
             # (pile, then warning) and the WARN ink have ONE spelling on every branch. They lead,
@@ -460,14 +427,7 @@ static func route_track(road: Dictionary, ladder: Array[Dictionary], knowledge: 
             # the press.
             var asides := _build_price_asides(_route_pile(entry), NO_MATERIAL_STORE,
                 _route_stall_clause(road, is_building), false)
-            if not is_building:
-                var placement := _route_queue_aside(queue)
-                if placement != "":
-                    asides.append({
-                        RUNG_ASIDE_TEXT_KEY: placement,
-                        RUNG_ASIDE_WARN_KEY: false,
-                    })
-            if builders <= SourceForecast.BUILD_CREW_NONE:
+            if is_building and builders <= SourceForecast.BUILD_CREW_NONE:
                 asides.append({
                     RUNG_ASIDE_TEXT_KEY: HudRouteVocab.ROAD_LADDER_NO_BUILDERS_ASIDE,
                     RUNG_ASIDE_WARN_KEY: true,
@@ -525,22 +485,6 @@ static func _route_stall_clause(road: Dictionary, is_building: bool) -> String:
     return HudRouteVocab.ROAD_LADDER_STALL_FORMAT % _stall_fraction_word(
         HudRouteVocab.material_coverage_of(road))
 
-## ⛔ **IS THE RUNG ABOVE THE STANDING ONE BEING BUILT?** — the test the approach row's two faces fork
-## on, and it is TWO facts because either alone leaves a real state reading as its opposite: a road
-## queued behind another job has banked nothing (so the meter cannot answer), and a band may bank work
-## on a rung whose entry has since left the queue (so the queue cannot answer either).
-##
-## ⛔ **A DECLARATION SETTLES IT ON ITS OWN, AND THE METER IS NOT ALLOWED A VOTE.** `build_fraction`
-## measures against the rung AT RISK, which on a road with nothing banked above it falls back to the
-## rung HELD — so a `grade` ordered this turn publishes an honest `1.0` for a **completed trail**. Read
-## as evidence about the rung being RAISED it says *nothing is rising* on the exact road that is, which
-## is why the queue is tested FIRST rather than as one term of an `or`.
-##
-## **A COMPLETE METER IS NOT A BUILD** — for a road NOBODY has ordered. There the wire states exactly
-## `1.0` for a rung just finished AND for the top of the ladder, so it is what *nothing is rising*
-## looks like, and the band that banked work on a rung whose entry has since left the queue is still
-## climbing. That is the same boundary `_route_meter_clause` and `_route_turns` draw, for the same
-## reason.
 static func _route_climbing(meter: float, queued: bool) -> bool:
     if queued:
         return true
@@ -548,10 +492,6 @@ static func _route_climbing(meter: float, queued: bool) -> bool:
         return false
     return meter > HudRouteVocab.ROAD_METER_UNSTARTED
 
-## **THE VERB OF THE ROW THAT IS BEING BUILT — `""` where no row is.** The producer already resolved
-## it (one row can own the meter, and only after both the queue and the meter have been read), so a
-## caller that needs to tell a press on that row from a press on any other reads it back off the rows
-## rather than deriving the same answer a second way.
 static func route_building_verb(rows: Array[Dictionary]) -> String:
     for row in rows:
         if bool(row.get(ROW_ROUTE_BUILDING_KEY, false)):
@@ -576,41 +516,11 @@ static func _route_meter_clause(meter: float) -> String:
         return ""
     return HudRouteVocab.ROAD_LADDER_METER_FORMAT % HudRouteVocab.road_percent_of(meter)
 
-## **WHAT A PRESS ON THIS ROW WOULD JOIN, AS ONE ASIDE.** `""` for a caller that states no queue at
-## all — a harness, or a card opened with no band on the roster — which draws no line rather than
-## claiming the queue is empty. **An empty queue and an unknown one are different facts**, and the
-## first of them is the reassuring one, so it is never the fall-back.
-##
-## ⛔ **AND IT IS ONLY EVER ASKED ABOUT A ROW MERELY OFFERED.** The sentence answers *what would this
-## press do* — a question the row itself cannot state — so on the row already being BUILT there is no
-## press to describe and `route_track` does not call this at all. It is not a fork in here.
-static func _route_queue_aside(queue: Dictionary) -> String:
-    if not queue.has(HudRouteVocab.ROAD_LADDER_QUEUE_AHEAD_KEY):
-        return ""
-    var ahead := int(queue[HudRouteVocab.ROAD_LADDER_QUEUE_AHEAD_KEY])
-    if ahead <= QUEUE_NOTHING_AHEAD:
-        return HudRouteVocab.ROAD_LADDER_QUEUE_EMPTY_ASIDE
-    # **THE HEAD IS NAMED AND THE REST ARE COUNTED**, which is the shape of the decision: the head is
-    # what this road is waiting behind, and the count is what a reorder is measured against.
-    var more := ""
-    if ahead > QUEUE_HEAD_ALONE:
-        more = HudRouteVocab.ROAD_LADDER_QUEUE_MORE_FORMAT % (ahead - QUEUE_HEAD_ALONE)
-    var head := String(queue.get(HudRouteVocab.ROAD_LADDER_QUEUE_HEAD_KEY, ""))
-    return HudRouteVocab.ROAD_LADDER_QUEUE_BEHIND_PLAIN_FORMAT % [head, more]
-
-## The two counts the aside above forks on, named because each is a MEANING: nothing is in the way, and
-## the only thing in the way is the head this sentence has just named.
-const QUEUE_NOTHING_AHEAD := 0
-const QUEUE_HEAD_ALONE := 1
-
 ## **THE METER READING FOR A ROW WITH NOTHING BANKED AGAINST IT** — every row but the one directly
 ## above the standing rung. Named because it is a MEANING (this rung has not been started) rather
 ## than a sentinel: `build_fraction` belongs to exactly one rung and the rest are priced whole.
 const NOTHING_BANKED := 0.0
 
-## ⛔ **HOW MANY TURNS THIS RUNG WOULD TAKE AT THE ACTING BAND'S `builders` POOL** — the answer the
-## card never gave, and the reason `ROW_TURNS_KEY` stopped being a slot nothing filled.
-##
 ## ⛔ **IT IS THE CLOSED FORM'S OWN SUPPLY SEAM, NOT A SECOND ESTIMATOR.**
 ## `SourceForecast.pool_work_supply` is exactly what `build_turns_at` divides by — `crew × bare rate
 ## + min(crew, saturating crew) × gear` — so a road and a Cultivate are paced by one expression. What
@@ -618,19 +528,6 @@ const NOTHING_BANKED := 0.0
 ## prefixed forecast SOURCE dict, which a road row is not.
 ##
 ## ⛔ **IT PRICES AN UNORDERED RUNG, AND IT IS NOT `RouteState.buildTurnsRemaining`** (`roads.md` →
-## *"`RungLadder._route_turns` DID NOT COLLAPSE INTO THIS, and must not"*). That field is LIVE and sim-stamped — the chained
-## countdown for a road actually QUEUED, through the same `published_build_countdown` seam the two
-## food webs use — and it answers `-1`, *no estimate*, for a rung nobody has declared, which is every
-## row this card prices. So the two answer different questions and the split is the design:
-## **an unordered rung → the client estimates, which is this function; a queued entry → the sim's own
-## `buildTurnsRemaining`**, read by `HudRouteVocab.build_turns_remaining_of`.
-##
-## ⛔ **NEITHER COLLAPSE IS AVAILABLE, and both have been tried.** A card quoting the wire field would
-## state *no estimate* on every rung a player is choosing between; a queue row quoting a hardcoded
-## sentinel instead of the field is the `-5`-on-every-road defect that read `Queued 97%` for 147
-## turns, reported from play. The justification both leaned on — *"a road has no source row at all,
-## which is why `buildTurnsRemaining` is a no-op for roads sim-side"* — is false in both halves: the
-## routes table is keyed by tile exactly as a patch row is, and the sim stamps a countdown on it.
 ##
 ## ⛔ **BOTH TERMS COME OFF THE CATALOG ENTRY, AND THE RATE IS READ RATHER THAN ASSUMED.** The cost is
 ## `workCost`; the bare rate is `buildWorkPerWorkerTurn`, which the sim publishes on every rung
@@ -731,7 +628,8 @@ static func _route_tooltip(entry: Dictionary, refusals: Array, road: Dictionary,
 ##
 ## `title` defaults to the plant/animal heading, so every existing call site is untouched.
 static func build_track(rows: Array[Dictionary], on_pick: Callable,
-        title_text: String = HudWorkVocab.RUNG_TRACK_TITLE) -> VBoxContainer:
+        title_text: String = HudWorkVocab.RUNG_TRACK_TITLE,
+        max_builders_by_rung: Dictionary = {}) -> VBoxContainer:
     var column := VBoxContainer.new()
     column.add_theme_constant_override("separation", HudWorkVocab.RUNG_TRACK_ROW_SEPARATION)
     column.custom_minimum_size = Vector2(HudWorkVocab.RUNG_TRACK_WIDTH, 0.0)
@@ -744,8 +642,22 @@ static func build_track(rows: Array[Dictionary], on_pick: Callable,
         # **A RUNG'S PRICE IS INSIDE ITS OWN BUTTON** — what it eats to raise, what the shelf will not
         # cover, what it costs to hold — so a pile can never float under the list belonging to no
         # rung in particular. A locked rung's REASONS are its hover (`_lock_row`), the `🔒` the row.
+        var state := String(row.get(ROW_STATE_KEY, ""))
+        if state != STATE_BANKED and state != STATE_STANDING:
+            row[ROW_MAX_BUILDERS_KEY] = int(max_builders_by_rung.get(
+                String(row.get(ROW_RUNG_KEY, "")), 0))
         column.add_child(_build_row(row, on_pick))
     return column
+
+## The catalog's builder caps as `{rung_key: max_builders}` - the one table a rung card reads
+## "up to N builders at once" from. `catalog` is `LadderRungState` dicts (`ladder_rungs()`).
+static func max_builders_by_rung(catalog: Array) -> Dictionary:
+    var caps: Dictionary = {}
+    for entry_variant in catalog:
+        if entry_variant is Dictionary:
+            var entry: Dictionary = entry_variant
+            caps[String(entry.get("rung_key", ""))] = int(entry.get("max_builders", 0))
+    return caps
 
 ## **THE RING'S OWN SMALL CARD — what another ring eats to raise, what it costs to hold, and where it
 ## will stall** (`docs/plan_standing_upkeep.md` §4.9 item 12c).
@@ -920,6 +832,9 @@ static func _build_rung_button(row: Dictionary, on_pick: Callable, locked: bool)
         for aside in (row.get(key, []) as Array):
             column.add_child(_row_aside(String((aside as Dictionary).get(RUNG_ASIDE_TEXT_KEY, "")),
                 bool((aside as Dictionary).get(RUNG_ASIDE_WARN_KEY, false))))
+    var cap := int(row.get(ROW_MAX_BUILDERS_KEY, 0))
+    if cap > 0:
+        column.add_child(_row_aside(HudWorkVocab.RUNG_MAX_BUILDERS_FORMAT % cap, false))
     return cell
 
 ## One price line INSIDE a rung's button — `build_aside`'s register, wrapping to the button's width
@@ -1520,18 +1435,12 @@ static func _index_of_improvement(branch: Array, improvement: String) -> int:
             return index
     return -1
 
-## The queued entry's published legs, keyed by their rung so a row can ask for its own. `{}` on an
-## unqueued source.
 static func _legs_by_rung(source: Dictionary, prefix: String) -> Dictionary:
     var by_rung := {}
     for leg in SourceForecast.build_legs(source, prefix):
         by_rung[String(leg.get(SourceForecast.BUILD_LEG_RUNG_KEY, ""))] = leg
     return by_rung
 
-## **WHAT THIS RUNG STILL OWES, FROM WHERE THE SOURCE STANDS.** The queued entry's own leg where it
-## publishes one — that figure is the sim's and is what the whole feature reads — and otherwise the
-## per-rung `workCost − workDone` pair the wire publishes for exactly this pre-commit question.
-##
 ## `WORK_UNKNOWN` where the wire prices no such job on this source, which every face renders as no
 ## figure rather than as a free rung.
 static func _work_remaining(source: Dictionary, prefix: String, improvement: String,
@@ -1543,9 +1452,6 @@ static func _work_remaining(source: Dictionary, prefix: String, improvement: Str
         return WORK_UNKNOWN
     return maxf(cost - SourceForecast.build_work_done(source, prefix, improvement), 0.0)
 
-## The leg's CHAINED date, and `BUILD_TURNS_NO_ESTIMATE` where no entry covers this rung. **There is
-## no pair to fall back on here**: a date is chained against a build queue the client cannot see, so
-## an unqueued rung honestly has none.
 static func _leg_turns(legs: Dictionary, rung_key: String) -> int:
     if not legs.has(rung_key):
         return SourceForecast.BUILD_TURNS_NO_ESTIMATE
@@ -1605,20 +1511,9 @@ static func _outright_bar(kind: String, source: Dictionary, prefix: String,
 
 # ---- THE TWO DEPOSIT BRANCHES — a THIRD sibling of `track`, never a widening of it ----------------
 #
-# ⛔ **`track` TAKES A LABOR `kind` AND A PREFIXED FORECAST SOURCE DICT, AND A WORKING HAS NEITHER.**
-# There is no `forage`/`hunt` forecast row for a deposit, no per-rung `<rung>WorkCost` on the source,
-# no queued entry publishing legs and no `prefix` to spell its keys under. So the PRODUCER is a
-# sibling, exactly as `route_track` is, and the RENDERER is not: this emits `track`'s own `ROW_*`
-# shape and hands it to the SAME `build_track`, which is what keeps one rung reading one way on every
-# card in the client.
-#
 # ⛔ **EVERY LABEL, PRICE, PAYOFF AND GATE COMES OFF THE CATALOG** (`HudDepositVocab`'s `catalog_*`
 # readers over `SubsistenceSection.ladderRungs`). Nothing here hard-codes the five shipped rungs: a
 # rung added to `intensification_ladder.json` appears as a row with no client edit at all.
-#
-# ⛔ **THREE OF THE SIX ORIGINAL STATES ARE UNREACHABLE HERE, STRUCTURALLY** — `path` and `target`
-# name legs of a QUEUED entry, and a deposit publishes membership (`is_queued`) rather than a
-# destination, so no row can be a leg of one.
 
 ## **THE DEPOSIT BRANCH FOR ONE WORKING, BOTTOM RUNG FIRST — ONE LINE PER RUNG.**
 ##
@@ -1626,27 +1521,10 @@ static func _outright_bar(kind: String, source: Dictionary, prefix: String,
 ## the working's own, because `order` is per branch), `knowledge` the faction's `{track: progress}`
 ## row and `labels` the `{knowledge_id: display_name}` lookup off the ladder's knowledge roster.
 ##
-## `builders` is the acting band's own pool and `band` is read for ONE thing — its `material_store`,
-## which is what the shared price-aside composer weighs a rung's pile against. `{}` simply drops that
-## aside: a caller with no band in hand states the price and not the shortfall, which is the honest
-## half, and it is `track()`'s own contract. `queue` is that band's build queue as `{ahead, head}`, so
-## a row states what a press would land behind.
-##
-## ⛔ **A PRICED ROW QUOTES NO TURNS, AND THAT IS A DECISION.** The estimate would be divided by a
-## builders pool that may be on another job entirely and would ignore the queue the press joins —
-## the route branch's own finding, arriving here before it could ship. What a row states instead is
-## the rung's pile and its standing bill, neither of which a crew moves. **The row being BUILT is the
-## one exception**, and it quotes the SIM's chained countdown (`build_value`) rather than an estimate
-## of this client's.
-## ⛔ **`cutters` AND `builders` ARE TWO DIFFERENT CREWS AND BOTH ARE READ.** `cutters` is the TAKE crew
-## on this working — what the sim's *no band is working this* rule tests, hence the CREW gate — while
-## `builders` is the band-wide pool that would RAISE the rung, which the countdown on a row already in
-## flight is quoted at. `cutters` is required and positional for `RungGates.deposit_gates`' own reason:
-## nothing on a `deposits` row states it, so a default would be a guess.
 static func deposit_track(deposit: Dictionary, ladder: Array[Dictionary], knowledge: Dictionary,
         labels: Dictionary, cutters: int,
         builders: int = SourceForecast.BUILD_CREW_NONE,
-        band: Dictionary = {}, queue: Dictionary = {}) -> Array[Dictionary]:
+        band: Dictionary = {}) -> Array[Dictionary]:
     var rows: Array[Dictionary] = []
     var branch := HudDepositVocab.branch_of(deposit)
     var catalog := HudDepositVocab.branch_ladder(ladder, branch)
@@ -1658,7 +1536,7 @@ static func deposit_track(deposit: Dictionary, ladder: Array[Dictionary], knowle
     var meter := HudDepositVocab.build_fraction_of(deposit)
     # ⛔ **IS THE RUNG ABOVE THE STANDING ONE ACTUALLY BEING RAISED?** — a declaration on the wire, or
     # work already banked against it. Resolved ONCE, because only one row can own the meter, and the
-    # queue is tested FIRST for the route branch's reason: `build_fraction` measures against the rung
+    # declaration is tested FIRST for the route branch's reason: `build_fraction` measures against the rung
     # AT RISK, which on a working with nothing banked above it falls back to the rung HELD — so a
     # `quarry` ordered this turn publishes an honest `1.0` for a completed gathering rung.
     var climbing := HudDepositVocab.is_queued(deposit) \
@@ -1713,7 +1591,7 @@ static func deposit_track(deposit: Dictionary, ladder: Array[Dictionary], knowle
             # ⛔ **A ROW ALREADY ORDERED IS NOT A PURCHASE BEING WEIGHED**, so `250 work` on it
             # answers a question nobody is asking; what the player opened the track to find out is
             # whether the press LANDED. `build_value` is the shared five-sentinel countdown a patch,
-            # a herd and a road all render through, so `0%` on a job queued behind another reads as
+            # a herd and a road all render through, so `0%` on a job with no hands yet reads as
             # the receipt it is rather than as a failed command.
             var progress := HudDepositVocab.build_value(deposit, builders)
             if progress != "":
@@ -1728,13 +1606,7 @@ static func deposit_track(deposit: Dictionary, ladder: Array[Dictionary], knowle
             # per-turn material draw of its own, so the stall verdict is DERIVED here from the shelf
             # against the pile exactly as a pen's hurdles are.
             var asides := _build_price_asides(_deposit_pile(entry), store)
-            if not is_building:
-                var placement := _route_queue_aside(queue)
-                if placement != "":
-                    asides.append({
-                        RUNG_ASIDE_TEXT_KEY: placement,
-                        RUNG_ASIDE_WARN_KEY: false,
-                    })
+            if is_building:
                 if builders <= SourceForecast.BUILD_CREW_NONE:
                     asides.append({
                         RUNG_ASIDE_TEXT_KEY: HudRouteVocab.ROAD_LADDER_NO_BUILDERS_ASIDE,

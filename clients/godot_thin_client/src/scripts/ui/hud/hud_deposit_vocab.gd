@@ -400,18 +400,8 @@ static func build_turns_remaining_of(deposit: Dictionary) -> int:
 static func build_blocked_reason_of(deposit: Dictionary) -> String:
 	return String(deposit.get("build_blocked_reason", ""))
 
-## Is this working in some band's build queue right now? — the MEMBERSHIP flag, and the term
-## `build_turns_remaining`'s `-5` is separated from `-1` by.
 static func is_queued(deposit: Dictionary) -> bool:
 	return bool(deposit.get("is_queued", false))
-
-## **THE POSITION `DetailFormat.build_sentinel_value` FORKS `-1` ON, answered by the flag the deposit
-## row actually publishes.** That fork asks exactly one question — *does any band still have this
-## source queued* — and `is_queued` is that question's own field; a deposit row carries membership
-## rather than a rank, so the rank is never read on this path and never invented here.
-static func queue_position_of(deposit: Dictionary) -> int:
-	return SourceForecast.BUILD_QUEUE_HEAD if is_queued(deposit) \
-		else SourceForecast.NOT_IN_ANY_BUILD_QUEUE
 
 # ---- THE KEEPING VERDICT ---------------------------------------------------------------------
 
@@ -815,7 +805,7 @@ static func build_value(deposit: Dictionary, crew: int) -> String:
 			and (meter <= METER_UNSTARTED or meter >= METER_COMPLETE):
 		return ""
 	return DetailFormat.build_countdown_value(turns, crew, percent_of(meter),
-		queue_position_of(deposit))
+		is_queued(deposit))
 
 # ==================================================================================================
 #  THE RUNG CATALOG — `SubsistenceSection.ladderRungs`, one row per rung of BOTH branches
@@ -1339,17 +1329,11 @@ const DEPOSIT_IDLE_TIP := "⚠ Unworked: decaying\nFix: assign cutters"
 ## walks away is exactly who has NOT pressed this.
 const WORKING_ABANDON_LABEL := "Stop holding this working"
 
-## ⛔ **WHAT IT DESTROYS, FIRST — and the banked work is the half a player cannot see coming.** The sim
-## drops the holding and its build-queue entry and leaves the METER to rot, which is the plant web's
-## own retirement contract: nothing is demolished, and nothing is refunded either. A hover that said
-## only *"drops this band's hold"* would read as reversible, which it is not once work is banked.
-const WORKING_ABANDON_DROPS_FORMAT := "Drops this band's hold on the %s here, and any rung it has " \
-	+ "queued on it. The work already banked is not given back: with nobody holding it, the ground " \
+const WORKING_ABANDON_DROPS_FORMAT := "Drops this band's hold on the %s here, and any rung it is " \
+	+ "building. The work already banked is not given back: with nobody holding it, the ground " \
 	+ "slides back to what it gives for free."
 
-## …and WHY a player would want it. A working is kept by its own crew, so dropping one frees nothing
-## band-wide; what it does is take the rung's queue entry and the band's claim off the ground.
-const WORKING_ABANDON_WHY := "It stays held until you do: its queued rung stays in line, and its " \
+const WORKING_ABANDON_WHY := "It stays held until you do: any rung it is building stays declared, and its " \
 	+ "crew keeps it before they cut."
 
 ## **ONE HOVER, ON BOTH EMITTERS.** The ladder card's row and the roster row's `✕` send the identical
@@ -1932,10 +1916,6 @@ const DEPOSIT_LADDER_RATE_DECIMALS := 2
 # read in one format and in one order. A branch-local spelling of it was written here first and
 # deleted: it would have been the same sentence typed a fourth time.
 
-## **WHAT A RUNG NOBODY HAS STARTED COSTS — the pile AND the bill, and NO DURATION.** A priced row
-## quotes no turns: the estimate would be divided by a builders pool that may be on another job and
-## would ignore the queue the press joins. The two figures that do not move with a crew are what the
-## row states.
 ##
 ## **THE UPKEEP CLAUSE IS DROPPED WHERE THE RUNG DECLARES NONE** — both free floors hold for nothing,
 ## so `0/turn upkeep` would be a bill where there is no bill.

@@ -39,12 +39,12 @@ completed Field once published `0.99999994` and a finished Field's card read *"F
   turn by turn. See `flora.md` → "THE MIX INTERPOLATES TOO" for why the earlier *"a half-weeded basket
   is not a blend of two baskets"* ruling was overturned, and for the take-selection repair that rides
   the commitment.
-- **A QUEUE ENTRY NAMES A DESTINATION, so `sow` on untended ground costs the WHOLE BRANCH — 125 work
+- **A DECLARATION NAMES A DESTINATION, so `sow` on untended ground costs the WHOLE BRANCH — 125 work
   units, not 75.** It lays two legs (`plant:tended`, then `plant:farm`), passes through Cultivated on
-  the way — announced on Cultivate's own channel — and holds the head of the queue until it arrives.
+  the way — announced on Cultivate's own channel — and stays declared until it arrives.
   The same order on ground that is already tended is **one** leg owing 75, and on a patch 30 units
   into its Cultivate it owes **20** on that leg: a previous improvement is a receipt, not a discount.
-  See `intensification.md` → "A QUEUE ENTRY NAMES A **DESTINATION**, NOT A RUNG", which owns the seam,
+  See `intensification.md` → "A DECLARATION NAMES A **DESTINATION**, NOT A RUNG", which owns the seam,
   the published legs and the per-web kit rule.
 
 `intensification.md` → "ONE POSITION ON THE LADDER" is the authority for the primitives; this file
@@ -192,24 +192,23 @@ the exact twin, one `ladder_position` beside a stamped `standing`; the checkpoin
   **no start profile lists it**, so no faction begins knowing Cultivation.
 - **The `Cultivate` improvement — the investment.** In `advance_labor_allocation`'s **Forage** arm
   (Population), a patch worked with the `cultivate` verb in flight:
-  - **Costs the hands it is staffed with, and nothing else.** `yield_fraction_while_building` is
-    **retired** (`docs/plan_standing_upkeep.md` §2.2): `cultivate <faction> <x> <y>` **queues** the
-    build and `assign_labor <f> <b> builders <n>` staffs the pool that raises it, so what a Cultivate
-    costs is *the people who are
-    clearing instead of gathering*, and the gatherers beside them carry exactly what they carried
-    before. It is the same statement at every staffing, where the dip's price depended on whether the
+  - **Costs the hands it is staffed with, and nothing else.** There is no
+    `yield_fraction_while_building` (`docs/plan_standing_upkeep.md` §2.2): `cultivate <faction> <x>
+    <y>` **declares** the build and staffing deals it builders, so what a Cultivate costs is *the
+    people who are clearing instead of gathering*, and the gatherers beside them carry exactly what
+    they carried before. It is the same statement at every staffing, where the dip's price depended on whether the
     patch's standing stock was binding the crew — a regime the player cannot see.
-  - **Accrues the band's BUILDERS POOL whole output** — `builders × PER_WORKER_OUTPUT`, and only
-    while this patch is the **head** of that band's build queue
-    (`docs/plan_standing_upkeep.md` §2.5) — **no floor
+  - **Accrues its own builders' whole output** — `builders × PER_WORKER_OUTPUT`, the crew staffing
+    dealt this declared build (up to the rung's `max_builders`;
+    `docs/plan_standing_upkeep.md` §2.5, `docs/plan_labor_at_scale.md`) — **no floor
     term** (a build crew is not pulling on the patch — see "THE FLOOR CAME OFF THE BUILD RATE" in
     `intensification.md`),
     in **work units**, toward the rung's `work_cost` (sets `owner` on first accrual;
     only the owner accrues), **gated** on the faction *knowing Cultivation* and on there being
     something standing above the floor to work (`systems::labor::crew_is_working_the_source`).
     **That term reads the WHOLE stand, never the gatherers' take selection** — a selective gather
-    leaves the rest standing by definition, and the builders are a band pool that is not gathering at
-    all, so threading the selection in stalls a queued build the moment a player narrows a work row.
+    leaves the rest standing by definition, and the builders are not gathering at all, so threading
+    the selection in stalls a declared build the moment a player narrows a work row.
     `flora.md` → "THE BUILD IS GATED ON THE GROUND, NOT ON THE SELECTION" owns that split. See
     "An improvement costs WORK, not turns" in `intensification.md`: the cost is fixed, **turns are
     the output**, and there is no crew cap. **The crew's KIT is not in that expression** — a tool
@@ -287,15 +286,15 @@ the exact twin, one `ladder_position` beside a stamped `standing`; the checkpoin
   boundary by the Population→Logistics lag. The old
   even-split-across-all-the-owner's-bands payment in `advance_cultivation` is **retired**, as is the
   flat `tended_provisions_per_biomass` managed rate.
-  - **Completion RETIRES THE QUEUE ENTRY — a completed patch is never left building.** A queued
+  - **Completion ENDS THE DECLARATION — a completed patch is never left building.** A declared
     build means "the band's builders are raising this"; the moment the meter fills that stops being
     true *and can never become true again on this ground*, so `Cultivate` is a dead rung there.
-    `advance_labor_allocation` therefore removes the entry from `LaborAllocation::build_queue`,
-    which hands the **whole pool** to whatever the player put next — the row itself is untouched, so
-    the tile, the **committed species**, the take crew and the stance all simply stay as they are.
-    It is announced, so the player sees the head move. **Nobody is freed**: the builders never stood
-    on the source, and the completion hand-off onto the keeping is retired (§2.3 — the keeping bill
-    starts at the first work banked, so the failure it guarded cannot happen).
+    `advance_labor_allocation` therefore removes the declaration from `LaborAllocation::builds`,
+    and the next staffing deals those hands elsewhere — the row itself is untouched, so the tile, the
+    **committed species**, the take crew and the stance all simply stay as they are. It is
+    announced. **Nobody is freed**: the builders never stood on the source, and there is no
+    completion hand-off onto the keeping (§2.3 — the keeping bill starts at the first work banked,
+    so the failure it guarded cannot happen).
     **The completing turn still pays the build's whole price** (the
     accrue-after-take ordering). The completion event's detail is
     `status=complete action=cultivate x=… y=…`; the `retired_policy=` token went with the constant
@@ -493,20 +492,17 @@ the exact twin, one `ladder_position` beside a stamped `standing`; the checkpoin
   ground climbs**, which is what the four verb commands are for. So a tended patch that has slipped
   below its cost **names its own rung** without the player working out which job a repair is.
   - **⛔ BUT NOTHING RE-ADOPTS IT** (`docs/plan_standing_upkeep.md` §2.4). Deriving the verb says
-    *what* a repair would be; it does not put the source back in the band's **build queue**.
-    Repairing an eroded rung is a **fresh decision**, made by re-queueing — which is what keeps a
-    one-percent-eroded Field from displacing the build the player actually ordered off the head of
-    the builders' queue, being topped up, slipping again, and oscillating there while the real build
-    stands still. Pinned by
+    *what* a repair would be; it does not declare the build. Repairing an eroded rung is a **fresh
+    decision**, made by declaring it again — which is what keeps a one-percent-eroded Field from
+    drawing builders away from the build the player actually ordered, being topped up, slipping
+    again, and oscillating there while the real build stands still. Pinned by
     `forage_cultivation::a_rung_completes_erodes_and_is_repaired_only_by_re_queueing_it`.
-  - **`abandon_improvement` is RETIRED** with the stored authority it used to clear (proto field 46
-    reserved, never reused), because a command that cleared a *derived* value would either do nothing
-    or fight the derivation. **What came back in its place is disposal, not arbitration** (§2.5):
-    `unqueue <faction> <x> <y>` drops the declaration and leaves the row, its take crew, its kit and
-    the meter alone, and `abandon <faction> <x> <y>` puts the whole **holding** down — row and entry
-    together — leaving the meter to rot back at the rung's own rate. Together they are the undo a
-    declaration never had: `cultivate <faction> <x> <y> 0` used to *set* the verb with no builders
-    and clear nothing, so an unwanted declaration was stuck for the life of the band.
+  - **There is no `abandon_improvement`** (proto field 46 reserved, never reused): a command that
+    cleared a *derived* value would either do nothing or fight the derivation. **Disposal is the
+    undo** (§2.5): `unqueue <faction> <x> <y>` stops the build — it drops the declaration and
+    leaves the row, its take crew, its kit and the meter alone — and `abandon <faction> <x> <y>`
+    puts the whole **holding** down — row and declaration together — leaving the meter to rot back
+    at the rung's own rate.
   - **A fully feral patch clears owner, species, cost and rung together** — `reconcile_owner`'s
     "nothing is left of either improvement" and the derivation's "a meter at zero needs a
     declaration" are one notion of empty, pinned by
@@ -525,12 +521,12 @@ the exact twin, one `ladder_position` beside a stamped `standing`; the checkpoin
   out of a **dipped** take: committing to a 25-turn improvement asked for *one* forager where the
   same wild patch asks for two, so doing more work required fewer people. With each role staffed on
   its own row there is no blended count for a floor to raise — `workers_needed` is the **take**'s own
-  count, `upkeepWorkersNeeded` is the **keeping**'s, and the builders are the band's own pool.
+  count, `upkeepWorkersNeeded` is the **keeping**'s, and the builders are the build's own crew.
   `RungDef::build_crew_needed`, `LadderConfig::build_crew`, `source_crew_needed`
   and the `cultivateCrewNeeded` / `sowCrewNeeded` wire fields went with it. **The crew is still the
   throughput**: a
-  Cultivate run by a pool of one takes 50 turns, by two 25, by ten **5**, with no cap beyond the
-  band's own head count (`docs/plan_unit_costed_work.md` §1.2). The declared cost was priced against two hands, which
+  Cultivate run by one builder takes 50 turns, by two 25, by three 17 — the rung's `max_builders`
+  is the cap (`docs/plan_unit_costed_work.md` §1.2, `docs/plan_labor_at_scale.md`). The declared cost was priced against two hands, which
   is why 25 turns is still the reference reading.
 - **Config.** The plant rung-2 **build dials moved to `intensification_ladder.json`**'s `plant:tended`
   rung (`build`: **`work_cost` 50** work units → 25 turns to prepare **at the rung's crew of 2, at the
@@ -545,7 +541,7 @@ the exact twin, one `ladder_position` beside a stamped `standing`; the checkpoin
   capacity_per_tender` — one tile is what the load measures, and the tiles are not the same size),
   **`upkeep.grace_turns` 2** — cleared, weeded ground keeps its clearing a couple of
   turns after the crew stops; **`crew_needed` and `yield_fraction_while_building` are both retired**
-  — the builders are the band's own pool and the gatherers beside them are untouched, so neither a
+  — the builders are the build's own crew and the gatherers beside them are untouched, so neither a
   staffing floor nor a dip has anything left to say), so
   the plant and animal ladders can only be tuned together (see "The Intensification Ladder"). What stays
   in `labor_config.json` `forage.cultivation` (`CultivationConfig`): **`tended_regrowth_gain`** (1.5 — a
@@ -819,10 +815,10 @@ herd has one appetite).
   each rung's `Thriving` gate, rung 3 never had one, and requiring it would make the
   create-from-nothing case impossible — **bare ground stands below every floor**, by construction. The
   floor still paces the build, so a crew stripping the ground it is sowing still builds nothing.
-- **The investment is the band's builders pool** — `sow <faction> <x> <y>` queues the job and the
-  hands staffed on `assign_labor <f> <b> builders <n>` raise it when it reaches the head,
-  which are hands not gathering (`docs/plan_standing_upkeep.md` §2.2; the rung's
-  `yield_fraction_while_building` is retired). On **bare** ground there is nothing for the gatherers
+- **The investment is the build's own crew** — `sow <faction> <x> <y>` declares the job and the
+  builders staffing deals it (up to the farm's `max_builders`) raise it, which are hands not
+  gathering (`docs/plan_standing_upkeep.md` §2.2; the rung carries no
+  `yield_fraction_while_building`). On **bare** ground there is nothing for the gatherers
   beside them to carry either, so a bare-ground sow is near-pure investment. `forage_field.rs` pins
   that as a
   **relation, not a pair of literals** — the whole build is a trickle beside the Field it buys
@@ -941,7 +937,7 @@ multiplier  = clamp(share_load, field_share_cost_floor, field_share_cost_ceiling
 - **⛔ IT IS NOT LIVE, and the reason is that the mix interpolates.** `patch_composition` blends across
   the rung being raised, so a Sow raises its own crop's share continuously as it proceeds. A live price
   would shrink the remaining work as the work was done — a job that accelerates itself — and it would
-  turn the queue's chained finish date (`plan_standing_upkeep.md` §4.6b) from an exact construction
+  turn the build's finish date (`plan_standing_upkeep.md` §4.6b) from an exact construction
   into a drifting estimate. Guarded by
   `forage::tests::a_running_sows_price_holds_while_the_mix_moves_under_it`, which asserts the crop's
   share climbing as a **precondition** before asserting the price standing still.

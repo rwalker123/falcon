@@ -176,13 +176,6 @@ func default_kit_id(job: String) -> String:
 			# none. Stated rather than reached by fall-through, for the builders arm's reason below.
 			return _default_extract_kit_id
 		KitRoster.JOB_BUILDERS:
-			# **THE WIRE NAMES NO BUILDERS DEFAULT**, so this answers `""` — the "a job the wire has
-			# not named a default for" case above, stated rather than reached by fall-through. Falling
-			# through to the HUNT default would be worse than saying nothing twice over: the role
-			# card's picker would mark the wrong entry `(default)`, and `Main._kit_token` would then
-			# OMIT the token for a builders selection that happened to equal the hunt kit, so the sim
-			# would resolve `default_kits.builders` (`none`) for a choice the player made and the
-			# panel showed.
 			return KitRoster.NO_KIT_ID
 		_:
 			return _default_hunt_kit_id
@@ -957,41 +950,23 @@ func find_deposit(x: int, y: int, material: String) -> Dictionary:
 			return row
 	return {}
 
-## ⛔ **WHICH ROAD TILES THE PLAYER HAS QUEUED — `{Vector2i: true}` over EVERY player band's queue.**
+## ⛔ **WHICH ROAD TILES HAVE A BUILD DECLARED ON THEM — `{Vector2i: true}`.**
 ##
-## A road is the one build source with **no labor row** (deliberately: a road is not worked like a
-## patch or a herd, so it has no crew to staff), which is exactly why the BUILD QUEUE block silently
-## dropped its entry and the tile card went on reading the road as un-declared. The entry is on the
-## wire — `PopulationCohortState.build_queue` publishes it as `kind: "roadwork"` carrying the road's
-## tile — so what was missing is this join, not a field.
+## A road is the one build source with **no labor row** (a road is not worked like a patch or a herd),
+## so the tile card cannot ask a crew. The road row itself states it: `builders_cap` is non-zero where
+## a band of the viewer's has declared a build there (`SourceForecast.build_is_declared`).
 ##
-## **EVERY BAND, not the acting one.** *Has anybody of mine ordered this road* is a FACTION question:
-## the tile card names no band, and a road queued by Band 2 read as un-queued while Band 1 was
-## selected would be the same invisibility one band over.
+## **The TILE is the key**, the road row's own identity (`tile_x` / `tile_y`).
 ##
-## **The TILE is the key**, which is the road row's own identity (`tile_x` / `tile_y`, the retired
-## `RouteId`'s replacement), so the two lists join on one spelling — and `pending_key`'s `roadwork`
-## arm keys per tile for the same reason, which is what stops two queued roads sharing one entry.
-##
-## `{}` for a faction that has queued no roads, which every consumer reads as *nothing is queued*.
+## `{}` where no road build is declared, which every consumer reads as *nothing is declared*.
 func road_queue_tiles() -> Dictionary:
 	var tiles: Dictionary = {}
-	for band_variant in current_player_bands():
-		if not (band_variant is Dictionary):
+	for road_variant in _roads:
+		if not (road_variant is Dictionary):
 			continue
-		var entries: Variant = (band_variant as Dictionary).get("build_queue", [])
-		if not (entries is Array):
-			continue
-		for entry_variant in (entries as Array):
-			if not (entry_variant is Dictionary):
-				continue
-			var entry: Dictionary = entry_variant
-			if not HudRouteVocab.queue_entry_is_road(entry):
-				continue
-			var x := int(entry.get("target_x", -1))
-			var y := int(entry.get("target_y", -1))
-			if x >= 0 and y >= 0:
-				tiles[Vector2i(x, y)] = true
+		var road: Dictionary = road_variant
+		if SourceForecast.build_is_declared(road, SourceForecast.BARE_SOURCE_PREFIX):
+			tiles[HudRouteVocab.tile_of(road)] = true
 	return tiles
 
 ## Ingest the snapshot forage patches into the per-tile lookup. A non-Array input is ignored (the
@@ -1016,13 +991,13 @@ func set_forage_patches(patches_variant: Variant) -> void:
 ##
 ## ⛔ **`roadwork` NAMES TWO DIFFERENT THINGS ON THE WIRE, AND THE TILE IS WHAT TELLS THEM APART.**
 ## It is a band-wide standing ROLE (`assign_labor <faction> <band> roadwork <n>`, one slot per band,
-## keeping the roads the band built) **and** it is the `BuildSource::kind()` of a queued ROAD, one per
-## TILE. Both arrive through this function, so the road arm is gated on a real tile: an entry from
-## `build_queue` carries `target_x`/`target_y` and keys per road, while the role — asked at `-1, -1`
-## like every other band-wide role — keeps the bare kind it has always had.
+## keeping the roads the band built) **and** it is the kind of a declared ROAD build, one per TILE.
+## Both arrive through this function, so the road arm is gated on a real tile: a road build carries
+## `target_x`/`target_y` and keys per road, while the role — asked at `-1, -1` like every other
+## band-wide role — keeps the bare kind it has always had. **Without the tile, two declared roads
+## share one key** and the board would join both to whichever road it looked up first, draw one row
+## for two jobs, and send that row's command for both.
 ##
-## **WITHOUT THE TILE, TWO QUEUED ROADS SHARE ONE KEY** and the queue block would join both entries to
-## whichever road it looked up first, draw one row for two jobs, and send that row's rank for both.
 ## ⛔ **AND AN `extract` ROW KEYS PER TILE *AND* MATERIAL, WHICH IS WHY THIS TAKES A FIFTH TOKEN**
 ## (arc #583). One tile can hold two workings — a wooded highland holds timber and rock — so a key
 ## built from the tile alone would join a band's Wood crew to its Stone crew, draw one row for two
@@ -1054,64 +1029,6 @@ func pending_key(kind: String, x: int, y: int, herd_id: String, material: String
 			return kind
 		_:
 			return kind  # scout / warrior / builders — one band-wide role each
-
-## **THIS BAND'S OWN BUILD QUEUE, AS THE KEYS THE QUEUE MODELS ARE KEYED BY** — the wire's
-## `PopulationCohortState.buildQueue` in the band's own order, each row mapped through `pending_key`,
-## `[]` for a band with nothing queued (`docs/plan_standing_upkeep.md` §4.9 item 9a).
-##
-## **THE RANK IS THE INDEX.** Entry 0 is the head and there is deliberately no second integer to
-## disagree with it, so this list IS the order and nothing re-sorts it.
-##
-## ⛔ **`SourceForecast.build_queue_position` IS NOT THIS.** That field is published per SOURCE and
-## rides the WINNING band (the soonest estimate), so on a source two bands hold it states another
-## band's place in another band's line — which drew band B's `[X, Y, Z]` as `[Y, X, Z]` and then had
-## the drag arithmetic compute an insert index from the wrong list. It is a READOUT; this is the rank.
-##
-## **ONE DERIVATION, SHARED BY THE BLOCK AND THE DROP.** The queue block orders on it and
-## `_queue_drop` indexes into it, so the position a drag sends is an index into the list the player
-## was looking at — the property a second walk of the wire would only be able to get wrong.
-##
-## The keys are `pending_key`'s own shape and the wire's `kind` is the `LaborAssignment` vocabulary
-## (`"forage"` / `"hunt"`), so an entry joins its work row on ONE spelling rather than on two that
-## merely happen to match.
-func build_queue_keys(band: Dictionary) -> Array:
-	var keys: Array = []
-	var entries: Variant = band.get("build_queue", [])
-	if not (entries is Array):
-		return keys
-	for entry_variant in (entries as Array):
-		if not (entry_variant is Dictionary):
-			continue
-		keys.append(queue_entry_key(entry_variant as Dictionary))
-	return keys
-
-## **ONE WIRE QUEUE ENTRY'S KEY**, in `pending_key`'s shape, off the entry's OWN site halves
-## (`BuildQueueEntryState.material` / `.branch`, `docs/plan_site_crews.md` §2.4): a working's key names
-## its material and a road's is the roadwork key, because one hex can hold two workings, or a road and
-## a patch, and the tile alone cannot say which.
-func queue_entry_key(entry: Dictionary) -> String:
-	var x := int(entry.get("target_x", -1))
-	var y := int(entry.get("target_y", -1))
-	if HudRouteVocab.queue_entry_is_road(entry):
-		return pending_key(HudConst.LABOR_KIND_ROADWORK, x, y, "")
-	return pending_key(String(entry.get("kind", "")).strip_edges().to_lower(), x, y,
-		String(entry.get("fauna_id", "")), String(entry.get("material", "")))
-
-## **ONE QUEUED BUILD'S OWN MARK** — `high` / `normal` / `low` off the band's wire queue entry whose
-## source key is `key` (`BuildQueueEntryState.buildPriority`, `docs/plan_site_crews.md` §2.4), or `""`
-## when this band has nothing queued there. Normalized through `HudWorkVocab.work_priority_of` so a
-## frame the sim did not write reads as the default rather than as a fourth token.
-func build_priority_for_key(band: Dictionary, key: String) -> String:
-	var entries: Variant = band.get("build_queue", [])
-	if not (entries is Array):
-		return ""
-	for entry_variant in (entries as Array):
-		if not (entry_variant is Dictionary):
-			continue
-		var entry: Dictionary = entry_variant
-		if queue_entry_key(entry) == key:
-			return HudWorkVocab.work_priority_of(String(entry.get("build_priority", "")))
-	return ""
 
 func pending_assigns_for(entity: int) -> Dictionary:
 	var e: Variant = _pending_labor.get(entity, {})
@@ -1187,19 +1104,15 @@ func record_pending_assign(entity: int, kind: String, workers: int, x: int, y: i
 	_pending_labor[entity] = entry
 	changed.emit(&"pending")
 
-# ---- THE WITHDRAWAL — the queue's one remaining optimistic fact -----------------------------------
+# ---- THE WITHDRAWAL — a stopped build's one optimistic fact ----------------------------------------
 #
 # **IT RIDES THE EXISTING PER-BAND RECORD, beside `assign` and `move`** (`docs/plan_standing_upkeep.md`
 # §4.7b ④), so `reconcile_pending` and `_prune_pending_entity` cover it with no second lifecycle to
 # keep in step.
 #
-# ⛔ **IT IS KEYED ON THE TURN, NOT ON THE NEXT SNAPSHOT — AND THE REASON IS NO LONGER THE ONE THAT
-# WAS WRITTEN HERE.** The justification used to be the stale turn-written `buildQueuePosition`: the
-# recapture every command triggers still carried the withdrawn entry at its old position, so a "hide
-# it until the next snapshot" rule flickered the row straight back. **That reason is dead.**
-# `PopulationCohortState.buildQueue` is captured LIVE off the allocation (§4.9 item 9a), so the
-# recapture an `unqueue` triggers has already dropped the entry, and so has the `improvement` token
-# on the source's own labor row.
+# ⛔ **IT IS KEYED ON THE TURN, NOT ON THE NEXT SNAPSHOT.** The declared build is captured live off
+# the allocation, so the recapture an `unqueue` triggers has already dropped it, and so has the
+# `improvement` token on the source's own labor row; the overlay only has to bridge the round trip.
 #
 # What the overlay still covers is the ROUND TRIP: the frame is drawn the instant the `✕` is pressed
 # and the recapture is a network hop away, so without it the row sits there until the reply lands.
@@ -1207,14 +1120,12 @@ func record_pending_assign(entity: int, kind: String, workers: int, x: int, y: i
 # already drops additions on *a snapshot with a NEWER turn*, and this takes the identical rule for
 # free by living in the same record.
 #
-# ⛔ **THE ORDERING OVERLAY THAT USED TO SHARE THIS RECORD IS GONE**, for exactly the fact that
-# changed: a client-side ordering beside a live wire one is a SECOND ordering, which is the drift
-# `buildQueue`'s own doc comment forbids ("a client therefore needs no optimistic ordering overlay,
-# and must not keep one"). A withdrawal has nothing to drift against — it removes a row rather than
-# ranking one — which is why it survives where the ordering did not.
+# A withdrawal has nothing to drift against — it removes a row rather than ranking one — which is
+# why it survives where the ordering did not.
 
-## The keys this band has WITHDRAWN this turn — `pending_key`'s own shape, so it cannot drift from
-## what the queue models are keyed by.
+## **STOP A DECLARATION OPTIMISTICALLY.** The build leaves the work row on the frame the chip is
+## pressed rather than a turn later, which is the asymmetry the declaration's own optimistic row
+## created.
 func pending_unqueues_for(entity: int) -> Dictionary:
 	var e: Variant = _pending_labor.get(entity, {})
 	if not (e is Dictionary):
@@ -1223,10 +1134,6 @@ func pending_unqueues_for(entity: int) -> Dictionary:
 	return u if u is Dictionary else {}
 
 
-## **WITHDRAW A DECLARATION OPTIMISTICALLY.** The row leaves the BUILD QUEUE block on the frame the
-## `✕` is pressed rather than a turn later, which is the asymmetry the declaration's own optimistic
-## row created.
-##
 ## ⛔ **IT CLEARS THE IMPROVEMENT; IT DOES NOT DROP THE PENDING RECORD.** `unqueue` withdraws a
 ## DECLARATION and leaves the take crew standing — and the same record may be holding a pending CREW
 ## edit on that very source, which dropping it would discard. `effective_worker_map` blanks the
@@ -1270,10 +1177,9 @@ func record_pending_move(entity: int, x: int, y: int) -> void:
 ## **DROP ONE OPTIMISTIC ENTRY THAT NEVER LEFT THE CLIENT.** The write above is made BEFORE the
 ## command is handed to the transport, which is right — the card must answer the stepper on the frame
 ## it was pressed — but nothing rolled it back when the send FAILED. Reported from play: an
-## `assign_labor … builders 3` that never reached the server left the Builders card showing three
-## builders the sim had never heard of, until the next turn's `reconcile_pending` quietly took them
-## away, while the build queue beside it correctly read `⚠ No builders`. One screen, two answers, and
-## the wrong one was the one with the number on it.
+## `assign_labor … scout 3` that never reached the server left the Scout card showing three scouts the
+## sim had never heard of, until the next turn's `reconcile_pending` quietly took them away. One
+## screen, two answers, and the wrong one was the one with the number on it.
 ##
 ## **IT DROPS THAT ENTRY AND NOTHING ELSE.** A failure clears the edit that failed; a rollback that
 ## emptied the whole overlay would discard the player's OTHER un-acknowledged edits on the same band —
@@ -1364,15 +1270,6 @@ const OPTIONAL_YIELD_KEYS: Array[String] = [
 ## **THE HANDS ONE MERGED ROW SPENDS**, the client's transcription of
 ## `LaborAssignment::staffed_total`.
 ##
-## **IT IS THE TAKE CREW ALONE AGAIN** (`docs/plan_standing_upkeep.md` §2.5). A source carried a
-## second, per-source BUILD allocation for one slice and this had to sum the pair; the builders are a
-## band-level POOL now — an ordinary `builders` role row of `labor_assignments`, like `scout` — so
-## `improvementWorkers` is off the wire and a row states one number again. The pool's own hands are
-## still counted, because its role row is a row in this same list.
-##
-## **THE DEFECT IT WAS WRITTEN FOR IS STILL LIVE, one shape over.** `effective_idle` sums this, and a
-## reader that skipped a whole ROW would report hands that do not exist — which is what a band's
-## `builders` row would become if anything here started filtering rows by kind.
 static func staffed_total(entry: Dictionary) -> int:
 	return maxi(int(entry.get("workers", 0)), 0)
 
@@ -1416,9 +1313,6 @@ func effective_worker_map(band: Dictionary) -> Dictionary:
 				if kind == HudConst.LABOR_KIND_TILE or kind == HudConst.LABOR_KIND_BAND \
 				else String(a.get("material", "")))
 		merged[key] = {
-			# **ONE CREW PER ROW AGAIN** (`docs/plan_standing_upkeep.md` §2.5). A row carried a second
-			# `improvement_workers` allocation for one slice; the builders are a band-level POOL now, so
-			# their hands ride their OWN row of this same map, keyed `builders` like `scout`.
 			"kind": kind, "workers": int(a.get("workers", 0)),
 			"branch": String(a.get("branch", "")),
 			"x": int(a.get("target_x", -1)), "y": int(a.get("target_y", -1)),
@@ -1636,9 +1530,9 @@ func effective_worker_map(band: Dictionary) -> Dictionary:
 				(merged[key] as Dictionary)[need_key] = settled_party[need_key]
 	# **A WITHDRAWAL BLANKS THE IMPROVEMENT AND TOUCHES NOTHING ELSE** (`docs/plan_standing_upkeep.md`
 	# §4.7b ④). `unqueue` withdraws a DECLARATION: the crew stays, the floor stays, the banked meter
-	# stays — so the one thing that must stop being true on the frame the `✕` is pressed is that this
-	# source is building something. Blanking it here rather than at the queue block is what puts the
-	# work row's `⌃` back to its offer face on the same frame, off the one map every readout shares.
+	# stays — so the one thing that must stop being true on the frame the chip is pressed is that this
+	# source is building something. Blanking it here puts the work row's `⌃` back to its offer face on
+	# the same frame, off the one map every readout shares.
 	for withdrawn_key in pending_unqueues_for(int(band.get("entity", -1))):
 		if merged.has(withdrawn_key):
 			(merged[withdrawn_key] as Dictionary)["improvement"] = SourceForecast.IMPROVEMENT_NONE
@@ -1693,16 +1587,12 @@ func _effort_on(key: String, bands: Array = []) -> Dictionary:
 ## Optimistic idle = working-age minus **every** hand each effective assignment spends
 ## (`staffed_total`), minus the bench crew.
 ##
-## **THE BUILDERS ARE IN IT, AND THE MECHANISM THAT PUTS THEM THERE HAS CHANGED ONCE.** This summed
-## the wire's per-assignment `workers` alone while a build had its own per-source crew, so a band with
-## three hands on a Cultivate reported three idle who were already spent — `3 idle of 18` beside
-## `Forage 9 · Hunt 6 · Idle 3`, reported from play. The fix then was to sum `staffed_total`, i.e.
-## `workers + improvement_workers`. **`docs/plan_standing_upkeep.md` §2.5 retired that second crew**:
-## the builders are a band-level `builders` ROW of this same list now and `staffed_total` is `workers`
-## alone again, so they are counted for a different reason and the invariant survives its own
-## mechanism. **A reader that started filtering this list by KIND would put the phantom hands back.**
-## The sim's `LaborAllocation::assigned_total` sums the same `LaborAssignment::staffed_total`; any
-## disagreement here is the client's.
+## **A SITE'S BUILD CREW IS COUNTED ALREADY.** A declared build is worked by its own site's crew
+## (`docs/plan_labor_at_scale.md`), drawn from the hands that row spends, so `staffed_total` is the
+## row's `workers` and a build adds no hands of its own. **A reader that started filtering this list by
+## KIND would put phantom hands back** — a band with three hands on a Cultivate reporting three idle who
+## were already spent. The sim's `LaborAllocation::assigned_total` sums the same
+## `LaborAssignment::staffed_total`; any disagreement here is the client's.
 ##
 ## **A WORKER AT THE BENCH IS ASSIGNED LABOR, AND THE BENCH IS NOT A `LaborTarget`.** A band's people
 ## are spent on the `labor_assignments` this overlays AND on the crafting bench, and a bench crew is
@@ -1792,8 +1682,8 @@ func working_breakdown(band: Dictionary) -> Dictionary:
 	forage_workers -= int(out_by_kind.get(SourceForecast.LABOR_KIND_FORAGE, 0))
 	hunt_workers -= int(out_by_kind.get(SourceForecast.LABOR_KIND_HUNT, 0))
 	extract_workers -= int(out_by_kind.get(HudConst.LABOR_KIND_EXTRACT, 0))
-	# The builders are the band's `builders` ROLE; scout, warrior and the roadwork pool are Roles.
-	var build_workers := int(effective_role_workers(band, HudConst.LABOR_KIND_BUILDERS).get("workers", 0))
+	# Builders are the SITES' own crews (`build_crews`), counted on their sources; scout, warrior and the
+	# roadwork pool are the Roles.
 	var role_workers := int(effective_role_workers(band, HudConst.LABOR_KIND_SCOUT).get("workers", 0)) \
 		+ int(effective_role_workers(band, HudConst.LABOR_KIND_WARRIOR).get("workers", 0)) \
 		+ int(effective_role_workers(band, HudConst.LABOR_KIND_ROADWORK).get("workers", 0))
@@ -1802,7 +1692,6 @@ func working_breakdown(band: Dictionary) -> Dictionary:
 		[HudWorkVocab.WORKING_PART_FORAGE, forage_workers],
 		[HudWorkVocab.WORKING_PART_HUNT, hunt_workers],
 		[HudWorkVocab.WORKING_PART_EXTRACT, extract_workers],
-		[HudWorkVocab.WORKING_PART_BUILD, build_workers],
 		[HudWorkVocab.WORKING_PART_ROLES, role_workers],
 		[HudWorkVocab.WORKING_PART_BENCH, bench_workers(band) - int(muster_out["bench"])],
 		[HudWorkVocab.WORKING_PART_HOMEWARD, homeward_workers(band)],
@@ -1976,12 +1865,6 @@ func workers_for_role(band: Dictionary, kind: String) -> int:
 ## **THE KIT THE SIM HAS THIS ROLE RESOLVED TO** — the band's own row's `LaborAssignment.kitId`,
 ## `KitRoster.NO_KIT_ID` when the role is unstaffed (no row at all).
 ##
-## **ON THE `builders` ROW IT IS THE DERIVED ANSWER, NOT A STORED ONE** (`equipment.md` → "THE WIRE
-## STATES THE DERIVED KIT"). The sim resolves that row per queue entry at capture — a kit named on the
-## row wins, else the roster answers for the HEAD entry's web — so a card reading this field states
-## what the pool is holding this turn. Every other role publishes the row's own kit, resolved to its
-## job default when the player named none.
-##
 ## `static` because it reads the band dict and nothing else: the role CARD and the two compose sheets
 ## both need it, and a second private copy is how one of them comes to read `kit_id` off the wrong
 ## row.
@@ -1990,100 +1873,6 @@ static func role_kit_id(band: Dictionary, kind: String) -> String:
 		if entry is Dictionary and String((entry as Dictionary).get("kind", "")).to_lower() == kind:
 			return String((entry as Dictionary).get("kit_id", KitRoster.NO_KIT_ID))
 	return KitRoster.NO_KIT_ID
-
-# ---- THE HEAD OF THE QUEUE — one derivation, two consumers -----------------------------------------
-#
-# **THE WHOLE `builders` POOL STANDS ON THE HEAD ENTRY** until its meter fills, then on the next
-# (`docs/plan_standing_upkeep.md` §4.6b). Two surfaces spend that fact and they must not derive it
-# twice: the Builders card picks and greys its kit for the web the head is on, and the compose sheet
-# tells a build IN FLIGHT from one merely `◷ Queued` by whether the pool is standing on THIS source.
-#
-# ⛔ **BOTH USED TO ASK `SourceForecast.build_is_queue_head`, AND THAT WAS THE WRONG BAND'S HEAD.**
-# `buildQueuePosition` is published per SOURCE and rides the winning band — the soonest estimate among
-# the bands working it — so `position == 0` means *some* band has it at the head, routinely not this
-# one. Band B with a plant Cultivate at its own head read the ANIMAL branch whenever band C's head was
-# a herd B also worked; and band B's sheet on a source standing THIRD in B's line rendered a running
-# meter because C had it first — putting the one-way `Cultivating 0 / 50 work (0%)` face back through
-# a door the play report never came in by. Same defect as the queue block's, one consumer over
-# (§4.9 item 9a).
-
-## **THE ENTRY THIS BAND'S BUILDERS ARE STANDING ON** — the first row of its own `buildQueue`, `{}`
-## when it has nothing queued. THE one derivation of "the head"; the two answers below are its only
-## readers, so the card and the sheet cannot come to disagree about which entry is being funded.
-func build_queue_head(band: Dictionary) -> Dictionary:
-	var entries: Variant = band.get("build_queue", [])
-	if not (entries is Array) or (entries as Array).is_empty():
-		return {}
-	var head: Variant = (entries as Array)[0]
-	return head if head is Dictionary else {}
-
-## **WHICH WEB THIS BAND'S BUILDERS ARE ACTUALLY OUT ON** — the branch of the entry at the head of its
-## own queue, `KitRoster.BUILD_BRANCH_NONE` when it has nothing queued.
-##
-## The head is the one entry whose gear is being spent, which is what the Builders card's picker is
-## choosing for and therefore what its greying is asked about (`KitRoster.kit_offer`'s third rule).
-##
-## The branch falls out of the entry's own `kind` — the `LaborAssignment` vocabulary the wire spells
-## it in, a patch plant and a herd animal, the same fact `systems::labor` stamps an entry with. No
-## source lookup and no walk of the band's rows: the queue names its own entries now.
-func head_build_branch(band: Dictionary) -> String:
-	var head := build_queue_head(band)
-	if head.is_empty():
-		return KitRoster.BUILD_BRANCH_NONE
-	return KitRoster.build_branch_for_kind(String(head.get("kind", "")).strip_edges().to_lower())
-
-## **…AND WHICH RUNG OF IT** — `KitRoster.BUILD_RUNG_ANY` for a head that is not a road, and for a
-## band with nothing queued.
-##
-## ⛔ **ONLY A ROAD HEAD HAS ONE TO GIVE, AND IT COSTS A LOOKUP THE BRANCH DOES NOT.** A queue entry
-## publishes `{kind, target_x, target_y, fauna_id}` and no rung, so the rung has to come off the
-## SOURCE — for a road, the rung above the one the road on that tile HOLDS, which is the step its
-## keepers would actually work next. A patch and a herd answer `BUILD_RUNG_ANY` because no plant or
-## animal kit binds a rung: `kit_serves_build`'s first arm serves them whatever the caller says.
-##
-## **A road the snapshot does not carry answers `BUILD_RUNG_ANY` too** — the `routes` section is
-## fog-filtered, and an unqualified ask is quoted no rung-bound tool at all, which errs toward the
-## ungeared estimate rather than toward a tool the sim may not pay for.
-func head_build_rung(band: Dictionary) -> String:
-	var head := build_queue_head(band)
-	if head.is_empty():
-		return KitRoster.BUILD_RUNG_ANY
-	if String(head.get("kind", "")).strip_edges().to_lower() != HudConst.LABOR_KIND_ROADWORK:
-		return KitRoster.BUILD_RUNG_ANY
-	return road_next_rung(Vector2i(int(head.get("target_x", -1)), int(head.get("target_y", -1))))
-
-## **THE RUNG A ROAD ON THIS TILE WOULD BE WORKED TO NEXT** — the one above the rung it HOLDS, and
-## `KitRoster.BUILD_RUNG_ANY` for a tile carrying no road this client can see. The road ladder and
-## the queue row both price against it, so it is resolved here rather than at each of them.
-func road_next_rung(tile: Vector2i) -> String:
-	if tile.x < 0 or tile.y < 0:
-		return KitRoster.BUILD_RUNG_ANY
-	for road_variant in roads():
-		if not (road_variant is Dictionary):
-			continue
-		var road: Dictionary = road_variant
-		if HudRouteVocab.tile_of(road) == tile:
-			return HudRouteVocab.next_rung_key(HudRouteVocab.rung_of(road))
-	return KitRoster.BUILD_RUNG_ANY
-
-## **IS THIS SOURCE THE ENTRY THIS BAND'S BUILDERS ARE STANDING ON?** — *are they on THIS one*, which
-## is what separates a build in flight from one waiting its turn.
-##
-## It takes the SOURCE dict because its two callers hold one and not an identity: a hunt sheet's
-## subject is the herd (named by `id`) and a forage sheet's is the tile_info (named by its `x`/`y`,
-## which are the patch's). Resolving that shape here rather than at the call site keeps the whole
-## question one answer, which is the property this pair exists to have.
-func is_band_build_head(band: Dictionary, kind: String, source: Dictionary) -> bool:
-	var head := build_queue_head(band)
-	if head.is_empty():
-		return false
-	var head_kind := String(head.get("kind", "")).strip_edges().to_lower()
-	if head_kind != kind:
-		return false
-	if kind == LABOR_KIND_HUNT:
-		return String(head.get("fauna_id", "")) == String(source.get("id", ""))
-	return int(head.get("target_x", -1)) == int(source.get("x", -1)) \
-		and int(head.get("target_y", -1)) == int(source.get("y", -1))
 
 ## Coerce a wire `arrival_schedule` to a PackedFloat32Array. The native decoder already hands over a
 ## packed array; a fixture (or an absent field) may hand over a plain Array or null.
@@ -2116,8 +1905,8 @@ const POOL_TOE_FILLED_KEY := "filled"
 ## **ONE POOL'S TABLE OF EQUIPMENT — the rows of `pool_toe` whose `pool` is this one, in wire order.**
 ##
 ## ⛔ **`pool` IS THE LABOR-ROLE TOKEN**, the same spelling `LaborAssignment.kind` publishes for the
-## row — `roadwork` and `builders`, the two band-wide pools left (`docs/plan_site_crews.md` §2.4) — so
-## a pool line joins its lines on a string it already holds and this layer keeps no table of its own.
+## row — `roadwork`, the one band-wide pool left (`docs/plan_site_crews.md` §2.4) — so a pool line
+## joins its lines on a string it already holds and this layer keeps no table of its own.
 ##
 ## ⛔ **NOTHING IS DROPPED HERE, AND AN ABSENT ROW AND A FILLED ROW ARE DIFFERENT SENTENCES.** A line
 ## exists only where `required > 0`, and a pool whose requirement was MET keeps its line with
@@ -2170,20 +1959,16 @@ const POOL_CREW_KEEPERS_KEY := "keepers"
 ## **BOTH ARE IN KEEPERS AND BOTH ARE FLOATS**, a pool's share arithmetic being continuous: `1.68`
 ## keepers left standing is an ordinary reading rather than a rounding artefact, and a caller
 ## subtracting against the head count casts nothing.
-##
 ## ⛔ **`pool` IS THE LABOR-ROLE TOKEN**, `pool_toe_for`'s rule verbatim, so a card resolves its crew
-## row and its table of equipment off the one `kind` token it already holds. The vocabulary is the
-## ONE keeping pool left — `roadwork` (`docs/plan_site_crews.md` §2.4) — and NEVER `builders`, which
-## is not a keeping pool and publishes no row here.
+## row and its table of equipment off the one `kind` token it already holds. The vocabulary is the ONE
+## keeping pool left — `roadwork` (`docs/plan_site_crews.md` §2.4).
 ##
 ## ⛔ **AN ABSENT ROW IS `{}` AND IT IS NOT A PAIR OF ZEROES.** A row exists for every keeping pool
 ## the cohort CAN HOLD — `roadwork` for a band, none for an anonymous cohort, which keeps no roads —
-## whether or not it staffs it, so within that set
-## `0.0 / 0.0` genuinely means *this pool employed every hand it was given*. An absent row therefore
-## reads *this cohort has no such pool*, the same answer `builders` already gets and needing no
-## separate branch; so does any frame the wire never wrote. Answering those with zeroes would hand a
-## projecting caller an anchor of `0` and a whole head count of phantom idle keepers; the empty dict
-## makes the caller say so.
+## whether or not it staffs it, so within that set `0.0 / 0.0` genuinely means *this pool employed
+## every hand it was given*, and a missing row means *this cohort has no such pool* (as does any frame
+## the wire never wrote). Answering those with zeroes would hand a projecting caller an anchor of `0`
+## and a whole head count of phantom idle keepers; the empty dict makes the caller say so.
 static func pool_crew_for(band: Dictionary, pool: String) -> Dictionary:
 	var v: Variant = band.get(POOL_CREW_KEY, [])
 	if not (v is Array):
@@ -2378,11 +2163,6 @@ func _validated_improvement(assignment: Dictionary, source: Dictionary) -> Strin
 		return improvement
 	return improvement if improvement in RungQuotes.verbs(source) else SourceForecast.IMPROVEMENT_NONE
 
-## **RETIRED — `build_workers_for_forage` / `_hunt`, the per-source BUILD crew**
-## (`docs/plan_standing_upkeep.md` §2.5). `LaborAssignment.improvementWorkers` is off the wire: a verb
-## DECLARES and names no hands, and the hands stand on the band's `builders` role. There is no
-## per-source build number left to read, and nothing here may re-derive one — what answers *"who could
-## be raising this source"* is `build_crew_forage` / `build_crew_hunt` below, off that role row.
 ##
 ## **THERE IS NO `maintain_workers_for_*` TWIN EITHER** (§2.5), for the same reason one slice earlier:
 ## a source gets a SHARE of the keeping pool, read through `SourceForecast.upkeep_state`.
@@ -2444,87 +2224,30 @@ func source_crew_pool_forage(band: Dictionary, x: int, y: int) -> int:
 func source_crew_pool_extract(band: Dictionary, x: int, y: int, material: String) -> int:
 	return maxi(effective_idle(band) + effective_extract_workers(band, x, y, material), 0)
 
-## **A RUNG THIS FACTION HAS DECLARED AND PUT NOBODY ON** — the declared verb when every band working
-## the source has zero builders on it, `IMPROVEMENT_NONE` otherwise. The client half of the
-## declared-but-unstaffed readout (`SourceForecast.unstaffed_build_state` decides which of the two
-## unstaffed states it is; this only answers *is anybody building it*).
-##
-## **IT IS READ OFF THE CONFIRMED WIRE ROWS ALONE, and that is not an oversight.** The declaration
-## rides a `LaborAssignment` the sim DERIVES from the band's queue entry, and the hands ride that same
-## band's `builders` row, so reading both off the confirmed frame is the only way the pair describes
-## one moment. The optimistic overlay carries a declaration but never a role edit, so a pending-aware
-## read would report *declared, nobody on it* for the turn after a player staffed the builders — a
-## warning fired at exactly the person who did the right thing. Silence for one snapshot is the honest
-## degrade: this is a standing fact, and it renders from the frame the sim confirms it.
-##
-## **FOLDED ACROSS EVERY BAND WORKING THE SOURCE, because a source several bands can reach may be
-## built by any of them.** The verb is the first non-empty declaration (at most one rung is ever in
-## flight on one source); the crew is the SUM of those bands' pools, so one band's builders cover
-## another band's bare declaration.
-func unstaffed_build_forage(x: int, y: int, bands: Array = []) -> String:
-	return _unstaffed_build(bands,
+## **A RUNG THIS FACTION HAS DECLARED AND PUT NOBODY ON** - the declared verb when the source's build has
+## no builder staffed on it this turn (`crew`: the source row's own `builders_staffed`, read by the caller
+## off the dict it holds), `IMPROVEMENT_NONE` otherwise. A build is worked by its site's own crew
+## (`docs/plan_labor_at_scale.md`), so *is anybody building it* is a fact of the SOURCE, not of a band-wide
+## role. The client half of the declared-but-unstaffed readout (`SourceForecast.unstaffed_build_state`
+## decides which of the two unstaffed states it is).
+func unstaffed_build_forage(x: int, y: int, crew: int, bands: Array = []) -> String:
+	return _unstaffed_build(bands, crew,
 		func(band: Dictionary) -> String: return improvement_for_forage(band, x, y),
 		func(band: Dictionary) -> bool: return not forage_assignment_of(band, x, y).is_empty())
 
-func unstaffed_build_hunt(herd_id: String, bands: Array = []) -> String:
-	return _unstaffed_build(bands,
+func unstaffed_build_hunt(herd_id: String, crew: int, bands: Array = []) -> String:
+	return _unstaffed_build(bands, crew,
 		func(band: Dictionary) -> String: return improvement_for_hunt(band, herd_id),
 		func(band: Dictionary) -> bool: return not hunt_assignment_of(band, herd_id).is_empty())
 
-## **THE HANDS THAT COULD BE RAISING THIS SOURCE — the `builders` POOL of every band that works it**
-## (`docs/plan_standing_upkeep.md` §2.5). It was a sum of per-source `improvementWorkers`; a verb
-## states no hands now, so what answers *"is anybody building this"* is the band-level role.
-##
-## **IT IS RESTRICTED TO THE BANDS THAT WORK THE SOURCE, and that restriction is the whole of its
-## honesty.** An improvement verb only ever reaches a band already working the source, so those are
-## exactly the bands that can hold it in a queue; summing every player band's pool instead would put a
-## crew on every source on the map the moment one band staffed a single builder.
-##
-## **IT IS A CREW, NOT A FUNDING CLAIM.** The whole pool goes on the HEAD of its band's queue, so a
-## waiting entry is not being worked by these hands this turn — which is what
-## `SourceForecast.build_queue_position` rides beside the countdown to say. What this answers is the
-## one fact `BUILD_METER_HOLDS` cannot carry: whether there is a crew to be treading water at all, or
-## whether the meter is parked (`SourceForecast.build_pace`).
-func build_crew_forage(x: int, y: int, bands: Array = []) -> int:
-	var builders := 0
-	for band_variant in (bands if not bands.is_empty() else current_player_bands()):
-		if band_variant is Dictionary \
-				and not forage_assignment_of(band_variant, x, y).is_empty():
-			builders += workers_for_role(band_variant, HudConst.LABOR_KIND_BUILDERS)
-	return builders
-
-func build_crew_hunt(herd_id: String, bands: Array = []) -> int:
-	var builders := 0
-	for band_variant in (bands if not bands.is_empty() else current_player_bands()):
-		if band_variant is Dictionary \
-				and not hunt_assignment_of(band_variant, herd_id).is_empty():
-			builders += workers_for_role(band_variant, HudConst.LABOR_KIND_BUILDERS)
-	return builders
-
-## `works_source` says whether this band holds the source at all — the same restriction
-## `build_crew_*` applies, asked as a predicate so one band's pool is visited once.
-##
-## **THE POOL IS READ PENDING-AWARE, and the DECLARATION is not.** They are two different rows and
-## only one of them can be edited optimistically here: the crew is the band's own `builders` role,
-## which the role card stages through `pending_assigns_for`, while the declaration is the SOURCE's
-## `LaborAssignment.improvement` and has no pending overlay to read. Reading the confirmed crew is
-## what made this warning fire at a player for the turn AFTER they staffed the role — the accusation
-## beside a Builders card already reading `2`. **A pending role edit cannot be refused**
-## (`assign_labor` clamps the count rather than rejecting it), so the optimistic read can only ever
-## silence a warning that was about to stop being true anyway.
-func _unstaffed_build(bands: Array, declared_of: Callable, works_source: Callable) -> String:
-	var declared := SourceForecast.IMPROVEMENT_NONE
-	var builders := 0
-	for band_variant in (bands if not bands.is_empty() else current_player_bands()):
-		if not (band_variant is Dictionary):
-			continue
-		var band: Dictionary = band_variant
-		if not bool(works_source.call(band)):
-			continue
-		if declared == SourceForecast.IMPROVEMENT_NONE:
-			declared = String(declared_of.call(band))
-		builders += int(effective_role_workers(
-			band, HudConst.LABOR_KIND_BUILDERS).get("workers", 0))
-	if builders > SourceForecast.BUILD_CREW_NONE:
+## `works_source` says whether a band holds the source at all, so the declaration is read off a band
+## that works it; `crew` is the source's own staffed builders.
+func _unstaffed_build(bands: Array, crew: int, declared_of: Callable, works_source: Callable) -> String:
+	if crew > SourceForecast.BUILD_CREW_NONE:
 		return SourceForecast.IMPROVEMENT_NONE
-	return declared
+	for band_variant in (bands if not bands.is_empty() else current_player_bands()):
+		if band_variant is Dictionary and bool(works_source.call(band_variant)):
+			var declared := String(declared_of.call(band_variant))
+			if declared != SourceForecast.IMPROVEMENT_NONE:
+				return declared
+	return SourceForecast.IMPROVEMENT_NONE

@@ -28,7 +28,7 @@ does with them. Read the sim one first — most of the traps here are its traps,
 | `ui/hud/RungGates.gd` → `deposit_gates` / `deposit_gates_for` / `deposit_row_refusal` / `deposit_tooltip_refusals` / `_deposit_crew_refusal` / `_deposit_craft_refusal` | The FIVE refusals, keyed on the RUNG rather than the verb, as `{kind, short, long}` records in the route branch's own shape. `cutters` is a REQUIRED parameter, a `deposits` row publishing no crew — see "the gates" below |
 | `Main.gd` → `format_abandon_working` | **PUTTING A WORKING DOWN** — `abandon_working <faction> <x> <y> <material>`, its own builder beside `format_abandon` because it is its own verb rather than a widening of one. It refuses an empty material as the material-targeted improvement arm does, the token being half the working's identity. Reached through `_on_hud_abandon_working` off `HudLayer.abandon_working_requested` |
 | `Main.gd` → `format_improvement`'s `IMPROVEMENT_MATERIAL_TARGETED` arm | The three verbs' GRAMMAR — `fell|coppice|quarry <faction> <x> <y> <material>`, `cultivate`'s shape with the material on `assign_labor extract`'s own trailing position. A fourth ARM beside the herd-targeted and band-targeted ones, refusing on an empty material as the band arm refuses on `IMPROVEMENT_NO_BAND`. The verb list is `SourceForecast.DEPOSIT_IMPROVEMENTS`, which exists because a token SHAPE is not something the wire's rung catalog states |
-| `ui/hud/BandPanelController.gd` → `_extract_source_models` / `_build_extract_row` / `_workings_roster_models` / `_workings_roster_cutters` / `_workings_roster_max_useful` / `_workings_roster_tooltip` / `_open_deposit_track` / `_emit_deposit_declaration` / `_deposit_track_queue` / `_deposit_ladder` | **THE GROUNDWORK SECTION'S SITE ROWS** — one row per working this band holds (its own `extract` row is the membership filter), nearest first, each with its own crew stepper; see "⛔ A WORKING IS A SITE ROW" below |
+| `ui/hud/BandPanelController.gd` → `_extract_source_models` / `_build_extract_row` / `_workings_roster_models` / `_workings_roster_cutters` / `_workings_roster_max_useful` / `_workings_roster_tooltip` / `_open_deposit_track` / `_emit_deposit_declaration` / `_deposit_ladder` | **THE GROUNDWORK SECTION'S SITE ROWS** — one row per working this band holds (its own `extract` row is the membership filter), nearest first, each with its own crew stepper; see "⛔ A WORKING IS A SITE ROW" below |
 | `ui/hud/hud_work_vocab.gd` → the `WORKINGS_ROSTER_*` row handles + `EXTRACT_ROW_HEIGHT` + `RUNG_TRACK_STATE_GROUND_GIVES` | The site row's handles (`WORKINGS_ROSTER_ROW_META` / `_TRACK_META` / `_ABANDON_META`, kept under their roster-era names), the extract web's take verb `cutting`, and the seventh rung state's SECOND word |
 | `ui/hud/HudWidgets.gd` → `zone_head`'s trailing `title_tooltip` | The one shared-layer change the roster made: a head whose readout is a CONDITIONAL mark needs its hover on the TITLE, because `readout_tooltip` rides a Label built only where a readout is stated |
 | `ui/hud/DetailFormat.gd` → `Context.deposit_rows` + its `_value_hex` arm | ⛔ **THE ONE ARM OF THAT DISPATCH KEYED ON MEMBERSHIP RATHER THAN ON A LITERAL.** Every other row key is a constant; a working's is `Wood` or `Stone` — `materials.json`'s ids, config this client may not spell — so the PRODUCER says which keys it wrote, exactly as `row_tooltips` does |
@@ -862,9 +862,9 @@ the row; `_row_face`'s own fallback for that state stays the route branch's.
 ### ⛔ A PRICED ROW QUOTES NO TURNS
 
 `250 work · 1.50/turn upkeep`, and the material aside `+ 8 wood to raise it` beneath it through the
-SHARED `_build_price_asides`. **No estimate**: it would be divided by a builders pool that may be on
-another job entirely and would ignore the queue the press joins — the route branch's own finding,
-arriving here before it could ship. The two figures a row states are the ones no crew moves.
+SHARED `_build_price_asides`. **No estimate**: it would be divided by a crew that may be on another
+job entirely — the route branch's own finding, arriving here before it could ship. The two figures a
+row states are the ones no crew moves.
 
 **A row being BUILT is the one exception**, and it quotes the SIM's chained countdown
 (`build_value` → `DetailFormat.build_countdown_value`, the five sentinels a patch, a herd and a road
@@ -1025,26 +1025,25 @@ in the site rows' columns:
   extract <x> <y> <material> [floor] <n>`, the material in the species slot, this band's own floor
   on ground that renews and no floor (`FLOOR_UNNAMED`) on ground that does not, and the row's kit
   restated so a `+` never re-kits the crew. Its `+` greys at the published useful-cutter cap.
-- **Both marks, like a harvest or hunt row**: `Priority` always (`work_priority <f> <band> <x> <y>
-  <material> <level>`) and `Build` while a working build is queued there (`build_priority` in the
-  same material form). A working is always addressed `<x> <y> <material>` — the bare tile is the
-  PATCH on that hex (`band-city-panel.md` → "EVERY SITE VERB SPELLS ITS SOURCE ONE WAY").
-- **A queued working build has a queue row** (`_deposit_queue_models`), so it can be reordered and
-  withdrawn from the BUILD QUEUE block in the material form.
+- **The `Priority` mark, like a harvest or hunt row**: `work_priority <f> <band> <x> <y> <material>
+  <level>`. A working is always addressed `<x> <y> <material>` — the bare tile is the PATCH on that
+  hex (`band-city-panel.md` → "EVERY SITE VERB SPELLS ITS SOURCE ONE WAY").
+- **A declared working build wears the build crew chip** on its row (`HudDepositVocab.is_queued`), and
+  its press stops the build with `unqueue` in the material form (`band-city-panel.md` → "THE BUILD
+  CREW CHIP").
 - **A crew of zero keeps nothing**, and the row's hover says so (`DEPOSIT_IDLE_TIP`); the put-down's
   hover states what holding it still means (`WORKING_ABANDON_WHY`) rather than a shared bill.
 
-## THE `Groundwork` POOL, AND WHAT A FIFTH CARD COST
+## THE `Groundwork` POOL
 
 `quarrywork` is the FOURTH keeping role, staffed exactly as `roadwork` is —
 `assign_labor <faction> <band> quarrywork <n>`, one more arm on `Main.format_assign_labor`'s shared
 role branch. **One pool for BOTH deposit branches**, which is the sim's own split: forestry and
 extraction differ on KNOWLEDGE and on nothing a keeper does.
 
-⛔ **IT IS THE ONE KEEPING POOL WITH NO CARD IN THE POOLS BLOCK.** That row is full at four and the
-height a fifth would cost cannot be found anywhere in the zone (below), so its stepper — and the
-shortfall mark and coverage sentence the card would have carried — live on the WORKINGS ROSTER
-block's own head, which already draws in the same zone directly where the question is asked.
+⛔ **ITS CONTROL WAS ON THE WORKINGS ROSTER'S HEAD.** Its stepper — and the shortfall mark and
+coverage sentence — sat on the WORKINGS ROSTER block's own head, which already draws in the Work zone
+directly where the question is asked.
 
 **ITS BILL IS A COHORT FIELD. DO NOT SUM THE DEPOSIT ROWS.**
 `HudBandLaborState.quarrywork_pool_state` reads `quarrywork_demand` / `_supplied` / `_shortfall` off
@@ -1064,62 +1063,12 @@ game.
 reason on a fourth pool: a band whose only standing cost is a felling working it opened is exactly the
 band this branch creates, and it has the same split to make.
 
-### ⛔ THERE IS NO FIFTH POOL CARD — THE ROW HAS NO WIDTH AND THE ZONE HAS NO HEIGHT
-
-A pool card's own minimum is its STEPPER and reads **83px** at `POOL_STEPPER_*` (measured off
-`band_panel_preview._assert_pool_cards_are_level`, which prints it). So:
-
-| cards abreast | width wanted | bottom-dock box | left-dock box |
-|---|---|---|---|
-| 4 (the shipped row) | `4 × 83 + 3 × 6` = **350** | 382 | 356 |
-| **5** | `5 × 83 + 4 × 6` = **439** | 382 | 356 |
-| 3 | `3 × 83 + 2 × 6` = **261** | 382 | 356 |
-
-The horizontal trim that bought the FOURTH card is already at 4 against `HudStyle`'s authored 11, so
-there is nothing left to take out of the CONTROL — and `_assert_pool_cards_are_level` exists to fail
-the moment a role NAME becomes a card's floor instead.
-
-> #### ⛔ AND A SECOND ROW OF CARDS WAS BUILT, SWEPT AND REJECTED — 62px THE ZONE HAS NOWHERE TO GET
->
-> A 3 + 2 split fits every dock on WIDTH (261px of 356) and costs **62px** of HEIGHT — one
-> `POOL_CARD_HEIGHT` plus one `ROLE_CARD_SEPARATION` — which takes
-> `HudWorkVocab.pools_block_height` from 82/110 to 144/172 and the WORK zone's own floor from **358**
-> to **420**. `band_panel_build_queue_wide` and `band_panel_queue_settings_wide` then fail at
-> `needs 420px … short by 62`, the ordinary wide states land 6px over once the board and the queue
-> have given back what they can, and `band_panel_work_inspector_dialog_bottom` drops from 2 board
-> rows to 1.
->
-> **`BandCityPanel.PANEL_HEIGHT_WIDE` was re-swept the way its own note describes — the whole
-> `band_panel_preview` matrix, every dock and viewport — and it has no value left to land on.** Two
-> bounds pin it from opposite sides, each read off a full run:
->
-> | value | zone box | verdict |
-> |---|---|---|
-> | **480** (= 420 + `HORIZONTAL_BODY_CHROME` 60) | 420 | every `Zone_work` claim clears — and `band_panel_band_columns_two` fails: the two-column band flank holds **413 of 840 = 49%** against `band_panel_preview.BAND_FLANK_FILL_FLOOR`'s 50% |
-> | **474** | 414 | fails BOTH — `needs 420 … short by 6` and the flank at 413 of 828 |
-> | **473** | 413 | the flank claim clears (413 ≥ 413) and the work zone is `short by 7` |
->
-> The band flank's one-column content is fixed at 413px and a two-column flank is offered `2 × box`,
-> so every pixel added there makes that flank emptier — which is the *"the bottom strip is too tall,
-> the columns end well above the bottom of it"* report that took `PANEL_HEIGHT_WIDE` **456 → 418** in
-> the first place, arriving from the other direction. **And at the matrix's shortest viewport that
-> constant is inert anyway**: `_horizontal_panel_height()` clamps to `MAX_WIDE_HEIGHT_FRACTION`, so at
-> 1152x720 the box is `720 × 0.6 − 35 − 60` = **337** whatever the budget says, and
-> `band_panel_queue_settings_tight` needs 398 there — a fraction of `(398 + 60 + 35) / 720` =
-> **0.685** against the 0.6 cap.
->
-> **So `PANEL_HEIGHT_WIDE` ends this arc UNTOUCHED at 418**, its own decomposition still summing to
-> 358 with the POOLS term at 82, and the `quarrywork` pool's control lives on the workings roster's
-> own head instead — which costs the zone **1px** (below). Neither of the two remaining levers was
-> moved to fit the arc: the height cap and the harness's 50% fill floor are both judgements about how
-> much of a short window this strip may eat.
-
 ## THE WORKINGS ROSTER — the pool says how many, the roster says WHICH
 
 The pool card says `Groundwork 2`; nothing else in the client would say WHICH two. That is the exact
 defect the roadwork roster was built to fix, so this is its twin —
 `BandPanelController._build_workings_roster_block`, a **block inside the existing Work zone** directly
-under the pools block that raises the question, not a fourth zone.
+in the Work zone's GROUNDWORK section, not a fourth zone.
 
 **The catchment is the band's own `extract` ROW, which is this arc's one deliberate departure from the
 route branch.** A working publishes no keeper: it is held by the band that WORKS it, so membership is
@@ -1129,10 +1078,9 @@ the pool exists.
 
 ### ⛔ ITS HEAD *IS* THE `Groundwork` POOL, AND THAT IS NOT roads.md's ROSTER RULE BEING BROKEN
 
-The pools block one line up has no room for a fifth card (above), and **this block's head already
-draws and is already paid for** — so the head carries the block title, the shortfall mark and a
-compact stepper on the pool cards' own `POOL_STEPPER_*` metrics, driving the same
-`assign_labor <faction> <band> quarrywork <n>` the card would have sent.
+**This block's head already drew and was already paid for** — so the head carried the block title, the
+shortfall mark and a compact stepper, driving
+`assign_labor <faction> <band> quarrywork <n>`.
 
 roads.md's rule reads *"⛔ IT IS A ROSTER, NOT A WORK BOARD: no stepper, no crew count, no kit
 picker"*, and its stated REASON is that **a ROW** offering a worker count would re-introduce, by the
@@ -1157,10 +1105,9 @@ band would otherwise have nowhere to read what this pool does.
 
 **ITS HEIGHT IS `WORKINGS_ROSTER_HEAD_HEIGHT` = 22.0px, MEASURED — re-measured on the drawn head once
 the overflow DOOR joined the stepper on it.** `HudWidgets.zone_head` declares 20 as a MINIMUM and an
-`HBoxContainer` grows to its tallest child, so the controls the head carries set the row. That 1px goes through the SAME
-single-resolution seam the block already used — `_fill_work_zone_column` resolves
-`workings_roster_height` once and hands it to both `build_queue_rows_max` and `_work_board_capacity` —
-so nothing in the zone's arithmetic learns about the head separately.
+`HBoxContainer` grows to its tallest child, so the controls the head carries set the row. The block's height is
+resolved once and reserved ahead of the board, so nothing in the zone's arithmetic learns about the
+head separately.
 `_assert_workings_roster_head` ends in `_assert_zone_head_reserves`, which prints reserved beside drawn
 against `WORKINGS_ROSTER_HEAD_HEIGHT` itself — which is what makes the constant a measurement rather
 than a guess, and what makes the const, not this paragraph, the figure of record.
@@ -1187,7 +1134,7 @@ two rows cannot swap frame to frame.
 **Fog: three cases, and the middle one must not be got wrong.** Nothing held in sight AND no demand →
 no block at all (`workings_roster_height` answers `0`); demand > 0 with zero visible → the block
 renders with ONE muted line saying so, **never an empty roster beside a non-zero count**; workings
-visible → rows, capped at `ROADWORK_ROSTER_ROWS_MAX` with the build queue's own `+N more` foot. The cap
+visible → rows, capped at `ROADWORK_ROSTER_ROWS_MAX` with a `+N more` foot. The cap
 and the foot are SHARED with the road roster deliberately: the two sit in one zone answering the same
 shape of question, and two caps would be two answers to *how long may a roster be here*.
 
@@ -1197,8 +1144,7 @@ rung ladder, and the card the second `abandon_working` button lives on — has e
 is a roster ROW: so a band's FOURTH working could be neither climbed nor put down while its keeping
 was still billed against the `quarrywork` pool. **The door is on the block's HEAD, not its foot**:
 `BandPanelController._make_zone_head_a_toggle` makes the head itself the toggle and carries the
-remaining count, and the separate foot builders (`_build_roster_overflow_door`,
-`_build_build_queue_overflow_row`) are gone — see `band-city-panel.md`, where the rework and the play
+remaining count, and the separate foot builders are gone — see `band-city-panel.md`, where the rework and the play
 report behind it are recorded. Pressing the head opens the whole roster over the Work zone,
 where every working has a row and every row its two controls. The cap itself is unchanged and is not
 raised — the zone `clip_contents` and every roster row is a board row that does not draw, so raising
@@ -1210,16 +1156,14 @@ the control on the head, a band holding no working and owing no bill has nowhere
 `quarrywork` — which is the honest arrangement: there is nothing to keep, so there is nothing to
 staff, and the stepper appears exactly when there is something for it to pay for. **A fallback control
 there would be a live stepper for a bill of zero**, which is the furniture-explaining-an-absence the
-pools block's own note refuses one block up. **Cases 2 and 3 both draw the head**, so a band that owes
+pool's own hint refuses. **Cases 2 and 3 both draw the head**, so a band that owes
 anything can always reach it — and case 2 is the one that matters, a band owing a bill it can see no
 working for being exactly the band that needs to staff the pool. All three are asserted, the case-1
 absence included, because a missing control looks the same whichever reading produced it.
 
-**Its height is paid for in BOTH reservations** — resolved once in `_fill_work_zone_column` and handed
-to `build_queue_rows_max` AND `_work_board_capacity`. **Its GAP is counted apart from the road
-roster's**: the two blocks appear independently, so a band with one pays one gap and a band with both
-pays two, and folding the pair into one term is the 6px disagreement
-`BUILD_QUEUE_ROOM_ROSTER_GAP_COUNT` exists to prevent, on a second block.
+**Its height is reserved ahead of the board, and its GAP is counted apart from the road roster's**:
+the two blocks appear independently, so a band with one pays one gap and a band with both pays two,
+and folding the pair into one term is a 6px disagreement.
 
 ### ⛔ ITS `✕` IS `abandon_working`, AND THAT IS A DIFFERENT VERB FROM `abandon`
 
@@ -1234,7 +1178,7 @@ on exactly the hexes that hold two of them.
 `abandon_working <faction> <x> <y> <material>` is the verb the row sends instead. It rides the three
 rung verbs' OWN parser arm, so the material sits in the same trailing position and the tail is closed;
 it names no band, a working's keeper being known from its `Extract` row; and it drops the HOLDING —
-the row and its build-queue entry — through the same `drop_holding_and_cancel_ring` a patch's
+the row and any declared build on it — through the same `drop_holding_and_cancel_ring` a patch's
 `abandon` uses, leaving the meter to rot.
 
 ⛔ **`abandon` ITSELF IS UNCHANGED AND THIS CLIENT NEVER SENDS IT FOR A WORKING.**
@@ -1293,7 +1237,7 @@ second line would be warning about a reach the verb does not have.
 `HudDepositVocab.working_abandon_tooltip`:
 
 - `WORKING_ABANDON_DROPS_FORMAT` — what it destroys, **the banked work included**. The sim drops the
-  holding and its queue entry and leaves the METER to rot, so nothing is demolished and nothing is
+  holding and its declared build and leaves the METER to rot, so nothing is demolished and nothing is
   refunded either; a hover saying only *"drops this band's hold"* would read as reversible, which it
   stops being the moment work is banked.
 - `WORKING_ABANDON_WHY_FORMAT` — why a player would want it, which is the shared bill above.
@@ -1394,8 +1338,8 @@ bill* rule, one register in. `deposit_roster_tooltip` therefore reads: the §7 t
 ## THE ROLE HAD TO PASS BOTH GATES, AND THIS IS THE THIRD TIME
 
 A role passes TWO gates: `sim_runtime::command_text`'s grammar and the server's own
-`handle_assign_labor`. `builders` and then `roadwork` each shipped **refused inside the client** for a
-slice because they were in the server's dispatch and not in that grammar — the native bridge parses a
+`handle_assign_labor`. `roadwork` once shipped **refused inside the client** for a slice because it
+was in the server's dispatch and not in that grammar — the native bridge parses a
 line there BEFORE it sends, so every staffing command was refused locally with nothing failing
 anywhere.
 
@@ -1403,7 +1347,7 @@ anywhere.
 `Main.format_assign_labor`. Both were added in the same pass as the controls that emit them:
 
 - **`quarrywork` joins the closed role arm** (`"scout" | "warrior" | "agriculture" | "husbandry" |
-  "roadwork" | "quarrywork" | "builders"`), a bare worker count and no tail but the kit.
+  "roadwork" | "quarrywork"`), a bare worker count and no tail but the kit.
 - **`extract` is a TARGETED grammar of its own** — `extract <x> <y> <material> [floor] <workers>` —
   and **the material is not optional**: one tile can hold two workings, so a line naming only the tile
   names neither. It rides the **`species` token**, which is where the sim's own `extract` arm reads it
@@ -1428,8 +1372,7 @@ anywhere.
 worse than none.** The deposit sheet's commit passes `ComposeState.deposit_kit_id()` into
 `_emit_assign_labor`, and `Main.format_assign_labor`'s `extract` arm appends `_kit_token` after the
 worker count (issue #663). `HudBandLaborState.default_kit_id` answers the wire's job-level `default_extract_kit_id` for `JOB_EXTRACT`
-explicitly rather than by fall-through, on `builders`' own reasoning: falling through would mark the
-HUNT kit as this job's default.
+explicitly rather than by fall-through: falling through would mark the HUNT kit as this job's default.
 
 ⛔ **THE TOKEN IS OMITTED AGAINST THE WORKING'S OWN DEFAULT, NEVER THE JOB'S.** An `extract` line with
 NO `kit` token means *the working's own derived kit* to the sim (it stores the rung's `default_kit_id`
@@ -1532,10 +1475,6 @@ re-derivation, and the fixtures are shaped exactly as `dict/deposits.rs` and
 
 ### The pool, the roster and the TRACK — `band_panel_preview`
 
-**`POOL_CARD_COUNT` stays 4 and every pool-card assertion is byte-identical to `origin/main`** —
-checked by diff, not by eye. Its doc block records the 439px and the rejected second row so the next
-reader does not re-derive them.
-
 The roster's own block asserts, on one fixture whose near hex carries TWO workings: the negative (a
 working this band does not work is not listed), **the two UNTOUCHED rows** — one of them on a hex
 whose other material this band DOES hold, which a tile-keyed membership test would list — the count of
@@ -1602,7 +1541,7 @@ quieter"* rule made falsifiable, and the card closing on the press is asserted b
 `command_guard` drives the builder directly and can only prove the PARSE.
 
 **Frames:** `band_panel_workings_roster` (the head with its stepper and its `⚠` over three rows, each
-wearing its `⌃` and its `✕`, under a four-card pools block), `band_panel_workings_track` (the ladder
+wearing its `⌃` and its `✕`), `band_panel_workings_track` (the ladder
 open over it), `band_panel_workings_walked_away` (the crewless row reading `Felling · no crew · ⚠
 going back`), `band_panel_workings_put_down` (the ladder card with `Stop holding this working` and its
 aside beneath the rungs), `band_panel_workings_roster_unseen` (case 2 — the head still drawn, the

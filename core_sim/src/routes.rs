@@ -53,8 +53,8 @@
 //! # TRAFFIC PAYS FOR THE FLOOR, AND IT STOPS AT THE TOP OF IT
 //!
 //! *"A crew clears ground | **traffic wears the route in**."* That is true of the **free floor** and
-//! of nothing else. A path and a trail declare no `verb`, append no `BuildQueueEntry` and draw
-//! nothing from the builders' pool — traffic is the crew, and it banks work up to the top of
+//! of nothing else. A path and a trail declare no `verb`, append no `BuildDeclaration` and draw
+//! nothing from the build crew — traffic is the crew, and it banks work up to the top of
 //! [`free_floor_top_rung`] **and no further** ([`traffic_ceiling`]).
 //!
 //! **The cap is the load-bearing half, not where the line sits.** 13a billed `route:trail`, so two
@@ -115,7 +115,7 @@ pub const PAVING_DISCOVERY_ID: u32 = 2013;
 /// *pastoral · pen*, and `route` is **path · trail** then **dirt road · paved road** - and **the line
 /// between the two parts is derived, not named**: everything below the first rung a verb raises
 /// forms from use, is lost to disuse and has **no keeper**; everything at or above it is ordered with
-/// a verb, raised by the builders' pool, kept by one band and lost to unpaid keeping.
+/// a verb, raised by the build crew, kept by one band and lost to unpaid keeping.
 pub fn first_built_rung(ladder: &LadderConfig) -> &RungDef {
     ladder
         .rungs_of(ladder.branch_of_kind(crate::intensification::SourceKind::Road))
@@ -299,14 +299,14 @@ pub struct Road {
     pub upkeep_materials_demanded: BTreeMap<String, f32>,
     /// See [`Self::upkeep_materials_demanded`].
     pub upkeep_materials_supplied: BTreeMap<String, f32>,
-    /// **THIS ROAD'S 0-BASED PLACE IN ITS KEEPER'S BUILD QUEUE**, or
-    /// [`sim_schema::NOT_IN_ANY_BUILD_QUEUE`] when no pass has placed it.
+    /// **THE ESTIMATE-PASS STAMP FOR THIS ROAD'S BUILD**, or
+    /// [`sim_schema::NOT_IN_ANY_BUILD_QUEUE`] when no pass has dated it.
     ///
     /// It is **scratch, not published**: its one reader is the countdown's *"has an estimate pass
-    /// ever run for this entry"* test, which is what separates a build queued a second ago from one
+    /// ever run for this entry"* test, which is what separates a build declared a second ago from one
     /// that is genuinely stalled — both sit at `0%`, so the meter cannot tell them apart. Cleared
-    /// every turn with the pair above, which is what makes *"live-queued and still cleared"* mean
-    /// *"queued since the last pass"*.
+    /// every turn with the pair above, which is what makes *"declared and still cleared"* mean
+    /// *"declared since the last pass"*.
     pub build_queue_position: i32,
 }
 
@@ -1685,7 +1685,7 @@ pub fn advance_roads(
     //
     // A road already **above** the cap — one a band's builders graded or paved — is untouched: the
     // `max` is what keeps the cap from dragging a paved road back down to a trail every turn a link
-    // runs over it, which would be a second producer of a position the builders' pool owns.
+    // runs over it, which would be a second producer of a position the build crew owns.
     let ceiling = traffic_ceiling(&ladder);
     for road in registry.iter_mut() {
         // **The game trail's own clock** — reset only by a herd, advanced every other turn, and left

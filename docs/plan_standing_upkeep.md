@@ -809,8 +809,8 @@ invisible*. Tuning is therefore **last**, and after §4.10, which changes what t
    > control that declares; the compose sheet keeps the forecast and stops being the commit; the crop
    > moved to the queue row's settings expansion. **What remains of §4.7 is ② (the per-entry kit
    > override, which needs a field on `BuildQueueEntry`, a command and a wire field), drag-to-reorder,
-   > and the optimistic unqueue.** The rationale is in `.claude/rules/client/band-city-panel.md` →
-   > "THE POOLS BLOCK" and `labor-ui.md` → "THERE IS NO CHECKBOX ANY MORE".
+   > and the optimistic unqueue.** (The build queue this section describes was replaced by per-site
+   > build crews — `docs/plan_labor_at_scale.md`.)
    >
    > **Four decisions taken on the 7 playtest, each closing a question this section left open:**
    >
@@ -1248,8 +1248,7 @@ invisible*. Tuning is therefore **last**, and after §4.10, which changes what t
    > inspector springs back on collapse beside an open settings strip, which is the 460-into-396
    > defect §4.7b closed.
    >
-   > **The rationale is in `.claude/rules/client/band-city-panel.md` → "THE EXPANSION" and
-   > `harness-band-panel.md` → "The EXPANSION's frames".** Both docks fit exactly and no lever of
+   > **Both docks fit exactly and no lever of
    > Ray's was needed: the list declares **625px of a 759px box** on the tall LEFT dock and **260 of
    > 394** on the 1920 BOTTOM one, where the scrollbar costs the job face 8px against a face already
    > ellipsised.

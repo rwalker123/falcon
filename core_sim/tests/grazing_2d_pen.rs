@@ -29,11 +29,11 @@ use core_sim::{
     spawn_initial_herds, spawn_initial_world, CommandEventLog, CultureManager,
     DiscoveryProgressLedger, FactionId, FactionInventory, FaunaConfigHandle, ForageRegistry,
     GenerationId, GenerationRegistry, GrazePatch, GrazeRegistry, Herd, HerdDensityMap,
-    HerdRegistry, HerdTelemetry, LaborAllocation, LaborAssignment, LaborConfigHandle, LaborTarget,
-    LadderConfigHandle, MapPresets, MapPresetsHandle, MoraleCause, PopulationCohort,
-    SimulationConfig, SimulationTick, SizeClass, SnapshotOverlaysConfig,
-    SnapshotOverlaysConfigHandle, SourcePriority, StartLocation, StartProfileKnowledgeTags,
-    StartProfileKnowledgeTagsHandle, StartingUnit, TileRegistry, WellbeingConfigHandle, FOOD,
+    HerdRegistry, HerdTelemetry, LaborAllocation, LaborAssignment, LaborTarget, LadderConfigHandle,
+    MapPresets, MapPresetsHandle, MoraleCause, PopulationCohort, SimulationConfig, SimulationTick,
+    SizeClass, SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle, SourcePriority, StartLocation,
+    StartProfileKnowledgeTags, StartProfileKnowledgeTagsHandle, StartingUnit, TileRegistry,
+    WellbeingConfigHandle, FOOD,
 };
 
 /// A pinned earthlike map (`map_seed` is otherwise entropy — pin it). Only used to stand up a real
@@ -87,7 +87,8 @@ fn base_world() -> App {
     app.world.insert_resource(GrazeRegistry::default());
     app.world.insert_resource(ForageRegistry::default());
     app.world.insert_resource(FaunaConfigHandle::default());
-    app.world.insert_resource(LaborConfigHandle::default());
+    app.world
+        .insert_resource(core_sim::labor_config_with_room_on_the_tile());
     app.world
         .insert_resource(core_sim::SupplyNetworkConfigHandle::default());
     app.world
@@ -626,31 +627,14 @@ fn begin_extension(
             .world
             .get_mut::<LaborAllocation>(keeper)
             .expect("the keeper band keeps its allocation");
-        match allocation
-            .assignments
-            .iter_mut()
-            .find(|assignment| assignment.target == LaborTarget::Builders)
-        {
-            Some(row) => row.workers = KEEPER_WORKERS,
-            None => allocation.assignments.push(LaborAssignment {
-                party: None,
-                muster_crew: 0,
-                planned_crew: 0,
-                max_workers: Some(KEEPER_WORKERS),
-                staffing: Default::default(),
-                target: LaborTarget::Builders,
-                workers: KEEPER_WORKERS,
-                kit: None,
-                priority: SourcePriority::default(),
-            }),
-        }
         assert!(
-            allocation.enqueue_build(
+            allocation.declare_build(
                 core_sim::BuildSource::Herd(id.to_string()),
                 core_sim::BuildJob::ExtendPen,
             ),
             "the keeper band works the herd whose pen it is widening"
         );
+        core_sim::seat_builders(&mut app.world, keeper, KEEPER_WORKERS);
     }
     began
 }
@@ -659,18 +643,23 @@ fn begin_extension(
 fn extend_pen_accrues_a_ring_flips_the_radius_raises_k_and_caps_at_max() {
     const FODDER: f32 = 0.10;
     const WILD_R: f32 = 0.35;
-    // **A ring is paid in HANDS now** (`docs/plan_unit_costed_work.md` §1.2): it is raised by the
-    // keepers on the tending assignment, at `animal:pen`'s own `work_cost`. This harness staffs
-    // [`KEEPER_WORKERS`] so tending is never worker-limited, so its ring goes up in a single turn —
-    // which is the model, not a fixture bug. The window below is generous slack around that.
-    const RING_TURNS: u32 = 28;
+    // **A ring is paid in HANDS** (`docs/plan_unit_costed_work.md` §1.2): it is raised at
+    // `animal:pen`'s own `work_cost`, by as many of the band's idle hands as the rung's
+    // `max_builders` takes. This harness leaves [`KEEPER_WORKERS`] idle, so the ring is raised at the
+    // cap. The window below is generous slack around the turns that takes.
+    const RING_TURNS: u32 = 40;
+    let ladder = core_sim::LadderConfig::builtin();
+    let pen = ladder.rung(shipped::animal_pen());
+    let ring_builders = pen
+        .build
+        .as_ref()
+        .map(|build| build.max_builders)
+        .expect("the pen rung builds");
     let ring_turns_expected = core_sim::build_turns_remaining(
-        core_sim::LadderConfig::builtin()
-            .rung(shipped::animal_pen())
-            .build_cost(core_sim::RUNG_COST_UNSCALED)
+        pen.build_cost(core_sim::RUNG_COST_UNSCALED)
             .expect("the pen rung builds"),
         core_sim::RUNG_UNSTARTED,
-        KEEPER_WORKERS as f32 * core_sim::PER_WORKER_OUTPUT,
+        ring_builders as f32 * core_sim::PER_WORKER_OUTPUT,
     )
     .expect("a staffed ring finishes");
 
@@ -727,9 +716,12 @@ fn extend_pen_accrues_a_ring_flips_the_radius_raises_k_and_caps_at_max() {
         }
     }
     let flipped_on = flipped_on.expect("the ring completes within its build window");
-    assert_eq!(
-        flipped_on, ring_turns_expected,
-        "the ring takes `work_cost / this keeper crew's output` turns (flipped on turn {flipped_on})"
+    // The handling gear the keepers hold adds work on top of the capped crew's output, so the ring
+    // can only land sooner than the bare-handed pace, and not by more than the gear's worth.
+    assert!(
+        flipped_on <= ring_turns_expected && flipped_on * 2 > ring_turns_expected,
+        "the ring takes `work_cost / the capped crew's output` turns or fewer, gear included \
+         (flipped on turn {flipped_on}, bare pace {ring_turns_expected})"
     );
     let (r1, extending1, _) = pen_state(&app, &id);
     assert_eq!(

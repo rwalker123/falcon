@@ -105,6 +105,9 @@ const MECHANIC_GRID: UVec2 = UVec2::new(96, 64);
 /// did not pin one would ask a different question every run.
 const PINNED_SEED: u64 = 119_304_647;
 
+/// More hands than any fixture row and build stand on one hex together.
+const ROOM_FOR_EVERY_ROW_ON_THE_TILE: u32 = 1000;
+
 fn spawn_world() -> App {
     spawn_world_on(MECHANIC_GRID, PINNED_SEED)
 }
@@ -153,7 +156,12 @@ fn spawn_world_on(grid_size: UVec2, seed: u64) -> App {
     app.world.insert_resource(HerdTelemetry::default());
     app.world.insert_resource(HerdDensityMap::default());
     app.world.insert_resource(FaunaConfigHandle::default());
-    app.world.insert_resource(LaborConfigHandle::default());
+    // **The tile is not what these fixtures measure**: a Field's keeping crew plus its builders
+    // would exceed the shipped per-tile cap, and the cap would then thin the build under test.
+    let mut labor = (*core_sim::LaborConfig::builtin()).clone();
+    labor.tile_worker_cap = ROOM_FOR_EVERY_ROW_ON_THE_TILE;
+    app.world
+        .insert_resource(LaborConfigHandle::new(std::sync::Arc::new(labor)));
     app.world
         .insert_resource(core_sim::SupplyNetworkConfigHandle::default());
     app.world
@@ -419,11 +427,14 @@ fn spawn_builder(
     // rung declares none. Two for a Cultivate and three for a Sow are the staffings the two shipped
     // `work_cost`s were priced against.
     const CULTIVATE_CREW: u32 = 2;
-    let crew = match improvement {
-        matched_ if matched_ == shipped::cultivate() => CULTIVATE_CREW,
-        _ => sow_crew(app, patch),
+    let (row_hands, builders) = match improvement {
+        matched_ if matched_ == shipped::cultivate() => (CULTIVATE_CREW, CULTIVATE_CREW),
+        _ => (sow_row_hands(app, patch), sow_crew(app, patch)),
     };
-    spawn_forager_of(app, tile, patch, Some(improvement), crew)
+    let band = spawn_forager_of(app, tile, patch, Some(improvement), row_hands);
+    // A build has no row of its own: its builders are the idle hands the band has beside the rows.
+    core_sim::seat_builders(&mut app.world, band, builders);
+    band
 }
 
 /// **A completed plant rung, seated at the LADDER's own cost.** The feral bleed is an absolute
@@ -534,27 +545,15 @@ fn spawn_forager_of(
                     },
                     // **A pool of the same size staffs the build** — what this fixture meant when
                     // one crew did every job (`docs/plan_standing_upkeep.md` §2.5).
-                    LaborAssignment {
-                        party: None,
-                        muster_crew: 0,
-                        planned_crew: 0,
-                        max_workers: Some(foragers),
-                        staffing: Default::default(),
-                        target: LaborTarget::Builders,
-                        workers: foragers,
-                        kit: None,
-                        priority: SourcePriority::default(),
-                    },
                 ],
-                build_queue: improvement
-                    .map(|declared| core_sim::BuildQueueEntry {
+                builds: improvement
+                    .map(|declared| core_sim::BuildDeclaration {
                         source: core_sim::BuildSource::Patch(patch),
                         declared: core_sim::BuildJob::Climb(core_sim::shipped::rung_of_verb(
                             declared,
                         )),
                         // ⛔ **AN ENTRY'S KIT PRICES NOTHING** since `docs/plan_pool_toe.md`: a
                         // pool's tools follow from the rung. The gear axis is held on the LEDGER.
-                        priority: core_sim::SourcePriority::default(),
                     })
                     .into_iter()
                     .collect(),
@@ -567,6 +566,7 @@ fn spawn_forager_of(
     // the build's pace and wrong for one measuring the keeping.
     if improvement.is_some() {
         core_sim::disarm_the_builders(&mut app.world, band, shipped::plant_farm());
+        core_sim::seat_builders(&mut app.world, band, foragers);
     }
     band
 }
@@ -575,6 +575,7 @@ fn spawn_forager_of(
 /// (labor allocation resolves the take and accrues the investment).
 fn run_turns_with_forage(app: &mut App, turns: u32) {
     for _ in 0..turns {
+        core_sim::reseat_builders(&mut app.world);
         app.world.run_system_once(advance_forage_regrowth);
         app.world.run_system_once(advance_cultivation);
         app.world.run_system_once(advance_labor_allocation);
@@ -598,6 +599,14 @@ fn provisions_f32(app: &mut App) -> f32 {
         }
     }
     total
+}
+
+/// The patch's whole climb so far, in work units - the cumulative position, not one rung's meter.
+fn ladder_position_of(app: &App, coord: UVec2) -> f32 {
+    app.world
+        .resource::<ForageRegistry>()
+        .patch(coord)
+        .map_or(0.0, |patch| patch.ladder_position())
 }
 
 fn field_progress_of(app: &App, coord: UVec2) -> f32 {
@@ -701,10 +710,31 @@ fn unmaintained_field_turns_before_loss(app: &App, coord: UVec2) -> u32 {
 /// The rung's own `crew_needed` is the staffing the shipped cost was priced against
 /// (`docs/plan_unit_costed_work.md` §3). The one-turn over-crewed build is real and pinned on
 /// purpose by `forage_cultivation::over_crewing_a_build_is_no_longer_capped`.
-fn sow_crew(app: &App, coord: UVec2) -> u32 {
+fn sow_crew(app: &App, _coord: UVec2) -> u32 {
+    // A Sow on untended ground lays the tended rung first, so the crew every leg can seat is the
+    // smaller of the two rungs' caps.
+    let ladder = app.world.resource::<LadderConfigHandle>().get();
+    [shipped::plant_tended(), shipped::plant_farm()]
+        .into_iter()
+        .map(|rung| {
+            ladder
+                .rung(rung)
+                .build
+                .as_ref()
+                .map(|build| build.max_builders)
+                .expect("the rung declares a build")
+        })
+        .min()
+        .expect("two rungs")
+}
+
+/// **The hands on the patch's own ROW while a Sow runs** - the keeping the rung owes plus the net
+/// supply the 75-unit cost was priced against. The builders are separate from these: they are the
+/// band's idle hands, capped by the rung's `max_builders` ([`sow_crew`]).
+fn sow_row_hands(app: &App, coord: UVec2) -> u32 {
     /// The net supply the `plant:farm` rung's 75-unit `work_cost` was priced against — the
     /// staffing this file's paces are all quoted at.
-    const NET_WORKER_TURNS: u32 = 3;
+    const NET_WORKER_TURNS: u32 = 1;
     // **Plus the rung's maintenance rate**, which the *keeping* pool owes while the meter is being
     // raised — the builders supply none of it (`docs/plan_standing_upkeep.md` §4.6a). The padding
     // survives because these fixtures size one band against everything it staffs: a bare three hands
@@ -782,7 +812,7 @@ fn queued_job(
     app.world
         .get::<LaborAllocation>(band)
         .expect("the fixture band keeps its allocation")
-        .build_queue_entry(&core_sim::BuildSource::Patch(tile))
+        .build_declaration(&core_sim::BuildSource::Patch(tile))
         .map(|entry| entry.declared)
 }
 
@@ -1188,10 +1218,10 @@ fn gear_the_builders_alone(app: &mut App, band: bevy::prelude::Entity) {
             .get::<LaborAllocation>(band)
             .expect("the fixture band keeps its allocation");
         assert!(
-            !allocation.build_queue.is_empty(),
+            !allocation.builds.is_empty(),
             "fixture: the band must have declared a build for the gear to be spent on"
         );
-        allocation.workers_on(&LaborTarget::Builders)
+        allocation.builders_total()
     };
     app.world
         .entity_mut(band)
@@ -1396,6 +1426,8 @@ fn sowing_a_tended_patch_leaves_the_gatherers_take_alone_then_upgrades_it() {
         // keeping frees hands for the take — so a baseline that kept its hoe would out-gather the
         // sowing arm by the tool, not by the build.
         core_sim::disarm_the_builders(&mut baseline.world, band, shipped::plant_tended());
+        // No declared build here, so the band is exactly the row's hands.
+        core_sim::seat_builders(&mut baseline.world, band, 0);
         if turns == 0 {
             baseline.world.run_system_once(advance_labor_allocation);
             return provisions_f32(&mut baseline);
@@ -1423,7 +1455,11 @@ fn sowing_a_tended_patch_leaves_the_gatherers_take_alone_then_upgrades_it() {
             patch.owner = Some(FactionId(0));
         }
         grant_seed_selection(&mut sparse, FactionId(0));
-        spawn_forager_of(&mut sparse, tile, coord, Some(shipped::sow()), SOLE_FORAGER);
+        let sb = spawn_forager_of(&mut sparse, tile, coord, Some(shipped::sow()), SOLE_FORAGER);
+        // The builders stand beside a row that keeps its whole Max: the band is that row plus the
+        // rung's builders, so the gatherers are the same hands the baseline arm has.
+        let builders = sow_crew(&sparse, coord);
+        core_sim::seat_builders(&mut sparse.world, sb, builders);
         sparse.world.run_system_once(advance_labor_allocation);
         let while_sowing = provisions_f32(&mut sparse);
         assert!(
@@ -1796,9 +1832,40 @@ fn a_completed_field_retires_the_sow_verb_onto_the_harvest_rung() {
     }
 
     // Every turn but the last: the meter fills and the verb stays put.
-    let turns_to_sow = turns_to_sow(&app, coord);
-    let turns_to_build = turns_to_sow;
-    run_turns_with_forage(&mut app, turns_to_build - 1);
+    // The Field leg runs at the farm's own builder cap, which can be above the cap the first leg
+    // shares - so the last turn is found by the work left, not counted off a fixed pace.
+    let (farm_base, _) = {
+        let ladder = app.world.resource::<LadderConfigHandle>().get();
+        core_sim::plant_rung_span(shipped::plant_farm(), &ladder)
+    };
+    let whole_climb = farm_base + field_span_here(&app, coord);
+    let farm_cap = app
+        .world
+        .resource::<LadderConfigHandle>()
+        .get()
+        .rung(shipped::plant_farm())
+        .build
+        .as_ref()
+        .map(|build| build.max_builders)
+        .expect("the farm rung declares a build");
+    let most_a_turn_can_bank = app
+        .world
+        .resource::<LadderConfigHandle>()
+        .get()
+        .rung(shipped::plant_farm())
+        .build_accrual(
+            Some(shipped::sow()),
+            true,
+            farm_cap,
+            core_sim::NO_BUILD_GEAR,
+        );
+    let climb_turns = turns_to_sow(&app, coord) * 2;
+    for _ in 0..climb_turns {
+        if whole_climb - ladder_position_of(&app, coord) <= most_a_turn_can_bank {
+            break;
+        }
+        run_turns_with_forage(&mut app, 1);
+    }
     assert!(
         !app.world
             .resource::<ForageRegistry>()
@@ -1825,7 +1892,7 @@ fn a_completed_field_retires_the_sow_verb_onto_the_harvest_rung() {
         .expect("the fixture band forages")
         .workers;
     assert!(
-        staffed > sow_crew(&app, coord),
+        staffed > farm_cap,
         "fixture: the row carries its keeping hands beside the sowing crew, got {staffed}"
     );
 

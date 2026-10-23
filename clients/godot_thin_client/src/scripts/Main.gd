@@ -419,14 +419,10 @@ func _ready() -> void:
             hud.connect("abandon_requested", Callable(self, "_on_hud_abandon"))
         if hud.has_signal("abandon_working_requested") and not hud.is_connected("abandon_working_requested", Callable(self, "_on_hud_abandon_working")):
             hud.connect("abandon_working_requested", Callable(self, "_on_hud_abandon_working"))
-        if hud.has_signal("build_order_requested") and not hud.is_connected("build_order_requested", Callable(self, "_on_hud_build_order")):
-            hud.connect("build_order_requested", Callable(self, "_on_hud_build_order"))
         if hud.has_signal("work_priority_requested") and not hud.is_connected("work_priority_requested", Callable(self, "_on_hud_work_priority")):
             hud.connect("work_priority_requested", Callable(self, "_on_hud_work_priority"))
         if hud.has_signal("stop_labor_requested") and not hud.is_connected("stop_labor_requested", Callable(self, "_on_hud_stop_labor")):
             hud.connect("stop_labor_requested", Callable(self, "_on_hud_stop_labor"))
-        if hud.has_signal("build_priority_requested") and not hud.is_connected("build_priority_requested", Callable(self, "_on_hud_build_priority")):
-            hud.connect("build_priority_requested", Callable(self, "_on_hud_build_priority"))
         if hud.has_signal("bench_enqueue_requested") and not hud.is_connected("bench_enqueue_requested", Callable(self, "_on_hud_bench_enqueue")):
             hud.connect("bench_enqueue_requested", Callable(self, "_on_hud_bench_enqueue"))
         if hud.has_signal("bench_crew_requested") and not hud.is_connected("bench_crew_requested", Callable(self, "_on_hud_bench_crew")):
@@ -1531,15 +1527,15 @@ static func format_assign_labor(payload: Dictionary) -> Dictionary:
                 "line": "%s %d%s" % [extract_head, workers, _kit_token(payload)],
                 "message": extract_message,
             }
-        "scout", "warrior", "roadwork", "builders":
+        "scout", "warrior", "roadwork":
             # **A BAND-WIDE ROLE CARRIES THE KIT TOKEN TOO, and it is the only optional token these
             # rows take.** They have no tile, no herd, no floor and no species — the sim ignores
             # every one of those on a role target — and `_kit_token` omits an empty selection, so a
             # player who never opened a role card's picker emits the line they always did.
             #
-            # **`roadwork` AND `builders` ARE THE TWO BAND-WIDE POOLS LEFT** (`docs/plan_site_crews.md`
-            # §0), in exactly the grammar scout and warrior use. Both send no kit: the sim refuses a
-            # `kit` token on either by name, a pool being HOW MANY hands and never what they carry.
+            # **`roadwork` IS THE ONE BAND-WIDE KEEPING POOL LEFT** (`docs/plan_site_crews.md` §0),
+            # in exactly the grammar scout and warrior use. It sends no kit: the sim refuses a `kit`
+            # token on it by name, a pool being HOW MANY hands and never what they carry.
             #
             # ⛔ **`agriculture`, `husbandry` AND `quarrywork` ARE RETIRED** with the keeping pools they
             # staffed — a site's own crew keeps it — and the sim refuses the three tokens by name, so
@@ -1854,9 +1850,8 @@ static func format_split_band(payload: Dictionary) -> Dictionary:
 ## ⛔ **THE GRAMMAR IS CLOSED AT THREE TOKENS, and a trailing crew is a PARSE ERROR**
 ## (`docs/plan_standing_upkeep.md` §2.5). It took a required worker count for one slice, back when a
 ## ring staffed a per-source build allocation. A ring rides the same `animal:pen` rung as the pen it
-## widens and is funded exactly like every other build now: this DECLARES it, appending an entry to
-## the build queue of every band keeping the pen, and that band's `builders` pool raises it when it
-## reaches the head.
+## widens and is funded exactly like every other build now: this DECLARES it on the pen, and the
+## pen's own crew raises it.
 static func format_extend_pen(payload: Dictionary) -> Dictionary:
     var faction := int(payload.get("faction", HudConst.PLAYER_FACTION_ID))
     var x := int(payload.get("x", -1))
@@ -1865,7 +1860,7 @@ static func format_extend_pen(payload: Dictionary) -> Dictionary:
         return {}
     return {
         "line": "extend_pen %d %d %d" % [faction, x, y],
-        "message": "Queue another ring on the pen at (%d, %d)." % [x, y],
+        "message": "Another ring declared on the pen at (%d, %d)." % [x, y],
     }
 
 ## **THE BUILD VERBS' COMMAND SHAPE IS READ OFF THE LADDER CATALOG** (issue #175). The verb's
@@ -1902,8 +1897,7 @@ static func _source_kind_of_payload(payload: Dictionary) -> String:
 
 ## ⛔ **NONE OF THESE VERBS TAKES A WORKER COUNT, and a trailing one is a PARSE ERROR**
 ## (`docs/plan_standing_upkeep.md` §2.5). Each carried the build's own crew for one slice; they
-## DECLARE now — the verb appends an entry to a build queue, and the hands stand on
-## `assign_labor <faction> <band> builders <n>`.
+## DECLARE now - the verb declares a build on the source, and the site's own crew raises it.
 static func format_improvement(payload: Dictionary, catalog: Array = []) -> Dictionary:
     var improvement := String(payload.get("improvement", "")).strip_edges().to_lower()
     if improvement == "":
@@ -1918,7 +1912,7 @@ static func format_improvement(payload: Dictionary, catalog: Array = []) -> Dict
             return {}
         return {
             "line": "build %s %d %s" % [improvement, faction, herd_id],
-            "message": "%s %s — queued for this band's builders." % [
+            "message": "%s %s — the site's crew will build it." % [
                 improvement.capitalize(), herd_id],
         }
     var x := int(payload.get("x", -1))
@@ -1934,7 +1928,7 @@ static func format_improvement(payload: Dictionary, catalog: Array = []) -> Dict
             return {}
         return {
             "line": "build %s %d %d %d %d" % [improvement, faction, band, x, y],
-            "message": "%s (%d, %d) — this band's road now, queued for its builders." % [
+            "message": "%s (%d, %d) — this band's road now, built by its crew." % [
                 improvement.capitalize(), x, y],
         }
     if kind == HudRouteVocab.SOURCE_KIND_DEPOSIT:
@@ -1948,17 +1942,17 @@ static func format_improvement(payload: Dictionary, catalog: Array = []) -> Dict
             return {}
         return {
             "line": "build %s %d %d %d %s" % [improvement, faction, x, y, material],
-            "message": "%s the %s at (%d, %d) — queued for this band's builders." % [
+            "message": "%s the %s at (%d, %d) — the site's crew will build it." % [
                 improvement.capitalize(), material, x, y],
         }
     return {
         "line": "build %s %d %d %d" % [improvement, faction, x, y],
-        "message": "%s (%d, %d) — queued for this band's builders." % [
+        "message": "%s (%d, %d) — the site's crew will build it." % [
             improvement.capitalize(), x, y],
     }
 
 ## **`unqueue <faction> <x> <y>` | `unqueue <faction> <herd_id>` — THE WITHDRAWAL**
-## (`docs/plan_standing_upkeep.md` §2.5). It drops the source's build-queue entry on every band of the
+## (`docs/plan_standing_upkeep.md` §2.5). It drops the source's declared build on every band of the
 ## faction working it and leaves the row, its take crew, its kit and the meter exactly as they are.
 ##
 ## **IT NAMES A SOURCE, NOT A RUNG, and that is why it is its own builder rather than a branch of
@@ -1977,17 +1971,17 @@ static func format_unqueue(payload: Dictionary) -> Dictionary:
         return {}
     return {
         "line": "unqueue %d %s" % [faction, site],
-        "message": "Withdraw the build queued on %s." % site_label(payload),
+        "message": "Stop the build on %s." % site_label(payload),
     }
 
 ## **`abandon <faction> <x> <y>` | `abandon <faction> <herd_id>` — PUT THE HOLDING DOWN.**
 ##
-## ⛔ **IT IS NOT `unqueue`, AND THE PAIR IS THE WHOLE POINT OF HAVING TWO BUILDERS.** `unqueue` drops
-## a source's build-queue ENTRY and leaves the row, its crew, its kit and the meter exactly as they
-## are — the undo for a declaration. This releases the HOLDING: the band's grip on the source and, for
-## a road, its keeping and its place in the queue together. Once any work is banked it is the only one
-## of the two that does anything, which is why a road handed to the wrong band could not be taken back
-## from the UI at all while this had no builder.
+## ⛔ **IT IS NOT `unqueue`, AND THE PAIR IS THE WHOLE POINT OF HAVING TWO BUILDERS.** `unqueue` drops a
+## source's declared build and leaves the row, its crew, its kit and the meter exactly as they are —
+## the undo for a declaration. This releases the HOLDING: the band's grip on the source and, for a road,
+## its keeping and its declared build together. Once any work is banked it is the only one of the two
+## that does anything, which is why a road handed to the wrong band could not be taken back from the UI
+## at all while this had no builder.
 ##
 ## ⛔ **THE BARE TILE NAMES A PLACE; `road <x> <y>` NAMES THE ROAD ALONE** (`docs/plan_site_crews.md`
 ## §2.4). `abandon <f> <x> <y>` drops the faction's labor rows on that tile AND the road's keeping,
@@ -2119,42 +2113,6 @@ static func site_label(payload: Dictionary) -> String:
 ## A road site's feed-line label.
 const SITE_LABEL_ROAD_FORMAT := "the road at %s"
 
-## **WHAT THE PLAYER CALLS THE FIRST SLOT OF A QUEUE.** The wire's `position` is a 0-based INDEX and
-## stays one; the sim's own reply spells the landed slot `#{landed + 1}`, so the echo beside it adds
-## the same one. Named because the two bases are a real distinction here — the token and the sentence
-## in one function must not drift onto one number.
-const BUILD_QUEUE_POSITION_LABEL_BASE := 1
-
-## **`build_order <faction> <band> <x> <y> <position>` | `build_order <faction> <band> <herd_id>
-## <position>` — THE REORDER** (`docs/plan_standing_upkeep.md` §4.7b ③), emitted by the BUILD QUEUE
-## block's drag.
-##
-## **THE ORDER IS THE FUNDING DECISION**: the whole `builders` pool stands on the HEAD entry until its
-## meter fills, then on the next — so a position is not a label, it is when the job gets built.
-##
-## **IT NAMES A BAND where `unqueue` does not**, and the asymmetry is the sim's: a queue
-## belongs to a band, while a kit and a withdrawal are properties of the entry every band holding that
-## source has. `position` is 0-based on the WIRE and the sim clamps it to the queue's length.
-##
-## ⛔ **THE ECHO SPELLS THAT POSITION THE SIM'S WAY — 1-based, `#n`.** `handle_build_order` answers the
-## same action with *"… is now #2 in the build queue"* (`core_sim/src/bin/server.rs`), deliberately
-## 1-based, and the two land in the dock on the SAME turn: a 0-based echo put two different numbers on
-## one drag, one row apart. The wire token stays 0-based — it is the sim's index, not a label.
-static func format_build_order(payload: Dictionary) -> Dictionary:
-    var band_id := int(payload.get("band_id", HudConst.NO_BAND_ID))
-    if band_id == HudConst.NO_BAND_ID:
-        return {}
-    var faction := int(payload.get("faction", HudConst.PLAYER_FACTION_ID))
-    var position: int = max(0, int(payload.get("position", 0)))
-    var site := site_address(payload)
-    if site == "":
-        return {}
-    return {
-        "line": "build_order %d %d %s %d" % [faction, band_id, site, position],
-        "message": "Move the build on %s to #%d in the build queue."
-            % [site_label(payload), position + BUILD_QUEUE_POSITION_LABEL_BASE],
-    }
-
 ## **`work_priority <faction> <band> <x> <y> <level>` | `work_priority <faction> <band> <herd_id>
 ## <level>` — THE PLAYER'S OWN RANK ON ONE WORKED ROW** (`docs/plan_standing_upkeep.md` §4.9 item 9b),
 ## emitted by the work inspector's priority picker.
@@ -2164,14 +2122,11 @@ static func format_build_order(payload: Dictionary) -> Dictionary:
 ## the order and this builder never sees one. The token it emits is the very string the decoder handed
 ## the picker, which is why nothing between the button and the socket can re-spell it.
 ##
-## **IT NAMES A BAND, like `build_order` and unlike `build_kit` / `unqueue`.** The ordering it feeds is
-## a band's: the shedding walk partitions that band's own rows and the pen-feed split serves that
-## band's own stores. The source-addressed verbs are the ones whose subject is the ground rather than
-## the holding.
-##
-## The two source shapes are told apart exactly as `format_build_order` tells them apart, which is how
-## the sim's own parser does it: a non-empty herd id is the herd form, else two integer tokens name a
-## tile.
+## **IT NAMES A BAND, unlike `unqueue`.** The ordering it feeds is a band's: the shedding walk
+## partitions that band's own rows and the pen-feed split serves that band's own stores. The
+## source-addressed verbs are the ones whose subject is the ground rather than the holding. The two
+## source shapes are told apart the way the sim's own parser does it: a non-empty herd id is the herd
+## form, else two integer tokens name a tile.
 static func format_work_priority(payload: Dictionary) -> Dictionary:
     var band_id := int(payload.get("band_id", HudConst.NO_BAND_ID))
     if band_id == HudConst.NO_BAND_ID:
@@ -2216,32 +2171,6 @@ static func format_stop_labor(payload: Dictionary) -> Dictionary:
     return {
         "line": "stop_labor %d %d %s" % [faction, band_id, site],
         "message": "Stop working %s." % site_label(payload),
-    }
-
-## **`build_priority <faction> <band> <x> <y> <level>` | `build_priority <faction> <band> <herd_id>
-## <level>` — A QUEUED BUILD'S OWN MARK** (`docs/plan_site_crews.md` §2.4), emitted by the `Build` pill
-## on a site's work row. `format_work_priority`'s exact shape, because it addresses the same band-and-
-## source pair: a second shape for one family of verbs is how a client sends the wrong one.
-##
-## **IT RANKS THE ENTRY, NOT THE SITE CREW.** A build no longer borrows its row's `work_priority`; the
-## sim refuses a source with nothing queued by name, which is why the pill only renders on a row whose
-## site is in this band's build queue.
-static func format_build_priority(payload: Dictionary) -> Dictionary:
-    var band_id := int(payload.get("band_id", HudConst.NO_BAND_ID))
-    if band_id == HudConst.NO_BAND_ID:
-        return {}
-    var faction := int(payload.get("faction", HudConst.PLAYER_FACTION_ID))
-    var level := String(payload.get("level", "")).strip_edges().to_lower()
-    if not HudWorkVocab.WORK_PRIORITY_FACES.has(level):
-        return {}
-    var face := String(HudWorkVocab.WORK_PRIORITY_FACES[level])
-    var site := site_address(payload)
-    if site == "":
-        return {}
-    return {
-        "line": "build_priority %d %d %s %s" % [faction, band_id, site, level],
-        "message": "The build on %s is now %s priority for this band."
-            % [site_label(payload), face.to_lower()],
     }
 
 ## **`bench_enqueue <faction_id> <band_id> recipe <recipe_id> count <n>`** — add an ORDER to the back
@@ -2802,8 +2731,8 @@ func _on_hud_extend_pen(payload: Dictionary) -> void:
 ## reaches only bands already working the source"* rule is satisfied by construction and no
 ## `assign_labor` has to precede it.
 ##
-## **IT NAMES NO CREW** (`docs/plan_standing_upkeep.md` §2.5): the verb appends a build-queue entry
-## and the band's `builders` pool raises whatever is at the head. An EMPTY `improvement` means *there
+## **IT NAMES NO CREW** (`docs/plan_standing_upkeep.md` §2.5): the verb declares a build on the
+## source and the site's own crew raises it. An EMPTY `improvement` means *there
 ## is nothing here to state* — `format_improvement` answers `{}` and nothing is sent.
 ##
 ## **A SEND THAT DID NOT GO TAKES THE HUD'S OPTIMISTIC WRITE WITH IT**, exactly as the labor path's
@@ -2838,18 +2767,9 @@ func _on_hud_abandon(payload: Dictionary) -> void:
 func _on_hud_abandon_working(payload: Dictionary) -> void:
     _send_formatted_command(format_abandon_working(payload))
 
-## RE-ORDER a band's build queue (`docs/plan_standing_upkeep.md` §4.7b ③).
-##
-## **NO ROLLBACK, because there is no optimistic write to roll back** — the live-capture rule. `PopulationCohortState.buildQueue` is captured LIVE
-## rather than turn-written (§4.9 item 9a), so the reordered list arrives on this command's own
-## recapture; the client-side ordering that used to be undone here was a second ordering beside the
-## wire's, which is the drift that made a drag paint one order and then jump to another.
-func _on_hud_build_order(payload: Dictionary) -> void:
-    _send_formatted_command(format_build_order(payload))
-
 ## RANK one worked row against the rest of this band's (`docs/plan_standing_upkeep.md` §4.9 item 9b).
 ##
-## **NO ROLLBACK, because there is no optimistic write to roll back** — `_on_hud_build_order`'s rule,
+## **NO ROLLBACK, because there is no optimistic write to roll back** — the rule of every live-captured row,
 ## and for the identical reason one field over. `LaborAssignment.priority` is captured LIVE off the
 ## allocation rather than turn-written, so the new mark arrives on this command's own recapture; a
 ## client-side copy would be a second statement of one value, which is the drift §4.9 forbids.
@@ -2861,12 +2781,6 @@ func _on_hud_work_priority(payload: Dictionary) -> void:
 ## the client keeps no optimistic copy of a row that is about to go.
 func _on_hud_stop_labor(payload: Dictionary) -> void:
     _send_formatted_command(format_stop_labor(payload))
-
-## Mark one queued build with the player's rank. **No rollback, for `_on_hud_work_priority`'s reason**:
-## `BuildQueueEntryState.buildPriority` is captured live off the band's queue, so the new mark arrives
-## on this command's own recapture and there is no optimistic write to undo.
-func _on_hud_build_priority(payload: Dictionary) -> void:
-    _send_formatted_command(format_build_priority(payload))
 
 ## Say how this band splits a keeping pool it cannot stretch. Sent on its own — the fund mode is a
 ## standing policy on the band's allocation, not part of any source's commit.
@@ -3002,7 +2916,7 @@ func _on_hud_answer_fork(payload: Dictionary) -> void:
 ## **IT ANSWERS WHETHER THE LINE WENT, and that answer is load-bearing for any caller holding an
 ## OPTIMISTIC overlay.** It used to warn and return nothing, so a send the transport refused
 ## (`Inspector.gd`'s `err != OK` branch) left the HUD's pending write standing as fact until the next
-## turn reconciled it away — a Builders card reading `3` beside a queue reading `⚠ No builders`. Every
+## turn reconciled it away — a crew card reading `3` beside a source reading `No spare hands`. Every
 ## caller that wrote something on the strength of this call must roll that write back on `false`; the
 ## rest may ignore it exactly as before.
 func _send_runtime_command(line: String, message: String,
