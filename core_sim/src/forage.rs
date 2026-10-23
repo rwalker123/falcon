@@ -1310,6 +1310,13 @@ pub fn tile_is_fresh_watered(
 /// land admit this rung* — and two functions answering it is how a refusal comes to differ between
 /// the command that rejects it and the labor arm that gates it.
 ///
+/// `belief` is the belief standing on the tile (`crate::belief::BeliefRegistry::get`), passed in for
+/// the same reason: only the caller holds the registry. A caller with no belief in play passes
+/// [`crate::belief::NO_BELIEF`], which cannot refuse a rung that leaves `min_belief` at its neutral
+/// (every rung off a belief branch). The belief branch's `monument` is refused on a tile that has
+/// not gathered enough - through this one seam, so the command, the labor arm's gate and the wire
+/// cannot disagree.
+///
 /// `knows` is the acting faction's lesson test ([`crate::intensification::knows_lesson`]): a rung's
 /// `site_relaxations` loosen the rule for a faction that holds the lesson, so the seam needs the
 /// faction and every gate passes the same one.
@@ -1317,6 +1324,7 @@ pub fn tile_is_fresh_watered(
 /// `None` = the rung asks nothing of the site, or the land permits it. `Some(refusal)` says **which**
 /// way the ground fell short, so the caller can phrase each distinctly — they are different problems
 /// with different answers (work a site instead, move, or wait for a rung that relaxes the dial).
+#[allow(clippy::too_many_arguments)] // the rung, the tile, and every reading the site rule judges
 pub fn rung_site_refusal(
     rung: &RungDef,
     tile: &Tile,
@@ -1324,6 +1332,7 @@ pub fn rung_site_refusal(
     gathering_site: bool,
     fresh_water: bool,
     deposit_capacity: f32,
+    belief: f32,
     knows: &dyn Fn(&str) -> bool,
 ) -> Option<SiteRefusal> {
     // **THE RULE THE ACTING FACTION IS JUDGED BY** - the rung's own, or the last lesson-keyed
@@ -1339,6 +1348,7 @@ pub fn rung_site_refusal(
             forage_capacity,
             fresh_water,
             deposit_capacity,
+            belief,
         )
         .is_none()
     }) {
@@ -1350,6 +1360,7 @@ pub fn rung_site_refusal(
         forage_capacity,
         fresh_water,
         deposit_capacity,
+        belief,
     )?;
     // **A LESSON THE FACTION LACKS WOULD ADMIT THIS GROUND**: say what to learn, not what is wrong.
     if rung
@@ -1359,6 +1370,7 @@ pub fn rung_site_refusal(
             forage_capacity,
             fresh_water,
             deposit_capacity,
+            belief,
         )
         .is_some()
     {

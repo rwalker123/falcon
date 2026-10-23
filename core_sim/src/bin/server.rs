@@ -4730,6 +4730,8 @@ fn plant_rung_site_refusal(
         // **A plant rung asks nothing of a deposit** — every rung off the two deposit branches
         // leaves `min_deposit_capacity` at this neutral, so the term cannot refuse one.
         core_sim::NO_DEPOSIT_FLOOR,
+        // **A plant rung asks nothing of belief** - only a belief branch's rungs set `min_belief`.
+        core_sim::NO_BELIEF,
         // **The acting faction's lessons**: a rung's `site_relaxations` loosen its site rule for a
         // people that holds the lesson, and every gate reads the same answer.
         &|name| {
@@ -4801,6 +4803,7 @@ fn validate_deposit_verb(
         true,
         true,
         core_sim::extraction::tile_deposit_capacity(&extraction, material, ground),
+        core_sim::NO_BELIEF,
         // A deposit rung declares no `site_relaxations`, so no lesson changes its rule.
         &|_| false,
     ) {
@@ -4845,6 +4848,11 @@ fn site_refusal_message(refusal: SiteRefusal, tile: UVec2, verb: &str) -> String
             "Nothing will grow at ({}, {}) — that ground is too thin and too dry to take a crop. \
              Your people can carry seed, but not yet water or feed the land.",
             tile.x, tile.y
+        ),
+        SiteRefusal::NoBelief => format!(
+            "({}, {}) does not hold enough belief to {} - belief gathers where people have buried \
+             their dead and met, so hold more gatherings and bury your dead there first.",
+            tile.x, tile.y, verb
         ),
         SiteRefusal::NeedsLesson => format!(
             "Your people have not learned how to {} ground beyond the sites they already gather, \
@@ -8746,6 +8754,37 @@ fn validate_tile_verb(
         .below_id(destination)
         .expect("a rung a verb raises stands on the rung beneath it");
     let label = rung.label.to_lowercase();
+    // **The ground, through the one `rung_site_refusal` seam** every other source's command and
+    // gate resolve: a rung that states a `site_requirement` (a belief branch's monument asks the
+    // tile for `min_belief`) is judged against the tile and the belief standing on it.
+    if rung.site_requirement.is_some() {
+        let labor = app.world.resource::<LaborConfigHandle>().get();
+        let registry = app.world.resource::<TileRegistry>();
+        let Some(ground) = registry
+            .index(tile.x, tile.y)
+            .and_then(|entity| app.world.get::<Tile>(entity))
+        else {
+            return Err(format!("There is no tile at ({}, {}).", tile.x, tile.y));
+        };
+        if let Some(refusal) = rung_site_refusal(
+            rung,
+            ground,
+            &labor.forage,
+            // A tile rung asks nothing about gathering or water: both are passed permissive.
+            true,
+            true,
+            core_sim::NO_DEPOSIT_FLOOR,
+            app.world.resource::<core_sim::BeliefRegistry>().get(tile),
+            // A tile rung declares no `site_relaxations`, so no lesson changes its rule.
+            &|_| false,
+        ) {
+            return Err(site_refusal_message(
+                refusal,
+                tile,
+                rung.verb.as_deref().unwrap_or(&label),
+            ));
+        }
+    }
     let improvements = app.world.resource::<core_sim::TileImprovementRegistry>();
     match improvements.get(tile, branch) {
         Some(improvement) if improvement.faction != faction => Err(format!(
@@ -20026,6 +20065,7 @@ mod tests {
             app.world.resource::<FoodSiteRegistry>().is_site(coord),
             fresh_water,
             core_sim::NO_DEPOSIT_FLOOR,
+            core_sim::NO_BELIEF,
             &|_| false,
         ))
     }
@@ -20061,8 +20101,15 @@ mod tests {
             min_forage_capacity: 0.0,
             requires_fresh_water: true,
             min_deposit_capacity: core_sim::NO_DEPOSIT_FLOOR,
+            min_belief: core_sim::NO_BELIEF,
         }
-        .refusal(false, 0.0, fresh_water, core_sim::NO_DEPOSIT_FLOOR)
+        .refusal(
+            false,
+            0.0,
+            fresh_water,
+            core_sim::NO_DEPOSIT_FLOOR,
+            core_sim::NO_BELIEF,
+        )
     }
 
     /// The first tile matching `accept`, scanned in a **totally ordered** `(y, x)` sweep — never map
@@ -30551,6 +30598,8 @@ mod tests {
             // The storage branches' verbs: the pit is a tile verb, the rack names the band.
             matched_ if matched_ == VerbId::new("dig") => "build dig 0 1 1".to_string(),
             matched_ if matched_ == VerbId::new("rack") => format!("build rack 0 {ROAD_BAND_ID}"),
+            // The belief branch's verb is a tile verb, the pit's shape.
+            matched_ if matched_ == VerbId::new("raise") => "build raise 0 1 1".to_string(),
             other => panic!("no canonical command line is stated for the verb `{other:?}`"),
         }
     }
@@ -30655,6 +30704,43 @@ mod tests {
                 extraction_failure_reasons(&app)
             );
         }
+    }
+
+    /// **`build raise` IS REFUSED BEFORE THE RITUAL LESSON, AND ON A TILE THAT HOLDS TOO LITTLE BELIEF**
+    /// (#692) - the tile verb's command gate, with the ground judged through the one
+    /// `rung_site_refusal` seam the labor arm's gate also reads.
+    #[test]
+    fn raise_is_refused_before_ritual_and_below_the_belief_floor() {
+        const SHORT_OF_ONE: f32 = 0.5;
+        const ENOUGH: f32 = 1.0;
+        let (mut app, faction, _band) = deposit_world(TWO_DEPOSIT_TERRAIN, "wood");
+        let ladder = app.world.resource::<LadderConfigHandle>().get();
+        let rung = ladder
+            .rung_for_verb(VerbId::new("raise"))
+            .expect("the belief branch's verb");
+        let branch = rung.branch;
+        let ask =
+            |app: &bevy::prelude::App| validate_tile_verb(app, faction, WORKING, branch, rung);
+
+        app.world
+            .resource_mut::<core_sim::BeliefRegistry>()
+            .add(WORKING, ENOUGH);
+        let unlearned = ask(&app).expect_err("ritual is not learned");
+        assert!(unlearned.contains("Ritual"), "{unlearned}");
+
+        grant_deposit_knowledge(&mut app, faction, core_sim::RITUAL_DISCOVERY_ID);
+        assert_eq!(
+            ask(&app),
+            Ok(()),
+            "a learned lesson on a tile holding belief"
+        );
+
+        *app.world.resource_mut::<core_sim::BeliefRegistry>() = core_sim::BeliefRegistry::default();
+        app.world
+            .resource_mut::<core_sim::BeliefRegistry>()
+            .add(WORKING, SHORT_OF_ONE);
+        let short = ask(&app).expect_err("half a dead-equivalent is not a gathering ground");
+        assert!(short.contains("belief"), "{short}");
     }
 
     /// ⛔ **`abandon_working` PUTS ONE WORKING DOWN AND LEAVES ITS NEIGHBOUR ON THE SAME HEX

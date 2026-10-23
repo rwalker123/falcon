@@ -1912,6 +1912,7 @@ fn head_rung_gate(
     tiles: &Query<&Tile>,
     map_seed: u64,
     wrap_horizontal: bool,
+    belief: &BeliefRegistry,
 ) -> BuildGate {
     if let BuildSource::Tile { tile, branch } = source {
         return tile_head_gate(
@@ -1923,6 +1924,11 @@ fn head_rung_gate(
             discovery,
             knowledge_threshold,
             ladder,
+            tile_registry
+                .index(tile.x, tile.y)
+                .and_then(|entity| tiles.get(entity).ok()),
+            labor,
+            belief.get(*tile),
         );
     }
     if let BuildSource::Band { band, branch } = source {
@@ -2018,6 +2024,7 @@ fn head_rung_gate(
                     food_sites.is_site(ground.position),
                     fresh_water,
                     crate::intensification::NO_DEPOSIT_FLOOR,
+                    crate::belief::NO_BELIEF,
                     &|name| {
                         crate::intensification::knows_lesson(
                             discovery,
@@ -2129,6 +2136,7 @@ fn deposit_head_gate(
         true,
         true,
         crate::extraction::tile_deposit_capacity(extraction, material, ground),
+        crate::belief::NO_BELIEF,
         // A deposit rung declares no `site_relaxations`, so no lesson changes its rule.
         &|_| false,
     )
@@ -2191,6 +2199,7 @@ fn ground_takes_the_rung_this_lesson_unlocks(
         true,
         true,
         crate::extraction::tile_deposit_capacity(extraction, material, ground),
+        crate::belief::NO_BELIEF,
         // A deposit rung declares no `site_relaxations`, so no lesson changes its rule.
         &|_| false,
     )
@@ -2269,7 +2278,13 @@ fn route_head_gate(
 ///
 /// The asked-first order is what makes the causes distinct: an improvement nobody placed is
 /// [`BuildGate::Unworked`] (a block with nothing standing to block), another people's is
-/// [`BuildGate::OwnedByOther`], and only then the knowledge.
+/// [`BuildGate::OwnedByOther`], then the ground ([`BuildGate::Site`]), and only then the knowledge.
+///
+/// **The ground is the rung's `site_requirement`, judged through the one `forage::rung_site_refusal`
+/// seam** the build command and every other source's gate resolve - a belief branch's monument asks
+/// the tile for `min_belief`, and `belief` is what stands on it. A rung with no `site_requirement`
+/// is admitted whatever `ground` is (a hand-built world with no tile entity still builds it); one
+/// that has a requirement and no ground to judge is refused.
 #[allow(clippy::too_many_arguments)] // the site, the rung it declares, and every seam its gate reads
 fn tile_head_gate(
     improvements: &crate::tile_improvement::TileImprovementRegistry,
@@ -2280,6 +2295,9 @@ fn tile_head_gate(
     discovery: &DiscoveryProgressLedger,
     knowledge_threshold: f32,
     ladder: &LadderConfig,
+    ground: Option<&Tile>,
+    labor: &LaborConfig,
+    belief: f32,
 ) -> BuildGate {
     let Some(destination) = ladder.rung_by_id(declared) else {
         return BuildGate::Undeclared;
@@ -2292,12 +2310,30 @@ fn tile_head_gate(
         .unlock_discovery_id()
         .is_none_or(|id| knows(discovery, faction, id, knowledge_threshold));
     let placed = improvements.get(tile, branch);
+    let land_admits = destination.site_requirement.is_none()
+        || ground.is_some_and(|ground| {
+            rung_site_refusal(
+                destination,
+                ground,
+                &labor.forage,
+                // **A tile rung asks nothing about gathering or water**, so neither reading can
+                // refuse it; they are passed at their permissive values (the deposit gate's rule).
+                true,
+                true,
+                crate::intensification::NO_DEPOSIT_FLOOR,
+                belief,
+                // A tile rung declares no `site_relaxations`, so no lesson changes its rule.
+                &|_| false,
+            )
+            .is_none()
+        });
     BuildGate::first_refusal(&[
         (placed.is_some(), BuildGate::Unworked),
         (
             placed.is_some_and(|improvement| improvement.faction == faction),
             BuildGate::OwnedByOther,
         ),
+        (land_admits, BuildGate::Site),
         (knows_rung, BuildGate::Knowledge),
     ])
 }
@@ -3089,6 +3125,7 @@ fn band_banking(
     tiles: &Query<&Tile>,
     map_seed: u64,
     wrap_horizontal: bool,
+    belief: &BeliefRegistry,
 ) -> SourceBankingFirstWork {
     source_banking_its_first_work(allocation, |source, improvement| {
         head_rung_gate(
@@ -3113,6 +3150,7 @@ fn band_banking(
             tiles,
             map_seed,
             wrap_horizontal,
+            belief,
         )
     })
 }
@@ -5966,6 +6004,7 @@ pub fn advance_labor_allocation(
             &tiles,
             map_seed,
             wrap_horizontal,
+            &belief,
         );
         // **WHERE THIS BAND IS STANDING** — read once: the shed's threat probe wants it, and so
         // does the route claim beneath it, whose whole catchment is this one tile (rule 2).
@@ -6337,6 +6376,7 @@ pub fn advance_labor_allocation(
             &tiles,
             map_seed,
             wrap_horizontal,
+            &belief,
         );
         // **THE BAND'S BUILDERS** — one pool, whose whole output goes on the **head** of the queue
         // until that entry's meter fills, then on the next (§2.5). It is not a crew on any tile: a
@@ -7186,6 +7226,7 @@ pub fn advance_labor_allocation(
                                 food_sites.is_site(ground.position),
                                 fresh_water,
                                 crate::intensification::NO_DEPOSIT_FLOOR,
+                                crate::belief::NO_BELIEF,
                                 &|name| held_site_lessons.contains(&name),
                             )
                             .is_none()
@@ -10562,6 +10603,11 @@ pub fn advance_labor_allocation(
                             &discovery,
                             knowledge_threshold,
                             &ladder,
+                            tile_registry
+                                .index(tile.x, tile.y)
+                                .and_then(|entity| tiles.get(entity).ok()),
+                            &labor,
+                            belief.get(*tile),
                         );
                         let (standing, banked_position, meter_rot) = {
                             let improvement = tile_improvements

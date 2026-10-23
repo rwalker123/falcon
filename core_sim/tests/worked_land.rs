@@ -113,6 +113,7 @@ fn refusal(app: &App, ground: &Ground, held: &[&str]) -> Option<SiteRefusal> {
         ground.on_site,
         ground.watered,
         NO_DEPOSIT_FLOOR,
+        core_sim::NO_BELIEF,
         &|name| held.contains(&name),
     )
 }

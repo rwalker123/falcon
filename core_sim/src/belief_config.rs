@@ -19,6 +19,12 @@
 //!   each named culture axis takes at full tie to the ancestors (`s → 1`, `r = 1`); see
 //!   `.claude/rules/core_sim/belief.md` → "The ancestor pull". An empty map turns the pull off.
 //!
+//! - `improvement_belief` **[{ rung "belief:monument", per_turn 0.1 }]** - the belief a held tile
+//!   improvement credits to its own tile each turn (`crate::belief::advance_improvement_belief`),
+//!   the monument as the third source on the `BeliefRegistry::add` seam. Each `rung` is a
+//!   `branch:id` reconciled against the ladder at boot ([`BeliefConfig::validate_improvement_belief`]);
+//!   `per_turn` is finite and `> 0`. An empty list turns the payoff off. A PLAYTEST DIAL.
+//!
 //! There is deliberately **no decay lever**: belief is monotone (`crate::belief`), so an abandoned
 //! place keeps its dead.
 
@@ -59,6 +65,41 @@ pub struct BeliefConfig {
     /// turns the pull off. PLAYTEST DIAL.
     #[serde(deserialize_with = "deserialize_ancestor_pull")]
     pub ancestor_pull: BTreeMap<String, f32>,
+    /// **WHAT A HELD TILE IMPROVEMENT ADDS TO ITS OWN TILE'S BELIEF, EACH TURN** (#692) - the
+    /// monument as the third source on the `BeliefRegistry::add` seam. One entry per rung; the
+    /// engine names none of them, so any tile-kind rung can be a source with a JSON edit. Empty =
+    /// no improvement adds belief. Reconciled against the ladder at boot
+    /// ([`Self::validate_improvement_belief`]).
+    pub improvement_belief: Vec<ImprovementBelief>,
+}
+
+/// **ONE IMPROVEMENT SOURCE** - the belief a tile gains each turn a rung is held on it. Strict: every
+/// key required and no other accepted, the `Preservation` row's shape.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ImprovementBelief {
+    /// The rung that has to be HELD, `branch:id`.
+    pub rung: crate::ladder_ids::RungId,
+    /// Belief credited to the improvement's own tile per turn the rung is held, in dead-equivalents.
+    /// Finite and `> 0`.
+    #[serde(deserialize_with = "deserialize_positive_finite")]
+    pub per_turn: f32,
+}
+
+/// Parse a per-turn belief rate, refusing a value that is not finite or is not above zero - a rate of
+/// zero is a source that parses and credits nothing.
+fn deserialize_positive_finite<'de, D>(deserializer: D) -> Result<f32, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    use serde::de::Error;
+    let value = f32::deserialize(deserializer)?;
+    if !value.is_finite() || value <= 0.0 {
+        return Err(D::Error::custom(format!(
+            "improvement_belief.per_turn must be finite and > 0, got {value}"
+        )));
+    }
+    Ok(value)
 }
 
 /// Shipped belief per gathering: one gathering is worth one death's ancestors.
@@ -125,6 +166,9 @@ impl Default for BeliefConfig {
                     DEFAULT_PULL_TRADITIONALIST_REVISIONIST,
                 ),
             ]),
+            // **Empty, because the engine names no rung.** The shipped monument entry lives in
+            // `belief_config.json` alone; a partial file that omits the list turns the payoff off.
+            improvement_belief: Vec::new(),
         }
     }
 }
@@ -145,6 +189,45 @@ impl BeliefConfig {
                 .copied()
                 .unwrap_or(NO_PULL)
         })
+    }
+
+    /// **EVERY IMPROVEMENT SOURCE NAMES A RUNG THE LADDER DEFINES, ON A TILE BRANCH** - the
+    /// cross-config half, run at boot where both configs are in scope (`validate` cannot hold the
+    /// ladder). A rung nobody defines, one on a branch whose kind is not `tile`, a root nothing
+    /// raises (every tile would pay it) or a rung listed twice would parse and never apply, or apply
+    /// wrongly.
+    pub fn validate_improvement_belief(
+        &self,
+        ladder: &crate::intensification::LadderConfig,
+    ) -> Result<(), String> {
+        use crate::intensification::SourceKind;
+        let mut seen = std::collections::BTreeSet::new();
+        for entry in &self.improvement_belief {
+            let Some(rung) = ladder.rung_by_id(entry.rung) else {
+                return Err(format!(
+                    "improvement_belief names unknown rung '{}'",
+                    entry.rung
+                ));
+            };
+            if ladder.source_kind(rung.branch) != Some(SourceKind::Tile) {
+                return Err(format!(
+                    "improvement_belief names '{}', which is not on a tile branch - only an \
+                     improvement standing on one tile can add belief to that tile",
+                    entry.rung
+                ));
+            }
+            if rung.build.is_none() {
+                return Err(format!(
+                    "improvement_belief names '{}', a rung nothing raises - every tile stands on \
+                     it, so it would add belief everywhere",
+                    entry.rung
+                ));
+            }
+            if !seen.insert(entry.rung) {
+                return Err(format!("improvement_belief states '{}' twice", entry.rung));
+            }
+        }
+        Ok(())
     }
 
     pub fn from_json_str(json: &str) -> Result<Self, serde_json::Error> {
@@ -267,6 +350,49 @@ mod tests {
             BeliefConfig::builtin().belief_per_gathering,
             BeliefConfig::default().belief_per_gathering
         );
+    }
+
+    #[test]
+    fn improvement_belief_is_strict_and_positive() {
+        const GOOD: &str = r#"{ "improvement_belief": [ { "rung": "a:b", "per_turn": 0.1 } ] }"#;
+        assert!(BeliefConfig::from_json_str(GOOD).is_ok());
+        for bad in [
+            r#"{ "improvement_belief": [ { "rung": "a:b", "per_turn": 0 } ] }"#,
+            r#"{ "improvement_belief": [ { "rung": "a:b", "per_turn": -1 } ] }"#,
+            r#"{ "improvement_belief": [ { "rung": "a:b", "per_turn": 1e60 } ] }"#,
+            r#"{ "improvement_belief": [ { "rung": "a:b" } ] }"#,
+            r#"{ "improvement_belief": [ { "per_turn": 0.1 } ] }"#,
+            r#"{ "improvement_belief": [ { "rung": "ab", "per_turn": 0.1 } ] }"#,
+            r#"{ "improvement_belief": [ { "rung": "a:b", "per_turn": 0.1, "extra": 1 } ] }"#,
+        ] {
+            assert!(BeliefConfig::from_json_str(bad).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn improvement_belief_must_name_a_tile_rung_the_ladder_defines() {
+        let ladder = crate::intensification::LadderConfig::builtin();
+        let check = |rung: &str| {
+            BeliefConfig::from_json_str(&format!(
+                r#"{{ "improvement_belief": [ {{ "rung": "{rung}", "per_turn": 0.1 }} ] }}"#
+            ))
+            .expect("parses")
+            .validate_improvement_belief(&ladder)
+        };
+        assert!(check("belief:no_such_rung").is_err(), "unknown rung");
+        assert!(check("plant:tended").is_err(), "not a tile branch");
+        assert!(
+            check("belief:gathering_ground").is_err(),
+            "a root nothing raises"
+        );
+        assert!(check("belief:monument").is_ok());
+        let twice = BeliefConfig::from_json_str(
+            r#"{ "improvement_belief": [
+                { "rung": "belief:monument", "per_turn": 0.1 },
+                { "rung": "belief:monument", "per_turn": 0.2 } ] }"#,
+        )
+        .expect("parses");
+        assert!(twice.validate_improvement_belief(&ladder).is_err());
     }
 
     #[test]

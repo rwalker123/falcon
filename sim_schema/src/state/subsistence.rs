@@ -2355,6 +2355,10 @@ pub struct LadderRungState {
     pub size_tiers: Vec<SizeTierState>,
     /// What the lessons the rung names give the herds that hold it.
     pub knowledge_gains: Vec<KnowledgeGainState>,
+    /// The belief the tile must hold for the rung to be placed there
+    /// (`site_requirement.min_belief`); `0` = it asks nothing of the tile's belief.
+    #[serde(default)]
+    pub min_belief: f32,
 }
 
 /// The wire's own default for [`LadderRungState::friction_multiplier`]: no help.
@@ -2409,6 +2413,7 @@ impl Default for LadderRungState {
             site_relaxations: Vec::new(),
             size_tiers: Vec::new(),
             knowledge_gains: Vec::new(),
+            min_belief: 0.0,
         }
     }
 }

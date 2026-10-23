@@ -6,7 +6,7 @@
 //! ladder, a **bill**, a **neglect** clock and a **grace**, kept by a **crew row** a band assigns to
 //! it ([`crate::components::LaborTarget::Tile`]) exactly as a deposit's crew is. It is a source kind
 //! the code owns (each kind is a source with its own state, registry and turn arm) and a branch is a
-//! JSON edit, so the code never names a tile branch: no tile branch ships, and one added to
+//! JSON edit, so the code never names a tile branch: `food_stores` and `belief` ship, and one added to
 //! `intensification_ladder.json` works with no code change (`core_sim/tests/tile_improvement.rs`
 //! proves it on a test-only ladder).
 //!
@@ -34,8 +34,9 @@
 //!
 //! # Materials
 //!
-//! Refused on a tile rung by `LadderConfig::validate`: the keeping settles work, and a stone-eating
-//! tile rung would be a bill nothing pays.
+//! A standing material RATE is refused on a tile rung by `LadderConfig::validate`: the keeping crew
+//! settles work, and a stone-eating standing bill would be a demand nothing pays. A BUILD pile is
+//! allowed - the building band's builders draw it from that band's own store as the meter climbs.
 
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};

@@ -2999,6 +2999,7 @@ pub fn capture_snapshot(
                     // every rung off the two deposit branches leaves `min_deposit_capacity` at this
                     // neutral.
                     crate::intensification::NO_DEPOSIT_FLOOR,
+                    crate::belief::NO_BELIEF,
                     &|name| lessons.contains(&name),
                 ) {
                     refusals.insert((tile.position, rung.rung_id()), refusal);

@@ -139,6 +139,7 @@ fn is_sowable(app: &App, pos: UVec2) -> bool {
         true,
         is_fresh_watered(app, pos),
         core_sim::NO_DEPOSIT_FLOOR,
+        core_sim::NO_BELIEF,
         &|_| false,
     )
     .is_none()

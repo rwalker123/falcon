@@ -2596,6 +2596,10 @@ pub(crate) fn snapshot_ladder_rungs(ladder: &LadderConfig) -> Vec<LadderRungStat
                         .site_requirement
                         .as_ref()
                         .map_or(NO_DEPOSIT_FLOOR, |site| site.min_deposit_capacity),
+                    min_belief: rung
+                        .site_requirement
+                        .as_ref()
+                        .map_or(crate::belief::NO_BELIEF, |site| site.min_belief),
                 }
             })
         })

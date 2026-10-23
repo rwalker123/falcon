@@ -10,10 +10,12 @@
   "_comment_knowledge_crafting": "AND THE PACE OF THE CRAFTS (docs/plan_crafting_and_materials.md section 5). `craft_lesson_per_item` is what ONE ITEM FINISHED AT A BENCH is worth in PRACTICE UNITS, so `lesson_costs[craft] / this` is a craft's length IN ITEMS: 20 / 4.0 -> 5 items. IT IS A SIBLING OF learn_rate RATHER THAN A READING OF IT, BECAUSE THE QUANTUM DIFFERS - a ladder lesson is charged per TURN WORKED and scaled by the crew's floor, a craft lesson per ITEM COMPLETED, on the SAME quantum as the bench tool's wear so the thing that consumes the tool and the thing that teaches the craft cannot drift. There is no floor to scale it by and no turn to charge it on. IT MOVED WITH THE CURRENCY rather than being left alone: it was `lesson_per_crafted_item` 0.2, a fraction of the normalized threshold, and leaving it that way while its sibling became a COST is precisely the drift the slice-4 consolidation existed to prevent - 4.0 against a cost of 20 is the same 5 items. IT LIVES HERE AND NOT IN recipes.json so that every knowledge pace in the game is tuned in ONE file, which is the whole reason the two ladder dials moved here in slice 4. 5 ITEMS IS SET AGAINST THE LADDER'S ~20 TURNS: against the shipped ~17-worker band a kit item costs roughly 4-10 turns of banked material, so a craft is learned in ~25-40 turns of deliberate work - the same order as one rung of the ladder, and the tool it unlocks is then a further ~28-turn investment. THE CRAFTS PACE THEMSELVES OFF THE LAND, which is the point: a gathering band learns Weaving fast (fibre is everywhere - reeds pay 0.02/biomass and a cotton field 0.07), and NOBODY learns Bone-working fast (bone is the scarcest yield on the roster at 0.0012-0.003/biomass). KNAPPING PACES OFF LABOUR RATHER THAN OFF A BYPRODUCT, which is what makes it the one craft a band can decide to learn: stone has a PRODUCER (docs/plan_extraction.md - `extraction:gathering` pays about 0.4 a worker-turn bare-handed), so hands put on a scatter become stone become knapped items become the lesson, while bone arrives only as much as the hunting happens to give. No per-craft dial says so - the four craft costs below are all 20, like every ladder lesson. PLAYTEST DIAL.",
   "_comment_knowledge_storage": "AND ROT TEACHES STORAGE (#707). A rung practised teaches a lesson; here the practice is SURPLUS ROTTING in a band's larder. A band with no excess never learns it; a band whose excess rots learns it at full ladder pace. `storage_lesson_rot_turns` is the rot that counts as ONE FULL TURN of practice, in turns of the band's OWN need: food rotting in one turn equal to this many turns of need pays `learn_rate` practice, against `lesson_costs.storage`, through the same ledger seam as every other lesson; less rot pays pro rata, and a band is capped at one full turn per turn. IT IS A SIBLING OF learn_rate, AS craft_lesson_per_item IS, BECAUSE THE QUANTUM DIFFERS - practice per turn, scaled by the share of a turn's need that rotted, rather than per turn worked scaled by the crew's floor. Validated finite and > 0: at 0 any rot at all would pay a full turn. IT IS CREW-BLIND because rot is measured against the band's OWN need, so band size cancels. TRANSIT ROT DOES NOT TEACH: a pack lost on a long walk is distance, not a surplus that sat, and a starving band whose far hunt rots has no excess. No rung or bench teaches storage, so its place on the knowledge roster is stated in standalone_knowledges. PLAYTEST DIAL. KEPT FOOD TEACHES TOO, SLOWLY: a band that never rots anything still learns storage by EATING food it had kept a while. `storage_kept_age_turns` is how many turns a lot must have been in the larder since it landed before the food eaten from it counts as kept (a lot landed on turn T is eaten fresh at meal T+1 and kept from meal T+2 at 2); validated >= 1. `storage_kept_weight` is how much of rot's practice a full turn of kept food pays: kept_practice = learn_rate x storage_kept_weight x min(kept / full_turn, 1), against the SAME full_turn = need x storage_lesson_rot_turns as rot, and the two are summed and capped at one full turn (learn_rate). Validated finite, > 0 and <= 1, so kept food can never teach faster than rot. Both PLAYTEST DIALS; crew-blind for rot's reason (measured against the band's own need). Only the band's own larder meal teaches: a caravan pack and a party's own meals do not.",
   "_comment_knowledge_contact": "AND WHAT CONTACT TEACHES IS PRICED HERE TOO (docs/plan_contact_and_logistics.md §Settled by #531). The knowledge rider credits `tie x channel_rate x observability / lesson_costs[tag]`, the SAME divisor practice is paid in, so a dear lesson is dear to learn by watching too. It can teach EVERY tag in start_profile_knowledge_tags.json, so every tag there must be priced here — a load failure otherwise, never a default. Channel rates live in knowledge_contact_config.json.",
+  "_comment_knowledge_ritual": "AND GATHERINGS TEACH RITUAL (#692). A gathering - two bands meeting after having no live tie (connections::advance_connections, belief.md 'The gatherings source') - pays `ritual_lesson_per_gathering` practice toward the `ritual` lesson to the people of EACH band in the pair (a pair of one people pays it once), through the same ledger seam the crafts' per-item lesson and the rot-taught `storage` use. At 4.0 against a `ritual` cost of 20 the lesson is learned in FIVE gatherings. `ritual` gates the belief branch's monument. PLAYTEST DIAL.",
   "knowledge": {
     "learn_rate": 1.0,
     "completion_threshold": 1.0,
     "craft_lesson_per_item": 4.0,
+    "ritual_lesson_per_gathering": 4.0,
     "storage_lesson_rot_turns": 1.0,
     "storage_kept_age_turns": 2,
     "storage_kept_weight": 0.25,
@@ -37,7 +39,8 @@
       "storage": 20.0,
       "herd_lore": 20.0,
       "travois": 20.0,
-      "drives": 20.0
+      "drives": 20.0,
+      "ritual": 20.0
     }
   },
   "_comment_branch_table": "THE BRANCH DESCRIPTOR TABLE, keyed by the branch token itself (docs/plan_knowledge_rows.md section 5). This is the FIRST RECORD A BRANCH HAS EVER HAD - until now `branch` was just a string repeated on each rung, with nothing anywhere that described the branch itself. It carries `area` today and is a RECORD rather than a bare string precisely so a second per-branch fact needs no second table beside this one. Every branch a rung names MUST have an entry here, because the entry is where the branch declares what KIND of source its rungs are raised on: `source` is one of patch | herd | road | deposit | tile | band, the bounded coded set the ladder is data over. A ladder declares exactly one patch branch, exactly one herd branch, exactly one road branch, at least one deposit branch (every extraction.json deposit names one) and any number of tile and band branches - validation COUNTS KINDS and never recognises a branch name, so a new branch that recombines an existing kind is a JSON edit. `keeping_job` is the KitJob whose roster entries equip a keeper on this branch's sites; `label` is the player-facing heading. A typo'd source or keeping_job fails the parse rather than resolving to a default nobody chose.",
@@ -49,7 +52,8 @@
     "extraction": { "area": "making", "source": "deposit", "keeping_job": "quarrywork", "label": "Extraction" },
     "route": { "area": "works", "source": "road", "keeping_job": "roadwork", "label": "Roads" },
     "camp_stores": { "area": "food", "source": "band", "keeping_job": "quarrywork", "label": "Camp stores" },
-    "food_stores": { "area": "food", "source": "tile", "keeping_job": "quarrywork", "label": "Food stores" }
+    "food_stores": { "area": "food", "source": "tile", "keeping_job": "quarrywork", "label": "Food stores" },
+    "belief": { "area": "lore", "source": "tile", "keeping_job": "quarrywork", "label": "Belief" }
   },
   "areas": ["food", "making", "works", "reach", "lore", "war"],
   "_comment_standalone_knowledges": "KNOWLEDGES NO RUNG TEACHES, FILED UNDER A BRANCH OF THEIR OWN (#799, docs/plan_roaming_bands.md, the roaming skills). A rung-taught knowledge is placed on the knowledge screen by the rung that earns it (its branch's area, its `order`); herd_lore, travois and drives are earned by a practice signal coded beside the system that teaches it (walking beside a migrating herd; what a long move sheds; a camp kill on a followed herd), so the placement is stated here instead. `storage` is the fourth (#707, #708): rot teaches it, and it unlocks BOTH stores, the drying rack (camp_stores) and the storage pit (food_stores), so it sits on a row of its own, `stores`, under `food` rather than under either branch. `branch` is a WIRE TOKEN, not a rung branch (no rung sits on it, so no coded enum is needed to draw it as a column): `roam`, the roaming branch, under the `reach` area, and `stores` under `food`. `area` must be a member of `areas`; `order` is the position in the column, bottom first. Each name must resolve to a discovery id (validate rejects one that does not) and be priced in knowledge.lesson_costs. Whether one is a STEP is read off the rungs exactly as for a rung-taught knowledge: the roaming skills gate no rung, `storage` gates two. They ride the roster after the rung-taught knowledges, in this order.",
@@ -57,7 +61,8 @@
     { "knowledge": "herd_lore", "branch": "roam", "area": "reach", "order": 1 },
     { "knowledge": "travois", "branch": "roam", "area": "reach", "order": 2 },
     { "knowledge": "drives", "branch": "roam", "area": "reach", "order": 3 },
-    { "knowledge": "storage", "branch": "stores", "area": "food", "order": 1 }
+    { "knowledge": "storage", "branch": "stores", "area": "food", "order": 1 },
+    { "knowledge": "ritual", "branch": "rites", "area": "lore", "order": 1 }
   ],
   "_comment_route_traffic": "HOW FAST TRAFFIC WEARS A ROAD IN - the route branch's build pace, in the same work units build.work_cost is quoted in. IT IS THE LINK, NOT THE TONNAGE: a live journey banks this much on EACH TILE IT CROSSES per turn, whatever it happened to carry. balance_supply_networks drops sub-dead-band moves, so a BALANCED network ships nothing - a mass-driven rate would leave two camps who have shared a larder for thirty turns with no path at all, which is exactly the case issue #532 says must not be the one that produces no trail. PER TILE IS NOW LITERAL, and that is the per-tile model's doing: the stored-path model banked rate x path-length onto ONE object, so a 2-tile link put 0.7 a turn into a single road and reached the trail rung's 40 in about 57 turns. Each tile now banks 0.35 of its own, so the same neighbours wear each of their two tiles in over about 114 turns - a long haul wears MANY tiles a little rather than one object a lot, which is what makes 'one band keeps half the tiles and another the other half' a state traffic can actually produce. The model change is deliberately left visible rather than hidden behind a compensating edit. PLAYTEST DIAL, section 4.14 owns the number.",
   "_comment_route_disuse": "AND HOW A FREE ROAD IS LOST - the disuse trigger, the free floor's own counterpart to the built rungs' unpaid-keeping trigger (docs/plan_standing_upkeep.md section 4.13a rule 3). A path and a trail cost NOTHING to hold, so they cannot be SHORT and the shortfall path can never reach them: what takes them back is the thing that made them, which is traffic. So a road inside the free floor's span that carries no traffic forgives `disuse_grace_turns` consecutive idle turns and then loses `disuse_loss_per_turn` work units off its position every turn until it is gone and the ledger prunes it. THE TWO TRIGGERS DO NOT OVERLAP: this one applies only while the position sits inside the free floor, and the unpaid-keeping decay only above it - a dirt road nobody stands on is lost because nobody PAYS for it, which is rule 3 already. At a grace of 4 and a loss of 1.0 a fully worn trail (40 work) survives a season away and is gone about 44 turns after the last traffic. WEARING ONE IN TAKES ABOUT 114: each tile banks its own 0.35 a turn under the per-tile model, so 40 work is 40 / 0.35 turns of unbroken neighbourhood - LOSING A ROAD IS CURRENTLY ABOUT 2.6x FASTER THAN MAKING ONE, which is the opposite of the shape this pair was first written for (the 57 turns quoted there was the stored-path model's, where rate x path-length went into ONE object). THE PACE IS SETTLED IN STEP 13e, NOT HERE: these figures are the POOLING-LINK ones alone, and 13b added marching parties as a second source and issue #215 migratory herds a third, so a tile that also carries feet or hooves wears in faster than the 114 says - a retune belongs where the whole shape is measured. PLAYTEST DIALS, section 4.14 owns both numbers.",
@@ -733,6 +738,65 @@
           "per_turn": 2.0
         },
         "grace_turns": 3
+      },
+      "partial_credit": "on_completion",
+      "behavior": {
+        "movement": "fixed"
+      }
+    },
+    {
+      "id": "gathering_ground",
+      "branch": "belief",
+      "order": 1,
+      "label": "Gathering ground",
+      "label_fallback": "a gathering ground",
+      "_comment_rung": "THE ROOT OF THE BELIEF BRANCH (#692): a place where people have gathered and buried their dead - what the tile's belief stock (belief.md) already says, named as a rung so a monument has a rung beneath it. Nothing is raised or held here, so it declares no verb, build or upkeep, the `food_stores` root's shape.",
+      "verb": null,
+      "unlock_knowledge": null,
+      "earns_knowledge": null,
+      "requires_rung": null,
+      "ceiling_required": null,
+      "site_requirement": null,
+      "build": null,
+      "behavior": {
+        "movement": "fixed"
+      }
+    },
+    {
+      "id": "monument",
+      "branch": "belief",
+      "order": 2,
+      "label": "Monument",
+      "label_fallback": "a monument",
+      "feed_channel": "extraction",
+      "_comment_rung": "A MONUMENT (#692) - THE FIRST RUNG WITH NO YIELD, THE GOBEKLI TEPE MOVE: a people raises a standing thing at a place that already holds its dead and its meetings, before it has any farm to feed the builders. What it buys is not here - belief_config.json `improvement_belief` names the belief it adds to its own tile each turn it is HELD - and the ladder file says what a rung costs and needs, never what it keeps. Kept like any tile rung by its crew (`assign_labor <faction> <band> tile belief <x> <y> <n>`), raised by the band's builders with 20 stone drawn from that band's own store as the meter climbs, and gated on the `ritual` lesson gatherings teach and on `site_requirement.min_belief` (one dead-equivalent standing on the tile: a gathering ground). An unkept monument decays back to the ground after its grace; the belief it already added stays, because belief is monotone. partial_credit on_completion: a half-raised monument adds nothing. OPENING VALUES CHOSEN FOR SHAPE, NOT BALANCE - playtest dials.",
+      "verb": "raise",
+      "unlock_knowledge": "ritual",
+      "earns_knowledge": null,
+      "requires_rung": "gathering_ground",
+      "ceiling_required": null,
+      "_comment_site_requirement": "A GATHERING GROUND IS A TILE HOLDING BELIEF. `min_belief` 1.0 is compared against the belief standing on the tile (BeliefRegistry::get) through the same forage::rung_site_refusal seam every other site rule resolves through, so the `build raise` refusal, the labor arm's gate and the wire cannot disagree. 1.0 is one dead-equivalent (belief_per_death), which a single gathering also pays (belief_per_gathering).",
+      "site_requirement": {
+        "requires_gathering_site": false,
+        "min_forage_capacity": 0.0,
+        "requires_fresh_water": false,
+        "min_deposit_capacity": 0.0,
+        "min_belief": 1.0
+      },
+      "build": {
+        "work_cost": 120.0,
+        "grace_turns": null,
+        "materials": {
+          "stone": 20.0
+        }
+      },
+      "upkeep": {
+        "work_per_turn": 0.5,
+        "scaled_by": "source_load",
+        "meter_decay": {
+          "per_turn": 1.0
+        },
+        "grace_turns": 6
       },
       "partial_credit": "on_completion",
       "behavior": {

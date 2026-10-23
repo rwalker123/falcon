@@ -259,8 +259,9 @@ that today only changes a label or an icon now changes what the player manages.
 
 - **Every people reaches every level.** Hierarchical or Egalitarian changes the kind of leader, not
   whether there is one. A Hierarchical leader carries orders out fully and tolerates long stretches
-  of directed work that feeds no one; an Egalitarian council carries out the same orders and grows
-  restless sooner under unfed directed work — the existing step-5 rule. So there is no dead end, and
+  of directed work; an Egalitarian council carries out the same orders and grows restless sooner
+  under directed work — the consent rule (`docs/plan_civilization_steps.md` → "Directed labor and
+  consent"). So there is no dead end, and
   the culture still costs something.
 - **A leader is a named person.** The Telling narrates them (*a chief, then a line of chiefs*).
   Leaders carry no stats yet.

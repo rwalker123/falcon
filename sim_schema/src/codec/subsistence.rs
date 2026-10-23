@@ -1267,6 +1267,7 @@ fn create_ladder_rungs<'a>(
                 siteRelaxations: Some(site_relaxations),
                 sizeTiers: Some(size_tiers),
                 knowledgeGains: Some(knowledge_gains),
+                minBelief: state.min_belief,
             },
         ));
     }
@@ -1892,6 +1893,7 @@ fn decode_ladder_rung(state: fb::LadderRungState<'_>) -> LadderRungState {
             knowledge: text(relaxation.knowledge()),
             rule: relaxation.rule().map(decode_site_rule).unwrap_or_default(),
         }),
+        min_belief: state.minBelief(),
     }
 }
 
