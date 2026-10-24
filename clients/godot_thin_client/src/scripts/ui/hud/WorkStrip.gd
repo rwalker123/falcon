@@ -47,32 +47,34 @@ const M_NEED_CREW := "need_crew"
 const M_LENT := "lent"
 const M_ROW := "row"
 
+## The row-vocabulary keys the strip reads for the site's build crew: the wire's `builders_staffed` and the
+## hover composed from it.
+const ROW_BUILDERS_KEY := "builders_staffed"
+const ROW_BUILD_TIP_KEY := "build_tip"
+
 ## The ladder slot's three kinds, the `WORK_ROW_BUILD_KIND_*` words.
 const LADDER_NONE := HudWorkVocab.WORK_ROW_BUILD_KIND_NONE
 const LADDER_OFFER := HudWorkVocab.WORK_ROW_BUILD_KIND_OFFER
 const LADDER_BUILDING := HudWorkVocab.WORK_ROW_BUILD_KIND_BUILDING
 const LADDER_STALLED := HudWorkVocab.WORK_ROW_BUILD_KIND_STALLED
 
-## **A BUILD'S PHASE — THE ONE DECISION THE CHIP'S BORDER AND ITS HOVER BOTH READ.**
-## `stalled`: the build is in flight and the band's builder pool cannot advance it, either because the pool is
-## empty (on EVERY web) or because the producer's verdict (`row.build_stalled`, `SourceForecast.build_is_stalled`
-## against the pool) says so; the amber border and `no spare hands this turn`. `building`: hands are on THIS site
-## (`site_builders` > 0). `waiting`: the pool has builders, but they are on another queued build; not amber.
+## **A BUILD'S PHASE — THE ONE DECISION THE CHIP'S BORDER AND ITS HOVER BOTH READ.** A declared build is
+## worked by its own site's crew (`docs/plan_labor_at_scale.md` → "Builds join the site's crew"), so there are
+## two phases and the sim's `builders_staffed` on the row picks between them. `stalled`: nobody is on this
+## build (amber border; the hover says every worker is busy on a work row). `building`: at least one
+## builder is on it.
 const PHASE_STALLED := "stalled"
 const PHASE_BUILDING := "building"
-const PHASE_WAITING := "waiting"
 
-static func build_phase(row: Dictionary, site_builders: int) -> String:
-    if bool(row.get("build_stalled", false)) or int(row.get("build_pool", 0)) <= 0:
-        return PHASE_STALLED
-    if site_builders > 0:
-        return PHASE_BUILDING
-    return PHASE_WAITING
+static func build_phase(row: Dictionary) -> String:
+    return PHASE_BUILDING if int(row.get(ROW_BUILDERS_KEY, 0)) > 0 else PHASE_STALLED
 
 ## **THE STRIP MODEL FOR ONE ROW.** `row` is the row-vocabulary dictionary the Work tab's producers
-## fill (`BandPanelController._work_source_model` and its extract / tile / improvement siblings);
-## `builders` is `site_builders` for that row.
-static func model_from_row(row: Dictionary, builders: int) -> Dictionary:
+## fill (`BandPanelController._work_source_model` and its extract / tile / improvement siblings). It
+## carries the site's own `builders_staffed` and the hover the producers composed from the wire row
+## (`build_tip`, `DetailFormat.build_crew_tooltip`).
+static func model_from_row(row: Dictionary) -> Dictionary:
+    var builders := maxi(int(row.get(ROW_BUILDERS_KEY, 0)), 0)
     var keepers := int(row.get("keepers_staffed", 0))
     var kitted := int(row.get("kitted_staffed", 0))
     var bare := int(row.get("bare_staffed", 0))
@@ -80,25 +82,13 @@ static func model_from_row(row: Dictionary, builders: int) -> Dictionary:
     var building_glyph := String(row.get("building_glyph", ""))
     var ready_glyph := String(row.get("ready_glyph", ""))
     var progress := clampf(float(row.get("building_progress", 0.0)), 0.0, 1.0)
-    var percent := HudFormat.progress_percent(progress)
     var kind := LADDER_NONE
     var glyph := ""
     var tip := ""
     if building_glyph != "":
         glyph = building_glyph
-        var verb := HudComposeVocab.improvement_running_label(String(row.get("building_policy", "")))
-        var phase := build_phase(row, builders)
-        kind = LADDER_STALLED if phase == PHASE_STALLED else LADDER_BUILDING
-        if phase == PHASE_BUILDING:
-            tip = HudWorkVocab.WORK_STRIP_BUILD_HANDS_FORMAT % [verb, percent, builders]
-            var done := DetailFormat.build_turns_clause(int(row.get("build_turns",
-                SourceForecast.BUILD_TURNS_NO_ESTIMATE)), builders)
-            if done != "" and int(row.get("build_turns", 0)) > 0:
-                tip = HudWorkVocab.WORK_STRIP_BUILD_DONE_FORMAT % [tip, done]
-        elif phase == PHASE_WAITING:
-            tip = HudWorkVocab.WORK_STRIP_BUILD_WAITING_FORMAT % [verb, percent]
-        else:
-            tip = HudWorkVocab.WORK_STRIP_BUILD_NO_HANDS_FORMAT % [verb, percent]
+        kind = LADDER_STALLED if build_phase(row) == PHASE_STALLED else LADDER_BUILDING
+        tip = String(row.get(ROW_BUILD_TIP_KEY, ""))
     elif ready_glyph != "":
         kind = LADDER_OFFER
         glyph = ready_glyph

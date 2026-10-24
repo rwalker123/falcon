@@ -12,7 +12,7 @@ extends RefCounted
 ## embedded subwindow draws above every `CanvasLayer`, the compose sheet's included.
 ##
 ## **THE CARD IS REBUILT PER OPEN, NEVER PATCHED.** It is a function of the source's position, the
-## faction's knowledge and whatever entry is queued, all of which move per snapshot. The popup node is
+## faction's knowledge and whatever build is declared, all of which move per snapshot. The popup node is
 ## reused because a Window is expensive; its CONTENT is not. The margin is the chrome and is never freed
 ## — its CHILDREN are (clearing the Window's own children frees the margin the next line reaches for,
 ## and `queue_free` is deferred).
@@ -30,16 +30,13 @@ signal unqueue_requested(payload: Dictionary)
 var _band_labor: HudBandLaborState = null
 var _topbar: FactionReadouts = null
 var _host: Node = null
-var _herd_label_for_id_fn: Callable = Callable()
 var _popup: PopupPanel = null
 var _body: MarginContainer = null
 
-func _init(band_labor: HudBandLaborState, topbar: FactionReadouts, host: Node,
-        herd_label_for_id: Callable) -> void:
+func _init(band_labor: HudBandLaborState, topbar: FactionReadouts, host: Node) -> void:
     _band_labor = band_labor
     _topbar = topbar
     _host = host
-    _herd_label_for_id_fn = herd_label_for_id
 
 ## The popup, built on first use. Harnesses read it to see what the card holds.
 func card() -> PopupPanel:
@@ -90,7 +87,7 @@ func open_track(band: Dictionary, model: Dictionary, anchor: Control,
     var body := _fresh_body()
     body.add_child(RungLadder.build_track(rows,
         func(rung: String) -> void: _pick_rung(band, model, source, rung, anchor),
-        HudWorkVocab.RUNG_TRACK_TITLE,
+        HudWorkVocab.RUNG_TRACK_TITLE, _max_builders_by_rung(),
         func() -> void:
             dismiss()
             emit_unqueue(band, model)))
@@ -151,9 +148,9 @@ func _emit_ready_declaration(band: Dictionary, model: Dictionary, rung: String) 
         "pending_entity": int(band.get("entity", -1)),
     })
 
-## **THE STOP** — withdraw the declaration on a site: `unqueue`, the build-queue row's `✕` command. The
-## payload is the queue row's, key for key, so `Main.format_unqueue` and the optimistic relay serve all
-## three controls without knowing which one withdrew the entry.
+## **THE STOP** — stop the build on a site: `unqueue`, which means *stop this build* now that builds join
+## the site's crew (there is no queue to leave). The payload is the site chip's, key for key, so
+## `Main.format_unqueue` and the optimistic relay serve every control without knowing which one stopped it.
 func emit_unqueue(band: Dictionary, model: Dictionary) -> void:
     unqueue_requested.emit({
         "faction": int(band.get("faction", HudConst.PLAYER_FACTION_ID)),
@@ -218,9 +215,7 @@ func open_deposit_track(band: Dictionary, deposit: Dictionary, cutters: int,
             "on the wire — the track cannot state a single rung")
         return
     var rows := RungLadder.deposit_track(deposit, ladder, _player_knowledge(), _knowledge_labels(),
-        cutters, int(_band_labor.effective_role_workers(
-            band, HudConst.LABOR_KIND_BUILDERS).get("workers", SourceForecast.BUILD_CREW_NONE)),
-        band, _deposit_track_queue(band))
+        cutters, SourceForecast.build_crew_staffed(deposit, SourceForecast.BARE_SOURCE_PREFIX), band)
     if not RungLadder.has_track(rows):
         return
     var building := RungLadder.deposit_building_verb(rows)
@@ -235,7 +230,7 @@ func open_deposit_track(band: Dictionary, deposit: Dictionary, cutters: int,
             # stands at or above.
             if verb != building:
                 _emit_deposit_declaration(band, deposit, verb),
-        HudWorkVocab.RUNG_TRACK_TITLE,
+        HudWorkVocab.RUNG_TRACK_TITLE, _max_builders_by_rung(),
         func() -> void:
             dismiss()
             emit_unqueue(band, _deposit_unqueue_model(deposit))))
@@ -269,25 +264,9 @@ func _emit_deposit_declaration(band: Dictionary, deposit: Dictionary, verb: Stri
         "herd_id": "",
     })
 
-## What a press would land behind — the acting band's own build queue, as `{ahead, head}`. `{}` for a
-## band this cannot resolve, which the track renders as no line rather than as an empty queue.
-func _deposit_track_queue(band: Dictionary) -> Dictionary:
-    if band.is_empty():
-        return {}
-    var keys := _band_labor.build_queue_keys(band)
-    var head := ""
-    var entries: Variant = band.get("build_queue", [])
-    if entries is Array and not (entries as Array).is_empty() \
-            and (entries as Array)[0] is Dictionary:
-        var first: Dictionary = (entries as Array)[0]
-        head = HudWorkVocab.build_queue_subject(
-            String(first.get("kind", "")).strip_edges().to_lower(),
-            int(first.get("target_x", -1)), int(first.get("target_y", -1)),
-            _herd_label_for_id_fn.call(String(first.get("fauna_id", ""))))
-    return {
-        HudRouteVocab.ROAD_LADDER_QUEUE_AHEAD_KEY: keys.size(),
-        HudRouteVocab.ROAD_LADDER_QUEUE_HEAD_KEY: head,
-    }
+## The rung catalog's builder caps - what the "Take it to..." card reads "up to N builders at once" from.
+func _max_builders_by_rung() -> Dictionary:
+    return RungLadder.max_builders_by_rung(_topbar.ladder_rungs() if _topbar != null else [])
 
 # ---- the popup ---------------------------------------------------------------------------------------
 

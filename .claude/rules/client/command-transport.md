@@ -79,7 +79,7 @@ cannot have, which is why the command side answers the question a different way.
 
 | Goes out on | What | Why |
 |---|---|---|
-| the **seated link** | `DenialRaidForecast`, `HuntCrewTake`, `WorkPartyForecast`, `DepositCrewTake`, `ForageCrewTake` | Each carries a client-supplied `faction_id` and is answered with that faction's private state — a named band's live equipment wear, its idle workers, its take curve. Asked from an unseated connection that is the disclosure per-seat frames just closed, one channel over |
+| the **seated link** | `DenialRaidForecast`, `HuntCrewTake`, `WorkPartyForecast`, `DepositCrewTake`, `ForageCrewTake`, `StaffingPreview` | Each carries a client-supplied `faction_id` and is answered with that faction's private state — a named band's live equipment wear, its idle workers, its take curve. Asked from an unseated connection that is the disclosure per-seat frames just closed, one channel over |
 | a **connection per round trip** | `ListSaves`, `FactionCapacity`, and the three save verbs | They name no faction, and they are asked from `LandingScreen` **before `Main` exists and therefore before any seat is claimed**. The server answers both ahead of its `world_active` gate so the load menu opens with no world; routing them onto the link would make that menu wait on the seat machinery to answer a question no gate will ever apply to |
 
 **A query written on the link is fire-and-forget out and correlated by `request_id` back**, exactly
@@ -393,8 +393,8 @@ sheet's `Stop working here` and the work inspector's `Unassign` (`BandPanelContr
 `DrawerComposeController._emit_stop_labor` → `stop_labor_requested` → `HudLayer` → `Main._on_hud_stop_labor`
 → `Main.format_stop_labor`).
 
-- **It names its band by `BandId`** (`faction`, `band_id` in the payload), like `work_priority` and
-  `build_order`, and rides the one seated link every faction-bearing command does.
+- **It names its band by `BandId`** (`faction`, `band_id` in the payload), like `work_priority`, and
+  rides the one seated link every faction-bearing command does.
 - **The source is `Main.site_address`'s**: `<x> <y>` for a patch, a herd id, `<x> <y> <material>` for a
   working, and `<branch> <x> <y>` for a tile-improvement keeper row (the branch word leads, from the
   payload's `branch`). The Roadwork pool is the lone token `roadwork` (`payload.roadwork`), never a tile.

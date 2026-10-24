@@ -143,9 +143,8 @@ fn begin_building(app: &mut App, band: Entity, faction: FactionId, tile: UVec2) 
         .resource_mut::<TileImprovementRegistry>()
         .place(tile, branch(), faction, &ladder);
     let mut allocation = LaborAllocation::default();
-    allocation.set_assignment(LaborTarget::Builders, BUILDERS, ALL_HANDS, None);
     allocation.set_assignment(tile_row(tile), CREW, ALL_HANDS, None);
-    allocation.enqueue_build(
+    allocation.declare_build(
         BuildSource::Tile {
             tile,
             branch: branch(),
@@ -153,6 +152,7 @@ fn begin_building(app: &mut App, band: Entity, faction: FactionId, tile: UVec2) 
         BuildJob::Climb(rung(BUILT_RUNG)),
     );
     app.world.entity_mut(band).insert(allocation);
+    core_sim::seat_builders(&mut app.world, band, BUILDERS);
 }
 
 /// Set the improvement's crew to `hands` (`0` holds the row unstaffed: the holding survives, the
@@ -199,7 +199,7 @@ fn a_crew_builds_rung_two_and_keeps_it_while_it_works_it() {
         app.world
             .get::<LaborAllocation>(band)
             .expect("the band has an allocation")
-            .build_queue
+            .builds
             .is_empty(),
         "an entry retires at its destination"
     );

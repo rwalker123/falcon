@@ -133,8 +133,8 @@ camp is. That is also what keeps `traffic_ceiling` one number for every road on 
 | `animal` | wild | pastoral · pen |
 | `route` | **path · trail** | **dirt road · paved road** |
 
-The two free rungs declare no `verb`, append no `BuildQueueEntry`, draw nothing from the builders'
-pool and are billed nothing for holding. **Traffic banks work up to `routes::traffic_ceiling` — the
+The two free rungs declare no `verb`, declare no build, draw no builders
+and are billed nothing for holding. **Traffic banks work up to `routes::traffic_ceiling` — the
 top of `FREE_FLOOR_TOP_RUNG` — and no further**, capped in `advance_roads`.
 
 > ### ⛔ THE CAP IS THE LOAD-BEARING HALF, NOT WHERE THE LINE SITS
@@ -154,13 +154,13 @@ because walking the ladder is not `const`.
 
 ### ⛔ `is_crew_built` IS DELETED, AND ITS REPLACEMENT IS FINER
 
-It answered *"does a band's `builders` pool raise this branch's rungs"* — `false` for `Route` alone.
-With `grade` and `pave` on the builders' pool the branch is **no longer uniformly crew-free**, so a
+It answered *"do builders raise this branch's rungs"* — `false` for `Route` alone.
+With `grade` and `pave` raised by builders the branch is **not uniformly crew-free**, so a
 branch-level answer is the wrong grain and would be wrong for half the rungs it covered.
 
 ***"Does this rung declare a `verb`"*** is the same question at the grain that can answer it, and
 every former caller was asking about a **rung**: `RungDef::verb`. The
-`debug_assert` inside `BuildersGear::on` went with it, and the branch gained a real (deliberately
+`debug_assert` inside `BuildersGear::on` went with it, and the branch has a real (deliberately
 empty) gear reading — see "The build" below.
 
 ### Traffic is banked PER TILE, and under this model that is literal
@@ -598,7 +598,7 @@ earned by *a turn the thing is used*, never by hands, or a faction would learn r
 parking people on the road. `knowledge.learn_rate` and `lesson_costs["roadbuilding"]` / `["paving"]`
 are the dials, and **13e tunes them** — the pass adds no lever of its own.
 
-## The build — `grade` and `pave` are TILE commands on the builders' pool
+## The build — `grade` and `pave` are TILE commands raised by a build crew
 
 `build grade <faction> <band> <x> <y>` → `route:dirt_road`. `build pave <faction> <band> <x> <y>` →
 `route:paved_road`. `cultivate`/`sow`'s grammar **plus a band token**, and that token is the one
@@ -606,8 +606,9 @@ structural difference: a patch's keeper is whoever is already foraging it, and *
 row at all**, so who will keep the tile has to be said out loud.
 
 Issuing one does two things at once, and they are the same act: it **declares the job** (a
-`BuildQueueEntry` on that band's queue, raised by that band's `builders` pool at the head) and it
-**names the keeper**.
+`BuildDeclaration` on that band, raised by the builders staffing deals it, up to the rung's
+`max_builders`) and it **names the keeper**. There is no build queue; builds join the site's crew —
+see "A VERB DECLARES A BUILD" in `intensification.md`.
 
 ### The refusals, each named
 
@@ -625,31 +626,28 @@ nowhere.
 
 ### ⛔ `BuildSource::Road(tile)` IS THE ONE SOURCE WITH NO LABOR ROW
 
-Every other build source is named by a `Forage` / `Hunt` row, and `prune_build_queue` drops an entry
+Every other build source is named by a `Forage` / `Hunt` row, and `prune_builds` drops a declaration
 whose row is gone. A road is named by its **keeper**, recorded on the road, which `LaborAllocation`
-cannot see — so **the keeper is passed in**: `prune_build_queue` takes a `keeps_road` predicate and
-`systems::labor::band_keeps_road` answers it off `RoadRegistry`, at both of the turn's prunes. *An
-entry raises a rung on a tile this band keeps; the moment it is not the keeper the job is not theirs
-and the entry goes.* One rule covers every exit — `abandon`, adoption by another band, and decay or
+cannot see — so **the keeper is passed in**: `prune_builds` takes a `keeps_road` predicate and
+`systems::labor::band_keeps_road` answers it off `RoadRegistry`, at both of the turn's prunes. *A
+declaration raises a rung on a tile this band keeps; the moment it is not the keeper the job is not
+theirs and the declaration goes.* One rule covers every exit — `abandon`, adoption by another band, and decay or
 disuse dropping the road below `traffic_ceiling`, which is `Road::set_position`'s own keeper release.
 
-⛔ **`holds_build_source` used to answer `true` for a road unconditionally, and that stranded a
-band's whole pool.** Every other exit was closed at the same moment: the road arm banks nothing once
-the band is not the keeper, `retire_entries_already_built` reads the rung the *tile* holds (which a
-decayed road no longer does), and `abandon` finds no keeper to release. So the entry sat at the
-**head** for ever and — all hands on the head — every other build that band had queued was funded
-zero work, silently, recoverable only through `unqueue`. `build_queue.rs`'s
-`a_road_entry_dies_with_its_keeper_and_frees_the_pool_behind_it` drives the disuse path and asserts
-both halves, the retirement and the pool moving on.
+⛔ **`holds_build_source` must not answer `true` for a road unconditionally.** Every other exit is
+closed at the same moment the keeper goes: the road arm banks nothing once the band is not the
+keeper, `retire_entries_already_built` reads the rung the *tile* holds (which a decayed road no
+longer does), and `abandon` finds no keeper to release. A declaration that survived would hold its
+builders for ever, recoverable only through `unqueue`; the disuse path must retire it.
 
 The two callers that cannot see the roads — `drop_source_row` and the role clear, both row-driven —
 pass `components::road_holding_unchanged`, because clearing a labor row cannot change a keeper.
-`enqueue_build` passes it too: `grade` / `pave` write the keeper immediately before declaring, and no
+`declare_build` passes it too: `grade` / `pave` write the keeper immediately before declaring, and no
 other path can produce a `BuildSource::Road`.
 
-⛔ **`head_rung_gate` ANSWERS THE ROUTE BRANCH BEFORE ITS LABOR-ROW LOOKUP, AND THAT IS WHAT MADE
-THE MATERIAL HALF REACHABLE AT ALL.** Every other source is found by matching the queue entry against
-`assignments`, and `BuildSource::of` never yields a `Road` — so a road head fell through to
+⛔ **THE BUILD GATE ANSWERS THE ROUTE BRANCH BEFORE ITS LABOR-ROW LOOKUP, AND THAT IS WHAT MAKES THE
+MATERIAL HALF REACHABLE AT ALL.** Every other source is found by matching the declaration against
+`assignments`, and `BuildSource::of` never yields a `Road` — so a road build would fall through to
 `BuildGate::Unworked`, `source_banking_its_first_work` filtered it out, `banking.source` was
 permanently `None` for a road, and no pile was ever struck for a `pave`. `route_head_gate` answers it
 from the same two terms the build arm resolves — *does this band still keep the tile* (`OwnedByOther`)
@@ -659,8 +657,8 @@ disagree about whether a road banks this turn. It leaks nothing into the keeping
 every row.
 
 **The build is its own arm in `advance_labor_allocation`, after the assignment loop**, because that
-loop visits `assignments` and can never reach a road. It banks the whole `builders` pool at the
-entry's own kit, capped at the destination rung's top, and **banks nothing unless the ordering band is
+loop visits `assignments` and can never reach a road. It banks the road build's own
+crew at the build's own kit, capped at the destination rung's top, and **banks nothing unless the ordering band is
 still the keeper** — a band whose `grade` was superseded (the tile decayed back into the free floor,
 or another band adopted it) puts no work on ground that is no longer its job.
 
@@ -668,38 +666,33 @@ or another band adopted it) puts no work on ground that is no longer its job.
   (earthmoving tools) serves `route:dirt_road` and `paving` (stone-dressing tools) serves
   `route:paved_road`; each is worth its offset on its own rung and `NO_BUILD_GEAR` on the other, off
   `EquipmentEffect::rung`. `BuildersGear` therefore resolves the kit at the rung **in flight** rather
-  than at the entry's destination — a `pave` on a road that has decayed below a dirt road is doing
+  than at the build's destination — a `pave` on a road that has decayed below a dirt road is doing
   grading work, and must resolve and wear the grading tool.
 - **The store scales the work, exactly as it scales the pile.** The arm's accrual is multiplied by
-  the head entry's material coverage before it is banked, which is `animal:pen`'s stated rule — *a
+  the build's material coverage before it is banked, which is `animal:pen`'s stated rule — *a
   short store stalls the build proportionally and never refuses it*, and the unbanked remainder is
   wasted rather than carried.
 - **A road publishes a chained countdown like any other source.** `RouteState.buildTurnsRemaining`
   carries **the same quantity with the same sentinels** a patch and a herd publish, through the same
   `published_build_countdown` seam — there is deliberately no route dialect, so a client renders a
-  road through the identical fork. Only the **queue** can answer it (an entry is dated as everything
-  above it plus its own span), so `publish_entry` stamps it and the decay pass clears it, exactly as
-  the two food webs do. **Only a queued road has a number**: an unordered rung has no quote and reads
+  road through the identical fork. Only a **declared build** can answer it (each build is dated on its own crew), so
+  `publish_entry` stamps it and the decay pass clears it, exactly as the two food webs do. **Only a
+  declared road has a number**: an unordered rung has no quote and reads
   the honest *no estimate*, never a `0` that renders as a finished build.
 
-  ⛔ **It shipped stamping nothing, and the client filled the silence with a constant** — every road
-  queue model hardcoded the `-5` *not yet estimated* sentinel, so a road read `Queued 97%` on turn 1
-  and on turn 147 alike. The justification was *"a road has no source row for the sim to stamp one
-  on"*, which was never true of `RouteState`. **No claims object arbitrates it**, unlike the two food
-  webs': one keeper per tile, and each band's own `prune_build_queue` drops the entry for a road it
-  does not keep *before* that band's queue is walked, so at most one band can hold an entry for a
-  tile by the time the pass runs.
+  **No claims object arbitrates it**, unlike the two food webs': one keeper per tile, and each
+  band's own `prune_builds` drops the declaration for a road it does not keep *before* that band's
+  builds are walked, so at most one band can hold a declaration for a tile by the time the pass
+  runs. A client must not hardcode a sentinel for a road: `RouteState` carries the stamp.
 
-> #### ⛔ EVERY ROAD ENTRY RECORDS A `BuildQuote`, AND THE COST OF NOT DOING SO WAS NOT CONFINED TO ROADS
+> #### ⛔ EVERY ROAD BUILD RECORDS A `BuildQuote`
 >
-> `publish_build_chain` mints `BuildTurns::Blocked` for a **staffed head that recorded no quote**,
-> with `blocked_reason(None)` — the cause `unworked` — and `carried` then hands that same `−4` to
-> **every entry behind it and every unqueued source the band works**. A road pushed no quote, so a
-> band that typed `grade` and staffed its builders published `⚠ Blocked` on its patches and its herds
-> while the road was building perfectly well. It is the hole the pen ring fell into, and it is closed
-> the same way: the arm records a quote for **every** road entry, head or waiting.
+> `publish_build_chain` mints `BuildTurns::Blocked` for a **staffed build that recorded no quote**,
+> with `blocked_reason(None)` — the cause `unworked`. The road arm therefore records a quote for
+> **every** declared road build, so a band that typed `grade` never publishes `⚠ Blocked` on a road
+> that is building perfectly well. The pen ring follows the same rule.
 >
-> The invariant is now stated where it is broken. A staffed head whose source `source_is_on_the_ground`
+> The invariant is stated where it would break. A staffed build whose source `source_is_on_the_ground`
 > can resolve must carry a quote, `debug_assert`ed in the chain pass. A source that is genuinely *not*
 > there — a `sow` on bare ground the faction cannot seed, which places no patch — is the case the
 > `unworked` cause is honest for, and it is the term that keeps the assertion true.
@@ -806,7 +799,7 @@ the pile by the remoteness; `labor.rs`'s
 
 **Drawn as the meter climbs, and decay refunds nothing.** A roadbed a third laid has swallowed seven
 stone; if it then washes out, the stone is gone. That is what makes neglect self-limiting rather than
-a store bleeding for ever. A store with nothing in it at all blocks the head with
+a store bleeding for ever. A store with nothing in it at all blocks the build with
 `BuildGate::Materials` — the cause a rung whose *own* gate holds publishes, read off
 `BuildQuote::blocking_gate` and never off the gate directly.
 
@@ -859,10 +852,9 @@ whose output scales with people standing there, so a work row with a stepper is 
 **The pool was never the problem — the automatic billing was.** With the free floor free and `grade`
 the only way onto a paid rung, every road a band pays for is one it chose by typing a command. So
 `Roadwork` covers **the roads that band is the keeper of**, and the per-road choice is exercised
-with `abandon <faction> route <x> <y>`, which puts down the road alone (keeper and queue entry) and
+with `abandon <faction> route <x> <y>`, which puts down the road alone (keeper and declaration) and
 leaves a patch on the same tile standing; a bare-tile `abandon <faction> <x> <y>` puts down both.
-`unqueue <faction> route <x> <y>` withdraws a queued `grade` / `pave` and leaves the keeper, and
-`build_priority` / `build_order` reach the queued road build by the same address
+`unqueue <faction> route <x> <y>` stops a declared `grade` / `pave` and leaves the keeper
 (`docs/plan_site_crews.md` §2.4). It is the **one band-level keeping pool left**: the food webs' and the deposits'
 keeping moved onto each site's own crew (`docs/plan_site_crews.md`), because a patch, a herd and a
 working each have a row to carry a crew and a road has none.
@@ -1021,7 +1013,7 @@ you seen that tile"*. It **fails closed** on an absent faction map.
 | `hasNeglectGrace` / `neglectGraceRemaining` | the **countdown**, through `routes::road_neglect_grace_remaining` at the at-risk rung |
 | `grantsSight` | the resolved *"is this road lighting its tile"* |
 | `frictionMultiplier` / `holdsLinkToTiles` | what the rung is buying, off the tile's stamped `payoff()` — the first a MEAN along a journey, the second the journey's MINIMUM |
-| `buildTurnsRemaining` | **the chained countdown** — everything above this entry in its band's queue plus its own span, with the two food webs' sentinel vocabulary verbatim (`-1` no estimate, `-2` holds, `-3` rots, `-4` blocked, `-5` not yet estimated, `>= 0` a real count). ⛔ **Only a QUEUED road has a number**; an unordered rung reads `-1`, never `0` |
+| `buildTurnsRemaining` | **the countdown** — the build's own span at its own crew, with the two food webs' sentinel vocabulary verbatim (`-1` no estimate, `-2` holds, `-3` rots, `-4` blocked, `-5` not yet estimated, `>= 0` a real count). ⛔ **Only a DECLARED road has a number**; an unordered rung reads `-1`, never `0` |
 | `buildBlockedReason` | **why the pool is stuck on this tile**, `""` when it is not — the same `BuildGate` vocabulary a patch row uses. A road can carry `knowledge`, `owned_by_other` (another band keeps the tile), `no_keeper` (**nobody** does — the tile is going begging, and re-issuing the verb adopts it) and `materials`. ⛔ The first two are **not one cause**: an unkept road reported as another band's sends the player after a rival that does not exist. Read off `BuildQuote::blocking_gate`, never off the rung gate, because a head the store emptied has an **open** rung gate |
 | `buildMaterialDemand` / `buildMaterialSupplied` | this turn's share of the rung's pile and what the stores paid of it — the material twin of the four above, on the same rule: `demand − supplied` is the shortfall, verbatim |
 
@@ -1224,8 +1216,8 @@ asserted through the very `knows(..)` expression the command's refusal reads.
 
 `core_sim/src/bin/server.rs`'s test module owns the two verbs: the knowledge gate with its liveness
 half, the rung-beneath refusals on both verbs, **one keeper per tile**, adoption of a keeperless road
-paired with the already-at-that-rung refusal, `abandon` releasing the keeper *and* its entry, and the
-builders' pool actually raising a graded tile (paired against an unstaffed pool banking nothing).
+paired with the already-at-that-rung refusal, `abandon` releasing the keeper *and* its declaration, and a
+build crew actually raising a graded tile (paired against an unstaffed build banking nothing).
 
 ⛔ **EVERY KEEPING FIXTURE SEATS ITS ROAD AT THE DIRT ROAD, NOT THE TRAIL.** The trail is free, so a
 fixture seated there has no bill to meet or miss and every claim about a shortfall, a grace, a payer or

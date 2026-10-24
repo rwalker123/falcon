@@ -142,7 +142,7 @@ fn published_destination_rung(destination: Option<crate::intensification::RungId
 /// **THE LEGS THE ENTRY STILL HAS TO LAY**, each with the chained date the publish pass struck.
 ///
 /// **The client must not re-derive these.** The rung spans are the sim's config, the source's
-/// position is the sim's state, and the dates are chained against a build queue the client cannot
+/// position is the sim's state, and the dates are stamped against builds the client cannot
 /// see — so a client reconstructing them would be a second producer of a verdict that has one.
 pub(crate) fn published_build_legs(
     legs: &[crate::intensification::PublishedBuildLeg],
@@ -158,7 +158,7 @@ pub(crate) fn published_build_legs(
         .collect()
 }
 
-/// **WHICH SOURCES SOME BAND HAS IN ITS LIVE BUILD QUEUE**, keyed the four ways a source is named —
+/// **WHICH SOURCES SOME BAND HAS A BUILD DECLARED ON**, keyed the four ways a source is named —
 /// the `queued_live` term of [`published_build_countdown`] and the wire's `isQueued` on a working.
 ///
 /// # IT IS READ LIVE, NOT STAMPED BY THE TURN
@@ -197,9 +197,80 @@ pub(crate) struct QueuedBuildSources {
     /// **The tile improvements some band has queued**, keyed `(tile, branch)` - the registry's own
     /// key, since one tile can carry an improvement of several branches.
     tiles: std::collections::HashSet<(UVec2, crate::intensification::BranchId)>,
+    /// **WHAT THE VIEWER'S OWN BANDS PUT ON EACH DECLARED BUILD** - the builders staffing assigned and
+    /// the tools they were issued, summed over the viewer's bands that declared the source.
+    crews: std::collections::HashMap<crate::components::BuildSource, PublishedBuildCrew>,
+}
+
+/// **One declared build's crew as the wire states it** (`buildersStaffed` / `buildersKitted` /
+/// `buildersCap` / `buildToe`), aggregated over the viewer's own bands.
+///
+/// Staffed and kitted add across bands (each band's builders are different people); the cap is the
+/// largest any band was offered, because it is the rung's own limit cut by the tile's room and is
+/// not additive. The tool lines merge per item, summing what was asked and what was issued.
+#[derive(Default, Clone)]
+pub(crate) struct PublishedBuildCrew {
+    pub(crate) staffed: u32,
+    pub(crate) kitted: u32,
+    pub(crate) cap: u32,
+    pub(crate) toe: Vec<sim_schema::state::PoolToeLineState>,
+}
+
+/// The pool token a build's tool lines are published under: the pool table's line shape is shared,
+/// and a build is not one of the standing pools.
+const BUILD_TOE_POOL: &str = "build";
+
+impl PublishedBuildCrew {
+    /// **One band's crew on one declared build**, as that band's allocation settled it.
+    pub(crate) fn of_allocation(
+        allocation: &crate::components::LaborAllocation,
+        source: &crate::components::BuildSource,
+    ) -> Self {
+        let mut published = Self::default();
+        published.add_band(allocation, source);
+        published
+    }
+
+    /// Fold one band's crew and tool lines on `source` into this reading: staffed and kitted add,
+    /// the cap is the largest any band was offered, tool lines merge per item.
+    fn add_band(
+        &mut self,
+        allocation: &crate::components::LaborAllocation,
+        source: &crate::components::BuildSource,
+    ) {
+        if let Some(crew) = allocation.build_crew(source) {
+            self.staffed += crew.total();
+            self.kitted += crew.kitted;
+            self.cap = self.cap.max(crew.cap);
+        }
+        for line in allocation
+            .last_build_toe
+            .iter()
+            .filter(|line| &line.source == source)
+        {
+            match self.toe.iter_mut().find(|held| held.item_id == line.item) {
+                Some(held) => {
+                    held.required += line.required;
+                    held.filled += line.filled;
+                }
+                None => self.toe.push(sim_schema::state::PoolToeLineState {
+                    pool: BUILD_TOE_POOL.to_string(),
+                    item_id: line.item.clone(),
+                    required: line.required,
+                    filled: line.filled,
+                }),
+            }
+        }
+    }
 }
 
 impl QueuedBuildSources {
+    /// **The viewer's crew on this declared build**, or the empty reading when none of the viewer's
+    /// bands declared it.
+    pub(crate) fn crew_of(&self, source: &crate::components::BuildSource) -> PublishedBuildCrew {
+        self.crews.get(source).cloned().unwrap_or_default()
+    }
+
     /// **IS THIS TILE IMPROVEMENT IN SOME BAND'S LIVE QUEUE?** - the tile kind's twin of
     /// [`Self::road_is_queued`], and the gate on the builder's scratch a rival may not read.
     pub(crate) fn tile_is_queued(
@@ -210,14 +281,14 @@ impl QueuedBuildSources {
         self.tiles.contains(&(tile, branch))
     }
 
-    /// **Is this road tile in some band's live build queue?** — the route twin of
+    /// **Does some band have a build declared on this road tile?** — the route twin of
     /// [`Self::patch_is_queued`], and the `queued_live` term of [`published_build_countdown`].
     pub(crate) fn road_is_queued(&self, tile: UVec2) -> bool {
         self.roads.contains(&tile)
     }
 
     /// **IS THIS PATCH IN SOME BAND'S LIVE QUEUE?** — membership of an index built by walking the
-    /// bands' `build_queue`s, rather than by reading the turn-written row.
+    /// bands' `builds`, rather than by reading the turn-written row.
     fn patch_is_queued(&self, tile: UVec2) -> bool {
         self.patches.contains(&tile)
     }
@@ -252,8 +323,9 @@ pub(crate) fn resolve_queued_build_sources<'a>(
 ) -> QueuedBuildSources {
     let mut resolved = QueuedBuildSources::default();
     for allocation in allocations {
-        for entry in &allocation.build_queue {
-            match &entry.source {
+        for entry in &allocation.builds {
+            let source = &entry.source;
+            match source {
                 crate::components::BuildSource::Patch(tile) => {
                     resolved.patches.insert(*tile);
                 }
@@ -276,6 +348,11 @@ pub(crate) fn resolve_queued_build_sources<'a>(
                 // receives, so there is no shared source table to gate a rival's scratch on.
                 crate::components::BuildSource::Band { .. } => {}
             }
+            resolved
+                .crews
+                .entry(source.clone())
+                .or_default()
+                .add_band(allocation, source);
         }
     }
     resolved
@@ -758,6 +835,8 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
             // the word does. Resolved once and used for the cuts, the sampled curve **and** the word,
             // which is what makes that agreement structural rather than a convention.
             let ecology = herd.map(|herd| herd_ecology(herd, fauna));
+            let herd_crew =
+                build_kits.crew_of(&crate::components::BuildSource::Herd(entry.id.clone()));
             HerdTelemetryState {
                 id: entry.id.clone(),
                 label: entry.label.clone(),
@@ -1278,11 +1357,12 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
                 build_work_from_gear: herd
                     .map(|herd| herd.build_work_from_gear)
                     .unwrap_or(NO_BUILD_GEAR),
-                // **Where this herd sits in that same band's queue** — the third of the set, and
-                // what makes a chained date legible rather than an unexplained number.
-                build_queue_position: herd
-                    .map(|herd| herd.build_queue_position)
-                    .unwrap_or(NOT_IN_ANY_BUILD_QUEUE),
+                // **The builders the viewer's own bands put on this herd's declared build**, the
+                // kitted share, the most the build could take and the tools they were issued.
+                builders_staffed: herd_crew.staffed,
+                builders_kitted: herd_crew.kitted,
+                builders_cap: herd_crew.cap,
+                build_toe: herd_crew.toe,
                 // **And WHY the pool is stuck, when `buildTurnsRemaining` reads `-4`** — the
                 // conjunct of the rung's own gate that refused, `""` when this herd is not a blocked
                 // build. Read live off the `Herd` like every other build field, and off the same
@@ -1444,7 +1524,7 @@ struct HerdQuoteInputs<'a> {
     fauna: &'a FaunaConfig,
     ladder: &'a LadderConfig,
     forecast: &'a crate::fauna::SourceYieldForecast,
-    /// The viewer's own queued builds - what says a rung is already spoken for.
+    /// The viewer's own declared builds - what says a rung is already spoken for.
     queued: &'a QueuedBuildSources,
 }
 
@@ -1668,7 +1748,7 @@ impl WildRowMemo {
 ///
 /// The third is asked of **every faction's** allocations rather than of the viewer's, and that is
 /// the whole point of it: a tile a rival queued this turn is a row that differs between viewers
-/// while nothing about the patch itself has moved yet — a queued build carries no estimate until a
+/// while nothing about the patch itself has moved yet — a declared build carries no estimate until a
 /// turn resolves, so the second condition does not catch it.
 fn patch_row_is_viewer_invariant(
     patch: &ForagePatch,
@@ -1919,6 +1999,7 @@ pub(crate) fn snapshot_forage_patches(
             },
             |wild| Cow::Borrowed(&wild.material_yields[..]),
         );
+        let patch_crew = build_kits.crew_of(&crate::components::BuildSource::Patch(patch.tile));
         ForagePatchState {
             x: patch.tile.x,
             y: patch.tile.y,
@@ -2083,8 +2164,11 @@ pub(crate) fn snapshot_forage_patches(
             // The plant twin — the hoes' delivery, or `NO_BUILD_GEAR` for a pool sent out bare
             // or carrying the animal web's hurdles.
             build_work_from_gear: patch.build_work_from_gear,
-            // The plant twin — see the herd row.
-            build_queue_position: patch.build_queue_position,
+            // The plant twin - see the herd row.
+            builders_staffed: patch_crew.staffed,
+            builders_kitted: patch_crew.kitted,
+            builders_cap: patch_crew.cap,
+            build_toe: patch_crew.toe,
             // The plant twin — see the herd row.
             build_blocked_reason: patch.build_blocked_reason.key().to_string(),
             // The plant twin — see the herd row for why the estimate's terms ship beside the
@@ -2443,6 +2527,8 @@ pub(crate) fn snapshot_ladder_areas(ladder: &LadderConfig) -> Vec<String> {
 /// publishes. On the shipped ladder that is `route:path` and nothing else: the branch's floor is
 /// where a road already stands, so there is no pile to raise.
 const NO_BUILD_WORK: f32 = 0.0;
+/// **The builder cap a rung with nothing to build publishes** - `0`, the wire's "no build" reading.
+const NO_BUILDERS_ALLOWED: u32 = 0;
 
 /// **A RUNG THAT EATS NOTHING SWALLOWS NO PILE** — the `build_material_cost` a rung declaring no
 /// `build.materials` publishes, and it rides with an empty `build_material_id`: the pair is one
@@ -2524,6 +2610,11 @@ pub(crate) fn snapshot_ladder_rungs(ladder: &LadderConfig) -> Vec<LadderRungStat
                     requires_rung: rung.requires_rung_wire_key().unwrap_or_default(),
                     // Unscaled: any per-source quote (a road's remoteness) is the source's.
                     work_cost: rung.build_cost(RUNG_COST_UNSCALED).unwrap_or(NO_BUILD_WORK),
+                    // How many hands can build this rung at once; `0` on a rung with nothing to build.
+                    max_builders: rung
+                        .build
+                        .as_ref()
+                        .map_or(NO_BUILDERS_ALLOWED, |build| build.max_builders),
                     upkeep_work_per_turn: rung
                         .upkeep
                         .as_ref()

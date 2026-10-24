@@ -46,13 +46,6 @@ extends RefCounted
 ## (`cultivate` / `sow` / `tame` / `corral`) and its withdrawal, sent by the improvement checkbox's
 ## tick and untick.
 ##
-## **THE CHECKBOX WAS NOT THE COMMIT, and that was the defect.** Only the sheet's own action button —
-## reading **`Forage`** — sent the verb, so ticking the box and closing the sheet did nothing at all.
-## Reported from play repeatedly. The declaration is one press of the WORK ROW's `⌃`, on the tab that
-## owns the builders pool and the build queue, and the withdrawal is that queue's own row `✕`;
-## **both signals survive on `BandPanelController`**, whose payloads were already byte-identical to
-## these, so `Main.format_improvement` / `format_unqueue` did not change at all.
-##
 ## What this sheet keeps is the FORECAST — the rung, what it would PAY once built, and its refusals —
 ## which is what a 28px work row could never hold and what makes it the place a rung is JUDGED. (Its
 ## COSTS went to the Work tab too; see `_improvement_offer_phrase`.)
@@ -64,8 +57,8 @@ extends RefCounted
 ## **IT CARRIES THE ACTING BAND'S `entity`, and for one release it carried nothing.** Reported from
 ## play: on the FACTION page the link switched to the FACTION's Work tab — a rollup, with no `⌃` on it
 ## — so the sentence sent the player somewhere that could not do what it promised. The acting band is
-## the one the sheet's `Band:` picker names, which is the band whose `⌃` queues this rung and whose
-## pool pays for it; `ComposeState.NO_BAND_ENTITY` where none resolves, which the far end treats as
+## the one the sheet's `Band:` picker names, which is the band whose `⌃` declares this rung;
+## `ComposeState.NO_BAND_ENTITY` where none resolves, which the far end treats as
 ## *switch the tab and jump nowhere*.
 ##
 ## **`entity` rather than `band_id`**: nothing here builds a command, and the panel resolves a band by
@@ -95,12 +88,6 @@ signal road_improvement_requested(payload: Dictionary)
 ## `unqueue` withdraws a DECLARATION and nothing else; the moment any work is banked the verb that
 ## releases a keeper is `abandon`, which was command-line only — so a road handed to the wrong band
 ## could not be taken back from the UI at all.
-##
-## ⛔ **IT NAMES A PLACE, NOT A ROAD.** `handle_abandon` drops the faction's labor rows on that tile as
-## well as the road's keeper and its queue entry, because a tile may carry a road AND a patch and
-## putting one down without the other would be silently partial. The row says so where the tile also
-## carries work of this faction's. **There is no road-only abandon and this client must not invent
-## one** — a command narrower than the sim implements would lie about what the button does.
 ##
 ## Relayed by `HudLayer` onto its own `abandon_requested`, which `Main.format_abandon` builds. **No
 ## optimistic write**, exactly as the declaration beside it: a road has no labor row to shadow.
@@ -171,6 +158,10 @@ func chart_crew_target(key: String) -> int:
 ## A priority mark / a stop on a source the band works (#871), relayed through HudLayer to `Main`.
 signal work_priority_requested(payload: Dictionary)
 signal stop_labor_requested(payload: Dictionary)
+## A declared build was STOPPED from the site's own sheet - the build crew control's `Stop building`.
+## Relayed to HudLayer.unqueue_requested (`Main.format_unqueue`), the same edge the work row's in-flight
+## chip uses. Payload `{ faction, x, y, herd_id, material, road, kind, pending_entity }`.
+signal unqueue_requested(payload: Dictionary)
 
 ## The crew each sheet prices its source at: the first-pass guess while the forecast is being struck, the
 ## staffed crew once it has been. A member rather than a parameter because the priced source is reached
@@ -211,15 +202,6 @@ var _road_ladder_band_entity: int = ComposeState.NO_BAND_ENTITY
 var _road_ladder_tile: Dictionary = {}
 var _road_ladder_index: int = -1
 
-## ⛔ **RETIRED — `_workings_card` / `_workings_body` / `_workings_band_entity` / `_workings_tile`**,
-## the `Workings ▸` popup's Window and the state that outlived one open of it (issue #650). The
-## working is composed on the shared COMPOSE SHEET now, whose node is `_compose_sheet` and whose
-## composition is `ComposeState`'s `deposit_*` group — so there is no second window and no second
-## acting-band member to keep in step with the first.
-## **RETIRED — `_pen_extend_crew`, the ring's own dialled crew** (`docs/plan_standing_upkeep.md`
-## §2.5). It held the number a stepper beside the Extend-pen button had dialled, because
-## `extend_pen` took a trailing worker count; the verb DECLARES now — it appends a queue entry and the
-## band's `builders` pool raises it at the head — so there is nothing left to hold between restates.
 
 ## **THE FORECAST QUERY SEAM**, injected by `HudLayer` after construction (`set_forecast_query`).
 ## Every sim-answered figure on the sheets comes through it — the crew-take curves and the work-party
@@ -370,11 +352,6 @@ func _emit_assign_labor(band: Dictionary, kind: String, workers: int, x: int, y:
 ## verb (`cultivate` / `sow` / `tame` / `corral`) and its untick into `unqueue <faction> <source>`,
 ## and it went with the checkbox: the box was not the commit — the action button reading **`Forage`**
 ## was — so ticking it and closing the sheet did nothing, reported from play repeatedly.
-##
-## **BOTH ORDERS SURVIVE, on the surface that owns the queue.** `BandPanelController` emits the
-## declaration off a WORK ROW's `⌃` and the withdrawal off a BUILD QUEUE row's `✕`, and its payloads
-## were already byte-identical to these — which is what let this whole function go without
-## `Main.format_improvement` / `format_unqueue` changing by a character.
 ##
 ## **WHAT WENT WITH IT AND MUST NOT COME BACK:** the *"an unchanged declaration is not an order"*
 ## comparison against `standing`, and the two-command commit. This sheet sends `assign_labor` and
@@ -1869,27 +1846,17 @@ func _forecast_worker_cap(forecast: Dictionary, assignable: int) -> int:
 ## **THE ROAD LADDER'S GEAR TERM, ONE ANSWER PER RUNG** — `{rung_key: build_gear}`, which
 ## `RungLadder.route_track` looks each row's answer up in.
 ##
-## ⛔ **THE KIT IS DERIVED PER RUNG, NOT READ OFF THE `builders` ROW.** The row publishes the kit the
-## sim RESOLVED for whatever is at the head of the queue, which on a card offering four rungs is the
-## answer to at most one of them; `KitRoster.builders_kit_for` is the same three-rule derivation the
-## compose sheets use, so a band whose row says `none` because it has nothing queued is quoted the
-## tool the roster will hand it when the press lands rather than bare hands.
-##
 ## **A rung the roster serves with nothing answers `{}`**, which `SourceForecast.build_turns_at`
 ## reads as the ungeared case — the honest reading for a branch no tool on this roster helps.
 func _road_ladder_kit_gear(band: Dictionary, ladder: Array[Dictionary]) -> Dictionary:
     var kits := _band_labor.kits()
-    var row_kit := HudBandLaborState.role_kit_id(band, HudConst.LABOR_KIND_BUILDERS)
-    var head_branch := _band_labor.head_build_branch(band)
-    var head_rung := _band_labor.head_build_rung(band)
     var by_rung: Dictionary = {}
     for entry in ladder:
         var rung_key := HudRouteVocab.catalog_rung_key(entry)
         if rung_key == "":
             continue
         by_rung[rung_key] = KitRoster.build_gear(band,
-            KitRoster.builders_kit_for(kits, row_kit, KitRoster.BUILD_BRANCH_ROUTE,
-                head_branch, rung_key, head_rung),
+            KitRoster.build_kit_for_branch(kits, KitRoster.BUILD_BRANCH_ROUTE, rung_key),
             KitRoster.BUILD_BRANCH_ROUTE, rung_key)
     return by_rung
 
@@ -1931,35 +1898,17 @@ func _declared_or_composed(pending: String, composed: String) -> String:
 
 
 
-## **RETIRED — `_mount_build_crew_row`, the BUILDERS stepper on the improvement control**
-## (`docs/plan_standing_upkeep.md` §2.5). It stated the source's own build crew, because the verb
-## carried one as a trailing worker count; the verb DECLARES now — `cultivate <f> <x> <y>` appends an
-## entry to the band's build queue and the extra token is a PARSE ERROR — and the hands stand on
-## `assign_labor <faction> <band> builders <n>`, a standing role card on the Band panel.
-##
 ## **WHAT THE SHEET SHOWS INSTEAD IS ALREADY ON THE CONTROL**: the rung's `<rung>WorkCost` (the pile),
 ## its `<rung>UpkeepDemand` (the rate it costs to hold, forever) and the chained
-## `buildTurnsRemaining` this source would get if queued now — all three published before anything is
-## queued. With the pool at zero the sim answers *no estimate*, and the face says so plainly rather
-## than rendering nothing.
-##
+## `buildTurnsRemaining` this source would get if declared now — all three published before anything is
+## declared. With nobody on the build the sim answers *no estimate*, and the face says so plainly
+## rather than rendering nothing.
 
 
 
-## **RETIRED — `_improvement_offer_face`, the verb and its PRICE.** It composed
-## `🌱 Cultivate this patch — 50 work, ≈25 turns · 2 work a turn from Agriculture to hold` and was
-## shared by the OFFERED and DECLARED states so a rung could not be priced one way before it was
-## queued and another after.
-##
-## **THE PRICE LEFT THE SHEET, not the client** (`docs/plan_standing_upkeep.md` §4.7a ①). Ray, from
-## play: *"That information should be on the work tab. No need to have it here, it is useless."* The
-## pile and the standing rate ride the WORK ROW's `⌃` tooltip — one hover from the control that spends
-## them — and the turn count rides the BUILD QUEUE row's date, which is the sim's own chained answer
-## and the one a player reorders against. `DetailFormat.build_price_clause` composes the first pair
-## still and is unchanged; only its caller moved.
-##
-## What is left here is two much smaller composers: `_improvement_offer_phrase` (the pointer sentence)
-## and `_improvement_rung_face` (the bare rung, which DECLARED puts `◷ Queued` beside).
+## **THE OFFER'S PRICE LEFT THE SHEET** (the Work row's `⌃` tooltip states it), so two small composers
+## remain here: `_improvement_offer_phrase` (the pointer sentence) and `_improvement_rung_face` (the
+## bare rung, which DECLARED puts `◷ Queued` beside).
 
 
 ## **THE RUNG THE READOUT'S DEAL BLOCK QUOTES** — the composed verb while a build is in flight, else
@@ -1997,14 +1946,45 @@ func _improvement_deal_rung(kind: String, source: Dictionary, prefix: String,
 ## dangling separator and no empty slot — the term is gone, not blanked. The rung's standing price is
 ## WORK and is stated on the work row's `⌃` tooltip, the same place every other rung's is.
 func _improvement_deal_row(kind: String, source: Dictionary, prefix: String, band: Dictionary,
-        rung: String, payoff_terms: String) -> Dictionary:
+        rung: String, payoff_terms: String, keeping_note: Dictionary = {}) -> Dictionary:
     if rung == "" or payoff_terms == "":
         return {}
-    return {
-        HudWidgets.IMPROVEMENT_DEAL_ROW_LABEL:
-            String(HudComposeVocab.IMPROVEMENT_PAYOFF_ROW_LABELS.get(rung, rung)),
+    var label := String(HudComposeVocab.IMPROVEMENT_PAYOFF_ROW_LABELS.get(rung, rung))
+    var row := {
+        HudWidgets.IMPROVEMENT_DEAL_ROW_LABEL: label,
         HudWidgets.IMPROVEMENT_DEAL_ROW_VALUE: payoff_terms,
     }
+    if not keeping_note.is_empty():
+        row[HudWidgets.IMPROVEMENT_DEAL_ROW_NOTE] = String(keeping_note["text"])
+        # The rung's past-tense word comes off the SAME label the row wears, never a hard-coded one.
+        row[HudWidgets.IMPROVEMENT_DEAL_ROW_NOTE_TIP] = HudComposeVocab.DEAL_ALL_KEEP_TOOLTIP_FORMAT \
+            % [label.trim_prefix(HudComposeVocab.DEAL_LABEL_PAST_PREFIX), label]
+    return row
+
+## **WHY A DEAL READS ZERO WHEN THE CREW IS ALL KEEPERS** - `{text}` for the clause appended to the
+## deal row, `{}` when it does not apply. `curve` is the crew curve's `per_crew` rows, `row` the one at
+## the stepper's `crew`, `take_key` the row's next-rung take (`next_rung_take` on the forage curve,
+## `next_rung_animals_likely` on the hunt curve - twins, both publishing `next_rung_keep_hands`). It
+## applies when that take has no component AND the rung's keeping bill takes every hand of the crew.
+## The second figure is the smallest crew on the curve that gathers, off the same rows.
+func _next_rung_keeping_note(curve: Array, row: Dictionary, crew: int, take_key: String) -> Dictionary:
+    if row.is_empty() or crew <= 0 or not row.has(take_key) \
+            or not row.has(SourceForecast.NEXT_RUNG_KEEP_HANDS_KEY):
+        return {}
+    if SourceForecast.has_component(float(row[take_key])):
+        return {}
+    if float(row[SourceForecast.NEXT_RUNG_KEEP_HANDS_KEY]) \
+            < float(crew) - SourceForecast.CREW_TAKE_REACH_TOLERANCE:
+        return {}
+    var gathers := 0
+    for candidate in curve:
+        if candidate is Dictionary and SourceForecast.has_component(float(
+                (candidate as Dictionary).get(take_key, 0.0))):
+            var workers := int((candidate as Dictionary).get(SourceForecast.CREW_TAKE_WORKERS_KEY, 0))
+            if gathers == 0 or workers < gathers:
+                gathers = workers
+    return {"text": (HudComposeVocab.DEAL_ALL_KEEP_FORMAT % [crew, gathers]) if gathers > 0 \
+        else HudComposeVocab.DEAL_ALL_KEEP_NONE_FORMAT % crew}
 
 ## The payoff terms for a rung — the payoff VECTOR the built rung pays, each account only when
 ## non-zero, so a hay meadow reads `1.80 fodder`. "" when the wire quotes no payoff at all, which the
@@ -2054,10 +2034,6 @@ func _payoff_terms(deal: Dictionary, band: Dictionary) -> String:
         float(deal["payoff_fodder"]) * output, SourceForecast.YIELD_ACCOUNT_FOOD,
         SourceForecast.scaled_material_rows(deal.get("payoff_material", []), output))
 
-## ⛔ RETIRED — **`_build_extend_pen_control`, THE TILE CARD'S `Extend pen` BUTTON AND ITS
-## `Fencing N%` BADGE** (`docs/plan_standing_upkeep.md` §4.9 item 12c). Reported from play: extending
-## a pen was a button on the TILE card, and it produced a **build queue entry** — so it was the one
-## queue entry in the game declared from somewhere other than the work tab.
 ##
 ## **THE MECHANICAL REASON IT ENDED UP HERE** was that `RungLadder.has_track` is FALSE when nothing
 ## sits above the standing rung, and `animal:pen` is the top of the animal branch — so a corralled
@@ -2070,8 +2046,6 @@ func _payoff_terms(deal: Dictionary, band: Dictionary) -> String:
 ## one position on a ladder. It opens a PRICE rather than committing on the click, because a ring
 ## draws `animal:pen`'s own hurdle pile since §2.7 and a one-click button stated that cost nowhere.
 ##
-## **THE BADGE WENT WITH IT, being a THIRD statement of one meter**: the build queue row dates and
-## withdraws the ring, and the work row's mark says one is up on its hover.
 ## `PEN_EXTEND_LABEL` / `PEN_EXTEND_TOOLTIP` / `PEN_FENCING_LABEL` retired with the control; the
 ## `extend_pen_requested` signal and `Main.format_extend_pen` did NOT — the command is unchanged and
 ## only its entry point moved.
@@ -2148,8 +2122,7 @@ func _mount_work_strip(parent: VBoxContainer, band: Dictionary, kind: String, x:
     row_label.set_meta(HudWidgets.CREW_ROW_LABEL_META, true)
     HudWidgets.set_label_tooltip(row_label, label_tooltip)
     block.add_child(row_label)
-    var model := WorkStrip.model_from_row(row, _bandpanel.site_builders(band,
-        String(row.get("key", ""))))
+    var model := WorkStrip.model_from_row(row)
     # A sheet that IS the order for a rung (an off-site farm order, whose commit raises the farm) offers no
     # second `⌃` beside it: the strip still draws the rung mark and the crew.
     if not offers_rung and String(model.get(WorkStrip.M_LADDER_KIND, "")) == WorkStrip.LADDER_OFFER:
@@ -2200,6 +2173,64 @@ func _staffed_crew_of(is_working: bool, standing_crew: int, cap: int, max_worker
         return standing_crew
     var crew := cap if cap > 0 else 0
     return mini(crew, max_workers) if max_workers > 0 else crew
+
+## **THE STAFFING PREVIEW, COMPOSED AND ASKED** (`ForecastQuery.KIND_STAFFING_PREVIEW`) - the sim's dry
+## run of the real staffing with this not-yet-worked row added at the sheet's Priority, Max, floor and
+## kit. `source` is the ask's address (`source_kind` plus its keys); `source_tag` is the subject's tail;
+## `extra_key` is whatever else the source adds to the question (a patch's ticked plants). Read exactly,
+## like the curves: a different Priority or Max is a different question, not a tick of the same one.
+func _staffing_preview_view(band: Dictionary, source: Dictionary, source_tag: String, kit_id: String,
+        floor: float, priority: String, max_workers: int, extra_key: String = "") -> Dictionary:
+    var pending := {"state": ForecastQuery.STATE_PENDING, "answer": {}, "error": ""}
+    var band_id := int(band.get("band_id", HudConst.NO_BAND_ID))
+    if _forecast_query == null or band_id == HudConst.NO_BAND_ID:
+        return pending
+    var subject := ForecastQuery.subject_of(ForecastQuery.KIND_STAFFING_PREVIEW, band_id, source_tag)
+    var key := ForecastQuery.preview_key_of(subject, kit_id, max_workers, floor, priority, band,
+        _band_labor.kits(), extra_key)
+    var params := source.duplicate()
+    params["faction_id"] = int(band.get("faction", HudConst.PLAYER_FACTION_ID))
+    params["band_id"] = band_id
+    params["kit_id"] = kit_id
+    params["floor"] = floor
+    params["priority"] = priority
+    params["max_workers"] = max_workers
+    _forecast_query.ask(ForecastQuery.KIND_STAFFING_PREVIEW, subject, key, params)
+    return _forecast_query.view_exact(subject, key)
+
+## **THE CREW A NEW ROW WOULD BE GIVEN**: the preview's `workers` once answered, else the idle-based
+## estimate the caller already struck (`fallback`). A worked row never takes this - it reads its own
+## `workers`, and its Priority / Max controls re-send live.
+func _previewed_crew(is_working: bool, view: Dictionary, fallback: int) -> int:
+    if not is_working and String(view.get("state", "")) == ForecastQuery.STATE_READY:
+        return int((view["answer"] as Dictionary).get("workers", fallback))
+    return fallback
+
+## The curve ask's crew term must cover the previewed crew: the band's idle pool alone can be 0 while
+## the real staffing hands the row a crew taken from lower-priority rows. Both ask paths (build and
+## drag) take THIS number, so they share one key.
+func _preview_curve_pool(pool: int, is_working: bool, view: Dictionary) -> int:
+    return maxi(pool, _previewed_crew(is_working, view, 0))
+
+## **THE PREVIEW LINE** under the crew strip: where the crew would come from, amber when no one would.
+## Nothing while the answer is in flight (the idle estimate stands), the failure line if it was refused.
+func _mount_staffing_preview(target: VBoxContainer, is_working: bool, view: Dictionary,
+        verb: String, crew_noun: String, priority: String) -> void:
+    var state := String(view.get("state", ""))
+    if is_working or state == "" or state == ForecastQuery.STATE_PENDING:
+        return
+    if state == ForecastQuery.STATE_FAILED:
+        target.add_child(HudWidgets.alloc_hint_label(HudComposeVocab.FORECAST_FAILED_FORMAT
+            % String(view.get("error", ""))))
+        return
+    var reply: Dictionary = view.get("answer", {})
+    var line := HudComposeVocab.staffing_preview_line(reply, verb, crew_noun, priority,
+        _herd_label_for_id_fn)
+    var label := HudWidgets.build_wrapping_status_part(String(line["text"]),
+        HudStyle.WARN if bool(line["warn"]) else HudStyle.INK_DIM)
+    label.mouse_filter = Control.MOUSE_FILTER_STOP
+    label.tooltip_text = HudComposeVocab.staffing_preview_tooltip(reply, _herd_label_for_id_fn)
+    target.add_child(label)
 
 ## The crew the FIRST pricing pass assumes, before the forecast has said what it is: the whole pool, held
 ## to the Max.
@@ -2401,7 +2432,9 @@ func _mount_readout(parent: VBoxContainer, hosts: Array, model: Dictionary, work
     if not deal_row.is_empty():
         column.add_child(HudWidgets.build_improvement_deal(
             String(deal_row.get(HudWidgets.IMPROVEMENT_DEAL_ROW_LABEL, "")),
-            String(deal_row.get(HudWidgets.IMPROVEMENT_DEAL_ROW_VALUE, ""))))
+            String(deal_row.get(HudWidgets.IMPROVEMENT_DEAL_ROW_VALUE, "")),
+            String(deal_row.get(HudWidgets.IMPROVEMENT_DEAL_ROW_NOTE, "")),
+            String(deal_row.get(HudWidgets.IMPROVEMENT_DEAL_ROW_NOTE_TIP, ""))))
     if known:
         var verdict_host := VBoxContainer.new()
         verdict_host.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -2629,7 +2662,6 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
     # against. Without the standing term a fully-allocated band capped at `0` and the player could
     # take a crew to nothing and never put it back.
     #
-    # **THE BUILDERS ARE NOT IN THIS TRANSACTION ANY MORE** (`docs/plan_standing_upkeep.md` §2.5).
     # The sheet composed two crews and clamped them against one pool while a verb carried a head
     # count; the build is a band-level role now, so this is the take's ceiling and nothing else.
     var assignable := _band_labor.source_crew_pool_hunt(band, herd_id)
@@ -2649,6 +2681,20 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
     var kit_id := KitRoster.resolve_selection(kits, KitRoster.JOB_HUNT, default_kit,
         _compose.hunt_kit_id(), herd, HudComposeVocab.BARE_FORECAST_PREFIX)
     _compose.set_hunt_kit_id(kit_id)
+    # **THE MAX IS CLAMPED TO THE BAND'S WORKING-AGE PEOPLE** (#871) - before the preview, which asks at it.
+    _compose.clamp_hunt_max(maxi(int(band.get("working_age", 0)), 0))
+    var needs_hunt := _herd_is_migratory(herd) and _compose.hunt_move_with_herd()
+    # **A SOURCE THE BAND DOES NOT WORK YET IS PRICED OFF THE SIM'S DRY RUN, not the idle pool**: the
+    # command restaffs the whole band by Priority, taking hands from lower rows. A follow hunt musters
+    # the whole band by its own rule, which the preview does not model - it asks nothing there.
+    var preview_view: Dictionary = {}
+    if not is_working and not needs_hunt:
+        preview_view = _staffing_preview_view(band,
+            {"source_kind": ForecastQuery.WORK_PARTY_SOURCE_HUNT, "herd_id": herd_id},
+            "hunt:" + herd_id, kit_id, _compose.hunt_floor(), _compose.hunt_priority(),
+            _compose.hunt_max())
+    # The curve is asked wide enough to cover the previewed crew, on the build AND the drag path.
+    var curve_pool := _preview_curve_pool(assignable, is_working, preview_view)
     # **THE SHEET'S OWN QUESTION — what each crew size actually BRINGS DOWN.** The sheet
     # lets the player move the stepper before committing, so the take has to be re-answered as they
     # move it, and the fight is not the client's to compute: composed here from the engagement and the
@@ -2664,7 +2710,7 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
     # ask answers for the COMMITTED floor and no other. A drag therefore re-asks as it moves
     # (`_drag_crew_take`, rate-limited); what is composed here is the sheet's opening state and the
     # state it returns to on release.
-    var crew_take_view := _crew_take_view(band, herd_id, kit_id, _compose.hunt_floor(), assignable)
+    var crew_take_view := _crew_take_view(band, herd_id, kit_id, _compose.hunt_floor(), curve_pool)
     var crew_take: Array = (crew_take_view["answer"] as Dictionary).get("per_crew", [])
     # **THE LIVE PAIR STARTS WHERE THE REBUILD LEFT IT.** A rebuild ends whatever drag preceded it, so
     # the committed floor's answer is the live answer until a drag replaces it; every live host reads
@@ -2672,23 +2718,6 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
     # the drag.
     _hunt_live_crew_take = crew_take
     _hunt_live_crew_view = crew_take_view
-    # THE COMPOSED IMPROVEMENT — the second axis.
-    # The deal it states rides the SELECTED stance, which is the whole point of the split: a Deplete
-    # builder's dip is a fraction of Deplete's larger ceiling, and it defeats itself through the
-    # ecology (the meter accrues only while the herd is Thriving) rather than through a gate.
-    # RESOLVED BEFORE THE FORECAST, because the forecast now takes it: while a build runs the sim's
-    # ceiling is `stance × <rung>BuildFraction`, so a stance-only forecast caps the stepper on a
-    # ceiling this crew will not be paid.
-    # A verb this herd has already built is RETIRED rather than carried — the animal twin of the
-    # forage sheet's rule, and for the same reason: `seed_hunt` runs only on a source change, so a
-    # composition outlives its build and would keep quoting a Tame that finished. `build_verb` is that
-    # retirement and its opposite in one derivation: it also ADOPTS a build the meters say is running
-    # where nothing was declared.
-    # **A DECLARATION MADE ELSEWHERE THIS FRAME OUTRANKS THE COMPOSITION** (§4.7a ①). The Work board's
-    # `⌃` writes the rung to the OPTIMISTIC OVERLAY, and this sheet is what would otherwise go on
-    # offering a rung the band has just queued — the sheet stays open across that press, so a stale
-    # OFFERED here is a sheet arguing with the queue row beside it. See
-    # `HudBandLaborState.pending_improvement_for` for why it reads the overlay and not the assignment.
     var composed_improvement := SourceForecast.build_verb(herd, HudComposeVocab.BARE_FORECAST_PREFIX,
             SourceForecast.SOURCE_KIND_HERD,
             _declared_or_composed(_band_labor.pending_improvement_for(
@@ -2710,9 +2739,8 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
     # **THE CREW THE SIM WILL STAFF** (#871). Working: the snapshot row's own `workers`. New: the
     # client's forecast - the crew that reaches the floor (`cap`, which the sim's crew-take curve has
     # already bounded by the hands that can bring the animal down), held to the Max.
-    var needs_hunt := _herd_is_migratory(herd) and _compose.hunt_move_with_herd()
-    var staffed_crew := _staffed_crew_of(is_working and not needs_hunt, current, cap,
-        _compose.hunt_max())
+    var staffed_crew := _previewed_crew(is_working, preview_view, _staffed_crew_of(
+        is_working and not needs_hunt, current, cap, _compose.hunt_max()))
     _hunt_priced_crew = staffed_crew
     # A managed herd's local crew are HERDERS/keepers (workersNeeded scales with the herd), not a hunt
     # party — so a pen needing several keepers doesn't read as a hunt-party bug (fix #6).
@@ -2766,7 +2794,7 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
             # asked at THIS floor. Both halves are the fix: without the ask the rows below are the
             # floor the sheet opened at, and without the exact read a superseded answer would stand in
             # for them under the seam's stale window for as long as the drag kept renewing it.
-            _drag_crew_take(band, herd_id, kit_id, floor, assignable)
+            _drag_crew_take(band, herd_id, kit_id, floor, curve_pool)
             _refresh_floor_live(live_hosts, SourceForecast.floor_chart_model(
                 _hunt_priced_herd(_live_herd(herd_id, herd), band),
                 SourceForecast.SOURCE_KIND_HERD,
@@ -2844,6 +2872,8 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
                 if is_working:
                     _send_hunt_assignment(band, herd_id, herd_x, herd_y, needs_hunt)
                 _build_herd_assign_controls(_live_herd(herd_id, herd), target))
+        _mount_staffing_preview(target, is_working, preview_view,
+            HudComposeVocab.STAFFING_PREVIEW_VERB_HUNT, crew_label, _compose.hunt_priority())
     # **NO STALE ANSWER STANDS ON THIS PATH EITHER** — `_crew_take_view` reads `view_exact`, and the
     # note that used to stand here said the opposite. The stale window's bargain is about a STEPPER
     # tick, and a stepper tick moves nothing this question is keyed on (the key carries the band's
@@ -2978,6 +3008,13 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
     # the finished rung, its keeping netted. Pending, refused, or no row for the crew → no deal row.
     var deal_payoff := "" if deal_rung == "" else _hunt_curve_payoff_terms(herd,
         _hunt_live_crew_view, staffed_crew)
+    var deal_keeping := {}
+    if deal_payoff != "":
+        var hunt_curve: Array = (_hunt_live_crew_view.get("answer", {}) as Dictionary).get(
+            "per_crew", [])
+        deal_keeping = _next_rung_keeping_note(hunt_curve,
+            SourceForecast.hunt_crew_take_row(hunt_curve, staffed_crew), staffed_crew,
+            SourceForecast.HUNT_CREW_NEXT_RUNG_ANIMALS_KEY)
     # The averaging-window disclaimer USED TO STAND HERE, as a wrapped body line under the hint: the
     # delivered rate is a long-run average of lumpy whole-animal delivery. It is a caveat on ONE
     # number, so it now rides the RUNG's tooltip beside the metric it qualifies (`_hunt_floor_takes`
@@ -3029,7 +3066,7 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
                     SourceForecast.YIELD_ACCOUNT_FOOD, true),
             SourceForecast.LABOR_KIND_HUNT,
             _improvement_deal_row(SourceForecast.LABOR_KIND_HUNT, herd,
-                HudComposeVocab.BARE_FORECAST_PREFIX, band, deal_rung, deal_payoff))
+                HudComposeVocab.BARE_FORECAST_PREFIX, band, deal_rung, deal_payoff, deal_keeping))
     # **NO KEEPING ROW** (`docs/plan_standing_upkeep.md` §2.5) — a managed herd is held by the
     # band's `husbandry` role, not by a crew on this sheet, so there is no stepper here to point
     # at it. What this herd's share of that pool covers, and where it falls short, is stated on
@@ -3124,10 +3161,6 @@ func _mount_kit_row(target: VBoxContainer, kits: Array, job: String, kit_id: Str
         HudComposeVocab.COMPOSE_FIELD_KIT, false, crew, assignment)
     if row != null:
         target.add_child(row)
-
-
-
-
 
 
 
@@ -3377,21 +3410,10 @@ func _resolve_crop_selection(entries: Array[Dictionary], policy: String, committ
 ## (`docs/plan_standing_upkeep.md` §4.7a ③). One pressable row per plant in the tile's basket, with an
 ## illegal entry greyed beside its reason and the committed one marked-and-locked.
 ##
-## Ray, from play: *"The CROP TO TEND shouldn't be a selection here as the user can't do the
-## cultivate here."* He is right, and §4.7a ③ had already decided it — **the queue row is the job's
-## SETTINGS**, so the crop rides the entry it belongs to, beside the kit, on the tab that owns the
-## queue. `BandPanelController._build_queue_crop_picker` is where it went.
-##
 ## **THE CROP IS STILL COMMITTED BY THIS SHEET'S OWN `assign_labor`**, as its `species` token, exactly
 ## as before — that is why moving the CONTROL stranded nothing. `_resolve_crop_selection` still runs
 ## every render, so a composition can never name a plant this tile and rung cannot take, and the
 ## readout's `ONCE TENDED` terms still follow the selected crop through `_crop_payoff_terms`.
-##
-## **`HudStyle.apply_button`'s `selected_when_disabled` LOSES ITS LAST CALLER with it.** It was
-## written for issue #420's standing-but-gated rung, which went with the stance/improvement split, and
-## this picker's committed row was the second; it survives as a `HudStyle` flag because
-## marked-and-locked is a real state, and the queue row's picker does not need it — an `OptionButton`
-## marks its own selection natively.
 ##
 ## The `extra_rows` hook it rode retired with it: the improvement control mounts nothing beneath
 ## itself on any state now.
@@ -3571,6 +3593,20 @@ func _build_forage_assign_controls(tile_info: Dictionary, target: VBoxContainer)
     # **A KEPT PATCH ASKS THE SIM FOR ITS CURVE**, and caps on the curve's plateau — the most hands
     # that still help, keeping included. The kit is resolved here for the ask exactly as the kit row
     # below resolves it, so the two cannot name different kits.
+    # **A PATCH THE BAND DOES NOT WORK YET IS PRICED OFF THE SIM'S DRY RUN** (the hunt sheet's rule): the
+    # curve below is asked wide enough to cover the previewed crew, and the strip reads it.
+    _compose.clamp_forage_max(maxi(int(band.get("working_age", 0)), 0))
+    var preview_kit := KitRoster.resolve_selection(_band_labor.kits(), KitRoster.JOB_FORAGE,
+        _band_labor.default_kit_id(KitRoster.JOB_FORAGE), _compose.forage_kit_id())
+    var preview_view: Dictionary = {}
+    if not is_working:
+        preview_view = _staffing_preview_view(band, {
+            "source_kind": ForecastQuery.WORK_PARTY_SOURCE_FORAGE, "x": x, "y": y,
+            "take_species": Array(_compose.forage_take_species())},
+            "forage:%d,%d" % [x, y], preview_kit, _compose.forage_floor(),
+            _compose.forage_priority(), _compose.forage_max(),
+            ":" + ",".join(PackedStringArray(_compose.forage_take_species())))
+    var curve_pool := _preview_curve_pool(crew_pool, is_working, preview_view)
     var kept := _forage_is_kept(take_tile)
     # **THE CROP THE CURVE PRICES ITS `next_rung_*` ON** — the sheet's picked (or settled) crop on
     # uncommitted ground; committed ground names none, the sim ignoring it there.
@@ -3580,7 +3616,7 @@ func _build_forage_assign_controls(tile_info: Dictionary, target: VBoxContainer)
         var ask_kit := KitRoster.resolve_selection(_band_labor.kits(), KitRoster.JOB_FORAGE,
             _band_labor.default_kit_id(KitRoster.JOB_FORAGE), _compose.forage_kit_id())
         _forage_live_crew_view = _forage_crew_take_view(band, take_tile,
-            Array(_compose.forage_take_species()), ask_kit, _compose.forage_floor(), crew_pool,
+            Array(_compose.forage_take_species()), ask_kit, _compose.forage_floor(), curve_pool,
             ask_crop)
         # **THE CAP IS THE CREW WHOSE GATHERERS REACH THE TAKE'S USEFUL HANDS** — the take's own
         # count, plus the keeping hands the sim says that crew spends first. While the reply is in
@@ -3596,7 +3632,8 @@ func _build_forage_assign_controls(tile_info: Dictionary, target: VBoxContainer)
     # **THE MAX IS CLAMPED TO THE BAND'S WORKING-AGE PEOPLE** (#871), and the crew is the sim's: the
     # snapshot row's `workers` on a patch the band works, else the forecast's reach crew held to the Max.
     _compose.clamp_forage_max(maxi(int(band.get("working_age", 0)), 0))
-    var staffed_crew := _staffed_crew_of(is_working, current, cap, _compose.forage_max())
+    var staffed_crew := _previewed_crew(is_working, preview_view,
+        _staffed_crew_of(is_working, current, cap, _compose.forage_max()))
     _forage_priced_crew = staffed_crew
     var forage_takes := _forage_floor_takes(take_tile, band)
     var on_floor_picked := func(floor: float) -> void:
@@ -3642,7 +3679,7 @@ func _build_forage_assign_controls(tile_info: Dictionary, target: VBoxContainer)
             # sheet's rate-limited drag ask; the refill then reads what the seam holds for that floor.
             if kept:
                 _drag_forage_crew_take(band, take_tile, Array(_compose.forage_take_species()),
-                    _compose.forage_kit_id(), floor, crew_pool, ask_crop)
+                    _compose.forage_kit_id(), floor, curve_pool, ask_crop)
             _refresh_floor_live(live_hosts, _kept_crew_targets(SourceForecast.floor_chart_model(
                 _forage_priced_patch(_forage_take_source(
                     _live_tile_info(subject_key, tile_info), take_state), band),
@@ -3678,6 +3715,8 @@ func _build_forage_assign_controls(tile_info: Dictionary, target: VBoxContainer)
             if is_working:
                 _send_forage_assignment(band, x, y)
             _build_forage_assign_controls(_live_tile_info(subject_key, tile_info), target))
+    _mount_staffing_preview(target, is_working, preview_view,
+        HudComposeVocab.STAFFING_PREVIEW_VERB_FORAGE, crew_label, _compose.forage_priority())
     # **THE KIT ROW, directly under the crew stepper and above the readout** — the forage web's half of
     # the picker. There is no honesty gate here: the plant web has no estimate table quoted at one kit,
     # so the readout below is composed from the patch's own terms at any selection. What the kit DOES
@@ -3750,16 +3789,20 @@ func _build_forage_assign_controls(tile_info: Dictionary, target: VBoxContainer)
     var curve_deal := kept or is_committed \
         or composed_improvement != SourceForecast.IMPROVEMENT_NONE
     var deal_payoff := ""
+    var deal_keeping := {}
     if deal_rung != "" and curve_deal:
         var deal_view := _forage_live_crew_view
         if not kept:
             deal_view = _forage_crew_take_view(band, take_tile,
                 Array(_compose.forage_take_species()), forage_kit_id, _compose.forage_floor(),
-                crew_pool, ask_crop)
+                curve_pool, ask_crop)
         var curve_row := _curve_next_rung_row(deal_view, staffed_crew)
         if not curve_row.is_empty():
             deal_payoff = _crop_payoff_terms(tile_info, basket, _compose.forage_species(), band,
                 deal_rung, curve_row)
+            deal_keeping = _next_rung_keeping_note((deal_view.get("answer", {}) as Dictionary).get(
+                "per_crew", []), curve_row, staffed_crew,
+                SourceForecast.FORAGE_CREW_NEXT_RUNG_TAKE_KEY)
     elif deal_rung != "":
         deal_payoff = _crop_payoff_terms(tile_info, basket, _compose.forage_species(), band,
             deal_rung)
@@ -3773,7 +3816,7 @@ func _build_forage_assign_controls(tile_info: Dictionary, target: VBoxContainer)
                 SourceForecast.YIELD_ACCOUNT_FOOD, true),
         SourceForecast.LABOR_KIND_FORAGE,
         _improvement_deal_row(SourceForecast.LABOR_KIND_FORAGE, tile_info,
-            HudComposeVocab.FORAGE_FORECAST_PREFIX, band, deal_rung, deal_payoff))
+            HudComposeVocab.FORAGE_FORECAST_PREFIX, band, deal_rung, deal_payoff, deal_keeping))
     # ⛔ **NO RANGE REFUSAL ON THIS SHEET ANY MORE** (`docs/plan_civilization_steps.md` §One work
     # party). A patch past the SELECTED band's work range used to disable the commit behind the
     # retired `_mount_work_range_refusal`, because the sim lapsed a far forage crew with no warning
@@ -4347,6 +4390,10 @@ func _crew_take_view(band: Dictionary, herd_id: String, kit_id: String, floor: f
         return {"state": ForecastQuery.STATE_PENDING, "answer": {}, "error": ""}
     var band_id := int(band.get("band_id", HudConst.NO_BAND_ID))
     var workers := _hunt_curve_cap(band, herd_id, max_workers)
+    # **NO HANDS TO PRICE ASKS NOTHING AND IS NOT WAITING ON ANYTHING** - an answered, EMPTY curve (the
+    # deposit sheet's rule): `PENDING` here read the "Costing..." line forever over a question never put.
+    if workers <= 0:
+        return {"state": ForecastQuery.STATE_READY, "answer": {}, "error": ""}
     var subject := ForecastQuery.subject_of(ForecastQuery.KIND_HUNT_CREW_TAKE, band_id, herd_id)
     var key := ForecastQuery.key_of(subject, kit_id, workers, floor, band,
         _band_labor.kits()) + _hunt_curve_herd_terms(herd_id)
@@ -4383,6 +4430,10 @@ func _drag_crew_take(band: Dictionary, herd_id: String, kit_id: String, floor: f
     # `_crew_take_workers`: the crew term is half the key, so two paths clamping differently would ask
     # under one key and read back under another.
     var workers := _hunt_curve_cap(band, herd_id, max_workers)
+    if workers <= 0:
+        _hunt_live_crew_view = {"state": ForecastQuery.STATE_READY, "answer": {}, "error": ""}
+        _hunt_live_crew_take = []
+        return
     var subject := ForecastQuery.subject_of(ForecastQuery.KIND_HUNT_CREW_TAKE, band_id, herd_id)
     var key := ForecastQuery.key_of(subject, kit_id, workers, floor, band,
         _band_labor.kits()) + _hunt_curve_herd_terms(herd_id)
@@ -4476,12 +4527,6 @@ func _deposit_crew_take_ask(band: Dictionary, deposit: Dictionary, kit_id: Strin
         },
     }
 
-## **THE OPTIMISTIC DECLARATION'S UNDO, ON THE ONE SURFACE `_after_pending_change()` CANNOT REACH.**
-## `Hud.drop_pending_assign` is the rollback for a verb the server refused, and the write path it
-## undoes (`_on_work_row_improvement_requested`) refreshes this sheet explicitly — so the rollback
-## must too, or a sheet open on that source goes on rendering the rung as DECLARED beside a queue row
-## that has already vanished.
-##
 ## **A REFRESH ALONE IS NOT ENOUGH, AND THAT IS THE WHOLE REASON THIS IS ITS OWN METHOD.** Both
 ## builders ADOPT the overlay's declaration into the composition — `if composed_improvement !=
 ## _compose.<web>_improvement(): set_<web>_improvement(...)`, which is what lets a `⌃` press flip an
@@ -4832,11 +4877,6 @@ func _open_road_ladder(tile_info: Dictionary, index: int, anchor: Control) -> vo
 
 ## **THE CARD'S CONTENTS, REBUILT IN PLACE** — the band row, the track, and the abandon row beneath it.
 ##
-## ⛔ **A PICK RE-RENDERS AND MUST NOT CLOSE THE CARD.** Every gate on the track is resolved against
-## the acting band (`RungGates.route_gates(…, band, keeper_label)`) and the turns estimate is priced at
-## that band's own `builders` pool, so a row left standing after a pick would offer a rung the newly
-## chosen band cannot have, at a pace it cannot keep. `popup()` is the OPEN's business alone; this
-## refills the same Window.
 func _fill_road_ladder() -> void:
     var margin := _road_ladder_body
     if margin == null or not is_instance_valid(margin):
@@ -4855,28 +4895,20 @@ func _fill_road_ladder() -> void:
     var keeper_label := ""
     if HudRouteVocab.has_keeper(road):
         keeper_label = _band_labor.band_label_for_id(HudRouteVocab.keeper_band_id_of(road))
-    # **THE CREW IS THE ACTING BAND'S `builders` POOL**, pending-aware, and the gear is what that pool
-    # carries for the ROUTE branch — **resolved PER RUNG**, which is what the road tools made
-    # necessary.
-    #
     # ⛔ **ONE GEAR TERM FOR THE WHOLE CARD WOULD QUOTE THE PAVING KIT'S `2.0` ON A `grade`.** Both
     # road tools declare the route branch and each names its own rung, so a card that asked once and
     # spent the answer on every row would promise an uplift the sim pays on exactly one of them. The
     # rows are the rungs, so the ask is per rung and `route_track` looks its row's answer up by key.
-    var builders := int(_band_labor.effective_role_workers(
-        band, HudConst.LABOR_KIND_BUILDERS).get("workers", SourceForecast.BUILD_CREW_NONE))
+    var builders := SourceForecast.build_crew_staffed(road, SourceForecast.BARE_SOURCE_PREFIX)
     var kit_gear := _road_ladder_kit_gear(band, ladder)
     # **WHETHER THIS ROAD IS ALREADY ORDERED IS A FACTION QUESTION, not the acting band's** — the
     # same set the tile card's `Road` row joins on, so the card and the ladder cannot disagree about
     # one road while the picker names a band that is not its keeper.
     var rows := RungLadder.route_track(road, ladder, _player_knowledge(),
         _topbar.knowledge_labels(), band, keeper_label, builders, kit_gear,
-        _road_ladder_queue(band), _band_labor.road_queue_tiles())
-    # ⛔ **THE RUNG ALREADY BEING BUILT IS A JUMP, NOT A SECOND ORDER.** The sim refuses a rung the
-    # band already keeps at or above (*you already keep it at that rung or above*), so pressing it
-    # spent a command to be told no; what a player pressing a road they have already ordered wants is
-    # the board where its place in the queue is decided. Resolved from the ROWS rather than re-derived,
-    # so the face that says *being built* and the press that acts on it read one answer.
+        _band_labor.road_queue_tiles())
+    # Resolved from the ROWS rather than re-derived, so the face that says *being built* and the
+    # press that acts on it read one answer.
     var building_verb := RungLadder.route_building_verb(rows)
     HudWidgets.clear_children(margin)
     var column := VBoxContainer.new()
@@ -4890,52 +4922,16 @@ func _fill_road_ladder() -> void:
         # The press closes the card BEFORE it emits, the destination track's own rule: the declaration
         # re-renders the drawer this card is anchored to.
         _dismiss_road_ladder()
-        # **A RUNG NOT YET ORDERED IS QUEUED AND THEN FOLLOWED; the one being built is only followed.**
-        # Either way the press ends on the acting band's Work tab — the board that says where this
-        # road stands in the queue and which staffs the builders that will raise it — so the act and
-        # its consequence are one gesture rather than a command that lands somewhere unseen.
         if verb != building_verb:
             _emit_road_improvement(band, _road_ladder_tile, verb)
         # **THE BAND IS THE `Band:` PICKER'S**, which is the band the entry is being made for and
         # whose pool pays for it — the same rule the offered rung's `Work tab` link follows.
         _navigate_to_work_tab(int(band.get("entity", ComposeState.NO_BAND_ENTITY))),
-        HudRouteVocab.ROAD_LADDER_TITLE))
+        HudRouteVocab.ROAD_LADDER_TITLE, RungLadder.max_builders_by_rung(_topbar.ladder_rungs())))
     var abandon := _build_road_abandon_row(road, band)
     if abandon != null:
         column.add_child(abandon)
     margin.add_child(column)
-
-## ⛔ **WHAT A PRESS WOULD LAND BEHIND — the acting band's own build queue, as `{ahead, head}`.**
-##
-## The press DECLARES: it appends an entry, and the whole `builders` pool funds the HEAD of that queue
-## until its meter fills. So *how long* is only half the answer and *what is it waiting behind* is the
-## other half — the question a road banking nothing for thirty turns actually raises.
-##
-## **THE HEAD IS THE ONLY ENTRY WORTH NAMING**, because it is the only one that decides when this road
-## starts; the rest are a count, which is what the BUILD QUEUE block's reorder arrows act on.
-##
-## `{}` for a band this controller cannot resolve, which the ladder renders as NO line rather than as
-## an empty queue — an unknown queue and an empty one are different facts and only one is reassuring.
-func _road_ladder_queue(band: Dictionary) -> Dictionary:
-    if band.is_empty():
-        return {}
-    var keys := _band_labor.build_queue_keys(band)
-    var head := ""
-    var entries: Variant = band.get("build_queue", [])
-    if entries is Array and not (entries as Array).is_empty() \
-            and (entries as Array)[0] is Dictionary:
-        var first: Dictionary = (entries as Array)[0]
-        # **THE SUBJECT, NOT THE QUEUE ROW'S FACE.** `Tame Wild Aurochs` reads as a fragment of another
-        # panel quoted mid-sentence; `behind Wild Aurochs` reads as a sentence. One resolution, in the
-        # queue block's own vocabulary, so the two surfaces cannot name one entry two ways.
-        head = HudWorkVocab.build_queue_subject(
-            String(first.get("kind", "")).strip_edges().to_lower(),
-            int(first.get("target_x", -1)), int(first.get("target_y", -1)),
-            _herd_label_for_id(String(first.get("fauna_id", ""))))
-    return {
-        HudRouteVocab.ROAD_LADDER_QUEUE_AHEAD_KEY: keys.size(),
-        HudRouteVocab.ROAD_LADDER_QUEUE_HEAD_KEY: head,
-    }
 
 ## ⛔ **WHICH BAND THE CARD OPENS ON, AND THE DEFAULT IS THE ONE A PLAYER WOULD HAVE PICKED ANYWAY.**
 ##
@@ -5397,7 +5393,20 @@ func _build_deposit_assign_controls(deposit: Dictionary, target: VBoxContainer) 
     # on a renewing working, `FLOOR_MIN` on a finite one, where an unnamed floor is stored as *strip it
     # bare* — and at the band's whole pool, so one round trip answers every stepper position.
     var ask_floor := _compose.deposit_floor() if offers_floor else SourceForecast.FLOOR_MIN
-    _deposit_live_crew_view = _deposit_crew_take_view(band, deposit, kit_id, ask_floor, crew_pool)
+    # **A WORKING THE BAND DOES NOT HOLD YET IS PRICED OFF THE SIM'S DRY RUN** (the hunt sheet's rule).
+    # A never-renewing dig is worked by exactly its Max in heads, so the Max is raised to the dig floor
+    # BEFORE the ask - the sim refuses a dig without a count.
+    _compose.clamp_deposit_max(maxi(int(band.get("working_age", 0)), 0))
+    if not offers_floor:
+        _compose.raise_deposit_max_to(HudDepositVocab.DIG_CREW_MIN)
+    var preview_view: Dictionary = {}
+    if not is_working:
+        preview_view = _staffing_preview_view(band, {
+            "source_kind": ForecastQuery.WORK_PARTY_SOURCE_EXTRACT, "x": tile.x, "y": tile.y,
+            "material": material}, "extract:" + _deposit_source_key(deposit), kit_id, ask_floor,
+            _compose.deposit_priority(), _compose.deposit_max())
+    var curve_pool := _preview_curve_pool(crew_pool, is_working, preview_view)
+    _deposit_live_crew_view = _deposit_crew_take_view(band, deposit, kit_id, ask_floor, curve_pool)
     var curve_view := _deposit_live_crew_view
     var curve_ready := String(curve_view.get("state", ForecastQuery.STATE_PENDING)) \
         == ForecastQuery.STATE_READY
@@ -5432,7 +5441,8 @@ func _build_deposit_assign_controls(deposit: Dictionary, target: VBoxContainer) 
     var is_dig_crew := not offers_floor
     if is_dig_crew:
         _compose.raise_deposit_max_to(HudDepositVocab.DIG_CREW_MIN)
-    var staffed_crew := _staffed_crew_of(is_working, current, cap, _compose.deposit_max())
+    var staffed_crew := _previewed_crew(is_working, preview_view,
+        _staffed_crew_of(is_working, current, cap, _compose.deposit_max()))
     var live_hosts: Array[Dictionary] = []
     # **THE FLOOR PRESETS, THROUGH THE SHARED PICKER**, with each preset's own per-turn take on its
     # hover — the same builder and the same metric shape the forage sheet's picker wears.
@@ -5457,7 +5467,7 @@ func _build_deposit_assign_controls(deposit: Dictionary, target: VBoxContainer) 
             # **THE CURVE IS FLOOR-DEPENDENT, SO THE DRAG RE-ASKS IT** — rate-limited, exactly as the
             # hunt sheet's drag does; the refill below then reads whatever the seam holds for the
             # dragged floor, which is PENDING until that answer lands.
-            _drag_deposit_crew_take(band, deposit, kit_id, dragged, crew_pool)
+            _drag_deposit_crew_take(band, deposit, kit_id, dragged, curve_pool)
             _refresh_floor_live(live_hosts, _deposit_chart_model(
                 _live_deposit(subject_key, deposit), ladder, dragged, staffed_crew),
                 staffed_crew)
@@ -5491,6 +5501,8 @@ func _build_deposit_assign_controls(deposit: Dictionary, target: VBoxContainer) 
                 _send_deposit_assignment(band, deposit, tile, material)
             _build_deposit_assign_controls(_live_deposit(subject_key, deposit), target),
         is_dig_crew)
+    _mount_staffing_preview(target, is_working, preview_view,
+        HudComposeVocab.STAFFING_PREVIEW_VERB_EXTRACT, crew_label, _compose.deposit_priority())
     if capped_by_seam:
         target.add_child(HudWidgets.alloc_hint_label(seam_note))
     # **THE KIT ROW** (issue #663). The roster's `extract` job lists the Woodcutting kit (sled + axe)
@@ -5844,10 +5856,6 @@ func _standing_actions_shape(summary_model: Dictionary) -> Array:
 func _herd_actions_shape(herd_id: String, corralled: bool, available: bool, summary_model: Dictionary) -> Array:
     return [herd_id, corralled, available] + _standing_actions_shape(summary_model)
 
-## ⛔ RETIRED — **`_update_extend_pen_control` and `_apply_fencing_badge`**, the in-place patch for the
-## `Fencing N%` badge and the words it wrote. They went with the badge itself (§4.9 item 12c); the
-## ring's meter is quoted by the build queue row, through the same `SourceForecast.pen_extend_fraction`
-## that division has always had exactly one home in.
 
 ## Patch the `Assign … ▸` CELL in place: its first line's noun (herders vs hunters can flip as a herd
 ## is tamed), its second line's standing summary, and the button's primary/ghost lit-while-composing

@@ -406,7 +406,7 @@ tr.band-row.focus td { background: color-mix(in srgb, var(--focus) 18%, transpar
   }
   function buildText(b) {
     if (!b) return "none";
-    return "→ " + b.destination_rung + (b.turns_remaining >= 0 ? ", " + b.turns_remaining + " turn" + (b.turns_remaining === 1 ? "" : "s") + " left" : "") + (b.queue_position >= 0 ? ", queue #" + b.queue_position : "") + (b.blocked_reason ? " — blocked: " + b.blocked_reason : "");
+    return "→ " + b.destination_rung + (b.turns_remaining >= 0 ? ", " + b.turns_remaining + " turn" + (b.turns_remaining === 1 ? "" : "s") + " left" : "") + (b.builders_cap > 0 ? ", " + b.builders_staffed + "/" + b.builders_cap + " builders" : "") + (b.blocked_reason ? " — blocked: " + b.blocked_reason : "");
   }
   function upkeepText(u) {
     if (!u) return "none";
@@ -451,17 +451,13 @@ tr.band-row.focus td { background: color-mix(in srgb, var(--focus) 18%, transpar
     }
     var L = obs.ledger;
     html += "<h3>Improved ground</h3><dl><dt>patches owned</dt><dd>" + L.patches_owned + "</dd><dt>cultivated</dt><dd>" + L.patches_cultivated + "</dd><dt>fields</dt><dd>" + L.patches_field + "</dd></dl>";
-    var byKey = {}, herdByKey = {};
-    obs.neighborhood.forEach(function (h) { byKey[h.x + "," + h.y] = h; if (h.herd) herdByKey[h.herd.id] = h.herd; });
     var builds = [];
-    obs.bands.forEach(function (b) {
-      b.build_queue.forEach(function (q) {
-        var src = q.target && q.target.herd_id != null ? herdByKey[q.target.herd_id] : (q.target ? byKey[q.target.x + "," + q.target.y] : null);
-        builds.push("b" + b.band_id + " " + q.job + " " + targetText(q) + ": " + buildText(src ? src.build : null));
-      });
+    obs.neighborhood.forEach(function (h) {
+      if (h.build) builds.push(h.x + "," + h.y + ": " + buildText(h.build));
+      if (h.herd && h.herd.build) builds.push(h.herd.id + " " + h.herd.species + ": " + buildText(h.herd.build));
     });
-    html += "<h3>Build queue</h3>";
-    if (!builds.length) html += "<p class=\"empty\">nothing queued</p>";
+    html += "<h3>Declared builds</h3>";
+    if (!builds.length) html += "<p class=\"empty\">nothing declared</p>";
     else builds.forEach(function (line) { html += "<div class=\"assign\">" + esc(line) + "</div>"; });
     var upkeep = [];
     obs.neighborhood.forEach(function (h) {

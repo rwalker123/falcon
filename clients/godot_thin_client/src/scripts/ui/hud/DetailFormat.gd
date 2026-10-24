@@ -402,11 +402,6 @@ const KIT_ROLE_CROOK := "keeping and raising animals"
 ## declare `build_work`. It carries the `tillage` kit and nothing else, so a band that wants both
 ## webs' tools holds both items.
 ##
-## **IT HAS A LABEL BUT NO BREAKDOWN ROW OF ITS OWN**, and that is the popover's standing rule rather
-## than an omission: a row pairs an item with the resolved tier it sets, and the build axis has no
-## flat per-band field to quote — it rides the `kit_tiers` row of whichever kit is selected, which is
-## what the Builders card's own gear line states. The hoes still NAME themselves wherever the band's
-## items are listed, which is the `Gear` summary row and the picker's condition clauses.
 const KIT_LABEL_HOES := "Hoes"
 const KIT_DURABILITY_KEY_HOES := "hoes"
 
@@ -425,12 +420,6 @@ const KIT_DURABILITY_KEY_HOES := "hoes"
 ## `.claude/rules/core_sim/routes.md` already uses for exactly these two ids — *"`roadbuilding`
 ## (earthmoving tools) … `paving` (stone-dressing tools)"*.
 ##
-## ⛔ **AND `Mattocks` IS REFUSED BY THAT SAME COMMENT, WHICH IS WHY IT IS NOT THE LABEL.** It shipped
-## as one for a pass, on the strength of `KitRoster.builders_kit_for`'s own prose (*"the tool that
-## entry wants TODAY is the mattock"*). The config is the authority and is explicit: *"THEY ARE
-## DELIBERATELY NOT FARM TOOLS AND NOT NAMED LIKE ONE: `hoes` holds the agricultural register in this
-## file, and a mattock beside them would blur the exact plant/route line the rung bound below exists
-## to draw."* A label that blurs the plant/route line is the one thing these two names may not do.
 const KIT_LABEL_EARTHMOVING := "Earthmoving tools"
 const KIT_LABEL_STONE_DRESSING := "Stone-dressing tools"
 
@@ -1082,11 +1071,10 @@ static func detail_bbcode(lines: Array, ctx: Context = null) -> String:
             # it: `Short of …`. Twelve keepers do not mend a fence with no hurdles, so the two
             # shortfalls must not read alike — a stalled build and an under-kept source both draw an
             # indented sentence here, and until this arm they drew it in the same ink.
-            #
             # ⛔ **THE INK IS THE RENDERER'S BECAUSE THE SENTENCE CANNOT CARRY IT.** The same string
-            # goes verbatim into the build queue row's plain-text `tooltip_text`, where a `[color=…]`
-            # run would print its own markup. Keyed on the lead rather than on a list of known
-            # sentences, which is the rule the hazard-glyph branch below already states.
+            # goes verbatim into the Work row's plain-text `tooltip_text`, where a `[color=…]` run
+            # would print its own markup. Keyed on the lead rather than on a list of known sentences,
+            # which is the rule the hazard-glyph branch below already states.
             elif line.strip_edges().begins_with(
                     HudSelectionVocab.BUILD_BLOCKED_MATERIAL_SHORT_LEAD):
                 row_hex = HudStyle.DANGER_HEX
@@ -1653,13 +1641,6 @@ static func graze_range_label(range_radius: int) -> String:
 ## resolved through (`SourceForecast.at_risk_rung`). A patch mid-Sow is billed for the FIELD, so a mark
 ## on the tended row beneath would point the player at ground that is fine.
 ##
-## **THE ROUTING USED TO BE ACCIDENTAL, WHICH IS WHY IT HAD TO BECOME DELIBERATE.** The test carried a
-## `build_is_in_flight` gate — there to keep the mark off a source whose bill the BUILDERS owed — and
-## it was incidentally suppressing the built row on exactly this shape. The pooled keeping deleted that
-## gate's own reason, and with it gone nothing routed the mark at all. **It decides which ROW shows a
-## number, never the number**, which is the same job `build_verb` already does for the build verb, off
-## the same table and the same newest-first walk.
-##
 ## `built_label` is the rung's own badge, glyph included, and is the caller's because one of them
 ## forks on something no rung shares — a penned herd that is starving states that instead.
 static func rung_row_value(src: Dictionary, prefix: String, improvement: String, kind: String,
@@ -1688,7 +1669,7 @@ static func rung_row_value(src: Dictionary, prefix: String, improvement: String,
         return HudSelectionVocab.RUNG_HELD_FORMAT % percent
     return unqueued_rung_value(src, prefix, kind, improvement, percent,
         build_countdown_value(SourceForecast.build_turns_remaining(src, prefix),
-            build_crew, percent, SourceForecast.build_queue_position(src, prefix)))
+            build_crew, percent, SourceForecast.build_is_declared(src, prefix)))
 
 ## **THE UNQUEUED RUNG'S MARK, WHERE IT IS EARNED.** `value` is the countdown face; on the unqueued
 ## state it is swapped for the rotting twin when the source's meter is losing work AND that meter is
@@ -1767,17 +1748,17 @@ static func standing_rung_face(src: Dictionary, prefix: String, kind: String) ->
     return rung_row_value(src, prefix, improvement, kind, label, true, progress,
         SourceForecast.BUILD_CREW_NONE, SourceForecast.IMPROVEMENT_NONE)
 
+## ⛔ **IT TAKES THE COMPOSED VALUE, NEVER THE SOURCE, so the verdict is reached exactly once.**
+## `build_sentinel_value` already forked on the countdown, the meter and the declaration; a hover that
+## asked those three questions again would be a second producer for one state, which is the defect
+## this family has shipped twice (`tile_meter_stalled`'s note, where the sheet said *held* and the
+## card said `⚠ Stalled`). The row's own word is the seam — the same shape `rung_value_hex` uses to
+## pick its ink off `RUNG_ROTTING_PHRASE`.
+##
 ## **THE UNQUEUED ROW'S OWN SENTENCE, on the hover of the row carrying a rung nobody is building.**
 ## `99% built · not queued` is short and the state needs three facts — what the state IS,
 ## that the banked work survives, and the one click that resumes it — so the words go where there is
 ## room for them (`lapsed_hover_text`, which names no CAUSE).
-##
-## ⛔ **IT TAKES THE COMPOSED VALUE, NEVER THE SOURCE, so the verdict is reached exactly once.**
-## `build_sentinel_value` already forked on the countdown, the meter and the queue position; a hover
-## that asked those three questions again would be a second producer for one state, which is the
-## defect this family has shipped twice (`tile_meter_stalled`'s note, where the sheet said *held* and
-## the card said `⚠ Stalled`). The row's own word is the seam — the same shape `rung_value_hex` uses
-## to pick its ink off `RUNG_ROTTING_PHRASE`.
 ##
 ## **IT IS REGISTERED BEFORE `note_under_kept_hover` SO THE KEEPING WINS WHERE BOTH APPLY.** A rung
 ## can be lapsed and under-kept at once, and then the shortfall is the more urgent remedy: re-queuing
@@ -2033,38 +2014,37 @@ static func rung_badge_word(improvement: String, src: Dictionary = {},
 ## that function is ROUTING (which of a card's two rows may print the source's one countdown, and
 ## whether this row is a built badge or a bare declaration); this is the part that reads the wire's
 ## `buildTurnsRemaining` and answers for every value it can carry — a positive count, `-2` holding,
-## `-3` rotting, `-4` the queue blocked, `-5` queued and not yet estimated, `-1` no answer.
+## `-3` rotting, `-4` blocked, `-5` declared and not yet estimated, `-1` no answer.
 ##
-## **IT IS EXTRACTED RATHER THAN COPIED, and that is the whole point.** The BUILD QUEUE block's date
-## column asks exactly this question and has none of the routing problem — a queue entry IS the rung,
-## so there is no second row to misattribute a number to. A second fork there would be a second place
-## for a newly-spelled sentinel to be missed, which is the mistake this family has already made twice
-## (`-3` split out of `-2`, then `-4` added beside them, each time with a reader left behind).
+## **IT IS EXTRACTED RATHER THAN COPIED, and that is the whole point.** The Work row's date column asks
+## exactly this question and has none of the routing problem — a declared build IS the rung, so there
+## is no second row to misattribute a number to. A second fork there would be a second place for a
+## newly-spelled sentinel to be missed, which is the mistake this family has already made twice (`-3`
+## split out of `-2`, then `-4` added beside them, each time with a reader left behind).
+##
+## `percent` is the meter's own fullness, supplied by the caller because the two callers read it from
+## different places — a rung row from its own meter, a Work row from the build's.
 ##
 ## **IT TAKES THE COUNTDOWN, NOT THE SOURCE**, so a caller that has already read the wire's value —
 ## the work board's models do, once per render — hands it straight over rather than reaching into the
 ## dict again. `SourceForecast.build_turns_remaining` is still the ONE reader of the field and still
 ## the one place an unrecognised negative is normalised.
-##
-## `percent` is the meter's own fullness, supplied by the caller because the two callers read it from
-## different places — a rung row from its own meter, a queue row from the entry's.
 static func build_countdown_value(turns: int, build_crew: int, percent: int,
-        queue_position: int) -> String:
-    var sentinel := build_sentinel_value(turns, build_crew, percent, queue_position)
+        build_declared: bool) -> String:
+    var sentinel := build_sentinel_value(turns, build_crew, percent, build_declared)
     if sentinel != "":
         return sentinel
     if turns == BUILD_TURNS_SINGULAR:
         return HudSelectionVocab.RUNG_TURNS_ONE_FORMAT % percent
     return HudSelectionVocab.RUNG_TURNS_FORMAT % [turns, percent]
 
-## **THE SAME VALUE AS A COMPLETION DATE — the turn this entry is estimated to LAND on**
+## **THE SAME VALUE AS A COMPLETION DATE — the turn this build is estimated to LAND on**
 ## (`docs/plan_standing_upkeep.md` §4.7). `turn 82 (0%)` rather than `≈42 turns (0%)`.
 ##
-## **IT IS THE BUILD QUEUE BLOCK'S ALONE, AND THAT IS THE WHOLE DISTINCTION.** The queue is a
-## SCHEDULE whose order is the player's own input — its counts are CHAINED, so `≈42` / `≈61` / `≈98`
-## down a list read as three independent spans when they are cumulative, which is what made them
-## ambiguous in play. A rung row and a compose sheet answer *what does this cost me*, which is a
-## DURATION and has no chain to be misread, so both keep `build_countdown_value`.
+## **IT IS THE WORK ROW'S ALONE, AND THAT IS THE WHOLE DISTINCTION.** The sim's counts are CHAINED, so
+## `≈42` / `≈61` / `≈98` down a list read as three independent spans when they are cumulative, which
+## is what made them ambiguous in play. A rung row and a compose sheet answer *what does this cost
+## me*, which is a DURATION and has no chain to be misread, so both keep `build_countdown_value`.
 ##
 ## **NO SINGULAR FORK.** `turn 41 (0%)` is correct at one turn out, so `BUILD_TURNS_SINGULAR` — which
 ## exists to keep `≈1 turns` off a countdown — has nothing to do here.
@@ -2086,8 +2066,8 @@ static func build_countdown_value(turns: int, build_crew: int, percent: int,
 ## `""` — or a rung with no participle — renders the bare dated face, which is what every caller
 ## emitted before a leg was in the question.
 static func build_completion_value(turns: int, build_crew: int, percent: int,
-        current_turn: int, queue_position: int, leg: String = "") -> String:
-    var sentinel := build_sentinel_value(turns, build_crew, percent, queue_position)
+        current_turn: int, build_declared: bool, leg: String = "") -> String:
+    var sentinel := build_sentinel_value(turns, build_crew, percent, build_declared)
     if sentinel != "":
         return sentinel
     # **THE PARTICIPLE COMES THROUGH THE SEAM, NOT OFF THE TABLE** — `improvement_running_label`
@@ -2105,7 +2085,7 @@ static func build_completion_value(turns: int, build_crew: int, percent: int,
 ## a caller that wants a new rendering of a COUNT writes it in terms of this rather than beside it.
 ## **`-5` IS THE THIRD TIME**, and it landed INSIDE this fork for exactly that reason.
 static func build_sentinel_value(turns: int, build_crew: int, percent: int,
-        queue_position: int) -> String:
+        build_declared: bool) -> String:
     if turns == SourceForecast.BUILD_TURNS_HOLDS:
         if build_crew <= SourceForecast.BUILD_CREW_NONE:
             return HudSelectionVocab.RUNG_HELD_FORMAT % percent
@@ -2115,30 +2095,23 @@ static func build_sentinel_value(turns: int, build_crew: int, percent: int,
         return HudSelectionVocab.RUNG_ROTTING_FORMAT % [
             HudSelectionVocab.RUNG_HAZARD_GLYPH, BUILD_TURNS_NEVER_GLYPH,
             HudSelectionVocab.RUNG_ROTTING_PHRASE, percent]
-    # **THE QUEUE IS STUCK ON THIS ENTRY** (`docs/plan_standing_upkeep.md` §4.6b) — the band's
-    # builders are staffed and standing here and this rung's own gate refuses them, so nothing banks
-    # and nothing behind it moves. It wears NO `∞`: that mark is a statement about a crew's
-    # arithmetic, and no crew size is the remedy here. The remedy is `build_blocked_lines`' sub-row
-    # beneath, paired with the shortfall this same row already publishes.
+    # **THE BUILD IS STUCK** (`docs/plan_standing_upkeep.md` §4.6b) — the site's crew is staffed and
+    # standing on it and this rung's own gate refuses them, so nothing banks. It wears NO `∞`: that
+    # mark is a statement about a crew's arithmetic, and no crew size is the remedy here. The remedy
+    # is `build_blocked_lines`' sub-row beneath, paired with the shortfall this same row already
+    # publishes.
     if turns == SourceForecast.BUILD_TURNS_QUEUE_BLOCKED:
         return HudSelectionVocab.RUNG_BLOCKED_FORMAT % [
             HudSelectionVocab.RUNG_HAZARD_GLYPH, percent]
-    # ⛔ **AND `-1` TAKES NO CREW FORK, unlike `BUILD_TURNS_HOLDS` above.** It is the tempting symmetry
-    # and it is wrong twice over: `RungDef::build_accrual`'s `eligible` reads the STOCK against the
-    # floor and takes no crew count at all, so the sim answers `-1` on a refused gate at ANY staffing —
-    # and gating the client's own answer on a crew is a defect this client already shipped once and
-    # fixed (`chapters/improvements.gd`'s `tile_meter_stalled`, where the sheet answered the neutral
-    # *held* while the card said `⚠ Stalled`: two producers disagreeing about one meter).
-    # **THE SIM HAS NOT LOOKED AT THIS ENTRY YET** (`SourceForecast.BUILD_TURNS_NOT_YET_ESTIMATED`,
-    # `docs/plan_standing_upkeep.md` §4.9). Queued since the last turn resolved, so no estimate pass
+    # **THE SIM HAS NOT LOOKED AT THIS BUILD YET** (`SourceForecast.BUILD_TURNS_NOT_YET_ESTIMATED`,
+    # `docs/plan_standing_upkeep.md` §4.9). Declared since the last turn resolved, so no estimate pass
     # has run over it — which is a different fact from `-1`'s *the pass ran and had no number*, and it
     # is the one the branch below used to swallow.
     #
-    # ⛔ **NO HAZARD GLYPH AND NO CREW FORK.** Nothing is wrong: a build one command old with a staffed
-    # pool on it is not a stall, and folding it into `-1` put `⚠ Stalled 0%` on a fresh `Cultivate`
-    # until the next turn cleared it. The crew is irrelevant for the same reason it is on `-1` — this
-    # says what the SIM has done, not what a crew is doing — so a staffed and an unstaffed fresh entry
-    # read alike here, and whether anybody is on it is the queue's own head/tail question.
+    # ⛔ **NO HAZARD GLYPH AND NO CREW FORK.** Nothing is wrong: a build one command old is not a stall,
+    # and folding it into `-1` put `⚠ Stalled 0%` on a fresh `Cultivate` until the next turn cleared
+    # it. The crew is irrelevant for the same reason it is on `-1` — this says what the SIM has done,
+    # not what a crew is doing — so a staffed and an unstaffed fresh build read alike here.
     #
     # **IT IS TESTED BEFORE `-1`** so the two cannot be read as one by a future edit that widens either
     # test, and it is written HERE rather than beside this function: a caller wanting a new rendering
@@ -2146,26 +2119,28 @@ static func build_sentinel_value(turns: int, build_crew: int, percent: int,
     # third time.
     if turns == SourceForecast.BUILD_TURNS_NOT_YET_ESTIMATED:
         return HudSelectionVocab.RUNG_QUEUED_FORMAT % percent
-    # **AND `-1` FORKS ONCE MORE, ON WHETHER ANY BAND STILL HAS THE SOURCE QUEUED** — the lapsed
-    # rung (`HudSelectionVocab.RUNG_UNQUEUED_FORMAT`). A build queue entry retires the turn its
-    # destination rung completes, so a rung that then goes feral loses its meter's last sliver with
-    # no entry left to carry it: work banked, `-1` on the countdown, and
-    # `NOT_IN_ANY_BUILD_QUEUE` on the position. Measured on the patch at (78, 20) — sown on tick 88,
-    # feral on tick 89, still at 49.612 of 49.624 work on tick 93 — where it rendered `⚠ Stalled`.
+    # ⛔ **AND `-1` TAKES NO CREW FORK, unlike `BUILD_TURNS_HOLDS` above.** It is the tempting symmetry
+    # and it is wrong twice over: `RungDef::build_accrual`'s `eligible` reads the STOCK against the
+    # floor and takes no crew count at all, so the sim answers `-1` on a refused gate at ANY staffing —
+    # and gating the client's own answer on a crew is a defect this client already shipped once and
+    # fixed (`chapters/improvements.gd`'s `tile_meter_stalled`, where the sheet answered the neutral
+    # *held* while the card said `⚠ Stalled`: two producers disagreeing about one meter).
     #
-    # ⛔ **IT IS NOT A CREW FORK BY ANOTHER NAME.** The crew fork on `-1` was built and reverted, for
-    # the reason written above: `RungDef::build_accrual`'s `eligible` takes no crew count, so a
-    # refused gate answers `-1` at any staffing, and a client that guessed from a crew disagreed with
-    # its own compose sheet. This forks on a field the WIRE publishes about the same source
-    # (`SourceForecast.build_queue_position`), read once by the caller and threaded in exactly as
-    # `build_crew` is — so nothing here is derived and no caller re-computes the verdict beside it.
+    # **`-1` FORKS ONCE, ON WHETHER ANY BAND STILL HAS A BUILD DECLARED ON THE SOURCE** — the lapsed
+    # rung (`HudSelectionVocab.RUNG_UNQUEUED_FORMAT`). A declared build retires the turn its
+    # destination rung completes, so a rung that then goes feral loses its meter's last sliver with
+    # nothing left to carry it: work banked, `-1` on the countdown, and no declared build. Measured on
+    # the patch at (78, 20) — sown on tick 88, feral on tick 89, still at 49.612 of 49.624 work on
+    # tick 93 — where it rendered `⚠ Stalled`. This forks on a field the WIRE publishes about the same
+    # source `build_crew` is (`SourceForecast.build_is_declared`) — so nothing here is derived and no
+    # caller re-computes the verdict beside it, and it is not a crew fork by another name.
     #
     # **AN EMPTY METER IS NOT LAPSED, and that is the third conjunct.** A rung nobody has ever
-    # started sits at `0%` in no queue too; calling it *Lapsed* would announce the loss of a payoff
-    # the player never had. Only a meter carrying work has something to have lost.
+    # started sits at `0%` with nothing declared too; calling it *Lapsed* would announce the loss of a
+    # payoff the player never had. Only a meter carrying work has something to have lost.
     if turns == SourceForecast.BUILD_TURNS_NO_ESTIMATE:
         if percent > BUILD_PERCENT_EMPTY \
-                and queue_position == SourceForecast.NOT_IN_ANY_BUILD_QUEUE:
+                and not build_declared:
             # ⛔ **NO MARK HERE.** Nothing in these four terms says the meter is moving, and a stable
             # part-built rung is not going wrong — `rung_row_value` adds the mark where the source's
             # own `meterRotPerTurn` says it is losing work (`unqueued_rung_value`).
@@ -2206,9 +2181,9 @@ const BUILD_PERCENT_EMPTY := 0
 ## says so in its own leaf rather than here.
 ## **AN EMPTY `built_needle` MEANS THE CALLER HAS NO BUILT BADGE TO MATCH**, and it must be guarded
 ## rather than left to `contains`: every string contains the empty one, so an unguarded call would
-## paint every value signal green. The BUILD QUEUE block's date column is that caller — a queue entry
-## is by construction a rung that is NOT built, the sim pruning an entry off the queue when its meter
-## fills — so it has no badge word and must not invent one.
+## paint every value signal green. The Work row's date column is that caller — a declared build is by
+## construction a rung that is NOT built, the sim retiring the build when its meter fills — so it has
+## no badge word and must not invent one.
 static func rung_value_hex(value: String, built_needle: String) -> String:
     if value.contains(HudSelectionVocab.RUNG_ROTTING_PHRASE):
         return HudStyle.DANGER_HEX
@@ -2219,16 +2194,6 @@ static func rung_value_hex(value: String, built_needle: String) -> String:
     if built_needle != "" and value.to_lower().contains(built_needle):
         return HudStyle.SIGNAL_HEX
     return HudStyle.INK_HEX
-
-## **THE `Color` TWIN OF THE RULE ABOVE, for a host that is a `Label` rather than BBCode** — the
-## `BandFoodStatus.color_for_morale` / `hex_for_morale` pairing, and taken for the same reason: a
-## `Label` takes an `add_theme_color_override` and can do nothing with a hex string.
-##
-## **IT IS WRITTEN IN TERMS OF `rung_value_hex`, never as a second fork**, so the ink a rung value
-## takes is decided in exactly one place whichever kind of host is asking. `built_needle` defaults to
-## empty for the caller that has no badge to match (see above).
-static func rung_value_color(value: String, built_needle: String = "") -> Color:
-    return Color.html(rung_value_hex(value, built_needle))
 
 ## **A METER ANOTHER PEOPLE OWNS**: `⚑ Lothari · 20%`. Only the owner's work moves it, so a bare percent
 ## would read as the viewer's own build.
@@ -2284,13 +2249,12 @@ static func animal_rate_face(value: float) -> String:
 ## player is proposing, because a quote for a job nobody has started is precisely what the sim's own
 ## `buildTurnsRemaining` cannot answer.
 ##
-## **THE STANDING PRICE IS A PRICE AND NOT A THRESHOLD** (`docs/plan_standing_upkeep.md` §2.4). It is
-## the quoted rung's `SourceForecast.build_upkeep_demand`, which for one slice was the term the build's
-## closed form subtracted and which the BUILDERS stepper stated as a bar to clear. The keeping pool
-## owes it at every fullness now, so it buys the player nothing to compare against a build crew — what
-## it answers is *and this much every turn, forever*, which is the half of the commitment the one-off
-## price beside it cannot state. **In WORK, never in hands**: the model is denominated in work units
-## end to end, and how many hands the rate takes depends on what they carry.
+## **THE STANDING PRICE IS A PRICE AND NOT A THRESHOLD** (`docs/plan_standing_upkeep.md` §2.4). The
+## keeping pool owes it at every fullness now, so it buys the player nothing to compare against a
+## build crew — what it answers is *and this much every turn, forever*, which is the half of the
+## commitment the one-off price beside it cannot state. **In WORK, never in hands**: the model is
+## denominated in work units end to end, and how many hands the rate takes depends on what they
+## carry.
 ##
 ## A rung the wire prices no rate on states no standing clause — a `0 work a turn` bill reads as a
 ## defect, and a rung that is free to hold should say nothing rather than say nothing twice.
@@ -2373,6 +2337,37 @@ static func build_turns_clause(turns: int,
         return HudComposeVocab.BUILD_TURNS_COUNT_ONE
     return HudComposeVocab.BUILD_TURNS_COUNT_FORMAT % turns
 
+## **THE BUILD CREW CHIP'S TOOLTIP** - what a declared build's own crew is doing: `N building (up to M),
+## done in ≈T`, or `Nobody is building — every worker is busy on a work row. Lower a row's Max or stop working a row to free a builder.` when the sim staffed nobody; then the build's OWN tool
+## shortfall (its `build_toe` lines, the same `pool_toe_row_is_short` test the keeping rows ask) and what
+## a press does (`with_stop_hint`: a surface whose press opens the rung card, the work strip's chip, omits
+## it). `item_names` is `{item_id: display name}` off the equipment roster.
+static func build_crew_tooltip(src: Dictionary, prefix: String, item_names: Dictionary,
+        with_stop_hint: bool = true) -> String:
+    var staffed := SourceForecast.build_crew_staffed(src, prefix)
+    var lines: Array[String] = []
+    if staffed <= SourceForecast.BUILD_CREW_NONE:
+        lines.append(HudWorkVocab.BUILD_CREW_NO_HANDS)
+    else:
+        var head := HudWorkVocab.BUILD_CREW_STAFFED_FORMAT % [staffed,
+            maxi(SourceForecast.build_crew_cap(src, prefix), staffed)]
+        var turns := SourceForecast.build_turns_remaining(src, prefix)
+        if turns > SourceForecast.BUILD_TURNS_NONE_TO_STATE:
+            head = HudWorkVocab.BUILD_CREW_DONE_FORMAT % [head, build_turns_clause(turns, staffed)]
+        lines.append(head)
+    var toe := SourceForecast.build_toe(src, prefix)
+    if HudWorkVocab.pool_toe_is_short(toe):
+        var named := HudWorkVocab.toe_short_item_names(toe, item_names)
+        lines.append(HudWorkVocab.BUILD_CREW_SHORT_FORMAT % named if named != "" \
+            else HudWorkVocab.BUILD_CREW_SHORT_GENERIC)
+    if with_stop_hint:
+        lines.append(HudWorkVocab.BUILD_CREW_STOP_HINT)
+    return "\n".join(PackedStringArray(lines))
+
+## Is this build's own kit short? (`build_toe` carries a line the settlement filled less than required.)
+static func build_toe_is_short(src: Dictionary, prefix: String) -> bool:
+    return HudWorkVocab.pool_toe_is_short(SourceForecast.build_toe(src, prefix))
+
 ## RETIRED — **THE `At risk:` ROW, ITS SHORTFALL AND ITS COUNTDOWN, AND THE REMEDY LINE UNDER IT.**
 ## An under-kept Tended patch used to spend three lines of the card on one fact: the rung row, an
 ## `At risk: short 2 work — this rung is lost in 3 turns` beneath it, and an indented
@@ -2422,9 +2417,33 @@ static func build_gear_lines(source: Dictionary, prefix: String) -> Array[String
             HudSelectionVocab.BUILD_GEAR_WORK_ROW_FORMAT % format_work_units(gear)])
     return lines
 
-## **WHY THE BUILDERS ARE HELD HERE, AND WHAT WOULD FREE THEM** — the sub-row(s) beneath
-## `RUNG_BLOCKED_FORMAT`, whose headline says the pool is stuck and deliberately states no cause
+## **WHY THE SITE'S CREW IS HELD HERE, AND WHAT WOULD FREE IT** — the sub-row(s) beneath
+## `RUNG_BLOCKED_FORMAT`, whose headline says the build is stuck and deliberately states no cause
 ## (`docs/plan_standing_upkeep.md` §4.6b).
+##
+## **BOTH SURFACES THAT SHOW A BLOCKED BUILD CALL THIS** — the source's own card (the tile card and the
+## herd drawer, indented under the rung row) and the Work row's tooltip, which passes an empty
+## `indent` because a tooltip has no rung row to hang beneath. One producer, so the two cannot come to
+## disagree about a refusal, which is this arc's most repeated failure.
+##
+## > ### ⛔ THE BLOCK IS TWO LINES — THE HEADLINE AND ONE SHORT CAUSE. NOTHING ELSE RENDERS.
+## >
+## > **THREE LINES OF PROSE UNDER A HAZARD ROW IS NOT A READOUT.** It drew a headline that spelled out
+## > what *Blocked* means, then a cause, then a remedy, then — where the keeping was short — a second
+## > remedy, in a ~245px column standing between the rung row and an `At risk:` countdown. Rejected on
+## > sight: *"You don't need 'your builders are stuck here', that's what Blocked means. You also don't
+## > need the 2nd and 3rd sentence."*
+## >
+## > **THE CUT SENTENCES ARE DELETED, NOT PARKED.** A tooltip carrying them was built and put to Ray;
+## > the answer was *"delete them"*. So this row emits exactly one line, and the causes themselves are
+## > one sentence each in `HudSelectionVocab.BUILD_BLOCKED_REASONS` — which is where a new key's
+## > wording rule lives. **Nothing here trims a string at render time**: the table says what the card
+## > shows, so this producer and the Work row's tooltip cannot come to show different halves of one
+## > refusal.
+## >
+## > **WHAT THE PLAYER STILL GETS INSTEAD OF THE REMEDY** is the rung row above: an under-kept source
+## > says `⚠ slipping` beside its meter and carries the role that pays on the row's own hover. Do NOT
+## > re-add a remedy here as one the block is missing.
 ##
 ## **IT USED TO RENDER ONLY WHERE THE KEEPING WAS SHORT, AND THAT GATE WAS THE BUG.** The build
 ## surface could not see WHY the gate refused, so it paired the block with the one fact the same row
@@ -2436,30 +2455,6 @@ static func build_gear_lines(source: Dictionary, prefix: String) -> Array[String
 ## `HudSelectionVocab.BUILD_BLOCKED_REASONS` and an unrecognised key — or a `-4` carrying no key —
 ## takes `BUILD_BLOCKED_FALLBACK` rather than an empty line, which on a marked row would read as
 ## *there is no cause*.
-##
-## **BOTH SURFACES THAT SHOW A BLOCKED BUILD CALL THIS** — the source's own card (the tile card and
-## the herd drawer, indented under the rung row) and the BUILD QUEUE row's tooltip, which passes an
-## empty `indent` because a tooltip has no rung row to hang beneath. One producer, so the two cannot
-## come to disagree about a refusal, which is this arc's most repeated failure.
-##
-## > ### ⛔ THE BLOCK IS TWO LINES — THE HEADLINE AND ONE SHORT CAUSE. NOTHING ELSE RENDERS.
-## >
-## > **THREE LINES OF PROSE UNDER A HAZARD ROW IS NOT A READOUT.** It drew a headline that spelled out
-## > what *Blocked* means, then a cause, then a remedy, then — where the keeping was short — a second
-## > remedy, in a ~245px column standing between the rung row and an `At risk:` countdown. Rejected on
-## > sight: *"You don't need 'your builders are stuck here', that's what Blocked means. You also don't
-## > need the 2nd and 3rd sentence."*
-## >
-## > **THE CUT SENTENCES ARE DELETED, NOT PARKED.** A tooltip carrying them was built and put to Ray;
-## > the answer was *"delete them"*. So this row emits exactly one line, `RUNG_BLOCKED_REMEDY_FORMAT`
-## > is retired, and the causes themselves are one sentence each in
-## > `HudSelectionVocab.BUILD_BLOCKED_REASONS` — which is where a new key's wording rule lives.
-## > **Nothing here trims a string at render time**: the table says what the card shows, so this
-## > producer and the queue row's tooltip cannot come to show different halves of one refusal.
-## >
-## > **WHAT THE PLAYER STILL GETS INSTEAD OF THE REMEDY** is the rung row above: an under-kept source
-## > says `⚠ slipping` beside its meter and carries the role that pays on the row's own hover. Do NOT
-## > re-add a remedy here as one the block is missing.
 ##
 ## `prefix` spells the keys, so one call serves a `patch_`-prefixed `tile_info` and a bare herd dict.
 ##
@@ -2519,49 +2514,6 @@ static func build_material_shortfalls(pile: Array[Dictionary], store: Dictionary
         shorts.append({MATERIAL_SHORT_ID_KEY: id, MATERIAL_SHORT_HELD_KEY: held,
             MATERIAL_SHORT_MISSING_KEY: missing})
     return shorts
-
-## The good the shelf is shortest of (the smallest held share of what is still to draw), `{}` for none.
-static func build_material_shortfall(pile: Array[Dictionary], store: Dictionary,
-        progress: float) -> Dictionary:
-    var left := SourceForecast.BUILD_METER_FULL - clampf(progress, 0.0, SourceForecast.BUILD_METER_FULL)
-    var worst := {}
-    var worst_share := 1.0
-    for short in build_material_shortfalls(pile, store, progress):
-        var needed := float(short[MATERIAL_SHORT_HELD_KEY]) + float(short[MATERIAL_SHORT_MISSING_KEY])
-        var share := float(short[MATERIAL_SHORT_HELD_KEY]) / needed
-        if share < worst_share:
-            worst_share = share
-            worst = short
-    return worst
-
-## The queue row's clause for a shortfall, `""` for none: `⚠ Blocked · need 2.1 hurdles` — the shortfall
-## at one decimal-trimmed precision and the material's name.
-static func build_material_short_text(short: Dictionary) -> String:
-    if short.is_empty():
-        return ""
-    return HudWorkVocab.BUILD_QUEUE_BLOCKED_NEED_FORMAT % [HudSelectionVocab.RUNG_HAZARD_GLYPH,
-        _material_missing_text(short), material_noun(String(short[MATERIAL_SHORT_ID_KEY]))]
-
-## …and the same fact as a hover / detail line: `Need 2.1 hurdles`.
-static func build_material_need_line(short: Dictionary) -> String:
-    return HudWorkVocab.BUILD_QUEUE_MATERIAL_LINE_FORMAT % [_material_missing_text(short),
-        material_noun(String(short[MATERIAL_SHORT_ID_KEY]))]
-
-## **THE MATERIAL'S NAME IS THE CRAFTING RAIL'S** — it humanises the id with `String.capitalize()`
-## (`wild_boar_hide` → `Wild Boar Hide`, `CraftingPanel._build_material_group`); a sentence takes it
-## lower-cased. One rule, so `stone_dressing` never reaches a queue row as a snake_case token.
-static func material_noun(material_id: String) -> String:
-    return material_id.capitalize().to_lower()
-
-static func _material_missing_text(short: Dictionary) -> String:
-    return format_trimmed(float(short[MATERIAL_SHORT_MISSING_KEY]), MATERIAL_SHORT_DECIMALS)
-
-const MATERIAL_SHORT_DECIMALS := 1
-
-## `Penning 64%` — the leg's participle and the meter, no date (a headline on a head with no real date).
-static func build_progress_value(percent: int, leg: String) -> String:
-    var verb := HudComposeVocab.improvement_running_label(leg)
-    return "%d%%" % percent if verb == "" else "%s %d%%" % [verb, percent]
 
 ## **THE PREDATOR THAT ATE THE GROWTH, IN THE PLAYER'S WORDS.** The wire names it by its fauna_config
 ## species KEY (`predator_eaten_by`, `"wolf"`) and the client holds no fauna roster, so the name comes

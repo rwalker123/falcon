@@ -122,12 +122,6 @@ func _under_herded_herd_fixture() -> Dictionary:
 	fixture["herded_fraction"] = 1.0
 	return fixture
 
-## **THE SAME HERD MID-TAME, which is owed BUILDERS and not keepers** (§2.4). Its meter is still going
-## up, so the sim bills it the animal web's whole keeping (the animals are standing there whether or
-## not the rung is finished) while publishing `upkeepWorkersNeeded 0` — a positive demand no pool
-## covers. The readout must therefore say it is being BUILT rather than quoting the pool at it.
-## `set_managed_herders` still states a positive `herders_needed`: a herd is owned from the moment the
-## Tame starts, so the `Keepers:` row is shown and must stay CALM.
 func _mid_tame_herd_fixture() -> Dictionary:
 	var fixture := HerdFx.taming_herd_fixture()
 	HerdFx.price_animal_build(fixture)
@@ -457,10 +451,6 @@ func _extending_pen_herd_fixture() -> Dictionary:
 ## the raw field by 100 — and it asserted the NUMBER on both the pill and its hover, at both the
 ## builder and the in-place patch (`_update_extend_pen_control`, a known drift pair).
 ##
-## **The tile card draws NEITHER control now.** The `Extend pen` button moved to the work row's
-## standing-rung mark and the `Fencing N%` badge retired outright, being a third statement of a meter
-## the build queue row already dates and withdraws. So what this asserts is that they are GONE.
-##
 ## ⛔ **PAIRED WITH A LIVENESS CLAIM, or it passes on a drawer that renders nothing.** The herd's
 ## action row still has to draw what it always drew beside them — the standing summary and the
 ## `Assign …  ▸` button — and a containment test alone cannot tell "the badge retired" from "the whole
@@ -489,7 +479,7 @@ func _assert_pen_controls_left_the_tile_card() -> void:
 	# THE LIVENESS HALF, so the two negatives below cannot pass on an empty drawer.
 	h._assert_hud("the extending pen's herd drawer still draws its action row (%s)" % str(faces),
 		not host.get_children().is_empty())
-	h._assert_hud("…and the `Fencing N%` badge is gone from it — the build queue row dates the ring now",
+	h._assert_hud("…and the `Fencing N%` badge is gone from it — the ring's build chip dates it now",
 		_fencing_badge() == null)
 	h._assert_hud("…and so is the `Extend pen` button, which is a `⌃` on the work row's mark now",
 		_extend_pen_button() == null)
@@ -822,11 +812,6 @@ func run(harness) -> void:
 	await h._save("herd_pen_self_feeding")
 
 	# State 2d-γ extending pen — the SAME pen mid-extension (42 of 70 work banked toward the ring).
-	# Partial pasture with the fodder share topping it up → "Fed: 100% — 60% pasture · 40% fodder".
-	# ⛔ This frame's SUBJECT used to be the WARN-amber "Fencing 60%" badge that replaced the
-	# "Extend pen" button here; both retired with §4.9 item 12c and the assertion below is that they
-	# are gone. The ring's meter is the BUILD QUEUE row's now — the surface that also dates and
-	# withdraws it — so the fixture's banked pair is still what makes this pen mid-extension.
 	h._hud._compose.reset_hunt_source()
 	h._show_herd(_extending_pen_herd_fixture())
 	h._compose_herd(_extending_pen_herd_fixture())

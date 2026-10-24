@@ -1005,13 +1005,10 @@ each sabotage-verified to fail on its own:
 **`map_preview`** — `map_worked_ready` (the ⌃ CONTRAST: a tended patch offers Sow, a tamed
 "pen"-ceiling deer offers Corral, a "wild"-ceiling wolf offers nothing; a chevron on every marker would
 prove nothing) · **`map_worked_unstaffed`** (its A/B twin: the SAME three sources with the working
-band's **`builders` ROLE row** taken off, so the one plate that can differ goes from
-`🌱42%` in the deep signal ink to `🌱⚠` in WARN — see `overlay-channels.md`. **The pair is the
-claim**, a plate that always warned passing either frame alone, and `_snapshot_work_ready` had to
-GAIN that role row for it: without it the ready frame stages the warned case under a comment
-describing work in flight. It was a per-source `improvement_workers` count until §2.5 moved the hands
-onto the band. **See the autopsy below — this pair went dead and both PNGs hashed the same for a
-while**) · `map_raid_party_quarry` (an outbound denial party's quarry marked beside a resident
+patch's **`builders_staffed`** taken to zero (`_stamp_patch_builders`), so the one plate that can differ
+goes from `🌱42%` in the deep signal ink to `🌱⚠` in WARN — see `overlay-channels.md`. **The pair is the
+claim**, a plate that always warned passing either frame alone. **See the autopsy below — this pair went
+dead and both PNGs hashed the same for a while**) · `map_raid_party_quarry` (an outbound denial party's quarry marked beside a resident
 band's local hunt — two routes to a worked source, one grammar) · `map_overflow_worked` (three wonders
 take every visible slot, so both worked sources roll into the chip as `+2 ⌃`). **Both new states push
 `set_faction_knowledge` explicitly**: `map_preview` has no HUD, so without it every source reads "not
@@ -1024,10 +1021,10 @@ because the fixture had none, and the mark correctly degraded to the bare tile o
 > Verified by `md5`, and it had been true for some time. The rule above calls the pair the claim, and
 > the pair was claiming nothing.
 >
-> **Cause.** The fixture's only difference is dropping the band's `builders` role row, and
+> **Cause.** The fixture's only difference is dropping the source's builders, and
 > `SourceForecast.build_is_stalled` stopped answering `true` for that state:
 > `BUILD_UNSTAFFED_SLIDING` — *work banked and nobody on it* — was RETIRED as an inference that is
-> wrong under pooled keeping, leaving only `BUILD_UNSTAFFED_UNSTARTED` (declared, nobody on it, meter
+> wrong when the keeping is pooled, leaving only `BUILD_UNSTAFFED_UNSTARTED` (declared, nobody on it, meter
 > never moved) and the WIRE's own rot verdict. The fixture stages a **42%** build, so neither arm
 > fires and the two frames rendered identically. **A predicate can be retired correctly and leave a
 > fixture staging a state nothing answers for; nothing errors, and the frames simply agree.**

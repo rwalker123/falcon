@@ -384,6 +384,11 @@ frames share the read path's 4-byte little-endian length prefix and the same
 must agree on it. Replies cross to the main thread through `CommandBridge.poll_query_replies` rather
 than a signal off the worker, so a render never observes a half-applied answer.
 
+**`QueryPayload::StaffingPreview` is the compose sheets' dry run of the real staffing** (`QUERY_KIND_STAFFING_PREVIEW`). Its
+source is addressed exactly as a work-party ask's (`work_party_source`, shared), it rides the seated link with
+the other faction-bearing questions, and its reply decodes to `{workers, keepers, kitted, bare, idle_before,
+idle_after, losses: [{kind, x, y, herd_id, material, branch, before, after}]}`.
+
 **A QUERY TRIGGERS NO SNAPSHOT.** The server answers and skips the recapture — the query changed
 nothing, and that recapture is the expensive half of a turn. Nothing downstream may wait on a frame
 to render an answer; the reply is the whole of it.
@@ -627,10 +632,9 @@ working publishes with no dialect of its own.
 
 `docs/plan_pool_toe.md` §4. `PopulationCohortState.poolToe` → **`pool_toe`** on the band dict
 (`dict/population.rs`), an `Array` of `{pool, item_id, required, filled}` — one row per
-`(pool, item)`, where `pool` is the labor-role token `roadwork` | `builders` — the two band-wide
-pools left (`docs/plan_site_crews.md` §2.4) — the same spelling `LaborAssignment.kind` publishes, so
-a pool line joins its lines on a string it already holds. `pool_crew` likewise carries `roadwork`
-alone.
+`(pool, item)`, where `pool` is the labor-role token `roadwork`, the one band-wide keeping pool left
+(`docs/plan_site_crews.md` §2.4) — the same spelling `LaborAssignment.kind` publishes, so a pool line
+joins its lines on a string it already holds. `pool_crew` likewise carries `roadwork` alone.
 
 **A SITE CARRIES ITS KEEPING-TOOL TABLE, `upkeep_toe`** — the same `{item_id, required, filled}`
 line shape on every patch, herd and deposit dict (`kit_toe_to_array`, shared with `kit_toe`), `[]`
@@ -663,7 +667,7 @@ changes above: it is built from `sim_schema::fixture`'s saturated snapshot, not 
 so a pool row's `kit_id` there still reads its own wire path. Only `core_sim`'s own capture tests
 witness those.
 
-## The site crew's keeping, and a queued build's own mark (`docs/plan_site_crews.md`)
+## The site crew's keeping (`docs/plan_site_crews.md`)
 
 A patch, a herd and a working are kept by the crew on their own work row. Two keys ride each of the
 three source dicts (`dict/subsistence.rs` for patches and herds, `dict/deposits.rs` for workings):
@@ -678,12 +682,29 @@ three source dicts (`dict/subsistence.rs` for patches and herds, `dict/deposits.
 `MapView._tile_info_at` crosses the patch pair as `patch_upkeep_hands` / `patch_upkeep_tools_short`,
 and the two tending forecasts as `patch_upkeep_workers_at_completion` / `patch_upkeep_next_worker_turn`
 (all redacted with the rest of the live patch payload; `HudWorkVocab.tending_of` reads them), and `SourceForecast.upkeep_hands` /
-`upkeep_tools_short` are the one reader of each. Each build-queue entry carries **`build_priority`**
-(`BuildQueueEntryState.buildPriority`, `high` | `normal` | `low`), read through
-`HudBandLaborState.build_priority_for_key`, which normalises an unwritten value to `normal`. It also
-carries its site halves, **`material`** (`BuildQueueEntryState.material`, `""` unless the entry is a
-working) and **`branch`** (`.branch`, issue #175: the road branch's id on a road build, a tile-kind branch's id on a tile build, `""` otherwise — it replaced the retired `road` bool), which `HudBandLaborState.queue_entry_key`
-keys on (through `HudRouteVocab.queue_entry_is_road`) — the tile alone cannot tell two workings, or a road and a patch, on one hex apart.
+`upkeep_tools_short` are the one reader of each.
+
+## The builders on a declared build ride the SOURCE row (`docs/plan_labor_at_scale.md`)
+
+There is no band-level build queue on the wire: the sim staffs a declared build from the site's own
+crew and publishes the result on the source. Every patch, herd, deposit, route and tile-keeper dict
+carries the same four keys, all written by one helper, `dict/population.rs` →
+`insert_build_crew(dict, staffed, kitted, cap, toe)`:
+
+| key | wire field | reads |
+|---|---|---|
+| `builders_staffed` | `buildersStaffed:uint` | hands the sim put on this build this turn |
+| `builders_kitted` | `buildersKitted:uint` | how many of those carry the tools the build wants |
+| `builders_cap` | `buildersCap:uint` | the most hands the rung can use; `0` means no build is declared here |
+| `build_toe` | `buildToe:[PoolToeLine]` | that build's own tool lines, `{item_id, required, filled}`, built by `pool_toe_to_array` |
+
+`SourceForecast.build_is_declared` / `build_crew_staffed` / `build_crew_cap` / `build_toe` are the one
+reader of each (a key prefix spells the `patch_` cross-ref on `tile_info`), and
+`DetailFormat.build_crew_tooltip` is the one sentence composer. A rung catalog entry carries
+`maxBuilders` as **`max_builders`** (`dict/subsistence.rs`), which `RungLadder.max_builders_by_rung`
+reads for the rung card's `up to N builders at once`. `unqueue` is the one command that stops a
+declared build, source-addressed like every site verb (`Main.site_address`). The decode golden
+(`tests/golden/snapshot_dict.json`) pins the four keys on every row kind that carries them.
 
 ## The `connections` section, and the cohort fields the shipment arc appended
 

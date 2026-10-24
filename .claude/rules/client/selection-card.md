@@ -159,10 +159,10 @@ paths:
       a compose flow; hiding it behind a sheet you must open first would be worse. So
       `_build_herd_drawer_actions` renders it (or the "Fencing N%" badge) directly."* The second
       sentence was true and was never the whole reason — reported from play, the button produced a
-      **build queue entry**, making it the one queue entry in the game declared from somewhere other
+      **declared build**, making it the one build in the game declared from somewhere other
       than the work tab. It is a `⌃` on the work row's standing-rung mark now, and it opens a PRICE
       rather than committing on the click, a ring drawing `animal:pen`'s own hurdle pile since §2.7.
-      **The `Fencing N%` badge retired outright** — the build queue row dates and withdraws the ring.
+      **The `Fencing N%` badge retired outright** — the Work row dates and stops the ring.
       `band-city-panel.md` → "`extend_pen` is declared from the standing-rung mark" has the whole of
       it, the `has_track`-is-false mechanism included.
     - **The standing summary reuses `SourceForecast.source_yield_readout` — it never recomputes a rate.**
@@ -602,48 +602,37 @@ FAILURE state leads with `HudSelectionVocab.RUNG_HAZARD_GLYPH`:
 
 | state | reads | why it is not the one above it |
 |---|---|---|
-| declared, nobody assigned, nothing banked | `⚠ Not started — no builders assigned` | there is no meter to state — `0 / 50 (0%)` is that zero written three ways |
+| declared, nobody on its crew, nothing banked | `⚠ Not started — no builders assigned` | there is no meter to state — `0 / 50 (0%)` is that zero written three ways |
 | **work banked, nobody on it, keeping COVERS it** | **`Held at 42%` — no mark, neutral ink** | **it is a decision, not a failure** (see below) |
 | banked work on a rung that is NOT the one in flight | `Held at 42%`, or `⚠ Reverting 42%` when its keeping is short | the source's ONE countdown is about the OTHER rung |
 | a crew on it banking exactly the ROT | `⚠ ∞ turns (42%)` | somebody IS on it and their turn is being wasted; the remedy is MORE of them |
 | under the rot, staffed or not | `⚠ ∞ turns, losing ground (42%)` | the work already bought is going BACK — so it is RED, not amber |
 | built, and the keeping pool is short | `🌾 Tended 92% ⚠` | the rung is HELD and slipping, which no build crew fixes |
-| **the band's builders are ON it and its own gate refuses** | **`⚠ Blocked 96% — your builders are held here`**, over an indented remedy | **the hands are staffed and STUCK** — see below |
-| **part-built, nobody on it, and no queue entry left** | **`99% built · not queued`**, unmarked; **`⚠ 99% built · not queued, losing ground`** in red where `meterRotPerTurn > 0` | **nobody is on it at all**, so *Stalled* names the wrong situation — see below |
+| **the site's build crew is ON it and its own gate refuses** | **`⚠ Blocked 96% — your builders are held here`**, over an indented remedy | **the hands are staffed and STUCK** — see below |
+| **part-built, nobody on it, and no build declared** | **`99% built · not being built`**, unmarked; **`⚠ 99% built · not being built, losing ground`** in red where `meterRotPerTurn > 0` | **nobody is on it at all**, so *Stalled* names the wrong situation — see below |
 
-> #### ⛔ THE BLOCKED ROW NAMES THE REMEDY, AND THE REMEDY IS THE KEEPING ROLE (§4.6b)
+> #### ⛔ THE BLOCKED ROW NAMES THE CAUSE THE SIM PUBLISHES (§4.6b, §4.7)
 >
-> `BUILD_QUEUE_BLOCKED` (`-4`) is the band's `builders` pool standing on the HEAD of its queue with the
-> gate on that entry refusing — so the pool is spending its turns on an entry that cannot advance and
-> **every entry behind it is waiting on the block**, which is the cost no other hazard on this table
-> carries. It is not the `Stalled` row: that one is a crew of nobody meeting a `-1`, where the wasted
-> resource is the rung, and this one wastes the WHOLE POOL.
->
-> **THE CAUSE IS PUBLISHED NOW, AND THE KEEPING WAS NEVER THE GATE (§4.7).** This callout used to say
-> *"the gate that produces this is the keeping shortfall's, so staffing the web's own keeping role
-> clears it"*, and then **rendered NOTHING once the keeping was paid** — on the reasoning that a `-4`
-> with a cleared shortfall *"is a block with some other cause"* and that naming a fully-staffed role
-> would be the warning-outlives-its-mechanism failure. The second half of that was right. The first
-> half was wrong, and the silence it produced was reported from play:
->
-> > A Tame sat at `⚠ Blocked 32%`. The player staffed Husbandry — the only remedy any surface named —
-> > and it stayed blocked, now with **no explanation at all**. The real cause was that the herd had
-> > fallen below its escapement floor.
+> `BUILD_TURNS_QUEUE_BLOCKED` (`-4`) is the site's build crew standing on a declared build whose gate
+> refuses — so the crew is spending its turns on a build that cannot advance. It is not the `Stalled`
+> row: that one is a crew of nobody meeting a `-1`, where the wasted resource is the rung, and this one
+> wastes the crew's whole turn.
 >
 > **The keeping shortfall is not a conjunct of any rung's `eligible`.** It reaches a build only
-> *indirectly*, by suppressing regrowth until the stock drops under the floor — which is a different
-> claim, one step longer, and true of one key rather than of `-4` in general.
+> *indirectly*, by suppressing regrowth until the stock drops under the floor — so staffing a keeping
+> crew is not the remedy for a `-4` in general, and a blocked row that names only that leaves the
+> player fixing the wrong thing.
 >
 > **`SourceForecast.build_blocked_reason` reads the sim's own `buildBlockedReason`**, a short cause key
-> published by the one site that mints the sentinel, carried down the queue so entries behind a blocked
-> head report the head's reason. **The sim decides `eligible`, so the sim says why** — the client has
+> published by the one site that mints the sentinel.
+> **The sim decides `eligible`, so the sim says why** — the client has
 > its own `RungGates` machinery and re-deriving here would be a second producer of one verdict.
 > `HudSelectionVocab.BUILD_BLOCKED_REASONS` owns the wording for all ten keys **plus a fallback**, on
 > `SOW_REFUSAL_REASONS`' precedent: an unrecognised key states that the client cannot name the reason,
 > because a blank line under a hazard mark is what this whole repair exists to delete.
 >
-> **`DetailFormat.build_blocked_lines` is still the ONE producer**, and both surfaces that show a
-> blocked build call it — this card and the BUILD QUEUE row's tooltip, the date column having room for
+> **`DetailFormat.build_blocked_lines` is the ONE producer**, and both surfaces that show a
+> blocked build call it — this card and the Work row's tooltip, the date column having room for
 > the headline alone.
 >
 > **THE `escapement` REASON CARRIES ITS DEPENDENCY AND ITS NUMBERS** (found in playtest: a Tame Wild
@@ -654,7 +643,7 @@ FAILURE state leads with `HudSelectionVocab.RUNG_HAZARD_GLYPH`:
 > `BUILD_BLOCKED_ESCAPEMENT_*_FORMAT`). The figures are in the units the card's own stock row prints —
 > a herd counts bodies (`Herd 61 / 133`), a patch is whole biomass — the middle one is
 > `ceil(floor x ceiling)`, and the percent is the floor of the assignment working the source
-> (`HudBandLaborState.working_floor_hunt` / `_forage`; the queue row passes its model's floor). They
+> (`HudBandLaborState.working_floor_hunt` / `_forage`; the Work row passes its model's floor). They
 > are composed in `DetailFormat.escapement_reason_numbers`, threaded through `build_blocked_lines`'
 > `leave_floor`; a caller with no floor (or a source with no ceiling) gets the numberless
 > `BUILD_BLOCKED_ESCAPEMENT_HERD` / `_PLANT` sentences, which keep the dependency. **The sentence is
@@ -687,8 +676,8 @@ FAILURE state leads with `HudSelectionVocab.RUNG_HAZARD_GLYPH`:
 
 > #### ⛔ THE HELD ROW IS THE ONE STATE HERE THAT MUST **NOT** BE MARKED (§4.6a)
 >
-> **Parking a half-built improvement is a legitimate thing to do.** Take the builders off a Cultivate
-> at 50%, leave the band's keeping staffed, and the meter holds there indefinitely — the keeping pool
+> **Parking a half-built improvement is a legitimate thing to do.** Stop the build crew on a Cultivate
+> at 50%, leave the site's keeping staffed, and the meter holds there indefinitely — the keeping pool
 > owes an at-risk meter at every fullness (`docs/plan_standing_upkeep.md` §2.4), so nothing is being
 > lost. **Marking it is how a player is taught to ignore the mark**, which costs every other row in
 > this table its meaning; that is this whole section's rule, pointed the other way.
@@ -712,7 +701,7 @@ silence this family exists to remove. **It reads alike to the HELD row in INK an
 different in meaning** — *no answer* against *no problem* — which is exactly why the held row spends a
 word on saying so.
 
-> #### ⛔ `-1` IS TWO STATES, AND THE QUEUE POSITION IS WHAT SEPARATES THEM
+> #### ⛔ `-1` IS TWO STATES, AND WHETHER A BUILD IS DECLARED IS WHAT SEPARATES THEM
 >
 > ⛔ **THIS STATE READ `⚠ Lapsed 99%` AND NOBODY COULD SAY WHAT IT MEANT** — reported from play on
 > a Field 94% sown under a Tended Patch, the maintainer unable to read it either. The word named no
@@ -725,19 +714,20 @@ word on saying so.
 > standing rung, which the row above states, and not something going wrong with this meter.
 >
 > ⛔ **"WAS THIS RUNG EVER FINISHED" IS NOT ON THE WIRE**, so the face cannot say *Field lost*. The
-> three conjuncts below are met by a Field gone feral a hair short of full, by a cancelled queue entry
-> with work banked, and by a Sow nobody ever queued; what all three share is what the face states.
+> three conjuncts below are met by a Field gone feral a hair short of full, by a withdrawn build
+> with work banked, and by a Sow nobody ever declared; what all three share is what the face states.
 >
-> **AN UNQUEUED RUNG IS THE SAME `-1` ON A SOURCE NO BAND HAS QUEUED.** Measured in play at tile (78, 20): a Field completed on tick 88 and went feral on
+> **AN UNQUEUED RUNG IS THE SAME `-1` ON A SOURCE NO BAND HAS A BUILD DECLARED ON.** Measured in play at tile (78, 20): a Field completed on tick 88 and went feral on
 > tick 89 (*"untended, the ground is reverting"*), which dropped the standing rung back to
-> `plant:tended`. **A build queue entry retires the turn its destination rung completes**, so the
+> `plant:tended`. **A declared build retires the turn its destination rung completes**, so the
 > feral turn found nothing left to carry the meter: at tick 93 the patch still held 49.612 of 49.624
-> work, publishing `-1` on the countdown and `NOT_IN_ANY_BUILD_QUEUE` on the position, with the yield
+> work, publishing `-1` on the countdown and no declared build, with the yield
 > already fallen from a Field's 12.48 to a tended patch's 1.39.
 >
-> **THE FORK IS THE WIRE'S OWN `build_queue_position`, THREADED IN LIKE `build_crew`** — three
+> **THE FORK IS THE WIRE'S OWN DECLARATION, THREADED IN LIKE `build_crew`**
+> (`SourceForecast.build_is_declared`, true while the source's `builders_cap` is above zero) — three
 > conjuncts inside `DetailFormat.build_sentinel_value`: `-1`, a meter above `BUILD_PERCENT_EMPTY`,
-> and no entry. It is emphatically **not** the crew fork on `-1` that was built and reverted:
+> and no declared build. It is emphatically **not** the crew fork on `-1` that was built and reverted:
 > `RungDef::build_accrual`'s `eligible` takes no crew count, so a refused gate answers `-1` at any
 > staffing and a client guessing from a crew disagreed with its own compose sheet.
 >
@@ -751,17 +741,17 @@ word on saying so.
 > mark** for that reason — the neutral would be the reassuring reading of a loss already taken.
 >
 > **THE HOVER IS WHERE THE REMEDY LIVES**, the mark being two words on a ~245px card:
-> `DetailFormat.lapsed_hover_text` is two lines: `99% built · not queued` (plus ` · losing 0.5/turn`
-> while the meter is rotting and the source publishes `meter_rot_per_turn`) over `Fix: re-queue from Work
-> row`. It is routed off the value the row already composed (`DetailFormat.note_lapsed_hover`, keyed on
+> `DetailFormat.lapsed_hover_text` is two lines: `99% built · not being built` (plus ` · losing 0.5/turn`
+> while the meter is rotting and the source publishes `meter_rot_per_turn`) over `Fix: start it again from ⌃ on its row`.
+> It is routed off the value the row already composed (`DetailFormat.note_lapsed_hover`, keyed on
 > `RUNG_UNQUEUED_PHRASE`, taking the meter and the rot from the caller), not re-derived — one verdict, one
 > producer.
 >
 > ⛔ **IT NAMES NO CAUSE, and it opened with one for a release.** *"The ground went feral and lost
 > this rung"* is a PLANT-web sentence on a hover `note_lapsed_hover` also registers on `HUSBANDRY_ROW`
-> and `CORRAL_ROW` — a herd part-way through a Tame with nobody queued was told about ground it does
-> not have. And a feral field is only one of the ways in: **cancelling** a queue entry with work
-> banked satisfies the same three conjuncts (`build_turns` at `-1`, a meter above empty, no entry)
+> and `CORRAL_ROW` — a herd part-way through a Tame with no build declared was told about ground it does
+> not have. And a feral field is only one of the ways in: **stopping** a build with work
+> banked satisfies the same three conjuncts (`build_turns` at `-1`, a meter above empty, no build)
 > with nothing having gone feral at all. The FACTS are right in every case; only the cause was a
 > guess, so the sentence states the state and the remedy and asserts nothing about how it got there.
 
@@ -791,7 +781,7 @@ for the FIELD, so a `⚠` on the tended row beneath would point the player at gr
 a false mark costs every true one its meaning exactly as a missing one does.
 
 **THE ROUTING USED TO BE ACCIDENTAL.** The test carried a `build_is_in_flight` gate, there to keep the
-mark off a source whose bill the BUILDERS owed; the pooled keeping deleted that gate's reason and
+mark off a source whose bill the build crew owed; the pooled keeping deleted that gate's reason and
 merged the test with `is_unbuilt_and_unpaid`, and with the gate went the routing it had been doing by
 side effect. **It decides which ROW shows a number, never the number** — the same job `build_verb`
 already does for the build verb, off the same table. **And it withholds a mark from a ROW, never the
@@ -906,7 +896,7 @@ The rest of this section records how the row got there, and is superseded by the
     `SOURCE_KIND_HERD` is `"herd"` and `LABOR_KIND_HUNT` is `"hunt"`, so handing a source kind
     straight to the labor-keyed picker answers with the PLANT web's sentence on an animal source — a
     wrong answer that looks like a right one. It delegates rather than re-spelling the pair.
-  - **A BLOCKED QUEUE SUPPRESSES IT**, because `build_blocked_lines` is already saying it on the row
+  - **A BLOCKED BUILD SUPPRESSES IT**, because `build_blocked_lines` is already saying it on the row
     the countdown is about; both would be one instruction twice on one card.
   - Asserted on `improvement_rung_slipped` and sabotage-verified by dropping the append — exactly
     that one claim fails.
@@ -919,8 +909,8 @@ parked meter reads now, and the losing half is the rotting row's.
 
 **The FIVE answers `buildTurnsRemaining` publishes all render** — a count is a finish date, `-2` is an
 amber `∞` (`BUILD_METER_HOLDS`, the meter standing still), `-3` a red one saying *losing ground*
-(`BUILD_METER_ROTS`, the meter going backwards), `-4` is `Blocked` (`BUILD_QUEUE_BLOCKED`, §4.6b — the
-pool staffed and refused, above), `-1` is *no answer*. **`-3` was split out of `-2` and
+(`BUILD_METER_ROTS`, the meter going backwards), `-4` is `Blocked` (`BUILD_TURNS_QUEUE_BLOCKED`, §4.6b — the
+crew staffed and refused, above), `-1` is *no answer*. **`-3` was split out of `-2` and
 this client did not follow for a release**, flattening it back to *no answer* and so rendering a build
 actively bleeding banked work as the STALLED hazard — *a gate refuses this, no crew size fixes it* —
 when the remedy is precisely more hands; the long form is in `labor-ui.md` → "THE SECOND `∞` IS RED".
@@ -952,7 +942,7 @@ state escaping the mark is the bug, and a per-state frame samples rather than cl
 `HerdFx.price_animal_build`), so a fixture that re-dials a meter cannot end up with a percentage and
 an absolute that disagree — which is the one thing this readout exists to make visible.
 
-### A build QUEUED THIS TURN IS NOT A STALLED ONE — the fifth sentinel (`-5`, §4.9)
+### A build DECLARED THIS TURN IS NOT A STALLED ONE — the fifth sentinel (`-5`, §4.9)
 
 `buildTurnsRemaining` carried two facts on one value and the client rendered both as a hazard.
 `sim_schema::BUILD_NOT_YET_ESTIMATED` (`-5`) now separates them:
@@ -960,20 +950,20 @@ an absolute that disagree — which is the one thing this readout exists to make
 | value | what the sim is saying | the face |
 |---|---|---|
 | `-1` `NO_BUILD_TURNS_ESTIMATE` | **the estimate pass RAN and had no number** — nobody on it, a gate refusing, a running build banking nothing | `⚠ Stalled N%`, WARN |
-| `-5` `BUILD_NOT_YET_ESTIMATED` | **no pass has ever run for this entry** — the player queued it since the last turn resolved | `Queued N%`, **neutral INK, no mark** |
+| `-5` `BUILD_NOT_YET_ESTIMATED` | **no pass has ever run for this build** — the player declared it since the last turn resolved | `Declared N%`, **neutral INK, no mark** |
 
-**Reported from play**: a fresh `Cultivate (4, 19)` reading `⚠ Stalled 0%` in the BUILD QUEUE block
-with two builders staffed and nothing wrong, which the next turn then cleared by itself. **A mark that
+**Reported from play**: a fresh `Cultivate (4, 19)` reading `⚠ Stalled 0%` on its Work row
+with its crew staffed and nothing wrong, which the next turn then cleared by itself. **A mark that
 appears when nothing is wrong and vanishes on its own is the worst shape a warning can have** — it
 teaches the player to ignore every other mark, which costs the whole family its meaning (see "THE
 ABSENCE OF A HAZARD IS THE ONLY SIGNAL THAT THINGS ARE FINE" above).
 
 **THE DISTINGUISHING FACT IS THE ESTIMATE PASS, NEVER THE METER, and the client cannot see it.** A
 genuinely stalled build sits at `0%` too, so no progress comparison separates them. What does is that
-`publish_build_chain` stamps every entry it walks with its place in the line and the decay passes
-clear that place each turn — so *live in a band's queue AND still carrying the cleared place* is
-exactly *queued since the last pass*. The client holds neither the queues nor the passes; it reads the
-word the wire sends and re-derives nothing.
+`publish_build_chain` stamps every build it walks and the decay passes clear the stamp each turn — so
+*declared AND still carrying the cleared stamp* is exactly *declared since the last pass*. The client
+holds neither the declarations' history nor the passes; it reads the word the wire sends and
+re-derives nothing.
 
 **IT LANDED INSIDE THE TWO EXISTING FORKS, WHICH IS THE WHOLE POINT OF THEM.**
 `DetailFormat.build_sentinel_value` is the one place a countdown's sentinels are worded and
@@ -987,7 +977,7 @@ the third time, and it is a branch in each rather than a third fork anywhere.
   `BUILD_PACE_UNKNOWN`: no verdict, neutral render.
 - **The tint needed no leaf at all, and that is the tint rule working.** `rung_value_hex` is *red if
   it says the meter is going backwards, amber if it carries the hazard mark, green if it carries the
-  BUILT badge, neutral otherwise*; `Queued N%` carries none of those needles and falls through to
+  BUILT badge, neutral otherwise*; `Declared N%` carries none of those needles and falls through to
   `INK_HEX`. A face that MEANT to be amber would have to earn it by wearing the mark — which is what
   keeps a new state from shipping without its colour, in both directions.
 
@@ -999,9 +989,9 @@ the third time, and it is a branch in each rather than a third fork anywhere.
 | `SourceForecast.build_pace` | the ONE pace classifier | **new `UNKNOWN` arm** (see above) |
 | `build_is_losing` / `build_is_stalled` | written on `build_pace` | unchanged — false for `-5`, so the MAP badge and the work row's rung slot are both quiet |
 | `DetailFormat.build_sentinel_value` | the ONE sentinel wording | **new neutral branch**, tested before `-1` |
-| `build_countdown_value` / `build_completion_value` / `rung_row_value` | all delegate to it | unchanged — the tile card, the herd drawer and the BUILD QUEUE date column follow for free |
+| `build_countdown_value` / `build_completion_value` / `rung_row_value` | all delegate to it | unchanged — the tile card, the herd drawer and the Work row's date column follow for free |
 | `DetailFormat.build_turns_clause` | `<= BUILD_TURNS_NONE_TO_STATE` | unchanged — no clause, which is right |
-| `rung_value_hex` / `rung_value_color` | the one tint rule | unchanged — neutral by the needle test |
+| `rung_value_hex` | the one tint rule | unchanged — neutral by the needle test |
 | `HudWidgets.improvement_pace_color` / `_stops` | read `build_pace` | unchanged — neutral once the arm exists |
 | `SourceForecast.floor_climbing`, `husbandry_payoff_lines` | `> 0` guards | unchanged — every negative already excluded |
 | `MapView` `patch_build_turns_remaining` | verbatim `int` copy | unchanged — the family must survive the copy as itself |
@@ -1009,11 +999,11 @@ the third time, and it is a branch in each rather than a third fork anywhere.
 
 ### A build DECLARED with nobody on it is a fourth state, and it said nothing at all
 
-The `-1` rule above is right and it left a hole. A source **nobody has staffed** answers
+The `-1` rule above is right and it left a hole. A source **whose build nobody has staffed** answers
 `BUILD_TURNS_NO_ESTIMATE`, correctly — nobody has promised anything there — so every meter surface
 rendered no line; and a rung row is gated on `progress > 0`, so at a meter of zero the tile card and
-the herd drawer rendered **no row either**. Reported from play: commit a Cultivate with BUILDERS at
-0 and everything reads as though work is under way — the compose sheet quoting
+the herd drawer rendered **no row either**. Reported from play: declare a Cultivate with no builders
+on the site's crew and everything reads as though work is under way — the compose sheet quoting
 `Cultivating 0 / 50 work (0%)`, a `0%` rung plate on the map — with nothing anywhere saying nothing
 is happening. **A declared-but-unstaffed build is an actionable standing fact, not an absence of
 information**, exactly as the `∞` one state over is.
@@ -1035,10 +1025,9 @@ function rather than four surfaces each deciding for themselves.
 `unstaffed_build_of(progress, crew)` is the same fork asked of an ALREADY-RESOLVED rung, for the map
 badge, which has just resolved both through `RungGates.rung_in_progress`.
 
-**Nothing new is asked of the wire.** The declaration (`LaborAssignment.improvement`, which the sim
-**derives** from the band's build queue), the hands (the band's `builders` row of
-`laborAssignments`, since the per-source `improvementWorkers` retired with the crew it counted —
-`docs/plan_standing_upkeep.md` §2.5) and the meter are all published; the client derives the state.
+**Nothing new is asked of the wire.** The declaration (`LaborAssignment.improvement`), the hands (the
+source row's own `builders_staffed`, with `builders_cap` saying whether a build is declared at all) and
+the meter are all published; the client derives the state.
 
 Four surfaces, and each says it in its own register:
 
@@ -1050,8 +1039,8 @@ Four surfaces, and each says it in its own register:
   from the crew on a state this arc built a whole readout for: a completed Cultivate that later erodes
   below its retention bar carries no declared improvement (completion clears it), so the bool could
   answer *staffed* on a meter nobody is touching and the row wore the amber `⚠ ∞ turns` where the
-  deliberate-hold `Held at 92%` belongs. `HudBandLaborState.build_crew_forage` / `build_crew_hunt` are
-  the folded counts both webs pass.
+  deliberate-hold `Held at 92%` belongs. `SourceForecast.build_crew_staffed` is the count both webs
+  pass.
 - **The herd drawer** takes the rung as a parameter — `herd_summary_lines`' trailing
   `unstaffed_build`, and since §4.6a the `build_crew` beside it — because a pure producer over one herd
   dict cannot see the player's labor row. **On this web `HOLDS` always means parked**: no animal rung
@@ -1059,54 +1048,32 @@ Four surfaces, and each says it in its own register:
   on one.
 - **The compose sheet** puts it in the improvement control's WARN note slot
   (`HudComposeVocab.BUILD_UNSTARTED_NOTE`) and inks the face through the same pace the `∞` uses.
-  **`BUILD_SLIDING_NOTE` is retired**: it filled a silence — at zero builders the sheet's own estimate
-  used to drop out — and `build_turns_at` answers at zero now, so the note would restate the line
-  directly above it and would claim a loss on a meter the player parked.
+  There is no sliding note: at zero builders `build_turns_at` still answers, so a note would restate
+  the line directly above it and would claim a loss on a meter the player parked.
 - **The map badge** drops the percentage for `🌱⚠` in `HudStyle.WARN` — see `overlay-channels.md`.
 
 **The tint is decided ONCE for four rows.** `DetailFormat.BUILD_UNSTAFFED_NEEDLE` is what
 `cultivation_value_hex` / `field_value_hex` / `husbandry_value_hex` / `corral_value_hex` all match,
 and `BUILD_UNSTARTED_VALUE` is BUILT from it, so the words and the test cannot drift.
 
-**THE DECLARATION AND THE CREW ARE TWO DIFFERENT ROWS NOW, AND ONLY ONE OF THEM CAN BE READ
-OPTIMISTICALLY** (§2.5). The declaration is the SOURCE's `LaborAssignment.improvement`; the hands are
-the band's own `builders` role row, which names no source at all. So
-`HudBandLaborState.unstaffed_build_forage` / `_hunt` walk `labor_assignments` for the CONFIRMED
-declaration and read the pool through **`effective_role_workers(band, "builders")`**, which is
-pending-aware.
+**THE DECLARATION AND THE CREW ARE BOTH THE SOURCE'S OWN, AND BOTH ARE CONFIRMED.** The declaration is
+the source's `LaborAssignment.improvement` and the hands are the source row's own `builders_staffed`
+(`SourceForecast.build_crew_staffed`, read by the caller off the dict it holds). So
+`HudBandLaborState.unstaffed_build_forage` / `_hunt` take that crew as a parameter and walk
+`labor_assignments` of the bands that work the source for the CONFIRMED declaration. There is no
+pending overlay for a declaration to read, and the reader composes safely with the pending-aware
+`building_rung` beside it on the tile card — a fresh commit has no confirmed declaration yet, so this
+reader answers nothing.
 
-**THE CREW HALF WAS CONFIRMED FOR A RELEASE, AND THE REASON WRITTEN HERE FOR IT WAS WRONG.** It said
-the pending overlay "carries a declaration and not a role edit" — true of `effective_worker_map`, the
-per-SOURCE map, and FALSE of `effective_role_workers`, the ROLE reader, which has always existed and
-answers exactly this question off `pending_assigns_for`. What the confirmed read actually bought was
-the defect: a player who had just staffed the role read a Builders card saying `2` beside a compose
-sheet saying *"⚠ Not started — nobody is on this band's Builders role"* until the turn resolved — two
-surfaces on one screen, and the stale one phrased as an accusation. **A pending role edit cannot be
-refused** (`assign_labor` clamps the count rather than rejecting it), so the optimistic read can only
-ever silence a warning that was about to stop being true.
-
-**The DECLARATION stays confirmed**, and that is not the same compromise: there is no pending overlay
-for it to read, and it composes safely with the pending-aware `building_rung` beside it on the tile
-card — a fresh commit has no confirmed declaration yet, so this reader answers nothing.
-
-**`build_crew_forage` / `build_crew_hunt` beside it stay CONFIRMED, deliberately.** They do not decide
-whether to warn; they choose the WORDING of a verdict the wire already computed (`BUILD_METER_HOLDS`
+**The crew also chooses only the WORDING of a verdict the wire already computed** (`BUILD_METER_HOLDS`
 is a crew treading water or a build parked on purpose), and that verdict was resolved against the
 confirmed crew. Reading an optimistic crew there would classify last turn's number with next turn's
 hands.
 
-**THE POOL IS FOLDED OVER THE BANDS THAT WORK THE SOURCE, NEVER OVER EVERY BAND.**
-`HudBandLaborState.build_crew_forage` / `build_crew_hunt` sum `workers_for_role(band, "builders")`
-across the bands holding an assignment on THIS source, because the question these surfaces ask is *is
-anybody building this* — a fact about the source. Folding the whole faction's builders would put a
-crew on every source on the map the moment one band staffed the role. The COMPOSE SHEET asks a
-different question (*what would MY band's pool make of it*) and answers it with one band's, which is
-why the two readings differ and must (`labor-ui.md` → "The build's closed form").
-
-**Declaring with no builders stays LEGAL, and withdrawing is `unqueue`.** Ticking the box appends a
-queue entry, which costs nothing and loses nothing while it waits; unticking sends
-`unqueue <faction> <source>` and drops it. The bug this state was written for was that a declaration
-was invisible, not that it was possible, so nothing here blocks a commit.
+**Declaring with no hands free stays LEGAL, and stopping is `unqueue`.** Declaring costs nothing and
+loses nothing while the build waits for hands; the crew chip's stop sends
+`unqueue <faction> <source>` and withdraws it. The bug this state was written for was that a
+declaration was invisible, not that it was possible, so nothing here blocks a declaration.
 
 **Frames + assertions.** `tile_build_unstaffed` (`chapters/improvements.gd`) carries the tile card's
 row as word-AND-tint markup, the sheet's note, and the NEGATIVE that names the defect — the build's

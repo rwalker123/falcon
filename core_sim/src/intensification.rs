@@ -733,7 +733,7 @@ pub enum BuildGate {
     /// gathering-site rule, and the same term in a projection's gate. The other three rung arms
     /// carry no site term: rungs 1–2 are already standing on ground a crew was allowed onto.
     Site,
-    /// **The band's queue entry does not name the rung its meter is on** — `Sow`'s
+    /// **The band's declared build does not name the rung its meter is on** — `Sow`'s
     /// `declared == Some(the `sow` verb)` term. Reachable where a patch's newest meter derives a
     /// rung the entry never declared, and the remedy is to re-queue the job the ground is actually
     /// half-way through.
@@ -872,7 +872,7 @@ pub struct BuildQuote {
     pub material_coverage: f32,
 }
 
-/// **ONE STEP OF A QUEUE ENTRY'S CLIMB** — a rung the entry has still to raise, and what it owes on
+/// **ONE STEP OF A DECLARED BUILD'S CLIMB** — a rung the entry has still to raise, and what it owes on
 /// it *from where the source stands now* (`docs/plan_standing_upkeep.md` §2.8).
 ///
 /// # ⛔ THE WORK IS REMAINING, NOT THE RUNG'S SPAN
@@ -891,16 +891,16 @@ pub struct BuildLeg {
 /// **A LEG AS THE WIRE CARRIES IT** — a [`BuildLeg`] with the **chained** countdown the publish pass
 /// stamps on it.
 ///
-/// The chain is the queue's own arithmetic one level down: a leg's turns are everything above it
-/// plus its own span at the band's full builders pool, so the last leg's number equals the entry's
+/// The chain is within one build: a leg's turns are everything above it in the climb
+/// plus its own span at the build's crew, so the last leg's number equals the build's
 /// `buildTurnsRemaining`. It is separate from `BuildLeg` because the work is a fact about the
-/// *source* while the date is a fact about the *queue*, and only the publish pass can see the latter.
+/// *source* while the date is a fact about the *crew*, and only the publish pass can see the latter.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct PublishedBuildLeg {
     pub leg: BuildLeg,
     /// `None` is the wire's *"no estimate"*, exactly as the entry's own countdown uses it.
     pub turns: Option<BuildTurns>,
-    /// **Turns before this leg starts banking** — everything above it on the queue's running sum,
+    /// **Turns before this leg starts banking** — everything above it on the climb's running sum,
     /// the same sum [`Self::turns`] ends on. `None` where the leg cannot be dated.
     pub starts_after: Option<u32>,
     /// **Work this leg banks per turn once it starts** — the entry's `balance` at the full pool
@@ -1086,9 +1086,9 @@ impl BuildQuote {
     }
 }
 
-/// **NOT IN ANY BAND'S BUILD QUEUE** — the neutral of a source's published `buildQueuePosition`
-/// (`docs/plan_standing_upkeep.md` §4.6b). A real position is 0-based, so the sentinel sits outside
-/// the range the same way the countdown's negatives do.
+/// **NO ESTIMATE PASS HAS DATED A BUILD HERE** — the neutral of a source's `build_queue_position`
+/// scratch stamp (`docs/plan_standing_upkeep.md` §4.6b); the pass writes `ESTIMATE_PASS_RAN` over
+/// it, so the sentinel sits outside the stamped value the same way the countdown's negatives do.
 pub const NOT_IN_ANY_BUILD_QUEUE: i32 = -1;
 
 /// **THE BALANCE AT WHICH A METER NEITHER GROWS NOR ROTS** — a crew banking exactly what the meter
@@ -1559,7 +1559,7 @@ impl RungStanding {
     /// rung's top: the rung held in full, raising whatever sits above it at no credit.
     ///
     /// It is what a **destination** reading is struck at (`forage::patch_destination_capacity`,
-    /// `fauna::herd_destination_capacity`): a queue entry names the rung its climb ends on, and
+    /// `fauna::herd_destination_capacity`): a declared build names the rung its climb ends on, and
     /// every per-rung quantity is [`interpolate`]d, which at [`NO_RUNG_CREDIT`] answers exactly
     /// `value_at(rung)`. So the destination figure and the live one are **one expression at two
     /// standings**, never two formulas that agree today.
@@ -2197,6 +2197,13 @@ pub struct RungBuild {
     /// *bigger* by declaring the crew *worse*. Validated finite and `> 0` — a zero would silently
     /// make the rung free.
     pub work_cost: f32,
+    /// **HOW MANY HANDS CAN WORK THIS RUNG AT ONCE** (`docs/plan_labor_at_scale.md` → "Builds join the
+    /// site's crew"). A farm takes up to four sowers; a build never takes more, however much work is
+    /// left, so a big job is a long one rather than a crowd. Required on every rung with a `build`
+    /// block — there is no default, because a cap nobody chose is a number nobody can find the dial
+    /// for. Validated `> 0`: a zero would make the rung unbuildable while reading like a live dial.
+    /// A source's tile may cut the crew further (`labor_config.json` → `tile_worker_cap`).
+    pub max_builders: u32,
     /// **The neglect GRACE — the UN-WORKED-BUILD trigger, which is now the ANIMAL branch's alone.**
     /// How many consecutive turns a source may go un-worked before this rung's neglect penalty
     /// starts. The penalty applies only while the source's `neglect_turns` counter is **strictly
@@ -2989,7 +2996,7 @@ impl RungDef {
     /// sooner as the faction puts more hands or better tools on it, which is the progression
     /// statement the normalized meter could not make.
     ///
-    /// # `workers` is the BAND'S BUILDERS POOL, and there is no cap
+    /// # `workers` is the BAND'S BUILD CREW, and there is no cap
     ///
     /// `LaborAllocation::workers_on(&LaborTarget::Builders)` — **not** the take crew this build
     /// rides beside, and the whole of it, because the pool funds only the **head** of the band's
@@ -3005,8 +3012,8 @@ impl RungDef {
     ///
     /// [`learn_multiplier`] used to scale this, on the rule *"a crew pulling hard on the source it is
     /// improving builds slowly"*. **That rule was written when ONE crew did both jobs.** The builders
-    /// are a band-level pool now ([`crate::components::LaborTarget::Builders`]) and are not pulling
-    /// on anything — and a pool raising a source nobody is harvesting has **no floor to read at
+    /// are a crew of their own now and are not pulling
+    /// on anything — and a crew raising a source nobody is harvesting has **no floor to read at
     /// all**, so the term would have to be invented from a default nobody chose. The floor stays where it still means something:
     /// [`RungDef::knowledge_accrual`], where *how much you leave standing shapes what you learn*.
     ///
@@ -3140,7 +3147,7 @@ impl RungDef {
     ///
     /// **`leg_width` is THIS SOURCE'S priced width**, the same number `forage::patch_build_legs`
     /// computes, so a Field leg quoted at a share multiplier draws its pile over that width rather
-    /// than the ladder's declared one. A queue entry spanning two legs asks each leg's own rung.
+    /// than the ladder's declared one. A declared build spanning two legs asks each leg's own rung.
     pub fn build_material_draw(&self, material: &str, accrual: f32, leg_width: f32) -> f32 {
         if leg_width <= 0.0 || accrual <= 0.0 {
             return NOTHING_DEMANDED;
@@ -3260,8 +3267,8 @@ impl RungDef {
     /// declared an upkeep kept the crew that raised it, and one that declared none freed them. **That
     /// hand-off is retired** (`docs/plan_standing_upkeep.md` §2.3), and twice over — the keeping bill
     /// starts at the **first work banked** rather than at completion (§4.6a), and the builders never
-    /// stood on the source to be handed anywhere (§2.5). What completion does now is **retire the
-    /// entry from the band's build queue**, which hands the pool to whatever the player put next.
+    /// stood on the source to be handed anywhere (§2.5). What completion does now is **end the
+    /// declaration**, which lets staffing deal those hands elsewhere.
     ///
     /// **`true` on all four managed rungs** — `plant:tended`, `plant:farm`, `animal:pastoral` and
     /// `animal:pen` each declare one. Only the two `wild` rungs answer `false`, and nothing is ever
@@ -4096,7 +4103,7 @@ impl LadderConfig {
     }
 
     /// A rung of this ladder by identity. Infallible for an id that came from the ladder itself - a
-    /// standing's `held` / `raising`, a queue entry's `Climb`, a record's `rung_id()` - and a
+    /// standing's `held` / `raising`, a declared build's `Climb`, a record's `rung_id()` - and a
     /// fault in the caller for one that did not (an id a config no longer defines).
     pub fn rung(&self, id: RungId) -> &RungDef {
         self.rung_by_id(id)
@@ -4429,7 +4436,7 @@ impl LadderConfig {
     }
 
     /// **THE SUBJECT AREA A BRANCH SITS UNDER** — the one accessor every reader goes through, so
-    /// the day an area is *derived* rather than declared only this body changes.
+    /// the day an area is *derived* rather tha declared only this body changes.
     ///
     /// `""` when the branch has no descriptor, or one naming no area. That is a **live fallback and
     /// not an error**: the knowledge still draws, under the client's fallback heading
@@ -5594,7 +5601,7 @@ fn validate_route_payoff(
 
 /// **A TILE RUNG IS BUILT AND KEPT WITH WORK ALONE, AND THE REFUSAL IS THE POINT.** A tile
 /// improvement's keeping is paid out of the keeper band's `Roadwork` pool, which settles work, and
-/// its build is struck against the builders' pool with no material pile (`tile_improvement`'s module
+/// its build is struck against the build crew with no material pile (`tile_improvement`'s module
 /// note). A material on a tile rung would parse, validate, publish a demand and be paid by nobody -
 /// the *"looks live but isn't"* failure this file is written against - so it is refused until a
 /// settle pass exists to pay it, and this check is then deleted deliberately.
@@ -6012,6 +6019,15 @@ fn validate_build(rung: &RungDef, where_: &str) -> Result<(), LadderConfigError>
     let Some(build) = rung.build.as_ref() else {
         return Ok(());
     };
+    if build.max_builders == 0 {
+        return Err(LadderConfigError::Invalid {
+            field: where_.to_string(),
+            constraint: "take at least one builder at once — a zero `max_builders` makes the rung \
+                         unbuildable while reading like a live dial"
+                .to_string(),
+            value: format!("max_builders = {}", build.max_builders),
+        });
+    }
     if !build.work_cost.is_finite() || build.work_cost <= 0.0 {
         return Err(LadderConfigError::Invalid {
             field: where_.to_string(),

@@ -291,11 +291,6 @@ static func gear_short_line(root: Node) -> String:
 	var line := Q.find_live_meta_node(root, HudComposeVocab.GEAR_SHORT_LINE_META)
 	return "" if line == null else String(line.get_meta(HudComposeVocab.GEAR_SHORT_LINE_META))
 
-## **RETIRED — `build_crew_value` / `build_crew_can_add` / `build_crew_plus` / `_build_crew_minus`,
-## the BUILDERS stepper's own readers** (`docs/plan_standing_upkeep.md` §2.5). They existed because a
-## sheet carried TWO steppers sharing one source pool, and `stepper_value` above takes the first `−`
-## it finds. A verb declares and names no crew now, so there is one stepper again — and the claim that
-## replaced theirs is `stepper_count` below, which is an assertion about there being no second one.
 
 ## **HOW MANY STEPPERS THIS SHEET MOUNTS**, counted by the `−` faces `HudWidgets.add_max_stepper`
 ## builds. The answer is ONE on every compose sheet in the game (`COMPOSE_STEPPERS_PER_SHEET`) - the

@@ -76,6 +76,9 @@ pub fn answer_forecast_query(world: &mut World, query: &QueryPayload) -> QueryRe
         ),
         QueryPayload::DepositCrewTake(ask) => answer_deposit_crew_take(world, ask),
         QueryPayload::ForageCrewTake(ask) => answer_forage_crew_take(world, ask),
+        QueryPayload::StaffingPreview(ask) => {
+            crate::staffing_preview::answer_staffing_preview(world, ask)
+        }
         // **Answered by the server, from disk.** The slot list is a question about the filesystem,
         // not about a world — it has no `World` to resolve against and must be answerable while the
         // server is idle, which is exactly when a player opens the load menu. Reaching here means
@@ -1492,7 +1495,7 @@ fn answer_work_party_forecast(
     // **The band's declared climb on this source** answers for a meter at zero, as it does for the
     // turn and the seed: a crew raising `tame` on an unstarted herd keeps it from the first turn.
     let declared = crate::components::BuildSource::of(&target)
-        .and_then(|source| allocation.build_queue_entry(&source))
+        .and_then(|source| allocation.build_declaration(&source))
         .and_then(|entry| match entry.declared {
             crate::components::BuildJob::Climb(rung) => Some(rung),
             // Neither "work on a rung already held" kind raises a rung.

@@ -426,13 +426,6 @@ static func floor_hint(floor: float, kind: String) -> String:
 ## A 0..1 progress track (knowledge / domestication) as a whole percent. 0 is a MEANINGFUL reading in
 ## a gate reason — it tells the player they haven't started the track at all.
 ##
-## ⛔ **IT FLOORS, AND `round()` HERE WAS A DEFECT.** Every caller of this helper is a COMPLETION
-## meter — a knowledge track, the crafting track, a pen's fencing, the four build meters, the rung
-## gates — and in all of them `100%` means *this is finished*. Rounding let an unfinished thing claim
-## it was: a Field at `49.612 / 49.624 work` (0.9997586) printed `100`, and because that Field had
-## gone feral the turn after it completed and its queue entry had already retired, the card read
-## `⚠ Stalled 100%` and stayed there with nothing able to move it. A player reading a full meter has
-## no reason to look for the work that is missing.
 ##
 ## **THE `clampf` ABOVE IS WHAT MAKES FLOORING SAFE AT THE TOP END, and it is not incidental.** A
 ## genuinely complete source publishes `>= 1.0` — often a hair over — so the clamp pins it to exactly

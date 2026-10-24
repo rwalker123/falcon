@@ -1,6 +1,9 @@
 //! Population-section FlatBuffers serialization.
 
-use crate::codec::subsistence::{create_upkeep_toe, decode_material_payoffs, decode_upkeep_toe};
+use crate::codec::subsistence::{
+    create_build_toe, create_upkeep_toe, decode_build_toe, decode_material_payoffs,
+    decode_upkeep_toe,
+};
 use crate::codec::{
     create_known_fragments, decode_known_fragments, decode_rows, decode_scalars, decode_strings,
     map_rows, map_rows_if_present, text, unknown_enum, DecodeError, FbBuilder,
@@ -10,14 +13,13 @@ use crate::state::population::{
     AccessibleStockpileEntryState, AccessibleStockpileState, BandImprovementState,
     BandKitCrewState, BandKitTiersState, BandLoadoutSupplyRowState, BandLoadoutWindowState,
     BenchKitOrderState, BenchOrderState, BenchState, BreedingMemberState, BreedingPeopleState,
-    BuildQueueEntryState, CharacteristicReadingState, CohortStoreState, CraftOfferState,
-    CraftSuggestionSourceState, CraftSuggestionState, CulturePressureState, DrawnInputState,
-    EquipmentBatchState, GenerationState, HarvestTaskState, KeepingMealState,
-    KitItemConditionState, KitNeedItemState, KitNeedRecipeState, KitNeedState, KitToeLineState,
-    LaborAssignmentState, MaterialAmountState, MaterialBatchState, MaterialShortfallState,
-    PoolCrewLineState, PoolToeLineState, PoolingLinkState, PopulationCohortState,
-    PopulationDemographicsState, ScoutTaskState, SettlementStageViewState, SourcePriorityState,
-    TransferCrossingState, WorkKitWantState,
+    CharacteristicReadingState, CohortStoreState, CraftOfferState, CraftSuggestionSourceState,
+    CraftSuggestionState, CulturePressureState, DrawnInputState, EquipmentBatchState,
+    GenerationState, HarvestTaskState, KeepingMealState, KitItemConditionState, KitNeedItemState,
+    KitNeedRecipeState, KitNeedState, KitToeLineState, LaborAssignmentState, MaterialAmountState,
+    MaterialBatchState, MaterialShortfallState, PoolCrewLineState, PoolToeLineState,
+    PoolingLinkState, PopulationCohortState, PopulationDemographicsState, ScoutTaskState,
+    SettlementStageViewState, SourcePriorityState, TransferCrossingState, WorkKitWantState,
 };
 use crate::state::subsistence::BuildLegState;
 use crate::world::{WorldDelta, WorldSnapshot};
@@ -517,58 +519,6 @@ fn create_populations<'a>(
             let kit_id = builder.create_string(&cohort.kit_id);
             // The band's maintenance fund mode — a string, so a third mode needs no schema change.
             let upkeep_fund_mode = Some(builder.create_string(&cohort.upkeep_fund_mode));
-            // **THE BAND'S OWN BUILD QUEUE, IN THE BAND'S OWN ORDER** (§4.9 item 9a) — the rank is
-            // the index, so the vector is written verbatim and nothing here sorts or filters it.
-            // **Absent rather than an empty vector** when the band has declared nothing, the
-            // `laborAssignments`/`takeSpecies` convention: an absent vector reads as empty, and
-            // empty *is* "this band is building nothing".
-            // **Built before the parent table opens**, the ordinary FlatBuffers rule.
-            let build_queue = if cohort.build_queue.is_empty() {
-                None
-            } else {
-                let entries: Vec<_> = cohort
-                    .build_queue
-                    .iter()
-                    .map(|entry| {
-                        let kind = builder.create_string(&entry.kind);
-                        // A forage entry names its tile and no herd — absent rather than `""`, the
-                        // same reading `LaborAssignment::faunaId` takes.
-                        let fauna_id = if entry.fauna_id.is_empty() {
-                            None
-                        } else {
-                            Some(builder.create_string(&entry.fauna_id))
-                        };
-                        // **THE ENTRY'S BUILD MARK** (`docs/plan_site_crews.md` §2.4).
-                        let build_priority = builder.create_string(&entry.build_priority);
-                        // **WHICH SITE ON THE TILE** — a working's material, absent off a working,
-                        // `faunaId`'s reading.
-                        let material = if entry.material.is_empty() {
-                            None
-                        } else {
-                            Some(builder.create_string(&entry.material))
-                        };
-                        // The branch of a per-tile entry, absent off one - `material`'s reading.
-                        let branch = if entry.branch.is_empty() {
-                            None
-                        } else {
-                            Some(builder.create_string(&entry.branch))
-                        };
-                        fb::BuildQueueEntryState::create(
-                            builder,
-                            &fb::BuildQueueEntryStateArgs {
-                                kind: Some(kind),
-                                targetX: entry.target_x,
-                                targetY: entry.target_y,
-                                faunaId: fauna_id,
-                                buildPriority: Some(build_priority),
-                                material,
-                                branch,
-                            },
-                        )
-                    })
-                    .collect();
-                Some(builder.create_vector(&entries))
-            };
             // **The TOE, one row per item.** Built before the cohort table like every other nested
             // vector: FlatBuffers forbids writing a child table while a parent is open.
             let kit_item_conditions = {
@@ -1170,7 +1120,6 @@ fn create_populations<'a>(
                     upkeepFundMode: upkeep_fund_mode,
                     // THE BAND'S OWN BUILD QUEUE — appended last. The rank is the index, so this
                     // vector's ORDER is the payload; a reader must not re-sort it.
-                    buildQueue: build_queue,
                     // The band's hay ledger — appended last, always written. `fodderNeed` is the
                     // GAP the pens' own footprints leave, `fodderIncome` the raw harvest beside it,
                     // and the runway is `turnsOfFood`'s own function and sentinel over the two.
@@ -1468,7 +1417,6 @@ fn create_craft_suggestions<'a>(
                             missingUnits: source.missing_units,
                             workersWithout: source.workers_without,
                             workPerTurn: source.work_per_turn,
-                            queuePosition: source.queue_position,
                         },
                     )
                 })
@@ -2000,15 +1948,6 @@ fn decode_population(
         transfer_received_turn: cohort.transferReceivedTurn(),
         transfer_sent_turn: cohort.transferSentTurn(),
         upkeep_fund_mode: text(cohort.upkeepFundMode()),
-        build_queue: map_rows(cohort.buildQueue(), |entry| BuildQueueEntryState {
-            kind: text(entry.kind()),
-            target_x: entry.targetX(),
-            target_y: entry.targetY(),
-            fauna_id: text(entry.faunaId()),
-            build_priority: text(entry.buildPriority()),
-            material: text(entry.material()),
-            branch: text(entry.branch()),
-        }),
         fodder_need: cohort.fodderNeed(),
         fodder_income: cohort.fodderIncome(),
         turns_of_fodder: cohort.turnsOfFodder(),
@@ -2099,7 +2038,6 @@ fn decode_population(
                     missing_units: source.missingUnits(),
                     workers_without: source.workersWithout(),
                     work_per_turn: source.workPerTurn(),
-                    queue_position: source.queuePosition(),
                 }),
                 shortfalls: decode_shortfalls(suggestion.shortfalls()),
                 upcoming_count: suggestion.upcomingCount(),
@@ -2206,6 +2144,10 @@ fn decode_population(
             upkeep_hands: row.upkeepHands(),
             upkeep_tools_short: row.upkeepToolsShort(),
             upkeep_toe: decode_upkeep_toe(row.upkeepToe()),
+            builders_staffed: row.buildersStaffed(),
+            builders_kitted: row.buildersKitted(),
+            builders_cap: row.buildersCap(),
+            build_toe: decode_build_toe(row.buildToe()),
             is_queued: row.isQueued(),
         }),
     })
@@ -2331,6 +2273,7 @@ fn create_band_improvements<'a>(
             let build_legs = builder.create_vector(&leg_offsets);
             let build_blocked_reason = builder.create_string(&row.build_blocked_reason);
             let upkeep_toe = create_upkeep_toe(builder, &row.upkeep_toe);
+            let build_toe = create_build_toe(builder, &row.build_toe);
             fb::BandImprovementState::create(
                 builder,
                 &fb::BandImprovementStateArgs {
@@ -2350,6 +2293,10 @@ fn create_band_improvements<'a>(
                     upkeepHands: row.upkeep_hands,
                     upkeepToolsShort: row.upkeep_tools_short,
                     upkeepToe: upkeep_toe,
+                    buildersStaffed: row.builders_staffed,
+                    buildersKitted: row.builders_kitted,
+                    buildersCap: row.builders_cap,
+                    buildToe: build_toe,
                     isQueued: row.is_queued,
                 },
             )

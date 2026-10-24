@@ -294,7 +294,7 @@ table exists to make impossible.
 >   `net_ratio = (steady_income − demand) / demand`, so surplus *raises* fertility as well as deficit
 >   lowering it. **`steady_income` is Σ per-source `SourceYield.realized`, never Σ `actual`** —
 >   `actual` is lumpy by design (a big-game hunt pays 0 for six turns then spikes) and fertility must
->   not sawtooth with whole-animal timing. It is the negation of the same net drain `turnsOfFood`
+>   not sawtooth with whole-animal timing. The one exception is a need row (follow-the-herd hunt), read at its `sustainable` because its `realized` is 0 on every waiting turn (`need_row_contributes_sustainable_to_steady_income`; `work-party.md` -> "Hunting by need"). It is the negation of the same net drain `turnsOfFood`
 >   divides by, so a band whose panel shows a shrinking runway is exactly a band whose `trend` is
 >   below 1 — the two readouts cannot disagree about direction.
 >   > **`FoodFlow::pen_feed_upkeep` is RETIRED, and so is the runway's copy of it.** Both subtracted

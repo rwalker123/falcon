@@ -276,10 +276,6 @@ const ANIMAL_CORRAL_WORK_COST := 75.0
 ## reading and renders as no line at all.
 const ANIMAL_BUILD_TURNS_REMAINING := 6
 
-## **WHAT THIS HERD'S BUILDERS ADD WITH THE HANDLING GEAR, PER TURN** — the shipped `crook`'s `plain`
-## tier at `BandFx.KIT_BUILD_WORK_HANDLING` (0.5) per equipped worker, over the reference two-keeper
-## crew, so `2 × 0.5` = 1.0. **The animal web is where this readout is judged**, no plant item
-## declaring the stat yet (issue #539).
 ##
 ## ⛔ **IT WAS `17.0` — `2 × 8.5` UNDER THE RETIRED SUBTRACTION** (`docs/plan_standing_upkeep.md`
 ## §4.8). `buildWorkFromGear` was *what the tools took OFF the job* and is *what the pool's kits ADD
@@ -320,7 +316,7 @@ static func price_animal_build(fixture: Dictionary,
 	# **AND WHERE IT SITS IN THE BAND'S QUEUE** (`docs/plan_standing_upkeep.md` §4.6b), the plant
 	# twin's rule: the sim publishes a countdown only for a source some band has queued, so a priced
 	# build with the sentinel position would stage a countdown belonging to no entry.
-	fixture["build_queue_position"] = SourceForecast.BUILD_QUEUE_HEAD
+	fixture["builders_cap"] = 3
 	return fixture
 
 ## **NO ANIMAL RUNG CAN LOSE METER, SO THIS IS A CONSTANT AND NOT A PARAMETER**

@@ -21,17 +21,17 @@ pub(crate) fn regrowth_samples_packed(
     packed
 }
 
-/// One queue entry's remaining CLIMB, as the `{rung, work_remaining, turns_remaining}` rows GDScript
-/// walks. **A source that is not queued publishes an EMPTY vector, and that is a real answer** — an
-/// absent leg list means "nothing is headed anywhere here", which is what the destination picker
-/// renders as *no chosen path* rather than as a climb with no legs left.
+/// One declared build's remaining CLIMB, as the `{rung, work_remaining, turns_remaining}` rows
+/// GDScript walks. **A source with no build declared publishes an EMPTY vector, and that is a real
+/// answer** — an absent leg list means "nothing is headed anywhere here", which is what the
+/// destination picker renders as *no chosen path* rather than as a climb with no legs left.
 ///
 /// ⛔ **NOTHING HERE IS DERIVED.** `workRemaining` is the leg's owing FROM WHERE THE SOURCE STANDS
 /// (a patch 30 units into a Cultivate owes 20, not 50 — a previous improvement is a receipt, not a
-/// discount) and `turnsRemaining` is CHAINED behind the legs above it against a build queue the
-/// client cannot see. A client that reconstructed either would be a second producer of a verdict
-/// that already has one, which is the failure the whole `buildTurnsRemaining` family exists to stop.
-/// The negatives are the same four the countdown carries and are passed through VERBATIM.
+/// discount) and `turnsRemaining` is CHAINED by the sim behind the legs above it. A client that
+/// reconstructed either would be a second producer of a verdict that already has one, which is the
+/// failure the whole `buildTurnsRemaining` family exists to stop. The negatives are the same four
+/// the countdown carries and are passed through VERBATIM.
 fn build_legs_to_array(
     legs: Option<Vector<'_, ForwardsUOffset<fb::BuildLegState<'_>>>>,
 ) -> VarArray {
@@ -229,34 +229,15 @@ pub(crate) fn herds_to_array(
             "regrowth_samples",
             &regrowth_samples_packed(herd.regrowthSamples()),
         );
-        // HOW MANY MORE TURNS the running build needs, at the crew, floor and kit that worked this
-        // herd. **`-1` IS "NO ESTIMATE" AND MUST RENDER AS NOTHING AT ALL** — a stalled build has no
-        // finite answer, and a `0` in its place is a promise. The client CANNOT compute it (it holds
-        // neither the crew's output, nor the floor multiplier, nor the kit's contribution), so the
-        // sim answers, exactly as it does for the yield forecast.
-        // **FIVE NEGATIVES, FIVE FACTS** — `-1` is *no estimate*, `-2` is *the meter holds exactly
-        // where it is*, `-3` is *the meter is going backwards*, `-4` is *the builders are staffed and
-        // standing on this entry, and its own gate refuses it*, and `-5` is *the player queued this
-        // since the last turn resolved, so no estimate pass has ever run for it*
-        // (`sim_schema::{NO_BUILD_TURNS_ESTIMATE, BUILD_METER_HOLDS, BUILD_METER_ROTS,
-        // BUILD_QUEUE_BLOCKED, BUILD_NOT_YET_ESTIMATED}`). Passed through verbatim so GDScript reads
-        // the sim's own answer rather than deriving a second opinion — and **every one of them has to
-        // be READ on the other side**: the client accepted the first two and flattened `-3` back to
-        // *no estimate*, which rendered a bleeding build as no line at all, then did the same to `-5`
-        // and put the `⚠ Stalled 0%` hazard on a build queued one command ago. `-4` arrived with the
-        // build QUEUE (`docs/plan_standing_upkeep.md` §4.6b) and `-5` with §4.9; neither is derivable
-        // client-side — the other three are arithmetic about one meter, and neither a queue nor an
-        // estimate pass is arithmetic.
         let _ = dict.insert("build_turns_remaining", herd.buildTurnsRemaining() as i64);
-        // **WHERE THIS SOURCE SITS IN THE WINNING BAND'S BUILD QUEUE** — 0-based, and
-        // `sim_schema::NOT_IN_ANY_BUILD_QUEUE` (`-1`) when no band has queued it
-        // (`docs/plan_standing_upkeep.md` §4.6b). The whole `builders` pool goes on the HEAD of a
-        // band's queue until that entry's meter fills, so `build_turns_remaining` above is a CHAINED
-        // date — everything ahead of this entry plus its own span — and without this field that date
-        // is an exact number with no explanation. **It rides the SAME winner** as
-        // `build_turns_remaining` and `build_work_from_gear`: several bands may work one source, the
-        // sooner estimate wins, and all three come from that band, so the three are read as one set.
-        let _ = dict.insert("build_queue_position", herd.buildQueuePosition() as i64);
+        // The site's own crew builds; there is no queue.
+        crate::dict::population::insert_build_crew(
+            &mut dict,
+            herd.buildersStaffed(),
+            herd.buildersKitted(),
+            herd.buildersCap(),
+            herd.buildToe(),
+        );
         // **WHY THAT QUEUE IS BLOCKED HERE** — `""` whenever this herd is not a blocked build, else a
         // short lowercase cause key (`escapement`, `knowledge`, `rung_below`, `species_ceiling`,
         // `owned_by_other`, `ring_idle`, `undeclared`, `unworked`; the `.fbs` comment on
@@ -284,11 +265,6 @@ pub(crate) fn herds_to_array(
         // Hunting by need (#798): the keeping class this herd's meat lands in; pairs with the band's
         // `hunt_meals` entry of the same `keeping` to size a hunting crew. Empty when unresolved.
         let _ = dict.insert("keeping", herd.keeping().unwrap_or_default());
-        // **WHERE THE PLAYER SENT THIS HERD, AND WHAT IS LEFT OF THE CLIMB**
-        // (`docs/plan_standing_upkeep.md` §2.8). A queue entry names a DESTINATION rung rather than a
-        // single rung — the four verbs always were destinations — so the entry stays at the head
-        // until the source reaches this rung's top, and `build_legs` is what it still owes on the way
-        // there. `""` / `[]` when no band has queued this herd.
         //
         // **THE ANIMAL WEB STILL CARRIES PER-RUNG METERS**, so an entry here is always ONE leg. The
         // field ships on both tables anyway, and the client walks a list either way, so the day this
@@ -946,10 +922,14 @@ pub(crate) fn forage_patches_to_array(
         // `-4` the queue is blocked on it, `-5` it is queued and the sim has not looked yet. See the
         // herd row for why each of the five has to be read as itself on the other side.
         let _ = dict.insert("build_turns_remaining", patch.buildTurnsRemaining() as i64);
-        // The plant twin of the herd row's queue position — 0-based, `-1` = in no band's queue. See
-        // there for why the countdown beside it is a CHAINED date and why the three build fields are
-        // read as one set off one winning band.
-        let _ = dict.insert("build_queue_position", patch.buildQueuePosition() as i64);
+        // The plant twin of the herd row's builders block.
+        crate::dict::population::insert_build_crew(
+            &mut dict,
+            patch.buildersStaffed(),
+            patch.buildersKitted(),
+            patch.buildersCap(),
+            patch.buildToe(),
+        );
         // The plant twin of the herd row's blocked CAUSE — `""` when this patch is not a blocked
         // build, else the key naming the conjunct that refused (`escapement`, `knowledge`, `no_crop`,
         // `site`, `owned_by_other`, `undeclared`, `unworked`). See the herd block for why it is read
@@ -1397,6 +1377,8 @@ pub(crate) fn ladder_rungs_to_array(
         let _ = dict.insert("earns_knowledge", rung.earnsKnowledge().unwrap_or_default());
         let _ = dict.insert("requires_rung", rung.requiresRung().unwrap_or_default());
         let _ = dict.insert("work_cost", f64::from(rung.workCost()));
+        // "Up to N builders at once" -- the rung's own builder cap (0 on a rung with no build).
+        let _ = dict.insert("max_builders", i64::from(rung.maxBuilders()));
         let _ = dict.insert("upkeep_work_per_turn", f64::from(rung.upkeepWorkPerTurn()));
         // The rung's declared pile and its noun are ONE reading: decoded together, read together.
         let _ = dict.insert("build_material_cost", f64::from(rung.buildMaterialCost()));
@@ -1530,6 +1512,13 @@ pub(crate) fn tile_improvements_to_array(
             &crate::dict::population::kit_toe_to_array(row.upkeepToe()),
         );
         let _ = dict.insert("is_queued", row.isQueued());
+        crate::dict::population::insert_build_crew(
+            &mut dict,
+            row.buildersStaffed(),
+            row.buildersKitted(),
+            row.buildersCap(),
+            row.buildToe(),
+        );
         array.push(&dict.to_variant());
     }
     array

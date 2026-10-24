@@ -544,6 +544,15 @@ pub struct LaborConfig {
     /// the same people on the same ground. A second travel rate for a party would be two answers to
     /// one question.
     pub band_move_tiles_per_turn: u32,
+    /// **THE MOST HANDS ONE TILE HOLDS** (`docs/plan_labor_at_scale.md` → "Builds join the site's
+    /// crew"). Keepers, builders and harvesters of every band working a source on the tile count
+    /// together, and staffing never puts the total past this. The sources it bounds are the tile-bound
+    /// ones (a patch, a deposit, a tile improvement, a herd at its current tile, a road build); a band
+    /// improvement sits on the band and the Roadwork keeping pool is band-wide, so neither is counted.
+    /// Bands are staffed in a deterministic order and a later band sees only the room earlier ones
+    /// left. Validated `>= 1`: a zero would leave every tile unworkable. A playtest lever (opening
+    /// value 12).
+    pub tile_worker_cap: u32,
     /// **The forward-projection horizon for a source's steady `realized` yield**, in turns. Each
     /// source's `SourceYield::realized` is the *average food/turn it will deliver over the next N
     /// turns*, computed by simulating the herd/patch forward N turns from its CURRENT state under the
@@ -618,6 +627,15 @@ impl LaborConfig {
                     "be at least 1 (the arrival-schedule forward-projection horizon in turns)"
                         .to_string(),
                 value: self.arrivals_horizon_turns.to_string(),
+            });
+        }
+        // A zero cap would leave every tile unworkable.
+        if self.tile_worker_cap == 0 {
+            return Err(LaborConfigError::Invalid {
+                field: "tile_worker_cap",
+                constraint: "be at least 1 (the most hands one tile holds across every band)"
+                    .to_string(),
+                value: self.tile_worker_cap.to_string(),
             });
         }
         // A party walks at the band's own pace, so a zero would make a far posting's walk never

@@ -100,6 +100,17 @@
           "hint": "Tiles a band covers per turn when relocating."
         },
         {
+          "pointer": "/tile_worker_cap",
+          "label": "Tile worker cap",
+          "type": "int",
+          "min": 1,
+          "max": 40,
+          "step": 1,
+          "default": 12,
+          "unit": "workers",
+          "hint": "Most hands one tile holds across every band: keepers, builders and harvesters together."
+        },
+        {
           "pointer": "/forage/per_worker_biomass_capacity",
           "label": "Forage throughput",
           "type": "float",

@@ -299,6 +299,7 @@ func run(harness) -> void:
 	# and the frame would test nothing) and Corral's ONLY gate reason is the herd's own tameness — the
 	# number under test, rendered as the compact one-liner rather than a bulleted list.
 	h._hud.update_intensification([{"faction": 0, "knowledges": {"cultivation": 1.0, "herding": 1.0, "seed_selection": 1.0, "penning": 1.0}}])
+	BandFx.CrewFx.staffed = 0
 	var reopen_band := BandFx.band_fixture()
 	reopen_band["idle_workers"] = REOPEN_IDLE_WORKERS
 	reopen_band["working_age"] = REOPEN_WORKING_AGE
@@ -1898,12 +1899,6 @@ func _dry_handling_gear_conditions(band: Dictionary) -> Array:
 # which is what makes a kit swap re-price the whole estimate. The crew A/B in
 # `chapters/improvements.gd` exercises the ungeared arm and nothing else, so this is the half of the
 # form no frame in that set can reach.
-#
-# ⛔ **THE KIT IS THE BUILDERS', NOT THE SHEET'S OWN PICKER** (the builders-kits arc). This A/B moved
-# the HUNT picker for a release, which was the defect: the picker under the crew stepper chooses what
-# the TAKE crew carries, and what speeds a build is what the BUILDERS carry — two different rows. The
-# sheet reads the band's `builders` row through `KitRoster.builders_kit_for` now, so the frames dial
-# THAT row's kit and the hunt picker is held fixed across both.
 #
 # **THE PAIR IS THE CLAIM, at ONE crew on ONE herd.** A gear term read off a WORKED SOURCE — or off
 # the take crew's kit — answers the same number for both, a perfectly plausible sheet quoting the

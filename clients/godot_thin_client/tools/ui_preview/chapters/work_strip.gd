@@ -17,6 +17,10 @@ const ForageFx := preload("res://tools/ui_preview/fixtures_forage.gd")
 const HerdFx := preload("res://tools/ui_preview/fixtures_herd.gd")
 const TileFx := preload("res://tools/ui_preview/fixtures_tile.gd")
 
+## The builders the sim staffed on the worked patch's build, and the most that build could take.
+const SITE_BUILDERS := 2
+const SITE_BUILDERS_CAP := 3
+
 ## Every craft known, so the next rung of either web is on offer rather than refused.
 const ALL_KNOWN := {"cultivation": 1.0, "herding": 1.0, "seed_selection": 1.0, "penning": 1.0}
 
@@ -84,14 +88,14 @@ func _hunt_sheet_strip() -> void:
 ## `Show on map` link at the left of `Done` / `Stop working here`.
 func _worked_sheet_strip() -> void:
 	var worked_band := BandFx.cultivating_forage_band_fixture()
-	# The patch's build is the queue HEAD, so the band's builders pool is building it (the strip's
-	# `K building, done in ≈T turns` hover).
-	worked_band["build_queue"] = [{"kind": SourceForecast.LABOR_KIND_FORAGE,
-		"target_x": 66, "target_y": 10, "fauna_id": ""}]
+	# The patch's build is worked by its own site's crew (`builders_staffed`), so the strip's hover is
+	# `N building (up to M), done in ≈T`.
 	h._hud._band_labor._player_band = worked_band
 	h._hud._band_labor._player_bands = [worked_band]
 	var tile := BaseFx.food_tile_fixture()
+	tile["patch_builders_cap"] = SITE_BUILDERS_CAP
 	h._hud._compose.reset_forage_source()
+	BandFx.staff_builders(h._hud._band_labor, SITE_BUILDERS)
 	h._show_tile(tile)
 	h._compose_forage(tile)
 	await h._settle()
@@ -101,9 +105,9 @@ func _worked_sheet_strip() -> void:
 			% ForageFx.ladder_kind(sheet),
 		ForageFx.ladder_kind(sheet) in [WorkStrip.LADDER_BUILDING, WorkStrip.LADDER_STALLED])
 	var chip_tip := ForageFx.strip_chip_tip(sheet)
-	h._assert_hud("…and the chip's hover carries the builders and the sim's turn estimate (got \"%s\")" % chip_tip,
-		chip_tip.contains(HudComposeVocab.BUILD_TURNS_COUNT_FORMAT.split("%")[0])
-			and chip_tip.contains(HudWorkVocab.WORK_STRIP_BUILD_DONE_FORMAT.split("%s")[1]))
+	h._assert_hud("…and the chip's hover carries the site's builders and the sim's turn estimate (got \"%s\")" % chip_tip,
+		chip_tip.contains(HudWorkVocab.BUILD_CREW_STAFFED_FORMAT % [SITE_BUILDERS, SITE_BUILDERS_CAP])
+			and chip_tip.contains(HudWorkVocab.BUILD_CREW_DONE_FORMAT.split("%s")[1]))
 	h._assert_hud("…and links `Show on map` in the footer",
 		_find_meta(sheet, HudComposeVocab.SHOW_ON_MAP_META) != null)
 

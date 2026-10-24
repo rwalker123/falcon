@@ -364,17 +364,6 @@ fn spawn_keeper(app: &mut App, herd_id: &str, tile: UVec2) -> Entity {
                     // **The builders' pool, staffed** — a `set_herd_output` commitment is an
                     // ordinary build and is raised from this pool at the head of the band's queue,
                     // exactly as a fence ring is.
-                    LaborAssignment {
-                        party: None,
-                        muster_crew: 0,
-                        planned_crew: 0,
-                        max_workers: Some(BUILDERS),
-                        staffing: Default::default(),
-                        target: LaborTarget::Builders,
-                        workers: BUILDERS,
-                        kit: None,
-                        priority: SourcePriority::default(),
-                    },
                     // **The keeping role, staffed** — the fixture's keeper really is keeping the
                     // herd, and an unstaffed `husbandry` pool reads as total neglect (see
                     // `grazing_2d_pen`'s own note): an accelerating shed would terminate the herd
@@ -952,10 +941,11 @@ fn a_commitment_is_priced_off_the_rung_and_lands_when_its_meter_completes() {
     app.world
         .get_mut::<LaborAllocation>(keeper)
         .expect("the fixture keeper keeps its allocation")
-        .enqueue_build(
+        .declare_build(
             core_sim::BuildSource::Herd(id.clone()),
             core_sim::BuildJob::SetHerdOutput(shipped::animal_pen()),
         );
+    core_sim::seat_builders(&mut app.world, keeper, BUILDERS);
 
     // One turn stamps the meter with its denominator; the fraction has NOT moved yet.
     run_turn(&mut app, keeper);

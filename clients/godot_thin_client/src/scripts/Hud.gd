@@ -74,14 +74,14 @@ signal extend_pen_requested(payload: Dictionary)
 ## (`cultivate` / `sow` / `tame` / `corral`).
 ##
 ## **ITS EMITTER IS THE WORK ROW'S `⌃`, AND THE COMPOSE SHEET NO LONGER DECLARES AT ALL**
-## (`docs/plan_standing_upkeep.md` §4.7a ①). The sheet's checkbox was not the commit — the button
-## that committed it read `Forage` — so ticking it and closing the sheet did nothing, reported from
-## play repeatedly. The declaration is one click on the tab that owns the pool and the queue, and it
-## reaches this signal through `_on_work_row_improvement_requested`, which carries the optimistic
-## write. The sheet keeps the FORECAST.
+## (`docs/plan_standing_upkeep.md` §4.7a ①). The sheet's checkbox was not the commit — the button that
+## committed it read `Forage` — so ticking it and closing the sheet did nothing, reported from play
+## repeatedly. The declaration is one click on the tab that owns the site's crew, and it reaches this
+## signal through `_on_work_row_improvement_requested`, which carries the optimistic write. The sheet
+## keeps the FORECAST.
 ##
-## **IT CARRIES NO CREW** (`docs/plan_standing_upkeep.md` §2.5) — the verb DECLARES, appending an
-## entry to the band's build queue, and the hands stand on the band-level `builders` role. A
+## **IT CARRIES NO CREW** (`docs/plan_standing_upkeep.md` §2.5) — the verb DECLARES a build
+## on the source, and the site's own crew raises it. A
 ## `workers` key rode this payload for one slice as a COMMAND token and the trailing token it
 ## produced is now a parse error; the one riding it today is the overlay's, and `format_improvement`
 ## does not read it.
@@ -89,11 +89,11 @@ signal improvement_requested(payload: Dictionary)
 
 ## The WITHDRAWAL of one of those declarations — { faction, x, y, herd_id }, Main formatting
 ## `unqueue <faction> <x> <y>` / `unqueue <faction> <herd_id>` (`docs/plan_standing_upkeep.md` §2.5).
-## RELAYED from `BandPanelController`'s BUILD QUEUE row `✕`, which is its only emitter since the
-## compose sheet's checkbox retired with the declaration (§4.7a ①).
+## RELAYED from the work row's in-flight build chip (`BandPanelController`) and the site sheet's
+## `Stop building` link (`DrawerComposeController`). It means *stop this build*.
 ##
 ## **ITS OWN SIGNAL BECAUSE ITS OWN GRAMMAR**: that one names a RUNG, this one names a SOURCE. It is
-## also the fix for the defect where unticking re-sent the set verb at zero builders, which SET the
+## also the fix for the defect where unticking re-sent the set verb at zero workers, which SET the
 ## declaration again instead of clearing it and left the rung stuck with no undo.
 signal unqueue_requested(payload: Dictionary)
 
@@ -106,18 +106,6 @@ signal abandon_requested(payload: Dictionary)
 
 ## > ⛔ RETIRED — **`build_kit_requested`** and **`upkeep_kit_requested`**: both verbs are refused by
 ## > the server now (`docs/plan_site_crews.md`), a build's and a site's tools following from the rung.
-
-## The band's build queue was DRAGGED into a new order — { faction, band_id, x, y, herd_id, position },
-## Main formatting `build_order <faction> <band> <x> <y> <position>` /
-## `build_order <faction> <band> <herd_id> <position>` (`docs/plan_standing_upkeep.md` §4.7b ③).
-## RELAYED from `BandPanelController`, its only emitter.
-##
-## **THE QUEUE IS THE PRIORITY PROPERTY'S OWN STORAGE** (§4.9), so the position is an index into that
-## one list and this client keeps no rank of its own beside it — literally none, since §4.9 item 9a:
-## `PopulationCohortState.buildQueue` is captured LIVE, the reordered list arrives on this command's
-## own recapture, and the payload therefore carries no `pending_entity` because there is no optimistic
-## ordering left to roll back.
-signal build_order_requested(payload: Dictionary)
 
 ## Emitted when the player marks ONE worked row with their own rank — where the band gives it up when
 ## it cannot cover everything it holds (`docs/plan_standing_upkeep.md` §4.9 item 9b). Payload keys:
@@ -137,12 +125,6 @@ signal work_priority_requested(payload: Dictionary)
 ## `stop_labor <faction> <band_id> <source…>`. No optimistic overlay and so no `pending_entity`: the
 ## server restaffs the band at once and the next snapshot carries the row's absence.
 signal stop_labor_requested(payload: Dictionary)
-
-## Emitted when the player cycles a QUEUED build's own mark from its site's work row
-## (`docs/plan_site_crews.md` §2.4). Payload keys: { faction, band_id, x, y, herd_id, level }. Main
-## formats `build_priority <faction> <band_id> <source…> <level>`. No optimistic overlay and so no
-## `pending_entity`, `work_priority_requested`'s reason: the entry's mark is captured live.
-signal build_priority_requested(payload: Dictionary)
 
 ## Emitted when the player picks how a band splits a keeping POOL it cannot stretch
 ## (`docs/plan_standing_upkeep.md` §2.5). Payload keys: { faction, band_id, mode }, `mode` being
@@ -172,8 +154,6 @@ signal diplomacy_command_requested(payload: Dictionary)
 ## Payload keys: { faction, band_id, recipe_id, count }. Main formats
 ## `bench_enqueue <faction> <band> recipe <id> count <n>`. RELAYED from `CraftingPanelController`.
 signal bench_enqueue_requested(payload: Dictionary)
-## Emitted when the bench's crew `− n +` stepper moves — the queue and its progress are left alone.
-## Payload keys: { faction, band_id, workers }. Main formats `bench_crew <faction> <band> workers <n>`.
 signal bench_crew_requested(payload: Dictionary)
 ## Emitted when a queued order's own `− n +` moves. Payload keys: { faction, band_id, order, count },
 ## `order` the order's index in `bench.orders` (0 = the head). Main formats
@@ -417,14 +397,6 @@ var _disclosures: DisclosureController = null
 # Shared BY REFERENCE with `BandPanelController`, which renders the same rows into the dock.
 var _banddetail: BandDetailLines = null
 # Generic section header for the outfit block (hosts both the scout + hunt send verbs).
-
-
-
-
-
-
-
-
 
 
 
@@ -705,7 +677,7 @@ func _ready() -> void:
     # The drawer's compose half. Handed the SAME state models, the two drawer-action containers it
     # fills, the selection card it anchors the sheet beside, the HUD CanvasLayer as the host it
     # parents that sheet into, and the three HudLayer helpers that keep callers on this side.
-    _rungcard = RungCardController.new(_band_labor, _topbar, self, _herd_label_for_id)
+    _rungcard = RungCardController.new(_band_labor, _topbar, self)
     _drawercompose = DrawerComposeController.new(
         _compose, _band_labor, _selection, _topbar, _selectioncard, self,
         herd_assign_controls, forage_assign_controls, road_ladder_controls,
@@ -718,6 +690,9 @@ func _ready() -> void:
         func(payload: Dictionary) -> void: work_priority_requested.emit(payload))
     _drawercompose.stop_labor_requested.connect(
         func(payload: Dictionary) -> void: stop_labor_requested.emit(payload))
+    # **STOP BUILDING, FROM A SITE'S OWN SHEET** rides the work row chip's relay, so the optimistic half
+    # (`record_pending_unqueue`) is written once whichever control ended the build.
+    _drawercompose.unqueue_requested.connect(_on_queue_row_unqueue_requested)
     # **THE ROAD LADDER'S DECLARATION GOES STRAIGHT OUT — no optimistic overlay write.**
     # `_on_work_row_improvement_requested` records a pending LABOR ROW before it relays, which is
     # right for a `⌃` on the work board; a road has no work row, so there is nothing to record and
@@ -736,16 +711,6 @@ func _ready() -> void:
     # lazy binding the `verb_pick_cancelled` relay below takes for the same reason.
     _drawercompose.work_tab_requested.connect(
         func(band_entity: int) -> void: _bandpanel.show_work_tab(band_entity))
-    # **NO IMPROVEMENT RELAY FROM THE COMPOSE SHEET** (`docs/plan_standing_upkeep.md` §4.7a ①). It
-    # emitted `improvement_requested` off the rung checkbox's tick and `unqueue_requested` off its
-    # untick; the checkbox was never the commit, so both moved to `BandPanelController` — the `⌃` on
-    # a work row and the `✕` on a queue row. Their relays are wired beside that controller below.
-    # The command-targeting cluster. Constructed AFTER `_drawercompose` (its three close-sheet nudges)
-    # and BEFORE `_bandpanel` (which injects `_targeting` — so `_targeting` must exist first). A verb
-    # pick carries the sheet's own commit Callable, so it needs no reference back to `_bandpanel`. It
-    # emits its OWN signals; HudLayer relays each (the
-    # controller never emits a HudLayer signal). Handed the HUD CanvasLayer as the host it parents the
-    # banner into (a RefCounted can't).
     _targeting = TargetingController.new(
         _band_labor, _drawercompose, _note_sink, self, _resolve_assign_band, _after_pending_change)
     _targeting.targeting_changed.connect(func(info: Dictionary) -> void: targeting_changed.emit(info))
@@ -793,25 +758,18 @@ func _ready() -> void:
         func(payload: Dictionary) -> void: open_borders_requested.emit(payload))
     _bandpanel.diplomacy_command_requested.connect(
         func(payload: Dictionary) -> void: diplomacy_command_requested.emit(payload))
-    # The BUILD QUEUE block's row `✕` (`docs/plan_standing_upkeep.md` §4.6b) joins the compose
-    # sheet's uncheck on the ONE `unqueue_requested` edge — the payloads are identical, so
-    # `Main.format_unqueue` serves both without knowing which control withdrew the entry.
+    # The work row's in-flight build chip joins the site sheet's `Stop building` on the ONE
+    # `unqueue_requested` edge — the payloads are identical, so `Main.format_unqueue` serves both.
     # **THE WITHDRAWAL'S OPTIMISTIC HALF RIDES THIS RELAY**, which is why it is a method rather than a
     # lambda — see `_on_queue_row_unqueue_requested`.
     _bandpanel.unqueue_requested.connect(_on_queue_row_unqueue_requested)
     # …and the ring, whose entry point moved to the work row's standing-rung mark (§4.9 item 12c).
-    # Straight through: `extend_pen` declares a build-queue entry and the recapture it triggers is
-    # what draws it, so there is no optimistic write on this layer.
     _bandpanel.extend_pen_requested.connect(
         func(payload: Dictionary) -> void: extend_pen_requested.emit(payload))
-    _bandpanel.build_order_requested.connect(
-        func(payload: Dictionary) -> void: build_order_requested.emit(payload))
     _bandpanel.work_priority_requested.connect(
         func(payload: Dictionary) -> void: work_priority_requested.emit(payload))
     _bandpanel.stop_labor_requested.connect(
         func(payload: Dictionary) -> void: stop_labor_requested.emit(payload))
-    _bandpanel.build_priority_requested.connect(
-        func(payload: Dictionary) -> void: build_priority_requested.emit(payload))
     # The WORK row's `⌃` is the DECLARATION now (`docs/plan_standing_upkeep.md` §4.7a ①), and this
     # relay carries its optimistic write — see `_on_work_row_improvement_requested`.
     _bandpanel.improvement_requested.connect(_on_work_row_improvement_requested)
@@ -847,8 +805,6 @@ func _ready() -> void:
     # viewport describes.
     _crafting = CraftingPanelController.new()
     _crafting.setup(self, _band_labor, floating_room)
-    _crafting.set_build_queue_faces_source(
-        func(band: Dictionary) -> Dictionary: return _bandpanel.build_queue_faces(band))
     _crafting.bench_enqueue_requested.connect(
         func(payload: Dictionary) -> void: bench_enqueue_requested.emit(payload))
     _crafting.bench_crew_requested.connect(
@@ -1594,8 +1550,6 @@ func get_player_band_tile() -> Vector2i:
     return SourceForecast.band_tile(_band_labor.player_band())
 
 
-
-
 ## Wrap-aware odd-r hex distance between two offset tiles, supplying the snapshot's grid geometry to
 ## the ONE implementation (`SourceForecast.hex_distance_wrapped`). This pass-through exists precisely
 ## because the module is stateless: the grid pair (`grid_width`, `wrap_horizontal`) lives on
@@ -1760,12 +1714,9 @@ func _emit_assign_labor(band: Dictionary, kind: String, workers: int, x: int, y:
 
 ## **A DECLARATION FROM THE WORK ROW'S `⌃`, AND ITS OPTIMISTIC HALF**
 ## (`docs/plan_standing_upkeep.md` §4.7a ①). The verb goes on the wire; the declaration is ALSO
-## written to the pending overlay so the BUILD QUEUE block's row and the row's own `▦0%` state land
 ## on the frame the mark was pressed, rather than a turn later.
 ##
 ## **IT IS ONE SEAM, NEVER A SECOND OVERLAY.** `record_pending_assign` already takes an
-## `improvement` — it exists so a crew edit does not blank a running build — and `_build_queue_models`
-## already admits a pending entry off exactly that field. So the declaration is that same write with
 ## this source's CURRENT crew and floor restated and the improvement set.
 ##
 ## **AND NO `assign_labor` GOES WITH IT.** The overlay write is client-side only: the band already
@@ -1817,21 +1768,16 @@ func _after_pending_change() -> void:
             _turnorb.band_attention(), _band_labor.player_bands()))
     emit_signal("labor_pending_changed", _band_labor.pending_labor())
 
-## **A WITHDRAWAL FROM THE BUILD QUEUE, AND ITS OPTIMISTIC HALF** (`docs/plan_standing_upkeep.md`
-## §4.7b ④). The `unqueue` goes on the wire; the withdrawal is ALSO written to the pending overlay so
-## the row leaves the BUILD QUEUE block on the frame the `✕` is pressed rather than a turn later.
+## **A STOPPED BUILD, AND ITS OPTIMISTIC HALF** (`docs/plan_standing_upkeep.md` §4.7b ④). The `unqueue`
+## goes on the wire; the withdrawal is ALSO written to the pending overlay so the build leaves the work
+## row on the frame the chip is pressed rather than a turn later. A declaration made this turn shows
+## immediately, and without this a stop would not — the overlay carried additions only.
 ##
-## **THE ASYMMETRY THIS CLOSES WAS VISIBLE IN PLAY.** A declaration made this turn shows immediately
-## (a pending row at the tail); unticking a CONFIRMED entry did not leave the block at all, because
-## the queue's positions are turn-written wire state and the overlay carried additions only.
-##
-## ⛔ **IT KEYS ON THE TURN, NOT ON THE NEXT SNAPSHOT — and the reason moved** (§4.9 item 9a). It was
-## the stale `buildQueuePosition`: the recapture this command triggers still carried the entry at its
-## old position, so a "hide it until the next snapshot" rule flickered the row straight back. That is
-## no longer true — `PopulationCohortState.buildQueue` is captured LIVE off the allocation `unqueue`
-## mutates — and what the overlay covers now is the ROUND TRIP between the press and the reply.
-## `record_pending_unqueue` files it in the same per-band record `reconcile_pending` already drops on
-## a snapshot with a NEWER turn, which carries it across that window and no further.
+## ⛔ **IT KEYS ON THE TURN, NOT ON THE NEXT SNAPSHOT.** The build's declaration is captured
+## LIVE off the allocation `unqueue` mutates, so what the overlay covers is the ROUND TRIP between the
+## press and the reply. `record_pending_unqueue` files it in the same per-band record
+## `reconcile_pending` already drops on a snapshot with a NEWER turn, which carries it across that
+## window and no further.
 ##
 ## **THE RECORD PRECEDES THE EMIT**, this layer's standing rollback precondition: `Main` handles the
 ## signal synchronously and hands the payload back to `drop_pending_unqueue` when the send fails, so a

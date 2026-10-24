@@ -42,18 +42,18 @@ class_name CraftingPanel
 ## group) rather than a step-down. Owning units reads **one line per GRADE**, because a band may hold one item at two and
 ## `×5 · excellent` would be a lie.
 ##
-## **MAKE QUEUES AN ORDER; THE PLAYER STAFFS THE BENCH.** Pressing Make emits `enqueue_requested`
-## with a count of one (→ `bench_enqueue`) and recruits nobody, so *"No one at the bench"* is the
-## ordinary state one click later and the crew `− n +` stepper (`crew_changed` → `bench_crew`) is the
-## only thing that picks the number — live on an idle bench too, the crew staying with the bench across
-## orders. **The bench works ONE order at a time — the first in queue order that holds a pile or can
-## draw (`BenchState.worked`)**: the well describes that WORKED order, and the queue rows under it list
-## every other order with its own `made/count` stepper (`order_count_changed` → `bench_order_count`), a
-## `↑` (`order_raise_requested` → `bench_raise`, never on index 0) and a `✕` (`order_remove_requested` →
-## `bench_remove`). The well's own ✕ and stepper address `order <worked>`. **SUGGESTIONS open the main column** — the sim's ranked list of what the
-## band's workers are going without, each with a Queue that enqueues its whole count. There is no
-## Crafter role card on the Band panel: crafting always has a subject, so it is staffed at the bench
-## like a worked source rather than through a standing role.
+## **MAKE QUEUES AN ORDER; THE PLAYER STAFFS THE BENCH.** Pressing Make emits `enqueue_requested` with a
+## count of one (→ `bench_enqueue`) and recruits nobody, so *"No one at the bench"* is the ordinary
+## state one click later and the crew `− n +` stepper (`crew_changed` → `bench_crew`) is the only thing
+## that picks the number — live on an idle bench too, the crew staying with the bench across orders.
+## **The bench works ONE order at a time — the first in queue order that holds a pile or can draw
+## (`BenchState.worked`)**: the well describes that WORKED order, and the queue rows under it list every
+## other order with its own `made/count` stepper (`order_count_changed` → `bench_order_count`), a `↑`
+## (`order_raise_requested` → `bench_raise`, never on index 0) and a `✕` (`order_remove_requested` →
+## `bench_remove`). The well's own ✕ and stepper address `order <worked>`. **SUGGESTIONS open the main
+## column** — the sim's ranked list of what the band's workers are going without, each with a Queue
+## that enqueues its whole count. There is no Crafter role card on the Band panel: crafting always has
+## a subject, so it is staffed at the bench like a worked source rather than through a standing role.
 ##
 ## **THIS IS THE FREE-FLOATING CASE, hence `AutoSizingPanel`** (`.claude/rules/client/panel-framework.md`):
 ## the card is measured against the ROOM — the viewport MINUS every reserved edge strip, which is the
@@ -131,9 +131,6 @@ const PAYLOAD_CRAFT_KNOWLEDGE := "craft_knowledge"
 ## already at the bench** (`HudBandLaborState.benchable_workers`), which is a different question from
 ## "how many are idle" and is why the key's name outlives its meaning. See `_build_crew_stepper`.
 const PAYLOAD_IDLE_WORKERS := "idle_workers"
-## `{queue_position: int -> face: String}` - the Work tab's build-queue row labels, by the rank the sim
-## publishes on a suggestion's `build_queue` source line.
-const PAYLOAD_BUILD_QUEUE_FACES := "build_queue_faces"
 
 var _card: PanelContainer = null
 var _scroll: ScrollContainer = null
@@ -760,9 +757,6 @@ func _build_bench(payload: Dictionary) -> void:
 					HudCraftingVocab.ORDER_BLOCKED_REASON_KEY, "")) != "":
 			words.add_child(_build_auto_skip_link())
 	elif recipe_id != "":
-		# **THE WORKED ORDER'S FORECAST** — the queue rows skip `worked`, so without this the lone
-		# order that is affordable for one pass shows nothing until it stalls. Never beside a blocked
-		# line: that one already quotes the same queue-aware numbers.
 		var well_orders: Array = bench.get(HudCraftingVocab.BENCH_ORDERS_KEY, [])
 		var well_worked := _worked_index(bench)
 		if well_worked < well_orders.size() and well_orders[well_worked] is Dictionary:
@@ -777,9 +771,6 @@ func _build_bench(payload: Dictionary) -> void:
 	# built BEFORE the stepper, which insets it from the card's right edge and keeps it away from the
 	# header's own ✕. See `_build_clear_button`.
 	#
-	# **THE WELL IS THE WORKED ORDER'S ROW** — `orders[worked]`, the order every bench scalar
-	# describes — so its `made/count` stepper rides here, beside its ✕, rather than on a second row
-	# under the well repeating its name and its ✕. See `_build_queue`.
 	var orders: Array = bench_orders
 	var worked := well_index
 	# **THE AUTO SWITCH rides after the Priority link (line two's trailing edge) and before the Made
@@ -2164,9 +2155,6 @@ func _kit_name(need: Dictionary, fallback_id: String = "") -> String:
 		return named
 	return String(need.get(HudCraftingVocab.KIT_NEED_KIT_ID_KEY, fallback_id))
 
-## **THE JOB NOUNS, ONE TABLE** (`HudCraftingVocab.KIT_JOB_WORDS`): a kit on one job speaks that job's
-## plural / singular / where, a kit on several speaks `workers`. The plural of `hunt`, `forage` and
-## `builders` is the work vocabulary's own crew noun, never a second spelling of it.
 func _kit_job_words(need: Dictionary) -> Dictionary:
 	var jobs: Array = need.get(HudCraftingVocab.KIT_NEED_JOBS_KEY, [])
 	if jobs.size() != 1:
@@ -3172,23 +3160,17 @@ func _suggestion_item_name(item_id: String, ledger_row: Dictionary) -> String:
 			return name
 	return HudCraftingVocab.SUGGESTION_ITEM_FALLBACK_FORMAT % item_id
 
-## **WHAT THE SHORTAGE COSTS, IN ITS OWN UNIT** - the queued build it holds up when that is the only thing
-## short (`_earliest_build_queue_source`), else work a turn on gear that adds build or keeping work
-## (`work_per_turn > 0`, published), else the people going without, because a missing spear costs
-## attack and carry and no single unit of output ranks it against a missing hoe. The build comes FIRST
-## because a builder's gear always adds work, so the work clause would hide which build it is for. Both
-## numbers are the sim's, rendered as they arrive.
 func _suggestion_consequence(suggestion: Dictionary, payload: Dictionary = {}) -> String:
 	var ledger_row := _row_in(payload, String(suggestion.get(HudCraftingVocab.SUGGESTION_ITEM_ID_KEY, "")))
 	if _is_material_row(ledger_row):
 		return _material_suggestion_consequence(suggestion, payload, ledger_row)
-	var queued := _earliest_build_queue_source(suggestion)
+	var queued := _first_build_source(suggestion)
 	if not queued.is_empty():
 		var builders := float(queued.get(HudCraftingVocab.SOURCE_WORKERS_WITHOUT_KEY, 0.0))
 		if is_equal_approx(builders, 1.0):
-			return HudCraftingVocab.SUGGESTION_BUILD_QUEUE_ONE_FORMAT % _build_queue_label(queued, payload)
-		return HudCraftingVocab.SUGGESTION_BUILD_QUEUE_FORMAT % [
-			_amount_text(builders), _build_queue_label(queued, payload)]
+			return HudCraftingVocab.SUGGESTION_BUILD_ONE_FORMAT % _build_label(queued)
+		return HudCraftingVocab.SUGGESTION_BUILD_FORMAT % [
+			_amount_text(builders), _build_label(queued)]
 	var work := float(suggestion.get(HudCraftingVocab.SUGGESTION_WORK_PER_TURN_KEY, 0.0))
 	if work > 0.0:
 		return HudCraftingVocab.SUGGESTION_WORK_FORMAT % _amount_text(work)
@@ -3200,46 +3182,37 @@ func _suggestion_consequence(suggestion: Dictionary, payload: Dictionary = {}) -
 func _is_material_row(row: Dictionary) -> bool:
 	return not row.is_empty() and String(row.get("group", "")) == HudCraftingVocab.GROUP_STOCK
 
-## **A MATERIAL SUGGESTION'S REASON IS GOODS, NEVER PEOPLE**: the units the queued builds still lack
-## (the sources' `missing_units`, summed), named by the material's own title and the build it holds up
-## (`2 more Hurdles, for Corral Wild Boar`; the head job has no queue row, so `the top job`). The kit
-## wording (`N builders without`) states a crew and a material has none.
 func _material_suggestion_consequence(suggestion: Dictionary, payload: Dictionary,
 		ledger_row: Dictionary) -> String:
 	var missing := 0.0
 	for source_variant in suggestion.get(HudCraftingVocab.SUGGESTION_SOURCES_KEY, []):
 		if source_variant is Dictionary:
 			missing += float((source_variant as Dictionary).get(HudCraftingVocab.SOURCE_MISSING_UNITS_KEY, 0.0))
-	var queued := _earliest_build_queue_source(suggestion)
+	var queued := _first_build_source(suggestion)
 	var subject := HudCraftingVocab.SUGGESTION_MATERIAL_TOP_JOB if queued.is_empty() \
-		else _build_queue_label(queued, payload)
+		else _build_label(queued)
 	return HudCraftingVocab.SUGGESTION_MATERIAL_FORMAT % [_amount_text(missing),
 		_suggestion_item_name("", ledger_row), subject]
 
-## **THE EARLIEST QUEUED-BUILD SOURCE, WHEN NOTHING ELSE IS SHORT** - `{}` unless the suggestion carries a
-## `build_queue` line and every other line is the builders' own (the head job). Any take, site or other
-## source is the more urgent fact, so a mixed suggestion keeps the ordinary wording.
-func _earliest_build_queue_source(suggestion: Dictionary) -> Dictionary:
+## **THE FIRST DECLARED-BUILD SOURCE, WHEN NOTHING ELSE IS SHORT** - `{}` unless the suggestion carries a
+## `build` line (a declared build whose builders are short of the item) and every line is a build line. Any
+## take, site or pool source is the more urgent fact, so a mixed suggestion keeps the ordinary wording.
+func _first_build_source(suggestion: Dictionary) -> Dictionary:
 	var best := {}
 	for source_variant in suggestion.get(HudCraftingVocab.SUGGESTION_SOURCES_KEY, []):
 		if not (source_variant is Dictionary):
 			continue
 		var source: Dictionary = source_variant
-		if String(source.get(HudCraftingVocab.SOURCE_KIND_KEY, "")) == HudCraftingVocab.SOURCE_KIND_BUILD_QUEUE:
-			if best.is_empty() or int(source.get(HudCraftingVocab.SOURCE_QUEUE_POSITION_KEY, 0)) \
-					< int(best.get(HudCraftingVocab.SOURCE_QUEUE_POSITION_KEY, 0)):
-				best = source
-		elif String(source.get(HudCraftingVocab.SOURCE_JOB_KEY, "")) != HudCraftingVocab.SOURCE_JOB_BUILDERS:
+		if String(source.get(HudCraftingVocab.SOURCE_KIND_KEY, "")) != HudCraftingVocab.SOURCE_KIND_BUILD:
 			return {}
+		if best.is_empty():
+			best = source
 	return best
 
-## The queue row's own label, joined by position; the job + target only when the position cannot be resolved.
-func _build_queue_label(source: Dictionary, payload: Dictionary) -> String:
-	var faces: Dictionary = payload.get(PAYLOAD_BUILD_QUEUE_FACES, {})
-	var position := int(source.get(HudCraftingVocab.SOURCE_QUEUE_POSITION_KEY, 0))
-	if faces.has(position):
-		return String(faces[position])
-	return HudWorkVocab.build_queue_subject(String(source.get(HudCraftingVocab.SOURCE_JOB_KEY, "")),
+## The build's own name - its job and target, with no position: a declared build is named by the site
+## it is raised on (`Tame (12, 4)`), not by a place in a line.
+func _build_label(source: Dictionary) -> String:
+	return HudWorkVocab.build_site_subject(String(source.get(HudCraftingVocab.SOURCE_JOB_KEY, "")),
 		int(source.get(HudCraftingVocab.SOURCE_TARGET_X_KEY, -1)),
 		int(source.get(HudCraftingVocab.SOURCE_TARGET_Y_KEY, -1)), "")
 
@@ -3258,18 +3231,12 @@ func _suggestion_crew_noun(suggestion: Dictionary) -> String:
 		noun = this
 	return noun.to_lower() if noun != "" else HudCraftingVocab.SUGGESTION_WORKER_NOUN
 
-## **THE CREW NOUN THE WORK VOCABULARY ALREADY SPEAKS**, never a new one: the hunt sheet's `Hunters`,
-## the plant web's `Harvesters`, the build pool's `Builders`. A job with no plural crew noun anywhere
-## in the client (`scout`, `warrior`, `extract`, `roadwork`) answers `""`, and the caller falls back to
-## `workers` rather than minting one here.
 static func _job_crew_noun(job: String) -> String:
 	match job:
 		SourceForecast.LABOR_KIND_HUNT:
 			return HudComposeVocab.HUNT_CREW_LABEL
 		SourceForecast.LABOR_KIND_FORAGE:
 			return HudComposeVocab.HARVEST_CREW_LABEL
-		HudConst.LABOR_KIND_BUILDERS:
-			return HudWorkVocab.ROLE_NAME_BUILDERS
 	return ""
 
 ## **THE SOURCES, ONE LINE EACH, ON THE ROW'S HOVER** — who is short, where, by how many units, how
