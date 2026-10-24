@@ -2020,6 +2020,11 @@ static func _readout_unit_label(text: String, tint: Color) -> Label:
 ## `_mount_readout` has no second flag to keep in step with it.
 const IMPROVEMENT_DEAL_ROW_LABEL := "label"
 const IMPROVEMENT_DEAL_ROW_VALUE := "value"
+## The optional keeping note and its hover on a deal row (`HudComposeVocab.DEAL_ALL_KEEP_FORMAT`).
+const IMPROVEMENT_DEAL_ROW_NOTE := "note"
+const IMPROVEMENT_DEAL_ROW_NOTE_TIP := "note_tip"
+## Meta on the note label, so a harness finds it without matching text.
+const IMPROVEMENT_DEAL_NOTE_META := "improvement_deal_note"
 
 ## **THE IMPROVEMENT DEAL** — the readout's register between the take and the verdict, and it is
 ## exactly ONE labelled row: what the rung on the table will pay once it stands
@@ -2036,7 +2041,8 @@ const IMPROVEMENT_DEAL_ROW_VALUE := "value"
 ## undipped take — see `labor-ui.md` for why that row went. An array parameter with one possible
 ## length, and a tint parameter with one possible value, are both the unused-API liability this repo
 ## already refuses; the block is a single row, so the signature says so.
-static func build_improvement_deal(label: String, value: String) -> VBoxContainer:
+static func build_improvement_deal(label: String, value: String, note: String = "",
+        note_tooltip: String = "") -> VBoxContainer:
     var block := VBoxContainer.new()
     block.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     block.add_theme_constant_override("separation", HudComposeVocab.READOUT_YIELD_V_SEPARATION)
@@ -2052,6 +2058,19 @@ static func build_improvement_deal(label: String, value: String) -> VBoxContaine
     reading.add_theme_font_size_override("font_size",
         HudComposeVocab.READOUT_DEAL_VALUE_FONT_SIZE)
     line.add_child(reading)
+    # **THE KEEPING NOTE** (`HudComposeVocab.DEAL_ALL_KEEP_FORMAT`): a SECOND label on the same line, in
+    # the WARN ink, so the value label stays the bare payoff every harness reads as `lines[1]`.
+    if note != "":
+        var note_label := Label.new()
+        note_label.text = note
+        note_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+        note_label.add_theme_color_override("font_color", HudStyle.WARN)
+        note_label.add_theme_font_size_override("font_size",
+            HudComposeVocab.READOUT_DEAL_VALUE_FONT_SIZE)
+        note_label.mouse_filter = Control.MOUSE_FILTER_PASS
+        note_label.tooltip_text = note_tooltip
+        note_label.set_meta(IMPROVEMENT_DEAL_NOTE_META, true)
+        line.add_child(note_label)
     block.add_child(line)
     return block
 

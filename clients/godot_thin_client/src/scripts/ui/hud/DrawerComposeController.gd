@@ -2409,14 +2409,45 @@ func _improvement_deal_rung(kind: String, source: Dictionary, prefix: String,
 ## dangling separator and no empty slot — the term is gone, not blanked. The rung's standing price is
 ## WORK and is stated on the work row's `⌃` tooltip, the same place every other rung's is.
 func _improvement_deal_row(kind: String, source: Dictionary, prefix: String, band: Dictionary,
-        rung: String, payoff_terms: String) -> Dictionary:
+        rung: String, payoff_terms: String, keeping_note: Dictionary = {}) -> Dictionary:
     if rung == "" or payoff_terms == "":
         return {}
-    return {
-        HudWidgets.IMPROVEMENT_DEAL_ROW_LABEL:
-            String(HudComposeVocab.IMPROVEMENT_PAYOFF_ROW_LABELS.get(rung, rung)),
+    var label := String(HudComposeVocab.IMPROVEMENT_PAYOFF_ROW_LABELS.get(rung, rung))
+    var row := {
+        HudWidgets.IMPROVEMENT_DEAL_ROW_LABEL: label,
         HudWidgets.IMPROVEMENT_DEAL_ROW_VALUE: payoff_terms,
     }
+    if not keeping_note.is_empty():
+        row[HudWidgets.IMPROVEMENT_DEAL_ROW_NOTE] = String(keeping_note["text"])
+        # The rung's past-tense word comes off the SAME label the row wears, never a hard-coded one.
+        row[HudWidgets.IMPROVEMENT_DEAL_ROW_NOTE_TIP] = HudComposeVocab.DEAL_ALL_KEEP_TOOLTIP_FORMAT \
+            % [label.trim_prefix(HudComposeVocab.DEAL_LABEL_PAST_PREFIX), label]
+    return row
+
+## **WHY A DEAL READS ZERO WHEN THE CREW IS ALL KEEPERS** - `{text}` for the clause appended to the
+## deal row, `{}` when it does not apply. `curve` is the crew curve's `per_crew` rows, `row` the one at
+## the stepper's `crew`, `take_key` the row's next-rung take (`next_rung_take` on the forage curve,
+## `next_rung_animals_likely` on the hunt curve - twins, both publishing `next_rung_keep_hands`). It
+## applies when that take has no component AND the rung's keeping bill takes every hand of the crew.
+## The second figure is the smallest crew on the curve that gathers, off the same rows.
+func _next_rung_keeping_note(curve: Array, row: Dictionary, crew: int, take_key: String) -> Dictionary:
+    if row.is_empty() or crew <= 0 or not row.has(take_key) \
+            or not row.has(SourceForecast.NEXT_RUNG_KEEP_HANDS_KEY):
+        return {}
+    if SourceForecast.has_component(float(row[take_key])):
+        return {}
+    if float(row[SourceForecast.NEXT_RUNG_KEEP_HANDS_KEY]) \
+            < float(crew) - SourceForecast.CREW_TAKE_REACH_TOLERANCE:
+        return {}
+    var gathers := 0
+    for candidate in curve:
+        if candidate is Dictionary and SourceForecast.has_component(float(
+                (candidate as Dictionary).get(take_key, 0.0))):
+            var workers := int((candidate as Dictionary).get(SourceForecast.CREW_TAKE_WORKERS_KEY, 0))
+            if gathers == 0 or workers < gathers:
+                gathers = workers
+    return {"text": (HudComposeVocab.DEAL_ALL_KEEP_FORMAT % [crew, gathers]) if gathers > 0 \
+        else HudComposeVocab.DEAL_ALL_KEEP_NONE_FORMAT % crew}
 
 ## The payoff terms for a rung — the payoff VECTOR the built rung pays, each account only when
 ## non-zero, so a hay meadow reads `1.80 fodder`. "" when the wire quotes no payoff at all, which the
@@ -2786,7 +2817,9 @@ func _mount_readout(parent: VBoxContainer, hosts: Array, model: Dictionary, work
     if not deal_row.is_empty():
         column.add_child(HudWidgets.build_improvement_deal(
             String(deal_row.get(HudWidgets.IMPROVEMENT_DEAL_ROW_LABEL, "")),
-            String(deal_row.get(HudWidgets.IMPROVEMENT_DEAL_ROW_VALUE, ""))))
+            String(deal_row.get(HudWidgets.IMPROVEMENT_DEAL_ROW_VALUE, "")),
+            String(deal_row.get(HudWidgets.IMPROVEMENT_DEAL_ROW_NOTE, "")),
+            String(deal_row.get(HudWidgets.IMPROVEMENT_DEAL_ROW_NOTE_TIP, ""))))
     if known:
         var verdict_host := VBoxContainer.new()
         verdict_host.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -3371,6 +3404,13 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
     # the finished rung, its keeping netted. Pending, refused, or no row for the crew → no deal row.
     var deal_payoff := "" if deal_rung == "" else _hunt_curve_payoff_terms(herd,
         _hunt_live_crew_view, staffed_crew)
+    var deal_keeping := {}
+    if deal_payoff != "":
+        var hunt_curve: Array = (_hunt_live_crew_view.get("answer", {}) as Dictionary).get(
+            "per_crew", [])
+        deal_keeping = _next_rung_keeping_note(hunt_curve,
+            SourceForecast.hunt_crew_take_row(hunt_curve, staffed_crew), staffed_crew,
+            SourceForecast.HUNT_CREW_NEXT_RUNG_ANIMALS_KEY)
     # The averaging-window disclaimer USED TO STAND HERE, as a wrapped body line under the hint: the
     # delivered rate is a long-run average of lumpy whole-animal delivery. It is a caveat on ONE
     # number, so it now rides the RUNG's tooltip beside the metric it qualifies (`_hunt_floor_takes`
@@ -3422,7 +3462,7 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
                     SourceForecast.YIELD_ACCOUNT_FOOD, true),
             SourceForecast.LABOR_KIND_HUNT,
             _improvement_deal_row(SourceForecast.LABOR_KIND_HUNT, herd,
-                HudComposeVocab.BARE_FORECAST_PREFIX, band, deal_rung, deal_payoff))
+                HudComposeVocab.BARE_FORECAST_PREFIX, band, deal_rung, deal_payoff, deal_keeping))
     # **NO KEEPING ROW** (`docs/plan_standing_upkeep.md` §2.5) — a managed herd is held by the
     # band's `husbandry` role, not by a crew on this sheet, so there is no stepper here to point
     # at it. What this herd's share of that pool covers, and where it falls short, is stated on
@@ -4151,6 +4191,7 @@ func _build_forage_assign_controls(tile_info: Dictionary, target: VBoxContainer)
     var curve_deal := kept or is_committed \
         or composed_improvement != SourceForecast.IMPROVEMENT_NONE
     var deal_payoff := ""
+    var deal_keeping := {}
     if deal_rung != "" and curve_deal:
         var deal_view := _forage_live_crew_view
         if not kept:
@@ -4161,6 +4202,9 @@ func _build_forage_assign_controls(tile_info: Dictionary, target: VBoxContainer)
         if not curve_row.is_empty():
             deal_payoff = _crop_payoff_terms(tile_info, basket, _compose.forage_species(), band,
                 deal_rung, curve_row)
+            deal_keeping = _next_rung_keeping_note((deal_view.get("answer", {}) as Dictionary).get(
+                "per_crew", []), curve_row, staffed_crew,
+                SourceForecast.FORAGE_CREW_NEXT_RUNG_TAKE_KEY)
     elif deal_rung != "":
         deal_payoff = _crop_payoff_terms(tile_info, basket, _compose.forage_species(), band,
             deal_rung)
@@ -4174,7 +4218,7 @@ func _build_forage_assign_controls(tile_info: Dictionary, target: VBoxContainer)
                 SourceForecast.YIELD_ACCOUNT_FOOD, true),
         SourceForecast.LABOR_KIND_FORAGE,
         _improvement_deal_row(SourceForecast.LABOR_KIND_FORAGE, tile_info,
-            HudComposeVocab.FORAGE_FORECAST_PREFIX, band, deal_rung, deal_payoff))
+            HudComposeVocab.FORAGE_FORECAST_PREFIX, band, deal_rung, deal_payoff, deal_keeping))
     # ⛔ **NO RANGE REFUSAL ON THIS SHEET ANY MORE** (`docs/plan_civilization_steps.md` §One work
     # party). A patch past the SELECTED band's work range used to disable the commit behind the
     # retired `_mount_work_range_refusal`, because the sim lapsed a far forage crew with no warning

@@ -5290,6 +5290,9 @@ const FORAGE_CREW_NEXT_RUNG_FODDER_KEY := "next_rung_fodder"
 const FORAGE_CREW_NEXT_RUNG_MATERIALS_KEY := "next_rung_materials"
 ## The hunt curve's twin: the same crew's likely take once the next rung stands, animals a turn.
 const HUNT_CREW_NEXT_RUNG_ANIMALS_KEY := "next_rung_animals_likely"
+## The hands the crew spends keeping the FINISHED rung (both curves publish it): a crew at or under it
+## gathers nothing once the rung stands.
+const NEXT_RUNG_KEEP_HANDS_KEY := "next_rung_keep_hands"
 
 ## The row for `workers`, `{}` where the curve has none.
 static func forage_crew_row(per_crew: Array, workers: int) -> Dictionary:

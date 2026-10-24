@@ -544,6 +544,21 @@ const IMPROVEMENT_PAYOFF_ROW_LABELS := {
     "corral": "once penned",
 }
 
+# ---- WHY THE DEAL READS ZERO: THE CREW IS ALL KEEPERS -------------------------------------------
+# A crew too small to hold the finished rung's keeping bill spends every hand keeping it, so the crew
+# curve's `next_rung_take` is exactly 0 - and `ONCE TENDED 0.00 food` read as "tending pays nothing".
+# The clause is appended to the deal row's value in the WARN ink; `%d` is the stepper's crew, and the
+# second `%d` the smallest crew on the curve that gathers anything once the rung stands. The noun-free
+# form keeps the row to the two-line panel rule.
+const DEAL_ALL_KEEP_FORMAT := "— all %d keep it; %d needed to gather"
+## …and the same clause where NO crew on the curve gathers.
+const DEAL_ALL_KEEP_NONE_FORMAT := "— all %d keep it"
+## The hover: `%s` is the rung's past-tense word (`tended` / `sown` / `tamed` / `penned`) and `%s` the
+## row's own label (`once tended`), both taken from `IMPROVEMENT_PAYOFF_ROW_LABELS`.
+const DEAL_ALL_KEEP_TOOLTIP_FORMAT := "Holding %s ground takes work every turn. This crew spends every hand keeping it, so it gathers nothing %s."
+## The prefix the row label wears over the rung's past-tense word.
+const DEAL_LABEL_PAST_PREFIX := "once "
+
 
 # The pen's running upkeep, subtracted from the payoff on the row that states it (Corral only), so
 # the deal is never quoted gross on the register that commits to it. `corralYield` does NOT deduct

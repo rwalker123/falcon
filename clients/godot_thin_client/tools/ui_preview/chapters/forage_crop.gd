@@ -289,8 +289,43 @@ func _sow_too_poor_tile_fixture() -> Dictionary:
 	tile["patch_sow_site_refusal"] = "too_poor"
 	return tile
 
+## **THE DEAL ROW SAYS WHY IT READS ZERO** (PNG-less, an authored curve): a crew whose finished-rung
+## keeping bill takes every hand gets `all N keep it; M needed to gather`, with the crew that first
+## gathers as M; a crew that gathers gets no clause. Fails without the clause (empty note) and without
+## the keep-hands comparison (crew 3 would carry one).
+const ALL_KEEP_CREW := 2
+const ALL_KEEP_GATHER_CREW := 3
+const ALL_KEEP_GATHER_TAKE := 0.9
+func _assert_all_keepers_deal_note() -> void:
+	var take_key := SourceForecast.FORAGE_CREW_NEXT_RUNG_TAKE_KEY
+	var curve: Array = [
+		{"workers": ALL_KEEP_CREW, take_key: 0.0, SourceForecast.NEXT_RUNG_KEEP_HANDS_KEY: float(ALL_KEEP_CREW)},
+		{"workers": ALL_KEEP_GATHER_CREW, take_key: ALL_KEEP_GATHER_TAKE,
+			SourceForecast.NEXT_RUNG_KEEP_HANDS_KEY: float(ALL_KEEP_CREW)},
+	]
+	var compose: Object = h._hud._drawercompose
+	var held: Dictionary = compose._next_rung_keeping_note(curve, curve[0], ALL_KEEP_CREW, take_key)
+	var want := HudComposeVocab.DEAL_ALL_KEEP_FORMAT % [ALL_KEEP_CREW, ALL_KEEP_GATHER_CREW]
+	h._assert_hud("deal note: crew %d with next_rung_take 0 and keep %d reads `%s` (got %s)"
+		% [ALL_KEEP_CREW, ALL_KEEP_CREW, want, str(held)], String(held.get("text", "")) == want)
+	h._assert_hud("deal note: that text is `all 2 keep it; 3 needed to gather`",
+		String(held.get("text", "")).contains("all 2 keep it; 3 needed to gather"))
+	h._assert_hud("deal note: crew %d, which gathers, carries no clause" % ALL_KEEP_GATHER_CREW,
+		compose._next_rung_keeping_note(curve, curve[1], ALL_KEEP_GATHER_CREW, take_key).is_empty())
+	var none_curve: Array = [curve[0]]
+	h._assert_hud("deal note: a curve where nobody gathers states only `all N keep it`",
+		String(compose._next_rung_keeping_note(none_curve, curve[0], ALL_KEEP_CREW, take_key).get(
+			"text", "")) == HudComposeVocab.DEAL_ALL_KEEP_NONE_FORMAT % ALL_KEEP_CREW)
+	var block := HudWidgets.build_improvement_deal("once tended", "0.00 food", want, "tip")
+	var note: Node = Q.find_meta_node(block, HudWidgets.IMPROVEMENT_DEAL_NOTE_META)
+	h._assert_hud("deal note: the widget renders the clause in the WARN ink with its hover",
+		note is Label and (note as Label).text == want and (note as Label).tooltip_text == "tip"
+		and (note as Label).get_theme_color("font_color") == HudStyle.WARN)
+	block.free()
+
 func run(harness) -> void:
 	h = harness
+	_assert_all_keepers_deal_note()
 
 	# ---- Cultivate: the forage INVESTMENT rung (gated, then unlocked) ----------------------------
 	# State 2-cultivate-locked — **THE KNOWLEDGE-SUPPRESSION RULE'S OWN FRAME, on the plant web.** The

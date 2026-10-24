@@ -1658,7 +1658,17 @@ stepper's crew.
 - **The hunt curve's key carries the herd's state** (`_hunt_curve_herd_terms`: rung, domestication,
   biomass), because the rows price the rung above the one the herd stands on. Without it a herd that
   climbed a rung reused the previous rung's answer.
-- **`next_rung_keep_hands` is decoded and not displayed**: the figures are already net of keeping.
+- **`next_rung_keep_hands` ONLY EXPLAINS A ZERO DEAL**: the figures are already net of keeping, so the
+  value is never subtracted again. Where the row's next-rung take has no component AND the finished
+  rung's keep-hands are >= the stepper's crew (tolerance `CREW_TAKE_REACH_TOLERANCE`), the deal row
+  appends, in the WARN ink and on a second label so the value label stays the bare payoff,
+  `— all N keep it; M needed to gather` (`DEAL_ALL_KEEP_FORMAT`; M = the smallest curve crew whose
+  take is a component, else `DEAL_ALL_KEEP_NONE_FORMAT` `— all N keep it`). Its hover
+  (`DEAL_ALL_KEEP_TOOLTIP_FORMAT`) takes the past-tense word off the row's own label (once
+  tended / sown / penned). Covers the forage curve (`next_rung_take`) and its hunt twin
+  (`next_rung_animals_likely`); deposit curves publish no next-rung keeping and are left alone.
+  `DrawerComposeController._next_rung_keeping_note` builds it; `forage_crop.gd`'s
+  `_assert_all_keepers_deal_note` pins it.
 - **While the curve is pending, refused, or has no row for the crew, the deal row is absent**, never
   a crew-blind fallback (`_curve_next_rung_row` answers `{}`). A crew of zero has no row, so a kept,
   raising or committed patch at zero states no deal.
