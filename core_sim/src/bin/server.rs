@@ -7984,6 +7984,11 @@ fn handle_split_band(
             return;
         }
     };
+    // **The parent kept fewer workers than its rows were staffed with** - re-decide its crews now,
+    // so the frame after this command shows crews fitted to the hands it kept rather than the
+    // pre-split ones until the turn advances. The splinter starts with no rows (fission.rs), so it
+    // has nothing to restaff; its outfitting-window wants are seeded by the split itself.
+    restaff_and_reseed(app, band.entity);
     let tick = app.world.resource::<SimulationTick>().0;
     // Every token is numeric, so none of them has to be last (`.claude/rules/core_sim/event-feed.md`
     // — a multi-word value can only be the trailing remainder).
@@ -33860,6 +33865,86 @@ mod long_move_tests {
 
     /// A split sends half the band's working-age people.
     const SPLIT_IN_HALF: u32 = 2;
+    /// How many forage rows the restaff fixture stands up.
+    const FIXTURE_FORAGE_ROWS: usize = 4;
+
+    /// **A SPLIT RESTAFFS THE PARENT AT ONCE.** The parent's rows were staffed against the hands it
+    /// had before the split; the frame right after the command (no turn advance) must show crews
+    /// fitted to the workers it kept. Asserted on the `LaborAllocation` rows the snapshot publishes.
+    #[test]
+    fn a_split_restaffs_the_parent_before_the_turn_advances() {
+        let (mut app, home, home_id) = world();
+        let faction = app
+            .world
+            .get::<PopulationCohort>(home)
+            .expect("a cohort")
+            .faction;
+        let hands = core_sim::available_workers(
+            app.world
+                .get::<PopulationCohort>(home)
+                .expect("a cohort")
+                .working,
+        );
+        // Forage rows on the nearest patches, each with a Max of every hand: the sim staffs them from
+        // the pool, so together they take everyone the band has.
+        let camp = position(&app, home);
+        let mut patches: Vec<UVec2> = app
+            .world
+            .resource::<core_sim::ForageRegistry>()
+            .patches
+            .keys()
+            .copied()
+            .collect();
+        patches.sort_by_key(|at| (at.x.abs_diff(camp.x) + at.y.abs_diff(camp.y), at.x, at.y));
+        patches.truncate(FIXTURE_FORAGE_ROWS);
+        for at in &patches {
+            let mut registry = app.world.resource_mut::<core_sim::ForageRegistry>();
+            let patch = registry.patch_mut(*at).expect("a seeded patch");
+            patch.biomass = patch.carrying_capacity;
+            handle_assign_labor(
+                &mut app,
+                faction,
+                Some(home_id),
+                "forage".to_string(),
+                hands,
+                Some(at.x),
+                Some(at.y),
+                None,
+                None,
+                None,
+                None,
+                Vec::new(),
+                false,
+            );
+        }
+        let staffed_before = app
+            .world
+            .get::<LaborAllocation>(home)
+            .expect("labor rows")
+            .assigned_total();
+        assert!(
+            staffed_before > hands / SPLIT_IN_HALF,
+            "fixture: the rows hold more hands than the parent keeps ({staffed_before} of {hands})"
+        );
+        split_off(&mut app, home, home_id);
+        let kept = core_sim::available_workers(
+            app.world
+                .get::<PopulationCohort>(home)
+                .expect("a cohort")
+                .working,
+        );
+        let staffed_after = app
+            .world
+            .get::<LaborAllocation>(home)
+            .expect("labor rows")
+            .assigned_total();
+        assert!(kept < hands, "fixture: the split took hands");
+        assert!(
+            staffed_after <= kept,
+            "the parent's crews are fitted to the {kept} hands it kept, not the {hands} it had: \
+             {staffed_after} staffed"
+        );
+    }
 
     /// ⛔ **A TURN-ONE SPLIT BAND ORDERED ON A LONG MOVE KEEPS ITS OUTFIT WINDOW UNTIL IT DEPARTS.**
     /// The reported bug: accepting the order shed the band and shut its window that instant, so the

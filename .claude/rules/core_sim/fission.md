@@ -33,6 +33,13 @@ What survived and was repointed rather than rebuilt: the runtime band-creation m
 `BandId`, insert `ResidentBand` + `DemographicFlowAccumulator`), the culture attach, and the
 checkpoint path that re-attaches `ResidentBand` for a band worldgen never made.
 
+## The split restaffs the parent at once
+
+`handle_split_band` calls `restaff_and_reseed` on the parent after the division, so the frame the
+command publishes shows crews fitted to the workers the parent kept, not the pre-split ones. The
+splinter starts with no rows and needs no restaff. Pinned by
+`server::long_move_tests::a_split_restaffs_the_parent_before_the_turn_advances`.
+
 ## The worker count decides the SHARE — and the share is a starting point, not the answer
 
 The player names a **worker count**. `share = asked ÷ parent.working`, applied to children, elders and
